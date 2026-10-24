@@ -554,18 +554,41 @@ describe('SessionTagDialog', () => {
       // padding is the 4-value shorthand (top right bottom left); take the right.
       const shorthand = /padding:\s*([^;]+);/.exec(chip)?.[1]?.trim()
       expect(shorthand, 'the chip must declare padding').toBeTruthy()
-      const right = shorthand!.split(/\s+(?![^(]*\))/)[1]
+      // Split on whitespace at paren depth 0: values can be
+      // `calc(var(--space-8) + calc(4 * var(--dp)))`.
+      const parts: string[] = []
+      {
+        let depth = 0
+        let cur = ''
+        for (const ch of shorthand!) {
+          if (ch === '(') depth++
+          else if (ch === ')') depth--
+          if (/\s/.test(ch) && depth === 0) {
+            if (cur) { parts.push(cur); cur = '' }
+            continue
+          }
+          cur += ch
+        }
+        if (cur) parts.push(cur)
+      }
+      const right = parts[1]
       // Accept a bare token or calc(token + Npx) — the chip needs a little slack
       // over the token value, since absolute offsets are measured from the
       // padding box and --space-8 (20px) alone is a pixel short of 21px.
-      const m = /var\(--space-(\d+)\)(?:\s*\+\s*(\d+)px)?/.exec(right)
+      // The slack is a design-px calc now, so accept that spelling too.
+      const m = /var\(--space-(\d+)\)(?:\s*\+\s*(?:calc\(\s*(\d+)\s*\*\s*var\(--dp\)\s*\)|(\d+)px))?/.exec(right)
       expect(m, `right padding should be a space token, got "${right}"`).not.toBeNull()
       const SPACE_PX: Record<string, number> = { '6': 12, '7': 16, '8': 20 }
       const base = SPACE_PX[m![1]]
       expect(base, `unmapped --space-${m![1]}`).toBeDefined()
-      const padRightPx = base + Number(m![2] || 0)
-      const inset = Number(/right:\s*(\d+)px/.exec(btn)?.[1])
-      const width = Number(/width:\s*(\d+)px/.exec(btn)?.[1])
+      const padRightPx = base + Number(m![2] || m![3] || 0)
+      // Design px: `calc(N * var(--dp))` or a literal `Npx`.
+      const designPx = (re: RegExp) => {
+        const mm = re.exec(btn)
+        return mm ? Number(mm[1] ?? mm[2]) : NaN
+      }
+      const inset = designPx(/right:\s*(?:calc\(\s*(\d+(?:\.\d+)?)\s*\*\s*var\(--dp\)\s*\)|(\d+(?:\.\d+)?)px)/)
+      const width = designPx(/width:\s*(?:calc\(\s*(\d+(?:\.\d+)?)\s*\*\s*var\(--dp\)\s*\)|(\d+(?:\.\d+)?)px)/)
       expect(inset + width).toBeLessThanOrEqual(padRightPx)
     })
   })

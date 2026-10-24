@@ -198,7 +198,7 @@ onMounted(refresh)
   display: flex;
   align-items: center;
   height: var(--header-height);
-  padding:0 var(--space-2) 0 var(--space-6);
+  padding: 0 var(--space-2) 0 var(--space-6);
   flex-shrink: 0;
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
@@ -207,8 +207,8 @@ onMounted(refresh)
 
 /* Create button in header toolbar */
 .create-btn {
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-lg);
   background: var(--accent-color, #0066cc);
@@ -223,8 +223,8 @@ onMounted(refresh)
 
 /* Header icon button (refresh, etc.) */
 .header-btn {
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-lg);
   background: var(--bg-secondary, #f1f3f5);
@@ -323,7 +323,7 @@ onMounted(refresh)
 @media (hover: hover) {
   .task-item:hover {
     border-color: var(--accent-color, #0066cc);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    box-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) rgba(0, 0, 0, 0.04);
   }
 }
 
@@ -370,7 +370,7 @@ onMounted(refresh)
 .task-trigger-badge {
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
-  padding:1px var(--space-3);
+  padding: 1px var(--space-3);
   border-radius: var(--radius-full);
   border: 1px solid transparent;
   flex-shrink: 0;
@@ -413,7 +413,7 @@ onMounted(refresh)
 
 .task-item.has-unread .task-item-icon {
   /* static accent highlight, no animation */
-  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent));
+  filter: drop-shadow(0 0 calc(3 * var(--dp)) color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent));
 }
 
 /* When both unread and running, keep the unread left border + icon highlight
@@ -424,12 +424,12 @@ onMounted(refresh)
 }
 
 .task-item.has-unread.is-running .task-item-icon {
-  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent));
+  filter: drop-shadow(0 0 calc(3 * var(--dp)) color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent));
 }
 
 .task-item-status {
   font-size: var(--font-size-2xs);
-  padding:3px var(--space-3);
+  padding: calc(3 * var(--dp)) var(--space-3);
   border-radius: var(--radius-xs);
   font-weight: var(--font-weight-semibold);
   flex-shrink: 0;
@@ -453,8 +453,8 @@ onMounted(refresh)
 }
 
 .task-item-running-dot {
-  width: 10px;
-  height: 10px;
+  width: calc(10 * var(--dp));
+  height: calc(10 * var(--dp));
   border-radius: 50%;
   background: var(--color-green, #22c55e);
   flex-shrink: 0;
@@ -504,18 +504,18 @@ onMounted(refresh)
 .task-progress {
   color: var(--accent-color, #0066cc);
   font-weight: var(--font-weight-medium);
-  margin-left: 2px;
+  margin-left: calc(2 * var(--dp));
 }
 
 .task-item-next {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: calc(4 * var(--dp));
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   background: var(--bg-primary, #fff);
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: calc(4 * var(--dp)) calc(8 * var(--dp));
+  border-radius: calc(4 * var(--dp));
   border: 1px solid var(--border-color, #e5e5e5);
   width: fit-content;
   max-width: 100%;
@@ -535,10 +535,10 @@ onMounted(refresh)
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 6px;
+  gap: calc(6 * var(--dp));
   flex-shrink: 0;
   align-self: flex-start;
-  margin-top: 2px;
-  margin-left: 10px;
+  margin-top: calc(2 * var(--dp));
+  margin-left: calc(10 * var(--dp));
 }
 </style>

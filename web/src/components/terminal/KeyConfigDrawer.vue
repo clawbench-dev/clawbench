@@ -133,7 +133,7 @@ function handleClose() {
   bottom: 0;
   left: 20%;
   right: 20%;
-  height: 2px;
+  height: calc(2 * var(--dp));
   background: var(--accent-color);
   border-radius: 1px;
 }

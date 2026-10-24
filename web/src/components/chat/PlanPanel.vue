@@ -138,7 +138,7 @@ watch(
 <style scoped>
 .plan-panel {
   width: auto;
-  margin:0 var(--space-5) var(--space-4);
+  margin: 0 var(--space-5) var(--space-4);
 }
 
 /* ── Collapsed chip ── */
@@ -164,8 +164,8 @@ watch(
 }
 
 .plan-chip__pulse {
-  width: 8px;
-  height: 8px;
+  width: calc(8 * var(--dp));
+  height: calc(8 * var(--dp));
   border-radius: 50%;
   background: #06b6d4;
   animation: pulse 1.5s ease-in-out infinite;
@@ -235,7 +235,7 @@ watch(
 .plan-expanded__timeline {
   display: flex;
   flex-direction: column;
-  max-height: 240px;
+  max-height: calc(240 * var(--dp));
   overflow-y: auto;
   /* The priority dot is the row's last flex item, so without this gutter its
      right edge lands exactly on the scrollbar's left edge (the scrollbar is
@@ -249,16 +249,16 @@ watch(
   align-items: flex-start;
   position: relative;
   padding-left: var(--space-8);
-  min-height: 28px;
+  min-height: calc(28 * var(--dp));
   gap: var(--space-3);
 }
 
 /* Vertical line segment */
 .plan-entry__line {
   position: absolute;
-  left: 7px;
-  top: 16px;
-  bottom: -12px;
+  left: calc(7 * var(--dp));
+  top: calc(16 * var(--dp));
+  bottom: calc(-12 * var(--dp));
   width: 0;
   border-left: 2px solid var(--border-color, #dee2e6);
 }
@@ -285,9 +285,9 @@ watch(
 .plan-entry__node {
   position: absolute;
   left: 0;
-  top: 4px;
-  width: 16px;
-  height: 16px;
+  top: calc(4 * var(--dp));
+  width: calc(16 * var(--dp));
+  height: calc(16 * var(--dp));
   border-radius: 50%;
   border: 2px solid var(--border-color, #dee2e6);
   display: flex;
@@ -323,8 +323,8 @@ watch(
 }
 
 .plan-entry__dot {
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
   background: var(--color-info);
   animation: pulse 1.5s ease-in-out infinite;
@@ -335,8 +335,8 @@ watch(
 }
 
 .plan-entry__circle {
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
   border: 1.5px solid var(--text-muted, #6c757d);
 }
@@ -361,10 +361,10 @@ watch(
 /* ── Priority dot ── */
 .plan-entry__priority-dot {
   flex-shrink: 0;
-  width: 8px;
-  height: 8px;
+  width: calc(8 * var(--dp));
+  height: calc(8 * var(--dp));
   border-radius: 50%;
-  margin-top: 5px;
+  margin-top: calc(5 * var(--dp));
 }
 
 .plan-entry__priority-dot--high {

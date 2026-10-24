@@ -30,6 +30,18 @@ import { readWebFile } from '@/testUtils/readWebFile'
  * These are source-contract checks: jsdom cannot evaluate `min()`/`calc()` with
  * `dvh`, cannot resolve an aspect ratio, and cannot measure a rendered box.
  */
+/**
+ * Regex source for a CSS length of `n` DESIGN px.
+ *
+ * Sizes are `calc(N * var(--dp))` so they follow the UI scale; a guard that
+ * hard-codes `200px` would fail on a value that is still exactly 200 design px.
+ * Accepts the literal spelling too (hairlines and percentages stay literal).
+ */
+function len(n: number | string): string {
+  const s = String(n).replace('.', '\\.')
+  return `(?:calc\\(\\s*${s}\\s*\\*\\s*var\\(--dp\\)\\s*\\)|${s}px)`
+}
+
 describe('svg media layout (media-block.css contract)', () => {
   const css = readWebFile('css/media-block.css')
 
@@ -195,7 +207,7 @@ describe('svg media layout (media-block.css contract)', () => {
     const chatRules = css.match(/^\s*\.chat-message[^{]*\{[^}]*\}/gm) || []
     expect(chatRules.length).toBeGreaterThan(0)
     for (const rule of chatRules) {
-      if (!/max-(width|height):\s*200px/.test(rule)) continue
+      if (!new RegExp(`max-(width|height):\\s*${len(200)}`).test(rule)) continue
       // Every size cap must be rest-only.
       expect(rule, `chat cap must be scoped to :not(.is-zooming):\n${rule}`)
         .toContain(':not(.is-zooming)')
@@ -265,10 +277,10 @@ describe('svg media layout (media-block.css contract)', () => {
     // The cap is rest-only (`:not(.is-zooming)`) so activation can span the
     // bubble; the selectors below therefore include the pseudo-class.
     expect(css).toMatch(
-      /\.chat-message \.image-block-wrapper:not\(\.is-zooming\)[^{]*\{[\s\S]*?max-width:\s*200px/,
+      new RegExp(`\\.chat-message \\.image-block-wrapper:not\\(\\.is-zooming\\)[^{]*\\{[\\s\\S]*?max-width:\\s*${len(200)}`),
     )
     expect(css).toMatch(
-      /\.chat-message \.image-block-wrapper:not\(\.is-zooming\) \.lightbox-svg-wrap svg\.lightbox-svg\s*\{[\s\S]*?max-width:\s*200px/,
+      new RegExp(`\\.chat-message \\.image-block-wrapper:not\\(\\.is-zooming\\) \\.lightbox-svg-wrap svg\\.lightbox-svg\\s*\\{[\\s\\S]*?max-width:\\s*${len(200)}`),
     )
   })
 
@@ -285,7 +297,7 @@ describe('svg media layout (media-block.css contract)', () => {
     const declarations = css.replace(/\/\*[\s\S]*?\*\//g, '')
     const chatCaps = [...declarations.matchAll(/\.chat-message[^{}]*\{[^{}]*\}/g)]
       .map(m => m[0])
-      .filter(rule => /max-(width|height):\s*\d+px/.test(rule))
+      .filter(rule => new RegExp(`max-(width|height):\\s*(?:calc\\([^)]*\\)|\\d+px)`).test(rule))
     expect(chatCaps.length).toBeGreaterThan(0)
     for (const rule of chatCaps) {
       expect(rule, `chat size caps must not target a diagram:\n${rule}`).not.toMatch(/mermaid/)
@@ -311,7 +323,7 @@ describe('svg media layout (media-block.css contract)', () => {
     // naive match found that instead of the real rule.
     const declarations = css.replace(/\/\*[\s\S]*?\*\//g, '')
     const chatCap = declarations.match(
-      /\.chat-message \.image-block-wrapper:not\(\.is-zooming\)[^{]*\{[^}]*max-width:\s*200px/,
+      new RegExp(`\\.chat-message \\.image-block-wrapper:not\\(\\.is-zooming\\)[^{]*\\{[^}]*max-width:\\s*${len(200)}`),
     )
     expect(chatCap, 'chat cap rule must exist').toBeTruthy()
     const selectors = chatCap![0].split('{')[0]
@@ -333,7 +345,7 @@ describe('svg media layout (media-block.css contract)', () => {
     expect(rule, 'chat media cap rule must exist').toBeTruthy()
     const body = rule![1].replace(/\/\*[\s\S]*?\*\//g, '')
     expect(body, 'must be !important to beat the generic max-width: none').toMatch(
-      /max-width:\s*200px\s*!important/,
+      new RegExp(`max-width:\\s*${len(200)}\\s*!important`),
     )
   })
 })

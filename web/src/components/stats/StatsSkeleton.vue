@@ -105,13 +105,13 @@ const rowWidths = computed(() =>
 }
 
 .stats-skeleton-title {
-  width: 96px;
-  height: 13px;
+  width: calc(96 * var(--dp));
+  height: calc(13 * var(--dp));
 }
 
 .stats-skeleton-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(calc(120 * var(--dp)), 1fr));
   gap: var(--space-4);
   min-width: 0;
 }
@@ -129,12 +129,12 @@ const rowWidths = computed(() =>
 
 .stats-skeleton-label {
   width: 62%;
-  height: 11px;
+  height: calc(11 * var(--dp));
 }
 
 .stats-skeleton-value {
   width: 84%;
-  height: 22px;
+  height: calc(22 * var(--dp));
 }
 
 .stats-skeleton-rows {
@@ -144,11 +144,11 @@ const rowWidths = computed(() =>
 }
 
 .stats-skeleton-row {
-  height: 13px;
+  height: calc(13 * var(--dp));
 }
 
 .stats-skeleton-chart {
-  height: 200px;
+  height: calc(200 * var(--dp));
   --skeleton-radius: var(--radius-sm, 6px);
 }
 </style>

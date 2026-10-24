@@ -153,7 +153,7 @@ function n(key: keyof UsageSnapshot): number {
 
 <style scoped>
 .usage-detail {
-  min-width: 180px;
+  min-width: calc(180 * var(--dp));
 }
 
 .usage-popup-bar {
@@ -165,7 +165,7 @@ function n(key: keyof UsageSnapshot): number {
 
 .usage-popup-bar-track {
   flex: 1;
-  height: 8px;
+  height: calc(8 * var(--dp));
   border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--text-primary) 15%, transparent);
   overflow: hidden;
@@ -181,7 +181,7 @@ function n(key: keyof UsageSnapshot): number {
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-bold);
   flex-shrink: 0;
-  min-width: 36px;
+  min-width: calc(36 * var(--dp));
   text-align: right;
 }
 
@@ -200,7 +200,7 @@ function n(key: keyof UsageSnapshot): number {
   justify-content: space-between;
   align-items: center;
   gap: var(--space-4);
-  padding: 3px 0;
+  padding: calc(3 * var(--dp)) 0;
   font-size: var(--font-size-sm);
 }
 
@@ -225,12 +225,12 @@ function n(key: keyof UsageSnapshot): number {
 .usage-popup-compact-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: calc(5 * var(--dp));
   background: none;
   border: 1px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  padding: 5px var(--space-6);
+  padding: calc(5 * var(--dp)) var(--space-6);
   color: var(--text-secondary, #6c757d);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-snug);

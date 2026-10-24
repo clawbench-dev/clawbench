@@ -265,7 +265,7 @@ const segments = computed<Segment[]>(() => {
 }
 
 .diff-content {
-  padding:0 var(--space-6);
+  padding: 0 var(--space-6);
   white-space: pre-wrap;
   word-break: break-all;
   overflow-wrap: break-word;
@@ -299,7 +299,7 @@ const segments = computed<Segment[]>(() => {
   color: var(--text-muted);
   text-align: center;
   padding: var(--space-1) var(--space-6);
-  letter-spacing: 2px;
+  letter-spacing: calc(2 * var(--dp));
 }
 
 /* ─── Char-level highlighting within diff lines ───

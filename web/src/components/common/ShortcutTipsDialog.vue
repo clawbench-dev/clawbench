@@ -57,7 +57,7 @@ const title = computed(() => t('appHeader.shortcutTipsDialog.title', { count: al
 
 <style scoped>
 .st-dialog-empty {
-  padding: 32px;
+  padding: calc(32 * var(--dp));
   text-align: center;
   color: var(--text-muted);
 }
@@ -71,7 +71,7 @@ const title = computed(() => t('appHeader.shortcutTipsDialog.title', { count: al
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  margin:0 0 var(--space-3);
+  margin: 0 0 var(--space-3);
   font-size: var(--font-size-md);
   color: var(--text-primary);
 }
@@ -93,7 +93,7 @@ const title = computed(() => t('appHeader.shortcutTipsDialog.title', { count: al
   white-space: nowrap;
 }
 .st-table td {
-  padding:5px var(--space-4);
+  padding: calc(5 * var(--dp)) var(--space-4);
   border-bottom: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
   vertical-align: top;
 }
@@ -102,10 +102,10 @@ const title = computed(() => t('appHeader.shortcutTipsDialog.title', { count: al
 .st-cell-action { color: var(--text-primary); }
 .st-kbd {
   display: inline-block;
-  margin:0 var(--space-1);
-  padding: 1px 5px;
+  margin: 0 var(--space-1);
+  padding: 1px calc(5 * var(--dp));
   border: 1px solid var(--border-color);
-  border-bottom-width: 2px;
+  border-bottom-width: calc(2 * var(--dp));
   border-radius: var(--radius-xs);
   background: var(--bg-tertiary);
   color: var(--text-primary);

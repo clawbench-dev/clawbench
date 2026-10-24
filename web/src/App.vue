@@ -588,6 +588,7 @@ import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyEffectiveUIScale, getZoomedViewport, toFixedCSS, startSystemThemeWatcher, applyStoredTheme } from '@/composables/useSettingsConfig'
+import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 import { useAnimatedWallpaperParams } from '@/composables/useAnimatedWallpaperParams'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
 import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab, PencilLine } from 'lucide-vue-next'
@@ -1075,11 +1076,32 @@ function onLeftPanePointerDown() {
 
 // Dock active indicator — water-drop sliding highlight
 // Dynamic button count: chat, browse, view, history, [inline overflow...], [overflow btn]
-const DOCK_STEP = 46 // 34 (btn width) + 12 (gap)
-// Wide dock's .wide-dock-center top padding; kept in sync with the CSS
-// padding-top so the absolutely-positioned active indicator lines up with the
-// first button (both bottom dock and wide dock use the same constant name).
-const WIDE_DOCK_PAD_TOP = 8
+//
+// DESIGN px, not screen px: the dock's button size and gap are written
+// `calc(34 * var(--dp))` / `var(--space-6)` in the stylesheet, so the step the
+// indicator travels per button has to be scaled by the same factor. Emitting
+// the raw `46px` would drift the highlight one unscaled step per button and the
+// error would grow with the index (at 150% the last button is off by ~40% of
+// the dock's width).
+const DOCK_BTN_DESIGN = 34
+const DOCK_GAP_DESIGN = 12
+const DOCK_STEP_DESIGN = DOCK_BTN_DESIGN + DOCK_GAP_DESIGN
+// Wide dock's .wide-dock-center top padding, in DESIGN px; kept in sync with
+// the CSS `padding-top` (which is `v-bind`-ed from this same number) so the
+// absolutely-positioned active indicator lines up with the first button.
+const WIDE_DOCK_PAD_TOP_DESIGN = 8
+
+/** The applied scale, as a reactive dependency (updated on UI_SCALE_EVENT). */
+const uiScale = ref(readAppliedUIScale())
+onMounted(() => {
+  const sync = () => { uiScale.value = readAppliedUIScale() }
+  window.addEventListener(UI_SCALE_EVENT, sync)
+  onUnmounted(() => window.removeEventListener(UI_SCALE_EVENT, sync))
+})
+/** Convert DESIGN px to CSS px at the current scale. */
+function dp(designPx: number): number {
+  return designPx * uiScale.value
+}
 
 const dockActiveIndex = computed(() => {
   const visibleTabs = ['chat', 'browse', 'view', 'history', ...inlineOverflowTabs.value]
@@ -1093,7 +1115,7 @@ const dockActiveIndex = computed(() => {
 })
 
 const dockIndicatorStyle = computed(() => ({
-  transform: `translateX(${dockActiveIndex.value * DOCK_STEP}px)`,
+  transform: `translateX(${dockActiveIndex.value * dp(DOCK_STEP_DESIGN)}px)`,
 }))
 
 // Assigned later in setup (it needs handlers defined further below); every
@@ -3044,13 +3066,18 @@ watch(isSoftKeyboardOpen, (open) => {
   })
 })
 
-// Safety net: re-measure dock when UI scale (CSS zoom) changes.
-// ResizeObserver may not fire when CSS zoom on <html> changes, so we
-// must explicitly re-measure to recalculate overflow layout.
-// Use requestAnimationFrame to ensure browser has reflowed after the zoom change.
-// Both the slider and the "auto fit" button write uiScale, so watching it alone
-// covers every writer (on Electron the zoom is applied natively, where no
-// ResizeObserver fires at all).
+// Safety net: re-measure the dock when the UI scale changes.
+//
+// This exists because the previous mechanism could not be observed: the scale
+// was applied as CSS `zoom` on <html> (or natively on Electron), and neither
+// fires a ResizeObserver on the dock — so its width and `--dock-height` stayed
+// at the pre-scale values and the overflow layout laid its items out wrong.
+//
+// The scale is now a root FONT SIZE change, which really does resize the dock's
+// box and therefore does fire the ResizeObserver. The explicit re-measure is
+// kept anyway because it is cheap and it also covers the case where the dock is
+// display:none at the moment of the change (ResizeObserver is not delivered for
+// a hidden element, and Android WebView is unreliable about the transition back).
 watch([() => localConfig.uiScale], () => {
   requestAnimationFrame(() => {
     startDockResize()
@@ -3366,7 +3393,7 @@ const wideDockIndicatorStyle = computed(() => ({
   // .wide-dock-center has a top padding (v-bind WIDE_DOCK_PAD_TOP); the
   // indicator is absolutely positioned at top:0 (padding-box origin), so
   // offset by the same value to stay vertically centered on the first button.
-  transform: `translateY(${wideDockActiveIndex.value * DOCK_STEP + WIDE_DOCK_PAD_TOP}px)`,
+  transform: `translateY(${wideDockActiveIndex.value * dp(DOCK_STEP_DESIGN) + dp(WIDE_DOCK_PAD_TOP_DESIGN)}px)`,
 }))
 
 const isOverflowTabActive = computed(() => popupOverflowTabs.value.includes(activeTab.value))
@@ -4310,7 +4337,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: var(--space-7);
-  padding:32px var(--space-7);
+  padding: calc(32 * var(--dp)) var(--space-7);
   text-align: center;
 }
 
@@ -4373,8 +4400,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
   padding: 0;
   border: 0;
   border-radius: var(--radius-xs);
@@ -4412,7 +4439,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: var(--space-4);
-  padding:9px var(--space-7);
+  padding: calc(9 * var(--dp)) var(--space-7);
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.3));
   border-radius: var(--radius-md);
   background: transparent;
@@ -4461,13 +4488,13 @@ onUnmounted(() => {
    shimmer come from the global .skeleton-block primitive (web/css/components.css),
    shared with the message-area ChatSkeleton. */
 .chat-title-skeleton-avatar {
-    width: 22px;
-    height: 22px;
+    width: calc(22 * var(--dp));
+    height: calc(22 * var(--dp));
 }
 
 .chat-title-skeleton-title {
-    width: 140px;
-    height: 14px;
+    width: calc(140 * var(--dp));
+    height: calc(14 * var(--dp));
 }
 
 /* Rename-session icon at the right end of the chat title bar. Pushed to the
@@ -4477,8 +4504,8 @@ onUnmounted(() => {
 .chat-title-edit-btn {
     margin-left: auto;
     flex-shrink: 0;
-    width: 24px;
-    height: 24px;
+    width: calc(24 * var(--dp));
+    height: calc(24 * var(--dp));
     padding: 0;
     border: none;
     background: none;
@@ -4552,11 +4579,11 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    padding: var(--space-5) 18px;
+    padding: var(--space-5) calc(18 * var(--dp));
     border-radius: var(--radius-full);
     background: var(--bg-primary);
     border: 1px solid var(--accent-color, #0066cc);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 calc(4 * var(--dp)) calc(16 * var(--dp)) rgba(0, 0, 0, 0.15);
     color: var(--accent-color, #0066cc);
     font-size: var(--font-size-lg);
     font-weight: var(--font-weight-semibold);
@@ -4587,7 +4614,7 @@ onUnmounted(() => {
 /* Wide-screen vertical dock (left edge) — VS Code activity-bar style */
 .wide-dock {
     flex-shrink: 0;
-    width: 48px;
+    width: calc(48 * var(--dp));
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -4607,9 +4634,9 @@ onUnmounted(() => {
     flex-direction: column;
     align-items: center;
     gap: var(--space-6);
-    /* Keep in sync with the JS constant WIDE_DOCK_PAD_TOP — the absolute
-       active indicator offsets by the same value to stay centered. */
-    padding-top: v-bind(WIDE_DOCK_PAD_TOP + 'px');
+    /* Keep in sync with the JS constant WIDE_DOCK_PAD_TOP_DESIGN — the absolute
+       active indicator offsets by the same design value (through `dp()`). */
+    padding-top: calc(v-bind(WIDE_DOCK_PAD_TOP_DESIGN) * var(--dp));
     /* All tabs are always rendered inline; on a very short window the dock
        scrolls instead of collapsing buttons into a menu. */
     overflow-y: auto;
@@ -4640,7 +4667,7 @@ onUnmounted(() => {
     left: 0;
     top: 0;
     width: 100%;
-    height: 34px;
+    height: calc(34 * var(--dp));
     border-radius: 0;
     background: color-mix(in srgb, var(--accent-color) 12%, transparent);
     /* Base uses a springy overshoot (for the bottom-dock water-drop); a smooth
@@ -4653,7 +4680,7 @@ onUnmounted(() => {
     left: 0;
     top: 0;
     bottom: 0;
-    width: 3px;
+    width: calc(3 * var(--dp));
     background: var(--accent-color);
 }
 
@@ -4670,8 +4697,8 @@ onUnmounted(() => {
    extra icon size comes out of the button's own padding rather than the dock
    footprint. Scoped under .wide-dock to outrank the base .dock-btn svg rule. */
 .wide-dock .dock-btn svg {
-    width: 20px;
-    height: 20px;
+    width: calc(20 * var(--dp));
+    height: calc(20 * var(--dp));
 }
 
 .bottom-dock {
@@ -4702,8 +4729,8 @@ onUnmounted(() => {
 /* Water-drop sliding indicator — accent background that drifts to the active button */
 .dock-active-indicator {
     position: absolute;
-    width: 34px;
-    height: 34px;
+    width: calc(34 * var(--dp));
+    height: calc(34 * var(--dp));
     border-radius: 50%;
     background: var(--accent-color);
     /* Water-drop feel: slightly overshoot then settle */
@@ -4714,8 +4741,8 @@ onUnmounted(() => {
 
 .dock-btn {
     position: relative;
-    width: 34px;
-    height: 34px;
+    width: calc(34 * var(--dp));
+    height: calc(34 * var(--dp));
     border: none;
     border-radius: 50%;
     background: transparent;
@@ -4745,8 +4772,8 @@ onUnmounted(() => {
 }
 
 .dock-btn svg {
-    width: 16px;
-    height: 16px;
+    width: calc(16 * var(--dp));
+    height: calc(16 * var(--dp));
 }
 
 .dock-btn.disabled {
@@ -4768,8 +4795,8 @@ onUnmounted(() => {
     position: absolute;
     top: 0;
     right: 0;
-    width: 8px;
-    height: 8px;
+    width: calc(8 * var(--dp));
+    height: calc(8 * var(--dp));
     border-radius: 50%;
     background: var(--accent-color, #0066cc);
     z-index: 2;
@@ -4787,8 +4814,8 @@ onUnmounted(() => {
     border-radius: var(--radius-full);
     font-weight: var(--font-weight-bold);
     color: #fff;
-    top: -4px;
-    right: -6px;
+    top: calc(-4 * var(--dp));
+    right: calc(-6 * var(--dp));
 }
 
 /* Dock badge pop animation on count change */
@@ -4802,7 +4829,7 @@ onUnmounted(() => {
     }
     40% {
         transform: scale(1.35);
-        box-shadow: 0 0 8px 2px color-mix(in srgb, var(--accent-color) 50%, transparent);
+        box-shadow: 0 0 calc(8 * var(--dp)) calc(2 * var(--dp)) color-mix(in srgb, var(--accent-color) 50%, transparent);
     }
     70% {
         transform: scale(0.9);
@@ -4818,12 +4845,12 @@ onUnmounted(() => {
     isolation: isolate;
     overflow: hidden;
     border-color: transparent;
-    box-shadow: 0 0 4px 1px color-mix(in srgb, var(--accent-color, #0066cc) 25%, transparent);
+    box-shadow: 0 0 calc(4 * var(--dp)) 1px color-mix(in srgb, var(--accent-color, #0066cc) 25%, transparent);
 }
 .dock-btn.has-running::before {
     content: '';
     position: absolute;
-    inset: -2px;
+    inset: calc(-2 * var(--dp));
     border-radius: inherit;
     background: conic-gradient(
         from 0deg,
@@ -4841,7 +4868,7 @@ onUnmounted(() => {
 .dock-btn.has-running::after {
     content: '';
     position: absolute;
-    inset: 1.5px;
+    inset: calc(1.5 * var(--dp));
     border-radius: inherit;
     background: var(--bg-primary);
     z-index: -1;
@@ -4882,18 +4909,18 @@ onUnmounted(() => {
     border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
     border-radius: var(--radius-lg);
     padding: var(--space-2);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 calc(4 * var(--dp)) calc(16 * var(--dp)) rgba(0, 0, 0, 0.2);
     z-index: var(--z-popover);
-    min-width: 140px;
+    min-width: calc(140 * var(--dp));
 }
 
 .dock-overflow-popup::after {
     content: '';
     position: absolute;
-    bottom: -6px;
-    right: 14px;
-    width: 12px;
-    height: 12px;
+    bottom: calc(-6 * var(--dp));
+    right: calc(14 * var(--dp));
+    width: calc(12 * var(--dp));
+    height: calc(12 * var(--dp));
     background: var(--bg-elevated, var(--bg-primary));
     border-right: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
     border-bottom: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
@@ -4951,6 +4978,6 @@ onUnmounted(() => {
 .dock-popup-enter-from,
 .dock-popup-leave-to {
     opacity: 0;
-    transform: translateY(4px) scale(0.95);
+    transform: translateY(calc(4 * var(--dp))) scale(0.95);
 }
 </style>

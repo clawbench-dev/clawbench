@@ -136,14 +136,14 @@ const textRows = computed(() =>
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  min-height: 44px;
+  min-height: calc(44 * var(--dp));
   padding: var(--space-3) var(--space-4);
   min-width: 0;
 }
 
 .panel-skeleton-leading {
-  width: 24px;
-  height: 24px;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
   flex-shrink: 0;
 }
 
@@ -156,17 +156,17 @@ const textRows = computed(() =>
 }
 
 .panel-skeleton-line {
-  height: 13px;
+  height: calc(13 * var(--dp));
 }
 
 .panel-skeleton-line--sub {
-  height: 10px;
+  height: calc(10 * var(--dp));
   opacity: 0.6;
 }
 
 .panel-skeleton-meta {
-  width: 40px;
-  height: 10px;
+  width: calc(40 * var(--dp));
+  height: calc(10 * var(--dp));
   flex-shrink: 0;
 }
 
@@ -174,7 +174,7 @@ const textRows = computed(() =>
 /* Mirrors .file-grid so the tiles land where the real ones will. */
 .panel-skeleton-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(calc(90 * var(--dp)), 1fr));
   gap: var(--space-4);
   padding: var(--space-4);
   align-content: start;
@@ -196,7 +196,7 @@ const textRows = computed(() =>
 
 .panel-skeleton-caption {
   width: 70%;
-  height: 11px;
+  height: calc(11 * var(--dp));
 }
 
 /* ── text ─────────────────────────────────────────────────────────────── */

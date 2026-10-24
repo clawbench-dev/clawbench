@@ -680,7 +680,7 @@ describe('QueuedMessageBar density + coexistence (source contract)', () => {
   it('is height-bounded so it cannot crowd out the message area', () => {
     // The plan timeline is capped at 240px; the queue list must be bounded too,
     // otherwise expanding both would leave the conversation almost no room.
-    expect(planSrc, 'reference: plan timeline cap').toMatch(/\.plan-expanded__timeline\s*\{[^}]*max-height:\s*240px/)
-    expect(rule('.queued-bar-list'), 'the queue list must be capped').toMatch(/max-height:\s*min\(40vh,\s*240px\)/)
+    expect(planSrc, 'reference: plan timeline cap').toMatch(/\.plan-expanded__timeline\s*\{[^}]*max-height:\s*calc\(\s*240\s*\*\s*var\(--dp\)\s*\)/)
+    expect(rule('.queued-bar-list'), 'the queue list must be capped').toMatch(/max-height:\s*min\(40vh,\s*calc\(\s*240\s*\*\s*var\(--dp\)\s*\)\)/)
   })
 })

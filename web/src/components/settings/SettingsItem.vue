@@ -849,7 +849,7 @@ function confirmEdit() {
 
 .settings-item__badge {
   font-size: var(--font-size-xs);
-  padding:1px var(--space-3);
+  padding: 1px var(--space-3);
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted);
@@ -916,7 +916,7 @@ function confirmEdit() {
 }
 .settings-item__note-icon {
   flex-shrink: 0;
-  margin-top: 2px;
+  margin-top: calc(2 * var(--dp));
 }
 
 .settings-item__right {
@@ -929,7 +929,7 @@ function confirmEdit() {
 .settings-item__value {
   font-size: var(--font-size-md);
   color: var(--text-secondary);
-  max-width: 160px;
+  max-width: calc(160 * var(--dp));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -959,7 +959,7 @@ function confirmEdit() {
 }
 
 .settings-item__progress-track {
-  height: 3px;
+  height: calc(3 * var(--dp));
   background: var(--bg-tertiary);
   border-radius: var(--radius-xs);
   overflow: visible;
@@ -983,7 +983,7 @@ function confirmEdit() {
     rgba(255, 255, 255, 0.15) 75%,
     transparent 75%
   );
-  background-size: 12px 12px;
+  background-size: calc(12 * var(--dp)) calc(12 * var(--dp));
   animation: progress-stripe 0.8s linear infinite;
 }
 
@@ -998,7 +998,7 @@ function confirmEdit() {
   align-items: center;
   justify-content: center;
   padding: var(--space-3);
-  margin: -6px 0;
+  margin: calc(-6 * var(--dp)) 0;
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
@@ -1062,7 +1062,7 @@ function confirmEdit() {
 .settings-item__text-input {
   flex: 1;
   min-width: 0;
-  height: 30px;
+  height: calc(30 * var(--dp));
   padding: 0 var(--space-6);
   font-size: var(--font-size-lg);
   border: 1px solid var(--border-color);
@@ -1113,7 +1113,7 @@ function confirmEdit() {
 
 .settings-item__textarea-input {
   width: 100%;
-  min-height: 120px;
+  min-height: calc(120 * var(--dp));
   padding: var(--space-4) var(--space-6);
   font-size: var(--font-size-md);
   font-family: inherit;
@@ -1178,7 +1178,7 @@ function confirmEdit() {
 }
 
 .settings-item__option-empty {
-  padding: 24px var(--space-7);
+  padding: calc(24 * var(--dp)) var(--space-7);
   text-align: center;
   color: var(--text-muted);
   font-size: var(--font-size-md);
@@ -1191,7 +1191,7 @@ function confirmEdit() {
   gap: var(--space-5);
   padding: var(--space-4) var(--space-7);
   cursor: pointer;
-  min-height: 38px;
+  min-height: calc(38 * var(--dp));
   position: relative;
   /* The option rows are flex children of the scrolling `.bs-body` column. Without
      this they default to flex-shrink:1, so a long list (many models) squashes
@@ -1266,7 +1266,7 @@ function confirmEdit() {
 .settings-item__option-badge {
   font-size: var(--font-size-xs);
   line-height: 1;
-  padding:3px var(--space-3);
+  padding: calc(3 * var(--dp)) var(--space-3);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   background: var(--bg-tertiary);
@@ -1277,13 +1277,13 @@ function confirmEdit() {
 /* ── Theme picker grid ── */
 .theme-picker-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(calc(96 * var(--dp)), 1fr));
   gap: var(--space-5);
   padding: var(--space-6) var(--space-7) var(--space-8);
 }
 
 .theme-picker-grid--wide {
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(calc(140 * var(--dp)), 1fr));
 }
 
 /* Terminal theme lazy-load failure banner (spans full grid width) */
@@ -1311,7 +1311,7 @@ function confirmEdit() {
 }
 
 .theme-picker-swatch--terminal {
-  height: 88px;
+  height: calc(88 * var(--dp));
   border: none;
   background: transparent;
 }
@@ -1326,7 +1326,7 @@ function confirmEdit() {
 }
 
 .theme-picker-swatch {
-  height: 64px;
+  height: calc(64 * var(--dp));
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-color);
   position: relative;
@@ -1342,8 +1342,8 @@ function confirmEdit() {
 /* Light/dark indicator icon in the top-right corner of a color swatch */
 .theme-picker-swatch-base-icon {
   position: absolute;
-  top: 5px;
-  right: 5px;
+  top: calc(5 * var(--dp));
+  right: calc(5 * var(--dp));
   color: var(--swatch-accent, var(--text-muted));
   flex-shrink: 0;
 }
@@ -1375,7 +1375,7 @@ function confirmEdit() {
 }
 
 .theme-picker-cell--active .theme-picker-swatch {
-  box-shadow: 0 0 0 2px var(--accent-color);
+  box-shadow: 0 0 0 calc(2 * var(--dp)) var(--accent-color);
   transform: scale(1.02);
 }
 
@@ -1390,10 +1390,10 @@ function confirmEdit() {
 
 .theme-picker-cell-check {
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 18px;
-  height: 18px;
+  top: calc(2 * var(--dp));
+  left: calc(2 * var(--dp));
+  width: calc(18 * var(--dp));
+  height: calc(18 * var(--dp));
   border-radius: 50%;
   background: var(--accent-color);
   color: #fff;

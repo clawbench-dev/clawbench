@@ -76,8 +76,8 @@ const { t } = useI18n()
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
   padding: 0;
   border: none;
   border-radius: var(--radius-full);

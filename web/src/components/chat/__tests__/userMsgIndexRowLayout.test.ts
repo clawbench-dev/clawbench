@@ -57,8 +57,8 @@ describe('UserMsgIndexDrawer: one-line rows', () => {
     // The chip holds only an icon now; a padding-based pill would collapse to a
     // sliver and the row's leading column would no longer line up.
     const tag = decls('.msg-role-tag')
-    expect(tag).toMatch(/width:\s*20px/)
-    expect(tag).toMatch(/height:\s*20px/)
+    expect(tag).toMatch(/(width):\s*(?:calc\(\s*20\s*\*\s*var\(--dp\)\s*\)|20px)/)
+    expect(tag).toMatch(/(height):\s*(?:calc\(\s*20\s*\*\s*var\(--dp\)\s*\)|20px)/)
     expect(tag, 'a text pill would set horizontal padding').not.toMatch(/padding:\s*1px\s+6px/)
   })
 
@@ -94,7 +94,7 @@ describe('UserMsgIndexDrawer: icon-only role chips', () => {
 describe('UserMsgIndexDrawer: timeline rail', () => {
   it('draws a solid segment per row so consecutive rows join seamlessly', () => {
     const rail = decls('.msg-item::before')
-    expect(rail).toMatch(/width:\s*2px/)
+    expect(rail).toMatch(/(width):\s*(?:calc\(\s*2\s*\*\s*var\(--dp\)\s*\)|2px)/)
     expect(rail).toMatch(/top:\s*0/)
     expect(rail).toMatch(/bottom:\s*0/)
     // A per-row gradient fades the line at every row boundary — the rail then
@@ -120,7 +120,7 @@ describe('UserMsgIndexDrawer: timeline rail', () => {
     // The node paints a ring in the row's own background colour; if that colour
     // does not track the row (hover/active) the node shows a mismatched halo.
     expect(decls('.msg-item')).toMatch(/--rail-punch:/)
-    expect(decls('.msg-node')).toMatch(/box-shadow:\s*0 0 0 3px var\(--rail-punch\)/)
+    expect(decls('.msg-node')).toMatch(/box-shadow:\s*0 0 0 calc\(\s*3\s*\*\s*var\(--dp\)\s*\) var\(--rail-punch\)/)
     expect(decls('.msg-item.active')).toMatch(/--rail-punch:/)
     expect(style).toMatch(/\.msg-item:hover\s*\{[^}]*--rail-punch:/)
   })

@@ -202,7 +202,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   padding: var(--space-5) var(--space-7) var(--space-3);
-  min-height: 120px;
+  min-height: calc(120 * var(--dp));
 }
 
 /* The placeholder grid carries its own inset; strip the body's so the tiles
@@ -228,7 +228,7 @@ onBeforeUnmount(() => {
 .avatar-picker__input {
   flex: 1;
   min-width: 0;
-  height: 30px;
+  height: calc(30 * var(--dp));
   padding: 0 var(--space-6);
   font-size: var(--font-size-xl);
   border: 1px solid var(--border-color);
@@ -249,7 +249,7 @@ onBeforeUnmount(() => {
 
 .avatar-picker__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(calc(72 * var(--dp)), 1fr));
   gap: var(--space-4);
 }
 
@@ -257,7 +257,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: calc(4 * var(--dp));
   padding: var(--space-4);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
@@ -277,8 +277,8 @@ onBeforeUnmount(() => {
 }
 
 .avatar-picker__tile-img {
-  width: 48px;
-  height: 48px;
+  width: calc(48 * var(--dp));
+  height: calc(48 * var(--dp));
   border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
   object-fit: contain;

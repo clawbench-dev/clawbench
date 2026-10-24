@@ -13,11 +13,11 @@ describe('computeAutoUIScale', () => {
     expect(computeAutoUIScale(1080)).toBe(1)
   })
 
-  it('scales a 1440p screen by 1.35 (snapped to the slider grid)', () => {
-    // 1440 / 1080 = 1.333… which is NOT on the 0.05 grid. It is snapped to
-    // 1.35 so the settings slider can represent it exactly — otherwise the
-    // thumb renders on the 1.35 step while the label would read "133%".
-    expect(computeAutoUIScale(1440)).toBe(1.35)
+  it('scales a 1440p screen by 1.33 (snapped to the slider grid)', () => {
+    // 1440 / 1080 = 1.333… → snapped to 1.33 on the 1% grid, so the slider can
+    // represent it exactly. (The old 5% grid forced 1.35, which was 1.3% away
+    // from the true fit purely to make the thumb land on a step.)
+    expect(computeAutoUIScale(1440)).toBe(1.33)
   })
 
   it('scales a 2160p (4K at 100% OS scaling) screen by 2', () => {
@@ -35,9 +35,11 @@ describe('computeAutoUIScale', () => {
     expect(computeAutoUIScale(1080 - 1)).toBe(1)
   })
 
-  it('scales a 1200p screen by 1.1 (snapped to the slider grid)', () => {
-    // 1200 / 1080 = 1.111… → snapped to 1.1
-    expect(computeAutoUIScale(1200)).toBe(1.1)
+  it('scales a 1200p screen by 1.11 (snapped to the slider grid)', () => {
+    // 1200 / 1080 = 1.111… → snapped to 1.11 on the 1% grid. (On the old 5%
+    // grid this landed on 1.1, i.e. a 1% error the user could see in the
+    // label but could not fix — the reason the grid is finer now.)
+    expect(computeAutoUIScale(1200)).toBe(1.11)
   })
 
   it('always returns a value representable on the slider step grid', () => {
@@ -100,11 +102,11 @@ describe('resolveUIScale', () => {
 
   it('snaps an off-grid stored value so the slider can represent it', () => {
     // A legacy/hand-edited value that is not a whole step would render its
-    // thumb on the nearest step while the label showed the raw number. 0.82 →
-    // 0.8, 1.33 → 1.35.
-    expect(resolveUIScale(0.82)).toBe(0.8)
-    expect(resolveUIScale(1.33)).toBe(1.35)
-    expect(resolveUIScale(1.02)).toBe(1)
+    // thumb on the nearest step while the label showed the raw number.
+    // On the 1% grid only sub-percent noise gets rounded away.
+    expect(resolveUIScale(0.824)).toBe(0.82)
+    expect(resolveUIScale(1.334)).toBe(1.33)
+    expect(resolveUIScale(1.024)).toBe(1.02)
   })
 
   it('always returns a value representable on the slider step grid', () => {
@@ -125,7 +127,7 @@ describe('resolveUIScale', () => {
 describe('screenHeightToCssPixels', () => {
   it('leaves the value untouched off Linux', () => {
     // macOS/Windows report CSS pixels, and their dpr is panel density — a
-    // Retina 5K reports 1440 at dpr 2 and must keep factor 1.35, not 0.67.
+    // Retina 5K reports 1440 at dpr 2 and must keep factor 1.33, not 0.67.
     expect(screenHeightToCssPixels(1440, 2, 2880, false)).toBe(1440)
     expect(screenHeightToCssPixels(2160, 2, 4320, false)).toBe(2160)
   })

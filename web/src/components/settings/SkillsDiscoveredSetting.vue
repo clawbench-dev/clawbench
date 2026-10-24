@@ -226,7 +226,7 @@ function openPath(p: string) {
   content: '';
   position: absolute;
   top: 0;
-  left: 16px;
+  left: calc(16 * var(--dp));
   right: 0;
   height: 1px;
   background: var(--border-color);

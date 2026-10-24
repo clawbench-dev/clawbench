@@ -2997,7 +2997,7 @@ function scrollSelectedIntoView(path) {
     display: flex;
     flex-direction: column;
     gap: 0;
-    min-height: 28px;
+    min-height: calc(28 * var(--dp));
     border-bottom: 1px solid var(--border-color, #e5e5e5);
     flex-shrink: 0;
 }
@@ -3007,7 +3007,7 @@ function scrollSelectedIntoView(path) {
     align-items: center;
     min-width: 0;
     background: var(--bg-tertiary, #f5f5f5);
-    padding:3px var(--space-4);
+    padding: calc(3 * var(--dp)) var(--space-4);
     /* No overflow:hidden — Teleported dropdowns need unclipped ancestors */
 }
 
@@ -3042,7 +3042,7 @@ function scrollSelectedIntoView(path) {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 3px var(--space-3);
+    padding: calc(3 * var(--dp)) var(--space-3);
     border: none;
     border-radius: var(--radius-xs);
     background: transparent;
@@ -3102,7 +3102,7 @@ function scrollSelectedIntoView(path) {
 .ms-select-all-btn {
     width: auto;
     height: auto;
-    padding:3px var(--space-5);
+    padding: calc(3 * var(--dp)) var(--space-5);
     border: none;
     border-radius: var(--radius-md);
     font-size: var(--font-size-xs);
@@ -3193,9 +3193,9 @@ function scrollSelectedIntoView(path) {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 3px;
-    width: 26px;
-    height: 26px;
+    gap: calc(3 * var(--dp));
+    width: calc(26 * var(--dp));
+    height: calc(26 * var(--dp));
     padding: 0;
     border: none;
     border-radius: 50%;
@@ -3234,8 +3234,8 @@ function scrollSelectedIntoView(path) {
 }
 
 .toolbar-btn svg {
-    width: 16px;
-    height: 16px;
+    width: calc(16 * var(--dp));
+    height: calc(16 * var(--dp));
     flex-shrink: 0;
 }
 
@@ -3256,7 +3256,7 @@ function scrollSelectedIntoView(path) {
     align-items: center;
     padding: var(--space-3) var(--space-4);
     border-radius: 0;
-    min-height: 44px;
+    min-height: calc(44 * var(--dp));
     cursor: pointer;
     transition: background var(--duration-base);
     gap: var(--space-4);
@@ -3293,7 +3293,7 @@ function scrollSelectedIntoView(path) {
 
 .file-item.dir-item.drag-target {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, transparent);
-    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 55%, transparent);
+    box-shadow: inset 0 0 0 calc(2 * var(--dp)) color-mix(in srgb, var(--accent-color, #4a90d9) 55%, transparent);
 }
 
 .file-item.dir-item.active {
@@ -3319,8 +3319,8 @@ function scrollSelectedIntoView(path) {
     box-sizing: border-box;
     border-radius: var(--radius-sm);
     padding: var(--space-1);
-    width: 28px;
-    height: 28px;
+    width: calc(28 * var(--dp));
+    height: calc(28 * var(--dp));
     display: flex;
     align-items: center;
     justify-content: center;
@@ -3336,38 +3336,38 @@ function scrollSelectedIntoView(path) {
 
 .file-item.active .file-icon-wrap .file-icon,
 .file-item.ctx-highlight .file-icon-wrap .file-icon {
-    width: 28px;
-    height: 28px;
+    width: calc(28 * var(--dp));
+    height: calc(28 * var(--dp));
 }
 
 .file-icon {
     flex-shrink: 0;
-    width: 28px;
-    height: 28px;
+    width: calc(28 * var(--dp));
+    height: calc(28 * var(--dp));
     object-fit: contain;
 }
 
 .file-icon-wrap {
     position: relative;
     flex-shrink: 0;
-    width: 28px;
-    height: 28px;
+    width: calc(28 * var(--dp));
+    height: calc(28 * var(--dp));
 }
 
 .file-icon-wrap .file-icon {
-    width: 28px;
-    height: 28px;
+    width: calc(28 * var(--dp));
+    height: calc(28 * var(--dp));
 }
 
 .file-icon-wrap .file-thumb {
-    width: 28px;
-    height: 28px;
+    width: calc(28 * var(--dp));
+    height: calc(28 * var(--dp));
 }
 
 .symlink-badge {
     position: absolute;
-    top: -5px;
-    right: -5px;
+    top: calc(-5 * var(--dp));
+    right: calc(-5 * var(--dp));
     display: flex;
     align-items: center;
     justify-content: center;
@@ -3383,14 +3383,14 @@ function scrollSelectedIntoView(path) {
 }
 
 .grid-thumb .symlink-badge {
-    top: 5px;
-    right: 5px;
+    top: calc(5 * var(--dp));
+    right: calc(5 * var(--dp));
 }
 
 .file-thumb {
     flex-shrink: 0;
-    width: 28px;
-    height: 28px;
+    width: calc(28 * var(--dp));
+    height: calc(28 * var(--dp));
     border-radius: var(--radius-xs);
     object-fit: contain;
 }
@@ -3444,14 +3444,14 @@ function scrollSelectedIntoView(path) {
 /* Empty State */
 .empty-state {
     text-align: center;
-    padding:40px var(--space-8);
+    padding: calc(40 * var(--dp)) var(--space-8);
     color: var(--text-muted, #999);
 }
 
 .empty-state .file-type-icon,
 .empty-state svg {
-    width: 48px;
-    height: 48px;
+    width: calc(48 * var(--dp));
+    height: calc(48 * var(--dp));
     margin-bottom: var(--space-6);
     opacity: var(--opacity-muted);
 }
@@ -3475,7 +3475,7 @@ function scrollSelectedIntoView(path) {
     overflow-y: auto;
     padding: var(--space-4);
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(calc(90 * var(--dp)), 1fr));
     gap: var(--space-4);
     align-content: start;
 }
@@ -3518,17 +3518,17 @@ function scrollSelectedIntoView(path) {
 
 .grid-item.grid-active .grid-thumb {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 15%, var(--bg-tertiary, #f5f5f5));
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 40%, transparent);
+    box-shadow: 0 0 0 calc(2 * var(--dp)) color-mix(in srgb, var(--accent-color, #4a90d9) 40%, transparent);
 }
 
 .grid-item.ctx-highlight .grid-thumb {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 15%, var(--bg-tertiary, #f5f5f5));
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 40%, transparent);
+    box-shadow: 0 0 0 calc(2 * var(--dp)) color-mix(in srgb, var(--accent-color, #4a90d9) 40%, transparent);
 }
 
 .grid-item.drag-target {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, transparent);
-    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 55%, transparent);
+    box-shadow: inset 0 0 0 calc(2 * var(--dp)) color-mix(in srgb, var(--accent-color, #4a90d9) 55%, transparent);
 }
 
 .grid-thumb {
@@ -3556,8 +3556,8 @@ function scrollSelectedIntoView(path) {
 }
 
 .grid-icon {
-    width: 32px;
-    height: 32px;
+    width: calc(32 * var(--dp));
+    height: calc(32 * var(--dp));
     flex-shrink: 0;
     object-fit: contain;
 }
@@ -3608,7 +3608,7 @@ function scrollSelectedIntoView(path) {
 [data-theme-base="dark"] .grid-item.grid-active .grid-thumb,
 [data-theme-base="dark"] .grid-item.ctx-highlight .grid-thumb {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, var(--bg-secondary, #2a2a2a));
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 50%, transparent);
+    box-shadow: 0 0 0 calc(2 * var(--dp)) color-mix(in srgb, var(--accent-color, #4a90d9) 50%, transparent);
 }
 
 [data-theme-base="dark"] .file-item.active .file-icon-wrap {
@@ -3665,7 +3665,7 @@ function scrollSelectedIntoView(path) {
     flex-shrink: 0;
     border-top: 1px solid var(--border-color, #e5e5e5);
     background: var(--bg-tertiary, #f5f5f5);
-    padding: 3px var(--space-5);
+    padding: calc(3 * var(--dp)) var(--space-5);
     gap: var(--space-1);
 }
 
@@ -3705,8 +3705,8 @@ function scrollSelectedIntoView(path) {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 26px;
-    height: 26px;
+    width: calc(26 * var(--dp));
+    height: calc(26 * var(--dp));
     border: none;
     border-radius: var(--radius-sm);
     background: transparent;
@@ -3740,7 +3740,7 @@ function scrollSelectedIntoView(path) {
 }
 
 .fs-results-count {
-    padding: var(--space-3) 14px;
+    padding: var(--space-3) calc(14 * var(--dp));
     font-size: var(--font-size-xs);
     color: var(--text-muted, #999);
     border-bottom: 1px solid var(--border-color, #e5e5e5);
@@ -3749,7 +3749,7 @@ function scrollSelectedIntoView(path) {
 }
 
 .fs-truncated {
-    padding: var(--space-5) 14px;
+    padding: var(--space-5) calc(14 * var(--dp));
     text-align: center;
     color: var(--text-muted, #999);
     font-size: var(--font-size-sm);
@@ -3763,7 +3763,7 @@ function scrollSelectedIntoView(path) {
     align-items: center;
     justify-content: center;
     gap: var(--space-5);
-    padding: 40px 24px;
+    padding: calc(40 * var(--dp)) calc(24 * var(--dp));
     text-align: center;
 }
 
@@ -3786,7 +3786,7 @@ function scrollSelectedIntoView(path) {
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 100%;
-    padding:0 var(--space-6);
+    padding: 0 var(--space-6);
 }
 
 .fs-result-dir-btn {
@@ -3794,8 +3794,8 @@ function scrollSelectedIntoView(path) {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 26px;
-    height: 26px;
+    width: calc(26 * var(--dp));
+    height: calc(26 * var(--dp));
     border: none;
     border-radius: var(--radius-sm);
     background: transparent;
@@ -3827,11 +3827,11 @@ function scrollSelectedIntoView(path) {
 .toolbar-dropdown {
     position: fixed;
     z-index: var(--z-popover);
-    min-width: 140px;
+    min-width: calc(140 * var(--dp));
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    box-shadow: 0 calc(4 * var(--dp)) calc(16 * var(--dp)) rgba(0, 0, 0, 0.12);
     padding: var(--space-2);
 }
 

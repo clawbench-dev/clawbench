@@ -298,8 +298,8 @@ async function handlePromptClick(event: MouseEvent) {
 }
 
 .status-dot {
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
 }
 
@@ -363,7 +363,7 @@ async function handlePromptClick(event: MouseEvent) {
   background: rgba(0, 102, 204, 0.05);
   padding: var(--space-3);
   border-radius: var(--radius-sm);
-  margin: -2px -6px;
+  margin: calc(-2 * var(--dp)) calc(-6 * var(--dp));
 }
 
 .overview-row.highlight .overview-value {

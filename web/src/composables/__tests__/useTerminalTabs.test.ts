@@ -924,12 +924,22 @@ describe('useTerminalTabs', () => {
       expect(tab.container).toBe(container2)
     })
 
-    it('patches the mouse service after open() so zoom compensation applies to live getCoords', () => {
+    it('does not patch xterm internals (the scale no longer shifts coordinates)', () => {
+      // This used to monkey-patch xterm's private _mouseService so that
+      // `getCoords` saw zoom-scaled cell dimensions. That was needed because
+      // `html { zoom }` put the DOM rect and the cell metrics in different
+      // coordinate spaces: the cursor landed in the wrong cell and selections
+      // were offset from the drag rectangle.
+      //
+      // The scale is now a root FONT SIZE change, so the cell metrics, the rect
+      // and the event coordinates all live in one space and no compensation is
+      // needed. Patching private internals is fragile (it depends on `_core`
+      // staying shaped this way) and it must not creep back in: a stale patch
+      // would now DOUBLE-apply a factor that is no longer present.
       const mgr = createTabManager()
       const tab = mgr.tabs.value[0]
       const container = document.createElement('div')
 
-      // 模拟 xterm open() 后惰性实例化的内部服务
       const css = { cell: { width: 8.43, height: 16 }, canvas: { width: 759, height: 368 } }
       const seen: number[] = []
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -941,20 +951,13 @@ describe('useTerminalTabs', () => {
         _renderService: { dimensions: { css } },
       }
 
-      document.documentElement.style.zoom = '1.5'
-      try {
-        mgr.mountTabXterm(tab, container)
-        expect(tab.container).toBe(container)
+      mgr.mountTabXterm(tab, container)
+      expect(tab.container).toBe(container)
 
-        // 调用被 patch 的 getCoords —— 内部应看到 ×1.5 的 cell 宽度
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ;(tab.xterm as any)._core._mouseService.getCoords({}, null, 80, 24, true)
-        expect(seen).toEqual([8.43 * 1.5])
-        // 调用后已还原
-        expect(css.cell.width).toBe(8.43)
-      } finally {
-        document.documentElement.style.zoom = ''
-      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(tab.xterm as any)._core._mouseService.getCoords({}, null, 80, 24, true)
+      // The cell width the service sees is the real one, unwrapped.
+      expect(seen).toEqual([8.43])
     })
   })
 

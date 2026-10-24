@@ -168,7 +168,7 @@ function markRead(item: NonNullable<typeof active.value>): void {
     display: flex;
     justify-content: center;
     align-items: flex-start;
-    padding-top: calc(8px + var(--header-safe-area-top, 0px));
+    padding-top: calc(8 * var(--dp) + var(--header-safe-area-top, 0px));
     pointer-events: none;
 }
 
@@ -183,7 +183,7 @@ function markRead(item: NonNullable<typeof active.value>): void {
     display: flex;
     flex-direction: column;
     width: 100%;
-    max-width: min(480px, 92vw);
+    max-width: min(calc(480 * var(--dp)), 92vw);
     /* 底部 padding 归零：外部项目区隔带要贴到卡片下沿（用负 margin 出血） */
     padding: var(--space-4) var(--space-5) 0;
     background: color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-elevated, var(--bg-tertiary)));
@@ -241,7 +241,7 @@ function markRead(item: NonNullable<typeof active.value>): void {
     .completion-notify {
         /* 桌面端收窄：这是通知不是面板。过宽时一行能塞下整段摘要，读起来
            像在看正文；窄卡片更贴近系统通知的形态，也让右下角的占用更小。 */
-        max-width: min(420px, 92vw);
+        max-width: min(calc(420 * var(--dp)), 92vw);
     }
 }
 
@@ -257,7 +257,7 @@ function markRead(item: NonNullable<typeof active.value>): void {
    不该和事件标题的语义色抢注意力。 */
 .completion-notify-category {
     flex-shrink: 0;
-    padding: 1px 6px;
+    padding: 1px calc(6 * var(--dp));
     font-size: var(--font-size-sm);
     line-height: var(--line-height-snug);
     font-weight: var(--font-weight-medium);
@@ -368,8 +368,8 @@ function markRead(item: NonNullable<typeof active.value>): void {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
-    height: 22px;
+    width: calc(22 * var(--dp));
+    height: calc(22 * var(--dp));
     padding: 0;
     background: transparent;
     color: var(--text-muted);

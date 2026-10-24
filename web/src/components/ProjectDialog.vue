@@ -305,17 +305,17 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding:3px var(--space-5) 3px;
+  padding: calc(3 * var(--dp)) var(--space-5) calc(3 * var(--dp));
 }
 
 .dialog-toolbar-row :deep(.search-pill) {
     margin-left: auto;
-    min-width: 80px;
-    max-width: 200px;
+    min-width: calc(80 * var(--dp));
+    max-width: calc(200 * var(--dp));
 }
 
 .dialog-nav :deep(.dir-breadcrumb) {
-  padding:0 var(--space-5) 3px;
+  padding: 0 var(--space-5) calc(3 * var(--dp));
 }
 
 /* Toolbar buttons */
@@ -323,8 +323,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: calc(26 * var(--dp));
+  height: calc(26 * var(--dp));
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -335,8 +335,8 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 .toolbar-btn svg {
-  width: 16px;
-  height: 16px;
+  width: calc(16 * var(--dp));
+  height: calc(16 * var(--dp));
   flex-shrink: 0;
 }
 @media (hover: hover) {
@@ -352,14 +352,14 @@ onBeforeUnmount(() => {
   flex: 1;
   overflow-y: auto;
   padding: var(--space-2) 0;
-  min-height: 200px;
+  min-height: calc(200 * var(--dp));
 }
 
 .dialog-item {
   display: flex;
   align-items: center;
   padding: var(--space-3) var(--space-4);
-  min-height: 44px;
+  min-height: calc(44 * var(--dp));
   cursor: pointer;
   gap: var(--space-4);
   transition: background var(--duration-fast);
@@ -381,8 +381,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   padding: 0;
   border: none;
   border-radius: var(--radius-xs);
@@ -413,7 +413,7 @@ onBeforeUnmount(() => {
 
 .dialog-empty {
   text-align: center;
-  padding:40px var(--space-8);
+  padding: calc(40 * var(--dp)) var(--space-8);
   color: var(--text-muted, #999);
   font-size: var(--font-size-lg);
 }

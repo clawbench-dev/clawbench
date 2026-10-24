@@ -216,8 +216,8 @@ function onEntryClick(entry: DirPreviewEntry) {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding:3px var(--space-3) 3px var(--space-6);
-  min-height: 28px;
+  padding: calc(3 * var(--dp)) var(--space-3) calc(3 * var(--dp)) var(--space-6);
+  min-height: calc(28 * var(--dp));
   background: var(--bg-secondary, #f8f9fa);
   border-bottom: 1px solid var(--border-color, #e0e0e0);
   user-select: none;
@@ -259,8 +259,8 @@ function onEntryClick(entry: DirPreviewEntry) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding:3px var(--space-3);
-  height: 24px;
+  padding: calc(3 * var(--dp)) var(--space-3);
+  height: calc(24 * var(--dp));
   font-size: var(--font-size-xs);
   color: var(--text-secondary, #5f6368);
   background: transparent;
@@ -292,7 +292,7 @@ function onEntryClick(entry: DirPreviewEntry) {
   justify-content: center;
   gap: var(--space-4);
   height: 100%;
-  min-height: 60px;
+  min-height: calc(60 * var(--dp));
   color: var(--text-secondary, #888);
   font-size: var(--font-size-sm);
 }
@@ -305,7 +305,7 @@ function onEntryClick(entry: DirPreviewEntry) {
    from the pane width; no JS measurement or ResizeObserver needed. */
 .dir-preview-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(calc(180 * var(--dp)), 1fr));
   gap: var(--space-1);
 }
 
@@ -336,8 +336,8 @@ function onEntryClick(entry: DirPreviewEntry) {
    to the icon it replaces so rows keep a uniform height. */
 .dir-preview-thumb {
   flex-shrink: 0;
-  width: 20px;
-  height: 20px;
+  width: calc(20 * var(--dp));
+  height: calc(20 * var(--dp));
   border-radius: var(--radius-xs);
   object-fit: cover;
   background: var(--bg-secondary, #f8f9fa);

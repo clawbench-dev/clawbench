@@ -223,7 +223,7 @@ describe('FileViewer error display', () => {
         const source = readFileSync(componentPath, 'utf-8')
 
         // Should have pill radius for the bubble shape
-        expect(source).toMatch(/border-radius:\s*20px/)
+        expect(source).toMatch(/(border-radius):\s*(?:calc\(\s*20\s*\*\s*var\(--dp\)\s*\)|20px)/)
         // Should have small padding (not 16px banner); values now come from
         // the spacing scale, so assert the tokens (6px / 12px)
         expect(source).toMatch(/padding:\s*var\(--space-3\)\s+var\(--space-6\)/)

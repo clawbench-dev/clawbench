@@ -10,7 +10,7 @@
  */
 
 import { getNative } from '@/utils/clawbenchNative'
-import { UI_SCALE_STEP } from '@/utils/uiScale'
+import { UI_SCALE_STEP, UI_SCALE_MANUAL_MIN, UI_SCALE_MANUAL_MAX } from '@/utils/uiScale'
 import { buildFontStack, DEFAULT_MONO_STACK, DEFAULT_UI_STACK, MONO_FONT_CHOICES, UI_FONT_CHOICES, MONO_FALLBACK_CHOICES, type FontChoice } from '@/utils/fontConfig'
 import i18n from '@/i18n'
 
@@ -241,7 +241,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // re-derived the factor on every applier call, which made the UI jump.
     // Hidden on Android, whose layout is already density-adapted by the WebView.
     { type: 'item', spec: { labelKey: 'settings.items.uiScaleAutoFit', descriptionKey: 'settings.items.uiScaleAutoFitDesc', key: 'uiScaleAutoFit', type: 'action', source: 'local', hideInAndroidApp: true, sectionHeader: 'settings.items.appearanceDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.uiScale', descriptionKey: 'settings.items.uiScaleDesc', key: 'uiScale', type: 'slider', source: 'local', min: 0.8, max: 1.5, step: UI_SCALE_STEP, defaultValue: 1, displayFormat: 'percent', sectionHeader: 'settings.items.appearanceDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.uiScale', descriptionKey: 'settings.items.uiScaleDesc', key: 'uiScale', type: 'slider', source: 'local', min: UI_SCALE_MANUAL_MIN, max: UI_SCALE_MANUAL_MAX, step: UI_SCALE_STEP, defaultValue: 1, displayFormat: 'percent', sectionHeader: 'settings.items.appearanceDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.headerShortcutTips', descriptionKey: 'settings.items.headerShortcutTipsDesc', key: 'headerShortcutTips', type: 'switch', source: 'local', sectionHeader: 'settings.items.appearanceDisplaySection' } },
     // How panel geometry is remembered: one record for every project, or one
     // per project. Placed in Display rather than a new card because it is the

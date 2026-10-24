@@ -218,8 +218,10 @@ describe('QuoteQuestionBar component', () => {
     // 发送/添加按钮：26px 方形（尖角风格里不能有圆形）
     const sendBtn = wrapper.find('.qq-send-btn')
     const sendStyles = window.getComputedStyle(sendBtn.element)
-    expect(sendStyles.width).toBe('26px')
-    expect(sendStyles.height).toBe('26px')
+    // jsdom does not resolve var(), so the computed value is the authored
+    // `calc(26 * var(--dp))`. The invariant is the 26 design px.
+    expect(sendStyles.width).toBe('calc(26 * var(--dp))')
+    expect(sendStyles.height).toBe('calc(26 * var(--dp))')
     // jsdom 不解析 border-radius 简写计算值，改为断言 CSS 规则
     const cssText = Array.from(document.styleSheets)
       .map((s) => {
@@ -264,16 +266,19 @@ describe('QuoteQuestionBar component', () => {
       }
       throw new Error(`no matching rule found for ${sel}`)
     }
+    // Sizes are design px: `calc(N * var(--dp))` or a literal `Npx`.
     const size = (block: string, prop: string) =>
-      block.match(new RegExp(`${prop}:\\s*(\\d+px)`))?.[1]
+      block.match(
+        new RegExp(`${prop}:\\s*(?:calc\\(\\s*(\\d+(?:\\.\\d+)?)\\s*\\*\\s*var\\(--dp\\)\\s*\\)|(\\d+(?:\\.\\d+)?)px)`),
+      )?.slice(1).find(Boolean)
 
     // 展开态：输入容器尖角（不再是 20px 胶囊），两个图标按钮 26px 方形
     const containerRule = blockOf('.qq-input-container', 'border-radius:')
     expect(containerRule).toContain('border-radius: 0')
     for (const sel of ['.qq-add-btn', '.qq-send-btn']) {
       const block = blockOf(sel)
-      expect(size(block, 'width'), `${sel} width`).toBe('26px')
-      expect(size(block, 'height'), `${sel} height`).toBe('26px')
+      expect(size(block, 'width'), `${sel} width`).toBe('26')
+      expect(size(block, 'height'), `${sel} height`).toBe('26')
       expect(block).toContain('border-radius: var(--radius-xs)')
     }
 
@@ -318,7 +323,7 @@ describe('QuoteQuestionBar component', () => {
 
     // The declaration itself, in the root rule.
     const rootBlock = blockOfClass('.quote-question-bar')
-    expect(rootBlock).toContain('--qq-expanded-width: 360px')
+    expect(rootBlock).toMatch(/--qq-expanded-width:\s*calc\(\s*360\s*\*\s*var\(--dp\)\s*\)/)
     expect(rootBlock).toContain('max-width: var(--qq-expanded-width)')
 
     // The panel must reference the same property rather than repeat the number.
@@ -971,8 +976,8 @@ describe('QuoteQuestionBar component', () => {
       .split('\n')
       .filter((line) => line.includes('.qq-copy-btn') && !line.includes('is-copied'))
       .join('\n')
-    expect(btnRule).toContain('width: 22px')
-    expect(btnRule).toContain('height: 22px')
+    expect(btnRule).toContain('width: calc(22 * var(--dp))')
+    expect(btnRule).toContain('height: calc(22 * var(--dp))')
     // An auto width would let the button size itself to its content again.
     expect(btnRule).not.toContain('min-width')
   })
@@ -1084,7 +1089,7 @@ describe('QuoteQuestionBar component', () => {
     expect(styles.minWidth).toBe('0px')
     expect(styles.flexGrow).toBe('1')
     // 预留浮动 copy 按钮空间（22px 宽 + 2px inset = 24px），避免滚动条压在按钮下面
-    expect(styles.maxWidth).toBe('calc(100% - 24px)')
+    expect(styles.maxWidth).toBe('calc(100% - calc(24 * var(--dp)))')
   })
 
   it('reserves the copy button only once, so the quote fills the bar width', async () => {

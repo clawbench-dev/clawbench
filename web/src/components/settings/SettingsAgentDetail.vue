@@ -761,7 +761,7 @@ async function handleDelete() {
   content: '';
   position: absolute;
   bottom: 0;
-  left: 16px;
+  left: calc(16 * var(--dp));
   right: 0;
   height: 0.5px;
   background: var(--border-color);

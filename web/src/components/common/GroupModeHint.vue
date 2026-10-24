@@ -97,7 +97,7 @@ function onChipClick() {
   align-items: center;
   gap: var(--space-1);
   flex-shrink: 0;
-  padding: 2px var(--space-3);
+  padding: calc(2 * var(--dp)) var(--space-3);
   border: none;
   border-radius: var(--radius-full);
   background: var(--bg-tertiary);
@@ -165,10 +165,10 @@ function onChipClick() {
 .group-mode-hint-tips li::before {
   content: '';
   position: absolute;
-  left: 3px;
+  left: calc(3 * var(--dp));
   top: 0.55em;
-  width: 3px;
-  height: 3px;
+  width: calc(3 * var(--dp));
+  height: calc(3 * var(--dp));
   border-radius: 50%;
   background: currentColor;
   opacity: var(--opacity-muted);

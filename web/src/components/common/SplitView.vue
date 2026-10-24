@@ -4,9 +4,9 @@
     class="split-view"
     :class="[`split-view--${orientation}`, { 'split-view--active': enabled }]"
     :style="{
-      '--split-gutter': `${gutterSize}px`,
-      '--split-min-first': `${minLeft}px`,
-      '--split-min-second': `${minRight}px`,
+      '--split-gutter': `${gutterPx}px`,
+      '--split-min-first': `${minLeftPx}px`,
+      '--split-min-second': `${minRightPx}px`,
     }"
   >
     <div
@@ -36,6 +36,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { clampRatio, normalizeRatio, MIN_PANEL_WIDTH } from '@/utils/splitRatio'
+import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 import SplitDivider from './SplitDivider.vue'
 
 const props = withDefaults(defineProps<{
@@ -64,6 +65,21 @@ const emit = defineEmits<{ (e: 'update:ratio', ratio: number): void }>()
 
 const isVertical = computed(() => props.orientation === 'vertical')
 
+/**
+ * The applied UI scale.
+ *
+ * `minLeft`/`minRight`/`gutterSize` are DESIGN px (the caller passes the
+ * stylesheet's numbers), while `getBoundingClientRect()` reports CSS px that
+ * already include the scale. Both the ratio clamp and the `--split-min-*`
+ * variables fed back to CSS need the scaled values, so they are converted once
+ * here — and reactively, because a scale change resizes the panes without
+ * firing a `resize` event.
+ */
+const uiScale = ref(readAppliedUIScale())
+const minLeftPx = computed(() => props.minLeft * uiScale.value)
+const minRightPx = computed(() => props.minRight * uiScale.value)
+const gutterPx = computed(() => props.gutterSize * uiScale.value)
+
 const rootRef = ref<HTMLDivElement | null>(null)
 const internalRatio = ref(normalizeRatio(props.ratio))
 // The split axis extent: width for a horizontal split, height for a vertical one.
@@ -85,8 +101,8 @@ const firstStyle = computed(() => {
     : { width: `${internalRatio.value * 100}%` }
 })
 
-const minFirstRatio = computed(() => (containerExtent.value > 0 ? props.minLeft / containerExtent.value : 0))
-const maxFirstRatio = computed(() => (containerExtent.value > 0 ? 1 - props.minRight / containerExtent.value : 1))
+const minFirstRatio = computed(() => (containerExtent.value > 0 ? minLeftPx.value / containerExtent.value : 0))
+const maxFirstRatio = computed(() => (containerExtent.value > 0 ? 1 - minRightPx.value / containerExtent.value : 1))
 
 const ariaValueNow = computed(() => Math.round(internalRatio.value * 100))
 const ariaValueMin = computed(() => Math.round(minFirstRatio.value * 100))
@@ -106,7 +122,7 @@ function onMove(clientPos: number) {
   if (extent <= 0) return
   const origin = isVertical.value ? rect.top : rect.left
   const raw = (clientPos - origin) / extent
-  const ratio = clampRatio(raw, extent, props.minLeft, props.minRight)
+  const ratio = clampRatio(raw, extent, minLeftPx.value, minRightPx.value)
   internalRatio.value = ratio
   emit('update:ratio', ratio)
 }
@@ -117,11 +133,23 @@ onMounted(() => {
     observer = new ResizeObserver(measureContainer)
     if (rootRef.value) observer.observe(rootRef.value)
   }
+  // Rem scaling resizes the panes but not the viewport, so `resize` never fires
+  // and the clamp bounds would keep the previous scale's design px.
+  window.addEventListener(UI_SCALE_EVENT, onScaleChange)
 })
 
 onBeforeUnmount(() => {
   observer?.disconnect()
+  window.removeEventListener(UI_SCALE_EVENT, onScaleChange)
 })
+
+function onScaleChange() {
+  uiScale.value = readAppliedUIScale()
+  // The pane extent itself did change, so re-measure rather than wait for the
+  // ResizeObserver (which does fire, but a frame later — the clamp would be
+  // computed against a stale extent in between).
+  measureContainer()
+}
 </script>
 
 <style scoped>

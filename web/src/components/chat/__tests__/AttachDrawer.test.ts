@@ -1048,8 +1048,8 @@ describe('AttachDrawer selected-badge CSS', () => {
   it('the badge sits outside the icon box on the bottom-right corner', () => {
     const decls = declsOf('.ad-icon-wrap .ad-icon-check')
     expect(decls).toMatch(/position\s*:\s*absolute/)
-    expect(decls).toMatch(/right\s*:\s*-3px/)
-    expect(decls).toMatch(/bottom\s*:\s*-3px/)
+    // Design px: `calc(-3 * var(--dp))` or a literal `-3px`.\n    expect(decls).toMatch(/right\s*:\s*(?:calc\(\s*-3\s*\*\s*var\(--dp\)\s*\)|-3px)/)
+    expect(decls).toMatch(/bottom\s*:\s*(?:calc\(\s*-3\s*\*\s*var\(--dp\)\s*\)|-3px)/)
   })
 
   it('the thumbnail still rounds its own corners (no clip needed)', () => {

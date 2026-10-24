@@ -502,6 +502,19 @@ describe('table copy menu positioning', () => {
   // inside `.table-block-wrapper`, which is `overflow: hidden` — on a 1-2 row
   // table the menu is TALLER than the table, so its third item (Copy TSV) was
   // clipped away and unclickable.
+  //
+  // A second regression, still live: in Android app mode `.chat-message` carries
+  // `will-change: transform` (the GPU-ghost fix), which makes it the CONTAINING
+  // BLOCK for `position: fixed` descendants. So `top: 0` is not the viewport top
+  // and CSS px are not rect px — a naive implementation places the menu tens of
+  // px off, and the error grows with the ancestor's own offset. `stubGeometry`
+  // models exactly that: a scaled, offset containing block.
+  //
+  // (This used to also model the UI scale, which was applied as CSS `zoom` on
+  // <html> and produced the same two symptoms. The scale now resizes the root
+  // font instead and leaves the coordinate space intact, so the transform case
+  // is the only one left that needs the compensation — see
+  // `fontDrivenScaling.test.ts`.)
   function stubGeometry(opts: {
     trigger: { top: number; bottom: number; left: number; right: number }
     menuWidth: number
@@ -528,11 +541,21 @@ describe('table copy menu positioning', () => {
     menu.className = 'table-block-copy-menu'
     Object.defineProperty(menu, 'offsetWidth', { configurable: true, get: () => opts.menuWidth })
     Object.defineProperty(menu, 'offsetHeight', { configurable: true, get: () => opts.menuHeight })
-    // Simulate a containing block at (originLeft, originTop) scaled by `scale`:
-    // a fixed child's rect = origin + CSS offset * scale.
-    menu.getBoundingClientRect = () => {
-      const left = originLeft + (parseFloat(menu.style.left) || 0) * scale
-      const top = originTop + (parseFloat(menu.style.top) || 0) * scale
+
+    // The containing block model: a fixed child's rect = origin + CSS offset ×
+    // scale. Applied to EVERY element inside the model, not just `menu`.
+    //
+    // That detail is load-bearing. `placeFixedAt` does not read `menu`'s rect to
+    // find the containing block — it appends a CLONE as a probe and measures
+    // where known offsets land (see utils/fixedPosition.ts). A stub installed on
+    // the `menu` instance alone is invisible to that clone, so the probe
+    // measured jsdom's all-zero rects, `measureFixedContainingBlock` returned a
+    // degenerate block, and `placeFixedAt` took its "not laid out, write the
+    // coordinates straight through" path — which is why this case used to fail
+    // even though the production code was correct.
+    const rectFor = (el: HTMLElement): DOMRect => {
+      const left = originLeft + (parseFloat(el.style.left) || 0) * scale
+      const top = originTop + (parseFloat(el.style.top) || 0) * scale
       return {
         top, bottom: top + opts.menuHeight * scale,
         left, right: left + opts.menuWidth * scale,
@@ -540,11 +563,24 @@ describe('table copy menu positioning', () => {
         x: left, y: top, toJSON: () => ({}),
       } as DOMRect
     }
+    // `cloneNode` copies the element, not its own-property stubs, so the model
+    // has to live on the prototype to be visible to the probe. Restored in
+    // afterEach — a leaked prototype patch would poison every later test in
+    // this file.
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      return rectFor(this)
+    }
     return { btn, menu }
   }
 
+  // `stubGeometry` patches `HTMLElement.prototype` so the measuring PROBE (a
+  // clone) sees the same containing block as the menu. Captured once, restored
+  // after every case.
+  const realGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
+
   afterEach(() => {
     document.body.innerHTML = ''
+    HTMLElement.prototype.getBoundingClientRect = realGetBoundingClientRect
   })
 
   it('places the menu directly below the trigger, right-aligned', () => {
@@ -602,24 +638,45 @@ describe('table copy menu positioning', () => {
     }
   })
 
-  it('compensates for a transformed/scaled containing block', () => {
-    // Android app mode: .chat-message has will-change:transform, and the UI
-    // scale applies CSS zoom — so `top: 0` is NOT the viewport top and CSS px
-    // are not rect px. A naive implementation lands the menu at the wrong
-    // place (or off-screen) here.
+  it('compensates for a transformed containing block', () => {
+    // Android app mode: `.chat-message` carries `will-change: transform`, which
+    // makes it the containing block for `position: fixed` descendants — so
+    // `top: 0` is NOT the viewport top and CSS px are not rect px. The menu must
+    // still land just below the trigger, right-aligned to it, in VIEWPORT space.
+    //
+    // Without the compensation the written offsets would be interpreted against
+    // the ancestor instead of the viewport, and the menu would appear ~100px up
+    // and to the left (the ancestor's own origin) with its size stretched by the
+    // ancestor's scale.
     const { btn, menu } = stubGeometry({
       trigger: { top: 300, bottom: 324, left: 500, right: 540 },
       menuWidth: 140,
       menuHeight: 92,
+      // A transformed ancestor at (60, 40) scaled 1.5×: the classic
+      // `will-change: transform` case on a zoomed/scaled chat bubble.
       originLeft: 60,
       originTop: 40,
       scale: 1.5,
     })
     positionTableMenu(btn, menu)
-    // Rect-space target: below the trigger, right-aligned to it.
+
+    // The invariant is stated in viewport space, which is what the user sees:
+    //   top  = trigger.bottom + gap(4)      = 328
+    //   left = trigger.right - menuWidth    = 400
+    // Note `offsetWidth/Height` stay in the element's OWN px (140×92) while the
+    // rect is scaled, exactly as a real transformed ancestor behaves.
     const rect = menu.getBoundingClientRect()
     expect(Math.round(rect.top)).toBe(328)
     expect(Math.round(rect.left)).toBe(400)
+
+    // The written CSS offsets are the INVERSE of the containing block, so they
+    // are smaller than the viewport coordinates by the ancestor's origin and
+    // scale. Pinning them (rather than only the rect) is what makes the test
+    // fail if someone "simplifies" `placeFixedAt` to write viewport px straight
+    // through — the rect assertions alone would still pass in a browser with no
+    // transformed ancestor.
+    expect(parseFloat(menu.style.left)).toBeCloseTo((400 - 60) / 1.5, 5)
+    expect(parseFloat(menu.style.top)).toBeCloseTo((328 - 40) / 1.5, 5)
   })
 
   it('opens positioned, and repositions on scroll while open', () => {

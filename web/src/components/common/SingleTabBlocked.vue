@@ -39,7 +39,7 @@ function reload() {
 }
 
 .single-tab-block__card {
-  max-width: 420px;
+  max-width: calc(420 * var(--dp));
   text-align: center;
   display: flex;
   flex-direction: column;
@@ -72,9 +72,9 @@ function reload() {
 
 .single-tab-block__btn {
   margin-top: var(--space-2, 8px);
-  padding: 8px 20px;
+  padding: calc(8 * var(--dp)) calc(20 * var(--dp));
   border: none;
-  border-radius: 6px;
+  border-radius: calc(6 * var(--dp));
   cursor: pointer;
   font-size: var(--font-size-md, 14px);
   /* The accent token is --accent-color, not --accent. The old name was never

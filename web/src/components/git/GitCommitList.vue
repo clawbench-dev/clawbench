@@ -75,7 +75,7 @@
           v-if="!isSearching && mode !== 'file'"
           class="commit-list-graph"
           :commits="filteredCommits"
-          :row-height="64"
+          :row-height="graphRowHeight"
           :collapsed="graphCollapsed"
           @update:collapsed="graphCollapsed = $event"
         />
@@ -139,7 +139,26 @@ import { refLabelText } from '@/utils/gitGraph'
 import { formatRelativeTime, formatDateTime } from '@/utils/format'
 import { startQuoteDrag, commitDragPayload } from '@/utils/quoteDrag'
 import { cleanupDragGhost } from '@/utils/attachDrag'
+import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 const { t } = useI18n()
+
+/**
+ * Commit row height, in CSS px, for the graph to lay its lanes out against.
+ *
+ * `.drilldown-item` is `calc(64 * var(--dp))` in the stylesheet, so the SVG's
+ * row grid has to grow with the same factor — a fixed 64 would draw each commit
+ * node progressively higher than its row as the scale rises (off by 32px by the
+ * second row at 150%). Kept reactive because the rows resize without a
+ * `resize` event.
+ */
+const DESIGN_ROW_HEIGHT = 64
+const uiScale = ref(readAppliedUIScale())
+const graphRowHeight = computed(() => DESIGN_ROW_HEIGHT * uiScale.value)
+onMounted(() => {
+  const sync = () => { uiScale.value = readAppliedUIScale() }
+  window.addEventListener(UI_SCALE_EVENT, sync)
+  onUnmounted(() => window.removeEventListener(UI_SCALE_EVENT, sync))
+})
 
 const props = defineProps({
   commits: { type: Array, default: () => [] },
@@ -376,7 +395,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
    border, which no longer exists here. */
 .commit-search :deep(.search-pill.focused) {
   border-color: transparent;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 35%, transparent);
+  box-shadow: 0 0 0 calc(2 * var(--dp)) color-mix(in srgb, var(--accent-color) 35%, transparent);
 }
 
 .commit-list-container {
@@ -399,11 +418,11 @@ defineExpose({ observeList, unobserveList, commitSearch })
 .drilldown-item {
   display: flex;
   align-items: center;
-  padding: var(--space-5) 14px;
+  padding: var(--space-5) calc(14 * var(--dp));
   cursor: pointer;
   transition: background var(--duration-base);
   border-bottom: 1px solid var(--border-color, #dee2e6);
-  height: 64px;
+  height: calc(64 * var(--dp));
   box-sizing: border-box;
   overflow: hidden;
 }
@@ -465,10 +484,10 @@ defineExpose({ observeList, unobserveList, commitSearch })
 }
 
 .git-load-more {
-  padding: var(--space-8) 14px;
+  padding: var(--space-8) calc(14 * var(--dp));
   display: flex;
   justify-content: center;
-  min-height: 60px;
+  min-height: calc(60 * var(--dp));
 }
 
 .git-history-loading {
@@ -501,7 +520,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
     flex-direction: column;
     align-items: center;
     text-align: center;
-    padding: 32px 24px;
+    padding: calc(32 * var(--dp)) calc(24 * var(--dp));
     gap: var(--space-4);
 }
 
@@ -534,7 +553,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
 .drilldown-item-selected {
   background: rgba(74, 144, 217, 0.08);
   border-left: 3px solid var(--accent-color, #4a90d9);
-  padding-left: 11px;
+  padding-left: calc(11 * var(--dp));
 }
 
 /* Keyboard-navigation highlight */
@@ -545,7 +564,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
 
 /* Search graph hint */
 .commit-list-graph-hint {
-  width: 24px;
+  width: calc(24 * var(--dp));
   flex-shrink: 0;
   display: flex;
   align-items: flex-start;
@@ -560,7 +579,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
   font-size: var(--font-size-2xs);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #f0f0f0);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   margin-right: var(--space-2);
 }
@@ -568,13 +587,13 @@ defineExpose({ observeList, unobserveList, commitSearch })
 /* Ref tags */
 .git-commit-refs {
   display: inline-flex;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
   margin-right: var(--space-2);
 }
 .git-ref-tag {
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   white-space: nowrap;
 }

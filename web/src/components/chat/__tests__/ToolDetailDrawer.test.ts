@@ -241,7 +241,7 @@ describe('ToolDetailDrawer — wide desktop card', () => {
   it('widens the card via --modal-max-width in a non-scoped style block', () => {
     const unscoped = src.slice(src.indexOf('<style>'))
     expect(unscoped, 'the width rule must be non-scoped to reach the teleported panel')
-      .toMatch(/\.tool-detail-sheet\s*\{[^}]*--modal-max-width:\s*960px/)
+      .toMatch(/\.tool-detail-sheet\s*\{[^}]*--modal-max-width:\s*calc\(\s*960\s*\*\s*var\(--dp\)\s*\)/)
   })
 
   it('keeps the panelClass out of the scoped block, where it would never match', () => {

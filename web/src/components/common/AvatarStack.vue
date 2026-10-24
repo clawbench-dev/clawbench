@@ -92,7 +92,7 @@ const resolvedTooltip = computed(() =>
      stack, so it is fully visible) rather than by a different ring colour.
      --accent-color (NOT --border-color): the latter nearly vanishes against
      the disc background in dark themes. */
-  box-shadow: 0 0 0 1.5px var(--accent-color, #0066cc);
+  box-shadow: 0 0 0 calc(1.5 * var(--dp)) var(--accent-color, #0066cc);
   /* Each disc after the first slides LEFT under the previous one; z-index is
      inline (first = highest) so the first stays fully visible. */
   margin-left: calc(-1 * var(--disc-overlap));
@@ -119,12 +119,12 @@ const resolvedTooltip = computed(() =>
 /* The host leads the stack (see `ordered`), so it is already fully visible;
    no ring override is needed. Kept as a hook for tests/consumers. */
 .avatar-disc.is-host {
-  box-shadow: 0 0 0 1.5px var(--accent-color, #0066cc);
+  box-shadow: 0 0 0 calc(1.5 * var(--dp)) var(--accent-color, #0066cc);
 }
 
 /* "+N" is plain text beside the stack — extra info, not a member. */
 .avatar-more {
-  margin-left: 6px;
+  margin-left: calc(6 * var(--dp));
   flex-shrink: 0;
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium, 500);

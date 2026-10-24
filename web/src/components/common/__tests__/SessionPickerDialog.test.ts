@@ -204,7 +204,10 @@ describe('SessionPickerDialog', () => {
     // number, so a later bump to 44 is not rejected.
     const row = css.match(/(?:^|\n)\.sp-row\s*\{[^}]*\}/)?.[0]
     expect(row, '.sp-row should exist').toBeTruthy()
-    const minHeight = row!.match(/min-height:\s*(\d+)px/)?.[1]
+    // Design px: `calc(N * var(--dp))` or a literal `Npx`.
+    const minHeight = row!.match(
+      /min-height:\s*(?:calc\(\s*(\d+(?:\.\d+)?)\s*\*\s*var\(--dp\)\s*\)|(\d+(?:\.\d+)?)px)/,
+    )?.slice(1).find(Boolean)
     expect(Number(minHeight)).toBeGreaterThanOrEqual(40)
     // The list is flush top and bottom — no vertical padding of any form.
     const list = css.match(/(?:^|\n)\.session-picker-list\s*\{[^}]*\}/)?.[0]

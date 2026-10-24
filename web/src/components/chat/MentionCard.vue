@@ -73,12 +73,12 @@ const cardTitle = computed(() => props.mention.note || props.mention.name)
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  height: 40px;
+  height: calc(40 * var(--dp));
   padding: 0 var(--space-3);
-  padding-right: 22px;
+  padding-right: calc(22 * var(--dp));
   border-radius: var(--radius-full, 999px);
   flex-shrink: 0;
-  max-width: 150px;
+  max-width: calc(150 * var(--dp));
   position: relative;
   box-sizing: border-box;
   cursor: pointer;
@@ -138,10 +138,10 @@ const cardTitle = computed(() => props.mention.note || props.mention.name)
 
 .mention-card-close {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 16px;
-  height: 16px;
+  top: calc(4 * var(--dp));
+  right: calc(4 * var(--dp));
+  width: calc(16 * var(--dp));
+  height: calc(16 * var(--dp));
   border-radius: 50%;
   border: none;
   background: rgba(0, 0, 0, 0.5);

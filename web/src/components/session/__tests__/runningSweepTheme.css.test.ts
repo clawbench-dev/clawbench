@@ -285,8 +285,12 @@ describe('running-session indicator is theme-derived and visible on every theme'
 
     const line = baseRule(list, '.session-running-line')
     expect(line, '.session-running-line should exist').toBeTruthy()
-    // Flat and short: the edge is a 3px bar, not a 14px glow field.
-    const height = Number(line!.match(/height:\s*(\d+)px/)?.[1])
+    // Flat and short: the edge is a 3 design-px bar, not a 14px glow field.
+    // Sizes are `calc(N * var(--dp))` now, so read the design number.
+    const height = Number(
+      line!.match(/height:\s*(?:calc\(\s*(\d+(?:\.\d+)?)\s*\*\s*var\(--dp\)\s*\)|(\d+(?:\.\d+)?)px)/)
+        ?.slice(1).find(Boolean),
+    )
     expect(height, 'the track should be a thin bar').toBeGreaterThan(0)
     expect(height, `track is ${height}px — too tall, that is a glow field again`).toBeLessThanOrEqual(4)
 

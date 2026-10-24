@@ -93,7 +93,7 @@ describe('chat bubble: v-html target classes must be styled from the non-scoped 
     // The regression was an unsized <video>; the fix must keep a width cap.
     const player = rulesFor('chat-video-player').find(r => !r.scoped)
     expect(player, '.chat-video-player must be defined in the non-scoped block').toBeDefined()
-    expect(player!.decls, 'must cap the rendered width').toMatch(/max-width:\s*\d/)
+    expect(player!.decls, 'must cap the rendered width').toMatch(/max-width:\s*(?:\d|calc\()/)
     expect(player!.decls, 'must not exceed the bubble').toMatch(/width:\s*100%/)
   })
 

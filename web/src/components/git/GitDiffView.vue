@@ -154,9 +154,9 @@ function onDiffClick(event: MouseEvent) {
   gap: var(--space-4);
   font-family: var(--font-mono);
   background: var(--bg-tertiary, #f0f0f0);
-  padding:3px var(--space-4);
+  padding: calc(3 * var(--dp)) var(--space-4);
   user-select: none;
-  min-height: 24px;
+  min-height: calc(24 * var(--dp));
   border-bottom: 1px solid var(--border-color, #e5e5e5);
 }
 
@@ -182,8 +182,8 @@ function onDiffClick(event: MouseEvent) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
@@ -200,8 +200,8 @@ function onDiffClick(event: MouseEvent) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
@@ -284,8 +284,8 @@ function onDiffClick(event: MouseEvent) {
 
 .git-diff-scroll :deep(.diff-linum) {
   width: 1%;
-  min-width: 30px;
-  padding:0 var(--space-2);
+  min-width: calc(30 * var(--dp));
+  padding: 0 var(--space-2);
   text-align: right;
   color: var(--text-muted, #999);
   font-size: var(--font-size-xs);
@@ -308,7 +308,7 @@ function onDiffClick(event: MouseEvent) {
 }
 
 .git-diff-scroll :deep(.diff-content) {
-  padding:0 var(--space-3);
+  padding: 0 var(--space-3);
   white-space: pre;
   min-width: 0;
 }

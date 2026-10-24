@@ -17,7 +17,7 @@
  * ──────────────────────────────────────────────────────────────────────────── */
 
 .cm-search {
-  --search-ctrl-h: 26px;
+  --search-ctrl-h: calc(26 * var(--dp));
 }
 
 /* ── Host layout (`.search-bar`): full-width bar pinned to the bottom with
@@ -34,7 +34,7 @@
 .search-bar .cm-search {
   width: 100%;
   box-sizing: border-box;
-  padding:5px var(--space-4) var(--space-3);
+  padding: calc(5 * var(--dp)) var(--space-4) var(--space-3);
   font-family: var(--font-mono);
   font-size: var(--font-size-md);
   display: flex;
@@ -57,7 +57,7 @@
 .search-bar .cm-search .cm-button[name='next'] { order: 3; }
 .search-bar .cm-search .cm-search-match-info {
   order: 4;
-  margin:0 var(--space-2);
+  margin: 0 var(--space-2);
   align-self: center;
 }
 .search-bar .cm-search button[name='close'] {
@@ -69,7 +69,7 @@
   flex-basis: 100%;
 }
 .search-bar .cm-search .cm-search-replace {
-  padding: var(--space-2) 0 5px;
+  padding: var(--space-2) 0 calc(5 * var(--dp));
 }
 .search-bar .cm-search .cm-search-replace > * {
   flex-shrink: 0;
@@ -96,9 +96,9 @@
    icons absolutely positioned inside the input's right edge. All classes are
    scoped under `.search-bar` to avoid colliding with other global classes. */
 .search-bar .search-input-wrap {
-  --search-opt-size: 22px;
-  --search-opt-gap: 2px;
-  --search-opt-right: 4px;
+  --search-opt-size: calc(22 * var(--dp));
+  --search-opt-gap: calc(2 * var(--dp));
+  --search-opt-right: calc(4 * var(--dp));
   position: relative;
   display: flex;
   flex: 1;
@@ -155,7 +155,7 @@
 /* Whole-word icon: VS Code renders "ab" with a bottom underline. */
 .search-bar .search-input-actions .search-opt-btn-word {
   text-decoration: underline;
-  text-underline-offset: 2px;
+  text-underline-offset: calc(2 * var(--dp));
 }
 
 /* ── Buttons ── */
@@ -221,15 +221,15 @@
   line-height: 1;
   border: solid var(--text-primary);
   border-width: 0 1.5px 1.5px 0;
-  padding: 2.5px;
+  padding: calc(2.5 * var(--dp));
 }
 .cm-search .cm-button[name='prev']::before {
   transform: rotate(135deg); /* ← */
-  margin-right: -2px;
+  margin-right: calc(-2 * var(--dp));
 }
 .cm-search .cm-button[name='next']::before {
   transform: rotate(-45deg); /* → */
-  margin-left: -2px;
+  margin-left: calc(-2 * var(--dp));
 }
 
 /* ── Match counter ── */

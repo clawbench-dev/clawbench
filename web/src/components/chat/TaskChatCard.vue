@@ -209,7 +209,7 @@ function statusLabelOf(task: Record<string, unknown>) { return statusLabel(task 
 @media (hover: hover) {
   .scheduled-task-card:hover {
     border-color: color-mix(in srgb, var(--accent-color, #4a90d9) 50%, var(--border-color, #dee2e6));
-    box-shadow: 0 2px 8px color-mix(in srgb, var(--accent-color, #4a90d9) 15%, transparent);
+    box-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) color-mix(in srgb, var(--accent-color, #4a90d9) 15%, transparent);
   }
 }
 
@@ -224,7 +224,7 @@ function statusLabelOf(task: Record<string, unknown>) { return statusLabel(task 
 @media (hover: hover) {
   .scheduled-task-card.is-event:hover {
     border-color: color-mix(in srgb, var(--color-purple, #7c3aed) 50%, var(--border-color, #dee2e6));
-    box-shadow: 0 2px 8px color-mix(in srgb, var(--color-purple, #7c3aed) 15%, transparent);
+    box-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) color-mix(in srgb, var(--color-purple, #7c3aed) 15%, transparent);
   }
 }
 
@@ -245,7 +245,7 @@ function statusLabelOf(task: Record<string, unknown>) { return statusLabel(task 
 .stask-header {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: calc(5 * var(--dp));
   padding: var(--space-2) var(--space-5);
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
   color: var(--accent-color, #4a90d9);
@@ -279,7 +279,7 @@ function statusLabelOf(task: Record<string, unknown>) { return statusLabel(task 
 }
 
 .stask-row strong {
-  min-width: 70px;
+  min-width: calc(70 * var(--dp));
   color: var(--text-secondary, #495057);
 }
 
@@ -386,8 +386,8 @@ function statusLabelOf(task: Record<string, unknown>) { return statusLabel(task 
 }
 
 .stask-status-dot {
-  width: 8px;
-  height: 8px;
+  width: calc(8 * var(--dp));
+  height: calc(8 * var(--dp));
   border-radius: 50%;
   flex-shrink: 0;
   align-self: center;

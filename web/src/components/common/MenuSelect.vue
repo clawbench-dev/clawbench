@@ -170,8 +170,8 @@ function choose(value: string | number) {
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: calc(6 * var(--dp));
+  padding: calc(8 * var(--dp)) calc(10 * var(--dp));
   border: 1px solid var(--border-color, #d1d5db);
   border-radius: 0;
   background: var(--bg-primary, #fff);
@@ -197,7 +197,7 @@ function choose(value: string | number) {
 .menu-select.is-open {
   outline: none;
   border-color: var(--accent-color, #0066cc);
-  box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+  box-shadow: 0 0 0 calc(3 * var(--dp)) rgba(0, 102, 204, 0.1);
 }
 
 @media (hover: hover) {
@@ -258,9 +258,9 @@ function choose(value: string | number) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: calc(8 * var(--dp));
   width: 100%;
-  padding: 8px 10px;
+  padding: calc(8 * var(--dp)) calc(10 * var(--dp));
   border: none;
   background: transparent;
   color: var(--text-primary, #1a1a1a);

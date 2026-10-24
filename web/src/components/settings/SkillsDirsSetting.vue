@@ -115,9 +115,9 @@ onMounted(load)
    same as .fbtn / the switch row), matching ForgeCredentialsRow's field. */
 .skills-input {
   flex: 1;
-  min-width: 150px;
+  min-width: calc(150 * var(--dp));
   box-sizing: border-box;
-  height: 30px;
+  height: calc(30 * var(--dp));
   padding: 0 var(--space-6);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
@@ -128,7 +128,7 @@ onMounted(load)
 .skills-input:focus {
   outline: none;
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  box-shadow: 0 0 0 calc(2 * var(--dp)) var(--focus-ring);
 }
 .skills-error {
   display: flex;

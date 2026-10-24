@@ -13,8 +13,13 @@
  *    containing block for fixed descendants — measured: a menu written to
  *    `top: rect.bottom + 4` rendered 60px too low, and the error grew with the
  *    ancestor's own offset.
- *  - The UI scale applies CSS `zoom` on `<html>`, which both moves the origin
- *    and scales the offsets.
+ *  - The UI scale is applied as a CSS `zoom` on `<html>` by older builds. The
+ *    current build scales through the root FONT SIZE instead (see
+ *    css/variables.css), which leaves the coordinate space intact — so for a
+ *    current build this measurement is only needed for the transform case
+ *    above. It is kept general (it solves for the scale rather than assuming 1)
+ *    because a page can still carry a zoom: a user stylesheet, a browser
+ *    extension, or a stale tab from before the upgrade.
  *
  * Neither is detectable from `getBoundingClientRect()` alone, so both are
  * MEASURED: write a known offset, observe where the element actually lands, and

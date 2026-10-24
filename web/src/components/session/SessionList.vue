@@ -1088,7 +1088,7 @@ onUnmounted(() => {
 
 .session-row.sortable-drag {
   opacity: 0.9;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 calc(6 * var(--dp)) calc(18 * var(--dp)) rgba(0, 0, 0, 0.28);
   border-radius: var(--radius-sm, 6px);
 }
 
@@ -1136,7 +1136,7 @@ onUnmounted(() => {
 }
 .session-fork-toggle:focus-visible {
   outline: 2px solid var(--accent-color, #0066cc);
-  outline-offset: 2px;
+  outline-offset: calc(2 * var(--dp));
 }
 /* Rotates to point right when collapsed, matching the chevron convention the
    cross-project headers use. */
@@ -1197,8 +1197,7 @@ onUnmounted(() => {
   pointer-events: none;
   /* Layer 1: the arm, 1px tall at the row's vertical centre.
      Layer 2: the rail, 1px wide along the box's left edge, full height. */
-  background-image:
-    linear-gradient(var(--tree-line), var(--tree-line)),
+  background-image: linear-gradient(var(--tree-line), var(--tree-line)),
     linear-gradient(var(--tree-line), var(--tree-line));
   background-size: 100% 1px, 1px 100%;
   background-position: 0 50%, 0 0;
@@ -1215,7 +1214,7 @@ onUnmounted(() => {
 .session-fork-gen {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
-  line-height: 16px;
+  line-height: calc(16 * var(--dp));
   padding: 0 var(--space-2);
   border-radius: var(--radius-xs);
   color: var(--text-muted, #999);
@@ -1244,7 +1243,7 @@ onUnmounted(() => {
   align-items: center;
   flex: 1;
   min-width: 0;
-  min-height: 44px;
+  min-height: calc(44 * var(--dp));
   /* The right inset is 8px, not the 12px the other three sides use: the status
      slot adds its own 8px `margin-left`, and the slot is the last thing before
      the trailing ⋮ cell. Measured on the live 1440px layout, 12px here put the
@@ -1283,7 +1282,7 @@ onUnmounted(() => {
   border-right: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
   border-top: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
-  box-shadow: inset 0 0 8px color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
+  box-shadow: inset 0 0 calc(8 * var(--dp)) color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
 }
 
 /* ── Running row: the bottom-edge COMET ──
@@ -1315,7 +1314,7 @@ onUnmounted(() => {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 3px;
+  height: calc(3 * var(--dp));
   overflow: hidden;
   pointer-events: none;
   z-index: 1;
@@ -1383,7 +1382,7 @@ onUnmounted(() => {
      it), not a separate edge glow — the distinction matters, because a
      stationary glow underneath is what the old design had and it read as a
      second effect. */
-  filter: drop-shadow(0 0 4px var(--running-comet));
+  filter: drop-shadow(0 0 calc(4 * var(--dp)) var(--running-comet));
   /* The travel itself is driven by v-running-sweep (Web Animations API), NOT a
      CSS animation. A CSS animation starts when its element first matches the
      rule, so each row would run at its own phase and lose that phase whenever
@@ -1501,9 +1500,9 @@ onUnmounted(() => {
   min-width: 0;
   max-width: 100%;
   padding: 0 var(--space-3);
-  border-radius: 999px;
+  border-radius: calc(999 * var(--dp));
   font-size: var(--font-size-xs);
-  line-height: 16px;
+  line-height: calc(16 * var(--dp));
   color: var(--tag-accent);
   background: color-mix(in srgb, var(--tag-accent) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--tag-accent) 30%, transparent);
@@ -1550,8 +1549,8 @@ onUnmounted(() => {
    of that move. */
 .session-status {
   flex-shrink: 0;
-  width: 14px;
-  height: 14px;
+  width: calc(14 * var(--dp));
+  height: calc(14 * var(--dp));
   margin-left: var(--space-4);
   box-sizing: border-box;
 }
@@ -1642,7 +1641,7 @@ onUnmounted(() => {
    always sat on. */
 .session-more-btn {
   flex-shrink: 0;
-  width: 34px;
+  width: calc(34 * var(--dp));
   margin-right: var(--space-3);
   border: none;
   background: transparent;
@@ -1674,7 +1673,7 @@ onUnmounted(() => {
 
 .session-item-agent {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   font-weight: var(--font-weight-medium);
   flex-shrink: 0;
@@ -1718,7 +1717,7 @@ onUnmounted(() => {
 
 .session-item-model {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   font-weight: var(--font-weight-medium);
   flex-shrink: 1;
@@ -1751,8 +1750,8 @@ onUnmounted(() => {
   position: absolute;
   top: 0;
   right: 0;
-  width: 12px;
-  height: 12px;
+  width: calc(12 * var(--dp));
+  height: calc(12 * var(--dp));
   background: linear-gradient(
     225deg,
     color-mix(in srgb, var(--accent-color, #0066cc) 60%, #fff) 0%,
@@ -1760,7 +1759,7 @@ onUnmounted(() => {
     color-mix(in srgb, var(--accent-color, #0066cc) 78%, #000) 100%
   );
   clip-path: polygon(0 0, 100% 0, 100% 100%);
-  filter: drop-shadow(-1px 1px 1.5px rgba(0, 0, 0, 0.35));
+  filter: drop-shadow(-1px 1px calc(1.5 * var(--dp)) rgba(0, 0, 0, 0.35));
   pointer-events: none;
   z-index: 1;
 }
@@ -1797,7 +1796,7 @@ onUnmounted(() => {
   align-items: center;
   flex: 1;
   min-width: 0;
-  min-height: 44px;
+  min-height: calc(44 * var(--dp));
   /* Right inset matched to .session-item so the status slot sits at the same
      distance from the text on both panes — the cross pane has no ⋮ cell, so
      without this the dot would land in a different place here. */
@@ -1805,7 +1804,7 @@ onUnmounted(() => {
   border-top: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
   /* Subtle left rail marks rows as belonging to another project. */
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--text-primary) 12%, transparent);
+  box-shadow: inset calc(2 * var(--dp)) 0 0 color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
 
 @media (hover: hover) {

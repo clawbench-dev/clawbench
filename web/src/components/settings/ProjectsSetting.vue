@@ -184,7 +184,7 @@ onMounted(load)
   content: '';
   position: absolute;
   bottom: 0;
-  left: 40px;
+  left: calc(40 * var(--dp));
   right: 0;
   height: 0.5px;
   background: var(--border-color);
@@ -207,8 +207,8 @@ onMounted(load)
 
 .projects-row__dot {
   flex-shrink: 0;
-  width: 8px;
-  height: 8px;
+  width: calc(8 * var(--dp));
+  height: calc(8 * var(--dp));
   border-radius: 50%;
 }
 

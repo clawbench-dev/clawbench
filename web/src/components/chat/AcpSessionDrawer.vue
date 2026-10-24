@@ -209,7 +209,7 @@ onBeforeUnmount(teardownObserver)
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-5) 14px;
+  padding: var(--space-5) calc(14 * var(--dp));
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
   flex-shrink: 0;
@@ -250,7 +250,7 @@ onBeforeUnmount(teardownObserver)
   position: relative;
   display: flex;
   align-items: flex-start;
-  padding: var(--space-6) 14px;
+  padding: var(--space-6) calc(14 * var(--dp));
   border-top: 1px solid var(--border-color, #dee2e6);
 }
 
@@ -286,7 +286,7 @@ onBeforeUnmount(teardownObserver)
 
 .acp-session-item-id {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   font-weight: var(--font-weight-medium);
   background: var(--bg-tertiary, #e9ecef);
@@ -298,8 +298,8 @@ onBeforeUnmount(teardownObserver)
 .acp-session-resume-btn {
   flex-shrink: 0;
   margin-left: var(--space-4);
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -344,7 +344,7 @@ onBeforeUnmount(teardownObserver)
 }
 
 .acp-session-hidden-hint {
-  padding: var(--space-4) 14px;
+  padding: var(--space-4) calc(14 * var(--dp));
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   text-align: center;

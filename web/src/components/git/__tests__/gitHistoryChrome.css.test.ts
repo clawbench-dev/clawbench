@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { normalizeDp } from '@/testUtils/designLength'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -31,7 +32,7 @@ import { join } from 'node:path'
 function readWebFile(relPath: string): string {
   for (const base of [process.cwd(), join(process.cwd(), 'web')]) {
     try {
-      return readFileSync(join(base, relPath), 'utf8')
+      return normalizeDp(readFileSync(join(base, relPath), 'utf8'))
     } catch {
       // try the next candidate root
     }
@@ -148,8 +149,8 @@ describe('git history header matches the forge panel header', () => {
 
   it('uses the square-round 28px icon button, like .forge-header-btn', () => {
     const decls = baseRule(componentsCss, 'drilldown-refresh-btn')!
-    expect(decls).toMatch(/width:\s*28px/)
-    expect(decls).toMatch(/height:\s*28px/)
+    expect(decls).toMatch(/(width):\s*(?:calc\(\s*28\s*\*\s*var\(--dp\)\s*\)|28px)/)
+    expect(decls).toMatch(/(height):\s*(?:calc\(\s*28\s*\*\s*var\(--dp\)\s*\)|28px)/)
     expect(decls).toMatch(/border-radius:\s*var\(--radius-lg\)/)
     expect(decls).toMatch(/background:\s*var\(--bg-secondary\)/)
     expect(decls).toMatch(/color:\s*var\(--text-secondary\)/)

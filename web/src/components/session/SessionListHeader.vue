@@ -80,7 +80,7 @@ const sessionBarColor = computed(() => {
 .session-list-header-content {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
   flex: 1;
   min-width: 0;
   width: 100%;
@@ -93,7 +93,7 @@ const sessionBarColor = computed(() => {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
   /* At the narrowest sidebar with every optional button present the header
      simply cannot fit title + meter + actions, and this group is what gives
      (the actions floor at min-content). Clipping here keeps the losing content
@@ -118,8 +118,8 @@ const sessionBarColor = computed(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 42px;
-  height: 16px;
+  min-width: calc(42 * var(--dp));
+  height: calc(16 * var(--dp));
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--text-primary) 18%, transparent);
   overflow: hidden;
@@ -140,7 +140,7 @@ const sessionBarColor = computed(() => {
   color: #fff;
   line-height: 1;
   letter-spacing: 0.3px;
-  text-shadow: 0 0 2px rgba(0, 0, 0, 0.3);
+  text-shadow: 0 0 calc(2 * var(--dp)) rgba(0, 0, 0, 0.3);
 }
 /* `min-width: min-content` floors the shrink at the buttons' own width: without
    it the group would keep shrinking and the meter would overlap the buttons on
@@ -161,8 +161,8 @@ const sessionBarColor = computed(() => {
    rendered by the parent component, not by this one. */
 .header-action-btn {
   margin-left: var(--space-3);
-  width: 24px;
-  height: 24px;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
   border: none;
   background: none;
   color: var(--accent-color, #0066cc);

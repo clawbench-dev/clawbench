@@ -513,7 +513,8 @@ describe('ForgeDetail icon button styling', () => {
     const src = readIconBtnSource()
     const rule = src.match(/\.forge-icon-btn\s*\{([\s\S]*?)\}/)![1]
     expect(rule).toContain('border-radius: var(--radius-lg)')
-    expect(rule).toContain('width: 28px')
-    expect(rule).toContain('height: 28px')
+    // Design px through --dp so the button follows the UI scale.
+    expect(rule).toMatch(/width:\s*calc\(\s*28\s*\*\s*var\(--dp\)\s*\)/)
+    expect(rule).toMatch(/height:\s*calc\(\s*28\s*\*\s*var\(--dp\)\s*\)/)
   })
 })

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { designPx } from '@/testUtils/designLength'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 
@@ -41,7 +42,7 @@ describe('diff marker rail', () => {
   it('draws the rail 3px wide, pinned to the right edge', () => {
     const rail = markerCss.match(/\.diff-marker::before\s*\{[\s\S]*?\}/)
     expect(rail).toBeTruthy()
-    expect(rail![0]).toContain('width: 3px')
+    expect(designPx(rail![0], 'width')).toBe(3)
     expect(rail![0]).toContain('right: 0')
   })
 
@@ -50,7 +51,7 @@ describe('diff marker rail', () => {
     // hit target would be unhittable, so the element stays 20px.
     const rule = viewerCss.match(/\.diff-marker-inline\s*\{[\s\S]*?\}/)
     expect(rule).toBeTruthy()
-    expect(rule![0]).toContain('width: 20px')
+    expect(designPx(rule![0], 'width')).toBe(20)
   })
 
   it('has no entry keyframes (a rail appearing is not an event to animate)', () => {

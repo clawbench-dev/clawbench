@@ -118,8 +118,14 @@ describe('TocDock', () => {
     expect(dock.attributes('style')).toContain('width: 260px')
     // CSS bounds act as the visual clamp; the numeric clamp lives in the
     // preference module (covered by useTocDockPreference tests).
-    expect(getComputedStyle(dock.element).maxWidth).toBe('400px')
-    expect(getComputedStyle(dock.element).minWidth).toBe('200px')
+    //
+    // jsdom does not resolve `var()`, so the computed value comes back as the
+    // authored `calc(N * var(--dp))` expression. The invariant is the design
+    // px, not the spelling — see css/variables.css (FONT-DRIVEN SCALING).
+    const designPx = (v: string) =>
+      Number(v.match(/calc\(\s*([\d.]+)\s*\*\s*var\(--dp\)\s*\)/)?.[1] ?? v.replace('px', ''))
+    expect(designPx(getComputedStyle(dock.element).maxWidth)).toBe(400)
+    expect(designPx(getComputedStyle(dock.element).minWidth)).toBe(200)
   })
 
   it('drags RIGHT to narrow the dock (divider follows pointer on left edge)', async () => {
@@ -298,7 +304,7 @@ describe('TocDock — drag highlight survives touch', () => {
     const scoped = src.slice(src.indexOf('<style scoped>'))
     const rule = scoped.match(/\.toc-dock-divider\s*\{([^}]*)\}/)
     expect(rule, '.toc-dock-divider rule must exist').not.toBeNull()
-    expect(rule![1]).toMatch(/width:\s*1px/)
+    expect(rule![1]).toMatch(/(width):\s*(?:calc\(\s*1\s*\*\s*var\(--dp\)\s*\)|1px)/)
     expect(rule![1], 'the divider host must stay 1px at rest').not.toMatch(/width:\s*[2-9]\d*px/)
   })
 

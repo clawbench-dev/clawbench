@@ -2046,6 +2046,6 @@ onBeforeUnmount(() => {
 /* Sheet header keeps a touch-friendlier height than the compact default so the
    copy-path / search / wrap buttons in .bs-header-actions stay easy to hit. */
 :deep(.code-preview-sheet .bs-header) {
-  min-height: 44px;
+  min-height: calc(44 * var(--dp));
 }
 </style>

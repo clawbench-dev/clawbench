@@ -128,8 +128,9 @@ describe('SessionList pinned marker', () => {
     expect(rule, '.session-row.pinned::after should exist').toBeTruthy()
     // Three vertices, one of them the top-right corner the box is anchored to.
     expect(rule).toMatch(/clip-path:\s*polygon\(\s*0\s+0\s*,\s*100%\s+0\s*,\s*100%\s+100%\s*\)/)
-    expect(rule).toMatch(/width:\s*12px/)
-    expect(rule).toMatch(/height:\s*12px/)
+    // 12 design px, expressed through --dp so the wedge scales with the row.
+    expect(rule).toMatch(/width:\s*calc\(\s*12\s*\*\s*var\(--dp\)\s*\)/)
+    expect(rule).toMatch(/height:\s*calc\(\s*12\s*\*\s*var\(--dp\)\s*\)/)
     // Anchored to the row's own top-right corner.
     expect(rule).toMatch(/top:\s*0/)
     expect(rule).toMatch(/right:\s*0/)

@@ -124,14 +124,14 @@ const sections = computed<HelpSection[]>(() => {
 }
 
 .th-section {
-  margin-bottom: 14px;
+  margin-bottom: calc(14 * var(--dp));
 }
 .th-section:last-child {
   margin-bottom: 0;
 }
 
 .th-section-title {
-  margin:0 0 var(--space-4);
+  margin: 0 0 var(--space-4);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-bold);
   color: var(--text-secondary, #495057);

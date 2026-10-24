@@ -674,7 +674,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: var(--space-6);
   height: 100%;
-  padding: 32px;
+  padding: calc(32 * var(--dp));
   text-align: center;
 }
 
@@ -692,7 +692,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: var(--space-4);
   height: 100%;
-  padding: 32px;
+  padding: calc(32 * var(--dp));
   color: var(--text-muted, #656d76);
   text-align: center;
 }
@@ -751,7 +751,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   height: 100%;
-  padding: 24px;
+  padding: calc(24 * var(--dp));
   box-sizing: border-box;
   background: var(--bg-primary, #fff);
   overflow: auto;
@@ -781,7 +781,7 @@ onBeforeUnmount(() => {
    unreasonably wide. Cap it and center it, leaving generous side margins. */
 @media (min-width: 1100px) {
   .share-content {
-    max-width: 1080px;
+    max-width: calc(1080 * var(--dp));
     margin: 0 auto;
   }
 }

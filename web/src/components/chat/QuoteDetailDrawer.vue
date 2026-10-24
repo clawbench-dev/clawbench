@@ -232,7 +232,7 @@ function handleSave() {
   align-items: center;
   gap: var(--space-1);
   flex-shrink: 0;
-  padding: 2px var(--space-3);
+  padding: calc(2 * var(--dp)) var(--space-3);
   border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   color: var(--accent-color, #0066cc);
@@ -265,8 +265,8 @@ function handleSave() {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;

@@ -48,7 +48,7 @@ describe('chat input type scale matches the message body', () => {
     expect(block).toMatch(/font-size:\s*var\(--font-size-md\)/)
     // The pre-fix scale: 16px text in a fixed 20px line box.
     expect(block).not.toMatch(/font-size:\s*var\(--font-size-2xl\)/)
-    expect(block).not.toMatch(/line-height:\s*20px/)
+    expect(block).not.toMatch(/(line-height):\s*(?:calc\(\s*20\s*\*\s*var\(--dp\)\s*\)|20px)/)
   })
 
   it.each([
@@ -101,13 +101,30 @@ describe('chat input type scale matches the message body', () => {
     const block = ruleBlock(source(), selector)
     const padding = block.match(/padding:\s*([^;]+);/)?.[1].trim()
     expect(padding, `${selector} should declare padding`).toBeTruthy()
-    const parts = padding!.split(/\s+/)
+    // Split on whitespace OUTSIDE parentheses: a value can now be
+    // `calc(5 * var(--dp))`, which contains spaces of its own.
+    const parts: string[] = []
+    let depth = 0
+    let cur = ''
+    for (const ch of padding!) {
+      if (ch === '(') depth++
+      else if (ch === ')') depth--
+      if (/\s/.test(ch) && depth === 0) {
+        if (cur) { parts.push(cur); cur = '' }
+        continue
+      }
+      cur += ch
+    }
+    if (cur) parts.push(cur)
     const resolve = (v: string) => {
       const token: Record<string, number> = {
         'var(--space-1)': 2, 'var(--space-2)': 4, 'var(--space-3)': 6, 'var(--space-4)': 8,
       }
       if (v in token) return token[v]
-      const px = v.match(/^(\d+)px$/)
+      // Design px: `calc(N * var(--dp))` or a literal `Npx`.
+      const viaDp = v.match(/^calc\(\s*(\d+(?:\.\d+)?)\s*\*\s*var\(--dp\)\s*\)$/)
+      if (viaDp) return Number(viaDp[1])
+      const px = v.match(/^(\d+(?:\.\d+)?)px$/)
       return px ? Number(px[1]) : NaN
     }
     // 2-value shorthand (top/bottom + left/right) is inherently symmetric.

@@ -208,13 +208,13 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   padding: var(--space-3) var(--space-5);
-  max-width: min(360px, calc(100vw - 16px));
+  max-width: min(calc(360 * var(--dp)), calc(100vw - calc(16 * var(--dp))));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
   z-index: var(--z-popover);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) rgba(0, 0, 0, 0.12);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-snug);
   color: var(--text-primary);

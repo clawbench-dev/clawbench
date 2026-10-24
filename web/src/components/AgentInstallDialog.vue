@@ -70,7 +70,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   z-index: var(--z-modal);
-  padding:0 var(--space-8);
+  padding: 0 var(--space-8);
   animation: overlay-in 0.15s ease;
   outline: none;
 }
@@ -78,12 +78,12 @@ onBeforeUnmount(() => {
 .install-box {
   background: var(--bg-secondary, #fff);
   border-radius: var(--radius-lg);
-  padding:18px var(--space-7) 14px;
-  max-width: 420px;
+  padding: calc(18 * var(--dp)) var(--space-7) calc(14 * var(--dp));
+  max-width: calc(420 * var(--dp));
   width: 100%;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 calc(8 * var(--dp)) calc(32 * var(--dp)) rgba(0, 0, 0, 0.2);
   animation: dlg-in 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -99,8 +99,8 @@ onBeforeUnmount(() => {
 
 .install-title-icon {
   flex-shrink: 0;
-  width: 24px;
-  height: 24px;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
   border-radius: var(--radius-sm);
   color: var(--accent-color, #0066cc);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
@@ -123,7 +123,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border-color, #ddd);
   border-radius: var(--radius-sm);
   padding: var(--space-4) var(--space-5);
-  margin-bottom: 14px;
+  margin-bottom: calc(14 * var(--dp));
 }
 
 .install-cmd {
@@ -140,8 +140,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-sm);
   background: var(--bg-primary, #fff);

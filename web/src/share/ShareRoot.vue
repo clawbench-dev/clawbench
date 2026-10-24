@@ -112,7 +112,7 @@ onMounted(async () => {
   justify-content: center;
   gap: var(--space-4);
   height: 100%;
-  padding: 32px;
+  padding: calc(32 * var(--dp));
   color: var(--text-muted, #656d76);
   text-align: center;
 }
