@@ -4684,6 +4684,38 @@ onUnmounted(() => {
     border-bottom: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
 }
 
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ⚠️  CRITICAL — Android WebView GPU Ghost Artifact Fix (dock layer)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   DO NOT REMOVE. Sibling of the `.chat-message` rule in ChatMessageItem.vue,
+   and it fixes the OTHER half of the same WebView compositor bug.
+
+   Symptom: a thin strip of the bottom dock — most recognisably the orange
+   active-tab disc, but any dock content — appears just BELOW a finished
+   reply's action bar, i.e. in the blank gap between the message list and the
+   composer. It survives scrolling and only a reload or a session switch clears
+   it (both rebuild the layer tree).
+
+   Why the existing `.chat-message { will-change: transform }` rule does not
+   cover it: that promotes each MESSAGE to its own layer, so message-to-message
+   contamination is gone — but the polluted region here is the panel's own
+   empty space, and the pixels come from the DOCK, which is a sibling subtree
+   with no layer of its own. When a reply finishes the list shrinks/grows and
+   the compositor re-composites the dock band; WebView then keeps the previous
+   frame's dock pixels and paints them at the band's old offset.
+
+   `contain: paint` on the wrapper clips the dock's descendants to the dock's
+   own box, so a stale composite can no longer bleed above it; `will-change:
+   transform` gives the wrapper its own layer so the re-composite cannot pick up
+   an older sibling frame. Both are scoped to [data-app-mode]: desktop browsers
+   do not have this compositor bug, and promoting the dock unconditionally would
+   disable subpixel antialiasing for its labels on non-HiDPI screens.
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+:root[data-app-mode] .bottom-dock-wrapper {
+    will-change: transform;
+    contain: paint;
+}
+
 .dock-safe-area {
     height: env(safe-area-inset-bottom, 0);
 }
