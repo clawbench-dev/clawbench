@@ -508,6 +508,37 @@ describe('AttachDrawer', () => {
     expect(state.activeTab.value).toBe('current')
   })
 
+  it('onFileSelect closes the drawer as soon as files were picked', async () => {
+    // Choosing a file ends the drawer's job: the upload continues in the
+    // background and the input bar shows its progress, so leaving the sheet
+    // open would just delay the user.
+    mockHandleFileSelect.mockResolvedValue(['.clawbench/uploads/a.png'])
+    const wrapper = mountDrawer()
+    await getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('onFileSelect closes the drawer before the upload finishes', async () => {
+    // The close must not wait for the transfer: a slow upload would otherwise
+    // keep the sheet (and its closeGuard) up for the whole transfer.
+    let resolveUpload: (v: string[]) => void = () => {}
+    mockHandleFileSelect.mockReturnValue(new Promise<string[]>((r) => { resolveUpload = r }))
+    const wrapper = mountDrawer()
+    void getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+    await nextTick()
+    expect(wrapper.emitted('close')).toBeTruthy()
+    resolveUpload([])
+  })
+
+  it('onFileSelect keeps the drawer open when the picker was cancelled', async () => {
+    // A cancelled picker (empty FileList) is not a decision to leave — the user
+    // may still be browsing the Current / References tabs.
+    mockHandleFileSelect.mockResolvedValue([])
+    const wrapper = mountDrawer()
+    await getRawState(wrapper).onFileSelect({ target: { files: [] } })
+    expect(wrapper.emitted('close')).toBeFalsy()
+  })
+
   it('onFileSelect auto-selects each freshly uploaded file', async () => {
     mockHandleFileSelect.mockResolvedValue([
       '.clawbench/uploads/a.png',

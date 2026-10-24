@@ -400,15 +400,26 @@ function handleCameraClick() {
 
 async function onFileSelect(e: Event) {
   filePickerOpen.value = false
+  // Did the user actually pick something? Read the count BEFORE handing the
+  // event over: handleFileSelect clears `input.value` synchronously, which also
+  // empties the FileList. A cancelled picker leaves this at 0 and must keep the
+  // drawer open — the user is still browsing tabs and never asked to leave.
+  const picked = (e.target as HTMLInputElement)?.files?.length ?? 0
+  // Choosing a file is the end of the drawer's job: dismiss it right away
+  // instead of waiting for the upload to finish. The transfer keeps running in
+  // the background and reports progress on the input bar's attachment cards,
+  // so keeping the sheet open only delays the user.
+  if (picked > 0) emit('close')
   const uploadedPaths = await handleFileSelect(e)
   // Terminated mid-batch: the user asked to clear everything, so do not attach
   // the files that had already finished. The terminate handler already dropped
   // them, and `chatUploadCancelled` is only reset when a new batch starts.
   if (chatUploadCancelled.value) return
   // Switch to the uploads tab and select the freshly uploaded files so the
-  // user immediately sees (and has attached) what they just uploaded. Only do
-  // this on a successful upload — switching for a cancelled/empty picker would
-  // yank the user away from their current tab for nothing.
+  // user immediately sees (and has attached) what they just uploaded when they
+  // open the drawer again. Only do this on a successful upload — switching for
+  // a cancelled/empty picker would yank the user away from their current tab
+  // for nothing.
   if (uploadedPaths.length === 0) return
   activeTab.value = 'uploads'
   for (const path of uploadedPaths) {
