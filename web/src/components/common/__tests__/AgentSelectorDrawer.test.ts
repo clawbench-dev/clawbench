@@ -483,7 +483,7 @@ describe('AgentSelectorDrawer', () => {
       expect(wrapper.find('.agent-mode-switch').exists()).toBe(false)
     })
 
-    it('renders the switch when showModeSwitch is set and >= 2 selectable agents', async () => {
+    it('renders the switch when showModeSwitch is set and at least one agent is selectable', async () => {
       const wrapper = mountDrawer({ showModeSwitch: true })
       await flushPromises()
       vi.advanceTimersByTime(500)
@@ -521,16 +521,83 @@ describe('AgentSelectorDrawer', () => {
       expect(wrapper.emitted('update:open')).toBeFalsy()
     })
 
-    it('hides the whole switch when fewer than two selectable agents exist', async () => {
-      // A group needs at least two members; with one agent the switch would
-      // degrade to a single-item segmented control — noise, so hide it.
+    it('still renders the switch with a SINGLE selectable agent (repeat instances make a group)', async () => {
+      // The group needs two MEMBERS, not two distinct agents: one installed
+      // agent can be added twice via the row's "+" stepper. Gating the switch
+      // on agent count would make group creation unreachable for a
+      // single-agent install, so the gate must be "any agent at all".
       const original = [...mockAgents]
       mockAgents.splice(0, mockAgents.length, { id: 'agent-1', name: 'Agent One', backend: 'cli', specialty: 'Coding' } as any)
       try {
         const wrapper = mountDrawer({ showModeSwitch: true })
         await flushPromises()
         vi.advanceTimersByTime(500)
+
+        const sw = wrapper.find('.agent-mode-switch')
+        expect(sw.exists()).toBe(true)
+        expect(sw.findAll('.agent-mode-tab').length).toBe(2)
+      } finally {
+        mockAgents.splice(0, mockAgents.length, ...original)
+      }
+    })
+
+    it('hides the switch when no agent is selectable (all disabled)', async () => {
+      // Nothing to build a group from — the segmented control would be dead.
+      const original = [...mockAgents]
+      mockAgents.splice(0, mockAgents.length, { id: 'agent-1', name: 'Agent One', backend: 'cli', specialty: '', disabled: true } as any)
+      try {
+        const wrapper = mountDrawer({ showModeSwitch: true })
+        await flushPromises()
+        vi.advanceTimersByTime(500)
         expect(wrapper.find('.agent-mode-switch').exists()).toBe(false)
+        expect(wrapper.find('.agent-list-empty').exists()).toBe(true)
+      } finally {
+        mockAgents.splice(0, mockAgents.length, ...original)
+      }
+    })
+
+    it('builds a two-instance group from a single installed agent', async () => {
+      // End-to-end of the scenario the gate change unblocks: one installed
+      // agent, flip to the group tab, "+" once, confirm — the payload repeats
+      // the same agent id twice (two independent instances).
+      const original = [...mockAgents]
+      mockAgents.splice(0, mockAgents.length, { id: 'agent-1', name: 'Agent One', backend: 'cli', specialty: 'Coding' } as any)
+      try {
+        const wrapper = mountDrawer({
+          multiple: false,
+          groupMode: false,
+          allowInstances: false,
+          maxInstances: 12,
+          showModeSwitch: true,
+          modelValue: '',
+        })
+        await flushPromises()
+        vi.advanceTimersByTime(500)
+
+        // The group tab must be reachable at all with a single agent.
+        await wrapper.find('[data-mode="group"]').trigger('click')
+        await flushPromises()
+        expect(wrapper.emitted('switch-mode')![0]).toEqual(['group'])
+
+        // The parent owns groupMode; mirror what SessionDrawer does on flip.
+        await wrapper.setProps({ multiple: true, groupMode: true, allowInstances: true })
+        await flushPromises()
+        vi.advanceTimersByTime(500)
+
+        const row = wrapper.find('.agent-option')
+        await row.trigger('click')
+        await flushPromises()
+        // One instance is not enough for a free group.
+        expect((wrapper.find('.agent-multi-confirm').element as HTMLButtonElement).disabled).toBe(true)
+
+        await row.find('.agent-stepper .agent-stepper-btn:last-child').trigger('click')
+        await flushPromises()
+        expect(row.find('.agent-stepper-count').text()).toBe('2')
+        expect((wrapper.find('.agent-multi-confirm').element as HTMLButtonElement).disabled).toBe(false)
+
+        await wrapper.find('.agent-multi-confirm').trigger('click')
+        await flushPromises()
+        expect(wrapper.emitted('select')![0]).toEqual([['agent-1', 'agent-1']])
       } finally {
         mockAgents.splice(0, mockAgents.length, ...original)
       }

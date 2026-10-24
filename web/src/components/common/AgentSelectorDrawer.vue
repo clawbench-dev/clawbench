@@ -8,12 +8,14 @@
       <Bot v-else :size="16" class="bs-header-icon" />
       <span class="bs-header-title agent-header-title">{{ title }}</span>
       <!-- Single vs group creation share this one page; the segmented control
-           on the right flips between them. Hidden entirely when fewer than two
-           selectable agents exist: a group needs at least two members, and a
-           one-item segmented control is just noise. @click.stop is required —
-           the whole .bs-header is a close target (BottomSheet's own click
-           handler). -->
-      <div v-if="showModeSwitch && selectableAgents.length >= 2" class="agent-mode-switch" role="tablist">
+           on the right flips between them. Shown whenever at least one agent is
+           selectable: a group needs two MEMBERS, but instances of the SAME agent
+           count as separate members (allowInstances), so a single installed
+           agent can still form a two-instance group via the row's "+" stepper.
+           Only the empty list hides the switch — there is nothing to build a
+           group from. @click.stop is required — the whole .bs-header is a close
+           target (BottomSheet's own click handler). -->
+      <div v-if="showModeSwitch && selectableAgents.length > 0" class="agent-mode-switch" role="tablist">
         <button
           type="button"
           class="agent-mode-tab"
@@ -204,7 +206,8 @@ const props = withDefaults(defineProps<{
    *  not in the selection buffer. 0 for group creation. */
   usedInstances?: number
   /** Show the single/group segmented switch in the header (create page only).
-   *  Hidden when fewer than two selectable agents exist. */
+   *  Hidden only when no agent is selectable; one agent is enough because
+   *  repeat instances of the same agent are valid distinct members. */
   showModeSwitch?: boolean
 }>(), {
   modelValue: '',

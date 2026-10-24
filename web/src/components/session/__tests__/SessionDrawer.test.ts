@@ -326,6 +326,21 @@ describe('SessionDrawer', () => {
       await nextTick()
       expect(wrapper.emitted('create-group')).toBeUndefined()
     })
+
+    it('creates a group from two instances of the SAME agent (single-agent install)', async () => {
+      // A single installed agent must still be able to start a group: the
+      // picker's "+" stepper repeats the id, and the member count — not the
+      // number of distinct agents — is what makes a free group valid.
+      const wrapper = mountDrawer()
+      await nextTick()
+      wrapper.findComponent(AgentSelectorDrawerStub).vm.$emit('switch-mode', 'group')
+      await nextTick()
+      const selector = wrapper.findComponent(AgentSelectorDrawerStub)
+
+      selector.vm.$emit('select', ['agent-1', 'agent-1'])
+      await nextTick()
+      expect(wrapper.emitted('create-group')![0]).toEqual([{ hostId: '', memberIds: ['agent-1', 'agent-1'] }])
+    })
   })
 
   describe('session list event forwarding', () => {
