@@ -21,7 +21,24 @@ type BackendSpec struct {
 	ThinkingEffortLevels []string // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported
 	AcpCommand           string   // ACP spawn command for acp-stdio transport, e.g. "kimi --acp"; empty = no ACP support
 	ACPLoadSession       bool     // whether the ACP agent truly supports LoadSession (overrides ACP Initialize report)
-	InstallCmd           string   // npm/pip install command, e.g. "npm install -g @anthropic-ai/claude-code"; empty = not installable
+	// ACPResumeIsProcessLocal marks an agent whose session/resume only resolves
+	// ids created by the CURRENT process — after the process dies the same id
+	// must be recovered with session/load instead.
+	//
+	// Automatic crash recovery (recoverExistingSession) tries session/resume
+	// first and only falls back to session/load on -32601 Method not found. An
+	// agent that implements resume but scopes it to the process answers with a
+	// BUSINESS error (-32603 "Session ... not found") instead, which that path
+	// deliberately surfaces as "session is unrecoverable" (it must not silently
+	// start a fresh session and lose history). For such an agent every restart
+	// would strand the conversation, so recovery must go straight to load.
+	//
+	// Measured on openclaw 2026.10.6: `openclaw acp` is only a bridge, and the
+	// bridge process owns the id→gateway-session map. session/load resolves the
+	// same id against the Gateway and DOES restore history (verified by asking
+	// the model to recall a seeded secret after a hard kill).
+	ACPResumeIsProcessLocal bool
+	InstallCmd              string // npm/pip install command, e.g. "npm install -g @anthropic-ai/claude-code"; empty = not installable
 	// LoginCmd is the command the user must run once in a terminal to sign this
 	// agent in, e.g. "cmdc login". Empty = the backend does not gate sessions on
 	// a sign-in, or it advertises its own instruction. Used only to render the

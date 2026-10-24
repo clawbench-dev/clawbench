@@ -332,7 +332,8 @@ describe('SessionShareView', () => {
     // The message area must NOT be boxed by vertical rules on either side.
     expect(col![1]).not.toContain('border-left')
     expect(col![1]).not.toContain('border-right')
-    expect(col![1]).toContain("max-width: 900px")
+    // Design px through --dp so the reading column follows the UI scale.
+    expect(col![1]).toMatch(/max-width:\s*calc\(\s*900\s*\*\s*var\(--dp\)\s*\)/)
     // The column must still fill the scroll container's height.
     expect(col![1]).toContain("min-height: 100%")
   })

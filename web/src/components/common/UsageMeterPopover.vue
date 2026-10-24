@@ -345,7 +345,7 @@ function openSettings() {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  height: 24px;
+  height: calc(24 * var(--dp));
   padding: 0 var(--space-5) 0 var(--space-4);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-full);
@@ -391,8 +391,8 @@ function openSettings() {
 .usage-bar {
   position: relative;
   display: block;
-  width: 40px;
-  height: 4px;
+  width: calc(40 * var(--dp));
+  height: calc(4 * var(--dp));
   border-radius: var(--radius-full);
   background: var(--bg-tertiary);
   flex-shrink: 0;
@@ -414,8 +414,8 @@ function openSettings() {
 .usage-mark {
   position: absolute;
   display: block;
-  top: -2px;
-  bottom: -2px;
+  top: calc(-2 * var(--dp));
+  bottom: calc(-2 * var(--dp));
   width: 1px;
   background: var(--text-primary);
   box-shadow: 0 0 0 1px var(--bg-secondary);
@@ -428,9 +428,9 @@ function openSettings() {
   position: absolute;
   display: block;
   right: 0;
-  top: -2px;
-  bottom: -2px;
-  width: 2px;
+  top: calc(-2 * var(--dp));
+  bottom: calc(-2 * var(--dp));
+  width: calc(2 * var(--dp));
   border-radius: 1px;
   background: var(--color-red);
 }
@@ -451,7 +451,7 @@ function openSettings() {
 .usage-text {
   display: inline-flex;
   align-items: baseline;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
   font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -531,7 +531,7 @@ function openSettings() {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  height: 18px;
+  height: calc(18 * var(--dp));
   font-size: var(--font-size-2xs);
   font-variant-numeric: tabular-nums;
 }
@@ -541,7 +541,7 @@ function openSettings() {
 }
 
 .um-row-name {
-  width: 34px;
+  width: calc(34 * var(--dp));
   flex-shrink: 0;
   color: var(--text-muted);
 }
@@ -549,7 +549,7 @@ function openSettings() {
 .um-track {
   display: block;
   flex: 1;
-  height: 8px;
+  height: calc(8 * var(--dp));
   border-radius: var(--radius-full);
   background: var(--bg-tertiary);
   overflow: hidden;
@@ -572,7 +572,7 @@ function openSettings() {
 }
 
 .um-row-val {
-  width: 56px;
+  width: calc(56 * var(--dp));
   flex-shrink: 0;
   text-align: right;
   font-weight: var(--font-weight-medium);
@@ -630,13 +630,13 @@ function openSettings() {
 .um-legend span {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: calc(4 * var(--dp));
 }
 
 .um-dot {
   display: inline-block;
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
 }
 
@@ -656,7 +656,7 @@ function openSettings() {
 
 .um-stat-label {
   color: var(--text-muted);
-  margin-bottom: 2px;
+  margin-bottom: calc(2 * var(--dp));
 }
 
 .um-stat-value {

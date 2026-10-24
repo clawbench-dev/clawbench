@@ -86,7 +86,7 @@ function handleClick() {
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-2) var(--space-4);
-  min-height: 44px;
+  min-height: calc(44 * var(--dp));
   padding: var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
@@ -155,7 +155,7 @@ function handleClick() {
   font-weight: var(--font-weight-semibold);
   background: var(--accent-color, #4a90d9);
   color: #fff;
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   flex-shrink: 0;
 }
@@ -177,8 +177,8 @@ function handleClick() {
 
 .branch-action-btn {
   flex-shrink: 0;
-  width: 30px;
-  height: 30px;
+  width: calc(30 * var(--dp));
+  height: calc(30 * var(--dp));
   border: none;
   background: transparent;
   color: var(--text-muted, #999);

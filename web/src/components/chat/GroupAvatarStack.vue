@@ -119,7 +119,7 @@ const modeLabel = computed(() => t(props.mode === 'free' ? 'group.freeMode' : 'g
 }
 .group-avatar-stack:focus-visible {
   outline: 2px solid var(--accent-color, #0066cc);
-  outline-offset: 2px;
+  outline-offset: calc(2 * var(--dp));
   border-radius: var(--radius-full);
 }
 @media (hover: hover) {

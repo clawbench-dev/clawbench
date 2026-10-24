@@ -72,6 +72,10 @@ export default {
     fileView: '文件',
     history: '历史',
     forge: '议题与合并请求',
+    // Dock tab label names the integration the project actually uses, so the
+    // overflow menu says which service it opens. Brand names stay untranslated.
+    forgeGithub: 'GitHub 集成',
+    forgeGitlab: 'GitLab 集成',
     tasks: '任务',
     notifications: '通知中心',
     portForward: '端口映射',
@@ -2678,7 +2682,7 @@ export default {
       localeZh: '中文',
       localeEn: 'English',
       uiScale: '界面缩放',
-      uiScaleDesc: '全局放大/缩小界面，效果等同浏览器缩放',
+      uiScaleDesc: '以字号为基准整体缩放界面：文字和控件一起放大缩小，任意比例连续可调',
       uiScaleAutoFit: '自动适配',
       uiScaleAutoFitDesc: '点击一次，按当前屏幕分辨率计算合适的缩放并写入下方滑块（以 1080p 为基准，最高 200%）；之后可随时用滑块微调',
       uiScaleAutoFitDone: '已按当前屏幕适配为 {pct}%',

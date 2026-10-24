@@ -42,7 +42,7 @@ describe('shared shell width', () => {
     const css = await rawCss()
     const decls = declsOf(css, '.modal-dialog')
     expect(decls, '.modal-dialog rule must exist').not.toBeNull()
-    expect(decls).toMatch(/--modal-max-width:\s*900px/)
+    expect(decls).toMatch(/(--modal-max-width):\s*(?:calc\(\s*900\s*\*\s*var\(--dp\)\s*\)|900px)/)
   })
 
   it('leaves BottomSheet on the narrower 624px default', async () => {

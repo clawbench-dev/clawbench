@@ -322,7 +322,7 @@ const chipText = computed(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  max-height: 240px;
+  max-height: calc(240 * var(--dp));
   overflow-y: auto;
   /* Container for the narrow-panel rule below. The panel width follows the
      chat column (which is resizable down to ~320px and is the full screen on a
@@ -377,7 +377,7 @@ const chipText = computed(() => {
   grid-template-columns: 12px minmax(0, 1fr) 3.5em 6ch;
   align-items: center;
   gap: var(--space-3);
-  min-height: 24px;
+  min-height: calc(24 * var(--dp));
   /* The row is a <button> (it opens the member detail sheet), so reset the UA
      chrome: a button's default padding/background/centred text would break the
      grid alignment the roster depends on. `text-align: left` is required —
@@ -425,7 +425,7 @@ const chipText = computed(() => {
    (0,2,0) thanks to the scoped attribute, which beats the global
    `.li-spinner` (0,1,0), so `--li-size` actually wins. */
 .team-member__status-icon--running {
-  --li-size: 12px;
+  --li-size: calc(12 * var(--dp));
   --li-color: var(--color-info, #3b82f6);
 }
 

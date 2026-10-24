@@ -138,8 +138,8 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -4px;
-  right: -4px;
+  left: calc(-4 * var(--dp));
+  right: calc(-4 * var(--dp));
 }
 /* 2px highlight. `:active` covers mouse press; `--expanded` covers the whole
    pointer session, which is what touch needs (see the `dragging` ref).
@@ -149,12 +149,12 @@ onBeforeUnmount(() => {
    both are host geometry, the line's own rules are shared. */
 .split-view__divider--horizontal:active,
 .split-view__divider--horizontal.resize-divider--expanded {
-  width: 2px;
+  width: calc(2 * var(--dp));
   margin: 0 -0.5px;
 }
 @media (hover: hover) {
   .split-view__divider--horizontal:hover {
-    width: 2px;
+    width: calc(2 * var(--dp));
     margin: 0 -0.5px;
   }
 }
@@ -170,37 +170,37 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 0;
   right: 0;
-  top: -4px;
-  bottom: -4px;
+  top: calc(-4 * var(--dp));
+  bottom: calc(-4 * var(--dp));
 }
 /* Touch: a 1px line is an unhittable target (and the negative-margin hover
    growth is hover-only). Give touch pointers a fatter invisible grab band via
    the pseudo-element, without changing the visual 1px line. */
 @media (pointer: coarse) {
   .split-view__divider--vertical::before {
-    top: -12px;
-    bottom: -12px;
+    top: calc(-12 * var(--dp));
+    bottom: calc(-12 * var(--dp));
   }
   .split-view__divider--horizontal::before {
-    left: -12px;
-    right: -12px;
+    left: calc(-12 * var(--dp));
+    right: calc(-12 * var(--dp));
   }
   /* A slightly thicker resting line reads as draggable on touch. */
   .split-view__divider--vertical {
-    height: 3px;
+    height: calc(3 * var(--dp));
   }
   .split-view__divider--horizontal {
-    width: 3px;
+    width: calc(3 * var(--dp));
   }
 }
 .split-view__divider--vertical:active,
 .split-view__divider--vertical.resize-divider--expanded {
-  height: 2px;
+  height: calc(2 * var(--dp));
   margin: -0.5px 0;
 }
 @media (hover: hover) {
   .split-view__divider--vertical:hover {
-    height: 2px;
+    height: calc(2 * var(--dp));
     margin: -0.5px 0;
   }
 }

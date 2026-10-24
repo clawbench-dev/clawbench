@@ -82,7 +82,7 @@ function doInput() {
 
 <style>
 .ti-content {
-  padding: var(--space-2) 14px 14px;
+  padding: var(--space-2) calc(14 * var(--dp)) calc(14 * var(--dp));
 }
 
 .ti-textarea {

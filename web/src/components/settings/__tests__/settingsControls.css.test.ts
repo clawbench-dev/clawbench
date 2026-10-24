@@ -75,10 +75,22 @@ function baseRule(css: string, cls: string): string | null {
   return null
 }
 
-/** Numeric px value of a `prop: Npx` declaration, or NaN. */
+/**
+ * The DESIGN px value of a `prop:` declaration, or NaN.
+ *
+ * Sizes are no longer bare `px` — they are `calc(N * var(--dp))` so the control
+ * scales with the root font size. The invariant this file protects is the
+ * design size (a 44×26 switch, a 100px slider, a 30px field), which must hold
+ * whatever expression wraps it. Accepts both spellings so a deliberately
+ * literal value (a pill radius, a hairline) can be asserted the same way.
+ */
 function px(decls: string, prop: string): number {
-  const m = decls.match(new RegExp(`(?:^|;)\\s*${prop}:\\s*(-?[\\d.]+)px`))
-  return m ? Number(m[1]) : NaN
+  const viaDp = decls.match(
+    new RegExp(`(?:^|;)\\s*${prop}:\\s*calc\\(\\s*(-?[\\d.]+)\\s*\\*\\s*var\\(--dp\\)\\s*\\)`),
+  )
+  if (viaDp) return Number(viaDp[1])
+  const literal = decls.match(new RegExp(`(?:^|;)\\s*${prop}:\\s*(-?[\\d.]+)px`))
+  return literal ? Number(literal[1]) : NaN
 }
 
 /** Controls whose SHAPE must be owned solely by the shared sheet. */
@@ -149,10 +161,13 @@ describe('settings controls are sized to the .fbtn control height', () => {
     expect(px(thumb, 'width')).toBe(22)
     expect(px(thumb, 'height')).toBe(22)
     // Travel must match width - thumb - 2*gap, or the knob over/undershoots.
+    // The offset is a --dp multiple now, so read the design number out of it.
+    const checked = componentsCss.match(
+      /\.settings-item__switch-input:checked \+ \.settings-item__switch-track::after\s*\{([^}]*)\}/,
+    )?.[1] ?? ''
     const travel = Number(
-      componentsCss.match(
-        /\.settings-item__switch-input:checked \+ \.settings-item__switch-track::after\s*\{[^}]*translateX\((-?[\d.]+)px\)/,
-      )?.[1],
+      checked.match(/translateX\(calc\((-?[\d.]+) \* var\(--dp\)\)\)/)?.[1]
+      ?? checked.match(/translateX\((-?[\d.]+)px\)/)?.[1],
     )
     expect(travel).toBe(44 - 22 - 2 * 2)
   })
@@ -170,7 +185,7 @@ describe('settings controls are sized to the .fbtn control height', () => {
       baseRule(componentsCss, 'settings-item__number-input') ??
       baseRule(styleBlocks(readWebFile(`${SETTINGS_DIR}/SettingsItem.vue`)), 'settings-item__number-input')
     expect(input, 'the number-input rule must exist').not.toBeNull()
-    expect(input!).toContain('height: 30px;')
+    expect(px(input!, 'height')).toBe(30)
     expect(input!).toContain('border-radius: var(--radius-sm);')
     expect(input!, 'an input must not use the pill radius').not.toContain('--radius-full')
   })

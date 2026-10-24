@@ -1580,6 +1580,16 @@ func (c *ACPConn) BackendID() string {
 	return ""
 }
 
+// backendSpec returns the registry entry for this connection's backend, or nil.
+// Same locking contract as BackendID/AgentID: c.agent is immutable, and
+// FindSpecByBackend reads a package-level snapshot.
+func (c *ACPConn) backendSpec() *model.BackendSpec {
+	if c.agent == nil {
+		return nil
+	}
+	return model.FindSpecByBackend(c.agent.Backend)
+}
+
 // IsAlive returns whether the connection is currently alive.
 func (c *ACPConn) IsAlive() bool {
 	c.mu.Lock()

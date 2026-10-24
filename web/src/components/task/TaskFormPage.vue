@@ -649,7 +649,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   height: var(--header-height);
-  padding:0 var(--space-2) 0 var(--space-6);
+  padding: 0 var(--space-2) 0 var(--space-6);
   flex-shrink: 0;
   gap: var(--space-3);
   background: var(--bg-primary);
@@ -710,7 +710,7 @@ onMounted(() => {
 }
 
 .section-title {
-  margin:0 0 var(--space-1) 0;
+  margin: 0 0 var(--space-1) 0;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
@@ -832,7 +832,7 @@ onMounted(() => {
 /* The token is the thing the user copies, so it gets a distinct chip. */
 .script-guide-token {
   flex-shrink: 0;
-  min-width: 84px;
+  min-width: calc(84 * var(--dp));
   padding: 1px var(--space-3);
   border-radius: var(--radius-xs);
   background: var(--bg-primary, #fff);
@@ -852,7 +852,7 @@ onMounted(() => {
 .form-select:focus,
 .form-textarea:focus {
   border-color: var(--accent-color, #0066cc);
-  box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+  box-shadow: 0 0 0 calc(3 * var(--dp)) rgba(0, 102, 204, 0.1);
 }
 
 .form-input::placeholder,
@@ -881,7 +881,7 @@ onMounted(() => {
 
 .agent-display:focus {
   border-color: var(--accent-color, #0066cc);
-  box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+  box-shadow: 0 0 0 calc(3 * var(--dp)) rgba(0, 102, 204, 0.1);
   outline: none;
 }
 
@@ -912,7 +912,7 @@ onMounted(() => {
 
 .agent-display-tag {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: 0;
   font-weight: var(--font-weight-medium);
   flex-shrink: 0;
@@ -927,7 +927,7 @@ onMounted(() => {
 .agent-display-tag.model-tag {
   background: rgba(100, 100, 100, 0.08);
   color: var(--text-muted, #999);
-  max-width: 120px;
+  max-width: calc(120 * var(--dp));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -946,12 +946,12 @@ onMounted(() => {
 
 .form-textarea {
   resize: vertical;
-  min-height: 80px;
+  min-height: calc(80 * var(--dp));
 }
 
 .prompt-textarea {
   height: 100%;
-  min-height: 280px;
+  min-height: calc(280 * var(--dp));
 }
 
 .form-hint {
@@ -1031,13 +1031,13 @@ onMounted(() => {
 .event-type-checks {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-3) 14px;
+  gap: var(--space-3) calc(14 * var(--dp));
 }
 
 .checkbox-label {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: calc(5 * var(--dp));
   font-size: var(--font-size-md);
   color: var(--text-secondary, #4b5563);
   cursor: pointer;
@@ -1128,8 +1128,8 @@ onMounted(() => {
 }
 
 .weekday-btn {
-  width: 32px;
-  height: 32px;
+  width: calc(32 * var(--dp));
+  height: calc(32 * var(--dp));
   border: 1px solid var(--border-color, #d1d5db);
   border-radius: var(--radius-sm);
   background: var(--bg-primary, #fff);
@@ -1197,8 +1197,8 @@ onMounted(() => {
 }
 
 .radio-label input[type="radio"] {
-  width: 14px;
-  height: 14px;
+  width: calc(14 * var(--dp));
+  height: calc(14 * var(--dp));
   accent-color: var(--accent-color, #0066cc);
   cursor: pointer;
 }

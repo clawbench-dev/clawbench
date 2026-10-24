@@ -333,6 +333,9 @@ import {
 } from '@/utils/terminalFontUtils'
 import { localConfig, setLocalConfig, useSettingsConfig } from '@/composables/useSettingsConfig'
 import { buildDualFontStack, DEFAULT_TERMINAL_MONO_STACK, ensureFontLoaded, isBundledChoice, MONO_FONT_CHOICES } from '@/utils/fontConfig'
+// xterm is canvas-rendered, so it cannot follow the root font size on its own —
+// the UI scale has to be applied to its `fontSize` option explicitly.
+import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 import { shouldAutoRefocusTerminal, shouldInstallTerminalBlurRefocus } from '@/utils/terminalBlurUtils'
 import type { KeyDef } from '@/utils/terminalKeyDefs'
 import {
@@ -373,8 +376,23 @@ const { getServerValueWithDefault } = useSettingsConfig()
 // module-level singleton inside useFileUpload, so the file manager shares it.
 const { dirUploading, dirUploadProgress, dirUploadDone, dirUploadTotal, cancelDirUpload } = useFileUpload()
 
-// Font size with persistence
-const fontSize = ref<number>((localConfig.terminalFontSize as number) || DEFAULT_FONT_SIZE)
+// Font size, in DESIGN px: the stored value is the size at 100% UI scale.
+//
+// xterm renders to a canvas and cannot read CSS variables, so unlike every
+// other element it does not follow the root font size on its own. Without this
+// multiplication the terminal stayed physically tiny while the rest of the UI
+// grew — the one surface the font-driven scaling missed.
+//
+// The stored value stays a design value on purpose: the Settings slider keeps
+// meaning "12 at 100%", and the pinch/wheel zoom keeps stepping by whole design
+// px, so both read the same at every scale.
+const fontSizeDesign = ref<number>((localConfig.terminalFontSize as number) || DEFAULT_FONT_SIZE)
+
+/** The applied UI scale, kept current through `UI_SCALE_EVENT`. */
+const uiScale = ref(readAppliedUIScale())
+
+/** Font size actually handed to xterm, in CSS px. */
+const fontSize = computed(() => Math.max(1, fontSizeDesign.value * uiScale.value))
 
 // Font family follows the Settings → Appearance mono font choice (+fallback).
 // xterm is canvas-rendered and cannot read CSS vars, so resolve the stored
@@ -394,9 +412,11 @@ const maxSessions = computed(() => {
 function applyFontSize(size: number) {
   const MIN = 8, MAX = 28
   const clamped = Math.max(MIN, Math.min(MAX, size))
-  fontSize.value = clamped
+  // `size` is a DESIGN size (the pinch/wheel step and the slider both speak in
+  // design px), so it goes to the design ref; xterm gets the scaled value.
+  fontSizeDesign.value = clamped
   setLocalConfig('terminalFontSize', clamped)
-  tabManager.updateFontSize(clamped)
+  tabManager.updateFontSize(fontSize.value)
   // Fit active terminal after font change
   const active = tabManager.activeTab.value
   if (active?.fitAddon) {
@@ -886,6 +906,28 @@ watch(() => [localConfig.fontMono, localConfig.fontMonoFallback], () => {
   void applyMonoFontChange()
 })
 
+// Settings → Terminal → 字体大小.
+//
+// `fontSizeDesign` seeds from the stored value at setup and the Settings row
+// writes through `setLocalConfig`, which has no side effect for this key — so
+// without this watch a change in Settings only reached terminals opened
+// afterwards, and an open one kept its old size until a reload.
+watch(() => localConfig.terminalFontSize, (v) => {
+  const n = Number(v)
+  if (!Number.isFinite(n) || n <= 0) return
+  // Compare against the design ref, not `fontSize`: the latter is scaled, so
+  // every UI-scale change would look like a font-size change and re-enter here.
+  if (Math.abs(n - fontSizeDesign.value) < 1e-6) return
+  fontSizeDesign.value = n
+  tabManager.updateFontSize(fontSize.value)
+  for (const tab of tabManager.tabs.value) {
+    if (!tab.fitAddon) continue
+    requestAnimationFrame(() => {
+      try { tab.fitAddon?.fit() } catch { /* ignore */ }
+    })
+  }
+})
+
 // Late-registered webfonts (custom fonts scanned after cold start) never
 // re-measure inside xterm — re-apply the family on the global font-change
 // event the custom-font loader dispatches after injecting @font-face.
@@ -895,6 +937,7 @@ function onGlobalFontChange() {
 window.addEventListener('clawbench-font-change', onGlobalFontChange)
 onBeforeUnmount(() => {
   window.removeEventListener('clawbench-font-change', onGlobalFontChange)
+  window.removeEventListener(UI_SCALE_EVENT, onUiScaleChange)
 })
 
 // Cold-start case: the user already picked a bundled font before opening the
@@ -903,6 +946,27 @@ onBeforeUnmount(() => {
 onMounted(() => {
   void applyMonoFontChange()
 })
+
+// UI scale changed (Settings → Appearance → 缩放).
+//
+// Rem scaling resizes every element but fires no `resize` event, and xterm is
+// canvas-rendered so it cannot follow the root font size on its own. Without
+// this the terminal keeps the glyph size it was created with while the panel
+// around it grows.
+function onUiScaleChange() {
+  uiScale.value = readAppliedUIScale()
+  tabManager.updateFontSize(fontSize.value)
+  // Cell metrics changed, so the column/row count the PTY was told about is
+  // stale; refit every tab, not just the active one (hidden tabs are fitted
+  // when they are shown, but their xterm options must already be correct).
+  for (const tab of tabManager.tabs.value) {
+    if (!tab.fitAddon) continue
+    requestAnimationFrame(() => {
+      try { tab.fitAddon?.fit() } catch { /* ignore */ }
+    })
+  }
+}
+window.addEventListener(UI_SCALE_EVENT, onUiScaleChange)
 
 // Terminal viewport — uses the active tab's xterm and container
 const viewport = useTerminalViewport(
@@ -937,7 +1001,10 @@ const gestures = useTerminalGestures(
     sendPageUp: terminalKeys.sendPageUp,
     sendPageDown: terminalKeys.sendPageDown,
     sendTab: terminalKeys.sendTab,
-    onPinchZoom: (delta: number) => applyFontSize(fontSize.value + delta),
+    // Step the DESIGN size: `applyFontSize` takes design px, so passing the
+    // scaled value would multiply the scale into the stored setting on every
+    // pinch (12 → 18 at 150%, then 27, …).
+    onPinchZoom: (delta: number) => applyFontSize(fontSizeDesign.value + delta),
     onTouchScroll: handleTerminalTouchScroll,
     getCellHeight: () => getXtermCellHeight(activeTab.value?.xterm ?? null),
     getCellWidth: () => getXtermCellWidth(activeTab.value?.xterm ?? null),
@@ -1062,7 +1129,8 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault()
       const delta = e.deltaY < 0 ? 1 : -1
-      applyFontSize(fontSize.value + delta)
+      // Design px, same reason as the pinch handler above.
+      applyFontSize(fontSizeDesign.value + delta)
     }
   }
   container.addEventListener('wheel', wheelHandler, { passive: false })
@@ -1453,7 +1521,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   justify-content: center;
   height: 100%;
   gap: var(--space-6);
-  padding: 32px;
+  padding: calc(32 * var(--dp));
 }
 
 .terminal-empty-icon {
@@ -1489,7 +1557,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .terminal-tab-bar {
   display: flex;
   align-items: stretch;
-  height: 28px;
+  height: calc(28 * var(--dp));
   padding: 0;
   flex-shrink: 0;
   background: var(--bg-secondary);
@@ -1519,14 +1587,14 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding:0 var(--space-3) 0 var(--space-5);
+  padding: 0 var(--space-3) 0 var(--space-5);
   border-radius: 0;
   cursor: pointer;
   flex-shrink: 0;
   transition: background var(--duration-fast) ease;
   user-select: none;
   -webkit-user-select: none;
-  max-width: 120px;
+  max-width: calc(120 * var(--dp));
 }
 
 @media (hover: hover) {
@@ -1537,7 +1605,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 
 .terminal-tab.active {
   background: color-mix(in srgb, var(--text-primary) 12%, transparent);
-  box-shadow: inset 0 -2px 0 var(--accent-color);
+  box-shadow: inset 0 calc(-2 * var(--dp)) 0 var(--accent-color);
 }
 
 .terminal-tab-title {
@@ -1557,8 +1625,8 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 
 .terminal-tab-unread-dot {
   flex-shrink: 0;
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
   background: var(--accent-color, #0066cc);
 }
@@ -1567,8 +1635,8 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: calc(16 * var(--dp));
+  height: calc(16 * var(--dp));
   border: none;
   border-radius: 0;
   background: transparent;
@@ -1601,15 +1669,15 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: 0;
   background: transparent;
   color: var(--accent-color);
   cursor: pointer;
   flex-shrink: 0;
-  margin:0 var(--space-3) 0 0;
+  margin: 0 var(--space-3) 0 0;
   transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
 }
 
@@ -1648,7 +1716,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 }
 .symbol-bar-enter-to,
 .symbol-bar-leave-from {
-  max-height: 44px;
+  max-height: calc(44 * var(--dp));
 }
 
 /* Terminal viewport container */
@@ -1668,15 +1736,15 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 
 .terminal-container :deep(.xterm-scrollable-element > .scrollbar.vertical),
 .terminal-container :deep(.xterm-scrollbar) {
-  width: 2px !important;
+  width: calc(2 * var(--dp)) !important;
   right: 1px !important;
   background: transparent !important;
 }
 
 .terminal-container :deep(.xterm-scrollable-element > .scrollbar > .slider) {
-  width: 2px !important;
+  width: calc(2 * var(--dp)) !important;
   left: 0 !important;
-  border-radius: 999px !important;
+  border-radius: calc(999 * var(--dp)) !important;
 }
 
 [data-theme-base="dark"] .terminal-container {
@@ -1710,7 +1778,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   transform: translate(-50%, -50%);
   font-size: 48px;
   color: rgba(255, 255, 255, 0.7);
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) rgba(0, 0, 0, 0.5);
   pointer-events: none;
   z-index: 5;
   user-select: none;
@@ -1794,7 +1862,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 }
 
 .symbol-bar {
-  padding:3px var(--space-3) 3px;
+  padding: calc(3 * var(--dp)) var(--space-3) calc(3 * var(--dp));
   background: color-mix(in srgb, var(--bg-primary) 60%, var(--bg-secondary));
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
@@ -1804,7 +1872,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .symbol-bar-scroll {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
@@ -1858,7 +1926,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 
 .gesture-toggle.mode-selection {
   outline: 2px solid var(--accent-color);
-  outline-offset: -2px;
+  outline-offset: calc(-2 * var(--dp));
   border-radius: var(--radius-sm);
 }
 
@@ -1878,9 +1946,9 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .key-group + .key-group::before {
   content: '';
   position: absolute;
-  left: -4px;
+  left: calc(-4 * var(--dp));
   width: 1px;
-  height: 16px;
+  height: calc(16 * var(--dp));
   border-radius: var(--radius-full);
   background: var(--toolbar-divider);
 }
@@ -1889,9 +1957,9 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 32px;
-  height: 32px;
-  padding: 0 5px;
+  min-width: calc(32 * var(--dp));
+  height: calc(32 * var(--dp));
+  padding: 0 calc(5 * var(--dp));
   border: none;
   border-radius: 0;
   background: transparent;
@@ -1926,7 +1994,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   flex-direction: column !important;
   gap: 0;
   line-height: 1;
-  padding: 3px 5px;
+  padding: calc(3 * var(--dp)) calc(5 * var(--dp));
 }
 .shift-tab-label { font-size: var(--font-size-2xs); font-weight: var(--font-weight-bold); line-height: 1.3; }
 
@@ -1959,9 +2027,9 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .btn-func-group + .key-group::before {
   content: '';
   position: absolute;
-  left: -4px;
+  left: calc(-4 * var(--dp));
   width: 1px;
-  height: 16px;
+  height: calc(16 * var(--dp));
   border-radius: var(--radius-full);
   background: var(--toolbar-divider);
 }
@@ -1994,7 +2062,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .quick-send-item .qs-label {
   flex-shrink: 0;
   font-weight: var(--font-weight-medium);
-  max-width: 110px;
+  max-width: calc(110 * var(--dp));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

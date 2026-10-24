@@ -319,7 +319,7 @@ onBeforeUnmount(() => {
   background: var(--bg-secondary, #fff);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: var(--radius-sm);
-  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 calc(-4 * var(--dp)) calc(12 * var(--dp)) rgba(0, 0, 0, 0.12);
   z-index: var(--z-popover);
   padding: 0;
 }
@@ -333,7 +333,7 @@ onBeforeUnmount(() => {
 .menu-fade-enter-from,
 .menu-fade-leave-to {
   opacity: 0;
-  transform: translateY(-4px);
+  transform: translateY(calc(-4 * var(--dp)));
 }
 
 /* ── App-header dropdown surface (matches .app-menu) ──
@@ -347,8 +347,8 @@ onBeforeUnmount(() => {
    computeMenuStyle. */
 .popup-menu--app {
   background: var(--bg-primary);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-  padding: 3px 0;
+  box-shadow: 0 calc(4 * var(--dp)) calc(16 * var(--dp)) rgba(0, 0, 0, 0.1);
+  padding: calc(3 * var(--dp)) 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;

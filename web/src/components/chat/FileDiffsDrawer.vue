@@ -283,8 +283,8 @@ function handleBodyInput(event) {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 24px;
-  height: 24px;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
@@ -348,8 +348,8 @@ function handleBodyInput(event) {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   margin-right: var(--space-1);
   border: none;
   border-radius: var(--radius-xs);
@@ -385,7 +385,7 @@ function handleBodyInput(event) {
 .fd-header-badge {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
   color: var(--accent-color);

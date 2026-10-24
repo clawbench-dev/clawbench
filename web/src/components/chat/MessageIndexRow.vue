@@ -193,7 +193,7 @@ const speaker = computed<SpeakerIdentity | null>(() => {
   display: flex;
   align-items: center;
   gap: var(--space-6);
-  padding: 8px var(--space-4) 8px 12px;
+  padding: calc(8 * var(--dp)) var(--space-4) calc(8 * var(--dp)) calc(12 * var(--dp));
   border-radius: var(--radius-lg);
   cursor: pointer;
   transition: background var(--duration-base) ease;
@@ -209,10 +209,10 @@ const speaker = computed<SpeakerIdentity | null>(() => {
 .msg-item::before {
   content: '';
   position: absolute;
-  left: 22px;
+  left: calc(22 * var(--dp));
   top: 0;
   bottom: 0;
-  width: 2px;
+  width: calc(2 * var(--dp));
   background: color-mix(in srgb, var(--accent-color) 26%, transparent);
 }
 
@@ -249,7 +249,7 @@ const speaker = computed<SpeakerIdentity | null>(() => {
   border-radius: 0;
   --rail-punch: color-mix(in srgb, var(--accent-color) 10%, var(--msg-row-bg, var(--bg-secondary)));
   background: var(--rail-punch);
-  box-shadow: inset 3px 0 0 var(--accent-color);
+  box-shadow: inset calc(3 * var(--dp)) 0 0 var(--accent-color);
 }
 
 .msg-item-active {
@@ -262,22 +262,22 @@ const speaker = computed<SpeakerIdentity | null>(() => {
   position: relative;
   z-index: 1;
   flex-shrink: 0;
-  width: 22px;
-  height: 22px;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
   background: var(--msg-row-bg, var(--bg-secondary));
   border: 1.5px solid color-mix(in srgb, var(--text-muted) 45%, transparent);
-  box-shadow: 0 0 0 3px var(--rail-punch);
+  box-shadow: 0 0 0 calc(3 * var(--dp)) var(--rail-punch);
   transition: background var(--duration-base), border-color var(--duration-base), color var(--duration-base);
 }
 
 .msg-item.active .msg-node {
   background: var(--accent-color);
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 3px var(--rail-punch);
+  box-shadow: 0 0 0 calc(3 * var(--dp)) var(--rail-punch);
 }
 
 .msg-index {
@@ -316,8 +316,8 @@ const speaker = computed<SpeakerIdentity | null>(() => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 20px;
-  height: 20px;
+  width: calc(20 * var(--dp));
+  height: calc(20 * var(--dp));
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
   overflow: hidden;
@@ -403,7 +403,7 @@ const speaker = computed<SpeakerIdentity | null>(() => {
 .msg-time {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: calc(5 * var(--dp));
   flex-shrink: 0;
   font-size: 10.5px;
   color: var(--text-muted, #999);
@@ -413,8 +413,8 @@ const speaker = computed<SpeakerIdentity | null>(() => {
 
 .msg-time::before {
   content: '';
-  width: 3px;
-  height: 3px;
+  width: calc(3 * var(--dp));
+  height: calc(3 * var(--dp));
   border-radius: 50%;
   background: var(--border-color);
 }

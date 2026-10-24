@@ -262,7 +262,7 @@ onMounted(() => {
   flex-shrink: 0;
 }
 .stats-error {
-  padding:9px var(--space-6);
+  padding: calc(9 * var(--dp)) var(--space-6);
   border-radius: var(--radius-sm, 6px);
   background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-red, #ef4444) 30%, transparent);
@@ -275,7 +275,7 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   gap: var(--space-5);
-  padding: 48px 0;
+  padding: calc(48 * var(--dp)) 0;
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
 }
@@ -285,7 +285,7 @@ onMounted(() => {
 
 .cloc-totals {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(calc(100 * var(--dp)), 1fr));
   gap: var(--space-4);
   min-width: 0;
 }
@@ -328,13 +328,13 @@ onMounted(() => {
 
 .cloc-chart {
   width: 100%;
-  height: 260px;
+  height: calc(260 * var(--dp));
 }
 
 .stats-table-wrap {
   overflow-x: auto;
-  margin: 0 -10px;
-  padding:0 var(--space-5);
+  margin: 0 calc(-10 * var(--dp));
+  padding: 0 var(--space-5);
 }
 .stats-table {
   width: 100%;
@@ -343,7 +343,7 @@ onMounted(() => {
 }
 .stats-table th,
 .stats-table td {
-  padding:7px var(--space-4);
+  padding: calc(7 * var(--dp)) var(--space-4);
   border-bottom: 1px solid var(--border-color);
   text-align: right;
   white-space: nowrap;
@@ -363,7 +363,7 @@ onMounted(() => {
 .stats-th-inner {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
 }
 .stats-th-sortable {
   cursor: pointer;

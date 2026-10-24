@@ -389,12 +389,12 @@ watch(() => props.open, (isOpen) => {
   gap: var(--space-4);
   /* Same body padding as SessionTagDialog — .modal-body itself has none. */
   padding: var(--space-6) var(--space-7);
-  min-height: 200px;
+  min-height: calc(200 * var(--dp));
 }
 
 .session-share-dialog-hint,
 .session-share-dialog-error {
-  padding: 24px 0;
+  padding: calc(24 * var(--dp)) 0;
   text-align: center;
   color: var(--text-muted);
   font-size: var(--font-size-sm);
@@ -424,7 +424,7 @@ watch(() => props.open, (isOpen) => {
 /* Sits on the shared .fbtn pill; only the size is dial-specific, since the
    toolbar is a compact inline row rather than a dialog footer. */
 .session-share-dialog-toggle {
-  height: 26px;
+  height: calc(26 * var(--dp));
   padding: 0 var(--space-5);
   font-size: var(--font-size-xs, 12px);
 }
@@ -436,7 +436,7 @@ watch(() => props.open, (isOpen) => {
 .session-share-dialog-locked {
   display: inline-flex;
   align-items: center;
-  height: 26px;
+  height: calc(26 * var(--dp));
   font-size: var(--font-size-xs, 12px);
   color: var(--text-muted, #656d76);
 }
@@ -446,7 +446,7 @@ watch(() => props.open, (isOpen) => {
    and the footer actions remain reachable. A bordered card on the dialog
    surface, matching how every other list in the app is framed. */
 .session-share-dialog-list {
-  max-height: 320px;
+  max-height: calc(320 * var(--dp));
   overflow-y: auto;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
@@ -460,7 +460,7 @@ watch(() => props.open, (isOpen) => {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  padding: 7px var(--space-5);
+  padding: calc(7 * var(--dp)) var(--space-5);
   cursor: pointer;
   /* Separator derived from the theme border rather than a second, undefined
      token: the previous `--border-color-subtle` was declared nowhere, so every
@@ -524,8 +524,8 @@ watch(() => props.open, (isOpen) => {
   flex-shrink: 0;
   -webkit-appearance: none;
   appearance: none;
-  width: 15px;
-  height: 15px;
+  width: calc(15 * var(--dp));
+  height: calc(15 * var(--dp));
   margin: 0;
   border: 1.5px solid color-mix(in srgb, var(--text-secondary) 55%, transparent);
   border-radius: var(--radius-xs);
@@ -543,10 +543,10 @@ watch(() => props.open, (isOpen) => {
 .session-share-dialog-check:checked::after {
   content: '';
   position: absolute;
-  left: 3.5px;
+  left: calc(3.5 * var(--dp));
   top: 0.5px;
-  width: 4px;
-  height: 8px;
+  width: calc(4 * var(--dp));
+  height: calc(8 * var(--dp));
   border: solid #fff;
   border-width: 0 1.5px 1.5px 0;
   transform: rotate(45deg);
@@ -572,8 +572,8 @@ watch(() => props.open, (isOpen) => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 20px;
-  height: 20px;
+  width: calc(20 * var(--dp));
+  height: calc(20 * var(--dp));
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
 }

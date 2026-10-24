@@ -51,17 +51,29 @@ export const UI_SCALE_MAX = 2
 export const UI_SCALE_MIN = 1
 
 /**
- * Granularity of the manual scale slider, in factor units (5%).
+ * Granularity of the manual scale slider, in factor units (1%).
+ *
+ * The whole point of font-driven scaling is that it is continuous: the layout
+ * is expressed in rem-derived units, so ANY factor renders correctly — there is
+ * no need for a coarse grid to hide rounding. 1% is fine enough to read as
+ * stepless while still producing a short, stable, displayable number (a raw
+ * pointer position would give values like 1.0344827 that no one wants to see in
+ * the label or store in localStorage).
  *
  * Both the auto-fit result and any stored value are snapped to this grid so
  * they are always REPRESENTABLE on that slider. A `<input type=range>`
- * silently snaps an off-grid value to the nearest step: 1.33 (1440p) lands on
- * the 1.35 step, so the thumb would sit at 135% while the label read "133%" —
- * the two disagreeing is exactly the bug this prevents. Keeping the step here
- * (and using it for the slider's own `step` in settingsFieldMap) means the
- * grid has a single source of truth.
+ * silently snaps an off-grid value to the nearest step, and the thumb would
+ * then sit somewhere the label does not say. Keeping the step here (and using
+ * it for the slider's own `step` in settingsFieldMap) means the grid has a
+ * single source of truth.
  */
-export const UI_SCALE_STEP = 0.05
+export const UI_SCALE_STEP = 0.01
+
+/** Lowest factor the slider offers. Matches the applier's own floor. */
+export const UI_SCALE_MANUAL_MIN = 0.5
+
+/** Highest factor the slider offers. Matches the applier's own ceiling. */
+export const UI_SCALE_MANUAL_MAX = 2
 
 /** Round to 2 decimals so the applied factor is stable and displayable. */
 function round2(n: number): number {
@@ -72,7 +84,7 @@ function round2(n: number): number {
  * Snap a factor to the slider's step grid.
  *
  * Snapped relative to 0, which matches the slider's grid because its minimum
- * (0.8) is itself a whole multiple of the step. `settingsFieldMap.test.ts`
+ * (0.5) is itself a whole multiple of the step. `settingsFieldMap.test.ts`
  * guards that relationship so a future change to either value cannot silently
  * break the alignment.
  */
@@ -119,8 +131,8 @@ export function resolveUIScale(manual: number): number {
   if (!Number.isFinite(n) || n <= 0) return 1
   // Snap so a value stored off the grid (e.g. a legacy 0.82) is not displayed
   // as 82% while the slider renders its thumb on the 0.8 step.
-  const bounded = Math.min(Math.max(n, 0.5), UI_SCALE_MAX)
-  return Math.min(Math.max(snapToScaleStep(bounded), 0.5), UI_SCALE_MAX)
+  const bounded = Math.min(Math.max(n, UI_SCALE_MANUAL_MIN), UI_SCALE_MAX)
+  return Math.min(Math.max(snapToScaleStep(bounded), UI_SCALE_MANUAL_MIN), UI_SCALE_MAX)
 }
 
 /**
@@ -197,3 +209,92 @@ export function currentScreenHeight(): number {
     return 0
   }
 }
+
+/**
+ * The scale factor currently applied to the document.
+ *
+ * Reads the `--ui-scale` custom property that `applyUIScale` writes, rather
+ * than a CSS `zoom` style. Returns 1 when the property is absent (standalone
+ * documents, first paint before the applier runs) or unparseable.
+ *
+ * Lives in this leaf module (zero imports) rather than in `useSettingsConfig`
+ * on purpose: `useWideScreenLayout` needs it, and that module is imported by
+ * ~20 components whose tests hand-pick a whitelist mock of
+ * `@/composables/useSettingsConfig`. A new import from that module is
+ * `undefined` in those mocks and crashes the whole file at import time — the
+ * exact failure mode this repo has hit before.
+ */
+export function readAppliedUIScale(): number {
+  try {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue('--ui-scale')
+    const n = Number(raw)
+    return Number.isFinite(n) && n > 0 ? n : 1
+  } catch {
+    return 1
+  }
+}
+
+/** The design base the layout was drawn against, in px. `1rem` = this × scale. */
+export const UI_BASE_FONT_PX = 15
+
+/**
+ * `--font-size-md` in design px — the size single-line form controls use.
+ *
+ * Deliberately not `UI_BASE_FONT_PX`: the line box that has to be an integer is
+ * the control's own, and controls are sized `--font-size-md` (13 design px),
+ * not at the document base (15). Pairing with the base would make the line box
+ * 15% too tall at every scale.
+ */
+const INPUT_FONT_DESIGN_PX = 13
+
+/** Line height multiplier for single-line form controls (--input-line-height). */
+const INPUT_LINE_HEIGHT_RATIO = 1.4
+
+/**
+ * Event broadcast after the applied scale changes.
+ *
+ * Rem scaling resizes every element but never the viewport, so `resize` does
+ * not fire and layout decisions derived from the scale have to be told.
+ * Declared here (a leaf module) so both the applier and its consumers can
+ * import it without creating an import cycle.
+ */
+export const UI_SCALE_EVENT = 'clawbench-ui-scale-change'
+
+/**
+ * Apply the global UI scale by resizing the root font.
+ *
+ * This is the ONLY scaling mechanism. The layout is expressed in rem-derived
+ * units (`--dp` = `1rem / 15` in variables.css), so changing the root font size
+ * resizes text and every box around it together, at any factor.
+ *
+ * It replaced `html { zoom }`, which was a dead end: CSS zoom does not scale
+ * the layout viewport. At zoom 1.5 on a 1000px window, `innerWidth` stayed 1000
+ * while `clientWidth` became 667 — so `100vw` drew 1500 visual px (floating
+ * cards ran off-screen), `60dvh` grew from 60% to 90% of the screen, media
+ * queries still believed there were 1000px, and canvases stretched their
+ * backing store. Every consumer then needed a `toFixedCSS()` conversion to
+ * translate between the two coordinate spaces. With rem scaling there is one
+ * space, so all of that is gone.
+ *
+ * Also writes `--input-line-height` as a whole number of px: form controls
+ * need an integer line box or Android WebView rounds the line box and the
+ * content box independently and the caret drifts high (see variables.css).
+ */
+export function applyUIScale(scale: number): void {
+  const el = document.documentElement
+  const s = Math.max(UI_SCALE_MANUAL_MIN, Math.min(UI_SCALE_MANUAL_MAX, scale))
+  // A pre-rem build may have left `zoom` on <html>; clear it unconditionally,
+  // otherwise the two mechanisms compound into a tiny UI.
+  el.style.zoom = ''
+  el.style.setProperty('--ui-scale', String(s))
+  el.style.setProperty(
+    '--input-line-height',
+    `${Math.round(INPUT_FONT_DESIGN_PX * s * INPUT_LINE_HEIGHT_RATIO)}px`,
+  )
+  try {
+    window.dispatchEvent(new CustomEvent(UI_SCALE_EVENT, { detail: { scale: s } }))
+  } catch {
+    // No window (SSR / a bare unit test): nothing to notify.
+  }
+}
+

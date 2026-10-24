@@ -6,7 +6,7 @@ vi.mock('@/utils/forgeApi', () => ({
   fetchForgeBinding: (...a: unknown[]) => mockFetchBinding(...a),
 }))
 
-import { useForgeBinding, setForgeBindingState, resetForgeBindingState, forgeDockIconKind } from '@/composables/useForgeBinding'
+import { useForgeBinding, setForgeBindingState, resetForgeBindingState, forgeDockIconKind, forgeTabTitleKey } from '@/composables/useForgeBinding'
 
 describe('useForgeBinding', () => {
   beforeEach(() => {
@@ -239,5 +239,29 @@ describe('forgeDockIconKind', () => {
 
   it('treats an unrecognized platform as GitHub rather than blank', () => {
     expect(forgeDockIconKind('bitbucket')).toBe('github')
+  })
+})
+
+describe('forgeTabTitleKey', () => {
+  it('names the GitLab integration for a bound GitLab repository', () => {
+    expect(forgeTabTitleKey('gitlab')).toBe('nav.forgeGitlab')
+  })
+
+  it('names the GitHub integration for a bound GitHub repository', () => {
+    expect(forgeTabTitleKey('github')).toBe('nav.forgeGithub')
+  })
+
+  it('defaults to GitHub before a repository is bound', () => {
+    // The tab is rendered before the binding resolves; an empty label would be
+    // worse than naming the default brand.
+    expect(forgeTabTitleKey('')).toBe('nav.forgeGithub')
+  })
+
+  it('tracks the icon: the label and the brand mark never disagree', () => {
+    for (const p of ['', 'github', 'gitlab', 'bitbucket']) {
+      expect(forgeTabTitleKey(p)).toBe(
+        forgeDockIconKind(p) === 'gitlab' ? 'nav.forgeGitlab' : 'nav.forgeGithub',
+      )
+    }
   })
 })

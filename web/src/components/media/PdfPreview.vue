@@ -492,7 +492,7 @@ defineExpose({
 .pdf-page-wrapper {
   position: relative;
   background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 1px calc(4 * var(--dp)) rgba(0, 0, 0, 0.2);
   border-radius: var(--radius-xs);
   flex-shrink: 0;
 }
@@ -520,7 +520,7 @@ defineExpose({
    override the primitive's two colour variables rather than restating the
    gradient (see the note on .skeleton-block in css/components.css). */
 .pdf-loading-skeleton {
-  width: min(560px, 80%);
+  width: min(calc(560 * var(--dp)), 80%);
   --skeleton-fill: rgba(255, 255, 255, 0.18);
   --skeleton-sheen: rgba(255, 255, 255, 0.32);
 }
@@ -533,15 +533,15 @@ defineExpose({
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 48px 24px;
+  padding: calc(48 * var(--dp)) calc(24 * var(--dp));
   text-align: center;
   color: var(--text-muted);
   background: var(--bg-primary);
 }
 
 .pdf-error > svg {
-  width: 48px;
-  height: 48px;
+  width: calc(48 * var(--dp));
+  height: calc(48 * var(--dp));
   margin-bottom: var(--space-6);
 }
 
@@ -555,7 +555,7 @@ defineExpose({
 .pdf-error-desc {
   font-size: var(--font-size-lg);
   margin-bottom: var(--space-8);
-  max-width: 400px;
+  max-width: calc(400 * var(--dp));
   word-break: break-word;
 }
 
@@ -589,7 +589,7 @@ defineExpose({
 
 :global([data-theme-base="dark"]) .pdf-page-wrapper {
   background: #1a1a1a;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 1px calc(4 * var(--dp)) rgba(0, 0, 0, 0.5);
 }
 
 :global([data-theme-base="dark"]) .pdf-loading-overlay {

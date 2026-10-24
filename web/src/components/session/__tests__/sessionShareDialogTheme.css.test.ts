@@ -152,8 +152,8 @@ describe('SessionShareDialog message list is theme-safe', () => {
     // collapse to a sliver (an inline-flex with no content and no padding).
     const rule = code(css).match(/\.session-share-dialog-role\s*\{([\s\S]*?)\}/)
     expect(rule, '.session-share-dialog-role rule must exist').not.toBeNull()
-    expect(rule![1]).toMatch(/width:\s*20px/)
-    expect(rule![1]).toMatch(/height:\s*20px/)
+    expect(rule![1]).toMatch(/width:\s*calc\(\s*20\s*\*\s*var\(--dp\)\s*\)/)
+    expect(rule![1]).toMatch(/height:\s*calc\(\s*20\s*\*\s*var\(--dp\)\s*\)/)
     expect(rule![1], 'a text pill would set horizontal padding').not.toMatch(
       /padding:\s*0\s+var\(--space-3\)/,
     )
@@ -175,8 +175,13 @@ describe('SessionShareDialog message list is theme-safe', () => {
     // The restyle must not inflate the row. Assert the vertical padding stays
     // in single digits so ~9 rows still fit the 320px window.
     const rowRule = code(css).match(/\.session-share-dialog-row\s*\{([\s\S]*?)\}/)
-    const padding = rowRule![1].match(/padding:\s*(\d+)px\s+var\(--space-\d+\)/)
-    expect(padding, 'the row must use a literal vertical padding token pair').not.toBeNull()
-    expect(Number(padding![1]), 'row vertical padding must stay under 10px').toBeLessThan(10)
+    // Vertical padding is a design-px multiple now; the horizontal one stays a
+    // spacing token. Read the design number out of the calc().
+    const padding = rowRule![1].match(
+      /padding:\s*(?:calc\(\s*(\d+(?:\.\d+)?)\s*\*\s*var\(--dp\)\s*\)|(\d+(?:\.\d+)?)px)\s+var\(--space-\d+\)/,
+    )
+    expect(padding, 'the row must use a design-px vertical padding + a spacing token').not.toBeNull()
+    const vertical = Number(padding!.slice(1).find(Boolean))
+    expect(vertical, 'row vertical padding must stay under 10 design px').toBeLessThan(10)
   })
 })

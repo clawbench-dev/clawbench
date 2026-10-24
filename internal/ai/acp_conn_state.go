@@ -218,6 +218,19 @@ func (c *ACPConn) extractSessionState(getResp func() (*acp.NewSessionResponse, *
 // applyExtractedState sets session-level current values and updates the agent-level registry.
 // Always preserves user's existing selections (from PreApply) over the agent's response defaults.
 func (c *ACPConn) applyExtractedState(ext sessionStateExtracted) {
+	// A backend whose `modes` block duplicates its `thought_level` config option
+	// must not surface both: only the config option is writable (writing the
+	// mode is rejected), and two identical pickers would appear in the UI.
+	// Dropping modes here — before the registry write — also keeps the
+	// persisted capability snapshot clean, so a stale mode picker cannot come
+	// back after a restart.
+	if len(ext.modes) > 0 && acpModesMirrorThoughtLevel(c.BackendID()) {
+		slog.Info("acp: suppressing modes that mirror thought_level",
+			"agent", c.AgentID(), "backend", c.BackendID(), "count", len(ext.modes))
+		ext.modes = nil
+		ext.modeCurrentID = ""
+	}
+
 	currentIDs := map[string]*string{
 		"mode":          &ext.modeCurrentID,
 		"thought_level": &ext.effortCurrentID,

@@ -239,7 +239,7 @@ watch(() => props.active, (val) => {
   display: flex;
   align-items: center;
   height: var(--header-height);
-  padding:0 var(--space-2) 0 var(--space-6);
+  padding: 0 var(--space-2) 0 var(--space-6);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
   background: var(--bg-primary);
@@ -289,7 +289,7 @@ watch(() => props.active, (val) => {
   border-top: 1px solid var(--border-color);
   flex-shrink: 0;
   gap: var(--space-4);
-  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(8 * var(--dp) + env(safe-area-inset-bottom, 0));
 }
 
 /* Restart footer button — layout + pulse only; pill visuals come from .fbtn. */

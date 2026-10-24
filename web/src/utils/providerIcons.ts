@@ -31,7 +31,6 @@ export interface ProviderIconData {
 // Color icons (baked-in brand colors)
 import claudeIcon from '@lobehub/icons-static-svg/icons/claude-color.svg?raw'
 import deepseekIcon from '@lobehub/icons-static-svg/icons/deepseek-color.svg?raw'
-import kimiIcon from '@lobehub/icons-static-svg/icons/kimi-color.svg?raw'
 import minimaxIcon from '@lobehub/icons-static-svg/icons/minimax-color.svg?raw'
 import mistralIcon from '@lobehub/icons-static-svg/icons/mistral-color.svg?raw'
 import googleIcon from '@lobehub/icons-static-svg/icons/google-color.svg?raw'
@@ -64,6 +63,7 @@ import groqIcon from '@lobehub/icons-static-svg/icons/groq.svg?raw'
 import xaiIcon from '@lobehub/icons-static-svg/icons/xai.svg?raw'
 import opencodeIcon from '@lobehub/icons-static-svg/icons/opencode.svg?raw'
 import piIcon from '@lobehub/icons-static-svg/icons/pi.svg?raw'
+import kimiIcon from '@lobehub/icons-static-svg/icons/kimi.svg?raw'
 
 // ---- Provider icon registry ----
 
@@ -80,7 +80,6 @@ const providerIconMap: Record<string, ProviderIconData> = {
     doubao: { raw: doubaoIcon },
     hunyuan: { raw: hunyuanIcon },
     minimax: { raw: minimaxIcon },
-    kimi: { raw: kimiIcon },
     xiaomi: { raw: mimoIcon },
     mimo: { raw: mimoIcon },
     cerebras: { raw: cerebrasIcon },
@@ -125,6 +124,11 @@ const providerIconMap: Record<string, ProviderIconData> = {
     // CLI backend tools — monochrome icons
     opencode: { raw: opencodeIcon, needsBg: true, monoCssClass: 'mono-opencode' },
     pi: { raw: piIcon, needsBg: true, monoCssClass: 'mono-pi' },
+    // Kimi's "-color" variant paints the K glyph pure white assuming a brand
+    // tile behind it; lobe-icons ships no such tile, so on light backgrounds
+    // only the blue dot survives. The mono variant in Kimi's brand blue reads
+    // on both themes and needs no backdrop.
+    kimi: { raw: kimiIcon, monoCssClass: 'mono-kimi' },
 
     // VeCLI not in lobe-icons — inline fallback (explicit fill colors, not currentColor)
     vecli: { raw: '<svg fill-rule="evenodd" height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg"><title>VeCLI</title><path d="M19.44 10.153l-2.936 11.586a.215.215 0 00.214.261h5.87a.215.215 0 00.214-.261l-2.95-11.586a.214.214 0 00-.412 0zM3.28 12.778l-2.275 8.96A.214.214 0 001.22 22h4.532a.212.212 0 00.214-.165.214.214 0 000-.097l-2.276-8.96a.214.214 0 00-.41 0z" fill="#00E5E5"/><path d="M7.29 5.359L3.148 21.738a.215.215 0 00.203.261h8.29a.214.214 0 00.215-.261L7.7 5.358a.214.214 0 00-.41 0z" fill="#006EFF"/><path d="M14.44.15a.214.214 0 00-.41 0L8.366 21.739a.214.214 0 00.214.261H19.9a.216.216 0 00.171-.078.214.214 0 00.044-.183L14.439.15z" fill="#006EFF"/><path d="M10.278 7.741L6.685 21.736a.214.214 0 00.214-.264h7.17a.215.215 0 00.214-.264L10.688 7.741a.214.214 0 00-.41 0z" fill="#00E5E5"/></svg>' },

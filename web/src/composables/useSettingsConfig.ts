@@ -7,7 +7,7 @@ import { syncServerLanguage } from '@/utils/serverLanguage'
 import { resolveThemeId, applyThemeAttributes, onSystemColorSchemeChange } from '@/utils/themeMeta'
 import { applyFontConfig } from '@/utils/fontConfig'
 import { normalizeDisplayMode } from '@/utils/chatSessionUtils'
-import { resolveUIScale, computeAutoUIScale, currentScreenHeight } from '@/utils/uiScale'
+import { resolveUIScale, computeAutoUIScale, currentScreenHeight, applyUIScale, readAppliedUIScale } from '@/utils/uiScale'
 import { setLayoutScopeMode } from '@/utils/panelState'
 import { applyServerLimits } from '@/stores/app.ts'
 
@@ -286,16 +286,13 @@ function readLocalValue(settingsKey: string, defaultValue: string | boolean | nu
   return defaultValue
 }
 
-/** Apply global UI scale via CSS zoom — true browser-zoom behavior, no position:fixed breakage. */
-export function applyUIScale(scale: number) {
-  const el = document.documentElement
-  const s = Math.max(0.5, Math.min(2, scale))
-  if (s === 1) {
-    el.style.zoom = ''
-  } else {
-    el.style.zoom = String(s)
-  }
-}
+/**
+ * Re-exported so callers (and their tests) have one entry point for the
+ * settings surface. The implementation lives in `utils/uiScale.ts`, a leaf
+ * module, because `useWideScreenLayout` needs it and importing that back from
+ * here would break the ~20 components whose tests mock this module by hand.
+ */
+export { applyUIScale }
 
 /**
  * The UI scale factor actually in effect: the stored value, clamped.
@@ -326,70 +323,51 @@ export function autoFitUIScale(): number {
 }
 
 /**
- * Apply the effective scale through the mechanism the current host supports.
+ * Apply the effective scale.
  *
- * - Electron: `webContents.setZoomFactor` (real native zoom). The CSS zoom is
- *   cleared so the two do not compound.
- * - Browser / Android: CSS zoom on <html>, which is the only equivalent
- *   available to a web page.
- *
- * Called at startup and whenever either setting changes.
+ * There is only one mechanism now. The Electron shell used to get
+ * `webContents.setZoomFactor` instead of CSS zoom, which had the same
+ * coordinate-space problem (and additionally suppressed every ResizeObserver
+ * in the page, forcing a manual re-measure dance for the dock). Both paths are
+ * gone: the root font size is the single knob, and it behaves identically in
+ * every host.
  */
 export function applyEffectiveUIScale(): void {
-  const factor = getEffectiveUIScale()
-  const native = getNative()
-  // Only the Electron shell implements this; Android and the plain browser
-  // leave the method undefined and take the CSS-zoom path below.
-  if (typeof native?.setZoomFactor === 'function') {
-    try {
-      native.setZoomFactor(factor)
-      // Clear any CSS zoom a previous session (or a pre-upgrade build) left on
-      // <html>, otherwise native zoom and CSS zoom would multiply.
-      document.documentElement.style.zoom = ''
-      return
-    } catch {
-      // Fall through to CSS zoom rather than leaving the UI unscaled.
-    }
-  }
-  applyUIScale(factor)
-}
-
-/** Read the current CSS zoom factor applied to <html>. Returns 1 if not set. */
-export function getUIScale(): number {
-  const z = document.documentElement.style.zoom
-  if (!z) return 1
-  const n = Number(z)
-  return isNaN(n) ? 1 : n
+  applyUIScale(getEffectiveUIScale())
 }
 
 /**
- * Convert a value from getBoundingClientRect() / window.innerWidth coordinate
- * space to position:fixed CSS pixel value.
+ * Read the scale factor currently applied to the document.
  *
- * Under CSS zoom on <html>, getBoundingClientRect() returns zoom-scaled
- * coordinates and window.innerWidth/innerHeight are NOT scaled, while
- * position:fixed CSS values are in the pre-zoom layout space:
- *   - fixed left:100px under zoom:2 visually appears at 200px
- *   - getBoundingClientRect().left of that element returns 200
+ * Thin re-export of the leaf-module implementation; new code that only needs
+ * the value should import `readAppliedUIScale` from `@/utils/uiScale` directly
+ * so it stays mockable in the many tests that stub this module by hand.
+ */
+export function getUIScale(): number {
+  return readAppliedUIScale()
+}
+
+/**
+ * Identity. Kept only so the coordinate-conversion call sites can be deleted
+ * incrementally; new code must NOT call this.
  *
- * Therefore: fixedCSS = viewportCoord / zoom
+ * Under `html { zoom }` a `position: fixed` offset had to be divided by the
+ * zoom factor because `getBoundingClientRect()` reported visual pixels while
+ * fixed offsets were in layout pixels. Rem scaling has a single coordinate
+ * space, so the conversion is a no-op.
  *
- * Example: to right-align a fixed popup to an anchor:
- *   right: toFixedCSS(innerWidth - anchorRect.right) + 'px'
+ * @deprecated scaling no longer changes the coordinate space — use the value
+ * directly.
  */
 export function toFixedCSS(viewportCoord: number): number {
-  const z = getUIScale()
-  return viewportCoord / z
+  return viewportCoord
 }
 
 /**
- * Get viewport dimensions for position:fixed calculations under CSS zoom.
+ * Viewport dimensions in the same coordinate space as `getBoundingClientRect()`.
  *
- * Returns window.innerWidth/innerHeight (NOT affected by CSS zoom),
- * in the same coordinate space as getBoundingClientRect().
- *
- * IMPORTANT: Values from this function are in getBoundingClientRect() space.
- * To use them as position:fixed CSS values, pass through toFixedCSS().
+ * Under CSS zoom these needed a `toFixedCSS()` pass before being used as fixed
+ * offsets; with rem scaling `innerWidth`/`innerHeight` ARE the layout space.
  */
 export function getZoomedViewport(): { width: number; height: number } {
   return {

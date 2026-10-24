@@ -1014,7 +1014,7 @@ defineExpose({
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding:5px var(--space-6);
+    padding: calc(5 * var(--dp)) var(--space-6);
     background: transparent;
     color: var(--text-secondary);
     border: 1px solid var(--border-color);
@@ -1042,7 +1042,7 @@ defineExpose({
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding:5px var(--space-6);
+    padding: calc(5 * var(--dp)) var(--space-6);
     background: var(--accent-color);
     color: #fff;
     border: none;
@@ -1069,7 +1069,7 @@ defineExpose({
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 40px;
+    padding: calc(40 * var(--dp));
 }
 
 /* The placeholder owns its own width: the wrapper centres, but a text skeleton
@@ -1086,9 +1086,9 @@ defineExpose({
     background: rgba(239, 68, 68, 0.1);
     color: var(--color-red);
     padding: var(--space-3) var(--space-6);
-    border-radius: 20px;
+    border-radius: calc(20 * var(--dp));
     font-size: var(--font-size-md);
-    margin: 24px auto;
+    margin: calc(24 * var(--dp)) auto;
     max-width: 90%;
     line-height: var(--line-height-snug);
     align-self: center;

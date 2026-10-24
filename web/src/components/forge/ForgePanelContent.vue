@@ -953,7 +953,7 @@ function formatTime(iso: string): string {
   display: flex;
   align-items: center;
   height: var(--header-height);
-  padding:0 var(--space-2) 0 var(--space-6);
+  padding: 0 var(--space-2) 0 var(--space-6);
   flex-shrink: 0;
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color);
@@ -977,7 +977,7 @@ function formatTime(iso: string): string {
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
-  padding: 3px 7px;
+  padding: calc(3 * var(--dp)) calc(7 * var(--dp));
   border: none;
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
@@ -1023,15 +1023,15 @@ function formatTime(iso: string): string {
    default focus ring. The <a> would otherwise be indistinguishable. */
 .forge-repo-menu-item:focus-visible {
   outline: 2px solid var(--accent-color);
-  outline-offset: -2px;
+  outline-offset: calc(-2 * var(--dp));
 }
 .forge-repo-menu-item.danger {
   color: var(--color-red);
 }
 /* Header icon button — same 28px round treatment as .header-btn elsewhere */
 .forge-header-btn {
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-lg);
   background: var(--bg-secondary);
@@ -1052,7 +1052,7 @@ function formatTime(iso: string): string {
 
 /* ── Empty / unbound state cards ── */
 .forge-card {
-  max-width: 340px;
+  max-width: calc(340 * var(--dp));
   width: 100%;
   display: flex;
   flex-direction: column;
@@ -1089,7 +1089,7 @@ function formatTime(iso: string): string {
 .forge-tabs {
   display: flex;
   align-items: stretch;
-  height: 34px;
+  height: calc(34 * var(--dp));
   flex-shrink: 0;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
@@ -1098,10 +1098,10 @@ function formatTime(iso: string): string {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: calc(5 * var(--dp));
   flex: 1;
   min-width: 0;
-  padding:0 var(--space-7);
+  padding: 0 var(--space-7);
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -1140,7 +1140,7 @@ function formatTime(iso: string): string {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 2px;
+  height: calc(2 * var(--dp));
   background: var(--accent-color);
 }
 
@@ -1181,7 +1181,7 @@ function formatTime(iso: string): string {
 .forge-row-comments {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
 }
 .forge-loading-more {
   padding: var(--space-6);
@@ -1193,10 +1193,10 @@ function formatTime(iso: string): string {
 .forge-bind-form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: calc(14 * var(--dp));
   /* ModalDialog's .modal-body ships with no padding of its own, so the content
      supplies it — without this the form sits flush against the card edges. */
-  padding:14px var(--space-7) var(--space-7);
+  padding: calc(14 * var(--dp)) var(--space-7) var(--space-7);
 }
 .forge-bind-section {
   display: flex;
@@ -1220,7 +1220,7 @@ function formatTime(iso: string): string {
   align-items: center;
   gap: var(--space-5);
   width: 100%;
-  padding:9px var(--space-6);
+  padding: calc(9 * var(--dp)) var(--space-6);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-primary);
@@ -1301,12 +1301,12 @@ function formatTime(iso: string): string {
 .forge-bind-divider {
   height: 1px;
   background: var(--border-color);
-  margin: -2px 0;
+  margin: calc(-2 * var(--dp)) 0;
 }
 .forge-input {
   width: 100%;
   box-sizing: border-box;
-  padding:9px var(--space-6);
+  padding: calc(9 * var(--dp)) var(--space-6);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-primary);
@@ -1319,7 +1319,7 @@ function formatTime(iso: string): string {
 .forge-input:focus {
   outline: none;
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  box-shadow: 0 0 0 calc(2 * var(--dp)) var(--focus-ring);
 }
 .forge-bind-error {
   display: flex;

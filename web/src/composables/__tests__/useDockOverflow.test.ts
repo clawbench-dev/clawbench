@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, afterEach } from 'vitest'
 import { useDockOverflow, type DockOverflowOptions } from '@/composables/useDockOverflow'
+import { applyUIScale } from '@/utils/uiScale'
 
 // Mock ResizeObserver
 const mockObserve = vi.fn()
@@ -301,6 +302,56 @@ describe('useDockOverflow', () => {
       expect(result.inlineOverflowTabs.value).toEqual(TABS)
       expect(result.popupOverflowTabs.value).toEqual([])
       expect(result.showOverflowButton.value).toBe(false)
+    })
+  })
+
+  describe('the button footprint follows the UI scale', () => {
+    // The dock is measured in CSS px (already scaled by the root font size),
+    // while DOCK_BTN_SIZE/DOCK_GAP are the stylesheet's DESIGN px. Comparing
+    // them directly over-counts how many buttons fit — at 150% the dock holds
+    // two thirds as many. These cases pin the scaled footprint.
+    afterEach(() => {
+      applyUIScale(1)
+    })
+
+    it('fits fewer buttons as the scale grows, for the same measured width', () => {
+      // 600 CSS px of dock, 4 primary buttons + 1 overflow:
+      //   100%: floor = 5*34 + 4*12 = 218, step = 46 → (600-218)/46 = 8.3 → all 4
+      //   150%: floor = 5*51 + 4*18 = 327, step = 69 → (600-327)/69 = 3.9 → 3
+      //   200%: floor = 5*68 + 4*24 = 436, step = 92 → (600-436)/92 = 1.7 → 1
+      // The 150% row is the one that proves it is not simply "scale divides the
+      // count": the floor moves too.
+      const at100 = setupWithSize(TABS, 600)
+      expect(at100.inlineOverflowTabs.value).toEqual(TABS)
+
+      applyUIScale(1.5)
+      const at150 = setupWithSize(TABS, 600)
+      expect(at150.inlineOverflowTabs.value).toEqual(['tasks', 'proxy', 'terminal'])
+
+      applyUIScale(2)
+      const at200 = setupWithSize(TABS, 600)
+      expect(at200.inlineOverflowTabs.value).toEqual(['tasks'])
+    })
+
+    it('uses the scaled minimum, not the design minimum, as the floor', () => {
+      // At 100% the minimum for 4 primary + 1 overflow is 218px, so 218 fits
+      // nothing extra. At 200% that same content needs 436px — 218px is below
+      // the floor and must collapse everything.
+      applyUIScale(2)
+      const { inlineOverflowTabs, showOverflowButton } = setupWithSize(TABS, 218)
+      expect(inlineOverflowTabs.value).toEqual([])
+      expect(showOverflowButton.value).toBe(true)
+    })
+
+    it('recomputes when the scale changes without a new measurement', () => {
+      // Rem scaling resizes the dock, but a caller can read the decision before
+      // the ResizeObserver callback lands. The scale must be a reactive
+      // dependency of the computed, or the stale count survives.
+      const s = setupWithSize(TABS, 600)
+      expect(s.inlineOverflowTabs.value).toEqual(TABS)
+
+      applyUIScale(2)
+      expect(s.inlineOverflowTabs.value).toEqual(['tasks'])
     })
   })
 })

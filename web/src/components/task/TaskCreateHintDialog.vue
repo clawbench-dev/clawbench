@@ -109,7 +109,7 @@ function dontShowAgain() {
 
 <style scoped>
 .tch-body {
-  padding: 14px var(--space-7) var(--space-4);
+  padding: calc(14 * var(--dp)) var(--space-7) var(--space-4);
   display: flex;
   flex-direction: column;
 }
@@ -151,8 +151,8 @@ function dontShowAgain() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: calc(26 * var(--dp));
+  height: calc(26 * var(--dp));
   /* Explicit border: this class is a <button>, and the shared icon-button
      language elsewhere is defined on <a> — without this the UA button border
      shows through. */

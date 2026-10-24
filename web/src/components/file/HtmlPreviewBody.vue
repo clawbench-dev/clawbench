@@ -22,6 +22,7 @@
       v-else-if="status === 'ready'"
       ref="iframeRef"
       class="html-preview-iframe"
+      :style="iframeStyle"
       :src="htmlSrc || undefined"
       :srcdoc="htmlSrc ? undefined : htmlContent"
       sandbox="allow-scripts allow-same-origin"
@@ -32,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { installPreviewScrollbar, installPreviewSearchStyles } from '@/utils/htmlPreview.ts'
 import {
@@ -58,6 +59,11 @@ import {
  * It mirrors MarkdownPreviewBody's exposed surface (status/error shell plus
  * no-op scroll helpers) so the parent can swap the rendered bodies without a
  * special case.
+ *
+ * The frame takes the measured height of the document it loaded (see
+ * measureDocHeight). The surfaces that host it are content-sized, so without
+ * that the frame fell back to the 150px replaced-element default and a
+ * full-page document opened as a short strip.
  */
 
 export type HtmlBodyStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -94,6 +100,69 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)
+
+/**
+ * Height of the previewed DOCUMENT, in CSS pixels, once it has loaded.
+ *
+ * Only the frame can report this, and only a content-sized host needs it: the
+ * floating card and the touch sheet both grow to fit their content, so
+ * `height: 100%` on the frame resolves against an indefinite parent and falls
+ * back to the replaced-element default of 150px — a full-page document then
+ * opens as a short strip. Feeding the document's own height in as the frame's
+ * height gives it a definite size; the card's `max-height` caps it and the
+ * document scrolls inside from then on.
+ *
+ * `null` until the first load, which leaves the frame at its stylesheet size.
+ */
+const docHeight = ref<number | null>(null)
+
+/**
+ * Drop the measurement when the previewed document changes.
+ *
+ * A new file mounts a new frame, and until its `load` fires the frame would
+ * otherwise carry the PREVIOUS document's height — a tall document followed by
+ * a short one would flash at the old size before settling.
+ */
+watch(
+  () => props.htmlSrc,
+  () => { docHeight.value = null },
+)
+
+/** Inline height for the measured case; unset keeps the stylesheet's `100%`. */
+const iframeStyle = computed(() =>
+  docHeight.value === null ? undefined : { height: `${docHeight.value}px` },
+)
+
+/**
+ * Read the loaded document's natural height.
+ *
+ * `body` — not `documentElement` — is the measurement: `documentElement`'s
+ * scrollHeight is floored at the frame's viewport height, so a short document
+ * (120px) reports the full frame and the card never shrinks back. The body
+ * reports the content's own height in both shapes; `documentElement` is kept
+ * as a fallback for a document that styles its body out of flow.
+ *
+ * Measured once per load, deliberately NOT observed. A document sized in `vh`
+ * (`height: 100vh`) would feed back: measuring grows the frame, the frame
+ * grows the viewport, the next measure grows it again. `load` already fires
+ * after subresources (images, stylesheets) have settled, which is what the
+ * measurement needs.
+ *
+ * Same-origin is guaranteed by the sandbox this component sets; a frame that
+ * somehow lost it throws on `contentDocument` and is left at its default size.
+ */
+function measureDocHeight() {
+  let doc: Document | null
+  try {
+    doc = iframeRef.value?.contentDocument ?? null
+  } catch {
+    return
+  }
+  if (!doc) return
+  const body = doc.body
+  const height = body?.scrollHeight || doc.documentElement?.scrollHeight || 0
+  if (height > 0) docHeight.value = height
+}
 
 /**
  * Quote bar handle, loaded on first use.
@@ -147,6 +216,7 @@ function onLoad() {
   const iframe = iframeRef.value
   installPreviewScrollbar(iframe)
   installPreviewSearchStyles(iframe)
+  measureDocHeight()
 
   disposeSearchShortcut?.()
   disposeSearchShortcut = null
@@ -220,7 +290,14 @@ defineExpose({
 }
 
 .html-preview-iframe {
-  flex: 1;
+  /* `flex-basis: auto` (NOT `flex: 1`) is load-bearing: the frame carries the
+     document's measured height as an inline style, and `flex: 1` expands to
+     `1 1 0%` — a zero basis ignores that height and the frame collapses to the
+     replaced-element default of 150px. With `auto` the inline height IS the
+     basis, so a content-sized host (floating card, touch sheet) grows to the
+     document and its `max-height` caps + scrolls it. In a host that already has
+     a definite height (the docked pane) `height: 100%` still fills it. */
+  flex: 1 1 auto;
   width: 100%;
   height: 100%;
   border: none;

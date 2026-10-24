@@ -443,7 +443,7 @@ defineExpose({ open: openSheet })
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 40px;
+  min-height: calc(40 * var(--dp));
   padding: var(--space-2) 0;
 }
 .gm-row + .gm-row {
@@ -528,7 +528,7 @@ defineExpose({ open: openSheet })
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
   font-size: var(--font-size-xs);
   color: var(--text-muted);
 }
@@ -540,8 +540,8 @@ defineExpose({ open: openSheet })
 
 .gm-usage-bar {
   position: relative;
-  width: 28px;
-  height: 6px;
+  width: calc(28 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--text-primary) 18%, transparent);
   overflow: hidden;
@@ -559,7 +559,7 @@ defineExpose({ open: openSheet })
 
 .gm-usage-pct {
   font-variant-numeric: tabular-nums;
-  min-width: 26px;
+  min-width: calc(26 * var(--dp));
   text-align: right;
 }
 
@@ -578,7 +578,7 @@ defineExpose({ open: openSheet })
   padding: 1px var(--space-3);
   border-radius: var(--radius-full);
   font-size: var(--font-size-xs);
-  line-height: 16px;
+  line-height: calc(16 * var(--dp));
 }
 .gm-tag-crown {
   flex-shrink: 0;
@@ -595,8 +595,8 @@ defineExpose({ open: openSheet })
 /* Remove: icon button, muted at rest, red on hover. */
 .gm-remove {
   flex-shrink: 0;
-  width: 26px;
-  height: 26px;
+  width: calc(26 * var(--dp));
+  height: calc(26 * var(--dp));
   padding: 0;
   border: none;
   background: none;
@@ -648,7 +648,7 @@ defineExpose({ open: openSheet })
 .gm-setting-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(2 * var(--dp));
   min-width: 0;
 }
 .gm-setting-desc {
@@ -682,7 +682,7 @@ defineExpose({ open: openSheet })
   align-items: center;
   gap: var(--space-2);
   padding: 0 var(--space-2);
-  height: 28px;
+  height: calc(28 * var(--dp));
   border: none;
   background: none;
   color: var(--accent-color, #0066cc);

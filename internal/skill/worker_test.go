@@ -1,8 +1,10 @@
 package skill
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -207,4 +209,98 @@ func TestResetSyncForTest_ClearsState(t *testing.T) {
 	defer syncMu.Unlock()
 	assert.Nil(t, syncDone)
 	assert.Equal(t, SyncResult{}, syncResult)
+}
+
+// TestRunSyncLoop_ExitsOnCancelWithPositiveInterval pins the periodic branch's
+// exit path. The previous coverage of this branch came only from the goroutine
+// in StartGitSyncWorker, whose scheduling made the package's coverage drift
+// between runs (measured 87.5%–90.6%), which intermittently tripped the
+// Tier 1 gate. Driving the loop directly makes it deterministic.
+func TestRunSyncLoop_ExitsOnCancelWithPositiveInterval(t *testing.T) {
+	setupWorkerEnv(t)
+	model.ConfigInstance.Skills.RefreshHours = 1
+
+	cancel := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		runSyncLoop(cancel)
+		close(exited)
+	}()
+
+	close(cancel)
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runSyncLoop did not exit after cancel closed")
+	}
+}
+
+// TestRunSyncLoop_ParksUntilCancelWithNonPositiveInterval pins the disabled
+// branch: with no interval the loop must not spin or fire a sync, it must park
+// until cancelled.
+func TestRunSyncLoop_ParksUntilCancelWithNonPositiveInterval(t *testing.T) {
+	setupWorkerEnv(t)
+	model.ConfigInstance.Skills.RefreshHours = 0
+
+	cancel := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		runSyncLoop(cancel)
+		close(exited)
+	}()
+
+	// The loop must park, not spin: if it fell through to a periodic sync it
+	// would either fire immediately or exit. Neither happens before cancel.
+	select {
+	case <-exited:
+		t.Fatal("runSyncLoop exited without being cancelled")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(cancel)
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runSyncLoop did not exit after cancel closed")
+	}
+}
+
+// TestSetPersistSyncStateFn_WiresCallback pins the injection point main.go uses.
+func TestSetPersistSyncStateFn_WiresCallback(t *testing.T) {
+	setupWorkerEnv(t)
+
+	called := false
+	SetPersistSyncStateFn(func(SyncResult) error {
+		called = true
+		return nil
+	})
+	recordSyncResult(SyncResult{})
+	assert.True(t, called, "the wired callback must be invoked by recordSyncResult")
+}
+
+// TestRecordSyncResult_PersistErrorIsNonFatal pins the best-effort contract: a
+// failing persistence callback must not panic or abort the sync (a read-only
+// config.yaml must not break syncing).
+func TestRecordSyncResult_PersistErrorIsNonFatal(t *testing.T) {
+	setupWorkerEnv(t)
+
+	persistSyncStateFn = func(SyncResult) error { return errors.New("read-only config") }
+
+	assert.NotPanics(t, func() { recordSyncResult(SyncResult{SkillCount: 3}) })
+	assert.NotZero(t, model.ConfigInstance.Skills.LastSyncAt,
+		"the in-memory state must still be updated")
+}
+
+// TestDoSync_SkipsRepoWithoutURL pins the empty-URL guard: a config entry
+// without a remote is not a failure, it is simply nothing to fetch.
+func TestDoSync_SkipsRepoWithoutURL(t *testing.T) {
+	setupWorkerEnv(t)
+
+	model.ConfigInstance.Skills.Repos = []model.SkillRepo{
+		{URL: "", Slug: "no-url"},
+	}
+
+	res := doSync()
+	assert.Empty(t, res.Errors, "an empty URL is skipped, not recorded as an error")
+	assert.Empty(t, model.ConfigInstance.Skills.Repos[0].LastError)
 }

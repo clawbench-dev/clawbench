@@ -311,11 +311,11 @@ function onModalClose() {
 .password-dialog__body {
   display: flex;
   flex-direction: column;
-  padding:14px var(--space-7) var(--space-3);
+  padding: calc(14 * var(--dp)) var(--space-7) var(--space-3);
 }
 
 .password-dialog__field {
-  margin-bottom: 14px;
+  margin-bottom: calc(14 * var(--dp));
 }
 
 .password-dialog__label {
@@ -334,9 +334,9 @@ function onModalClose() {
 .password-dialog__input {
   width: 100%;
   min-width: 0;
-  height: 30px;
+  height: calc(30 * var(--dp));
   /* Right padding reserves room for the absolutely-positioned eye toggle. */
-  padding: 0 40px 0 var(--space-6);
+  padding: 0 calc(40 * var(--dp)) 0 var(--space-6);
   font-size: var(--font-size-xl);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
@@ -352,7 +352,7 @@ function onModalClose() {
 
 .password-dialog__eye {
   position: absolute;
-  right: 10px;
+  right: calc(10 * var(--dp));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -392,7 +392,7 @@ function onModalClose() {
 
 .password-dialog__strength-bar {
   flex: 1;
-  height: 4px;
+  height: calc(4 * var(--dp));
   background: var(--bg-tertiary);
   border-radius: var(--radius-xs);
   overflow: hidden;

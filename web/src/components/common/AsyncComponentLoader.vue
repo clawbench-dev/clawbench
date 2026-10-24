@@ -16,8 +16,8 @@ defineProps<{
 <style scoped>
 .async-component-loader {
   height: 100%;
-  min-height: 120px;
-  padding: 32px;
+  min-height: calc(120 * var(--dp));
+  padding: calc(32 * var(--dp));
 }
 
 .async-component-loader.minimal {

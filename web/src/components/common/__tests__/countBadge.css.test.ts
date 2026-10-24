@@ -46,10 +46,19 @@ function declsOf(selector: string): string {
   return m![1]
 }
 
-/** Numeric px value of a `prop: Npx` declaration, or NaN. */
+/**
+ * The DESIGN px value of a `prop:` declaration, or NaN.
+ *
+ * Geometry is `calc(N * var(--dp))` so the badge scales with the root font
+ * size; the invariant here is the design size, not the spelling.
+ */
 function px(decls: string, prop: string): number {
-  const m = decls.match(new RegExp(`(?:^|;)\\s*${prop}:\\s*(-?[\\d.]+)px`))
-  return m ? Number(m[1]) : NaN
+  const viaDp = decls.match(
+    new RegExp(`(?:^|;)\\s*${prop}:\\s*calc\\(\\s*(-?[\\d.]+)\\s*\\*\\s*var\\(--dp\\)\\s*\\)`),
+  )
+  if (viaDp) return Number(viaDp[1])
+  const literal = decls.match(new RegExp(`(?:^|;)\\s*${prop}:\\s*(-?[\\d.]+)px`))
+  return literal ? Number(literal[1]) : NaN
 }
 
 describe('.count-badge is a pill, not a rounded rectangle', () => {

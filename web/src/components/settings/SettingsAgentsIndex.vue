@@ -168,7 +168,7 @@ async function handleRescan() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 38px;
+  min-height: calc(38 * var(--dp));
   padding: var(--space-4) var(--space-7);
   cursor: pointer;
   background: var(--bg-primary);
@@ -215,7 +215,7 @@ async function handleRescan() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 38px;
+  min-height: calc(38 * var(--dp));
   padding: var(--space-4) var(--space-7);
   cursor: pointer;
   gap: var(--space-6);
@@ -301,7 +301,7 @@ async function handleRescan() {
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
   line-height: 1;
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   background: var(--accent-color, #0066cc);
   color: #fff;
@@ -323,7 +323,7 @@ async function handleRescan() {
 }
 
 .settings-agents-index__empty {
-  padding:24px var(--space-7);
+  padding: calc(24 * var(--dp)) var(--space-7);
   text-align: center;
   color: var(--text-muted);
   font-size: var(--font-size-lg);

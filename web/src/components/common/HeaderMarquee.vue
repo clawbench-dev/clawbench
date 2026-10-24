@@ -181,7 +181,7 @@ defineExpose({ checkOverflow, isOverflow, isDragging, scrollOffset, getMaxScroll
   align-items: center;
   min-width: 0;
   overflow: hidden;
-  padding-left: 3px;
+  padding-left: calc(3 * var(--dp));
   width: 100%;
   max-width: 100%;
   user-select: none;

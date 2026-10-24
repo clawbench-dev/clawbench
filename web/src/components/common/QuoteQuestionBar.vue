@@ -618,11 +618,11 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
      drift between them would either clip the panel or leave it narrower than
      intended. 60% of the previous 600px, per review feedback that the popup
      read as too wide for an inline reply box. */
-  --qq-expanded-width: 360px;
+  --qq-expanded-width: calc(360 * var(--dp));
   position: fixed;
-  top: calc(var(--header-height) + 8px + var(--header-safe-area-top));
-  left: 8px;
-  right: 8px;
+  top: calc(var(--header-height) + calc(8 * var(--dp)) + var(--header-safe-area-top));
+  left: calc(8 * var(--dp));
+  right: calc(8 * var(--dp));
   background: color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-elevated, var(--bg-tertiary)));
   border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
   border-radius: var(--radius-xs);
@@ -690,7 +690,7 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
-  height: 28px;
+  height: calc(28 * var(--dp));
   padding: 0 var(--space-6);
   cursor: pointer;
   flex-shrink: 0;
@@ -750,7 +750,7 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   align-items: center;
   gap: var(--space-3);
   width: 100%;
-  min-height: 22px;
+  min-height: calc(22 * var(--dp));
   padding: 0 0 var(--space-2);
   margin: 0;
   border: none;
@@ -784,10 +784,10 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: calc(14 * var(--dp));
+  height: calc(14 * var(--dp));
   border: 1px dashed color-mix(in srgb, var(--text-muted) 60%, transparent);
-  border-radius: 3px;
+  border-radius: calc(3 * var(--dp));
   color: var(--text-muted);
 }
 
@@ -844,13 +844,13 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
    copy action is a separate pill — see .quote-bar-action.) */
 .qq-copy-btn {
   position: absolute;
-  top: 2px;
-  right: 2px;
+  top: calc(2 * var(--dp));
+  right: calc(2 * var(--dp));
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
   padding: 0;
   border: none;
   border-radius: var(--radius-xs);
@@ -883,7 +883,7 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
 .qq-quoted-text--expanded {
   flex: 1;
   min-width: 0;
-  max-width: calc(100% - 24px);
+  max-width: calc(100% - calc(24 * var(--dp)));
 }
 
 /* Quote text: single line by default; expand on click to show full content.
@@ -895,7 +895,7 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding-right: 24px;
+  padding-right: calc(24 * var(--dp));
 }
 
 .qq-quoted-text--expanded {
@@ -903,7 +903,7 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   overflow-y: auto;
   text-overflow: clip;
   word-break: break-word;
-  max-height: 120px;
+  max-height: calc(120 * var(--dp));
   /* The expanded state reserves the copy button via max-width instead (see the
      geometry rule above). Keeping the base 24px here as well would subtract the
      same space twice and leave the text ~40px short of the bar's right edge. */
@@ -923,7 +923,7 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   align-self: flex-start;
   max-width: 100%;
   padding: 0 var(--space-3);
-  height: 22px;
+  height: calc(22 * var(--dp));
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color) 20%, transparent);
   border-radius: var(--radius-xs);
@@ -969,7 +969,7 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   display: flex;
   align-items: flex-end;
   gap: var(--space-1);
-  padding: 3px var(--space-2);
+  padding: calc(3 * var(--dp)) var(--space-2);
 }
 
 .qq-textarea {
@@ -1003,8 +1003,8 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: calc(26 * var(--dp));
+  height: calc(26 * var(--dp));
   padding: 0;
   background: var(--accent-color);
   color: #fff;

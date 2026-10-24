@@ -370,7 +370,7 @@ onMounted(() => {
  */
 .mcp-input {
   box-sizing: border-box;
-  height: 30px;
+  height: calc(30 * var(--dp));
   padding: 0 var(--space-6);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
@@ -381,7 +381,7 @@ onMounted(() => {
 /* Row children share the width: the name field grows, the select is fixed. */
 .mcp-add-grid > .mcp-input:not(.mcp-select) {
   flex: 1;
-  min-width: 120px;
+  min-width: calc(120 * var(--dp));
 }
 /* Column children must keep their height and fill the width on the cross axis. */
 .mcp-add > .mcp-input {
@@ -389,7 +389,7 @@ onMounted(() => {
   flex: none;
 }
 .mcp-select {
-  flex: 0 0 100px;
+  flex: 0 0 calc(100 * var(--dp));
   padding: 0 var(--space-3);
 }
 /* A textarea has no intrinsic control height: it keeps height:auto so its rows
@@ -403,7 +403,7 @@ onMounted(() => {
 .mcp-input:focus {
   outline: none;
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  box-shadow: 0 0 0 calc(2 * var(--dp)) var(--focus-ring);
 }
 .mcp-error {
   display: flex;

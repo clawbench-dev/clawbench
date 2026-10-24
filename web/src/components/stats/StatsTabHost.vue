@@ -120,7 +120,7 @@ function onRefresh() {
 .stats-tab-bar {
   display: flex;
   align-items: stretch;
-  height: 34px;
+  height: calc(34 * var(--dp));
   flex-shrink: 0;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
@@ -138,8 +138,8 @@ function onRefresh() {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding:0 var(--space-7);
+  gap: calc(5 * var(--dp));
+  padding: 0 var(--space-7);
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -178,19 +178,19 @@ function onRefresh() {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 2px;
+  height: calc(2 * var(--dp));
   background: var(--accent-color, #4f8cff);
 }
 
 .stats-tab-actions {
   display: flex;
   align-items: center;
-  padding:0 var(--space-3);
+  padding: 0 var(--space-3);
   flex-shrink: 0;
 }
 .stats-tab-refresh {
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-lg);
   background: transparent;

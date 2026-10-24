@@ -377,13 +377,13 @@ const tooltipStyle = computed(() => {
   overflow-x: auto;
   overflow-y: hidden;
   flex-shrink: 0;
-  min-width: 20px;
-  max-width: 300px;
+  min-width: calc(20 * var(--dp));
+  max-width: calc(300 * var(--dp));
   position: relative;
 }
 
 .git-graph-scroll.collapsed-mode {
-  max-width: 24px;
+  max-width: calc(24 * var(--dp));
   overflow-x: hidden;
 }
 
@@ -417,7 +417,7 @@ const tooltipStyle = computed(() => {
   white-space: nowrap;
   pointer-events: none;
   z-index: var(--z-popover);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) rgba(0, 0, 0, 0.12);
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -435,12 +435,12 @@ const tooltipStyle = computed(() => {
   color: var(--text-primary, #212529);
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: calc(5 * var(--dp));
 }
 
 .tooltip-ref-dot {
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
   flex-shrink: 0;
 }

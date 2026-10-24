@@ -15,11 +15,11 @@ import claudeIcon from '@lobehub/icons-static-svg/icons/claude-color.svg?raw'
 import codebuddyIcon from '@lobehub/icons-static-svg/icons/codebuddy-color.svg?raw'
 import codexIcon from '@lobehub/icons-static-svg/icons/codex-color.svg?raw'
 import copilotIcon from '@lobehub/icons-static-svg/icons/copilot-color.svg?raw'
-import kimiIcon from '@lobehub/icons-static-svg/icons/kimi-color.svg?raw'
 import deepseekIcon from '@lobehub/icons-static-svg/icons/deepseek-color.svg?raw'
 import qoderIcon from '@lobehub/icons-static-svg/icons/qoder-color.svg?raw'
 import mimoIcon from '@lobehub/icons-static-svg/icons/xiaomimimo.svg?raw'
 import antigravityIcon from '@lobehub/icons-static-svg/icons/antigravity-color.svg?raw'
+import openclawIcon from '@lobehub/icons-static-svg/icons/openclaw-color.svg?raw'
 
 // Monochrome icons (fill="currentColor" — inherit CSS `color`, theme-aware)
 import opencodeIcon from '@lobehub/icons-static-svg/icons/opencode.svg?raw'
@@ -27,6 +27,7 @@ import piIcon from '@lobehub/icons-static-svg/icons/pi.svg?raw'
 import grokIcon from '@lobehub/icons-static-svg/icons/grok.svg?raw'
 import hermesIcon from '@lobehub/icons-static-svg/icons/hermesagent.svg?raw'
 import cursorIcon from '@lobehub/icons-static-svg/icons/cursor.svg?raw'
+import kimiIcon from '@lobehub/icons-static-svg/icons/kimi.svg?raw'
 
 
 // Command Code (Langbase) is not in lobe-icons. Its official mark ships inside
@@ -54,10 +55,12 @@ const agentSvgMap: Record<string, AgentSvgData> = {
     codex: { svg: extractSvgInner(codexIcon), viewBox: extractViewBox(codexIcon) },
     copilot: { svg: extractSvgInner(copilotIcon), viewBox: extractViewBox(copilotIcon) },
     qoder: { svg: extractSvgInner(qoderIcon), viewBox: extractViewBox(qoderIcon) },
-    kimi: { svg: extractSvgInner(kimiIcon), viewBox: extractViewBox(kimiIcon) },
     deepseek: { svg: extractSvgInner(deepseekIcon), viewBox: extractViewBox(deepseekIcon) },
     // DeepSeek Harness is DeepSeek's official agent, so it shares the DeepSeek mark.
     dsh: { svg: extractSvgInner(deepseekIcon), viewBox: extractViewBox(deepseekIcon) },
+    // OpenClaw's official mark is the red lobster; lobe-icons ships it as a
+    // color SVG with baked-in gradient fills.
+    openclaw: { svg: extractSvgInner(openclawIcon), viewBox: extractViewBox(openclawIcon) },
 
     // Monochrome icons (currentColor — CSS `color` controls theme adaptation)
     opencode: { svg: extractSvgInner(opencodeIcon), viewBox: extractViewBox(opencodeIcon), needsBg: true, monoCssClass: 'mono-opencode' },
@@ -71,6 +74,12 @@ const agentSvgMap: Record<string, AgentSvgData> = {
     // Cursor's mark is monochrome (fill="currentColor"), so it needs the same
     // theme-aware color treatment as the other mono backends.
     cursor: { svg: extractSvgInner(cursorIcon), viewBox: extractViewBox(cursorIcon), needsBg: true, monoCssClass: 'mono-cursor' },
+    // Kimi's "-color" variant paints the K glyph pure white on the assumption
+    // of a blue tile behind it; lobe-icons ships no such tile, so on a light
+    // background the glyph vanishes (only the blue dot survives). The mono
+    // variant in Kimi's own brand blue is legible on both themes, so it needs
+    // no contrasting backdrop.
+    kimi: { svg: extractSvgInner(kimiIcon), viewBox: extractViewBox(kimiIcon), monoCssClass: 'mono-kimi' },
 
     // Command Code's mark is monochrome, so it gets the theme-aware mono class.
     commandcode: { svg: commandcodeIcon, viewBox: '0 0 144 144', needsBg: true, monoCssClass: 'mono-commandcode' },

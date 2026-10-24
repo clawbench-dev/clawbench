@@ -12,6 +12,7 @@ describe('getBackendDisplayName', () => {
     expect(getBackendDisplayName('hermes')).toBe('Hermes Agent')
     expect(getBackendDisplayName('cursor')).toBe('Cursor')
     expect(getBackendDisplayName('commandcode')).toBe('Command Code')
+    expect(getBackendDisplayName('openclaw')).toBe('OpenClaw')
   })
 
   it('falls back to the backend id for unknown backends', () => {

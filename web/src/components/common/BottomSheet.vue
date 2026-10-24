@@ -281,7 +281,7 @@ defineExpose({
   background: var(--bg-secondary, #fff);
   border-top: none;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 calc(-4 * var(--dp)) calc(20 * var(--dp)) rgba(0, 0, 0, 0.15);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -352,8 +352,8 @@ defineExpose({
 .bs-header {
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding:0 var(--space-3);
+  gap: calc(3 * var(--dp));
+  padding: 0 var(--space-3);
   height: var(--header-height);
   border-bottom: none;
   box-shadow: 0 1px 0 var(--border-color, #e5e5e5);
@@ -368,11 +368,11 @@ defineExpose({
 /* Android-style drag handle */
 .bs-handle {
   position: absolute;
-  top: 4px;
+  top: calc(4 * var(--dp));
   left: 50%;
   transform: translateX(-50%);
-  width: 32px;
-  height: 4px;
+  width: calc(32 * var(--dp));
+  height: calc(4 * var(--dp));
   border-radius: var(--radius-xs);
   background: var(--text-muted, #bbb);
   opacity: var(--opacity-muted);
@@ -381,19 +381,19 @@ defineExpose({
 /* Handle-only header — compact, no box-shadow, centered handle */
 .bs-header-handle-only {
   justify-content: center;
-  height: 12px;
+  height: calc(12 * var(--dp));
   padding: 0;
   box-shadow: none;
 }
 
 .bs-header-handle-only .bs-handle {
-  top: 4px;
+  top: calc(4 * var(--dp));
 }
 
 .bs-header-icon {
   flex-shrink: 0;
-  width: 24px;
-  height: 24px;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
   border-radius: var(--radius-sm);
   color: var(--accent-color, #0066cc);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);

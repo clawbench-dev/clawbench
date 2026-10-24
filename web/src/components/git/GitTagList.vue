@@ -98,7 +98,7 @@ function shortDate(dateStr: string) {
 
 .retry-btn {
   font-size: var(--font-size-sm);
-  padding:3px var(--space-5);
+  padding: calc(3 * var(--dp)) var(--space-5);
   border: 1px solid var(--accent-color, #4a90d9);
   border-radius: var(--radius-xs);
   background: transparent;
@@ -109,7 +109,7 @@ function shortDate(dateStr: string) {
 .section-empty {
   font-size: var(--font-size-md);
   color: var(--text-muted, #999);
-  padding:24px var(--space-6);
+  padding: calc(24 * var(--dp)) var(--space-6);
   text-align: center;
 }
 
@@ -130,9 +130,9 @@ function shortDate(dateStr: string) {
 
 .tag-action-btn {
   flex-shrink: 0;
-  width: 30px;
-  height: 30px;
-  margin-top: -2px;
+  width: calc(30 * var(--dp));
+  height: calc(30 * var(--dp));
+  margin-top: calc(-2 * var(--dp));
   border: none;
   background: transparent;
   color: var(--text-muted, #999);

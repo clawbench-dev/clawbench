@@ -101,6 +101,31 @@
       })();
     </script>
 
+    <!-- Apply the stored UI scale BEFORE CSS paints, for the same reason as the
+         theme and font blocks above: the scale is now the root font size, so
+         without this the first frame renders at 100% and then every element
+         jumps to its real size once the app mounts (a visible reflow of the
+         whole UI). Reads the same key as useSettingsConfig
+         ('clawbench-settings-' + 'uiScale', JSON-encoded) and clamps to the same
+         0.5–2 range the applier uses, so a corrupt value cannot blank the UI. -->
+    <script>
+      (function() {
+        var scale = 1;
+        try {
+          var raw = localStorage.getItem('clawbench-settings-uiScale');
+          if (raw !== null) {
+            var v = JSON.parse(raw);
+            var n = Number(v);
+            if (isFinite(n) && n > 0) scale = Math.min(2, Math.max(0.5, n));
+          }
+        } catch (e) {}
+        document.documentElement.style.setProperty('--ui-scale', String(scale));
+        // A pre-rem build left `zoom` on <html>; clear it before first paint so
+        // the two mechanisms never compound.
+        document.documentElement.style.zoom = '';
+      })();
+    </script>
+
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">

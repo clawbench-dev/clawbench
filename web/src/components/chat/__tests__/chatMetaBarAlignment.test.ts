@@ -51,7 +51,7 @@ describe('chat meta bar: user and assistant rows align on the right edge', () =>
       /margin-right:\s*var\(--space-5\)/,
     )
     expect(bubble, 'bubble keeps its width cap').toMatch(
-      /max-width:\s*calc\(100%\s*-\s*20px\)/,
+      /max-width:\s*calc\(100%\s*-\s*(?:calc\(\s*20\s*\*\s*var\(--dp\)\s*\)|20px)\)/,
     )
   })
 

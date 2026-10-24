@@ -237,7 +237,7 @@ async function onDragEnd() {
   font-size: var(--font-size-2xl);
   line-height: 1;
   user-select: none;
-  padding:0 var(--space-1);
+  padding: 0 var(--space-1);
 }
 
 .qs-drag-handle:active {
@@ -247,7 +247,7 @@ async function onDragEnd() {
 .qs-label {
   flex-shrink: 0;
   font-weight: var(--font-weight-medium);
-  max-width: 100px;
+  max-width: calc(100 * var(--dp));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -291,14 +291,14 @@ async function onDragEnd() {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  padding: var(--space-3) var(--space-5) var(--space-3) 28px;
+  padding: var(--space-3) var(--space-5) var(--space-3) calc(28 * var(--dp));
   background: color-mix(in srgb, #e53e3e 8%, transparent);
   font-size: var(--font-size-sm);
   color: var(--text-secondary, #666);
 }
 
 .qs-confirm-btn {
-  padding:3px var(--space-5);
+  padding: calc(3 * var(--dp)) var(--space-5);
   border: 1px solid var(--border-color, #ddd);
   border-radius: var(--radius-xs);
   font-size: var(--font-size-sm);
@@ -325,8 +325,8 @@ async function onDragEnd() {
 }
 
 .create-btn {
-  width: 24px;
-  height: 24px;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
   border: none;
   background: none;
   color: var(--accent-color, #0066cc);

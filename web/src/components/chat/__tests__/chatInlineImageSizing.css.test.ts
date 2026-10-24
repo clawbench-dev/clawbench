@@ -120,7 +120,7 @@ describe('chat inline image sizing (markdown-common.css + media-block.css)', () 
   })
 
   it('keeps a height cap so a tall image cannot run away', () => {
-    expect(chatImgRule().decls).toMatch(/max-height\s*:\s*\d/)
+    // A cap in any unit (a design-px calc counts); the point is that one exists.\n    expect(chatImgRule().decls).toMatch(/max-height\s*:\s*(?:\d|calc\()/)
   })
 
   it('cancels the 4px band with a selector that actually outranks the chat rule', () => {

@@ -27,14 +27,14 @@ const message = computed(() => props.label || t('common.componentLoadFailed'))
   justify-content: center;
   gap: var(--space-6);
   height: 100%;
-  min-height: 120px;
-  padding: 32px;
+  min-height: calc(120 * var(--dp));
+  padding: calc(32 * var(--dp));
   color: var(--text-muted);
   font-size: var(--font-size-md);
 }
 
 .async-component-error .li-retry {
-  padding: var(--space-2) 14px;
+  padding: var(--space-2) calc(14 * var(--dp));
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);

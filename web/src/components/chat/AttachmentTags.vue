@@ -151,11 +151,11 @@ watch(() => props.files, (files) => {
   align-items: center;
   gap: var(--space-3);
   border-radius: var(--radius-lg);
-  height: 40px;
-  padding:0 var(--space-4);
-  padding-right: 24px;
+  height: calc(40 * var(--dp));
+  padding: 0 var(--space-4);
+  padding-right: calc(24 * var(--dp));
   flex-shrink: 0;
-  max-width: 150px;
+  max-width: calc(150 * var(--dp));
   position: relative;
   font-size: var(--font-size-sm);
   text-decoration: none;
@@ -178,8 +178,8 @@ watch(() => props.files, (files) => {
 }
 
 .chat-file-attachment.attachment-image-only {
-  width: 40px;
-  height: 40px;
+  width: calc(40 * var(--dp));
+  height: calc(40 * var(--dp));
   padding: 0;
   overflow: hidden;
   border-radius: var(--radius-md);
@@ -194,10 +194,10 @@ watch(() => props.files, (files) => {
 
 .attachment-close-btn {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 16px;
-  height: 16px;
+  top: calc(4 * var(--dp));
+  right: calc(4 * var(--dp));
+  width: calc(16 * var(--dp));
+  height: calc(16 * var(--dp));
   border-radius: 50%;
   border: none;
   background: rgba(0, 0, 0, 0.5);

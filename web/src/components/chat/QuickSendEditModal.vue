@@ -145,7 +145,7 @@ async function saveItem() {
 
 .form-textarea {
   resize: vertical;
-  min-height: 160px;
+  min-height: calc(160 * var(--dp));
   line-height: var(--line-height-normal);
   font-family: inherit;
 }
@@ -165,8 +165,8 @@ async function saveItem() {
 }
 
 .form-checkbox input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
+  width: calc(16 * var(--dp));
+  height: calc(16 * var(--dp));
   accent-color: var(--accent-color, #0066cc);
 }
 </style>

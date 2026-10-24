@@ -19,6 +19,7 @@ import (
 	_ "clawbench/internal/ai/backends/hermes"
 	_ "clawbench/internal/ai/backends/kimi"
 	_ "clawbench/internal/ai/backends/mimo"
+	_ "clawbench/internal/ai/backends/openclaw"
 	_ "clawbench/internal/ai/backends/opencode"
 	_ "clawbench/internal/ai/backends/pi"
 	_ "clawbench/internal/ai/backends/qoder"
@@ -50,6 +51,7 @@ var skillAwareBackends = map[string]bool{
 	"hermes":      true, // ~/.hermes/skills (hermes-acp toolset: skills_list/skill_view/skill_manage); does NOT read ~/.agents/skills by default
 	"commandcode": true, // .commandcode/skills + .agents/skills (cli.mjs resolveSkillLoadPlan adds both at the user tier)
 	"cursor":      true, // .cursor/skills + .claude/skills + .codex/skills + .grok/skills + .agents/skills (verified with marker SKILL.md files; skills also surface as ACP slash commands)
+	"openclaw":    true, // <workspace>/skills + <workspace>/.agents/skills + ~/.agents/skills + ~/.openclaw/skills + per-agent workshop-skills (verified with marker SKILL.md files: the model listed marker-oc-probe and marker-agents-probe by name)
 
 	// Do NOT load their own skills → ClawBench must inject.
 	//
@@ -121,7 +123,7 @@ func TestSharedSkillsDirDeclaredWhereReadable(t *testing.T) {
 	readsShared := map[string]bool{
 		"codex": true, "copilot": true, "opencode": true,
 		"mimo": true, "qoder": true, "dsh": true, "deepseek": true,
-		"cursor": true, "commandcode": true,
+		"cursor": true, "commandcode": true, "openclaw": true,
 	}
 	for _, p := range backends.All() {
 		if !readsShared[p.ID] {

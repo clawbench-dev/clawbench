@@ -223,7 +223,7 @@ defineExpose({ open: openDrawer })
 .shared-files-hint {
   /* Own breathing room so the empty text never hugs the drawer edge,
      independent of the (now removed) container padding. */
-  padding: 32px var(--space-7);
+  padding: calc(32 * var(--dp)) var(--space-7);
   margin: var(--space-4) 0;
   text-align: center;
   font-size: var(--font-size-md);
@@ -246,7 +246,7 @@ defineExpose({ open: openDrawer })
 
 .shared-files-error { color: #cf222e; }
 .shared-files-retry {
-  padding: var(--space-3) 14px;
+  padding: var(--space-3) calc(14 * var(--dp));
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-color, #dee2e6);
   background: var(--bg-tertiary, #f0f0f0);
@@ -309,7 +309,7 @@ defineExpose({ open: openDrawer })
 .shared-file-badge {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   background: rgba(128,128,128,.15);
   color: var(--text-secondary, #57606a);
@@ -356,8 +356,8 @@ defineExpose({ open: openDrawer })
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -372,8 +372,8 @@ defineExpose({ open: openDrawer })
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  height: 28px;
-  padding:0 var(--space-4);
+  height: calc(28 * var(--dp));
+  padding: 0 var(--space-4);
   margin-left: auto;
   border: none;
   border-radius: var(--radius-sm);

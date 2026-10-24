@@ -199,6 +199,21 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// codex-acp sends the same title with NO _meta. Detected here (the
 		// opening frame) because that is where both agents carry the title.
 		reportCompactionToolCall(conn, ch, extractMetaToolName(tc.Meta), tc.Title)
+		// Envelope frames (openclaw: "tool_call: id: web_fetch, args: {...}")
+		// precede the real frame for the same tool under a different
+		// toolCallId. Drop them entirely: a card named "tool_call" is noise,
+		// and id-based dedup cannot collapse the pair.
+		if isACPToolCallWrapper(tc.Title, backendID) {
+			slog.Debug("acp: dropping tool_call wrapper frame",
+				"title", tc.Title, "tool_call_id", toolCallIDOf(tc.ToolCallId))
+			// Still mark the agent active: a wrapper means the real call is
+			// imminent, and the stall watchdog must not fire in between.
+			if conn != nil {
+				conn.SetToolInFlight(true)
+				conn.RecordTurnOutput()
+			}
+			break
+		}
 		// An Agent spawn frame for a team member is the only place the member
 		// name and the tool-call id co-occur; record the join so this member's
 		// later content frames can be grouped under this Agent card.

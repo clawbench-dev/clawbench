@@ -38,8 +38,8 @@ const overlayText = computed(() =>
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(calc(4 * var(--dp)));
+  -webkit-backdrop-filter: blur(calc(4 * var(--dp)));
 }
 
 .connection-overlay__content {
@@ -47,7 +47,7 @@ const overlayText = computed(() =>
   flex-direction: column;
   align-items: center;
   gap: var(--space-8);
-  padding: 40px 48px;
+  padding: calc(40 * var(--dp)) calc(48 * var(--dp));
   border-radius: var(--radius-lg);
   background: var(--bg-primary);
   box-shadow: var(--shadow-md);

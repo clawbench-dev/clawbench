@@ -3,8 +3,20 @@ import { DEFAULT_RATIO, normalizeRatio } from '@/utils/splitRatio'
 import { appLog } from '@/utils/appLog'
 import { DOCK_TAB_IDS, WIDE_SCREEN_PRIMARY_TABS, isDockTabId, type DockTabId } from '@/composables/dockTabs'
 import { DEFAULT_LEFT_COLLAPSED, layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
+import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 
 const TAG = 'WideScreenLayout'
+
+/**
+ * Broadcast when the applied UI scale changes.
+ *
+ * Re-exported from `utils/uiScale.ts` (a leaf module) rather than declared here:
+ * the applier lives there, and importing it back from this module would create a
+ * cycle. A scale change resizes every element but leaves `innerWidth` alone, so
+ * `resize` never fires and any layout decision derived from the scale has to be
+ * told explicitly.
+ */
+export { UI_SCALE_EVENT as SCALE_EVENT }
 
 /**
  * Wide-screen (two-column) threshold, in CSS pixels.
@@ -54,16 +66,27 @@ export function wideDockTabOrder(overflowTabs: readonly string[]): string[] {
 }
 
 /**
- * Wide-screen detection: active when the CSS viewport is at least
- * WIDE_SCREEN_MIN_WIDTH (960) CSS px.
+ * Wide-screen detection: active when the viewport can hold two columns at the
+ * current UI scale.
  *
- * Takes only the CSS width. It used to also take screen dimensions and
- * devicePixelRatio for a physical-width fallback; that fallback is gone because
- * it measured the wrong thing (device glass, not layout space) and produced
- * self-contradictory results — see WIDE_SCREEN_MIN_WIDTH above.
+ * `cssWidth` is the raw `window.innerWidth`; `uiScale` is the font-driven scale
+ * factor. The threshold is compared against the width measured in DESIGN
+ * pixels — the units the 960 was chosen in — so the decision means the same
+ * thing at every scale:
+ *
+ *   usable design width = innerWidth / uiScale
+ *
+ * At scale 1 the two are identical. At scale 1.5 a 1400px window has only
+ * ~933 design px of room, i.e. the panels are 1.5× bigger and genuinely no
+ * longer fit side by side, so it collapses to one column. Skipping the division
+ * would be wrong in the other direction: the layout would claim there is room
+ * for two 320px-minimum columns while the columns themselves are 1.5× wider.
+ *
+ * `uiScale` defaults to 1 so pure-geometry callers and tests keep working.
  */
-export function computeIsWideScreen(cssWidth: number): boolean {
-  return cssWidth >= WIDE_SCREEN_MIN_WIDTH
+export function computeIsWideScreen(cssWidth: number, uiScale = 1): boolean {
+  const scale = Number.isFinite(uiScale) && uiScale > 0 ? uiScale : 1
+  return cssWidth / scale >= WIDE_SCREEN_MIN_WIDTH
 }
 
 const isWideScreen = ref(false)
@@ -101,8 +124,9 @@ let setActiveTab: ((tab: DockTabId) => void) | null = null
 // Listener handles kept so re-init (test reset) can remove old listeners
 // instead of accumulating duplicates on window / matchMedia.
 let resizeListener: (() => void) | null = null
-let mql: MediaQueryList | null = null
-let mqlChangeListener: (() => void) | null = null
+// The scale factor changes every element's size but never the viewport, so it
+// needs its own trigger; the applier broadcasts UI_SCALE_EVENT for that.
+let scaleListener: (() => void) | null = null
 // Same for the layout-epoch watcher: `_resetForTest` clears `initialized`, so a
 // second init would otherwise register a second watcher that reads the same
 // refs — harmless for correctness but a leak that grows with every test.
@@ -123,28 +147,23 @@ function initWideScreen() {
   stopEpochWatch = watch(layoutEpoch, readLayoutState)
   if (typeof window !== 'undefined') {
     const recompute = () => {
-      isWideScreen.value = computeIsWideScreen(window.innerWidth)
+      isWideScreen.value = computeIsWideScreen(window.innerWidth, readAppliedUIScale())
     }
     recompute()
     // Remove any previously registered listeners (a prior init in this
     // process, e.g. after a test reset, may have added them).
     if (resizeListener) window.removeEventListener('resize', resizeListener)
-    if (mql && mqlChangeListener) {
-      if (typeof mql.removeEventListener === 'function') mql.removeEventListener('change', mqlChangeListener)
-      else if (typeof (mql as { removeListener?: unknown }).removeListener === 'function') (mql as { removeListener: (cb: () => void) => void }).removeListener(mqlChangeListener)
-    }
     // Viewport resize covers rotation, window resize and browser-zoom DPR changes.
     resizeListener = recompute
     window.addEventListener('resize', recompute)
-    if (typeof window.matchMedia === 'function') {
-      mql = window.matchMedia(`(min-width: ${WIDE_SCREEN_MIN_WIDTH}px)`)
-      mqlChangeListener = () => recompute()
-      if (typeof mql.addEventListener === 'function') {
-        mql.addEventListener('change', mqlChangeListener)
-      } else if (typeof (mql as { addListener?: unknown }).addListener === 'function') {
-        ;(mql as { addListener: (cb: () => void) => void }).addListener(mqlChangeListener)
-      }
-    }
+    // A scale change does NOT fire `resize`: rem scaling changes the size of
+    // every element, not the viewport, so `innerWidth` is untouched. The
+    // applier broadcasts an event instead (it cannot be a reactive dependency
+    // here — importing `localConfig` from useSettingsConfig would break the ~20
+    // components whose tests hand-pick a whitelist mock of that module).
+    if (scaleListener) window.removeEventListener(UI_SCALE_EVENT, scaleListener)
+    scaleListener = recompute
+    window.addEventListener(UI_SCALE_EVENT, scaleListener)
   }
 }
 
@@ -309,5 +328,7 @@ export function _resetForTest() {
   initialized = false
   stopEpochWatch?.()
   stopEpochWatch = null
+  if (scaleListener) window.removeEventListener(UI_SCALE_EVENT, scaleListener)
+  scaleListener = null
   resetWideScreenState()
 }

@@ -519,8 +519,8 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -566,7 +566,7 @@ defineExpose({
 
 .cs-filter-label {
   flex-shrink: 0;
-  width: 64px;
+  width: calc(64 * var(--dp));
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
@@ -606,7 +606,7 @@ defineExpose({
   align-items: center;
   justify-content: center;
   gap: var(--space-5);
-  padding: 40px var(--space-8);
+  padding: calc(40 * var(--dp)) var(--space-8);
   text-align: center;
 }
 
@@ -693,7 +693,7 @@ defineExpose({
   flex-direction: column;
   align-items: center;
   gap: var(--space-5);
-  padding: 40px var(--space-6);
+  padding: calc(40 * var(--dp)) var(--space-6);
 }
 
 /* The skeleton spans the result column and left-aligns like real hits; only the
@@ -768,7 +768,7 @@ defineExpose({
 
 .cs-file-count {
   flex-shrink: 0;
-  min-width: 22px;
+  min-width: calc(22 * var(--dp));
   padding: 0 var(--space-2);
   border-radius: var(--radius-full);
   background: var(--bg-tertiary, #eee);
@@ -818,7 +818,7 @@ defineExpose({
    keeps the gutter aligned with the code it labels. */
 .cs-match-line {
   flex-shrink: 0;
-  min-width: 34px;
+  min-width: calc(34 * var(--dp));
   text-align: right;
   color: var(--text-muted);
   opacity: var(--opacity-muted);
@@ -837,7 +837,7 @@ defineExpose({
 .cs-match-text :deep(mark) {
   background: color-mix(in srgb, var(--accent-color) 28%, transparent);
   color: var(--text-primary);
-  border-radius: 2px;
+  border-radius: calc(2 * var(--dp));
 }
 
 .cs-match-more {
@@ -854,6 +854,6 @@ defineExpose({
    effect in BottomSheet's wide-screen card mode; the narrow-mode bottom sheet
    ignores --modal-max-width and stays a full-height drawer. */
 .content-search-sheet {
-  --modal-max-width: 900px;
+  --modal-max-width: calc(900 * var(--dp));
 }
 </style>

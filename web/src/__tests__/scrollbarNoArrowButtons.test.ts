@@ -130,15 +130,15 @@ describe('the shared scrollbar sheet is the single source', () => {
     const beforeMedia = clean.slice(0, coarseAt)
     const base = beforeMedia.match(/::-webkit-scrollbar\s*\{[^}]*\}/g) || []
     expect(base, 'the shared sheet must define the base rule exactly once').toHaveLength(1)
-    expect(base[0]).toMatch(/width:\s*8px/)
-    expect(base[0]).toMatch(/height:\s*8px/)
+    expect(base[0]).toMatch(/(width):\s*(?:calc\(\s*8\s*\*\s*var\(--dp\)\s*\)|8px)/)
+    expect(base[0]).toMatch(/(height):\s*(?:calc\(\s*8\s*\*\s*var\(--dp\)\s*\)|8px)/)
 
     // Coarse override: 4px on both axes, inside the media block.
     const coarse = clean.slice(coarseAt)
     const override = coarse.match(/::-webkit-scrollbar\s*\{[^}]*\}/)
     expect(override, 'the coarse block must override the base rule').not.toBeNull()
-    expect(override![0]).toMatch(/width:\s*4px/)
-    expect(override![0]).toMatch(/height:\s*4px/)
+    expect(override![0]).toMatch(/(width):\s*(?:calc\(\s*4\s*\*\s*var\(--dp\)\s*\)|4px)/)
+    expect(override![0]).toMatch(/(height):\s*(?:calc\(\s*4\s*\*\s*var\(--dp\)\s*\)|4px)/)
   })
 
   it('takes its colours from variables with fallbacks, so each document keeps its palette', () => {

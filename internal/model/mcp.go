@@ -125,6 +125,18 @@ var mcpUnsupportedBackends = map[string]bool{
 	"dsh":      true,
 	"deepseek": true,
 	"pi":       true,
+	// openclaw's `acp` subcommand is a bridge, not an agent: it explicitly
+	// refuses per-session MCP servers ("ACP bridge mode does not support
+	// per-session MCP servers. Configure MCP on the OpenClaw gateway or agent
+	// instead."). Unlike the three above it does not silently ignore the field —
+	// session/new FAILS, so every turn would error out if we injected anything.
+	//
+	// The rejection is payload-dependent (measured 2026-10-24): an entry with
+	// only {name, command} is accepted and ignored, while {name, command,
+	// args: [], env: []} — exactly what toACPMcpServers emits — is refused.
+	// Do not "fix" this by trimming empty slices; that would trade a hard
+	// failure for a silently useless injection.
+	"openclaw": true,
 }
 
 // BackendSupportsMCP reports whether the probe found this backend honoring the

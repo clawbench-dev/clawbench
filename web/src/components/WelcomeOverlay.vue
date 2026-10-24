@@ -259,8 +259,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--bg-primary) 80%, transparent);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(calc(4 * var(--dp)));
+  -webkit-backdrop-filter: blur(calc(4 * var(--dp)));
   padding: var(--space-7);
 }
 
@@ -269,7 +269,7 @@ onUnmounted(() => {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   width: 100%;
-  max-width: 420px;
+  max-width: calc(420 * var(--dp));
   max-height: 80vh;
   display: flex;
   flex-direction: column;
@@ -281,7 +281,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding:14px var(--space-7) var(--space-5);
+  padding: calc(14 * var(--dp)) var(--space-7) var(--space-5);
 }
 
 .welcome-header h3 {
@@ -295,8 +295,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: 50%;
   background: var(--bg-tertiary);
@@ -312,7 +312,7 @@ onUnmounted(() => {
 }
 
 .welcome-desc {
-  margin:0 var(--space-7) var(--space-5);
+  margin: 0 var(--space-7) var(--space-5);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   line-height: var(--line-height-normal);
@@ -327,7 +327,7 @@ onUnmounted(() => {
   flex: 1;
   max-height: 40vh;
   overflow-y: auto;
-  padding:0 var(--space-6);
+  padding: 0 var(--space-6);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -357,7 +357,7 @@ onUnmounted(() => {
 .backend-icon {
   line-height: 1;
   flex-shrink: 0;
-  width: 24px;
+  width: calc(24 * var(--dp));
   text-align: center;
 }
 
@@ -382,11 +382,11 @@ onUnmounted(() => {
 
 .backend-badge {
   position: absolute;
-  right: 6px;
-  bottom: 4px;
+  right: calc(6 * var(--dp));
+  bottom: calc(4 * var(--dp));
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-sm);
   white-space: nowrap;
 }
@@ -403,8 +403,8 @@ onUnmounted(() => {
 
 .btn-install {
   position: absolute;
-  right: 6px;
-  top: 4px;
+  right: calc(6 * var(--dp));
+  top: calc(4 * var(--dp));
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
   padding: var(--space-1) var(--space-3);
@@ -470,7 +470,7 @@ onUnmounted(() => {
 }
 
 .welcome-footer {
-  padding: var(--space-5) var(--space-7) 14px;
+  padding: var(--space-5) var(--space-7) calc(14 * var(--dp));
   display: flex;
   flex-direction: column;
   gap: var(--space-4);

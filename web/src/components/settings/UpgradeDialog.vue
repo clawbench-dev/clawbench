@@ -244,8 +244,8 @@ watch(visible, (v) => {
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--bg-primary) 80%, transparent);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(calc(4 * var(--dp)));
+  -webkit-backdrop-filter: blur(calc(4 * var(--dp)));
   padding: var(--space-7);
 }
 
@@ -254,7 +254,7 @@ watch(visible, (v) => {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   width: 100%;
-  max-width: 380px;
+  max-width: calc(380 * var(--dp));
   box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
@@ -263,7 +263,7 @@ watch(visible, (v) => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding:14px var(--space-7) var(--space-4);
+  padding: calc(14 * var(--dp)) var(--space-7) var(--space-4);
 }
 
 .ug-header h3 {
@@ -277,8 +277,8 @@ watch(visible, (v) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: 50%;
   background: var(--bg-tertiary);
@@ -307,7 +307,7 @@ watch(visible, (v) => {
 .ug-release-link {
   display: block;
   text-align: center;
-  margin:0 var(--space-7) var(--space-6);
+  margin: 0 var(--space-7) var(--space-6);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   color: var(--accent-color);
@@ -324,12 +324,12 @@ watch(visible, (v) => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
+  gap: calc(14 * var(--dp));
 }
 
 .ug-progress-bar {
   width: 100%;
-  height: 6px;
+  height: calc(6 * var(--dp));
   background: var(--bg-tertiary);
   border-radius: var(--radius-xs);
   overflow: hidden;
@@ -354,7 +354,7 @@ watch(visible, (v) => {
 }
 
 .ug-success {
-  margin:0 0 var(--space-4);
+  margin: 0 0 var(--space-4);
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);
   color: var(--accent-color);
@@ -387,7 +387,7 @@ watch(visible, (v) => {
 
 /* Pre-flight install-directory warning (amber, non-fatal) */
 .ug-warn {
-  margin:0 var(--space-7) var(--space-6);
+  margin: 0 var(--space-7) var(--space-6);
   padding: var(--space-5) var(--space-6);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--color-orange) 12%, transparent);
@@ -396,14 +396,14 @@ watch(visible, (v) => {
 }
 
 .ug-warn-title {
-  margin:0 0 var(--space-3);
+  margin: 0 0 var(--space-3);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--color-orange);
 }
 
 .ug-warn-body {
-  margin:0 0 var(--space-3);
+  margin: 0 0 var(--space-3);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   word-break: break-word;
@@ -429,7 +429,7 @@ watch(visible, (v) => {
 
 /* Docker advisory (informational, non-fatal) */
 .ug-hint {
-  margin:0 var(--space-7) var(--space-6);
+  margin: 0 var(--space-7) var(--space-6);
   padding: var(--space-5) var(--space-6);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
@@ -438,14 +438,14 @@ watch(visible, (v) => {
 }
 
 .ug-hint-title {
-  margin:0 0 var(--space-3);
+  margin: 0 0 var(--space-3);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--accent-color);
 }
 
 .ug-hint-body {
-  margin:0 0 var(--space-4);
+  margin: 0 0 var(--space-4);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   word-break: break-word;
@@ -484,7 +484,7 @@ watch(visible, (v) => {
 }
 
 .ug-footer {
-  padding: var(--space-4) var(--space-7) 14px;
+  padding: var(--space-4) var(--space-7) calc(14 * var(--dp));
   display: flex;
   gap: var(--space-4);
 }

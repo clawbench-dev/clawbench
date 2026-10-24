@@ -192,7 +192,7 @@ defineExpose({ getSelectedIds })
 .kcf-divider {
   height: 1px;
   background: var(--border-color, #e5e5e5);
-  margin:0 var(--space-6);
+  margin: 0 var(--space-6);
   flex-shrink: 0;
 }
 
@@ -227,9 +227,9 @@ defineExpose({ getSelectedIds })
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 36px;
-  min-width: 36px;
-  padding:0 var(--space-5);
+  height: calc(36 * var(--dp));
+  min-width: calc(36 * var(--dp));
+  padding: 0 var(--space-5);
   border: 1px solid var(--border-color, #e0e0e0);
   border-radius: 0;
   background: var(--bg-primary, #fff);
@@ -266,13 +266,13 @@ defineExpose({ getSelectedIds })
 }
 
 .kcf-chosen {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) rgba(0, 0, 0, 0.15);
   transform: scale(1.05);
   z-index: 1;
 }
 
 .kcf-drag {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 calc(4 * var(--dp)) calc(16 * var(--dp)) rgba(0, 0, 0, 0.2);
   transform: scale(1.08);
   z-index: 10;
   opacity: var(--opacity-hover);

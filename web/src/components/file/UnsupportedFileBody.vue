@@ -49,14 +49,14 @@ defineProps<{
      otherwise so nothing collapses. */
   flex: 1;
   min-height: 0;
-  padding: 48px 24px;
+  padding: calc(48 * var(--dp)) calc(24 * var(--dp));
   text-align: center;
   overflow: auto;
 }
 
 .unsupported-file > :deep(img.file-type-icon) {
-  width: 48px;
-  height: 48px;
+  width: calc(48 * var(--dp));
+  height: calc(48 * var(--dp));
   margin-bottom: var(--space-6);
 }
 

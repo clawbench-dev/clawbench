@@ -291,7 +291,8 @@ describe('DirPreviewBody', () => {
     )
     const grid = src.match(/\.dir-preview-grid\s*\{([^}]*)\}/)
     expect(grid, '.dir-preview-grid rule must exist').not.toBeNull()
-    expect(grid![1]).toMatch(/minmax\(180px/)
+    // The track floor is 180 design px, expressed via --dp so it scales.
+    expect(grid![1]).toMatch(/minmax\(calc\(\s*180\s*\*\s*var\(--dp\)\s*\)/)
 
     const item = src.match(/\.dir-preview-item\s*\{([^}]*)\}/)
     expect(item, '.dir-preview-item rule must exist').not.toBeNull()
@@ -303,8 +304,8 @@ describe('DirPreviewBody', () => {
 
     const thumb = src.match(/\.dir-preview-thumb\s*\{([^}]*)\}/)
     expect(thumb, '.dir-preview-thumb rule must exist').not.toBeNull()
-    expect(thumb![1]).toMatch(/width:\s*20px/)
-    expect(thumb![1]).toMatch(/height:\s*20px/)
+    expect(thumb![1]).toMatch(/width:\s*calc\(\s*20\s*\*\s*var\(--dp\)\s*\)/)
+    expect(thumb![1]).toMatch(/height:\s*calc\(\s*20\s*\*\s*var\(--dp\)\s*\)/)
   })
 })
 

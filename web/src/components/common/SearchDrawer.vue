@@ -339,7 +339,7 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  padding: var(--space-5) 14px;
+  padding: var(--space-5) calc(14 * var(--dp));
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
   flex-shrink: 0;
@@ -357,7 +357,7 @@ defineExpose({
 }
 
 .search-empty {
-  padding: 24px;
+  padding: calc(24 * var(--dp));
   text-align: center;
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
@@ -370,7 +370,7 @@ defineExpose({
 }
 
 .search-results-count {
-  padding: var(--space-3) 14px;
+  padding: var(--space-3) calc(14 * var(--dp));
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
@@ -382,7 +382,7 @@ defineExpose({
   display: flex;
   align-items: baseline;
   gap: var(--space-5);
-  padding: 5px 14px;
+  padding: calc(5 * var(--dp)) calc(14 * var(--dp));
   cursor: pointer;
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
@@ -404,7 +404,7 @@ defineExpose({
 
 .search-result-lnum {
   color: var(--text-muted, #999);
-  min-width: 32px;
+  min-width: calc(32 * var(--dp));
   text-align: right;
   flex-shrink: 0;
   user-select: none;

@@ -958,8 +958,8 @@ onUnmounted(() => {
   /* One source of truth for both preview thumbnails: the Bing preview and the
      gallery tiles must render at the same size, so neither can drift from the
      other. Change these two values to resize both together. */
-  --wallpaper-thumb-w: 72px;
-  --wallpaper-thumb-h: 54px;
+  --wallpaper-thumb-w: calc(72 * var(--dp));
+  --wallpaper-thumb-h: calc(54 * var(--dp));
 }
 
 .wallpaper-setting > .settings-item {
@@ -979,7 +979,7 @@ onUnmounted(() => {
   content: '';
   position: absolute;
   bottom: 0;
-  left: 16px;
+  left: calc(16 * var(--dp));
   right: 0;
   height: 0.5px;
   background: var(--border-color);
@@ -1060,7 +1060,7 @@ onUnmounted(() => {
 .wallpaper-mode__btn {
   display: inline-flex;
   align-items: center;
-  height: 30px;
+  height: calc(30 * var(--dp));
   padding: 0 var(--space-6);
   border: none;
   background: var(--bg-tertiary);
@@ -1110,10 +1110,10 @@ onUnmounted(() => {
      does not consume layout space: a 2px border would shrink the photo to
      68x50 while the Bing preview renders 72x54, leaving the two previews
      visibly different sizes. */
-  box-shadow: inset 0 0 0 2px transparent;
+  box-shadow: inset 0 0 0 calc(2 * var(--dp)) transparent;
 }
 .wallpaper-gallery__item--active {
-  box-shadow: inset 0 0 0 2px var(--accent-color);
+  box-shadow: inset 0 0 0 calc(2 * var(--dp)) var(--accent-color);
 }
 
 .wallpaper-gallery__thumb {
@@ -1132,10 +1132,10 @@ onUnmounted(() => {
    only showed it if you happened to move the pointer over it). */
 .wallpaper-gallery__apply {
   position: absolute;
-  bottom: 2px;
-  right: 2px;
+  bottom: calc(2 * var(--dp));
+  right: calc(2 * var(--dp));
   padding: 0 var(--space-3);
-  height: 18px;
+  height: calc(18 * var(--dp));
   border: none;
   border-radius: var(--radius-sm);
   background: rgba(0, 0, 0, 0.6);
@@ -1156,10 +1156,10 @@ onUnmounted(() => {
 
 .wallpaper-gallery__delete {
   position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 20px;
-  height: 20px;
+  top: calc(2 * var(--dp));
+  right: calc(2 * var(--dp));
+  width: calc(20 * var(--dp));
+  height: calc(20 * var(--dp));
   border: none;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.55);
@@ -1178,14 +1178,14 @@ onUnmounted(() => {
 
 .wallpaper-gallery__badge {
   position: absolute;
-  bottom: 2px;
-  left: 2px;
-  padding:0 var(--space-2);
+  bottom: calc(2 * var(--dp));
+  left: calc(2 * var(--dp));
+  padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
   background: var(--accent-color);
   color: #fff;
   font-size: var(--font-size-xs);
-  line-height: 16px;
+  line-height: calc(16 * var(--dp));
 }
 
 .wallpaper-gallery-empty {

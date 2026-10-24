@@ -21,35 +21,80 @@
    ========================================================================== */
 
 :root {
+    /* ══════════════════════════════════════════════════════════════════════
+       FONT-DRIVEN SCALING — read this before adding any size.
+
+       The whole UI scales from ONE number: the root font size. Every size in
+       this file is expressed relative to it, so changing `html { font-size }`
+       (Settings → Appearance → 缩放) resizes text AND the boxes around it in
+       lockstep, at any factor (no steps).
+
+       The unit is `--dp` — one DESIGN pixel, i.e. `1rem / 15`. The layout was
+       drawn against a 15px base, so `4 * var(--dp)` is the "4px" from the
+       mock-up, whatever the current scale is. Sizes are written as
+       `calc(<design px> * var(--dp))` rather than in `em` on purpose: `em`
+       compounds through nesting (a 1.6em heading inside a 0.875em badge would
+       multiply), and this UI nests typography freely in markdown. `rem`/`--dp`
+       always resolve against the root and never compound.
+
+       Why this replaced `html { zoom }`: CSS zoom does NOT scale the layout
+       viewport. Measured at zoom 1.5 on a 1000px window — `innerWidth` stayed
+       1000 while `documentElement.clientWidth` became 667, so `100vw` rendered
+       1500 visual px (floating cards ran off-screen), `60dvh` went from 60% to
+       90% of the screen, media queries still saw 1000px while only 667px were
+       usable, and canvases stretched their backing store. Rem-based scaling
+       keeps one coordinate space: the viewport genuinely narrows, so `vw`,
+       `vh`, media queries and canvas math all stay honest.
+
+       Rules for new sizes:
+         • geometry (padding/gap/width/height/radius/offset) → `calc(N * var(--dp))`
+         • text                                             → a `--font-size-*` token
+         • hairlines (1px borders, outlines)                → stay literal `1px`
+           (they are meant to be a device pixel, not a scaled design pixel)
+       ══════════════════════════════════════════════════════════════════════ */
+
+    /* The scale factor. Written by applyEffectiveUIScale() (and by the
+       pre-paint bootstrap in index.html). 1 = the 15px design base. */
+    --ui-scale: 1;
+
+    /* One design pixel, in rem. `1rem` is set by `html { font-size }` below,
+       so this follows the scale automatically — nothing else may define it. */
+    --dp: calc(1rem / 15);
+
     /* ── Static layout values (never change with theme) ──────────── */
-    --header-height: 36px;
+    --header-height: calc(36 * var(--dp));
+    /* The safe-area inset is a DEVICE measurement, so it must NOT be scaled —
+       a notch is the same physical size whatever the UI scale. */
     --header-safe-area-top: env(safe-area-inset-top, 0px);
-    --dock-height: calc(47px + env(safe-area-inset-bottom, 0));
+    --dock-height: calc(47 * var(--dp) + env(safe-area-inset-bottom, 0px));
 
     /* ── Corner radii. `full` is the pill/circle form; `0` (square) is
        written literally where a shape is deliberately sharp, since a token
        would only obscure that it is a decision. ── */
-    --radius-xs: 3px;      /* tags, tiny chips */
-    --radius-sm: 6px;      /* buttons, inputs, menu rows */
-    --radius-md: 10px;     /* cards, panels, popovers */
-    --radius-lg: 14px;     /* dialogs, large surfaces */
-    --radius-full: 999px;  /* pills, avatars, icon buttons */
+    --radius-xs: calc(3 * var(--dp));      /* tags, tiny chips */
+    --radius-sm: calc(6 * var(--dp));      /* buttons, inputs, menu rows */
+    --radius-md: calc(10 * var(--dp));     /* cards, panels, popovers */
+    --radius-lg: calc(14 * var(--dp));     /* dialogs, large surfaces */
+    /* A pill only needs to exceed half the element's height, so this one is
+       left unscaled: scaling it would make it drift into "not a pill" territory
+       on large scales while gaining nothing. */
+    --radius-full: 999px;
 
     /* ── Spacing scale. Numbers are step names, not sizes: the same step can
        mean "inset of a dense row" or "gap between cards" depending on where
        it lands, so semantic names would mislead more than they help. The
        scale is 4px-based with 2px/6px/10px kept because they are already
        load-bearing in dense UI (badges, icon padding). ── */
-    --space-1: 2px;
-    --space-2: 4px;
-    --space-3: 6px;
-    --space-4: 8px;
-    --space-5: 10px;
-    --space-6: 12px;
-    --space-7: 16px;
-    --space-8: 20px;
-    --space-9: 24px;
-    --space-10: 28px;
+    --space-1: calc(2 * var(--dp));
+    --space-2: calc(4 * var(--dp));
+    --space-3: calc(6 * var(--dp));
+    --space-4: calc(8 * var(--dp));
+    --space-5: calc(10 * var(--dp));
+    --space-6: calc(12 * var(--dp));
+    --space-7: calc(16 * var(--dp));
+    --space-8: calc(20 * var(--dp));
+    --space-9: calc(24 * var(--dp));
+    --space-10: calc(28 * var(--dp));
 
     /* ── Scrollbar track fill. The thumb is themed per palette, but no theme
        tints the track, so this lives once here as the shared default. It is
@@ -204,31 +249,34 @@
     --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
     --font-mono: 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace;
 
-    /* ── Type scale. Fixed px rather than rem on purpose: the appearance
-       "缩放" setting scales the whole UI through `html { zoom }` (see
-       useSettingsConfig.applyUIScale), so px values already follow it.
+    /* ── Type scale. Expressed in design px through `--dp`, so text scales
+       with the root font size together with every box around it (see the
+       FONT-DRIVEN SCALING block at the top of :root).
+
        Seven steps cover the sizes the UI actually uses; every one of them
        maps to a distinct role, so prefer picking the closest step over
-       introducing an eighth. ── */
-    --font-size-2xs: 10px;   /* badges, corner marks, diff gutters */
-    --font-size-xs: 11px;    /* dense meta: tool cards, file paths, diffs */
-    --font-size-sm: 12px;    /* compact body: tool detail, list rows */
-    --font-size-md: 13px;    /* default UI text: chat messages, settings */
-    --font-size-lg: 14px;    /* tool icons, dialog titles, primary buttons */
-    --font-size-xl: 15px;    /* reading text — matches the html/body base */
-    --font-size-2xl: 16px;   /* headings, and inputs kept at 16px so mobile
-                                Safari does not zoom when they gain focus */
+       introducing an eighth. `--font-size-2xl` stays at 16 design px because
+       mobile Safari zooms the page when a form control below 16px gains
+       focus — at the 15px base that is 16/15 rem, and larger scales only move
+       it further from the threshold. ── */
+    --font-size-2xs: calc(10 * var(--dp));   /* badges, corner marks, diff gutters */
+    --font-size-xs: calc(11 * var(--dp));    /* dense meta: tool cards, file paths, diffs */
+    --font-size-sm: calc(12 * var(--dp));    /* compact body: tool detail, list rows */
+    --font-size-md: calc(13 * var(--dp));    /* default UI text: chat messages, settings */
+    --font-size-lg: calc(14 * var(--dp));    /* tool icons, dialog titles, primary buttons */
+    --font-size-xl: calc(15 * var(--dp));    /* reading text — the html/body base */
+    --font-size-2xl: calc(16 * var(--dp));   /* headings, and the 16px form-control floor */
 
-    /* ── Icon size scale (px). Four steps for the agent/brand icons, chosen so
+    /* ── Icon size scale. Four steps for the agent/brand icons, chosen so
        each matches the text it sits beside: sm (14) rides 10–12px meta, md (18)
        the default 13–15px rows, lg (24) larger list/avatar contexts, xl (40)
        the single settings-detail preview. Passed to AgentIcon as `size` enum
        (sm|md|lg|xl), which resolves to these vars. Prefer the closest step over
        a new one. ── */
-    --icon-size-sm: 14px;
-    --icon-size-md: 18px;
-    --icon-size-lg: 24px;
-    --icon-size-xl: 40px;
+    --icon-size-sm: calc(14 * var(--dp));
+    --icon-size-md: calc(18 * var(--dp));
+    --icon-size-lg: calc(24 * var(--dp));
+    --icon-size-xl: calc(40 * var(--dp));
 
     /* ── Weights. Three steps cover the UI, plus `normal` for the places that
        must opt back OUT of an inherited weight (a muted badge nested inside a
@@ -259,7 +307,16 @@
        why the drift is WebView-only.
 
        Pairs with --font-size-md: 13px × 1.4 = 18.2px → 18px keeps the line box
-       whole, and 18 + (--space-2 × 2) = 26px, matching the row's 26px buttons. */
+       whole, and 18 + (--space-2 × 2) = 26px, matching the row's 26px buttons.
+
+       Under font-driven scaling this can no longer be a fixed 18px — it has to
+       follow the scale or the caret drifts at every factor except 1. It also
+       cannot be `calc(18 * var(--dp))`, because that yields a fractional value
+       at almost every scale (15px base × 1.15 → 20.7px) and reintroduces the
+       exact rounding bug above. So it is computed in JS to a whole pixel and
+       written onto <html> (see useSettingsConfig.applyEffectiveUIScale). The
+       18px here is the scale-1 fallback for the first paint and for the
+       standalone documents that never run the applier. */
     --input-line-height: 18px;
 }
 

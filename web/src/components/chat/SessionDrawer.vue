@@ -1107,8 +1107,8 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: calc(30 * var(--dp));
+  height: calc(30 * var(--dp));
   border: none;
   border-radius: var(--radius-sm);
   background: var(--bg-tertiary, #f0f0f0);
@@ -1151,7 +1151,7 @@ defineExpose({
   align-items: center;
   gap: var(--space-4);
   width: 100%;
-  padding: var(--space-5) 14px;
+  padding: var(--space-5) calc(14 * var(--dp));
   border: none;
   background: none;
   color: var(--text-primary);
@@ -1181,8 +1181,8 @@ defineExpose({
 }
 
 .model-item-indicator {
-  width: 8px;
-  height: 8px;
+  width: calc(8 * var(--dp));
+  height: calc(8 * var(--dp));
   border-radius: 50%;
   flex-shrink: 0;
   background: transparent;
@@ -1230,8 +1230,8 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
   flex-shrink: 0;
 }
 
@@ -1239,8 +1239,8 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
@@ -1268,14 +1268,14 @@ defineExpose({
 }
 
 .model-empty {
-  padding: 24px 14px;
+  padding: calc(24 * var(--dp)) calc(14 * var(--dp));
   text-align: center;
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
 }
 
 .tab-empty-hint {
-  padding: 32px 14px;
+  padding: calc(32 * var(--dp)) calc(14 * var(--dp));
   text-align: center;
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
@@ -1290,7 +1290,7 @@ defineExpose({
   align-items: center;
   justify-content: space-between;
   gap: var(--space-6);
-  padding: var(--space-5) 14px;
+  padding: var(--space-5) calc(14 * var(--dp));
 }
 
 /* Auto-cruise sits under auto-approve in the same block; a hairline keeps the
@@ -1336,8 +1336,8 @@ defineExpose({
 .toggle-switch {
   position: relative;
   display: inline-block;
-  width: 36px;
-  height: 20px;
+  width: calc(36 * var(--dp));
+  height: calc(20 * var(--dp));
   flex-shrink: 0;
 }
 
@@ -1356,16 +1356,16 @@ defineExpose({
   bottom: 0;
   background-color: var(--bg-tertiary, #ccc);
   transition: var(--duration-slow);
-  border-radius: 20px;
+  border-radius: calc(20 * var(--dp));
 }
 
 .toggle-slider::before {
   position: absolute;
   content: "";
-  height: 16px;
-  width: 16px;
-  left: 2px;
-  bottom: 2px;
+  height: calc(16 * var(--dp));
+  width: calc(16 * var(--dp));
+  left: calc(2 * var(--dp));
+  bottom: calc(2 * var(--dp));
   background-color: white;
   transition: var(--duration-slow);
   border-radius: 50%;
@@ -1376,7 +1376,7 @@ defineExpose({
 }
 
 .toggle-switch input:checked + .toggle-slider::before {
-  transform: translateX(16px);
+  transform: translateX(calc(16 * var(--dp)));
 }
 </style>
 
@@ -1386,7 +1386,7 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-4) 14px;
+  padding: var(--space-4) calc(14 * var(--dp));
   width: 100%;
   border: none;
   background: none;

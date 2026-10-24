@@ -360,8 +360,7 @@ onMounted(() => {
 .login-bg-gradient {
     position: absolute;
     inset: 0;
-    background:
-        radial-gradient(ellipse 60% 50% at 20% 20%, color-mix(in srgb, var(--accent-color) 8%, transparent), transparent),
+    background: radial-gradient(ellipse 60% 50% at 20% 20%, color-mix(in srgb, var(--accent-color) 8%, transparent), transparent),
         radial-gradient(ellipse 50% 60% at 80% 80%, color-mix(in srgb, var(--accent-color) 6%, transparent), transparent);
     pointer-events: none;
 }
@@ -369,10 +368,9 @@ onMounted(() => {
 .login-bg-grid {
     position: absolute;
     inset: 0;
-    background-image:
-        linear-gradient(color-mix(in srgb, var(--border-color) 30%, transparent) 1px, transparent 1px),
+    background-image: linear-gradient(color-mix(in srgb, var(--border-color) 30%, transparent) 1px, transparent 1px),
         linear-gradient(90deg, color-mix(in srgb, var(--border-color) 30%, transparent) 1px, transparent 1px);
-    background-size: 48px 48px;
+    background-size: calc(48 * var(--dp)) calc(48 * var(--dp));
     mask-image: radial-gradient(ellipse 70% 70% at center, black, transparent);
     -webkit-mask-image: radial-gradient(ellipse 70% 70% at center, black, transparent);
     opacity: var(--opacity-disabled);
@@ -387,9 +385,9 @@ onMounted(() => {
     flex-direction: column;
     align-items: center;
     width: 100%;
-    max-width: 380px;
-    padding: 0 24px;
-    gap: 36px;
+    max-width: calc(380 * var(--dp));
+    padding: 0 calc(24 * var(--dp));
+    gap: calc(36 * var(--dp));
 }
 
 /* Brand section */
@@ -402,14 +400,14 @@ onMounted(() => {
 
 .login-logo-wrapper {
     position: relative;
-    width: 96px;
-    height: 96px;
+    width: calc(96 * var(--dp));
+    height: calc(96 * var(--dp));
     margin-bottom: var(--space-8);
 }
 
 .login-logo {
-    width: 96px;
-    height: 96px;
+    width: calc(96 * var(--dp));
+    height: calc(96 * var(--dp));
     border-radius: 50%;
     display: block;
     position: relative;
@@ -419,7 +417,7 @@ onMounted(() => {
 
 .login-logo-ring {
     position: absolute;
-    inset: -4px;
+    inset: calc(-4 * var(--dp));
     border-radius: 50%;
     border: 2px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
     animation: ring-pulse 3s ease-in-out infinite;
@@ -435,14 +433,14 @@ onMounted(() => {
     font-weight: var(--font-weight-bold);
     color: var(--text-primary);
     letter-spacing: -0.02em;
-    margin:0 0 var(--space-4);
+    margin: 0 0 var(--space-4);
 }
 
 .login-slogan {
     font-size: var(--font-size-2xl);
     font-weight: var(--font-weight-medium);
     color: var(--accent-color);
-    margin:0 0 var(--space-2);
+    margin: 0 0 var(--space-2);
     letter-spacing: 0.08em;
 }
 
@@ -458,7 +456,7 @@ onMounted(() => {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
-    padding: 28px 24px;
+    padding: calc(28 * var(--dp)) calc(24 * var(--dp));
     box-shadow: var(--shadow-sm);
 }
 
@@ -472,7 +470,7 @@ onMounted(() => {
     flex-direction: column;
     gap: var(--space-2);
     margin-bottom: 0;
-    max-height: 160px;
+    max-height: calc(160 * var(--dp));
     overflow-y: auto;
 }
 
@@ -497,7 +495,7 @@ onMounted(() => {
 .server-list-divider {
     border: none;
     border-top: 1px solid var(--border-color);
-    margin:0 0 var(--space-7) 0;
+    margin: 0 0 var(--space-7) 0;
 }
 
 .server-item {
@@ -551,8 +549,8 @@ onMounted(() => {
 
 .server-indicator {
     flex-shrink: 0;
-    width: 8px;
-    height: 8px;
+    width: calc(8 * var(--dp));
+    height: calc(8 * var(--dp));
     border-radius: 50%;
     border: 1.5px solid var(--border-color);
     background: transparent;
@@ -606,9 +604,9 @@ onMounted(() => {
 
 .input-icon {
     position: absolute;
-    left: 14px;
-    width: 18px;
-    height: 18px;
+    left: calc(14 * var(--dp));
+    width: calc(18 * var(--dp));
+    height: calc(18 * var(--dp));
     color: var(--text-muted);
     pointer-events: none;
     flex-shrink: 0;
@@ -617,7 +615,7 @@ onMounted(() => {
 input[type="password"],
 input[type="url"] {
     width: 100%;
-    padding: 13px 14px 13px 42px;
+    padding: calc(13 * var(--dp)) calc(14 * var(--dp)) calc(13 * var(--dp)) calc(42 * var(--dp));
     border: 1.5px solid var(--border-color);
     border-radius: var(--radius-md);
     font-size: var(--font-size-xl);
@@ -630,12 +628,12 @@ input[type="url"] {
 
 input:focus {
     border-color: var(--accent-color);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-color) 12%, transparent);
+    box-shadow: 0 0 0 calc(3 * var(--dp)) color-mix(in srgb, var(--accent-color) 12%, transparent);
 }
 
 .login-btn {
     width: 100%;
-    padding: 13px;
+    padding: calc(13 * var(--dp));
     margin-top: var(--space-7);
     border: none;
     border-radius: var(--radius-md);
@@ -654,7 +652,7 @@ input:focus {
 @media (hover: hover) {
   .login-btn:hover:not(:disabled) {
     background: var(--accent-hover);
-    box-shadow: 0 4px 14px color-mix(in srgb, var(--accent-color) 30%, transparent);
+    box-shadow: 0 calc(4 * var(--dp)) calc(14 * var(--dp)) color-mix(in srgb, var(--accent-color) 30%, transparent);
   }
 }
 
@@ -702,8 +700,8 @@ input:focus {
 }
 
 .error {
-    margin-top: 14px;
-    padding: var(--space-5) 14px;
+    margin-top: calc(14 * var(--dp));
+    padding: var(--space-5) calc(14 * var(--dp));
     border-radius: var(--radius-sm);
     background: color-mix(in srgb, var(--color-red, #dc2626) 8%, var(--bg-primary));
     border: 1px solid color-mix(in srgb, var(--color-red, #dc2626) 20%, var(--border-color));

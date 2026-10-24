@@ -114,11 +114,11 @@ function handleClose() {
 .copy-agent-dialog__body {
   display: flex;
   flex-direction: column;
-  padding:14px var(--space-7) var(--space-3);
+  padding: calc(14 * var(--dp)) var(--space-7) var(--space-3);
 }
 
 .copy-agent-dialog__field {
-  margin-bottom: 14px;
+  margin-bottom: calc(14 * var(--dp));
 }
 
 .copy-agent-dialog__label {
@@ -131,7 +131,7 @@ function handleClose() {
 .copy-agent-dialog__input {
   width: 100%;
   min-width: 0;
-  height: 30px;
+  height: calc(30 * var(--dp));
   padding: 0 var(--space-6);
   font-size: var(--font-size-xl);
   border: 1px solid var(--border-color);

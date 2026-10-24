@@ -77,7 +77,7 @@
     color: var(--accent-color);
     text-decoration: underline;
     text-decoration-style: dotted;
-    text-underline-offset: 2px;
+    text-underline-offset: calc(2 * var(--dp));
     cursor: pointer;
     word-break: break-all;
     overflow-wrap: break-word;
@@ -250,7 +250,7 @@
 .chat-message.assistant li,
 .chat-message.user li,
 .table-row-value li {
-    margin: 3px 0;
+    margin: calc(3 * var(--dp)) 0;
 }
 
 /* Table */
@@ -263,7 +263,7 @@
 .markdown-body td,
 .chat-message.assistant th,
 .chat-message.assistant td {
-    padding: var(--space-4) 14px;
+    padding: var(--space-4) calc(14 * var(--dp));
     border: 1px solid var(--table-border);
     text-align: left;
 }
@@ -347,7 +347,7 @@
 
 .chat-message.user th,
 .chat-message.user td {
-    padding: var(--space-4) 14px;
+    padding: var(--space-4) calc(14 * var(--dp));
     border: 1px solid rgba(255, 255, 255, 0.2);
     text-align: left;
 }
@@ -427,7 +427,7 @@
 
 .table-row-value code {
     font-size: var(--font-size-md);
-    padding:1px var(--space-2);
+    padding: 1px var(--space-2);
 }
 
 .table-row-value pre {
@@ -443,13 +443,13 @@
 
 /* ── Table row modal layout overrides ── */
 .table-row-value p {
-    margin: 3px 0;
+    margin: calc(3 * var(--dp)) 0;
 }
 
 .table-row-value h1,
 .table-row-value h2,
 .table-row-value h3 {
-    margin: var(--space-3) 0 3px;
+    margin: var(--space-3) 0 calc(3 * var(--dp));
     font-weight: var(--font-weight-semibold);
 }
 
@@ -459,7 +459,7 @@
 
 .table-row-value img {
     margin: var(--space-3) 0;
-    width: 200px;
+    width: calc(200 * var(--dp));
     height: auto;
     max-width: none;
     max-height: none;
@@ -512,7 +512,7 @@
    lets the figure hug it exactly, so no band can form. */
 .chat-message.assistant img.chat-img,
 .chat-message.user img.chat-img {
-    max-height: 200px;
+    max-height: calc(200 * var(--dp));
     height: auto;
     width: auto;
     max-width: 100%;
@@ -566,7 +566,7 @@
     font-family: var(--font-mono);
     background: var(--bg-secondary);
     border-radius: var(--radius-xs);
-    padding: 0 3px;
+    padding: 0 calc(3 * var(--dp));
 }
 
 .markdown-body .chat-file-open-btn,
@@ -576,8 +576,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
-    height: 18px;
+    width: calc(18 * var(--dp));
+    height: calc(18 * var(--dp));
     border-radius: var(--radius-xs);
     border: none;
     background: transparent;
@@ -611,8 +611,8 @@
 /* User bubble keeps its own (smaller, circular) button geometry — only the
    colours are shared with the other roles now. */
 .chat-message.user .chat-file-open-btn {
-    width: 16px;
-    height: 16px;
+    width: calc(16 * var(--dp));
+    height: calc(16 * var(--dp));
     border-radius: 50%;
     padding: 0;
 }
@@ -638,7 +638,7 @@
     font-family: var(--font-mono);
     background: color-mix(in srgb, #000 22%, transparent);
     border-radius: var(--radius-xs);
-    padding: 0 3px;
+    padding: 0 calc(3 * var(--dp));
 }
 
 /* A path that is ALSO a link (the annotation adds the class to an existing

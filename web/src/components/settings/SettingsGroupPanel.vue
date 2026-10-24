@@ -1085,7 +1085,7 @@ watch(localValues, () => {
 .group-panel__header {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
-  padding:5px var(--space-7);
+  padding: calc(5 * var(--dp)) var(--space-7);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: var(--font-weight-medium);
@@ -1096,7 +1096,7 @@ watch(localValues, () => {
   content: '';
   position: absolute;
   bottom: 0;
-  left: 16px;
+  left: calc(16 * var(--dp));
   right: 0;
   height: 0.5px;
   background: var(--border-color);
@@ -1114,7 +1114,7 @@ watch(localValues, () => {
   padding: var(--space-4) var(--space-7);
 }
 .group-panel__card :deep(.settings-item::after) {
-  left: 16px;
+  left: calc(16 * var(--dp));
 }
 .group-panel__card :deep(.settings-item:last-child::after) {
   display: none;
@@ -1125,8 +1125,8 @@ watch(localValues, () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding:0 var(--space-7);
-  min-height: 38px;
+  padding: 0 var(--space-7);
+  min-height: calc(38 * var(--dp));
   background: transparent;
   position: relative;
 }
@@ -1169,7 +1169,7 @@ watch(localValues, () => {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  min-height: 30px;
+  min-height: calc(30 * var(--dp));
 }
 
 .group-panel__entry-row::after {
@@ -1228,7 +1228,7 @@ watch(localValues, () => {
 .group-panel__entry-value {
   font-size: var(--font-size-md);
   color: var(--text-secondary);
-  max-width: 160px;
+  max-width: calc(160 * var(--dp));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1243,7 +1243,7 @@ watch(localValues, () => {
 .group-panel__section-header {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
-  padding:5px var(--space-7) 3px;
+  padding: calc(5 * var(--dp)) var(--space-7) calc(3 * var(--dp));
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: var(--font-weight-medium);
@@ -1309,8 +1309,8 @@ watch(localValues, () => {
 }
 
 .group-panel__tunnel-dot {
-  width: 8px;
-  height: 8px;
+  width: calc(8 * var(--dp));
+  height: calc(8 * var(--dp));
   flex-shrink: 0;
   border-radius: var(--radius-full);
   background: var(--text-muted);
@@ -1401,7 +1401,7 @@ watch(localValues, () => {
   justify-content: space-between;
   padding: var(--space-4) var(--space-7);
   cursor: pointer;
-  min-height: 38px;
+  min-height: calc(38 * var(--dp));
   position: relative;
 }
 

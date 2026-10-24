@@ -624,8 +624,13 @@ defineExpose({
 
        Width stays 20px: this element is the HIT AREA. The visible 3px rail is
        drawn by .diff-marker::before at its right edge. */
-    right: max(0px, (100% - 900px) / 2);
-    width: 20px;
+    /* `0px`, not `0`: `max()` requires both arguments to be the same type, and
+       a bare number mixed with a length invalidates the whole declaration —
+       the marker then fell back to `right: auto` and was painted past the
+       right edge. The comment above already spells the unit out; keep them in
+       sync. */
+    right: max(0px, (100% - calc(900 * var(--dp))) / 2);
+    width: calc(20 * var(--dp));
     height: auto;
     z-index: 2;
 }

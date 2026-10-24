@@ -2494,7 +2494,7 @@ onUnmounted(() => {
   padding: var(--space-4) 0 var(--space-2);
 }
 .placeholder-dots span {
-  width: 7px; height: 7px;
+  width: calc(7 * var(--dp)); height: 7px;
   border-radius: 50%;
   background: var(--text-muted, #999);
   animation: dot-bounce 1.2s infinite ease-in-out;
@@ -2523,7 +2523,7 @@ onUnmounted(() => {
   background: transparent;
   color: #dc2626;
   font-size: var(--font-size-xs);
-  padding:1px var(--space-4);
+  padding: 1px var(--space-4);
   border-radius: var(--radius-xs);
   cursor: pointer;
 }
@@ -2539,7 +2539,7 @@ onUnmounted(() => {
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #f0f0f0);
-  padding:1px var(--space-3);
+  padding: 1px var(--space-3);
   border-radius: var(--radius-xs);
   margin-left: auto;
 }
@@ -2621,7 +2621,7 @@ onUnmounted(() => {
 .error-source-chip {
   flex-shrink: 0;
   margin-left: var(--space-4);
-  padding:1px var(--space-4);
+  padding: 1px var(--space-4);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   border-radius: var(--radius-full);
@@ -2784,7 +2784,7 @@ onUnmounted(() => {
 .thinking-content-wrapper.thinking-content-open {
   grid-template-rows: 1fr;
   opacity: 1;
-  padding:0 var(--space-5) 3px;
+  padding: 0 var(--space-5) calc(3 * var(--dp));
 }
 
 .thinking-inline-content {
@@ -2810,7 +2810,7 @@ onUnmounted(() => {
 .thinking-content-wrapper.thinking-content-open .thinking-inline-content {
   /* ~10 lines at the 12px/1.65 typography above; caps long reasoning while
      streaming without growing the message unbounded. */
-  max-height: 220px;
+  max-height: calc(220 * var(--dp));
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -2823,14 +2823,14 @@ onUnmounted(() => {
    auto-collapse to a chip); the 0fr↔1fr expand animation stays smooth because
    the transition is not height-gated. */
 .chat-thinking.thinking-expanded-done .thinking-content-wrapper.thinking-content-open .thinking-inline-content {
-  max-height: min(50vh, 520px);
+  max-height: min(50vh, calc(520 * var(--dp)));
 }
 
 .thinking-header {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding:3px var(--space-5);
+  gap: calc(5 * var(--dp));
+  padding: calc(3 * var(--dp)) var(--space-5);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
@@ -2879,7 +2879,7 @@ onUnmounted(() => {
 }
 .thinking-inline-content code {
   font-size: var(--font-size-xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
 }
 .thinking-inline-content pre code {
@@ -2927,7 +2927,7 @@ onUnmounted(() => {
 .thinking-inline-content mark {
   background: rgba(245, 158, 11, 0.2);
   color: inherit;
-  padding:1px var(--space-1);
+  padding: 1px var(--space-1);
   border-radius: var(--radius-xs);
 }
 
@@ -2937,12 +2937,12 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 5px;
+  gap: calc(5 * var(--dp));
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--tool-accent) 6%, var(--bg-secondary));
   border: 1px solid color-mix(in srgb, var(--tool-accent) 15%, var(--border-color));
-  padding:3px var(--space-4);
+  padding: calc(3 * var(--dp)) var(--space-4);
   border-radius: var(--radius-full);
   cursor: pointer;
   width: 100%;
@@ -3011,7 +3011,7 @@ onUnmounted(() => {
    styling. */
 .subagent-group {
   --subagent-accent: #ec4899;
-  margin:0 0 var(--space-2);
+  margin: 0 0 var(--space-2);
 }
 
 /* Only when expanded does the pill's shape change: it becomes the rounded-
@@ -3024,8 +3024,8 @@ onUnmounted(() => {
   border-left: 2px solid color-mix(in srgb, var(--subagent-accent) 35%, transparent);
   border-right: 2px solid color-mix(in srgb, var(--subagent-accent) 35%, transparent);
   border-bottom: 2px solid color-mix(in srgb, var(--subagent-accent) 35%, transparent);
-  border-bottom-left-radius: 6px;
-  border-bottom-right-radius: 6px;
+  border-bottom-left-radius: calc(6 * var(--dp));
+  border-bottom-right-radius: calc(6 * var(--dp));
   background: color-mix(in srgb, var(--subagent-accent) 4%, transparent);
 }
 
@@ -3116,7 +3116,7 @@ onUnmounted(() => {
   white-space: normal;
   overflow-x: clip;
   overflow-y: auto;
-  max-height: 500px;
+  max-height: calc(500 * var(--dp));
   cursor: default;
 }
 
@@ -3134,7 +3134,7 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  padding:1px var(--space-4);
+  padding: 1px var(--space-4);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, #0ea5e9 15%, transparent);
   color: #0ea5e9;
@@ -3230,7 +3230,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .tool-output-label {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(34, 197, 94, 0.12);
   color: #16a34a;
@@ -3244,7 +3244,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .tool-output-status {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   font-weight: var(--font-weight-semibold);
 }
@@ -3270,7 +3270,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .tool-output-body {
-  max-height: 200px;
+  max-height: calc(200 * var(--dp));
   overflow-y: auto;
   font-size: var(--font-size-xs);
   line-height: var(--line-height-normal);
@@ -3298,7 +3298,7 @@ onUnmounted(() => {
   gap: var(--space-3);
   margin-bottom: var(--space-2);
   padding-bottom: var(--space-2);
-  padding-right: 22px;
+  padding-right: calc(22 * var(--dp));
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
@@ -3329,7 +3329,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .edit-diff-replace-all {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(245, 158, 11, 0.12);
   color: #d97706;
@@ -3401,7 +3401,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .file-write-badge {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(59, 130, 246, 0.12);
   color: #2563eb;
@@ -3497,8 +3497,8 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 5px;
-  padding:5px var(--space-4);
+  gap: calc(5 * var(--dp));
+  padding: calc(5 * var(--dp)) var(--space-4);
   background: color-mix(in srgb, var(--tool-accent) 6%, var(--bg-secondary));
   border-bottom: 1px solid color-mix(in srgb, var(--tool-accent) 12%, var(--border-color));
   cursor: pointer;
@@ -3546,7 +3546,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail.chat-inline-card .chat-card-body {
   padding: var(--space-4) var(--space-5);
   overflow-y: auto;
-  max-height: 500px;
+  max-height: calc(500 * var(--dp));
 }
 
 .content-blocks .tool-detail.chat-inline-card.is-pending .chat-card-strip {
@@ -3693,7 +3693,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .ask-question-recommend {
-  padding:5px var(--space-7);
+  padding: calc(5 * var(--dp)) var(--space-7);
   border: 1px solid #8b5cf6;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -3736,7 +3736,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .ask-question-submit {
   align-self: flex-end;
-  padding:5px var(--space-7);
+  padding: calc(5 * var(--dp)) var(--space-7);
   border: 1px solid #f97316;
   border-radius: var(--radius-sm);
   background: #f97316;
@@ -3784,7 +3784,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .ask-question-supplementary {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
 }
 
 .content-blocks .tool-detail .ask-supplementary-label {
@@ -3798,7 +3798,7 @@ onUnmounted(() => {
      sync with it; the caps are 6 line boxes + padding (the auto-grow cap in
      renderToolDetail.ts uses the same 6, and the browser clamps `height` at
      max-height, which is what turns on the internal scrollbar past 6 lines). */
-  --ask-supp-pad-y: 5px;
+  --ask-supp-pad-y: calc(5 * var(--dp));
   width: 100%;
   padding: var(--ask-supp-pad-y) var(--space-4);
   border: 1px solid var(--border-color);
@@ -3853,7 +3853,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .grep-label {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
@@ -3890,7 +3890,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .grep-mode-tag {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.08);
   color: #8b5cf6;
@@ -3920,7 +3920,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .glob-label {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
@@ -3985,7 +3985,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .web-fetch-label {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
@@ -4045,7 +4045,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .agent-type-badge {
   font-size: var(--font-size-2xs);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   background: rgba(236, 72, 153, 0.12);
   color: #db2777;
@@ -4101,7 +4101,7 @@ onUnmounted(() => {
   font-family: var(--font-mono);
   font-size: var(--font-size-2xs);
   background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
 }
 .content-blocks .tool-detail .agent-call-prompt pre {
@@ -4187,8 +4187,8 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .permission-team-member__dot {
-  width: 8px;
-  height: 8px;
+  width: calc(8 * var(--dp));
+  height: calc(8 * var(--dp));
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -4222,7 +4222,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .permission-detail-label {
   align-self: flex-start;
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-3);
+  padding: 1px var(--space-3);
   border-radius: var(--radius-xs) var(--radius-xs) 0 0;
   /* Must match the command box's border exactly (same mix) so the two left
      borders read as one line. */
@@ -4251,7 +4251,7 @@ onUnmounted(() => {
   border: 1px solid color-mix(in srgb, var(--tool-accent, #eab308) 14%, var(--border-color));
   /* Sharp, hard corners — terminal-like command block. */
   border-radius: 0;
-  padding:5px var(--space-4);
+  padding: calc(5 * var(--dp)) var(--space-4);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -4267,7 +4267,7 @@ onUnmounted(() => {
    shape for a plain rounded-rect (radius matches the ask-question option
    blocks in the same card). Only the interaction-state keep-alive stays here. */
 .content-blocks .tool-detail .permission-options .permission-btn {
-  padding: 0 14px;
+  padding: 0 calc(14 * var(--dp));
   border-radius: var(--radius-sm);
 }
 
@@ -4312,8 +4312,8 @@ onUnmounted(() => {
   /* `display: block` (not inline-flex) + line-height is what lets
      text-overflow: ellipsis actually apply to the label. */
   display: block;
-  height: 30px;
-  line-height: 30px;
+  height: calc(30 * var(--dp));
+  line-height: calc(30 * var(--dp));
   padding: 0 var(--space-5);
   text-align: center;
   overflow: hidden;
@@ -4385,7 +4385,7 @@ onUnmounted(() => {
   /* The glyph and the label are two children, so they need an explicit gap. */
   align-items: center;
   gap: var(--space-4);
-  height: 30px;
+  height: calc(30 * var(--dp));
   padding: 0 var(--space-6);
   border-radius: var(--radius-sm);
   /* Same step down as the option cells above (they use --font-size-sm too), so

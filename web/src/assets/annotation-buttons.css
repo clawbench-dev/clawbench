@@ -113,7 +113,7 @@ a.chat-file-path-inert,
      Both longhands must therefore be `!important` too. (`text-underline-offset`
      is NOT part of the shorthand, but pinning it keeps the pair symmetric.) */
   text-decoration-thickness: 1px !important;
-  text-underline-offset: 3px !important;
+  text-underline-offset: calc(3 * var(--dp)) !important;
   cursor: help !important;
   background: none !important;
 }
@@ -275,7 +275,7 @@ a.chat-file-path-inert:hover,
    sets `display`, so a single-class rule would tie on specificity and depend on
    which stylesheet the bundler emits first. */
 .chat-url-open-btn .chat-url-open-btn-spinner {
-  --li-size: 8px;
+  --li-size: calc(8 * var(--dp));
   /* Kept from the pre-unification ::after ring, which spun at 0.6s. */
   --li-duration: 0.6s;
   display: none;
@@ -297,8 +297,8 @@ a.chat-file-path-inert:hover,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: calc(18 * var(--dp));
+  height: calc(18 * var(--dp));
   border-radius: var(--radius-xs);
   font-size: var(--font-size-sm);
   line-height: 1;

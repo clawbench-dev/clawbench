@@ -362,7 +362,7 @@ defineExpose({
 
 .office-preview-body :deep(.x-spreadsheet td),
 .office-preview-body :deep(.x-spreadsheet th) {
-  max-width: 120px;
+  max-width: calc(120 * var(--dp));
   word-break: break-all;
 }
 
@@ -404,12 +404,12 @@ defineExpose({
   inset: 0;
   z-index: 10;
   background: var(--bg-primary);
-  padding: 48px 24px;
+  padding: calc(48 * var(--dp)) calc(24 * var(--dp));
   overflow: hidden;
 }
 
 .office-loading-skeleton {
-  max-width: 720px;
+  max-width: calc(720 * var(--dp));
   margin: 0 auto;
 }
 
@@ -421,7 +421,7 @@ defineExpose({
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 48px 24px;
+  padding: calc(48 * var(--dp)) calc(24 * var(--dp));
   text-align: center;
   color: var(--text-muted);
   background: var(--bg-primary);
@@ -429,8 +429,8 @@ defineExpose({
 }
 
 .office-error-overlay > svg {
-  width: 48px;
-  height: 48px;
+  width: calc(48 * var(--dp));
+  height: calc(48 * var(--dp));
   margin-bottom: var(--space-6);
 }
 
@@ -444,7 +444,7 @@ defineExpose({
 .office-error-desc {
   font-size: var(--font-size-lg);
   margin-bottom: var(--space-8);
-  max-width: 400px;
+  max-width: calc(400 * var(--dp));
   word-break: break-word;
 }
 

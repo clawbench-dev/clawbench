@@ -99,7 +99,7 @@
   .diff-marker-rail-flash::before,
   .cm-diff-gutter-rail-flash {
     animation: none !important;
-    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 45%, transparent);
+    box-shadow: 0 0 0 calc(3 * var(--dp)) color-mix(in srgb, currentColor 45%, transparent);
   }
 }
 
@@ -111,7 +111,7 @@
 .diff-marker-inline {
     position: absolute;
     right: 0;
-    width: 20px;
+    width: calc(20 * var(--dp));
     height: 100%;
     z-index: 2;
 }

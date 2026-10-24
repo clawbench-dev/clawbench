@@ -486,8 +486,8 @@ onMounted(async () => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
@@ -514,7 +514,7 @@ onMounted(async () => {
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
-  padding:0 var(--space-2);
+  padding: 0 var(--space-2);
   white-space: nowrap;
 }
 
@@ -526,7 +526,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  padding: 11px 14px;
+  padding: calc(11 * var(--dp)) calc(14 * var(--dp));
   cursor: pointer;
   transition: background var(--duration-base);
   border-bottom: 1px solid var(--border-color, #dee2e6);
@@ -563,7 +563,7 @@ onMounted(async () => {
 .git-file-type-badge {
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-bold);
-  padding: var(--space-1) 5px;
+  padding: var(--space-1) calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   flex-shrink: 0;
   letter-spacing: 0.02em;
@@ -605,7 +605,7 @@ onMounted(async () => {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
-  padding: var(--space-4) 14px var(--space-2);
+  padding: var(--space-4) calc(14 * var(--dp)) var(--space-2);
   letter-spacing: 0.03em;
 }
 

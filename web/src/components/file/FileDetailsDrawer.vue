@@ -138,7 +138,7 @@ const detailItems = computed(() => {
 }
 
 .details-label {
-  width: 80px;
+  width: calc(80 * var(--dp));
   flex-shrink: 0;
   font-size: var(--font-size-md);
   color: var(--text-muted, #999);

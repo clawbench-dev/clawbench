@@ -1,9 +1,38 @@
 import { ref, computed } from 'vue'
+import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 
-/** Dock layout constants (must match App.vue CSS) */
+/**
+ * Dock layout constants, in DESIGN px (must match App.vue's CSS, which writes
+ * them as `calc(34 * var(--dp))` and `var(--space-6)`).
+ *
+ * They are deliberately NOT screen px: the measured dock size comes back from
+ * `getBoundingClientRect()` already multiplied by the UI scale, so comparing it
+ * against an unscaled 34 would over-count how many buttons fit (at 150% the
+ * dock holds 2/3 as many). `scaleLayout()` applies the factor below.
+ */
 export const DOCK_BTN_SIZE = 34
 export const DOCK_GAP = 12
 export const DOCK_STEP = DOCK_BTN_SIZE + DOCK_GAP // 46
+
+/**
+ * The applied UI scale, kept current through `UI_SCALE_EVENT`.
+ *
+ * A module-level ref, not a per-call read: the overflow computation is a
+ * `computed`, so the scale has to be a reactive dependency or the dock would
+ * keep the button count it derived at the previous scale (the element itself
+ * does re-measure — `ResizeObserver` fires — but the constants would not).
+ */
+const uiScale = ref(1)
+if (typeof window !== 'undefined') {
+  const sync = () => { uiScale.value = readAppliedUIScale() }
+  sync()
+  window.addEventListener(UI_SCALE_EVENT, sync)
+}
+
+/** Convert DESIGN px to CSS px at the current scale. */
+function scaleLayout(designPx: number): number {
+  return designPx * uiScale.value
+}
 
 export interface DockOverflowOptions {
   /** Which axis the dock lays out along and measures for overflow. */
@@ -38,10 +67,21 @@ export function useDockOverflow(
   getOverflowTabs: () => string[],
   options: DockOverflowOptions = {},
 ) {
-  const { direction = 'horizontal', btnSize = DOCK_BTN_SIZE, gap = DOCK_GAP, primaryCount = 4 } = options
-  const step = btnSize + gap
+  const { direction = 'horizontal', primaryCount = 4 } = options
+  // Scale the geometry before any arithmetic: the measured dock size is in CSS
+  // px (already scaled), so the per-button footprint has to be too.
+  //
+  // `computed`, not plain numbers: they read `uiScale`, so a scale change has
+  // to invalidate `inlineCount` below. Computed once at setup, a scale change
+  // would keep the old footprint while the dock itself grew, and the overflow
+  // decision would be wrong until something else re-triggered it.
+  const btnSize = computed(() => scaleLayout(options.btnSize ?? DOCK_BTN_SIZE))
+  const gap = computed(() => scaleLayout(options.gap ?? DOCK_GAP))
+  const step = computed(() => btnSize.value + gap.value)
   // Minimum size to hold the fixed primary buttons + the overflow button.
-  const minContent = (primaryCount + 1) * btnSize + primaryCount * gap
+  const minContent = computed(
+    () => (primaryCount + 1) * btnSize.value + primaryCount * gap.value,
+  )
 
   const dockContentSize = ref(0)
 
@@ -54,9 +94,9 @@ export function useDockOverflow(
   const inlineCount = computed(() => {
     const size = dockContentSize.value
     if (size <= 0) return 0
-    const remaining = size - minContent
+    const remaining = size - minContent.value
     if (remaining < 0) return 0
-    return Math.min(Math.floor(remaining / step), getOverflowTabs().length)
+    return Math.min(Math.floor(remaining / step.value), getOverflowTabs().length)
   })
 
   /** Overflow tabs shown inline in the dock */

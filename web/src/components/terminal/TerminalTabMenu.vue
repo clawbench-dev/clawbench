@@ -71,7 +71,7 @@ function onShowChange(val: boolean) {
   align-items: center;
   gap: var(--space-4);
   width: 100%;
-  padding: var(--space-4) 14px;
+  padding: var(--space-4) calc(14 * var(--dp));
   border: none;
   background: none;
   color: var(--text-primary);

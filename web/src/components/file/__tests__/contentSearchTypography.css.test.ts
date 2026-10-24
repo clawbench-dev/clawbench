@@ -47,8 +47,12 @@ function tokenPx(token: string): number {
   const name = token.match(/var\((--[\w-]+)\)/)?.[1]
   expect(name, `${token} should be a var() reference`).toBeTruthy()
   const css = readWebFile('css/variables.css')
-  const m = css.match(new RegExp(`${name}:\\s*(\\d+(?:\\.\\d+)?)px`))
-  expect(m, `${name} must be defined in px`).not.toBeNull()
+  // Tokens are `calc(N * var(--dp))` so the type scale follows the UI scale.
+  // The comparison this helper feeds is about the DESIGN size, so read the N.
+  const viaDp = css.match(new RegExp(`${name}:\\s*calc\\(\\s*(\\d+(?:\\.\\d+)?)\\s*\\*\\s*var\\(--dp\\)`))
+  const literal = css.match(new RegExp(`${name}:\\s*(\\d+(?:\\.\\d+)?)px`))
+  const m = viaDp ?? literal
+  expect(m, `${name} must be defined as a design px length`).not.toBeNull()
   return Number(m![1])
 }
 

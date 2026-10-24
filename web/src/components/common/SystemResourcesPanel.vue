@@ -274,7 +274,7 @@ defineExpose({ startPolling, stopPolling })
   justify-content: center;
   gap: var(--space-3);
   width: 100%;
-  padding: 7px 0;
+  padding: calc(7 * var(--dp)) 0;
   border: none;
   background: var(--bg-tertiary);
   cursor: pointer;
@@ -305,7 +305,7 @@ defineExpose({ startPolling, stopPolling })
 .resource-row {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
 }
 
 .resource-header {
@@ -340,7 +340,7 @@ defineExpose({ startPolling, stopPolling })
 .resource-label {
   color: var(--text-secondary);
   flex-shrink: 0;
-  min-width: 32px;
+  min-width: calc(32 * var(--dp));
 }
 
 .resource-value {
@@ -351,7 +351,7 @@ defineExpose({ startPolling, stopPolling })
 }
 
 .progress-bar {
-  height: 4px;
+  height: calc(4 * var(--dp));
   background: var(--bg-tertiary, #e5e7eb);
   border-radius: var(--radius-xs);
   overflow: hidden;
@@ -403,7 +403,7 @@ defineExpose({ startPolling, stopPolling })
 
 .usage-row:focus-visible {
   outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
+  outline-offset: calc(2 * var(--dp));
 }
 
 .usage-chevron {
@@ -437,7 +437,7 @@ defineExpose({ startPolling, stopPolling })
      default, which would collapse the 4px track. */
   display: block;
   position: relative;
-  margin-top: 3px;
+  margin-top: calc(3 * var(--dp));
 }
 
 .usage-fill {
@@ -455,8 +455,8 @@ defineExpose({ startPolling, stopPolling })
    PopupMenu) so it stays visible where it crosses the filled portion. */
 .usage-mark {
   position: absolute;
-  top: -2px;
-  bottom: -2px;
+  top: calc(-2 * var(--dp));
+  bottom: calc(-2 * var(--dp));
   width: 1px;
   border-radius: 1px;
   background: var(--text-primary);
@@ -468,7 +468,7 @@ defineExpose({ startPolling, stopPolling })
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  margin-top: 2px;
+  margin-top: calc(2 * var(--dp));
   font-size: var(--font-size-2xs);
   color: var(--text-muted);
 }

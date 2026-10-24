@@ -141,7 +141,7 @@ function toggleCollapse() {
 
 .retry-btn {
   font-size: var(--font-size-sm);
-  padding:3px var(--space-5);
+  padding: calc(3 * var(--dp)) var(--space-5);
   border: 1px solid var(--accent-color, #4a90d9);
   border-radius: var(--radius-xs);
   background: transparent;

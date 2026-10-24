@@ -197,7 +197,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-4) 14px var(--space-2);
+  padding: var(--space-4) calc(14 * var(--dp)) var(--space-2);
   flex-shrink: 0;
 }
 
@@ -216,13 +216,13 @@ onUnmounted(() => {
 
 .panel-list {
   overflow-y: auto;
-  padding: var(--space-5) 0 14px 0;
+  padding: var(--space-5) 0 calc(14 * var(--dp)) 0;
   flex: 1;
   min-height: 0;
 }
 
 .panel-list::-webkit-scrollbar {
-  width: 6px;
+  width: calc(6 * var(--dp));
 }
 .panel-list::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb, #c1c1c1);
@@ -240,13 +240,13 @@ onUnmounted(() => {
   justify-content: center;
   gap: var(--space-3);
   min-height: 36vh;
-  padding: 24px 28px;
+  padding: calc(24 * var(--dp)) calc(28 * var(--dp));
   text-align: center;
 }
 
 .panel-empty-icon-wrap {
-  width: 52px;
-  height: 52px;
+  width: calc(52 * var(--dp));
+  height: calc(52 * var(--dp));
   border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
@@ -270,6 +270,6 @@ onUnmounted(() => {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
   line-height: var(--line-height-normal);
-  max-width: 260px;
+  max-width: calc(260 * var(--dp));
 }
 </style>

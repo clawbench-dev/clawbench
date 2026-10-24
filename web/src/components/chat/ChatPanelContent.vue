@@ -2487,17 +2487,17 @@ defineExpose({
   padding: var(--space-5) var(--space-8) var(--space-4);
   background: var(--bg-primary);
   color: var(--text-primary);
-  border-radius: 24px;
+  border-radius: calc(24 * var(--dp));
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   letter-spacing: 0.3px;
   position: absolute;
-  top: 48px;
+  top: calc(48 * var(--dp));
   left: 0;
   right: 0;
   justify-content: center;
   z-index: 10;
-  max-width: 260px;
+  max-width: calc(260 * var(--dp));
   margin: 0 auto;
   border: 1px solid var(--border-color);
   box-shadow: var(--shadow-md);
@@ -2510,7 +2510,7 @@ defineExpose({
 }
 
 .session-indicator-text {
-  max-width: 220px;
+  max-width: calc(220 * var(--dp));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2532,16 +2532,16 @@ defineExpose({
 }
 
 .session-dot {
-  width: 4px;
-  height: 4px;
+  width: calc(4 * var(--dp));
+  height: calc(4 * var(--dp));
   border-radius: 50%;
   background: var(--text-hint);
   transition: all var(--duration-base) ease-out;
 }
 
 .session-dot.active {
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   background: var(--accent-color);
 }
 
@@ -2552,8 +2552,8 @@ defineExpose({
 }
 
 .session-capsule-track {
-  width: 80px;
-  height: 3px;
+  width: calc(80 * var(--dp));
+  height: calc(3 * var(--dp));
   border-radius: var(--radius-xs);
   background: var(--text-hint);
   position: relative;
@@ -2562,7 +2562,7 @@ defineExpose({
 .session-capsule-slider {
   position: absolute;
   top: 0;
-  height: 3px;
+  height: calc(3 * var(--dp));
   border-radius: var(--radius-xs);
   background: var(--accent-color);
   transition: left var(--duration-slow) ease-out;
@@ -2573,7 +2573,7 @@ defineExpose({
   font-size: var(--font-size-2xs);
   color: var(--text-hint);
   white-space: nowrap;
-  min-width: 24px;
+  min-width: calc(24 * var(--dp));
   text-align: center;
 }
 
@@ -2588,7 +2588,7 @@ defineExpose({
 @keyframes indicator-slide-left {
   from {
     opacity: 0;
-    transform: translateX(30px) scale(0.9);
+    transform: translateX(calc(30 * var(--dp))) scale(0.9);
   }
   to {
     opacity: 1;
@@ -2599,7 +2599,7 @@ defineExpose({
 @keyframes indicator-slide-right {
   from {
     opacity: 0;
-    transform: translateX(-30px) scale(0.9);
+    transform: translateX(calc(-30 * var(--dp))) scale(0.9);
   }
   to {
     opacity: 1;
@@ -2630,14 +2630,14 @@ defineExpose({
 .tool-call-loading {
   display: flex;
   justify-content: center;
-  padding: 24px;
+  padding: calc(24 * var(--dp));
 }
 /* The spinner is the shared global .li-spinner (css/components.css) at the
    component's md tier. It has to be a real element rather than an ::after here
    because the ring is one implementation shared with the injected mermaid /
    code-preview / localhost callers. */
 .tool-call-loading .li-spinner {
-  --li-size: 20px;
+  --li-size: calc(20 * var(--dp));
   /* Kept from the pre-unification implementation, which spun at 0.6s. */
   --li-duration: 0.6s;
 }

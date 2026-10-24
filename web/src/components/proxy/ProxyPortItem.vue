@@ -150,7 +150,7 @@ const statusTitle = computed(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  padding: var(--space-6) 14px;
+  padding: var(--space-6) calc(14 * var(--dp));
   border-radius: 0;
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
@@ -163,7 +163,7 @@ const statusTitle = computed(() => {
 @media (hover: hover) {
   .proxy-port-item:hover {
     border-color: var(--accent-color, #0066cc);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    box-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) rgba(0, 0, 0, 0.04);
   }
 }
 
@@ -232,20 +232,20 @@ const statusTitle = computed(() => {
 }
 
 .port-status {
-  width: 8px;
-  height: 8px;
+  width: calc(8 * var(--dp));
+  height: calc(8 * var(--dp));
   border-radius: 50%;
   flex-shrink: 0;
 }
 
 .port-status.active {
   background: #22c55e;
-  box-shadow: 0 0 4px rgba(34, 197, 94, 0.4);
+  box-shadow: 0 0 calc(4 * var(--dp)) rgba(34, 197, 94, 0.4);
 }
 
 .port-status.connecting {
   background: #f59e0b;
-  box-shadow: 0 0 4px rgba(245, 158, 11, 0.4);
+  box-shadow: 0 0 calc(4 * var(--dp)) rgba(245, 158, 11, 0.4);
   animation: pulse-yellow 1.5s ease-in-out infinite;
 }
 
@@ -255,7 +255,7 @@ const statusTitle = computed(() => {
 
 .port-status.tunnel-down {
   background: #ef4444;
-  box-shadow: 0 0 4px rgba(239, 68, 68, 0.4);
+  box-shadow: 0 0 calc(4 * var(--dp)) rgba(239, 68, 68, 0.4);
   animation: pulse-red 2s ease-in-out infinite;
 }
 
@@ -266,21 +266,21 @@ const statusTitle = computed(() => {
 
 @keyframes pulse-red {
   0%, 100% {
-    box-shadow: 0 0 4px rgba(239, 68, 68, 0.4);
+    box-shadow: 0 0 calc(4 * var(--dp)) rgba(239, 68, 68, 0.4);
   }
   50% {
-    box-shadow: 0 0 8px rgba(239, 68, 68, 0.7);
+    box-shadow: 0 0 calc(8 * var(--dp)) rgba(239, 68, 68, 0.7);
   }
 }
 
 @keyframes pulse-yellow {
   0%, 100% {
     opacity: var(--opacity-muted);
-    box-shadow: 0 0 4px rgba(245, 158, 11, 0.4);
+    box-shadow: 0 0 calc(4 * var(--dp)) rgba(245, 158, 11, 0.4);
   }
   50% {
     opacity: 1;
-    box-shadow: 0 0 8px rgba(245, 158, 11, 0.7);
+    box-shadow: 0 0 calc(8 * var(--dp)) rgba(245, 158, 11, 0.7);
   }
 }
 
@@ -292,8 +292,8 @@ const statusTitle = computed(() => {
 }
 
 .toggle-switch {
-  width: 38px;
-  height: 20px;
+  width: calc(38 * var(--dp));
+  height: calc(20 * var(--dp));
   border-radius: var(--radius-md);
   border: none;
   background: var(--bg-tertiary, #e9ecef);
@@ -315,18 +315,18 @@ const statusTitle = computed(() => {
 
 .toggle-thumb {
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
+  top: calc(2 * var(--dp));
+  left: calc(2 * var(--dp));
+  width: calc(16 * var(--dp));
+  height: calc(16 * var(--dp));
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 1px calc(2 * var(--dp)) rgba(0, 0, 0, 0.25);
   transition: transform var(--duration-slow) ease;
 }
 
 .toggle-switch.on .toggle-thumb {
-  transform: translateX(18px);
+  transform: translateX(calc(18 * var(--dp)));
 }
 
 /* Info row */
@@ -353,7 +353,7 @@ const statusTitle = computed(() => {
   font-size: var(--font-size-xs);
   font-family: var(--font-mono);
   font-weight: var(--font-weight-medium);
-  padding:1px var(--space-3);
+  padding: 1px var(--space-3);
   border-radius: 0;
   background: rgba(59, 130, 246, 0.1);
   color: #3b82f6;
@@ -370,7 +370,7 @@ const statusTitle = computed(() => {
   font-size: var(--font-size-xs);
   font-family: var(--font-mono);
   font-weight: var(--font-weight-medium);
-  padding:1px var(--space-3);
+  padding: 1px var(--space-3);
   border-radius: 0;
   background: rgba(107, 114, 128, 0.1);
   color: var(--text-secondary, #666);
@@ -390,8 +390,8 @@ const statusTitle = computed(() => {
 }
 
 .port-action-btn {
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   background: none;
   color: var(--text-muted, #999);

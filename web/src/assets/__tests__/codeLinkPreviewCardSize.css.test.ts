@@ -38,7 +38,7 @@ describe('code link preview card width', () => {
   it('defines the single card width on the base rule', () => {
     const decls = ruleDecls('.code-link-preview-floating')
     expect(decls, 'base card rule must exist').not.toBeNull()
-    expect(decls).toMatch(/width:\s*min\(\s*720px\s*,\s*calc\(100vw - 24px\)\s*\)/)
+    expect(decls).toMatch(/width:\s*min\(\s*calc\(\s*720\s*\*\s*var\(--dp\)\s*\)\s*,\s*calc\(100vw - calc\(\s*24\s*\*\s*var\(--dp\)\s*\)\)\s*\)/)
   })
 
   it('does not give media cards a wider width than code cards', () => {
@@ -51,6 +51,31 @@ describe('code link preview card width', () => {
 
   it('keeps the taller media height cap', () => {
     const decls = ruleDecls('.code-link-preview-floating.is-media')
+    expect(decls).toMatch(/max-height:\s*min\(88vh,\s*calc\(100vh - calc\(\s*24\s*\*\s*var\(--dp\)\s*\)\)\)/)
+  })
+})
+
+/**
+ * A rendered HTML document is page content, not a snippet: it gets the same
+ * height cap as media, or the card opens as a short strip over a full page even
+ * though the frame reports the document's own height (HtmlPreviewBody).
+ */
+describe('code link preview — page-content height cap', () => {
+  it('lifts the code-tuned cap for the page-content modifier', () => {
+    const decls = ruleDecls('.code-link-preview-floating.is-page-content')
+    expect(decls, '.is-page-content rule must exist').not.toBeNull()
     expect(decls).toMatch(/max-height:\s*min\(88vh,\s*calc\(100vh - 24px\)\)/)
+  })
+
+  it('does not widen the card for page content', () => {
+    // One card width for every target type (see the suite above).
+    const decls = ruleDecls('.code-link-preview-floating.is-page-content')
+    expect(decls).not.toMatch(/(^|;)\s*width\s*:/)
+  })
+
+  it('keeps the media-only floor and backdrop off the page-content modifier', () => {
+    // A document is white and has its own padding; the 220px floor and grey
+    // backdrop belong to media only. Sharing the modifier would apply both.
+    expect(ruleDecls('.code-link-preview-floating.is-page-content .code-preview-content')).toBeNull()
   })
 })

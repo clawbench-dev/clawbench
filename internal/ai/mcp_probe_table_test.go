@@ -45,6 +45,12 @@ var mcpProbeBackends = []mcpProbeBackend{
 	{ID: "pi", Args: []string{"npx", "-y", "pi-acp@latest"}, CLI: "pi"},
 	{ID: "antigravity", Args: []string{"npx", "-y", "agy-acp@latest"}, CLI: "agy"},
 	{ID: "zcode", Args: []string{"npx", "-y", "zcode-acp-server"}},
+	// openclaw is already MEASURED as unsupported (2026-10-24): the bridge
+	// refuses per-session mcpServers outright, so session/new fails rather than
+	// silently ignoring the field. It stays in the table so the guard still
+	// catches an AcpCommand change, and so a future re-probe notices if the
+	// bridge ever starts accepting the field.
+	{ID: "openclaw", Args: []string{"openclaw", "acp"}, CLI: "openclaw"},
 }
 
 // TestMCPProbeBackendTable 是源码守卫：探针表里每个后端的 spawn 命令必须与

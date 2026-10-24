@@ -61,7 +61,7 @@ const nextRunAt = computed(() => props.task.nextRunAt as string | undefined)
   background: rgba(0, 102, 204, 0.05);
   padding: var(--space-3);
   border-radius: var(--radius-sm, 6px);
-  margin: -2px -6px;
+  margin: calc(-2 * var(--dp)) calc(-6 * var(--dp));
 }
 .overview-row.highlight .overview-value {
   color: var(--accent-color, #0066cc);

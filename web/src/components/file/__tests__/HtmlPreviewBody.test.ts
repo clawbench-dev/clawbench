@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import HtmlPreviewBody from '@/components/file/HtmlPreviewBody.vue'
 
 const i18n = createI18n({
@@ -175,5 +177,140 @@ describe('HtmlPreviewBody — in-document hooks', () => {
     expect(onOpenSearch).not.toHaveBeenCalled()
     // And the chord is no longer claimed.
     expect(event.defaultPrevented).toBe(false)
+  })
+})
+
+/**
+ * Height contract for the previewed document.
+ *
+ * The surfaces that host this body are content-sized (the floating card and the
+ * touch sheet both grow to fit what they show). A frame whose only height came
+ * from `height: 100%` / `flex: 1` therefore had no definite size to resolve
+ * against and fell back to the replaced-element default of 150px — a full-page
+ * document opened as a short strip (measured in Chromium: card 207px for a
+ * 1123px document). The body now measures the document on `load` and feeds that
+ * back as the frame's height, which the card's `max-height` then caps.
+ */
+describe('HtmlPreviewBody — document height', () => {
+  /**
+   * Put a body into the frame's document and fire `load`.
+   *
+   * jsdom neither fetches `src` nor renders `srcdoc`, so the frame's document
+   * starts empty (`body === null`). Writing one in gives the component the same
+   * thing a real load provides. jsdom has no layout engine either, so
+   * `scrollHeight` is always 0 — stub it to what a document of this height
+   * would report.
+   */
+  async function loadWithBodyHeight(
+    wrapper: ReturnType<typeof mountBody>,
+    height: number,
+  ) {
+    const iframe = wrapper.find('iframe.html-preview-iframe').element as HTMLIFrameElement
+    const doc = iframe.contentDocument!
+    doc.open()
+    doc.write('<html><body><div>document</div></body></html>')
+    doc.close()
+    Object.defineProperty(doc.body, 'scrollHeight', { configurable: true, value: height })
+    iframe.dispatchEvent(new Event('load'))
+    await wrapper.vm.$nextTick()
+    return { iframe, doc }
+  }
+
+  it('sizes the frame to the loaded document', async () => {
+    const wrapper = mountBody()
+    const { iframe } = await loadWithBodyHeight(wrapper, 1123)
+
+    expect(iframe.style.height).toBe('1123px')
+  })
+
+  it('leaves the frame unmeasured before the document loads', () => {
+    // An inline height of 0 would collapse the card while the frame is still
+    // loading; unset keeps the stylesheet's `100%`.
+    const wrapper = mountBody()
+    const iframe = wrapper.find('iframe.html-preview-iframe').element as HTMLIFrameElement
+    expect(iframe.style.height).toBe('')
+  })
+
+  it('re-measures on reload instead of keeping the previous document height', async () => {
+    // A reload is a new document; a stale height would leave the card sized for
+    // the file that was open before.
+    const wrapper = mountBody()
+    await loadWithBodyHeight(wrapper, 1123)
+    const { iframe } = await loadWithBodyHeight(wrapper, 200)
+
+    expect(iframe.style.height).toBe('200px')
+  })
+
+  it('falls back to documentElement when the body reports no height', async () => {
+    // A document that styles its body out of flow (or leaves it empty) reports
+    // nothing on `body`; the root element is the remaining source of truth.
+    const wrapper = mountBody()
+    const iframe = wrapper.find('iframe.html-preview-iframe').element as HTMLIFrameElement
+    const doc = iframe.contentDocument!
+    doc.open()
+    doc.write('<html><body></body></html>')
+    doc.close()
+    Object.defineProperty(doc.body, 'scrollHeight', { configurable: true, value: 0 })
+    Object.defineProperty(doc.documentElement, 'scrollHeight', { configurable: true, value: 640 })
+    iframe.dispatchEvent(new Event('load'))
+    await wrapper.vm.$nextTick()
+
+    expect(iframe.style.height).toBe('640px')
+  })
+
+  it('ignores a document that reports no height at all', async () => {
+    // A frame whose document is unreachable/empty must not be pinned to 0px,
+    // which would hide the preview entirely.
+    const wrapper = mountBody()
+    const iframe = wrapper.find('iframe.html-preview-iframe').element as HTMLIFrameElement
+    iframe.dispatchEvent(new Event('load'))
+    await wrapper.vm.$nextTick()
+
+    expect(iframe.style.height).toBe('')
+  })
+})
+
+/**
+ * jsdom has no CSS engine, so the flex-basis half of the contract is a
+ * source check. `flex: 1` expands to `1 1 0%`; a zero basis ignores the inline
+ * height the component measures and the frame collapses to 150px again —
+ * verified in Chromium: with `flex: 1` the measured 1123px document still
+ * rendered a 150px frame, with `flex: 1 1 auto` the card grew to its cap.
+ */
+describe('HtmlPreviewBody — iframe must honour the measured height', () => {
+  const source = readFileSync(
+    resolve(__dirname, '../HtmlPreviewBody.vue'),
+    'utf8',
+  )
+
+  it('keeps a content-based flex-basis on the frame', () => {
+    const rule = source.match(/\.html-preview-iframe\s*\{([\s\S]*?)\}/)
+    expect(rule, '.html-preview-iframe rule must exist').not.toBeNull()
+    expect(rule![1]).toMatch(/flex:\s*1 1 auto/)
+    // The shorthand that would silently reset the basis to 0.
+    expect(rule![1]).not.toMatch(/flex:\s*1\s*;/)
+  })
+})
+
+describe('HtmlPreviewBody — document height resets with the target', () => {
+  it('drops the previous document height when the file changes', async () => {
+    // A new target mounts a frame that would otherwise keep the OLD document's
+    // height until its own load fires — a tall file followed by a short one
+    // would flash at the stale size.
+    const wrapper = mountBody()
+    const iframe = wrapper.find('iframe.html-preview-iframe').element as HTMLIFrameElement
+    const doc = iframe.contentDocument!
+    doc.open()
+    doc.write('<html><body><div>tall</div></body></html>')
+    doc.close()
+    Object.defineProperty(doc.body, 'scrollHeight', { configurable: true, value: 1123 })
+    iframe.dispatchEvent(new Event('load'))
+    await wrapper.vm.$nextTick()
+    expect(iframe.style.height).toBe('1123px')
+
+    await wrapper.setProps({ htmlSrc: '/api/fs/raw/public/other.html?t=2' })
+
+    const next = wrapper.find('iframe.html-preview-iframe').element as HTMLIFrameElement
+    expect(next.style.height).toBe('')
   })
 })

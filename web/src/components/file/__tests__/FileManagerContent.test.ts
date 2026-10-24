@@ -5291,8 +5291,8 @@ describe('FileManagerContent — panel layout (search bar belongs to the listing
     expect(row![1]).toMatch(/align-items:\s*center/)
     const toggle = src.match(/\.fs-toggle-btn\s*\{([^}]*)\}/)
     expect(toggle).toBeTruthy()
-    expect(toggle![1]).toMatch(/width:\s*26px/)
-    expect(toggle![1]).toMatch(/height:\s*26px/)
+    expect(toggle![1]).toMatch(/width:\s*calc\(\s*26\s*\*\s*var\(--dp\)\s*\)/)
+    expect(toggle![1]).toMatch(/height:\s*calc\(\s*26\s*\*\s*var\(--dp\)\s*\)/)
   })
 
   it('leaves the field with no fill or border in ANY state, including focus', () => {

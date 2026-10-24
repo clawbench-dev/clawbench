@@ -283,7 +283,7 @@ function handleClose() {
      row in the app and left no room for the current-session chip without the
      title and the chip colliding. Still under the 44px session-list row — this
      picker is a short, one-shot list, not the main navigation. */
-  min-height: 40px;
+  min-height: calc(40 * var(--dp));
   padding: 0 var(--space-6);
   border: none;
   border-top: 1px solid var(--border-color, #dee2e6);
@@ -345,7 +345,7 @@ function handleClose() {
   left: 0;
   top: 0;
   bottom: 0;
-  width: 3px;
+  width: calc(3 * var(--dp));
   background: var(--accent-color);
 }
 
@@ -356,7 +356,7 @@ function handleClose() {
 .sp-current-chip {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
-  line-height: 16px;
+  line-height: calc(16 * var(--dp));
   padding: 0 var(--space-2);
   border-radius: var(--radius-xs);
   color: var(--accent-color);
@@ -385,8 +385,8 @@ function handleClose() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
   padding: 0;
   border: none;
   border-radius: var(--radius-sm);
@@ -415,7 +415,7 @@ function handleClose() {
 .sp-goto:focus-visible {
   opacity: 1;
   outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
+  outline-offset: calc(-2 * var(--dp));
 }
 
 /* Touch devices have no hover, so the button would be invisible AND

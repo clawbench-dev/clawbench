@@ -515,8 +515,8 @@ watch(() => props.open, async (val) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-sm);
   background: none;
@@ -532,7 +532,7 @@ watch(() => props.open, async (val) => {
   font-weight: var(--font-weight-semibold);
   color: #fff;
   background: var(--accent-color, #0066cc);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   white-space: nowrap;
 }
@@ -542,8 +542,8 @@ watch(() => props.open, async (val) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-sm);
   background: none;
@@ -587,7 +587,7 @@ watch(() => props.open, async (val) => {
 
 .agent-tag {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: 0;
   font-weight: var(--font-weight-medium);
   flex-shrink: 0;
@@ -602,7 +602,7 @@ watch(() => props.open, async (val) => {
 .model-tag {
   background: rgba(100, 100, 100, 0.08);
   color: var(--text-muted, #999);
-  max-width: 120px;
+  max-width: calc(120 * var(--dp));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -611,8 +611,8 @@ watch(() => props.open, async (val) => {
 /* Multi-select checkbox and confirm button */
 .agent-option-check {
   flex-shrink: 0;
-  width: 20px;
-  height: 20px;
+  width: calc(20 * var(--dp));
+  height: calc(20 * var(--dp));
   border: 1px solid var(--border-color, #ccc);
   border-radius: var(--radius-sm, 4px);
   display: flex;
@@ -648,7 +648,7 @@ watch(() => props.open, async (val) => {
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  padding: 2px var(--space-1);
+  padding: calc(2 * var(--dp)) var(--space-1);
   border: 1px solid var(--border-color, #ccc);
   border-radius: var(--radius-full);
   background: none;
@@ -658,8 +658,8 @@ watch(() => props.open, async (val) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: calc(20 * var(--dp));
+  height: calc(20 * var(--dp));
   border: none;
   border-radius: var(--radius-full);
   background: none;
@@ -681,7 +681,7 @@ watch(() => props.open, async (val) => {
 }
 
 .agent-stepper-count {
-  min-width: 14px;
+  min-width: calc(14 * var(--dp));
   text-align: center;
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
@@ -697,7 +697,7 @@ watch(() => props.open, async (val) => {
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  padding: 3px var(--space-2);
+  padding: calc(3 * var(--dp)) var(--space-2);
   border: 1px solid var(--border-color, #ccc);
   border-radius: var(--radius-full);
   background: none;
@@ -749,7 +749,7 @@ watch(() => props.open, async (val) => {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   line-height: 1;
-  padding: 4px var(--space-4);
+  padding: calc(4 * var(--dp)) var(--space-4);
   cursor: pointer;
   white-space: nowrap;
   transition: color var(--duration-base), background var(--duration-base);

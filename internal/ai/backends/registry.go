@@ -116,6 +116,30 @@ func LookupACPModelSwitchMethod(backendID string) string {
 	return ""
 }
 
+// LookupACPToolCallWrapperPrefixes returns the title prefixes that mark a
+// tool_call frame as a wrapper around the real call (dropped by the host), or
+// nil when the backend emits no wrapper frames.
+func LookupACPToolCallWrapperPrefixes(backendID string) []string {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	if p, ok := plugins[backendID]; ok && p.ACP != nil {
+		return p.ACP.ToolCallWrapperTitlePrefixes
+	}
+	return nil
+}
+
+// LookupACPModesMirrorThoughtLevel reports whether the backend's `modes` block
+// duplicates its `thought_level` config option (so the mode surface must be
+// suppressed). Unknown backends return false.
+func LookupACPModesMirrorThoughtLevel(backendID string) bool {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	if p, ok := plugins[backendID]; ok && p.ACP != nil {
+		return p.ACP.ModesMirrorThoughtLevel
+	}
+	return false
+}
+
 // LookupMidTurnInjector returns the backend's mid-turn injection policy, or nil
 // when the backend cannot inject a message into a running turn.
 func LookupMidTurnInjector(backendID string) ai.MidTurnInjector {

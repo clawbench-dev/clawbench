@@ -45,9 +45,11 @@ function blockFor(selector: string): string {
 
 describe('wallpaper preview thumbnail sizing', () => {
   it('defines the thumbnail size once as shared custom properties', () => {
+    // Expressed as `calc(N * var(--dp))` so the tile follows the UI scale with
+    // everything around it; a bare px value would freeze at one size.
     const root = blockFor('.wallpaper-setting')
-    expect(root).toMatch(/--wallpaper-thumb-w:\s*\d+px;/)
-    expect(root).toMatch(/--wallpaper-thumb-h:\s*\d+px;/)
+    expect(root).toMatch(/--wallpaper-thumb-w:\s*calc\(\s*\d+\s*\*\s*var\(--dp\)\s*\);/)
+    expect(root).toMatch(/--wallpaper-thumb-h:\s*calc\(\s*\d+\s*\*\s*var\(--dp\)\s*\);/)
   })
 
   it('sizes the Bing preview from the shared properties', () => {
@@ -76,8 +78,8 @@ describe('wallpaper preview thumbnail sizing', () => {
     // The gallery tile pins aspect-ratio: 4 / 3; the explicit preview size must
     // match it, or the two previews would differ in shape as well as scale.
     const root = blockFor('.wallpaper-setting')
-    const w = Number(root.match(/--wallpaper-thumb-w:\s*(\d+)px/)?.[1])
-    const h = Number(root.match(/--wallpaper-thumb-h:\s*(\d+)px/)?.[1])
+    const w = Number(root.match(/--wallpaper-thumb-w:\s*calc\(\s*(\d+)\s*\*\s*var\(--dp\)/)?.[1])
+    const h = Number(root.match(/--wallpaper-thumb-h:\s*calc\(\s*(\d+)\s*\*\s*var\(--dp\)/)?.[1])
     expect(w).toBeGreaterThan(0)
     expect(h).toBeGreaterThan(0)
     expect(w / h).toBeCloseTo(4 / 3, 5)
@@ -90,11 +92,13 @@ describe('wallpaper preview thumbnail sizing', () => {
     // 68x50 while the Bing preview rendered 72x54. The ring must be an inset
     // shadow so both photos occupy the identical box.
     const item = blockFor('.wallpaper-gallery__item')
-    expect(item).toContain('box-shadow: inset 0 0 0 2px transparent;')
-    expect(item).not.toMatch(/border:\s*2px/)
+    expect(item).toMatch(/box-shadow:\s*inset 0 0 0 calc\(2 \* var\(--dp\)\) transparent;/)
+    expect(item).not.toMatch(/border:\s*(?:calc\([^)]*\)|2px)/)
 
     const active = blockFor('.wallpaper-gallery__item--active')
-    expect(active).toContain('box-shadow: inset 0 0 0 2px var(--accent-color);')
+    expect(active).toMatch(
+      /box-shadow:\s*inset 0 0 0 calc\(2 \* var\(--dp\)\) var\(--accent-color\);/,
+    )
     expect(active).not.toContain('border-color')
   })
 

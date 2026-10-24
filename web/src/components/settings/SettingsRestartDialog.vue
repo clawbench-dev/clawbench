@@ -67,16 +67,16 @@ const displayFields = computed(() =>
   align-items: center;
   justify-content: center;
   z-index: 10;
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(calc(4 * var(--dp)));
+  backdrop-filter: blur(calc(4 * var(--dp)));
 }
 
 .settings-restart-dialog {
   background: var(--bg-primary);
   border-radius: var(--radius-lg);
   padding: var(--space-8);
-  margin: 24px;
-  max-width: 320px;
+  margin: calc(24 * var(--dp));
+  max-width: calc(320 * var(--dp));
   width: 100%;
   box-shadow: var(--shadow-md);
 }
@@ -92,12 +92,12 @@ const displayFields = computed(() =>
 .settings-restart-dialog__message {
   font-size: var(--font-size-lg);
   color: var(--text-secondary);
-  margin:0 0 var(--space-6);
+  margin: 0 0 var(--space-6);
   text-align: center;
 }
 
 .settings-restart-dialog__list {
-  margin:0 0 var(--space-8);
+  margin: 0 0 var(--space-8);
   padding-left: var(--space-8);
   font-size: var(--font-size-lg);
   color: var(--text-secondary);

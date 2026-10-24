@@ -226,8 +226,12 @@ describe('MCPSetting layout guard', () => {
     // `flex` (shorthand) or `flex-basis` on the shared class is the bug.
     expect(/(^|[\s;])flex\s*:/.test(body), '.mcp-input must not set `flex`').toBe(false)
     expect(/(^|[\s;])flex-basis\s*:/.test(body)).toBe(false)
-    // height is the thing being protected.
-    expect(/height\s*:\s*30px/.test(body), '.mcp-input must keep height: 30px').toBe(true)
+    // height is the thing being protected. Expressed in design px now, so it
+    // scales with the rest of the UI; the invariant is the 30, not the unit.
+    expect(
+      /height\s*:\s*calc\(\s*30\s*\*\s*var\(--dp\)\s*\)/.test(body),
+      '.mcp-input must keep a 30 design-px height',
+    ).toBe(true)
   })
 
   it('sizes row children and column children separately', () => {

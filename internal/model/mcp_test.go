@@ -245,6 +245,10 @@ func TestBackendSupportsMCP(t *testing.T) {
 	require.False(t, BackendSupportsMCP("dsh"))
 	require.False(t, BackendSupportsMCP("deepseek"))
 	require.False(t, BackendSupportsMCP("pi"))
+	// openclaw is a different failure mode from the three above: the bridge
+	// REFUSES per-session servers (session/new errors) instead of accepting and
+	// ignoring them, so injecting anything would break every turn.
+	require.False(t, BackendSupportsMCP("openclaw"))
 	require.True(t, BackendSupportsMCP("claude"))
 	require.True(t, BackendSupportsMCP("codex"))
 	// Unknown backends default to supported: the list only records measured

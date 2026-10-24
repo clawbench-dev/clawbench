@@ -72,6 +72,10 @@ export default {
     fileView: 'File',
     history: 'History',
     forge: 'Issues & PRs',
+    // Dock tab label names the integration the project actually uses, so the
+    // overflow menu says which service it opens. Brand names stay untranslated.
+    forgeGithub: 'GitHub Integration',
+    forgeGitlab: 'GitLab Integration',
     tasks: 'Tasks',
     notifications: 'Notification Center',
     portForward: 'Port Mapping',
@@ -2682,7 +2686,7 @@ export default {
       localeZh: '中文',
       localeEn: 'English',
       uiScale: 'UI Scale',
-      uiScaleDesc: 'Global zoom in/out, equivalent to browser zoom',
+      uiScaleDesc: 'Scales the whole UI from its text size — type and controls grow together, continuously at any factor',
       uiScaleAutoFit: 'Auto Fit',
       uiScaleAutoFitDesc: 'Click once to compute a scale for the current screen resolution and write it to the slider below (1080p baseline, capped at 200%). Fine-tune with the slider afterwards.',
       uiScaleAutoFitDone: 'Fitted to {pct}% for the current screen',

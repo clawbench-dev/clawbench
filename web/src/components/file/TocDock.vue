@@ -125,8 +125,8 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   flex-direction: column;
-  min-width: 200px;
-  max-width: 400px;
+  min-width: calc(200 * var(--dp));
+  max-width: calc(400 * var(--dp));
   flex-shrink: 0;
   background: var(--bg-secondary);
   /* No border-left: the drag divider's line (on this edge) already provides the
@@ -183,8 +183,8 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -4px;
-  right: -4px;
+  left: calc(-4 * var(--dp));
+  right: calc(-4 * var(--dp));
 }
 /* 2px highlight. `:active` covers mouse press; `--expanded` covers the whole
    pointer session, which is what touch needs (see the `dragging` ref).
@@ -194,12 +194,12 @@ onBeforeUnmount(() => {
    below — both are host geometry, the line's own rules are shared. */
 .toc-dock-divider:active,
 .toc-dock-divider.resize-divider--expanded {
-  width: 2px;
+  width: calc(2 * var(--dp));
   margin-left: -0.5px;
 }
 @media (hover: hover) {
   .toc-dock-divider:hover {
-    width: 2px;
+    width: calc(2 * var(--dp));
     margin-left: -0.5px;
   }
 }
@@ -219,7 +219,7 @@ onBeforeUnmount(() => {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
-  min-height: 28px;
+  min-height: calc(28 * var(--dp));
 }
 
 .toc-dock-header-icon {
