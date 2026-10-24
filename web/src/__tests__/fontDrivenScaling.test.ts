@@ -263,6 +263,12 @@ describe('canvas-rendered surfaces scale explicitly', () => {
     expect(src).toContain('UI_SCALE_EVENT')
     expect(src).toMatch(/addEventListener\(UI_SCALE_EVENT/)
     expect(src).toMatch(/removeEventListener\(UI_SCALE_EVENT/)
+    // The stored setting must ALSO be watched: `fontSizeDesign` seeds once at
+    // setup and the Settings row writes through `setLocalConfig` (which has no
+    // side effect for this key), so without a watch a change in Settings only
+    // reached terminals opened afterwards — an open one kept its old size until
+    // a reload. That is the actual "nothing changed" symptom.
+    expect(src).toMatch(/watch\(\(\) => localConfig\.terminalFontSize/)
     // The listener must actually re-fit, not just re-read the scale. Scoped to
     // the function body rather than a fixed character window, so a comment
     // tweak cannot silently turn this into a no-op assertion.

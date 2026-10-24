@@ -906,6 +906,28 @@ watch(() => [localConfig.fontMono, localConfig.fontMonoFallback], () => {
   void applyMonoFontChange()
 })
 
+// Settings → Terminal → 字体大小.
+//
+// `fontSizeDesign` seeds from the stored value at setup and the Settings row
+// writes through `setLocalConfig`, which has no side effect for this key — so
+// without this watch a change in Settings only reached terminals opened
+// afterwards, and an open one kept its old size until a reload.
+watch(() => localConfig.terminalFontSize, (v) => {
+  const n = Number(v)
+  if (!Number.isFinite(n) || n <= 0) return
+  // Compare against the design ref, not `fontSize`: the latter is scaled, so
+  // every UI-scale change would look like a font-size change and re-enter here.
+  if (Math.abs(n - fontSizeDesign.value) < 1e-6) return
+  fontSizeDesign.value = n
+  tabManager.updateFontSize(fontSize.value)
+  for (const tab of tabManager.tabs.value) {
+    if (!tab.fitAddon) continue
+    requestAnimationFrame(() => {
+      try { tab.fitAddon?.fit() } catch { /* ignore */ }
+    })
+  }
+})
+
 // Late-registered webfonts (custom fonts scanned after cold start) never
 // re-measure inside xterm — re-apply the family on the global font-change
 // event the custom-font loader dispatches after injecting @font-face.
