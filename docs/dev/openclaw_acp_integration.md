@@ -212,7 +212,7 @@ thought_level=adaptive                    → -32603 "thinkingLevel \"adaptive\"
 | `internal/ai/acp_conn_state.go` | `applyExtractedState` 丢弃镜像 modes |
 | `internal/ai/acp_conn_lifecycle.go` + `acp_pool.go` | load-first 恢复分支 + `backendSpec()` 辅助 |
 | `cmd/server/main.go`、`internal/model/discovery_test.go`、`internal/ai/backends/native_skills_test.go`、`internal/ai/mcp_probe_table_test.go`、`internal/model/mcp_test.go`、`internal/service/i18n_hardcoded_guard_test.go` | 注册与守卫同步 |
-| `web/src/utils/{backendNames.ts,agentIcons.ts}`、`web/src/assets/mono-icon-colors.css` + 两个测试 | 显示名 / 图标 / 单色主题色 |
+| `web/src/utils/{backendNames.ts,agentIcons.ts}`、`web/src/assets/mono-icon-colors.css` + 两个测试 | 显示名 / 图标（用 lobe-icons 的 `openclaw-color.svg` 红色小龙虾，非单色版）/ 单色主题色 |
 
 ## 九、升级路径上的坑
 

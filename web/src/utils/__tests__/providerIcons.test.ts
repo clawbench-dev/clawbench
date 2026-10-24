@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { getModelProvider, getProviderIcon, extractSvgInner, extractViewBox, getProviderSvgHtml, getProviderViewBox, getProviderFullSvg } from '@/utils/providerIcons'
 
 describe('providerIcons', () => {
@@ -191,6 +193,30 @@ describe('providerIcons', () => {
             const data = getProviderIcon('vecli')
             expect(data).not.toBeNull()
             expect(data!.raw).toContain('<svg')
+        })
+
+        // Same hazard class as the agent icons: lobe-icons' "-color" variants
+        // sometimes paint the glyph pure white assuming a brand tile that is not
+        // part of the SVG, so the mark disappears on a light background.
+        it('kimi uses the mono mark, not the white-on-white color variant', () => {
+            const data = getProviderIcon('kimi')!
+            const literalFills = [...data.raw.matchAll(/\bfill="(#[0-9a-fA-F]{3,6})"/g)].map(m => m[1].toLowerCase())
+            expect(literalFills).not.toContain('#fff')
+            expect(literalFills).not.toContain('#ffffff')
+            expect(data.monoCssClass).toBe('mono-kimi')
+            expect(getProviderFullSvg('kimi', 16)).toContain('mono-kimi')
+        })
+
+        // Every monoCssClass referenced by the registry must have a rule in the
+        // shared stylesheet — a typo silently falls back to inherited `color`.
+        it('every monoCssClass has a colour rule in mono-icon-colors.css', () => {
+            const css = readFileSync(resolve(__dirname, '../../assets/mono-icon-colors.css'), 'utf8')
+            const defined = new Set([...css.matchAll(/^\.([\w-]+)\s*\{/gm)].map(m => m[1]))
+            for (const id of ['openai', 'anthropic', 'groq', 'xai', 'opencode', 'pi', 'kimi', 'opencode-go']) {
+                const cls = getProviderIcon(id)?.monoCssClass
+                if (!cls) continue
+                expect(defined.has(cls), `provider "${id}" uses .${cls} but no rule defines it`).toBe(true)
+            }
         })
     })
 
