@@ -206,6 +206,7 @@
         'is-dragging': isDraggingCard,
         'is-resizing': isResizingCard,
         'is-media': isMediaView,
+        'is-page-content': growsToAvailableHeight,
         'is-docked': docked,
         'is-user-sized': cardW !== null || cardH !== null,
       }"
@@ -1509,10 +1510,14 @@ const scrollToTargetLine = () => {
 }
 
 // Max-height for the card. Code slices are capped at 65vh/480px so the card
-// stays compact; media cards hold the file itself, so they are allowed to grow
-// to the full placement box (which already accounts for the viewport).
+// stays compact; a target whose CONTENT is the page — media (the file itself)
+// or a rendered HTML document (a full page, not a snippet) — is allowed to grow
+// to the full placement box, which already accounts for the viewport.
+const growsToAvailableHeight = computed(
+  () => isMediaView.value || (isRenderedView.value && isHtmlView.value),
+)
 const mediaMaxHeightCss = (clampPx: number) =>
-  isMediaView.value
+  growsToAvailableHeight.value
     ? `${clampPx}px`
     : `min(65vh, 480px, ${clampPx}px)`
 

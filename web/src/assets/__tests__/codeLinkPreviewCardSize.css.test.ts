@@ -54,3 +54,28 @@ describe('code link preview card width', () => {
     expect(decls).toMatch(/max-height:\s*min\(88vh,\s*calc\(100vh - 24px\)\)/)
   })
 })
+
+/**
+ * A rendered HTML document is page content, not a snippet: it gets the same
+ * height cap as media, or the card opens as a short strip over a full page even
+ * though the frame reports the document's own height (HtmlPreviewBody).
+ */
+describe('code link preview — page-content height cap', () => {
+  it('lifts the code-tuned cap for the page-content modifier', () => {
+    const decls = ruleDecls('.code-link-preview-floating.is-page-content')
+    expect(decls, '.is-page-content rule must exist').not.toBeNull()
+    expect(decls).toMatch(/max-height:\s*min\(88vh,\s*calc\(100vh - 24px\)\)/)
+  })
+
+  it('does not widen the card for page content', () => {
+    // One card width for every target type (see the suite above).
+    const decls = ruleDecls('.code-link-preview-floating.is-page-content')
+    expect(decls).not.toMatch(/(^|;)\s*width\s*:/)
+  })
+
+  it('keeps the media-only floor and backdrop off the page-content modifier', () => {
+    // A document is white and has its own padding; the 220px floor and grey
+    // backdrop belong to media only. Sharing the modifier would apply both.
+    expect(ruleDecls('.code-link-preview-floating.is-page-content .code-preview-content')).toBeNull()
+  })
+})

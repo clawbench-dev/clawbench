@@ -856,6 +856,16 @@ body.code-preview-resizing * {
   max-height: min(88vh, calc(100vh - 24px));
 }
 
+/* A rendered HTML document is the same case as media: the preview shows a whole
+   PAGE, not a code snippet, so the 65vh/480px cap made it open as a short strip
+   even though the frame now reports the document's own height (see
+   HtmlPreviewBody). Same lift, same reason. Kept as its own modifier rather
+   than folded into `.is-media`: media additionally gets a 220px content floor
+   and a grey backdrop, neither of which suits a white document. */
+.code-link-preview-floating.is-page-content {
+  max-height: min(88vh, calc(100vh - 24px));
+}
+
 /* The media pane sits directly under the header/meta rows; give it a floor so
    a small image still reads as a preview rather than a sliver. */
 .code-link-preview-floating.is-media .code-preview-content {

@@ -2288,6 +2288,9 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     expect(floating?.querySelector('.md-preview-body')).not.toBeNull()
     expect(floating?.querySelector('.fake-rendered-md')).not.toBeNull()
     expect(floating?.querySelectorAll('.code-preview-line-row').length).toBe(0)
+    // Markdown is prose, not a page: it keeps the compact code-tuned cap. Only
+    // a rendered HTML document gets the page-content modifier.
+    expect(floating?.classList.contains('is-page-content')).toBe(false)
 
     wrapper.unmount()
   })
@@ -2503,6 +2506,62 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     const htmlBuildCalls = buildPreviewMarkdownHtml.mock.calls
       .filter(([arg]) => String(arg?.path || '').endsWith('.html'))
     expect(htmlBuildCalls).toHaveLength(0)
+
+    wrapper.unmount()
+  })
+
+  it('gives the rendered HTML view the page-content height cap', async () => {
+    // A rendered document is a whole PAGE, not a code snippet: with only the
+    // code-tuned min(65vh, 480px) cap the card opened as a short strip even
+    // after the frame started reporting the document's height. The modifier
+    // lifts that cap (see codeLinkPreviewCardSize.css.test.ts) and must not
+    // leak onto the source view or onto Markdown, which stay compact.
+    const preview = createMockPreviewController({
+      target: ref(makeHtmlTarget()),
+      isHtml: ref(true),
+      canRenderDocument: ref(true),
+      effectiveRenderMode: ref('rendered'),
+    })
+
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    expect(
+      document.querySelector('.code-link-preview-floating.is-page-content'),
+      'rendered HTML must get the page-content height cap',
+    ).not.toBeNull()
+
+    wrapper.unmount()
+  })
+
+  it('does not give the source view of an HTML file the page-content cap', async () => {
+    // Source view is an ordinary code slice: it keeps the compact cap so the
+    // card does not jump to near-fullscreen when the eye toggle flips.
+    const preview = createMockPreviewController({
+      target: ref(makeHtmlTarget()),
+      isHtml: ref(true),
+      canRenderDocument: ref(true),
+      effectiveRenderMode: ref('source'),
+      slicedCode: ref({
+        code: '<html>\n<body>Hi</body>\n</html>',
+        startLine: 1,
+        endLine: 3,
+        totalLines: 3,
+        lineOutOfRange: false,
+        renderTruncated: false,
+      }),
+    })
+
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    expect(document.querySelector('.code-link-preview-floating.is-page-content')).toBeNull()
 
     wrapper.unmount()
   })
