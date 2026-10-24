@@ -332,6 +332,7 @@
                   <!-- Chat Tab (title bar is now the shared one above) -->
                   <TabPanel class="chat-tab-panel" noHeader tabId="chat" :activeTab="chatActive">
                     <ChatPanelContent
+                      ref="chatPanelContentRef"
                       :active="isWideScreen || activeTab === 'chat'"
                       :keyboard-active="chatShortcutActive"
                       :current-file="currentFile"
@@ -842,6 +843,10 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   }
 
   // ── Phase 3: Reset module-level singletons ──
+  // Save the current session's reading position BEFORE resetIdentity() clears
+  // currentSessionId. Once cleared, ChatMessageList's session watcher won't see
+  // an oldSid and onBeforeUnmount sees an empty id — neither can save.
+  chatPanelContentRef.value?.savePositionNow()
   resetIdentity()
   resetAgents()
   resetChatSessionState()
@@ -2135,6 +2140,7 @@ setOpenSessionHandler((sessionId) => {
 const { pickerOpen: sessionPickerOpen } = usePendingTarget()
 const sessionDrawerRef = ref<InstanceType<typeof SessionDrawer> | null>(null)
 const sessionSidebarRef = ref<InstanceType<typeof SessionSidebar> | null>(null)
+const chatPanelContentRef = ref<InstanceType<typeof ChatPanelContent> | null>(null)
 
 // Register the group-roster refresher. App.vue owns the single
 // useGroupMembers instance (the chat header and the settings sheet both read

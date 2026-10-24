@@ -533,30 +533,90 @@ describe('ChatMessageList — content-growth observer backstop', () => {
 })
 
 /**
- * Session switches always land at the bottom — no per-session scroll position
- * memory (chatScrollMemory was removed). The currentSessionId watcher only
- * resets the scroll state machine for the freshly rebuilt list; the actual
- * force-scroll-to-bottom is driven by switchSession's loadHistory(true).
+ * Source slice of the `watch(() => props.currentSessionId, ...)` callback body,
+ * from its opening brace to the matching close. A fixed-length window is
+ * brittle: the watcher legitimately grows (scroll memory, preview cleanup) and
+ * a window that is too short silently stops covering the assertions.
+ */
+function sessionWatcherBody(source: string): string {
+  const start = source.indexOf('watch(() => props.currentSessionId')
+  if (start === -1) return ''
+  const open = source.indexOf('{', start)
+  if (open === -1) return ''
+  let depth = 0
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i]
+    if (ch === '{') depth++
+    else if (ch === '}') {
+      depth--
+      if (depth === 0) return source.slice(open, i + 1)
+    }
+  }
+  return source.slice(open)
+}
+
+/**
+ * A session the user left mid-history reopens where they left it; a session
+ * left at the bottom (or one that is RUNNING) still lands at the bottom. The
+ * currentSessionId watcher saves the OLD session's position before resetting
+ * the scroll state machine, and the messages watcher consumes the armed
+ * pendingRestoreSessionId once the incoming history lands.
  *
- * The messages watcher keeps ONLY the array-replacement anchor (captureAnchor /
+ * The messages watcher also keeps the array-replacement anchor (captureAnchor /
  * restoreAnchor) for when content is prepended/loaded while the user is NOT at
  * the bottom — a same-session, mid-reading reload must not jump the view.
  */
-describe('ChatMessageList — session switch resets scroll state, no position memory', () => {
-  it('resets the full scroll state machine on session switch', async () => {
+describe('ChatMessageList — session switch scroll memory', () => {
+  it('saves the left session position before resetting the scroll state', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    // State machine reset on currentSessionId change
-    expect(source).toContain('watch(() => props.currentSessionId')
-    expect(source).toContain('userLeftBottom = false')
-    // Every user-input flag is cleared too, so the rebuilt list starts clean.
-    expect(source).toMatch(/userTouching = false\s*wheelActive = false\s*mouseDownActive = false/)
-    // No position memory left behind
-    expect(source).not.toContain('saveChatScrollPosition')
-    expect(source).not.toContain('clearChatScrollPosition')
-    expect(source).not.toContain('getChatScrollPosition')
-    expect(source).not.toContain('pendingRestoreSessionId')
-    expect(source).not.toContain('savePositionNow')
+    // The watcher must receive the OLD id — that is the session being left.
+    expect(source).toContain('watch(() => props.currentSessionId, (newSid, oldSid)')
+    expect(source).toContain('saveCurrentPosition(oldSid)')
+    // Saving must happen BEFORE the state machine is reset: the reset clears
+    // userLeftBottom / lastScrollTop and the DOM is rebuilt right after, so a
+    // save placed later would read the fresh list instead of the old one.
+    // Scoped to the watcher body — `userLeftBottom = false` also appears in
+    // followToBottom() and applyRestore(), so a whole-file index proves nothing.
+    const body = sessionWatcherBody(source)
+    const saveIdx = body.indexOf('saveCurrentPosition(oldSid)')
+    const resetIdx = body.indexOf('userLeftBottom = false')
+    expect(saveIdx).toBeGreaterThan(-1)
+    expect(resetIdx).toBeGreaterThan(saveIdx)
+  })
+
+  it('arms the restore with an explicit flag and applies it once messages land', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // Explicit flag, never a listKey oldValue comparison (listKey embeds the
+    // message count and is therefore not a stable session identity).
+    expect(source).toContain('pendingRestoreSessionId = newSid && hasChatScrollPosition(newSid) ? newSid : null')
+    expect(source).toContain('if (pendingRestoreSessionId === props.currentSessionId)')
+    // The restore runs before the "no previous messages" guard, which a
+    // session switch always trips (clear → full array).
+    const consumeIdx = source.indexOf('pendingRestoreSessionId === props.currentSessionId')
+    const guardIdx = source.indexOf('if (!oldMsgs || oldMsgs.length === 0) return')
+    expect(consumeIdx).toBeGreaterThan(-1)
+    expect(guardIdx).toBeGreaterThan(consumeIdx)
+    expect(source).toContain('applyRestore(sid, entry)')
+    // Restoring into the middle must KEEP the follow latch, or the next stream
+    // token yanks the reader back to the bottom.
+    expect(source).toMatch(/function applyRestore\(sid, entry\)[\s\S]*?userLeftBottom = dist > NEAR_BOTTOM_PX/)
+  })
+
+  it('exposes savePositionNow for the project switch and saves on unmount', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // A project switch tears the tree down without an id change, so the save
+    // must be callable from outside BEFORE resetIdentity clears the id.
+    expect(source).toContain('function savePositionNow()')
+    expect(source).toContain('savePositionNow,')
+    const unmountIdx = source.indexOf('onBeforeUnmount(() => {')
+    const saveNowIdx = source.indexOf('savePositionNow()', unmountIdx)
+    expect(saveNowIdx).toBeGreaterThan(unmountIdx)
+    // At the bottom → forget (returning should show the newest content).
+    expect(source).toContain('if (dist <= NEAR_BOTTOM_PX) {')
+    expect(source).toContain('clearChatScrollPosition(sid)')
   })
 
   it('keeps the array-replacement anchor for mid-reading reloads', async () => {
@@ -694,8 +754,10 @@ describe('ChatMessageList — CodeLinkPreview integration', () => {
   it('closes preview on session switch', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    const sessionWatch = source.slice(source.indexOf('watch(() => props.currentSessionId'))
-    expect(sessionWatch.slice(0, 1000)).toContain('codeLinkPreview.close()')
+    // Scoped to the watcher body, not a fixed 1000-char window: the watcher
+    // grows as responsibilities are added and a window would silently stop
+    // covering the cleanup it is supposed to prove.
+    expect(sessionWatcherBody(source)).toContain('codeLinkPreview.close()')
   })
 
   it('handles clicking both file-open button and directory chat-file-path text', async () => {

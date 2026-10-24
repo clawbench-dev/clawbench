@@ -433,6 +433,7 @@ vi.mock('@/utils/chatStreamUtils', async (importOriginal) => {
 // ── Import after mocks ──
 
 import { useChatSession, loadSessionsOnce, resetChatSessionState } from '@/composables/useChatSession'
+import { saveChatScrollPosition, _resetChatScrollMemory } from '@/utils/chatScrollMemory'
 import { recordRecentSession } from '@/composables/useRecentSession'
 import { store } from '@/stores/app.ts'
 import { chatMessageReducer, resetInFlightSendsForTest, trackInFlightSend, isInFlightSend } from '@/utils/chatStreamUtils.ts'
@@ -2519,6 +2520,75 @@ describe('switchSession', () => {
     )
     expect(readCall).toBeDefined()
     expect(String(readCall![0])).toContain(`session_id=s2`)
+  })
+
+  /**
+   * Scroll restoration (issue #576): switching to a session the user left
+   * mid-history must NOT force-scroll to the bottom, or the remembered position
+   * is overwritten on arrival. A running session (or one with no memory) still
+   * lands at the bottom.
+   *
+   * Asserted through onScrollBottom's `force` argument — that is the single
+   * input the message list uses to decide pin-vs-restore.
+   */
+  describe('forceScrollBottom on switch (scroll memory)', () => {
+    function mockSwitchFetch(running = false) {
+      globalThis.fetch = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            sessionId: 's2',
+            messages: [],
+            total: 0,
+            backend: 'claude',
+            agentId: 'agent1',
+            modelId: '',
+            thinkingEffort: '',
+            running,
+          }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true }) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ sessions: [] }) })
+    }
+
+    beforeEach(() => {
+      _resetChatScrollMemory()
+    })
+
+    afterEach(() => {
+      _resetChatScrollMemory()
+    })
+
+    it('does not force-scroll a still session that has a remembered position', async () => {
+      saveChatScrollPosition('s2', { scrollTop: 400, anchorKey: '', anchorOffset: 0, ratio: 0.3 })
+      mockSwitchFetch(false)
+
+      const { session, options } = createSessionInternal()
+      await session.switchSession('s2')
+
+      expect(options.onScrollBottom).toHaveBeenCalledWith(false)
+    })
+
+    it('force-scrolls when the target session has no remembered position', async () => {
+      mockSwitchFetch(false)
+
+      const { session, options } = createSessionInternal()
+      await session.switchSession('s2')
+
+      expect(options.onScrollBottom).toHaveBeenCalledWith(true)
+    })
+
+    it('force-scrolls a RUNNING session even when it has a remembered position', async () => {
+      // The live output is the point — restoring mid-history would hide it.
+      saveChatScrollPosition('s2', { scrollTop: 400, anchorKey: '', anchorOffset: 0, ratio: 0.3 })
+      mockState.runningSessions.add('s2')
+      mockSwitchFetch(true)
+
+      const { session, options } = createSessionInternal()
+      await session.switchSession('s2')
+
+      expect(options.onScrollBottom).toHaveBeenCalledWith(true)
+    })
   })
 
   it('passes the owning project path when switching to a cross-project session', async () => {

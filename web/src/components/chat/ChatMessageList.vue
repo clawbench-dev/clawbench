@@ -241,6 +241,7 @@ import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { isUserScrolling, shouldPin, isUserAwayFromBottom, SCROLL_STOP_MS, NEAR_BOTTOM_PX, RESUME_FOLLOW_PX } from '@/utils/scrollState'
+import { saveChatScrollPosition, clearChatScrollPosition, getChatScrollPosition, hasChatScrollPosition } from '@/utils/chatScrollMemory'
 import { appLog } from '@/utils/appLog'
 import { isLastAssistantMessage } from '@/utils/chatSessionUtils'
 import { flashElement } from '@/utils/domFlash'
@@ -658,6 +659,8 @@ function handleScroll() {
   const nearBottom = distFromBottom <= NEAR_BOTTOM_PX
   const nearTop = el.scrollTop < NEAR_TOP_THRESHOLD
   isAtBottom.value = nearBottom
+  // Back at the latest reply → the "you are behind" state is over.
+  if (nearBottom) restoredAwayFromBottom = false
 
   // Scroll-stop detection: restarts on every scroll event (a fling keeps them
   // coming, so the window auto-extends for its whole duration). Used ONLY for
@@ -923,6 +926,9 @@ onMounted(() => {
   observeContentGrowth()
 })
 onBeforeUnmount(() => {
+  // Teardown without a session switch (e.g. the whole panel unmounts) still
+  // deserves a remembered position — read the geometry while the ref is alive.
+  savePositionNow()
   document.removeEventListener('click', onDocumentClick, true)
   document.removeEventListener('keydown', handleCtrlArrowMsgJump)
   document.removeEventListener('mouseup', onDocumentMouseUp)
@@ -1294,14 +1300,72 @@ function getNearestMessageId() {
   return idx === null ? null : (props.messages[idx]?.id ?? null)
 }
 
+// ── Session-switch scroll memory ──
+// A session the user left mid-history reopens where they left it; one left at
+// the bottom reopens at the bottom (the memory is cleared on the way out — see
+// saveCurrentPosition). The restore target is carried by an explicit flag, NOT
+// by comparing listKey old/new values: listKey embeds the message count, so its
+// oldValue is whatever the last flush saw (switchSession clears the array in
+// between) and can never identify the session being left.
+let pendingRestoreSessionId = null
+
+/** rAF attempts for a restore that has not landed yet (content still growing). */
+const MAX_RESTORE_TRIES = 60
+
+/**
+ * True while the user is sitting at a restored position that is away from the
+ * bottom, together with the message count at restore time. New messages
+ * arriving in this state are exactly "the session grew while you were reading
+ * history" — the down FAB is then re-shown so the jump-to-bottom control is
+ * there without a separate banner. Cleared as soon as the user reaches the
+ * bottom (or switches sessions).
+ */
+let restoredAwayFromBottom = false
+let restoredMsgCount = 0
+
+/**
+ * Remember where the user is in `sid`, or forget it when they are at the
+ * bottom. Called on session switch (with the OLD id, while the old DOM is
+ * still mounted), on unmount, and from hotSwitchProject before resetIdentity()
+ * clears the id.
+ */
+function saveCurrentPosition(sid) {
+  const el = messagesRef.value
+  if (!sid || !el) return
+  const max = el.scrollHeight - el.clientHeight
+  const dist = max - el.scrollTop
+  // At (or near) the bottom → no memory: returning should show the newest
+  // content, which is what the user was watching.
+  if (dist <= NEAR_BOTTOM_PX) {
+    clearChatScrollPosition(sid)
+    return
+  }
+  const anchor = captureAnchor(el)
+  saveChatScrollPosition(sid, {
+    scrollTop: el.scrollTop,
+    anchorKey: anchor.key,
+    anchorOffset: anchor.offset,
+    ratio: max > 0 ? el.scrollTop / max : 0,
+  })
+}
+
+/** Save the current session's position now (exposed for the project switch). */
+function savePositionNow() {
+  const sid = props.currentSessionId
+  if (sid) saveCurrentPosition(sid)
+}
+
 // Watch session switch to reset scroll state and user msg index.
-// Session switches always land at the bottom (switchSession force-scrolls), so
-// no position save/restore — only a full state-machine reset for the freshly
-// rebuilt list.
-watch(() => props.currentSessionId, () => {
-  // Session switch always lands at the bottom (switchSession force-scrolls),
-  // so no position save/restore here — just reset the scroll state machine for
-  // the freshly rebuilt list.
+watch(() => props.currentSessionId, (newSid, oldSid) => {
+  // Save the position of the session being LEFT before the DOM is rebuilt.
+  // This watcher is pre-flush and the old list is still mounted, so the
+  // geometry here is the one the user was actually looking at.
+  if (oldSid && oldSid !== newSid) saveCurrentPosition(oldSid)
+  // Arm the restore for the incoming session; the messages watcher consumes it
+  // once the new array arrives. A flag (not an oldKey comparison) because
+  // listKey embeds the message count and is therefore never a stable identity.
+  pendingRestoreSessionId = newSid && hasChatScrollPosition(newSid) ? newSid : null
+  restoredAwayFromBottom = false
   isAtBottom.value = true
   scrolledUp.value = false
   scrolledDown.value = false
@@ -1374,9 +1438,108 @@ function restoreAnchor(el, anchor) {
   delete el.__prevScrollTop
 }
 
+/**
+ * Put the viewport back where the user left `sid`.
+ *
+ * Deliberately does NOT clamp to the current maxScroll: a restored session may
+ * still be loading older history / images / Mermaid, so the content is shorter
+ * than it was and clamping would silently land at the top. Instead it retries
+ * on the next frame (up to MAX_RESTORE_TRIES) until the content is tall enough,
+ * then falls back to pixels, then to the saved ratio if the anchor message is
+ * gone (truncated / deleted).
+ */
+function applyRestore(sid, entry) {
+  const attempt = (tries) => {
+    const el = messagesRef.value
+    // The user switched away again mid-restore → abandon, they are elsewhere.
+    if (!el || props.currentSessionId !== sid) return
+    const max = el.scrollHeight - el.clientHeight
+    if (max <= 0 || (tries < MAX_RESTORE_TRIES && entry.scrollTop > max)) {
+      if (tries < MAX_RESTORE_TRIES) {
+        requestAnimationFrame(() => attempt(tries + 1))
+        return
+      }
+    }
+    let ok = false
+    if (entry.anchorKey) {
+      const items = el.querySelectorAll('.chat-messages-list > .chat-message')
+      const rect0 = el.getBoundingClientRect()
+      for (const it of items) {
+        if (it.getAttribute('data-msg-key') === entry.anchorKey) {
+          // Land on the saved pixel first, then nudge the anchor message back
+          // to the offset it had in the viewport when the user left.
+          el.scrollTop = Math.min(entry.scrollTop, Math.max(0, max))
+          const rect = it.getBoundingClientRect()
+          el.scrollTop += rect.top - (rect0.top + entry.anchorOffset)
+          ok = true
+          break
+        }
+      }
+    }
+    if (!ok) {
+      // Anchor message gone → pixels, then the ratio when the content height
+      // changed (lazy-loaded history).
+      el.scrollTop = entry.scrollTop <= max ? entry.scrollTop : Math.round(entry.ratio * max)
+    }
+    // Restoring into the middle of the history must KEEP the follow latch set,
+    // otherwise the next streamed token / render flush yanks the user back to
+    // the bottom — the exact bug this feature exists to fix.
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+    isAtBottom.value = dist <= NEAR_BOTTOM_PX
+    userLeftBottom = dist > NEAR_BOTTOM_PX
+    setProgrammatic(false)
+    if (dist > NEAR_BOTTOM_PX) {
+      // Surface the existing DOWN FAB group (jump-to-bottom + next message).
+      // That group — not the up one — is the "you are not at the latest reply"
+      // affordance, so a restored position already has the jump-to-bottom
+      // control without any new UI.
+      restoredAwayFromBottom = true
+      restoredMsgCount = props.messages.length
+      showDownFabHint()
+    }
+  }
+  attempt(0)
+}
+
+/**
+ * Show the jump-to-bottom FAB for a while. Used when the viewport is knowingly
+ * NOT at the latest reply (restore landed mid-list, or new messages arrived
+ * while the user reads history) — the down group is the existing affordance for
+ * exactly that, so no extra hint UI is needed.
+ */
+function showDownFabHint() {
+  scrolledUp.value = false
+  clearTimeout(scrollUpTimer)
+  scrolledDown.value = true
+  clearTimeout(scrollDownTimer)
+  scrollDownTimer = setTimeout(() => { scrolledDown.value = false }, SCROLL_BUTTON_HIDE_DELAY)
+}
+
 watch(() => props.messages, (newMsgs, oldMsgs) => {
   const el = messagesRef.value
   if (!el || !newMsgs || newMsgs.length === 0) return
+
+  // Session switch restore: the incoming history has just landed. Runs before
+  // the "no previous messages" guard below because a switch always arrives as
+  // an empty → full transition.
+  if (pendingRestoreSessionId === props.currentSessionId) {
+    const sid = pendingRestoreSessionId
+    pendingRestoreSessionId = null
+    const entry = getChatScrollPosition(sid)
+    if (entry) {
+      nextTick(() => { requestAnimationFrame(() => applyRestore(sid, entry)) })
+      return
+    }
+  }
+
+  // New messages arrived while the reader sits at a restored position away
+  // from the bottom. The follow latch already keeps the viewport still; re-show
+  // the jump-to-bottom FAB (it auto-hides) so the control is present without a
+  // separate banner.
+  if (restoredAwayFromBottom && newMsgs.length > restoredMsgCount) {
+    restoredMsgCount = newMsgs.length
+    showDownFabHint()
+  }
 
   // Session switches always force-scroll to the bottom; this watcher only
   // anchors the viewport when the message array is replaced (loadHistory /
@@ -1407,6 +1570,7 @@ defineExpose({
   // only searches what is already loaded and silently does nothing otherwise.
   jumpToUserMessage,
   messagesRef,
+  savePositionNow,
   isAtBottom: () => isAtBottom.value,
   // Whether the view should stay pinned to the bottom: the user has NOT
   // deliberately scrolled away (userLeftBottom). Unlike isAtBottom — which is
