@@ -18,6 +18,11 @@ import { ChatPage } from '../pages/chat.page'
 test.describe.serial('Session switch scroll memory', () => {
   let chat: ChatPage
 
+  // webkit is markedly slower to lay out a long transcript and to settle a
+  // session switch; the default 30s leaves no room for the prep loop plus the
+  // switch plus the restore retries.
+  test.describe.configure({ timeout: 180_000 })
+
   test.beforeEach(async ({ page }) => {
     chat = new ChatPage(page)
     await page.goto('/')
@@ -57,6 +62,25 @@ test.describe.serial('Session switch scroll memory', () => {
    * look "still at the bottom" and be forgotten on the way out — testing the
    * wrong branch.
    */
+  /**
+   * Read the scroll offset once it has stopped changing.
+   *
+   * A wheel gesture keeps coasting for a few frames (much longer in webkit), so
+   * sampling immediately after it can capture a transient offset — and then the
+   * restore, which correctly lands on the SETTLED position, looks wrong by
+   * exactly the distance the coast still had to travel.
+   */
+  async function settleScroll(page: Page) {
+    let prev = await scrollInfo(page)
+    for (let i = 0; i < 20; i++) {
+      await page.waitForTimeout(100)
+      const now = await scrollInfo(page)
+      if (now.top === prev.top) return now
+      prev = now
+    }
+    return prev
+  }
+
   async function wheelUp(page: Page, deltaY: number) {
     const box = await page.locator('.chat-messages').boundingBox()
     if (!box) throw new Error('no scroll container')
@@ -79,18 +103,32 @@ test.describe.serial('Session switch scroll memory', () => {
       const d = await r.json()
       return (d.sessions || []).map((s: { id: string }) => s.id)
     })
-    if (ids.length >= 2) return ids[0]
-    const created = await page.evaluate(async () => {
-      const r = await fetch('/api/ai/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId: 'acp-mock' }),
+    if (ids.length < 2) {
+      const created = await page.evaluate(async () => {
+        const r = await fetch('/api/ai/sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentId: 'acp-mock' }),
+        })
+        if (!r.ok) throw new Error(`create session failed: ${r.status}`)
+        return r.json()
       })
-      if (!r.ok) throw new Error(`create session failed: ${r.status}`)
-      return r.json()
-    })
-    expect(created.sessionId).toBeTruthy()
-    return ids[0]
+      expect(created.sessionId).toBeTruthy()
+      // Creating a session makes the app switch to it. Come back to the
+      // original one so the caller scrolls in the transcript it has been
+      // filling — otherwise it measures the empty new session (max=0).
+      const back = page.locator(`.session-row[data-session-id]:visible[data-session-id="${ids[0]}"]`).first()
+      await expect(back).toBeVisible({ timeout: 10000 })
+      await back.click()
+      await expect(page.locator('.chat-messages')).toBeVisible()
+    }
+    // Return the session the app is ACTUALLY showing: tests run in sequence and
+    // a previous one may have left another session active, so `ids[0]` is not
+    // necessarily the transcript on screen.
+    const active = await page.evaluate(
+      () => document.querySelector('.session-row .session-item.active')?.closest('.session-row')?.getAttribute('data-session-id') ?? null,
+    )
+    return active || ids[0]
   }
 
   /**
@@ -114,19 +152,30 @@ test.describe.serial('Session switch scroll memory', () => {
     const back = page.locator(`${rowSel}[data-session-id="${sessionId}"]`).first()
     await expect(back).toBeVisible({ timeout: 10000 })
     await back.click()
+    // Wait for the switch to settle: the skeleton only renders while the
+    // history is loading, and measuring before it clears reads a half-built
+    // list whose height (and therefore the restored offset) is still moving.
+    await expect(page.locator('.chat-switching-indicator')).toHaveCount(0, { timeout: 20000 })
+    await expect(page.locator('.chat-message').first()).toBeVisible({ timeout: 20000 })
   }
 
   test('a still session reopens at the reading position', async ({ page }) => {
-    await makeScrollable(page)
+    // Create the second session FIRST: POSTing /api/ai/sessions makes the app
+    // switch to it, so doing it after the scroll prep would leave us measuring
+    // an empty transcript (max=0 → the sanity check fails with 0).
     const sessionId = await ensureSecondSession(page)
     expect(sessionId).toBeTruthy()
+    await makeScrollable(page)
 
     // Read partway up the transcript.
     await wheelUp(page, 600)
     await expect
       .poll(async () => (await scrollInfo(page)).top, { timeout: 5000 })
       .toBeGreaterThan(100)
-    const left = await scrollInfo(page)
+    // Let the wheel's momentum settle before sampling: a mid-fling reading is
+    // not the position the user "left", and asserting against it makes the
+    // comparison meaningless (webkit keeps coasting longer than chromium).
+    const left = await settleScroll(page)
     // Sanity: we must be genuinely away from the bottom, or the feature is
     // supposed to forget the position and this test proves nothing.
     expect(left.max - left.top).toBeGreaterThan(300)
@@ -145,9 +194,12 @@ test.describe.serial('Session switch scroll memory', () => {
   })
 
   test('a session left at the bottom reopens at the bottom', async ({ page }) => {
-    await makeScrollable(page)
+    // Create the second session FIRST: POSTing /api/ai/sessions makes the app
+    // switch to it, so doing it after the scroll prep would leave us measuring
+    // an empty transcript (max=0 → the sanity check fails with 0).
     const sessionId = await ensureSecondSession(page)
     expect(sessionId).toBeTruthy()
+    await makeScrollable(page)
 
     // Stay at the bottom, then leave and return.
     const before = await scrollInfo(page)
@@ -164,9 +216,12 @@ test.describe.serial('Session switch scroll memory', () => {
   })
 
   test('a running session still lands at the bottom', async ({ page }) => {
-    await makeScrollable(page)
+    // Create the second session FIRST: POSTing /api/ai/sessions makes the app
+    // switch to it, so doing it after the scroll prep would leave us measuring
+    // an empty transcript (max=0 → the sanity check fails with 0).
     const sessionId = await ensureSecondSession(page)
     expect(sessionId).toBeTruthy()
+    await makeScrollable(page)
 
     // Leave mid-history so a still session WOULD be restored…
     await wheelUp(page, 600)
