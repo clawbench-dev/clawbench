@@ -28,6 +28,8 @@ flowchart TD
 
 窗口形态在创建时由平台决定：Windows / Linux 无边框（控制簇由 Web UI 画在 header 右侧），macOS 保留原生帧（系统交通灯在左上角）。**只有 Windows / Linux 自绘**是因为两平台的控件位置惯例相反——macOS 的左上角交通灯有极强的肌肉记忆，把控制搬到右上角会与用户预期冲突；而 macOS 若只隐藏标题栏保留交通灯，header 右侧就会出现一个空簇或"按平台静默不同的 header"，不如保留原生帧来得更小更可预测。
 
+**窗口位置与大小跨重启记忆**（`windowGeometry.ts` 是纯模块、无 electron import，故可单测）。三处取舍：①**最大化时存的是「还原后的矩形」**而不是当前全屏矩形——否则下次取消最大化会得到一张铺满屏幕的"普通窗口"；②保存的矩形必须与某个显示器的**工作区**有足够重叠才采用（阈值 64px，即一个还能抓住的拖拽手柄），否则窗口会恢复到已被拔掉的显示器上：不可见、也没有任何入口能把它拉回来；③最小尺寸 640×480 兜底，且非有限数（NaN / Infinity）一律判为不可用——`setBounds` 收到这类值会抛错。
+
 外部链接判断以服务器 Origin 为边界，且用**白名单**而非黑名单：只有 `http`/`https`/`mailto`/`tel` 会被处理，其余（`file:`、`javascript:`、`data:`、自定义协议，以及无法解析的 URL）一律 `block`——绝不交给 OS 协议处理器或窗口。白名单内的 URL 再按 Origin 分流：等于服务器 Origin 的在窗口内导航，否则交给默认浏览器。这样 AI 生成的 localhost 端口 URL 与同服务器资源仍可在窗口内使用，而第三方链接不会劫持应用窗口。
 
 ### 最小化时的通知投递
@@ -65,7 +67,7 @@ sequenceDiagram
 - **已读消除原生通知**：系统通知只设 `setAutoCancel` 时，仅在点击通知本身时消失；用户手动打开 App 读消息后，旧通知仍留在通知栏，再点会重复派发深链、重复加载会话。因此主进程按 subject 键控保留 Notification 句柄，`native:dismiss-notification` 供渲染层在收到 `read` 事件时撤销对应通知（Android 侧同型，见 [推送通知](../features/push-notifications.md)）
 - **多服务器与凭据**：服务器列表里每个服务端各存各的密码（safeStorage 加密在各自 entry 内，keychain 不可用时降级为带标记的明文），因此在多个实例间切换都能自动登录；连接失败时回退登录页并展示失败原因（认证失败 / 网络不通 / 该服务端没存过密码三种区分）
 - **SSH / h2 端口映射**：桌面端内置 ssh2 客户端（以及可选的 h2 流隧道，见 [SSH 隧道](../infra/ssh-tunnel.md)），读取服务器公开的 `/api/ssh/info` 获取 SSH 端口与用户名，用 safeStorage 加密存储的密码建立连接，把 localhost 端口映射到服务器端口。设置页提供 **SSH / HTTP/2 二选一**传输选择器（默认 SSH），选择持久化到 Electron store 并在下次重连生效；桥暴露 `native:get-tunnel-transport`（偏好）、`native:get-active-tunnel-transport`（实际承载本次连接的线缆）与 `native:set-tunnel-transport`（只接受 `'ssh' | 'h2'`）
-- **界面缩放**：外观设置里的「自动适配」按钮**点一次**按当前屏幕分辨率算出合适的缩放并写入「界面缩放」滑块（1080p 为基准，上限 200%；已由系统缩放过的屏幕不二次放大），之后倍率是普通存储值、不会随屏幕变动；`Ctrl+滚轮` / `Ctrl+=` / `Ctrl+-` / `Ctrl+0` 走 Electron 原生缩放，比例按站点记忆。光标在终端 / PDF / PPT 预览内时 `Ctrl+滚轮` 缩放的是该内容本身
+- **界面缩放**：外观设置里的「自动适配」按钮**点一次**按当前屏幕分辨率算出合适的缩放并写入「界面缩放」滑块（1080p 为基准，上限 200%；已由系统缩放过的屏幕不二次放大），之后倍率是普通存储值、不会随屏幕变动。**这条链路在所有宿主上完全相同**——缩放经根字号（`--ui-scale` / `--dp`）实现，桌面壳**不再**走 `webContents.setZoomFactor`：原生缩放会缩小 `innerWidth` 并压制页面里所有 ResizeObserver，dock 溢出计算得靠人工补测，且与浏览器/Android 产生两套坐标空间。`Ctrl+滚轮` / `Ctrl+=` / `Ctrl+-` / `Ctrl+0` 仍是 Electron 原生页面缩放（与外观缩放**互相独立、可叠加**，比例按站点记忆），光标在终端 / PDF / PPT 预览内时缩放的是该内容本身
 - **系统通知**：AI 完成、任务执行、仓库事件通过原生系统通知展示；点击通知恢复窗口并导航到对应会话/任务/仓库详情。冷启动时通知先于页面加载到达，导航载荷暂存，等渲染进程显式握手后再派发
 - **应用自升级**：见下方"自升级"与"分发"两节
 - **会话缓存强刷**：`Ctrl+Shift+R`（macOS 为 `Cmd+Shift+R`）清空会话缓存与存储数据后硬刷新窗口；`F12` / `Ctrl+Shift+I`（macOS 为 `Cmd+Option+I`）开关开发者工具。这些键经 `before-input-event` 在窗口自己的事件路径上认领，其余按键（尤其 `F5`）原样交给页面——终端与文件管理器都在用 `F5`，而 OS 级 `globalShortcut` 会让页面再也收不到它。应用菜单被置为 null，因此开发者工具入口必须由这里提供
@@ -118,6 +120,8 @@ flowchart TD
 失败一律静默降级为全量下载，因此**载荷包名不一致不会报错**，只会让每次升级又下 150MB——这正是需要跨语言断言（`release.yml` ↔ Go 载荷基名）的原因。macOS 不发布载荷：替换已签名 `.app` 内的 `resources/` 会破坏代码签名封条，Apple Silicon 拒绝运行无效签名。载荷**只经 npm registry 分发**（`desktopPayloadURLs` 直接调 `desktopPayloadNpmURLs`，不含 GitHub 候选）：早期载荷 zip 曾与全量包并列挂在 Release 资产里，但那会让人误以为这个小 zip 可以直接安装（它缺 Electron 运行时），故移出；npm 顺带给了国内镜像加速。
 
 **失败弹框必须同时展示两条错误**：载荷（npm）路径**优先尝试**、失败才回落到全量包，但载荷失败此前只写 console——于是弹框只剩 GitHub 全量包的错误，满屏 `github.com` 地址让人误以为"客户端根本没走 npm 镜像"，而事实是走了并失败了。因此 `formatInstallFailure` 把载荷与全量两条错误各带来源标签一并展示。这是"静默降级"在**诊断信息**上必须付出的代价：降级本身该静默，但降级的原因不能。
+
+**写盘与克隆必须关掉 Electron 的 asar 拦截**：Electron 的 fs shim 把**任何末段以 `.asar` 结尾的路径**当作归档，解析到归档内部而不是磁盘上。而安装器的整个工作就是生产与复制这个名字的文件（解压含 `resources/app.asar` 的包、再克隆整个壳），不关拦截则升级在任何平台都走不完——实测 Electron 44.4.3 下 `writeFileSync`/`openSync`/`copyFileSync` 直接抛 `Invalid package`，`existsSync` 对合法归档返回 false，`statSync` 抛错。故同步写盘与克隆都包在 `process.noAsar = true` 的临时作用域里（**结束后恢复原值**而非置 false——调用方可能本来就用 `--no-asar` 启动），且**只覆盖同步调用**：跨 `await` 持有时，运行中的应用会读不了自己的归档。目录级操作（`rmSync`/`renameSync`）不受影响，清理与最终换指针无需包。
 
 ### 分发以 GitHub Release 为唯一渠道
 
