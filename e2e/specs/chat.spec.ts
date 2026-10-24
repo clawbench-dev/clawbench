@@ -117,12 +117,17 @@ test.describe('Chat', () => {
       // three and trips Playwright's strict mode.
       await drawer.locator('input[type="file"]:not([accept])').setInputFiles(testFilePath)
 
-      // The drawer footer reuses AttachmentTags, so the attached file shows up
-      // as a `.chat-file-attachment` chip inside the drawer. The server de-dupes
-      // upload names (`test-upload.txt` → `test-upload_2.txt` when a prior run
-      // left one behind), so match the stem rather than the exact name.
-      const attachment = drawer.locator('.chat-file-attachment')
-      await expect(attachment.first()).toBeVisible({ timeout: 10000 })
+      // Picking a file ends the drawer's job: it closes immediately and the
+      // upload keeps running in the background, reporting progress on the input
+      // bar's attachment cards. Keeping the sheet open only delayed the user, so
+      // the chip must be asserted on the input bar — not inside the drawer.
+      await expect(drawer).toBeHidden({ timeout: 10000 })
+
+      // The input bar's attachment strip is the surface the user actually sees.
+      // The server de-dupes upload names (`test-upload.txt` → `test-upload_2.txt`
+      // when a prior run left one behind), so match the stem.
+      const attachment = page.locator('.chat-input-wrapper .chat-file-attachment')
+      await expect(attachment.first()).toBeVisible({ timeout: 15000 })
       await expect(attachment.first()).toContainText(/test-upload(_\d+)?\.txt/)
     } finally {
       if (fs.existsSync(testFilePath)) fs.unlinkSync(testFilePath)
