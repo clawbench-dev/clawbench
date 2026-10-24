@@ -22,11 +22,15 @@
  * failure.
  */
 export function designPx(css: string, prop: string): number {
+  // Anchored on a property-name boundary so a `width` lookup cannot be
+  // satisfied by `min-width` / `max-width`. Without it a guard for one
+  // declaration silently passes on a different one.
+  const at = `(?:^|[\\s;{])${prop}:`
   const viaDp = css.match(
-    new RegExp(`${prop}:\\s*calc\\(\\s*(-?[\\d.]+)\\s*\\*\\s*var\\(--dp\\)\\s*\\)`),
+    new RegExp(`${at}\\s*calc\\(\\s*(-?[\\d.]+)\\s*\\*\\s*var\\(--dp\\)\\s*\\)`),
   )
   if (viaDp) return Number(viaDp[1])
-  const literal = css.match(new RegExp(`${prop}:\\s*(-?[\\d.]+)px`))
+  const literal = css.match(new RegExp(`${at}\\s*(-?[\\d.]+)px`))
   return literal ? Number(literal[1]) : NaN
 }
 

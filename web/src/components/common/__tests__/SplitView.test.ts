@@ -341,3 +341,55 @@ describe('SplitView — min sizes drive both JS clamp and CSS floors', () => {
     expect(style).toMatch(/min-width:\s*var\(--split-min-second/)
   })
 })
+
+describe('SplitView — follows the applied UI scale', () => {
+  // Rem scaling resizes the panes but never the viewport, so `resize` does not
+  // fire. Without the UI_SCALE_EVENT subscription the clamp bounds would keep
+  // the previous scale's design px and a drag would stop at the wrong edge.
+  afterEach(() => {
+    document.documentElement.style.removeProperty('--ui-scale')
+  })
+
+  it('scales the min-size CSS vars by the applied factor', async () => {
+    document.documentElement.style.setProperty('--ui-scale', '1.5')
+    wrapper = mountSplit({ enabled: true, ratio: 0.5, minLeft: 120, minRight: 140, gutterSize: 8 })
+    await nextTick()
+    const root = wrapper.find('.split-view').element as HTMLElement
+    // Design px × scale: the panes' real CSS px, which is what getBoundingClientRect
+    // reports and therefore what the clamp compares against.
+    expect(root.style.getPropertyValue('--split-min-first')).toBe('180px')
+    expect(root.style.getPropertyValue('--split-min-second')).toBe('210px')
+    expect(root.style.getPropertyValue('--split-gutter')).toBe('12px')
+  })
+
+  it('updates the bounds when the scale changes after mount', async () => {
+    wrapper = mountSplit({ enabled: true, ratio: 0.5, minLeft: 100, minRight: 100 })
+    await nextTick()
+    const root = wrapper.find('.split-view').element as HTMLElement
+    expect(root.style.getPropertyValue('--split-min-first')).toBe('100px')
+
+    // What applyUIScale() does on a settings change.
+    document.documentElement.style.setProperty('--ui-scale', '2')
+    window.dispatchEvent(new CustomEvent('clawbench-ui-scale-change', { detail: { scale: 2 } }))
+    await nextTick()
+
+    expect(root.style.getPropertyValue('--split-min-first')).toBe('200px')
+    expect(root.style.getPropertyValue('--split-min-second')).toBe('200px')
+  })
+
+  it('stops listening after unmount', async () => {
+    wrapper = mountSplit({ enabled: true, ratio: 0.5, minLeft: 100, minRight: 100 })
+    await nextTick()
+    const root = wrapper.find('.split-view').element as HTMLElement
+    wrapper.unmount()
+    wrapper = null
+
+    // A listener left attached would write to a detached element and, worse,
+    // keep the whole component tree alive.
+    document.documentElement.style.setProperty('--ui-scale', '2')
+    expect(() =>
+      window.dispatchEvent(new CustomEvent('clawbench-ui-scale-change', { detail: { scale: 2 } })),
+    ).not.toThrow()
+    expect(root.style.getPropertyValue('--split-min-first')).toBe('100px')
+  })
+})

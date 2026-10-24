@@ -152,7 +152,7 @@ const iframeStyle = computed(() =>
  * somehow lost it throws on `contentDocument` and is left at its default size.
  */
 function measureDocHeight() {
-  let doc: Document | null = null
+  let doc: Document | null
   try {
     doc = iframeRef.value?.contentDocument ?? null
   } catch {

@@ -255,3 +255,68 @@ type stubMidTurnInjector struct{}
 func (s *stubMidTurnInjector) Inject(context.Context, ai.RawRPCTransport, ai.MidTurnInjectRequest) (ai.MidTurnInjectResult, error) {
 	return ai.MidTurnInjectResult{}, nil
 }
+
+// TestLookupACPToolCallWrapperPrefixes covers the wrapper-frame filter lookup.
+// It is wired into ai.LookupACPToolCallWrapperPrefixesFn during init(), and a
+// backend that emits no wrappers must resolve to nil so the filter stays off.
+func TestLookupACPToolCallWrapperPrefixes(t *testing.T) {
+	backends.ResetForTest()
+	t.Cleanup(backends.ResetForTest)
+
+	backends.Register(&backends.BackendPlugin{
+		ID: "with-wrappers",
+		ACP: &backends.ACPPlugin{
+			ToolCallWrapperTitlePrefixes: []string{"tool_call: id: "},
+		},
+	})
+	backends.Register(&backends.BackendPlugin{ID: "no-acp"})
+	backends.Register(&backends.BackendPlugin{
+		ID:  "acp-no-wrappers",
+		ACP: &backends.ACPPlugin{},
+	})
+
+	got := backends.LookupACPToolCallWrapperPrefixes("with-wrappers")
+	if len(got) != 1 || got[0] != "tool_call: id: " {
+		t.Errorf("expected the registered prefixes, got %v", got)
+	}
+	if got := backends.LookupACPToolCallWrapperPrefixes("acp-no-wrappers"); got != nil {
+		t.Errorf("expected nil when no prefixes are registered, got %v", got)
+	}
+	if got := backends.LookupACPToolCallWrapperPrefixes("no-acp"); got != nil {
+		t.Errorf("expected nil for a backend without an ACP plugin, got %v", got)
+	}
+	if got := backends.LookupACPToolCallWrapperPrefixes("nonexistent"); got != nil {
+		t.Errorf("expected nil for an unknown backend, got %v", got)
+	}
+}
+
+// TestLookupACPModesMirrorThoughtLevel covers the modes-suppression lookup.
+// A false result is the default and must also be returned for unknown backends
+// and for backends whose ACP plugin is nil.
+func TestLookupACPModesMirrorThoughtLevel(t *testing.T) {
+	backends.ResetForTest()
+	t.Cleanup(backends.ResetForTest)
+
+	backends.Register(&backends.BackendPlugin{
+		ID:  "mirrored",
+		ACP: &backends.ACPPlugin{ModesMirrorThoughtLevel: true},
+	})
+	backends.Register(&backends.BackendPlugin{ID: "no-acp"})
+	backends.Register(&backends.BackendPlugin{
+		ID:  "acp-normal",
+		ACP: &backends.ACPPlugin{},
+	})
+
+	if !backends.LookupACPModesMirrorThoughtLevel("mirrored") {
+		t.Error("expected true for a backend that mirrors its modes")
+	}
+	if backends.LookupACPModesMirrorThoughtLevel("acp-normal") {
+		t.Error("expected false when the flag is unset")
+	}
+	if backends.LookupACPModesMirrorThoughtLevel("no-acp") {
+		t.Error("expected false for a backend without an ACP plugin")
+	}
+	if backends.LookupACPModesMirrorThoughtLevel("nonexistent") {
+		t.Error("expected false for an unknown backend")
+	}
+}

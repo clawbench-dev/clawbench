@@ -57,21 +57,29 @@ func StartGitSyncWorker() {
 		// before any network work.
 		Global().ScanAll()
 		syncNow()
-
-		for {
-			hours := model.ConfigInstance.Skills.RefreshHours
-			if hours <= 0 {
-				<-cancel
-				return
-			}
-			select {
-			case <-cancel:
-				return
-			case <-time.After(time.Duration(hours) * time.Hour):
-				syncNow()
-			}
-		}
+		runSyncLoop(cancel)
 	}()
+}
+
+// runSyncLoop refreshes on the configured interval until cancel is closed.
+//
+// A non-positive interval disables the periodic part: the loop parks on cancel
+// so the worker can still be stopped. Split out of the goroutine so the two
+// exit paths can be tested without waiting on a scheduler race.
+func runSyncLoop(cancel <-chan struct{}) {
+	for {
+		hours := model.ConfigInstance.Skills.RefreshHours
+		if hours <= 0 {
+			<-cancel
+			return
+		}
+		select {
+		case <-cancel:
+			return
+		case <-time.After(time.Duration(hours) * time.Hour):
+			syncNow()
+		}
+	}
 }
 
 // StopGitSyncWorker stops the background loop. Safe to call when not running.
