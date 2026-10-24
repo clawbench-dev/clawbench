@@ -718,7 +718,7 @@ import { portForwardUnavailable } from './utils/portForwardUtils.ts'
 import { useChatContext } from './composables/useChatContext.ts'
 import { consumeShareTargetResult, stageShareTargetResult } from './utils/shareTarget.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
-import { useForgeBinding, forgeDockIconKind } from './composables/useForgeBinding.ts'
+import { useForgeBinding, forgeDockIconKind, forgeTabTitleKey } from './composables/useForgeBinding.ts'
 import { setPendingForgeTarget, clearPendingForgeTarget, forgeTargetFromDetail } from './composables/useForgeNavigation.ts'
 import type { ForgeTarget } from './composables/useForgeNavigation.ts'
 import { forgeTargetItemKey } from './composables/useForge.ts'
@@ -3101,6 +3101,10 @@ function dockTabIcon(tab: string) {
   return dockTabMeta(tab)?.icon ?? Clock
 }
 function dockTabTitle(tab: string) {
+  // The forge tab is named after the integration in use ("GitHub integration" /
+  // "GitLab integration") rather than the platform-neutral registry title, so
+  // the overflow menu says which service it opens.
+  if (tab === 'forge') return t(forgeTabTitleKey(forgePlatform.value))
   const meta = dockTabMeta(tab)
   return meta ? t(meta.titleKey) : ''
 }
@@ -3336,6 +3340,9 @@ function wideDockTabIcon(tab: string) {
   return dockTabMeta(tab)?.icon ?? FolderOpen
 }
 function wideDockTabTitle(tab: string) {
+  // Same platform-aware label as the compact dock, so both docks name the
+  // integration ("GitHub integration" / "GitLab integration") consistently.
+  if (tab === 'forge') return t(forgeTabTitleKey(forgePlatform.value))
   const meta = dockTabMeta(tab)
   return meta ? t(meta.titleKey) : ''
 }
@@ -3470,8 +3477,7 @@ const overflowBadgeCount = computed(() => {
 
 const overflowButtonTitle = computed(() => {
   if (popupOverflowTabs.value.includes(activeTab.value)) {
-    const meta = dockTabMeta(activeTab.value)
-    return meta ? t(meta.titleKey) : t('nav.more')
+    return dockTabTitle(activeTab.value) || t('nav.more')
   }
   return t('nav.more')
 })

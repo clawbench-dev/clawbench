@@ -78,6 +78,19 @@ export function forgeDockIconKind(currentPlatform: string): 'github' | 'gitlab' 
 }
 
 /**
+ * forgeTabTitleKey is the i18n key for the forge dock tab's label.
+ *
+ * The tab is named after the integration the project actually uses ("GitHub
+ * integration" / "GitLab integration") instead of a platform-neutral
+ * "issues & PRs" phrase, so the dock entry says which service it opens.
+ * Unbound (or unknown) defaults to GitHub, matching `forgeDockIconKind` — the
+ * tab exists before a repository is bound and must not render an empty label.
+ */
+export function forgeTabTitleKey(currentPlatform: string): 'nav.forgeGithub' | 'nav.forgeGitlab' {
+    return forgeDockIconKind(currentPlatform) === 'gitlab' ? 'nav.forgeGitlab' : 'nav.forgeGithub'
+}
+
+/**
  * useForgeBinding exposes which forge the current project is bound to, and is
  * the single source of truth for every consumer that needs it.
  *

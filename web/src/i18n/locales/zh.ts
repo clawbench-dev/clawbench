@@ -72,6 +72,10 @@ export default {
     fileView: '文件',
     history: '历史',
     forge: '议题与合并请求',
+    // Dock tab label names the integration the project actually uses, so the
+    // overflow menu says which service it opens. Brand names stay untranslated.
+    forgeGithub: 'GitHub 集成',
+    forgeGitlab: 'GitLab 集成',
     tasks: '任务',
     notifications: '通知中心',
     portForward: '端口映射',
