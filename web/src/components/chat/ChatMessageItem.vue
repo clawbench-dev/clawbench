@@ -1117,6 +1117,18 @@ const copyPayload = quotableText
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 :root[data-app-mode] .chat-message {
     will-change: transform;
+    /* `will-change` alone only makes the row its own LAYER — it does not clip
+       what that layer paints. WebView can still leave a stale slice of the
+       bubble's own background below the row: users report a ~9px band of
+       `--bg-tertiary` sitting under the action bar of the reply that just
+       finished streaming (the older replies are clean, because their layer was
+       composited long ago). `contain: paint` bounds the row's paint to its own
+       box, so the slice cannot survive a re-composite.
+
+       Safe here: the row holds no absolutely/fixed positioned descendants that
+       deliberately overflow (verified — only two `position: relative`), and
+       `.msg-card` already clips its own children with `overflow: hidden`. */
+    contain: paint;
 }
 
 /* ── File attachment in messages ── */
