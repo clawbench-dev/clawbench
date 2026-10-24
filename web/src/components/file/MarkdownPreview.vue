@@ -624,8 +624,8 @@ defineExpose({
 
        Width stays 20px: this element is the HIT AREA. The visible 3px rail is
        drawn by .diff-marker::before at its right edge. */
-    right: max(0px, (100% - 900px) / 2);
-    width: 20px;
+    right: max(0, (100% - calc(900 * var(--dp))) / 2);
+    width: calc(20 * var(--dp));
     height: auto;
     z-index: 2;
 }

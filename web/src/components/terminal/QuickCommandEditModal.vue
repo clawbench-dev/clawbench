@@ -165,7 +165,7 @@ async function saveCommand() {
 
 .form-textarea {
   resize: vertical;
-  min-height: 80px;
+  min-height: calc(80 * var(--dp));
   line-height: var(--line-height-normal);
   font-family: inherit;
 }
@@ -187,8 +187,8 @@ async function saveCommand() {
 .form-checkbox input[type="checkbox"] {
   -webkit-appearance: none;
   appearance: none;
-  width: 16px;
-  height: 16px;
+  width: calc(16 * var(--dp));
+  height: calc(16 * var(--dp));
   margin: 0;
   flex-shrink: 0;
   border: 1.5px solid var(--border-color, #999);
@@ -207,12 +207,12 @@ async function saveCommand() {
 .form-checkbox input[type="checkbox"]:checked::after {
   content: '';
   position: absolute;
-  left: 4px;
+  left: calc(4 * var(--dp));
   top: 1px;
-  width: 5px;
-  height: 9px;
+  width: calc(5 * var(--dp));
+  height: calc(9 * var(--dp));
   border: solid #fff;
-  border-width: 0 2px 2px 0;
+  border-width: 0 calc(2 * var(--dp)) calc(2 * var(--dp)) 0;
   transform: rotate(45deg);
 }
 
@@ -224,6 +224,6 @@ async function saveCommand() {
 .form-hint {
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
-  padding-left: 24px;
+  padding-left: calc(24 * var(--dp));
 }
 </style>

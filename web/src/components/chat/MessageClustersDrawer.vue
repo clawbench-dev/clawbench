@@ -235,7 +235,7 @@ defineExpose({ open })
 }
 
 .mc-progress-bar {
-  height: 6px;
+  height: calc(6 * var(--dp));
   background: var(--bg-tertiary, #e5e5e5);
   border-radius: var(--radius-xs);
   overflow: hidden;
@@ -278,7 +278,7 @@ defineExpose({ open })
   flex-direction: column;
   align-items: center;
   gap: var(--space-6);
-  padding: 24px 0;
+  padding: calc(24 * var(--dp)) 0;
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
 }
@@ -427,8 +427,8 @@ defineExpose({ open })
 }
 
 .mc-header-btn {
-  width: 24px;
-  height: 24px;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
   border: none;
   background: none;
   color: var(--accent-color, #0066cc);

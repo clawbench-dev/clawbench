@@ -49,7 +49,7 @@ const buttonLabel = computed(() => (props.showingSummary ? labelOriginal.value :
 .summary-toggle-bar {
   display: flex;
   align-items: stretch;
-  height: 34px;
+  height: calc(34 * var(--dp));
   margin-bottom: var(--space-6);
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
@@ -61,8 +61,8 @@ const buttonLabel = computed(() => (props.showingSummary ? labelOriginal.value :
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding:0 var(--space-7);
+  gap: calc(5 * var(--dp));
+  padding: 0 var(--space-7);
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -92,7 +92,7 @@ const buttonLabel = computed(() => (props.showingSummary ? labelOriginal.value :
   left: 0;
   right: 0;
   bottom: 0;
-  height: 2px;
+  height: calc(2 * var(--dp));
   background: var(--accent-color);
 }
 </style>

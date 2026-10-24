@@ -60,21 +60,45 @@
 
 全部在 `web/css/variables.css` 的 `:root` 里（静态值）+ `[data-theme="…"]` 块里（颜色）。**不要写魔法数字**，找最近的 token。
 
-### 字号（7 档，固定 px）
+### 字号（7 档，设计 px）
 
-| Token | 值 | 用途 |
+| Token | 设计值 | 用途 |
 |---|---|---|
-| `--font-size-2xs` | 10px | 角标、角标、diff 行号槽 |
-| `--font-size-xs` | 11px | 密集元信息：工具卡片、文件路径、diff |
-| `--font-size-sm` | 12px | 紧凑正文：工具详情、列表行 |
-| `--font-size-md` | 13px | **默认 UI 文字**：聊天消息、设置 |
-| `--font-size-lg` | 14px | 工具图标、弹窗标题、主按钮 |
-| `--font-size-xl` | 15px | 阅读文字——**同时是 html/body 基准** |
-| `--font-size-2xl` | 16px | 标题；输入框固定 16px 防移动端 Safari 聚焦缩放 |
+| `--font-size-2xs` | 10 | 角标、角标、diff 行号槽 |
+| `--font-size-xs` | 11 | 密集元信息：工具卡片、文件路径、diff |
+| `--font-size-sm` | 12 | 紧凑正文：工具详情、列表行 |
+| `--font-size-md` | 13 | **默认 UI 文字**：聊天消息、设置 |
+| `--font-size-lg` | 14 | 工具图标、弹窗标题、主按钮 |
+| `--font-size-xl` | 15 | 阅读文字——**同时是 html/body 基准** |
+| `--font-size-2xl` | 16 | 标题；输入框固定 16 防移动端 Safari 聚焦缩放 |
 
-**为什么是 px 不是 rem**：外观「缩放」设置通过 `html { zoom }` 缩放整个 UI（`useSettingsConfig.applyUIScale`），px 已经跟着缩放了。引入 rem 反而会双重缩放。
+⚠️ 表里是**设计值**，不是最终 px。token 实际定义成 `calc(N * var(--dp))`，见下节。
 
-⚠️ **`--font-size-xl` 是 html/body 的基准字号**（`base.css:32`）。改动它 = 全站基准漂移。`designTokens.css.test.ts:57` 钉死这条不变量。
+### 字号驱动的缩放（`--ui-scale` / `--dp`）
+
+**整套 UI 只由一个数字缩放：根字号。** 外观「缩放」写 `--ui-scale`（0.5–2，步长 1%），`base.css` 把它乘进 `html { font-size }`，而所有尺寸都用 `--dp` 表达：
+
+```css
+:root { --ui-scale: 1; --dp: calc(1rem / 15); }
+html  { font-size: calc(15px * var(--ui-scale, 1)); }
+```
+
+- **`--dp` = 一个「设计像素」**（`1rem / 15`）。布局按 15px 基准画的，所以 `calc(4 * var(--dp))` 就是原型里的「4px」，与当前缩放无关。
+- **写几何尺寸一律用 `calc(N * var(--dp))`**：padding / gap / width / height / radius / offset / 阴影模糊半径 / 图标尺寸。
+- **文字用 `--font-size-*` token**（它们内部就是 `--dp` 倍数）。
+- **发丝线保持字面 `1px`**：边框、分隔线、焦点环、`outline-offset`、1px 阴影。它们该是**一个设备像素**，放大到 1.5px 只会发虚。
+- **为什么不用 `em`**：`em` 会随嵌套复合——`1.6em` 的标题放进 `0.875em` 的徽标里会乘起来，而 markdown 里的字号嵌套非常自由。`rem` / `--dp` 永远相对根，不会复合。
+- **为什么放弃 `html { zoom }`**：CSS zoom **不缩放布局视口**。实测 zoom 1.5 / 1000px 窗口下 `innerWidth` 仍是 1000 而 `clientWidth` 变成 667，于是 `100vw` 画出 1500 视觉 px（浮动卡片跑出屏幕）、`60dvh` 从占屏 60% 变 90%、媒体查询仍以为有 1000px、canvas 拉伸 backing store；每个消费方都要用 `toFixedCSS()` 在两套坐标间换算。rem 缩放只有一个坐标空间，这些坑整体消失。
+- **`--input-line-height` 例外**：表单控件的行盒必须是**整数 px**（Android WebView 会独立舍入行盒与内容盒，分数值下光标偏高），所以由 JS 按 `round(13 × scale × 1.4)` 写入，不走 `calc`。
+- **`--radius-full` 与 `--header-safe-area-top` 不缩放**：前者只要大于元素高度一半就是药丸，后者是物理刘海尺寸。
+- **图标**：lucide 的 `:size` 写成 SVG 的 `width` **属性**，属性不跟随根字号。`css/components.css` 里有一组 `:where(svg[width="N"])` 规则按属性值缩放它们，所以 885 个调用点一个都不用改。`:where()` 把特异性压到 0,1,0，自己定尺寸的组件（`.agent-icon-svg`、`.li-spinner`）仍然赢。
+- **JS 里参与布局的常量也必须缩放**。这是最容易漏的一类：CSS 改成 `calc(34 * var(--dp))` 之后，JS 里同源的 `34` 就变成了**设计 px**，而 `getBoundingClientRect()` / `clientWidth` 返回的是**已缩放**的 CSS px。两者直接比较会让「放得下几个」算错，直接写进 `style.transform` 会让指示器错位（错量随索引线性增长）。已处理的三处：
+  - `useDockOverflow` / `useToolbarOverflow`：按钮尺寸与间距在 `computed` 里乘 `uiScale`（**必须是 computed**，否则缩放变化不会让计数重算）。
+  - `SplitView`：`minLeft` / `minRight` / `gutterSize` 是设计 px，缩放后再用于 `clampRatio` 与 `--split-min-*`。
+  - `GitCommitList` 传给 `GitGraph` 的 `row-height`：行高 CSS 是 `calc(64 * var(--dp))`，SVG 的泳道网格必须跟着走，否则越往下偏差越大。
+  - 判据：**只要一个数字同时出现在 CSS 和 JS 里，它就必须在 JS 侧乘 `uiScale`**。缩放变化用 `UI_SCALE_EVENT` 通知（rem 缩放不触发 `resize`）。
+
+⚠️ **`--font-size-xl` 是 body 的基准字号**，且**必须与 `html` 的 15px 设计基准一致**。但 `html` 自己**不能**用这个 token：`--dp` 是 `1rem / 15`，`html { font-size: var(--font-size-xl) }` 会闭合成 `1rem ← 根字号 ← token ← 1rem` 的环，浏览器回退到 16px 初始值（迁移时踩过，表现是整个 UI 无视设置）。`designTokens.css.test.ts` 与 `fontDrivenScaling.test.ts` 都钉住这条。
 
 ### 间距（4px 基数，保留 2/6/10px）
 
@@ -230,7 +254,8 @@
 
 - 阈值（`useWideScreenLayout.ts` 的 `WIDE_SCREEN_MIN_WIDTH`）：**CSS 视口宽度 ≥960px**，仅此一条。
 - **为什么是纯 CSS 宽度、且不带物理像素回退**：布局实际能用的只有 CSS 像素，所以「放得下第二栏吗」只在 CSS 像素里有意义。早期版本带一条「物理宽度 ≥1280 且横屏」的回退，本意是救高 DPR 平板（2400 物理 px / DPR 2.5 = 960 CSS px），但副作用是拿「屏幕玻璃尺寸」越权替「可用布局空间」做决定，产出自相矛盾的结果——横屏手机（CSS 698px）被判宽屏，而桌面 960px 窗口反而不算。它也无法用 CSS 表达（媒体查询只认 CSS 像素），会让 JS 信号与 CSS 媒体查询在边界处分歧。把阈值从 1024 降到 960 就把平板那个 case 直接并进阈值里，回退条款可整体删除。
-- **UI 缩放不影响判定**：外观「缩放」走 `html { zoom }`，实测不改变 `innerWidth`，也不改变媒体查询求值。
+- **UI 缩放影响判定**：判据是**有效宽度** `innerWidth / uiScale`。面板本身随缩放变大，所以同一个窗口在 1.5 倍下只剩约 933 设计 px，确实放不下两栏（1400px 窗口会掉成单栏，1440px 正好 960 保持两栏）。`computeIsWideScreen(cssWidth, uiScale)` 两个参数缺一不可。
+  - **缩放变化不会触发 `resize`**：rem 缩放改的是元素尺寸不是视口，所以 `applyUIScale` 会广播 `clawbench-ui-scale-change`（`utils/uiScale.ts` 的 `UI_SCALE_EVENT`），布局监听它重算。少了这条，布局会一直沿用上一个缩放档位的判定。
 - 生效方式是给 `.main-content` 加 `.wide-screen` 类，`wide-screen.css` 切成 `flex-direction: row`。
 - **不要拿宽屏阈值当「布局放得下吗」的通用判据**：那是另一个问题、另一个阈值。例如头部胶囊的段标签用 `@media (min-width: 600px)`（见 `AppHeader.vue` 的 `.seg-label`）——带标签的胶囊实测仅约 215px，600 就够，用 960 反而会在有空间的横屏手机上隐藏标签。
 - **默认分屏比例是 4:6（左侧稍窄）**，常量 `DEFAULT_RATIO` 在 `utils/splitRatio.ts`——composable 初值与 `resetWideScreenState` 都引用它，不要把 0.4 散落成魔数。用户已持久化的自定义比例不受影响（localStorage 优先）。
@@ -544,6 +569,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 ### 任何 UI 改动
 
 - [ ] 只用了 token，没有魔法数字（尤其颜色和 z-index）
+- [ ] 几何尺寸写成 `calc(N * var(--dp))`，**不是**裸 px（否则该元素不跟随界面缩放）；发丝线除外，保持字面 `1px`
 - [ ] **在浅色和深色主题下各看一眼**（至少 `github-light` + `github-dark`）
 - [ ] 没碰 `--font-size-xl` / `--input-line-height` 的语义
 - [ ] 新增 `.app-container` 直接子元素已补进 `base.css` 的 `z-index:1` 规则
@@ -557,7 +583,8 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 
 | 测试 | 守什么 |
 |---|---|
-| `components/common/__tests__/designTokens.css.test.ts` | token 值、主题块完整性、未定义 token 引用、窗口控件对比度配方 |
+| `components/common/__tests__/designTokens.css.test.ts` | token 设计值、主题块完整性、未定义 token 引用、窗口控件对比度配方 |
+| `__tests__/fontDrivenScaling.test.ts` | 根字号是唯一缩放入口（`--dp` 唯一声明、html 不得用 `--font-size-*`）、全仓无 `zoom`、Electron 不再走 `setZoomFactor`、token 都走 `--dp`、发丝线不被缩放、lucide 属性选择器齐备、宽屏断点用有效宽度且监听缩放事件 |
 | `components/common/__tests__/countBadge.css.test.ts` | 角标几何全局唯一、scoped 未重加圆角 |
 | `components/common/__tests__/wrapCheck.css.test.ts` | 菜单「该项当前是开的」勾选 `.wrap-check` 全局唯一、两个菜单共用同一 class |
 | `components/common/__tests__/modalFooterBtn.theme.css.test.ts` | `.fbtn` 深色主题前景提亮 |

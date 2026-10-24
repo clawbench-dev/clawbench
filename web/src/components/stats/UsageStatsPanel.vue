@@ -664,7 +664,7 @@ onMounted(() => {
   color: var(--text-secondary);
   flex-shrink: 0;
   min-width: 4em;
-  line-height: 26px;
+  line-height: calc(26 * var(--dp));
 }
 .stats-chip-scroll {
   display: flex;
@@ -680,9 +680,9 @@ onMounted(() => {
   background: var(--bg-elevated, var(--bg-primary));
   color: var(--text-secondary);
   border-radius: var(--radius-full);
-  padding: 3px 11px;
+  padding: calc(3 * var(--dp)) calc(11 * var(--dp));
   font-size: var(--font-size-sm);
-  line-height: 18px;
+  line-height: calc(18 * var(--dp));
   cursor: pointer;
   transition: background var(--duration-base), color var(--duration-base), border-color var(--duration-base);
   -webkit-tap-highlight-color: transparent;
@@ -725,7 +725,7 @@ onMounted(() => {
   flex-direction: column;
 }
 .stats-donut-col {
-  flex: 0 0 190px;
+  flex: 0 0 calc(190 * var(--dp));
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -736,7 +736,7 @@ onMounted(() => {
   width: 100%;
 }
 .stats-summary.is-stacked .stats-donut {
-  height: 200px;
+  height: calc(200 * var(--dp));
 }
 .stats-summary.is-stacked .stats-totals {
   flex: none;
@@ -749,27 +749,27 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  min-height: 20px;
+  min-height: calc(20 * var(--dp));
 }
 .stats-donut-back {
   border: none;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   border-radius: var(--radius-md);
-  padding:0 var(--space-4);
+  padding: 0 var(--space-4);
   font-size: var(--font-size-xs);
-  line-height: 18px;
+  line-height: calc(18 * var(--dp));
   cursor: pointer;
   flex-shrink: 0;
 }
 .stats-donut {
   width: 100%;
-  height: 170px;
+  height: calc(170 * var(--dp));
 }
 .stats-totals {
   flex: 1;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(calc(110 * var(--dp)), 1fr));
   gap: var(--space-4);
   min-width: 0;
   align-content: start;
@@ -813,7 +813,7 @@ onMounted(() => {
 
 /* ── Error / loading / empty ── */
 .stats-error {
-  padding:9px var(--space-6);
+  padding: calc(9 * var(--dp)) var(--space-6);
   border-radius: var(--radius-sm, 6px);
   background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-red, #ef4444) 30%, transparent);
@@ -826,7 +826,7 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   gap: var(--space-5);
-  padding: 48px 0;
+  padding: calc(48 * var(--dp)) 0;
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
 }
@@ -837,8 +837,8 @@ onMounted(() => {
 /* ── Detail table ── */
 .stats-table-wrap {
   overflow-x: auto;
-  margin: 0 -10px;
-  padding:0 var(--space-5);
+  margin: 0 calc(-10 * var(--dp));
+  padding: 0 var(--space-5);
 }
 .stats-table {
   width: 100%;
@@ -847,7 +847,7 @@ onMounted(() => {
 }
 .stats-table th,
 .stats-table td {
-  padding:7px var(--space-4);
+  padding: calc(7 * var(--dp)) var(--space-4);
   border-bottom: 1px solid var(--border-color);
   text-align: right;
   white-space: nowrap;
@@ -874,7 +874,7 @@ onMounted(() => {
 .stats-th-inner {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
 }
 .stats-sort-arrow {
   font-size: var(--font-size-xs);
@@ -893,6 +893,6 @@ onMounted(() => {
 }
 .stats-chart {
   width: 100%;
-  height: 260px;
+  height: calc(260 * var(--dp));
 }
 </style>

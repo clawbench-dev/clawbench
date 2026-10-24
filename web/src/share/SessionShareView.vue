@@ -921,7 +921,7 @@ onBeforeUnmount(() => {
   min-height: 100%;
   box-sizing: border-box;
   width: 100%;
-  max-width: 900px;
+  max-width: calc(900 * var(--dp));
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -936,7 +936,7 @@ onBeforeUnmount(() => {
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-3, 6px);
-  min-height: 18px;
+  min-height: calc(18 * var(--dp));
   padding: var(--space-6) var(--space-6) 0;
   font-size: var(--font-size-sm, 12px);
   color: var(--text-muted, #656d76);
@@ -973,7 +973,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: var(--space-4);
   min-height: 60vh;
-  padding: 32px;
+  padding: calc(32 * var(--dp));
   color: var(--text-muted, #656d76);
   text-align: center;
 }

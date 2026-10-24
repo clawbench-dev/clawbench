@@ -597,8 +597,8 @@ function forgeTargetFromItemKey(key: string) {
 }
 .crumb-icon { color: var(--accent-color); flex-shrink: 0; }
 .header-btn {
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-lg);
   background: var(--bg-secondary);
@@ -759,9 +759,9 @@ function forgeTargetFromItemKey(key: string) {
   min-height: 0;
 }
 .nc-time {
-  width: 38px;
+  width: calc(38 * var(--dp));
   flex-shrink: 0;
-  padding-top: 9px;
+  padding-top: calc(9 * var(--dp));
   font-size: var(--font-size-2xs);
   line-height: 1;
   /* NOT --text-hint: at 10px on a white card that is ~2.6:1. The clock is
@@ -774,7 +774,7 @@ function forgeTargetFromItemKey(key: string) {
 }
 .nc-rail {
   position: relative;
-  width: 26px;
+  width: calc(26 * var(--dp));
   flex-shrink: 0;
   align-self: stretch;
   display: flex;
@@ -802,9 +802,9 @@ function forgeTargetFromItemKey(key: string) {
 .nc-node {
   position: relative;
   z-index: 1;
-  width: 20px;
-  height: 20px;
-  margin-top: 6px;
+  width: calc(20 * var(--dp));
+  height: calc(20 * var(--dp));
+  margin-top: calc(6 * var(--dp));
   border-radius: var(--radius-full);
   display: flex;
   align-items: center;
@@ -818,7 +818,7 @@ function forgeTargetFromItemKey(key: string) {
 @media (hover: hover) {
   .notif-card:hover .nc-node {
     transform: scale(1.14);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--tone) 12%, transparent);
+    box-shadow: 0 0 0 calc(4 * var(--dp)) color-mix(in srgb, var(--tone) 12%, transparent);
   }
   .notif-card:hover .nc-rail::before {
     background: color-mix(in srgb, var(--tone) 40%, var(--border-color));

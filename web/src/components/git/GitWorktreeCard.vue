@@ -92,7 +92,7 @@ function handleDelete() {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: var(--space-4);
-  min-height: 44px;
+  min-height: calc(44 * var(--dp));
   padding: var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
@@ -138,7 +138,7 @@ function handleDelete() {
 .wt-row-name {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: calc(5 * var(--dp));
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
@@ -154,7 +154,7 @@ function handleDelete() {
   color: var(--text-muted, #999);
   word-break: break-all;
   line-height: var(--line-height-snug);
-  padding-left: 19px; /* align with name text after icon */
+  padding-left: calc(19 * var(--dp)); /* align with name text after icon */
 }
 
 .wt-row-badges {
@@ -173,8 +173,8 @@ function handleDelete() {
 
 .wt-action-btn {
   flex-shrink: 0;
-  width: 30px;
-  height: 30px;
+  width: calc(30 * var(--dp));
+  height: calc(30 * var(--dp));
   border: none;
   background: transparent;
   color: var(--text-muted, #999);
@@ -215,7 +215,7 @@ function handleDelete() {
 .wt-badge {
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
-  padding:1px var(--space-3);
+  padding: 1px var(--space-3);
   border-radius: var(--radius-xs);
   white-space: nowrap;
 }

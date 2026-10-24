@@ -195,8 +195,8 @@ function handleBodyClick(e: MouseEvent) {
 /* The member's colour, same swatch as the roster name. */
 .team-member-detail__dot {
   flex-shrink: 0;
-  width: 8px;
-  height: 8px;
+  width: calc(8 * var(--dp));
+  height: calc(8 * var(--dp));
   border-radius: var(--radius-full);
 }
 
@@ -395,6 +395,6 @@ function handleBodyClick(e: MouseEvent) {
    bottom sheet ignores --modal-max-width).
    Non-scoped because the class is bound inside BottomSheet's own template. */
 .team-member-sheet {
-  --modal-max-width: 900px;
+  --modal-max-width: calc(900 * var(--dp));
 }
 </style>

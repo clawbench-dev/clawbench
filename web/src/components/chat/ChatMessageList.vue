@@ -1661,7 +1661,7 @@ defineExpose({
 }
 
 .btw-anchor-count {
-  min-width: 16px;
+  min-width: calc(16 * var(--dp));
   padding: 0 var(--space-1);
   border-radius: var(--radius-full, 999px);
   background: var(--accent-color, #0066cc);
@@ -1685,7 +1685,7 @@ defineExpose({
 
 .chat-empty {
   text-align: center;
-  padding:32px var(--space-7);
+  padding: calc(32 * var(--dp)) var(--space-7);
   color: var(--text-muted);
   font-size: var(--font-size-md);
   display: flex;
@@ -1700,11 +1700,11 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: var(--space-6);
-  padding:14px var(--space-7);
+  padding: calc(14 * var(--dp)) var(--space-7);
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  max-width: 280px;
+  max-width: calc(280 * var(--dp));
   width: 100%;
   text-align: left;
 }
@@ -1718,11 +1718,11 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  padding: 14px var(--space-7);
+  padding: calc(14 * var(--dp)) var(--space-7);
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  max-width: 300px;
+  max-width: calc(300 * var(--dp));
   width: 100%;
   text-align: left;
 }
@@ -1743,7 +1743,7 @@ defineExpose({
   flex-shrink: 0;
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
-  padding: 2px var(--space-3);
+  padding: calc(2 * var(--dp)) var(--space-3);
   border-radius: var(--radius-full);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
@@ -1776,10 +1776,10 @@ defineExpose({
 .group-welcome-tips li::before {
   content: '';
   position: absolute;
-  left: 3px;
+  left: calc(3 * var(--dp));
   top: 0.55em;
-  width: 3px;
-  height: 3px;
+  width: calc(3 * var(--dp));
+  height: calc(3 * var(--dp));
   border-radius: 50%;
   background: currentColor;
   opacity: var(--opacity-muted);
@@ -1787,8 +1787,8 @@ defineExpose({
 
 .agent-welcome-icon {
   flex-shrink: 0;
-  width: 40px;
-  height: 40px;
+  width: calc(40 * var(--dp));
+  height: calc(40 * var(--dp));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1800,7 +1800,7 @@ defineExpose({
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
   min-width: 0;
 }
 
@@ -1829,7 +1829,7 @@ defineExpose({
 
 .agent-welcome-tag {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-3);
+  padding: 1px var(--space-3);
   border-radius: var(--radius-xs);
   font-weight: var(--font-weight-medium);
   flex-shrink: 0;
@@ -1843,7 +1843,7 @@ defineExpose({
 .agent-welcome-model {
   background: rgba(100, 100, 100, 0.08);
   color: var(--text-muted);
-  max-width: 120px;
+  max-width: calc(120 * var(--dp));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1869,7 +1869,7 @@ defineExpose({
 .no-agents-desc {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
-  max-width: 240px;
+  max-width: calc(240 * var(--dp));
   text-align: center;
   line-height: var(--line-height-normal);
 }
@@ -1905,7 +1905,7 @@ defineExpose({
    it never scrolls with the message flow and never pushes messages down. */
 .chat-load-area {
   position: absolute;
-  top: 8px;
+  top: calc(8 * var(--dp));
   left: 0;
   right: 0;
   display: flex;
@@ -1921,15 +1921,15 @@ defineExpose({
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
-  padding:5px var(--space-6);
+  padding: calc(5 * var(--dp)) var(--space-6);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
   border-radius: var(--radius-full);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(calc(6 * var(--dp)));
+  -webkit-backdrop-filter: blur(calc(6 * var(--dp)));
   pointer-events: auto;
 }
 
@@ -2000,12 +2000,12 @@ defineExpose({
 
 .scroll-fab-swap-enter-from {
   opacity: 0;
-  transform: translateY(6px);
+  transform: translateY(calc(6 * var(--dp)));
 }
 
 .scroll-fab-swap-leave-to {
   opacity: 0;
-  transform: translateY(-6px);
+  transform: translateY(calc(-6 * var(--dp)));
 }
 
 .scroll-fab-round {
@@ -2013,14 +2013,14 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: calc(30 * var(--dp));
+  height: calc(30 * var(--dp));
   background: var(--bg-primary);
   color: var(--text-secondary);
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) rgba(0, 0, 0, 0.18);
   opacity: 1;
   transition: background var(--duration-base), color var(--duration-base), transform var(--duration-base), border-color var(--duration-base);
   -webkit-tap-highlight-color: transparent;
@@ -2054,11 +2054,11 @@ defineExpose({
 }
 .scroll-fab-bottom.scroll-fab-enter-from {
   opacity: 0;
-  transform: translateY(16px) scale(0.9);
+  transform: translateY(calc(16 * var(--dp))) scale(0.9);
 }
 .scroll-fab-bottom.scroll-fab-leave-to {
   opacity: 0;
-  transform: translateY(10px) scale(0.9);
+  transform: translateY(calc(10 * var(--dp))) scale(0.9);
 }
 
 /* ── Message highlight flash ──

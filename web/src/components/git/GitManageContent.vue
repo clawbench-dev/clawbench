@@ -498,7 +498,7 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: calc(5 * var(--dp));
   padding: var(--space-5) var(--space-4);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
@@ -565,8 +565,8 @@ defineExpose({
   background: var(--bg-primary, #fff);
   border-radius: var(--radius-lg);
   padding: var(--space-8);
-  width: min(320px, 85vw);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  width: min(calc(320 * var(--dp)), 85vw);
+  box-shadow: 0 calc(8 * var(--dp)) calc(32 * var(--dp)) rgba(0, 0, 0, 0.2);
 }
 
 .modal-title {
@@ -581,8 +581,8 @@ defineExpose({
 
 .modal-title-icon {
   flex-shrink: 0;
-  width: 24px;
-  height: 24px;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
   border-radius: var(--radius-sm);
   color: var(--accent-color, #0066cc);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
@@ -594,7 +594,7 @@ defineExpose({
 .modal-msg {
   font-size: var(--font-size-md);
   color: var(--text-secondary, #666);
-  margin:0 0 var(--space-7);
+  margin: 0 0 var(--space-7);
   line-height: var(--line-height-normal);
   white-space: pre-line;
   word-break: break-word;

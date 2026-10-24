@@ -20,6 +20,18 @@ import { resolve } from 'path'
  * preview by re-shrinking the scroll element or silently drop the gutter on
  * wide screens.
  */
+/**
+ * Regex source for a CSS length of `n` DESIGN px.
+ *
+ * Sizes are `calc(N * var(--dp))` so they follow the UI scale; a guard that
+ * hard-codes `200px` would fail on a value that is still exactly 200 design px.
+ * Accepts the literal spelling too (hairlines and percentages stay literal).
+ */
+function len(n: number | string): string {
+  const s = String(n).replace('.', '\\.')
+  return `(?:calc\\(\\s*${s}\\s*\\*\\s*var\\(--dp\\)\\s*\\)|${s}px)`
+}
+
 describe('markdown preview wide-screen layout (scrollbar flush, padding cap)', () => {
   const contentCss = readFileSync(
     resolve(__dirname, '../../../../css/content.css'),
@@ -43,7 +55,7 @@ describe('markdown preview wide-screen layout (scrollbar flush, padding cap)', (
     // The 900px column cap must come from horizontal padding (box-sizing is
     // border-box), never from a max-width/margin combo on the scroll element.
     expect(contentCss).toMatch(
-      /\.markdown-preview \.markdown-body\s*\{[\s\S]*?padding:\s*10px calc\(10px \+ max\(0px,\s*\(100% - 900px\) \/ 2\)\);/,
+      new RegExp(`\\.markdown-preview \\.markdown-body\\s*\\{[\\s\\S]*?padding:\\s*${len(10)}\\s+calc\\(\\s*10\\s*\\*\\s*var\\(--dp\\)\\s*\\+\\s*max\\(0,\\s*\\(100% - ${len(900)}\\) / 2\\)\\)`),
     )
   })
 
@@ -57,7 +69,7 @@ describe('markdown preview wide-screen layout (scrollbar flush, padding cap)', (
       /\.markdown-preview \.markdown-body \.diff-marker-inline\s*\{[\s\S]*?\}/,
     )
     expect(markerRule).toBeTruthy()
-    expect(markerRule![0]).toContain('right: max(0px, (100% - 900px) / 2)')
+    expect(markerRule![0]).toMatch(new RegExp(`right:\\s*max\\(0,\\s*\\(100% - ${len(900)}\\) / 2\\)`))
   })
 
   it('does not leak the full-width behavior outside the file preview', () => {
@@ -68,7 +80,7 @@ describe('markdown preview wide-screen layout (scrollbar flush, padding cap)', (
     // untouched.
     const baseRule = contentCss.match(/^\.markdown-body\s*\{[\s\S]*?\}/m)
     expect(baseRule).toBeTruthy()
-    expect(baseRule![0]).toContain('max-width: min(900px, 100%)')
+    expect(baseRule![0]).toMatch(new RegExp(`max-width:\\s*min\\(${len(900)}, 100%\\)`))
     expect(baseRule![0]).toContain('margin: 0 auto')
   })
 })

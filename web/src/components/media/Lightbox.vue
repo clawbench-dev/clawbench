@@ -921,9 +921,9 @@ onUnmounted(() => {
 
 .lightbox-toolbar {
     position: absolute;
-    top: calc(16px + var(--header-safe-area-top, 0px));
-    left: 16px;
-    right: 16px;
+    top: calc(16 * var(--dp) + var(--header-safe-area-top, 0px));
+    left: calc(16 * var(--dp));
+    right: calc(16 * var(--dp));
     display: flex;
     gap: var(--space-4);
     z-index: 10;
@@ -938,7 +938,7 @@ onUnmounted(() => {
     background: rgba(0,0,0,0.5);
     padding: var(--space-2) var(--space-6);
     border-radius: var(--radius-lg);
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(calc(4 * var(--dp)));
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -955,9 +955,9 @@ onUnmounted(() => {
 
 .lightbox-bottom-bar {
     position: absolute;
-    bottom: 16px;
-    left: 16px;
-    right: 16px;
+    bottom: calc(16 * var(--dp));
+    left: calc(16 * var(--dp));
+    right: calc(16 * var(--dp));
     display: flex;
     gap: var(--space-4);
     z-index: 10;
@@ -968,19 +968,19 @@ onUnmounted(() => {
 .lb-counter {
     color: rgba(255,255,255,0.7);
     font-size: var(--font-size-sm);
-    min-width: 40px;
+    min-width: calc(40 * var(--dp));
     text-align: center;
     user-select: none;
     pointer-events: none;
     background: rgba(0,0,0,0.5);
     padding: var(--space-1) var(--space-4);
     border-radius: var(--radius-md);
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(calc(4 * var(--dp)));
 }
 
 .lb-btn {
-    width: 40px;
-    height: 40px;
+    width: calc(40 * var(--dp));
+    height: calc(40 * var(--dp));
     border: none;
     border-radius: 50%;
     background: var(--lb-toolbar-bg, rgba(255,255,255,0.9));
@@ -990,7 +990,7 @@ onUnmounted(() => {
     align-items: center;
     justify-content: center;
     transition: background var(--duration-base), transform var(--duration-base);
-    backdrop-filter: blur(8px);
+    backdrop-filter: blur(calc(8 * var(--dp)));
     touch-action: manipulation;
     flex-shrink: 0;
 }
@@ -1007,8 +1007,8 @@ onUnmounted(() => {
 }
 
 .lb-btn svg {
-    width: 20px;
-    height: 20px;
+    width: calc(20 * var(--dp));
+    height: calc(20 * var(--dp));
 }
 
 .lightbox-content {

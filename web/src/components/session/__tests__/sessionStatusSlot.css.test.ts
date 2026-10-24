@@ -407,7 +407,11 @@ describe('session status slot', () => {
     // stay a bounded size or it would push the title's ellipsis around.
     const rule = list.match(/\n\.session-status\s*\{[^}]*\}/)?.[0]
     expect(rule, '.session-status should exist').toBeTruthy()
-    const w = Number(rule!.match(/width:\s*(\d+)px/)?.[1])
+    // Sizes are `calc(N * var(--dp))`; read the design number.
+    const w = Number(
+      rule!.match(/width:\s*(?:calc\(\s*(\d+(?:\.\d+)?)\s*\*\s*var\(--dp\)\s*\)|(\d+(?:\.\d+)?)px)/)
+        ?.slice(1).find(Boolean),
+    )
     expect(w, 'slot width should be a small px value').toBeGreaterThan(0)
     expect(w, `slot is ${w}px — too wide for a row's trailing signal`).toBeLessThanOrEqual(20)
     expect(rule, 'the slot is a flex child, not an absolute overlay').not.toMatch(

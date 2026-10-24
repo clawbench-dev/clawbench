@@ -30,8 +30,38 @@
 
 /* HTML & Body — use 100vh instead of 100dvh to avoid iOS WKWebView mismatch.
    On iOS, dvh shrinks when the soft keyboard opens but position:fixed elements
-   still reference the full screen, causing overflow. 100vh stays stable. */
-html, body {
+   still reference the full screen, causing overflow. 100vh stays stable.
+
+   ── THE ROOT FONT SIZE IS THE UI SCALE KNOB ──────────────────────────────
+   `--ui-scale` (written by applyEffectiveUIScale / the pre-paint bootstrap in
+   index.html) multiplies the 15px design base here, and every token in
+   variables.css is derived from `--dp` = `1rem / 15`. So this one declaration
+   resizes text and every box around it together.
+
+   It must be `calc(15px * var(--ui-scale))` rather than a plain px value: the
+   whole scheme hangs off the root size, so anything that changes it (this
+   line, a browser's own "default font size" preference, or a user stylesheet)
+   rescales the UI consistently. Note that this deliberately makes the app
+   honour the browser's font-size preference — that is the point of
+   font-driven scaling, and it is what `html { zoom }` could never do.
+
+   `--dp` is declared in variables.css and is NOT redefined here: it resolves
+   against whichever element uses it, so `1rem` inside a nested element still
+   means the ROOT size (rem is always root-relative) and cannot compound. */
+html {
+    font-size: calc(15px * var(--ui-scale, 1));
+}
+
+/* `html` is deliberately EXCLUDED from the font-size below.
+
+   `--dp` is `1rem / 15`, so `--font-size-xl` resolves against the root font
+   size. If `html` also took `--font-size-xl` as its own font-size the two
+   would form a cycle (`1rem` ← root size ← `--font-size-xl` ← `1rem`) and the
+   browser would fall back to the 16px initial value — which is exactly what
+   happened on the first attempt. `body` may take the token because by then the
+   root size is already resolved; it equals the root size anyway
+   (15 design px × scale). */
+body {
     height: 100vh;
     font-family: var(--font-ui);
     font-size: var(--font-size-xl);
@@ -39,6 +69,13 @@ html, body {
     background: var(--bg-primary);
     color: var(--text-primary);
     transition: background var(--duration-slow), color var(--duration-slow);
+}
+
+/* `height` was shared by html and body before the split above; `html` still
+   needs it so the wallpaper layer and the fixed shell have a full-height
+   containing block. */
+html {
+    height: 100vh;
 }
 
 /* ── Theme reveal (circular wipe) ─────────────────────────────────────

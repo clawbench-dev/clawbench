@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { normalizeDp } from '@/testUtils/designLength'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -94,7 +95,9 @@ function baseRuleClasses(source: string): Set<string> {
 function read(rel: string): string {
   for (const base of [process.cwd(), join(process.cwd(), 'web')]) {
     try {
-      return readFileSync(join(base, rel), 'utf8')
+      // Normalise `calc(N * var(--dp))` to `Npx` so the literal assertions
+      // below keep pinning the same design numbers under font-driven scaling.
+      return normalizeDp(readFileSync(join(base, rel), 'utf8'))
     } catch {
       // try the next candidate root
     }
@@ -163,7 +166,7 @@ describe('share-dialog chrome lives in the shared asset', () => {
     const rule = sharedSource.match(/\.share-dialog-link-input\s*\{([\s\S]*?)\}/)
     expect(rule, '.share-dialog-link-input base rule must exist').not.toBeNull()
     for (const prop of [
-      'padding:7px 84px 7px var(--space-5)',
+      'padding: 7px 84px 7px var(--space-5)',
       'border-radius: var(--radius-sm, 6px)',
       'font-family: var(--font-mono)',
     ]) {

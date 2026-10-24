@@ -26,8 +26,8 @@ const { t } = useI18n()
 }
 
 .about-brand__logo {
-  width: 64px;
-  height: 64px;
+  width: calc(64 * var(--dp));
+  height: calc(64 * var(--dp));
   border-radius: 50%;
   display: block;
   box-shadow: var(--shadow-md);

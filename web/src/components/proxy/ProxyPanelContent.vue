@@ -611,7 +611,7 @@ async function handleRetryTunnel() {
   display: flex;
   align-items: center;
   height: var(--header-height);
-  padding:0 var(--space-2) 0 var(--space-6);
+  padding: 0 var(--space-2) 0 var(--space-6);
   flex-shrink: 0;
   gap: var(--space-3);
   background: var(--bg-primary);
@@ -637,8 +637,8 @@ async function handleRetryTunnel() {
 
 /* Create button in header toolbar */
 .create-btn {
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-lg);
   background: var(--accent-color, #0066cc);
@@ -653,8 +653,8 @@ async function handleRetryTunnel() {
 
 /* Header icon button (scan, etc.) */
 .header-btn {
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-lg);
   background: var(--bg-secondary, #f1f3f5);
@@ -776,8 +776,8 @@ async function handleRetryTunnel() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.15);
@@ -801,7 +801,7 @@ async function handleRetryTunnel() {
 }
 
 .proxy-empty {
-  padding:24px var(--space-6);
+  padding: calc(24 * var(--dp)) var(--space-6);
   text-align: center;
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
@@ -888,7 +888,7 @@ async function handleRetryTunnel() {
 }
 
 .tunnel-guide-body {
-  padding:0 var(--space-5) var(--space-5);
+  padding: 0 var(--space-5) var(--space-5);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -975,7 +975,7 @@ async function handleRetryTunnel() {
 .tunnel-guide-copy {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
   padding: var(--space-1) var(--space-3);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: var(--radius-xs);
@@ -1030,7 +1030,7 @@ async function handleRetryTunnel() {
   align-items: center;
   justify-content: center;
   gap: var(--space-6);
-  padding:40px var(--space-6);
+  padding: calc(40 * var(--dp)) var(--space-6);
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
 }
@@ -1051,8 +1051,8 @@ async function handleRetryTunnel() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   background: none;
   color: var(--text-muted, #999);
@@ -1109,7 +1109,7 @@ async function handleRetryTunnel() {
 @media (hover: hover) {
   .port-scan-item:hover {
     border-color: var(--accent-color, #0066cc);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    box-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) rgba(0, 0, 0, 0.04);
     transform: translateY(-1px);
   }
 }
@@ -1171,7 +1171,7 @@ async function handleRetryTunnel() {
   align-items: center;
   justify-content: center;
   gap: var(--space-4);
-  padding:40px var(--space-6);
+  padding: calc(40 * var(--dp)) var(--space-6);
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
   opacity: var(--opacity-hover);

@@ -15,7 +15,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding:44px var(--space-8) 48px;
+  padding: calc(44 * var(--dp)) var(--space-8) calc(48 * var(--dp));
   animation: modal-fadeIn 0.2s ease;
   outline: none;
 }
@@ -38,7 +38,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14), 0 18px 52px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 calc(2 * var(--dp)) calc(10 * var(--dp)) rgba(0, 0, 0, 0.14), 0 calc(18 * var(--dp)) calc(52 * var(--dp)) rgba(0, 0, 0, 0.28);
   animation: modal-scaleIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -49,14 +49,14 @@
    On narrow viewports this is inert — `.modal-dialog` is `width: 100%` inside
    an overlay with `--space-8` side padding, so the cap never binds. */
 .modal-dialog {
-  --modal-max-width: 900px;
+  --modal-max-width: calc(900 * var(--dp));
 }
 
 /* Dark themes: the black shadow falls on an almost-black scrim, so deepen it
    to keep the card visually lifted. */
 [data-theme-base="dark"] .modal-dialog,
 [data-theme-base="dark"] .bs-panel.bs-wide-auto {
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45), 0 20px 60px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 calc(2 * var(--dp)) calc(10 * var(--dp)) rgba(0, 0, 0, 0.45), 0 calc(20 * var(--dp)) calc(60 * var(--dp)) rgba(0, 0, 0, 0.6);
 }
 
 .modal-dialog.modal-full-height {
@@ -73,11 +73,11 @@
 .bs-overlay.bs-overlay-wide-auto .bs-header {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 5px 9px;
+  gap: calc(7 * var(--dp));
+  padding: calc(5 * var(--dp)) calc(9 * var(--dp));
   /* Reserve room for the absolutely-positioned .modal-close-btn so right-aligned
      header content (e.g. .bs-header-actions) never slides under it. */
-  padding-right: 38px;
+  padding-right: calc(38 * var(--dp));
   height: auto;
   border-bottom: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 15%, var(--border-color, #e5e5e5));
   background: color-mix(in srgb, var(--accent-color, #0066cc) 6%, transparent);
@@ -89,7 +89,7 @@
 /* Narrow-mode BottomSheet header: same right padding, keyed on a modifier so
    TabPanel (which reuses .bs-header and has no close button) is unaffected. */
 .bs-header.bs-header-has-close {
-  padding-right: 38px;
+  padding-right: calc(38 * var(--dp));
 }
 
 /* ── Close button ──
@@ -117,8 +117,8 @@
   justify-content: center;
   /* 28px matches the drill-down back button (.fd-back-btn) and sits just under
      the 24px header icon buttons — 30px filled the ~33px header edge to edge. */
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   /* Explicit border: this is a <button> and the shared icon-button language
      elsewhere is defined on <a>; without it the UA button border shows. */
   border: none;
@@ -149,8 +149,8 @@
 
 .modal-header-icon {
   flex-shrink: 0;
-  width: 24px;
-  height: 24px;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
   border-radius: var(--radius-sm);
   color: var(--accent-color, #0066cc);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
@@ -192,7 +192,7 @@
 }
 
 .modal-footer-default {
-  min-height: 8px;
+  min-height: calc(8 * var(--dp));
   padding: var(--space-4) var(--space-5);
   justify-content: center;
 }
@@ -206,7 +206,7 @@
    placeholder still counts as empty. Scoped to the wide overlay so the narrow
    bottom drawer keeps its slot-only footer. */
 .bs-overlay.bs-overlay-wide-auto .bs-footer:not(:has(> *)) {
-  min-height: 8px;
+  min-height: calc(8 * var(--dp));
   padding: var(--space-4) var(--space-5);
   justify-content: center;
 }
@@ -225,7 +225,7 @@
 @keyframes modal-scaleIn {
   from {
     opacity: 0;
-    transform: translateY(24px) scale(0.94);
+    transform: translateY(calc(24 * var(--dp))) scale(0.94);
   }
   to {
     opacity: 1;
@@ -240,6 +240,6 @@
   }
   to {
     opacity: 0;
-    transform: translateY(24px) scale(0.94);
+    transform: translateY(calc(24 * var(--dp))) scale(0.94);
   }
 }

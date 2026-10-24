@@ -102,7 +102,7 @@ describe('TransferProgressBar floating placement (source contract)', () => {
   })
 
   it('caps the width so it does not stretch edge to edge on desktop', () => {
-    expect(rule![0]).toContain('max-width: 520px')
+    expect(rule![0]).toContain('max-width: calc(520 * var(--dp))')
   })
 
   it('keeps a gutter on narrow viewports where the cap does not apply', () => {

@@ -61,8 +61,8 @@ function close() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
   border-radius: 50%;
   background: var(--accent-color);
   color: #fff;

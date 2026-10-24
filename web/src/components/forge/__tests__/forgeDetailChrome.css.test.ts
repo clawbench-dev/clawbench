@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { normalizeDp } from '@/testUtils/designLength'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -141,7 +142,9 @@ function baseRuleClasses(source: string): Set<string> {
 function read(rel: string): string {
   for (const base of [process.cwd(), join(process.cwd(), 'web')]) {
     try {
-      return readFileSync(join(base, rel), 'utf8')
+      // Normalise `calc(N * var(--dp))` to `Npx` so the literal assertions
+      // below keep pinning the same design numbers under font-driven scaling.
+      return normalizeDp(readFileSync(join(base, rel), 'utf8'))
     } catch {
       // try the next candidate root
     }

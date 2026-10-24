@@ -108,7 +108,7 @@ describe('centered-card footer chrome', () => {
     // never true and the footer would otherwise collapse to a ~12px stub.
     const rule = css.match(/\.bs-overlay\.bs-overlay-wide-auto\s+\.bs-footer:not\(:has\(>\s*\*\)\)\s*\{([\s\S]*?)\}/)
     expect(rule, '.bs-overlay-wide-auto .bs-footer:not(:has(> *)) must exist').not.toBeNull()
-    expect(rule![1]).toContain('min-height: 8px')
+    expect(rule![1]).toMatch(/min-height:\s*calc\(\s*8\s*\*\s*var\(--dp\)\s*\)/)
   })
 
   it('scopes the wide footer recipe to the centered-card overlay only', async () => {

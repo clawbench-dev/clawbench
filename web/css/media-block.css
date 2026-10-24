@@ -46,8 +46,8 @@
    deepen on hover. */
 .image-block-header {
     position: absolute;
-    top: 6px;
-    right: 6px;
+    top: calc(6 * var(--dp));
+    right: calc(6 * var(--dp));
     z-index: 2;
     display: flex;
     align-items: center;
@@ -56,8 +56,8 @@
     /* Square, matching the figure frame it floats over. */
     border-radius: 0;
     background: rgba(0, 0, 0, 0.45);
-    backdrop-filter: blur(2px);
-    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(calc(2 * var(--dp)));
+    -webkit-backdrop-filter: blur(calc(2 * var(--dp)));
     line-height: 1;
     user-select: none;
 }
@@ -79,8 +79,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
-    height: 22px;
+    width: calc(22 * var(--dp));
+    height: calc(22 * var(--dp));
     border: none;
     border-radius: 0;
     background: transparent;
@@ -106,8 +106,8 @@
 .image-block-reset-btn svg,
 .image-block-attach-btn svg,
 .image-block-open-btn svg {
-    width: 14px;
-    height: 14px;
+    width: calc(14 * var(--dp));
+    height: calc(14 * var(--dp));
 }
 
 /* ─── Raster image content cell ─────────────────────────────────────────── */
@@ -414,7 +414,7 @@
        document. */
     .image-block-wrapper.is-zoom-active {
         outline: 2px solid var(--accent-color, #4a9eff);
-        outline-offset: 2px;
+        outline-offset: calc(2 * var(--dp));
     }
 
     /* The grab handle belongs to the INTERACTIVE state: it promises a drag, and
@@ -503,7 +503,7 @@
    it is zoomed (reported: 聊天界面点击聚焦后没有全宽). */
 .chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-img-wrap > img),
 .chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg) {
-    max-width: 200px;
+    max-width: calc(200 * var(--dp));
 }
 
 /* The media itself is clamped to a PIXEL cap, not a percentage. The generic
@@ -515,13 +515,13 @@
    `inlineZoom`, and an `!important` cap here would pin it to 200px. */
 .chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-img-wrap > img) > .lightbox-img-wrap > img,
 .chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap > svg.lightbox-svg {
-    max-width: 200px !important;
-    max-height: 184px;
+    max-width: calc(200 * var(--dp)) !important;
+    max-height: calc(184 * var(--dp));
 }
 
 .chat-message .image-block-wrapper:not(.is-zooming) .lightbox-svg-wrap svg.lightbox-svg {
-    max-width: 200px;
-    max-height: 200px;
+    max-width: calc(200 * var(--dp));
+    max-height: calc(200 * var(--dp));
 }
 
 /* ─── Missing media: labelled placeholder ────────────────────────────────
@@ -559,8 +559,8 @@
     justify-content: center;
     gap: var(--space-2);
     box-sizing: border-box;
-    min-width: 150px;
-    max-width: min(100%, 320px);
+    min-width: calc(150 * var(--dp));
+    max-width: min(100%, calc(320 * var(--dp)));
     padding: var(--space-6) var(--space-7);
     border: 1px dashed var(--border-color);
     border-radius: var(--radius-md);
@@ -575,8 +575,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 34px;
+    width: calc(34 * var(--dp));
+    height: calc(34 * var(--dp));
     margin-bottom: var(--space-1);
     border-radius: 50%;
     color: var(--text-muted, #999);
@@ -600,7 +600,7 @@
 /* Fills a pane (preview card, lightbox, audio/video viewer) instead of
    floating at its natural size — the surface has no other content to show. */
 .media-load-error--fill {
-    min-height: 160px;
+    min-height: calc(160 * var(--dp));
     width: 100%;
     max-width: 100%;
     flex: 1;

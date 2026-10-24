@@ -166,7 +166,7 @@ watch(effectiveTips, () => {
 }
 
 .stt-vert-out {
-  transform: translateY(-10px);
+  transform: translateY(calc(-10 * var(--dp)));
   opacity: 0;
   transition: transform var(--duration-slow) ease, opacity var(--duration-slow) ease;
 }
@@ -192,10 +192,10 @@ watch(effectiveTips, () => {
 
 .stt-kbd {
   display: inline-block;
-  margin:0 var(--space-1);
-  padding: 1px 5px;
+  margin: 0 var(--space-1);
+  padding: 1px calc(5 * var(--dp));
   border: 1px solid var(--border-color);
-  border-bottom-width: 2px;
+  border-bottom-width: calc(2 * var(--dp));
   border-radius: var(--radius-xs);
   background: var(--bg-tertiary);
   color: var(--text-primary);

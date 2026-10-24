@@ -71,8 +71,8 @@ describe('ask-option indicator is CSS-drawn, not a glyph', () => {
     const rule = css.match(/\n\.ask-option-indicator\s*\{([^}]*)\}/)
     if (!rule) throw new Error('missing .ask-option-indicator rule in components.css')
     const body = rule[1]
-    expect(body).toMatch(/width:\s*16px/)
-    expect(body).toMatch(/height:\s*16px/)
+    expect(body).toMatch(/(width):\s*(?:calc\(\s*16\s*\*\s*var\(--dp\)\s*\)|16px)/)
+    expect(body).toMatch(/(height):\s*(?:calc\(\s*16\s*\*\s*var\(--dp\)\s*\)|16px)/)
     expect(body).toMatch(/border:\s*1\.5px solid currentColor/)
   })
 

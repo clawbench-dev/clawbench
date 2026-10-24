@@ -598,7 +598,7 @@ onBeforeUnmount(() => {
     align-items: center;
     gap: var(--space-2);
     height: var(--header-height);
-    padding:0 var(--space-2) 0 var(--space-3);
+    padding: 0 var(--space-2) 0 var(--space-3);
     background: var(--bg-secondary);
     border: none;
     border-bottom: 1px solid var(--border-color);
@@ -627,7 +627,7 @@ onBeforeUnmount(() => {
     align-items: center;
     gap: var(--space-2);
     flex: 0 1 auto;
-    min-width: 80px;
+    min-width: calc(80 * var(--dp));
     max-width: 40%;
     overflow: hidden;
 }
@@ -689,8 +689,8 @@ onBeforeUnmount(() => {
     }
 }
 .file-header-btn svg {
-    width: 14px;
-    height: 14px;
+    width: calc(14 * var(--dp));
+    height: calc(14 * var(--dp));
 }
 .file-header-btn:disabled {
     opacity: var(--opacity-disabled);
@@ -751,9 +751,9 @@ onBeforeUnmount(() => {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 calc(4 * var(--dp)) calc(12 * var(--dp)) rgba(0, 0, 0, 0.15);
     z-index: var(--z-popover);
-    min-width: 140px;
+    min-width: calc(140 * var(--dp));
     padding: var(--space-2) 0;
     overflow: hidden;
 }

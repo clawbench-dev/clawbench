@@ -194,17 +194,17 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   z-index: var(--z-modal);
-  padding:0 var(--space-8);
+  padding: 0 var(--space-8);
   outline: none;
 }
 
 .dlg-box {
   background: var(--bg-secondary, #fff);
   border-radius: var(--radius-lg);
-  padding:18px var(--space-7) 14px;
-  max-width: 320px;
+  padding: calc(18 * var(--dp)) var(--space-7) calc(14 * var(--dp));
+  max-width: calc(320 * var(--dp));
   width: 100%;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16), 0 14px 44px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 calc(2 * var(--dp)) calc(10 * var(--dp)) rgba(0, 0, 0, 0.16), 0 calc(14 * var(--dp)) calc(44 * var(--dp)) rgba(0, 0, 0, 0.3);
   animation: dlg-in 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -220,8 +220,8 @@ onBeforeUnmount(() => {
 
 .dlg-title-icon {
   flex-shrink: 0;
-  width: 24px;
-  height: 24px;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
   border-radius: var(--radius-sm);
   color: var(--accent-color, #0066cc);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
@@ -234,7 +234,7 @@ onBeforeUnmount(() => {
   font-size: var(--font-size-md);
   color: var(--text-secondary, #555);
   line-height: var(--line-height-normal);
-  margin-bottom: 14px;
+  margin-bottom: calc(14 * var(--dp));
   white-space: pre-line;
   word-break: break-word;
   max-height: 40vh;
@@ -251,13 +251,13 @@ onBeforeUnmount(() => {
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
   outline: none;
-  margin-bottom: 14px;
+  margin-bottom: calc(14 * var(--dp));
   transition: border-color var(--duration-base);
 }
 
 .dlg-textarea {
   resize: none;
-  min-height: 84px;
+  min-height: calc(84 * var(--dp));
   line-height: var(--line-height-normal);
   white-space: pre-wrap;
   word-break: break-word;
@@ -343,7 +343,7 @@ onBeforeUnmount(() => {
 }
 
 [data-theme-base="dark"] .dlg-box {
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5), 0 16px 48px rgba(0, 0, 0, 0.65);
+  box-shadow: 0 calc(2 * var(--dp)) calc(10 * var(--dp)) rgba(0, 0, 0, 0.5), 0 calc(16 * var(--dp)) calc(48 * var(--dp)) rgba(0, 0, 0, 0.65);
 }
 
 .dlg-enter-active, .dlg-leave-active {

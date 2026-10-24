@@ -88,14 +88,14 @@ function onError() {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    padding: calc(24 * var(--dp));
     background: var(--bg-primary);
     gap: var(--space-7);
 }
 
 .audio-icon {
-    width: 80px;
-    height: 80px;
+    width: calc(80 * var(--dp));
+    height: calc(80 * var(--dp));
     display: flex;
     align-items: center;
     justify-content: center;
@@ -105,8 +105,8 @@ function onError() {
 }
 
 .audio-icon svg {
-    width: 40px;
-    height: 40px;
+    width: calc(40 * var(--dp));
+    height: calc(40 * var(--dp));
 }
 
 .audio-info {
@@ -118,7 +118,7 @@ function onError() {
     font-weight: var(--font-weight-medium);
     color: var(--text-primary);
     word-break: break-all;
-    max-width: 300px;
+    max-width: calc(300 * var(--dp));
 }
 
 .audio-size {
@@ -129,8 +129,8 @@ function onError() {
 
 .audio-player {
     width: 100%;
-    max-width: 400px;
-    height: 42px;
+    max-width: calc(400 * var(--dp));
+    height: calc(42 * var(--dp));
     border-radius: var(--radius-sm);
     outline: none;
 }

@@ -357,7 +357,7 @@ watch(() => props.open, (open) => {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  max-height: 220px;
+  max-height: calc(220 * var(--dp));
   overflow-y: auto;
 }
 
@@ -390,16 +390,16 @@ watch(() => props.open, (open) => {
      chip's right border. Absolute offsets are measured from the padding box, so
      padding-right must clear 21px or a long tag name ellipsises underneath the
      icon. --space-8 (20px) is a pixel short, hence the +4px of slack. */
-  padding: 4px calc(var(--space-8) + 4px) 4px var(--space-3);
+  padding: calc(4 * var(--dp)) calc(var(--space-8) + calc(4 * var(--dp))) calc(4 * var(--dp)) var(--space-3);
   /* Reset UA button chrome: without an explicit border and background the
      browser paints its own. */
   border: 1px solid color-mix(in srgb, var(--tag-accent) 30%, transparent);
-  border-radius: 999px;
+  border-radius: calc(999 * var(--dp));
   background: color-mix(in srgb, var(--tag-accent) 12%, transparent);
   color: var(--tag-accent);
   font-size: var(--font-size-xs);
   font-family: inherit;
-  line-height: 16px;
+  line-height: calc(16 * var(--dp));
   cursor: pointer;
   transition: background var(--duration-fast, 120ms) ease, color var(--duration-fast, 120ms) ease;
 }
@@ -467,14 +467,14 @@ watch(() => props.open, (open) => {
  * the label. */
 .st-delete-btn {
   position: absolute;
-  right: 3px;
+  right: calc(3 * var(--dp));
   top: 50%;
   transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: calc(18 * var(--dp));
+  height: calc(18 * var(--dp));
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -508,7 +508,7 @@ watch(() => props.open, (open) => {
 .st-input {
   flex: 1;
   min-width: 0;
-  height: 32px;
+  height: calc(32 * var(--dp));
   padding: 0 var(--space-5);
   border: 1px solid var(--border-color, #dee2e6);
   border-radius: var(--radius-sm);
@@ -529,7 +529,7 @@ watch(() => props.open, (open) => {
 
 .st-scope-select {
   flex-shrink: 0;
-  height: 32px;
+  height: calc(32 * var(--dp));
   padding: 0 var(--space-4);
   border: 1px solid var(--border-color, #dee2e6);
   border-radius: var(--radius-sm);
@@ -550,7 +550,7 @@ watch(() => props.open, (open) => {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  height: 32px;
+  height: calc(32 * var(--dp));
   padding: 0 var(--space-6);
   /* Explicit border: this is a <button>, and without one the UA paints its own
      chrome, which reads as an unstyled element next to the input/select. */

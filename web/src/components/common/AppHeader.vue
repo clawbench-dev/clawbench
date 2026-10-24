@@ -1234,8 +1234,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 }
 
 .header-logo {
-    width: 22px;
-    height: 22px;
+    width: calc(22 * var(--dp));
+    height: calc(22 * var(--dp));
     border-radius: 50%;
     flex-shrink: 0;
 }
@@ -1260,7 +1260,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     border-radius: var(--radius-full);
     flex: 0 1 auto;
     min-width: 0;
-    max-width: calc(100% - 50px); /* leave room for logo + server button */
+    max-width: calc(100% - calc(50 * var(--dp))); /* leave room for logo + server button */
     overflow: hidden;
     transition: background var(--duration-base), border-color var(--duration-base);
 }
@@ -1285,7 +1285,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     position: relative;
     flex: 0 1 auto;
     min-width: 0;
-    max-width: 220px;
+    max-width: calc(220 * var(--dp));
 }
 
 /* Label + value pair, laid out on a shared baseline.
@@ -1315,8 +1315,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    padding:0 var(--space-5);
-    height: 24px;
+    padding: 0 var(--space-5);
+    height: calc(24 * var(--dp));
     border: none;
     background: transparent;
     cursor: pointer;
@@ -1357,8 +1357,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    padding:0 var(--space-5);
-    height: 24px;
+    padding: 0 var(--space-5);
+    height: calc(24 * var(--dp));
     background: transparent;
     border: none;
     border-radius: 0;
@@ -1386,8 +1386,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    padding:0 var(--space-5);
-    height: 24px;
+    padding: 0 var(--space-5);
+    height: calc(24 * var(--dp));
     background: transparent;
     border: none;
     border-radius: 0;
@@ -1558,7 +1558,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 /* Server icon button — merged gauge + status dot */
 .server-toggle {
     padding: var(--space-5);
-    margin-left: -8px;
+    margin-left: calc(-8 * var(--dp));
     border: none;
     background: transparent;
     cursor: pointer;
@@ -1574,7 +1574,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .header-tips {
     flex: 1;
     min-width: 0;
-    margin:0 var(--space-4);
+    margin: 0 var(--space-4);
     height: 100%;
     overflow: hidden;
 }
@@ -1667,7 +1667,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
        14px glyph on a 34px cell lands the ink density at ~18.6%, between the
        neighbouring icon buttons (~22%) and the sparse 14% that the old
        46px/14px pairing produced. */
-    width: 34px;
+    width: calc(34 * var(--dp));
     flex: 0 0 auto;
     display: flex;
     align-items: center;
@@ -1743,17 +1743,17 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+    box-shadow: 0 calc(4 * var(--dp)) calc(16 * var(--dp)) rgba(0,0,0,0.1);
     z-index: var(--z-popover);
     overflow: hidden;
-    max-width: calc(100vw - 16px);
-    padding: 3px 0;
+    max-width: calc(100vw - calc(16 * var(--dp)));
+    padding: calc(3 * var(--dp)) 0;
     display: flex;
     flex-direction: column;
 }
 
 .app-menu-title {
-    padding:5px var(--space-6) var(--space-2);
+    padding: calc(5 * var(--dp)) var(--space-6) var(--space-2);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
     text-transform: uppercase;
@@ -1766,7 +1766,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .app-menu-scroll {
     overflow-y: auto;
     overflow-x: hidden;
-    max-height: 300px;
+    max-height: calc(300 * var(--dp));
 }
 
 .app-menu-message {
@@ -1780,7 +1780,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    padding:5px var(--space-5);
+    padding: calc(5 * var(--dp)) var(--space-5);
     cursor: pointer;
     transition: background var(--duration-fast);
     font-size: var(--font-size-sm);
@@ -1802,8 +1802,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .recent-group-header {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: var(--space-2) var(--space-5) 2px;
+    gap: calc(4 * var(--dp));
+    padding: var(--space-2) var(--space-5) calc(2 * var(--dp));
     color: var(--text-muted);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-medium);
@@ -1833,12 +1833,12 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
    line terminates instead of dangling past the group. */
 .app-menu-item.is-nested {
     position: relative;
-    padding-left: calc(var(--space-5) + 16px);
+    padding-left: calc(var(--space-5) + calc(16 * var(--dp)));
 }
 
 .app-menu-item.is-nested .item-nest-line {
     position: absolute;
-    left: calc(var(--space-5) + 5px);
+    left: calc(var(--space-5) + calc(5 * var(--dp)));
     top: 0;
     bottom: 0;
     width: 1px;
@@ -1852,9 +1852,9 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 }
 
 .app-menu-item.app-menu-item--stacked .item-kind {
-    margin-left: 6px;
-    padding: 0 4px;
-    border-radius: 3px;
+    margin-left: calc(6 * var(--dp));
+    padding: 0 calc(4 * var(--dp));
+    border-radius: calc(3 * var(--dp));
     font-size: 10px;
     font-weight: var(--font-weight-normal);
     color: var(--text-muted);
@@ -1970,8 +1970,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     align-items: center;
     justify-content: center;
     flex: 0 0 auto;
-    width: 18px;
-    height: 18px;
+    width: calc(18 * var(--dp));
+    height: calc(18 * var(--dp));
     padding: 0;
     border: 0;
     border-radius: var(--radius-xs);
@@ -2003,8 +2003,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     align-items: center;
     justify-content: center;
     flex: 0 0 auto;
-    width: 18px;
-    height: 18px;
+    width: calc(18 * var(--dp));
+    height: calc(18 * var(--dp));
     margin-left: auto;
     padding: 0;
     border: 0;
@@ -2060,7 +2060,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .dropdown-enter-from,
 .dropdown-leave-to {
     opacity: 0;
-    transform: translateY(-4px);
+    transform: translateY(calc(-4 * var(--dp)));
 }
 
 /* ─── Dirty worktree checkout modal ──────────────────────────────── */
@@ -2079,8 +2079,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     background: var(--bg-primary, #fff);
     border-radius: var(--radius-lg);
     padding: var(--space-8);
-    width: min(320px, 85vw);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    width: min(calc(320 * var(--dp)), 85vw);
+    box-shadow: 0 calc(8 * var(--dp)) calc(32 * var(--dp)) rgba(0, 0, 0, 0.2);
 }
 
 .ht-dirty-title {
@@ -2095,8 +2095,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 
 .ht-dirty-title-icon {
     flex-shrink: 0;
-    width: 24px;
-    height: 24px;
+    width: calc(24 * var(--dp));
+    height: calc(24 * var(--dp));
     border-radius: var(--radius-sm);
     color: var(--accent-color, #0066cc);
     background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
@@ -2108,7 +2108,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .ht-dirty-msg {
     font-size: var(--font-size-md);
     color: var(--text-secondary, #666);
-    margin:0 0 var(--space-7);
+    margin: 0 0 var(--space-7);
     line-height: var(--line-height-normal);
     white-space: pre-line;
     word-break: break-word;
@@ -2182,6 +2182,6 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
    focus ring is header-specific, since the terminal rows are not tabbable. */
 .theme-item:focus-visible {
   outline: 2px solid var(--accent-color);
-  outline-offset: -2px;
+  outline-offset: calc(-2 * var(--dp));
 }
 </style>

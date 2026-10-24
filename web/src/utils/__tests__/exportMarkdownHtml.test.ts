@@ -307,7 +307,8 @@ describe('exportMarkdownToHtml', () => {
     expect(result.html).toContain('display: none')
     // The chrome comes from the shared share-chrome.css stylesheet.
     expect(result.html).toContain('.share-toc {')
-    expect(result.html).toContain('240px')
+    // Design px through --dp so the rail follows the UI scale.
+    expect(result.html).toMatch(/width:\s*calc\(\s*240\s*\*\s*var\(--dp\)\s*\)/)
     expect(result.html).toContain('.share-view')
     // No topbar download button in the offline doc.
     expect(result.html).not.toContain('share-download')

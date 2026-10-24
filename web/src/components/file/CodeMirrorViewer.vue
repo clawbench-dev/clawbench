@@ -983,8 +983,8 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     align-items: center;
 }
 .dirty-dot {
-    width: 8px;
-    height: 8px;
+    width: calc(8 * var(--dp));
+    height: calc(8 * var(--dp));
     border-radius: 50%;
     background: var(--accent-color);
     flex-shrink: 0;
@@ -994,11 +994,11 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding:5px var(--space-4);
+    padding: calc(5 * var(--dp)) var(--space-4);
     line-height: 1;
 }
 .editor-btn {
-    padding: 5px 14px;
+    padding: calc(5 * var(--dp)) calc(14 * var(--dp));
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
     background: transparent;
@@ -1061,7 +1061,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
 /* Diff marker gutter label */
 .cm-diff-gutter-marker {
     display: inline-block;
-    min-width: 16px;
+    min-width: calc(16 * var(--dp));
     text-align: center;
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
@@ -1069,7 +1069,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     cursor: pointer;
     user-select: none;
     border-radius: var(--radius-xs);
-    padding:0 var(--space-1);
+    padding: 0 var(--space-1);
 }
 @media (hover: hover) {
     .cm-diff-gutter-marker:hover {
@@ -1130,7 +1130,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     cursor: pointer;
     font-family: var(--font-mono);
     font-size: var(--font-size-md);
-    line-height: 20.8px;
+    line-height: calc(20.8 * var(--dp));
     pointer-events: auto;
 }
 @media (hover: hover) {
@@ -1160,18 +1160,18 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 calc(4 * var(--dp)) calc(12 * var(--dp)) rgba(0, 0, 0, 0.3);
 }
 .cm-viewer .cm-tooltip-autocomplete {
   font-family: var(--font-mono);
   font-size: var(--font-size-md);
-  max-height: 200px;
+  max-height: calc(200 * var(--dp));
 }
 .cm-viewer .cm-tooltip-autocomplete ul li {
   padding: var(--space-1) var(--space-4) var(--space-1) var(--space-2);
 }
 .cm-viewer .cm-completionIcon {
-  width: 16px;
+  width: calc(16 * var(--dp));
   font-size: var(--font-size-xs);
   opacity: var(--opacity-soft);
 }
@@ -1192,7 +1192,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 300px;
+  max-width: calc(300 * var(--dp));
 }
 .cm-viewer .cm-completionDetail {
   color: var(--text-muted);

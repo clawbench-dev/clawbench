@@ -1453,7 +1453,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   justify-content: center;
   height: 100%;
   gap: var(--space-6);
-  padding: 32px;
+  padding: calc(32 * var(--dp));
 }
 
 .terminal-empty-icon {
@@ -1489,7 +1489,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .terminal-tab-bar {
   display: flex;
   align-items: stretch;
-  height: 28px;
+  height: calc(28 * var(--dp));
   padding: 0;
   flex-shrink: 0;
   background: var(--bg-secondary);
@@ -1519,14 +1519,14 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding:0 var(--space-3) 0 var(--space-5);
+  padding: 0 var(--space-3) 0 var(--space-5);
   border-radius: 0;
   cursor: pointer;
   flex-shrink: 0;
   transition: background var(--duration-fast) ease;
   user-select: none;
   -webkit-user-select: none;
-  max-width: 120px;
+  max-width: calc(120 * var(--dp));
 }
 
 @media (hover: hover) {
@@ -1537,7 +1537,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 
 .terminal-tab.active {
   background: color-mix(in srgb, var(--text-primary) 12%, transparent);
-  box-shadow: inset 0 -2px 0 var(--accent-color);
+  box-shadow: inset 0 calc(-2 * var(--dp)) 0 var(--accent-color);
 }
 
 .terminal-tab-title {
@@ -1557,8 +1557,8 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 
 .terminal-tab-unread-dot {
   flex-shrink: 0;
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
   background: var(--accent-color, #0066cc);
 }
@@ -1567,8 +1567,8 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: calc(16 * var(--dp));
+  height: calc(16 * var(--dp));
   border: none;
   border-radius: 0;
   background: transparent;
@@ -1601,15 +1601,15 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: 0;
   background: transparent;
   color: var(--accent-color);
   cursor: pointer;
   flex-shrink: 0;
-  margin:0 var(--space-3) 0 0;
+  margin: 0 var(--space-3) 0 0;
   transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
 }
 
@@ -1648,7 +1648,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 }
 .symbol-bar-enter-to,
 .symbol-bar-leave-from {
-  max-height: 44px;
+  max-height: calc(44 * var(--dp));
 }
 
 /* Terminal viewport container */
@@ -1668,15 +1668,15 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 
 .terminal-container :deep(.xterm-scrollable-element > .scrollbar.vertical),
 .terminal-container :deep(.xterm-scrollbar) {
-  width: 2px !important;
+  width: calc(2 * var(--dp)) !important;
   right: 1px !important;
   background: transparent !important;
 }
 
 .terminal-container :deep(.xterm-scrollable-element > .scrollbar > .slider) {
-  width: 2px !important;
+  width: calc(2 * var(--dp)) !important;
   left: 0 !important;
-  border-radius: 999px !important;
+  border-radius: calc(999 * var(--dp)) !important;
 }
 
 [data-theme-base="dark"] .terminal-container {
@@ -1710,7 +1710,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   transform: translate(-50%, -50%);
   font-size: 48px;
   color: rgba(255, 255, 255, 0.7);
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) rgba(0, 0, 0, 0.5);
   pointer-events: none;
   z-index: 5;
   user-select: none;
@@ -1794,7 +1794,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 }
 
 .symbol-bar {
-  padding:3px var(--space-3) 3px;
+  padding: calc(3 * var(--dp)) var(--space-3) calc(3 * var(--dp));
   background: color-mix(in srgb, var(--bg-primary) 60%, var(--bg-secondary));
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
@@ -1804,7 +1804,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .symbol-bar-scroll {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
@@ -1858,7 +1858,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 
 .gesture-toggle.mode-selection {
   outline: 2px solid var(--accent-color);
-  outline-offset: -2px;
+  outline-offset: calc(-2 * var(--dp));
   border-radius: var(--radius-sm);
 }
 
@@ -1878,9 +1878,9 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .key-group + .key-group::before {
   content: '';
   position: absolute;
-  left: -4px;
+  left: calc(-4 * var(--dp));
   width: 1px;
-  height: 16px;
+  height: calc(16 * var(--dp));
   border-radius: var(--radius-full);
   background: var(--toolbar-divider);
 }
@@ -1889,9 +1889,9 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 32px;
-  height: 32px;
-  padding: 0 5px;
+  min-width: calc(32 * var(--dp));
+  height: calc(32 * var(--dp));
+  padding: 0 calc(5 * var(--dp));
   border: none;
   border-radius: 0;
   background: transparent;
@@ -1926,7 +1926,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   flex-direction: column !important;
   gap: 0;
   line-height: 1;
-  padding: 3px 5px;
+  padding: calc(3 * var(--dp)) calc(5 * var(--dp));
 }
 .shift-tab-label { font-size: var(--font-size-2xs); font-weight: var(--font-weight-bold); line-height: 1.3; }
 
@@ -1959,9 +1959,9 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .btn-func-group + .key-group::before {
   content: '';
   position: absolute;
-  left: -4px;
+  left: calc(-4 * var(--dp));
   width: 1px;
-  height: 16px;
+  height: calc(16 * var(--dp));
   border-radius: var(--radius-full);
   background: var(--toolbar-divider);
 }
@@ -1994,7 +1994,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .quick-send-item .qs-label {
   flex-shrink: 0;
   font-weight: var(--font-weight-medium);
-  max-width: 110px;
+  max-width: calc(110 * var(--dp));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

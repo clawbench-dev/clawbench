@@ -29,7 +29,7 @@ defineProps<{
 .settings-card__header {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
-  padding:5px var(--space-7);
+  padding: calc(5 * var(--dp)) var(--space-7);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: var(--font-weight-medium);
@@ -43,7 +43,7 @@ defineProps<{
   padding: var(--space-4) var(--space-7);
 }
 .settings-card__body :deep(.settings-item::after) {
-  left: 16px;
+  left: calc(16 * var(--dp));
 }
 .settings-card__body :deep(.settings-item:last-child::after) {
   display: none;

@@ -62,7 +62,7 @@ const { t } = useI18n()
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
-  padding: 3px var(--space-3);
+  padding: calc(3 * var(--dp)) var(--space-3);
   border-radius: var(--radius-xs);
   white-space: nowrap;
   cursor: pointer;

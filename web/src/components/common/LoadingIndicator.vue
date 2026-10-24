@@ -58,8 +58,8 @@ withDefaults(
 /* Default: vertical block used for empty content areas */
 .loading-indicator:not(.inline) {
   flex-direction: column;
-  padding:24px var(--space-7);
-  min-height: 80px;
+  padding: calc(24 * var(--dp)) var(--space-7);
+  min-height: calc(80 * var(--dp));
 }
 
 .loading-indicator.overlay {
@@ -93,7 +93,7 @@ withDefaults(
    the injected callers never render. */
 .loading-indicator.overlay .li-spinner,
 .loading-indicator.fixed .li-spinner {
-  filter: drop-shadow(0 4px 14px color-mix(in srgb, var(--li-color, var(--accent-color, #0066cc)) 25%, transparent));
+  filter: drop-shadow(0 calc(4 * var(--dp)) calc(14 * var(--dp)) color-mix(in srgb, var(--li-color, var(--accent-color, #0066cc)) 25%, transparent));
 }
 </style>
 

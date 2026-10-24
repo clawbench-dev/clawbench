@@ -76,7 +76,7 @@ const emit = defineEmits<{
 .transfer-progress {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
   padding: var(--space-3) var(--space-4, 12px);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
@@ -100,7 +100,7 @@ const emit = defineEmits<{
   left: 50%;
   transform: translateX(-50%);
   width: calc(100% - 2 * var(--space-4, 12px));
-  max-width: 520px;
+  max-width: calc(520 * var(--dp));
   z-index: var(--z-header, 1100);
 }
 
@@ -132,7 +132,7 @@ const emit = defineEmits<{
 }
 
 .transfer-progress-track {
-  height: 3px;
+  height: calc(3 * var(--dp));
   overflow: hidden;
   border-radius: var(--radius-xs);
   background: var(--bg-tertiary, #f0f0f0);
@@ -160,8 +160,8 @@ const emit = defineEmits<{
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
+  width: calc(18 * var(--dp));
+  height: calc(18 * var(--dp));
   padding: 0;
   border: none;
   border-radius: 50%;

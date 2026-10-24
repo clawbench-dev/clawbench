@@ -12,16 +12,17 @@
  *   Callers can override with `anchor: 'left' | 'right'` to force alignment
  *   (useful for autocomplete menus that logically start at the left of the input).
  *
- * CSS zoom handling:
- *   - getBoundingClientRect() returns zoom-scaled coordinates
- *   - window.innerWidth/innerHeight are NOT scaled by zoom
- *   - position:fixed CSS values are in pre-zoom layout space
- *   - Conversion: fixedCSS = viewportCoord / zoom (via toFixedCSS)
+ * Coordinate space:
+ *   The UI scale is applied by resizing the root font (css/variables.css), which
+ *   leaves `getBoundingClientRect()`, `innerWidth` and `position: fixed` in ONE
+ *   space — so no conversion is needed for scaling. `toFixedCSS` is retained as
+ *   an identity for the fallback path (it still neutralises a legacy CSS `zoom`
+ *   left on `<html>` by an older build or a user stylesheet).
  *
- * That conversion is only correct when the viewport really is the menu's
- * containing block. When an ancestor establishes one for fixed descendants
- * (`.chat-message` does, via `will-change: transform` in app mode), both the
- * origin and the scale differ — callers pass a `containingBlock` measured by
+ * The conversion that IS needed is for the containing block. When an ancestor
+ * establishes one for fixed descendants (`.chat-message` does, via
+ * `will-change: transform` in app mode), both the origin and the scale differ
+ * from the viewport's — callers pass a `containingBlock` measured by
  * `measureFixedContainingBlock` (utils/fixedPosition.ts) and every coordinate
  * is converted through it instead.
  */

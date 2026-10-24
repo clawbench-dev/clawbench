@@ -53,14 +53,14 @@ function handleClick() {
 <style>
 .toast {
     position: fixed;
-    top: calc(8px + var(--header-safe-area-top, 0px));
+    top: calc(8 * var(--dp) + var(--header-safe-area-top, 0px));
     left: 0;
     right: 0;
     margin: 0 auto;
     background: color-mix(in srgb, var(--accent-color) 85%, var(--bg-tertiary));
     color: #fff;
     border-radius: var(--radius-full);
-    padding: var(--space-3) 14px;
+    padding: var(--space-3) calc(14 * var(--dp));
     display: flex;
     align-items: center;
     gap: var(--space-3);
@@ -71,7 +71,7 @@ function handleClick() {
     z-index: var(--z-popover);
     white-space: normal;
     width: fit-content;
-    min-width: 80px;
+    min-width: calc(80 * var(--dp));
     max-width: 88vw;
     text-align: left;
     line-height: var(--line-height-snug);
@@ -124,7 +124,7 @@ function handleClick() {
 [data-theme-base="dark"] .toast {
     background: color-mix(in srgb, var(--accent-color) 40%, var(--bg-tertiary));
     color: var(--text-primary);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 calc(4 * var(--dp)) calc(16 * var(--dp)) rgba(0, 0, 0, 0.5);
 }
 
 /* On dark themes the toast backdrop is a muted accent mix with --text-primary
@@ -163,6 +163,6 @@ function handleClick() {
 .toast-enter-from,
 .toast-leave-to {
     opacity: 0;
-    transform: translateY(-12px);
+    transform: translateY(calc(-12 * var(--dp)));
 }
 </style>

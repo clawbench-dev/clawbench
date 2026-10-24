@@ -142,7 +142,7 @@ watch(() => props.file, () => {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    padding: calc(24 * var(--dp));
     background: var(--bg-primary);
     position: relative;
     user-select: none;
@@ -156,11 +156,11 @@ watch(() => props.file, () => {
     max-height: 100%;
     object-fit: contain;
     cursor: default;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 calc(2 * var(--dp)) calc(12 * var(--dp)) rgba(0, 0, 0, 0.08);
 }
 
 :global([data-theme-base="dark"]) .image-preview-img {
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 calc(2 * var(--dp)) calc(12 * var(--dp)) rgba(0, 0, 0, 0.3);
 }
 
 /* Navigation hint arrows */
@@ -168,8 +168,8 @@ watch(() => props.file, () => {
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
-    width: 36px;
-    height: 36px;
+    width: calc(36 * var(--dp));
+    height: calc(36 * var(--dp));
     border-radius: 50%;
     background: rgba(0, 0, 0, 0.35);
     color: rgba(255, 255, 255, 0.9);
@@ -179,12 +179,12 @@ watch(() => props.file, () => {
     cursor: pointer;
     transition: background var(--duration-base), transform var(--duration-base);
     z-index: 2;
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(calc(4 * var(--dp)));
 }
 
 .img-nav-hint svg {
-    width: 18px;
-    height: 18px;
+    width: calc(18 * var(--dp));
+    height: calc(18 * var(--dp));
 }
 
 @media (hover: hover) {
@@ -195,17 +195,17 @@ watch(() => props.file, () => {
 }
 
 .img-nav-prev {
-    left: 12px;
+    left: calc(12 * var(--dp));
 }
 
 .img-nav-next {
-    right: 12px;
+    right: calc(12 * var(--dp));
 }
 
 /* Counter badge */
 .img-counter {
     position: absolute;
-    bottom: 12px;
+    bottom: calc(12 * var(--dp));
     left: 50%;
     transform: translateX(-50%);
     background: rgba(0, 0, 0, 0.5);
@@ -213,7 +213,7 @@ watch(() => props.file, () => {
     font-size: var(--font-size-sm);
     padding: var(--space-1) var(--space-5);
     border-radius: var(--radius-md);
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(calc(4 * var(--dp)));
     pointer-events: none;
     user-select: none;
 }

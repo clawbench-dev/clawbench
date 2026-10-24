@@ -43,23 +43,60 @@ function token(name: string): string {
   return m![1].trim()
 }
 
+/**
+ * The token's value in DESIGN pixels.
+ *
+ * Sizes are no longer written as bare `px` — they are `calc(N * var(--dp))`, so
+ * that the whole UI scales from the root font size (see the FONT-DRIVEN SCALING
+ * block in variables.css). The invariant these guards exist for is still the
+ * design size: `--font-size-2xl` must stay the 16 design px that keeps mobile
+ * Safari from zooming on focus, whatever expression wraps it.
+ *
+ * Accepts both forms so a token that legitimately stays literal (a hairline, a
+ * pill radius) can still be asserted with the same helper:
+ *   `14px`                  → 14
+ *   `calc(14 * var(--dp))`  → 14
+ */
+function designPx(name: string): number {
+  const raw = token(name)
+  const literal = raw.match(/^(-?[\d.]+)px$/)
+  if (literal) return Number(literal[1])
+  const viaDp = raw.match(/^calc\(\s*(-?[\d.]+)\s*\*\s*var\(--dp\)\s*\)$/)
+  if (viaDp) return Number(viaDp[1])
+  throw new Error(`token ${name} is neither a px literal nor a --dp multiple: ${raw}`)
+}
+
 describe('typography tokens (variables.css)', () => {
-  it('defines the seven font-size steps at their documented px values', () => {
-    expect(token('--font-size-2xs')).toBe('10px')
-    expect(token('--font-size-xs')).toBe('11px')
-    expect(token('--font-size-sm')).toBe('12px')
-    expect(token('--font-size-md')).toBe('13px')
-    expect(token('--font-size-lg')).toBe('14px')
-    expect(token('--font-size-xl')).toBe('15px')
-    expect(token('--font-size-2xl')).toBe('16px')
+  it('defines the seven font-size steps at their documented design px', () => {
+    expect(designPx('--font-size-2xs')).toBe(10)
+    expect(designPx('--font-size-xs')).toBe(11)
+    expect(designPx('--font-size-sm')).toBe(12)
+    expect(designPx('--font-size-md')).toBe(13)
+    expect(designPx('--font-size-lg')).toBe(14)
+    expect(designPx('--font-size-xl')).toBe(15)
+    expect(designPx('--font-size-2xl')).toBe(16)
   })
 
-  it('keeps --font-size-xl equal to the html/body base size', () => {
-    // base.css sizes the document from this token; a mismatch would make every
-    // rem-free px value in the app render at an unexpected scale.
+  it('scales every font-size step from the root size', () => {
+    // If any step went back to a bare px literal it would stop following the
+    // scale while its neighbours kept growing, so the type hierarchy would
+    // silently invert at large scales.
+    for (const name of ['2xs', 'xs', 'sm', 'md', 'lg', 'xl', '2xl']) {
+      expect(token(`--font-size-${name}`), `--font-size-${name} must scale`).toContain('var(--dp)')
+    }
+  })
+
+  it('keeps --font-size-xl equal to the document base size', () => {
+    // `body` takes its size from this token and `html` sets the root size in
+    // the same 15 design px, so the two agree at every scale. `html` itself
+    // must NOT take the token: `--dp` is `1rem / 15`, so `html { font-size:
+    // var(--font-size-xl) }` would close the cycle 1rem ← root ← token ← 1rem
+    // and the browser would fall back to the 16px initial value (which is
+    // exactly what happened during the migration).
     const base = readCss('css/base.css')
-    expect(base).toMatch(/font-size:\s*var\(--font-size-xl\)/)
-    expect(token('--font-size-xl')).toBe('15px')
+    expect(base).toMatch(/body\s*\{[^}]*font-size:\s*var\(--font-size-xl\)/)
+    expect(base).toMatch(/html\s*\{\s*font-size:\s*calc\(15px \* var\(--ui-scale/)
+    expect(designPx('--font-size-xl')).toBe(15)
   })
 
   it('defines the three font-weight steps', () => {
@@ -87,23 +124,21 @@ describe('typography tokens (variables.css)', () => {
 })
 
 describe('spacing tokens (variables.css)', () => {
-  it('defines the eight steps at their documented px values', () => {
-    expect(token('--space-1')).toBe('2px')
-    expect(token('--space-2')).toBe('4px')
-    expect(token('--space-3')).toBe('6px')
-    expect(token('--space-4')).toBe('8px')
-    expect(token('--space-5')).toBe('10px')
-    expect(token('--space-6')).toBe('12px')
-    expect(token('--space-7')).toBe('16px')
-    expect(token('--space-8')).toBe('20px')
+  it('defines the eight steps at their documented design px', () => {
+    expect(designPx('--space-1')).toBe(2)
+    expect(designPx('--space-2')).toBe(4)
+    expect(designPx('--space-3')).toBe(6)
+    expect(designPx('--space-4')).toBe(8)
+    expect(designPx('--space-5')).toBe(10)
+    expect(designPx('--space-6')).toBe(12)
+    expect(designPx('--space-7')).toBe(16)
+    expect(designPx('--space-8')).toBe(20)
   })
 
   it('keeps the steps strictly increasing', () => {
     // A spacing scale that goes backwards (or repeats) makes "one step up"
     // meaningless and invites arbitrary values back in.
-    const px = [1, 2, 3, 4, 5, 6, 7, 8].map((n) =>
-      parseFloat(token(`--space-${n}`)),
-    )
+    const px = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => designPx(`--space-${n}`))
     for (let i = 1; i < px.length; i++) {
       expect(px[i], `--space-${i + 1} should be larger than --space-${i}`).toBeGreaterThan(px[i - 1])
     }
@@ -111,12 +146,19 @@ describe('spacing tokens (variables.css)', () => {
 })
 
 describe('radius tokens (variables.css)', () => {
-  it('defines the five steps at their documented values', () => {
-    expect(token('--radius-xs')).toBe('3px')
-    expect(token('--radius-sm')).toBe('6px')
-    expect(token('--radius-md')).toBe('10px')
-    expect(token('--radius-lg')).toBe('14px')
-    expect(token('--radius-full')).toBe('999px')
+  it('defines the five steps at their documented design values', () => {
+    expect(designPx('--radius-xs')).toBe(3)
+    expect(designPx('--radius-sm')).toBe(6)
+    expect(designPx('--radius-md')).toBe(10)
+    expect(designPx('--radius-lg')).toBe(14)
+    expect(designPx('--radius-full')).toBe(999)
+  })
+
+  it('leaves --radius-full unscaled', () => {
+    // A pill only has to exceed half the element height. Scaling it gains
+    // nothing and risks drifting out of "always a pill" territory, so it stays
+    // a literal — unlike the four corner radii, which must follow the UI.
+    expect(token('--radius-full')).not.toContain('var(--dp)')
   })
 
   it('keeps --radius-full large enough to always render as a pill', () => {
@@ -127,11 +169,11 @@ describe('radius tokens (variables.css)', () => {
 })
 
 describe('icon-size tokens (variables.css)', () => {
-  it('defines the four steps at their documented px values', () => {
-    expect(token('--icon-size-sm')).toBe('14px')
-    expect(token('--icon-size-md')).toBe('18px')
-    expect(token('--icon-size-lg')).toBe('24px')
-    expect(token('--icon-size-xl')).toBe('40px')
+  it('defines the four steps at their documented design px', () => {
+    expect(designPx('--icon-size-sm')).toBe(14)
+    expect(designPx('--icon-size-md')).toBe(18)
+    expect(designPx('--icon-size-lg')).toBe(24)
+    expect(designPx('--icon-size-xl')).toBe(40)
   })
 })
 

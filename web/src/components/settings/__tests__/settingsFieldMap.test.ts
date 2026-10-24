@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getServerFieldToLabelKey, categoryItems, categoryHasPanels, isPanelOnlyCategory, getCategoryPanels, isSubPageRoute, getSubPagePanel, getSubPageTitleKey, subPagePanelMap, buildFontFamilyOptions, isDependsOnMet, formatAnchorForDisplay } from '@/components/settings/settingsFieldMap'
-import { UI_SCALE_STEP } from '@/utils/uiScale'
+import { UI_SCALE_STEP, UI_SCALE_MANUAL_MIN, UI_SCALE_MANUAL_MAX } from '@/utils/uiScale'
 import i18n from '@/i18n'
 
 describe('settingsFieldMap', () => {
@@ -201,8 +201,14 @@ describe('settingsFieldMap', () => {
     // longer exists (disableUnless would read `undefined` and disable it
     // permanently).
     expect(slider.spec.disableUnless).toBeUndefined()
-    expect(slider.spec.min).toBe(0.8)
-    expect(slider.spec.max).toBe(1.5)
+    // The range matches the applier's own bounds (0.5–2) so a value the applier
+    // accepts is always reachable with the slider, and vice versa. It used to
+    // be 0.8–1.5 while the applier clamped 0.5–2, so auto-fit could park a
+    // factor the slider could not represent.
+    expect(slider.spec.min).toBe(UI_SCALE_MANUAL_MIN)
+    expect(slider.spec.max).toBe(UI_SCALE_MANUAL_MAX)
+    expect(slider.spec.min).toBe(0.5)
+    expect(slider.spec.max).toBe(2)
     expect(slider.spec.defaultValue).toBe(1)
   })
 

@@ -2,9 +2,9 @@
    Used by: SummaryToggle, file changes button, speak button, info button, etc. */
 .chat-action-btn {
   flex-shrink: 0;
-  min-width: 22px;
-  height: 22px;
-  padding:0 var(--space-3);
+  min-width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
+  padding: 0 var(--space-3);
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -42,8 +42,8 @@
 }
 
 .chat-action-btn svg {
-  width: 14px;
-  height: 14px;
+  width: calc(14 * var(--dp));
+  height: calc(14 * var(--dp));
   flex-shrink: 0;
 }
 
@@ -54,5 +54,5 @@
 /* Wide variant for buttons with text labels (speak, file changes) */
 .chat-action-btn--wide {
   min-width: auto;
-  padding:0 var(--space-4);
+  padding: 0 var(--space-4);
 }

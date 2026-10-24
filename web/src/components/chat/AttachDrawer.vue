@@ -679,7 +679,7 @@ defineExpose({ activeTab, handleFileDrop })
   align-items: center;
   gap: var(--space-2);
   padding: 0 var(--space-2);
-  height: 28px;
+  height: calc(28 * var(--dp));
   border: none;
   background: none;
   color: var(--accent-color);
@@ -721,7 +721,7 @@ defineExpose({ activeTab, handleFileDrop })
   justify-content: center;
   gap: var(--space-2);
   padding: var(--space-4) var(--space-2);
-  min-height: 44px;
+  min-height: calc(44 * var(--dp));
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   background: var(--bg-primary);
@@ -752,14 +752,14 @@ defineExpose({ activeTab, handleFileDrop })
 .ad-tab-bar {
   display: flex;
   gap: 0;
-  padding:0 var(--space-6);
+  padding: 0 var(--space-6);
   overflow-x: auto;
   border-bottom: 1px solid var(--border-color);
   -webkit-overflow-scrolling: touch;
   flex-shrink: 0;
 }
 .ad-tab {
-  padding: var(--space-4) 14px;
+  padding: var(--space-4) calc(14 * var(--dp));
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   border: none;
@@ -782,7 +782,7 @@ defineExpose({ activeTab, handleFileDrop })
   padding: var(--space-2) 0;
 }
 .ad-empty {
-  padding:24px var(--space-7);
+  padding: calc(24 * var(--dp)) var(--space-7);
   text-align: center;
   color: var(--text-muted);
   font-size: var(--font-size-md);
@@ -793,7 +793,7 @@ defineExpose({ activeTab, handleFileDrop })
   display: flex;
   align-items: center;
   gap: var(--space-5);
-  padding: var(--space-5) 14px;
+  padding: var(--space-5) calc(14 * var(--dp));
   width: 100%;
   border: none;
   background: none;
@@ -820,8 +820,8 @@ defineExpose({ activeTab, handleFileDrop })
  * wrapper does not need to clip. */
 .ad-icon-wrap {
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -891,16 +891,16 @@ defineExpose({ activeTab, handleFileDrop })
 /* Attachment check badge: sits on the bottom-right corner of the icon */
 .ad-icon-wrap .ad-icon-check {
   position: absolute;
-  right: -3px;
-  bottom: -3px;
-  width: 14px;
-  height: 14px;
+  right: calc(-3 * var(--dp));
+  bottom: calc(-3 * var(--dp));
+  width: calc(14 * var(--dp));
+  height: calc(14 * var(--dp));
   padding: var(--space-1);
   box-sizing: border-box;
   border-radius: 50%;
   background: var(--accent-color);
   color: #fff;
-  box-shadow: 0 0 0 2px var(--bg-primary);
+  box-shadow: 0 0 0 calc(2 * var(--dp)) var(--bg-primary);
   pointer-events: none;
 }
 
@@ -940,7 +940,7 @@ defineExpose({ activeTab, handleFileDrop })
   font-weight: var(--font-weight-semibold);
   color: var(--accent-color);
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   margin-right: var(--space-3);
   vertical-align: middle;
@@ -967,7 +967,7 @@ defineExpose({ activeTab, handleFileDrop })
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3) 14px;
+  padding: var(--space-3) calc(14 * var(--dp));
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
 }
@@ -985,7 +985,7 @@ defineExpose({ activeTab, handleFileDrop })
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  height: 24px;
+  height: calc(24 * var(--dp));
   padding: 0 var(--space-4);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-full);
@@ -1015,7 +1015,7 @@ defineExpose({ activeTab, handleFileDrop })
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) 14px;
+  padding: var(--space-2) calc(14 * var(--dp));
   border-bottom: 1px solid var(--border-color);
 }
 .ad-clear-hint {
@@ -1032,7 +1032,7 @@ defineExpose({ activeTab, handleFileDrop })
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  height: 24px;
+  height: calc(24 * var(--dp));
   padding: 0 var(--space-4);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-full);

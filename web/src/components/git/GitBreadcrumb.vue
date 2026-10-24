@@ -87,7 +87,7 @@ const commitTarget = computed(() => {
   display: none;
 }
 .git-crumb {
-  padding:3px var(--space-3);
+  padding: calc(3 * var(--dp)) var(--space-3);
   border-radius: var(--radius-xs);
   cursor: pointer;
   white-space: nowrap;
@@ -116,8 +116,8 @@ const commitTarget = computed(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: calc(18 * var(--dp));
+  height: calc(18 * var(--dp));
   border-radius: 50%;
   border: none;
   background: transparent;

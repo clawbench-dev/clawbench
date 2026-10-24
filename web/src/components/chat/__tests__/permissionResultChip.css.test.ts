@@ -174,7 +174,7 @@ describe('permission-result chip matches the option buttons', () => {
 
     it(`${path}: same 30px height and radius family as a button`, () => {
       const decls = declsOf(path, '')
-      expect(decls, 'must match the 30px control height').toMatch(/height:\s*30px/)
+      expect(decls, 'must match the 30px control height').toMatch(/(height):\s*(?:calc\(\s*30\s*\*\s*var\(--dp\)\s*\)|30px)/)
       expect(decls).toMatch(/border-radius:\s*var\(--radius-sm\)/)
     })
   }

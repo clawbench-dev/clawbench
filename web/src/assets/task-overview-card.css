@@ -59,8 +59,8 @@
 
 /* Collapse chevron button: a bare 22px hit target, no chrome of its own. */
 .card-toggle-btn {
-  width: 22px;
-  height: 22px;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;

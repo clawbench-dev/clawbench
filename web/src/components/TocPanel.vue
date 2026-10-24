@@ -541,7 +541,7 @@ onBeforeUnmount(() => {
 
 .toc-empty {
     text-align: center;
-    padding:32px var(--space-7);
+    padding: calc(32 * var(--dp)) var(--space-7);
     color: var(--text-muted);
     font-size: var(--font-size-md);
 }
@@ -577,7 +577,7 @@ onBeforeUnmount(() => {
     font-weight: var(--font-weight-semibold);
     background: var(--bg-tertiary);
     color: var(--text-muted);
-    padding: 1px 5px;
+    padding: 1px calc(5 * var(--dp));
     border-radius: var(--radius-xs);
     margin-right: var(--space-2);
     flex-shrink: 0;
@@ -591,7 +591,7 @@ onBeforeUnmount(() => {
 
 .toc-kind-icon {
     flex-shrink: 0;
-    margin-right: 5px;
+    margin-right: calc(5 * var(--dp));
     vertical-align: middle;
     opacity: var(--opacity-soft);
 }

@@ -436,14 +436,14 @@ function formatTime(iso: string): string {
 </script>
 
 <style scoped>.forge-detail-content {
-  margin-top: 14px;
-  padding-bottom: 14px;
+  margin-top: calc(14 * var(--dp));
+  padding-bottom: calc(14 * var(--dp));
   border-bottom: 1px solid var(--border-color);
 }
 
 /* ── Comments ── */
 .forge-comments {
-  margin-top: 14px;
+  margin-top: calc(14 * var(--dp));
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
@@ -451,14 +451,14 @@ function formatTime(iso: string): string {
 .forge-comments-title {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: calc(5 * var(--dp));
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-muted);
 }
 .forge-load-more-comments {
   align-self: center;
-  padding: 5px 14px;
+  padding: calc(5 * var(--dp)) calc(14 * var(--dp));
   border: 1px solid var(--border-color);
   border-radius: var(--radius-full);
   background: transparent;
@@ -484,7 +484,7 @@ function formatTime(iso: string): string {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  padding:7px var(--space-6);
+  padding: calc(7 * var(--dp)) var(--space-6);
   border-bottom: 1px solid var(--border-color);
   font-size: var(--font-size-sm);
   color: var(--text-muted);

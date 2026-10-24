@@ -23,7 +23,7 @@
     position: sticky;
     left: 0;
     display: inline-block;
-    min-width: 32px;
+    min-width: calc(32 * var(--dp));
     padding-right: var(--space-3);
     color: var(--text-muted);
     text-align: right;

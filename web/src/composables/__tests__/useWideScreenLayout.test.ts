@@ -68,9 +68,39 @@ describe('computeIsWideScreen', () => {
   })
 
   it('does not depend on screen dimensions or DPR (no such parameters)', () => {
-    // The signature is (cssWidth) only — this is the structural guarantee that
-    // device size can no longer influence the decision.
-    expect(computeIsWideScreen.length).toBe(1)
+    // The signature is (cssWidth, uiScale) — this is the structural guarantee
+    // that device size can no longer influence the decision. The scale IS a
+    // legitimate input: at a larger scale the same window holds fewer DESIGN
+    // pixels, so the panels genuinely do not fit side by side any more.
+    //
+    // `Function.length` counts only parameters without defaults, and uiScale
+    // has one (so callers that predate it keep working) — hence reading the
+    // declared parameter names instead of the arity.
+    const src = computeIsWideScreen.toString()
+    // Only the parameter list: the function NAME contains "Screen", which would
+    // otherwise trip the negative assertion below.
+    const params = src.slice(src.indexOf('(') + 1, src.indexOf(')')).replace(/\s+/g, ' ')
+    expect(params).toContain('cssWidth')
+    expect(params).toContain('uiScale')
+    expect(params).not.toMatch(/screen|dpr|devicePixel/i)
+  })
+
+  it('divides the viewport by the UI scale before comparing', () => {
+    // 960 design px is the threshold, so the same window flips as it grows.
+    expect(computeIsWideScreen(960, 1)).toBe(true)
+    expect(computeIsWideScreen(1440, 1.5)).toBe(true)   // exactly 960 design px
+    expect(computeIsWideScreen(1439, 1.5)).toBe(false)  // 959.3 design px
+    expect(computeIsWideScreen(1920, 2)).toBe(true)     // exactly 960 design px
+    expect(computeIsWideScreen(1919, 2)).toBe(false)
+  })
+
+  it('treats a missing or nonsensical scale as 1', () => {
+    // Callers that predate the parameter, and a first paint before the applier
+    // has written --ui-scale, must both keep the old behaviour.
+    expect(computeIsWideScreen(1280)).toBe(true)
+    expect(computeIsWideScreen(1280, 0)).toBe(true)
+    expect(computeIsWideScreen(1280, NaN)).toBe(true)
+    expect(computeIsWideScreen(1280, -2)).toBe(true)
   })
 })
 

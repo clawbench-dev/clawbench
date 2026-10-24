@@ -149,9 +149,9 @@ watch(() => props.files.length, (len) => {
   align-items: center;
   gap: var(--space-3);
   border-radius: var(--radius-lg);
-  height: 40px;
-  padding:0 var(--space-5);
-  max-width: 150px;
+  height: calc(40 * var(--dp));
+  padding: 0 var(--space-5);
+  max-width: calc(150 * var(--dp));
   font-size: var(--font-size-sm);
   text-decoration: none;
   cursor: pointer;
@@ -175,8 +175,8 @@ watch(() => props.files.length, (len) => {
 
 /* Image card: square thumbnail */
 .chat-file-attachment.attachment-image-only {
-  width: 40px;
-  height: 40px;
+  width: calc(40 * var(--dp));
+  height: calc(40 * var(--dp));
   padding: 0;
   overflow: hidden;
   border-radius: var(--radius-md);

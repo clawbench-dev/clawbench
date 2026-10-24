@@ -832,7 +832,7 @@ const copyPayload = quotableText
   .chat-file-changes-banner:hover {
     background: color-mix(in srgb, var(--accent-color, #0066cc) 16%, transparent);
     border-color: color-mix(in srgb, var(--accent-color, #0066cc) 55%, transparent);
-    box-shadow: 0 1px 3px color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+    box-shadow: 0 1px calc(3 * var(--dp)) color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   }
 }
 
@@ -1153,8 +1153,8 @@ const copyPayload = quotableText
   align-items: center;
   gap: var(--space-3);
   border-radius: var(--radius-sm);
-  height: 40px;
-  padding:0 var(--space-5);
+  height: calc(40 * var(--dp));
+  padding: 0 var(--space-5);
   font-size: var(--font-size-sm);
   text-decoration: none;
   cursor: pointer;
@@ -1180,8 +1180,8 @@ const copyPayload = quotableText
 
 /* Image card: square thumbnail */
 .chat-message .chat-file-attachment.attachment-image-only {
-  width: 40px;
-  height: 40px;
+  width: calc(40 * var(--dp));
+  height: calc(40 * var(--dp));
   padding: 0;
   overflow: hidden;
   border-radius: var(--radius-sm);
@@ -1301,9 +1301,9 @@ const copyPayload = quotableText
 
 .chat-message.user .msg-card {
     background: var(--user-msg-color);
-    border-radius: 20px 20px 0 20px;
+    border-radius: calc(20 * var(--dp)) calc(20 * var(--dp)) 0 calc(20 * var(--dp));
     margin-right: var(--space-5);
-    max-width: calc(100% - 20px);
+    max-width: calc(100% - calc(20 * var(--dp)));
     overflow: hidden;
 }
 
@@ -1347,7 +1347,7 @@ const copyPayload = quotableText
 .chat-message.user h1,
 .chat-message.user h2,
 .chat-message.user h3 {
-    margin: var(--space-3) 0 3px;
+    margin: var(--space-3) 0 calc(3 * var(--dp));
     font-weight: var(--font-weight-semibold);
 }
 
@@ -1356,7 +1356,7 @@ const copyPayload = quotableText
 .chat-message.user h3 { font-size: var(--font-size-md); }
 
 .chat-message.user p {
-    margin: 3px 0;
+    margin: calc(3 * var(--dp)) 0;
 }
 
 .chat-message.user ul,
@@ -1366,7 +1366,7 @@ const copyPayload = quotableText
 
 .chat-message.user blockquote {
     margin: var(--space-3) 0;
-    padding:5px var(--space-5);
+    padding: calc(5 * var(--dp)) var(--space-5);
     border-left-color: rgba(255, 255, 255, 0.35);
     background: rgba(0, 0, 0, 0.1);
 }
@@ -1376,7 +1376,7 @@ const copyPayload = quotableText
     overflow-wrap: break-word;
     color: white;
     text-decoration: underline;
-    text-underline-offset: 2px;
+    text-underline-offset: calc(2 * var(--dp));
 }
 
 @media (hover: hover) {
@@ -1489,7 +1489,7 @@ const copyPayload = quotableText
 .chat-message.assistant h1,
 .chat-message.assistant h2,
 .chat-message.assistant h3 {
-    margin: var(--space-3) 0 3px;
+    margin: var(--space-3) 0 calc(3 * var(--dp));
     font-weight: var(--font-weight-semibold);
 }
 
@@ -1498,7 +1498,7 @@ const copyPayload = quotableText
 .chat-message.assistant h3 { font-size: var(--font-size-md); }
 
 .chat-message.assistant p {
-    margin: 3px 0;
+    margin: calc(3 * var(--dp)) 0;
 }
 
 .chat-message.assistant ul,
@@ -1508,7 +1508,7 @@ const copyPayload = quotableText
 
 .chat-message.assistant blockquote {
     margin: var(--space-3) 0;
-    padding:5px var(--space-5);
+    padding: calc(5 * var(--dp)) var(--space-5);
 }
 
 .chat-message.assistant a {
@@ -1557,19 +1557,19 @@ const copyPayload = quotableText
 
 .chat-message .chat-audio-player {
   width: 100%;
-  max-width: 280px;
-  height: 28px;
+  max-width: calc(280 * var(--dp));
+  height: calc(28 * var(--dp));
   border-radius: var(--radius-sm);
   outline: none;
   display: block;
 }
 
 .chat-message .chat-audio-player::-webkit-media-controls-panel {
-  padding:0 var(--space-2);
+  padding: 0 var(--space-2);
 }
 
 .chat-message .chat-audio-player::-webkit-media-controls-play-button {
-  margin:0 var(--space-1);
+  margin: 0 var(--space-1);
 }
 
 .chat-message .chat-audio-player::-webkit-media-controls-current-time-display,
@@ -1589,8 +1589,8 @@ const copyPayload = quotableText
 
 .chat-message .chat-video-player {
   width: 100%;
-  max-width: 400px;
-  max-height: 225px;
+  max-width: calc(400 * var(--dp));
+  max-height: calc(225 * var(--dp));
   border-radius: var(--radius-sm);
   outline: none;
   background: #000;

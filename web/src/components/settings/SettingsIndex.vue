@@ -143,8 +143,8 @@ const groups = computed(() =>
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 42px;
-  padding:0 var(--space-7);
+  height: calc(42 * var(--dp));
+  padding: 0 var(--space-7);
   cursor: pointer;
   gap: var(--space-6);
   background: transparent;
@@ -156,7 +156,7 @@ const groups = computed(() =>
   content: '';
   position: absolute;
   bottom: 0;
-  left: 48px;
+  left: calc(48 * var(--dp));
   right: 0;
   height: 0.5px;
   background: var(--border-color);

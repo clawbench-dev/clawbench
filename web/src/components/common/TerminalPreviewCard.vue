@@ -79,15 +79,15 @@ const fileStyle = computed(() => {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding:0 var(--space-3);
-  height: 16px;
+  padding: 0 var(--space-3);
+  height: calc(16 * var(--dp));
   flex-shrink: 0;
   background: rgba(0, 0, 0, 0.15);
 }
 
 .tpc-dot {
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
 }
 

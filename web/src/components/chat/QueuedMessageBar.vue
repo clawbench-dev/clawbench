@@ -263,7 +263,7 @@ function fileLabel(f) {
   gap: var(--space-2);
   /* Bounded so this list can never crowd out the message area when the plan
      card is ALSO expanded (its timeline is capped at 240px the same way). */
-  max-height: min(40vh, 240px);
+  max-height: min(40vh, calc(240 * var(--dp)));
   overflow-y: auto;
 }
 
@@ -323,13 +323,13 @@ function fileLabel(f) {
 .queued-bar-action {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
   background: rgba(127, 127, 127, 0.16);
   border: none;
   border-radius: var(--radius-full);
   cursor: pointer;
   color: var(--text-secondary);
-  padding: 1px 7px;
+  padding: 1px calc(7 * var(--dp));
   font-size: var(--font-size-xs);
   line-height: var(--line-height-relaxed);
   transition: background var(--duration-base), color var(--duration-base);

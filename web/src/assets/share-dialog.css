@@ -24,7 +24,7 @@
 
 /* ── Dialog body + async states ── */
 .share-dialog-body {
-  padding: var(--space-6) var(--space-7) 14px;
+  padding: var(--space-6) var(--space-7) calc(14 * var(--dp));
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
@@ -45,7 +45,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-4);
-  padding: 9px 11px;
+  padding: calc(9 * var(--dp)) calc(11 * var(--dp));
   border-radius: var(--radius-sm);
   font-size: 12.5px;
   line-height: 1.55;
@@ -102,7 +102,7 @@
   flex: 1;
   min-width: 0;
   width: 100%;
-  padding:7px 84px 7px var(--space-5); /* right padding clears the two embedded buttons */
+  padding: calc(7 * var(--dp)) calc(84 * var(--dp)) calc(7 * var(--dp)) var(--space-5); /* right padding clears the two embedded buttons */
   border: 1px solid var(--border-color, #dee2e6);
   border-radius: var(--radius-sm, 6px);
   font-size: var(--font-size-md);
@@ -118,9 +118,9 @@
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  right: 4px;
-  width: 34px;
-  height: 30px;
+  right: calc(4 * var(--dp));
+  width: calc(34 * var(--dp));
+  height: calc(30 * var(--dp));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -131,7 +131,7 @@
   cursor: pointer;
 }
 .share-dialog-link-btn + .share-dialog-link-btn {
-  right: 38px;
+  right: calc(38 * var(--dp));
 }
 .share-dialog-link-btn:disabled { opacity: var(--opacity-muted); cursor: default; }
 /* In-flight spinner for the regenerate button. It is the shared

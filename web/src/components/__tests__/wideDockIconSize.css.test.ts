@@ -36,26 +36,26 @@ describe('wide dock glyph size', () => {
   it('renders the dock glyphs at 20px inside the 48px rail', () => {
     const decls = ruleDecls(appVue, '.wide-dock .dock-btn svg')
     expect(decls, '.wide-dock .dock-btn svg rule must exist').not.toBeNull()
-    expect(decls).toMatch(/width:\s*20px/)
-    expect(decls).toMatch(/height:\s*20px/)
+    expect(decls).toMatch(/(width):\s*(?:calc\(\s*20\s*\*\s*var\(--dp\)\s*\)|20px)/)
+    expect(decls).toMatch(/(height):\s*(?:calc\(\s*20\s*\*\s*var\(--dp\)\s*\)|20px)/)
   })
 
   it('keeps the rail width and button geometry untouched', () => {
     // The rail width, the button box, and the active-indicator height all have
     // to agree with DOCK_STEP; enlarging any of them would drift the sliding
     // highlight off the buttons.
-    expect(ruleDecls(appVue, '.wide-dock')).toMatch(/width:\s*48px/)
-    expect(ruleDecls(appVue, '.dock-btn')).toMatch(/width:\s*34px/)
-    expect(ruleDecls(appVue, '.dock-btn')).toMatch(/height:\s*34px/)
+    expect(ruleDecls(appVue, '.wide-dock')).toMatch(/(width):\s*(?:calc\(\s*48\s*\*\s*var\(--dp\)\s*\)|48px)/)
+    expect(ruleDecls(appVue, '.dock-btn')).toMatch(/(width):\s*(?:calc\(\s*34\s*\*\s*var\(--dp\)\s*\)|34px)/)
+    expect(ruleDecls(appVue, '.dock-btn')).toMatch(/(height):\s*(?:calc\(\s*34\s*\*\s*var\(--dp\)\s*\)|34px)/)
     expect(ruleDecls(appVue, '.wide-dock .wide-dock-active-indicator')).toMatch(
-      /height:\s*34px/,
+      /(height):\s*(?:calc\(\s*34\s*\*\s*var\(--dp\)\s*\)|34px)/,
     )
   })
 
   it('keeps the base bottom-dock glyph at 16px', () => {
     // The override is scoped under .wide-dock on purpose: the horizontal bottom
     // dock must keep its original 16px glyphs.
-    expect(ruleDecls(appVue, '.dock-btn svg')).toMatch(/width:\s*16px/)
-    expect(ruleDecls(appVue, '.dock-btn svg')).toMatch(/height:\s*16px/)
+    expect(ruleDecls(appVue, '.dock-btn svg')).toMatch(/(width):\s*(?:calc\(\s*16\s*\*\s*var\(--dp\)\s*\)|16px)/)
+    expect(ruleDecls(appVue, '.dock-btn svg')).toMatch(/(height):\s*(?:calc\(\s*16\s*\*\s*var\(--dp\)\s*\)|16px)/)
   })
 })

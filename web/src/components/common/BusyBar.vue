@@ -50,7 +50,7 @@ defineProps<{
   top: 0;
   left: 0;
   right: 0;
-  height: 3px;
+  height: calc(3 * var(--dp));
   overflow: hidden;
   /* Above the message list and the swipe indicator, below menus/toasts.
      The host is `position: relative`, so this scopes to the panel. */

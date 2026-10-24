@@ -31,7 +31,7 @@
   align-items: center;
   gap: var(--space-3);
   width: 100%;
-  padding: 5px var(--space-5);
+  padding: calc(5 * var(--dp)) var(--space-5);
   border: none;
   border-radius: 0;
   background: transparent;
@@ -72,7 +72,7 @@
   left: 0;
   top: 0;
   bottom: 0;
-  width: 2px;
+  width: calc(2 * var(--dp));
   background: var(--accent-color);
 }
 
@@ -80,8 +80,8 @@
 
 .theme-swatch {
   flex-shrink: 0;
-  width: 13px;
-  height: 13px;
+  width: calc(13 * var(--dp));
+  height: calc(13 * var(--dp));
   border-radius: 50%;
   background: var(--tterm-preview-bg, var(--bg-tertiary));
   /* Inset hairline in the CURRENT theme's text colour, so a near-white swatch

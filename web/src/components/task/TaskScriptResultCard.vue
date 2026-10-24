@@ -145,7 +145,7 @@ const durationLabel = computed(() => {
   padding: var(--space-3) var(--space-4);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 260px;
+  max-height: calc(260 * var(--dp));
   overflow-y: auto;
   color: var(--text-primary);
 }

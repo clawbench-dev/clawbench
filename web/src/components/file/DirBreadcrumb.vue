@@ -222,7 +222,7 @@ const homeDragPath = computed(() => normalizeSlashes(store.state.projectRoot || 
 }
 
 .crumb {
-  padding:3px var(--space-3);
+  padding: calc(3 * var(--dp)) var(--space-3);
   border-radius: var(--radius-xs);
   cursor: pointer;
   white-space: nowrap;
@@ -289,7 +289,7 @@ const homeDragPath = computed(() => normalizeSlashes(store.state.projectRoot || 
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding:3px var(--space-3);
+  padding: calc(3 * var(--dp)) var(--space-3);
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;

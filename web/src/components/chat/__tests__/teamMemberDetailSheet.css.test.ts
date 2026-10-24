@@ -37,11 +37,11 @@ describe('TeamMemberDetail — wide desktop card', () => {
   it('widens the card via --modal-max-width in a NON-SCOPED style block', () => {
     const unscoped = SRC.slice(SRC.indexOf('<style>'))
     expect(unscoped, 'the width rule must be non-scoped to reach the teleported panel')
-      .toMatch(/\.team-member-sheet\s*\{[^}]*--modal-max-width:\s*\d+px/)
+      .toMatch(/\.team-member-sheet\s*\{[^}]*--modal-max-width:\s*calc\(\s*\d+\s*\*\s*var\(--dp\)\s*\)/)
   })
 
   it('is wider than the default card, which is what "wider" means here', () => {
-    const m = SRC.match(/\.team-member-sheet\s*\{[^}]*--modal-max-width:\s*(\d+)px/)
+    const m = SRC.match(/\.team-member-sheet\s*\{[^}]*--modal-max-width:\s*calc\(\s*(\d+)\s*\*\s*var\(--dp\)\s*\)/)
     expect(m).not.toBeNull()
     // modal-card.css defaults to 624px; anything at or below that changes nothing.
     expect(Number(m![1])).toBeGreaterThan(624)

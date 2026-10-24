@@ -436,11 +436,11 @@ function copyValue(value, event) {
 }
 
 .md-tile {
-    flex: 1 1 84px;
-    min-width: 84px;
+    flex: 1 1 calc(84 * var(--dp));
+    min-width: calc(84 * var(--dp));
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: calc(2 * var(--dp));
 }
 
 .md-tile-label {
@@ -459,14 +459,14 @@ function copyValue(value, event) {
 /* ── Rows ── */
 .md-row {
     display: grid;
-    grid-template-columns: minmax(76px, 34%) 1fr;
+    grid-template-columns: minmax(calc(76 * var(--dp)), 34%) 1fr;
     align-items: start;
     gap: var(--space-4);
     /* Negative inline margin + matching padding: the row's hover fill reaches
        slightly past the text (so it reads as a row, not a text highlight)
        without shifting the label/value columns. */
     margin: 0 calc(-1 * var(--space-2));
-    padding: 2px var(--space-2);
+    padding: calc(2 * var(--dp)) var(--space-2);
     border-radius: var(--radius-xs);
 }
 

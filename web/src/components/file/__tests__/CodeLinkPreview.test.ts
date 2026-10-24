@@ -3371,7 +3371,7 @@ describe('code-link-preview.css — docked pane adds no divergent rules', () => 
     for (const block of dockedBlocks) {
       expect(block).not.toMatch(/overflow-x/)
       expect(block).not.toMatch(/min-height/)
-      expect(block).not.toMatch(/height:\s*28px/)
+      expect(block).not.toMatch(/(height):\s*(?:calc\(\s*28\s*\*\s*var\(--dp\)\s*\)|28px)/)
     }
   })
 
@@ -3413,8 +3413,8 @@ describe('code-link-preview.css — compact floating header', () => {
     expect(decls('.code-preview-header')).toMatch(/padding:\s*var\(--space-1\)/)
     // Scoped to the header — the meta row keeps its 24px controls.
     const btn = decls('.code-preview-header .code-preview-btn')
-    expect(btn).toMatch(/height:\s*22px/)
-    expect(btn).toMatch(/min-width:\s*22px/)
+    expect(btn).toMatch(/height:\s*calc\(\s*22\s*\*\s*var\(--dp\)\s*\)/)
+    expect(btn).toMatch(/min-width:\s*calc\(\s*22\s*\*\s*var\(--dp\)\s*\)/)
   })
 
   it('keeps the path on one line so a long path cannot re-inflate the row', () => {

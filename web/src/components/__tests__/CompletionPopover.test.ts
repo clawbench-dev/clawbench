@@ -755,7 +755,7 @@ describe('CompletionPopover', () => {
         // 系统通知的形态，右下角占用也更小。
         const src = readWebFile('src/components/common/CompletionPopover.vue')
         const desktopRule = src.match(/@media \(min-width: 768px\)\s*\{[\s\S]*?\n\}/)?.[0] || ''
-        expect(desktopRule).toContain('max-width: min(420px, 92vw)')
+        expect(desktopRule).toContain('max-width: min(calc(420 * var(--dp)), 92vw)')
         // 防回归：不得再回到 680px
         expect(desktopRule).not.toContain('680px')
     })

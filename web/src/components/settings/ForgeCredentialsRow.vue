@@ -286,7 +286,7 @@ onMounted(loadHosts)
 .forge-cred-result {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: calc(5 * var(--dp));
   font-size: var(--font-size-sm);
   min-width: 0;
 }
@@ -324,9 +324,9 @@ onMounted(loadHosts)
 }
 .forge-cred-input {
   flex: 1;
-  min-width: 130px;
+  min-width: calc(130 * var(--dp));
   box-sizing: border-box;
-  height: 30px;
+  height: calc(30 * var(--dp));
   padding: 0 var(--space-6);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
@@ -337,7 +337,7 @@ onMounted(loadHosts)
 .forge-cred-input:focus {
   outline: none;
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  box-shadow: 0 0 0 calc(2 * var(--dp)) var(--focus-ring);
 }
 .forge-cred-error {
   display: flex;

@@ -117,8 +117,8 @@ const { t } = useI18n()
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: calc(18 * var(--dp));
+  height: calc(18 * var(--dp));
   padding: 0;
   /* Reset UA button chrome: this is a <button>, so without an explicit border
      and background the browser paints its own. */
@@ -147,7 +147,7 @@ const { t } = useI18n()
      row could not be seen or clicked at all on a narrow sidebar.
      The cap stops a long tag list from consuming the whole pane: past ~3 rows
      the area scrolls vertically instead of growing further. */
-  max-height: 78px;
+  max-height: calc(78 * var(--dp));
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -162,11 +162,11 @@ const { t } = useI18n()
   /* Reset UA button styles: this is a <button>, not an <a>, so without an
      explicit border/background reset the browser paints its own chrome. */
   border: 1px solid color-mix(in srgb, var(--tag-accent) 30%, transparent);
-  border-radius: 999px;
+  border-radius: calc(999 * var(--dp));
   background: color-mix(in srgb, var(--tag-accent) 12%, transparent);
   color: var(--tag-accent);
   font-size: var(--font-size-xs);
-  line-height: 20px;
+  line-height: calc(20 * var(--dp));
   cursor: pointer;
   /* Caps an individual long tag name, but never wider than the row — with
      flex-wrap a chip that overflows just moves to the next line. */

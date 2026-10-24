@@ -7,13 +7,13 @@
   z-index: var(--z-sheet);
   display: flex;
   flex-direction: column;
-  width: min(720px, calc(100vw - 24px));
-  max-height: min(65vh, 480px);
+  width: min(calc(720 * var(--dp)), calc(100vw - calc(24 * var(--dp))));
+  max-height: min(65vh, calc(480 * var(--dp)));
   min-height: 0;
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #e0e0e0);
   border-radius: var(--radius-sm);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 calc(8 * var(--dp)) calc(24 * var(--dp)) rgba(0, 0, 0, 0.16);
   color: var(--text-primary, #202124);
   font-family: var(--font-ui);
   font-size: var(--font-size-md);
@@ -65,8 +65,8 @@ body.code-preview-resizing * {
   right: 0;
   bottom: 0;
   z-index: 2;
-  width: 18px;
-  height: 18px;
+  width: calc(18 * var(--dp));
+  height: calc(18 * var(--dp));
   cursor: nwse-resize;
   /* Pointer events must not start a text selection or a native drag. */
   touch-action: none;
@@ -81,8 +81,8 @@ body.code-preview-resizing * {
 .code-preview-resize-grip::after {
   content: '';
   position: absolute;
-  right: 4px;
-  bottom: 4px;
+  right: calc(4 * var(--dp));
+  bottom: calc(4 * var(--dp));
   border-right: 2px solid var(--text-muted, #80868b);
   border-bottom: 2px solid var(--text-muted, #80868b);
   opacity: 0.7;
@@ -90,13 +90,13 @@ body.code-preview-resizing * {
 }
 
 .code-preview-resize-grip::before {
-  width: 9px;
-  height: 9px;
+  width: calc(9 * var(--dp));
+  height: calc(9 * var(--dp));
 }
 
 .code-preview-resize-grip::after {
-  width: 4px;
-  height: 4px;
+  width: calc(4 * var(--dp));
+  height: calc(4 * var(--dp));
 }
 
 .code-preview-resize-grip:hover::before,
@@ -141,8 +141,8 @@ body.code-preview-resizing * {
    the compact row. Scoped to the header: the meta row's tool strip keeps 24px,
    and the docked pane keeps its own 28px touch target. */
 .code-preview-header .code-preview-btn {
-  min-width: 22px;
-  height: 22px;
+  min-width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
   padding: 0;
 }
 
@@ -154,7 +154,7 @@ body.code-preview-resizing * {
 }
 
 .code-link-preview-floating.is-dragging {
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.28) !important;
+  box-shadow: 0 calc(16 * var(--dp)) calc(44 * var(--dp)) rgba(0, 0, 0, 0.28) !important;
   transition: none !important;
 }
 
@@ -210,8 +210,8 @@ body.code-preview-resizing * {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding:3px var(--space-3);
-  height: 24px;
+  padding: calc(3 * var(--dp)) var(--space-3);
+  height: calc(24 * var(--dp));
   font-size: var(--font-size-xs);
   color: var(--text-secondary, #5f6368);
   background: transparent;
@@ -261,7 +261,7 @@ body.code-preview-resizing * {
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  padding:5px var(--space-6);
+  padding: calc(5 * var(--dp)) var(--space-6);
   background: var(--accent-color, #1a73e8);
   color: #fff;
   border: none;
@@ -314,7 +314,7 @@ body.code-preview-resizing * {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding:24px var(--space-7);
+  padding: calc(24 * var(--dp)) var(--space-7);
   gap: var(--space-6);
   color: var(--text-secondary, #888);
   text-align: center;
@@ -331,7 +331,7 @@ body.code-preview-resizing * {
    would tie with the global `.li-spinner` (both 0,1,0), leaving the winner to
    whichever stylesheet the bundler emits last. */
 .code-preview-status .code-preview-spinner {
-  --li-size: 20px;
+  --li-size: calc(20 * var(--dp));
   --li-track-color: rgba(0, 0, 0, 0.1);
 }
 
@@ -342,7 +342,7 @@ body.code-preview-resizing * {
   flex: 1;
   min-height: 0;
   position: relative;
-  line-height: 20px;
+  line-height: calc(20 * var(--dp));
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   background: var(--code-bg, #1e1e1e);
@@ -366,15 +366,15 @@ body.code-preview-resizing * {
 .code-preview-line-row {
   display: flex;
   align-items: stretch;
-  min-height: 20px;
-  line-height: 20px;
+  min-height: calc(20 * var(--dp));
+  line-height: calc(20 * var(--dp));
   width: 100%;
 }
 
 .code-preview-line-row.is-target-line {
   background: rgba(59, 130, 246, 0.12);
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-  box-shadow: inset 3px 0 0 var(--accent-color);
+  box-shadow: inset calc(3 * var(--dp)) 0 0 var(--accent-color);
 }
 
 .code-preview-line-number {
@@ -385,9 +385,9 @@ body.code-preview-resizing * {
   /* Width tracks the digit count of the widest line number (set via
      --gutter-digits on .code-preview-lines) instead of a fixed 44px slot,
      so short line ranges (e.g. 10–99) do not waste horizontal space. */
-  width: calc(var(--gutter-digits, 2) * 1ch + 20px);
+  width: calc(var(--gutter-digits, 2) * 1ch + calc(20 * var(--dp)));
   min-width: 0;
-  padding:0 var(--space-4) 0 var(--space-3);
+  padding: 0 var(--space-4) 0 var(--space-3);
   text-align: right;
   user-select: none;
   font-variant-numeric: tabular-nums;
@@ -396,7 +396,7 @@ body.code-preview-resizing * {
   border-right: 1px solid var(--border-color, rgba(0, 0, 0, 0.08));
   color: var(--text-muted, #8c8c8c);
   font-size: var(--font-size-xs);
-  line-height: 20px;
+  line-height: calc(20 * var(--dp));
   align-self: stretch;
 }
 
@@ -411,15 +411,15 @@ body.code-preview-resizing * {
 .code-preview-line-code {
   flex: 1;
   min-width: 0;
-  padding:0 var(--space-6);
-  line-height: 20px;
+  padding: 0 var(--space-6);
+  line-height: calc(20 * var(--dp));
 }
 
 .code-preview-line-code code.hljs {
   display: block;
   padding: 0;
   background: transparent !important;
-  line-height: 20px;
+  line-height: calc(20 * var(--dp));
   font-family: inherit;
   font-size: inherit;
   white-space: pre;
@@ -490,15 +490,15 @@ body.code-preview-resizing * {
    the rest of the app. Scoped under the expand container for the same
    specificity reason as .code-preview-spinner above. */
 .code-preview-expand-loading .code-preview-expand-spinner {
-  --li-size: 10px;
+  --li-size: calc(10 * var(--dp));
   --li-track-color: rgba(0, 0, 0, 0.12);
 }
 
 .code-preview-title.is-clickable {
   cursor: pointer;
   border-radius: var(--radius-xs);
-  padding:1px var(--space-2);
-  margin: -1px -4px;
+  padding: 1px var(--space-2);
+  margin: -1px calc(-4 * var(--dp));
   transition: background-color var(--duration-base) ease;
 }
 
@@ -511,8 +511,8 @@ body.code-preview-resizing * {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding:3px var(--space-3) 3px var(--space-6);
-  min-height: 28px;
+  padding: calc(3 * var(--dp)) var(--space-3) calc(3 * var(--dp)) var(--space-6);
+  min-height: calc(28 * var(--dp));
   background: var(--bg-secondary, #f8f9fa);
   border-bottom: 1px solid var(--border-color, #e0e0e0);
   user-select: none;
@@ -558,7 +558,7 @@ body.code-preview-resizing * {
 .code-preview-search-input {
   flex: 1;
   min-width: 0;
-  height: 24px;
+  height: calc(24 * var(--dp));
   padding: var(--space-1) var(--space-3);
   font-size: var(--font-size-sm);
   border: 1px solid var(--border-color, #ccc);
@@ -581,9 +581,9 @@ body.code-preview-resizing * {
 
 .code-preview-actions-divider {
   width: 1px;
-  height: 14px;
+  height: calc(14 * var(--dp));
   background: var(--border-color, #e0e0e0);
-  margin: 0 3px;
+  margin: 0 calc(3 * var(--dp));
   flex-shrink: 0;
 }
 
@@ -619,7 +619,7 @@ body.code-preview-resizing * {
 
 .code-preview-line-row.is-current-search-match {
   background-color: rgba(255, 214, 0, 0.45);
-  box-shadow: inset 3px 0 0 var(--accent-color);
+  box-shadow: inset calc(3 * var(--dp)) 0 0 var(--accent-color);
 }
 
 /* Mobile BottomSheet Header & Footer styles */
@@ -705,8 +705,8 @@ body.code-preview-resizing * {
 
 /* Square icon button used by the in-preview search bars (prev / next / close). */
 .code-preview-btn.icon-only {
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   padding: 0;
   border-radius: var(--radius-sm);
 }
@@ -730,7 +730,7 @@ body.code-preview-resizing * {
   pointer-events: none;
   padding: var(--space-2) var(--space-4);
   font-size: var(--font-size-xs);
-  line-height: 14px;
+  line-height: calc(14 * var(--dp));
   font-family: var(--font-ui);
   font-weight: var(--font-weight-medium);
   letter-spacing: 0.2px;
@@ -738,9 +738,9 @@ body.code-preview-resizing * {
   background: rgba(32, 33, 36, 0.94);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-xs);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 calc(4 * var(--dp)) calc(14 * var(--dp)) rgba(0, 0, 0, 0.28);
   white-space: nowrap;
-  max-width: min(380px, calc(100% - 16px));
+  max-width: min(calc(380 * var(--dp)), calc(100% - calc(16 * var(--dp))));
   overflow: hidden;
   text-overflow: ellipsis;
   user-select: none;
@@ -798,7 +798,7 @@ body.code-preview-resizing * {
   align-items: center;
   justify-content: center;
   gap: var(--space-6);
-  padding:24px var(--space-8);
+  padding: calc(24 * var(--dp)) var(--space-8);
   width: 100%;
   min-height: 0;
   color: var(--text-secondary, #666);
@@ -819,7 +819,7 @@ body.code-preview-resizing * {
 }
 
 .code-preview-media-audio-player {
-  width: min(420px, 100%);
+  width: min(calc(420 * var(--dp)), 100%);
 }
 
 /* PDF: pdf.js fills the pane; the component's own height:100% needs a sized
@@ -853,7 +853,7 @@ body.code-preview-resizing * {
   /* Lift the code-tuned min(65vh, 480px) cap: media IS the content, so let it
      fill the viewport. cardStyle's inline maxHeight (when set) still clamps to
      the placement box below this. */
-  max-height: min(88vh, calc(100vh - 24px));
+  max-height: min(88vh, calc(100vh - calc(24 * var(--dp))));
 }
 
 /* A rendered HTML document is the same case as media: the preview shows a whole
@@ -869,7 +869,7 @@ body.code-preview-resizing * {
 /* The media pane sits directly under the header/meta rows; give it a floor so
    a small image still reads as a preview rather than a sliver. */
 .code-link-preview-floating.is-media .code-preview-content {
-  min-height: 220px;
+  min-height: calc(220 * var(--dp));
 }
 
 /* PDF body needs the code background replaced with the viewer's own. */

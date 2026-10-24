@@ -262,7 +262,7 @@ const contextRows = computed(() =>
   font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
   flex-shrink: 0;
-  min-width: 56px;
+  min-width: calc(56 * var(--dp));
 }
 .event-chips-row {
   display: flex;
@@ -271,7 +271,7 @@ const contextRows = computed(() =>
 }
 .event-chip {
   font-size: var(--font-size-xs);
-  padding:1px var(--space-4);
+  padding: 1px var(--space-4);
   border-radius: var(--radius-full);
   border: 1px solid transparent;
   white-space: nowrap;
@@ -322,7 +322,7 @@ const contextRows = computed(() =>
 .sample-badge {
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-medium);
-  padding:1px var(--space-3);
+  padding: 1px var(--space-3);
   border-radius: var(--radius-full);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #f3f4f6);
@@ -336,7 +336,7 @@ const contextRows = computed(() =>
   padding: var(--space-4) var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
 }
 .event-context-heading {
   font-size: var(--font-size-sm);

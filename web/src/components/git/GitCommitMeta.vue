@@ -113,12 +113,12 @@ function formatDate(dateStr) {
 
 <style scoped>
 .diff-meta-panel {
-  padding: var(--space-6) 14px;
+  padding: var(--space-6) calc(14 * var(--dp));
   border-bottom: 1px solid var(--border-color, #dee2e6);
   background: var(--bg-secondary, #f8f9fa);
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: calc(5 * var(--dp));
   flex-shrink: 0;
 }
 
@@ -132,7 +132,7 @@ function formatDate(dateStr) {
 .diff-meta-label {
   color: var(--text-muted, #999);
   flex-shrink: 0;
-  width: 36px;
+  width: calc(36 * var(--dp));
   padding-top: 1px;
 }
 
@@ -147,7 +147,7 @@ function formatDate(dateStr) {
   color: var(--accent-color, #4a90d9);
   cursor: pointer;
   border-radius: var(--radius-xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   transition: background var(--duration-base);
 }
 

@@ -195,8 +195,8 @@ onUpdated(restoreAskStates)
 
 .tool-detail-header-icon {
   flex-shrink: 0;
-  width: 24px;
-  height: 24px;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
   border-radius: var(--radius-sm);
   color: color-mix(in srgb, var(--tool-accent) 80%, transparent);
   background: color-mix(in srgb, var(--tool-accent) 14%, transparent);
@@ -230,7 +230,7 @@ onUpdated(restoreAskStates)
 .tool-detail-duration {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   font-weight: var(--font-weight-medium);
   background: color-mix(in srgb, var(--tool-accent) 12%, transparent);
@@ -265,7 +265,7 @@ onUpdated(restoreAskStates)
    wide-screen card mode (the narrow-mode bottom sheet ignores --modal-max-width).
    Non-scoped because the class is bound inside BottomSheet's own template. */
 .tool-detail-sheet {
-  --modal-max-width: 960px;
+  --modal-max-width: calc(960 * var(--dp));
 }
 
 /* Non-scoped styles for v-html penetration — tool detail rendering in bottom sheet.
@@ -293,7 +293,7 @@ onUpdated(restoreAskStates)
 
 .tool-detail-body .tool-output-label {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(34, 197, 94, 0.12);
   color: #16a34a;
@@ -307,7 +307,7 @@ onUpdated(restoreAskStates)
 
 .tool-detail-body .tool-output-status {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   font-weight: var(--font-weight-semibold);
 }
@@ -381,7 +381,7 @@ onUpdated(restoreAskStates)
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
 }
 .tool-detail-body .tool-output-body .agent-call-prompt pre {
@@ -424,7 +424,7 @@ onUpdated(restoreAskStates)
 }
 .tool-detail-body .agent-type-badge {
   font-size: var(--font-size-2xs);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   background: rgba(236, 72, 153, 0.12);
   color: #db2777;
@@ -487,7 +487,7 @@ onUpdated(restoreAskStates)
 }
 .tool-detail-body .wait-call-label {
   font-size: var(--font-size-2xs);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   background: rgba(107, 114, 128, 0.12);
   color: var(--text-secondary);
@@ -540,7 +540,7 @@ onUpdated(restoreAskStates)
   gap: var(--space-3);
   margin-bottom: var(--space-3);
   padding-bottom: var(--space-3);
-  padding-right: 22px;
+  padding-right: calc(22 * var(--dp));
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
@@ -572,7 +572,7 @@ onUpdated(restoreAskStates)
 
 .tool-detail-body .edit-diff-replace-all {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(245, 158, 11, 0.12);
   color: #d97706;
@@ -607,8 +607,8 @@ onUpdated(restoreAskStates)
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
@@ -750,7 +750,7 @@ onUpdated(restoreAskStates)
 
 .tool-detail-body .file-write-badge {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(59, 130, 246, 0.12);
   color: #2563eb;
@@ -861,7 +861,7 @@ onUpdated(restoreAskStates)
 
 .tool-detail-body .grep-label {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
@@ -898,7 +898,7 @@ onUpdated(restoreAskStates)
 
 .tool-detail-body .grep-mode-tag {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.08);
   color: #8b5cf6;
@@ -928,7 +928,7 @@ onUpdated(restoreAskStates)
 
 .tool-detail-body .glob-label {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
@@ -993,7 +993,7 @@ onUpdated(restoreAskStates)
 
 .tool-detail-body .web-fetch-label {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
@@ -1053,7 +1053,7 @@ onUpdated(restoreAskStates)
 
 .tool-detail-body .agent-type-badge {
   font-size: var(--font-size-2xs);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   background: rgba(236, 72, 153, 0.12);
   color: #db2777;
@@ -1109,7 +1109,7 @@ onUpdated(restoreAskStates)
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
 }
 .tool-detail-body .agent-call-prompt pre {
@@ -1282,7 +1282,7 @@ onUpdated(restoreAskStates)
 }
 .tool-detail-body .task-field-label {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(245, 158, 11, 0.12);
   color: #d97706;
@@ -1381,7 +1381,7 @@ onUpdated(restoreAskStates)
   font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
   font-size: var(--font-size-2xs);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   background: rgba(236, 72, 153, 0.12);
   color: #db2777;
@@ -1502,7 +1502,7 @@ onUpdated(restoreAskStates)
 .tool-detail-body .skill-manage-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .skill-manage-action {
   font-size: var(--font-size-2xs);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   background: rgba(6, 182, 212, 0.12);
   color: #0891b2;
@@ -1562,7 +1562,7 @@ onUpdated(restoreAskStates)
 }
 .tool-detail-body .image-gen-size {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-2);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   background: rgba(6, 182, 212, 0.12);
   color: #0891b2;
@@ -1830,7 +1830,7 @@ onUpdated(restoreAskStates)
 .tool-detail-body .permission-detail-label {
   align-self: flex-start;
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-3);
+  padding: 1px var(--space-3);
   border-radius: var(--radius-xs) var(--radius-xs) 0 0;
   /* Literal red, not var(--tool-accent): the accent is set on
      .tool-detail-header, which is a separate slot and does NOT inherit into the
@@ -1860,7 +1860,7 @@ onUpdated(restoreAskStates)
   border: 1px solid color-mix(in srgb, var(--tool-accent, #ef4444) 14%, var(--border-color));
   /* Sharp, hard corners — terminal-like command block. */
   border-radius: 0;
-  padding:5px var(--space-4);
+  padding: calc(5 * var(--dp)) var(--space-4);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1873,7 +1873,7 @@ onUpdated(restoreAskStates)
    the pill shape for a plain rounded-rect (same 6px as the card's ask-question
    blocks). Only the interaction-state keep-alive stays here. */
 .tool-detail-body .permission-options .permission-btn {
-  padding: 0 14px;
+  padding: 0 calc(14 * var(--dp));
   border-radius: var(--radius-sm);
 }
 
@@ -1908,8 +1908,8 @@ onUpdated(restoreAskStates)
   /* `display: block` (not inline-flex) + line-height is what lets
      text-overflow: ellipsis actually apply to the label. */
   display: block;
-  height: 30px;
-  line-height: 30px;
+  height: calc(30 * var(--dp));
+  line-height: calc(30 * var(--dp));
   padding: 0 var(--space-5);
   text-align: center;
   overflow: hidden;
@@ -1971,7 +1971,7 @@ onUpdated(restoreAskStates)
   /* The glyph and the label are two children, so they need an explicit gap. */
   align-items: center;
   gap: var(--space-4);
-  height: 30px;
+  height: calc(30 * var(--dp));
   padding: 0 var(--space-6);
   border-radius: var(--radius-sm);
   /* Same step down as the option cells above (they use --font-size-sm too), so

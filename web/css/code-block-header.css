@@ -36,7 +36,7 @@
     font-size: var(--font-size-xs);
     line-height: var(--line-height-snug);
     user-select: none;
-    min-height: 22px;
+    min-height: calc(22 * var(--dp));
 }
 
 /* ─── Language label ─── */
@@ -61,8 +61,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
-    height: 22px;
+    width: calc(22 * var(--dp));
+    height: calc(22 * var(--dp));
     border: none;
     border-radius: var(--radius-xs);
     background: transparent;
@@ -163,7 +163,7 @@
     font-size: var(--font-size-xs);
     line-height: var(--line-height-snug);
     user-select: none;
-    min-height: 22px;
+    min-height: calc(22 * var(--dp));
 }
 
 /* ─── Label ─── */
@@ -188,8 +188,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
-    height: 22px;
+    width: calc(22 * var(--dp));
+    height: calc(22 * var(--dp));
     border: none;
     border-radius: var(--radius-xs);
     background: transparent;
@@ -240,7 +240,7 @@
 .table-block-copy-btn {
     gap: 1px;
     width: auto;
-    padding: 0 3px;
+    padding: 0 calc(3 * var(--dp));
 }
 
 .table-block-copy-btn svg:last-child {
@@ -263,19 +263,19 @@
 .table-block-copy-menu {
     position: fixed;
     z-index: 100;
-    min-width: 140px;
+    min-width: calc(140 * var(--dp));
     padding: var(--space-2) 0;
     background: var(--code-bg);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md, 6px);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 calc(4 * var(--dp)) calc(16 * var(--dp)) rgba(0, 0, 0, 0.2);
     overflow: hidden;
 }
 
 .table-block-copy-menu-item {
     display: block;
     width: 100%;
-    padding:7px var(--space-6);
+    padding: calc(7 * var(--dp)) var(--space-6);
     border: none;
     background: none;
     color: var(--text-primary);
@@ -360,6 +360,6 @@
    explicit width/height — size it like the copy/wrap icons). */
 .code-block-attach-btn svg,
 .table-block-attach-btn svg {
-    width: 14px;
-    height: 14px;
+    width: calc(14 * var(--dp));
+    height: calc(14 * var(--dp));
 }

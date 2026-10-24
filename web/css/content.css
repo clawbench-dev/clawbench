@@ -4,7 +4,7 @@
 
 /* Markdown Content Styling */
 .markdown-body {
-    max-width: min(900px, 100%);
+    max-width: min(calc(900 * var(--dp)), 100%);
     margin: 0 auto;
     padding: var(--space-5);
     font-size: var(--font-size-md);
@@ -33,7 +33,7 @@
 .markdown-preview .markdown-body {
     max-width: none;
     margin: 0;
-    padding: 10px calc(10px + max(0px, (100% - 900px) / 2));
+    padding: calc(10 * var(--dp)) calc(10 * var(--dp) + max(0, (100% - calc(900 * var(--dp))) / 2));
 }
 
 .markdown-body h1,

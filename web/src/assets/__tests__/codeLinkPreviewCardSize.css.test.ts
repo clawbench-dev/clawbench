@@ -38,7 +38,7 @@ describe('code link preview card width', () => {
   it('defines the single card width on the base rule', () => {
     const decls = ruleDecls('.code-link-preview-floating')
     expect(decls, 'base card rule must exist').not.toBeNull()
-    expect(decls).toMatch(/width:\s*min\(\s*720px\s*,\s*calc\(100vw - 24px\)\s*\)/)
+    expect(decls).toMatch(/width:\s*min\(\s*calc\(\s*720\s*\*\s*var\(--dp\)\s*\)\s*,\s*calc\(100vw - calc\(\s*24\s*\*\s*var\(--dp\)\s*\)\)\s*\)/)
   })
 
   it('does not give media cards a wider width than code cards', () => {
@@ -51,7 +51,7 @@ describe('code link preview card width', () => {
 
   it('keeps the taller media height cap', () => {
     const decls = ruleDecls('.code-link-preview-floating.is-media')
-    expect(decls).toMatch(/max-height:\s*min\(88vh,\s*calc\(100vh - 24px\)\)/)
+    expect(decls).toMatch(/max-height:\s*min\(88vh,\s*calc\(100vh - calc\(\s*24\s*\*\s*var\(--dp\)\s*\)\)\)/)
   })
 })
 

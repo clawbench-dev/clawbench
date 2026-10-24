@@ -30,6 +30,11 @@
    divider uses for its touch grab band.
    ========================================================================== */
 
+/* Deliberately NOT scaled with the UI: a scrollbar is a piece of the browser's
+   own chrome, and its width is chosen so it does not eat content — scaling it
+   would make a 12px bar at 150%, which is worse than the thing it replaced.
+   It also lives in four separate documents (app, OpenAPI iframe, HTML export,
+   HTML preview) where `--dp` may not be defined. */
 ::-webkit-scrollbar {
     width: 8px;
     height: 8px;

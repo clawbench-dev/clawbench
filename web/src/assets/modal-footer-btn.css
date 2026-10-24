@@ -23,9 +23,9 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
-  height: 30px;
-  padding:0 var(--space-7);
-  border-radius: 15px;
+  height: calc(30 * var(--dp));
+  padding: 0 var(--space-7);
+  border-radius: calc(15 * var(--dp));
   border: 1px solid color-mix(in srgb, var(--text-secondary, #4b5563) 40%, transparent);
   background: var(--bg-tertiary, #f1f3f5);
   color: var(--text-secondary, #4b5563);

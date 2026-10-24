@@ -75,18 +75,18 @@ defineExpose({ focus, inputRef, focused })
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-full);
-  padding:5px var(--space-6);
+  padding: calc(5 * var(--dp)) var(--space-6);
   transition: border-color var(--duration-slow), box-shadow var(--duration-slow);
 }
 
 .search-pill.focused {
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.12);
+  box-shadow: 0 0 0 calc(2 * var(--dp)) rgba(74, 144, 217, 0.12);
 }
 
 .search-pill-icon {
-  width: 14px;
-  height: 14px;
+  width: calc(14 * var(--dp));
+  height: calc(14 * var(--dp));
   flex-shrink: 0;
   color: var(--text-muted);
 }
@@ -111,8 +111,8 @@ defineExpose({ focus, inputRef, focused })
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: calc(18 * var(--dp));
+  height: calc(18 * var(--dp));
   border: none;
   background: var(--bg-tertiary);
   border-radius: 50%;

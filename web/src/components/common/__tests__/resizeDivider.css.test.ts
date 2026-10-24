@@ -128,7 +128,7 @@ describe('resize-divider.css — resting line', () => {
     const scoped = tocdock.slice(tocdock.indexOf('<style scoped>'))
     const rule = scoped.match(/\.toc-dock-divider\s*\{([^}]*)\}/)
     expect(rule, '.toc-dock-divider rule must exist').not.toBeNull()
-    expect(rule![1], 'TocDock host must be 1px at rest').toMatch(/width:\s*1px/)
+    expect(rule![1], 'TocDock host must be 1px at rest').toMatch(/(width):\s*(?:calc\(\s*1\s*\*\s*var\(--dp\)\s*\)|1px)/)
     expect(rule![1], 'TocDock host must not be widened back').not.toMatch(/width:\s*[2-9]\d*px/)
 
     const split = readFromRepo('src/components/common/SplitDivider.vue')

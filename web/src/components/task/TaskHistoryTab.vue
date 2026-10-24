@@ -375,7 +375,7 @@ defineExpose({
   align-items: center;
   justify-content: center;
   gap: var(--space-6);
-  padding: 24px 0;
+  padding: calc(24 * var(--dp)) 0;
   color: var(--text-muted, #999);
   font-size: var(--font-size-lg);
 }
@@ -406,7 +406,7 @@ defineExpose({
 @media (hover: hover) {
   .execution-item:not(.running):hover {
     border-color: var(--accent-color, #0066cc);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    box-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) rgba(0, 0, 0, 0.04);
     transform: translateY(-1px);
   }
 }
@@ -455,8 +455,8 @@ defineExpose({
 
 /* ── Unread dot (static) ── */
 .exec-unread-dot {
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
   background: var(--accent-color, #0066cc);
   flex-shrink: 0;
@@ -569,7 +569,7 @@ defineExpose({
   background: var(--bg-primary, #fff);
   border: 1px solid var(--border-color, #e5e7eb);
   border-radius: var(--radius-xs);
-  padding:1px var(--space-3);
+  padding: 1px var(--space-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -617,8 +617,8 @@ defineExpose({
 
 /* ── Running execution indicator (inside status badge) ── */
 .exec-running-dot {
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
   background: #16a34a;
   flex-shrink: 0;
@@ -642,8 +642,8 @@ defineExpose({
 
 /* ── Cancel button ── */
 .cancel-exec-btn {
-  width: 32px;
-  height: 32px;
+  width: calc(32 * var(--dp));
+  height: calc(32 * var(--dp));
   border: none;
   background: rgba(239, 68, 68, 0.1);
   color: #ef4444;
@@ -669,8 +669,8 @@ defineExpose({
 
 /* ── Delete button ── */
 .delete-exec-btn {
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   background: transparent;
   color: var(--text-muted, #9ca3af);

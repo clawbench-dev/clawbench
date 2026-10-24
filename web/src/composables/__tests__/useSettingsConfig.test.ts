@@ -906,63 +906,99 @@ describe('useSettingsConfig', () => {
   })
 
   // ── applyUIScale / getUIScale ──
+  //
+  // The scale is applied by writing `--ui-scale`, which `html { font-size }`
+  // and every `--dp`-derived token read. CSS `zoom` is explicitly cleared: a
+  // pre-rem build (or a stale session) may have left it on <html>, and the two
+  // mechanisms together would compound into a tiny UI.
 
   describe('applyUIScale', () => {
-    it('applies zoom style for scale > 1', () => {
+    it('writes --ui-scale for scale > 1', () => {
       applyUIScale(1.5)
-      expect(document.documentElement.style.zoom).toBe('1.5')
+      expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('1.5')
     })
 
-    it('applies zoom style for scale < 1', () => {
+    it('writes --ui-scale for scale < 1', () => {
       applyUIScale(0.75)
-      expect(document.documentElement.style.zoom).toBe('0.75')
+      expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('0.75')
     })
 
-    it('clears zoom style when scale is 1', () => {
+    it('writes 1 rather than removing the property', () => {
+      // Kept explicit so a consumer reading the property never sees an empty
+      // string and has to guess the default.
       applyUIScale(1)
+      expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('1')
+    })
+
+    it('clears any legacy CSS zoom', () => {
+      document.documentElement.style.zoom = '1.5'
+      applyUIScale(1.5)
       expect(document.documentElement.style.zoom).toBe('')
     })
 
     it('clamps scale to minimum 0.5', () => {
       applyUIScale(0.1)
-      expect(document.documentElement.style.zoom).toBe('0.5')
+      expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('0.5')
     })
 
     it('clamps scale to maximum 2', () => {
       applyUIScale(3)
-      expect(document.documentElement.style.zoom).toBe('2')
+      expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('2')
+    })
+
+    it('writes an integer px --input-line-height', () => {
+      // Form controls need a whole-pixel line box: Android WebView rounds the
+      // line box and the content box independently, and at a fractional value
+      // the two roundings stop cancelling so the caret sits visibly high.
+      // 13 design px × 1.4 = 18.2 at scale 1, 27.3 at 1.5.
+      applyUIScale(1)
+      expect(document.documentElement.style.getPropertyValue('--input-line-height')).toBe('18px')
+
+      applyUIScale(1.5)
+      const raw = document.documentElement.style.getPropertyValue('--input-line-height')
+      expect(raw).toMatch(/^\d+px$/)
+      expect(Number.parseInt(raw, 10)).toBe(27)
     })
   })
 
   describe('getUIScale', () => {
-    it('returns 1 when no zoom is set', () => {
-      document.documentElement.style.zoom = ''
+    afterEach(() => {
+      document.documentElement.style.removeProperty('--ui-scale')
+    })
+
+    it('returns 1 when the property is absent', () => {
+      document.documentElement.style.removeProperty('--ui-scale')
       expect(getUIScale()).toBe(1)
     })
 
-    it('returns current zoom value', () => {
-      document.documentElement.style.zoom = '1.5'
+    it('returns the applied value', () => {
+      applyUIScale(1.5)
       expect(getUIScale()).toBe(1.5)
-      document.documentElement.style.zoom = ''
     })
 
-    it('returns 1 for non-numeric zoom value', () => {
-      document.documentElement.style.zoom = 'invalid'
+    it('returns 1 for a non-numeric value', () => {
+      document.documentElement.style.setProperty('--ui-scale', 'invalid')
       expect(getUIScale()).toBe(1)
-      document.documentElement.style.zoom = ''
     })
   })
 
+  // ── coordinate conversion (now an identity) ──
+  //
+  // These two exist only because `html { zoom }` split the coordinate space:
+  // getBoundingClientRect() reported visual pixels while `position: fixed`
+  // offsets were in layout pixels, so call sites had to divide. Rem scaling has
+  // a single space, so the conversion is a no-op. The guards below pin that —
+  // if someone reintroduces a factor here, every popup/menu would jump.
+
   describe('toFixedCSS', () => {
-    it('divides viewportCoord by zoom factor', () => {
-      document.documentElement.style.zoom = '2'
-      expect(toFixedCSS(200)).toBe(100)
-      document.documentElement.style.zoom = ''
+    it('returns the coordinate unchanged', () => {
+      expect(toFixedCSS(200)).toBe(200)
     })
 
-    it('returns same value when zoom is 1', () => {
+    it('ignores a legacy zoom left on <html>', () => {
+      document.documentElement.style.zoom = '2'
+      expect(toFixedCSS(200)).toBe(200)
       document.documentElement.style.zoom = ''
-      expect(toFixedCSS(150)).toBe(150)
     })
   })
 
@@ -1027,49 +1063,37 @@ describe('useSettingsConfig', () => {
       expect(getEffectiveUIScale()).toBe(1.35)
     })
 
-    it('applies CSS zoom in the browser', () => {
+    it('applies the scale through --ui-scale in the browser', () => {
       localConfig.uiScale = 2
       setNative(undefined)
       applyEffectiveUIScale()
-      expect(document.documentElement.style.zoom).toBe('2')
+      expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('2')
     })
 
-    it('routes to native setZoomFactor on Electron and clears CSS zoom', () => {
+    it('uses the same mechanism on Electron instead of native zoom', () => {
+      // The Electron shell used to get `webContents.setZoomFactor`. That has
+      // the identical coordinate-space problem as CSS zoom (and additionally
+      // suppressed every ResizeObserver in the page), so it is gone: one knob
+      // in every host means the layout cannot behave differently per platform.
       localConfig.uiScale = 2
       const setZoomFactor = vi.fn()
       setNative({ setZoomFactor })
-      // A CSS zoom left by a previous session must not compound with native zoom.
-      document.documentElement.style.zoom = '1.5'
 
       applyEffectiveUIScale()
 
-      expect(setZoomFactor).toHaveBeenCalledWith(2)
-      expect(document.documentElement.style.zoom).toBe('')
+      expect(setZoomFactor).not.toHaveBeenCalled()
+      expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('2')
     })
 
-    it('falls back to CSS zoom when native zoom throws', () => {
+    it('clears any legacy CSS zoom', () => {
       localConfig.uiScale = 1.35
-      setNative({
-        setZoomFactor: () => {
-          throw new Error('refused')
-        },
-      })
-
-      applyEffectiveUIScale()
-
-      expect(document.documentElement.style.zoom).toBe('1.35')
-    })
-
-    it('clears CSS zoom on Electron when the factor is 1', () => {
-      localConfig.uiScale = 1
-      const setZoomFactor = vi.fn()
-      setNative({ setZoomFactor })
+      setNative(undefined)
       document.documentElement.style.zoom = '1.5'
 
       applyEffectiveUIScale()
 
-      expect(setZoomFactor).toHaveBeenCalledWith(1)
       expect(document.documentElement.style.zoom).toBe('')
+      expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('1.35')
     })
   })
 
@@ -1109,7 +1133,8 @@ describe('useSettingsConfig', () => {
     it('applies the fitted factor immediately', () => {
       setScreenHeight(1440)
       autoFitUIScale()
-      expect(document.documentElement.style.zoom).toBe('1.35')
+      // 1440 / 1080 = 1.333… snapped to the 1% grid (the old 5% grid forced 1.35).
+      expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('1.33')
     })
 
     it('is a no-op factor of 1 on a 1080p screen', () => {
@@ -1142,21 +1167,21 @@ describe('useSettingsConfig', () => {
       localConfig.uiScale = 1
     })
 
-    it('setLocalConfig for uiScale applies CSS zoom', () => {
+    it('setLocalConfig for uiScale applies the scale', () => {
       const { setLocalConfig } = useSettingsConfig()
 
       setLocalConfig('uiScale', 1.5)
 
-      expect(document.documentElement.style.zoom).toBe('1.5')
+      expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('1.5')
     })
 
-    it('setLocalConfig for uiScale clears CSS zoom at 1', () => {
-      document.documentElement.style.zoom = '1.5'
+    it('setLocalConfig for uiScale resets the scale to 1', () => {
       const { setLocalConfig } = useSettingsConfig()
 
+      setLocalConfig('uiScale', 1.5)
       setLocalConfig('uiScale', 1)
 
-      expect(document.documentElement.style.zoom).toBe('')
+      expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('1')
     })
   })
 

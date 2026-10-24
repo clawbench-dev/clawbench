@@ -728,7 +728,7 @@ onUnmounted(() => {
   align-items: center;
   gap: var(--space-3);
   height: var(--header-height);
-  padding:0 var(--space-2) 0 var(--space-6);
+  padding: 0 var(--space-2) 0 var(--space-6);
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
@@ -736,8 +736,8 @@ onUnmounted(() => {
 
 /* Refresh button in the breadcrumb bar (unified with TaskDetailPage) */
 .header-btn {
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-lg);
   background: var(--bg-secondary, #f1f3f5);
@@ -915,13 +915,13 @@ onUnmounted(() => {
 
 .exec-detail-empty {
   text-align: center;
-  padding:40px var(--space-6);
+  padding: calc(40 * var(--dp)) var(--space-6);
   color: var(--text-muted, #999);
   font-size: var(--font-size-lg);
 }
 
 .exec-cancelled-notice {
-  padding: 3rem 1rem;
+  padding: calc(48 * var(--dp)) calc(16 * var(--dp));
   text-align: center;
   color: var(--text-muted, #999);
   font-style: italic;
@@ -931,7 +931,7 @@ onUnmounted(() => {
 /* A skipped run is a deliberate no-op, not an error — same treatment as the
    cancelled notice, but kept as its own class so the two can diverge. */
 .exec-skipped-notice {
-  padding: 3rem 1rem;
+  padding: calc(48 * var(--dp)) calc(16 * var(--dp));
   text-align: center;
   color: var(--text-muted, #999);
   font-style: italic;

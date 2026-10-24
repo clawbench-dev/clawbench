@@ -63,7 +63,8 @@ describe('share chrome restates the host layout variables', () => {
     // Indirect through the topbar token: hard-coding 44px here as well would let
     // the bar and the sheet drift apart on the next change.
     expect(value).toBe('var(--share-topbar-height)')
-    expect(customProp(root!, '--share-topbar-height')).toBe('44px')
+    // Expressed in design px so the share chrome follows the UI scale too.
+    expect(customProp(root!, '--share-topbar-height')).toMatch(/^calc\(\s*44\s*\*\s*var\(--dp\)\s*\)$/)
   })
 
   it('renders the topbar at that same token', async () => {

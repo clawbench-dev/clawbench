@@ -87,8 +87,8 @@ watch(visible, (v) => {
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--bg-primary) 80%, transparent);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(calc(4 * var(--dp)));
+  -webkit-backdrop-filter: blur(calc(4 * var(--dp)));
   padding: var(--space-7);
 }
 
@@ -97,13 +97,13 @@ watch(visible, (v) => {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   width: 100%;
-  max-width: 380px;
+  max-width: calc(380 * var(--dp));
   box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 
 .up-header {
-  padding:14px var(--space-7) var(--space-4);
+  padding: calc(14 * var(--dp)) var(--space-7) var(--space-4);
 }
 
 .up-header h3 {
@@ -114,7 +114,7 @@ watch(visible, (v) => {
 }
 
 .up-body {
-  margin:0 var(--space-7) var(--space-4);
+  margin: 0 var(--space-7) var(--space-4);
   font-size: var(--font-size-md);
   color: var(--text-secondary);
   line-height: var(--line-height-relaxed);
@@ -122,7 +122,7 @@ watch(visible, (v) => {
 
 .up-version-badge {
   display: inline-block;
-  margin:0 var(--space-7) var(--space-6);
+  margin: 0 var(--space-7) var(--space-6);
   padding: var(--space-2) var(--space-6);
   background: color-mix(in srgb, var(--accent-color) 15%, transparent);
   color: var(--accent-color);
@@ -134,7 +134,7 @@ watch(visible, (v) => {
 
 .up-release-link {
   display: block;
-  margin:0 var(--space-7) var(--space-6);
+  margin: 0 var(--space-7) var(--space-6);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   color: var(--accent-color);
@@ -143,7 +143,7 @@ watch(visible, (v) => {
 }
 
 .up-docker-hint {
-  margin:0 var(--space-7) var(--space-5);
+  margin: 0 var(--space-7) var(--space-5);
   padding: var(--space-4) var(--space-5);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
@@ -180,7 +180,7 @@ watch(visible, (v) => {
    that actually matters here. `flex-wrap` is kept so an unusually long locale
    wraps its own row instead of overflowing the panel. */
 .up-footer {
-  padding: var(--space-4) var(--space-7) 14px;
+  padding: var(--space-4) var(--space-7) calc(14 * var(--dp));
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-4);

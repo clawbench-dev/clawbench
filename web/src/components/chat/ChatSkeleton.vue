@@ -67,8 +67,8 @@ const rows = [
 }
 
 .chat-skeleton-avatar {
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   margin-top: var(--space-1);
 }
 
@@ -88,16 +88,16 @@ const rows = [
 }
 
 .chat-skeleton-name {
-  width: 96px;
-  height: 12px;
+  width: calc(96 * var(--dp));
+  height: calc(12 * var(--dp));
 }
 
 .chat-skeleton-line {
-  height: 14px;
+  height: calc(14 * var(--dp));
 }
 
 .chat-skeleton-row.user .chat-skeleton-line {
   --skeleton-radius: var(--radius-lg);
-  height: 20px;
+  height: calc(20 * var(--dp));
 }
 </style>

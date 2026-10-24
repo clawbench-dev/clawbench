@@ -808,7 +808,7 @@ defineExpose({ focusSearchInput })
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-5) 14px;
+  padding: var(--space-5) calc(14 * var(--dp));
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
   flex-shrink: 0;
@@ -825,11 +825,11 @@ defineExpose({ focusSearchInput })
 .filter-dropdown-btn {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: calc(3 * var(--dp));
   flex-shrink: 0;
-  max-width: 88px;
-  height: 26px;
-  padding:0 var(--space-3);
+  max-width: calc(88 * var(--dp));
+  height: calc(26 * var(--dp));
+  padding: 0 var(--space-3);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: var(--radius-sm);
   background: var(--bg-primary, #fff);
@@ -870,7 +870,7 @@ defineExpose({ focusSearchInput })
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3) 14px;
+  padding: var(--space-3) calc(14 * var(--dp));
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
   flex-shrink: 0;
@@ -885,8 +885,8 @@ defineExpose({ focusSearchInput })
 
 .time-chip {
   flex-shrink: 0;
-  height: 22px;
-  padding: 0 9px;
+  height: calc(22 * var(--dp));
+  padding: 0 calc(9 * var(--dp));
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: var(--radius-md);
   background: var(--bg-primary, #fff);
@@ -949,7 +949,7 @@ defineExpose({ focusSearchInput })
 
 .filter-menu-check {
   flex-shrink: 0;
-  width: 13px;
+  width: calc(13 * var(--dp));
   display: inline-flex;
   justify-content: center;
 }
@@ -968,7 +968,7 @@ defineExpose({ focusSearchInput })
 }
 
 .session-search-empty {
-  padding: 24px;
+  padding: calc(24 * var(--dp));
   text-align: center;
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
@@ -976,7 +976,7 @@ defineExpose({ focusSearchInput })
 }
 
 .session-search-error {
-  padding: 24px;
+  padding: calc(24 * var(--dp));
   text-align: center;
   color: var(--color-red);
   font-size: var(--font-size-md);
@@ -1002,7 +1002,7 @@ defineExpose({ focusSearchInput })
 }
 
 .session-search-count {
-  padding: var(--space-3) 14px;
+  padding: var(--space-3) calc(14 * var(--dp));
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
@@ -1012,7 +1012,7 @@ defineExpose({ focusSearchInput })
 
 .session-search-mode {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-3);
+  padding: 1px var(--space-3);
   border-radius: var(--radius-xs);
   background: rgba(124, 58, 237, 0.08);
   color: var(--color-purple, #7c3aed);
@@ -1021,7 +1021,7 @@ defineExpose({ focusSearchInput })
 }
 
 .session-search-item {
-  padding: var(--space-5) 14px;
+  padding: var(--space-5) calc(14 * var(--dp));
   border-bottom: 1px solid var(--border-color, #f0f0f0);
   cursor: pointer;
   transition: background var(--duration-fast);
@@ -1102,7 +1102,7 @@ defineExpose({ focusSearchInput })
 
 .session-search-item-archived {
   font-size: var(--font-size-2xs);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   background: rgba(230, 162, 60, 0.12);
   color: var(--color-orange);
@@ -1110,7 +1110,7 @@ defineExpose({ focusSearchInput })
 
 .session-search-item-backend {
   font-size: var(--font-size-2xs);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   background: var(--bg-tertiary, #eee);
   color: var(--text-secondary, #666);
@@ -1132,7 +1132,7 @@ defineExpose({ focusSearchInput })
    matches are ranked first in the list. */
 .session-search-item-titlematch {
   font-size: var(--font-size-2xs);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
   background: rgba(74, 144, 217, 0.14);
   color: var(--accent-color, #4a90d9);
@@ -1144,7 +1144,7 @@ defineExpose({ focusSearchInput })
    sessions also carry. */
 .session-search-item-type {
   font-size: var(--font-size-2xs);
-  padding: 1px 5px;
+  padding: 1px calc(5 * var(--dp));
   border-radius: var(--radius-xs);
 }
 
@@ -1171,8 +1171,8 @@ defineExpose({ focusSearchInput })
 
 /* ── Drilldown detail view ── */
 .detail-back-btn {
-  width: 28px;
-  height: 28px;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   background: none;
   color: var(--accent-color, #4a90d9);
@@ -1199,8 +1199,8 @@ defineExpose({ focusSearchInput })
 
 /* ACP "load external session" button — right side of the search header */
 .acp-resume-header-btn {
-  height: 26px;
-  padding:0 var(--space-4);
+  height: calc(26 * var(--dp));
+  padding: 0 var(--space-4);
   border: none;
   background: none;
   color: var(--text-secondary, #495057);
@@ -1231,7 +1231,7 @@ defineExpose({ focusSearchInput })
 
 .detail-archived-badge {
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-3);
+  padding: 1px var(--space-3);
   border-radius: var(--radius-xs);
   background: rgba(230, 162, 60, 0.12);
   color: var(--color-orange);
@@ -1251,7 +1251,7 @@ defineExpose({ focusSearchInput })
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-4) 14px;
+  padding: var(--space-4) calc(14 * var(--dp));
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
   flex-shrink: 0;
@@ -1259,7 +1259,7 @@ defineExpose({ focusSearchInput })
 
 .detail-meta-badge {
   font-size: var(--font-size-2xs);
-  padding: var(--space-1) 7px;
+  padding: var(--space-1) calc(7 * var(--dp));
   border-radius: var(--radius-xs);
   font-weight: var(--font-weight-medium);
 }
@@ -1300,12 +1300,12 @@ defineExpose({ focusSearchInput })
 }
 
 .detail-chunk {
-  padding: var(--space-5) 14px;
+  padding: var(--space-5) calc(14 * var(--dp));
   border-bottom: 1px solid var(--border-color, rgba(0, 0, 0, 0.04));
 }
 
 .detail-empty {
-  padding: 24px;
+  padding: calc(24 * var(--dp));
   text-align: center;
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
@@ -1341,9 +1341,9 @@ defineExpose({ focusSearchInput })
 .detail-chunk-jump {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: calc(4 * var(--dp));
   margin-left: auto;
-  padding: 2px 8px;
+  padding: calc(2 * var(--dp)) calc(8 * var(--dp));
   border: 1px solid var(--border-color, rgba(0, 0, 0, 0.08));
   border-radius: var(--radius-full);
   background: transparent;
@@ -1400,7 +1400,7 @@ defineExpose({ focusSearchInput })
    bottom sheet ignores --modal-max-width). Non-scoped because the class is
    bound inside BottomSheet's own template. */
 .session-search-sheet {
-  --modal-max-width: 960px;
+  --modal-max-width: calc(960 * var(--dp));
 }
 
 /* Dark theme overrides — non-scoped for [data-theme] selector */
