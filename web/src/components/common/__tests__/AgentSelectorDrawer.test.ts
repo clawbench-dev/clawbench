@@ -556,6 +556,61 @@ describe('AgentSelectorDrawer', () => {
       }
     })
 
+    it('hides the switch when the agent list is empty (no install at all)', async () => {
+      // The OTHER way to have zero selectable agents: nothing installed. This
+      // is a distinct input from "all disabled" — a gate written as
+      // `selectableAgents.length >= 1` passes one and fails the other only if
+      // it reads the same list, so both must be pinned.
+      const original = [...mockAgents]
+      mockAgents.splice(0, mockAgents.length)
+      try {
+        const wrapper = mountDrawer({ showModeSwitch: true })
+        await flushPromises()
+        vi.advanceTimersByTime(500)
+        expect(wrapper.find('.agent-mode-switch').exists()).toBe(false)
+        expect(wrapper.find('.agent-list-empty').exists()).toBe(true)
+      } finally {
+        mockAgents.splice(0, mockAgents.length, ...original)
+      }
+    })
+
+    it('builds a HOST group from two instances of a single installed agent', async () => {
+      // Host mode has its own validity rule (the host must be among the
+      // members) and does NOT need two members. With one installed agent the
+      // only way to get a valid host group is still the stepper, so the host
+      // path must not be blocked by the single-agent install either.
+      const original = [...mockAgents]
+      mockAgents.splice(0, mockAgents.length, { id: 'agent-1', name: 'Agent One', backend: 'cli', specialty: 'Coding' } as any)
+      try {
+        const wrapper = mountDrawer({
+          multiple: true,
+          groupMode: true,
+          allowInstances: true,
+          maxInstances: 12,
+          showModeSwitch: true,
+          hostId: 'agent-1',
+          modelValue: [],
+        })
+        await flushPromises()
+        vi.advanceTimersByTime(500)
+
+        const row = wrapper.find('.agent-option')
+        await row.trigger('click')
+        await flushPromises()
+        // Host is among the members already ⇒ confirm enabled with ONE instance.
+        expect((wrapper.find('.agent-multi-confirm').element as HTMLButtonElement).disabled).toBe(false)
+
+        // A second instance is allowed too (and does not disturb the host).
+        await row.find('.agent-stepper .agent-stepper-btn:last-child').trigger('click')
+        await flushPromises()
+        await wrapper.find('.agent-multi-confirm').trigger('click')
+        await flushPromises()
+        expect(wrapper.emitted('select')![0]).toEqual([['agent-1', 'agent-1']])
+      } finally {
+        mockAgents.splice(0, mockAgents.length, ...original)
+      }
+    })
+
     it('builds a two-instance group from a single installed agent', async () => {
       // End-to-end of the scenario the gate change unblocks: one installed
       // agent, flip to the group tab, "+" once, confirm — the payload repeats
