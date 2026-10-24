@@ -224,3 +224,51 @@ describe('the wide-screen breakpoint uses the effective width', () => {
     expect(applier).toContain('dispatchEvent')
   })
 })
+
+describe('canvas-rendered surfaces scale explicitly', () => {
+  // CSS variables cannot reach a canvas, so any surface that draws its own text
+  // (xterm, charts) has to multiply the scale into its font size by hand. These
+  // guards pin the two that do.
+
+  it('the terminal multiplies the UI scale into xterm fontSize', () => {
+    // xterm renders glyphs into a canvas: unlike every other element it does
+    // NOT inherit the root font size. Without this the terminal stayed tiny
+    // while the panel around it grew.
+    const src = readWebFile('src/components/terminal/TerminalPanelContent.vue')
+    const code = stripComments(src)
+    // The value handed to xterm must be the scaled one...
+    expect(code).toMatch(/fontSize\.value\s*=\s*Math\.max\(1,\s*fontSizeDesign\.value\s*\*\s*uiScale\.value\)|const fontSize = computed\(\(\) => Math\.max\(1,\s*fontSizeDesign\.value\s*\*\s*uiScale\.value\)\)/)
+    // ...while what gets PERSISTED stays a design value, so the Settings slider
+    // keeps meaning "12 at 100%".
+    expect(code).toMatch(/setLocalConfig\('terminalFontSize',\s*clamped\)/)
+    expect(code).not.toMatch(/setLocalConfig\('terminalFontSize',\s*fontSize\.value\)/)
+  })
+
+  it('the terminal steps its DESIGN size on pinch and ctrl+wheel', () => {
+    // `applyFontSize` takes design px. Feeding it the already-scaled value would
+    // multiply the scale into the stored setting on every gesture (12 → 18 at
+    // 150%, then 27, …) — the terminal would run away on the first pinch.
+    const src = stripComments(readWebFile('src/components/terminal/TerminalPanelContent.vue'))
+    const steps = src.match(/applyFontSize\([^)]*\+ delta\)/g) ?? []
+    expect(steps.length).toBeGreaterThanOrEqual(2)
+    for (const s of steps) {
+      expect(s, `gesture step must use the design size: ${s}`).toContain('fontSizeDesign.value')
+    }
+  })
+
+  it('the terminal refits when the scale changes', () => {
+    // Cell metrics change with the font size, so the cols/rows the PTY was told
+    // about are stale — and rem scaling fires no `resize` event.
+    const src = readWebFile('src/components/terminal/TerminalPanelContent.vue')
+    expect(src).toContain('UI_SCALE_EVENT')
+    expect(src).toMatch(/addEventListener\(UI_SCALE_EVENT/)
+    expect(src).toMatch(/removeEventListener\(UI_SCALE_EVENT/)
+    // The listener must actually re-fit, not just re-read the scale. Scoped to
+    // the function body rather than a fixed character window, so a comment
+    // tweak cannot silently turn this into a no-op assertion.
+    const fn = src.match(/function onUiScaleChange\(\)[\s\S]*?\n\}/)
+    expect(fn, 'onUiScaleChange must exist').not.toBeNull()
+    expect(fn![0]).toMatch(/updateFontSize\(/)
+    expect(fn![0]).toMatch(/fit\(\)/)
+  })
+})

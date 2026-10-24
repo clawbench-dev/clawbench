@@ -333,6 +333,9 @@ import {
 } from '@/utils/terminalFontUtils'
 import { localConfig, setLocalConfig, useSettingsConfig } from '@/composables/useSettingsConfig'
 import { buildDualFontStack, DEFAULT_TERMINAL_MONO_STACK, ensureFontLoaded, isBundledChoice, MONO_FONT_CHOICES } from '@/utils/fontConfig'
+// xterm is canvas-rendered, so it cannot follow the root font size on its own —
+// the UI scale has to be applied to its `fontSize` option explicitly.
+import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 import { shouldAutoRefocusTerminal, shouldInstallTerminalBlurRefocus } from '@/utils/terminalBlurUtils'
 import type { KeyDef } from '@/utils/terminalKeyDefs'
 import {
@@ -373,8 +376,23 @@ const { getServerValueWithDefault } = useSettingsConfig()
 // module-level singleton inside useFileUpload, so the file manager shares it.
 const { dirUploading, dirUploadProgress, dirUploadDone, dirUploadTotal, cancelDirUpload } = useFileUpload()
 
-// Font size with persistence
-const fontSize = ref<number>((localConfig.terminalFontSize as number) || DEFAULT_FONT_SIZE)
+// Font size, in DESIGN px: the stored value is the size at 100% UI scale.
+//
+// xterm renders to a canvas and cannot read CSS variables, so unlike every
+// other element it does not follow the root font size on its own. Without this
+// multiplication the terminal stayed physically tiny while the rest of the UI
+// grew — the one surface the font-driven scaling missed.
+//
+// The stored value stays a design value on purpose: the Settings slider keeps
+// meaning "12 at 100%", and the pinch/wheel zoom keeps stepping by whole design
+// px, so both read the same at every scale.
+const fontSizeDesign = ref<number>((localConfig.terminalFontSize as number) || DEFAULT_FONT_SIZE)
+
+/** The applied UI scale, kept current through `UI_SCALE_EVENT`. */
+const uiScale = ref(readAppliedUIScale())
+
+/** Font size actually handed to xterm, in CSS px. */
+const fontSize = computed(() => Math.max(1, fontSizeDesign.value * uiScale.value))
 
 // Font family follows the Settings → Appearance mono font choice (+fallback).
 // xterm is canvas-rendered and cannot read CSS vars, so resolve the stored
@@ -394,9 +412,11 @@ const maxSessions = computed(() => {
 function applyFontSize(size: number) {
   const MIN = 8, MAX = 28
   const clamped = Math.max(MIN, Math.min(MAX, size))
-  fontSize.value = clamped
+  // `size` is a DESIGN size (the pinch/wheel step and the slider both speak in
+  // design px), so it goes to the design ref; xterm gets the scaled value.
+  fontSizeDesign.value = clamped
   setLocalConfig('terminalFontSize', clamped)
-  tabManager.updateFontSize(clamped)
+  tabManager.updateFontSize(fontSize.value)
   // Fit active terminal after font change
   const active = tabManager.activeTab.value
   if (active?.fitAddon) {
@@ -895,6 +915,7 @@ function onGlobalFontChange() {
 window.addEventListener('clawbench-font-change', onGlobalFontChange)
 onBeforeUnmount(() => {
   window.removeEventListener('clawbench-font-change', onGlobalFontChange)
+  window.removeEventListener(UI_SCALE_EVENT, onUiScaleChange)
 })
 
 // Cold-start case: the user already picked a bundled font before opening the
@@ -903,6 +924,27 @@ onBeforeUnmount(() => {
 onMounted(() => {
   void applyMonoFontChange()
 })
+
+// UI scale changed (Settings → Appearance → 缩放).
+//
+// Rem scaling resizes every element but fires no `resize` event, and xterm is
+// canvas-rendered so it cannot follow the root font size on its own. Without
+// this the terminal keeps the glyph size it was created with while the panel
+// around it grows.
+function onUiScaleChange() {
+  uiScale.value = readAppliedUIScale()
+  tabManager.updateFontSize(fontSize.value)
+  // Cell metrics changed, so the column/row count the PTY was told about is
+  // stale; refit every tab, not just the active one (hidden tabs are fitted
+  // when they are shown, but their xterm options must already be correct).
+  for (const tab of tabManager.tabs.value) {
+    if (!tab.fitAddon) continue
+    requestAnimationFrame(() => {
+      try { tab.fitAddon?.fit() } catch { /* ignore */ }
+    })
+  }
+}
+window.addEventListener(UI_SCALE_EVENT, onUiScaleChange)
 
 // Terminal viewport — uses the active tab's xterm and container
 const viewport = useTerminalViewport(
@@ -937,7 +979,10 @@ const gestures = useTerminalGestures(
     sendPageUp: terminalKeys.sendPageUp,
     sendPageDown: terminalKeys.sendPageDown,
     sendTab: terminalKeys.sendTab,
-    onPinchZoom: (delta: number) => applyFontSize(fontSize.value + delta),
+    // Step the DESIGN size: `applyFontSize` takes design px, so passing the
+    // scaled value would multiply the scale into the stored setting on every
+    // pinch (12 → 18 at 150%, then 27, …).
+    onPinchZoom: (delta: number) => applyFontSize(fontSizeDesign.value + delta),
     onTouchScroll: handleTerminalTouchScroll,
     getCellHeight: () => getXtermCellHeight(activeTab.value?.xterm ?? null),
     getCellWidth: () => getXtermCellWidth(activeTab.value?.xterm ?? null),
@@ -1062,7 +1107,8 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault()
       const delta = e.deltaY < 0 ? 1 : -1
-      applyFontSize(fontSize.value + delta)
+      // Design px, same reason as the pinch handler above.
+      applyFontSize(fontSizeDesign.value + delta)
     }
   }
   container.addEventListener('wheel', wheelHandler, { passive: false })
