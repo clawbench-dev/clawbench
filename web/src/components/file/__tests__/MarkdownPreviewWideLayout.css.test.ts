@@ -54,8 +54,15 @@ describe('markdown preview wide-screen layout (scrollbar flush, padding cap)', (
   it('caps the reading column with symmetric horizontal padding on the same element', () => {
     // The 900px column cap must come from horizontal padding (box-sizing is
     // border-box), never from a max-width/margin combo on the scroll element.
+    //
+    // `max(0px, …)`, NOT `max(0, …)`: `max()` compares values of one type, so a
+    // bare `0` (a <number>) next to a <length> makes the declaration invalid at
+    // computed-value time. The browser then drops the whole `padding`, and the
+    // reading column loses ALL its side padding — text sits against the screen
+    // edge. This assertion used to spell the broken form out, which is how the
+    // regression shipped: the test was pinning the bug.
     expect(contentCss).toMatch(
-      new RegExp(`\\.markdown-preview \\.markdown-body\\s*\\{[\\s\\S]*?padding:\\s*${len(10)}\\s+calc\\(\\s*10\\s*\\*\\s*var\\(--dp\\)\\s*\\+\\s*max\\(0,\\s*\\(100% - ${len(900)}\\) / 2\\)\\)`),
+      new RegExp(`\\.markdown-preview \\.markdown-body\\s*\\{[\\s\\S]*?padding:\\s*${len(10)}\\s+calc\\(\\s*10\\s*\\*\\s*var\\(--dp\\)\\s*\\+\\s*max\\(0px,\\s*\\(100% - ${len(900)}\\) / 2\\)\\)`),
     )
   })
 
@@ -65,11 +72,15 @@ describe('markdown preview wide-screen layout (scrollbar flush, padding cap)', (
     // element border (the column edge). Now that the container is full-width
     // and the column is inset by padding, the marker must be inset by the same
     // half-slack (max(0px,(100%−900px)/2)) to keep hugging the text.
+    //
+    // The `px` is load-bearing for the same reason as the padding assertion
+    // above: without it the declaration is invalid and `right` falls back to
+    // `auto`, pushing the marker past the right edge of the viewport.
     const markerRule = previewVue.match(
       /\.markdown-preview \.markdown-body \.diff-marker-inline\s*\{[\s\S]*?\}/,
     )
     expect(markerRule).toBeTruthy()
-    expect(markerRule![0]).toMatch(new RegExp(`right:\\s*max\\(0,\\s*\\(100% - ${len(900)}\\) / 2\\)`))
+    expect(markerRule![0]).toMatch(new RegExp(`right:\\s*max\\(0px,\\s*\\(100% - ${len(900)}\\) / 2\\)`))
   })
 
   it('does not leak the full-width behavior outside the file preview', () => {

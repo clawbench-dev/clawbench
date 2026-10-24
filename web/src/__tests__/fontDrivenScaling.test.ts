@@ -278,3 +278,64 @@ describe('canvas-rendered surfaces scale explicitly', () => {
     expect(fn![0]).toMatch(/fit\(\)/)
   })
 })
+
+describe('max()/min()/clamp() arguments are all lengths', () => {
+  // `max(0, <length>)` is INVALID CSS: a bare `0` is a <number> and the
+  // comparison needs both arguments in the same type. The browser drops the
+  // whole declaration at computed-value time — it does not clamp to 0, it makes
+  // the property vanish, so the element silently loses its padding.
+  //
+  // This bit the Markdown preview during the rem migration: a correct
+  // `max(0px, (100% - 900px)/2)` was rewritten to `max(0, (100% - 900px)/2)`
+  // while the numbers were being converted, and the reading column lost all of
+  // its side padding (text flush against the screen edge).
+  //
+  // The check is deliberately textual: jsdom computes no layout, and the
+  // failure is a parse-time validity issue rather than a value issue.
+  it('no declaration mixes a bare 0 with a length inside max/min/clamp', () => {
+    const offenders: string[] = []
+    for (const { file, css } of allStyleSources()) {
+      const code = stripComments(css)
+      for (const m of code.matchAll(/\b(max|min|clamp)\(/g)) {
+        // Take the balanced argument list starting at this `(`.
+        let depth = 0
+        let i = m.index! + m[0].length - 1
+        let args = ''
+        for (; i < code.length; i++) {
+          const ch = code[i]
+          if (ch === '(') depth++
+          else if (ch === ')') { depth--; if (depth === 0) break }
+          if (depth >= 1 && !(depth === 1 && ch === '(')) args += ch
+        }
+        // Split on top-level commas only.
+        const parts: string[] = []
+        let d = 0
+        let cur = ''
+        for (const ch of args) {
+          if (ch === '(') d++
+          if (ch === ')') d--
+          if (ch === ',' && d === 0) { parts.push(cur.trim()); cur = '' } else cur += ch
+        }
+        parts.push(cur.trim())
+        if (parts.length < 2) continue
+        const hasBareZero = parts.some(p => /^0(\.0+)?$/.test(p))
+        const hasLength = parts.some(p => /var\(|\d(px|rem|em|%|vh|vw|vmin|vmax|ch|ex)\b|calc\(/.test(p))
+        if (hasBareZero && hasLength) {
+          const line = code.slice(0, m.index!).split('\n').length
+          offenders.push(`${file}:${line}  ${m[1]}(${parts.join(', ')})`)
+        }
+      }
+    }
+    expect(offenders, `bare 0 mixed with a length — the declaration is dropped:\n${offenders.join('\n')}`).toEqual([])
+  })
+
+  it('the Markdown reading column keeps its side padding', () => {
+    // Pin the two places that carry the "center the 900px column" trick. A
+    // regression here is invisible to a class-name test but immediately
+    // visible as text against the screen edge.
+    const content = stripComments(readWebFile('css/content.css'))
+    expect(content).toMatch(/\.markdown-preview \.markdown-body\s*\{[^}]*max\(0px,\s*\(100% - calc\(900 \* var\(--dp\)\)\) \/ 2\)/)
+    const preview = stripComments(readWebFile('src/components/file/MarkdownPreview.vue'))
+    expect(preview).toMatch(/right:\s*max\(0px,\s*\(100% - calc\(900 \* var\(--dp\)\)\) \/ 2\)/)
+  })
+})
