@@ -3604,6 +3604,12 @@ export default {
     dontShowAgain: '不再提示',
     ok: '确定',
   },
+  uiScalePrompt: {
+    title: '当前屏幕较大',
+    message: '当前屏幕按 1080p 基准建议缩放到 {suggested}%（现在是 {current}%），界面可能偏小。是否调整？之后可在「设置 → 外观 → 界面缩放」随时微调。',
+    accept: '调整为 {pct}%',
+    decline: '保持当前',
+  },
   upgrade: {
     title: '升级',
     start: '开始升级',

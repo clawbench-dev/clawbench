@@ -588,6 +588,7 @@ import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyEffectiveUIScale, getZoomedViewport, toFixedCSS, startSystemThemeWatcher, applyStoredTheme } from '@/composables/useSettingsConfig'
+import { maybePromptStartupUIScale } from '@/composables/useStartupUIScalePrompt'
 import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 import { useAnimatedWallpaperParams } from '@/composables/useAnimatedWallpaperParams'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
@@ -2649,6 +2650,9 @@ async function handleLoginSuccess() {
     }
     welcomeOverlay.value?.show()
     checkForUpgrade()
+    // Same offer as the cold-start path; the composable is once-per-session,
+    // so the second caller is a no-op.
+    offerStartupUIScale()
 
     // Handle pending navigation
 }
@@ -2658,6 +2662,29 @@ const shareLinkOpen = ref(false)
 const welcomeOverlay = ref<InstanceType<typeof WelcomeOverlay> | null>(null)
 const upgradePromptOverlay = ref<InstanceType<typeof UpgradePromptOverlay> | null>(null)
 const upgradeDialogRef = ref<InstanceType<typeof UpgradeDialog> | null>(null)
+
+/**
+ * Offer the screen-derived UI scale, but never stack it on the first-run
+ * welcome panel.
+ *
+ * Both are full-screen modals, and on a fresh install the welcome panel opens
+ * in the same tick. The scale prompt sits at a higher z-index, so calling it
+ * straight away would cover the welcome panel with a second modal before the
+ * user has read the first. Wait for the welcome panel to go away instead (it
+ * never opening again is fine — the next launch asks).
+ */
+function offerStartupUIScale() {
+  const welcome = welcomeOverlay.value
+  if (!welcome?.visible) {
+    void maybePromptStartupUIScale()
+    return
+  }
+  const stop = watch(() => welcome.visible, (visible) => {
+    if (visible) return
+    stop()
+    void maybePromptStartupUIScale()
+  })
+}
 
 async function checkForUpgrade() {
   const { checkForUpgradePrompt, state } = useUpgrade()
@@ -3921,6 +3948,9 @@ onMounted(async () => {
     startDockResize()
     welcomeOverlay.value?.show()
     checkForUpgrade()
+    // After the welcome panel (see offerStartupUIScale). Never awaited: it only
+    // shows a dialog, and startup must not block on a decision.
+    offerStartupUIScale()
 
     // Handle pending navigation from push notification deep link
     // (cross-project reload or cold start via native bridge)

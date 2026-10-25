@@ -3608,6 +3608,12 @@ export default {
     dontShowAgain: "Don't show again",
     ok: 'OK',
   },
+  uiScalePrompt: {
+    title: 'Large display detected',
+    message: 'This screen suggests a UI scale of {suggested}% (currently {current}%), so the interface may look small. Apply it now? You can fine-tune it later in Settings → Appearance → UI Scale.',
+    accept: 'Set to {pct}%',
+    decline: 'Keep current',
+  },
   upgrade: {
     title: 'Upgrade',
     start: 'Start Upgrade',

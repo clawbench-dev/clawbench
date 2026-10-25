@@ -4,8 +4,10 @@ import {
   resolveUIScale,
   currentScreenHeight,
   screenHeightToCssPixels,
+  shouldSuggestUIScale,
   UI_SCALE_BASE_HEIGHT,
   UI_SCALE_STEP,
+  UI_SCALE_SUGGEST_THRESHOLD,
   applyUIScale,
   designToCss,
 } from '@/utils/uiScale'
@@ -123,6 +125,65 @@ describe('resolveUIScale', () => {
     expect(resolveUIScale(NaN)).toBe(1)
     expect(resolveUIScale(0)).toBe(1)
     expect(resolveUIScale(-2)).toBe(1)
+  })
+})
+
+describe('shouldSuggestUIScale', () => {
+  it('suggests when the screen wants a noticeably larger factor', () => {
+    // 4K at 100% (2160 → 2.0) against a fresh install's 1.0.
+    expect(shouldSuggestUIScale(1, 2)).toBe(true)
+    // 1440p: 1.33 vs 1.0 is 0.33, well past the 0.15 bar.
+    expect(shouldSuggestUIScale(1, computeAutoUIScale(1440))).toBe(true)
+  })
+
+  it('stays quiet for a difference the user would not notice', () => {
+    // 1200p fits 1.11 — an 11% bump is noise on a screen that already reads
+    // fine, so it must not interrupt startup.
+    expect(shouldSuggestUIScale(1, computeAutoUIScale(1200))).toBe(false)
+    // 1080p and below derive exactly 1, i.e. "already correct".
+    expect(shouldSuggestUIScale(1, computeAutoUIScale(1080))).toBe(false)
+    expect(shouldSuggestUIScale(1, computeAutoUIScale(768))).toBe(false)
+  })
+
+  it('never suggests shrinking, however far off the stored value is', () => {
+    // A user who deliberately set 200% on a 1080p laptop must not be asked to
+    // undo it on every launch — the failure being fixed is "too small", not
+    // "too big".
+    expect(shouldSuggestUIScale(2, 1)).toBe(false)
+    expect(shouldSuggestUIScale(1.5, 1.33)).toBe(false)
+  })
+
+  it('is quiet when the two factors already agree', () => {
+    expect(shouldSuggestUIScale(1.33, 1.33)).toBe(false)
+    expect(shouldSuggestUIScale(2, 2)).toBe(false)
+  })
+
+  it('treats the threshold as a lower bound on the difference', () => {
+    // Boundary: exactly at the bar suggests, just under it does not. Pins the
+    // comparison as >= rather than > so a screen sitting on the boundary is
+    // still offered (it is the case the user complained about).
+    expect(shouldSuggestUIScale(1, 1 + UI_SCALE_SUGGEST_THRESHOLD)).toBe(true)
+    expect(shouldSuggestUIScale(1, 1 + UI_SCALE_SUGGEST_THRESHOLD - 0.01)).toBe(false)
+    // Explicit threshold wins over the default.
+    expect(shouldSuggestUIScale(1, 1.1, 0.05)).toBe(true)
+    expect(shouldSuggestUIScale(1, 1.1, 0.5)).toBe(false)
+  })
+
+  it('refuses to suggest on unusable input', () => {
+    // Startup must degrade to "no prompt", never to a broken factor.
+    expect(shouldSuggestUIScale(NaN, 2)).toBe(false)
+    expect(shouldSuggestUIScale(1, NaN)).toBe(false)
+    expect(shouldSuggestUIScale(0, 2)).toBe(false)
+    expect(shouldSuggestUIScale(-1, 2)).toBe(false)
+    expect(shouldSuggestUIScale(1, 2, NaN)).toBe(false)
+    expect(shouldSuggestUIScale(1, 2, 0)).toBe(false)
+  })
+
+  it('has a threshold well below the smallest screen that derives a fit', () => {
+    // 1440p (the common "everything is tiny" laptop panel) must clear the bar;
+    // this pins the relationship so retuning one constant cannot silently
+    // disable the prompt on the screens it exists for.
+    expect(computeAutoUIScale(1440) - 1).toBeGreaterThanOrEqual(UI_SCALE_SUGGEST_THRESHOLD)
   })
 })
 

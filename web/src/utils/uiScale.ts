@@ -7,10 +7,11 @@
  * that compensates, and the settings "auto fit" button applies it ONCE by
  * storing the result as the user's scale.
  *
- * Nothing here runs on startup any more. The applied factor is the stored
- * `uiScale` value (`resolveUIScale`), so it cannot change on its own — the
- * previous design recomputed from the screen on every applier call, which made
- * the UI jump.
+ * The applied factor is the stored `uiScale` value (`resolveUIScale`), so it
+ * cannot change on its own — the previous design recomputed from the screen on
+ * every applier call, which made the UI jump. Startup may still *offer* a fit
+ * (`shouldSuggestUIScale` + `composables/useStartupUIScalePrompt.ts`), but the
+ * user has to accept it before anything is written.
  *
  * `screenHeight` is read from `window.screen.height`, which is supposed to be
  * in CSS pixels (DIP) — NOT the physical panel resolution. On Windows, macOS
@@ -133,6 +134,47 @@ export function resolveUIScale(manual: number): number {
   // as 82% while the slider renders its thumb on the 0.8 step.
   const bounded = Math.min(Math.max(n, UI_SCALE_MANUAL_MIN), UI_SCALE_MAX)
   return Math.min(Math.max(snapToScaleStep(bounded), UI_SCALE_MANUAL_MIN), UI_SCALE_MAX)
+}
+
+/**
+ * How far the screen-derived factor has to be from the applied one before
+ * startup bothers asking. Expressed in factor units (0.15 = 15%).
+ *
+ * The point is "the screen is noticeably wrong for this UI", not "the numbers
+ * differ": a 1200p panel fits 1.11 while the stored value is 1, and a prompt
+ * for an 11% difference would be noise on a screen that already reads fine.
+ * 1440p (1.33) and above clear the bar; 1080p and below derive exactly 1 and
+ * never prompt at all.
+ */
+export const UI_SCALE_SUGGEST_THRESHOLD = 0.15
+
+/**
+ * Whether startup should OFFER the screen-derived factor.
+ *
+ * Deliberately one-directional: only a screen that wants a LARGER factor than
+ * the one in effect is worth asking about. The failure this exists for is a
+ * high-resolution panel making everything tiny. The reverse case — the user
+ * turned the slider up to 200% on a 1080p laptop — is a deliberate choice, and
+ * asking them to undo it every launch would be hostile. It also matches
+ * `computeAutoUIScale`, which never derives below 1.
+ *
+ * Pure and threshold-parameterised so the boundary can be pinned in tests; the
+ * caller (startup prompt) owns the persistence that stops it nagging.
+ */
+export function shouldSuggestUIScale(
+  current: number,
+  suggested: number,
+  threshold: number = UI_SCALE_SUGGEST_THRESHOLD,
+): boolean {
+  if (!Number.isFinite(current) || !Number.isFinite(suggested)) return false
+  if (current <= 0 || suggested <= 0) return false
+  if (!Number.isFinite(threshold) || threshold <= 0) return false
+  // Round before comparing: the factor grid is 1%, so the difference is only
+  // meaningful to 2 decimals, and the raw subtraction makes the boundary
+  // unreliable (1 + 0.15 - 1 === 0.14999999999999991, i.e. a screen sitting
+  // exactly on the bar would be rejected). Same rounding the factors use.
+  const delta = round2(suggested - current)
+  return delta >= threshold
 }
 
 /**

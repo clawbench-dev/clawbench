@@ -100,6 +100,8 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
   - `UsageStatsPanel` 的堆叠断点 460 与 `CodeLinkPreview` 的卡片最小尺寸 320×160：都是设计 px 对 CSS px 的比较，用 `designToCss()`。前者还要监听 `UI_SCALE_EVENT`——面板宽度是视口百分比，rem 缩放不改变它的 CSS px，`resize` 与 `ResizeObserver` 都不会触发。
   - 判据：**只要一个数字同时出现在 CSS 和 JS 里，它就必须在 JS 侧乘 `uiScale`**。缩放变化用 `UI_SCALE_EVENT` 通知（rem 缩放不触发 `resize`）。
 
+**启动时只「建议」，绝不自动套用。** 存储值就是生效值（`resolveUIScale` 不看屏幕），所以启动时不能重新推导——那正是早先「UI 一跳」的成因。高分辨率屏幕上的补偿改为**询问**：`composables/useStartupUIScalePrompt.ts` 在初始化完成后测一次屏幕，`shouldSuggestUIScale` 判定「建议值比当前值高出 `UI_SCALE_SUGGEST_THRESHOLD`（0.15）」才弹确认框，同意后走 `setLocalConfig('uiScale', …)`（与滑块、自动适配同一个写入路径）。四条边界：①**只往大调**——用户在 1080p 上手动调到 200% 是明确选择，每次启动反问他很粗暴；②1080p 及以下推导恒为 1，永不弹；③拒绝时把**建议值**记进 `clawbench_ui_scale_prompt_declined`，同一块屏幕不再问、换分辨率会重新问（记布尔会让换屏后失效）；④Android 跳过（系统按密度缩放，设置里的自动适配行对同一原因隐藏）。弹框走 `useDialog` 单例，因此**已有对话框打开时直接跳过**（开第二个会把第一个 resolve 成取消）。两条启动路径（`onMounted` 冷启动、`handleLoginSuccess` 登录后）都要调，composable 内部有每次会话一次的守卫。
+
 ⚠️ **`--font-size-xl` 是 body 的基准字号**，且**必须与 `html` 的 15px 设计基准一致**。但 `html` 自己**不能**用这个 token：`--dp` 是 `1rem / 15`，`html { font-size: var(--font-size-xl) }` 会闭合成 `1rem ← 根字号 ← token ← 1rem` 的环，浏览器回退到 16px 初始值（迁移时踩过，表现是整个 UI 无视设置）。`designTokens.css.test.ts` 与 `fontDrivenScaling.test.ts` 都钉住这条。
 
 ### 间距（4px 基数，保留 2/6/10px）
