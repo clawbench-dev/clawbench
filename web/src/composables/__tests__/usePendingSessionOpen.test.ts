@@ -1,6 +1,12 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick, ref } from 'vue'
-import { openPendingSessionWhenReady } from '@/composables/usePendingSessionOpen'
+import {
+  openPendingSessionWhenReady,
+  armPendingOpenSession,
+  takePendingOpenSession,
+  clearPendingOpenSession,
+  peekPendingOpenSession,
+} from '@/composables/usePendingSessionOpen'
 
 describe('openPendingSessionWhenReady', () => {
   it('opens the pending session immediately when identity is already resolved', () => {
@@ -230,5 +236,143 @@ describe('openPendingSessionWhenReady', () => {
     })
 
     expect(switchSession).not.toHaveBeenCalled()
+  })
+
+  // ── The target is already loaded (the armed cross-project session) ──
+  // The jump's first history load now fetches the clicked session directly, so
+  // identity is ALREADY the target by Phase 7. switchSession would clear and
+  // refetch that very conversation — the second half of the reported flicker.
+
+  it('adopts an already-loaded target instead of switching to it', () => {
+    const currentSessionId = ref('target-session')
+    const switchSession = vi.fn()
+    const switchTab = vi.fn()
+    const markReadAndRefresh = vi.fn()
+
+    openPendingSessionWhenReady({
+      currentSessionId,
+      sessionId: 'target-session',
+      projectPath: '/project/B',
+      switchTab,
+      switchSession,
+      markReadAndRefresh,
+    })
+
+    expect(switchSession, 'clearing/reloading the conversation already on screen').not.toHaveBeenCalled()
+    expect(markReadAndRefresh).toHaveBeenCalledTimes(1)
+    expect(switchTab).toHaveBeenCalledWith('chat')
+  })
+
+  it('still marks the adopted session read (the badge must clear)', () => {
+    // The whole point of opening a cross-project row is clearing its badge;
+    // skipping switchSession must not skip that side effect.
+    const currentSessionId = ref('target-session')
+    const markReadAndRefresh = vi.fn()
+
+    openPendingSessionWhenReady({
+      currentSessionId,
+      sessionId: 'target-session',
+      projectPath: '/project/B',
+      switchTab: vi.fn(),
+      switchSession: vi.fn(),
+      markReadAndRefresh,
+    })
+
+    expect(markReadAndRefresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to a real switch when no adoption hook is provided', () => {
+    // Same-target identity without a markReadAndRefresh hook must not silently
+    // do nothing — the read call is a load-bearing side effect.
+    const currentSessionId = ref('target-session')
+    const switchSession = vi.fn()
+
+    openPendingSessionWhenReady({
+      currentSessionId,
+      sessionId: 'target-session',
+      switchTab: vi.fn(),
+      switchSession,
+    })
+
+    expect(switchSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('adopts when the watcher resolves identity to the target', async () => {
+    // The identity-unresolved branch reaches the same decision: the load that
+    // resolves it may have loaded the armed target.
+    const currentSessionId = ref('')
+    const switchSession = vi.fn()
+    const markReadAndRefresh = vi.fn()
+
+    openPendingSessionWhenReady({
+      currentSessionId,
+      sessionId: 'target-session',
+      projectPath: '/project/B',
+      switchTab: vi.fn(),
+      switchSession,
+      markReadAndRefresh,
+    })
+
+    currentSessionId.value = 'target-session'
+    await nextTick()
+
+    expect(switchSession).not.toHaveBeenCalled()
+    expect(markReadAndRefresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('switches when the watcher resolves identity to a different session', async () => {
+    const currentSessionId = ref('')
+    const switchSession = vi.fn()
+    const markReadAndRefresh = vi.fn()
+
+    openPendingSessionWhenReady({
+      currentSessionId,
+      sessionId: 'target-session',
+      projectPath: '/project/B',
+      switchTab: vi.fn(),
+      switchSession,
+      markReadAndRefresh,
+    })
+
+    currentSessionId.value = 'other-session'
+    await nextTick()
+
+    expect(switchSession).toHaveBeenCalledTimes(1)
+    expect(switchSession).toHaveBeenCalledWith('target-session', '/project/B')
+    expect(markReadAndRefresh).not.toHaveBeenCalled()
+  })
+})
+
+describe('armed cross-project target', () => {
+  beforeEach(() => {
+    clearPendingOpenSession()
+  })
+
+  it('is consumed exactly once', () => {
+    armPendingOpenSession('target-session')
+    expect(takePendingOpenSession()).toBe('target-session')
+    // A later, unrelated load must fall back to the normal recovery lookup —
+    // a standing preference would hijack every subsequent empty-identity load.
+    expect(takePendingOpenSession()).toBeNull()
+  })
+
+  it('treats an empty/absent id as "nothing armed"', () => {
+    armPendingOpenSession('target-session')
+    armPendingOpenSession('')
+    expect(peekPendingOpenSession()).toBeNull()
+  })
+
+  it('clears only the matching id, so a superseded switch cannot disarm the newer one', () => {
+    armPendingOpenSession('newer-target')
+    clearPendingOpenSession('older-target')
+    expect(peekPendingOpenSession()).toBe('newer-target')
+    clearPendingOpenSession('newer-target')
+    expect(peekPendingOpenSession()).toBeNull()
+  })
+
+  it('clears unconditionally when no id is given', () => {
+    armPendingOpenSession('target-session')
+    clearPendingOpenSession()
+    expect(peekPendingOpenSession()).toBeNull()
   })
 })

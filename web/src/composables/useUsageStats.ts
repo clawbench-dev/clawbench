@@ -21,8 +21,8 @@ export function dimsForScope(scope: UsageScope): UsageDimId[] {
 }
 
 /** Numeric metric ids (table columns / chart series). */
-export type UsageMetricId = 'input' | 'output' | 'total' | 'cacheHit' | 'credit' | 'cost'
-export const USAGE_METRIC_IDS: UsageMetricId[] = ['input', 'output', 'total', 'cacheHit', 'credit', 'cost']
+export type UsageMetricId = 'input' | 'output' | 'total' | 'cacheHit' | 'credit' | 'cost' | 'duration'
+export const USAGE_METRIC_IDS: UsageMetricId[] = ['input', 'output', 'total', 'cacheHit', 'credit', 'cost', 'duration']
 
 export type UsageRangeKey = '24h' | '7d' | '30d' | 'custom'
 export type UsageChartType = 'bar' | 'pie' | 'trend'
@@ -47,6 +47,8 @@ export interface UsageTotals {
   cacheMiss: number
   credit: number
   costUsd: number
+  /** Summed AI runtime in milliseconds (wall clock of every turn in range). */
+  durationMs: number
   messageCnt: number
 }
 
@@ -60,6 +62,7 @@ export interface UsageRow {
   cacheMiss: number
   credit: number
   costUsd: number
+  durationMs: number
   messageCnt: number
 }
 
@@ -211,7 +214,9 @@ export function resetUsageStats(): void {
  * nonzero. The overall token total leads the list (it is the headline number);
  * the input/output split follows. Cache hit (tokens served from cache) is kept
  * here so the overview shows how much cache traffic contributed; the hit-rate
- * percentage and the hit/miss split are derived in the panel. */
+ * percentage and the hit/miss split are derived in the panel. Runtime comes
+ * last: it is the only card measured in time, not tokens, so it must not break
+ * up the token flow above it. */
 const visibleTotals = computed(() => {
   const t = raw.value?.totals
   if (!t) return [] as { metric: UsageMetricId; value: number }[]
@@ -222,6 +227,7 @@ const visibleTotals = computed(() => {
   if (t.cacheHit > 0) items.push({ metric: 'cacheHit', value: t.cacheHit })
   if (t.credit > 0) items.push({ metric: 'credit', value: t.credit })
   if (t.costUsd > 0) items.push({ metric: 'cost', value: t.costUsd })
+  if (t.durationMs > 0) items.push({ metric: 'duration', value: t.durationMs })
   return items
 })
 

@@ -825,6 +825,98 @@ describe('useSessionIdentity', () => {
             vi.unstubAllGlobals()
         })
 
+        // ── preferredSessionId (the cross-project jump target) ──
+        // hotSwitchProject rebuilds the subtree and the remounted chat panel
+        // immediately loads history with an empty identity. If identity resolves
+        // to the project's remembered session instead of the clicked one, that
+        // OTHER conversation is rendered for a frame before Phase 7 switches —
+        // the reported cross-project flicker.
+
+        it('requests the preferred session instead of the remembered one', async () => {
+            const identity = useSessionIdentity()
+            recordRecentSession('remembered-session')
+
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ sessionId: 'clicked-session' }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+
+            await initSessionFromAPI('clicked-session')
+
+            // One request, and it asked for the CLICKED session.
+            expect(mockFetch).toHaveBeenCalledTimes(1)
+            expect(String(mockFetch.mock.calls[0][0])).toContain('session_id=clicked-session')
+            expect(String(mockFetch.mock.calls[0][0])).not.toContain('remembered-session')
+            expect(identity.currentSessionId.value).toBe('clicked-session')
+
+            vi.unstubAllGlobals()
+        })
+
+        it('falls back to the default lookup when the preferred session is gone', async () => {
+            // A stale/foreign target must not leave identity empty: Phase 7 then
+            // targets an id that no longer resolves.
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = ''
+
+            const mockFetch = vi.fn()
+                .mockResolvedValueOnce({
+                    ok: false,
+                    status: 404,
+                    json: () => Promise.resolve({ msgKey: 'SessionNotFound' }),
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve({ sessionId: 'default-session' }),
+                })
+            vi.stubGlobal('fetch', mockFetch)
+
+            await initSessionFromAPI('gone-session')
+            await nextTick()
+
+            expect(mockFetch).toHaveBeenCalledTimes(2)
+            expect(String(mockFetch.mock.calls[0][0])).toContain('session_id=gone-session')
+            expect(String(mockFetch.mock.calls[1][0])).not.toContain('session_id=')
+            expect(identity.currentSessionId.value).toBe('default-session')
+
+            vi.unstubAllGlobals()
+        })
+
+        it('keeps the remembered session when a preferred session fails to resolve', async () => {
+            // Only a REMEMBERED id is cleared on 404/403. The preferred id never
+            // entered the store, so clearing here would delete the project's
+            // still-valid memory and the next plain switch would lose it.
+            //
+            // The fallback request is made to FAIL on purpose: a successful one
+            // would set identity, and the persistence watcher would re-record a
+            // fresh entry — masking whether the original was wiped.
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = ''
+            recordRecentSession('remembered-session')
+
+            const mockFetch = vi.fn()
+                .mockResolvedValueOnce({
+                    ok: false,
+                    status: 403,
+                    json: () => Promise.resolve({ msgKey: 'AccessDenied' }),
+                })
+                .mockResolvedValueOnce({
+                    ok: false,
+                    status: 500,
+                    json: () => Promise.resolve({ error: 'boom' }),
+                })
+            vi.stubGlobal('fetch', mockFetch)
+
+            await initSessionFromAPI('foreign-session')
+            await nextTick()
+
+            expect(mockFetch).toHaveBeenCalledTimes(2)
+            const stored = JSON.parse(localStorage.getItem('clawbench-recent-session:/test/project')!)
+            expect(stored.sessionId).toBe('remembered-session')
+
+            vi.unstubAllGlobals()
+        })
+
         it('falls back to saved model preference when server returns no modelId', async () => {
             const identity = useSessionIdentity()
 

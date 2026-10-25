@@ -20,7 +20,7 @@ import { useUsageStats } from '@/composables/useUsageStats'
 import { nextTick } from 'vue'
 
 const EMPTY_RESPONSE = {
-  totals: { input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 0 },
+  totals: { input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, durationMs: 0, messageCnt: 0 },
   rows: [],
 }
 
@@ -150,7 +150,7 @@ describe('useUsageStats', () => {
     it('shows only nonzero additive cards incl. cache hit tokens', () => {
       const stats = useUsageStats()
       stats.raw.value = {
-        totals: { input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, messageCnt: 1 },
+        totals: { input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, durationMs: 0, messageCnt: 1 },
         rows: [],
       }
       const visible = stats.visibleTotals.value
@@ -167,6 +167,25 @@ describe('useUsageStats', () => {
       // The overall token total leads — it is the headline number, so it must
       // not be buried after the input/output split.
       expect(ids[0]).toBe('total')
+    })
+
+    it('lists the runtime card last, after every token/cost card', () => {
+      const stats = useUsageStats()
+      stats.raw.value = {
+        totals: { input: 100, output: 10, total: 110, cacheHit: 80, cacheMiss: 20, credit: 2, costUsd: 0.05, durationMs: 3_600_000, messageCnt: 4 },
+        rows: [],
+      }
+      const ids = stats.visibleTotals.value.map(c => c.metric)
+      // Runtime is a different quantity (time, not tokens), so it must not
+      // interrupt the token flow above it.
+      expect(ids[ids.length - 1]).toBe('duration')
+      expect(ids).toContain('cost')
+      // Zero runtime is hidden like every other zero card.
+      stats.raw.value = {
+        totals: { input: 100, output: 0, total: 100, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, durationMs: 0, messageCnt: 1 },
+        rows: [],
+      }
+      expect(stats.visibleTotals.value.map(c => c.metric)).not.toContain('duration')
     })
   })
 

@@ -435,6 +435,7 @@ vi.mock('@/utils/chatStreamUtils', async (importOriginal) => {
 import { useChatSession, loadSessionsOnce, resetChatSessionState } from '@/composables/useChatSession'
 import { saveChatScrollPosition, _resetChatScrollMemory } from '@/utils/chatScrollMemory'
 import { recordRecentSession } from '@/composables/useRecentSession'
+import { armPendingOpenSession, peekPendingOpenSession } from '@/composables/usePendingSessionOpen'
 import { store } from '@/stores/app.ts'
 import { chatMessageReducer, resetInFlightSendsForTest, trackInFlightSend, isInFlightSend } from '@/utils/chatStreamUtils.ts'
 import { addQueued, getQueue, removeQueued, resetQueuesForTest, markSendCommitted } from '@/composables/useMessageQueue.ts'
@@ -7832,6 +7833,105 @@ describe('loadHistory session_id recovery', () => {
     // Stale entry removed
     expect(localStorage.getItem('clawbench-recent-session:/test/proj')).toBeNull()
     expect(currentSessionId.value).toBe('fallback-s1')
+  })
+
+  // ── Armed cross-project target ──
+  // The FIRST load after hotSwitchProject rebuilds the subtree runs with an
+  // empty identity. Recovering "this project's most recent session" there
+  // renders an unrelated conversation for a frame before Phase 7 opens the
+  // clicked one — the reported cross-project flicker. The armed target makes
+  // that first load fetch the clicked session directly.
+
+  function makeRecoverySession(currentSessionId: ReturnType<typeof ref<string>>) {
+    const options = {
+      currentSessionId,
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    return options
+  }
+
+  it('loads the armed cross-project target instead of the project recent session', async () => {
+    store.state.projectRoot = '/test/proj'
+    // A DIFFERENT session is remembered for this project — the one that used to
+    // be loaded (and briefly rendered) before the jump completed.
+    localStorage.setItem('clawbench-recent-session:/test/proj', JSON.stringify({ sessionId: 'recent-s1', accessedAt: Date.now() }))
+    armPendingOpenSession('target-s1')
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'target-s1',
+        messages: [{ id: 'm1' }],
+        total: 1,
+        running: false,
+      }),
+    })
+
+    const currentSessionId = ref('')
+    const session = useChatSession(makeRecoverySession(currentSessionId))
+    await session.loadHistory(true, false, false)
+
+    // One request, and it asked for the CLICKED session — not the remembered
+    // one. A single call also proves the recovery did not double-fetch.
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('session_id=target-s1'),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+    expect(currentSessionId.value).toBe('target-s1')
+    // Consumed: the next empty-identity load must fall back to the remembered
+    // session rather than keep resurrecting the jump target.
+    expect(peekPendingOpenSession()).toBeNull()
+  })
+
+  it('keeps the remembered session when the armed target fails to resolve', async () => {
+    // A stale/foreign target (404/403) must not delete the project's genuine
+    // memory — the jump's fallback is the normal chain, and the memory is what
+    // that chain uses.
+    store.state.projectRoot = '/test/proj'
+    localStorage.setItem('clawbench-recent-session:/test/proj', JSON.stringify({ sessionId: 'recent-s1', accessedAt: Date.now() }))
+    armPendingOpenSession('gone-s1')
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve({ error: '会话不存在', msgKey: 'SessionNotFound' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 'fallback-s1',
+          messages: [{ id: 'm1' }],
+          total: 1,
+          running: false,
+        }),
+      })
+
+    const currentSessionId = ref('')
+    const session = useChatSession(makeRecoverySession(currentSessionId))
+    await session.loadHistory(true, false, false)
+
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(1, expect.stringContaining('session_id=gone-s1'), expect.anything())
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(2, expect.not.stringContaining('session_id='), expect.anything())
+    expect(currentSessionId.value).toBe('fallback-s1')
+    // The remembered entry survives: only a REMEMBERED id is cleared on 404.
+    expect(JSON.parse(localStorage.getItem('clawbench-recent-session:/test/proj')!).sessionId).toBe('recent-s1')
   })
 
   it('returns early when recovery yields no session', async () => {

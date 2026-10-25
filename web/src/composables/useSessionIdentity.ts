@@ -732,8 +732,21 @@ export function registerOpenSessionTabOverride(fn: (() => void) | null) {
  * Pre-fill session identity from the API. Called by App.vue on mount
  * so that QuoteQuestionBar can display correct session info even
  * before ChatPanel is opened.
+ *
+ * `preferredSessionId` is the session the caller is about to open (the
+ * cross-project jump: the user clicked a row in another project). When given,
+ * it REPLACES the per-project "last opened" lookup as the identity source, so
+ * the panel that mounts after the switch loads the session the user asked for
+ * instead of the new project's most-recent one. Without it the user sees that
+ * other session's messages for one frame before Phase 7 switches — the reported
+ * cross-project flicker.
+ *
+ * A preferred id that turns out to be unusable (404/403) falls back to the
+ * normal recent/default chain rather than leaving identity empty: the pending
+ * open then simply targets an id that no longer resolves, and Phase 7's own
+ * guards handle it.
  */
-export async function initSessionFromAPI() {
+export async function initSessionFromAPI(preferredSessionId?: string | null) {
   const agentsApi = useAgents()
   try {
     const initCtrl = new AbortController()
@@ -748,7 +761,11 @@ export async function initSessionFromAPI() {
     // Try the last opened session for this project first (per-project
     // localStorage). If it no longer exists (404/403), drop the stale entry
     // and fall back to the default "most recently updated session" behavior.
-    const storedSessionId = getRecentSession()
+    //
+    // An explicit `preferredSessionId` outranks the remembered one: the user
+    // just picked that session, so the project's memory is about to be
+    // overwritten anyway.
+    const storedSessionId = preferredSessionId || getRecentSession()
     const initUrl = storedSessionId
       ? `/api/ai/chat?limit=1&session_id=${encodeURIComponent(storedSessionId)}`
       : '/api/ai/chat?limit=1'
@@ -756,8 +773,10 @@ export async function initSessionFromAPI() {
     let finalResp = chatResp
     if (storedSessionId && chatResp && !chatResp.ok) {
       // Stored session is gone (404) or no longer in this project (403) —
-      // remove it and retry with the default logic.
-      clearRecentSession()
+      // remove it and retry with the default logic. Only the REMEMBERED id is
+      // cleared: a preferred id that failed to resolve is not in the store, and
+      // clearing would delete the project's genuinely valid memory.
+      if (!preferredSessionId) clearRecentSession()
       finalResp = await fetchChat('/api/ai/chat?limit=1')
     }
     clearTimeout(initTimer)

@@ -42,8 +42,9 @@ flowchart TD
 
 ### 功能清单
 
-- **用量总览**：面板顶部展示时间范围内的总量——input vs output 环形图直观反映读写比例，点击 input 扇区下钻为该输入量的缓存命中 vs 未命中构成；旁边的数值卡列出 input/output/total/cacheHit/credit/cost 六项总量（0 值自动隐藏，避免空卡占位），附缓存命中率。让用户一眼看到"这个项目这段时间烧了多少 token、缓存命中高不高"
+- **用量总览**：面板顶部展示时间范围内的总量——input vs output 环形图直观反映读写比例，点击 input 扇区下钻为该输入量的缓存命中 vs 未命中构成；旁边的数值卡列出 input/output/total/cacheHit/credit/cost/duration 七项总量（0 值自动隐藏，避免空卡占位），附缓存命中率。让用户一眼看到"这个项目这段时间烧了多少 token、缓存命中高不高、AI 实际跑了多久"
 - **按指标拆分的图表**：为每个选中指标（metric，默认 `total`）各渲染一张图，类目是所选维度的组合（多个维度用 ` × ` 拼成单一标签，如 `glm-5.1 × codebuddy`），横向比较各实体在该指标下的消耗。图表类型可切换 **bar（直方图）/ pie（饼图）/ trend（时间趋势）** 三种——bar/pie 基于明细行，trend 基于按天聚合（默认保留 top-10 组合，避免组合爆炸）。帮助定位"哪个模型/后端/Agent 是消耗大户"，并观察"升级模型后用量是否回落"
+- **AI 工作时长**：`wall_ms` 列的合计——每轮 AI 从开始到定稿的墙钟时间（含模型调用与工具执行），以毫秒为单位落库。展示走**累计量级**格式（`formatSpanDuration`，毫秒/秒/分钟/小时/**天**，一律一位小数）：它是几百轮求和，一个月约 720 小时，必须能落到「天」，而单轮用的 `formatDuration` 刻意封顶在小时（给紧凑的气泡元信息栏用）——两者不可互换。它与 token 列**不可相加**，所以是独立指标：既能作为总览卡，也能作为明细列/图表指标参与分组与排序（"哪个后端最吃时间"）。**取消的轮次同样计入**——被取消的回合仍然真实消耗了时间，`drainAndPersistCancelledMetadata` 会补上 `buildResult` 从未写过的 `WallMs`
 - **时间范围与维度筛选**：24h / 7d / 30d / 自定义（≤370 天，UTC 时基、按天分桶）；维度可选 model/backend/agent 的组合（1-3 个；跨项目模式下还可选 project，见下文），配合 sort/order 排序与 top/limit 截断。筛选卡独立于总览区，体现"总览不随维度筛选改变"的设计
 - **明细表排序**：筛选后的明细行可点击表头按各指标排序，快速找出 top 消耗者；`limit` 上限 200 行防止超大结果集拖垮渲染
 - **费用两位小数统一**：所有费用展示（用量统计、上下文面板、消息详情弹窗）统一保留两位小数、大额带千分位，sub-cent 归零显示 `$0.00`。pi/opencode 等后端单次成本常在 0.0001 以下，此前各界面精度不一（6 位 / 4 位 / 特殊显示 `$0.0001`）会让界面出现一长串小数；原始精度仍保留在 DB 与 API 中未截断
@@ -64,6 +65,7 @@ flowchart TD
 - **缓存口径统一为 OpenAI/CodeBuddy 形状**：`input_tokens` 含缓存部分，`cache_hit/miss` 单独拆出。Claude/Codex 的桥接把缓存计数报在 `inputTokens` **之外**（满足 `total = input + output + cacheRead + cacheWrite`），旧实现原样存储，于是它们的 `cache_hit/miss` 恒为 0、命中率只统计 CodeBuddy（混合库里显示 98.3%）。现在按上述恒等式校验后再归一化，恒等式不成立（如 agent 把缓存算进 input）则保持原值而不是猜
 - **以 assistant 消息完成时间为准**：时间基准是 `chat_metadata.created_at`，取自消息自己的 `completed_at`（回落到 `created_at`）。`INSERT OR REPLACE` 早期不写这一列，导致每次重存都被 SQLite 重新盖戳——内容→台账 backfill 把一个月前的消息搬进了今天的窗口（实测 32 行、>1 天偏差，其中 7 行 2.6M token 落在 30 天窗口里）。配合 `chat_metadata.project_id` 归属校验做项目作用域
 - **范围与维度解耦**：总览展示的是窗口内全部数据（不随维度筛选变化），维度只作用于明细表与图表——"总览是快照、明细是切片"，避免用户困惑"为什么选了 agent 后总览数字也变了"
+- **工作时长与 token 同表不同量纲**：`wall_ms` 与 token 列在**同一行台账**里，但一个是毫秒、一个是计数，所以既不合并成一个"合计"、也不做任何派生比率；`SUM(wall_ms)` 只走独立指标。展示分两层：单轮时长用 `formatDuration`（`1.5s` / `5.3m` / `3.5h`，封顶小时，紧凑），累计报表用 `formatSpanDuration`（带本地化单位词、可落到天、一位小数）。写入侧有三个来源且都归一化到同一语义：`buildResult` 的 `time.Since(wallStart)`（正常回合）、取消路径补的 `WallMs`（abandoned 回合）、以及升级回填（见下）。历史行若 `wall_ms = 0` 会被 `MigrateLedgerWallClock` 一次性补齐：优先取消息自身 content JSON 里的 `metadata.wallMs`（与原生写入值完全一致），取不到才用 `completed_at − created_at` 近似（实测与真实值在 6276/6322 行上相差几秒内），且只在 1s–48h 的合理区间内采纳——两者都没有则保持 0，**不臆造**未知时长
 - **渲染层与数据层分离**：`useUsageStats` 单例 composable 管理请求状态（300ms 防抖 + AbortController + 项目切换时重置），图表构建（`statsChart.ts`）与 ECharts 封装（`UsageChart`）解耦，使响应式窗口变化和主题切换只影响渲染层，不触发重新取数
 
 ### 跨项目用量（scope=all）

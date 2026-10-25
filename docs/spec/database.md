@@ -85,7 +85,7 @@ UNIQUE：`(backend, id)`
 | input_tokens | INTEGER | | `0` | 输入 token 数 |
 | output_tokens | INTEGER | | `0` | 输出 token 数 |
 | duration_ms | INTEGER | | `0` | 处理耗时（毫秒） |
-| wall_ms | INTEGER | | `0` | 墙钟耗时（毫秒） |
+| wall_ms | INTEGER | | `0` | 墙钟耗时（毫秒）——AI 每轮从开始到定稿的实际运行时长，是「用量统计」AI 工作时长指标的唯一数据源。取消的回合也写（`drainAndPersistCancelledMetadata` 补 `buildResult` 未写的值）；升级时 `MigrateLedgerWallClock` 回填历史行（先取消息 content 的 `metadata.wallMs`，再退化为 `completed_at − created_at`） |
 | cost_usd | REAL | | `0` | **单轮增量**费用（美元）。求和即真实总额 |
 | stop_reason | TEXT | | `''` | 停止原因 |
 | is_error | INTEGER | | `0` | 是否出错 |

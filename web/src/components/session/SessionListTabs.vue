@@ -7,6 +7,7 @@
       class="session-tab"
       :class="{ active: activeTab === 'project' }"
       role="tab"
+      data-session-tab="project"
       :aria-selected="activeTab === 'project'"
       @click="$emit('update:activeTab', 'project')"
     >
@@ -16,6 +17,7 @@
       class="session-tab"
       :class="{ active: activeTab === 'cross' }"
       role="tab"
+      data-session-tab="cross"
       :aria-selected="activeTab === 'cross'"
       @click="$emit('update:activeTab', 'cross')"
     >

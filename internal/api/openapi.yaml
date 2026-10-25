@@ -246,7 +246,8 @@ paths:
 
         **响应结构**：
         - `totals`：所有行的合计，字段 `input` / `output` / `total` / `cacheHit` /
-          `cacheMiss` / `credit` / `costUsd` / `messageCnt`。
+          `cacheMiss` / `credit` / `costUsd` / `messageCnt`，外加 `durationMs`
+          （区间内 AI 墙钟时长合计，毫秒，不与 token 列相加）。
         - `rows[]`：每个 dim 组合一行。`key` 是对象，键即请求的 dims
           （如 `{"model":"...","backend":"..."}`），行上带有与 `totals` 相同的字段。
           行的顺序由 `sort` / `order` 决定，`limit` 截断。
@@ -303,7 +304,7 @@ paths:
             type: array
             items:
               type: string
-              enum: [input, output, total, cacheHit, credit, cost]
+              enum: [input, output, total, cacheHit, credit, cost, duration]
         - name: sort
           in: query
           description: 排序用的指标 id，默认 `total`。

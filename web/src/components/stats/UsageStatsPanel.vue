@@ -232,7 +232,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { BarChart3, Clock, SlidersHorizontal, Gauge, Table, ChartPie, Sigma, ArrowDownToLine, ArrowUpFromLine, Database, Coins, CircleDollarSign, Percent } from 'lucide-vue-next'
+import { BarChart3, Clock, SlidersHorizontal, Gauge, Table, ChartPie, Sigma, ArrowDownToLine, ArrowUpFromLine, Database, Coins, CircleDollarSign, Percent, Timer } from 'lucide-vue-next'
 import StatsSkeleton from '@/components/stats/StatsSkeleton.vue'
 import { useDelayedFlag } from '@/composables/useDelayedFlag'
 import UsageChart from '@/components/stats/UsageChart.vue'
@@ -365,13 +365,14 @@ function metricLabelKey(m: UsageMetricId): string {
     case 'cacheHit': return 'stats.colCacheHit'
     case 'credit': return 'stats.colCredit'
     case 'cost': return 'stats.colCost'
+    case 'duration': return 'stats.colDuration'
   }
 }
 
 // Overview-card icons: each metric gets a shape that reads on its own (total =
 // aggregate, input/output = direction of the token flow, cache = stored data,
-// credit = coin, cost = currency). Shape over hue, since several themes share
-// the same accent colour.
+// credit = coin, cost = currency, duration = clock). Shape over hue, since
+// several themes share the same accent colour.
 const METRIC_ICONS: Record<UsageMetricId, Component> = {
   total: Sigma,
   input: ArrowDownToLine,
@@ -379,6 +380,7 @@ const METRIC_ICONS: Record<UsageMetricId, Component> = {
   cacheHit: Database,
   credit: Coins,
   cost: CircleDollarSign,
+  duration: Timer,
 }
 function metricIcon(m: UsageMetricId): Component {
   return METRIC_ICONS[m]
@@ -450,7 +452,7 @@ function formatMetricCellValue(m: UsageMetricId, row: UsageRowLike): string {
 }
 
 // --- Chart option building ---
-type UsageRowLike = { key: Partial<Record<UsageDimId, string>>; input: number; output: number; total: number; cacheHit: number; cacheMiss: number; credit: number; costUsd: number }
+type UsageRowLike = { key: Partial<Record<UsageDimId, string>>; input: number; output: number; total: number; cacheHit: number; cacheMiss: number; credit: number; costUsd: number; durationMs: number }
 
 function chartOptionFor(m: UsageMetricId) {
   // Read themeTick (palette rebuild on theme change) and viewportTick (axis
@@ -503,10 +505,12 @@ const totals = computed(() => stats.raw.value?.totals ?? null)
 // credit is part of the presence check: a range whose only usage is
 // credit-bearing CodeBuddy turns (no tokens recorded, e.g. a failed turn that
 // still billed) would otherwise render the whole overview as "no data".
+// durationMs joins it for the same reason — a range can carry recorded runtime
+// with no tokens at all (a turn that was cancelled after the agent ran).
 const totalsPresent = computed(() => {
   const t = totals.value
   if (!t) return false
-  return t.input > 0 || t.output > 0 || t.total > 0 || t.cacheHit > 0 || t.cacheMiss > 0 || t.credit > 0 || t.costUsd > 0
+  return t.input > 0 || t.output > 0 || t.total > 0 || t.cacheHit > 0 || t.cacheMiss > 0 || t.credit > 0 || t.costUsd > 0 || t.durationMs > 0
 })
 const hasContent = computed(() => totalsPresent.value || filteredRows.value.length > 0 || rawTrend.value.length > 0)
 

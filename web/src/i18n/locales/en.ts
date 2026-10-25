@@ -250,6 +250,7 @@ export default {
     colHitRate: 'Cache Hit Rate',
     colCredit: 'Credit',
     colCost: 'Cost (USD)',
+    colDuration: 'AI Work Time',
     chartTitle: 'Chart',
     chartBar: 'Bar',
     chartPie: 'Pie',
@@ -2439,6 +2440,14 @@ export default {
     yesterday: 'Yesterday',
     monthDay: '{month}/{day}',
     yearMonthDay: '{year}/{month}/{day}',
+    // Units of an accumulated span (see formatSpanDuration in utils/format.ts).
+    // Separate from the compact single-turn form (1.5s / 5.3m / 3.5h): a report
+    // total of a month is ~700 hours, which has to roll up into days.
+    durationMs: '{n} ms',
+    durationSec: '{n} s',
+    durationMin: '{n} min',
+    durationHour: '{n} hr',
+    durationDay: '{n} days',
   },
   cron: {
     everyMinutes: 'Every {count} min',

@@ -12,6 +12,7 @@ import {
   DONUT_RADIUS,
 } from '@/components/stats/statsChart'
 import { buildClocBarOption } from '@/components/stats/gitStatsChart'
+import { formatSpanDuration } from '@/utils/format'
 
 function setInnerWidth(w: number) {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: w })
@@ -217,5 +218,19 @@ describe('formatMetricValue token tiers (raw / K / M / B)', () => {
     // A thousands separator is kept for large totals.
     expect(formatMetricValue('cost', 8283.125)).toBe('$8,283.13')
     expect(formatMetricValue('cost', 0)).toBe('$0.00')
+  })
+
+  it('formats the work-time metric as an accumulated span, not as a token count', () => {
+    // durationMs is a SUM over many turns, so realistic values run to hours and
+    // days. It must NOT be a K/M token compaction ("3.6M" says nothing) and it
+    // must NOT stop at hours the way the compact single-turn formatter does.
+    // The scale/unit words are pinned in utils/__tests__/formatSpanDuration
+    // .test.ts; here the assertion is that this metric routes to that formatter.
+    for (const ms of [0, 500, 4_200, 300_000, 3_600_000, 30 * 24 * 3600 * 1000]) {
+      expect(formatMetricValue('duration', ms)).toBe(formatSpanDuration(ms))
+    }
+    // A month of work time rolls up into days rather than ~720 hours.
+    expect(formatMetricValue('duration', 30 * 24 * 3600 * 1000)).not.toContain('720')
+    expect(formatMetricValue('duration', 30 * 24 * 3600 * 1000)).not.toBe('3.0M')
   })
 })

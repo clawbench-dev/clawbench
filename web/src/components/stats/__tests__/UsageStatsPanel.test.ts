@@ -28,6 +28,7 @@ vi.mock('echarts/renderers', () => ({ CanvasRenderer: {} }))
 
 import UsageStatsPanel from '@/components/stats/UsageStatsPanel.vue'
 import { useUsageStats } from '@/composables/useUsageStats'
+import { formatSpanDuration } from '@/utils/format'
 
 const zhMessages = {
   nav: { stats: '数据统计', refresh: '刷新' },
@@ -62,6 +63,7 @@ const zhMessages = {
     colHitRate: '缓存命中率',
     colCredit: 'Credit',
     colCost: '费用 (USD)',
+    colDuration: 'AI 工作时长',
     chartTitle: '图表类型',
     chartBar: '直方图',
     chartPie: '饼图',
@@ -84,7 +86,7 @@ function makeI18n() {
 
 function mockResponse(partial: Record<string, unknown>) {
   return {
-    totals: { input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 0 },
+    totals: { input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, durationMs: 0, messageCnt: 0 },
     rows: [],
     ...partial,
   }
@@ -201,8 +203,8 @@ describe('UsageStatsPanel', () => {
 
   it('renders overview cards: additive metrics + cache hit tokens + hit rate', async () => {
     mockApiGet.mockResolvedValue(mockResponse({
-      totals: { input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, messageCnt: 1 },
-      rows: [{ key: { model: 'glm' }, input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, messageCnt: 1 }],
+      totals: { input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, durationMs: 0, messageCnt: 1 },
+      rows: [{ key: { model: 'glm' }, input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, durationMs: 0, messageCnt: 1 }],
     }))
     const wrapper = await mountPanel()
     const cards = wrapper.findAll('.stats-total')
@@ -221,6 +223,55 @@ describe('UsageStatsPanel', () => {
     expect(cardText).toContain('80.0%') // cache hit rate
     expect(cardText).not.toContain('输出 Tokens') // zero → hidden
     expect(cardText).not.toContain('Credit') // zero → hidden
+    expect(cardText).not.toContain('AI 工作时长') // zero → hidden
+  })
+
+  it('shows the AI work-time card in the accumulated-span format', async () => {
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, durationMs: 5_400_000, messageCnt: 12 },
+      rows: [{ key: { model: 'glm' }, input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, durationMs: 5_400_000, messageCnt: 12 }],
+    }))
+    const wrapper = await mountPanel()
+    const cards = wrapper.findAll('.stats-total')
+    const workTime = cards.find(c => (c.find('.stats-total-label')?.text() ?? '').includes('AI 工作时长'))
+    expect(workTime, 'work time must have its own overview card').toBeTruthy()
+    const shown = workTime!.find('.stats-total-value').text()
+    // 5.4M ms = 1.5 hours, rendered by the span formatter (unit word + one
+    // decimal). Asserting equality with the formatter pins the wiring; the
+    // scale itself is pinned in format.test.ts with an explicit locale.
+    expect(shown).toBe(formatSpanDuration(5_400_000))
+    // Not the compact single-turn form ("1.5h") and not a token compaction
+    // ("5.4M") — either would mean the card is using the wrong formatter.
+    expect(shown).not.toBe('1.5h')
+    expect(shown).not.toBe('5.4M')
+  })
+
+  it('rolls a multi-day work time up into days', async () => {
+    const month = 30 * 24 * 3600 * 1000
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, durationMs: month, messageCnt: 400 },
+      rows: [{ key: { model: 'glm' }, input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, durationMs: month, messageCnt: 400 }],
+    }))
+    const wrapper = await mountPanel()
+    const card = wrapper.findAll('.stats-total')
+      .find(c => (c.find('.stats-total-label')?.text() ?? '').includes('AI 工作时长'))
+    const shown = card!.find('.stats-total-value').text()
+    expect(shown).toBe(formatSpanDuration(month))
+    // 720 hours must never render as "720.0 小时" — a day tier is the whole
+    // point of the span formatter.
+    expect(shown).not.toContain('720')
+  })
+
+  it('treats a range whose only data is work time as non-empty', async () => {
+    // A cancelled turn can record runtime with no tokens at all; showing "no
+    // data" while the work-time card has a number would contradict itself.
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, durationMs: 90_000, messageCnt: 1 },
+      rows: [{ key: { model: 'glm' }, input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, durationMs: 90_000, messageCnt: 1 }],
+    }))
+    const wrapper = await mountPanel()
+    expect(wrapper.text()).not.toContain('所选时间段内暂无用量数据')
+    expect(wrapper.text()).toContain('AI 工作时长')
   })
 
   it('gives every overview card its own icon', async () => {

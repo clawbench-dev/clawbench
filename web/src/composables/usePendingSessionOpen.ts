@@ -25,6 +25,59 @@
 //      works. Hence the reported "click once to flicker, click again to switch".
 import { watch, type Ref } from 'vue'
 
+/**
+ * The session a cross-project jump is about to open, published BEFORE the
+ * keyed subtree rebuild.
+ *
+ * Why a module-level value instead of just calling switchSession afterwards:
+ * `hotSwitchProject` clears identity, rebuilds the whole `.app-container`
+ * subtree, and the remounted chat panel immediately runs its first
+ * `loadHistory()`. With no session id that call takes the RECOVERY branch and
+ * asks the backend for "this project's most recent session" — so the user sees
+ * a DIFFERENT conversation's messages for one frame, before Phase 7 finally
+ * switches to the one they clicked. That intermediate render is the reported
+ * cross-project flicker (a same-project switch never hits it: identity is
+ * already the target, so there is exactly one load).
+ *
+ * Publishing the target here lets that first load fetch the clicked session
+ * directly, so the whole jump costs one request and never renders anything
+ * else. `takePendingOpenSession` is a read-and-clear: the value is consumed by
+ * the first `loadHistory` that needs a recovery target, and `hotSwitchProject`
+ * clears it on every exit path so it cannot leak into a later, unrelated load.
+ */
+let pendingOpenSessionId: string | null = null
+
+/** Publish the session an upcoming cross-project jump will open. */
+export function armPendingOpenSession(sessionId: string | null | undefined): void {
+  pendingOpenSessionId = sessionId || null
+}
+
+/**
+ * Read and clear the armed session. Consume-once on purpose: it is a
+ * replacement for the "which session should I recover?" answer, not a standing
+ * preference — a later load with an empty identity (a genuinely new project)
+ * must fall back to the normal recent/latest lookup.
+ */
+export function takePendingOpenSession(): string | null {
+  const id = pendingOpenSessionId
+  pendingOpenSessionId = null
+  return id
+}
+
+/**
+ * Drop the armed session. `sessionId` scopes the clear so a slow, superseded
+ * switch cannot disarm the one that superseded it.
+ */
+export function clearPendingOpenSession(sessionId?: string | null): void {
+  if (sessionId && pendingOpenSessionId !== sessionId) return
+  pendingOpenSessionId = null
+}
+
+/** @internal Inspect the armed value without consuming it — for tests only. */
+export function peekPendingOpenSession(): string | null {
+  return pendingOpenSessionId
+}
+
 export interface OpenPendingSessionOptions {
   /** Live session identity — resolved by initSessionFromAPI() before this runs. */
   currentSessionId: Ref<string>
@@ -40,6 +93,20 @@ export interface OpenPendingSessionOptions {
   switchTab: (tab: string) => void
   /** Opens the session (App.vue passes sessionIdentity.switchSession). */
   switchSession: (sessionId: string, projectPath?: string) => void | Promise<void>
+  /**
+   * What to do when identity ALREADY equals the target — i.e. the jump's first
+   * history load fetched it (the armed target) and the conversation is on
+   * screen.
+   *
+   * Calling `switchSession` in that case is pure damage: it starts with
+   * `dispatch({type:'clear'})` and refetches the same window, so the user sees
+   * the messages they just got wiped and a skeleton put back — the second half
+   * of the cross-project flicker. Skipping it must still reproduce the two
+   * side effects `switchSession` owns: marking the session read (the whole
+   * point of opening a row from another project) and refreshing the list so the
+   * badge clears in the right order.
+   */
+  markReadAndRefresh?: () => void | Promise<void>
   /**
    * Relevance guard, consulted before opening and again on every identity
    * change while waiting. Callers pass "am I still on the project this session
@@ -64,7 +131,7 @@ export interface OpenPendingSessionOptions {
  * no-op when identity was already resolved.
  */
 export function openPendingSessionWhenReady(opts: OpenPendingSessionOptions): () => void {
-  const { currentSessionId, sessionId, projectPath, switchTab, switchSession, isStillRelevant } = opts
+  const { currentSessionId, sessionId, projectPath, switchTab, switchSession, isStillRelevant, markReadAndRefresh } = opts
 
   const relevant = () => (isStillRelevant ? isStillRelevant() : true)
 
@@ -73,11 +140,26 @@ export function openPendingSessionWhenReady(opts: OpenPendingSessionOptions): ()
     switchSession(sessionId, projectPath)
   }
 
+  /**
+   * The target is already loaded. Do the read-marking work switchSession would
+   * have done, but do NOT clear/reload — that would throw away the conversation
+   * the user is now looking at.
+   */
+  const adopt = () => {
+    switchTab('chat')
+    if (markReadAndRefresh) void markReadAndRefresh()
+    else open()
+  }
+
   // Identity is normally already resolved: Phase 6 awaits initSessionFromAPI()
-  // before reaching Phase 7. Open directly — no watcher, so no way for a later
-  // identity change to re-open this session or to fight the user's next click.
+  // before reaching Phase 7. If it resolved to the TARGET (the armed cross-
+  // project session), adopt it; if it resolved to some other session, open the
+  // target. Either way no watcher is left behind, so a later identity change
+  // can neither re-open this session nor fight the user's next click.
   if (currentSessionId.value) {
-    if (relevant()) open()
+    if (!relevant()) return () => {}
+    if (currentSessionId.value === sessionId) adopt()
+    else open()
     return () => {}
   }
 
@@ -97,7 +179,10 @@ export function openPendingSessionWhenReady(opts: OpenPendingSessionOptions): ()
     if (!id) return
     done = true
     stop()
-    open()
+    // The load that finally resolved identity may itself have loaded the target
+    // (the armed cross-project session) — same rule as the resolved branch.
+    if (id === sessionId) adopt()
+    else open()
   })
   return () => {
     done = true

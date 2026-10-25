@@ -22,6 +22,8 @@ import { forceCleanupStreamingState, type ChatMessage, type ChatMessageAction } 
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
 import { syncFromHistory, clearQueue, beginQueueSnapshot } from '@/composables/useMessageQueue.ts'
 import { hasChatScrollPosition, shouldRestoreChatScroll } from '@/utils/chatScrollMemory'
+import { markSessionRead as markSessionReadRequest } from '@/utils/sessionRead'
+import { takePendingOpenSession } from '@/composables/usePendingSessionOpen'
 
 // Module-level one-time session list load (replaces continuous polling)
 // Accessible from App.vue without instantiating useChatSession
@@ -672,7 +674,16 @@ export function useChatSession(options: UseChatSessionOptions) {
         // localStorage). If that session no longer exists (404) or belongs to
         // another project (403), drop the stale entry and fall back to the
         // default recovery (GetLatestSessionID by updated_at).
-        const storedSessionId = getRecentSession()
+        //
+        // An armed cross-project target outranks both. This is the FIRST load
+        // after `hotSwitchProject` rebuilt the subtree, and identity is still
+        // empty by design (the panel must mount to show anything). Recovering
+        // "this project's most recent session" here would render an unrelated
+        // conversation for a frame before Phase 7 opens the one the user
+        // clicked — the cross-project flicker. Consume-once: a later load must
+        // not keep resurrecting that target.
+        const armedSessionId = takePendingOpenSession()
+        const storedSessionId = armedSessionId || getRecentSession()
         const recoverCtrl = new AbortController()
         const recoverTimer = setTimeout(() => recoverCtrl.abort(), 60000)
         // Load agents in parallel with recovery fetch
@@ -694,8 +705,10 @@ export function useChatSession(options: UseChatSessionOptions) {
         let recoverResp = await doRecover(true)
         if (storedSessionId && recoverResp && !recoverResp.ok) {
           // Stored session is gone (404) or no longer in this project (403) —
-          // remove it and retry with default logic.
-          clearRecentSession()
+          // remove it and retry with default logic. Only the REMEMBERED id is
+          // dropped: an armed cross-project target never entered the store, so
+          // clearing here would delete the project's still-valid memory.
+          if (!armedSessionId) clearRecentSession()
           recoverResp = await doRecover(false)
         }
         clearTimeout(recoverTimer)
@@ -934,27 +947,13 @@ export function useChatSession(options: UseChatSessionOptions) {
    * Loading history (GET /api/ai/chat) does NOT mark read anymore — that
    * happens only when the user actively opens the session (switchSession),
    * so automatic reloads never clear an unread badge the user hasn't seen.
+   *
+   * Delegates to the shared leaf helper because the cross-project jump in
+   * App.vue marks read WITHOUT going through switchSession (it lands on an
+   * already-loaded session), and the two must send the identical request.
    */
   async function markSessionRead(sessionId: string, projectPath?: string): Promise<void> {
-    if (!sessionId) return
-    const params = new URLSearchParams({ session_id: sessionId })
-    // When the session's owning project is known (e.g. from the WS
-    // session_update event's project_path), pass it explicitly so the backend
-    // can verify ownership even when the current cookie project differs —
-    // otherwise cross-project sessions opened via notification deep links or
-    // the completion popover never get marked read. Omit it when unknown:
-    // MarkChatRead falls back to the cookie project, which is correct for
-    // same-project switches.
-    if (projectPath) {
-      params.set('project_path', projectPath)
-    }
-    const resp = await fetch(`/api/ai/chat/read?${params.toString()}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    })
-    if (!resp.ok) {
-      appLog.w(TAG, `markSessionRead failed for ${sessionId.slice(0, 12)}: ${resp.status}`)
-    }
+    await markSessionReadRequest(sessionId, projectPath)
   }
 
   // Returning to the foreground: re-sync the current session.

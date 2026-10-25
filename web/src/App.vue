@@ -706,7 +706,8 @@ import {
   resolvePanelTab,
   saveProjectPanel,
 } from './composables/useProjectPanel.ts'
-import { openPendingSessionWhenReady } from './composables/usePendingSessionOpen.ts'
+import { openPendingSessionWhenReady, armPendingOpenSession, clearPendingOpenSession } from './composables/usePendingSessionOpen.ts'
+import { markSessionRead } from '@/utils/sessionRead.ts'
 import { setLayoutProjectRoot } from './utils/panelState'
 import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
@@ -848,6 +849,13 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   // currentSessionId. Once cleared, ChatMessageList's session watcher won't see
   // an oldSid and onBeforeUnmount sees an empty id — neither can save.
   chatPanelContentRef.value?.savePositionNow()
+  // Publish the cross-project target BEFORE the reset. The subtree is rebuilt
+  // in Phase 4 and the remounted chat panel's first loadHistory runs with an
+  // empty identity; without this it recovers "this project's most recent
+  // session" and renders THAT conversation for a frame before Phase 7 opens
+  // the one the user clicked (the cross-project flicker). Armed here so no
+  // reset or watcher can slip in between.
+  armPendingOpenSession(pendingSessionId)
   resetIdentity()
   resetAgents()
   resetChatSessionState()
@@ -885,7 +893,11 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   switchingProject.value = false
 
   // ── Phase 6: Background data loading — all independent, fully parallel, non-blocking ──
-  await sessionIdentity.initSessionFromAPI()
+  // Pass the cross-project target so identity resolves to the session the user
+  // actually clicked. Without it, initSessionFromAPI() resolves the project's
+  // remembered/most-recent session and Phase 7 then switches away from it —
+  // two different conversations in one jump (the cross-project flicker).
+  await sessionIdentity.initSessionFromAPI(pendingSessionId)
   // Restore the new project's session draft now that identity is resolved.
   // The project switch bypasses the session manager (which does this on a
   // session switch), so the restore has to happen here; without it the
@@ -956,6 +968,16 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
       projectPath: resolvedProjectPath,
       switchTab,
       switchSession: sessionIdentity.switchSession,
+      // Already on the target (Phase 6 resolved identity to the armed session
+      // and its history is on screen): switchSession would clear and refetch
+      // that very conversation — a visible flash for no new data. Reproduce
+      // only the side effects that matter: mark read (with project_path so the
+      // backend can prove ownership) and refresh the list so the badge clears
+      // in the same order switchSession uses.
+      markReadAndRefresh: () =>
+        markSessionRead(pendingSessionId, resolvedProjectPath).then(() => {
+          loadSessionsOnce()
+        }),
       // Only open while the user is still on the project this session belongs
       // to. Without this, a fallback watcher (armed when identity was not yet
       // resolved) would survive an unrelated later project switch and open this
@@ -968,6 +990,13 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
     // thrown error, or a rejected await. Idempotent, so the normal path's
     // earlier release is not double-counted.
     releasePanelSwitch()
+    // The armed target is single-use. Phase 7 consumes it on the happy path
+    // (the remounted panel's first loadHistory takes it), but an early return
+    // or a rejected await leaves it armed — where it would hijack the NEXT
+    // project's first load. Only a switch that ARMED something may clear: a
+    // plain project switch (no pending session) finishing late must not wipe
+    // the target an overlapping, newer switch just armed.
+    if (pendingSessionId) clearPendingOpenSession(pendingSessionId)
   }
 }
 

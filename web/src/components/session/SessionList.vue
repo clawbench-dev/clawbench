@@ -207,6 +207,7 @@
               v-for="session in group.sessions"
               :key="group.name + '/' + session.id"
               class="cross-session-row"
+              :data-session-id="session.id"
               :class="{ running: session.running }"
             >
               <span v-if="session.running" class="session-running-line" :class="{ 'is-blocked': rowStatus(session) === 'pending' }">

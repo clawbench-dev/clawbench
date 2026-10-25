@@ -1712,9 +1712,16 @@ func (e *SessionExecutor) drainAndPersistCancelledMetadata(eventCh <-chan ai.Str
 	e.mu.Lock()
 	meta := e.responseMetadata
 	msgID := e.cfg.StreamingMessageID
+	wallStart := e.wallStart
 	e.mu.Unlock()
 	if meta == nil || msgID <= 0 {
 		return
+	}
+	// buildResult never ran on this path, so nothing has stamped the runtime.
+	// Without it a cancelled turn — which can have run for minutes — records
+	// wall_ms = 0 and silently disappears from the runtime statistics.
+	if meta.WallMs == 0 && wallStart > 0 {
+		meta.WallMs = int(time.Now().UnixMilli() - wallStart)
 	}
 	if err := SaveMetadata(msgID, meta); err != nil {
 		slog.Warn("failed to save cancelled turn metadata",

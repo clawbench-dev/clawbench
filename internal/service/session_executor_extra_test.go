@@ -1431,6 +1431,87 @@ func TestDrainAndPersistCancelledMetadata_SavesUsage(t *testing.T) {
 	assert.Equal(t, 1540, total)
 }
 
+func TestDrainAndPersistCancelledMetadata_StampsWallClock(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	msgID, err := AddChatMessage("/test", "test", sid, "assistant", `{"blocks":[]}`, nil, true, "")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	executor := NewSessionExecutor(ctx, RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: msgID,
+	})
+	// The abandoned path never calls buildResult, so nothing else ever sets this.
+	// Simulate a turn that has been running for 90 seconds.
+	executor.wallStart = time.Now().Add(-90 * time.Second).UnixMilli()
+
+	ch := make(chan ai.StreamEvent, 2)
+	ch <- ai.StreamEvent{Type: "metadata", Meta: &ai.Metadata{
+		InputTokens: 100,
+		StopReason:  "cancelled",
+	}}
+	close(ch)
+
+	executor.drainAndPersistCancelledMetadata(ch)
+
+	var wallMs int64
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT wall_ms FROM chat_metadata WHERE message_id = ?", msgID,
+	).Scan(&wallMs))
+	// A cancelled turn still consumed real wall-clock time; recording 0 would
+	// drop it from the runtime statistics entirely.
+	assert.GreaterOrEqual(t, wallMs, int64(89_000), "cancelled turn must record its runtime")
+}
+
+// A runtime already stamped by buildResult must survive the drain: overwriting
+// it with "now - wallStart" would only add the post-finalize drain time.
+func TestDrainAndPersistCancelledMetadata_KeepsExistingWallClock(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	msgID, err := AddChatMessage("/test", "test", sid, "assistant", `{"blocks":[]}`, nil, true, "")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	executor := NewSessionExecutor(ctx, RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: msgID,
+	})
+	executor.wallStart = time.Now().Add(-5 * time.Minute).UnixMilli()
+	executor.responseMetadata = &ai.Metadata{WallMs: 1234}
+
+	ch := make(chan ai.StreamEvent, 1)
+	close(ch)
+
+	executor.drainAndPersistCancelledMetadata(ch)
+
+	var wallMs int64
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT wall_ms FROM chat_metadata WHERE message_id = ?", msgID,
+	).Scan(&wallMs))
+	assert.Equal(t, int64(1234), wallMs)
+}
+
 func TestDrainAndPersistCancelledMetadata_NoUsageWritesNothing(t *testing.T) {
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{
