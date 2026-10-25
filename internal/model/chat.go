@@ -310,6 +310,19 @@ type ChatSession struct {
 	PendingApproval bool       `json:"pendingApproval,omitempty"` // ACP permission request awaiting user response
 	LastReadAt      *time.Time `json:"-"`
 	ProjectPath     string     `json:"projectPath,omitempty"` // project this session belongs to (overview grouping)
+	// AgentName / AgentAvatar are the display identity of AgentID, resolved by
+	// the list/overview endpoints from the global agent registry and never
+	// stored on the session row. They exist because the client resolves an
+	// agent by looking it up in GET /api/agents, which is scoped to the
+	// caller's CURRENT project: a session in another project may run an agent
+	// scoped to that project, so the lookup misses and the row would degrade
+	// to a raw agent id and an initial-letter icon. AgentName is filled for
+	// every row the registry can resolve (it is a few bytes); AgentAvatar only
+	// for rows the caller could not resolve itself (it is a multi-KB SVG).
+	// Both are omitted when empty, so a row the client can resolve keeps its
+	// payload unchanged.
+	AgentName   string `json:"agentName,omitempty"`
+	AgentAvatar string `json:"agentAvatar,omitempty"`
 	// Tags is populated by the session list / overview endpoints (batch-loaded,
 	// not stored on the session row itself). Always omitted when empty so the
 	// payload for untagged sessions is unchanged.

@@ -111,7 +111,7 @@
                       <Users :size="12" />
                       <GroupMemberStack :members="row.session.groupMembers || []" />
                     </span>
-                    <span v-else class="session-item-agent"><AgentIcon :backend="getAgentBackend(row.session.agentId)" :name="getAgentName(row.session.agentId)" :avatar="getAgentAvatar(row.session.agentId)" size="sm" /> {{ getAgentName(row.session.agentId) }}</span>
+                    <span v-else class="session-item-agent"><AgentIcon :backend="sessionAgentBackend(row.session)" :name="sessionAgentName(row.session)" :avatar="sessionAgentAvatar(row.session)" size="sm" /> {{ sessionAgentName(row.session) }}</span>
                     <!-- Group mode: an independent tag with its own glyph, so it
                          reads as metadata about the group rather than a suffix
                          of the member stack. Omitted when the mode is unknowable
@@ -225,7 +225,7 @@
                       <Users :size="12" />
                       <GroupMemberStack :members="session.groupMembers || []" />
                     </span>
-                    <span v-else class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :avatar="getAgentAvatar(session.agentId)" size="sm" /> {{ getAgentName(session.agentId) }}</span>
+                    <span v-else class="session-item-agent"><AgentIcon :backend="sessionAgentBackend(session)" :name="sessionAgentName(session)" :avatar="sessionAgentAvatar(session)" size="sm" /> {{ sessionAgentName(session) }}</span>
                     <!-- Group mode tag: same independent tag as the project pane. -->
                     <span v-if="session.sessionType === 'group' && groupModeLabel(session)" class="session-item-group-mode">
                       <component :is="groupModeIcon(session)" :size="10" />
@@ -475,6 +475,37 @@ function statusLabel(status) {
   if (status === 'pending') return t('session.statusPending')
   if (status === 'unread') return t('session.statusUnread')
   return ''
+}
+
+/**
+ * Agent display identity for a session row's chip.
+ *
+ * The local agent list is scoped to the CURRENT project, so a row from another
+ * project may name an agent that is scoped to ITS project and absent from the
+ * list — `getAgentName` then falls back to the raw id and `getAgentBackend`
+ * returns '', which also degrades the icon to an initial letter. The server
+ * therefore ships the identity on the session row itself.
+ *
+ * Order differs per field on purpose: the name prefers the server (it resolves
+ * against the full registry, which the local list cannot), while the avatar
+ * prefers the local agent (the server only ships an avatar for agents the
+ * caller cannot resolve, so both orders agree — this one avoids shipping the
+ * SVG twice when they overlap).
+ *
+ * `backend` prefers the agent too, so every row that resolves today renders
+ * byte-identically; the row's own column is only the fallback for an agent the
+ * local list does not know.
+ */
+function sessionAgentName(session) {
+  return session?.agentName || getAgentName(session?.agentId) || ''
+}
+
+function sessionAgentBackend(session) {
+  return getAgentBackend(session?.agentId) || session?.backend || ''
+}
+
+function sessionAgentAvatar(session) {
+  return getAgentAvatar(session?.agentId) || session?.agentAvatar || ''
 }
 
 /**

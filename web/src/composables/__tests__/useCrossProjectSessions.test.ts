@@ -110,6 +110,31 @@ describe('useCrossProjectSessions', () => {
     expect(s.model).toBe('gpt-5')
   })
 
+  it('maps the server-supplied agent identity for rows whose agent the client cannot resolve', async () => {
+    // A session in another project may run an agent scoped to THAT project, so
+    // the local /api/agents list (scoped to the current project) does not
+    // contain it. The row carries the identity instead of rendering a raw id.
+    mockFetch.mockResolvedValue(overviewPayload([
+      { name: '/proj/b', sessions: [session('b1', '2026-01-01', {
+        backend: 'codebuddy', agentId: 'scoped-b', agentName: '视觉制作', agentAvatar: '<svg>x</svg>',
+      })] },
+    ]))
+    await refresh()
+    const s = useCrossProjectSessions().groups.value[0].sessions[0]
+    expect(s.agentName).toBe('视觉制作')
+    expect(s.agentAvatar).toBe('<svg>x</svg>')
+  })
+
+  it('leaves the agent identity undefined when the server omits it', async () => {
+    mockFetch.mockResolvedValue(overviewPayload([
+      { name: '/proj/b', sessions: [session('b1', '2026-01-01', { backend: 'codebuddy', agentId: 'cb' })] },
+    ]))
+    await refresh()
+    const s = useCrossProjectSessions().groups.value[0].sessions[0]
+    expect(s.agentName).toBeUndefined()
+    expect(s.agentAvatar).toBeUndefined()
+  })
+
   it('maps sessionType and the group member preview for group rows', async () => {
     const members = [
       { id: 'm1', agentId: 'cb', name: 'Host', backend: 'codebuddy' },

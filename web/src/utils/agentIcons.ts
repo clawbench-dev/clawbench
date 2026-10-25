@@ -89,6 +89,22 @@ const agentSvgMap: Record<string, AgentSvgData> = {
         svg: '<path d="M19.44 10.153l-2.936 11.586a.215.215 0 00.214.261h5.87a.215.215 0 00.214-.261l-2.95-11.586a.214.214 0 00-.412 0zM3.28 12.778l-2.275 8.96A.214.214 0 001.22 22h4.532a.212.212 0 00.214-.165.214.214 0 000-.097l-2.276-8.96a.214.214 0 00-.41 0z" fill="#00E5E5"/><path d="M7.29 5.359L3.148 21.738a.215.215 0 00.203.261h8.29a.214.214 0 00.215-.261L7.7 5.358a.214.214 0 00-.41 0z" fill="#006EFF"/><path d="M14.44.15a.214.214 0 00-.41 0L8.366 21.739a.214.214 0 00.214.261H19.9a.216.216 0 00.171-.078.214.214 0 00.044-.183L14.439.15z" fill="#006EFF"/><path d="M10.278 7.741L6.685 21.736a.214.214 0 00.214-.264h7.17a.215.215 0 00.214-.264L10.688 7.741a.214.214 0 00-.41 0z" fill="#00E5E5"/>',
         viewBox: '0 0 24 24',
     },
+
+    // User-defined ACP agents (issue #557) all share the `custom-acp` backend
+    // id, so no single brand mark can stand for them — and without an entry
+    // here every one of them fell back to an initial letter, which reads as a
+    // broken/missing icon rather than "your own agent". This is a generic
+    // terminal prompt (`>_`): what these agents actually are is a spawn command
+    // speaking ACP over stdio. Deliberately monochrome via currentColor so it
+    // adapts to all 36 themes instead of inventing a brand colour for a
+    // concept that has none. Each agent's own name still rides alongside the
+    // icon in every surface that shows it, and a user-configured avatar (if
+    // any) outranks this in AgentIcon.
+    'custom-acp': {
+        svg: '<path d="M3.6 4.8h16.8a1.2 1.2 0 011.2 1.2v12a1.2 1.2 0 01-1.2 1.2H3.6a1.2 1.2 0 01-1.2-1.2V6a1.2 1.2 0 011.2-1.2zm0 1.8a.3.3 0 00-.3.3v9.4a.3.3 0 00.3.3h16.8a.3.3 0 00.3-.3V6.9a.3.3 0 00-.3-.3H3.6z" fill="currentColor"/><path d="M6.34 8.86a.9.9 0 011.27.06l2.2 2.42a.9.9 0 010 1.2l-2.2 2.42a.9.9 0 11-1.33-1.2l1.79-1.97-1.79-1.97a.9.9 0 01.06-1.27z" fill="currentColor"/><rect x="11.6" y="13.3" width="5" height="1.8" rx=".9" fill="currentColor"/>',
+        viewBox: '0 0 24 24',
+        monoCssClass: 'mono-custom-acp',
+    },
 }
 
 /**

@@ -44,6 +44,8 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 		Title           string                     `json:"title"`
 		Backend         string                     `json:"backend"`
 		AgentID         string                     `json:"agentId"`
+		AgentName       string                     `json:"agentName,omitempty"`
+		AgentAvatar     string                     `json:"agentAvatar,omitempty"`
 		Model           string                     `json:"model"`
 		SessionType     string                     `json:"sessionType,omitempty"`
 		Running         bool                       `json:"running"`
@@ -59,6 +61,12 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 	groups := []*projectGroup{}
 	groupByName := map[string]*projectGroup{}
 	groupIDs := []string{}
+	// The caller's project decides which agents it can resolve itself: this
+	// endpoint spans projects, so a row's agent may be scoped to the session's
+	// project and invisible in GET /api/agents here (see
+	// agentDisplayIdentity). Scoping is judged against the CALLER, not the
+	// session's project, because that is what the client's lookup sees.
+	callerProject := middleware.GetProjectFromCookie(r)
 	total := 0
 	for _, s := range sessions {
 		running := runningSet[s.ID]
@@ -75,11 +83,17 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 		if service.IsGroupSessionType(s.SessionType) {
 			groupIDs = append(groupIDs, s.ID)
 		}
+		agentName, agentAvatar := "", ""
+		if s.AgentID != "" {
+			agentName, agentAvatar = agentDisplayIdentity(s.AgentID, callerProject)
+		}
 		g.Sessions = append(g.Sessions, overviewSession{
 			ID:              s.ID,
 			Title:           s.Title,
 			Backend:         s.Backend,
 			AgentID:         s.AgentID,
+			AgentName:       agentName,
+			AgentAvatar:     agentAvatar,
 			Model:           s.Model,
 			SessionType:     s.SessionType,
 			Running:         running,
@@ -184,6 +198,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		}
 		attachSessionTags(sessions)
 		attachGroupMembers(sessions)
+		attachAgentIdentity(sessions, projectPath)
 		totalCount, _ := service.GetSessionCount(projectPath)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"sessions":   sessions,
@@ -1197,6 +1212,48 @@ func attachGroupMembers(sessions []model.ChatSession) {
 		if members := membersByGroup[sessions[i].ID]; len(members) > 0 {
 			sessions[i].GroupMembers = members
 		}
+	}
+}
+
+// agentDisplayIdentity resolves an agent id to what a session row needs to
+// render its agent chip: the display name and (optionally) the custom avatar.
+//
+// The client normally resolves both itself from GET /api/agents, but that list
+// is scoped to the caller's CURRENT project (see visibleAgentsInProject), while
+// session lists are not — the cross-project overview deliberately spans every
+// project. A session in another project may therefore run an agent scoped to
+// THAT project, and the client's lookup misses: the row degraded to the raw
+// agent id with an initial-letter icon (and no brand icon, since the backend id
+// is unknown to it too).
+//
+// So the name is always supplied (a few bytes, and it also covers the
+// deleted-agent case), while the avatar — a multi-KB SVG — is supplied ONLY
+// when the caller cannot resolve the agent itself, i.e. when it is not visible
+// in projectPath. That keeps the payload of a normal row unchanged.
+//
+// An unknown id returns empty strings, which leaves the client's existing
+// fallbacks in place rather than inventing a name.
+func agentDisplayIdentity(agentID, projectPath string) (name, avatar string) {
+	agent := model.GetAgent(agentID)
+	if agent == nil {
+		return "", ""
+	}
+	name = agent.Name
+	if !agentVisibleInProject(agent, projectPath) {
+		avatar = agent.Avatar
+	}
+	return name, avatar
+}
+
+// attachAgentIdentity fills AgentName (and, for rows the caller could not
+// resolve itself, AgentAvatar) on a page of sessions. See
+// agentDisplayIdentity for why the client cannot do this alone.
+func attachAgentIdentity(sessions []model.ChatSession, projectPath string) {
+	for i := range sessions {
+		if sessions[i].AgentID == "" {
+			continue
+		}
+		sessions[i].AgentName, sessions[i].AgentAvatar = agentDisplayIdentity(sessions[i].AgentID, projectPath)
 	}
 }
 

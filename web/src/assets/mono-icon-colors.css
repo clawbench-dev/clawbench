@@ -48,5 +48,10 @@
 .mono-commandcode { color: #1A1A1A; }
 [data-theme-base="dark"] .mono-commandcode { color: #e6edf3; }
 
+/* ---- Custom ACP agents: generic mark, no brand colour to borrow ----
+   Tracks --text-secondary so it reads as UI chrome rather than a vendor logo,
+   and stays legible on all 36 themes without a hard-coded pair per theme. */
+.mono-custom-acp { color: var(--text-secondary); }
+
 /* ---- Kimi: brand blue — readable on both themes, no backdrop needed ---- */
 .mono-kimi { color: #1783FF; }
