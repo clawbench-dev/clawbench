@@ -211,6 +211,60 @@ describe('project switch does not leak staged input across projects', () => {
     // reappears in the new project's input box.
     expect(body, 'hotSwitchProject never clears the staged input').toContain('leaveInputDraft(leavingSessionId)')
   })
+})
+
+describe('cross-project jump loads the clicked session exactly once', () => {
+  const body = functionBody(code, 'hotSwitchProject')
+
+  it('arms the pending target before identity is reset', () => {
+    // The remounted chat panel's first loadHistory runs with an empty identity;
+    // without the armed target it recovers the project's most-recent session
+    // and renders THAT conversation for a frame before Phase 7 opens the one
+    // the user clicked — the reported cross-project flicker. The arm must
+    // precede resetIdentity(), the point where identity is cleared.
+    const armAt = body.indexOf('armPendingOpenSession(pendingSessionId)')
+    const resetAt = body.indexOf('resetIdentity()')
+    expect(armAt, 'hotSwitchProject never arms the pending target').toBeGreaterThan(-1)
+    expect(resetAt).toBeGreaterThan(-1)
+    expect(armAt).toBeLessThan(resetAt)
+  })
+
+  it('disarms the pending target on every exit path', () => {
+    // Armed state is single-use. An early return (project gone) or a rejected
+    // await leaves it armed, and it would then hijack the NEXT project's first
+    // load — opening a session that belongs to a different project.
+    const finallyAt = body.lastIndexOf('finally {')
+    expect(body.slice(finallyAt), 'finally does not disarm the pending target')
+      .toContain('clearPendingOpenSession(')
+    // Only a switch that armed something may clear: a plain project switch
+    // (no pending session) completing late must not wipe the target an
+    // overlapping newer switch just armed.
+    expect(body.slice(finallyAt), 'clear is unconditional — a late plain switch would disarm the newer one')
+      .toContain('if (pendingSessionId) clearPendingOpenSession(pendingSessionId)')
+  })
+
+  it('passes the target to initSessionFromAPI', () => {
+    // Identity is what Phase 7 compares against; resolving it to the wrong
+    // session reintroduces the second half of the flicker (a switch away from
+    // what is already on screen).
+    expect(body, 'initSessionFromAPI must receive the pending session id')
+      .toContain('await sessionIdentity.initSessionFromAPI(pendingSessionId)')
+  })
+
+  it('adopts an already-loaded target instead of re-switching', () => {
+    // Phase 6 resolves identity TO the target, and the first loadHistory has
+    // already fetched its messages. switchSession would clear that array and
+    // refetch it — the visible flash. Phase 7 must supply the adopt hook so the
+    // read-marking side effects still happen.
+    const phase7At = body.indexOf('openPendingSessionWhenReady({')
+    expect(phase7At, 'Phase 7 no longer opens the pending session').toBeGreaterThan(-1)
+    const phase7 = body.slice(phase7At, body.indexOf('})', phase7At))
+    expect(phase7, 'no adoption hook — an already-loaded target would be cleared and refetched')
+      .toContain('markReadAndRefresh')
+    // The hook must forward the owning project so the backend can prove
+    // ownership; without it the cross-project unread badge stays stuck.
+    expect(phase7, 'mark-as-read must carry project_path').toContain('resolvedProjectPath')
+  })
 
   it('restores the current session draft after identity resolves, without clobbering fresh input', () => {
     // The switch bypasses the session manager (which restores on a session
@@ -219,9 +273,13 @@ describe('project switch does not leak staged input across projects', () => {
     // no-op, so asserting only the call name would let that regression pass.
     // onlyIfLiveEmpty matters too: the new subtree is already interactive when
     // this runs, so input staged during the round-trip must not be discarded.
-    const initAt = body.indexOf('await sessionIdentity.initSessionFromAPI()')
+    // The call carries the cross-project target: without it identity resolves
+    // to the project's remembered session and Phase 7 then switches away from
+    // it (two conversations in one jump). Assert the ARGUMENT too, not just the
+    // call, so dropping it fails here.
+    const initAt = body.indexOf('await sessionIdentity.initSessionFromAPI(pendingSessionId)')
     const restoreAt = body.indexOf('restoreAttachments(sessionIdentity.currentSessionId.value')
-    expect(initAt).toBeGreaterThan(-1)
+    expect(initAt, 'initSessionFromAPI must be awaited with the pending session id').toBeGreaterThan(-1)
     expect(restoreAt, 'staged input is never restored after the switch').toBeGreaterThan(-1)
     expect(initAt).toBeLessThan(restoreAt)
     expect(body.slice(restoreAt), 'restore must not clobber input staged meanwhile')
