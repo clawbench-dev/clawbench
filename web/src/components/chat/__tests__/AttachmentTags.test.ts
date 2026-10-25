@@ -2,9 +2,14 @@ import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AttachmentTags from '../AttachmentTags.vue'
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (key: string) => key }),
-}))
+// Pass the real module through and override only `useI18n`: the component now
+// reaches `useFileUpload` (the shared batch-terminate implementation), whose
+// import graph includes `@/i18n` — a mock that exported nothing but `useI18n`
+// made that transitive import fail with "No createI18n export".
+vi.mock('vue-i18n', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
+})
 
 vi.mock('@/utils/fileIcon', () => ({
   buildPathThumbUrl: (path: string) => `http://localhost/thumb/${path}`,
@@ -159,5 +164,94 @@ describe('AttachmentTags', () => {
 
     expect(wrapper.emitted('remove-pending')).toBeTruthy()
     expect(wrapper.emitted('remove-pending')![0]).toEqual([0])
+  })
+
+  // ── Whole-batch terminate ──
+  //
+  // The drawer's terminate button is unreachable during an upload: picking
+  // files closes the drawer, so this strip is the only thing on screen. Its
+  // per-card "×" aborts ONE file and the sequential loop continues, so without
+  // this control there was no way to stop the batch.
+  it('renders no batch-terminate control when nothing is uploading', () => {
+    const wrapper = mount(AttachmentTags, {
+      props: {
+        files: [{ path: 'src/main.go' }],
+        pendingFiles: [{
+          path: 'src/done.go', previewUrl: null, isImage: false,
+          uploading: false, progress: 100, size: 10,
+        }],
+      },
+    })
+    expect(wrapper.find('.chat-attachment-terminate').exists()).toBe(false)
+  })
+
+  it('renders the batch-terminate control while a file is uploading', () => {
+    const wrapper = mount(AttachmentTags, {
+      props: {
+        files: [],
+        pendingFiles: [{
+          path: '', previewUrl: null, isImage: false,
+          uploading: true, progress: 40, size: 10,
+        }],
+      },
+    })
+    const btn = wrapper.find('.chat-attachment-terminate')
+    expect(btn.exists()).toBe(true)
+    // The i18n mock returns the key, so this pins the reuse of the drawer's
+    // label rather than a second wording for the same action.
+    expect(btn.attributes('title')).toBe('chat.attach.terminateUpload')
+    expect(btn.attributes('aria-label')).toBe('chat.attach.terminateUpload')
+  })
+
+  it('cancels the WHOLE batch on click, not just one file', async () => {
+    const { useFileUpload } = await import('@/composables/useFileUpload')
+    const upload = useFileUpload()
+    upload.clearPendingFiles()
+    upload.attachedFiles.value.splice(0)
+
+    const wrapper = mount(AttachmentTags, {
+      props: {
+        files: [],
+        pendingFiles: [{
+          path: '', previewUrl: null, isImage: false,
+          uploading: true, progress: 40, size: 10,
+        }],
+      },
+    })
+
+    await wrapper.find('.chat-attachment-terminate').trigger('click')
+
+    // The batch flag stops the sequential loop in useFileUpload — the per-card
+    // "×" (remove-pending) never sets it, which is exactly why one file's "×"
+    // lets the rest of the batch continue.
+    expect(upload.chatUploadCancelled.value).toBe(true)
+    // Every in-flight row is dropped here rather than left at its last
+    // percentage (abort() alone never touches pendingFiles).
+    expect(upload.pendingFiles.value.filter(f => f.uploading)).toHaveLength(0)
+    // Distinct from the per-card "×", which only emits remove-pending.
+    expect(wrapper.emitted('remove-pending')).toBeFalsy()
+  })
+
+  it('does NOT set the batch flag when only one pending card is removed', async () => {
+    // Contrast that pins the difference between the two controls: the "×" is
+    // a per-file abort, so the rest of the batch keeps uploading.
+    const { useFileUpload } = await import('@/composables/useFileUpload')
+    const upload = useFileUpload()
+    upload.clearPendingFiles()
+    upload.chatUploadCancelled.value = false
+
+    const wrapper = mount(AttachmentTags, {
+      props: {
+        files: [],
+        pendingFiles: [{
+          path: '', previewUrl: null, isImage: false,
+          uploading: true, progress: 40, size: 10,
+        }],
+      },
+    })
+
+    await wrapper.find('.attachment-pending .attachment-close-btn').trigger('click')
+
+    expect(upload.chatUploadCancelled.value).toBe(false)
   })
 })

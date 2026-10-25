@@ -55,6 +55,12 @@
             </span>
           </div>
           <span class="group-welcome-hint">{{ groupModeDesc }}</span>
+          <!-- A host group may legitimately have the host as its only member
+               (the backend allows it; only FREE groups require two). It routes
+               exactly like a single chat, so the user who built one needs to
+               know why nobody else is answering — and that the fix is adding a
+               member, not that the group is broken. -->
+          <span v-if="isSoloGroup" class="group-welcome-solo">{{ t('chat.messageList.groupSoloMemberHint') }}</span>
           <ul class="group-welcome-tips">
             <li v-for="(tip, i) in groupModeTips" :key="i">{{ tip }}</li>
           </ul>
@@ -321,6 +327,21 @@ const groupStackMembers = computed(() =>
     .filter((m) => !m.left)
     .map((m) => ({ id: m.id, agentId: m.agentId, name: m.name, backend: m.backend, avatar: m.avatar, isHost: m.isHost })),
 )
+
+/**
+ * A group with exactly ONE active member.
+ *
+ * Only host mode can be created this way (free mode requires two members
+ * server-side), and it behaves like a single chat — nothing routes to a second
+ * participant because there is none. The empty state says so instead of
+ * leaving the user wondering why the group is silent.
+ *
+ * Derived from `groupStackMembers` rather than `props.groupMembers` so it uses
+ * the SAME "active member" definition the avatar stack above renders: a member
+ * who left is not a participant, and counting them would hide the hint from the
+ * group that most needs it.
+ */
+const isSoloGroup = computed(() => props.isGroupSession && groupStackMembers.value.length === 1)
 
 // Group empty-state copy, selected by mode. The two modes route completely
 // differently — a host decides who speaks, free mode relays via @-mentions — so
@@ -1802,6 +1823,15 @@ defineExpose({
 .group-welcome-hint {
   font-size: var(--font-size-md);
   color: var(--text-secondary);
+  line-height: var(--line-height-snug);
+}
+
+/* "You are the only member" — an advisory inside the group empty state, so it
+   reads as a quieter sibling of the mode hint above it rather than as an error
+   (the group is valid; it just has nobody else in it). */
+.group-welcome-solo {
+  font-size: var(--font-size-sm);
+  color: var(--color-orange, #d97706);
   line-height: var(--line-height-snug);
 }
 

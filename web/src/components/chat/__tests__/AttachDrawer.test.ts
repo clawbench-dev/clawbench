@@ -49,6 +49,23 @@ const mockToastShow = vi.fn()
 const mockHandleFileSelect = vi.fn()
 const mockCancelChatUpload = vi.fn()
 const sharedChatUploadCancelled = ref(false)
+/**
+ * Stand-in for useFileUpload.terminateChatUploadBatch.
+ *
+ * The real one is `cancelChatUpload()` + detaching the finished paths from the
+ * shared attachedFiles ref. Reproducing that shape here is what lets the
+ * existing assertions ("remove-attached emitted for the attached finished
+ * file only") keep describing the product behaviour now that the drawer
+ * delegates instead of doing it inline.
+ */
+const mockTerminateChatUploadBatch = vi.fn(() => {
+  const finished: string[] = mockCancelChatUpload() ?? []
+  for (const path of finished) {
+    const idx = sharedAttachedFiles.value.findIndex((f: any) => f.path === path)
+    if (idx >= 0) sharedAttachedFiles.value.splice(idx, 1)
+  }
+  return finished
+})
 
 // The real useToast starts an auto-dismiss timer and shares module state, which
 // would leak across tests. Only `show` is needed here.
@@ -92,6 +109,14 @@ vi.mock('@/composables/useFileUpload', () => ({
     handleFileDrop: vi.fn(),
     removeFile: vi.fn(),
     cancelChatUpload: mockCancelChatUpload,
+    // The drawer now delegates to the SHARED implementation (the input strip
+    // uses the same one), so the mock forwards to the same cancel spy and
+    // detaches through the shared attachedFiles ref.
+    terminateChatUploadBatch: mockTerminateChatUploadBatch,
+    // Same helper the real composable exports: the drawer reads the picked
+    // count through it rather than inline, so the ordering contract lives with
+    // the code that clears the input.
+    readPickedCount: (e: Event) => (e.target as HTMLInputElement)?.files?.length ?? 0,
     chatUploadCancelled: sharedChatUploadCancelled,
   }),
 }))
@@ -211,6 +236,7 @@ describe('AttachDrawer', () => {
     mockHandleFileSelect.mockResolvedValue([])
     mockCancelChatUpload.mockReset()
     mockCancelChatUpload.mockReturnValue([])
+    mockTerminateChatUploadBatch.mockClear()
     sharedChatUploadCancelled.value = false
     // Default to desktop: that is the majority case and the one whose layout
     // the original header button belongs to. Mobile tests opt in explicitly.
@@ -539,6 +565,38 @@ describe('AttachDrawer', () => {
     expect(wrapper.emitted('close')).toBeFalsy()
   })
 
+  it('onFileSelect reads the picked count BEFORE handleFileSelect clears the input', async () => {
+    // The ordering contract: handleFileSelect clears `input.value`, and a real
+    // <input type=file> empties its FileList when that happens. If the drawer
+    // read the count afterwards it would always see 0 and never close after a
+    // real pick. The read now goes through the composable's readPickedCount,
+    // but the CALL ORDER is still the drawer's responsibility — that is what
+    // this pins.
+    const seen: string[] = []
+    let fileCount = 1
+    const target = {
+      get files() {
+        return fileCount > 0 ? [{ name: 'a.png' }] : []
+      },
+      value: 'x',
+    }
+    mockHandleFileSelect.mockImplementation(async (e: Event) => {
+      seen.push(`handle:${(e.target as HTMLInputElement).files?.length ?? -1}`)
+      // Emulate the real clear, including the FileList emptying that comes with
+      // it — that is the whole hazard.
+      ;(e.target as HTMLInputElement).value = ''
+      fileCount = 0
+      return []
+    })
+    const wrapper = mountDrawer()
+
+    await getRawState(wrapper).onFileSelect({ target } as any)
+
+    // The count was observed as 1 (i.e. before the clear), so the drawer closed.
+    expect(seen[0]).toBe('handle:1')
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
   it('onFileSelect auto-selects each freshly uploaded file', async () => {
     mockHandleFileSelect.mockResolvedValue([
       '.clawbench/uploads/a.png',
@@ -605,7 +663,7 @@ describe('AttachDrawer', () => {
       expect(wrapper.find('.ad-upload-banner').exists()).toBe(true)
     })
 
-    it('clicking terminate cancels the batch and detaches the finished files', async () => {
+    it('clicking terminate runs the shared batch-terminate (cancel + detach)', async () => {
       sharedPendingFiles.value = [
         { path: '', previewUrl: null, isImage: false, uploading: true, progress: 30, size: 100 },
       ]
@@ -614,27 +672,30 @@ describe('AttachDrawer', () => {
         '.clawbench/uploads/done-a.png',
         '.clawbench/uploads/done-b.png',
       ])
-      const wrapper = mountDrawer({ attachedFiles: [{ path: '.clawbench/uploads/done-a.png' }] })
+      sharedAttachedFiles.value = [{ path: '.clawbench/uploads/done-a.png' }]
+      const wrapper = mountDrawer()
       await openUploadsTab(wrapper)
       await wrapper.find('.ad-terminate-btn').trigger('click')
 
-      expect(mockCancelChatUpload).toHaveBeenCalledTimes(1)
+      // ONE implementation backs both entry points (this banner and the input
+      // strip's pill) — the drawer must not carry its own copy of the
+      // "cancel, abort, detach the finished ones" sequence.
+      expect(mockTerminateChatUploadBatch).toHaveBeenCalledTimes(1)
       // Finished files are cleared — but only the ones actually attached.
-      expect(wrapper.emitted('remove-attached')).toEqual([
-        [{ path: '.clawbench/uploads/done-a.png' }],
-      ])
+      expect(sharedAttachedFiles.value).toEqual([])
     })
 
-    it('does not emit remove-attached for finished files that were not attached', async () => {
+    it('does not detach finished files that were never attached', async () => {
       sharedPendingFiles.value = [
         { path: '', previewUrl: null, isImage: false, uploading: true, progress: 30, size: 100 },
       ]
       mockCancelChatUpload.mockReturnValue(['.clawbench/uploads/never-attached.png'])
-      const wrapper = mountDrawer({ attachedFiles: [] })
+      const wrapper = mountDrawer()
       await openUploadsTab(wrapper)
       await wrapper.find('.ad-terminate-btn').trigger('click')
 
-      expect(wrapper.emitted('remove-attached')).toBeFalsy()
+      expect(mockTerminateChatUploadBatch).toHaveBeenCalledTimes(1)
+      expect(sharedAttachedFiles.value).toEqual([])
     })
   })
 

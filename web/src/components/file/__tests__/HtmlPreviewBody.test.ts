@@ -313,4 +313,155 @@ describe('HtmlPreviewBody — document height resets with the target', () => {
     const next = wrapper.find('iframe.html-preview-iframe').element as HTMLIFrameElement
     expect(next.style.height).toBe('')
   })
+
+  it('also resets on the srcdoc branch, where htmlSrc never changes', async () => {
+    // External (absolute-path) files take the srcdoc branch and keep htmlSrc at
+    // '' for their whole life. An htmlSrc-only watcher never fired there, so a
+    // 3000px external document followed by a 200px one kept the stale inline
+    // height until the new document loaded — the card visibly collapsed.
+    const wrapper = mountBody({ htmlSrc: '', htmlContent: '<html><body>tall</body></html>' })
+    const iframe = wrapper.find('iframe.html-preview-iframe').element as HTMLIFrameElement
+    const doc = iframe.contentDocument!
+    doc.open()
+    doc.write('<html><body><div>tall</div></body></html>')
+    doc.close()
+    Object.defineProperty(doc.body, 'scrollHeight', { configurable: true, value: 3000 })
+    iframe.dispatchEvent(new Event('load'))
+    await wrapper.vm.$nextTick()
+    expect(iframe.style.height).toBe('3000px')
+
+    // Same branch (htmlSrc stays ''), different file.
+    await wrapper.setProps({
+      filePath: 'elsewhere/short.html',
+      htmlContent: '<html><body>short</body></html>',
+    })
+
+    const next = wrapper.find('iframe.html-preview-iframe').element as HTMLIFrameElement
+    expect(next.style.height).toBe('')
+  })
+})
+
+/**
+ * `load` fires before the document's webfonts settle, so a layout that depends
+ * on one is measured at its fallback-font height. The frame then stays too
+ * short and the card shows a scrollbar over text that would have fit.
+ *
+ * The fix is ONE compensation pass on `document.fonts.ready`, not an observer:
+ * an observer on a `height: 100vh` document feeds back (measure → grow frame →
+ * grow viewport → measure again).
+ */
+describe('HtmlPreviewBody — webfont reflow compensation', () => {
+  /** Mount a loaded document with a controllable `fonts.ready`. */
+  async function loadWithFonts(wrapper: ReturnType<typeof mountBody>, height: number) {
+    const iframe = wrapper.find('iframe.html-preview-iframe').element as HTMLIFrameElement
+    const doc = iframe.contentDocument!
+    doc.open()
+    doc.write('<html><body><div>text</div></body></html>')
+    doc.close()
+    Object.defineProperty(doc.body, 'scrollHeight', { configurable: true, value: height })
+    let resolveFonts!: () => void
+    const ready = new Promise<void>((res) => { resolveFonts = res })
+    Object.defineProperty(doc, 'fonts', {
+      configurable: true,
+      value: { ready },
+    })
+    iframe.dispatchEvent(new Event('load'))
+    await wrapper.vm.$nextTick()
+    return { iframe, doc, resolveFonts: () => resolveFonts() }
+  }
+
+  it('grows the frame to the post-webfont height', async () => {
+    const wrapper = mountBody()
+    const { iframe, doc, resolveFonts } = await loadWithFonts(wrapper, 900)
+    expect(iframe.style.height).toBe('900px')
+
+    // The webfont arrives and the text reflows taller.
+    Object.defineProperty(doc.body, 'scrollHeight', { configurable: true, value: 1200 })
+    resolveFonts()
+    await Promise.resolve()
+    await Promise.resolve()
+    await wrapper.vm.$nextTick()
+
+    expect(iframe.style.height).toBe('1200px')
+  })
+
+  it('never shrinks the frame after the webfont settles', async () => {
+    // A reflow that shortens the document must not resize the frame under a
+    // reader mid-scroll; the earlier (slightly generous) height stays.
+    const wrapper = mountBody()
+    const { iframe, doc, resolveFonts } = await loadWithFonts(wrapper, 1200)
+
+    Object.defineProperty(doc.body, 'scrollHeight', { configurable: true, value: 800 })
+    resolveFonts()
+    await Promise.resolve()
+    await Promise.resolve()
+    await wrapper.vm.$nextTick()
+
+    expect(iframe.style.height).toBe('1200px')
+  })
+
+  it('caps how far a single reflow may grow the frame', async () => {
+    // The compensation runs once, but a `vh`-sized document's reported height
+    // is derived from the frame's own height, so an unbounded adoption would
+    // multiply the card. Real font reflows add tens of percent.
+    const wrapper = mountBody()
+    const { iframe, doc, resolveFonts } = await loadWithFonts(wrapper, 100)
+
+    Object.defineProperty(doc.body, 'scrollHeight', { configurable: true, value: 100_000 })
+    resolveFonts()
+    await Promise.resolve()
+    await Promise.resolve()
+    await wrapper.vm.$nextTick()
+
+    expect(iframe.style.height).toBe('100px')
+  })
+
+  it('ignores a fonts promise from a superseded document', async () => {
+    // The user switched files while the old document's font load was still in
+    // flight. The pass must re-read the CURRENT document: adopting the old
+    // one's height would resize the frame to a number that describes neither
+    // file. (The height is within the growth cap here, so only reading the
+    // current document can reject it.)
+    const wrapper = mountBody()
+    const { doc, resolveFonts } = await loadWithFonts(wrapper, 900)
+
+    await wrapper.setProps({ filePath: 'other.html', htmlSrc: '/api/fs/raw/public/other.html?t=2' })
+    const next = wrapper.find('iframe.html-preview-iframe').element as HTMLIFrameElement
+    expect(next.style.height).toBe('')
+
+    // The new document loads and measures itself.
+    const nextDoc = next.contentDocument!
+    nextDoc.open()
+    nextDoc.write('<html><body><div>new</div></body></html>')
+    nextDoc.close()
+    Object.defineProperty(nextDoc.body, 'scrollHeight', { configurable: true, value: 700 })
+    next.dispatchEvent(new Event('load'))
+    await wrapper.vm.$nextTick()
+    expect(next.style.height).toBe('700px')
+
+    // The OLD document's fonts now settle and it reports a taller height.
+    Object.defineProperty(doc.body, 'scrollHeight', { configurable: true, value: 2000 })
+    resolveFonts()
+    await Promise.resolve()
+    await Promise.resolve()
+    await wrapper.vm.$nextTick()
+
+    expect(next.style.height).toBe('700px')
+  })
+
+  it('does not throw when the document has no fonts API', async () => {
+    // jsdom has no `document.fonts`; neither do some older engines for a
+    // sub-document. The absence must leave the plain measurement in place.
+    const wrapper = mountBody()
+    const iframe = wrapper.find('iframe.html-preview-iframe').element as HTMLIFrameElement
+    const doc = iframe.contentDocument!
+    doc.open()
+    doc.write('<html><body><div>no fonts api</div></body></html>')
+    doc.close()
+    Object.defineProperty(doc.body, 'scrollHeight', { configurable: true, value: 640 })
+
+    expect(() => iframe.dispatchEvent(new Event('load'))).not.toThrow()
+    await wrapper.vm.$nextTick()
+    expect(iframe.style.height).toBe('640px')
+  })
 })

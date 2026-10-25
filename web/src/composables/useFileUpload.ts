@@ -119,7 +119,7 @@ export function useFileUpload() {
 
   // attachedFiles is managed globally via useChatContext so any tab
   // (file preview, chat input, quote-question) can read/write it.
-  const { attachedFiles, addAttachedFile, removeAttachedFile, snapshotAttachments, clearAll } = useChatContext()
+  const { attachedFiles, addAttachedFile, removeAttachedFile, removeAttachedFileByPath, snapshotAttachments, clearAll } = useChatContext()
 
   /**
    * Upload one file. Resolves with the server-assigned path on success, or
@@ -390,6 +390,24 @@ export function useFileUpload() {
     return uploadedPaths
   }
 
+  /**
+   * How many files the user actually picked in this change event.
+   *
+   * MUST be called BEFORE `handleFileSelect`/`handleFileSelectToDir` get the
+   * same event: those clear `input.value`, and clearing a file input also
+   * empties its `FileList` — so a later read always reports 0.
+   *
+   * Callers used to inline this read and rely on that ordering, with a comment
+   * as the only record of the contract. The moment the clearing moved (or an
+   * `await` was inserted before it) the caller would silently see 0 and, for
+   * the attachment drawer, never close after a real pick. The contract now
+   * lives with the code that performs the clearing, and the drawer's ordering
+   * is pinned by a behavioural test (see AttachDrawer.test.ts).
+   */
+  function readPickedCount(e: Event): number {
+    return (e.target as HTMLInputElement)?.files?.length ?? 0
+  }
+
   async function handleFileSelect(e: Event): Promise<string[]> {
     const files = Array.from((e.target as HTMLInputElement).files || [])
     // Reset input immediately to prevent Android WebView from re-firing
@@ -438,6 +456,9 @@ export function useFileUpload() {
   }
 
   async function handleFileSelectToDir(e: Event, dir: string) {
+    // Same read-before-clear ordering as handleFileSelect; the count is not
+    // returned here because no directory-upload caller needs it (the progress
+    // bar derives its total from the batch itself).
     const files = Array.from((e.target as HTMLInputElement).files || [])
     ;(e.target as HTMLInputElement).value = ''
     if (files.length === 0) return
@@ -670,6 +691,37 @@ export function useFileUpload() {
     await uploadExpandedFolder(result, dir)
   }
 
+  /**
+   * Terminate the whole in-flight chat upload batch and detach whatever it had
+   * already finished ("终止 = 全部清空").
+   *
+   * THE single implementation of that action, shared by both entry points:
+   *   - the drawer's batch banner (only reachable while the drawer is open), and
+   *   - the attachment strip on the input bar, which is where the user actually
+   *     is during an upload — the drawer closes as soon as files are picked.
+   *
+   * Keeping it in one place is what stops the two from drifting on the
+   * semantics that are easy to get subtly different: the queued files stop, the
+   * transfer in flight is aborted, AND the files that already completed are
+   * detached again, so the input returns to its pre-upload state.
+   *
+   * Returns the paths that were detached (also useful for tests/telemetry).
+   */
+  function terminateChatUploadBatch(): string[] {
+    const finished = cancelChatUpload()
+    const detached: string[] = []
+    for (const path of finished) {
+      // Only entries that are actually attached need removing; the upload may
+      // have completed without being auto-attached. Uses the same path-based
+      // removal the attachment cards use, so a ranged reference to the same
+      // file is not silently dropped along with the whole-file entry.
+      const before = attachedFiles.value.length
+      removeAttachedFileByPath(path)
+      if (attachedFiles.value.length < before) detached.push(path)
+    }
+    return detached
+  }
+
   function removeFile(index: number) {
     const f = pendingFiles.value[index]
     if (f) cancelPendingFile(f)
@@ -753,6 +805,7 @@ export function useFileUpload() {
     pendingFiles,
     attachedFiles,
     handleFileSelect,
+    readPickedCount,
     handleFileDrop,
     uploadAndAttach,
     removeFile,
@@ -762,8 +815,9 @@ export function useFileUpload() {
     cleanupPreviewUrls,
     clearPendingFiles,
     leaveInputDraft,
-    // Chat upload batch termination (AttachDrawer)
+    // Chat upload batch termination (AttachDrawer + the input bar's strip)
     cancelChatUpload,
+    terminateChatUploadBatch,
     chatUploadCancelled,
     // Directory upload (file manager)
     dirUploading,

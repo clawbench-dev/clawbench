@@ -399,6 +399,50 @@ describe('AgentSelectorDrawer', () => {
       expect(wrapper.find('.agent-multi-confirm').attributes('disabled')).toBeUndefined()
     })
 
+    it('warns that a one-member host group is no different from a single chat', async () => {
+      // The backend allows a host group with the host as its only member, so
+      // confirm must stay enabled — but the user should not discover the
+      // consequence only after creating it.
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'], hostId: 'agent-1' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      expect((wrapper.find('.agent-multi-confirm').element as HTMLButtonElement).disabled).toBe(false)
+      const hint = wrapper.find('.agent-solo-hint')
+      expect(hint.exists()).toBe(true)
+      expect(hint.text()).toBe('group.soloHostGroupHint')
+
+      // A second member removes the warning.
+      await wrapper.findAll('.agent-option')[1].trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.agent-solo-hint').exists()).toBe(false)
+    })
+
+    it('shows no solo warning in free mode or without a host', async () => {
+      // Free mode already requires two members (confirm is disabled at one), and
+      // without a host the group is free — neither is the "host alone" shape.
+      const free = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'], hostId: '' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+      expect(free.find('.agent-solo-hint').exists()).toBe(false)
+
+      const notGroup = mountDrawer({ multiple: true, modelValue: ['agent-1'] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+      expect(notGroup.find('.agent-solo-hint').exists()).toBe(false)
+    })
+
+    it('shows no solo warning when the single member is not the host', async () => {
+      // That shape is not creatable at all (confirm is disabled), so a warning
+      // about the resulting group would describe something that cannot happen.
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-2'], hostId: 'agent-1' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      expect((wrapper.find('.agent-multi-confirm').element as HTMLButtonElement).disabled).toBe(true)
+      expect(wrapper.find('.agent-solo-hint').exists()).toBe(false)
+    })
+
     it('enables confirm for a free group with two members and no host', async () => {
       const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'], hostId: '' })
       await flushPromises()
@@ -884,46 +928,61 @@ describe('AgentSelectorDrawer instance mode', () => {
     expect(wrapper.emitted('select')![0]).toEqual([['agent-1', 'agent-1', 'agent-1']])
   })
 
-  it('disables − at one instance and deselects via the row click', async () => {
+  it('keeps "−" enabled at one instance: it is the only way to deselect', async () => {
+    // A row click now always ADDS (see the tests below), so "−" has to work at
+    // 1 instance or the row could never be deselected.
     const wrapper = mountDrawer({ multiple: true, allowInstances: true, modelValue: [] })
     vi.advanceTimersByTime(500)
     await flushPromises()
 
     await wrapper.find('.agent-option').trigger('click')
     await flushPromises()
-    // At 1 the − is disabled (the stepper never goes below one instance).
-    expect((wrapper.find('.agent-stepper .agent-stepper-btn:first-child').element as HTMLButtonElement).disabled).toBe(true)
+    const minus = wrapper.find('.agent-stepper .agent-stepper-btn:first-child')
+    expect((minus.element as HTMLButtonElement).disabled).toBe(false)
+    // Its label states the outcome at 1: deselect, not "one fewer instance".
+    expect(minus.attributes('aria-label')).toBe('group.removeAgent')
 
-    const plus = wrapper.find('.agent-stepper .agent-stepper-btn:last-child')
-    await plus.trigger('click')
+    await minus.trigger('click')
     await flushPromises()
-    // At 2 the − is enabled and steps back to 1.
-    await wrapper.find('.agent-stepper .agent-stepper-btn:first-child').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.agent-stepper-count').text()).toBe('1')
-
-    // Deselecting entirely is a row click (clears all instances).
-    await wrapper.find('.agent-option').trigger('click')
-    await flushPromises()
+    // Gone from the selection entirely.
     expect(wrapper.findAll('.agent-stepper').length).toBe(0)
   })
 
-  it('clicking an already-selected row clears all its instances', async () => {
+  it('clicking an already-selected row ADDS another instance', async () => {
+    // The counter-intuitive behaviour this replaces: with a single installed
+    // agent, two clicks on the same row is the only way to build a two-member
+    // group, and the second click used to clear the first with no feedback.
+    // The row now does what its "+" does; removal is the "−".
     const wrapper = mountDrawer({ multiple: true, allowInstances: true, modelValue: [] })
     vi.advanceTimersByTime(500)
     await flushPromises()
 
     await wrapper.find('.agent-option').trigger('click')
     await flushPromises()
-    const plus = wrapper.find('.agent-stepper .agent-stepper-btn:last-child')
-    await plus.trigger('click')
+    expect(wrapper.find('.agent-stepper-count').text()).toBe('1')
+
+    await wrapper.find('.agent-option').trigger('click')
     await flushPromises()
     expect(wrapper.find('.agent-stepper-count').text()).toBe('2')
 
-    // Clicking the row clears the whole selection for that agent.
+    await wrapper.find('.agent-multi-confirm').trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('select')![0]).toEqual([['agent-1', 'agent-1']])
+  })
+
+  it('refuses a row click that would exceed the instance cap', async () => {
+    // The row click shares the stepper's "+" rule, so it must stop at the cap
+    // instead of pushing past it.
+    const wrapper = mountDrawer({ multiple: true, allowInstances: true, maxInstances: 1, modelValue: [] })
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
     await wrapper.find('.agent-option').trigger('click')
     await flushPromises()
-    expect(wrapper.findAll('.agent-stepper').length).toBe(0)
+    await wrapper.find('.agent-option').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.agent-stepper-count').text()).toBe('1')
   })
 
   it('free-mode confirm stays disabled with a single instance', async () => {

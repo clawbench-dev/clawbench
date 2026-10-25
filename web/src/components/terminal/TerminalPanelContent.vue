@@ -1492,6 +1492,13 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  // The gesture hint is a 600ms one-shot; unmounting mid-window would otherwise
+  // fire its callback against a torn-down instance (ISS-169). Clearing the
+  // pending timer also releases the ref it closes over.
+  if (gestureHintTimer) {
+    clearTimeout(gestureHintTimer)
+    gestureHintTimer = null
+  }
   themeObserver?.disconnect()
   autoCopy.dispose()
   viewport.stopWatching()
@@ -1776,7 +1783,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  font-size: 48px;
+  font-size: calc(48 * var(--dp));
   color: rgba(255, 255, 255, 0.7);
   text-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) rgba(0, 0, 0, 0.5);
   pointer-events: none;

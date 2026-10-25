@@ -752,6 +752,66 @@ describe('useFileUpload', () => {
       const ev = { target: { files: [], value: 'x' } }
       expect(await upload.handleFileSelect(ev as any)).toEqual([])
     })
+
+    it('reads the picked count BEFORE clearing the input (ordering contract)', async () => {
+      // The real hazard: clearing `input.value` empties the FileList, so any
+      // read after that reports 0 — and the attachment drawer would then never
+      // close after a real pick. The drawer gets its count from
+      // readPickedCount, which the caller must invoke before handing the event
+      // over; this pins the order INSIDE handleFileSelect so a refactor there
+      // (an `await` before the clear, or moving the clear into uploadFiles)
+      // cannot invalidate that.
+      const order: string[] = []
+      const files = [makeFile('a.png')]
+      const target: Record<string, unknown> = {}
+      Object.defineProperty(target, 'files', {
+        configurable: true,
+        get() {
+          order.push('read-files')
+          return files
+        },
+      })
+      let stored = 'x'
+      Object.defineProperty(target, 'value', {
+        configurable: true,
+        get: () => stored,
+        set: (v: string) => {
+          order.push('clear-value')
+          stored = v
+        },
+      })
+      xhrSendHandler = (xhr) => respondSuccess(xhr, '.clawbench/uploads/a.png')
+
+      const upload = useFileUpload()
+      await upload.handleFileSelect({ target } as any)
+
+      expect(order[0]).toBe('read-files')
+      expect(order).toContain('clear-value')
+      expect(order.indexOf('read-files')).toBeLessThan(order.indexOf('clear-value'))
+    })
+  })
+
+  describe('readPickedCount', () => {
+    it('reports the FileList length without touching the input', () => {
+      // Exported so the picker's "should I close?" answer does not depend on
+      // statement order in another module. Reading must not clear anything:
+      // handleFileSelect still needs the files.
+      const upload = useFileUpload()
+      const files = [makeFile('a.png'), makeFile('b.png')]
+      const target = { files, value: 'kept' }
+
+      expect(upload.readPickedCount({ target } as any)).toBe(2)
+      expect(target.value).toBe('kept')
+      expect(target.files).toBe(files)
+    })
+
+    it('returns 0 for a cancelled picker and for a missing target', () => {
+      const upload = useFileUpload()
+      expect(upload.readPickedCount({ target: { files: [], value: '' } } as any)).toBe(0)
+      expect(upload.readPickedCount({} as any)).toBe(0)
+      // `files` can be null on a cleared input.
+      expect(upload.readPickedCount({ target: { files: null } } as any)).toBe(0)
+    })
   })
 
   describe('handleFileDrop', () => {
@@ -838,6 +898,67 @@ describe('useFileUpload', () => {
 
       expect(paths).toEqual([])
       expect(upload.pendingFiles.value).toHaveLength(0)
+    })
+  })
+
+  describe('terminateChatUploadBatch (shared by drawer + input strip)', () => {
+    it('cancels the batch AND detaches the files it had already finished', async () => {
+      // The whole point of having ONE implementation: "terminate = clear
+      // everything". Both entry points (the drawer's banner and the input
+      // strip's pill) must detach the completed files, not just stop the queue.
+      let calls = 0
+      xhrSendHandler = (xhr) => {
+        calls++
+        // First file completes; second stays in flight.
+        if (calls === 1) respondSuccess(xhr, '.clawbench/uploads/done-a.png')
+      }
+
+      const upload = useFileUpload()
+      // An attachment from before this batch must survive.
+      upload.addAttachedFile('src/main.ts')
+
+      const p = upload.handleFileDrop([makeFile('a.png'), makeFile('b.png')])
+      await vi.waitFor(() => {
+        expect(upload.pendingFiles.value.some(f => f.uploading)).toBe(true)
+      })
+
+      // Mirror the real flow: the completed file is attached as it lands.
+      upload.addAttachedFile('.clawbench/uploads/done-a.png')
+
+      const detached = upload.terminateChatUploadBatch()
+
+      expect(detached).toEqual(['.clawbench/uploads/done-a.png'])
+      expect(upload.attachedFiles.value.map(f => f.path)).toEqual(['src/main.ts'])
+      expect(upload.chatUploadCancelled.value).toBe(true)
+      await p
+    })
+
+    it('leaves attachments that were never in this batch alone', async () => {
+      // A finished path that is NOT attached (auto-attach was off) must not
+      // remove some unrelated card.
+      let calls = 0
+      xhrSendHandler = (xhr) => {
+        calls++
+        if (calls === 1) respondSuccess(xhr, '.clawbench/uploads/never-attached.png')
+      }
+
+      const upload = useFileUpload()
+      upload.addAttachedFile('src/other.ts')
+
+      const p = upload.handleFileDrop([makeFile('a.png'), makeFile('b.png')])
+      await vi.waitFor(() => {
+        expect(upload.pendingFiles.value.some(f => f.uploading)).toBe(true)
+      })
+
+      expect(upload.terminateChatUploadBatch()).toEqual([])
+      expect(upload.attachedFiles.value.map(f => f.path)).toEqual(['src/other.ts'])
+      await p
+    })
+
+    it('sets the cancellation flag so the sequential loop stops', () => {
+      const upload = useFileUpload()
+      upload.terminateChatUploadBatch()
+      expect(upload.chatUploadCancelled.value).toBe(true)
     })
   })
 

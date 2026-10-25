@@ -119,12 +119,20 @@ const docHeight = ref<number | null>(null)
 /**
  * Drop the measurement when the previewed document changes.
  *
- * A new file mounts a new frame, and until its `load` fires the frame would
- * otherwise carry the PREVIOUS document's height — a tall document followed by
- * a short one would flash at the old size before settling.
+ * A new target mounts a frame that would otherwise keep the OLD document's
+ * height until its own `load` fires — a tall document followed by a short one
+ * would flash at the stale size.
+ *
+ * Watches `filePath` as well as `htmlSrc`: the srcdoc branch (an external file
+ * with no usable URL) keeps `htmlSrc` at `''` forever, so an htmlSrc-only
+ * watcher never fired there — a 3000px external document followed by a 200px
+ * one kept the old inline height until the new document loaded, and the card
+ * visibly collapsed from the stale size. `filePath` changes for BOTH branches
+ * (it is what the parent navigates by); `htmlSrc` is still watched because a
+ * refresh of the SAME file only changes the cache buster in the URL.
  */
 watch(
-  () => props.htmlSrc,
+  () => [props.filePath, props.htmlSrc],
   () => { docHeight.value = null },
 )
 
@@ -148,6 +156,11 @@ const iframeStyle = computed(() =>
  * after subresources (images, stylesheets) have settled, which is what the
  * measurement needs.
  *
+ * `load` does NOT cover everything, though: webfonts usually arrive after it,
+ * and the text reflow they cause can make the document taller. That one gap is
+ * closed by scheduleFontRemeasure — a single one-shot compensation, not an
+ * observer.
+ *
  * Same-origin is guaranteed by the sandbox this component sets; a frame that
  * somehow lost it throws on `contentDocument` and is left at its default size.
  */
@@ -159,9 +172,73 @@ function measureDocHeight() {
     return
   }
   if (!doc) return
-  const body = doc.body
-  const height = body?.scrollHeight || doc.documentElement?.scrollHeight || 0
+  const height = readDocHeight(doc)
   if (height > 0) docHeight.value = height
+}
+
+/** The document's natural height, or 0 when neither element reports one. */
+function readDocHeight(doc: Document): number {
+  return doc.body?.scrollHeight || doc.documentElement?.scrollHeight || 0
+}
+
+/**
+ * Cap on how much the webfont re-measure may grow the frame.
+ *
+ * The compensation below runs exactly once, so it cannot oscillate the way an
+ * observer would. It can still be DERIVED from the first measurement: a
+ * document sized in `vh` reports a height tied to the frame's own height, and
+ * the frame was just sized from that report. A growth factor keeps that
+ * feedback to one plausible reflow step instead of letting it multiply the
+ * card, while still absorbing the real case (a webfont reflow adds tens of
+ * percent, not multiples).
+ */
+const FONT_REMEASURE_GROWTH_CAP = 4
+
+/**
+ * Re-measure ONCE after the document's webfonts settle.
+ *
+ * `load` fires before `document.fonts.ready` in practice, so a document whose
+ * layout depends on a webfont is measured at its fallback-font height and then
+ * never corrected: the frame stays too short and the card shows a scrollbar
+ * over text that would have fit. `lazy` images entering the viewport and the
+ * page's own post-load rendering are out of scope — covering those needs an
+ * observer, which is what the `vh` feedback above rules out.
+ *
+ * Only GROWTH is adopted: a reflow that shortens the document leaves the
+ * (already correct, if slightly generous) height alone rather than risk
+ * shrinking the frame while the user is reading.
+ */
+function scheduleFontRemeasure() {
+  let doc: Document | null
+  try {
+    doc = iframeRef.value?.contentDocument ?? null
+  } catch {
+    return
+  }
+  // Not every engine exposes the CSS Font Loading API on a sub-document
+  // (jsdom has no `fonts` at all), and its absence must not break the load.
+  const fonts = doc?.fonts
+  if (!fonts || typeof fonts.ready?.then !== 'function') return
+
+  void fonts.ready.then(() => {
+    // Read the CURRENT document, not the one this pass was scheduled for: the
+    // user may have switched files (or the frame reloaded) while the fonts were
+    // loading, and the old document's height describes neither the new
+    // document nor anything on screen. After a switch `docHeight` is also
+    // `null` until the new document loads, so the stale pass exits below.
+    let current: Document | null
+    try {
+      current = iframeRef.value?.contentDocument ?? null
+    } catch {
+      return
+    }
+    if (!current) return
+    const prev = docHeight.value
+    const next = readDocHeight(current)
+    if (prev === null || next <= prev) return
+    if (next > prev * FONT_REMEASURE_GROWTH_CAP) return
+    docHeight.value = next
+  })
 }
 
 /**
@@ -217,6 +294,9 @@ function onLoad() {
   installPreviewScrollbar(iframe)
   installPreviewSearchStyles(iframe)
   measureDocHeight()
+  // `load` fires before webfonts settle, so the first measurement can be a
+  // fallback-font height; one compensation pass follows (see the function).
+  scheduleFontRemeasure()
 
   disposeSearchShortcut?.()
   disposeSearchShortcut = null

@@ -70,6 +70,13 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
   { id: 'browse', titleKey: 'nav.fileManager', primary: true },
   { id: 'view', titleKey: 'nav.fileView', primary: true },
   { id: 'history', titleKey: 'git.history.projectHistory', primary: true },
+  // Forge's registry title is the platform-NEUTRAL label ("issues & change
+  // requests"). The dock does not use it: `dockTabTitle` in App.vue resolves
+  // `forgeTabTitleKey(platform)` instead, so the tab names the bound service
+  // ("GitHub integration" / "GitLab integration"). It stays here because the
+  // registry requires a title for every tab (and the guard test checks each one
+  // resolves in both locales), and because the forge panel header uses it as
+  // its own fallback when no repository is bound.
   { id: 'forge', titleKey: 'nav.forge' },
   { id: 'tasks', titleKey: 'nav.tasks' },
   { id: 'terminal', titleKey: 'terminal.title' },
