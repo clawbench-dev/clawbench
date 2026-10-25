@@ -281,7 +281,7 @@ const speaker = computed<SpeakerIdentity | null>(() => {
 }
 
 .msg-index {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-bold);
   color: var(--text-secondary);
   line-height: 1;
@@ -405,10 +405,10 @@ const speaker = computed<SpeakerIdentity | null>(() => {
   align-items: center;
   gap: calc(5 * var(--dp));
   flex-shrink: 0;
-  font-size: 10.5px;
+  font-size: calc(10.5 * var(--dp));
   color: var(--text-muted, #999);
   line-height: 1;
-  letter-spacing: 0.2px;
+  letter-spacing: calc(0.2 * var(--dp));
 }
 
 .msg-time::before {

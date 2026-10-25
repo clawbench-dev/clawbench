@@ -247,6 +247,7 @@ import {
   type UsageScope,
 } from '@/composables/useUsageStats'
 import { store } from '@/stores/app'
+import { designToCss, UI_SCALE_EVENT } from '@/utils/uiScale'
 import {
   buildBarOption,
   buildPieOption,
@@ -318,8 +319,19 @@ const panelEl = ref<HTMLElement | null>(null)
 const summaryStacked = ref(false)
 let panelResizeObserver: ResizeObserver | null = null
 
+/**
+ * Width below which the overview stacks, in DESIGN px.
+ *
+ * `clientWidth` is CSS px, so the threshold has to be converted at the current
+ * scale: at 200% this is 920 CSS px, not 460. Comparing against the raw 460
+ * kept the donut beside the value cards long after they no longer fit, and the
+ * row overflowed its card.
+ */
+const SUMMARY_STACK_MIN_DESIGN_WIDTH = 460
+
 function updateSummaryStacked() {
-  summaryStacked.value = !!panelEl.value && panelEl.value.clientWidth < 460
+  summaryStacked.value =
+    !!panelEl.value && panelEl.value.clientWidth < designToCss(SUMMARY_STACK_MIN_DESIGN_WIDTH)
 }
 
 function onThemeChange() {
@@ -329,10 +341,22 @@ function onWindowResize() {
   viewportTick.value++
   updateSummaryStacked()
 }
+/**
+ * Re-evaluate on a scale change.
+ *
+ * Not covered by `resize` or the ResizeObserver: rem scaling grows every box
+ * but leaves the viewport alone, and this panel's width is a percentage of that
+ * unchanged viewport — so its `clientWidth` in CSS px stays the same while the
+ * design-px room shrinks. Only the explicit event catches it.
+ */
+function onUiScaleChange() {
+  updateSummaryStacked()
+}
 
 onMounted(() => {
   window.addEventListener('clawbench-theme-change', onThemeChange)
   window.addEventListener('resize', onWindowResize)
+  window.addEventListener(UI_SCALE_EVENT, onUiScaleChange)
   if (panelEl.value && typeof ResizeObserver !== 'undefined') {
     panelResizeObserver = new ResizeObserver(() => updateSummaryStacked())
     panelResizeObserver.observe(panelEl.value)
@@ -343,6 +367,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('clawbench-theme-change', onThemeChange)
   window.removeEventListener('resize', onWindowResize)
+  window.removeEventListener(UI_SCALE_EVENT, onUiScaleChange)
   if (panelResizeObserver) {
     panelResizeObserver.disconnect()
     panelResizeObserver = null

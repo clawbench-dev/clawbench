@@ -429,7 +429,7 @@ onMounted(() => {
 }
 
 .login-title {
-    font-size: 26px;
+    font-size: calc(26 * var(--dp));
     font-weight: var(--font-weight-bold);
     color: var(--text-primary);
     letter-spacing: -0.02em;

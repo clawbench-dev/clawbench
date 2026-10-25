@@ -74,6 +74,13 @@ const isVertical = computed(() => props.orientation === 'vertical')
  * variables fed back to CSS need the scaled values, so they are converted once
  * here — and reactively, because a scale change resizes the panes without
  * firing a `resize` event.
+ *
+ * Deliberately NOT `useUiScale()` + the shared `designToCss()`: `onScaleChange`
+ * has to re-measure the container SYNCHRONOUSLY, in the same task as the event.
+ * A `watch` on a composable's ref flushes on the next tick, which would leave
+ * one frame where the clamp bounds use the new scale against the old extent.
+ * The multiplication is therefore kept local (see `designToCss` for the
+ * non-reactive callers).
  */
 const uiScale = ref(readAppliedUIScale())
 const minLeftPx = computed(() => props.minLeft * uiScale.value)

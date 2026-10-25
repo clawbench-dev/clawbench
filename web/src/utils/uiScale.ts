@@ -234,6 +234,27 @@ export function readAppliedUIScale(): number {
   }
 }
 
+/**
+ * Convert a DESIGN px length (a number copied from the stylesheet) into the CSS
+ * px the DOM actually reports at the current scale.
+ *
+ * Needed wherever a measured value is compared against a threshold: `clientWidth`,
+ * `getBoundingClientRect()` and `innerWidth` are all CSS px, while the constants
+ * in the code are the numbers from the stylesheet's design units. Without the
+ * conversion the comparison silently changes meaning with the scale — at 200% a
+ * "460px is wide enough" check really fires at 230 design px.
+ *
+ * Keep this the single implementation: it used to be copy-pasted in four places
+ * (`useDockOverflow`, `useToolbarOverflow`, `App.vue`'s `dp()`, `SplitView`),
+ * which is how the fifth and sixth call sites came to be forgotten.
+ *
+ * Non-reactive by design (it reads the DOM once). Reactive consumers use
+ * `useUiScale()` from `composables/useUiScale.ts`.
+ */
+export function designToCss(designPx: number): number {
+  return designPx * readAppliedUIScale()
+}
+
 /** The design base the layout was drawn against, in px. `1rem` = this × scale. */
 export const UI_BASE_FONT_PX = 15
 

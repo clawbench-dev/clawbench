@@ -1275,7 +1275,7 @@ function formatTime(iso: string): string {
   border-radius: var(--radius-full);
 }
 .forge-remote-url {
-  font-size: 11.5px;
+  font-size: calc(11.5 * var(--dp));
   color: var(--text-muted);
   font-family: var(--font-mono);
   overflow: hidden;
@@ -1285,7 +1285,7 @@ function formatTime(iso: string): string {
 /* Non-official host hint inside a remote row. Amber, not red: binding is
    allowed, the user just has to know where the credential is going. */
 .forge-remote-warning {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--color-yellow);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1329,7 +1329,7 @@ function formatTime(iso: string): string {
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--color-red) 8%, transparent);
   color: var(--color-red);
-  font-size: 12.5px;
+  font-size: calc(12.5 * var(--dp));
   line-height: var(--line-height-snug);
 }
 /* Pre-submit warning for a non-official host. Amber rather than red because it
@@ -1344,7 +1344,7 @@ function formatTime(iso: string): string {
   border: 1px solid color-mix(in srgb, var(--color-yellow) 35%, transparent);
   background: color-mix(in srgb, var(--color-yellow) 12%, transparent);
   color: var(--color-yellow);
-  font-size: 12.5px;
+  font-size: calc(12.5 * var(--dp));
   line-height: var(--line-height-snug);
 }
 .forge-bind-warning svg {

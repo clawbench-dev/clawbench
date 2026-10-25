@@ -733,7 +733,7 @@ body.code-preview-resizing * {
   line-height: calc(14 * var(--dp));
   font-family: var(--font-ui);
   font-weight: var(--font-weight-medium);
-  letter-spacing: 0.2px;
+  letter-spacing: calc(0.2 * var(--dp));
   color: #ffffff;
   background: rgba(32, 33, 36, 0.94);
   border: 1px solid rgba(255, 255, 255, 0.12);

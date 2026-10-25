@@ -81,7 +81,7 @@ function baseName(path) {
   font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: calc(0.5 * var(--dp));
 }
 
 .fc-file-list {

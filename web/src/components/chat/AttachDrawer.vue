@@ -955,7 +955,7 @@ defineExpose({ activeTab, handleFileDrop })
   border-radius: var(--radius-xs);
   margin-right: var(--space-3);
   vertical-align: middle;
-  letter-spacing: 0.3px;
+  letter-spacing: calc(0.3 * var(--dp));
 }
 .ad-current-item {
   background: var(--bg-secondary);
@@ -970,7 +970,7 @@ defineExpose({ activeTab, handleFileDrop })
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-bold);
   color: var(--accent-color);
-  letter-spacing: -0.3px;
+  letter-spacing: calc(-0.3 * var(--dp));
 }
 
 /* Batch terminate bar above the in-flight upload rows */

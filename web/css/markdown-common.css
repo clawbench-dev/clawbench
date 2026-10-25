@@ -413,7 +413,7 @@
     color: var(--text-muted, #888);
     margin-bottom: var(--space-2);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: calc(0.5 * var(--dp));
 }
 
 .table-row-value {

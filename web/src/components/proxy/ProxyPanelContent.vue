@@ -1129,7 +1129,7 @@ async function handleRetryTunnel() {
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: calc(0.5 * var(--dp));
   padding: var(--space-1) var(--space-3);
   border-radius: 0;
   background: rgba(59, 130, 246, 0.12);

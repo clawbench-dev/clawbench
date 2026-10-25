@@ -1021,7 +1021,7 @@ function confirmEdit() {
   color: var(--text-muted);
   padding: var(--space-7) var(--space-7) var(--space-2);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: calc(0.5 * var(--dp));
   font-weight: var(--font-weight-medium);
 }
 
@@ -1257,7 +1257,7 @@ function confirmEdit() {
   font-weight: var(--font-weight-medium);
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: calc(0.5 * var(--dp));
   padding: var(--space-5) var(--space-7) var(--space-2);
   background: var(--bg-secondary);
 }

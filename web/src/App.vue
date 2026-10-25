@@ -4392,7 +4392,7 @@ onUnmounted(() => {
   text-align: left;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: calc(0.5 * var(--dp));
 }
 
 .view-empty-recent-item {

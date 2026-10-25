@@ -82,9 +82,14 @@ export function wideDockTabOrder(overflowTabs: readonly string[]): string[] {
  * would be wrong in the other direction: the layout would claim there is room
  * for two 320px-minimum columns while the columns themselves are 1.5× wider.
  *
- * `uiScale` defaults to 1 so pure-geometry callers and tests keep working.
+ * `uiScale` is REQUIRED, deliberately: it used to default to 1, which made a
+ * forgotten argument silently behave as "ignore the scale". The failure mode is
+ * invisible to the caller — the window is wide enough, the layout collapses to
+ * one column, and nothing points at the missing argument. Pure-geometry callers
+ * (and tests) pass an explicit `1`, which the type checker forces them to
+ * think about.
  */
-export function computeIsWideScreen(cssWidth: number, uiScale = 1): boolean {
+export function computeIsWideScreen(cssWidth: number, uiScale: number): boolean {
   const scale = Number.isFinite(uiScale) && uiScale > 0 ? uiScale : 1
   return cssWidth / scale >= WIDE_SCREEN_MIN_WIDTH
 }

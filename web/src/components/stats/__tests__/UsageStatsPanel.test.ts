@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 import { shallowMount, mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick } from 'vue'
@@ -29,6 +29,7 @@ vi.mock('echarts/renderers', () => ({ CanvasRenderer: {} }))
 import UsageStatsPanel from '@/components/stats/UsageStatsPanel.vue'
 import { useUsageStats } from '@/composables/useUsageStats'
 import { formatSpanDuration } from '@/utils/format'
+import { applyUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 
 const zhMessages = {
   nav: { stats: '数据统计', refresh: '刷新' },
@@ -592,5 +593,59 @@ describe('UsageStatsPanel', () => {
     expect(cellTexts).toContain('3.3M')
     // Flush the debounced reload scheduled by setMetrics so no timer leaks.
     await new Promise(r => setTimeout(r, 350))
+  })
+
+  describe('the stacked-overview breakpoint follows the UI scale', () => {
+    // The threshold is 460 DESIGN px but `clientWidth` is CSS px, so at 200% a
+    // 600 CSS px panel only has 300 design px of room and must stack. Comparing
+    // the raw numbers left the donut beside the value cards and the row
+    // overflowed its card.
+    const SUMMARY = { input: 300, output: 100, total: 400, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0, messageCnt: 1 }
+
+    /** jsdom has no layout: pin the panel's `clientWidth`. */
+    function stubPanelWidth(wrapper: Awaited<ReturnType<typeof mountPanel>>, width: number) {
+      const panel = wrapper.find('.usage-stats-panel').element as HTMLElement
+      Object.defineProperty(panel, 'clientWidth', { configurable: true, get: () => width })
+    }
+
+    afterEach(() => {
+      applyUIScale(1)
+    })
+
+    it('stacks when the design-px width is under the threshold at 200%', async () => {
+      mockApiGet.mockResolvedValue(mockResponse({ totals: SUMMARY, rows: [] }))
+      applyUIScale(2)
+      const wrapper = await mountPanel()
+      stubPanelWidth(wrapper, 600)
+      window.dispatchEvent(new CustomEvent(UI_SCALE_EVENT))
+      await nextTick()
+      // 600 CSS px / 2 = 300 design px < 460.
+      expect(wrapper.find('.stats-summary').classes()).toContain('is-stacked')
+      wrapper.unmount()
+    })
+
+    it('does not stack at 200% when the design-px width is ample', async () => {
+      mockApiGet.mockResolvedValue(mockResponse({ totals: SUMMARY, rows: [] }))
+      applyUIScale(2)
+      const wrapper = await mountPanel()
+      stubPanelWidth(wrapper, 1200)
+      window.dispatchEvent(new CustomEvent(UI_SCALE_EVENT))
+      await nextTick()
+      // 1200 / 2 = 600 design px ≥ 460.
+      expect(wrapper.find('.stats-summary').classes()).not.toContain('is-stacked')
+      wrapper.unmount()
+    })
+
+    it('is unchanged at scale 1', async () => {
+      // The conversion must be a no-op at 100%: 459 stacks, 460 does not.
+      mockApiGet.mockResolvedValue(mockResponse({ totals: SUMMARY, rows: [] }))
+      applyUIScale(1)
+      const wrapper = await mountPanel()
+      stubPanelWidth(wrapper, 459)
+      window.dispatchEvent(new CustomEvent(UI_SCALE_EVENT))
+      await nextTick()
+      expect(wrapper.find('.stats-summary').classes()).toContain('is-stacked')
+      wrapper.unmount()
+    })
   })
 })

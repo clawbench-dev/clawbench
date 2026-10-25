@@ -500,7 +500,7 @@
 
 /* Event-count badge on an unread row (e.g. "3 events"). */
 .forge-overview-count-badge {
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     color: var(--text-secondary, #6b7280);
 }
 

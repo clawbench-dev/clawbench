@@ -15,23 +15,62 @@
  */
 
 /**
- * The design px number of a `prop:` declaration in `css`, or NaN.
+ * The design px number of a `prop:` declaration in `css`.
  *
  * Use this when the assertion is about the VALUE (e.g. "the rail is 3 wide"),
  * which reads better than a truthiness check and reports the actual number on
  * failure.
+ *
+ * Recognised forms, in priority order:
+ *   1. `calc(N * var(--dp))` — the scaled form
+ *   2. a sum of those, `calc(N * var(--dp) + M * var(--dp) …)` — summed
+ *   3. a literal `Npx` — hairlines and other deliberately unscaled lengths
+ *
+ * Returns NaN when the property is absent (so `toBeNaN()` reads as "the guard
+ * is looking at the wrong declaration"). THROWS when the property is present
+ * but written in a form this cannot read: silently returning NaN there would
+ * fail the guard with `NaN ≠ 3` and give no hint that the SOURCE shape is the
+ * problem. The message carries the original value for that reason.
  */
 export function designPx(css: string, prop: string): number {
   // Anchored on a property-name boundary so a `width` lookup cannot be
   // satisfied by `min-width` / `max-width`. Without it a guard for one
   // declaration silently passes on a different one.
   const at = `(?:^|[\\s;{])${prop}:`
-  const viaDp = css.match(
-    new RegExp(`${at}\\s*calc\\(\\s*(-?[\\d.]+)\\s*\\*\\s*var\\(--dp\\)\\s*\\)`),
+  const decl = new RegExp(`${at}\\s*([^;}]+)`).exec(css)
+  if (!decl) return NaN
+  const value = decl[1].replace(/!\s*important\s*$/i, '').trim()
+
+  // A single `calc(...)` whose body is nothing but `N * var(--dp)` terms joined
+  // by `+`. Covers the single-term form (the common case) and
+  // `calc(4 * var(--dp) + 2 * var(--dp))`.
+  //
+  // Requiring the WHOLE value to be that one calc is what rejects the shapes
+  // this cannot reduce to a single number: a multi-value shorthand
+  // (`padding: calc(9 * var(--dp)) calc(11 * var(--dp))` — summing those would
+  // be a silently wrong answer, not a missing one), a subtraction, and
+  // `calc(4 * var(--dp) * 2)`.
+  const wholeCalc = /^calc\(([\s\S]*)\)$/.exec(value)
+  if (wholeCalc) {
+    const terms = wholeCalc[1].split('+').map(t => t.trim())
+    const TERM = /^(-?[\d.]+)\s*\*\s*var\(--dp\)$/
+    if (terms.every(t => TERM.test(t))) {
+      return terms.reduce((sum, t) => sum + Number(TERM.exec(t)![1]), 0)
+    }
+    throw new Error(
+      `designPx(${prop}) cannot read "${value}": only additions of ` +
+      `\`N * var(--dp)\` can be summed. Extend the helper rather than ` +
+      `asserting a number it cannot derive.`,
+    )
+  }
+
+  const literal = /^(-?[\d.]+)px$/.exec(value)
+  if (literal) return Number(literal[1])
+
+  throw new Error(
+    `designPx(${prop}) cannot read "${value}": expected ` +
+    `\`calc(N * var(--dp))\`, a sum of those, or a literal \`Npx\`.`,
   )
-  if (viaDp) return Number(viaDp[1])
-  const literal = css.match(new RegExp(`${at}\\s*(-?[\\d.]+)px`))
-  return literal ? Number(literal[1]) : NaN
 }
 
 /**

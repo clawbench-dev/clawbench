@@ -15,21 +15,15 @@ const DEFAULT_GAP = 6
 const MAX_SEARCH_WIDTH = 140
 
 /**
- * The applied UI scale, kept current through `UI_SCALE_EVENT`.
+ * Convert DESIGN px to CSS px at the current scale.
  *
- * Module-level and reactive: `inlineIds` is a `computed`, so a plain read would
- * leave the button count pinned to whatever the scale was at setup.
+ * Per-instance and reactive (takes the scale as an argument) rather than the
+ * shared `designToCss()`: `inlineIds` is a `computed`, so a scale change has to
+ * invalidate it, and `designToCss()` reads the DOM once so it cannot be a
+ * dependency.
  */
-const uiScale = ref(1)
-if (typeof window !== 'undefined') {
-  const sync = () => { uiScale.value = readAppliedUIScale() }
-  sync()
-  window.addEventListener(UI_SCALE_EVENT, sync)
-}
-
-/** Convert DESIGN px to CSS px at the current scale. */
-function scaleLayout(designPx: number): number {
-  return designPx * uiScale.value
+function scaleLayout(designPx: number, scale: number): number {
+  return designPx * scale
 }
 
 /**
@@ -61,6 +55,21 @@ export function useToolbarOverflow(
   const contentWidth = ref(0)
   let resizeObserver: ResizeObserver | null = null
 
+  /**
+   * The applied UI scale, kept current through `UI_SCALE_EVENT`.
+   *
+   * Per instance, not module-level: the module-level ref plus its module-level
+   * listener leaked the previous test's scale into the next one and was never
+   * removed. Each toolbar is a single instance, so the extra subscription is
+   * free.
+   *
+   * Subscribed from `startObserving()`: this is a plain function called from
+   * `setup()`, and the callers own the measure lifecycle. Tying the listener to
+   * the same lifecycle makes "observing" and "listening" a single state.
+   */
+  const uiScale = ref(readAppliedUIScale())
+  const syncScale = () => { uiScale.value = readAppliedUIScale() }
+
   const inlineIds = computed(() => {
     const width = contentWidth.value
     if (width <= 0) return getDemotableIds() // not yet measured, show all
@@ -70,14 +79,15 @@ export function useToolbarOverflow(
 
     // Scaled inside the computed so a scale change invalidates it. The measured
     // `width` is already in CSS px; these constants are design px.
-    const btnWidth = scaleLayout(opts?.btnWidth ?? DEFAULT_BTN_WIDTH)
-    const gap = scaleLayout(opts?.gap ?? DEFAULT_GAP)
+    const scale = uiScale.value
+    const btnWidth = scaleLayout(opts?.btnWidth ?? DEFAULT_BTN_WIDTH, scale)
+    const gap = scaleLayout(opts?.gap ?? DEFAULT_GAP, scale)
     const step = btnWidth + gap
 
     const inlineCount = unref(opts?.inlineCount ?? 0)
     // Fixed space: always-inline buttons + gaps between all inline items + search
     const fixedBtns = inlineCount
-    const searchSpace = hasSearch ? scaleLayout(MAX_SEARCH_WIDTH) : 0
+    const searchSpace = hasSearch ? scaleLayout(MAX_SEARCH_WIDTH, scale) : 0
     // Gaps: between always-inline buttons (N-1), plus 1 between last inline and first demotable
     const minGaps = Math.max(0, fixedBtns - 1) * gap
     const fixedSpace = fixedBtns * btnWidth + minGaps + searchSpace
@@ -98,6 +108,11 @@ export function useToolbarOverflow(
 
   function startObserving() {
     stopObserving()
+    // Re-read before the first measure so the toolbar is not sized against a
+    // factor captured at setup (settings load / project switch can change it
+    // in between).
+    syncScale()
+    if (typeof window !== 'undefined') window.addEventListener(UI_SCALE_EVENT, syncScale)
     const el = getEl()
     if (!el) return
 
@@ -117,6 +132,7 @@ export function useToolbarOverflow(
   function stopObserving() {
     resizeObserver?.disconnect()
     resizeObserver = null
+    if (typeof window !== 'undefined') window.removeEventListener(UI_SCALE_EVENT, syncScale)
   }
 
   return {

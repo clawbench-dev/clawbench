@@ -6,6 +6,8 @@ import {
   screenHeightToCssPixels,
   UI_SCALE_BASE_HEIGHT,
   UI_SCALE_STEP,
+  applyUIScale,
+  designToCss,
 } from '@/utils/uiScale'
 
 describe('computeAutoUIScale', () => {
@@ -223,5 +225,40 @@ describe('currentScreenHeight', () => {
     // must not be silently halved either.
     setEnv({ screenH: 2160, dpr: 2, outerH: 800, ua: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/154' })
     expect(currentScreenHeight()).toBe(2160)
+  })
+})
+
+describe('designToCss', () => {
+  afterEach(() => {
+    applyUIScale(1)
+  })
+
+  it('is the identity at scale 1', () => {
+    // The whole point of the conversion is that it changes nothing at 100%:
+    // every migrated threshold must keep its exact previous behaviour there.
+    applyUIScale(1)
+    expect(designToCss(460)).toBe(460)
+    expect(designToCss(0)).toBe(0)
+  })
+
+  it('multiplies by the applied scale', () => {
+    applyUIScale(1.5)
+    expect(designToCss(460)).toBeCloseTo(690, 5)
+    applyUIScale(2)
+    expect(designToCss(320)).toBe(640)
+  })
+
+  it('scales fractional design values without rounding', () => {
+    // Letter-spacing and similar sub-pixel lengths are passed through; rounding
+    // here would reintroduce the very drift this replaced.
+    applyUIScale(1.5)
+    expect(designToCss(0.5)).toBeCloseTo(0.75, 6)
+  })
+
+  it('falls back to 1 when the applied scale is unreadable', () => {
+    // First paint before the applier runs, or a standalone document: the value
+    // must degrade to "no scaling", not to 0 or NaN.
+    document.documentElement.style.removeProperty('--ui-scale')
+    expect(designToCss(460)).toBe(460)
   })
 })

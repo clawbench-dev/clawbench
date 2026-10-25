@@ -41,16 +41,16 @@ beforeEach(() => {
 
 describe('computeIsWideScreen', () => {
   it('CSS width ≥960 → wide screen', () => {
-    expect(computeIsWideScreen(1280)).toBe(true)
-    expect(computeIsWideScreen(1024)).toBe(true)
-    expect(computeIsWideScreen(960)).toBe(true)
+    expect(computeIsWideScreen(1280, 1)).toBe(true)
+    expect(computeIsWideScreen(1024, 1)).toBe(true)
+    expect(computeIsWideScreen(960, 1)).toBe(true)
   })
 
   it('CSS width <960 → NOT wide screen, regardless of device size', () => {
-    expect(computeIsWideScreen(959)).toBe(false)
-    expect(computeIsWideScreen(800)).toBe(false)
-    expect(computeIsWideScreen(430)).toBe(false)
-    expect(computeIsWideScreen(360)).toBe(false)
+    expect(computeIsWideScreen(959, 1)).toBe(false)
+    expect(computeIsWideScreen(800, 1)).toBe(false)
+    expect(computeIsWideScreen(430, 1)).toBe(false)
+    expect(computeIsWideScreen(360, 1)).toBe(false)
   })
 
   it('is pure CSS width: a physically wide landscape phone is NOT wide screen', () => {
@@ -58,13 +58,13 @@ describe('computeIsWideScreen', () => {
     // 1920px wide, but the layout only ever has 698px, so two columns do not fit.
     // (The removed physical-width clause used to call this "wide", which was
     // self-contradictory: a 960 CSS px desktop window was not.)
-    expect(computeIsWideScreen(698)).toBe(false)
+    expect(computeIsWideScreen(698, 1)).toBe(false)
   })
 
   it('high-DPR tablet at 960 CSS px IS wide screen (the case the physical clause existed for)', () => {
     // 2400 physical px at DPR 2.5 → 960 CSS px. Folding it into the threshold
     // keeps this case working without a physical-pixel branch.
-    expect(computeIsWideScreen(960)).toBe(true)
+    expect(computeIsWideScreen(960, 1)).toBe(true)
   })
 
   it('does not depend on screen dimensions or DPR (no such parameters)', () => {
@@ -73,15 +73,16 @@ describe('computeIsWideScreen', () => {
     // legitimate input: at a larger scale the same window holds fewer DESIGN
     // pixels, so the panels genuinely do not fit side by side any more.
     //
-    // `Function.length` counts only parameters without defaults, and uiScale
-    // has one (so callers that predate it keep working) — hence reading the
-    // declared parameter names instead of the arity.
+    // `uiScale` has NO default (a default made a forgotten argument silently
+    // mean "ignore the scale"), so `Function.length` is 2 — arity is part of
+    // the contract here, not just the parameter names.
     const src = computeIsWideScreen.toString()
     // Only the parameter list: the function NAME contains "Screen", which would
     // otherwise trip the negative assertion below.
     const params = src.slice(src.indexOf('(') + 1, src.indexOf(')')).replace(/\s+/g, ' ')
     expect(params).toContain('cssWidth')
     expect(params).toContain('uiScale')
+    expect(params, 'uiScale must not have a default value').not.toMatch(/uiScale\s*=/)
     expect(params).not.toMatch(/screen|dpr|devicePixel/i)
   })
 
@@ -94,10 +95,10 @@ describe('computeIsWideScreen', () => {
     expect(computeIsWideScreen(1919, 2)).toBe(false)
   })
 
-  it('treats a missing or nonsensical scale as 1', () => {
-    // Callers that predate the parameter, and a first paint before the applier
-    // has written --ui-scale, must both keep the old behaviour.
-    expect(computeIsWideScreen(1280)).toBe(true)
+  it('treats a nonsensical scale as 1', () => {
+    // A first paint before the applier has written --ui-scale, or a
+    // hand-edited 0/NaN, must not make the decision collapse.
+    expect(computeIsWideScreen(1280, 1)).toBe(true)
     expect(computeIsWideScreen(1280, 0)).toBe(true)
     expect(computeIsWideScreen(1280, NaN)).toBe(true)
     expect(computeIsWideScreen(1280, -2)).toBe(true)

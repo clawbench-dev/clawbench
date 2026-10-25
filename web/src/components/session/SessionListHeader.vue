@@ -139,7 +139,7 @@ const sessionBarColor = computed(() => {
   font-weight: var(--font-weight-semibold);
   color: #fff;
   line-height: 1;
-  letter-spacing: 0.3px;
+  letter-spacing: calc(0.3 * var(--dp));
   text-shadow: 0 0 calc(2 * var(--dp)) rgba(0, 0, 0, 0.3);
 }
 /* `min-width: min-content` floors the shrink at the buttons' own width: without
