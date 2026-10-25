@@ -23,19 +23,29 @@ const DECLINED_KEY = 'clawbench_ui_scale_prompt_declined'
 const SCALE_KEY = 'clawbench-settings-uiScale'
 
 /**
- * Reload the app while reporting `height` as the screen height (CSS px).
+ * Reload the app while reporting a `width` x `height` screen (CSS px).
  *
- * dpr 1 and a window shorter than the screen so `currentScreenHeight` keeps the
- * value as-is on Linux (its native-Wayland normalisation divides only when the
- * window is taller than the report).
+ * The decision reads the SHORT edge, so a portrait case must set both
+ * dimensions — passing only a height would leave the real 1280-wide screen in
+ * place and quietly test a landscape panel.
+ *
+ * dpr 1 and a window shorter than the report so `currentScreenShortEdge` keeps
+ * the value as-is on Linux (its native-Wayland normalisation divides only when
+ * the window is taller than the report).
  */
-async function reloadWithScreenHeight(page: Page, height: number): Promise<void> {
-  await page.addInitScript((h) => {
+async function reloadWithScreen(page: Page, width: number, height: number): Promise<void> {
+  await page.addInitScript(({ w, h }) => {
+    Object.defineProperty(window.screen, 'width', { value: w, configurable: true })
     Object.defineProperty(window.screen, 'height', { value: h, configurable: true })
     Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true })
-  }, height)
+  }, { w: width, h: height })
   await page.reload()
   await expect(page.locator('.app-container, .login-page').first()).toBeVisible({ timeout: 20000 })
+}
+
+/** A landscape panel whose short edge is `shortEdge`. */
+async function reloadWithShortEdge(page: Page, shortEdge: number): Promise<void> {
+  await reloadWithScreen(page, Math.round(shortEdge * 16 / 9), shortEdge)
 }
 
 async function readScale(page: Page): Promise<number> {
@@ -59,7 +69,7 @@ test.describe('Startup UI scale suggestion', () => {
   })
 
   test('offers a fit on a 4K screen and applies it on accept', async ({ page }) => {
-    await reloadWithScreenHeight(page, 2160) // 2160 / 1080 = 2.0
+    await reloadWithShortEdge(page, 2160) // 2160 / 1080 = 2.0
 
     const dialog = page.locator('.dlg-overlay')
     await expect(dialog).toBeVisible({ timeout: 20000 })
@@ -76,7 +86,7 @@ test.describe('Startup UI scale suggestion', () => {
   })
 
   test('leaves the scale alone when the user keeps the current value', async ({ page }) => {
-    await reloadWithScreenHeight(page, 2160)
+    await reloadWithShortEdge(page, 2160)
 
     const dialog = page.locator('.dlg-overlay')
     await expect(dialog).toBeVisible({ timeout: 20000 })
@@ -98,7 +108,7 @@ test.describe('Startup UI scale suggestion', () => {
   })
 
   test('never asks on a 1080p screen', async ({ page }) => {
-    await reloadWithScreenHeight(page, 1080)
+    await reloadWithShortEdge(page, 1080)
 
     // Give the post-startup prompt a moment to appear; it must not.
     await page.waitForTimeout(1500)
@@ -109,11 +119,41 @@ test.describe('Startup UI scale suggestion', () => {
   test('never asks when the difference is under the threshold', async ({ page }) => {
     // 1200p fits 1.11 against a stored 1.0 — an 11% bump is not worth an
     // interruption on a screen that already reads fine.
-    await reloadWithScreenHeight(page, 1200)
+    await reloadWithShortEdge(page, 1200)
 
     await page.waitForTimeout(1500)
     await expect(page.locator('.dlg-overlay')).toBeHidden()
     expect(await readScale(page)).toBe(1)
+  })
+
+  test('does not ask on a rotated 1080p monitor', async ({ page }) => {
+    // Portrait: 1080 wide x 1920 tall. Measuring height would read 1920 and
+    // ask for 178% on a plain 1080p panel someone turned on its side — a very
+    // common setup for reading code. The short edge stays 1080.
+    await reloadWithScreen(page, 1080, 1920)
+
+    await page.waitForTimeout(1500)
+    await expect(page.locator('.dlg-overlay')).toBeHidden()
+    expect(await readScale(page)).toBe(1)
+  })
+
+  test('asks for the same factor whether a 4K panel is landscape or portrait', async ({ page }) => {
+    // Same panel, two orientations, same answer. This is the property the
+    // short-edge measurement buys; with a height-based one the portrait case
+    // asked for 200% and the landscape case for 200% only by coincidence of
+    // the cap, so the factor is checked against a screen below the cap.
+    await reloadWithScreen(page, 2560, 1440) // 1440p landscape -> 1.33
+    await expect(page.locator('.dlg-overlay')).toBeVisible({ timeout: 20000 })
+    await expect(page.locator('.dlg-ok')).toContainText('133')
+    await page.locator('.dlg-cancel').click()
+    await expect(page.locator('.dlg-overlay')).toBeHidden()
+
+    // Rotate the same 1440p panel. A height-based measurement would now read
+    // 2560 and ask for 200%.
+    await page.evaluate(() => localStorage.removeItem('clawbench_ui_scale_prompt_declined'))
+    await reloadWithScreen(page, 1440, 2560)
+    await expect(page.locator('.dlg-overlay')).toBeVisible({ timeout: 20000 })
+    await expect(page.locator('.dlg-ok')).toContainText('133')
   })
 
   test('waits for the first-run welcome panel instead of stacking on it', async ({ page }) => {
@@ -123,7 +163,7 @@ test.describe('Startup UI scale suggestion', () => {
     await page.addInitScript(() => {
       localStorage.removeItem('clawbench_welcome_dismissed')
     })
-    await reloadWithScreenHeight(page, 2160)
+    await reloadWithShortEdge(page, 2160)
 
     // The welcome panel owns the screen first, and the scale prompt must NOT be
     // behind/over it — two full-screen modals at once is the bug being avoided.

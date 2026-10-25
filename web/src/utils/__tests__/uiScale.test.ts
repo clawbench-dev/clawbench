@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import {
   computeAutoUIScale,
   resolveUIScale,
-  currentScreenHeight,
+  currentScreenShortEdge,
   screenHeightToCssPixels,
   shouldSuggestUIScale,
   UI_SCALE_BASE_HEIGHT,
@@ -234,15 +234,26 @@ describe('screenHeightToCssPixels', () => {
   })
 })
 
-describe('currentScreenHeight', () => {
+describe('currentScreenShortEdge', () => {
   const originalScreen = window.screen
   const originalOuter = window.outerHeight
   const originalInner = window.innerHeight
   const originalDpr = window.devicePixelRatio
   const originalUa = navigator.userAgent
 
-  function setEnv(opts: { screenH: number; dpr?: number; outerH?: number; innerH?: number; ua?: string }) {
-    Object.defineProperty(window, 'screen', { value: { height: opts.screenH }, configurable: true })
+  function setEnv(opts: {
+    screenW?: number
+    screenH: number
+    dpr?: number
+    outerH?: number
+    innerH?: number
+    ua?: string
+  }) {
+    // Width defaults to a 16:9 landscape panel so the short edge is the height.
+    Object.defineProperty(window, 'screen', {
+      value: { width: opts.screenW ?? Math.round(opts.screenH * 16 / 9), height: opts.screenH },
+      configurable: true,
+    })
     Object.defineProperty(window, 'devicePixelRatio', { value: opts.dpr ?? 1, configurable: true })
     Object.defineProperty(window, 'outerHeight', { value: opts.outerH ?? 800, configurable: true })
     Object.defineProperty(window, 'innerHeight', { value: opts.innerH ?? 700, configurable: true })
@@ -257,35 +268,66 @@ describe('currentScreenHeight', () => {
     Object.defineProperty(navigator, 'userAgent', { value: originalUa, configurable: true })
   })
 
-  it('reads window.screen.height', () => {
-    setEnv({ screenH: 1440, dpr: 1, outerH: 800 })
-    expect(currentScreenHeight()).toBe(1440)
+  it('reads the short edge, not the height', () => {
+    setEnv({ screenW: 2560, screenH: 1440, dpr: 1, outerH: 800 })
+    expect(currentScreenShortEdge()).toBe(1440)
+  })
+
+  it('is identical in landscape and portrait', () => {
+    // The regression this replaces: a rotated 1080p monitor reported 1920 and
+    // asked for a 178% UI. A 12.9" iPad had the same problem the other way
+    // round (portrait asked, landscape did not).
+    setEnv({ screenW: 1920, screenH: 1080, dpr: 1, outerH: 800 })
+    const landscape = currentScreenShortEdge()
+    setEnv({ screenW: 1080, screenH: 1920, dpr: 1, outerH: 800 })
+    const portrait = currentScreenShortEdge()
+    expect(portrait).toBe(landscape)
+    expect(portrait).toBe(1080)
+  })
+
+  it('uses the short edge on a portrait tablet', () => {
+    // 12.9" iPad Pro: 1366x1024 CSS px. Must read 1024 whichever way it is held,
+    // so the derived factor is 1.0 rather than 1.26.
+    setEnv({ screenW: 1024, screenH: 1366, dpr: 2, outerH: 1024, innerH: 1366 })
+    expect(currentScreenShortEdge()).toBe(1024)
+    expect(computeAutoUIScale(currentScreenShortEdge())).toBe(1)
   })
 
   it('returns 0 rather than NaN when screen is unavailable', () => {
     Object.defineProperty(window, 'screen', { value: undefined, configurable: true })
-    expect(currentScreenHeight()).toBe(0)
+    expect(currentScreenShortEdge()).toBe(0)
+  })
+
+  it('ignores a missing dimension instead of reading it as 0', () => {
+    // `Math.min(w, h)` with a missing width would be 0 and collapse the factor
+    // to "no scaling" on a screen that actually needs it.
+    Object.defineProperty(window, 'screen', { value: { height: 1440 }, configurable: true })
+    Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true })
+    Object.defineProperty(window, 'outerHeight', { value: 800, configurable: true })
+    Object.defineProperty(window, 'innerHeight', { value: 700, configurable: true })
+    Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/154', configurable: true })
+    expect(currentScreenShortEdge()).toBe(1440)
   })
 
   it('normalizes native Wayland device pixels to CSS pixels', () => {
-    // Live GNOME 46 Wayland, 4K at scale 2: screen.height 2160, dpr 2, a
-    // maximized window 1048 CSS tall. Must report 1080 so auto scale is 1.
-    setEnv({ screenH: 2160, dpr: 2, outerH: 1048, innerH: 961 })
-    expect(currentScreenHeight()).toBe(1080)
+    // Live GNOME 46 Wayland, 4K at scale 2: short edge 2160, dpr 2, a maximized
+    // window 1048 CSS tall. Must report 1080 so auto scale is 1.
+    setEnv({ screenW: 3840, screenH: 2160, dpr: 2, outerH: 1048, innerH: 961 })
+    expect(currentScreenShortEdge()).toBe(1080)
   })
 
   it('keeps XWayland CSS pixels as-is', () => {
-    // Same monitor, XWayland backend: screen.height 1080, dpr 2, window 1048
-    // CSS (2096 device) — already CSS pixels, must stay 1080.
-    setEnv({ screenH: 1080, dpr: 2, outerH: 1048, innerH: 961 })
-    expect(currentScreenHeight()).toBe(1080)
+    // Same monitor, XWayland backend: short edge 1080, dpr 2, window 1048 CSS
+    // (2096 device) — already CSS pixels, must stay 1080.
+    setEnv({ screenW: 1920, screenH: 1080, dpr: 2, outerH: 1048, innerH: 961 })
+    expect(currentScreenShortEdge()).toBe(1080)
   })
 
   it('does not touch Android, whose UA also contains Linux', () => {
-    // Android is excluded from auto scale by its own check, but the height
-    // must not be silently halved either.
-    setEnv({ screenH: 2160, dpr: 2, outerH: 800, ua: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/154' })
-    expect(currentScreenHeight()).toBe(2160)
+    // Android is excluded from auto scale by its own check, but the value must
+    // not be silently halved either.
+    setEnv({ screenW: 1080, screenH: 2160, dpr: 2, outerH: 800, ua: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/154' })
+    expect(currentScreenShortEdge()).toBe(1080)
   })
 })
 

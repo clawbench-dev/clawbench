@@ -17,9 +17,11 @@ const dialogState = vi.hoisted(() => ({ visible: false }))
 const setLocalConfigMock = vi.hoisted(() => vi.fn())
 const getEffectiveUIScaleMock = vi.hoisted(() => vi.fn(() => 1))
 const platform = vi.hoisted(() => ({ android: false }))
+/** UA-derived mobile gate: false = desktop browser (jsdom's default UA). */
+const mobileUa = vi.hoisted(() => ({ value: false }))
 const screenHeight = vi.hoisted(() => ({ value: 1080, useReal: false }))
 const realUiScale = vi.hoisted(() => ({
-  currentScreenHeight: (() => 0) as () => number,
+  currentScreenShortEdge: (() => 0) as () => number,
 }))
 
 vi.mock('@/composables/useDialog', () => ({
@@ -32,15 +34,25 @@ vi.mock('@/composables/useDialog', () => ({
   }),
 }))
 
-vi.mock('@/composables/usePlatformDetect', () => ({
-  usePlatformDetect: () => ({
-    isAndroidApp: ref(platform.android),
-    isElectron: ref(false),
-    isWebApp: ref(true),
-    isNativeApp: ref(false),
-    isTouchPrimary: ref(false),
-  }),
-}))
+// `isMobileOSUA` is a module-load constant (UA-derived) and must survive the
+// mock: a bare factory would leave it undefined, silently disabling the
+// mobile gate in every case here.
+vi.mock('@/composables/usePlatformDetect', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/usePlatformDetect')>()
+  return {
+    ...actual,
+    // A getter, not a snapshot: the factory runs once at import time, so a
+    // plain value would freeze whatever the first case set.
+    get isMobileOSUA() { return mobileUa.value },
+    usePlatformDetect: () => ({
+      isAndroidApp: ref(platform.android),
+      isElectron: ref(false),
+      isWebApp: ref(true),
+      isNativeApp: ref(false),
+      isTouchPrimary: ref(false),
+    }),
+  }
+})
 
 vi.mock('@/composables/useSettingsConfig', () => ({
   getEffectiveUIScale: getEffectiveUIScaleMock,
@@ -51,14 +63,14 @@ vi.mock('@/utils/uiScale', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/utils/uiScale')>()
   // Keep the REAL `currentScreenHeight` reachable so the pixel-normalization
   // cases can exercise it while everything else sees the stub.
-  realUiScale.currentScreenHeight = actual.currentScreenHeight
+  realUiScale.currentScreenShortEdge = actual.currentScreenShortEdge
   return {
     ...actual,
     // `useReal` lets the pixel-normalization cases drive the REAL measurement
     // (which reads window.screen / devicePixelRatio) instead of a stub — a
-    // stubbed height would make those cases vacuous.
-    currentScreenHeight: () =>
-      screenHeight.useReal ? actual.currentScreenHeight() : screenHeight.value,
+    // stubbed edge would make those cases vacuous.
+    currentScreenShortEdge: () =>
+      screenHeight.useReal ? actual.currentScreenShortEdge() : screenHeight.value,
   }
 })
 
@@ -154,6 +166,7 @@ describe('maybePromptStartupUIScale', () => {
     setLocalConfigMock.mockReset()
     getEffectiveUIScaleMock.mockReturnValue(1)
     platform.android = false
+    mobileUa.value = false
     dialogState.visible = false
     screenHeight.value = 1080
     _resetStartupUIScalePromptForTest()
@@ -248,6 +261,28 @@ describe('maybePromptStartupUIScale', () => {
     await maybePromptStartupUIScale()
     expect(confirmMock).toHaveBeenCalledTimes(1)
     expect(setLocalConfigMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not offer on a phone or tablet, even at a size that would qualify', async () => {
+    // A 12.9" iPad Pro in portrait used to ask for 126% (its short edge is
+    // 1024, but the height-based measurement read 1366). Tablets and phones are
+    // scaled by the OS to their density, so a second in-page factor would
+    // compound — the same reason the settings "auto fit" row is hidden on
+    // Android. The gate must hold regardless of what the screen reports.
+    mobileUa.value = true
+    screenHeight.value = 2160
+    await maybePromptStartupUIScale()
+    expect(confirmMock).not.toHaveBeenCalled()
+  })
+
+  it('still offers on a desktop browser of the same size', async () => {
+    // The counterpart: the mobile gate must not be the thing that makes the
+    // desktop case pass. Same 2160 short edge, desktop UA → it asks.
+    mobileUa.value = false
+    screenHeight.value = 2160
+    confirmMock.mockResolvedValue(false)
+    await maybePromptStartupUIScale()
+    expect(confirmMock).toHaveBeenCalledTimes(1)
   })
 
   it('does not offer on the Android shell', async () => {

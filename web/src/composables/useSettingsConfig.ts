@@ -7,7 +7,7 @@ import { syncServerLanguage } from '@/utils/serverLanguage'
 import { resolveThemeId, applyThemeAttributes, onSystemColorSchemeChange } from '@/utils/themeMeta'
 import { applyFontConfig } from '@/utils/fontConfig'
 import { normalizeDisplayMode } from '@/utils/chatSessionUtils'
-import { resolveUIScale, computeAutoUIScale, currentScreenHeight, applyUIScale, readAppliedUIScale } from '@/utils/uiScale'
+import { resolveUIScale, computeAutoUIScale, currentScreenShortEdge, applyUIScale, readAppliedUIScale } from '@/utils/uiScale'
 import { setLayoutScopeMode } from '@/utils/panelState'
 import { applyServerLimits } from '@/stores/app.ts'
 
@@ -314,10 +314,13 @@ export function getEffectiveUIScale(): number {
  * nothing recomputes behind their back. Goes through `setLocalConfig` so the
  * value is persisted and applied by the same side effect as the slider.
  *
+ * Measures the screen's SHORT edge: a rotated 1080p monitor (1080×1920) must
+ * fit to 100%, not to the 178% its height would give.
+ *
  * Returns the factor so the caller can report it back to the user.
  */
 export function autoFitUIScale(): number {
-  const factor = computeAutoUIScale(currentScreenHeight())
+  const factor = computeAutoUIScale(currentScreenShortEdge())
   setLocalConfig('uiScale', factor)
   return factor
 }

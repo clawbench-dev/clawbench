@@ -13,26 +13,33 @@
  * (`shouldSuggestUIScale` + `composables/useStartupUIScalePrompt.ts`), but the
  * user has to accept it before anything is written.
  *
- * `screenHeight` is read from `window.screen.height`, which is supposed to be
- * in CSS pixels (DIP) — NOT the physical panel resolution. On Windows, macOS
- * and X11/XWayland that holds: a 4K panel driven at 200% OS scaling reports
- * height 1080 and devicePixelRatio 2, so `height / 1080` already subtracts the
- * system scaling (4K at 200% → factor 1.0, 4K at 100% → factor 2.0).
+ * The measurement is the screen's SHORT EDGE, not its height. A panel's size
+ * class ("1080p", "1440p") names its short edge, and the short edge is the one
+ * quantity that does not change when the device is rotated. Measuring height
+ * instead made the same 12.9" iPad (1366×1024 CSS px) ask for a 126% UI in
+ * portrait and nothing in landscape, and made a rotated 1080p monitor — very
+ * common for reading code — report 1920 and ask for 178%.
+ *
+ * `screen.width/height` are supposed to be in CSS pixels (DIP), NOT the
+ * physical panel resolution. On Windows, macOS and X11/XWayland that holds: a
+ * 4K panel driven at 200% OS scaling reports 1080 for the short edge and
+ * devicePixelRatio 2, so `shortEdge / 1080` already subtracts the system
+ * scaling (4K at 200% → factor 1.0, 4K at 100% → factor 2.0).
  *
  * Native Wayland (Ubuntu's default GNOME session) is the exception: Chromium
  * reports `screen.width/height` in DEVICE pixels there — the same 4K panel at
- * 200% reports height 2160 with devicePixelRatio 2. Feeding that straight in
- * yields factor 2.0 on top of the OS's 2×, i.e. a 4× UI. Measured with Chrome
- * 154 on a live GNOME 46 Wayland session (4K VX2880-4K-HDU at scale 2.0):
- * native Wayland → `screen.height === 2160`, XWayland on the same monitor →
- * `screen.height === 1080`.
+ * 200% reports a short edge of 2160 with devicePixelRatio 2. Feeding that
+ * straight in yields factor 2.0 on top of the OS's 2×, i.e. a 4× UI. Measured
+ * with Chrome 154 on a live GNOME 46 Wayland session (4K VX2880-4K-HDU at
+ * scale 2.0): native Wayland → `screen.height === 2160`, XWayland on the same
+ * monitor → `screen.height === 1080`.
  *
  * There is no browser API that reports which convention is in use (UA, screen
  * and media queries are identical), so `screenHeightToCssPixels` infers it from
  * an invariant: a window can never be taller than the screen it sits on.
  */
 
-/** Height in CSS pixels the layout was designed against (1080p). */
+/** Short edge in CSS pixels the layout was designed against (1080p). */
 export const UI_SCALE_BASE_HEIGHT = 1080
 
 /**
@@ -233,20 +240,33 @@ function isLinuxDesktopBrowser(): boolean {
 }
 
 /**
- * Current screen height in CSS pixels, or 0 when unavailable (SSR/tests).
+ * Current screen short edge in CSS pixels, or 0 when unavailable (SSR/tests).
  * Wrapped so callers do not each need the try/undefined dance.
  *
+ * The short edge — not the height — because it is the quantity that survives
+ * rotation: a 12.9" iPad is 1366×1024 and a rotated 1080p monitor is
+ * 1080×1920, and both are the same size class either way round. See the module
+ * header for the two bugs measuring height caused.
+ *
  * The value is normalized by `screenHeightToCssPixels` so native Wayland's
- * device-pixel reading does not double up with the OS scale factor.
+ * device-pixel reading does not double up with the OS scale factor. That
+ * normalization infers the convention from whether the window fits inside the
+ * report, so it must receive the SHORT edge on both sides: a window can be
+ * taller than the short edge on a portrait screen (1920×1080 rotated is
+ * 1080 wide × 1920 tall), and feeding the height there would make the
+ * inference compare the wrong pair of numbers.
  */
-export function currentScreenHeight(): number {
+export function currentScreenShortEdge(): number {
   try {
-    const raw = Number(window.screen?.height) || 0
+    const w = Number(window.screen?.width) || 0
+    const h = Number(window.screen?.height) || 0
+    // A missing dimension must not win `Math.min` as 0.
+    const shortRaw = w > 0 && h > 0 ? Math.min(w, h) : Math.max(w, h)
     const dpr = Number(window.devicePixelRatio) || 1
     const outer = Number(window.outerHeight) || 0
     const inner = Number(window.innerHeight) || 0
     const windowDeviceHeight = Math.max(outer, inner) * dpr
-    return screenHeightToCssPixels(raw, dpr, windowDeviceHeight, isLinuxDesktopBrowser())
+    return screenHeightToCssPixels(shortRaw, dpr, windowDeviceHeight, isLinuxDesktopBrowser())
   } catch {
     return 0
   }

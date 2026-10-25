@@ -1,10 +1,11 @@
 import i18n from '@/i18n'
 import { useDialog } from '@/composables/useDialog'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
+import { isMobileOSUA } from '@/composables/usePlatformDetect'
 import { getEffectiveUIScale, setLocalConfig } from '@/composables/useSettingsConfig'
 import {
   computeAutoUIScale,
-  currentScreenHeight,
+  currentScreenShortEdge,
   shouldSuggestUIScale,
 } from '@/utils/uiScale'
 import { appLog } from '@/utils/appLog'
@@ -60,8 +61,12 @@ function writeDeclined(factor: number): void {
  * persisted and the settings slider shows it immediately.
  *
  * Skips:
- *   - the Android shell, where the OS scales by density and the settings
- *     "auto fit" row is hidden for the same reason;
+ *   - every mobile OS — Android, iOS and iPadOS in desktop mode. Phones and
+ *     tablets are already scaled by the OS to their density, so a second,
+ *     in-page factor would compound; the settings "auto fit" row is hidden on
+ *     Android for exactly the same reason. `isMobileOSUA` (not `isAndroidApp`)
+ *     is the right predicate here because it also covers the Android browser
+ *     and every iPad, neither of which is an Android app;
  *   - a screen whose fit is not at least `UI_SCALE_SUGGEST_THRESHOLD` larger
  *     than the applied factor (1080p and below never prompt at all);
  *   - a fit the user already declined on this device;
@@ -73,10 +78,14 @@ export async function maybePromptStartupUIScale(): Promise<void> {
   prompted = true
 
   try {
+    // The native-host check stays alongside the UA one: a WebView can be told
+    // to send a desktop UA (BrowserActivity does exactly that for its desktop
+    // mode), and the app shell must never offer a second factor regardless.
     if (usePlatformDetect().isAndroidApp.value) return
+    if (isMobileOSUA) return
 
     const current = getEffectiveUIScale()
-    const suggested = computeAutoUIScale(currentScreenHeight())
+    const suggested = computeAutoUIScale(currentScreenShortEdge())
     if (!shouldSuggestUIScale(current, suggested)) return
     if (readDeclined() === suggested) return
 
