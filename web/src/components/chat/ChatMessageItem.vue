@@ -1125,10 +1125,44 @@ const copyPayload = quotableText
        composited long ago). `contain: paint` bounds the row's paint to its own
        box, so the slice cannot survive a re-composite.
 
-       Safe here: the row holds no absolutely/fixed positioned descendants that
-       deliberately overflow (verified — only two `position: relative`), and
-       `.msg-card` already clips its own children with `overflow: hidden`. */
+       ⚠️ CONTAINMENT CLIPS INJECTED FIXED OVERLAYS. This rule is only safe
+       because of the escape hatch below it — do NOT read it as "this row holds
+       nothing that overflows". It does: `useCodeBlockHeader.ts` injects a
+       `position: fixed` `.table-block-copy-menu` into every markdown table at
+       RUNTIME, and paint containment both clips it to the row and makes the row
+       its containing block. On a 1–2 row table the menu is taller than the
+       table, so its last items (HTML / TSV) landed below the row's bottom edge:
+       invisible, unclickable, and the click fell through to the message behind
+       it — with no error anywhere.
+
+       The owner of that DOM is NOT this file, so "grep this file for `fixed`"
+       is a blind spot: the only way to find such overlays is to grep the
+       RENDER pipeline for elements it injects into `v-html` content. Whenever
+       one is added, the escape hatch below has to cover it too. */
     contain: paint;
+}
+
+/* ── Escape hatch: an open table copy menu needs the clip to be lifted ──
+   `contain: paint` implies layout + style containment and makes the row a
+   containing block for fixed descendants, so a fixed menu inside the bubble is
+   clipped at the row's box — the exact defect the `contain: paint` above
+   introduced for short tables.
+
+   Declarative rather than JS-managed on purpose: the menu can be closed from
+   half a dozen places (App.vue's outside-click, `useChatMessageInteractions`'
+   document listener, the wrap toggle, a code-block click, scroll-out). A row
+   class toggled by each of those would leak on any path that forgot to clear
+   it, and a leaked class permanently disables the ghost fix. `:has()` cannot
+   get out of sync because the menu's own state IS the condition.
+
+   `contain: style` (not `none`): it restores exactly the containment the
+   unscoped `.chat-message` rule declares, so only the PAINT clip is dropped.
+   Verified in Chromium that the containing block's origin is identical in both
+   states — `will-change: transform` keeps providing it — so the menu does not
+   jump when this rule flips. The ghost-artifact fix is unaffected: it applies
+   while streaming, when no menu is open. */
+:root[data-app-mode] .chat-message:has(.table-block-copy-menu.is-open) {
+    contain: style;
 }
 
 /* ── File attachment in messages ── */

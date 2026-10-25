@@ -49,4 +49,44 @@ describe('bottom dock layer isolation (Android WebView GPU ghost)', () => {
       expect(bare[1]).not.toMatch(/contain:\s*paint/)
     }
   })
+
+  /**
+   * `contain: paint` clips the dock's descendants to the dock's box. That is
+   * the point — but it also means any OVERLAY the dock opens must not be a
+   * descendant, or it gets clipped exactly like the chat row's table copy menu
+   * did (see chatRowLayerIsolation.css.test.ts).
+   *
+   * The dock's overflow menu escapes because it is teleported to <body>. That
+   * escape is currently accidental: nothing about `.dock-overflow-popup` says
+   * "must be teleported", so moving the menu back inside the wrapper to fix
+   * some unrelated positioning bug would silently clip it in app mode only.
+   * This guard pins the teleport.
+   */
+  describe('the dock overflow menu must escape the paint clip', () => {
+    it('renders .dock-overflow-popup inside a <Teleport to="body">', () => {
+      // Find every Teleport block and require one that both targets body and
+      // contains the popup. A plain `indexOf` would pass on a teleport that
+      // wraps something else entirely.
+      const teleports = [...appSource.matchAll(/<Teleport\b([^>]*)>([\s\S]*?)<\/Teleport>/g)]
+      expect(teleports.length, 'App.vue must contain at least one <Teleport>').toBeGreaterThan(0)
+
+      const hostsPopup = teleports.filter(([, attrs, body]) =>
+        /to\s*=\s*["']body["']/.test(attrs) && body.includes('dock-overflow-popup'),
+      )
+      expect(
+        hostsPopup.length,
+        '.dock-overflow-popup must be teleported to <body>: .bottom-dock-wrapper has ' +
+        '`contain: paint` in app mode, which clips any descendant overlay',
+      ).toBe(1)
+    })
+
+    it('does not also render the popup inside the dock wrapper', () => {
+      // A second, non-teleported copy would be the clipped one — and it would
+      // shadow the teleported menu in DOM order.
+      const wrapper = appSource.match(/<div class="bottom-dock-wrapper"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/)
+      if (wrapper) {
+        expect(wrapper[0]).not.toContain('dock-overflow-popup')
+      }
+    })
+  })
 })
