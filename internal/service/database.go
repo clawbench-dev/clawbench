@@ -41,6 +41,7 @@ const (
 	migAskCardDone          = "2026-10-16_normalize_ask_summary_cards_done"
 	migEffortPickFlag       = "2026-10-18_mark_legacy_effort_picks"
 	migUsageLedgerHeal      = "2026-10-19_heal_usage_ledger"
+	migLedgerWallClock      = "2026-10-25_backfill_ledger_wall_clock"
 )
 
 // dataMigrationNames 是上表的名字集合，供测试遍历。
@@ -52,6 +53,7 @@ var dataMigrationNames = []string{
 	migAskCardDone,
 	migEffortPickFlag,
 	migUsageLedgerHeal,
+	migLedgerWallClock,
 }
 
 // ensureSchemaMigrationsTable 幂等建台账表。必须在任何 runOnce 之前调用。
@@ -2004,6 +2006,13 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// attribution, re-stamped created_at). Runs after every other migration so
 	// rows it backfills (e.g. from chat_history.content) are healed too.
 	runOnce(migUsageLedgerHeal, MigrateUsageLedger)
+
+	// Migrate: backfill the AI runtime column of already-written ledger rows
+	// (exact value from the message's embedded metadata, else derived from the
+	// message's own start/finish stamps). Runs after the healing migration so it
+	// sees the repaired created_at values — a re-stamped row would otherwise
+	// derive a runtime of hours.
+	runOnce(migLedgerWallClock, MigrateLedgerWallClock)
 
 	return nil
 }

@@ -62,6 +62,7 @@ const zhMessages = {
     colHitRate: '缓存命中率',
     colCredit: 'Credit',
     colCost: '费用 (USD)',
+    colDuration: 'AI 运行时长',
     chartTitle: '图表类型',
     chartBar: '直方图',
     chartPie: '饼图',
@@ -84,7 +85,7 @@ function makeI18n() {
 
 function mockResponse(partial: Record<string, unknown>) {
   return {
-    totals: { input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 0 },
+    totals: { input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, durationMs: 0, messageCnt: 0 },
     rows: [],
     ...partial,
   }
@@ -201,8 +202,8 @@ describe('UsageStatsPanel', () => {
 
   it('renders overview cards: additive metrics + cache hit tokens + hit rate', async () => {
     mockApiGet.mockResolvedValue(mockResponse({
-      totals: { input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, messageCnt: 1 },
-      rows: [{ key: { model: 'glm' }, input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, messageCnt: 1 }],
+      totals: { input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, durationMs: 0, messageCnt: 1 },
+      rows: [{ key: { model: 'glm' }, input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, durationMs: 0, messageCnt: 1 }],
     }))
     const wrapper = await mountPanel()
     const cards = wrapper.findAll('.stats-total')
@@ -221,6 +222,33 @@ describe('UsageStatsPanel', () => {
     expect(cardText).toContain('80.0%') // cache hit rate
     expect(cardText).not.toContain('输出 Tokens') // zero → hidden
     expect(cardText).not.toContain('Credit') // zero → hidden
+    expect(cardText).not.toContain('AI 运行时长') // zero → hidden
+  })
+
+  it('shows the AI runtime card and its total in duration units', async () => {
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, durationMs: 5_400_000, messageCnt: 12 },
+      rows: [{ key: { model: 'glm' }, input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, durationMs: 5_400_000, messageCnt: 12 }],
+    }))
+    const wrapper = await mountPanel()
+    const cards = wrapper.findAll('.stats-total')
+    const runtime = cards.find(c => (c.find('.stats-total-label')?.text() ?? '').includes('AI 运行时长'))
+    expect(runtime, 'runtime must have its own overview card').toBeTruthy()
+    // 5.4M ms = 1.5h — formatted by the shared duration formatter, never as a
+    // compact token count ("5.4M").
+    expect(runtime!.find('.stats-total-value').text()).toBe('1.5h')
+  })
+
+  it('treats a range whose only data is runtime as non-empty', async () => {
+    // A cancelled turn can record runtime with no tokens at all; showing "no
+    // data" while the runtime card has a number would contradict itself.
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, durationMs: 90_000, messageCnt: 1 },
+      rows: [{ key: { model: 'glm' }, input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, durationMs: 90_000, messageCnt: 1 }],
+    }))
+    const wrapper = await mountPanel()
+    expect(wrapper.text()).not.toContain('所选时间段内暂无用量数据')
+    expect(wrapper.text()).toContain('AI 运行时长')
   })
 
   it('gives every overview card its own icon', async () => {

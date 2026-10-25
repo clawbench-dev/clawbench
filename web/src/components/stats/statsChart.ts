@@ -2,6 +2,7 @@ import type { EChartsCoreOption } from 'echarts/core'
 import { gt } from '@/composables/useLocale'
 import type { UsageMetricId, UsageRow } from '@/composables/useUsageStats'
 import { WIDE_SCREEN_MIN_WIDTH } from '@/composables/useWideScreenLayout'
+import { formatDuration } from '@/utils/format'
 import { formatCompactCount } from '@/utils/usageFormat'
 
 // Sentinel the backend uses for a missing group label
@@ -334,6 +335,11 @@ export function formatMetricValue(metric: UsageMetricId, v: number): string {
       // kept for large totals). Sub-cent amounts round to $0.00 — the raw
       // precision is still available in the per-message metadata modal.
       return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    case 'duration':
+      // Runtime is summed in milliseconds across every turn in the group, so a
+      // month's worth is hours: reuse the app's single duration formatter (and
+      // its h promotion) instead of inventing a second scale here.
+      return formatDuration(v)
     default:
       // input / output / total / cacheHit — raw token counts compacted to
       // K/M tiers (unit shown on the labels, e.g. "输入 Tokens").
@@ -350,5 +356,6 @@ export function rowValueOf(row: UsageRow, metric: UsageMetricId): number {
     case 'cacheHit': return row.cacheHit
     case 'credit': return row.credit
     case 'cost': return row.costUsd
+    case 'duration': return row.durationMs
   }
 }

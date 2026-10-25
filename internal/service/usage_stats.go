@@ -48,6 +48,10 @@ const (
 	MetricCacheHit UsageMetric = "cacheHit"
 	MetricCredit   UsageMetric = "credit"
 	MetricCost     UsageMetric = "cost"
+	// MetricDuration sums the ledger's wall_ms: the wall-clock time each AI
+	// turn actually ran (model calls plus tool execution). It is the only
+	// metric measured in milliseconds, not tokens.
+	MetricDuration UsageMetric = "duration"
 )
 
 // UsageParams configures a single usage statistics query.
@@ -78,7 +82,10 @@ type UsageParams struct {
 // UsageRow aggregates one dimension combination (or one day × combination for
 // trend queries). CacheHit/CacheMiss sums are returned so the client can
 // compose the cache breakdown (hit rate is shown from range totals in the
-// overview, not as an additive metric column).
+// overview, not as an additive metric column). DurationMs is the summed
+// wall-clock runtime of the group's turns — a different quantity (milliseconds,
+// not counts), so it is surfaced as its own metric and never added to the token
+// columns.
 type UsageRow struct {
 	Day        string            `json:"day,omitempty"` // "2006-01-02", trend only
 	Key        map[string]string `json:"key"`           // dim → group label, only requested dims
@@ -89,6 +96,7 @@ type UsageRow struct {
 	CacheMiss  int64             `json:"cacheMiss"`
 	Credit     float64           `json:"credit"`
 	CostUSD    float64           `json:"costUsd"`
+	DurationMs int64             `json:"durationMs"`
 	MessageCnt int64             `json:"messageCnt"`
 }
 
@@ -101,6 +109,7 @@ type UsageTotals struct {
 	CacheMiss  int64   `json:"cacheMiss"`
 	Credit     float64 `json:"credit"`
 	CostUSD    float64 `json:"costUsd"`
+	DurationMs int64   `json:"durationMs"`
 	MessageCnt int64   `json:"messageCnt"`
 }
 
@@ -179,6 +188,8 @@ func sortExpr(m UsageMetric) (string, bool) {
 		return "SUM(m.credit)", true
 	case MetricCost:
 		return "SUM(m.cost_usd)", true
+	case MetricDuration:
+		return "SUM(m.wall_ms)", true
 	}
 	return "", false
 }
@@ -293,7 +304,8 @@ func UsageStats(ctx context.Context, p UsageParams) (*UsageStatsResult, error) {
 	sums := "COALESCE(SUM(m.input_tokens),0), COALESCE(SUM(m.output_tokens),0), " +
 		"COALESCE(" + usageTotalSumExpr + ",0), " +
 		"COALESCE(SUM(m.cache_hit_tokens),0), COALESCE(SUM(m.cache_miss_tokens),0), " +
-		"COALESCE(SUM(m.credit),0), COALESCE(SUM(m.cost_usd),0), COUNT(*)"
+		"COALESCE(SUM(m.credit),0), COALESCE(SUM(m.cost_usd),0), " +
+		"COALESCE(SUM(m.wall_ms),0), COUNT(*)"
 	// chat_metadata is a standalone ledger with denormalized project_path/
 	// backend/agent_id, so no join back to chat_history/chat_sessions is needed
 	// (those rows may have been deleted). agents is joined only to resolve the

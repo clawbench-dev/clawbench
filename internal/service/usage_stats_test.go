@@ -56,6 +56,7 @@ type usageSeed struct {
 	cacheMiss int64
 	credit    float64
 	costUSD   float64
+	wallMs    int64
 }
 
 func insertUsageSeed(t *testing.T, db *sql.DB, s usageSeed) {
@@ -100,10 +101,10 @@ func insertUsageSeed(t *testing.T, db *sql.DB, s usageSeed) {
 	// agent_id/clawbench_session_id) so stats work after the session is deleted.
 	if _, err := db.Exec(
 		`INSERT INTO chat_metadata (message_id, model, input_tokens, output_tokens, total_tokens,
-			cache_hit_tokens, cache_miss_tokens, credit, cost_usd, created_at,
+			cache_hit_tokens, cache_miss_tokens, credit, cost_usd, wall_ms, created_at,
 			project_id, backend, agent_id, clawbench_session_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		msgID, s.model, s.input, s.output, s.total, s.cacheHit, s.cacheMiss, s.credit, s.costUSD, s.createdAt,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		msgID, s.model, s.input, s.output, s.total, s.cacheHit, s.cacheMiss, s.credit, s.costUSD, s.wallMs, s.createdAt,
 		projectID, s.backend, s.agentID, s.sessionID,
 	); err != nil {
 		t.Fatalf("insert metadata: %v", err)
@@ -307,6 +308,53 @@ func TestUsageStatsTrendByDay(t *testing.T) {
 	}
 	assert.Equal(t, int64(15), byDayModel["2026-01-10/glm"], "two rows same day model merge")
 	assert.Equal(t, int64(30), byDayModel["2026-01-11/deepseek"])
+}
+
+// The runtime metric sums wall_ms, which lives on the same ledger row as the
+// tokens but is a different quantity (milliseconds, not counts). It must be
+// summed per group AND in the totals, and it must be usable as the sort key —
+// otherwise "which backend eats the most of my day" cannot be answered.
+func TestUsageStatsDurationMetric(t *testing.T) {
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	insertUsageSeed(t, db, usageSeed{
+		project: "/p", sessionID: "s1", agentID: "cb", agentName: "CodeBuddy",
+		backend: "codebuddy", model: "glm", createdAt: "2026-01-10 10:00:00",
+		total: 10, wallMs: 60_000,
+	})
+	insertUsageSeed(t, db, usageSeed{
+		project: "/p", sessionID: "s2", agentID: "cb", agentName: "CodeBuddy",
+		backend: "codebuddy", model: "glm", createdAt: "2026-01-11 10:00:00",
+		total: 20, wallMs: 120_000,
+	})
+	// A row with runtime but no tokens: a cancelled turn still spent the time.
+	insertUsageSeed(t, db, usageSeed{
+		project: "/p", sessionID: "s3", agentID: "cc", agentName: "ClaudeCode",
+		backend: "claude", model: "opus", createdAt: "2026-01-12 10:00:00",
+		total: 0, wallMs: 5_000,
+	})
+
+	res, err := service.UsageStats(context.Background(), usageParams(service.UsageParams{
+		ProjectPath: "/p",
+		Dims:        []service.UsageDim{service.DimBackend},
+		Metrics:     []service.UsageMetric{service.MetricDuration},
+		SortBy:      service.MetricDuration,
+		SortDesc:    true,
+	}))
+	require.NoError(t, err)
+
+	require.NotNil(t, res.Totals)
+	assert.Equal(t, int64(185_000), res.Totals.DurationMs, "totals sum every row's wall_ms")
+
+	require.Len(t, res.Rows, 2)
+	// Sorted by runtime desc: codebuddy (180s) before claude (5s).
+	assert.Equal(t, "codebuddy", res.Rows[0].Key["backend"])
+	assert.Equal(t, int64(180_000), res.Rows[0].DurationMs)
+	assert.Equal(t, int64(5_000), res.Rows[1].DurationMs)
+	// The token columns keep their own values — runtime must not leak into them.
+	assert.Equal(t, int64(30), res.Rows[0].Total)
+	assert.Equal(t, int64(0), res.Rows[1].Total)
 }
 
 func TestUsageStatsEmptyResult(t *testing.T) {

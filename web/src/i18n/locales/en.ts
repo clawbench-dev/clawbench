@@ -250,6 +250,7 @@ export default {
     colHitRate: 'Cache Hit Rate',
     colCredit: 'Credit',
     colCost: 'Cost (USD)',
+    colDuration: 'AI Runtime',
     chartTitle: 'Chart',
     chartBar: 'Bar',
     chartPie: 'Pie',

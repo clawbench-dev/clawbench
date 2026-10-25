@@ -255,6 +255,7 @@ export default {
     colHitRate: '缓存命中率',
     colCredit: 'Credit',
     colCost: '费用 (USD)',
+    colDuration: 'AI 运行时长',
     chartTitle: '图表类型',
     chartBar: '直方图',
     chartPie: '饼图',

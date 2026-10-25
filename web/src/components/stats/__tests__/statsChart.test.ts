@@ -218,4 +218,15 @@ describe('formatMetricValue token tiers (raw / K / M / B)', () => {
     expect(formatMetricValue('cost', 8283.125)).toBe('$8,283.13')
     expect(formatMetricValue('cost', 0)).toBe('$0.00')
   })
+
+  it('formats the runtime metric in the app duration units, not as a token count', () => {
+    // durationMs is a SUM over many turns, so realistic values are minutes to
+    // hours — never a K/M "token" compaction, which would read "3.6M" for a
+    // month of runtime and say nothing.
+    expect(formatMetricValue('duration', 500)).toBe('500ms')
+    expect(formatMetricValue('duration', 4_200)).toBe('4.2s')
+    expect(formatMetricValue('duration', 300_000)).toBe('5.0m')
+    expect(formatMetricValue('duration', 3_600_000)).toBe('1.0h')
+    expect(formatMetricValue('duration', 0)).toBe('0ms')
+  })
 })
