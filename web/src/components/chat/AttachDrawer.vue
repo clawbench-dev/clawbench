@@ -310,7 +310,7 @@ const { recentShares, fetchRecentShares, deleteRecentShare, clearRecentShares } 
 const { recentUploads, fetchRecentUploads, deleteRecentUpload, clearRecentUploads } = useUploadRecent()
 
 // ── Upload logic (now lives inside the drawer) ──
-const { pendingFiles, attachedFiles, handleFileSelect, handleFileDrop, cancelChatUpload, chatUploadCancelled } = useFileUpload()
+const { pendingFiles, attachedFiles, handleFileSelect, handleFileDrop, readPickedCount, terminateChatUploadBatch, chatUploadCancelled } = useFileUpload()
 
 const activeTab = ref('current')
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -400,16 +400,20 @@ function handleCameraClick() {
 
 async function onFileSelect(e: Event) {
   filePickerOpen.value = false
-  // Did the user actually pick something? Read the count BEFORE handing the
-  // event over: handleFileSelect clears `input.value` synchronously, which also
-  // empties the FileList. A cancelled picker leaves this at 0 and must keep the
-  // drawer open — the user is still browsing tabs and never asked to leave.
-  const picked = (e.target as HTMLInputElement)?.files?.length ?? 0
   // Choosing a file is the end of the drawer's job: dismiss it right away
   // instead of waiting for the upload to finish. The transfer keeps running in
   // the background and reports progress on the input bar's attachment cards,
   // so keeping the sheet open only delays the user.
-  if (picked > 0) emit('close')
+  //
+  // Whether anything was picked comes from the composable's readPickedCount,
+  // NOT from an inline read of `e.target.files`: handleFileSelect clears
+  // `input.value`, which empties the FileList, so the count must be taken
+  // before the call. That ordering contract now lives with the code that does
+  // the clearing (and is asserted by its own tests) instead of being a comment
+  // on this side that a future refactor of the composable could silently break.
+  // A cancelled picker reports 0 and keeps the drawer open — the user is still
+  // browsing tabs and never asked to leave.
+  if (readPickedCount(e) > 0) emit('close')
   const uploadedPaths = await handleFileSelect(e)
   // Terminated mid-batch: the user asked to clear everything, so do not attach
   // the files that had already finished. The terminate handler already dropped
@@ -430,15 +434,14 @@ async function onFileSelect(e: Event) {
 /**
  * Terminate the whole in-flight upload batch.
  *
- * Clears everything, per the product decision: the queued files stop, the
- * transfer in flight is aborted, and any file that had already finished is
- * detached again (so the input returns to its pre-upload state).
+ * The action itself lives in useFileUpload.terminateChatUploadBatch, shared
+ * with the input bar's attachment strip — that strip is where the user actually
+ * is during an upload, because this drawer closes as soon as files are picked
+ * (see onFileSelect). Two copies of "cancel, abort, then detach the finished
+ * ones" would drift on exactly that last step.
  */
 function handleTerminateUpload() {
-  const finished = cancelChatUpload()
-  for (const path of finished) {
-    if (isAttached(path)) emit('remove-attached', { path })
-  }
+  terminateChatUploadBatch()
 }
 
 // When uploads complete, remove finished items from pendingFiles
@@ -955,7 +958,7 @@ defineExpose({ activeTab, handleFileDrop })
   border-radius: var(--radius-xs);
   margin-right: var(--space-3);
   vertical-align: middle;
-  letter-spacing: 0.3px;
+  letter-spacing: calc(0.3 * var(--dp));
 }
 .ad-current-item {
   background: var(--bg-secondary);
@@ -970,7 +973,7 @@ defineExpose({ activeTab, handleFileDrop })
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-bold);
   color: var(--accent-color);
-  letter-spacing: -0.3px;
+  letter-spacing: calc(-0.3 * var(--dp));
 }
 
 /* Batch terminate bar above the in-flight upload rows */

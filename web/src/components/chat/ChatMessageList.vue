@@ -55,6 +55,12 @@
             </span>
           </div>
           <span class="group-welcome-hint">{{ groupModeDesc }}</span>
+          <!-- A host group may legitimately have the host as its only member
+               (the backend allows it; only FREE groups require two). It routes
+               exactly like a single chat, so the user who built one needs to
+               know why nobody else is answering — and that the fix is adding a
+               member, not that the group is broken. -->
+          <span v-if="isSoloGroup" class="group-welcome-solo">{{ t('chat.messageList.groupSoloMemberHint') }}</span>
           <ul class="group-welcome-tips">
             <li v-for="(tip, i) in groupModeTips" :key="i">{{ tip }}</li>
           </ul>
@@ -242,6 +248,7 @@ import { computeRemainingCount } from '@/utils/messageListUtils.ts'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { isUserScrolling, shouldPin, isUserAwayFromBottom, SCROLL_STOP_MS, NEAR_BOTTOM_PX, RESUME_FOLLOW_PX } from '@/utils/scrollState'
 import { saveChatScrollPosition, clearChatScrollPosition, getChatScrollPosition, hasChatScrollPosition } from '@/utils/chatScrollMemory'
+import { runningSessions } from '@/composables/useSessionIdentity'
 import { appLog } from '@/utils/appLog'
 import { isLastAssistantMessage } from '@/utils/chatSessionUtils'
 import { flashElement } from '@/utils/domFlash'
@@ -320,6 +327,21 @@ const groupStackMembers = computed(() =>
     .filter((m) => !m.left)
     .map((m) => ({ id: m.id, agentId: m.agentId, name: m.name, backend: m.backend, avatar: m.avatar, isHost: m.isHost })),
 )
+
+/**
+ * A group with exactly ONE active member.
+ *
+ * Only host mode can be created this way (free mode requires two members
+ * server-side), and it behaves like a single chat — nothing routes to a second
+ * participant because there is none. The empty state says so instead of
+ * leaving the user wondering why the group is silent.
+ *
+ * Derived from `groupStackMembers` rather than `props.groupMembers` so it uses
+ * the SAME "active member" definition the avatar stack above renders: a member
+ * who left is not a participant, and counting them would hide the hint from the
+ * group that most needs it.
+ */
+const isSoloGroup = computed(() => props.isGroupSession && groupStackMembers.value.length === 1)
 
 // Group empty-state copy, selected by mode. The two modes route completely
 // differently — a host decides who speaks, free mode relays via @-mentions — so
@@ -1314,24 +1336,55 @@ const MAX_RESTORE_TRIES = 60
 
 /**
  * True while the user is sitting at a restored position that is away from the
- * bottom, together with the message count at restore time. New messages
- * arriving in this state are exactly "the session grew while you were reading
- * history" — the down FAB is then re-shown so the jump-to-bottom control is
- * there without a separate banner. Cleared as soon as the user reaches the
+ * bottom, together with the id of the newest message at restore time. New
+ * messages arriving in this state are exactly "the session grew while you were
+ * reading history" — the down FAB is then re-shown so the jump-to-bottom control
+ * is there without a separate banner. Cleared as soon as the user reaches the
  * bottom (or switches sessions).
+ *
+ * Identity of the TAIL message, not the array LENGTH: loading older history
+ * prepends to the head, so the length grows without a single new message
+ * arriving. Length comparison therefore fired the "new messages" hint on every
+ * load-more while the reader sat at a restored position. The tail id only
+ * changes when something is actually appended.
  */
 let restoredAwayFromBottom = false
-let restoredMsgCount = 0
+let restoredTailId = ''
+
+/**
+ * Stable comparison key for a message id. Ids arrive as numbers (DB rows) and
+ * as strings (transient pending/streaming bubbles), and `1 === '1'` is false —
+ * so both sides go through String() or a type flip would read as "new message".
+ */
+function tailIdOf(list) {
+  const tail = list && list.length ? list[list.length - 1] : null
+  const id = tail?.id
+  return id === undefined || id === null ? '' : String(id)
+}
 
 /**
  * Remember where the user is in `sid`, or forget it when they are at the
  * bottom. Called on session switch (with the OLD id, while the old DOM is
  * still mounted), on unmount, and from hotSwitchProject before resetIdentity()
  * clears the id.
+ *
+ * A RUNNING session is never remembered (its memory is dropped instead). That is
+ * the same trade-off `shouldRestoreChatScroll(hasMemory, isRunning)` applies on
+ * the way IN — it refuses to restore into a running session because "its output
+ * is the point". Storing a position for one would leave an entry that is
+ * guaranteed to be ignored, and if the turn finishes before the user comes back
+ * it would silently restore a stale mid-history position instead of showing the
+ * reply that just landed. Keeping the two sides on one rule also means the
+ * entry can never describe a turn the user did not actually read.
  */
 function saveCurrentPosition(sid) {
   const el = messagesRef.value
   if (!sid || !el) return
+  // Running → drop any memory rather than write one: see the docblock above.
+  if (runningSessions.value.has(sid)) {
+    clearChatScrollPosition(sid)
+    return
+  }
   const max = el.scrollHeight - el.clientHeight
   const dist = max - el.scrollTop
   // At (or near) the bottom → no memory: returning should show the newest
@@ -1366,6 +1419,7 @@ watch(() => props.currentSessionId, (newSid, oldSid) => {
   // listKey embeds the message count and is therefore never a stable identity.
   pendingRestoreSessionId = newSid && hasChatScrollPosition(newSid) ? newSid : null
   restoredAwayFromBottom = false
+  restoredTailId = ''
   isAtBottom.value = true
   scrolledUp.value = false
   scrolledDown.value = false
@@ -1453,6 +1507,14 @@ function applyRestore(sid, entry) {
     const el = messagesRef.value
     // The user switched away again mid-restore → abandon, they are elsewhere.
     if (!el || props.currentSessionId !== sid) return
+    // The user took the viewport back while the restore was still retrying
+    // (the chain runs up to MAX_RESTORE_TRIES frames, ~1s of layout settling).
+    // Writing scrollTop now would yank them from wherever they just scrolled
+    // to back to the saved position. Their gesture is the newer intent.
+    if (isUserScrolling(buildScrollState())) {
+      appLog.d('ChatScroll', `restore abandoned: user took over (tries=${tries})`)
+      return
+    }
     const max = el.scrollHeight - el.clientHeight
     if (max <= 0 || (tries < MAX_RESTORE_TRIES && entry.scrollTop > max)) {
       if (tries < MAX_RESTORE_TRIES) {
@@ -1494,7 +1556,7 @@ function applyRestore(sid, entry) {
       // affordance, so a restored position already has the jump-to-bottom
       // control without any new UI.
       restoredAwayFromBottom = true
-      restoredMsgCount = props.messages.length
+      restoredTailId = tailIdOf(props.messages)
       showDownFabHint()
     }
   }
@@ -1536,8 +1598,16 @@ watch(() => props.messages, (newMsgs, oldMsgs) => {
   // from the bottom. The follow latch already keeps the viewport still; re-show
   // the jump-to-bottom FAB (it auto-hides) so the control is present without a
   // separate banner.
-  if (restoredAwayFromBottom && newMsgs.length > restoredMsgCount) {
-    restoredMsgCount = newMsgs.length
+  //
+  // Compared by the TAIL message's id, not by array length: load-more prepends
+  // older history to the head, so the length grows with no new message — a
+  // length check popped the FAB on every load-more. See restoredTailId.
+  // An empty tail id means the newest row is a transient bubble with no
+  // identity yet — comparing '' against the remembered id would fire, then fire
+  // AGAIN when that bubble adopts its DB id. Wait for a real identity.
+  const tailId = tailIdOf(newMsgs)
+  if (restoredAwayFromBottom && tailId !== '' && tailId !== restoredTailId) {
+    restoredTailId = tailId
     showDownFabHint()
   }
 
@@ -1753,6 +1823,15 @@ defineExpose({
 .group-welcome-hint {
   font-size: var(--font-size-md);
   color: var(--text-secondary);
+  line-height: var(--line-height-snug);
+}
+
+/* "You are the only member" — an advisory inside the group empty state, so it
+   reads as a quieter sibling of the mode hint above it rather than as an error
+   (the group is valid; it just has nobody else in it). */
+.group-welcome-solo {
+  font-size: var(--font-size-sm);
+  color: var(--color-orange, #d97706);
   line-height: var(--line-height-snug);
 }
 

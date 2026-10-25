@@ -972,6 +972,10 @@ export default {
       groupModeFreeTip1: "{'@'} a member to have them speak directly",
       groupModeFreeTip2: "Members hand off to each other via {'@'}-mentions",
       groupModeFreeTip3: 'Ends when the discussion limit is reached; press Stop any time',
+      // Shown only when a group has exactly one active member (host mode allows
+      // that; free mode requires two). The group is valid — it just routes like
+      // a single chat, which is why it looks silent.
+      groupSoloMemberHint: 'This group only has you in it. Add members before they can join the conversation.',
       noAgentsTitle: 'No agents available',
       noAgentsDesc: 'Install and configure an AI agent to start chatting.',
       noAgentsAction: 'Configure agents',
@@ -1308,6 +1312,8 @@ export default {
     confirm: 'Add',
     increaseInstance: 'Add another instance of this agent',
     decreaseInstance: 'Remove one instance of this agent',
+    removeAgent: 'Deselect this agent',
+    soloHostGroupHint: 'A group with one member behaves like a single chat — consider adding another',
     memberCountHint: '{count}/{max} added',
     memberLimitReached: 'Member limit reached',
     bcc: {
@@ -1900,7 +1906,6 @@ export default {
       projectRoot: 'Project root',
       backToProject: 'Back to project root',
       fsRoot: 'Filesystem root',
-      external: 'External',
       externalTip: 'Outside the project directory',
     },
     recent: {
@@ -3601,6 +3606,12 @@ export default {
     manualInstallHint: 'Run the following command to install:',
     dontShowAgain: "Don't show again",
     ok: 'OK',
+  },
+  uiScalePrompt: {
+    title: 'Large display detected',
+    message: 'This screen suggests a UI scale of {suggested}% (currently {current}%), so the interface may look small. Apply it now? You can fine-tune it later in Settings → Appearance → UI Scale.',
+    accept: 'Set to {pct}%',
+    decline: 'Keep current',
   },
   upgrade: {
     title: 'Upgrade',

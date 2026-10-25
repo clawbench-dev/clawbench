@@ -17,11 +17,20 @@ import (
 //
 //  1. `read` / `write` / `edit` carry the path under "path", but their cards read
 //     "file_path". `ls` ALSO uses "path" and its card reads "path", so a global
-//     path→file_path remap would blank the LS card. The remap must be per tool.
+//     path→file_path remap would blank the LS card. path→file_path therefore
+//     lives in the BASE table (so tools the list does not know yet still render
+//     a path) and `ls` overrides it back.
 //  2. `edit` carries a nested `edits: [{oldText, newText}]` array and no flat
 //     old_string/new_string. The diff renderer only reads the flat fields, so the
 //     first edit has to be promoted (exactly what pi needs — see
 //     normalizePiEditInput, which is reused rather than duplicated).
+//
+// The base table is keyed by FIELD, not by tool, so it must hold only remaps
+// that are right for every tool. `path` is the one exception: it is the field
+// most file tools use and the cards that read it (Read/Write/Edit) all want
+// file_path, while the single tool that disagrees (ls) overrides it explicitly.
+// That keeps a tool this list has never seen (e.g. a future `apply_patch`-style
+// call carrying "path") rendering a path instead of a blank file header.
 //
 // Measured shapes (TestOpenClawACPProbe_L4_ToolFrameShapes):
 //
@@ -64,13 +73,16 @@ func normalizeOpenClawACPInput(toolName string, rawInput []byte) string {
 	}
 
 	switch toolName {
-	case "read", "write":
-		remaps["path"] = "file_path"
 	case "edit":
-		remaps["path"] = "file_path"
+		// path→file_path comes from the base table; the nested edits[] array
+		// still needs the pi normalizer.
 		return normalizePiEditInput(json.RawMessage(rawInput), remaps)
 	case "ls":
-		// LS's card reads "path" — deliberately no remap.
+		// LS's card reads "path", so the base path→file_path remap is dropped
+		// for this tool. Deleted rather than reversed (file_path→path): the
+		// remap pass iterates a map, so a pair of opposite remaps would apply
+		// in a random order and make the result nondeterministic.
+		delete(remaps, "path")
 	}
 
 	normalized, err := normalizeToolInput(rawInput, remaps)
@@ -82,8 +94,15 @@ func normalizeOpenClawACPInput(toolName string, rawInput []byte) string {
 
 // openClawACPBaseRemaps is the remap table applied for every OpenClaw tool.
 // Kept here (not imported from backends/openclaw, which would be an import
-// cycle) and kept in sync by register_test.go in that package.
+// cycle) and kept in sync by register_test.go in that package — that test
+// asserts the shared keys explicitly, so a drift is a test failure rather than
+// a silent divergence.
+//
+// "path" is included because it is the field every file tool uses and the
+// Read/Write/Edit cards all read "file_path". The one tool that disagrees (ls)
+// removes it (see normalizeOpenClawACPInput).
 var openClawACPBaseRemaps = map[string]string{
+	"path":       "file_path",
 	"filePath":   "file_path",
 	"oldString":  "old_string",
 	"newString":  "new_string",
@@ -150,6 +169,20 @@ func ACPModesMirrorThoughtLevelForTest(backendID string) bool {
 // NormalizeOpenClawACPInputForTest exports normalizeOpenClawACPInput.
 func NormalizeOpenClawACPInputForTest(toolName, rawInput string) string {
 	return normalizeOpenClawACPInput(toolName, []byte(rawInput))
+}
+
+// OpenClawACPBaseRemapsForTest exports a copy of openClawACPBaseRemaps so the
+// backend sub-package's register_test.go can pin it against
+// OpenClawACPInputRemaps — the two tables live in different packages (this one
+// must not import backends/openclaw: cycle) and are kept in sync only by
+// convention. A copy, not the map itself, so a test cannot mutate production
+// state.
+func OpenClawACPBaseRemapsForTest() map[string]string {
+	out := make(map[string]string, len(openClawACPBaseRemaps))
+	for k, v := range openClawACPBaseRemaps {
+		out[k] = v
+	}
+	return out
 }
 
 // ParseOpenClawToolCallForTest exports parseOpenClawACPToolCall.

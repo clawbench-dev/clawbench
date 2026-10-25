@@ -977,6 +977,10 @@ export default {
       groupModeFreeTip1: "{'@'} 某位成员，可直接让他发言",
       groupModeFreeTip2: "成员之间 {'@'} 接力，形成讨论",
       groupModeFreeTip3: '智能体讨论次数达到上限后结束，随时可点「停止」',
+      // Shown only when a group has exactly one active member (host mode allows
+      // that; free mode requires two). The group is valid — it just routes like
+      // a single chat, which is why it looks silent.
+      groupSoloMemberHint: '这是一个只有你自己的群。添加成员后，他们才能参与对话。',
       noAgentsTitle: '暂无可用智能体',
       noAgentsDesc: '安装并配置 AI 智能体以开始对话。',
       noAgentsAction: '配置智能体',
@@ -1313,6 +1317,8 @@ export default {
     confirm: '添加',
     increaseInstance: '再添加一个该智能体实例',
     decreaseInstance: '减少一个该智能体实例',
+    removeAgent: '取消选择该智能体',
+    soloHostGroupHint: '只有一个成员时，群聊与单聊没有区别，建议再加一个成员',
     memberCountHint: '已添加 {count}/{max} 个',
     memberLimitReached: '已达成员上限',
     bcc: {
@@ -1898,7 +1904,6 @@ export default {
       projectRoot: '项目根目录',
       backToProject: '返回项目根目录',
       fsRoot: '文件系统根目录',
-      external: '外部',
       externalTip: '位于项目目录之外',
     },
     recent: {
@@ -3597,6 +3602,12 @@ export default {
     manualInstallHint: '请运行以下命令安装：',
     dontShowAgain: '不再提示',
     ok: '确定',
+  },
+  uiScalePrompt: {
+    title: '当前屏幕较大',
+    message: '当前屏幕按 1080p 基准建议缩放到 {suggested}%（现在是 {current}%），界面可能偏小。是否调整？之后可在「设置 → 外观 → 界面缩放」随时微调。',
+    accept: '调整为 {pct}%',
+    decline: '保持当前',
   },
   upgrade: {
     title: '升级',

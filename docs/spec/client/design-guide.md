@@ -85,18 +85,26 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 
 - **`--dp` = 一个「设计像素」**（`1rem / 15`）。布局按 15px 基准画的，所以 `calc(4 * var(--dp))` 就是原型里的「4px」，与当前缩放无关。
 - **写几何尺寸一律用 `calc(N * var(--dp))`**：padding / gap / width / height / radius / offset / 阴影模糊半径 / 图标尺寸。
-- **文字用 `--font-size-*` token**（它们内部就是 `--dp` 倍数）。
+- **文字用 `--font-size-*` token**（它们内部就是 `--dp` 倍数）。没有对应档位时（11.5 / 12.5 / 26 / 48 等）写 `calc(N * var(--dp))`，**绝不写裸 px**——裸 px 的字号在缩放后不跟随，视觉上就是「比周围小一号」，而 scale=1 时完全看不出来。守卫：`fontDrivenScaling.test.ts`。
+- **字距（`letter-spacing`）同样要缩放**：它是相对字号的比例属性，`0.5px` 在字号放大 1.5× 后视觉上「变紧」。写 `calc(N * var(--dp))`（负值同理，`calc(-0.3 * var(--dp))`）。不用 `em` 的原因同上（会嵌套复合），且不少比例是非有限小数（0.5/11），`em` 在 scale=1 时做不到逐像素一致。
 - **发丝线保持字面 `1px`**：边框、分隔线、焦点环、`outline-offset`、1px 阴影。它们该是**一个设备像素**，放大到 1.5px 只会发虚。
 - **为什么不用 `em`**：`em` 会随嵌套复合——`1.6em` 的标题放进 `0.875em` 的徽标里会乘起来，而 markdown 里的字号嵌套非常自由。`rem` / `--dp` 永远相对根，不会复合。
 - **为什么放弃 `html { zoom }`**：CSS zoom **不缩放布局视口**。实测 zoom 1.5 / 1000px 窗口下 `innerWidth` 仍是 1000 而 `clientWidth` 变成 667，于是 `100vw` 画出 1500 视觉 px（浮动卡片跑出屏幕）、`60dvh` 从占屏 60% 变 90%、媒体查询仍以为有 1000px、canvas 拉伸 backing store；每个消费方都要用 `toFixedCSS()` 在两套坐标间换算。rem 缩放只有一个坐标空间，这些坑整体消失。
 - **`--input-line-height` 例外**：表单控件的行盒必须是**整数 px**（Android WebView 会独立舍入行盒与内容盒，分数值下光标偏高），所以由 JS 按 `round(13 × scale × 1.4)` 写入，不走 `calc`。
 - **`--radius-full` 与 `--header-safe-area-top` 不缩放**：前者只要大于元素高度一半就是药丸，后者是物理刘海尺寸。
 - **图标**：lucide 的 `:size` 写成 SVG 的 `width` **属性**，属性不跟随根字号。`css/components.css` 里有一组 `:where(svg[width="N"])` 规则按属性值缩放它们，所以 885 个调用点一个都不用改。`:where()` 把特异性压到 0,1,0，自己定尺寸的组件（`.agent-icon-svg`、`.li-spinner`）仍然赢。
-- **JS 里参与布局的常量也必须缩放**。这是最容易漏的一类：CSS 改成 `calc(34 * var(--dp))` 之后，JS 里同源的 `34` 就变成了**设计 px**，而 `getBoundingClientRect()` / `clientWidth` 返回的是**已缩放**的 CSS px。两者直接比较会让「放得下几个」算错，直接写进 `style.transform` 会让指示器错位（错量随索引线性增长）。已处理的三处：
-  - `useDockOverflow` / `useToolbarOverflow`：按钮尺寸与间距在 `computed` 里乘 `uiScale`（**必须是 computed**，否则缩放变化不会让计数重算）。
-  - `SplitView`：`minLeft` / `minRight` / `gutterSize` 是设计 px，缩放后再用于 `clampRatio` 与 `--split-min-*`。
-  - `GitCommitList` 传给 `GitGraph` 的 `row-height`：行高 CSS 是 `calc(64 * var(--dp))`，SVG 的泳道网格必须跟着走，否则越往下偏差越大。
+- **JS 里参与布局的常量也必须缩放**。这是最容易漏的一类：CSS 改成 `calc(34 * var(--dp))` 之后，JS 里同源的 `34` 就变成了**设计 px**，而 `getBoundingClientRect()` / `clientWidth` 返回的是**已缩放**的 CSS px。两者直接比较会让「放得下几个」算错，直接写进 `style.transform` 会让指示器错位（错量随索引线性增长）。换算**只有一个实现**：`utils/uiScale.ts` 的 `designToCss(designPx)`（非响应式，读一次 DOM）。这一处曾被复制成四份，第五、六处就是这么漏掉的。已处理：
+  - `useDockOverflow` / `useToolbarOverflow`：按钮尺寸与间距在 `computed` 里乘 `uiScale`（**必须是 computed**，否则缩放变化不会让计数重算）。这两处刻意保留本地乘法而不用 `designToCss`——`computed` 需要的是响应式依赖，`designToCss` 读一次 DOM 无法作为依赖。缩放 ref 用 `composables/useUiScale.ts`（**每实例订阅，随 `stopObserving` 卸载**；早先的模块级 ref + 模块级监听会把上一个用例的缩放值泄漏给下一个）。
+  - `SplitView`：`minLeft` / `minRight` / `gutterSize` 是设计 px，缩放后再用于 `clampRatio` 与 `--split-min-*`。同样保留本地乘法：`onScaleChange` 必须**同步**重新量容器，`watch` 会延到下一 tick，中间有一帧用新缩放对旧尺寸算夹取。
+  - `GitCommitList` 传给 `GitGraph` 的 `row-height`：行高 CSS 是 `calc(64 * var(--dp))`，SVG 的泳道网格必须跟着走，否则越往下偏差越大（用 `useUiScale()`）。
+  - `UsageStatsPanel` 的堆叠断点 460 与 `CodeLinkPreview` 的卡片最小尺寸 320×160：都是设计 px 对 CSS px 的比较，用 `designToCss()`。前者还要监听 `UI_SCALE_EVENT`——面板宽度是视口百分比，rem 缩放不改变它的 CSS px，`resize` 与 `ResizeObserver` 都不会触发。
   - 判据：**只要一个数字同时出现在 CSS 和 JS 里，它就必须在 JS 侧乘 `uiScale`**。缩放变化用 `UI_SCALE_EVENT` 通知（rem 缩放不触发 `resize`）。
+
+**启动时只「建议」，绝不自动套用。** 存储值就是生效值（`resolveUIScale` 不看屏幕），所以启动时不能重新推导——那正是早先「UI 一跳」的成因。高分辨率屏幕上的补偿改为**询问**：`composables/useStartupUIScalePrompt.ts` 在初始化完成后测一次屏幕，`shouldSuggestUIScale` 判定「建议值比当前值高出 `UI_SCALE_SUGGEST_THRESHOLD`（0.15）」才弹确认框，同意后走 `setLocalConfig('uiScale', …)`（与滑块、自动适配同一个写入路径）。
+
+⚠️ **量的是短边（`currentScreenShortEdge`），不是高度。** 面板的尺寸档位（1080p / 1440p）说的就是短边，而短边是唯一**不随旋转变化**的量。用高度量出过两个 bug：同一台 12.9 寸 iPad（1366×1024）竖屏建议 126%、横屏不弹；1080p 显示器转竖屏（1080×1920）报 178%——竖屏读代码是很常见的用法。设置里的「自动适配」按钮走同一个函数，所以也一并修好了。Wayland 的设备像素归一化（`screenHeightToCssPixels`）仍在，短边必须同样过它，否则 4K@200% 会得到 2.0 再叠 OS 的 2×。
+
+五条边界：①**只往大调**——用户在 1080p 上手动调到 200% 是明确选择，每次启动反问他很粗暴；②1080p 及以下推导恒为 1，永不弹；③**手机与平板一律不弹**（`isMobileOSUA`：Android / iOS / iPadOS 桌面 UA 全覆盖）——系统已按屏幕密度缩放，再叠一层就重复了，设置里 Android 隐藏自动适配行是同一个理由。用 `isMobileOSUA` 而不是 `isAndroidApp`，因为后者漏掉 Android 浏览器和所有 iPad；原生壳判定仍保留（WebView 可以被要求发桌面 UA，`BrowserActivity` 就这么做）；④拒绝时把**建议值**记进 `clawbench_ui_scale_prompt_declined`，同一块屏幕不再问、换分辨率会重新问（记布尔会让换屏后失效）；⑤弹框走 `useDialog` 单例，因此**已有对话框打开时直接跳过**（开第二个会把第一个 resolve 成取消）。两条启动路径（`onMounted` 冷启动、`handleLoginSuccess` 登录后）都要调，composable 内部有每次会话一次的守卫；首次运行还要等欢迎面板关掉（两个全屏模态不叠加）。
 
 ⚠️ **`--font-size-xl` 是 body 的基准字号**，且**必须与 `html` 的 15px 设计基准一致**。但 `html` 自己**不能**用这个 token：`--dp` 是 `1rem / 15`，`html { font-size: var(--font-size-xl) }` 会闭合成 `1rem ← 根字号 ← token ← 1rem` 的环，浏览器回退到 16px 初始值（迁移时踩过，表现是整个 UI 无视设置）。`designTokens.css.test.ts` 与 `fontDrivenScaling.test.ts` 都钉住这条。
 
@@ -584,7 +592,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | 测试 | 守什么 |
 |---|---|
 | `components/common/__tests__/designTokens.css.test.ts` | token 设计值、主题块完整性、未定义 token 引用、窗口控件对比度配方 |
-| `__tests__/fontDrivenScaling.test.ts` | 根字号是唯一缩放入口（`--dp` 唯一声明、html 不得用 `--font-size-*`）、全仓无 `zoom`、Electron 不再走 `setZoomFactor`、token 都走 `--dp`、发丝线不被缩放、lucide 属性选择器齐备、宽屏断点用有效宽度且监听缩放事件 |
+| `__tests__/fontDrivenScaling.test.ts` | 根字号是唯一缩放入口（`--dp` 唯一声明、html 不得用 `--font-size-*`）、全仓无 `zoom`、Electron 不再走 `setZoomFactor`、token 都走 `--dp`、发丝线不被缩放、lucide 属性选择器齐备、宽屏断点用有效宽度且监听缩放事件、**全仓 `<style>`（含 `src/assets/*.css`）无裸 `font-size: Npx` / `letter-spacing: Npx`**、`designToCss` 唯一实现且被各阈值比较点消费 |
 | `components/common/__tests__/countBadge.css.test.ts` | 角标几何全局唯一、scoped 未重加圆角 |
 | `components/common/__tests__/wrapCheck.css.test.ts` | 菜单「该项当前是开的」勾选 `.wrap-check` 全局唯一、两个菜单共用同一 class |
 | `components/common/__tests__/modalFooterBtn.theme.css.test.ts` | `.fbtn` 深色主题前景提亮 |

@@ -31,7 +31,7 @@ defineProps<{
   color: var(--text-muted);
   padding: calc(5 * var(--dp)) var(--space-7);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: calc(0.5 * var(--dp));
   font-weight: var(--font-weight-medium);
   position: relative;
   background: var(--bg-tertiary);

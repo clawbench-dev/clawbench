@@ -1324,7 +1324,7 @@ defineExpose({ focusSearchInput })
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   padding: var(--space-1) 0;
-  letter-spacing: 0.3px;
+  letter-spacing: calc(0.3 * var(--dp));
 }
 
 .detail-chunk-role.role-user {

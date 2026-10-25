@@ -236,10 +236,20 @@ function onEntryClick(entry: DirPreviewEntry) {
 }
 
 .dir-preview-title {
+  /* Yields before the badge does: the external marker is icon-only and fixed,
+     the directory name is the part that can afford to ellipsize. */
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: var(--font-weight-medium);
+}
+
+/* The info row aligns on the text baseline; the icon-only badge has no text of
+   its own, so it would hang below the line without this. */
+.dir-preview-meta-info :deep(.external-badge) {
+  align-self: center;
 }
 
 .dir-preview-count {

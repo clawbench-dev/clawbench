@@ -155,18 +155,22 @@ playwright-cli -s=shot close
 
 README 顶部头图：`README.md` 用 `product_hero.png`，`README.en.md` 用 `product_hero.en.png`。源文件是纯 HTML/CSS 画布（1920×1080），可编辑后用 Playwright 重新导出 PNG。
 
+### 版式
+
+左侧品牌区 + 右侧三端设备舞台（PC 显示器居中、平板在左、手机在右），底部一条安装命令与一行关键词。背景**不是图片**，是 CSS 光环境（`.key-light` 主光 + `.beam` 顶部漫射 + `.floor` 地面反光 + `.vignette` 暗角 + `.grain` 颗粒），因此没有背景素材可换。
+
 ### 素材
 
 | 文件 | 说明 |
 |------|------|
 | `docs/screenshots/product_hero.html` / `product_hero.en.html` | 中 / 英纯 HTML/CSS 源（可编辑） |
 | `docs/screenshots/product_hero.png` / `product_hero.en.png` | 中 / 英导出图（1920×1080，2x DPR） |
-| `docs/screenshots/product_hero_assets/bg_tech.jpg` | MiniMax 生成的科技风背景 |
+| `docs/screenshots/pc-desktop.png` | 显示器屏幕内容（即上文流程产物，推荐 1080p 桌面三栏画面） |
 | `docs/screenshots/product_hero_assets/phone_screenshot.jpg` | 手机端截图 |
 | `docs/screenshots/product_hero_assets/tablet_screenshot.jpg` | 平板端截图 |
 | `docs/screenshots/product_hero_assets/logo.png` | ClawBench Logo |
 
-设备截图素材为纵向长图，经 `object-fit: cover` 裁入横屏/竖屏设备框；桌面端截图素材即上文流程产物（推荐 1080p 的桌面三栏画面）。
+设备截图素材为纵向长图，经 `object-fit: cover` 裁入设备框。`product_hero_assets/bg_tech.jpg` 是旧版背景，现已不被任何 HTML 引用。
 
 ### 在线预览
 
@@ -176,10 +180,12 @@ README 顶部头图：`README.md` 用 `product_hero.png`，`README.en.md` 用 `p
 
 编辑 `product_hero.html`：
 
-- **设备尺寸**：`.tablet-screen` / `.phone-screen` 的 `width` / `height`
-- **功能亮点**：右侧 `.feature-card` 区域
+- **设备尺寸**：`.pc .screen` / `.tablet .screen` / `.phone .screen` 的 `width` / `height`（改尺寸要同步调 `.showcase` 内的绝对定位与 `.contact-*` 接触阴影，否则设备会飘或阴影脱开）
 - **品牌信息**：左上角 `.brand` 区域
-- **背景**：替换 `bg_tech.jpg` 或改 `.bg-image` 的 `filter`
+- **底部命令**：`.install .cmd`
+- **关键词行**：`.keywords`（后端数量、卖点短句）
+- **光环境**：`.key-light` / `.beam` 的 `radial-gradient` 与 `filter: blur()`
+- **主色**：橙色 `#fe8019` 在 `.install .prompt`、`.keywords .num`、设备边缘高光处硬编码，换色需全局搜
 
 ### 重新导出
 
@@ -208,4 +214,6 @@ const { chromium } = require('playwright');
 
 ### 已踩坑
 
-在已铺满 brand/tablet/phone/features/footer 的现有画布里「插入」一台显示器，会和前景设备互相遮挡、支架被盖。三端融合需整体重排或把显示器作为后景完整露出，勿在拥挤布局上硬叠。
+在旧的 brand/tablet/phone/features/footer 画布里「插入」一台显示器，会和前景设备互相遮挡、支架被盖。**当前版已整体重排**（去掉右侧功能卡片列与 `bg_tech.jpg` 背景，改成左侧品牌 + 右侧三端舞台 + 底部命令/关键词），新增设备请沿用这个舞台结构，别在旧布局上硬叠。
+
+设备是绝对定位 + `perspective` 叠出来的，改任何一台的尺寸或位置都要连带改 `.contact-pc` / `.contact-ph` 两处接触阴影和 `.pc-base*` / `.pc-neck*` 支架，否则会出现设备悬空或阴影脱离。

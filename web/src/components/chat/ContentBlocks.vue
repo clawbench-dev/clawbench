@@ -4198,7 +4198,7 @@ onUnmounted(() => {
   font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  letter-spacing: 0.2px;
+  letter-spacing: calc(0.2 * var(--dp));
   text-transform: uppercase;
 }
 
@@ -4231,7 +4231,7 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--tool-accent, #eab308) 16%, var(--bg-primary));
   color: #b45309;
   font-weight: var(--font-weight-semibold);
-  letter-spacing: 0.4px;
+  letter-spacing: calc(0.4 * var(--dp));
   text-transform: uppercase;
   white-space: nowrap;
 }

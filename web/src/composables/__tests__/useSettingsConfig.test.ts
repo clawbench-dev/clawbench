@@ -1100,9 +1100,17 @@ describe('useSettingsConfig', () => {
   describe('autoFitUIScale', () => {
     const originalScreen = window.screen
 
-    /** Report a screen height in CSS pixels (dpr 1 so normalization is a no-op). */
+    /**
+     * Report a landscape screen whose SHORT edge is `h` CSS px (dpr 1 so the
+     * Wayland normalization is a no-op). Width is set too: the measurement
+     * reads the short edge, so leaving width undefined would fall back to the
+     * height and make these cases pass without exercising the real path.
+     */
     function setScreenHeight(h: number) {
-      Object.defineProperty(window, 'screen', { value: { height: h }, configurable: true })
+      Object.defineProperty(window, 'screen', {
+        value: { width: Math.round(h * 16 / 9), height: h },
+        configurable: true,
+      })
       Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true })
       Object.defineProperty(window, 'outerHeight', { value: 800, configurable: true })
       Object.defineProperty(window, 'innerHeight', { value: 700, configurable: true })

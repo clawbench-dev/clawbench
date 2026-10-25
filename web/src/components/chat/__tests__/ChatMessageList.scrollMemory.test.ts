@@ -116,6 +116,15 @@ vi.mock('@/stores/app.ts', () => ({ store: { state: {} } }))
 vi.mock('@/utils/appLog', () => ({ appLog: { w: vi.fn(), e: vi.fn(), i: vi.fn(), d: vi.fn() } }))
 vi.mock('@/utils/domFlash', () => ({ flashElement: vi.fn() }))
 
+// The running-session set is module-level global state; the save contract reads
+// it to decide whether a session may be remembered at all (WARN-008). A REAL
+// ref, not a plain object: the component reads `runningSessions.value.has(...)`,
+// and a bare `{}` would throw instead of exercising the branch.
+vi.mock('@/composables/useSessionIdentity', async () => {
+  const { ref } = await import('vue')
+  return { runningSessions: ref(new Set<string>()) }
+})
+
 import ChatMessageList from '../ChatMessageList.vue'
 import en from '@/i18n/locales/en'
 import {
@@ -124,6 +133,7 @@ import {
   getChatScrollPosition,
   _resetChatScrollMemory,
 } from '@/utils/chatScrollMemory'
+import { runningSessions } from '@/composables/useSessionIdentity'
 import { NEAR_BOTTOM_PX } from '@/utils/scrollState'
 
 const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
@@ -196,10 +206,12 @@ async function flushRestore(frames = 6) {
 
 beforeEach(() => {
   _resetChatScrollMemory()
+  runningSessions.value = new Set()
 })
 
 afterEach(() => {
   _resetChatScrollMemory()
+  runningSessions.value = new Set()
 })
 
 describe('ChatMessageList — saving the position of the session being left', () => {
@@ -242,6 +254,36 @@ describe('ChatMessageList — saving the position of the session being left', ()
     ;(wrapper.vm as unknown as { savePositionNow: () => void }).savePositionNow()
 
     expect(getChatScrollPosition('s1')?.scrollTop).toBe(700)
+    wrapper.unmount()
+  })
+
+  it('never remembers a running session (its output is the point)', async () => {
+    // shouldRestoreChatScroll refuses to restore into a running session, so an
+    // entry written for one could only ever be ignored — or worse, restored
+    // after the turn finished, hiding the reply that just landed. The save side
+    // must therefore apply the same rule instead of storing a dead position.
+    runningSessions.value = new Set(['s1'])
+    const wrapper = mountList({ messages: msgs(1) })
+    fakeGeometry(containerOf(wrapper), { scrollHeight: 2000, clientHeight: 500, scrollTop: 300 })
+
+    await wrapper.setProps({ currentSessionId: 's2' })
+
+    expect(hasChatScrollPosition('s1')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('drops a stale memory for a session that started running', async () => {
+    // A position saved while the session was still can go stale if the session
+    // is then run and the user leaves mid-turn: the reader is no longer where
+    // they were, so the old entry must not survive.
+    saveChatScrollPosition('s1', { scrollTop: 100, anchorKey: '', anchorOffset: 0, ratio: 0.1 })
+    runningSessions.value = new Set(['s1'])
+    const wrapper = mountList({ messages: msgs(1) })
+    fakeGeometry(containerOf(wrapper), { scrollHeight: 2000, clientHeight: 500, scrollTop: 300 })
+
+    await wrapper.setProps({ currentSessionId: 's2' })
+
+    expect(hasChatScrollPosition('s1')).toBe(false)
     wrapper.unmount()
   })
 })
@@ -372,6 +414,109 @@ describe('ChatMessageList — restoring a still session position', () => {
 
     // The restore must have been abandoned — the viewport still belongs to s3.
     expect(geo.scrollTop).toBe(1500)
+    wrapper.unmount()
+  })
+
+  it('abandons the restore once the user takes the viewport back', async () => {
+    // The retry chain runs for up to MAX_RESTORE_TRIES frames (~1s of layout
+    // settling). If the user grabs the scrollbar during that window, the final
+    // write must not drag them back to the saved position — their gesture is
+    // the newer intent.
+    saveChatScrollPosition('s2', { scrollTop: 1200, anchorKey: '', anchorOffset: 0, ratio: 0.6 })
+    const wrapper = mountList({ messages: msgs(1) })
+    const el = containerOf(wrapper)
+    // maxScroll = 200, so the saved 1200 cannot land yet and the chain retries.
+    const geo = fakeGeometry(el, { scrollHeight: 700, clientHeight: 500, scrollTop: 0 })
+
+    await wrapper.setProps({ currentSessionId: 's2' })
+    await wrapper.setProps({ messages: msgs(1, 2) })
+    // Let the retry chain start while the content is still too short.
+    await flushRestore(2)
+    expect(geo.scrollTop).toBe(0)
+
+    // The user starts dragging: mousedown on the list sets the user-input flag
+    // (the same one shouldPin consults).
+    await wrapper.get('.chat-messages').trigger('mousedown')
+    // The content finishes loading and the user has moved the viewport.
+    geo.scrollHeight = 2000
+    geo.scrollTop = 900
+    await flushRestore()
+
+    expect(geo.scrollTop).toBe(900, 'the restore must not yank the user back')
+    wrapper.unmount()
+  })
+})
+
+describe('ChatMessageList — "new messages" hint is not fooled by prepends', () => {
+  it('does not re-show the jump-to-bottom FAB when older history is prepended', async () => {
+    // load-more prepends older messages to the HEAD, so the array length grows
+    // with no new message. A length-based check fired the hint on every
+    // load-more while the reader sat at a restored position.
+    saveChatScrollPosition('s2', { scrollTop: 300, anchorKey: '', anchorOffset: 0, ratio: 0.2 })
+    const wrapper = mountList({ messages: msgs(1) })
+    fakeGeometry(containerOf(wrapper), { scrollHeight: 2000, clientHeight: 500, scrollTop: 0 })
+
+    await wrapper.setProps({ currentSessionId: 's2' })
+    await wrapper.setProps({ messages: msgs(1, 2) })
+    await flushRestore()
+    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(true)
+
+    // Dismiss the hint through the real path so the assertion below cannot pass
+    // just because the restore left it showing.
+    document.body.click()
+    await nextTick()
+    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(false)
+
+    // Older history arrives at the head: 3 messages instead of 2, same tail.
+    await wrapper.setProps({ messages: msgs(0, 1, 2) })
+
+    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('still re-shows the FAB when a message is genuinely appended', async () => {
+    // The control case for the test above: the hint must survive for real new
+    // messages, otherwise the fix would just disable the feature.
+    saveChatScrollPosition('s2', { scrollTop: 300, anchorKey: '', anchorOffset: 0, ratio: 0.2 })
+    const wrapper = mountList({ messages: msgs(1) })
+    fakeGeometry(containerOf(wrapper), { scrollHeight: 2000, clientHeight: 500, scrollTop: 0 })
+
+    await wrapper.setProps({ currentSessionId: 's2' })
+    await wrapper.setProps({ messages: msgs(1, 2) })
+    await flushRestore()
+    document.body.click()
+    await nextTick()
+    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(false)
+
+    await wrapper.setProps({ messages: msgs(1, 2, 3) })
+
+    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('treats a numeric and a string id for the same message as the same tail', async () => {
+    // Transient bubbles carry string ids and DB rows carry numbers. Without a
+    // normalised comparison the id type flip alone would look like a new
+    // message and pop the hint for nothing.
+    saveChatScrollPosition('s2', { scrollTop: 300, anchorKey: '', anchorOffset: 0, ratio: 0.2 })
+    const wrapper = mountList({ messages: msgs(1) })
+    fakeGeometry(containerOf(wrapper), { scrollHeight: 2000, clientHeight: 500, scrollTop: 0 })
+
+    await wrapper.setProps({ currentSessionId: 's2' })
+    await wrapper.setProps({ messages: msgs(1, 2) })
+    await flushRestore()
+    document.body.click()
+    await nextTick()
+    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(false)
+
+    await wrapper.setProps({
+      messages: [
+        { id: 1, role: 'user', content: 'm1' },
+        { id: '2', role: 'assistant', content: 'm2' },
+      ],
+    })
+
+    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(false)
     wrapper.unmount()
   })
 })

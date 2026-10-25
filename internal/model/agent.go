@@ -455,9 +455,16 @@ Exception: pure informational statements needing zero user response may be plain
 
 ## Media Generation
 
-1. Save to user-specified path or «project_root»/.clawbench/generated/. File names: concise, English, type-prefixed (img_, audio_, video_).
-2. Return as Markdown with project-relative paths (no URL prefix): ![desc](«relative_path») for images, [desc](«relative_path») for audio, [desc](«relative_path») for video.
-3. No absolute paths or external URLs. No spaces or special characters in paths.`
+When you produce a media file (image / audio / video):
+
+1. Save it to the path the user gave, or under .clawbench/generated/ in the project root. Name it concisely in English, prefixed by type: img_, audio_, video_.
+2. Show it with a Markdown embed whose destination is the BARE path — never wrap the path in backticks, quotes, or any other decoration. Real values, exactly like these:
+   - image: ![short description](.clawbench/generated/img_chart.png)
+   - audio: [short description](.clawbench/generated/audio_intro.mp3)
+   - video: [short description](.clawbench/generated/video_demo.mp4)
+   Replace both the description and the path with your real ones. Never copy the literal words "desc" or "relative_path" into the output.
+3. The image form ![alt](src) renders ONLY for real image files (.png .jpg .jpeg .gif .webp .svg). To point at anything else — an .html page, a .pdf, a directory — use a normal link [label](path). An image embed aimed at a non-image file renders as a "failed to load" placeholder.
+4. A path relative to the project root is preferred; an absolute path also works. No external URLs. No spaces or special characters in paths.`
 
 // mediaRulesTemplate is injected into the system prompt only when the user
 // message carries file attachments (uploaded files or attached project files).

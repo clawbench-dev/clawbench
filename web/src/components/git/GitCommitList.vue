@@ -139,7 +139,7 @@ import { refLabelText } from '@/utils/gitGraph'
 import { formatRelativeTime, formatDateTime } from '@/utils/format'
 import { startQuoteDrag, commitDragPayload } from '@/utils/quoteDrag'
 import { cleanupDragGhost } from '@/utils/attachDrag'
-import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
+import { useUiScale } from '@/composables/useUiScale'
 const { t } = useI18n()
 
 /**
@@ -152,13 +152,10 @@ const { t } = useI18n()
  * `resize` event.
  */
 const DESIGN_ROW_HEIGHT = 64
-const uiScale = ref(readAppliedUIScale())
+// Shared composable rather than a local ref + listener: this had the exact
+// module-level copy of the subscription that leaked scale between instances.
+const uiScale = useUiScale()
 const graphRowHeight = computed(() => DESIGN_ROW_HEIGHT * uiScale.value)
-onMounted(() => {
-  const sync = () => { uiScale.value = readAppliedUIScale() }
-  window.addEventListener(UI_SCALE_EVENT, sync)
-  onUnmounted(() => window.removeEventListener(UI_SCALE_EVENT, sync))
-})
 
 const props = defineProps({
   commits: { type: Array, default: () => [] },

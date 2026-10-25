@@ -145,7 +145,14 @@ vi.mock('@/composables/useCrossProjectSessions', async () => {
 })
 vi.mock('@/utils/format', () => ({ formatRelativeTime: (d: string) => d || 'now' }))
 vi.mock('@/components/common/AgentIcon.vue', () => ({
-  default: { name: 'AgentIcon', template: '<span class="agent-icon-stub" />' },
+  // Props are DECLARED (not left to fallthrough) so a test asserting on them is
+  // meaningful: an undeclared prop lands in attrs and reads undefined even when
+  // the component did pass it. Same rationale as the VueDraggable stub below.
+  default: {
+    name: 'AgentIcon',
+    props: ['backend', 'name', 'avatar', 'size'],
+    template: '<span class="agent-icon-stub" />',
+  },
 }))
 vi.mock('@/components/common/LoadingIndicator.vue', () => ({
   default: { name: 'LoadingIndicator', template: '<div class="loading-stub" />' },
@@ -816,6 +823,45 @@ describe('SessionList', () => {
     const runningRow = wrapper.find('.cross-session-row.running')
     expect(runningRow.find('.session-status').exists(), 'a running cross row has no slot').toBe(false)
     expect(runningRow.find('.session-running-band').exists(), 'but it keeps the comet').toBe(true)
+  })
+
+  it('renders the server-supplied agent identity on cross-project rows', async () => {
+    // A session in another project may run an agent scoped to THAT project, so
+    // the local agent list (scoped to the current project) cannot resolve it —
+    // the row used to degrade to the raw agent id plus an initial-letter icon.
+    // The server now ships the identity on the row; both panes must prefer it.
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+    // The lookup misses on purpose: this is what an unresolvable agent looks
+    // like to the component.
+    mockGetAgentName.mockReturnValue('scoped-b')
+    mockGetAgentBackend.mockReturnValue('')
+    mockCrossState.groups.value = [{
+      name: '/proj/other',
+      displayName: 'Other',
+      displayPath: '/proj/other',
+      sessions: [{
+        id: 'x1', title: 'X1', agentId: 'scoped-b', agentName: '视觉制作', agentAvatar: '<svg>a</svg>',
+        backend: 'codebuddy', model: '', updatedAt: '2025-01-01',
+        running: false, pendingApproval: false, unreadCount: 1,
+      }],
+    }]
+    const wrapper = await mountList({ activeTab: 'cross' })
+    await flushPromises()
+
+    const row = wrapper.find('.cross-session-row')
+    const chip = row.find('.session-item-agent')
+    expect(chip.text()).toContain('视觉制作')
+    expect(chip.text()).not.toContain('scoped-b')
+
+    const icon = row.findComponent({ name: 'AgentIcon' })
+    expect(icon.props('name')).toBe('视觉制作')
+    expect(icon.props('avatar')).toBe('<svg>a</svg>')
+    // `backend` is a column on the row, so the brand icon resolves even when
+    // the agent lookup misses.
+    expect(icon.props('backend')).toBe('codebuddy')
+
+    mockGetAgentName.mockReturnValue('Agent')
+    mockGetAgentBackend.mockReturnValue('')
   })
 
   it('omits the model chip on cross-project group rows too', async () => {

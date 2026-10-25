@@ -2,10 +2,14 @@ import { describe, it, expect, afterEach } from 'vitest'
 import {
   computeAutoUIScale,
   resolveUIScale,
-  currentScreenHeight,
+  currentScreenShortEdge,
   screenHeightToCssPixels,
+  shouldSuggestUIScale,
   UI_SCALE_BASE_HEIGHT,
   UI_SCALE_STEP,
+  UI_SCALE_SUGGEST_THRESHOLD,
+  applyUIScale,
+  designToCss,
 } from '@/utils/uiScale'
 
 describe('computeAutoUIScale', () => {
@@ -124,6 +128,65 @@ describe('resolveUIScale', () => {
   })
 })
 
+describe('shouldSuggestUIScale', () => {
+  it('suggests when the screen wants a noticeably larger factor', () => {
+    // 4K at 100% (2160 → 2.0) against a fresh install's 1.0.
+    expect(shouldSuggestUIScale(1, 2)).toBe(true)
+    // 1440p: 1.33 vs 1.0 is 0.33, well past the 0.15 bar.
+    expect(shouldSuggestUIScale(1, computeAutoUIScale(1440))).toBe(true)
+  })
+
+  it('stays quiet for a difference the user would not notice', () => {
+    // 1200p fits 1.11 — an 11% bump is noise on a screen that already reads
+    // fine, so it must not interrupt startup.
+    expect(shouldSuggestUIScale(1, computeAutoUIScale(1200))).toBe(false)
+    // 1080p and below derive exactly 1, i.e. "already correct".
+    expect(shouldSuggestUIScale(1, computeAutoUIScale(1080))).toBe(false)
+    expect(shouldSuggestUIScale(1, computeAutoUIScale(768))).toBe(false)
+  })
+
+  it('never suggests shrinking, however far off the stored value is', () => {
+    // A user who deliberately set 200% on a 1080p laptop must not be asked to
+    // undo it on every launch — the failure being fixed is "too small", not
+    // "too big".
+    expect(shouldSuggestUIScale(2, 1)).toBe(false)
+    expect(shouldSuggestUIScale(1.5, 1.33)).toBe(false)
+  })
+
+  it('is quiet when the two factors already agree', () => {
+    expect(shouldSuggestUIScale(1.33, 1.33)).toBe(false)
+    expect(shouldSuggestUIScale(2, 2)).toBe(false)
+  })
+
+  it('treats the threshold as a lower bound on the difference', () => {
+    // Boundary: exactly at the bar suggests, just under it does not. Pins the
+    // comparison as >= rather than > so a screen sitting on the boundary is
+    // still offered (it is the case the user complained about).
+    expect(shouldSuggestUIScale(1, 1 + UI_SCALE_SUGGEST_THRESHOLD)).toBe(true)
+    expect(shouldSuggestUIScale(1, 1 + UI_SCALE_SUGGEST_THRESHOLD - 0.01)).toBe(false)
+    // Explicit threshold wins over the default.
+    expect(shouldSuggestUIScale(1, 1.1, 0.05)).toBe(true)
+    expect(shouldSuggestUIScale(1, 1.1, 0.5)).toBe(false)
+  })
+
+  it('refuses to suggest on unusable input', () => {
+    // Startup must degrade to "no prompt", never to a broken factor.
+    expect(shouldSuggestUIScale(NaN, 2)).toBe(false)
+    expect(shouldSuggestUIScale(1, NaN)).toBe(false)
+    expect(shouldSuggestUIScale(0, 2)).toBe(false)
+    expect(shouldSuggestUIScale(-1, 2)).toBe(false)
+    expect(shouldSuggestUIScale(1, 2, NaN)).toBe(false)
+    expect(shouldSuggestUIScale(1, 2, 0)).toBe(false)
+  })
+
+  it('has a threshold well below the smallest screen that derives a fit', () => {
+    // 1440p (the common "everything is tiny" laptop panel) must clear the bar;
+    // this pins the relationship so retuning one constant cannot silently
+    // disable the prompt on the screens it exists for.
+    expect(computeAutoUIScale(1440) - 1).toBeGreaterThanOrEqual(UI_SCALE_SUGGEST_THRESHOLD)
+  })
+})
+
 describe('screenHeightToCssPixels', () => {
   it('leaves the value untouched off Linux', () => {
     // macOS/Windows report CSS pixels, and their dpr is panel density — a
@@ -171,15 +234,26 @@ describe('screenHeightToCssPixels', () => {
   })
 })
 
-describe('currentScreenHeight', () => {
+describe('currentScreenShortEdge', () => {
   const originalScreen = window.screen
   const originalOuter = window.outerHeight
   const originalInner = window.innerHeight
   const originalDpr = window.devicePixelRatio
   const originalUa = navigator.userAgent
 
-  function setEnv(opts: { screenH: number; dpr?: number; outerH?: number; innerH?: number; ua?: string }) {
-    Object.defineProperty(window, 'screen', { value: { height: opts.screenH }, configurable: true })
+  function setEnv(opts: {
+    screenW?: number
+    screenH: number
+    dpr?: number
+    outerH?: number
+    innerH?: number
+    ua?: string
+  }) {
+    // Width defaults to a 16:9 landscape panel so the short edge is the height.
+    Object.defineProperty(window, 'screen', {
+      value: { width: opts.screenW ?? Math.round(opts.screenH * 16 / 9), height: opts.screenH },
+      configurable: true,
+    })
     Object.defineProperty(window, 'devicePixelRatio', { value: opts.dpr ?? 1, configurable: true })
     Object.defineProperty(window, 'outerHeight', { value: opts.outerH ?? 800, configurable: true })
     Object.defineProperty(window, 'innerHeight', { value: opts.innerH ?? 700, configurable: true })
@@ -194,34 +268,100 @@ describe('currentScreenHeight', () => {
     Object.defineProperty(navigator, 'userAgent', { value: originalUa, configurable: true })
   })
 
-  it('reads window.screen.height', () => {
-    setEnv({ screenH: 1440, dpr: 1, outerH: 800 })
-    expect(currentScreenHeight()).toBe(1440)
+  it('reads the short edge, not the height', () => {
+    setEnv({ screenW: 2560, screenH: 1440, dpr: 1, outerH: 800 })
+    expect(currentScreenShortEdge()).toBe(1440)
+  })
+
+  it('is identical in landscape and portrait', () => {
+    // The regression this replaces: a rotated 1080p monitor reported 1920 and
+    // asked for a 178% UI. A 12.9" iPad had the same problem the other way
+    // round (portrait asked, landscape did not).
+    setEnv({ screenW: 1920, screenH: 1080, dpr: 1, outerH: 800 })
+    const landscape = currentScreenShortEdge()
+    setEnv({ screenW: 1080, screenH: 1920, dpr: 1, outerH: 800 })
+    const portrait = currentScreenShortEdge()
+    expect(portrait).toBe(landscape)
+    expect(portrait).toBe(1080)
+  })
+
+  it('uses the short edge on a portrait tablet', () => {
+    // 12.9" iPad Pro: 1366x1024 CSS px. Must read 1024 whichever way it is held,
+    // so the derived factor is 1.0 rather than 1.26.
+    setEnv({ screenW: 1024, screenH: 1366, dpr: 2, outerH: 1024, innerH: 1366 })
+    expect(currentScreenShortEdge()).toBe(1024)
+    expect(computeAutoUIScale(currentScreenShortEdge())).toBe(1)
   })
 
   it('returns 0 rather than NaN when screen is unavailable', () => {
     Object.defineProperty(window, 'screen', { value: undefined, configurable: true })
-    expect(currentScreenHeight()).toBe(0)
+    expect(currentScreenShortEdge()).toBe(0)
+  })
+
+  it('ignores a missing dimension instead of reading it as 0', () => {
+    // `Math.min(w, h)` with a missing width would be 0 and collapse the factor
+    // to "no scaling" on a screen that actually needs it.
+    Object.defineProperty(window, 'screen', { value: { height: 1440 }, configurable: true })
+    Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true })
+    Object.defineProperty(window, 'outerHeight', { value: 800, configurable: true })
+    Object.defineProperty(window, 'innerHeight', { value: 700, configurable: true })
+    Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/154', configurable: true })
+    expect(currentScreenShortEdge()).toBe(1440)
   })
 
   it('normalizes native Wayland device pixels to CSS pixels', () => {
-    // Live GNOME 46 Wayland, 4K at scale 2: screen.height 2160, dpr 2, a
-    // maximized window 1048 CSS tall. Must report 1080 so auto scale is 1.
-    setEnv({ screenH: 2160, dpr: 2, outerH: 1048, innerH: 961 })
-    expect(currentScreenHeight()).toBe(1080)
+    // Live GNOME 46 Wayland, 4K at scale 2: short edge 2160, dpr 2, a maximized
+    // window 1048 CSS tall. Must report 1080 so auto scale is 1.
+    setEnv({ screenW: 3840, screenH: 2160, dpr: 2, outerH: 1048, innerH: 961 })
+    expect(currentScreenShortEdge()).toBe(1080)
   })
 
   it('keeps XWayland CSS pixels as-is', () => {
-    // Same monitor, XWayland backend: screen.height 1080, dpr 2, window 1048
-    // CSS (2096 device) — already CSS pixels, must stay 1080.
-    setEnv({ screenH: 1080, dpr: 2, outerH: 1048, innerH: 961 })
-    expect(currentScreenHeight()).toBe(1080)
+    // Same monitor, XWayland backend: short edge 1080, dpr 2, window 1048 CSS
+    // (2096 device) — already CSS pixels, must stay 1080.
+    setEnv({ screenW: 1920, screenH: 1080, dpr: 2, outerH: 1048, innerH: 961 })
+    expect(currentScreenShortEdge()).toBe(1080)
   })
 
   it('does not touch Android, whose UA also contains Linux', () => {
-    // Android is excluded from auto scale by its own check, but the height
-    // must not be silently halved either.
-    setEnv({ screenH: 2160, dpr: 2, outerH: 800, ua: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/154' })
-    expect(currentScreenHeight()).toBe(2160)
+    // Android is excluded from auto scale by its own check, but the value must
+    // not be silently halved either.
+    setEnv({ screenW: 1080, screenH: 2160, dpr: 2, outerH: 800, ua: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/154' })
+    expect(currentScreenShortEdge()).toBe(1080)
+  })
+})
+
+describe('designToCss', () => {
+  afterEach(() => {
+    applyUIScale(1)
+  })
+
+  it('is the identity at scale 1', () => {
+    // The whole point of the conversion is that it changes nothing at 100%:
+    // every migrated threshold must keep its exact previous behaviour there.
+    applyUIScale(1)
+    expect(designToCss(460)).toBe(460)
+    expect(designToCss(0)).toBe(0)
+  })
+
+  it('multiplies by the applied scale', () => {
+    applyUIScale(1.5)
+    expect(designToCss(460)).toBeCloseTo(690, 5)
+    applyUIScale(2)
+    expect(designToCss(320)).toBe(640)
+  })
+
+  it('scales fractional design values without rounding', () => {
+    // Letter-spacing and similar sub-pixel lengths are passed through; rounding
+    // here would reintroduce the very drift this replaced.
+    applyUIScale(1.5)
+    expect(designToCss(0.5)).toBeCloseTo(0.75, 6)
+  })
+
+  it('falls back to 1 when the applied scale is unreadable', () => {
+    // First paint before the applier runs, or a standalone document: the value
+    // must degrade to "no scaling", not to 0 or NaN.
+    document.documentElement.style.removeProperty('--ui-scale')
+    expect(designToCss(460)).toBe(460)
   })
 })

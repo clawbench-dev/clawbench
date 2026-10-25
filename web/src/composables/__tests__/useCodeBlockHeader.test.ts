@@ -1,4 +1,6 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { annotateCodeBlockHeaders, annotateTableBlockHeaders, handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus, positionTableMenu } from '@/composables/useCodeBlockHeader.ts'
 // Source of the menu's positioning rule — jsdom cannot reproduce overflow
 // clipping, so the escape-from-clip-chain assertion has to read the CSS.
@@ -743,5 +745,181 @@ describe('table copy menu positioning', () => {
     expect(rule).not.toBeNull()
     expect(rule![1]).toMatch(/position:\s*fixed/)
     expect(rule![1]).not.toMatch(/position:\s*absolute/)
+  })
+
+  /**
+   * `position: fixed` is not enough once the row is paint-contained.
+   *
+   * `.chat-message` carries `contain: paint` in app mode (Android WebView GPU
+   * ghost fix), which clips the row's descendants to the row's box — so a menu
+   * inside the bubble is clipped there, however it is positioned. On a 1–2 row
+   * table the menu is taller than the table, so its last items fell outside the
+   * row and became unclickable (ISS-294).
+   *
+   * The escape hatch is a CSS `:has()` rule in ChatMessageItem.vue keyed on
+   * `.table-block-copy-menu.is-open`. That makes the class name a CONTRACT
+   * ACROSS FILES: `setTableMenuOpen` here is the only writer, and if it ever
+   * stops adding `is-open` (or the class is renamed on one side only), the
+   * escape silently stops matching and the defect returns with every test
+   * still green. Pin both halves.
+   */
+  it('keeps the class the chat row’s containment escape hatch watches', () => {
+    const itemSource = readFileSync(
+      resolve(__dirname, '../../components/chat/ChatMessageItem.vue'),
+      'utf8',
+    )
+    const escape = itemSource.match(
+      /:root\[data-app-mode\]\s+\.chat-message:has\(\.table-block-copy-menu\.is-open\)\s*\{([^}]*)\}/,
+    )
+    expect(
+      escape,
+      'ChatMessageItem.vue must relax `contain: paint` while a copy menu is open',
+    ).not.toBeNull()
+    // The rule must actually drop the paint clip (it is the only thing that
+    // clips the menu — `will-change: transform` alone never did).
+    const decls = escape![1].replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(decls).not.toMatch(/contain:[^;]*paint/)
+
+    // And the runtime must actually produce that state.
+    const wrapper = document.createElement('div')
+    wrapper.className = 'table-block-wrapper'
+    const btn = document.createElement('button')
+    btn.className = 'table-block-copy-btn'
+    btn.setAttribute('data-action', 'open-copy-menu')
+    const menu = document.createElement('div')
+    menu.className = 'table-block-copy-menu'
+    menu.style.display = 'none'
+    wrapper.appendChild(btn)
+    wrapper.appendChild(menu)
+    document.body.appendChild(wrapper)
+
+    handleTableBlockClick({ target: btn, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as MouseEvent)
+    expect(menu.classList.contains('is-open'), 'opening must add the class the :has() rule matches').toBe(true)
+
+    handleTableBlockClick({ target: btn, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as MouseEvent)
+    expect(menu.classList.contains('is-open'), 'closing must remove it, or the clip stays lifted').toBe(false)
+
+    wrapper.remove()
+  })
+
+  it('the menu stays inside the row, so the escape hatch is load-bearing', () => {
+    // Documents WHY the CSS escape exists rather than moving the menu out:
+    // the menu must remain a descendant of `.chat-message` (it is injected
+    // into the v-html content). Relocating it to <body> would ALSO fix the
+    // clipping, but it breaks click delegation — ChatMessageList handles
+    // `data-action` on the menu items through `.chat-messages`, so a menu
+    // outside that subtree silently stops responding.
+    const html = '<div class="table-wrap"><table><tr><td>1</td></tr></table></div>'
+    const doc = new DOMParser().parseFromString(annotateTableBlockHeaders(html), 'text/html')
+    const menu = doc.querySelector('.table-block-copy-menu')
+    expect(menu).not.toBeNull()
+    const dropdown = doc.querySelector('.table-block-copy-dropdown')
+    expect(dropdown, 'the menu must sit with its trigger so delegation still reaches it').not.toBeNull()
+    expect(dropdown!.contains(menu!)).toBe(true)
+  })
+
+  /**
+   * EVERY close path must remove `is-open`.
+   *
+   * The chat row's containment escape is a CSS `:has(.table-block-copy-menu.is-open)`
+   * rule, so the clip is lifted exactly as long as the class is present. That
+   * makes a missed `classList.remove` far worse than a cosmetic bug: the row
+   * keeps `contain: paint` lifted forever, and the Android WebView ghost band
+   * (the reason the clip exists) comes back on that message with nothing to
+   * indicate why.
+   *
+   * There are four distinct close paths, and they do NOT share one helper —
+   * each calls `setTableMenuOpen` with its own trigger lookup:
+   *   1. toggling the trigger again (`open-copy-menu`)
+   *   2. `closeAllTableBlockMenus()` with no exception (outside click / App.vue)
+   *   3. `closeAllTableBlockMenus(exceptBtn)` closing the OTHER blocks' menus
+   *   4. picking a copy format (the menu closes itself after copying)
+   *
+   * A regression that clears `display` but forgets the class would pass a
+   * "menu is hidden" assertion while leaving the clip lifted, so these cases
+   * assert the CLASS specifically, and each drives its own path.
+   */
+  describe('every close path clears is-open (the containment escape key)', () => {
+    const click = (target: HTMLElement) =>
+      ({ target, preventDefault: vi.fn(), stopPropagation: vi.fn() }) as unknown as MouseEvent
+
+    function buildMenuBlock() {
+      const wrapper = document.createElement('div')
+      wrapper.className = 'table-block-wrapper'
+      const btn = document.createElement('button')
+      btn.className = 'table-block-copy-btn'
+      btn.setAttribute('data-action', 'open-copy-menu')
+      const menu = document.createElement('div')
+      menu.className = 'table-block-copy-menu'
+      menu.style.display = 'none'
+      const item = document.createElement('button')
+      item.className = 'table-block-copy-menu-item'
+      item.setAttribute('data-action', 'copy-md')
+      menu.appendChild(item)
+      wrapper.appendChild(btn)
+      wrapper.appendChild(menu)
+      // The copy path needs a table inside the same wrapper.
+      const table = document.createElement('table')
+      table.innerHTML = '<tr><th>H</th></tr><tr><td>v</td></tr>'
+      wrapper.appendChild(table)
+      document.body.appendChild(wrapper)
+      return { wrapper, btn, menu, item }
+    }
+
+    it('path 1: re-clicking the trigger removes it', () => {
+      const { wrapper, btn, menu } = buildMenuBlock()
+      handleTableBlockClick(click(btn))
+      expect(menu.classList.contains('is-open')).toBe(true)
+      handleTableBlockClick(click(btn))
+      expect(menu.classList.contains('is-open'), 'toggle-close must clear the class').toBe(false)
+      expect(menu.style.display, 'and hide the box').toBe('none')
+      wrapper.remove()
+    })
+
+    it('path 2: closeAllTableBlockMenus() with no exception removes it', () => {
+      const { wrapper, btn, menu } = buildMenuBlock()
+      handleTableBlockClick(click(btn))
+      expect(menu.classList.contains('is-open')).toBe(true)
+      closeAllTableBlockMenus()
+      expect(menu.classList.contains('is-open'), 'outside-click close must clear the class').toBe(false)
+      expect(menu.style.display).toBe('none')
+      wrapper.remove()
+    })
+
+    it('path 3: opening another block closes this one, class included', () => {
+      const a = buildMenuBlock()
+      const b = buildMenuBlock()
+      handleTableBlockClick(click(a.btn))
+      expect(a.menu.classList.contains('is-open')).toBe(true)
+      handleTableBlockClick(click(b.btn))
+      expect(b.menu.classList.contains('is-open')).toBe(true)
+      expect(a.menu.classList.contains('is-open'), 'the sibling that was closed must drop the class').toBe(false)
+      expect(a.menu.style.display).toBe('none')
+      a.wrapper.remove()
+      b.wrapper.remove()
+    })
+
+    it('path 4: picking a copy format removes it', () => {
+      const { wrapper, menu, item } = buildMenuBlock()
+      handleTableBlockClick(click(menu.previousElementSibling as HTMLElement))
+      expect(menu.classList.contains('is-open')).toBe(true)
+      handleTableBlockClick(click(item))
+      expect(menu.classList.contains('is-open'), 'copy-close must clear the class').toBe(false)
+      expect(menu.style.display).toBe('none')
+      wrapper.remove()
+    })
+
+    it('path 5: the wrap toggle dismisses an open menu, class included', () => {
+      const { wrapper, menu } = buildMenuBlock()
+      const wrapBtn = document.createElement('button')
+      wrapBtn.className = 'table-block-wrap-btn'
+      wrapBtn.setAttribute('data-action', 'wrap')
+      wrapper.appendChild(wrapBtn)
+      handleTableBlockClick(click(menu.previousElementSibling as HTMLElement))
+      expect(menu.classList.contains('is-open')).toBe(true)
+      handleTableBlockClick(click(wrapBtn))
+      expect(menu.classList.contains('is-open'), 'wrap toggle must clear the class too').toBe(false)
+      wrapper.remove()
+    })
   })
 })

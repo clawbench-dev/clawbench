@@ -213,7 +213,7 @@ defineExpose({ getSelectedIds })
   color: var(--text-muted, #999);
   margin-bottom: var(--space-3);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: calc(0.5 * var(--dp));
 }
 
 .kcf-group-grid {

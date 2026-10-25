@@ -2490,7 +2490,7 @@ defineExpose({
   border-radius: calc(24 * var(--dp));
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
-  letter-spacing: 0.3px;
+  letter-spacing: calc(0.3 * var(--dp));
   position: absolute;
   top: calc(48 * var(--dp));
   left: 0;

@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
+import { applyUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 
 // Mock ResizeObserver
 const mockObserve = vi.fn()
@@ -91,6 +92,42 @@ describe('useToolbarOverflow', () => {
       expect(mockObserve).toHaveBeenCalled()
       stopObserving()
       expect(mockDisconnect).toHaveBeenCalled()
+    })
+
+    it('stops listening for scale changes on stopObserving', () => {
+      // The listener used to be module-level and never removed.
+      const remove = vi.spyOn(window, 'removeEventListener')
+      const { startObserving, stopObserving } = createSetup(['a'])
+      startObserving()
+      remove.mockClear()
+      stopObserving()
+      expect(remove.mock.calls.filter(([type]) => type === UI_SCALE_EVENT)).toHaveLength(1)
+      remove.mockRestore()
+    })
+  })
+
+  describe('the button footprint follows the UI scale', () => {
+    afterEach(() => {
+      applyUIScale(1)
+    })
+
+    it('fits fewer buttons at a larger scale for the same measured width', () => {
+      // 200px, 1 always-inline button, no search:
+      //   100%: 200 - 26 - 6 = 168 → floor(168/32) = 5 → all 3
+      //   200%: 200 - 52 - 12 = 136 → floor(136/64) = 2 → 2 of 3
+      const at100 = setupWithWidth(['a', 'b', 'c'], 200, { inlineCount: 1 })
+      expect(at100.inlineIds.value).toEqual(['a', 'b', 'c'])
+
+      applyUIScale(2)
+      const at200 = setupWithWidth(['a', 'b', 'c'], 200, { inlineCount: 1 })
+      expect(at200.inlineIds.value).toEqual(['a', 'b'])
+    })
+
+    it('recomputes when the scale changes without a new measurement', () => {
+      const s = setupWithWidth(['a', 'b', 'c'], 200, { inlineCount: 1 })
+      expect(s.inlineIds.value).toEqual(['a', 'b', 'c'])
+      applyUIScale(2)
+      expect(s.inlineIds.value).toEqual(['a', 'b'])
     })
   })
 })

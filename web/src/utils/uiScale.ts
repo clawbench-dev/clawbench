@@ -7,31 +7,39 @@
  * that compensates, and the settings "auto fit" button applies it ONCE by
  * storing the result as the user's scale.
  *
- * Nothing here runs on startup any more. The applied factor is the stored
- * `uiScale` value (`resolveUIScale`), so it cannot change on its own — the
- * previous design recomputed from the screen on every applier call, which made
- * the UI jump.
+ * The applied factor is the stored `uiScale` value (`resolveUIScale`), so it
+ * cannot change on its own — the previous design recomputed from the screen on
+ * every applier call, which made the UI jump. Startup may still *offer* a fit
+ * (`shouldSuggestUIScale` + `composables/useStartupUIScalePrompt.ts`), but the
+ * user has to accept it before anything is written.
  *
- * `screenHeight` is read from `window.screen.height`, which is supposed to be
- * in CSS pixels (DIP) — NOT the physical panel resolution. On Windows, macOS
- * and X11/XWayland that holds: a 4K panel driven at 200% OS scaling reports
- * height 1080 and devicePixelRatio 2, so `height / 1080` already subtracts the
- * system scaling (4K at 200% → factor 1.0, 4K at 100% → factor 2.0).
+ * The measurement is the screen's SHORT EDGE, not its height. A panel's size
+ * class ("1080p", "1440p") names its short edge, and the short edge is the one
+ * quantity that does not change when the device is rotated. Measuring height
+ * instead made the same 12.9" iPad (1366×1024 CSS px) ask for a 126% UI in
+ * portrait and nothing in landscape, and made a rotated 1080p monitor — very
+ * common for reading code — report 1920 and ask for 178%.
+ *
+ * `screen.width/height` are supposed to be in CSS pixels (DIP), NOT the
+ * physical panel resolution. On Windows, macOS and X11/XWayland that holds: a
+ * 4K panel driven at 200% OS scaling reports 1080 for the short edge and
+ * devicePixelRatio 2, so `shortEdge / 1080` already subtracts the system
+ * scaling (4K at 200% → factor 1.0, 4K at 100% → factor 2.0).
  *
  * Native Wayland (Ubuntu's default GNOME session) is the exception: Chromium
  * reports `screen.width/height` in DEVICE pixels there — the same 4K panel at
- * 200% reports height 2160 with devicePixelRatio 2. Feeding that straight in
- * yields factor 2.0 on top of the OS's 2×, i.e. a 4× UI. Measured with Chrome
- * 154 on a live GNOME 46 Wayland session (4K VX2880-4K-HDU at scale 2.0):
- * native Wayland → `screen.height === 2160`, XWayland on the same monitor →
- * `screen.height === 1080`.
+ * 200% reports a short edge of 2160 with devicePixelRatio 2. Feeding that
+ * straight in yields factor 2.0 on top of the OS's 2×, i.e. a 4× UI. Measured
+ * with Chrome 154 on a live GNOME 46 Wayland session (4K VX2880-4K-HDU at
+ * scale 2.0): native Wayland → `screen.height === 2160`, XWayland on the same
+ * monitor → `screen.height === 1080`.
  *
  * There is no browser API that reports which convention is in use (UA, screen
  * and media queries are identical), so `screenHeightToCssPixels` infers it from
  * an invariant: a window can never be taller than the screen it sits on.
  */
 
-/** Height in CSS pixels the layout was designed against (1080p). */
+/** Short edge in CSS pixels the layout was designed against (1080p). */
 export const UI_SCALE_BASE_HEIGHT = 1080
 
 /**
@@ -136,6 +144,47 @@ export function resolveUIScale(manual: number): number {
 }
 
 /**
+ * How far the screen-derived factor has to be from the applied one before
+ * startup bothers asking. Expressed in factor units (0.15 = 15%).
+ *
+ * The point is "the screen is noticeably wrong for this UI", not "the numbers
+ * differ": a 1200p panel fits 1.11 while the stored value is 1, and a prompt
+ * for an 11% difference would be noise on a screen that already reads fine.
+ * 1440p (1.33) and above clear the bar; 1080p and below derive exactly 1 and
+ * never prompt at all.
+ */
+export const UI_SCALE_SUGGEST_THRESHOLD = 0.15
+
+/**
+ * Whether startup should OFFER the screen-derived factor.
+ *
+ * Deliberately one-directional: only a screen that wants a LARGER factor than
+ * the one in effect is worth asking about. The failure this exists for is a
+ * high-resolution panel making everything tiny. The reverse case — the user
+ * turned the slider up to 200% on a 1080p laptop — is a deliberate choice, and
+ * asking them to undo it every launch would be hostile. It also matches
+ * `computeAutoUIScale`, which never derives below 1.
+ *
+ * Pure and threshold-parameterised so the boundary can be pinned in tests; the
+ * caller (startup prompt) owns the persistence that stops it nagging.
+ */
+export function shouldSuggestUIScale(
+  current: number,
+  suggested: number,
+  threshold: number = UI_SCALE_SUGGEST_THRESHOLD,
+): boolean {
+  if (!Number.isFinite(current) || !Number.isFinite(suggested)) return false
+  if (current <= 0 || suggested <= 0) return false
+  if (!Number.isFinite(threshold) || threshold <= 0) return false
+  // Round before comparing: the factor grid is 1%, so the difference is only
+  // meaningful to 2 decimals, and the raw subtraction makes the boundary
+  // unreliable (1 + 0.15 - 1 === 0.14999999999999991, i.e. a screen sitting
+  // exactly on the bar would be rejected). Same rounding the factors use.
+  const delta = round2(suggested - current)
+  return delta >= threshold
+}
+
+/**
  * Convert a reported screen height into CSS pixels.
  *
  * `rawHeight` is `window.screen.height`. On Windows, macOS and X11/XWayland it
@@ -191,20 +240,33 @@ function isLinuxDesktopBrowser(): boolean {
 }
 
 /**
- * Current screen height in CSS pixels, or 0 when unavailable (SSR/tests).
+ * Current screen short edge in CSS pixels, or 0 when unavailable (SSR/tests).
  * Wrapped so callers do not each need the try/undefined dance.
  *
+ * The short edge — not the height — because it is the quantity that survives
+ * rotation: a 12.9" iPad is 1366×1024 and a rotated 1080p monitor is
+ * 1080×1920, and both are the same size class either way round. See the module
+ * header for the two bugs measuring height caused.
+ *
  * The value is normalized by `screenHeightToCssPixels` so native Wayland's
- * device-pixel reading does not double up with the OS scale factor.
+ * device-pixel reading does not double up with the OS scale factor. That
+ * normalization infers the convention from whether the window fits inside the
+ * report, so it must receive the SHORT edge on both sides: a window can be
+ * taller than the short edge on a portrait screen (1920×1080 rotated is
+ * 1080 wide × 1920 tall), and feeding the height there would make the
+ * inference compare the wrong pair of numbers.
  */
-export function currentScreenHeight(): number {
+export function currentScreenShortEdge(): number {
   try {
-    const raw = Number(window.screen?.height) || 0
+    const w = Number(window.screen?.width) || 0
+    const h = Number(window.screen?.height) || 0
+    // A missing dimension must not win `Math.min` as 0.
+    const shortRaw = w > 0 && h > 0 ? Math.min(w, h) : Math.max(w, h)
     const dpr = Number(window.devicePixelRatio) || 1
     const outer = Number(window.outerHeight) || 0
     const inner = Number(window.innerHeight) || 0
     const windowDeviceHeight = Math.max(outer, inner) * dpr
-    return screenHeightToCssPixels(raw, dpr, windowDeviceHeight, isLinuxDesktopBrowser())
+    return screenHeightToCssPixels(shortRaw, dpr, windowDeviceHeight, isLinuxDesktopBrowser())
   } catch {
     return 0
   }
@@ -232,6 +294,27 @@ export function readAppliedUIScale(): number {
   } catch {
     return 1
   }
+}
+
+/**
+ * Convert a DESIGN px length (a number copied from the stylesheet) into the CSS
+ * px the DOM actually reports at the current scale.
+ *
+ * Needed wherever a measured value is compared against a threshold: `clientWidth`,
+ * `getBoundingClientRect()` and `innerWidth` are all CSS px, while the constants
+ * in the code are the numbers from the stylesheet's design units. Without the
+ * conversion the comparison silently changes meaning with the scale — at 200% a
+ * "460px is wide enough" check really fires at 230 design px.
+ *
+ * Keep this the single implementation: it used to be copy-pasted in four places
+ * (`useDockOverflow`, `useToolbarOverflow`, `App.vue`'s `dp()`, `SplitView`),
+ * which is how the fifth and sixth call sites came to be forgotten.
+ *
+ * Non-reactive by design (it reads the DOM once). Reactive consumers use
+ * `useUiScale()` from `composables/useUiScale.ts`.
+ */
+export function designToCss(designPx: number): number {
+  return designPx * readAppliedUIScale()
 }
 
 /** The design base the layout was drawn against, in px. `1rem` = this × scale. */

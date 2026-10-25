@@ -6,7 +6,7 @@ A: 支持 Linux（x86_64 / ARM64）、macOS（Apple Silicon / Intel）和 Window
 
 **Q: 支持哪些 AI 后端？**
 
-A: 支持 CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code 十八种后端，均支持 CLI 和/或 ACP 传输模式。可在 Web UI 中实时切换，会话数据隔离。CLI 后端需确保对应 CLI 已安装并在 PATH 中可用。
+A: 支持 CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw 十九种后端，均支持 CLI 和/或 ACP 传输模式。可在 Web UI 中实时切换，会话数据隔离。CLI 后端需确保对应 CLI 已安装并在 PATH 中可用。
 
 **Q: 如何添加新的智能体？**
 
@@ -109,6 +109,8 @@ A: 大部分功能都在左侧 Dock 的九个图标里。设置类选项统一�
 **Q: 界面元素太小 / 太大？**
 
 A: 设置 → 外观。点 **自动适配** 按钮，会按当前屏幕分辨率算出合适的缩放并写入下方的 **界面缩放** 滑块（以 1080p 为基准，最高 200%；系统已缩放过的屏幕不会二次放大）。**它只在点击时计算一次，不会随屏幕变化自己变动**，之后你可以用滑块在 80%–150% 之间手动微调。移动端不提供此按钮，屏幕由系统按密度适配。
+
+另外，**启动时**如果检测到当前屏幕明显偏大（建议缩放比当前设置高出 15% 以上，例如 1440p / 4K 屏幕上的默认 100%），会弹一次确认框问你要不要调整，同意后自动写入滑块。拒绝后同一块屏幕不再询问；换到别的分辨率会重新询问。1080p 及以下的屏幕不会弹。**手机和平板不会弹**（系统已按屏幕密度缩放，再叠一层就重复了）。判断看的是屏幕短边，所以横放竖放结果一致，显示器转竖屏也不会误弹。
 
 **Q: Forge 提示 API rate limit exceeded？**
 

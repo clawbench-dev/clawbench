@@ -9,6 +9,7 @@ import { useChatContext } from '@/composables/useChatContext'
 import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { cancelTarget, usePendingTarget } from '@/composables/useConversationTarget.ts'
 import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
+import { applyUIScale } from '@/utils/uiScale'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -3529,6 +3530,41 @@ describe('CodeLinkPreview.vue — user resize (floating card)', () => {
     expect(card.style.height).toBe('160px')
     grip.dispatchEvent(new PointerEvent('pointerup', { pointerId: 8, bubbles: true }))
     wrapper.unmount()
+  })
+
+  it('scales the resize floor with the UI scale', async () => {
+    // The floor is 320×160 DESIGN px and the card's own header/tool rows are
+    // sized through `--dp`, so at 200% the smallest usable card is 640×320 CSS
+    // px. Compared raw, the user could shrink it to 160×80 design px and the
+    // title row would collide with the tool row.
+    applyUIScale(2)
+    try {
+      const preview = createMockPreviewController()
+      const wrapper = mount(CodeLinkPreview, {
+        props: { preview },
+        global: { plugins: [i18n] },
+      })
+      await flushPromises()
+
+      const card = document.querySelector('.code-link-preview-floating') as HTMLElement
+      stubCardRect(card, { width: 720, height: 300 })
+      const grip = card.querySelector('.code-preview-resize-grip') as HTMLElement
+      grip.setPointerCapture = vi.fn()
+      grip.releasePointerCapture = vi.fn()
+
+      grip.dispatchEvent(new PointerEvent('pointerdown', { clientX: 800, clientY: 400, pointerId: 21, bubbles: true }))
+      // Drag far past the top-left corner: both axes clamp to the scaled floor.
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: 0, clientY: 0 }))
+      await new Promise((r) => requestAnimationFrame(r))
+      await nextTick()
+
+      expect(card.style.width).toBe('640px')
+      expect(card.style.height).toBe('320px')
+      grip.dispatchEvent(new PointerEvent('pointerup', { pointerId: 21, bubbles: true }))
+      wrapper.unmount()
+    } finally {
+      applyUIScale(1)
+    }
   })
 
   it('resets to the content-driven size on a grip double-click', async () => {

@@ -69,14 +69,14 @@
             <div class="dock-active-indicator wide-dock-active-indicator" v-show="!leftCollapsed" :style="wideDockIndicatorStyle"></div>
             <!-- Primary tabs (always visible) -->
             <div v-for="tab in WIDE_SCREEN_PRIMARY_TABS" :key="tab" class="dock-btn-wrap">
-              <button class="dock-btn" :data-tab="tab" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="wideDockTabTitle(tab)">
+              <button class="dock-btn" :data-tab="tab" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="dockTabTitle(tab)">
                 <component :is="wideDockTabIcon(tab)" />
               </button>
               <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
             </div>
             <!-- Secondary tabs (always shown inline; the dock scrolls if too short) -->
             <div v-for="tab in overflowTabs" :key="tab" class="dock-btn-wrap">
-              <button class="dock-btn" :data-tab="tab" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="wideDockTabTitle(tab)">
+              <button class="dock-btn" :data-tab="tab" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="dockTabTitle(tab)">
                 <component :is="wideDockTabIcon(tab)" />
               </button>
               <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
@@ -588,6 +588,7 @@ import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyEffectiveUIScale, getZoomedViewport, toFixedCSS, startSystemThemeWatcher, applyStoredTheme } from '@/composables/useSettingsConfig'
+import { maybePromptStartupUIScale } from '@/composables/useStartupUIScalePrompt'
 import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 import { useAnimatedWallpaperParams } from '@/composables/useAnimatedWallpaperParams'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
@@ -2649,6 +2650,9 @@ async function handleLoginSuccess() {
     }
     welcomeOverlay.value?.show()
     checkForUpgrade()
+    // Same offer as the cold-start path; the composable is once-per-session,
+    // so the second caller is a no-op.
+    offerStartupUIScale()
 
     // Handle pending navigation
 }
@@ -2658,6 +2662,29 @@ const shareLinkOpen = ref(false)
 const welcomeOverlay = ref<InstanceType<typeof WelcomeOverlay> | null>(null)
 const upgradePromptOverlay = ref<InstanceType<typeof UpgradePromptOverlay> | null>(null)
 const upgradeDialogRef = ref<InstanceType<typeof UpgradeDialog> | null>(null)
+
+/**
+ * Offer the screen-derived UI scale, but never stack it on the first-run
+ * welcome panel.
+ *
+ * Both are full-screen modals, and on a fresh install the welcome panel opens
+ * in the same tick. The scale prompt sits at a higher z-index, so calling it
+ * straight away would cover the welcome panel with a second modal before the
+ * user has read the first. Wait for the welcome panel to go away instead (it
+ * never opening again is fine — the next launch asks).
+ */
+function offerStartupUIScale() {
+  const welcome = welcomeOverlay.value
+  if (!welcome?.visible) {
+    void maybePromptStartupUIScale()
+    return
+  }
+  const stop = watch(() => welcome.visible, (visible) => {
+    if (visible) return
+    stop()
+    void maybePromptStartupUIScale()
+  })
+}
 
 async function checkForUpgrade() {
   const { checkForUpgradePrompt, state } = useUpgrade()
@@ -3132,7 +3159,15 @@ function dockTabIcon(tab: string) {
 function dockTabTitle(tab: string) {
   // The forge tab is named after the integration in use ("GitHub integration" /
   // "GitLab integration") rather than the platform-neutral registry title, so
-  // the overflow menu says which service it opens.
+  // the dock entry (and the overflow button's tooltip, which reuses this) says
+  // which service it opens.
+  //
+  // This is the ONLY title lookup. Both docks and the overflow tooltip call it:
+  // the wide dock used to carry its own copy of the whole function, so the
+  // forge branch had to be added twice and the tooltip could silently keep the
+  // neutral label. `dockTabMeta` deliberately stays the icon-free registry
+  // (`dockTabs.ts` must import nothing, and `forgeTabTitleKey` lives in a
+  // composable), which is why the platform-aware key is resolved here.
   if (tab === 'forge') return t(forgeTabTitleKey(forgePlatform.value))
   const meta = dockTabMeta(tab)
   return meta ? t(meta.titleKey) : ''
@@ -3367,13 +3402,6 @@ function wideDockTabIcon(tab: string) {
   // the wide-screen dock shows the GitHub/GitLab brand too.
   if (tab === 'forge') return dockTabIcon('forge')
   return dockTabMeta(tab)?.icon ?? FolderOpen
-}
-function wideDockTabTitle(tab: string) {
-  // Same platform-aware label as the compact dock, so both docks name the
-  // integration ("GitHub integration" / "GitLab integration") consistently.
-  if (tab === 'forge') return t(forgeTabTitleKey(forgePlatform.value))
-  const meta = dockTabMeta(tab)
-  return meta ? t(meta.titleKey) : ''
 }
 /** Chat toggle button tooltip: points at the action that will happen on click. */
 const chatToggleTitle = computed(() => (chatCollapsed.value ? t('nav.showChat') : t('nav.hideChat')))
@@ -3920,6 +3948,9 @@ onMounted(async () => {
     startDockResize()
     welcomeOverlay.value?.show()
     checkForUpgrade()
+    // After the welcome panel (see offerStartupUIScale). Never awaited: it only
+    // shows a dialog, and startup must not block on a decision.
+    offerStartupUIScale()
 
     // Handle pending navigation from push notification deep link
     // (cross-project reload or cold start via native bridge)
@@ -4392,7 +4423,7 @@ onUnmounted(() => {
   text-align: left;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: calc(0.5 * var(--dp));
 }
 
 .view-empty-recent-item {

@@ -69,13 +69,15 @@
              original horizontal slots. -->
         <div v-if="(groupMode || allowInstances) && isSelected(agent.id)" class="agent-row-actions">
           <!-- Instance stepper: − count + . Only the count is shown (no nickname
-               preview). "+" is disabled at the group-wide instance limit. -->
+               preview). "+" is disabled at the group-wide instance limit.
+               "−" stays enabled at one instance: that is the only way to
+               deselect the row now that a row click always ADDS (it removes the
+               agent from the selection). -->
           <div v-if="allowInstances" class="agent-stepper" @click.stop>
             <button
               class="agent-stepper-btn"
               type="button"
-              :aria-label="t('group.decreaseInstance')"
-              :disabled="countOf(agent.id) <= 1"
+              :aria-label="countOf(agent.id) <= 1 ? t('group.removeAgent') : t('group.decreaseInstance')"
               @click.stop="decrement(agent.id)"
             >
               <Minus :size="12" />
@@ -145,6 +147,17 @@
             ? t('group.memberLimitReached')
             : t('group.memberCountHint', { count: totalInstances, max: maxInstances }) }}
         </span>
+        <!-- Host mode allows a one-member group (the host alone), which the
+             backend accepts but the user almost never wants: a "group" with one
+             participant routes exactly like a single chat. Confirm stays enabled
+             (that is the backend contract), so the consequence is stated here
+             instead of silently producing it. The member must BE the host:
+             with one non-host member the group is not creatable at all, and a
+             warning about its shape would be noise. -->
+        <span
+          v-if="soloHostGroup"
+          class="agent-solo-hint"
+        >{{ t('group.soloHostGroupHint') }}</span>
       </div>
       <button class="fbtn fbtn-primary agent-multi-confirm" :disabled="confirmDisabled" @click="handleConfirmMulti">{{ confirmLabel }}</button>
     </template>
@@ -298,19 +311,17 @@ function handleSelect(agentId: string) {
   if (props.multiple) {
     // Toggle; do not close.
     if (props.allowInstances) {
-      // Instance mode: clicking a row selects one instance; clicking an
-      // already-selected row clears ALL its instances (back to 0). Fine-grained
-      // counts are adjusted with the row's − / + stepper, not by the row click.
-      const n = countOf(agentId)
-      if (n > 0) {
-        selectedIds.value = selectedIds.value.filter(id => id !== agentId)
-        if (props.groupMode && props.hostId === agentId) emit('update:hostId', '')
-      } else {
-        // Selecting a fresh agent adds one instance; refuse at the group-wide
-        // limit (same rule as the stepper's +).
-        if (atInstanceLimit.value) return
-        selectedIds.value.push(agentId)
-      }
+      // Instance mode: a row click always ADDS one instance (same action as
+      // the row's "+"), including on an already-selected row.
+      //
+      // It used to clear every instance of the agent instead, which read as
+      // "click twice = cancel everything": with a single installed agent, the
+      // only way to build a two-member group is two clicks on the same row, so
+      // the second click silently undid the first with no feedback. Removal
+      // belongs to the row's "−" (which deselects at 1), mirroring how the
+      // count is adjusted.
+      if (atInstanceLimit.value) return
+      selectedIds.value.push(agentId)
       return
     }
     const i = selectedIds.value.indexOf(agentId)
@@ -347,6 +358,18 @@ const confirmDisabled = computed(() => {
   if (props.hostId) return !selectedIds.value.includes(props.hostId)
   return selectedIds.value.length < 2
 })
+
+/**
+ * True for the one group shape that is creatable but pointless: host mode with
+ * the host as its ONLY member.
+ *
+ * The backend allows it (only free mode requires two members), so confirm stays
+ * enabled — blocking it here would disagree with the contract. The footer
+ * states the consequence instead.
+ */
+const soloHostGroup = computed(() =>
+  props.groupMode && !!props.hostId && selectedIds.value.length === 1 && selectedIds.value[0] === props.hostId,
+)
 
 function handleConfirmMulti() {
   const ids = [...selectedIds.value]
@@ -796,6 +819,17 @@ watch(() => props.open, async (val) => {
 .agent-count-hint.at-limit {
   color: var(--color-red, #dc2626);
   font-weight: var(--font-weight-medium);
+}
+
+/* One-member host group: an advisory, not an error — the group IS creatable
+   (the backend allows it), so this is muted rather than red. */
+.agent-solo-hint {
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted, #999);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 /* Confirm button: shape/colour come from the shared .fbtn / .fbtn-primary

@@ -168,6 +168,88 @@ func TestOpenClawModesMirrorThoughtLevelIsWired(t *testing.T) {
 
 // --- Input normalization ---
 
+// sharedRemapKeys are the remaps that must be IDENTICAL in both tables:
+// OpenClawACPInputRemaps (this package, wired into the generic flat remap) and
+// ai.openClawACPBaseRemaps (internal/ai, used by the per-tool OpenClaw
+// normalizer). They live in different packages — internal/ai must not import
+// this one (cycle) — so nothing but this test keeps them aligned. A drift means
+// the same field is normalized two different ways depending on which code path
+// parsed the frame.
+//
+// Deliberately NOT the whole table: OpenClawACPInputRemaps additionally carries
+// dirPath/cellIndex/cellType, which the per-tool normalizer does not need.
+// `path` is also absent here — it is asserted separately below, because the two
+// tables must NOT agree on it (see the test after this one).
+var sharedRemapKeys = []string{
+	"filePath",
+	"oldString",
+	"newString",
+	"replaceAll",
+}
+
+func TestOpenClawRemapTablesAgreeOnSharedKeys(t *testing.T) {
+	base := ai.OpenClawACPBaseRemapsForTest()
+	require.NotEmpty(t, base, "the base table must not be empty")
+
+	for _, key := range sharedRemapKeys {
+		want, ok := OpenClawACPInputRemaps[key]
+		require.True(t, ok,
+			"OpenClawACPInputRemaps must carry the shared key %q — the two tables "+
+				"are kept in sync by this test alone", key)
+		got, ok := base[key]
+		require.True(t, ok,
+			"ai.openClawACPBaseRemaps must carry the shared key %q — the two tables "+
+				"are kept in sync by this test alone", key)
+		assert.Equal(t, want, got,
+			"remap %q diverges between the packages: OpenClawACPInputRemaps says %q, "+
+				"ai.openClawACPBaseRemaps says %q", key, want, got)
+	}
+}
+
+// `path` is the one remap that must live ONLY in the base table. The base table
+// is applied by a per-tool normalizer that can drop it for `ls`; the flat table
+// is applied blindly, so a global path→file_path there would blank the LS card.
+// The per-tool normalizer is what makes path→file_path safe, and it must still
+// carry it (WARN-012: an unlisted tool such as apply_patch carries "path" too).
+func TestOpenClawPathRemapLivesInTheBaseTableOnly(t *testing.T) {
+	base := ai.OpenClawACPBaseRemapsForTest()
+	assert.Equal(t, "file_path", base["path"],
+		"the per-tool base table must remap path — openclaw's tool set grows, and an "+
+			"unlisted tool carrying \"path\" would otherwise render a blank file header")
+	assert.NotContains(t, OpenClawACPInputRemaps, "path",
+		"the flat table is applied blindly (no per-tool opt-out), so path→file_path "+
+			"there would blank the LS card; it belongs in the per-tool base table")
+}
+
+// The shared keys must actually be the ones both parsers apply, not a list that
+// happens to match. This drives the real per-tool normalizer with a payload
+// containing every shared key plus `path`, and asserts each one landed on its
+// target.
+func TestOpenClawBaseRemapsAreAppliedByThePerToolNormalizer(t *testing.T) {
+	raw := `{"path":"/p","filePath":"/f","oldString":"a","newString":"b","replaceAll":true}`
+	got := ai.NormalizeOpenClawACPInputForTest("read", raw)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(got), &parsed))
+	base := ai.OpenClawACPBaseRemapsForTest()
+	for _, key := range append([]string{"path"}, sharedRemapKeys...) {
+		target, ok := base[key]
+		require.True(t, ok, "the base table must carry %q", key)
+		assert.Contains(t, parsed, target,
+			"remap %q was not applied by the per-tool normalizer (got %s)", key, got)
+		assert.NotContains(t, parsed, key,
+			"the raw key %q survived normalization (got %s)", key, got)
+	}
+}
+
+// The flat table must not be handed to the per-tool path as-is: it would remap
+// `path` for `ls` too and blank the LS card. Pinned through the real normalizer
+// so the "drop it for ls" branch cannot be removed unnoticed.
+func TestOpenClawLsKeepsPathDespiteTheFlatTable(t *testing.T) {
+	got := ai.NormalizeOpenClawACPInputForTest("ls", `{"path":"/tmp/x"}`)
+	assert.JSONEq(t, `{"path":"/tmp/x"}`, got)
+}
+
 // The flat ACP remap table cannot express these: `path` must become `file_path`
 // for read/write/edit but must stay `path` for ls, and edit's arguments live in a
 // nested edits[] array.

@@ -162,6 +162,91 @@ describe('measureFixedContainingBlock', () => {
   })
 })
 
+/**
+ * The probe CLONES the element to inherit its containing block. It must keep the
+ * element's own class list: `position: fixed` — the very property that makes the
+ * measurement meaningful — comes FROM a class on every floating surface
+ * (`.table-block-copy-menu`, `.popup-menu`).
+ *
+ * Regression (ISS-286): the clone did `probe.className = ''` to strip the
+ * `<Transition>` enter/leave classes (those declare a `transform` transition,
+ * which makes the box its own containing block). Clearing the WHOLE attribute
+ * also dropped the element's own class, so the probe degraded to a `static` box
+ * in normal flow. Measured in Chromium: `probePosition: "static"` and the
+ * "containing block" came back as `{left: 30, top: 30, right: 830, bottom: 30}`
+ * — a zero-height line box — instead of the viewport. Callers then placed their
+ * menu at `left: -140px, top: 27`.
+ *
+ * jsdom has no layout engine, so these cases assert what is observable: which
+ * classes survive onto the probe. A `className = ''` regression flips every one
+ * of them.
+ */
+describe('probe keeps the element’s own classes (ISS-286)', () => {
+  /**
+   * Capture the class list of the clone the probe appends, then measure.
+   *
+   * The element must be ATTACHED: the probe is appended to `el.parentElement`,
+   * which is null for a detached node, so a detached element would silently
+   * skip the measurement entirely and observe nothing.
+   */
+  function classesOfProbe(el: HTMLElement): string[] {
+    document.body.appendChild(el)
+    const seen: string[] = []
+    const nativeAppend = HTMLElement.prototype.appendChild
+    const spy = function (this: Node, child: Node) {
+      if (child instanceof HTMLElement && child !== el && this === el.parentElement) {
+        seen.push(...Array.from(child.classList))
+      }
+      return nativeAppend.call(this, child)
+    }
+    HTMLElement.prototype.appendChild = spy as typeof HTMLElement.prototype.appendChild
+    try {
+      measureFixedContainingBlock(el)
+    } finally {
+      HTMLElement.prototype.appendChild = nativeAppend
+    }
+    return seen
+  }
+
+  it('keeps the positioning class that makes the probe fixed', () => {
+    const el = makeEl({})
+    el.className = 'table-block-copy-menu'
+    const classes = classesOfProbe(el)
+    expect(classes, 'the probe must carry the element’s own class').toContain('table-block-copy-menu')
+  })
+
+  it('strips <Transition> enter/leave classes from the probe', () => {
+    // These declare a transform transition; leaving them on makes the probe its
+    // own containing block, which is the bug the stripping exists for.
+    const el = makeEl({})
+    el.className = 'table-block-copy-menu menu-fade-enter-active'
+    const classes = classesOfProbe(el)
+    expect(classes).toContain('table-block-copy-menu')
+    expect(classes).not.toContain('menu-fade-enter-active')
+  })
+
+  it('strips every Vue transition class form', () => {
+    const el = makeEl({})
+    el.className = [
+      'keep-me',
+      'fade-enter-active', 'fade-enter-from', 'fade-enter-to',
+      'fade-leave-active', 'fade-leave-from', 'fade-leave-to',
+      'v-enter-active',
+    ].join(' ')
+    const classes = classesOfProbe(el)
+    expect(classes).toEqual(['keep-me'])
+  })
+
+  it('does not strip lookalike classes that are not transition classes', () => {
+    // `enter` / `leave` appear in ordinary names. Over-matching here would
+    // silently drop a positioning class and reintroduce ISS-286 by another road.
+    const el = makeEl({})
+    el.className = 'table-block-copy-menu is-entered center-leaving'
+    const classes = classesOfProbe(el)
+    expect(classes).toEqual(['table-block-copy-menu', 'is-entered', 'center-leaving'])
+  })
+})
+
 describe('viewport → CSS conversions', () => {
   const cb = { left: 120, top: 60, right: 820, bottom: 660, scaleX: 1.25, scaleY: 1.25 }
 

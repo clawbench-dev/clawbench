@@ -304,4 +304,22 @@ describe('TerminalPanel xterm selection defaults', () => {
     expect(inactiveBranch).toContain('showTabMenu.value = false')
     expect(inactiveBranch).toContain('themeMenuOpen.value = false')
   })
+
+  it('clears the pending gesture hint timer on unmount', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+
+    // The hint is a 600ms one-shot that closes over `gestureHint`. Unmounting
+    // inside that window left the callback to fire against a torn-down
+    // instance (ISS-169). The teardown hook must clear it.
+    //
+    // Slice from the LAST `onBeforeUnmount` (the teardown hook that owns the
+    // gesture machinery) to end of file. Two traps make a naive assertion pass
+    // with the fix deleted: (1) `gestureHintTimer` is also cleared on every new
+    // hint, so a whole-file `toContain` is satisfied by those sites; (2) the
+    // file has TWO `onBeforeUnmount` hooks, and slicing from the first one would
+    // still include both hint-clearing call sites above. Both must be excluded.
+    const unmountHook = source.slice(source.lastIndexOf('onBeforeUnmount(() => {'))
+    expect(unmountHook).toContain('clearTimeout(gestureHintTimer)')
+    expect(unmountHook).toContain('gestureHintTimer = null')
+  })
 })

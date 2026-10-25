@@ -36,6 +36,17 @@ export interface CrossProjectSession {
   title: string
   backend?: string
   agentId?: string
+  /**
+   * Display name of `agentId`, supplied by the server.
+   *
+   * The local agent list (GET /api/agents) is scoped to the CURRENT project,
+   * but this pane lists sessions from OTHER projects — a row may therefore run
+   * an agent scoped to its own project, which the local list does not contain.
+   * Without this the row rendered a raw agent id.
+   */
+  agentName?: string
+  /** Custom avatar SVG for exactly those unresolvable agents (see agentName). */
+  agentAvatar?: string
   model?: string
   /** 'group' for a group-chat session; drives the group row rendering. */
   sessionType?: string
@@ -102,6 +113,8 @@ function toSession(raw: Record<string, unknown>): CrossProjectSession {
     title: String(raw.title ?? ''),
     backend: raw.backend ? String(raw.backend) : undefined,
     agentId: raw.agentId ? String(raw.agentId) : undefined,
+    agentName: raw.agentName ? String(raw.agentName) : undefined,
+    agentAvatar: raw.agentAvatar ? String(raw.agentAvatar) : undefined,
     model: raw.model ? String(raw.model) : undefined,
     sessionType: raw.sessionType ? String(raw.sessionType) : undefined,
     groupMembers: Array.isArray(raw.groupMembers)

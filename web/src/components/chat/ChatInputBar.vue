@@ -3261,7 +3261,7 @@ defineExpose({
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   font-weight: var(--font-weight-medium);
-  letter-spacing: 0.3px;
+  letter-spacing: calc(0.3 * var(--dp));
 }
 
 .quick-send-item {

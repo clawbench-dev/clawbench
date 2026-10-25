@@ -101,7 +101,29 @@ export function measureFixedContainingBlock(el: HTMLElement): FixedContainingBlo
   // hundreds of px short and the menu landed off-screen. Dropping the transition
   // classes is what makes the probe measure the real block.
   probe.style.transition = 'none'
-  probe.className = ''
+  // Strip the Transition/transition-group class names, NOT the whole class
+  // attribute.
+  //
+  // Only the transition classes are a problem: `*-enter-active` declares a
+  // `transform` TRANSITION, which makes the box its own containing block for
+  // fixed descendants, so the clone measured itself instead of the real block.
+  //
+  // `probe.className = ''` also removed the element's OWN classes, and that is
+  // a silent measurement bug: `position: fixed` on every floating surface comes
+  // FROM a class (`.table-block-copy-menu`, `.popup-menu`), so a stripped clone
+  // degrades to a static box in normal flow. Measured in Chromium against
+  // `.table-block-copy-menu`: `probePosition: "static"`, and the "block" came
+  // out as `{left: 30, top: 30, right: 830, bottom: 30}` — a zero-height line
+  // box at the parent's content edge instead of the viewport. Every caller that
+  // fed those numbers back placed its menu at `left: -140px, top: 27`.
+  //
+  // Match Vue's Transition naming (`name-enter-active`, `name-leave-to`, …) and
+  // the `v-` prefixed defaults, and leave everything else alone.
+  for (const cls of Array.from(probe.classList)) {
+    if (/-enter(-active|-from|-to)?$/.test(cls) || /-leave(-active|-from|-to)?$/.test(cls) || cls.startsWith('v-')) {
+      probe.classList.remove(cls)
+    }
+  }
   probe.style.transform = 'none'
   probe.removeAttribute('id')
   el.parentElement?.appendChild(probe)

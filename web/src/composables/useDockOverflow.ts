@@ -15,23 +15,15 @@ export const DOCK_GAP = 12
 export const DOCK_STEP = DOCK_BTN_SIZE + DOCK_GAP // 46
 
 /**
- * The applied UI scale, kept current through `UI_SCALE_EVENT`.
+ * Convert DESIGN px to CSS px at the current scale.
  *
- * A module-level ref, not a per-call read: the overflow computation is a
- * `computed`, so the scale has to be a reactive dependency or the dock would
- * keep the button count it derived at the previous scale (the element itself
- * does re-measure — `ResizeObserver` fires — but the constants would not).
+ * Kept as a per-instance helper rather than the shared `designToCss()` because
+ * this has to be REACTIVE: `inlineCount` is a `computed`, so a scale change has
+ * to invalidate it. `designToCss()` reads the DOM once and cannot be a
+ * dependency.
  */
-const uiScale = ref(1)
-if (typeof window !== 'undefined') {
-  const sync = () => { uiScale.value = readAppliedUIScale() }
-  sync()
-  window.addEventListener(UI_SCALE_EVENT, sync)
-}
-
-/** Convert DESIGN px to CSS px at the current scale. */
-function scaleLayout(designPx: number): number {
-  return designPx * uiScale.value
+function scaleLayout(designPx: number, scale: number): number {
+  return designPx * scale
 }
 
 export interface DockOverflowOptions {
@@ -68,6 +60,25 @@ export function useDockOverflow(
   options: DockOverflowOptions = {},
 ) {
   const { direction = 'horizontal', primaryCount = 4 } = options
+
+  /**
+   * The applied UI scale, kept current through `UI_SCALE_EVENT`.
+   *
+   * Per instance, not module-level: a module-level ref plus a module-level
+   * listener meant the previous test's scale leaked into the next one (the
+   * tests had to call `applyUIScale(1)` in `afterEach` to compensate), and the
+   * listener was never removed. The dock and the toolbar each have exactly one
+   * instance, so the extra subscription costs nothing.
+   *
+   * Subscribed from `startObserving()` rather than `onMounted()`: this is a
+   * plain function called from `setup()`, and callers drive the measure
+   * lifecycle themselves (they may start observing long after mount, e.g. when
+   * the dock first becomes visible). Tying the listener to that same lifecycle
+   * keeps "is it observing?" and "is it listening?" one decision.
+   */
+  const uiScale = ref(readAppliedUIScale())
+  const syncScale = () => { uiScale.value = readAppliedUIScale() }
+
   // Scale the geometry before any arithmetic: the measured dock size is in CSS
   // px (already scaled), so the per-button footprint has to be too.
   //
@@ -75,8 +86,8 @@ export function useDockOverflow(
   // to invalidate `inlineCount` below. Computed once at setup, a scale change
   // would keep the old footprint while the dock itself grew, and the overflow
   // decision would be wrong until something else re-triggered it.
-  const btnSize = computed(() => scaleLayout(options.btnSize ?? DOCK_BTN_SIZE))
-  const gap = computed(() => scaleLayout(options.gap ?? DOCK_GAP))
+  const btnSize = computed(() => scaleLayout(options.btnSize ?? DOCK_BTN_SIZE, uiScale.value))
+  const gap = computed(() => scaleLayout(options.gap ?? DOCK_GAP, uiScale.value))
   const step = computed(() => btnSize.value + gap.value)
   // Minimum size to hold the fixed primary buttons + the overflow button.
   const minContent = computed(
@@ -137,6 +148,11 @@ export function useDockOverflow(
   /** Start observing dock element size. Call in onMounted. Idempotent. */
   function startObserving() {
     stopObserving()
+    // Re-read before the first measure: the applier may have run between setup
+    // and this call, and the dock would otherwise be sized against a stale
+    // factor until the next UI_SCALE_EVENT.
+    syncScale()
+    if (typeof window !== 'undefined') window.addEventListener(UI_SCALE_EVENT, syncScale)
     const el = getDockEl()
     if (!el) return
 
@@ -180,6 +196,7 @@ export function useDockOverflow(
     settleRaf = 0
     resizeObserver?.disconnect()
     resizeObserver = null
+    if (typeof window !== 'undefined') window.removeEventListener(UI_SCALE_EVENT, syncScale)
   }
 
   return {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { useDockOverflow, type DockOverflowOptions } from '@/composables/useDockOverflow'
-import { applyUIScale } from '@/utils/uiScale'
+import { applyUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 
 // Mock ResizeObserver
 const mockObserve = vi.fn()
@@ -352,6 +352,49 @@ describe('useDockOverflow', () => {
 
       applyUIScale(2)
       expect(s.inlineOverflowTabs.value).toEqual(['tasks'])
+    })
+  })
+
+  describe('scale state is per instance', () => {
+    // The scale used to be a module-level ref with a module-level listener that
+    // was never removed, so a previous case's scale leaked into the next one —
+    // the suite compensated with `applyUIScale(1)` in `afterEach`, which is a
+    // convention rather than a mechanism. These cases pin the mechanism.
+    afterEach(() => {
+      applyUIScale(1)
+    })
+
+    it('a stopped instance keeps its own scale while a new one picks up the current one', () => {
+      // The distinguishing property of per-instance state: with the old
+      // module-level ref, the still-registered module listener would write the
+      // new scale into the shared ref and move the stopped instance too.
+      applyUIScale(1)
+      const first = setupWithSize(TABS, 600)
+      expect(first.inlineOverflowTabs.value).toEqual(TABS)
+
+      applyUIScale(2)
+      expect(first.inlineOverflowTabs.value).toEqual(['tasks'])
+
+      first.stopObserving()
+      applyUIScale(1)
+      // Listener gone → the stopped instance is frozen at the scale it saw.
+      expect(first.inlineOverflowTabs.value).toEqual(['tasks'])
+
+      // A fresh instance reads the scale in effect (1), not the frozen 2.
+      const second = setupWithSize(TABS, 600)
+      expect(second.inlineOverflowTabs.value).toEqual(TABS)
+    })
+
+    it('stopObserving removes the scale listener', () => {
+      // A leftover listener keeps writing to a ref nobody re-renders — and, in
+      // the old module-level shape, kept the last scale alive forever.
+      const remove = vi.spyOn(window, 'removeEventListener')
+      const s = setupWithSize(TABS, 600)
+      remove.mockClear()
+      s.stopObserving()
+      const removed = remove.mock.calls.filter(([type]) => type === UI_SCALE_EVENT)
+      expect(removed).toHaveLength(1)
+      remove.mockRestore()
     })
   })
 })

@@ -66,10 +66,24 @@ func StartGitSyncWorker() {
 // A non-positive interval disables the periodic part: the loop parks on cancel
 // so the worker can still be stopped. Split out of the goroutine so the two
 // exit paths can be tested without waiting on a scheduler race.
+//
+// CALLER CONTRACT — this function does not return on its own:
+//   - With RefreshHours > 0 it returns when cancel is closed.
+//   - With RefreshHours <= 0 it blocks on cancel with NO timeout at all. A
+//     caller that never closes cancel hangs here forever, and a test that does
+//     so hangs until the global test timeout. The only production caller
+//     (StartGitSyncWorker's goroutine) satisfies this because StopGitSyncWorker
+//     and ResetSyncForTest are the ones that own closing it.
+//
+// cancel is deliberately a bare channel rather than a context.Context: the
+// worker's lifetime is the process's, nothing needs a deadline, and the channel
+// makes "exactly one owner closes it" explicit (close is idempotent-unfriendly,
+// unlike cancel()).
 func runSyncLoop(cancel <-chan struct{}) {
 	for {
 		hours := model.ConfigInstance.Skills.RefreshHours
 		if hours <= 0 {
+			// Parked: the ONLY way out is cancel. See the caller contract above.
 			<-cancel
 			return
 		}

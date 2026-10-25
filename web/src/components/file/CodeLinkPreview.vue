@@ -509,6 +509,7 @@ import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download'
 import { buildHtmlPreviewSrc } from '@/utils/htmlPreview'
 import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom, SCROLL_LOAD_STEP } from '@/utils/codeLinkPreview'
 import { toFixedCSS, useSettingsConfig, getZoomedViewport } from '@/composables/useSettingsConfig'
+import { designToCss } from '@/utils/uiScale'
 import { requestTarget } from '@/composables/useConversationTarget.ts'
 import { store } from '@/stores/app'
 import { navToFileInManager } from '@/composables/useFilePathAnnotation'
@@ -1046,10 +1047,22 @@ const cardW = ref<number | null>(null)
 const cardH = ref<number | null>(null)
 const isResizingCard = ref(false)
 
-/** Floor for a resized card, in viewport pixels. Below this the header, the
- *  tool row and a couple of body lines no longer fit. */
+/**
+ * Floor for a resized card, in DESIGN px. Below this the header, the tool row
+ * and a couple of body lines no longer fit.
+ *
+ * Design px, not viewport px: the card's own header/rows are sized through
+ * `--dp`, so they grow with the UI scale while the viewport does not. Compared
+ * raw against `vp.width` (CSS px), a 200% user could drag the card down to
+ * 320 CSS px = 160 design px and the title row would collide with the tool row.
+ * Every comparison therefore goes through `minCardWidth()` / `minCardHeight()`.
+ */
 const MIN_CARD_WIDTH = 320
 const MIN_CARD_HEIGHT = 160
+
+/** The design floors converted to the CSS px `cardW`/`cardH` are stored in. */
+const minCardWidth = () => designToCss(MIN_CARD_WIDTH)
+const minCardHeight = () => designToCss(MIN_CARD_HEIGHT)
 
 let resizeStartWidth = 0
 let resizeStartHeight = 0
@@ -1089,13 +1102,13 @@ const updateResizeSize = () => {
   const top = dragY.value ?? topSafe
   // Never grow past the viewport from the card's own origin: the card is
   // anchored top-left, so the room it has is what is left to its right/bottom.
-  const maxW = Math.max(MIN_CARD_WIDTH, vp.width - left - 12)
-  const maxH = Math.max(MIN_CARD_HEIGHT, vp.height - top - 12)
+  const maxW = Math.max(minCardWidth(), vp.width - left - 12)
+  const maxH = Math.max(minCardHeight(), vp.height - top - 12)
 
   const nextW = resizeStartWidth + (pendingResizeX - resizeStartPointerX)
   const nextH = resizeStartHeight + (pendingResizeY - resizeStartPointerY)
-  cardW.value = Math.round(Math.min(Math.max(nextW, MIN_CARD_WIDTH), maxW))
-  cardH.value = Math.round(Math.min(Math.max(nextH, MIN_CARD_HEIGHT), maxH))
+  cardW.value = Math.round(Math.min(Math.max(nextW, minCardWidth()), maxW))
+  cardH.value = Math.round(Math.min(Math.max(nextH, minCardHeight()), maxH))
 }
 
 const onResizePointerDown = (e: PointerEvent) => {
@@ -1824,10 +1837,10 @@ const clampCurrentPosition = () => {
     const left = dragX.value ?? 12
     const top = dragY.value ?? (typeof window !== 'undefined' ? getAppHeaderBottom() : 40) + 12
     if (cardW.value !== null) {
-      cardW.value = Math.round(Math.min(cardW.value, Math.max(MIN_CARD_WIDTH, vp.width - left - 12)))
+      cardW.value = Math.round(Math.min(cardW.value, Math.max(minCardWidth(), vp.width - left - 12)))
     }
     if (cardH.value !== null) {
-      cardH.value = Math.round(Math.min(cardH.value, Math.max(MIN_CARD_HEIGHT, vp.height - top - 12)))
+      cardH.value = Math.round(Math.min(cardH.value, Math.max(minCardHeight(), vp.height - top - 12)))
     }
   }
 

@@ -6,7 +6,7 @@ import { getAgentSvg } from '@/utils/agentIcons'
 const ALL_BACKENDS = [
     'claude', 'codebuddy', 'opencode', 'codex',
     'copilot', 'qoder', 'kimi', 'mimo', 'pi', 'deepseek', 'dsh', 'vecli', 'grok', 'antigravity', 'hermes', 'cursor',
-    'commandcode', 'openclaw',
+    'commandcode', 'openclaw', 'custom-acp',
 ]
 
 describe('agentIcons', () => {
@@ -44,7 +44,7 @@ describe('agentIcons', () => {
         })
 
         it('monochrome backends have monoCssClass for theme-aware color', () => {
-            const monochrome = ['opencode', 'pi', 'mimo', 'grok', 'hermes', 'cursor', 'commandcode', 'kimi']
+            const monochrome = ['opencode', 'pi', 'mimo', 'grok', 'hermes', 'cursor', 'commandcode', 'kimi', 'custom-acp']
             for (const id of monochrome) {
                 const data = getAgentSvg(id)!
                 expect(data.monoCssClass, `backend "${id}" should have monoCssClass`).toBeTruthy()
@@ -128,6 +128,22 @@ describe('agentIcons', () => {
                     + `Give it a monoCssClass or needsBg.`,
                 ).toBe(true)
             }
+        })
+
+        // Regression: `custom-acp` had no entry, so every user-defined ACP agent
+        // (issue #557 — they all share this one backend id) fell through to the
+        // initial-letter fallback. A letter reads as a missing icon, not as
+        // "your own agent", and it looked especially broken in lists where every
+        // other row had a brand mark.
+        it('resolves a generic mark for user-defined ACP agents', () => {
+            const data = getAgentSvg('custom-acp')
+            expect(data, 'custom-acp must not fall back to an initial letter').not.toBeNull()
+            expect(data!.viewBox).toBe('0 0 24 24')
+            // Monochrome + theme-aware: there is no brand colour to hard-code for
+            // an arbitrary user agent, and a fixed fill would break on some of the
+            // 36 themes.
+            expect(data!.monoCssClass).toBe('mono-custom-acp')
+            expect(data!.svg).toContain('currentColor')
         })
 
         // The specific regression: lobe-icons' `-color` variants sometimes paint

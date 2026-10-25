@@ -56,6 +56,11 @@ function allStyleSources(): Array<{ file: string; css: string }> {
         const sfc = readWebFile(rel)
         const css = [...sfc.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(m => m[1]).join('\n')
         if (css) out.push({ file: rel, css })
+      } else if (entry.endsWith('.css')) {
+        // `src/assets/*.css` are imported by components (CodeLinkPreview,
+        // ShareLinkDialog, …) and are just as much part of the UI as a scoped
+        // block. Skipping them left whole stylesheets outside every guard here.
+        out.push({ file: rel, css: readWebFile(rel) })
       } else if (!entry.includes('.') && entry !== '__tests__') {
         walk(rel)
       }
@@ -222,6 +227,216 @@ describe('the wide-screen breakpoint uses the effective width', () => {
     expect(src).toContain('UI_SCALE_EVENT')
     const applier = readWebFile('src/utils/uiScale.ts')
     expect(applier).toContain('dispatchEvent')
+  })
+
+  it('every call site passes the scale explicitly', () => {
+    // The two assertions above only look INSIDE the function and at the file's
+    // imports, so neither can notice a caller that omits the scale — which is
+    // exactly the regression `uiScale` being a required parameter exists to
+    // prevent. The compiler is no help either: `tsconfig.json` excludes
+    // `src/**/__tests__/**`, so a test call site is never typechecked (vitest
+    // strips types without checking them).
+    //
+    // So the call sites are scanned textually. Every `computeIsWideScreen(`
+    // must have two top-level arguments; a pure-geometry caller passes an
+    // explicit `1`.
+    const offenders: string[] = []
+    for (const file of allTsSources()) {
+      const code = stripComments(file.code)
+      for (const m of code.matchAll(/\bcomputeIsWideScreen\s*\(/g)) {
+        // Skip the declaration itself (it has no `(` call shape of its own —
+        // it is `function computeIsWideScreen(...)`).
+        const before = code.slice(Math.max(0, m.index! - 40), m.index!)
+        if (/function\s*$/.test(before)) continue
+        const args = topLevelArgs(code, m.index! + m[0].length - 1)
+        const line = code.slice(0, m.index!).split('\n').length
+        if (args.length < 2) {
+          offenders.push(`${file.file}:${line}  computeIsWideScreen(${args.join(', ')})`)
+        }
+      }
+    }
+    expect(
+      offenders,
+      'computeIsWideScreen takes (cssWidth, uiScale) with NO default — a ' +
+      'missing second argument silently ignores the scale and collapses the ' +
+      'layout on a window that is wide enough:\n' + offenders.join('\n'),
+    ).toEqual([])
+    // And the scan must actually find the sites, or it passes vacuously.
+    expect(countCallSites()).toBeGreaterThanOrEqual(3)
+  })
+})
+
+/** Every `.ts`/`.vue` script under src/, with its path, for call-site scans. */
+function allTsSources(): Array<{ file: string; code: string }> {
+  const out: Array<{ file: string; code: string }> = []
+  const walk = (dir: string) => {
+    for (const entry of readWebDir(dir)) {
+      const rel = `${dir}/${entry}`
+      if (entry.endsWith('.ts')) {
+        out.push({ file: rel, code: readWebFile(rel) })
+      } else if (entry.endsWith('.vue')) {
+        const sfc = readWebFile(rel)
+        const script = [...sfc.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]).join('\n')
+        if (script) out.push({ file: rel, code: script })
+      } else if (!entry.includes('.') && entry !== 'node_modules') {
+        walk(rel)
+      }
+    }
+  }
+  walk('src')
+  return out
+}
+
+/**
+ * The top-level arguments of the call whose `(` is at `openIdx`.
+ *
+ * Splits on commas at nesting depth 1 only, so `f(a, g(b, c))` yields two
+ * arguments. Returns `[]` for an empty argument list.
+ */
+function topLevelArgs(code: string, openIdx: number): string[] {
+  const args: string[] = []
+  let depth = 1
+  let cur = ''
+  for (let i = openIdx + 1; i < code.length; i++) {
+    const ch = code[i]
+    if (ch === '(' || ch === '[' || ch === '{') depth++
+    else if (ch === ')' || ch === ']' || ch === '}') {
+      depth--
+      if (depth === 0) break
+    }
+    if (ch === ',' && depth === 1) {
+      args.push(cur.trim())
+      cur = ''
+      continue
+    }
+    cur += ch
+  }
+  if (cur.trim()) args.push(cur.trim())
+  return args
+}
+
+/** Number of real `computeIsWideScreen(...)` calls found by the scan. */
+function countCallSites(): number {
+  let n = 0
+  for (const file of allTsSources()) {
+    const code = stripComments(file.code)
+    for (const m of code.matchAll(/\bcomputeIsWideScreen\s*\(/g)) {
+      const before = code.slice(Math.max(0, m.index! - 40), m.index!)
+      if (!/function\s*$/.test(before)) n++
+    }
+  }
+  return n
+}
+
+describe('text sizes follow the root font size', () => {
+  // Two properties that were migrated unevenly: most rules were converted, a
+  // handful kept literal px and therefore stayed physically small while
+  // everything around them grew. Both are invisible at scale 1 — the only place
+  // they show up is at 150%/200%, where the text reads as "one size too small"
+  // or the tracking looks progressively tighter.
+  //
+  // These are textual guards because jsdom has no CSS engine; the failure is a
+  // missing conversion in the source, not a computed value.
+
+  /** `font-size` values that are allowed to stay literal px. */
+  const FONT_SIZE_PX_ALLOWED = [
+    // The root declaration itself: `calc(15px * var(--ui-scale))` is the ONE
+    // place a px base is correct (it is what the scale multiplies).
+    { file: 'css/base.css', line: /html\s*\{/ },
+  ]
+
+  it('no `<style>` sets font-size from a literal px value', () => {
+    const offenders: string[] = []
+    for (const { file, css } of allStyleSources()) {
+      const code = stripComments(css)
+      for (const m of code.matchAll(/font-size:\s*([0-9.]+)px\b/g)) {
+        // `calc(Npx * var(--ui-scale))` (the root) is a scaled value, not a
+        // literal one — the regex above only matches the bare form, but the
+        // calc's own `15px` token would match too, so skip calc bodies.
+        const before = code.slice(Math.max(0, m.index! - 8), m.index!)
+        if (/calc\(\s*$/.test(before)) continue
+        const line = code.slice(0, m.index!).split('\n').length
+        offenders.push(`${file}:${line}  font-size: ${m[1]}px`)
+      }
+    }
+    expect(
+      offenders,
+      'a literal px font size does not follow the root font size — use a ' +
+      '`--font-size-*` token, or `calc(N * var(--dp))` when no token matches:\n' +
+      offenders.join('\n'),
+    ).toEqual([])
+  })
+
+  it('the root font-size declaration is the only px base left', () => {
+    // Guards the exemption above from being used as a loophole: base.css must
+    // still be the place that defines the scale, so the previous test's skip
+    // cannot be satisfied by deleting the declaration.
+    expect(stripComments(baseCss)).toMatch(/html\s*\{\s*font-size:\s*calc\(15px \* var\(--ui-scale/)
+    // `FONT_SIZE_PX_ALLOWED` documents the single exception; keep it honest.
+    expect(FONT_SIZE_PX_ALLOWED).toHaveLength(1)
+  })
+
+  it('no `<style>` sets letter-spacing from a literal px value', () => {
+    // Tracking is a ratio of the font size. A literal 0.5px stays 0.5px while
+    // the glyphs grow, so the text visibly tightens as the scale rises — most
+    // obvious on the uppercase micro-labels these rules are used for.
+    const offenders: string[] = []
+    for (const { file, css } of allStyleSources()) {
+      const code = stripComments(css)
+      for (const m of code.matchAll(/letter-spacing:\s*(-?[0-9.]+)px\b/g)) {
+        const line = code.slice(0, m.index!).split('\n').length
+        offenders.push(`${file}:${line}  letter-spacing: ${m[1]}px`)
+      }
+    }
+    expect(
+      offenders,
+      'a literal px letter-spacing does not follow the root font size — use ' +
+      '`calc(N * var(--dp))` (or an em ratio):\n' + offenders.join('\n'),
+    ).toEqual([])
+  })
+})
+
+describe('design px vs measured CSS px', () => {
+  it('exports a single designToCss conversion', () => {
+    // `clientWidth` / `getBoundingClientRect()` / `innerWidth` report CSS px,
+    // already multiplied by the scale; the constants in the code are the
+    // stylesheet's DESIGN px. Comparing them raw silently changes meaning with
+    // the scale (a 460px "is it wide enough" check really fires at 230 design
+    // px at 200%). This was copy-pasted in four places, which is how the fifth
+    // and sixth call sites came to be missed.
+    const src = readWebFile('src/utils/uiScale.ts')
+    expect(src).toMatch(/export function designToCss\(designPx: number\): number/)
+    expect(src).toMatch(/return designPx \* readAppliedUIScale\(\)/)
+  })
+
+  it('is actually consumed by the threshold comparisons', () => {
+    // A helper nobody calls is worse than no helper: it looks like the problem
+    // was solved. Each of these compares a measured width against a design-px
+    // threshold, so each must go through the conversion.
+    const consumers = [
+      // designToCss(...)
+      { file: 'src/components/stats/UsageStatsPanel.vue', pattern: /clientWidth < designToCss\(/ },
+      { file: 'src/components/file/CodeLinkPreview.vue', pattern: /const minCardWidth = \(\) => designToCss\(/ },
+      // Reactive sites keep a local multiply (documented at each site) — they
+      // still must be a scale multiplication, not a bare comparison.
+      { file: 'src/composables/useDockOverflow.ts', pattern: /designPx \* scale/ },
+      { file: 'src/composables/useToolbarOverflow.ts', pattern: /designPx \* scale/ },
+      { file: 'src/composables/useWideScreenLayout.ts', pattern: /cssWidth \/ scale/ },
+    ]
+    for (const { file, pattern } of consumers) {
+      expect(readWebFile(file), `${file} must scale before comparing`).toMatch(pattern)
+    }
+  })
+
+  it('the card-size floors are converted, not compared raw', () => {
+    // Both places that clamp a user-sized card (the drag and the re-clamp on a
+    // scale/viewport change) have to use the converted floor. Checking only one
+    // would let the other silently undo it.
+    const code = stripComments(readWebFile('src/components/file/CodeLinkPreview.vue'))
+    expect(code).not.toMatch(/Math\.max\(MIN_CARD_WIDTH,/)
+    expect(code).not.toMatch(/Math\.max\(MIN_CARD_HEIGHT,/)
+    expect(code.match(/minCardWidth\(\)/g) ?? []).toHaveLength(3)
+    expect(code.match(/minCardHeight\(\)/g) ?? []).toHaveLength(3)
   })
 })
 

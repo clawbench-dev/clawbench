@@ -38,6 +38,49 @@ describe('designPx', () => {
     expect(designPx('width: calc(3 * var(--dp));', 'width')).toBe(3)
     expect(designPx('.x { min-width: 5px; }', 'min-width')).toBe(5)
   })
+
+  it('sums a calc of several --dp terms', () => {
+    // `calc(4 * var(--dp) + 2 * var(--dp))` is 6 design px. The old regex only
+    // matched a single term and fell through to the `Npx` branch, returning NaN
+    // — which surfaces as a confusing "NaN ≠ 6" instead of naming the shape.
+    expect(designPx('.x { width: calc(4 * var(--dp) + 2 * var(--dp)); }', 'width')).toBe(6)
+    expect(designPx('.x { width: calc(4*var(--dp)+2*var(--dp)); }', 'width')).toBe(6)
+    expect(
+      designPx('.x { width: calc(-2 * var(--dp) + 5 * var(--dp)); }', 'width'),
+    ).toBe(3)
+    // A single term is the same code path, not a special case.
+    expect(designPx('.x { width: calc(0.5 * var(--dp)); }', 'width')).toBe(0.5)
+  })
+
+  it('throws on a shape it cannot reduce to one number', () => {
+    // Each of these would otherwise become a misleading "NaN ≠ expected". The
+    // message must name the property and the original value so the guard author
+    // knows the SOURCE shape is the problem.
+    const cases: Array<[string, string]> = [
+      // Multi-value shorthand: summing the two would be wrong, not just missing.
+      ['.x { padding: calc(9 * var(--dp)) calc(11 * var(--dp)); }', 'padding'],
+      // Subtraction is not a sum.
+      ['.x { width: calc(9 * var(--dp) - 2 * var(--dp)); }', 'width'],
+      // A non---dp calc term.
+      ['.x { width: calc(4 * var(--dp) + 2px); }', 'width'],
+      // Not a length at all.
+      ['.x { width: auto; }', 'width'],
+      ['.x { width: 50%; }', 'width'],
+    ]
+    for (const [css, prop] of cases) {
+      expect(() => designPx(css, prop), css).toThrow(/designPx\(/)
+      // The message carries the original value so the failure is diagnosable.
+      expect(() => designPx(css, prop), css).toThrow(new RegExp(prop))
+    }
+  })
+
+  it('still returns NaN (not throw) when the property is absent', () => {
+    // Absent and unrecognised must stay distinguishable: `toBeNaN()` is how a
+    // guard says "you are looking at the wrong declaration", while a throw says
+    // "this declaration's shape is not understood".
+    expect(designPx('.x { height: calc(3 * var(--dp)); }', 'width')).toBeNaN()
+    expect(designPx('.x {}', 'width')).toBeNaN()
+  })
 })
 
 describe('normalizeDp', () => {

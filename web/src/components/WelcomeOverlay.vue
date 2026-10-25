@@ -118,8 +118,6 @@ interface BackendInfo {
 
 const STORAGE_KEY = 'clawbench_welcome_dismissed'
 
-defineExpose({ show, forceShow })
-
 const emit = defineEmits<{
   dismissed: []
 }>()
@@ -248,6 +246,10 @@ onUnmounted(() => {
     unregisterBack = null
   }
 })
+
+// `visible` is exposed so App.vue can hold the startup UI-scale prompt back
+// until this first-run panel is closed — two full-screen modals must not stack.
+defineExpose({ show, forceShow, visible })
 </script>
 
 <style scoped>

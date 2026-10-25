@@ -707,3 +707,42 @@ describe('inline svg in file previews is lifted into a media figure', () => {
     expect(html).not.toContain('katex-error')
   })
 })
+
+/**
+ * The AI sometimes points an image embed at something that is not an image —
+ * most often the .html page it just rendered. That is well-formed markdown, so
+ * no parser rejects it; the browser simply cannot decode it, the <img> fires
+ * `error`, and the user gets the generic "failed to load" placeholder instead
+ * of the page. The pipeline must downgrade such embeds to links (and unwrap a
+ * backtick-decorated real image) before anything lifts the <img> into a figure.
+ */
+describe('non-image embeds in the file-preview pipeline', () => {
+  beforeEach(() => _setWideScreenForTest(true))
+  afterEach(() => vi.restoreAllMocks())
+
+  it('downgrades an .html embed to a link instead of a broken figure', () => {
+    const md = '![设备编排方案](/proj/docs/screenshots/_hero_layouts.html)'
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isWideScreen: true, imageTimestamp: 1 })
+    expect(html).not.toContain('<img')
+    expect(html).not.toContain('image-block-wrapper')
+    expect(html).toContain('href=')
+    expect(html).toContain('设备编排方案')
+  })
+
+  it('keeps a real image embed as a figure', () => {
+    const md = '![方案图](/proj/docs/screenshots/product_hero.png)'
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isWideScreen: true, imageTimestamp: 1 })
+    expect(html).toContain('image-block-wrapper')
+    expect(html).toContain('product_hero.png')
+  })
+
+  it('unwraps backticks around a real image path so it still loads', () => {
+    // The AI copying the prompt's placeholder literally: `![x](`.a/b.png`)`.
+    // marked percent-encodes the backticks into the src, so the request 404s.
+    const md = '![图](`.clawbench/generated/a.png`)'
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isWideScreen: true, imageTimestamp: 1 })
+    expect(html).toContain('image-block-wrapper')
+    expect(html).not.toContain('%60')
+    expect(html).toContain('a.png')
+  })
+})

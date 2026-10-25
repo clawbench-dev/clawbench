@@ -1550,6 +1550,11 @@ paths:
             `isHost` 来自群行的主持人指针，客户端据此在行内展示模式标签（有主持人 = 主持人模式，
             非空名单无主持人 = 自由模式；名单为空时不显示，不猜测）。非群会话省略该键。
             完整成员名单（含已离场）见 `GET /api/group/members`。
+
+            每行还带 `agentName`（智能体显示名，注册表可解析时返回）。本端点按调用方
+            当前项目取数，智能体通常能由客户端自行反查，`agentName` 主要覆盖「智能体已被
+            删除但会话仍在」——此时行仍显示人名而不是裸 id。`agentAvatar` 只在调用方无法
+            自行解析该智能体时才返回（见 `GET /api/ai/sessions/overview` 的同名字段）。
     post:
       tags: [Sessions]
       summary: 新建会话
@@ -1611,6 +1616,18 @@ paths:
     get:
       tags: [Sessions]
       summary: 会话总览
+      description: |
+        跨项目的活跃会话（running / 待审批 / 有未读），按项目分组。
+
+        **为什么行上带 `agentName` / `agentAvatar`**：客户端平时用
+        `GET /api/agents` 反查智能体名称与头像，但那个列表**按调用方的当前项目
+        过滤**（项目级智能体只在其所属项目可见），而本端点**跨项目**返回。所以
+        别的项目里跑的、作用域属于那个项目的智能体，客户端根本查不到 —— 行会退化成
+        裸 `agentId` 加首字母图标。因此：
+        - `agentName`：只要注册表能解析就返回（同时覆盖「智能体已被删除」之外的情况）。
+        - `agentAvatar`：**仅**当调用方无法自行解析该智能体（即它在调用方当前项目
+          不可见）时返回，避免给正常行附上数 KB 的 SVG。
+        注册表查不到的 id 两者都省略，交由客户端既有兜底处理。
       operationId: sessionsOverview
       responses:
         "200":

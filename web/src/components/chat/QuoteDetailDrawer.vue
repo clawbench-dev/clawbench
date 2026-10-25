@@ -288,7 +288,7 @@ function handleSave() {
   font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: calc(0.5 * var(--dp));
 }
 
 /* Quoted content: read-only, scrollable when long, monospace so code quotes

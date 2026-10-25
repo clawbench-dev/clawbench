@@ -182,3 +182,48 @@ describe('ChatMessageList — group empty state by mode', () => {
     expect(wrapper.findAll('.group-welcome-tips li')).toHaveLength(3)
   })
 })
+
+/**
+ * A host group may be created with the host as its only member (the backend
+ * only requires two for FREE groups). It then routes like a single chat, so the
+ * empty state has to explain the silence and the fix.
+ */
+describe('ChatMessageList — single-member group hint', () => {
+  const soloHost = [{ id: 'm1', agentId: 'a1', name: 'A', backend: 'claude', isHost: true }]
+
+  it('shows the hint when the only member is the host', () => {
+    const wrapper = mountEmptyGroup({ groupMode: 'host', groupMembers: soloHost })
+    const hint = wrapper.find('.group-welcome-solo')
+    expect(hint.exists()).toBe(true)
+    expect(hint.text()).toBe(ml.groupSoloMemberHint)
+    // It sits with the mode copy, not inside the tips list.
+    expect(wrapper.findAll('.group-welcome-tips li')).toHaveLength(3)
+  })
+
+  it('hides the hint for a normal two-member group', () => {
+    const wrapper = mountEmptyGroup({ groupMode: 'host' })
+    expect(wrapper.find('.group-welcome-solo').exists()).toBe(false)
+  })
+
+  it('counts only ACTIVE members: a left member does not hide the hint', () => {
+    // The group that most needs the hint is the one whose other members all
+    // left. Counting rows instead of active members would hide it there.
+    const wrapper = mountEmptyGroup({
+      groupMode: 'host',
+      groupMembers: [
+        ...soloHost,
+        { id: 'm2', agentId: 'a2', name: 'B', backend: 'claude', isHost: false, left: true },
+      ],
+    })
+    expect(wrapper.find('.group-welcome-solo').exists()).toBe(true)
+  })
+
+  it('does not render for a non-group session', () => {
+    // Belt-and-braces: the template only reaches this block for a group, and
+    // `isSoloGroup` also checks `isGroupSession`. Either guard alone keeps the
+    // hint out of a single-agent session; this pins the visible outcome.
+    const wrapper = mountEmptyGroup({ isGroupSession: false, groupMembers: soloHost })
+    expect(wrapper.find('.group-welcome').exists()).toBe(false)
+    expect(wrapper.find('.group-welcome-solo').exists()).toBe(false)
+  })
+})

@@ -1222,6 +1222,24 @@ type ACPConn struct {
 	// atomic, no lock needed — written from the ACP notification goroutine.
 	compactDropPending atomic.Bool
 
+	// wrapperToolCallIDs holds the toolCallIds of tool_call frames that were
+	// dropped as envelope wrappers (openclaw's "tool_call: id: web_fetch, …").
+	// The bridge keeps sending tool_call_update frames under that SAME id, and
+	// those updates usually carry no title at all — so the id is the only thing
+	// that can identify them as belonging to the dropped frame. Without this,
+	// each update re-materializes the wrapper as a card whose name comes from
+	// whatever the update's title resolves to (typically the kind fallback,
+	// "Bash") and which never closes, because the real call reports under a
+	// DIFFERENT id (see isACPToolCallWrapper).
+	//
+	// Bounded FIFO (wrapperToolCallIDCapacity) so a long session cannot grow it
+	// without limit. Guarded by stateMu — same leaf-lock rule as the cached
+	// session state below (this is written from the notification goroutine).
+	wrapperToolCallIDs map[string]struct{}
+	// wrapperToolCallOrder is the insertion order used to evict the oldest id
+	// once wrapperToolCallIDs is full. Guarded by stateMu.
+	wrapperToolCallOrder []string
+
 	// pendingSteerIDs holds the clientUserMessageIds of mid-turn injections this
 	// host issued that have not yet been observed on the wire. CodeBuddy echoes
 	// the id back in the _meta of a `user_message_chunk` session update at the
@@ -2108,6 +2126,78 @@ func (c *ACPConn) claimPendingSteerID(id string) bool {
 	}
 	delete(c.pendingSteerIDs, id)
 	return true
+}
+
+// wrapperToolCallIDCapacity bounds wrapperToolCallIDs. Wrapper frames only
+// occur for plugin/MCP tools, so a handful is the steady state; the bound only
+// exists so a pathological agent cannot grow the set for the whole session.
+const wrapperToolCallIDCapacity = 32
+
+// noteDroppedWrapperToolCallID remembers that the tool_call frame `id` was
+// dropped as an envelope wrapper, so its later tool_call_update frames (which
+// normally carry no title) can be recognized and dropped too. Called from the
+// ACP notification goroutine — uses stateMu, never c.mu.
+func (c *ACPConn) noteDroppedWrapperToolCallID(id string) {
+	if id == "" {
+		return
+	}
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if c.wrapperToolCallIDs == nil {
+		c.wrapperToolCallIDs = make(map[string]struct{}, wrapperToolCallIDCapacity)
+	}
+	if _, ok := c.wrapperToolCallIDs[id]; ok {
+		return
+	}
+	// Evict the oldest entries first once full.
+	for len(c.wrapperToolCallOrder) >= wrapperToolCallIDCapacity {
+		oldest := c.wrapperToolCallOrder[0]
+		c.wrapperToolCallOrder = c.wrapperToolCallOrder[1:]
+		delete(c.wrapperToolCallIDs, oldest)
+	}
+	c.wrapperToolCallIDs[id] = struct{}{}
+	c.wrapperToolCallOrder = append(c.wrapperToolCallOrder, id)
+}
+
+// isDroppedWrapperToolCallID reports whether `id` belongs to a tool_call frame
+// that was dropped as an envelope wrapper, so its updates must be dropped too.
+// Called from the ACP notification goroutine — uses stateMu, never c.mu.
+//
+// Deliberately NOT one-shot: the bridge sends a whole update stream (pending →
+// in_progress → completed) under the wrapper's id, and consuming the id on the
+// first update would let the remaining ones re-materialize the ghost card.
+// Release happens when that stream terminates — see forgetDroppedWrapperToolCallID
+// — with the FIFO bound as the backstop for a wrapper that never terminates.
+func (c *ACPConn) isDroppedWrapperToolCallID(id string) bool {
+	if id == "" {
+		return false
+	}
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	_, ok := c.wrapperToolCallIDs[id]
+	return ok
+}
+
+// forgetDroppedWrapperToolCallID releases an id remembered by
+// noteDroppedWrapperToolCallID. Called once the wrapper's update stream has
+// reached a terminal status. Called from the ACP notification goroutine — uses
+// stateMu, never c.mu.
+func (c *ACPConn) forgetDroppedWrapperToolCallID(id string) {
+	if id == "" {
+		return
+	}
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if _, ok := c.wrapperToolCallIDs[id]; !ok {
+		return
+	}
+	delete(c.wrapperToolCallIDs, id)
+	for i, v := range c.wrapperToolCallOrder {
+		if v == id {
+			c.wrapperToolCallOrder = append(c.wrapperToolCallOrder[:i], c.wrapperToolCallOrder[i+1:]...)
+			break
+		}
+	}
 }
 
 // getMetaAccum returns the accumulated _meta extensions without clearing.

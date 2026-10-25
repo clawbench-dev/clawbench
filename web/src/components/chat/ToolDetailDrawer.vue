@@ -1644,7 +1644,7 @@ onUpdated(restoreAskStates)
   font-weight: var(--font-weight-semibold);
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: calc(0.5 * var(--dp));
 }
 .tool-detail-body .ask-question-text {
   color: var(--text-primary);
@@ -1709,7 +1709,7 @@ onUpdated(restoreAskStates)
   font-weight: var(--font-weight-semibold);
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: calc(0.5 * var(--dp));
 }
 .tool-detail-body .ask-supplementary-input {
   /* Local copy of the vertical padding so the min/max height caps below stay in
@@ -1812,7 +1812,7 @@ onUpdated(restoreAskStates)
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
-  letter-spacing: 0.2px;
+  letter-spacing: calc(0.2 * var(--dp));
   text-transform: uppercase;
 }
 .tool-detail-body .permission-tool-detail {
@@ -1841,7 +1841,7 @@ onUpdated(restoreAskStates)
   background: color-mix(in srgb, #ef4444 12%, var(--bg-secondary));
   color: #dc2626;
   font-weight: var(--font-weight-semibold);
-  letter-spacing: 0.4px;
+  letter-spacing: calc(0.4 * var(--dp));
   text-transform: uppercase;
   white-space: nowrap;
   line-height: var(--line-height-normal);

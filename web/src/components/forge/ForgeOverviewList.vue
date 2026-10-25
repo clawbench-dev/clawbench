@@ -225,7 +225,7 @@ defineExpose({ reload, clearLocal, loading: unread.loading })
 }
 
 .forge-overview-count-badge {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #6b7280);
 }
 

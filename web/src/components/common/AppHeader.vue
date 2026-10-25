@@ -1855,7 +1855,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     margin-left: calc(6 * var(--dp));
     padding: 0 calc(4 * var(--dp));
     border-radius: calc(3 * var(--dp));
-    font-size: 10px;
+    font-size: var(--font-size-2xs);
     font-weight: var(--font-weight-normal);
     color: var(--text-muted);
     background: var(--bg-tertiary, rgba(127, 127, 127, 0.15));
