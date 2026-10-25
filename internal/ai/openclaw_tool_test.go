@@ -301,3 +301,30 @@ func TestParseACPToolCallUpdate_OpenClawDispatch(t *testing.T) {
 	assert.JSONEq(t, `{"file_path":"/a/b.go"}`, tool.Input,
 		"an untitled update falls back to the base remaps, which include path")
 }
+
+// --- OpenClawACPBaseRemapsForTest ---
+
+// TestOpenClawACPBaseRemapsForTest_ReturnsCopy pins the reason this export
+// exists at all: the backend sub-package needs to compare the table against its
+// own, and it must not be able to change production behavior while doing so.
+// Returning the map itself would make every later frame normalize differently
+// depending on test execution order.
+func TestOpenClawACPBaseRemapsForTest_ReturnsCopy(t *testing.T) {
+	first := OpenClawACPBaseRemapsForTest()
+	require.NotEmpty(t, first, "the base table must not be empty")
+	assert.Equal(t, "file_path", first["path"],
+		"the exported copy must carry the same remaps as the package table")
+
+	first["path"] = "tampered"
+	delete(first, "oldString")
+
+	assert.Equal(t, "file_path", openClawACPBaseRemaps["path"],
+		"mutating the copy must not touch the package-level table")
+	assert.Contains(t, openClawACPBaseRemaps, "oldString",
+		"deleting a key from the copy must not remove it from the table")
+
+	// A second call sees the untouched table, not the previous caller's edits.
+	second := OpenClawACPBaseRemapsForTest()
+	assert.Equal(t, "file_path", second["path"])
+	assert.Contains(t, second, "oldString")
+}
