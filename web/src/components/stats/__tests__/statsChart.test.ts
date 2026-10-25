@@ -12,6 +12,7 @@ import {
   DONUT_RADIUS,
 } from '@/components/stats/statsChart'
 import { buildClocBarOption } from '@/components/stats/gitStatsChart'
+import { formatSpanDuration } from '@/utils/format'
 
 function setInnerWidth(w: number) {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: w })
@@ -219,14 +220,17 @@ describe('formatMetricValue token tiers (raw / K / M / B)', () => {
     expect(formatMetricValue('cost', 0)).toBe('$0.00')
   })
 
-  it('formats the runtime metric in the app duration units, not as a token count', () => {
-    // durationMs is a SUM over many turns, so realistic values are minutes to
-    // hours — never a K/M "token" compaction, which would read "3.6M" for a
-    // month of runtime and say nothing.
-    expect(formatMetricValue('duration', 500)).toBe('500ms')
-    expect(formatMetricValue('duration', 4_200)).toBe('4.2s')
-    expect(formatMetricValue('duration', 300_000)).toBe('5.0m')
-    expect(formatMetricValue('duration', 3_600_000)).toBe('1.0h')
-    expect(formatMetricValue('duration', 0)).toBe('0ms')
+  it('formats the work-time metric as an accumulated span, not as a token count', () => {
+    // durationMs is a SUM over many turns, so realistic values run to hours and
+    // days. It must NOT be a K/M token compaction ("3.6M" says nothing) and it
+    // must NOT stop at hours the way the compact single-turn formatter does.
+    // The scale/unit words are pinned in utils/__tests__/formatSpanDuration
+    // .test.ts; here the assertion is that this metric routes to that formatter.
+    for (const ms of [0, 500, 4_200, 300_000, 3_600_000, 30 * 24 * 3600 * 1000]) {
+      expect(formatMetricValue('duration', ms)).toBe(formatSpanDuration(ms))
+    }
+    // A month of work time rolls up into days rather than ~720 hours.
+    expect(formatMetricValue('duration', 30 * 24 * 3600 * 1000)).not.toContain('720')
+    expect(formatMetricValue('duration', 30 * 24 * 3600 * 1000)).not.toBe('3.0M')
   })
 })

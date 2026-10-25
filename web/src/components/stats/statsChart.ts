@@ -2,7 +2,7 @@ import type { EChartsCoreOption } from 'echarts/core'
 import { gt } from '@/composables/useLocale'
 import type { UsageMetricId, UsageRow } from '@/composables/useUsageStats'
 import { WIDE_SCREEN_MIN_WIDTH } from '@/composables/useWideScreenLayout'
-import { formatDuration } from '@/utils/format'
+import { formatSpanDuration } from '@/utils/format'
 import { formatCompactCount } from '@/utils/usageFormat'
 
 // Sentinel the backend uses for a missing group label
@@ -336,10 +336,12 @@ export function formatMetricValue(metric: UsageMetricId, v: number): string {
       // precision is still available in the per-message metadata modal.
       return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     case 'duration':
-      // Runtime is summed in milliseconds across every turn in the group, so a
-      // month's worth is hours: reuse the app's single duration formatter (and
-      // its h promotion) instead of inventing a second scale here.
-      return formatDuration(v)
+      // Runtime is summed over every turn in the group, so a month's worth is
+      // hundreds of hours. formatSpanDuration rolls that up into days with one
+      // decimal — "29.3 天" is readable where "703.2h" is not. It is a report
+      // total, not a single reply, which is why formatDuration (capped at
+      // hours for the compact chat meta bar) is the wrong scale here.
+      return formatSpanDuration(v)
     default:
       // input / output / total / cacheHit — raw token counts compacted to
       // K/M tiers (unit shown on the labels, e.g. "输入 Tokens").

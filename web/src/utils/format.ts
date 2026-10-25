@@ -217,6 +217,35 @@ export function formatDuration(ms: number): string {
     return `${(min / 60).toFixed(1)}h`
 }
 
+/**
+ * Format an ACCUMULATED span (a report total, not one turn) in the units a
+ * person actually reads a duration in, always with exactly one decimal:
+ *
+ *   ≥ 1 day  → "1.5 天"
+ *   ≥ 1 hour → "3.5 小时"
+ *   ≥ 1 min  → "5.3 分钟"
+ *   ≥ 1 s    → "1.5 秒"
+ *   < 1 s    → "420 毫秒"  (integer; sub-second precision is the point)
+ *
+ * Why this is not formatDuration: that one caps at hours because it labels a
+ * single reply in a compact meta bar ("3.5h" next to a timestamp). A month of
+ * runtime summed over every turn is ~700 hours, and "703.2h" is a number
+ * nobody can place — the same figure as "29.3 天" is immediately readable.
+ * The units are localized here (and only here): an accumulated span is prose,
+ * not a compact glyph.
+ */
+export function formatSpanDuration(ms: number): string {
+    if (!Number.isFinite(ms) || ms < 0) return ''
+    if (ms < 1000) return i18n.global.t('time.durationMs', { n: Math.round(ms) })
+    const sec = ms / 1000
+    if (sec < 60) return i18n.global.t('time.durationSec', { n: sec.toFixed(1) })
+    const min = sec / 60
+    if (min < 60) return i18n.global.t('time.durationMin', { n: min.toFixed(1) })
+    const hour = min / 60
+    if (hour < 24) return i18n.global.t('time.durationHour', { n: hour.toFixed(1) })
+    return i18n.global.t('time.durationDay', { n: (hour / 24).toFixed(1) })
+}
+
 /** Strip markdown formatting for list previews */
 export function stripMarkdownPreview(text: string, maxLen: number = 100): string {
     if (!text) return ''

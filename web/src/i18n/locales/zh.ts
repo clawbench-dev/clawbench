@@ -255,7 +255,7 @@ export default {
     colHitRate: '缓存命中率',
     colCredit: 'Credit',
     colCost: '费用 (USD)',
-    colDuration: 'AI 运行时长',
+    colDuration: 'AI 工作时长',
     chartTitle: '图表类型',
     chartBar: '直方图',
     chartPie: '饼图',
@@ -2436,6 +2436,14 @@ export default {
     yesterday: '昨天',
     monthDay: '{month}月{day}日',
     yearMonthDay: '{year}年{month}月{day}日',
+    // 累计时长的单位（见 utils/format.ts 的 formatSpanDuration）。与紧凑的
+    // 单轮时长（1.5s / 5.3m / 3.5h）分列：这里是给人读的整句量级，一天以上
+    // 必须落到「天」，否则一个月的累计会显示成 700 多小时。
+    durationMs: '{n} 毫秒',
+    durationSec: '{n} 秒',
+    durationMin: '{n} 分钟',
+    durationHour: '{n} 小时',
+    durationDay: '{n} 天',
   },
   cron: {
     everyMinutes: '每 {count} 分钟',
