@@ -3,6 +3,7 @@ import { escapeHtml } from '@/utils/html.ts'
 import { injectTableRowAttrsIn } from '@/utils/tableRowExpand.ts'
 import { annotateCodeBlockHeadersIn, annotateTableBlockHeadersIn } from '@/composables/useCodeBlockHeader.ts'
 import { rewriteImageUrls, markInlineSvgs, convertAudioLinks, convertVideoLinks, getThumbWidth } from '@/utils/chatRenderUtils.ts'
+import { downgradeNonImageEmbedsIn } from '@/utils/nonImageEmbed.ts'
 import { annotateMediaBlocksIn } from '@/utils/mediaBlockFactory.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 import { annotateFilePathsIn } from '@/composables/useFilePathAnnotation.ts'
@@ -327,6 +328,13 @@ export function renderMarkdown(
     // keeps that attribute out of the sanitizer's allow-list entirely.
     {
         const doc = new DOMParser().parseFromString(html, 'text/html')
+        // An image embed aimed at a non-image file (an .html page the AI just
+        // rendered, a .pdf…) can never decode: the <img> fires `error` and the
+        // fallback paints "failed to load". Downgrade it to a plain link here,
+        // BEFORE rewriteImageUrls (step 9) turns every <img> into a block
+        // figure. Runs in the streaming path too — the placeholder is equally
+        // wrong mid-stream, and skipEnhancements would otherwise leave it.
+        downgradeNonImageEmbedsIn(doc)
         injectTableRowAttrsIn(doc)
         annotateCodeBlockHeadersIn(doc)
         annotateTableBlockHeadersIn(doc)
