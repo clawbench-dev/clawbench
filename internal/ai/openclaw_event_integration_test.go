@@ -17,13 +17,15 @@ import (
 // Wrapper tool_call frames (openclaw's "tool_call: id: X, args: {...}")
 // ---------------------------------------------------------------------------
 
-// withWrapperPrefixes installs a wrapper-prefix table through the same function
-// variable the backends package sets, so the real lookup path is exercised.
-func withWrapperPrefixes(t *testing.T, backendID string, prefixes []string) {
+// withWrapperPrefixes installs a wrapper-prefix table for the "probe" backend
+// through the same function variable the backends package sets, so the real
+// lookup path is exercised. Every case here drives the same backend id (the one
+// newACPConn is given below); the backend-scoping case covers the nil-conn path.
+func withWrapperPrefixes(t *testing.T, prefixes []string) {
 	t.Helper()
 	prev := LookupACPToolCallWrapperPrefixesFn
 	LookupACPToolCallWrapperPrefixesFn = func(id string) []string {
-		if id == backendID {
+		if id == "probe" {
 			return prefixes
 		}
 		return nil
@@ -36,7 +38,7 @@ func withWrapperPrefixes(t *testing.T, backendID string, prefixes []string) {
 // "tool_call" next to the real card, and the two frames carry different
 // toolCallIds so nothing downstream can collapse them.
 func TestMapACPSessionUpdate_DropsWrapperToolCall(t *testing.T) {
-	withWrapperPrefixes(t, "probe", []string{"tool_call: id: "})
+	withWrapperPrefixes(t, []string{"tool_call: id: "})
 
 	conn := newACPConn(&model.Agent{ID: "probe-agent", Backend: "probe"}, "sid")
 	ch := make(chan StreamEvent, 20)
@@ -68,7 +70,7 @@ func TestMapACPSessionUpdate_DropsWrapperToolCall(t *testing.T) {
 // frame that follows the wrapper must still render. A filter that dropped both
 // would pass the test above but hide every plugin/MCP tool.
 func TestMapACPSessionUpdate_KeepsRealFrameAfterWrapper(t *testing.T) {
-	withWrapperPrefixes(t, "probe", []string{"tool_call: id: "})
+	withWrapperPrefixes(t, []string{"tool_call: id: "})
 
 	conn := newACPConn(&model.Agent{ID: "probe-agent", Backend: "probe"}, "sid")
 	ch := make(chan StreamEvent, 20)
@@ -99,7 +101,7 @@ func TestMapACPSessionUpdate_KeepsRealFrameAfterWrapper(t *testing.T) {
 // not touch other backends: a title that happens to start with "tool_call: id: "
 // on claude must render normally.
 func TestMapACPSessionUpdate_WrapperFilterIsBackendScoped(t *testing.T) {
-	withWrapperPrefixes(t, "probe", []string{"tool_call: id: "})
+	withWrapperPrefixes(t, []string{"tool_call: id: "})
 
 	ch := make(chan StreamEvent, 20)
 	update := acp.SessionUpdate{
@@ -161,7 +163,7 @@ func drainACPTestEvents(ch chan StreamEvent) []StreamEvent {
 // fallback ("Bash") which never closes (nothing ever completes that id, because
 // the real call reports under a different one).
 func TestMapACPSessionUpdate_DropsWrapperToolCallUpdate_ByID(t *testing.T) {
-	withWrapperPrefixes(t, "probe", []string{"tool_call: id: "})
+	withWrapperPrefixes(t, []string{"tool_call: id: "})
 
 	conn := newACPConn(&model.Agent{ID: "probe-agent", Backend: "probe"}, "sid")
 	ch := make(chan StreamEvent, 20)
@@ -198,7 +200,7 @@ func TestMapACPSessionUpdate_DropsWrapperToolCallUpdate_ByID(t *testing.T) {
 // half: an update that DOES repeat the wrapper title is dropped even when the
 // opening frame was never seen (e.g. the connection started mid-turn).
 func TestMapACPSessionUpdate_DropsWrapperToolCallUpdate_ByTitle(t *testing.T) {
-	withWrapperPrefixes(t, "probe", []string{"tool_call: id: "})
+	withWrapperPrefixes(t, []string{"tool_call: id: "})
 
 	conn := newACPConn(&model.Agent{ID: "probe-agent", Backend: "probe"}, "sid")
 	ch := make(chan StreamEvent, 20)
@@ -223,7 +225,7 @@ func TestMapACPSessionUpdate_DropsWrapperToolCallUpdate_ByTitle(t *testing.T) {
 // completed) and released when that stream terminates, so the table cannot
 // accumulate dead ids for the rest of a long session.
 func TestMapACPSessionUpdate_WrapperIDIsReleasedOnTerminalStatus(t *testing.T) {
-	withWrapperPrefixes(t, "probe", []string{"tool_call: id: "})
+	withWrapperPrefixes(t, []string{"tool_call: id: "})
 
 	conn := newACPConn(&model.Agent{ID: "probe-agent", Backend: "probe"}, "sid")
 	ch := make(chan StreamEvent, 20)
@@ -268,7 +270,7 @@ func TestMapACPSessionUpdate_WrapperIDIsReleasedOnTerminalStatus(t *testing.T) {
 // TestMapACPSessionUpdate_WrapperIDTableIsBounded pins the FIFO bound: a session
 // that somehow sees an endless stream of wrappers must not grow the table.
 func TestMapACPSessionUpdate_WrapperIDTableIsBounded(t *testing.T) {
-	withWrapperPrefixes(t, "probe", []string{"tool_call: id: "})
+	withWrapperPrefixes(t, []string{"tool_call: id: "})
 
 	conn := newACPConn(&model.Agent{ID: "probe-agent", Backend: "probe"}, "sid")
 	ch := make(chan StreamEvent, 4)
