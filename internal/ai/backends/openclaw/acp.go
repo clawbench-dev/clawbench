@@ -75,10 +75,16 @@ var OpenClawACPTitlePrefixes = map[string]string{
 // in acp.go's tool parser instead:
 //   - `read`/`write`/`edit` use "path", but Read/Write/Edit cards read
 //     "file_path". LS reads "path", so remapping path→file_path globally would
-//     break LS. The remap is applied per tool name, not globally.
+//     break LS. acp.go therefore keeps path→file_path in its BASE table (so a
+//     tool this list has never seen still renders a path) and drops it for `ls`.
+//     The shared keys are asserted against that base table by register_test.go.
 //   - `edit` carries a nested edits[] array with oldText/newText and NO flat
 //     old_string/new_string. The renderer only reads the flat fields, so the
 //     first edit must be promoted (same treatment pi needs).
+//
+// This table additionally carries OpenClaw-only keys (dirPath/cellIndex/
+// cellType) that acp.go's base table does not need, so the two are NOT
+// identical — only the keys they must agree on are pinned by that test.
 var OpenClawACPInputRemaps = map[string]string{
 	// Generic camelCase normalizations other ACP backends also need.
 	"filePath":   "file_path",

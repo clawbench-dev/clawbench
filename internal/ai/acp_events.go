@@ -204,11 +204,16 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// toolCallId. Drop them entirely: a card named "tool_call" is noise,
 		// and id-based dedup cannot collapse the pair.
 		if isACPToolCallWrapper(tc.Title, backendID) {
+			id := toolCallIDOf(tc.ToolCallId)
 			slog.Debug("acp: dropping tool_call wrapper frame",
-				"title", tc.Title, "tool_call_id", toolCallIDOf(tc.ToolCallId))
+				"title", tc.Title, "tool_call_id", id)
 			// Still mark the agent active: a wrapper means the real call is
 			// imminent, and the stall watchdog must not fire in between.
 			if conn != nil {
+				// Remember the id: the bridge keeps sending tool_call_update
+				// frames under it, and those carry no title to filter on (see
+				// isWrapperToolCallUpdate).
+				conn.noteDroppedWrapperToolCallID(id)
 				conn.SetToolInFlight(true)
 				conn.RecordTurnOutput()
 			}
@@ -263,6 +268,31 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			case acp.ToolCallStatusPending, acp.ToolCallStatusInProgress:
 				conn.SetToolInFlight(true)
 			}
+		}
+
+		// Envelope-wrapper updates: openclaw's bridge emits the wrapper tool_call
+		// under one id and then keeps sending tool_call_update frames under that
+		// SAME id, while the real call reports under a different one. The
+		// opening frame is dropped above (isACPToolCallWrapper), so forwarding
+		// its updates would re-materialize it as a card whose name comes from
+		// the update's title (usually the kind fallback — "Bash") and which
+		// never closes: nothing ever completes THAT id. Two signals, because
+		// the updates usually carry no title at all:
+		//   - the title prefix (same predicate as the opening frame), and
+		//   - the id remembered when the opening frame was dropped.
+		// The in-flight bookkeeping above is deliberately kept: a wrapper means
+		// the real call is imminent, so the stall watchdog must not fire.
+		if conn != nil && isWrapperToolCallUpdate(*tcu, backendID, conn) {
+			id := toolCallIDOf(tcu.ToolCallId)
+			slog.Debug("acp: dropping tool_call_update for a wrapper frame",
+				"title", derefStr(tcu.Title), "tool_call_id", id, "status", fmt.Sprintf("%v", tcu.Status))
+			// The update stream under this id is over — release it so the id
+			// table cannot hold a stale entry for the rest of the session.
+			if tcu.Status != nil &&
+				(*tcu.Status == acp.ToolCallStatusCompleted || *tcu.Status == acp.ToolCallStatusFailed) {
+				conn.forgetDroppedWrapperToolCallID(id)
+			}
+			break
 		}
 
 		// CodeBuddy exposes its task system through Task* tools (TaskCreate/

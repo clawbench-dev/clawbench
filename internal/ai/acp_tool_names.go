@@ -67,6 +67,24 @@ func isACPToolCallWrapper(title, backendID string) bool {
 	return false
 }
 
+// isWrapperToolCallUpdate reports whether a tool_call_update belongs to a
+// tool_call frame that was dropped as an envelope wrapper.
+//
+// The title check alone is not enough: openclaw's bridge sends the wrapper
+// opening frame with a "tool_call: id: …" title but the FOLLOW-UP updates
+// under the same id usually carry no title at all (verified on the wire — the
+// update frames only carry status/content). So the id is the primary signal and
+// the title is the fallback for an update that does repeat it.
+//
+// Returning false for a nil conn is intentional: without a connection there is
+// no id table to consult, and the title check is still applied.
+func isWrapperToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID string, conn *ACPConn) bool {
+	if isACPToolCallWrapper(derefStr(tcu.Title), backendID) {
+		return true
+	}
+	return conn != nil && conn.isDroppedWrapperToolCallID(toolCallIDOf(tcu.ToolCallId))
+}
+
 // acpModesMirrorThoughtLevel reports whether the backend's `modes` surface must
 // be suppressed because it duplicates the thought_level config option.
 func acpModesMirrorThoughtLevel(backendID string) bool {

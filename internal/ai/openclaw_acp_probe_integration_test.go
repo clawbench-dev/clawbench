@@ -770,6 +770,54 @@ func TestOpenClawACPProbe_L3_WrapperToolFrames(t *testing.T) {
 				"L3 CHANGED: wrapper frames no longer use kind=other; the filter predicate must be revisited")
 		}
 	}
+
+	// tool_call_UPDATE frames are the blind spot this probe used to have: the
+	// wrapper's follow-ups arrive as updates under the SAME id, usually with NO
+	// title, so a title-only filter never sees them and they re-materialize the
+	// dropped envelope as a permanently-open card named after the kind fallback.
+	// Collect them by id prefix to prove the wrapper's updates really do come
+	// under the wrapper id (that is what makes the id table necessary).
+	type updateFrame struct {
+		id     string
+		title  string
+		status string
+	}
+	var updateFrames []updateFrame
+	for _, u := range updates {
+		upd, _ := u["update"].(map[string]any)
+		if upd == nil || upd["sessionUpdate"] != "tool_call_update" {
+			continue
+		}
+		title, _ := upd["title"].(string)
+		id, _ := upd["toolCallId"].(string)
+		status, _ := upd["status"].(string)
+		updateFrames = append(updateFrames, updateFrame{id: id, title: title, status: status})
+	}
+
+	wrapperIDs := map[string]bool{}
+	for _, f := range frames {
+		if strings.HasPrefix(f.title, "tool_call: id: ") {
+			wrapperIDs[f.id] = true
+		}
+	}
+	updatesForWrappers := 0
+	untitled := 0
+	for _, u := range updateFrames {
+		t.Logf("tool_call_update: id=%-40s status=%-12s title=%.80q", u.id, u.status, u.title)
+		if wrapperIDs[u.id] {
+			updatesForWrappers++
+			if u.title == "" {
+				untitled++
+			}
+		}
+	}
+	t.Logf("tool_call_update frames: %d (for wrapper ids: %d, of which untitled: %d)",
+		len(updateFrames), updatesForWrappers, untitled)
+	if len(updateFrames) > 0 {
+		require.NotZero(t, updatesForWrappers,
+			"L3 CHANGED: no tool_call_update arrived under a wrapper id — the id-based "+
+				"half of the wrapper filter (and wrapperToolCallIDs) may no longer be needed")
+	}
 }
 
 // ---------------------------------------------------------------------------

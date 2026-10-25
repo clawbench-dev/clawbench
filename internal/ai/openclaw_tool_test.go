@@ -12,8 +12,8 @@ import (
 
 // These tests pin the OpenClaw ACP tool path against the rawInput shapes the
 // `openclaw acp` bridge forwards (OpenClaw's native arguments, not canonical
-// ACP names). Unlike the flat generic remap, `path` has to be remapped per
-// tool — read/write/edit want file_path while ls keeps path — and edit's
+// ACP names). `path` is remapped to file_path by the BASE table (so a tool this
+// list has never seen still renders a path) and `ls` removes it again; edit's
 // arguments live in a nested edits[] array.
 //
 // The mirror tests in backends/openclaw/register_test.go exercise the same
@@ -114,6 +114,16 @@ func TestNormalizeOpenClawACPInput(t *testing.T) {
 		assert.Equal(t, "/tmp", m["workdir"])
 	})
 
+	t.Run("an unknown tool still remaps path", func(t *testing.T) {
+		// The point of putting path→file_path in the BASE table: openclaw's tool
+		// set grows with every release (the probe already saw apply_patch). A
+		// tool the switch does not list must still render a file path, not a
+		// blank Edit/Write header.
+		m := mustParseOpenClawInput(t, normalizeOpenClawACPInput("apply_patch", []byte(`{"path":"/x"}`)))
+		assert.Equal(t, "/x", m["file_path"])
+		assert.NotContains(t, m, "path")
+	})
+
 	t.Run("base remaps apply to every tool", func(t *testing.T) {
 		// These four are canonical ACP spellings that the bridge forwards in
 		// camelCase regardless of tool.
@@ -126,11 +136,13 @@ func TestNormalizeOpenClawACPInput(t *testing.T) {
 	})
 
 	t.Run("the shared table is never mutated", func(t *testing.T) {
-		// normalizeOpenClawACPInput copies the table before adding `path`, so a
-		// later ls call must not inherit the read remap.
-		_ = normalizeOpenClawACPInput("read", []byte(`{"path":"/a"}`))
-		assert.NotContains(t, openClawACPBaseRemaps, "path",
-			"the package-level table must stay free of per-tool entries")
+		// normalizeOpenClawACPInput copies the table before ls deletes `path`
+		// from its copy, so a later read call must still remap it.
+		_ = normalizeOpenClawACPInput("ls", []byte(`{"path":"/x"}`))
+		assert.Contains(t, openClawACPBaseRemaps, "path",
+			"the package-level table must keep the shared path remap")
+		m := mustParseOpenClawInput(t, normalizeOpenClawACPInput("read", []byte(`{"path":"/a"}`)))
+		assert.Equal(t, "/a", m["file_path"], "a previous ls call must not disable the remap")
 	})
 
 	t.Run("invalid JSON is returned verbatim", func(t *testing.T) {
@@ -276,13 +288,16 @@ func TestParseACPToolCallUpdate_OpenClawDispatch(t *testing.T) {
 	assert.True(t, tool.Done)
 	assert.JSONEq(t, `{"file_path":"/a/b.go"}`, tool.Input)
 
-	// Without a title the per-tool remap cannot be chosen (read/write/edit want
-	// file_path, ls wants path), so the raw input is kept rather than guessed.
+	// Without a title the tool name is unknown, so only the BASE remaps apply.
+	// `path` is one of them, which is the intended trade-off: an update that
+	// omits its title can only be a file tool in practice (exec/ls titles are
+	// always present), and a blank Edit/Write header is worse than an LS card
+	// reading file_path for the handful of frames that drop the title.
 	tool = parseACPToolCallUpdate("openclaw", acp.SessionToolCallUpdate{
 		ToolCallId: "call_2",
 		Status:     &status,
 		RawInput:   map[string]any{"path": "/a/b.go"},
 	})
-	assert.JSONEq(t, `{"path":"/a/b.go"}`, tool.Input,
-		"an untitled update must not apply the read-only path remap")
+	assert.JSONEq(t, `{"file_path":"/a/b.go"}`, tool.Input,
+		"an untitled update falls back to the base remaps, which include path")
 }
