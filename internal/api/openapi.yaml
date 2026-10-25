@@ -246,15 +246,13 @@ paths:
 
         **响应结构**：
         - `totals`：所有行的合计，字段 `input` / `output` / `total` / `cacheHit` /
-          `cacheMiss` / `credit` / `costUsd` / `durationMs` / `messageCnt`。
+          `cacheMiss` / `credit` / `costUsd` / `messageCnt`，外加 `durationMs`
+          （区间内 AI 墙钟时长合计，毫秒，不与 token 列相加）。
         - `rows[]`：每个 dim 组合一行。`key` 是对象，键即请求的 dims
           （如 `{"model":"...","backend":"..."}`），行上带有与 `totals` 相同的字段。
           行的顺序由 `sort` / `order` 决定，`limit` 截断。
         - `trend[]`：仅 `trend=1` 时返回，在 `rows[]` 的基础上多一个 `day`
           （`YYYY-MM-DD`），用于按天走势图。
-
-        `durationMs` 是该区间内 AI 实际运行的墙钟时长合计（毫秒，含模型调用与
-        工具执行），与 token 列不可相加——它是独立的量纲。
 
         注意 `chat_metadata.created_at` 记录的是元数据**最终写入**时刻
         （约等于助手回复完成），不是用户提问时刻。
