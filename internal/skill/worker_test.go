@@ -238,9 +238,24 @@ func TestRunSyncLoop_ExitsOnCancelWithPositiveInterval(t *testing.T) {
 // TestRunSyncLoop_ParksUntilCancelWithNonPositiveInterval pins the disabled
 // branch: with no interval the loop must not spin or fire a sync, it must park
 // until cancelled.
+//
+// "Parks" is asserted through LastSyncAt rather than by waiting: the loop
+// reaches the disabled branch BEFORE any timer, so a version that fell through
+// to the periodic path (e.g. hours forced to 0 → time.After(0) → syncNow) would
+// return to the top with a freshly stamped LastSyncAt. Merely waiting proves
+// nothing — a busy-spin that re-checks cancel also stays alive (verified: a
+// `select{case <-cancel: return; default:}; continue` version passed an
+// earlier wait-only version of this test).
 func TestRunSyncLoop_ParksUntilCancelWithNonPositiveInterval(t *testing.T) {
 	setupWorkerEnv(t)
 	model.ConfigInstance.Skills.RefreshHours = 0
+	// A previous test's StartGitSyncWorker goroutine does one startup pass and
+	// then parks; that pass stamps LastSyncAt. Wait it out, or the sentinel
+	// below would be overwritten by a sync this test never caused (observed as
+	// an order-dependent failure).
+	waitForNoSyncInFlight(t)
+	const sentinel = int64(1)
+	model.ConfigInstance.Skills.LastSyncAt = sentinel
 
 	cancel := make(chan struct{})
 	exited := make(chan struct{})
@@ -249,19 +264,54 @@ func TestRunSyncLoop_ParksUntilCancelWithNonPositiveInterval(t *testing.T) {
 		close(exited)
 	}()
 
-	// The loop must park, not spin: if it fell through to a periodic sync it
-	// would either fire immediately or exit. Neither happens before cancel.
+	// The loop must park, not spin: if it fell through to the periodic path it
+	// would fire a sync and stamp LastSyncAt. Neither happens before cancel.
 	select {
 	case <-exited:
 		t.Fatal("runSyncLoop exited without being cancelled")
 	case <-time.After(100 * time.Millisecond):
 	}
+	assert.Equal(t, sentinel, model.ConfigInstance.Skills.LastSyncAt,
+		"the disabled branch must not run a sync")
 
 	close(cancel)
 	select {
 	case <-exited:
 	case <-time.After(5 * time.Second):
 		t.Fatal("runSyncLoop did not exit after cancel closed")
+	}
+}
+
+// waitForNoSyncInFlight blocks until no sync pass has been in flight for a
+// sustained window.
+//
+// StartGitSyncWorker's startup goroutine does its own syncNow and then parks;
+// StopGitSyncWorker only closes cancel, it does NOT join that pass. A following
+// test can therefore observe a sync it never started (recordSyncResult stamps
+// the global LastSyncAt), which made an unrelated assertion order-dependent.
+//
+// A single `syncDone == nil` sample is not enough: the goroutine calls
+// ScanAll() before syncNow(), so there is a window where nothing is in flight
+// yet and the pass has not started. Requiring the quiet state to persist covers
+// that gap; the deadline keeps a genuinely stuck sync from hanging the suite.
+func waitForNoSyncInFlight(t *testing.T) {
+	t.Helper()
+	const quietFor = 200 * time.Millisecond
+	deadline := time.Now().Add(5 * time.Second)
+	quietSince := time.Now()
+	for {
+		syncMu.Lock()
+		busy := syncDone != nil
+		syncMu.Unlock()
+		if busy {
+			quietSince = time.Now()
+		} else if time.Since(quietSince) >= quietFor {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("a sync pass never finished")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

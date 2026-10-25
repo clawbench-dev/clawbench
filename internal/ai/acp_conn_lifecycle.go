@@ -386,14 +386,107 @@ func newSessionTimeout(mcpServers int) time.Duration {
 	return 30 * time.Second
 }
 
+// Deadlines for session/load, split by whether the backend can resume across
+// processes at all.
+const (
+	// loadSessionTimeoutDefault applies when session/resume works across
+	// processes. load is then only the -32601 fallback (the agent does not
+	// implement resume at all), so it either replays a conversation that a
+	// normal resume would have handled instantly, or is not used; 60s covers
+	// that replay.
+	loadSessionTimeoutDefault = 60 * time.Second
+
+	// loadSessionTimeoutProcessLocalResume applies when
+	// BackendSpec.ACPResumeIsProcessLocal is set (e.g. openclaw's bridge).
+	// There, load is the ONLY recovery path: the agent cannot resume an id from
+	// a previous process, so EVERY bridge restart replays the whole
+	// conversation. The replay cost scales with history length, not with a
+	// fixed startup cost, so a session with thousands of messages does not fit
+	// in 60s — and timing out used to mark the session unrecoverable, i.e. the
+	// user lost it for good.
+	//
+	// A flat value rather than one scaled by history size because this path
+	// only holds session ids, not a message count; 5 minutes is a bounded upper
+	// estimate for the replay.
+	loadSessionTimeoutProcessLocalResume = 300 * time.Second
+)
+
+// resumeSessionTimeout is the deadline for session/resume, which only
+// re-attaches to existing session state and does not replay history — its cost
+// is a startup handshake, not a function of conversation length.
+const resumeSessionTimeout = 30 * time.Second
+
+// loadSessionTimeout returns the deadline for session/load on this connection.
+// See the constants above for why it depends on the backend.
+func (c *ACPConn) loadSessionTimeout() time.Duration {
+	if spec := c.backendSpec(); spec != nil && spec.ACPResumeIsProcessLocal {
+		return loadSessionTimeoutProcessLocalResume
+	}
+	return loadSessionTimeoutDefault
+}
+
+// errSessionRecoveryTimeout marks a recovery RPC that ran out of time instead
+// of being refused.
+//
+// The distinction is the difference between "we stopped waiting" and "the
+// conversation is gone": a refusal (-32601, -32002, any business error) means
+// the agent no longer has the session, while a timeout only means the replay
+// did not finish. In the timeout case the session mapping is preserved
+// (killAndMarkDeadLocked keeps acpSID), so the next turn retries the same
+// recovery — reporting it as "unrecoverable" tells the user their history is
+// lost when it is not.
+//
+// It deliberately does NOT wrap context.DeadlineExceeded: the transport layer
+// classifies a deadline as a peer disconnect (isACPPeerDisconnected) and
+// silently re-runs the entire recovery once, which for a load that replays the
+// whole conversation would double an already multi-minute wait. The underlying
+// cause is logged by recoveryFailure.
+var errSessionRecoveryTimeout = errors.New("session recovery timed out")
+
+// isRecoveryTimeout reports whether a failed recovery RPC ran out of time
+// rather than being refused.
+func isRecoveryTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	// The ACP SDK converts a context deadline into a -32603 RequestError that
+	// carries the original text in its data, so errors.Is no longer sees it.
+	return isACPDeadlineMsg(err.Error())
+}
+
+// recoveryFailure reports a failed session-recovery RPC and turns it into the
+// error the caller returns.
+//
+// Caller holds c.mu (ensureAliveWithSession). The process is killed either way
+// — after a failed load/resume it cannot be trusted to serve the next turn —
+// but a timeout is reported as retryable and a refusal as unrecoverable (see
+// errSessionRecoveryTimeout).
+func (c *ACPConn) recoveryFailure(rpc, acpSID string, timeout time.Duration, cause error) error {
+	c.killAndMarkDeadLocked()
+	if isRecoveryTimeout(cause) {
+		slog.Warn("acp conn: session recovery timed out, session mapping preserved for a retry",
+			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "rpc", rpc,
+			"timeout", timeout, "error", cause)
+		return fmt.Errorf("acp: session %s %s timed out after %s (retryable, session preserved): %w",
+			acpSID, rpc, timeout, errSessionRecoveryTimeout)
+	}
+	slog.Error("acp conn: session recovery failed, session is unrecoverable",
+		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "rpc", rpc, "error", cause)
+	return fmt.Errorf("acp: session %s %s failed: %w", acpSID, rpc, cause)
+}
+
 // recoverExistingSession re-attaches to a prior session after the agent process
 // died. On success ensureAliveWithSession reports isNew=false, so this helper
 // only needs to signal failure.
 //
 // It tries ResumeSession first, which only re-attaches to the existing session
 // state without replaying history. LoadSession replays the entire conversation,
-// which is very slow for long conversations and can exceed the 60s timeout
-// ("acp: session/load: context deadline exceeded").
+// which is very slow for long conversations — see loadSessionTimeout for the
+// per-backend deadlines and why a process-local-resume backend gets a longer
+// one.
 //
 // ResumeSession is NOT universally implemented. It is a non-standard RPC, and
 // SessionCapabilities.Resume is an unreliable signal: CodeBuddy implements
@@ -404,22 +497,44 @@ func newSessionTimeout(mcpServers int) time.Duration {
 // authoritative runtime signal.
 //
 // On failure we deliberately do NOT silently start a new session (amnesia): the
-// error is surfaced so the user knows the context was lost. killAndMarkDeadLocked
-// (not killProcessLocked) preserves acpSID so a later prompt can retry.
+// error is surfaced so the user knows the context was lost. Every failure goes
+// through recoveryFailure, which kills the process but preserves acpSID (it uses
+// killAndMarkDeadLocked, not killProcessLocked) so a later prompt can retry —
+// and which reports a TIMEOUT as retryable rather than unrecoverable.
 func (c *ACPConn) recoverExistingSession(ctx context.Context, cwd, acpSID string, prevConfig cachedConfigSnapshot) error {
 	// An agent whose session/resume is process-local answers a cross-process
 	// resume with a BUSINESS error, not -32601, so the fallback below would
 	// never fire and every restart would strand the conversation. Go straight to
 	// session/load for those (BackendSpec.ACPResumeIsProcessLocal; measured on
 	// openclaw's bridge).
-	if spec := c.backendSpec(); spec != nil && spec.ACPResumeIsProcessLocal {
+	//
+	// spec == nil means the backend is not in the registry, which has TWO very
+	// different causes and only one of them is a problem:
+	//   - it genuinely has no spec (a user-defined ACP agent, model.CustomACPBackend
+	//     is deliberately not registered — its command is user-supplied); or
+	//   - the registry had not been populated yet when this ran, so a real spec's
+	//     capabilities (including ACPResumeIsProcessLocal) are invisible and
+	//     recovery silently takes the resume-first path.
+	// Production imports the backend subpackages, so their init() runs before any
+	// connection exists; the second cause is a test/early-startup shape. It is
+	// logged rather than treated as an error because the fallback is still a
+	// correct (just slower, and possibly -32603-doomed) path — but without this
+	// line the two cases are indistinguishable in the logs.
+	spec := c.backendSpec()
+	if spec == nil {
+		backend := ""
+		if c.agent != nil {
+			backend = c.agent.Backend
+		}
+		slog.Warn("acp conn: backend has no registered spec, recovery cannot read its capability flags",
+			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "backend", backend,
+			"note", "expected for a custom-acp agent; otherwise the backend registry was not populated yet")
+	}
+	if spec != nil && spec.ACPResumeIsProcessLocal {
 		slog.Info("acp conn: backend's session/resume is process-local, recovering via LoadSession",
 			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "backend", c.agent.Backend)
 		if _, loadErr := c.recoverViaLoadSession(ctx, cwd, acpSID, true); loadErr != nil {
-			slog.Error("acp conn: LoadSession recovery failed, session is unrecoverable",
-				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "error", loadErr)
-			c.killAndMarkDeadLocked()
-			return fmt.Errorf("acp: session %s LoadSession failed: %w", acpSID, loadErr)
+			return c.recoveryFailure("LoadSession", acpSID, c.loadSessionTimeout(), loadErr)
 		}
 		c.reapplyConfigAfterResume(ctx, acpSID, prevConfig)
 		return nil
@@ -442,19 +557,13 @@ func (c *ACPConn) recoverExistingSession(ctx context.Context, cwd, acpSID string
 		slog.Info("acp conn: agent does not implement session/resume, recovering via LoadSession",
 			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "backend", c.agent.Backend)
 		if _, loadErr := c.recoverViaLoadSession(ctx, cwd, acpSID, true); loadErr != nil {
-			slog.Error("acp conn: LoadSession fallback failed, session is unrecoverable",
-				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "error", loadErr)
-			c.killAndMarkDeadLocked()
-			return fmt.Errorf("acp: session %s LoadSession failed: %w", acpSID, loadErr)
+			return c.recoveryFailure("LoadSession", acpSID, c.loadSessionTimeout(), loadErr)
 		}
 		c.reapplyConfigAfterResume(ctx, acpSID, prevConfig)
 		return nil
 	}
 
-	slog.Error("acp conn: ResumeSession failed, session is unrecoverable",
-		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "error", err)
-	c.killAndMarkDeadLocked()
-	return fmt.Errorf("acp: session %s ResumeSession failed: %w", acpSID, err)
+	return c.recoveryFailure("ResumeSession", acpSID, resumeSessionTimeout, err)
 }
 
 // cachedConfigSnapshot holds previously-set config values to re-apply after respawn.
@@ -493,7 +602,8 @@ func (c *ACPConn) snapshotCachedConfig() cachedConfigSnapshot {
 //     buffered SessionUpdate notifications to persist the replay into the DB,
 //     so the buffer must be preserved.
 func (c *ACPConn) recoverViaLoadSession(ctx context.Context, cwd, loadSID string, drainReplay bool) (bool, error) {
-	loadCtx, loadCancel := context.WithTimeout(ctx, 60*time.Second)
+	timeout := c.loadSessionTimeout()
+	loadCtx, loadCancel := context.WithTimeout(ctx, timeout)
 	defer loadCancel()
 
 	c.loadSessionActive.Store(true)
@@ -518,7 +628,7 @@ func (c *ACPConn) recoverViaLoadSession(ctx context.Context, cwd, loadSID string
 			McpServers: c.mcpServersForSession(),
 		})
 	}
-	slog.Info("acp perf: ensureAliveWithSession.LoadSession", "clawbench_sid", c.clawbenchSID, "acp_sid", loadSID, "elapsed", time.Since(loadStart), "error", err)
+	slog.Info("acp perf: ensureAliveWithSession.LoadSession", "clawbench_sid", c.clawbenchSID, "acp_sid", loadSID, "timeout", timeout, "elapsed", time.Since(loadStart), "error", err)
 
 	if err != nil {
 		c.alive = false
@@ -554,7 +664,7 @@ func (c *ACPConn) recoverViaLoadSession(ctx context.Context, cwd, loadSID string
 
 // recoverViaResumeSession recovers a session via ResumeSession and re-applies config.
 func (c *ACPConn) recoverViaResumeSession(ctx context.Context, cwd, acpSID string, prevConfig cachedConfigSnapshot) error {
-	resumeCtx, resumeCancel := context.WithTimeout(ctx, 30*time.Second)
+	resumeCtx, resumeCancel := context.WithTimeout(ctx, resumeSessionTimeout)
 	defer resumeCancel()
 
 	resumeStart := time.Now()
