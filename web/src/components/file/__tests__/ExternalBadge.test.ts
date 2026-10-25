@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import ExternalBadge from '@/components/file/ExternalBadge.vue'
 
 const i18n = createI18n({
@@ -10,7 +12,6 @@ const i18n = createI18n({
     en: {
       file: {
         nav: {
-          external: 'External',
           externalTip: 'Outside the project directory',
         },
       },
@@ -26,43 +27,36 @@ function mountBadge(props: Record<string, any> = {}) {
 }
 
 describe('ExternalBadge', () => {
-  it('shows the short label for a directory', () => {
-    expect(mountBadge({ kind: 'dir' }).text()).toContain('External')
-  })
-
-  it('shows the short label for a file', () => {
-    expect(mountBadge({ kind: 'file' }).text()).toContain('External')
-  })
-
-  it('keeps the label to a single short word', () => {
-    // Regression guard: the badge sits inline in dense rows, so a phrase like
-    // "file outside the project" pushed the row's own content aside. The icon
-    // carries the file-vs-dir distinction instead.
+  it('renders no text at all', () => {
+    // Regression guard: the badge sits inline in dense rows, and every word it
+    // carried — even the single short one it used to show — competed with the
+    // row's own filename. The meaning lives in the tooltip now.
     for (const kind of ['dir', 'file']) {
-      const text = mountBadge({ kind }).find('.external-badge').text().trim()
-      expect(text).toBe('External')
-      expect(text.split(/\s+/)).toHaveLength(1)
+      expect(mountBadge({ kind }).find('.external-badge').text().trim()).toBe('')
     }
   })
 
   it('spells the full meaning out in the tooltip', () => {
-    // The short label alone is ambiguous, so the explanation has to live here.
     expect(mountBadge({ kind: 'dir' }).find('.external-badge').attributes('title'))
       .toBe('Outside the project directory')
   })
 
-  it('renders an icon alongside the label', () => {
-    // The icon carries the file-vs-directory distinction, which the single
-    // shared label deliberately does not. It renders as an inline <svg> — a
-    // module-level `lucide-vue-next` stub would NOT apply here, since the
-    // component imports FolderOpen/FileText as named bindings.
-    const wrapper = mountBadge({ kind: 'dir' })
-    expect(wrapper.find('.external-badge svg').exists()).toBe(true)
-    expect(wrapper.find('.external-badge').text().trim()).toBe('External')
+  it('exposes the tooltip text as the accessible name', () => {
+    // Icon-only means the tooltip is the ONLY thing a screen reader can read;
+    // a bare decorative span would announce nothing at all.
+    const badge = mountBadge({ kind: 'file' }).find('.external-badge')
+    expect(badge.attributes('aria-label')).toBe('Outside the project directory')
+  })
+
+  it('renders an icon', () => {
+    // It renders as an inline <svg> — a module-level `lucide-vue-next` stub
+    // would NOT apply here, since the component imports FolderOpen/FileText as
+    // named bindings.
+    expect(mountBadge({ kind: 'dir' }).find('.external-badge svg').exists()).toBe(true)
   })
 
   it('picks a different icon for a directory than for a file', () => {
-    // The two kinds share one word, so the icon is the ONLY thing telling them
+    // With no text left, the icon is the ONLY thing telling the two kinds
     // apart. If both branches ever collapsed to the same component the badge
     // would still render — and silently stop distinguishing anything.
     const dirIcon = mountBadge({ kind: 'dir' }).find('.external-badge svg').classes()
@@ -76,5 +70,18 @@ describe('ExternalBadge', () => {
     // Callers drop the badge next to a filename in the common case, so a
     // forgotten `kind` must read as a file rather than as a directory.
     expect(mountBadge().find('.external-badge svg').classes()).toContain('lucide-file-text')
+  })
+
+  it('never shrinks, so the neighbouring name yields instead', () => {
+    // jsdom does not load SFC <style>, so assert against the source. The badge
+    // is a fixed-size cue; if flex could compress it the row would clip the
+    // very thing that says "this is outside the project".
+    const src = readFileSync(
+      resolve(__dirname, '../../../components/file/ExternalBadge.vue'),
+      'utf8',
+    )
+    const rule = src.match(/\.external-badge\s*\{([^}]*)\}/)
+    expect(rule, '.external-badge rule must exist').not.toBeNull()
+    expect(rule![1]).toMatch(/flex-shrink:\s*0/)
   })
 })

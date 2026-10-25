@@ -1906,7 +1906,6 @@ export default {
       projectRoot: 'Project root',
       backToProject: 'Back to project root',
       fsRoot: 'Filesystem root',
-      external: 'External',
       externalTip: 'Outside the project directory',
     },
     recent: {

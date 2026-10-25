@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, computed, ref } from 'vue'
 import { createI18n } from 'vue-i18n'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import FileHeader from '../FileHeader.vue'
 import { useFileShare } from '@/composables/useFileShare'
 
@@ -990,7 +992,7 @@ describe('FileHeader — project-external badge', () => {
         chat: { actions: { attachToChat: 'Attach' }, attach: { removeFromChat: 'Remove', addedToChat: 'Added', removedFromChat: 'Removed' } },
         file: {
           header: { toc: 'TOC', search: 'Search', fitWidth: 'Fit', quoteInChat: 'Quote', sourceView: 'Source', renderedView: 'Rendered', finishEditing: 'Done', edit: 'Edit', more: 'More' },
-          nav: { external: 'External', externalTip: 'Outside the project directory' },
+          nav: { externalTip: 'Outside the project directory' },
         },
       },
     },
@@ -1013,5 +1015,17 @@ describe('FileHeader — project-external badge', () => {
 
   it('hides the badge for a project-relative file', () => {
     expect(mountWith('web/src/App.vue').find('.external-badge').exists()).toBe(false)
+  })
+
+  it('shrinks the file name before the badge when space runs out', () => {
+    // The badge is icon-only and fixed; the name is the part that must yield
+    // (ellipsize) so the "outside the project" cue never gets clipped away.
+    // jsdom does not load SFC <style>, so assert against the source.
+    const src = readFileSync(resolve(__dirname, '../../../components/file/FileHeader.vue'), 'utf8')
+    const name = src.match(/\.file-path-hint\s*\{([^}]*)\}/)
+    expect(name, '.file-path-hint rule must exist').not.toBeNull()
+    expect(name![1]).toMatch(/flex:\s*0\s+1\s+auto/)
+    expect(name![1]).toMatch(/min-width:\s*0/)
+    expect(name![1]).toMatch(/text-overflow:\s*ellipsis/)
   })
 })

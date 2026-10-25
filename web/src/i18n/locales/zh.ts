@@ -1904,7 +1904,6 @@ export default {
       projectRoot: '项目根目录',
       backToProject: '返回项目根目录',
       fsRoot: '文件系统根目录',
-      external: '外部',
       externalTip: '位于项目目录之外',
     },
     recent: {

@@ -328,4 +328,17 @@ describe('DirPreviewBody — project-external badge', () => {
     // listing; the type icons fallback already covers this case.
     expect(mountBody({ dirName: 'src' }).find('.external-badge').exists()).toBe(false)
   })
+
+  it('shrinks the directory name before the badge when space runs out', () => {
+    // Same contract as the file header: the badge is icon-only and fixed, so
+    // the title is what ellipsizes. jsdom does not load SFC <style>.
+    const src = readFileSync(
+      resolve(__dirname, '../../../components/file/DirPreviewBody.vue'),
+      'utf8',
+    )
+    const title = src.match(/\.dir-preview-title\s*\{([^}]*)\}/)
+    expect(title, '.dir-preview-title rule must exist').not.toBeNull()
+    expect(title![1]).toMatch(/flex:\s*0\s+1\s+auto/)
+    expect(title![1]).toMatch(/min-width:\s*0/)
+  })
 })

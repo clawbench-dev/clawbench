@@ -633,7 +633,11 @@ onBeforeUnmount(() => {
 }
 
 .file-path-hint {
-    flex: 0 0 auto;
+    /* The name is what yields when the header runs out of room: the external
+       badge beside it is icon-only and fixed, so letting the name ellipsize
+       keeps the "outside the project" cue visible instead of clipping it. */
+    flex: 0 1 auto;
+    min-width: 0;
     max-width: 100%;
     color: var(--text-muted);
     font-family: var(--font-mono);
