@@ -61,7 +61,7 @@ vi.mock('@/composables/useSettingsConfig', () => ({
 
 vi.mock('@/utils/uiScale', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/utils/uiScale')>()
-  // Keep the REAL `currentScreenHeight` reachable so the pixel-normalization
+  // Keep the REAL `currentScreenShortEdge` reachable so the pixel-normalization
   // cases can exercise it while everything else sees the stub.
   realUiScale.currentScreenShortEdge = actual.currentScreenShortEdge
   return {
@@ -88,9 +88,9 @@ const DECLINED_KEY = 'clawbench_ui_scale_prompt_declined'
 /**
  * CSS-pixel handling — the trap this feature can fall into.
  *
- * `screen.height` is in CSS pixels on Windows/macOS/X11 but in DEVICE pixels
- * under native Wayland (GNOME's default). The composable must therefore go
- * through `currentScreenHeight()`, which normalizes; reading `screen.height`
+ * `screen.width/height` are in CSS pixels on Windows/macOS/X11 but in DEVICE
+ * pixels under native Wayland (GNOME's default). The composable must therefore
+ * go through `currentScreenShortEdge()`, which normalizes; reading the screen
  * directly would double up with the OS scale factor on Wayland and offer a 4x
  * UI. These cases drive the REAL measurement (not the stub), so the
  * normalization is what is under test.
