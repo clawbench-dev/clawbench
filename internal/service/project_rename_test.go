@@ -166,7 +166,7 @@ func mkProjectDir(t *testing.T) string {
 func TestRenameProjectData_FollowsProjectScopeData(t *testing.T) {
 	setupProjectDeleteDB(t)
 	oldPath := mkProjectDir(t)
-	newPath := filepath.Join(t.TempDir(), "moved")
+	newPath := store.NormalizeProjectPath(filepath.Join(t.TempDir(), "moved"))
 	require.NoError(t, os.MkdirAll(newPath, 0o755))
 
 	id := seedProjectRow(t, oldPath)
