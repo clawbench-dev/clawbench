@@ -2003,12 +2003,18 @@ defineExpose({
   padding: calc(5 * var(--dp)) var(--space-6);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
-  background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
+  /* Nearly opaque instead of translucent+blurred: `backdrop-filter` forces
+     this pill onto its own compositing layer, and the "all messages loaded"
+     pill appears and disappears ~2s after opening a session while the list is
+     being re-composited. That was the original trigger of the message-to-
+     message phantom-text ghost. It lives inside the single chat-panel
+     compositing boundary (ChatPanelContent.vue) and must NOT be a layer of its
+     own. 96% is visually indistinguishable over the message background and
+     costs no layer. Do not reintroduce `backdrop-filter` here. */
+  background: color-mix(in srgb, var(--bg-primary) 96%, transparent);
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
   border-radius: var(--radius-full);
   box-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) rgba(0, 0, 0, 0.12);
-  backdrop-filter: blur(calc(6 * var(--dp)));
-  -webkit-backdrop-filter: blur(calc(6 * var(--dp)));
   pointer-events: auto;
 }
 

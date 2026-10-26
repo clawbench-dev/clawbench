@@ -6,7 +6,7 @@ A: 支持 Linux（x86_64 / ARM64）、macOS（Apple Silicon / Intel）和 Window
 
 **Q: 支持哪些 AI 后端？**
 
-A: 支持 CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw 十九种后端，均支持 CLI 和/或 ACP 传输模式。可在 Web UI 中实时切换，会话数据隔离。CLI 后端需确保对应 CLI 已安装并在 PATH 中可用。
+A: 支持 CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw 十九种后端，均支持 CLI 和/或 ACP 传输模式。可在 Web UI 中实时切换，会话数据隔离。CLI 后端需确保对应 CLI 已安装并在 PATH 中可用。OpenClaw 走 ACP 桥接，需要先跑起它自己的 Gateway（`openclaw gateway start`），否则桥连不上会表现为「Agent 启动超时」。
 
 **Q: 如何添加新的智能体？**
 
@@ -14,7 +14,7 @@ A: 从欢迎屏幕安装智能体，或在 Web UI 中创建新智能体，选择
 
 **Q: 是否需要配置 API Key？**
 
-A: 不需要。ClawBench 通过调用本地 CLI（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code 或 Pi）实现 AI 功能，这些 CLI 工具已经完成了 API Key 的配置和管理。
+A: 不需要。ClawBench 通过调用本地已装好的 CLI / ACP 后端（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw 共 19 种）实现 AI 功能，凭据由这些工具自己管理；ClawBench 只在「创建智能体」时让你填 LLM 提供商的 API Key（用于标题生成、摘要等旁路能力）。个别后端需要额外前置条件——例如 OpenClaw 走 ACP 桥接，要先跑起它自己的 Gateway（`openclaw gateway start`），否则表现为「Agent 启动超时」。
 
 **Q: TTS 语音合成可以使用本地模型吗？**
 
@@ -35,7 +35,7 @@ TTS 引擎本身也支持本地离线方案（piper / kokoro / moss-nano），�
 
 **Q: 可以同时运行多个 ClawBench 实例吗？**
 
-A: 可以。每个实例使用独立的 `--data-dir` 指定不同的数据目录，并在 `config/config.yaml` 中配置不同端口即可。默认数据目录为 `~/.clawbench/`，同一用户下的多实例需要显式指定不同的 `--data-dir` 以实现数据隔离。
+A: 可以。每个实例使用独立的 `--data-dir` 指定不同的数据目录，并用 `--port`（或配置文件里的 `port`）给出不同端口即可。默认数据目录为 `~/.clawbench/`，同一用户下的多实例需要显式指定不同的 `--data-dir` 以实现数据隔离。
 
 **Q: 是否需要配置文件才能启动？**
 
@@ -51,7 +51,7 @@ A: 数据存储在用户家目录下的 `~/.clawbench/` 中（Windows 为 `%USER
 
 **Q: 如何备份数据？**
 
-A: 备份 `~/.clawbench/ClawBench.db` 数据库文件即可。
+A: 备份 `~/.clawbench/ClawBench.db` 数据库文件即可（会话、消息、智能体、任务、分享记录都在里面）。同一目录下的 `config/`（含 `config.yaml` 与自动生成的 `auto-password`）建议一并备份，否则换机后要重新配置；项目目录里的上传文件与项目本身不在数据目录内，需要单独备份。
 
 **Q: 如何管理智能体？**
 
@@ -104,11 +104,11 @@ A: 发现新版本时会弹出升级卡片：
 
 **Q: 某个功能找不到？**
 
-A: 大部分功能都在左侧 Dock 的九个图标里。设置类选项统一在最后一个「设置」图标。若 Dock 里没有终端或端口映射，说明该功能在服务端被禁用或平台不支持。
+A: 大部分功能都在左侧 Dock 的十个图标里（文件管理器 / 文件 / 项目历史 / GitHub 集成 / GitLab 集成 / 任务 / 终端 / 数据统计 / 端口映射 / 通知中心 / 设置——空间不足时靠后的收进「更多」）。设置类选项统一在最后一个「设置」图标。若 Dock 里没有终端或端口映射，说明该功能在服务端被禁用或平台不支持。
 
 **Q: 界面元素太小 / 太大？**
 
-A: 设置 → 外观。点 **自动适配** 按钮，会按当前屏幕分辨率算出合适的缩放并写入下方的 **界面缩放** 滑块（以 1080p 为基准，最高 200%；系统已缩放过的屏幕不会二次放大）。**它只在点击时计算一次，不会随屏幕变化自己变动**，之后你可以用滑块在 80%–150% 之间手动微调。移动端不提供此按钮，屏幕由系统按密度适配。
+A: 设置 → 外观。点 **自动适配** 按钮，会按当前屏幕分辨率算出合适的缩放并写入下方的 **界面缩放** 滑块（以 1080p 为基准，最高 200%；系统已缩放过的屏幕不会二次放大）。**它只在点击时计算一次，不会随屏幕变化自己变动**，之后你可以用滑块在 50%–200% 之间手动微调（步长 1%，整套 UI 一起放大）。移动端不提供此按钮，屏幕由系统按密度适配。
 
 另外，**启动时**如果检测到当前屏幕明显偏大（建议缩放比当前设置高出 15% 以上，例如 1440p / 4K 屏幕上的默认 100%），会弹一次确认框问你要不要调整，同意后自动写入滑块。拒绝后同一块屏幕不再询问；换到别的分辨率会重新询问。1080p 及以下的屏幕不会弹。**手机和平板不会弹**（系统已按屏幕密度缩放，再叠一层就重复了）。判断看的是屏幕短边，所以横放竖放结果一致，显示器转竖屏也不会误弹。
 

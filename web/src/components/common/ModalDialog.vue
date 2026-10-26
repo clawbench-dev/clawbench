@@ -11,7 +11,15 @@
       @click.self="handleClose"
       @keydown.escape="handleClose"
     >
-      <div class="modal-dialog" :class="{ 'modal-leaving': leaving, 'modal-full-height': fullHeight }" @click.stop>
+      <div
+        class="modal-dialog"
+        :class="{
+          'modal-leaving': leaving,
+          'modal-full-height': fullHeight,
+          'modal-dialog--compact': size === 'compact',
+        }"
+        @click.stop
+      >
         <div class="modal-header">
           <slot name="header">
             <span class="modal-title">{{ title }}</span>
@@ -51,6 +59,12 @@ const props = defineProps({
   title: { type: String, default: '' },
   zIndex: { type: Number, default: 2100 },
   fullHeight: { type: Boolean, default: false },
+  /**
+   * Named width variant. Arbitrary per-call-site widths are forbidden (see
+   * ModalDialog.test.ts): a compact card is a shared primitive so its cap lives
+   * in modal-card.css next to the default one.
+   */
+  size: { type: String, default: 'default' },
 })
 
 const emit = defineEmits(['close'])

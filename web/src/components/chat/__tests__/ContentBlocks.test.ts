@@ -1335,6 +1335,44 @@ describe('ContentBlocks', () => {
       expect(wrapper.html()).toContain('sum text')
     })
 
+    // Real shape from message 65835: the terminal tool_use was AskUserQuestion
+    // whose only question had an EMPTY `question` field (a header plus options,
+    // no prompt). The summary card must still render from the options — the
+    // user reported this as "the message with the question card is blank".
+    it('renders an ask card whose question text is empty but options exist', () => {
+      const formatToolInput = vi.fn((input: any) => JSON.stringify(input))
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'Reasoning prose that is NOT the answer',
+        showingSummary: true,
+        summaryCards: {
+          tools: [{
+            name: 'AskUserQuestion',
+            id: 'ask-19c87d02',
+            done: true,
+            input: {
+              questions: [{
+                header: '接下来怎么修？',
+                multiSelect: false,
+                question: '',
+                options: [
+                  { label: '改代理', description: '只动我们自己的 Go 代码' },
+                  { label: '改客户端', description: '在 ACP 消费处兼容' },
+                ],
+              }],
+            },
+          }],
+          taskIDs: [],
+          askQuestions: [],
+        },
+        formatToolInput,
+      })
+
+      expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(true)
+      expect(wrapper.html()).toContain('接下来怎么修？')
+      expect(wrapper.html()).not.toBe('')
+    })
+
     it('renders an ask-question card from summaryCards.askQuestions via formatToolInput', () => {
       const formatToolInput = vi.fn((input: any) => JSON.stringify(input))
       const wrapper = mountBlocks({
@@ -3292,6 +3330,33 @@ describe('static block cache scope', () => {
     await nextTick()
 
     expect(blockCalls()).toBe(afterMount)
+  })
+
+  // A text block with empty content is persisted WITHOUT a `text` key
+  // (ContentBlock.Text is `omitempty` in Go), so `block.text` is undefined at
+  // render time. That used to throw inside StaticBlockCache.makeKey
+  // (`text.length`) and blank the ENTIRE message — message 65835 rendered as an
+  // empty bubble. Reproduces the real DB shape: `{type:"text"}` with no text.
+  it('renders a text-less block without throwing', async () => {
+    const { StaticBlockCache } = await import('@/utils/streamPerf.ts')
+    const cache = markRaw(new StaticBlockCache())
+    const renderTextBlock = vi.fn((text: string) => `<p>${text}</p>`)
+
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'text' },
+        { type: 'text', text: 'visible after' },
+      ],
+      staticBlockCache: cache,
+      renderTextBlock,
+    })
+    await nextTick()
+
+    expect(wrapper.find('.content-blocks').exists()).toBe(true)
+    expect(wrapper.html()).toContain('visible after')
+    // The undefined text must reach the render pipeline as '' — not as the
+    // string "undefined", and not skipped (that would hide a real empty block).
+    expect(renderTextBlock).toHaveBeenCalledWith('', 'msg-1', 0, false, false)
   })
 })
 

@@ -948,6 +948,50 @@ describe('AgentSelectorDrawer instance mode', () => {
     expect(wrapper.findAll('.agent-stepper').length).toBe(0)
   })
 
+  it('clicking the checkbox of a selected row cancels ALL its instances', async () => {
+    // Row clicks always ADD in instance mode, so the checkbox is the cancel
+    // affordance: one tap drops the agent (and every instance of it) outright.
+    const wrapper = mountDrawer({ multiple: true, allowInstances: true, modelValue: [] })
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    await wrapper.find('.agent-option').trigger('click')
+    await wrapper.find('.agent-stepper .agent-stepper-btn:last-child').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.agent-stepper-count').text()).toBe('2')
+
+    await wrapper.find('.agent-option-check').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.agent-stepper').length).toBe(0)
+    expect(wrapper.find('.agent-option-check').classes()).not.toContain('checked')
+
+    await wrapper.find('.agent-multi-confirm').trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('select')![0]).toEqual([[]])
+  })
+
+  it('clicking the checkbox of an unselected row adds one instance', async () => {
+    const wrapper = mountDrawer({ multiple: true, allowInstances: true, modelValue: [] })
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    await wrapper.find('.agent-option-check').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.agent-stepper-count').text()).toBe('1')
+  })
+
+  it('clears the host when the checkbox removes the host row', async () => {
+    const wrapper = mountDrawer({
+      multiple: true, allowInstances: true, groupMode: true, hostId: 'agent-1', modelValue: ['agent-1'],
+    })
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    await wrapper.find('.agent-option-check').trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('update:hostId')!.at(-1)).toEqual([''])
+  })
+
   it('clicking an already-selected row ADDS another instance', async () => {
     // The counter-intuitive behaviour this replaces: with a single installed
     // agent, two clicks on the same row is the only way to build a two-member

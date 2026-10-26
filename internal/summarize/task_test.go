@@ -199,7 +199,37 @@ func TestExtractLastAnswerFromBlocks_LongAnswerBeforeTerminalToolUse(t *testing.
 		{Type: "tool_use", Name: "AskUserQuestion", ID: "4"},
 	}
 	result := ExtractLastAnswerFromBlocks(blocks)
-	assert.Equal(t, longAnswer, result) // picks the longest text block, not the intro
+	assert.Equal(t, longAnswer, result) // the text right before the terminal tool, not the intro
+}
+
+// Regression for message 65835: the turn ended with a substantive conclusion
+// followed by AskUserQuestion. An EARLIER text block (16k chars of English
+// intermediate reasoning) was longer than the conclusion (2.6k chars), so the
+// old "longest text block" fallback persisted the reasoning as the reading
+// summary and the user saw the wrong text. The answer is the LAST text before
+// the terminal tool, regardless of length.
+func TestExtractLastAnswerFromBlocks_PrefersLastTextOverLongerReasoning(t *testing.T) {
+	reasoning := strings.Repeat("The key insight: the proxy passes reasoning through. ", 200)
+	conclusion := "排查完成，结论比「代理转错了」更具体：问题出在 CodeBuddy CLI 的自定义模型通道。"
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: reasoning},
+		{Type: "tool_use", Name: "Bash", ID: "1"},
+		{Type: "text", Text: conclusion},
+		{Type: "tool_use", Name: "AskUserQuestion", ID: "2"},
+	}
+	assert.Equal(t, conclusion, ExtractLastAnswerFromBlocks(blocks))
+}
+
+// A whitespace-only text block between tool calls is not an answer: returning
+// it would persist a blank summary and hide the real conclusion before it.
+func TestExtractLastAnswerFromBlocks_IgnoresWhitespaceOnlyText(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "The real answer."},
+		{Type: "tool_use", Name: "Bash", ID: "1"},
+		{Type: "text", Text: " "},
+		{Type: "tool_use", Name: "AskUserQuestion", ID: "2"},
+	}
+	assert.Equal(t, "The real answer.", ExtractLastAnswerFromBlocks(blocks))
 }
 
 // ExtractLastAnswerFromBlocks is a PURE text extractor: it must NOT strip

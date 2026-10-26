@@ -50,7 +50,14 @@
         @keydown.enter="handleSelect(agent.id)"
         @keydown.space.prevent="handleSelect(agent.id)"
       >
-        <span v-if="multiple" class="agent-option-check" :class="{ checked: isSelected(agent.id) }">
+        <span
+          v-if="multiple"
+          class="agent-option-check"
+          :class="{ checked: isSelected(agent.id) }"
+          role="checkbox"
+          :aria-checked="isSelected(agent.id)"
+          @click.stop="handleCheckboxToggle(agent.id)"
+        >
           <Check v-if="isSelected(agent.id)" :size="14" />
         </span>
         <span class="agent-option-icon"><AgentIcon :backend="agent.backend" :name="agent.name" :avatar="agent.avatar" size="md" /></span>
@@ -302,6 +309,24 @@ function decrement(agentId: string) {
 
 function handleClose() {
   emit('update:open', false)
+}
+
+/** Checkbox click. In instance mode a selected row can hold several instances,
+ *  and a row click always ADDS — so the checkbox is the affordance that CANCELS
+ *  the agent outright. Clicking an unchecked box adds one instance. */
+function handleCheckboxToggle(agentId: string) {
+  if (Date.now() - openTime < 400) return
+  if (!props.multiple) return
+  if (props.allowInstances) {
+    if (countOf(agentId) > 0) {
+      selectedIds.value = selectedIds.value.filter(id => id !== agentId)
+      if (props.groupMode && props.hostId === agentId) emit('update:hostId', '')
+    } else if (!atInstanceLimit.value) {
+      selectedIds.value.push(agentId)
+    }
+    return
+  }
+  handleSelect(agentId)
 }
 
 function handleSelect(agentId: string) {
@@ -642,6 +667,7 @@ watch(() => props.open, async (val) => {
   align-items: center;
   justify-content: center;
   color: var(--accent-color, #0066cc);
+  cursor: pointer;
 }
 
 .agent-option-check.checked {

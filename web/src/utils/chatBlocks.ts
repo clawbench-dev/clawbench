@@ -50,11 +50,18 @@ export function parseAssistantContent(content: string, opts?: ParseAssistantCont
             b.output = b.input.output
             delete b.input.output
           }
-        } else if (b.type === 'text' && typeof b.text === 'string') {
+        } else if (b.type === 'text') {
           // Unwrap nested JSON serializations that historical data (or some
           // ACP agents) embedded into the text field, so the message never
           // renders as a literal JSON string.
-          b.text = extractPlainText(b.text)
+          //
+          // `text` may be MISSING entirely: ContentBlock.Text is `omitempty`
+          // in Go, so an empty text block round-trips as `{type:"text"}`.
+          // Normalizing to '' here upholds "a text block always carries a
+          // string" for every downstream consumer — an undefined used to throw
+          // in the render cache key builder and blank the whole message
+          // (message 65835).
+          b.text = typeof b.text === 'string' ? extractPlainText(b.text) : ''
         } else if (b.type === 'thinking' && !liveStreaming && b.in_progress) {
           // `in_progress` is a streaming-row-only signal: it tells the render
           // layer "more deltas are coming, lazy-load the prefix". On a row that

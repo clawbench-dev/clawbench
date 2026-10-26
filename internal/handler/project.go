@@ -116,12 +116,15 @@ func ServeProjectRegistryList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"projects": projects})
 }
 
-// ServeProjectRegistryDetail handles GET (detail) and DELETE (remove project
-// and all its data) for a single registry project, identified by `?id=`.
+// ServeProjectRegistryDetail handles GET (detail), DELETE (remove project and
+// all its data) and PATCH (repoint the project at a moved directory) for a
+// single registry project, identified by `?id=`.
 //
 // DELETE refuses the global-scope sentinel, an unknown id, the caller's CURRENT
-// project, and any project with a running session. The directory on disk is not
-// touched.
+// project, and any project with a running session. PATCH refuses the sentinel,
+// an unknown id, a missing/non-directory target, a path another project already
+// owns, and a project with a running session. Neither touches the directory on
+// disk.
 func ServeProjectRegistryDetail(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -143,9 +146,98 @@ func ServeProjectRegistryDetail(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		deleteProjectRegistryEntry(w, r)
 
+	case http.MethodPatch:
+		renameProjectRegistryEntry(w, r)
+
 	default:
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 	}
+}
+
+// renameProjectRegistryEntry handles PATCH /api/projects/detail?id= with
+// `{"path": "..."}`: repoint an existing project at a directory that was moved
+// or renamed on disk.
+//
+// The directory is only validated, never created or moved — this is a registry
+// update. The caller's project cookie is rewritten when the renamed project is
+// the one it currently has open, otherwise the next request would resolve the
+// old path again.
+func renameProjectRegistryEntry(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseProjectIDQuery(w, r)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+		return
+	}
+
+	// Reject the sentinel before path validation: it is not a real project, and
+	// reporting 403 for an arbitrary target path would mask the intended 400.
+	if id == store.GlobalScopeProjectID {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProjectRenameForbidden")
+		return
+	}
+
+	raw := strings.TrimSpace(req.Path)
+	if raw == "" || !filepath.IsAbs(raw) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProjectPathInvalid")
+		return
+	}
+	newPath := model.NormalizeProjectPath(raw)
+	if !isPathUnderAnyRoot(newPath) {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return
+	}
+
+	oldPath, err := service.RenameProjectData(id, newPath)
+	switch {
+	case err == nil:
+	case errors.Is(err, service.ErrProjectNotFound):
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "ProjectNotFound")
+		return
+	case errors.Is(err, service.ErrProjectRenameForbidden):
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProjectRenameForbidden")
+		return
+	case errors.Is(err, service.ErrProjectPathInvalid):
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProjectPathInvalid")
+		return
+	case errors.Is(err, service.ErrProjectPathExists):
+		writeLocalizedErrorf(w, r, http.StatusConflict, "ProjectPathExists")
+		return
+	case errors.Is(err, service.ErrProjectHasRunningSessions):
+		writeLocalizedErrorf(w, r, http.StatusConflict, "ProjectRenameHasRunningSessions")
+		return
+	default:
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to rename project")))
+		return
+	}
+
+	// Follow the open project. Normalize both sides because the cookie can carry
+	// a non-canonical spelling from older sessions.
+	if cur := middleware.GetProjectFromCookie(r); cur != "" &&
+		store.NormalizeProjectPath(cur) == store.NormalizeProjectPath(oldPath) {
+		http.SetCookie(w, &http.Cookie{
+			Name:     model.ScopedCookieName("clawbench_project"),
+			Value:    url.QueryEscape(newPath),
+			Path:     "/",
+			MaxAge:   7 * 24 * 3600,
+			HttpOnly: true,
+			Secure:   r.TLS != nil,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":       true,
+		"id":       id,
+		"path":     newPath,
+		"old_path": oldPath,
+	})
 }
 
 // deleteProjectRegistryEntry handles DELETE /api/projects/detail?id=.

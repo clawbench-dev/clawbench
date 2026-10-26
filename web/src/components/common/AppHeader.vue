@@ -282,8 +282,16 @@
 
     <!-- Server info + resources popup (both Web and APP mode) -->
     <PopupMenu v-model:show="resourcesMenuOpen" :target-element="serverBtnRef" :max-width="320" :max-height="440" :menu-items-count="11" anchor="right">
-      <SystemResourcesPanel ref="resourcesPanelRef" :show-logout="isAppMode" :ws-status="wsStatus" @logout="handleLogout" @open-usage-settings="handleOpenUsageSettings" />
+      <SystemResourcesPanel ref="resourcesPanelRef" :show-server-switch="isAppMode" :ws-status="wsStatus" @switch-server="openServerSwitch" @open-usage-settings="handleOpenUsageSettings" />
     </PopupMenu>
+
+    <!-- One-click server switching without a trip through the native login
+         page; logout stays available inside the dialog. -->
+    <ServerSwitchDialog
+      :open="serverSwitchOpen"
+      @close="serverSwitchOpen = false"
+      @logout="handleLogout"
+    />
 
     <!-- App-drawn window controls (frameless desktop shell, Windows/Linux).
          Present only when the window has no native frame, so the two can never
@@ -349,6 +357,7 @@ import { setPendingManageNavigation } from '@/composables/useCommitNavigation.ts
 import { setPendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import SystemResourcesPanel from '@/components/common/SystemResourcesPanel.vue'
+import ServerSwitchDialog from '@/components/common/ServerSwitchDialog.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import HintTooltip from '@/components/common/HintTooltip.vue'
@@ -1118,9 +1127,17 @@ function onClickOutside(e: MouseEvent) {
     themeMenuOpen.value = false
 }
 
-// --- Logout (APP mode) ---
+// --- Switch server / logout (APP mode) ---
+const serverSwitchOpen = ref(false)
+
+function openServerSwitch() {
+    resourcesMenuOpen.value = false
+    serverSwitchOpen.value = true
+}
+
 function handleLogout() {
     resourcesMenuOpen.value = false
+    serverSwitchOpen.value = false
     if (getNative()?.showServerDialog) {
         getNative()?.showServerDialog()
     } else {

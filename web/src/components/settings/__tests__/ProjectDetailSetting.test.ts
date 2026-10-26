@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import ProjectDetailSetting from '@/components/settings/ProjectDetailSetting.vue'
+import ProjectDialog from '@/components/ProjectDialog.vue'
+import { useFileEditor, _resetForTesting } from '@/composables/useFileEditor'
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -25,7 +27,7 @@ vi.mock('@/composables/useDialog', () => ({
 }))
 
 vi.mock('@/stores/app', () => ({
-  store: { state: { projectRoot: '/home/me/current' } },
+  store: { state: { projectRoot: '/home/me/current', rootPaths: [], homeDir: '/home/me' } },
 }))
 
 const i18n = createI18n({
@@ -53,6 +55,11 @@ const i18n = createI18n({
           projectRepoUnknown: 'Unknown',
           projectSwitchTo: 'Switch to this project',
           projectSwitchCurrent: 'Current project',
+          projectRename: 'Change path',
+          projectRenamePickTitle: 'Choose the project\'s new directory',
+          projectRenameSuccess: 'Project path updated',
+          projectRenameFailed: 'Failed to update project path',
+          projectSwitchFailed: 'Failed to switch project',
           projectDelete: 'Delete project',
           projectDeleteConfirmTitle: 'Delete project',
           projectDeleteConfirmPrompt: 'Type {name} to confirm',
@@ -92,6 +99,7 @@ function mountDetail(projectId = 7, provide: Record<string, unknown> = {}) {
 describe('ProjectDetailSetting', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    _resetForTesting()
     vi.stubGlobal('fetch', vi.fn(async () => detailResponse()))
   })
 
@@ -166,6 +174,138 @@ describe('ProjectDetailSetting', () => {
     expect(primary.text()).toContain('Current project')
     expect(primary.attributes('disabled')).toBeDefined()
     expect(wrapper.find('.project-detail__btn--danger').attributes('disabled')).toBeDefined()
+  })
+
+  it('opens the directory picker from the rename button', async () => {
+    const wrapper = mountDetail(7)
+    await flushPromises()
+
+    const renameBtn = wrapper.find('[data-action="project-rename"]')
+    expect(renameBtn.text()).toContain('Change path')
+    await renameBtn.trigger('click')
+
+    const picker = wrapper.findComponent(ProjectDialog)
+    expect(picker.props('open')).toBe(true)
+    expect(picker.props('mode')).toBe('pick')
+    // The project's directory was moved, so browsing starts at its parent.
+    expect(picker.props('initialPath')).toBe('/home/me')
+  })
+
+  it('PATCHes the new path and re-points the current project', async () => {
+    const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
+      if (opts?.method === 'PATCH') {
+        return { ok: true, json: async () => ({ ok: true, id: 7, path: '/home/me/moved', old_path: '/home/me/current' }) } as unknown as Response
+      }
+      return detailResponse({ path: '/home/me/current' })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const hotSwitch = vi.fn(async () => {})
+    const wrapper = mountDetail(7, { hotSwitchProject: hotSwitch })
+    await flushPromises()
+
+    wrapper.findComponent(ProjectDialog).vm.$emit('pick', '/home/me/moved')
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/projects/detail?id=7', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: '/home/me/moved' }),
+    })
+    expect(hotSwitch).toHaveBeenCalledWith('/home/me/moved')
+    expect(mockToastShow).toHaveBeenCalledWith('Project path updated', expect.anything())
+  })
+
+  it('aborts before PATCH when the editor leave guard is declined', async () => {
+    const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
+      if (opts?.method === 'PATCH') {
+        return { ok: true, json: async () => ({ ok: true, path: '/home/me/moved' }) } as unknown as Response
+      }
+      return detailResponse({ path: '/home/me/current' })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const hotSwitch = vi.fn(async () => {})
+    const wrapper = mountDetail(7, { hotSwitchProject: hotSwitch })
+    await flushPromises()
+    useFileEditor().registerLeaveGuard(() => false)
+    fetchMock.mockClear()
+
+    wrapper.findComponent(ProjectDialog).vm.$emit('pick', '/home/me/moved')
+    await flushPromises()
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(hotSwitch).not.toHaveBeenCalled()
+  })
+
+  it('does not re-point the SPA when a different project is renamed', async () => {
+    const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
+      if (opts?.method === 'PATCH') {
+        return { ok: true, json: async () => ({ ok: true, id: 7, path: '/home/me/moved', old_path: '/home/me/alpha' }) } as unknown as Response
+      }
+      return detailResponse()
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const hotSwitch = vi.fn(async () => {})
+    const wrapper = mountDetail(7, { hotSwitchProject: hotSwitch })
+    await flushPromises()
+
+    wrapper.findComponent(ProjectDialog).vm.$emit('pick', '/home/me/moved')
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/projects/detail?id=7', expect.objectContaining({ method: 'PATCH' }))
+    expect(hotSwitch).not.toHaveBeenCalled()
+  })
+
+  it('reports a switch failure separately after the rename already succeeded', async () => {
+    const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
+      if (opts?.method === 'PATCH') {
+        return { ok: true, json: async () => ({ ok: true, id: 7, path: '/home/me/moved', old_path: '/home/me/current' }) } as unknown as Response
+      }
+      return detailResponse({ path: '/home/me/current' })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const hotSwitch = vi.fn(async () => { throw new Error('switch failed') })
+    const wrapper = mountDetail(7, { hotSwitchProject: hotSwitch })
+    await flushPromises()
+
+    wrapper.findComponent(ProjectDialog).vm.$emit('pick', '/home/me/moved')
+    await flushPromises()
+
+    expect(mockToastShow).toHaveBeenCalledWith('Failed to switch project', expect.anything())
+    expect(mockToastShow).not.toHaveBeenCalledWith('Project path updated', expect.anything())
+    // The registry DID change, so the panel must show the new path even though
+    // the SPA stayed on the old one.
+    expect(fetchMock).toHaveBeenCalledWith('/api/projects/detail?id=7')
+  })
+
+  it('shows the server error and keeps the project when the rename is refused', async () => {
+    const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
+      if (opts?.method === 'PATCH') {
+        return { ok: false, json: async () => ({ error: 'another project already uses this path' }) } as unknown as Response
+      }
+      return detailResponse()
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountDetail(7)
+    await flushPromises()
+
+    wrapper.findComponent(ProjectDialog).vm.$emit('pick', '/home/me/taken')
+    await flushPromises()
+
+    expect(mockToastShow).toHaveBeenCalledWith('another project already uses this path', expect.anything())
+    expect(wrapper.text()).toContain('alpha')
+  })
+
+  it('skips the request when the picked path is unchanged', async () => {
+    const fetchMock = vi.fn(async () => detailResponse())
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountDetail(7)
+    await flushPromises()
+    fetchMock.mockClear()
+
+    wrapper.findComponent(ProjectDialog).vm.$emit('pick', '/home/me/alpha/')
+    await flushPromises()
+
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('deletes the project after the typed name matches', async () => {

@@ -148,7 +148,7 @@ if (meStatus !== 200) {
 
 宽屏布局：`.wide-dock`（左竖栏）+ `.col-left`（左内容）+ `.col-right`（聊天）+ `.session-sidebar`（会话侧栏，固定 280px）。
 
-**Dock 按钮无 `data-tab`，只有 `title`**（中文界面）：文件管理器 / 文件 / 项目历史 / 议题与合并请求 / 任务 / 终端 / 数据统计 / 端口映射 / 设置。
+**Dock 按钮同时带 `data-tab` 与 `title`**（中文界面）：`browse` 文件管理器 / `view` 文件 / `history` 项目历史 / `forge` GitHub 集成 / GitLab 集成（标签跟随绑定平台）/ `tasks` 任务 / `terminal` 终端 / `stats` 数据统计 / `proxy` 端口映射 / `notifications` 通知中心 / `settings` 设置。取景优先用 `data-tab` 定位（稳定、与语言无关），`title` 只在需要点击某个具名按钮时用（随界面语言变化）。
 
 | 模块 | 面板根选择器 | 备注 |
 |---|---|---|
@@ -162,7 +162,7 @@ if (meStatus !== 200) {
 | 任务 | `.task-tab` | 含事件任务 + 定时任务 |
 | 终端 | `.terminal-panel` | xterm；输入焦点 `.xterm-helper-textarea` |
 | 数据统计 | `.stats-tab-host` | 三子页：用量统计/代码存量/代码增量 |
-| 设置 | `.settings-page` | 首页 `.settings-index__row`（**17 分类**，两列；含独立的「技能」分类） |
+| 设置 | `.settings-page` | 首页 `.settings-index__row`（**20 分类**，两列；含独立的「技能」分类） |
 
 **TabPanel 用 `v-show` 不是 `v-if`**：切过的面板留在 DOM（opacity:0）。自检必须判 `.tab-panel-active` 或走 `checkVisibility`，不能数元素个数。
 
@@ -170,7 +170,7 @@ if (meStatus !== 200) {
 
 ## 五、720p 的固有构图约束
 
-- **设置首页 18 个分类**（每行 96px，两列）在 648px 可视高度里只能完整显示 13 个，必然截断。接受它，或用滚动分两张。
+- **设置首页 20 个分类**（每行 96px，两列）在 648px 可视高度里只能完整显示 13 个，必然截断。接受它，或用滚动分两张。
 - **Git 提交列表**同理，只能显示前几条。
 
 ### 左栏必须收窄到 441px（用户明确要求）
@@ -294,7 +294,7 @@ localStorage.setItem('clawbench-panel.split-ratio', String(441 / 1232));
 **Forge**：动态 / 议题 / 合并 / 流水线 / 详情 / 绑定弹窗
 **终端**：标签栏 / 虚拟键工具栏 / 主题选择器 / 键位配置 / 帮助抽屉 / 快速指令
 **统计**：用量统计（含筛选与图表切换）/ 代码存量 / 代码增量
-**设置**：**18 个分类逐个出图**（项目/外观/文件/聊天/智能体/**技能**/AI 摘要/会话搜索/语音朗读/语音识别/终端/端口映射/内网穿透/GitHub GitLab 集成/推送通知/安全/调试/关于）
+**设置**：**20 个分类逐个出图**（其他/外观/项目/文件/聊天/智能体/终端/语音朗读/语音识别/AI 摘要/会话搜索/端口映射/GitHub GitLab 集成/技能/MCP 服务/推送通知/用量/安全/调试/关于）
 
 ## 十、设置分类截图脚本要点
 
@@ -742,7 +742,7 @@ if os.path.getsize(out) > 300*1024 and uniq < 60000:   # UI 截图
 |---|---|
 | 会话 | `chatUnreadCount` |
 | 项目历史 | `gitWorkingTreeChangeCount` |
-| 议题与合并请求 | `forgeUnreadCount` |
+| GitHub/GitLab 集成 | `forgeUnreadCount` |
 | 任务 | `taskUnreadCount` |
 | 终端 | `terminalSessionCount` |
 | 端口映射 | `portForwardEnabledCount` |

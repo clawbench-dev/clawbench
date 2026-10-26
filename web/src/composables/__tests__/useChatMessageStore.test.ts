@@ -50,4 +50,27 @@ describe('createChatMessageStore — thin reducer wrapper', () => {
     store.dispatch({ type: 'clear' })
     expect(messages.value).toEqual(direct)
   })
+
+  // An empty content delta must not open a text block. Such a block is persisted
+  // without a `text` key (Go's `omitempty`), so a reload hands the renderer
+  // undefined and blanks the whole message (message 65835). Mirrors the
+  // AccumulateBlock guard on the backend and ws_thinking's guard below it.
+  it('ws_content with empty text does not open a block', () => {
+    const store = createChatMessageStore(messages)
+    const sm = msg({ id: 'empty-1', streaming: true, seq: 1 })
+    messages.value = [sm]
+
+    store.dispatch({ type: 'ws_content', text: '' })
+    expect(sm.blocks).toHaveLength(0)
+
+    // A real delta afterwards still opens the block normally.
+    store.dispatch({ type: 'ws_content', text: 'real' })
+    expect(sm.blocks).toHaveLength(1)
+    expect(sm.blocks![0]).toMatchObject({ type: 'text', text: 'real' })
+
+    // And an empty delta does not disturb it.
+    store.dispatch({ type: 'ws_content', text: '' })
+    expect(sm.blocks).toHaveLength(1)
+    expect(sm.blocks![0].text).toBe('real')
+  })
 })

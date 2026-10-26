@@ -207,12 +207,9 @@ func notifyProjectRenamed(oldPath, newPath string) {
 // no other table is rewritten — every project-scoped row keeps referring to the
 // same id, so all of it follows the project to its new path.
 //
-// NOTE: there is currently NO production caller — no endpoint exposes a
-// rename, so the capability is unreachable today and is exercised only by
-// tests. It is kept because it is the operation the refactor exists to make
-// cheap, and because the caches it invalidates (this package's path→id map and
-// the RAG store's, via RegisterProjectRenamedHook) are live. Wire it to an
-// endpoint before claiming the refactor's payoff in user-facing terms.
+// Wired to the user-facing PATCH /api/projects/detail endpoint through
+// service.RenameProjectData, which adds the running-session and path-validity
+// guards this leaf package cannot express.
 //
 // Colliding with an existing project is an error rather than a merge. Merging
 // would have to repoint ~15 tables and decide what to do with conflicting

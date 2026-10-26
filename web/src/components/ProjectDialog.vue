@@ -1,8 +1,8 @@
 <template>
-  <ModalDialog :open="open" :title="t('projectDialog.title')" :z-index="2500" full-height @close="$emit('close')">
+  <ModalDialog :open="open" :title="t(titleKey)" :z-index="2500" full-height @close="$emit('close')">
     <template #header>
       <Folder :size="16" class="modal-header-icon" />
-      <span class="modal-title">{{ t('projectDialog.title') }}</span>
+      <span class="modal-title">{{ t(titleKey) }}</span>
     </template>
     <!-- Browse nav -->
     <div class="dialog-nav">
@@ -82,8 +82,18 @@ const dialog = useDialog()
 
 const props = defineProps({
   open: Boolean,
+  /**
+   * 'switch' (default) picks a directory and opens it as the current project.
+   * 'pick' only emits the chosen directory, for callers that repoint an
+   * existing project (settings → project detail → change path).
+   */
+  mode: { type: String, default: 'switch' },
+  /** Directory to browse from when the dialog opens (defaults to home/root). */
+  initialPath: { type: String, default: '' },
+  /** i18n key for the dialog title. */
+  titleKey: { type: String, default: 'projectDialog.title' },
 })
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'pick'])
 const toast = inject('toast', null)
 const hotSwitchProject = inject('hotSwitchProject', null)
 
@@ -136,8 +146,10 @@ watch(() => props.open, (isOpen) => {
     if (isOpen) {
         searchQuery.value = ''
         selectedPath.value = ''
-        // Default to homeDir on non-Windows; on Windows (multi-root) stay at root level
-        browsePath.value = isWindows.value ? '/' : (store.state.homeDir || '/')
+        // Callers repointing an existing project pass the directory it came
+        // from, so the user does not have to navigate from home again.
+        browsePath.value = props.initialPath ||
+            (isWindows.value ? '/' : (store.state.homeDir || '/'))
         loadBrowse()
     }
 })
@@ -264,6 +276,11 @@ async function confirm() {
         path = currentBrowseAbs.value
     }
     if (!path) return
+    if (props.mode === 'pick') {
+        emit('pick', path)
+        emit('close')
+        return
+    }
     try {
         if (hotSwitchProject) {
             emit('close')

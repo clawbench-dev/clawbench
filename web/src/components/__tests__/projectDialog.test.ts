@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ProjectDialog from '../ProjectDialog.vue'
@@ -29,7 +29,7 @@ vi.mock('@/stores/app', () => ({
   store: { state: { rootPaths: ['/'], homeDir: '/home/user' } },
 }))
 
-const TeleportStub = { template: '<div><slot /></div>' }
+const TeleportStub = { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' }
 
 const JumpStub = {
   props: ['open'],
@@ -37,7 +37,7 @@ const JumpStub = {
   template: '<div v-if="open" class="jump-dialog-stub" @click="$emit(\'confirm\', \'src/utils\')" />',
 }
 
-function mountDialog(props = {}) {
+function mountDialog(props = {}, hotSwitchProject = vi.fn()) {
   return mount(ProjectDialog, {
     props: { open: true, ...props },
     global: {
@@ -45,7 +45,7 @@ function mountDialog(props = {}) {
       plugins: [i18n],
       provide: {
         toast: { show: vi.fn() },
-        hotSwitchProject: vi.fn(),
+        hotSwitchProject,
       },
     },
   })
@@ -79,6 +79,38 @@ describe('ProjectDialog', () => {
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/projects?path=' + encodeURIComponent('src/utils'))
     )
+  })
+
+  it('uses the caller-provided initial path when opening', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ path: '/home/user/old', items: [] }),
+    })
+    const wrapper = mountDialog({ open: false, initialPath: '/home/user/old' })
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/api/projects?path=' + encodeURIComponent('/home/user/old')
+    )
+  })
+
+  it('pick mode emits the chosen directory instead of switching projects', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ path: '/home/user/old', items: [] }),
+    })
+    const hotSwitch = vi.fn()
+    const wrapper = mountDialog({ open: false, initialPath: '/home/user/old', mode: 'pick' }, hotSwitch)
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+
+    await wrapper.find('.fbtn-primary').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('pick')).toBeTruthy()
+    expect(wrapper.emitted('pick')![0]).toEqual(['/home/user/old'])
+    expect(hotSwitch).not.toHaveBeenCalled()
   })
 })
 

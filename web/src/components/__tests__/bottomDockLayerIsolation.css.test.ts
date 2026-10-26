@@ -3,28 +3,25 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /**
- * Android WebView: the bottom dock must be its own compositing layer.
+ * Android WebView: the bottom dock is CLIPPED but never promoted to a layer.
  *
- * Sibling of the `.chat-message { will-change: transform }` rule in
- * ChatMessageItem.vue, and it covers the other half of the same compositor bug.
- * That rule promotes each MESSAGE to its own layer, so message-to-message
- * contamination is gone — but the polluted region here is the chat panel's own
- * empty space, and the pixels come from the DOCK, a sibling subtree that has no
- * layer of its own. When a reply finishes the list re-composites and WebView
- * keeps the previous frame's dock pixels at the band's old offset: users see a
- * thin strip of the dock (typically the orange active-tab disc) just below the
- * action bar, which only a reload or a session switch clears.
+ * Symptom this covers: a thin strip of the dock (typically the orange
+ * active-tab disc) appears in the gap above the composer after a reply
+ * finishes. The pixels come from the dock, a sibling subtree of the chat panel.
+ * `contain: paint` clips the dock's descendants to the dock's own box so they
+ * cannot be painted above it.
  *
- * `contain: paint` clips the dock's descendants to the dock's own box so a stale
- * composite cannot bleed above it; `will-change: transform` gives the wrapper
- * its own layer. Both must stay scoped to [data-app-mode] — promoting the dock
- * unconditionally would disable subpixel antialiasing for its labels on
- * non-HiDPI desktop screens.
+ * ⚠️ `will-change: transform` must NOT come back here. It was the previous fix,
+ * and it is the bug being removed tree-wide: an element that changes size while
+ * composited is exactly what this WebView draws as a stretched stale texture.
+ * The dock's height does change (badges/labels), so promoting it reintroduces
+ * the ghost class. The only layer boundary lives on the stable-size chat panel
+ * (ChatPanelContent.vue); see chatCompositingBoundary.css.test.ts.
  *
  * jsdom has no CSS engine, so this is a source-contract check (the same pattern
  * chatBoldStyle.test.ts / chatMetaBarAlignment.test.ts use).
  */
-describe('bottom dock layer isolation (Android WebView GPU ghost)', () => {
+describe('bottom dock paint clip (Android WebView GPU ghost)', () => {
   const appSource = readFileSync(resolve(__dirname, '../../App.vue'), 'utf8')
 
   /** Declarations of the first rule whose selector matches `pattern`. */
@@ -34,18 +31,19 @@ describe('bottom dock layer isolation (Android WebView GPU ghost)', () => {
     return m![1]
   }
 
-  it('promotes the dock wrapper to its own layer and clips its descendants', () => {
+  it('clips the dock descendants without promoting a layer', () => {
     const rule = declsIn(/:root\[data-app-mode\]\s+\.bottom-dock-wrapper\s*\{([^}]*)\}/)
-    expect(rule).toMatch(/will-change:\s*transform/)
     expect(rule).toMatch(/contain:\s*paint/)
+    // Promotion is the ghost source, not the fix — it must stay out.
+    expect(rule).not.toMatch(/will-change:\s*transform/)
+    expect(rule).not.toMatch(/transform\s*:/)
   })
 
-  it('keeps the isolation scoped to app mode', () => {
-    // An unscoped rule would also promote the dock in desktop browsers, where
-    // the bug does not exist and the layer costs ClearType on its labels.
+  it('keeps the clip scoped to app mode', () => {
+    // An unscoped rule would clip legitimate overflow on desktop, where the
+    // compositor bug does not exist.
     const bare = appSource.match(/^\s*\.bottom-dock-wrapper\s*\{([^}]*)\}/m)
     if (bare) {
-      expect(bare[1]).not.toMatch(/will-change/)
       expect(bare[1]).not.toMatch(/contain:\s*paint/)
     }
   })

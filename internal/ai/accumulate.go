@@ -67,6 +67,18 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 	switch event.Type {
 	case "content":
 		parent := event.ParentToolCallID
+		// Empty deltas carry no content and must not open a block. Unlike the
+		// thinking branch below, this one had no such guard: a stray empty
+		// content delta arriving right after a tool_use (where there is no text
+		// block to merge into) appended `{type:"text", text:""}`. Text carries
+		// `json:"text,omitempty"`, so that block persisted with NO `text` key at
+		// all — and the frontend's StaticBlockCache.makeKey does `text.length`
+		// on it, throwing a TypeError that blanked the entire message bubble.
+		// Merging into an existing block would also be a no-op, so skipping is
+		// strictly better.
+		if event.Content == "" {
+			return ""
+		}
 		// Coalesce incremental content deltas into the most recent text block.
 		if idx, found := findLastBlockOfType("text", parent); found {
 			(*blocks)[idx].Text += event.Content

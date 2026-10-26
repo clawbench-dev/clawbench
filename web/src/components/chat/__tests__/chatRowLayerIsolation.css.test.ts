@@ -3,26 +3,29 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /**
- * Android WebView: the chat ROW must be both its own layer and clipped to its
- * own box.
+ * Android WebView: the chat ROW must be clipped to its own box and must NOT be
+ * promoted to its own compositing layer.
  *
- * `will-change: transform` alone promotes `.chat-message` to a compositing layer
- * — that stopped message-to-message pixel contamination (phantom metadata text).
- * It does NOT bound what the layer paints, so a stale slice of the bubble's own
- * background can still survive a re-composite. Users report exactly that: a
- * ~9px band of `--bg-tertiary` sitting just under the action bar of the reply
- * that just finished streaming (older replies are clean — their layer was
- * composited long ago), measured as a full-width strip in the panel background
- * colour between the meta bar and the composer.
+ * History matters here, because the obvious fix is the wrong one. Promoting
+ * each row (`will-change: transform`) stopped message-to-message pixel
+ * contamination, but turned every row into a GPU texture whose size changes
+ * whenever the row grows. This WebView version then redraws the resized texture
+ * into the delta instead of repainting it: a thin strip of the reply's own
+ * pixels (a vertically squashed copy of the meta bar text and its icons,
+ * 4px = the meta bar's `margin-top`) appears just under the action bar at the
+ * moment a reply finishes and the meta bar grows the row. The same resize-tile
+ * effect produced the earlier ~9px `--bg-tertiary` band.
  *
- * `contain: paint` bounds the row's paint to its own box. Both declarations must
- * stay under [data-app-mode]: desktop browsers do not have this compositor bug
- * and would pay a layer for every message for nothing.
+ * `contain: paint` is the isolation mechanism: it bounds each row's paint to
+ * its own box, so cross-row bleeding is impossible without making the row a
+ * layer. It must stay under [data-app-mode]: desktop browsers do not have this
+ * compositor bug, and paint containment changes the containing block for
+ * injected fixed overlays.
  *
  * jsdom has no CSS engine, so this is a source-contract check (same pattern as
  * chatBoldStyle.test.ts).
  */
-describe('chat row layer + paint containment (Android WebView GPU ghost)', () => {
+describe('chat row paint containment, no layer promotion (Android WebView GPU ghost)', () => {
   const itemSource = readFileSync(
     resolve(__dirname, '../ChatMessageItem.vue'),
     'utf8',
@@ -38,9 +41,13 @@ describe('chat row layer + paint containment (Android WebView GPU ghost)', () =>
     return m![1].replace(/\/\*[\s\S]*?\*\//g, '')
   }
 
-  it('promotes the row to its own layer', () => {
-    // Removing this reintroduces message-to-message contamination.
-    expect(appModeChatMessageRule()).toMatch(/will-change:\s*transform/)
+  it('does NOT promote the row to its own layer', () => {
+    // A promoted row is a GPU texture that resizes every time the row grows
+    // (meta bar appears, tool card expands). This WebView redraws the resized
+    // texture into the delta, producing a squashed copy of the meta bar under
+    // the action bar. Isolation is done by `contain: paint` below instead.
+    expect(appModeChatMessageRule()).not.toMatch(/will-change:\s*transform/)
+    expect(appModeChatMessageRule()).not.toMatch(/transform\s*:/)
   })
 
   it('clips the row paint to its own box', () => {
@@ -89,6 +96,15 @@ describe('chat row layer + paint containment (Android WebView GPU ghost)', () =>
       // `layout style`) keeps the other containment the base rule wants;
       // `none` is also acceptable. What must never come back is `paint`.
       expect(escapeRule()).not.toMatch(/contain:[^;]*paint/)
+    })
+
+    it('keeps the row a containing block while the clip is lifted', () => {
+      // The fixed menu is positioned against the ROW because the row is a
+      // containing block for fixed descendants. The base rule drops to
+      // uncomposited `contain: paint` (which provides it); once paint
+      // containment is lifted here, `will-change: transform` must provide the
+      // containing block instead, or the open menu jumps to the viewport.
+      expect(escapeRule()).toMatch(/will-change:\s*transform/)
     })
 
     it('targets the row that owns the menu, not the menu itself', () => {
@@ -223,9 +239,9 @@ describe('chat row layer + paint containment (Android WebView GPU ghost)', () =>
     })
   })
 
-  it('keeps both declarations scoped to app mode', () => {
+  it('keeps the containment scoped to app mode', () => {
     // An unscoped `contain: paint` would clip legitimate overflow on desktop
-    // (and `will-change` would cost a layer per message).
+    // and would change the containing block for fixed overlays everywhere.
     const bare = itemSource.match(/^\.chat-message\s*\{([^}]*)\}/m)
     if (bare) {
       expect(bare[1]).not.toMatch(/contain:\s*paint/)

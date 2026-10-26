@@ -81,7 +81,7 @@ vi.mock('vue-i18n', async (importOriginal) => ({
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
-function mountPanel(props?: { showLogout?: boolean; wsStatus?: string }) {
+function mountPanel(props?: { showServerSwitch?: boolean; wsStatus?: string }) {
   return mount(SystemResourcesPanel, {
     props,
     global: {
@@ -95,7 +95,7 @@ function mountPanel(props?: { showLogout?: boolean; wsStatus?: string }) {
         CloudDownload: true,
         CloudUpload: true,
         Server: true,
-        LogOut: true,
+        ArrowLeftRight: true,
         WifiOff: true,
         LoaderCircle: true,
         Gauge: true,
@@ -218,32 +218,36 @@ describe('SystemResourcesPanel', () => {
     expect(wrapper.find('.server-info-address')).toBeTruthy()
   })
 
-  it('does not show logout button when showLogout is false', () => {
-    const wrapper = mountPanel({ showLogout: false })
-    expect(wrapper.find('.logout-btn').exists()).toBe(false)
+  it('does not show the switch-server button when showServerSwitch is false', () => {
+    const wrapper = mountPanel({ showServerSwitch: false })
+    expect(wrapper.find('.switch-server-btn').exists()).toBe(false)
   })
 
-  it('shows logout button when showLogout is true', () => {
-    const wrapper = mountPanel({ showLogout: true })
-    expect(wrapper.find('.logout-btn').exists()).toBe(true)
+  it('shows the switch-server button when showServerSwitch is true', () => {
+    const wrapper = mountPanel({ showServerSwitch: true })
+    expect(wrapper.find('.switch-server-btn').exists()).toBe(true)
   })
 
-  it('renders logout button as its own row with label below the address', () => {
-    const wrapper = mountPanel({ showLogout: true })
-    const btn = wrapper.find('.logout-btn')
+  it('renders the switch-server button as its own row with a visible label', () => {
+    const wrapper = mountPanel({ showServerSwitch: true })
+    const btn = wrapper.find('.switch-server-btn')
     expect(btn.exists()).toBe(true)
-    // Label is visible text, not just an icon with a tooltip
-    expect(btn.text()).toContain('login.logout')
-    // Full-width row: separated from the server info header row
+    expect(btn.text()).toContain('login.switchServer')
     const panel = wrapper.find('.system-resources-panel')
     expect(panel.find('.server-info-header').exists()).toBe(true)
-    expect(panel.find('.logout-btn').exists()).toBe(true)
+    expect(panel.find('.switch-server-btn').exists()).toBe(true)
   })
 
-  it('emits logout event when logout button is clicked', async () => {
-    const wrapper = mountPanel({ showLogout: true })
-    await wrapper.find('.logout-btn').trigger('click')
-    expect(wrapper.emitted('logout')).toBeTruthy()
+  it('emits switch-server when the button is clicked', async () => {
+    const wrapper = mountPanel({ showServerSwitch: true })
+    await wrapper.find('.switch-server-btn').trigger('click')
+    expect(wrapper.emitted('switch-server')).toBeTruthy()
+  })
+
+  it('places the switch-server action at the bottom of the panel', () => {
+    const wrapper = mountPanel({ showServerSwitch: true })
+    const children = wrapper.find('.system-resources-panel').element.children
+    expect(children[children.length - 1].classList.contains('switch-server-btn')).toBe(true)
   })
 
   // ── Connection status ──

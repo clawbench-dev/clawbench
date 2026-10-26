@@ -218,6 +218,25 @@ describe('providerIcons', () => {
                 expect(defined.has(cls), `provider "${id}" uses .${cls} but no rule defines it`).toBe(true)
             }
         })
+
+        // OpenAI's brand purple (#412991) is dark. On the dark themes it drops
+        // to a muddy, near-illegible mark against --bg-tertiary, so it needs its
+        // own lightened colour — "a rule exists" is not enough, it must be light.
+        it('mono-openai lightens to a readable purple in dark themes', () => {
+            const css = readFileSync(resolve(__dirname, '../../assets/mono-icon-colors.css'), 'utf8')
+            const match = css.match(/\[data-theme-base="dark"\]\s+\.mono-openai\s*\{\s*color:\s*(#[0-9a-fA-F]{3,6})\s*;/)
+            expect(match, '.mono-openai has no dark-theme colour override').not.toBeNull()
+
+            const hex = match![1].slice(1)
+            const full = hex.length === 3 ? hex.split('').map(c => c + c).join('') : hex
+            const [r, g, b] = [0, 2, 4].map(i => parseInt(full.slice(i, i + 2), 16) / 255)
+            const linear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+            const luminance = 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+
+            // Dark theme surfaces sit around L* ≈ 0.01–0.03; a mark below this
+            // threshold visually merges into the background at 16px.
+            expect(luminance).toBeGreaterThan(0.3)
+        })
     })
 
     describe('extractSvgInner', () => {

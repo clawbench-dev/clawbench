@@ -92,6 +92,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   updateCommandState: vi.fn(),
   updateThinkingEffortState: vi.fn(),
   reconcileThinkingEffort: vi.fn(),
+  reconcileModelSelection: vi.fn(),
   updateAvailableThinkingEfforts: vi.fn(),
   updateUsageState: vi.fn(),
   currentAgentId: { value: 'test-agent-1' },
@@ -2431,6 +2432,24 @@ describe('useChatStream', () => {
           { id: 'gpt-4', name: 'GPT-4' },
           { id: 'gpt-3.5', name: 'GPT-3.5' },
         ], 'gpt-4')
+      })
+
+      it('re-resolves the session model against the new list', async () => {
+        const { reconcileModelSelection } = await import('@/composables/useSessionIdentity')
+        ;(reconcileModelSelection as any).mockClear()
+
+        const options = createOptions()
+        const { connectStream } = useChatStream(options)
+        connectStream('test-session-1')
+
+        simulateWsEvent('model_list_update', {
+          resolvedModels: [{ id: 'gpt-4', name: 'GPT-4', default: true }],
+          currentModelId: 'gpt-4',
+        })
+
+        // A list that no longer contains the session's model must not leave the
+        // chip on a dead id.
+        expect(reconcileModelSelection).toHaveBeenCalledWith('test-agent-1')
       })
 
       it('should not call when models is empty', async () => {

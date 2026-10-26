@@ -33,6 +33,13 @@
 
       <div class="project-detail__actions">
         <button
+          class="fbtn project-detail__btn"
+          data-action="project-rename"
+          @click="renameOpen = true"
+        >
+          {{ t('settings.items.projectRename') }}
+        </button>
+        <button
           class="fbtn project-detail__btn project-detail__btn--primary"
           :disabled="isCurrent"
           @click="switchToProject"
@@ -48,6 +55,15 @@
         </button>
       </div>
     </template>
+
+    <ProjectDialog
+      :open="renameOpen"
+      mode="pick"
+      :initial-path="renameStartPath"
+      title-key="settings.items.projectRenamePickTitle"
+      @close="renameOpen = false"
+      @pick="renameProject"
+    />
   </div>
 </template>
 
@@ -55,12 +71,14 @@
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import ProjectDialog from '@/components/ProjectDialog.vue'
 import { store } from '@/stores/app'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
+import { useFileEditor } from '@/composables/useFileEditor'
 import { appLog } from '@/utils/appLog'
 import { formatRelativeTime } from '@/utils/format'
-import { baseName, normalizeSlashes } from '@/utils/path'
+import { baseName, dirName, normalizeSlashes } from '@/utils/path'
 
 const TAG = 'ProjectDetailSetting'
 
@@ -81,6 +99,7 @@ const emit = defineEmits<{ deleted: [] }>()
 const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
+const fileEditor = useFileEditor()
 
 // Injected from App.vue (see hotSwitchProject / switchTab providers).
 const hotSwitchProject = inject<((path: string) => Promise<void>) | null>('hotSwitchProject', null)
@@ -88,6 +107,11 @@ const switchTab = inject<((tab: string) => void) | undefined>('switchTab', undef
 
 const detail = ref<ProjectDetail | null>(null)
 const loading = ref(true)
+
+// Directory picker for "change path". Starts at the parent of the current
+// directory: the project was moved, so the new location is usually a sibling.
+const renameOpen = ref(false)
+const renameStartPath = computed(() => (detail.value ? dirName(detail.value.path) : ''))
 
 const isCurrent = computed(() => {
   if (!detail.value) return false
@@ -136,6 +160,51 @@ async function switchToProject() {
   } catch (err) {
     appLog.e(TAG, 'failed to switch project', err)
     toast.show(t('settings.items.projectSwitchFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+  }
+}
+
+async function renameProject(newPath: string) {
+  if (!detail.value || !newPath) return
+  const norm = (p: string) => normalizeSlashes(p).replace(/\/+$/, '')
+  if (norm(newPath) === norm(detail.value.path)) return
+
+  const wasCurrent = isCurrent.value
+  // Renaming the open project re-points the SPA, which unmounts the editor.
+  // Ask before the registry changes: a cancel afterwards would leave the
+  // backend on the new path while the app still shows the old one.
+  if (wasCurrent && !(await fileEditor.confirmLeave())) return
+
+  try {
+    const resp = await fetch(`/api/projects/detail?id=${props.projectId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: newPath }),
+    })
+    const body = await resp.json().catch(() => ({}))
+    if (!resp.ok) {
+      toast.show(body.error || t('settings.items.projectRenameFailed'), { icon: 'warning', type: 'error', duration: 4000 })
+      return
+    }
+
+    // The id is unchanged, so the SPA's open project must be re-pointed at the
+    // new path; otherwise it keeps sending the old path in request cookies.
+    // The registry is already updated at this point, so a failure here is a
+    // switch problem, not a rename problem — report it as such.
+    if (wasCurrent && hotSwitchProject && body.path) {
+      try {
+        await hotSwitchProject(body.path)
+      } catch (err) {
+        appLog.e(TAG, 'renamed project but failed to switch to its new path', err)
+        await load()
+        toast.show(t('settings.items.projectSwitchFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+        return
+      }
+    }
+    await load()
+    toast.show(t('settings.items.projectRenameSuccess'), { icon: 'success', type: 'success', duration: 2500 })
+  } catch (err) {
+    appLog.e(TAG, 'failed to rename project', err)
+    toast.show(t('settings.items.projectRenameFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 

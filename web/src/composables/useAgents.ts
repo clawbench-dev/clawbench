@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { apiGet, apiPatch, apiPost, apiDelete, apiPut } from '@/utils/api'
+import { pickDefaultModelId, resolveModelSelection as resolveModelSelectionFromList } from '@/utils/modelSelection'
 import { gt } from '@/composables/useLocale'
 import { updatePlanEntries } from '@/composables/usePlanProgress'
 import { appLog } from '@/utils/appLog'
@@ -16,17 +17,23 @@ let _updateAvailableModes: ((modes: Array<{ id: string; name: string }>) => void
 let _updateAvailableThinkingEfforts: ((levels: Array<{ id: string; name: string }>) => void) | null = null
 let _updateCommandState: ((commands: Array<{ name: string; description: string; inputHint?: string }>) => void) | null = null
 let _currentAgentId: { value: string } | null = null
+// Re-resolves the CURRENT session's model after an authoritative list
+// replacement. Optional: tests and callers that only care about the list do
+// not have to supply it.
+let _reconcileModelSelection: ((agentId: string) => void) | null = null
 
 export function registerIdentityUpdaters(opts: {
   updateAvailableModes: (modes: Array<{ id: string; name: string }>) => void
   updateAvailableThinkingEfforts: (levels: Array<{ id: string; name: string }>) => void
   updateCommandState: (commands: Array<{ name: string; description: string; inputHint?: string }>) => void
   currentAgentId: { value: string }
+  reconcileModelSelection?: (agentId: string) => void
 }) {
   _updateAvailableModes = opts.updateAvailableModes
   _updateAvailableThinkingEfforts = opts.updateAvailableThinkingEfforts
   _updateCommandState = opts.updateCommandState
   _currentAgentId = opts.currentAgentId
+  _reconcileModelSelection = opts.reconcileModelSelection ?? null
 }
 
 // Singleton state — shared across the whole app
@@ -133,6 +140,11 @@ export function resetAgents(): void {
     _updateAvailableThinkingEfforts = null
     _updateCommandState = null
     _currentAgentId = null
+    // _reconcileModelSelection is deliberately NOT cleared: it is a pure
+    // function that no-ops unless the agent matches the current session, and
+    // the updaters are registered once at module evaluation time — clearing it
+    // here would disable model reconciliation for the rest of the SPA session
+    // after a project switch.
 }
 
 async function loadAgents(force = false): Promise<void> {
@@ -165,8 +177,8 @@ async function loadAgents(force = false): Promise<void> {
             // to a non-ACP backend. Other agents' ACP state will be loaded
             // when the user switches sessions (via /api/ai/chat REST response
             // or SSE events).
+            const activeAgentId = _currentAgentId?.value || ''
             if (data.acpStates) {
-                const activeAgentId = _currentAgentId?.value || ''
                 const activeState = activeAgentId ? data.acpStates[activeAgentId] as AcpState : null
                 if (activeState) {
                     // Only update available modes/levels — currentModeId and
@@ -209,6 +221,12 @@ async function loadAgents(force = false): Promise<void> {
                     // (SSE usage_update, REST chat response, createSession reset).
                 }
             }
+            // The list just replaced above is authoritative for membership: a
+            // model the agent no longer offers must not keep the chip (or the
+            // next request) on a dead id. This is the `agents_updated` /
+            // reconnect path; a manual refresh calls the same updater from
+            // applyRefreshedModelList.
+            if (activeAgentId) _reconcileModelSelection?.(activeAgentId)
         } catch (err: unknown) {
             appLog.e(TAG, 'Failed to load agents:', err)
         } finally {
@@ -286,10 +304,10 @@ function isDefaultAgent(agentId: string): boolean {
 /** Get the default model ID for an agent. Priority: preferredModel > first model with default:true > first in list. */
 function getDefaultModelId(agentId: string): string {
     const agent = agents.value.find(a => a.id === agentId)
-    if (agent?.preferredModel) return agent.preferredModel
-    if (!agent?.models?.length) return ''
-    const defaultModel = agent.models.find((m: { default: boolean }) => m.default)
-    return defaultModel ? defaultModel.id : agent.models[0].id
+    if (!agent) return ''
+    // A preferred model that a refresh removed from the list can no longer
+    // run; pickDefaultModelId falls through to the list's own default there.
+    return pickDefaultModelId(agent.models || [], agent.preferredModel || '')
 }
 
 /** Get the models list for an agent. */
@@ -350,6 +368,34 @@ function syncModelFromAgent(agentId: string): { modelId: string; modelName: stri
 function getAgentModel(agentId: string, modelId: string) {
     const models = getAgentModels(agentId)
     return models.find(m => m.id === modelId)
+}
+
+/**
+ * Resolve a session's model selection against the agent's CURRENT list.
+ *
+ * The single place that decides what the chip shows and what the next request
+ * carries:
+ *  - a candidate the list still offers wins (its display name is refreshed);
+ *  - a candidate a POPULATED list no longer offers is retired — fall back to
+ *    the agent's default so the UI never claims a model the runtime cannot
+ *    run (ACP would silently keep its own model, CLI would get a dead id);
+ *  - an EMPTY list means "not discovered yet", so the candidate is kept
+ *    verbatim rather than being rewritten on no evidence.
+ *
+ * `retired` reports that a non-empty candidate was dropped, which is what
+ * makes this usable for both initial load and post-refresh reconciliation.
+ */
+function resolveModelSelection(agentId: string, candidateId: string): { modelId: string; modelName: string; retired: boolean } {
+    const agent = agents.value.find(a => a.id === agentId)
+    const models = agent?.models || []
+    return resolveModelSelectionFromList(
+        models,
+        agent?.preferredModel || '',
+        candidateId,
+        // The registry may know an id's display name even when the list has not
+        // been discovered yet (empty list keeps the candidate).
+        (id) => getAgentModel(agentId, id)?.name,
+    )
 }
 
 /** Get the thinking effort levels for an agent. Returns [] for unsupported backends. */
@@ -604,6 +650,10 @@ export function applyRefreshedModelList(
     } else {
         agent.models = cli.map(m => ({ ...m }))
     }
+    // A refresh is authoritative for membership: if the session's model is no
+    // longer in the new list, the chip must move to the new default now rather
+    // than keep displaying a model that cannot run.
+    _reconcileModelSelection?.(agentId)
 }
 
 /** Check if an agent supports model refresh (has canRefreshModels from backend). */
@@ -802,6 +852,7 @@ export function useAgents() {
         getAgentDefaultModelName,
         agentHeaderTitle,
         syncModelFromAgent,
+        resolveModelSelection,
         getAgentThinkingEffortLevels,
         getAgentThinkingEffortLevelsIncludingACP,
         hasThinkingEffortLevels,

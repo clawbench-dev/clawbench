@@ -19,8 +19,9 @@
 .mono-mimo { color: #1A1A2E; }
 [data-theme-base="dark"] .mono-mimo { color: #e6edf3; }
 
-/* ---- OpenAI: purple — visible on both themes ---- */
+/* ---- OpenAI: brand purple is dark, so dark themes need a lightened one ---- */
 .mono-openai { color: #412991; }
+[data-theme-base="dark"] .mono-openai { color: #b39ddb; }
 
 /* ---- Anthropic: terracotta — bright enough on both themes, no needsBg ---- */
 .mono-anthropic { color: #D97757; }

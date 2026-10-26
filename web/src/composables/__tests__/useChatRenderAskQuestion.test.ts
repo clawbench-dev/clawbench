@@ -199,3 +199,25 @@ describe('renderTextBlock — mentions (public chip / private drop)', () => {
     expect(html).toContain('没有 targets')
   })
 })
+
+describe('renderTextBlock — undefined text (empty block persisted without a text key)', () => {
+  // ContentBlock.Text is `omitempty` in Go, so a text block with empty content
+  // round-trips as `{type:"text"}` — `block.text` is undefined. Passing that
+  // here used to throw `Cannot read properties of undefined (reading
+  // 'includes')` from renderMentionChips on every streaming pass (41× in
+  // client.log). The funnel must coerce, on both paths.
+  it('does not throw on the post-streaming path', () => {
+    const r = setup()
+    expect(() => r.renderTextBlock(undefined as unknown as string, 'm1', 0)).not.toThrow()
+    expect(r.renderTextBlock(undefined as unknown as string, 'm1', 0)).toBe('')
+  })
+
+  it('does not throw on the streaming path', () => {
+    const r = setup()
+    expect(() => r.renderTextBlock(undefined as unknown as string, 'm1', 0, true)).not.toThrow()
+    // The streaming path is pure markdown (mocked here to echo its input), so
+    // an empty body renders as an empty paragraph — the point is that it
+    // received '' rather than undefined.
+    expect(r.renderTextBlock(undefined as unknown as string, 'm1', 0, true)).toBe('<p></p>')
+  })
+})
