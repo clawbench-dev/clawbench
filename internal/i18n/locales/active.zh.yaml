@@ -47,7 +47,11 @@ CreateSessionFailed: 创建会话失败
 SessionNotFound: 会话未找到
 ProjectNotFound: 项目未找到
 ProjectDeleteForbidden: 该项目无法删除
+ProjectRenameForbidden: 该项目无法修改路径
+ProjectPathInvalid: 目标路径不存在或不是目录
+ProjectPathExists: 已有其他项目使用该路径
 ProjectHasRunningSessions: 该项目有正在运行的会话，请先停止后再删除
+ProjectRenameHasRunningSessions: 该项目有正在运行的会话，请先停止后再修改路径
 CannotDeleteCurrentProject: 无法删除当前正在使用的项目
 ShareNotFound: 分享未找到
 SummaryModelNotConfigured: 尚未配置 AI 摘要模型

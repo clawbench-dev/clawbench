@@ -37,4 +37,27 @@ test.describe('Project settings panel', () => {
     // dedicated detail request).
     await expect(page.locator('.project-detail__stat').filter({ hasText: /repo|仓库/i })).toBeVisible()
   })
+
+  test('opens the directory picker for changing a project path', async ({ page }) => {
+    const projectRow = page.locator('.settings-index__row').filter({ hasText: /project|项目/i }).first()
+    await expect(projectRow).toBeVisible({ timeout: 5000 })
+    await projectRow.click()
+
+    const rows = page.locator('.projects-row')
+    await expect(rows.first()).toBeVisible({ timeout: 10000 })
+    await rows.first().click()
+
+    const renameBtn = page.locator('[data-action="project-rename"]')
+    await expect(renameBtn).toBeVisible({ timeout: 10000 })
+    await renameBtn.click()
+
+    // The same directory picker as the project switcher, but in pick mode: its
+    // title is the "change path" label and confirming only reports the chosen
+    // directory. Cancel here so the shared registry is not mutated.
+    const picker = page.locator('.modal-dialog').filter({ has: page.locator('.dialog-content') })
+    await expect(picker).toBeVisible({ timeout: 10000 })
+    await expect(picker.locator('.modal-title')).toHaveText(/new directory|新目录/i)
+    await picker.locator('.fbtn:not(.fbtn-primary)').click()
+    await expect(picker).toBeHidden()
+  })
 })

@@ -47,7 +47,11 @@ CreateSessionFailed: Failed to create the session
 SessionNotFound: session not found
 ProjectNotFound: project not found
 ProjectDeleteForbidden: this project cannot be deleted
+ProjectRenameForbidden: this project's path cannot be changed
+ProjectPathInvalid: the target path does not exist or is not a directory
+ProjectPathExists: another project already uses this path
 ProjectHasRunningSessions: the project has running sessions; stop them before deleting
+ProjectRenameHasRunningSessions: the project has running sessions; stop them before changing its path
 CannotDeleteCurrentProject: cannot delete the project currently open
 ShareNotFound: share not found
 SummaryModelNotConfigured: AI summary model is not configured

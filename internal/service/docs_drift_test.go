@@ -83,8 +83,8 @@ func readSpecDocs(t *testing.T) map[string]string {
 // openAPICountRe matches the "N paths / M operations" claim the spec docs make.
 //
 // The unit word 个 is OPTIONAL because both spellings occur in the docs:
-// api/README.md writes "178 个路径 / 226 个操作" while docs/spec/README.md
-// writes "178 路径 / 226 操作". Requiring it left spec/README.md matching zero
+// api/README.md writes "178 个路径 / 227 个操作" while docs/spec/README.md
+// writes "178 路径 / 227 操作". Requiring it left spec/README.md matching zero
 // claims, so its count could drift freely — the exact failure this guard exists
 // to prevent.
 //
@@ -160,15 +160,15 @@ func TestSpecDocsOpenAPICountsMatchSpec(t *testing.T) {
 // itself, independent of the live docs.
 //
 // The guard originally required the unit word 个, which silently excluded
-// docs/spec/README.md ("178 路径 / 226 操作" — no 个) from every check. These
+// docs/spec/README.md ("178 路径 / 227 操作" — no 个) from every check. These
 // cases pin both directions: the spellings that MUST match, and the bare ratios
 // that must not (a regex loose enough to catch everything would drown the guard
 // in false positives and get weakened again).
 func TestOpenAPICountReCoversBothSpellings(t *testing.T) {
 	mustMatch := []string{
-		"178 个路径 / 226 个操作", // api/README.md
-		"178 路径 / 226 操作",   // docs/spec/README.md
-		"178个路径/226个操作",     // no spaces
+		"178 个路径 / 227 个操作", // api/README.md
+		"178 路径 / 227 操作",   // docs/spec/README.md
+		"178个路径/227个操作",     // no spaces
 	}
 	for _, s := range mustMatch {
 		m := openAPICountRe.FindStringSubmatch(s)
@@ -176,8 +176,8 @@ func TestOpenAPICountReCoversBothSpellings(t *testing.T) {
 			t.Errorf("%q must be recognized as an OpenAPI count claim; the guard cannot see it", s)
 			continue
 		}
-		if m[1] != "178" || m[2] != "226" {
-			t.Errorf("%q parsed as %s/%s, want 178/226", s, m[1], m[2])
+		if m[1] != "178" || m[2] != "227" {
+			t.Errorf("%q parsed as %s/%s, want 178/227", s, m[1], m[2])
 		}
 	}
 

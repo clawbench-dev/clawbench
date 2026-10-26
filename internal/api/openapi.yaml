@@ -928,6 +928,46 @@ paths:
           $ref: "#/components/responses/Error"
         "409":
           $ref: "#/components/responses/Error"
+    patch:
+      tags: [Projects]
+      summary: 修改项目路径（目录被移动或重命名后重新指向）
+      description: |
+        把已注册项目重新指向磁盘上的另一个目录。**只更新注册表，不移动磁盘
+        目录**。项目 id 不变，因此会话、消息、标签、任务、分享、用量、通知、
+        RAG 索引和项目级智能体都自动跟随。
+
+        拒绝：全局哨兵（id=0）、未知 id、目标路径不存在或不是目录、目标路径
+        已被其他项目注册，以及该项目存在运行中的会话。
+      operationId: projectRegistryRename
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: 项目 id（`projects` 表主键）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  description: 新的项目绝对路径（必须存在且为目录）
+      responses:
+        "200":
+          description: 修改结果（`path` 为规范化后的新路径，`old_path` 为原路径）
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
 
   /api/project:
     get:

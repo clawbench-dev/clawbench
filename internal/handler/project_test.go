@@ -562,6 +562,155 @@ func TestServeProjectRegistryDetail(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 
+	t.Run("PATCH_UpdatesPathAndCurrentProjectCookie", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		oldPath := filepath.Join(env.WatchDir, "oldproj")
+		newPath := filepath.Join(env.WatchDir, "newproj")
+		require.NoError(t, os.MkdirAll(oldPath, 0o755))
+		require.NoError(t, os.MkdirAll(newPath, 0o755))
+		id := store.ProjectIDForTest(t, oldPath)
+
+		req := newRequest(t, http.MethodPatch, "/api/projects/detail?id="+strconv.FormatInt(id, 10), map[string]string{
+			"path": newPath,
+		})
+		withProjectCookie(req, oldPath)
+
+		w := callHandler(ServeProjectRegistryDetail, req)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var resp map[string]any
+		decodeRespJSON(t, w.Body, &resp)
+		assert.Equal(t, newPath, resp["path"])
+		assert.Equal(t, oldPath, resp["old_path"])
+
+		var stored string
+		require.NoError(t, store.ReadDB().QueryRow("SELECT path FROM projects WHERE id = ?", id).Scan(&stored))
+		assert.Equal(t, newPath, stored)
+
+		// The cookie must follow the project, or the next request resolves the
+		// old path and reports a different project.
+		var projectCookie *http.Cookie
+		for _, c := range w.Result().Cookies() {
+			if c.Name == model.ScopedCookieName("clawbench_project") {
+				projectCookie = c
+			}
+		}
+		require.NotNil(t, projectCookie, "expected project cookie to be rewritten")
+		decoded, err := url.QueryUnescape(projectCookie.Value)
+		require.NoError(t, err)
+		assert.Equal(t, newPath, decoded)
+	})
+
+	t.Run("PATCH_OtherProject_DoesNotTouchCookie", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		oldPath := filepath.Join(env.WatchDir, "otherproj")
+		newPath := filepath.Join(env.WatchDir, "otherproj-moved")
+		current := filepath.Join(env.WatchDir, "current-proj")
+		require.NoError(t, os.MkdirAll(oldPath, 0o755))
+		require.NoError(t, os.MkdirAll(newPath, 0o755))
+		require.NoError(t, os.MkdirAll(current, 0o755))
+		id := store.ProjectIDForTest(t, oldPath)
+
+		req := newRequest(t, http.MethodPatch, "/api/projects/detail?id="+strconv.FormatInt(id, 10), map[string]string{
+			"path": newPath,
+		})
+		withProjectCookie(req, current)
+
+		w := callHandler(ServeProjectRegistryDetail, req)
+		require.Equal(t, http.StatusOK, w.Code)
+		for _, c := range w.Result().Cookies() {
+			assert.NotEqual(t, model.ScopedCookieName("clawbench_project"), c.Name,
+				"renaming a different project must not rewrite the cookie")
+		}
+	})
+
+	t.Run("PATCH_MissingTargetPath_Returns400", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		oldPath := filepath.Join(env.WatchDir, "missing-target")
+		require.NoError(t, os.MkdirAll(oldPath, 0o755))
+		id := store.ProjectIDForTest(t, oldPath)
+
+		req := newRequest(t, http.MethodPatch, "/api/projects/detail?id="+strconv.FormatInt(id, 10), map[string]string{
+			"path": filepath.Join(env.WatchDir, "does-not-exist"),
+		})
+		w := callHandler(ServeProjectRegistryDetail, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("PATCH_RelativePath_Returns400", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		oldPath := filepath.Join(env.WatchDir, "relative-target")
+		require.NoError(t, os.MkdirAll(oldPath, 0o755))
+		id := store.ProjectIDForTest(t, oldPath)
+
+		req := newRequest(t, http.MethodPatch, "/api/projects/detail?id="+strconv.FormatInt(id, 10), map[string]string{
+			"path": "relative/dir",
+		})
+		w := callHandler(ServeProjectRegistryDetail, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("PATCH_Collision_Returns409", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		oldPath := filepath.Join(env.WatchDir, "collide-source")
+		target := filepath.Join(env.WatchDir, "collide-target")
+		require.NoError(t, os.MkdirAll(oldPath, 0o755))
+		require.NoError(t, os.MkdirAll(target, 0o755))
+		id := store.ProjectIDForTest(t, oldPath)
+		store.ProjectIDForTest(t, target)
+
+		req := newRequest(t, http.MethodPatch, "/api/projects/detail?id="+strconv.FormatInt(id, 10), map[string]string{
+			"path": target,
+		})
+		w := callHandler(ServeProjectRegistryDetail, req)
+		assert.Equal(t, http.StatusConflict, w.Code)
+	})
+
+	t.Run("PATCH_GlobalSentinel_Returns400", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodPatch, "/api/projects/detail?id=0", map[string]string{
+			"path": "/tmp",
+		})
+		w := callHandler(ServeProjectRegistryDetail, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("PATCH_RunningSession_Returns409", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		oldPath := filepath.Join(env.WatchDir, "busyproj")
+		newPath := filepath.Join(env.WatchDir, "busyproj-moved")
+		require.NoError(t, os.MkdirAll(oldPath, 0o755))
+		require.NoError(t, os.MkdirAll(newPath, 0o755))
+		id := store.ProjectIDForTest(t, oldPath)
+		_, err := store.WriteExec(
+			"INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-busy', ?, 'claude', 't')",
+			id,
+		)
+		require.NoError(t, err)
+		service.SetSessionRunning("sess-busy", true)
+		t.Cleanup(func() { service.SetSessionRunning("sess-busy", false, true) })
+
+		req := newRequest(t, http.MethodPatch, "/api/projects/detail?id="+strconv.FormatInt(id, 10), map[string]string{
+			"path": newPath,
+		})
+		w := callHandler(ServeProjectRegistryDetail, req)
+		assert.Equal(t, http.StatusConflict, w.Code)
+	})
+
 	t.Run("DELETE_RemovesProject", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
