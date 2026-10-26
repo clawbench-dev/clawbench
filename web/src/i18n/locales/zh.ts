@@ -219,6 +219,7 @@ export default {
     badgeOver: '超出计划 {pct}%',
     badgeFull: '已用尽',
     adjust: '调整额度与周期 →',
+    openSettings: '打开用量设置',
     trendLabel: '累计用量与匀速基准对比',
     legendActual: '实际累计',
     legendExpected: '匀速基准',

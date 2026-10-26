@@ -61,7 +61,22 @@
       <div class="um-pop">
         <div class="um-head">
           <span class="um-title">{{ t('usageMeter.title') }}</span>
-          <span class="um-badge" :class="`is-${state}`">{{ badgeText }}</span>
+          <div class="um-head-actions">
+            <span class="um-badge" :class="`is-${state}`">{{ badgeText }}</span>
+            <!-- Shortcut into the rule that produces every number below. Lives
+                 in the header rather than at the foot of the panel: the figures
+                 are long and the action was below the fold on short viewports. -->
+            <button
+              type="button"
+              class="um-settings"
+              :title="t('usageMeter.openSettings')"
+              :aria-label="t('usageMeter.openSettings')"
+              data-action="usage-meter-settings"
+              @click="openSettings"
+            >
+              <Settings2 :size="14" aria-hidden="true" />
+            </button>
+          </div>
         </div>
 
         <div class="um-period">
@@ -144,10 +159,6 @@
             <div class="um-stat-value">{{ fmt(dailyLeft) }}</div>
           </div>
         </div>
-
-        <button type="button" class="um-link" @click="openSettings">
-          {{ t('usageMeter.adjust') }}
-        </button>
       </div>
     </PopupMenu>
   </div>
@@ -155,7 +166,7 @@
 
 <script setup lang="ts">
 import { computed, inject, ref, watch } from 'vue'
-import { Gauge } from 'lucide-vue-next'
+import { Gauge, Settings2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import { formatUsageMeterValue } from '@/utils/usageFormat'
@@ -485,6 +496,41 @@ function openSettings() {
   margin-bottom: var(--space-3);
 }
 
+.um-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.um-settings {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--duration-base), color var(--duration-base);
+}
+
+@media (hover: hover) {
+  .um-settings:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+}
+
+.um-settings:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
 .um-title {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
@@ -666,25 +712,4 @@ function openSettings() {
 }
 
 .um-stat-value.is-over { color: var(--color-orange); }
-
-.um-link {
-  display: block;
-  width: 100%;
-  margin-top: var(--space-5);
-  padding: var(--space-4) 0 0;
-  border: none;
-  border-top: 1px solid var(--border-color);
-  background: transparent;
-  color: var(--link-color);
-  font: inherit;
-  font-size: var(--font-size-xs);
-  text-align: left;
-  cursor: pointer;
-}
-
-@media (hover: hover) {
-  .um-link:hover {
-    text-decoration: underline;
-  }
-}
 </style>

@@ -206,6 +206,21 @@ describe('UsageMeterPopover — no rule configured', () => {
     expect(wrapper.find('.um-pop').exists()).toBe(true)
     expect(wrapper.find('.um-compare').exists()).toBe(true)
     expect(wrapper.find('.um-stats').exists()).toBe(true)
-    expect(wrapper.get('.um-link').text()).toBe('usageMeter.adjust')
+    expect(wrapper.find('.um-link').exists()).toBe(false)
+    expect(wrapper.get('[data-action="usage-meter-settings"]').exists()).toBe(true)
+  })
+
+  // The header gear is the popover's only route to the rule's settings (the
+  // foot-of-panel text link was removed so the action is not repeated). Without
+  // this the icon could be decorative and every other assertion would pass.
+  it('opens the usage settings from the header gear', async () => {
+    mockSetPendingSettingsCategory.mockClear()
+    mockSwitchTab.mockClear()
+
+    const wrapper = mountPopover(status(), 'over')
+    await wrapper.get('[data-action="usage-meter-settings"]').trigger('click')
+
+    expect(mockSetPendingSettingsCategory).toHaveBeenCalledWith('usageMeter')
+    expect(mockSwitchTab).toHaveBeenCalledWith('settings')
   })
 })

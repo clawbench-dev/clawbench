@@ -214,6 +214,7 @@ export default {
     badgeOver: '{pct}% over plan',
     badgeFull: 'Exhausted',
     adjust: 'Adjust quota and cycle →',
+    openSettings: 'Open usage settings',
     trendLabel: 'Cumulative usage against the linear plan',
     legendActual: 'Actual',
     legendExpected: 'Linear plan',
