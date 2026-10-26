@@ -294,6 +294,14 @@ export function useChatRender(options: {
    *   The cache upgrade mechanism will later re-render with full enhancements.
    */
   function renderTextBlock(text: string, msgId: string, blockIdx: number, streaming = false, deferEnhancements = false) {
+    // A text block persisted with empty content has no `text` key at all
+    // (ContentBlock.Text is `omitempty` in Go), so callers can hand us
+    // undefined. Normalize at the single funnel: renderMentionChips and
+    // renderMarkdownHtml both assume a string, and an undefined threw
+    // `text.includes is not a function` from renderMentionChips on every
+    // streaming pass (observed 41× in client.log alongside the blank-bubble
+    // TypeError for message 65835).
+    text = text ?? ''
     // Rewrite group-chat mention tags BEFORE either path. A well-formed public
     // mention becomes an inline "@name" chip (its body survives); a private note
     // is dropped (fail-closed — it is not addressed to the reader, and DOMPurify

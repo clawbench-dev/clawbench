@@ -67,6 +67,29 @@ func TestAccumulateBlock_NonThinkingEventsReportNoID(t *testing.T) {
 	assert.Empty(t, id)
 }
 
+func TestAccumulateBlock_EmptyContentDeltaIgnored(t *testing.T) {
+	// An empty content delta must not open a text block. `Text` is serialized
+	// with `omitempty`, so such a block lands in the DB with no `text` key at
+	// all; the frontend then calls `text.length` on undefined and the whole
+	// message fails to render (blank bubble). Reproduces message 65835, where
+	// 63 text-less blocks were persisted across 12 messages.
+	var blocks []model.ContentBlock
+	AccumulateBlock(&blocks, StreamEvent{Type: "tool_use", Tool: &ToolCall{Name: "Bash", ID: "t1", Done: true}})
+	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: ""})
+	require.Len(t, blocks, 1, "an empty content delta must not open a block")
+	assert.Equal(t, "tool_use", blocks[0].Type)
+
+	// A real delta afterwards still creates the text block normally.
+	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "real"})
+	require.Len(t, blocks, 2)
+	assert.Equal(t, "real", blocks[1].Text)
+
+	// An empty delta must not disturb an existing block either.
+	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: ""})
+	require.Len(t, blocks, 2)
+	assert.Equal(t, "real", blocks[1].Text)
+}
+
 func TestAccumulateBlock_EmptyThinkingDeltaDoesNotMintID(t *testing.T) {
 	// An empty delta must not open a block (it would render as an empty spinner),
 	// so it must not mint an identity either — a stray id would key a block that

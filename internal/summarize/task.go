@@ -82,7 +82,12 @@ func ExtractTextFromBlocks(blocks []model.ContentBlock) string {
 
 // ExtractLastAnswerFromBlocks extracts text from blocks after the last tool_use block.
 // This captures the AI's final answer rather than intermediate reasoning or tool-call commentary.
-// If no text exists after the last tool_use, falls back to the longest text block.
+// If no text exists after the last tool_use, falls back to the LAST non-blank text
+// block: the final prose before a terminal tool call (e.g. AskUserQuestion) is the
+// answer. It is NOT the longest block — an earlier stretch of intermediate
+// reasoning is often far longer, and picking it made the summary show that
+// reasoning instead of the conclusion (message 65835: 16135-char thinking beat
+// the 2637-char answer).
 // Returns empty string if no suitable text is found.
 //
 // This is a PURE text extractor: it does NOT strip group-chat protocol tags.
@@ -98,19 +103,29 @@ func ExtractLastAnswerFromBlocks(blocks []model.ContentBlock) string {
 			lastToolIdx = i
 		}
 	}
-	// Find first text block after the last tool_use (only if tool_use exists)
+	// Find first text block after the last tool_use (only if tool_use exists).
+	// Whitespace-only blocks are skipped: a lone " " between two tool calls is
+	// not an answer, and returning it would produce a blank summary.
 	if lastToolIdx >= 0 {
 		for i := lastToolIdx + 1; i < len(blocks); i++ {
-			if blocks[i].Type == "text" && blocks[i].Text != "" {
+			if blocks[i].Type == blockTypeText && strings.TrimSpace(blocks[i].Text) != "" {
 				return blocks[i].Text
 			}
 		}
+		// No text after last tool_use — the AI answered and then called a
+		// terminal tool (e.g. AskUserQuestion) with nothing trailing. The
+		// answer is the LAST text block BEFORE that tool, not the longest one:
+		// long intermediate reasoning routinely dwarfs the conclusion.
+		for i := lastToolIdx - 1; i >= 0; i-- {
+			if blocks[i].Type == blockTypeText && strings.TrimSpace(blocks[i].Text) != "" {
+				return blocks[i].Text
+			}
+		}
+		return ""
 	}
-	// No text after last tool_use — fall back to the longest text block.
-	// This handles the case where the AI gives a substantive answer followed
-	// by a terminal tool_use (e.g. AskUserQuestion) with no trailing text.
-	// Falling back to the first text block would typically return the intro
-	// sentence ("Let me check...") rather than the actual answer.
+	// No tool_use at all: the reply is prose from start to finish. Keep the
+	// longest text block (a short intro followed by the real answer is the
+	// common shape; the last block may be a one-line sign-off).
 	var bestText string
 	for _, b := range blocks {
 		if b.Type == blockTypeText && b.Text != "" && utf8.RuneCountInString(b.Text) > utf8.RuneCountInString(bestText) {

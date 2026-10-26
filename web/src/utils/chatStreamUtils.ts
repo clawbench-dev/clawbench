@@ -2009,6 +2009,12 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       if (!sm) return state
       const blocks = sm.blocks!
       const parent = action.parentToolCallId
+      // An empty delta must not open a block. Appending it to an existing block
+      // is a no-op anyway, and opening one produces `{type:'text', text:''}` —
+      // which the backend persists WITHOUT a `text` key (`omitempty`), so a
+      // reload hands the renderer undefined and blanks the message. Mirrors
+      // AccumulateBlock's guard (and ws_thinking's below).
+      if (!action.text) return state
       const existingText = findBlockByTypeBackward(blocks, 'text', parent)
       if (existingText) existingText.text += action.text
       else blocks.push({

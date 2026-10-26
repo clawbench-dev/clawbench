@@ -90,6 +90,26 @@ describe('parseAssistantContent', () => {
     expect(parseAssistantContent(content).cancelled).toBe(false)
   })
 
+  // A text block with empty content is persisted WITHOUT a `text` key:
+  // ContentBlock.Text is `omitempty` in Go. The parser must normalize it to a
+  // string so no downstream consumer (render cache key, mention-chip rewrite,
+  // markdown pipeline) receives undefined. Message 65835 carried 15 such blocks
+  // and rendered as a completely blank bubble.
+  it('normalizes a text block with no text key to an empty string', () => {
+    const content = JSON.stringify({
+      blocks: [{ type: 'text' }, { type: 'text', text: 'visible' }],
+    })
+    const { blocks } = parseAssistantContent(content)
+    expect(blocks[0].type).toBe('text')
+    expect(blocks[0].text).toBe('')
+    expect(blocks[1].text).toBe('visible')
+  })
+
+  it('normalizes a text block with an explicit null text to an empty string', () => {
+    const content = JSON.stringify({ blocks: [{ type: 'text', text: null }] })
+    expect(parseAssistantContent(content).blocks[0].text).toBe('')
+  })
+
   it('marks tool_use as done when missing', () => {
     const content = JSON.stringify({
       blocks: [{ type: 'tool_use', name: 'Read', id: '1', input: {} }],

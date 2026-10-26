@@ -213,14 +213,21 @@ export class StaticBlockCache {
    */
   private static readonly MAX_ENTRIES = 3000
 
-  private makeKey(msgId: string | number, blockIdx: number, text: string, scope: string): string {
-    const prefix = text.length > 40 ? text.slice(0, 20) : ''
-    const suffix = text.slice(-20)
+  private makeKey(msgId: string | number, blockIdx: number, text: string | null | undefined, scope: string): string {
+    // `text` is typed as a string, but a block read back from the DB may have
+    // no `text` field at all: ContentBlock.Text is serialized with `omitempty`,
+    // so a text block with empty content arrives as `{type:"text"}` and the
+    // property is undefined. Calling `.length` on it threw a TypeError during
+    // render, which blanked the whole message bubble (message 65835). Coercing
+    // here keeps the cache total; the empty string keys the same way as before.
+    const src = text ?? ''
+    const prefix = src.length > 40 ? src.slice(0, 20) : ''
+    const suffix = src.slice(-20)
     // `scope` is last so the msgId/blockIdx/text part stays readable in a
     // debugger. Empty scope keeps the historical key shape for callers that
     // have no rendering inputs to distinguish (e.g. tests, TaskExecDetail).
     const scopePart = scope ? `-${scope}` : ''
-    return `${msgId}-${blockIdx}-${text.length}-${prefix}${suffix}${scopePart}`
+    return `${msgId}-${blockIdx}-${src.length}-${prefix}${suffix}${scopePart}`
   }
 
   /** Drop oldest entries until the cache is back under the cap. */

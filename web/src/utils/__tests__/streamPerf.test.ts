@@ -316,6 +316,27 @@ describe('StaticBlockCache', () => {
     expect(cache.get('msg2', 0, 'b')).toBeUndefined()
   })
 
+  // ── Undefined text must not throw ──
+  //
+  // A text block persisted with empty content has NO `text` key at all:
+  // ContentBlock.Text is `omitempty` in Go, so `{type:"text", text:""}` is
+  // serialized as `{type:"text"}`. ContentBlocks.getBlockHtml passes
+  // `block.text` straight through, so the key builder received undefined and
+  // threw on `.length` — during render, which blanked the whole message
+  // bubble (message 65835). The cache must tolerate it.
+  it('tolerates undefined text without throwing', () => {
+    const cache = new StaticBlockCache()
+    expect(() => cache.get('msg1', 0, undefined as unknown as string)).not.toThrow()
+    expect(() => cache.set('msg1', 0, undefined as unknown as string, '<p></p>')).not.toThrow()
+    expect(cache.get('msg1', 0, undefined as unknown as string)).toBe('<p></p>')
+  })
+
+  it('keys undefined text the same as empty text', () => {
+    const cache = new StaticBlockCache()
+    cache.set('msg1', 0, undefined as unknown as string, '<p></p>')
+    expect(cache.get('msg1', 0, '')).toBe('<p></p>')
+  })
+
   // ── Bounded retention (LRU) ──
   //
   // The cache is deliberately NOT cleared on session/project switch (keys are

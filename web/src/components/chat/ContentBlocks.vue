@@ -2147,13 +2147,19 @@ function flushBlockHtml() {
 
 function getBlockHtml(bi: number, block: any) {
   const ai = absIdx(bi)
+  // A text block persisted with empty content has no `text` key at all
+  // (ContentBlock.Text is `omitempty` on the Go side), so block.text is
+  // undefined here. Normalize once: every path below (cache key, markdown
+  // pipeline) expects a string, and an undefined used to throw inside the
+  // cache key builder and blank the entire message.
+  const text: string = block.text ?? ''
   if (!props.streaming) {
     // Non-streaming: full pipeline with cache
     if (props.staticBlockCache) {
       // Read the scope before the lookup: this both keys the entry correctly
       // and registers the render-time dependency on projectRoot/locale.
       const scope = cacheScope.value
-      const cached = props.staticBlockCache.get(props.msgId, ai, block.text, scope)
+      const cached = props.staticBlockCache.get(props.msgId, ai, text, scope)
       if (cached !== undefined) {
         return cached
       }
@@ -2161,11 +2167,11 @@ function getBlockHtml(bi: number, block: any) {
       // Deferred rendering (skipEnhancements=true → scheduleUpgrade) causes
       // scrollHeight to change after initial paint, creating a visible "snap"
       // when scrollToBottom corrects for the height difference.
-      const fullHtml = props.renderTextBlock(block.text, props.msgId, ai, false, false)
-      props.staticBlockCache.set(props.msgId, ai, block.text, fullHtml, false, scope)
+      const fullHtml = props.renderTextBlock(text, props.msgId, ai, false, false)
+      props.staticBlockCache.set(props.msgId, ai, text, fullHtml, false, scope)
       return fullHtml
     }
-    return props.renderTextBlock(block.text, props.msgId, ai, false)
+    return props.renderTextBlock(text, props.msgId, ai, false)
   }
   // Streaming + panel not visible: skip expensive markdown parsing
   if (!props.active) {
@@ -2173,7 +2179,7 @@ function getBlockHtml(bi: number, block: any) {
   }
   // Streaming: deferred rendering with throttling
   const key = stableBlockKey(bi, block)
-  const src = block.text ?? ''
+  const src = text
   const cache = blockHtmlCache.value
   const cached = cache.get(key)
   if (cached !== undefined) {
@@ -2188,7 +2194,7 @@ function getBlockHtml(bi: number, block: any) {
       // Copy-on-write: the flush reads the previous Map, and the template may
       // read the new one mid-pass, so never mutate the Map in place.
       const newCache = new Map(cache)
-      newCache.set(key, props.renderTextBlock(block.text, props.msgId, ai, true))
+      newCache.set(key, props.renderTextBlock(text, props.msgId, ai, true))
       blockHtmlCache.value = newCache
       // The write above is fresh for this text — record it so the next flush
       // does not re-render (and so it is not treated as stale).
@@ -2199,7 +2205,7 @@ function getBlockHtml(bi: number, block: any) {
     }
     return blockHtmlCache.value.get(key) ?? ''
   }
-  const html = props.renderTextBlock(block.text, props.msgId, ai, true)
+  const html = props.renderTextBlock(text, props.msgId, ai, true)
   const withHtml = new Map(cache)
   withHtml.set(key, html)
   blockHtmlCache.value = withHtml
