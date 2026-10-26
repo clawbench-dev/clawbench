@@ -339,6 +339,17 @@ export default {
     switchServer: '切换服务端',
     logout: '登出',
   },
+  serverSwitch: {
+    title: '切换服务端',
+    lead: '选择一个已保存的服务器，立即切换。',
+    empty: '暂无已保存的服务器',
+    current: '当前',
+    connect: '连接',
+    passwordFor: '输入「{name}」的密码',
+    loadFailed: '加载服务器列表失败',
+    switchFailed: '切换服务端失败',
+    saveFailed: '保存服务器密码失败',
+  },
   welcome: {
     selectFile: '选择文件开始对话',
     description: '打开文件后与 AI 对话，让 AI 直接帮你阅读、编辑和修改文件。',

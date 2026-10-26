@@ -334,6 +334,17 @@ export default {
     switchServer: 'Switch server',
     logout: 'Logout',
   },
+  serverSwitch: {
+    title: 'Switch server',
+    lead: 'Pick a saved server to connect instantly.',
+    empty: 'No saved servers',
+    current: 'Current',
+    connect: 'Connect',
+    passwordFor: 'Password for {name}',
+    loadFailed: 'Failed to load the server list',
+    switchFailed: 'Failed to switch server',
+    saveFailed: 'Failed to save the server password',
+  },
   welcome: {
     selectFile: 'Select a file to start',
     description: 'Open a file and chat with AI to read, edit, and modify it directly.',

@@ -147,7 +147,9 @@ const i18n = createI18n({
     projectRemoved: 'Project removed',
     removeProjectFailed: 'Failed to remove project',
     labels: { project: 'Project', branch: 'Branch', file: 'File' },
-  }, login: { logout: 'Logout' }, systemResources: { title: 'System Resources' } } },
+  }, login: { logout: 'Logout', switchServer: 'Switch server' },
+  serverSwitch: { title: 'Switch server', empty: 'No saved servers', connect: 'Connect' },
+  systemResources: { title: 'System Resources' } } },
 })
 
 const PopupMenuStub = { template: '<div class="popup-menu-stub" v-if="$props.show"><slot /></div>', props: ['show','targetElement','maxWidth','maxHeight','menuItemsCount'] }
@@ -1891,7 +1893,19 @@ describe('AppHeader', () => {
     expect($('.header-tips')).toBeFalsy()
   })
 
-  // ── handleLogout ──
+  // ── switch server / logout ──
+
+  it('opens the switch-server dialog from the header entry', async () => {
+    isAppModeConfig.value = true
+    const wrapper = mountAndTrack()
+    await (wrapper.vm as any).openServerSwitch()
+    await nextTick()
+    await flushPromises()
+
+    expect(wrapper.vm.serverSwitchOpen).toBe(true)
+    expect(wrapper.vm.resourcesMenuOpen).toBe(false)
+    expect($('.server-switch')).toBeTruthy()
+  })
 
   it('handleLogout calls ClawBenchNative.showServerDialog in APP mode', async () => {
     isAppModeConfig.value = true

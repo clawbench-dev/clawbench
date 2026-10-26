@@ -5,11 +5,6 @@
       <Server :size="13" class="server-info-icon" />
       <span class="server-info-address">{{ serverAddress }}</span>
     </div>
-    <!-- Logout (APP mode only) -->
-    <button v-if="showLogout" class="logout-btn" @click="$emit('logout')">
-      <LogOut :size="13" />
-      <span class="logout-label">{{ t('login.logout') }}</span>
-    </button>
     <div class="header-divider"></div>
     <!-- Connection error / reconnecting state -->
     <div v-if="wsDisconnected" class="connection-status">
@@ -140,11 +135,21 @@
         </template>
       </button>
     </template>
+
+    <!-- Switch server sits at the tail: it is a session-level action, not a
+         machine-health reading, so it should not interrupt the resource list. -->
+    <template v-if="showServerSwitch">
+      <div class="header-divider"></div>
+      <button class="switch-server-btn" @click="$emit('switch-server')">
+        <ArrowLeftRight :size="13" />
+        <span class="switch-server-label">{{ t('login.switchServer') }}</span>
+      </button>
+    </template>
   </div>
 </template>
 
 <script setup>
-import { Cpu, Activity, MemoryStick, Database, HardDriveDownload, HardDriveUpload, CloudDownload, CloudUpload, Server, LogOut, WifiOff, Gauge, ChevronRight } from 'lucide-vue-next'
+import { Cpu, Activity, MemoryStick, Database, HardDriveDownload, HardDriveUpload, CloudDownload, CloudUpload, Server, ArrowLeftRight, WifiOff, Gauge, ChevronRight } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -159,7 +164,7 @@ const { status: meterStatus, meterState, fillPercent, expectedPercent, hasData }
 const { isWideScreen } = useWideScreenLayout()
 
 const props = defineProps({
-    showLogout: { type: Boolean, default: false },
+    showServerSwitch: { type: Boolean, default: false },
     wsStatus: { type: String, default: 'connected' },
 })
 
@@ -194,7 +199,7 @@ const meterBadge = computed(() => {
 
 const wsDisconnected = computed(() => props.wsStatus === 'disconnected' || props.wsStatus === 'reconnecting')
 
-defineEmits(['logout', 'open-usage-settings'])
+defineEmits(['switch-server', 'open-usage-settings'])
 
 const serverAddress = window.location.host // e.g. "192.168.1.5:20000"
 
@@ -268,32 +273,32 @@ defineExpose({ startPolling, stopPolling })
   min-width: 0;
 }
 
-.logout-btn {
+.switch-server-btn {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
   width: 100%;
   padding: calc(7 * var(--dp)) 0;
-  border: none;
-  background: var(--bg-tertiary);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 24%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
   cursor: pointer;
   border-radius: var(--radius-sm, 4px);
-  color: var(--color-red, #ef4444);
+  color: var(--accent-color);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   transition: background var(--duration-base), color var(--duration-base);
   flex-shrink: 0;
 }
 
-.logout-label {
+.switch-server-label {
   line-height: 1;
 }
 
 @media (hover: hover) {
-  .logout-btn:hover {
-    background: color-mix(in srgb, var(--color-red, #ef4444) 10%, var(--bg-tertiary));
-    color: var(--color-red, #ef4444);
+  .switch-server-btn:hover {
+    background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+    border-color: color-mix(in srgb, var(--accent-color) 44%, transparent);
   }
 }
 

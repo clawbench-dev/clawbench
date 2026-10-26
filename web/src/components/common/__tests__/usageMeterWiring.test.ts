@@ -156,7 +156,7 @@ describe('usage meter — mobile entry to the rule', () => {
 
     const panel = stripComments(readWebFile('src/components/common/SystemResourcesPanel.vue'))
     expect(panel).toContain("$emit('open-usage-settings')")
-    expect(panel).toContain("defineEmits(['logout', 'open-usage-settings'])")
+    expect(panel).toContain("defineEmits(['switch-server', 'open-usage-settings'])")
   })
 })
 
