@@ -152,12 +152,15 @@ func openErrInjectDB(t *testing.T, failSubstr string) *sql.DB {
 }
 
 // mkProjectDir creates the directory a rename test points at, under the
-// per-test temp dir so no test touches a real path.
+// per-test temp dir so no test touches a real path. The returned path is
+// canonicalized the same way RenameProjectData canonicalizes it (symlink
+// resolution, e.g. /var -> /private/var on macOS) so expectations match across
+// platforms.
 func mkProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "project")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
-	return dir
+	return store.NormalizeProjectPath(dir)
 }
 
 func TestRenameProjectData_FollowsProjectScopeData(t *testing.T) {
