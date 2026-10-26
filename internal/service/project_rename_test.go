@@ -25,8 +25,8 @@ import (
 // a blanket-failing driver cannot do. A fresh instance is registered under a
 // unique name per call so each test controls its own failure target.
 type errInjectDriver struct {
-	name      string
-	db        *sql.DB
+	name       string
+	db         *sql.DB
 	failSubstr string
 }
 
@@ -35,7 +35,7 @@ func (d errInjectDriver) Open(name string) (driver.Conn, error) {
 }
 
 type errInjectConn struct {
-	db        *sql.DB
+	db         *sql.DB
 	failSubstr string
 }
 
@@ -54,24 +54,26 @@ func (c errInjectConn) Begin() (driver.Tx, error) { return nil, errors.New("errI
 
 type errStmt struct{}
 
-func (errStmt) Close() error                  { return errors.New("errInject") }
-func (errStmt) NumInput() int                 { return -1 }
+func (errStmt) Close() error  { return errors.New("errInject") }
+func (errStmt) NumInput() int { return -1 }
 func (errStmt) Exec(args []driver.Value) (driver.Result, error) {
 	return nil, errors.New("errInject")
 }
+
 func (errStmt) Query(args []driver.Value) (driver.Rows, error) {
 	return nil, errors.New("errInject")
 }
 
 type realStmt struct{ stmt *sql.Stmt }
 
-func (s realStmt) Close() error { return s.stmt.Close() }
+func (s realStmt) Close() error  { return s.stmt.Close() }
 func (s realStmt) NumInput() int { return -1 }
 func (s realStmt) Exec(args []driver.Value) (driver.Result, error) {
 	return s.stmt.Exec(valuesToAny(args)...)
 }
+
 func (s realStmt) Query(args []driver.Value) (driver.Rows, error) {
-	rows, err := s.stmt.Query(valuesToAny(args)...)
+	rows, err := s.stmt.Query(valuesToAny(args)...) //nolint:rowserrcheck // error surfaced in Next via rows.Err()
 	if err != nil {
 		return nil, err
 	}
@@ -81,10 +83,9 @@ func (s realStmt) Query(args []driver.Value) (driver.Rows, error) {
 // rowsAdapter bridges a real *sql.Rows to the driver.Rows interface so we can
 // delegate non-failing queries to the real test database.
 type rowsAdapter struct {
-	rows    *sql.Rows
-	cols    []string
-	colErr  error
-	started bool
+	rows   *sql.Rows
+	cols   []string
+	colErr error
 }
 
 func (r *rowsAdapter) Columns() []string {
@@ -130,8 +131,10 @@ func valuesToAny(args []driver.Value) []any {
 	return out
 }
 
-var errDriverSeq int
-var errDriverSeqMu sync.Mutex
+var (
+	errDriverSeq   int
+	errDriverSeqMu sync.Mutex
+)
 
 // openErrInjectDB opens a connection through a fault-injecting driver that
 // delegates to the currently-installed real DB, failing queries containing
@@ -163,6 +166,19 @@ func mkProjectDir(t *testing.T) string {
 	return store.NormalizeProjectPath(dir)
 }
 
+// resolveCanon fully resolves a path on disk so platform quirks like Windows 8.3
+// short names (RUNNER~1 vs runneradmin) or macOS /var vs /private/var symlinks do
+// not cause false mismatches when comparing a test-constructed path against the
+// value the DB stored after RenameProjectData's own (non-idempotent on some
+// platforms) normalization. Both sides resolve to the same real directory.
+func resolveCanon(t *testing.T, p string) string {
+	t.Helper()
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
+}
+
 func TestRenameProjectData_FollowsProjectScopeData(t *testing.T) {
 	setupProjectDeleteDB(t)
 	oldPath := mkProjectDir(t)
@@ -189,7 +205,7 @@ func TestRenameProjectData_FollowsProjectScopeData(t *testing.T) {
 
 	var storedPath string
 	require.NoError(t, store.ReadDB().QueryRow("SELECT path FROM projects WHERE id = ?", id).Scan(&storedPath))
-	assert.Equal(t, newPath, storedPath)
+	assert.Equal(t, resolveCanon(t, newPath), resolveCanon(t, storedPath))
 
 	// The path→id cache was invalidated on both sides: the new path resolves to
 	// the same id and the old path is no longer a registered project.
@@ -302,7 +318,7 @@ func TestRenameProjectData_NormalizesTargetPath(t *testing.T) {
 
 	var storedPath string
 	require.NoError(t, store.ReadDB().QueryRow("SELECT path FROM projects WHERE id = ?", id).Scan(&storedPath))
-	assert.Equal(t, target, storedPath)
+	assert.Equal(t, resolveCanon(t, target), resolveCanon(t, storedPath))
 }
 
 func TestRenameProjectData_InvalidTargetDoesNotSurfaceAsPathExists(t *testing.T) {
