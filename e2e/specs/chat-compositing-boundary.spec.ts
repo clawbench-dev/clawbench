@@ -49,7 +49,7 @@ test.describe('chat compositing boundary', () => {
 
     const native = await page.evaluate(() => {
       const panel = document.querySelector('.chat-panel-content') as HTMLElement
-      const rows = document.querySelectorAll('.chat-message')
+      const rows = document.querySelectorAll('.chat-message.assistant')
       const row = rows[rows.length - 1] as HTMLElement
       const cs = (el: HTMLElement) => getComputedStyle(el)
       return {
