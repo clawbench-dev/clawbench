@@ -14,7 +14,7 @@ A: 从欢迎屏幕安装智能体，或在 Web UI 中创建新智能体，选择
 
 **Q: 是否需要配置 API Key？**
 
-A: 不需要。ClawBench 通过调用本地 CLI（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code 或 Pi）实现 AI 功能，这些 CLI 工具已经完成了 API Key 的配置和管理。
+A: 不需要。ClawBench 通过调用本地已装好的 CLI / ACP 后端（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw 共 19 种）实现 AI 功能，凭据由这些工具自己管理；ClawBench 只在「创建智能体」时让你填 LLM 提供商的 API Key（用于标题生成、摘要等旁路能力）。个别后端需要额外前置条件——例如 OpenClaw 走 ACP 桥接，要先跑起它自己的 Gateway（`openclaw gateway start`），否则表现为「Agent 启动超时」。
 
 **Q: TTS 语音合成可以使用本地模型吗？**
 
@@ -35,7 +35,7 @@ TTS 引擎本身也支持本地离线方案（piper / kokoro / moss-nano），�
 
 **Q: 可以同时运行多个 ClawBench 实例吗？**
 
-A: 可以。每个实例使用独立的 `--data-dir` 指定不同的数据目录，并在 `config/config.yaml` 中配置不同端口即可。默认数据目录为 `~/.clawbench/`，同一用户下的多实例需要显式指定不同的 `--data-dir` 以实现数据隔离。
+A: 可以。每个实例使用独立的 `--data-dir` 指定不同的数据目录，并用 `--port`（或配置文件里的 `port`）给出不同端口即可。默认数据目录为 `~/.clawbench/`，同一用户下的多实例需要显式指定不同的 `--data-dir` 以实现数据隔离。
 
 **Q: 是否需要配置文件才能启动？**
 
@@ -51,7 +51,7 @@ A: 数据存储在用户家目录下的 `~/.clawbench/` 中（Windows 为 `%USER
 
 **Q: 如何备份数据？**
 
-A: 备份 `~/.clawbench/ClawBench.db` 数据库文件即可。
+A: 备份 `~/.clawbench/ClawBench.db` 数据库文件即可（会话、消息、智能体、任务、分享记录都在里面）。同一目录下的 `config/`（含 `config.yaml` 与自动生成的 `auto-password`）建议一并备份，否则换机后要重新配置；项目目录里的上传文件与项目本身不在数据目录内，需要单独备份。
 
 **Q: 如何管理智能体？**
 
@@ -104,7 +104,7 @@ A: 发现新版本时会弹出升级卡片：
 
 **Q: 某个功能找不到？**
 
-A: 大部分功能都在左侧 Dock 的九个图标里。设置类选项统一在最后一个「设置」图标。若 Dock 里没有终端或端口映射，说明该功能在服务端被禁用或平台不支持。
+A: 大部分功能都在左侧 Dock 的十个图标里（文件管理器 / 文件 / 项目历史 / GitHub 集成 / GitLab 集成 / 任务 / 终端 / 数据统计 / 端口映射 / 通知中心 / 设置——空间不足时靠后的收进「更多」）。设置类选项统一在最后一个「设置」图标。若 Dock 里没有终端或端口映射，说明该功能在服务端被禁用或平台不支持。
 
 **Q: 界面元素太小 / 太大？**
 
