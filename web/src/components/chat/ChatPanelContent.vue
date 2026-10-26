@@ -282,7 +282,7 @@ import { useChatRender } from '@/composables/useChatRender.ts'
 import { formatToolOutput, revertAskSubmission } from '@/utils/renderToolDetail.ts'
 import { useChatStream } from '@/composables/useChatStream.ts'
 import { useChatSession, loadSessionsOnce } from '@/composables/useChatSession.ts'
-import { useSessionIdentity, getSessionId } from '@/composables/useSessionIdentity.ts'
+import { useSessionIdentity, getSessionId, reconcileModelSelection } from '@/composables/useSessionIdentity.ts'
 import { useSessionManager } from '@/composables/useSessionManager.ts'
 import { createChatMessageStore } from '@/composables/useChatMessageStore.ts'
 import { useAcpSession } from '@/composables/useAcpSession'
@@ -1363,6 +1363,10 @@ function restoreModelSelection(sid) {
         identity.currentModelId.value = data.modelId
         const m = agentsComposable.getAgentModel(identity.currentAgentId.value, data.modelId)
         identity.currentModelName.value = m?.name || data.modelId
+        // The persisted id may itself be a model the agent no longer offers
+        // (the list was refreshed while this switch was failing) — resolve it
+        // like every other entry point instead of restoring a dead id.
+        reconcileModelSelection(identity.currentAgentId.value)
         return
       }
       // A session created via POST /api/ai/sessions deliberately has model=''

@@ -3,7 +3,7 @@ import { appLog, diagLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useGlobalEvents } from './useGlobalEvents'
 import { gt } from '@/composables/useLocale'
-import { updateModeState, updateCommandState, updateThinkingEffortState, reconcileThinkingEffort, currentAgentId, currentModelId, updateUsageState } from './useSessionIdentity'
+import { updateModeState, updateCommandState, updateThinkingEffortState, reconcileThinkingEffort, reconcileModelSelection, currentAgentId, currentModelId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import type { ToastIconKey } from './useToast'
@@ -1107,6 +1107,10 @@ export function useChatStream(options: UseChatStreamOptions) {
         } else if (Array.isArray(mlData.models) && mlData.models.length > 0) {
           updateACPModelList(aid, mlData.models as { id: string; name: string }[], mlData.currentModelId)
         }
+        // The new list is authoritative: if the session's model is no longer
+        // offered, move the chip to the new default instead of leaving a dead
+        // id on screen (and on the next request).
+        reconcileModelSelection(aid)
         break
       }
 

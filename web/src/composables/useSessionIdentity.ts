@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { useAgents, registerIdentityUpdaters } from '@/composables/useAgents'
+import { resolveModelSelection } from '@/utils/modelSelection'
 import { appLog } from '@/utils/appLog'
 import { createSelectState } from '@/composables/useSelectState'
 import { useChatContext } from '@/composables/useChatContext'
@@ -172,11 +173,47 @@ registerIdentityUpdaters({
   updateAvailableThinkingEfforts,
   updateCommandState,
   currentAgentId,
+  reconcileModelSelection,
 })
 
 /** Read-only accessor for the current session ID (no composable setup needed). */
 export function getSessionId(): string {
   return currentSessionId.value
+}
+
+/**
+ * Re-resolve the CURRENT session's model against the agent's current list.
+ *
+ * Called after any authoritative list replacement (manual refresh, agent
+ * reload, ACP `model_list_update`). A model the list no longer offers cannot
+ * run: ACP silently keeps its own model and CLI receives a dead id, so the
+ * chip must not keep claiming it. Falls back to the agent's new default.
+ *
+ * Deliberately sends no request. The corrected id rides along on the next
+ * message (POST /api/ai/chat persists `modelId`) and a reload re-runs the same
+ * resolution, so the DB converges without a surprise model-switch RPC here.
+ *
+ * No-op when `agentId` is not the session currently on screen: a refresh of
+ * another agent's list must not touch this session's chip.
+ */
+export function reconcileModelSelection(agentId?: string): void {
+  const aid = agentId || currentAgentId.value
+  if (!aid || aid !== currentAgentId.value) return
+  const agentsApi = useAgents()
+  const agent = agentsApi.getAgent(aid)
+  const { modelId, modelName } = resolveModelSelection(
+    agent?.models || [],
+    agent?.preferredModel || '',
+    currentModelId.value,
+    // An empty list means the agent has not reported its models, so there is no
+    // label to look up — keep the one already on the chip rather than
+    // degrading a real name to the raw id.
+    (id) => agentsApi.getAgentModel(aid, id)?.name
+      ?? (id === currentModelId.value ? currentModelName.value : undefined),
+  )
+  if (modelId === currentModelId.value && modelName === currentModelName.value) return
+  currentModelId.value = modelId
+  currentModelName.value = modelName
 }
 
 /**
@@ -790,30 +827,21 @@ export async function initSessionFromAPI(preferredSessionId?: string | null) {
         currentAgentId.value = data.agentId || ''
         // Slash commands are now populated from /api/agents acpStates (via loadAgents)
         // and from the chat response below — no separate prefetch request needed.
-        // Initialize model: prefer server-persisted modelId, then localStorage pref, then agent default
-        if (data.modelId) {
-          currentModelId.value = data.modelId
-          const model = agentsApi.getAgentModel(data.agentId || '', data.modelId)
-          currentModelName.value = model?.name || data.modelId
-        } else {
-          const savedModelId = loadModelPref(data.agentId || '')
-          if (savedModelId) {
-            const model = agentsApi.getAgentModel(data.agentId || '', savedModelId)
-            if (model) {
-              currentModelId.value = savedModelId
-              currentModelName.value = model.name
-            } else {
-              // Saved model no longer available — fall back to agent default & clear stale pref
-              const { modelId, modelName } = agentsApi.syncModelFromAgent(data.agentId || '')
-              currentModelId.value = modelId
-              currentModelName.value = modelName
-            }
-          } else {
-            const { modelId, modelName } = agentsApi.syncModelFromAgent(data.agentId || '')
-            currentModelId.value = modelId
-            currentModelName.value = modelName
-          }
-        }
+        // Initialize model: server-persisted id > agent preference, both
+        // resolved against the CURRENT list. A persisted id the agent no
+        // longer offers (refreshed away) falls back to the new default rather
+        // than keeping a dead id on the chip.
+        const initAgentId = data.agentId || ''
+        const initAgent = agentsApi.getAgent(initAgentId)
+        const initCandidate = data.modelId || loadModelPref(initAgentId) || ''
+        const initModel = resolveModelSelection(
+          initAgent?.models || [],
+          initAgent?.preferredModel || '',
+          initCandidate,
+          (id) => agentsApi.getAgentModel(initAgentId, id)?.name,
+        )
+        currentModelId.value = initModel.modelId
+        currentModelName.value = initModel.modelName
         // Initialize thinking effort: from ACP state or agent preference
         thinkingEffortState.clear()
         thinkingEffortState.syncAndFallback(data.thinkingEffortState?.currentId || '', data.thinkingEffortState?.availableLevels || [], data.agentId || '', data.modelId || '')
@@ -949,24 +977,19 @@ export function useSessionIdentity() {
         currentBackend.value = data.backend || ''
         currentSessionType.value = data.sessionType || ''
         currentAgentId.value = data.agentId || agentId || ''
-        // Initialize model: prefer localStorage pref, then agent default
+        // Initialize model: the agent preference, resolved against the CURRENT
+        // list (a stale preference falls back to the list's default).
         const agentsApi = useAgents()
-        const savedModelId = loadModelPref(currentAgentId.value)
-        if (savedModelId) {
-          const model = agentsApi.getAgentModel(currentAgentId.value, savedModelId)
-          if (model) {
-            currentModelId.value = savedModelId
-            currentModelName.value = model.name
-          } else {
-            const { modelId, modelName } = agentsApi.syncModelFromAgent(currentAgentId.value)
-            currentModelId.value = modelId
-            currentModelName.value = modelName
-          }
-        } else {
-          const { modelId, modelName } = agentsApi.syncModelFromAgent(currentAgentId.value)
-          currentModelId.value = modelId
-          currentModelName.value = modelName
-        }
+        const createdAgent = agentsApi.getAgent(currentAgentId.value)
+        const createdCandidate = loadModelPref(currentAgentId.value) || ''
+        const createdModel = resolveModelSelection(
+          createdAgent?.models || [],
+          createdAgent?.preferredModel || '',
+          createdCandidate,
+          (id) => agentsApi.getAgentModel(currentAgentId.value, id)?.name,
+        )
+        currentModelId.value = createdModel.modelId
+        currentModelName.value = createdModel.modelName
         // Initialize thinking effort from agent preference
         thinkingEffortState.loadPref(currentAgentId.value, currentModelId.value)
         // Auto-approve is server-authoritative: the backend persists the

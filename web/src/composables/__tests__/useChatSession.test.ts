@@ -6042,7 +6042,11 @@ describe('syncModelFromData', () => {
   it('when localStorage preference is stale (model no longer available): falls back to agent default', async () => {
     mockIdentityFns.loadModelPref.mockReturnValue('stale-model')
     mockAgentFns.getAgentModel.mockReturnValue(undefined)  // model not found
-    mockAgentFns.syncModelFromAgent.mockReturnValue({ modelId: 'default-model', modelName: 'Default Model' })
+    // A populated list that no longer offers the saved model — that is what
+    // makes the preference genuinely retired rather than merely undiscovered.
+    mockAgentFns.getAgent.mockReturnValue({
+      models: [{ id: 'default-model', name: 'Default Model', default: true }],
+    })
 
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -6061,9 +6065,37 @@ describe('syncModelFromData', () => {
     const session = createSession()
     await session.loadHistory(true, false, false)
 
-    expect(mockAgentFns.syncModelFromAgent).toHaveBeenCalledWith('agent1')
     expect(mockIdentity.currentModelId).toBe('default-model')
     expect(mockIdentity.currentModelName).toBe('Default Model')
+  })
+
+  it('when the persisted modelId was retired by a refresh: falls back to the new default', async () => {
+    // The reported bug: the session row still holds the old id, but the
+    // agent's refreshed list no longer offers it.
+    mockAgentFns.getAgentModel.mockReturnValue(undefined)
+    mockAgentFns.getAgent.mockReturnValue({
+      models: [{ id: 'new-default', name: 'New Default', default: true }],
+    })
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1',
+        messages: [],
+        total: 0,
+        backend: 'codebuddy',
+        agentId: 'agent1',
+        modelId: 'retired-model',
+        thinkingEffort: '',
+        running: false,
+      }),
+    })
+
+    const session = createSession()
+    await session.loadHistory(true, false, false)
+
+    expect(mockIdentity.currentModelId).toBe('new-default')
+    expect(mockIdentity.currentModelName).toBe('New Default')
   })
 })
 

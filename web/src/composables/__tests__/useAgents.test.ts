@@ -81,7 +81,9 @@ describe('useAgents', () => {
     syncModelFromAgent, getAgentThinkingEffortLevels, hasThinkingEffortLevels,
     updateAgentField, canRefreshModels, getEffectiveThinkingEffort,
     agentCanResume, supportsACP, supportsCLI, supportsDualTransport, getAgentTransport,
-    setDefaultAgent, duplicateAgent, createAcpAgent, deleteAgent, rescanAgents, reorderAgents, hasPreferredMode, applyRefreshedModelList, selectableAgents } = useAgents()
+    setDefaultAgent, duplicateAgent, createAcpAgent, deleteAgent, rescanAgents, reorderAgents, hasPreferredMode, applyRefreshedModelList, selectableAgents, resolveModelSelection } = useAgents()
+
+  const mockReconcileModelSelection = vi.fn()
 
   // Register mock identity updaters — normally done by useSessionIdentity at
   // module evaluation time, but that module is mocked so we wire manually.
@@ -92,6 +94,7 @@ describe('useAgents', () => {
       updateAvailableThinkingEfforts: (...args: any[]) => mockUpdateAvailableThinkingEfforts(...args),
       updateCommandState: (...args: any[]) => mockUpdateCommandState(...args),
       currentAgentId: _currentAgentId,
+      reconcileModelSelection: mockReconcileModelSelection,
     })
   }
   registerMocks()
@@ -136,6 +139,10 @@ describe('useAgents', () => {
     agents.value = []
     defaultAgentId.value = ''
     mockApiGet.mockReset()
+    mockReconcileModelSelection.mockReset()
+    _currentAgentId.value = ''
+    // resetAgents() (called by some tests) drops the registered updaters.
+    registerMocks()
 
     // testAgents objects are module-level and shared across tests; clear any
     // `disabled` flag a previous test set so state cannot leak forward.
@@ -193,6 +200,14 @@ describe('useAgents', () => {
       mockApiGet.mockRejectedValue(new Error('Network error'))
       await loadAgents()
       expect(agentsLoaded.value).toBe(false)
+    })
+
+    it('re-resolves the current session model after an agents_updated reload', async () => {
+      _currentAgentId.value = 'claude'
+
+      await loadAgents(true)
+
+      expect(mockReconcileModelSelection).toHaveBeenCalledWith('claude')
     })
 
     it('clears the loaded flag on reset', () => {
@@ -296,6 +311,79 @@ describe('useAgents', () => {
 
     it('returns empty string for unknown agent', () => {
       expect(getDefaultModelId('nonexistent')).toBe('')
+    })
+
+    it('falls back to the list default when preferredModel is no longer offered', () => {
+      // Replace the entry instead of mutating it: `testAgents` is a module-level
+      // fixture shared with every other test in this file.
+      agents.value = agents.value.map(a =>
+        a.id === 'claude' ? { ...a, preferredModel: 'claude-retired' } : a,
+      )
+
+      expect(getDefaultModelId('claude')).toBe('claude-3.5')
+      expect(getAgentDefaultModelName('claude')).toBe('Claude 3.5 Sonnet')
+    })
+
+    it('keeps preferredModel while the list is empty (discovery has not reported yet)', () => {
+      agents.value = agents.value.map(a =>
+        a.id === 'simple' ? { ...a, preferredModel: 'unreported-model' } : a,
+      )
+
+      expect(getDefaultModelId('simple')).toBe('unreported-model')
+    })
+  })
+
+  // --- resolveModelSelection ---
+
+  describe('resolveModelSelection', () => {
+    it('keeps a candidate the list still offers and refreshes its name', () => {
+      agents.value = agents.value.map(a =>
+        a.id === 'claude'
+          ? { ...a, models: [{ id: 'claude-3.5', name: 'Claude 3.5 (renamed)', default: true }] }
+          : a,
+      )
+
+      expect(resolveModelSelection('claude', 'claude-3.5')).toEqual({
+        modelId: 'claude-3.5',
+        modelName: 'Claude 3.5 (renamed)',
+        retired: false,
+      })
+    })
+
+    it('falls back to the new default when the candidate was retired', () => {
+      agents.value = agents.value.map(a =>
+        a.id === 'claude'
+          ? {
+              ...a,
+              models: [
+                { id: 'claude-4', name: 'Claude 4', default: true },
+                { id: 'claude-3-haiku', name: 'Claude 3 Haiku', default: false },
+              ],
+            }
+          : a,
+      )
+
+      expect(resolveModelSelection('claude', 'claude-3.5')).toEqual({
+        modelId: 'claude-4',
+        modelName: 'Claude 4',
+        retired: true,
+      })
+    })
+
+    it('keeps an unknown candidate while the list is empty', () => {
+      expect(resolveModelSelection('simple', 'not-yet-discovered')).toEqual({
+        modelId: 'not-yet-discovered',
+        modelName: 'not-yet-discovered',
+        retired: false,
+      })
+    })
+
+    it('returns the agent default for an empty candidate', () => {
+      expect(resolveModelSelection('claude', '')).toEqual({
+        modelId: 'claude-3.5',
+        modelName: 'Claude 3.5 Sonnet',
+        retired: false,
+      })
     })
   })
 
@@ -935,6 +1023,12 @@ describe('useAgents', () => {
 
     it('does nothing for an unknown agent', () => {
       applyRefreshedModelList('nonexistent', [{ id: 'x', name: 'X' }])
+    })
+
+    it('re-resolves the current session model after replacing the list', () => {
+      applyRefreshedModelList('claude', [{ id: 'claude-new', name: 'Claude New', default: true }])
+
+      expect(mockReconcileModelSelection).toHaveBeenCalledWith('claude')
     })
   })
 

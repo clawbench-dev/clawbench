@@ -15,6 +15,7 @@ import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress
 import { discardPendingMessageNavigation } from '@/composables/useMessageNavigation'
 import { clearTeamState } from '@/composables/useTeamState'
 import { useAgents, resetModelViewForTransport, getAgentThinkingEffortLevels, populateACPStateFromCache, updateACPModelList, applyResolvedModelList } from '@/composables/useAgents'
+import { resolveModelSelection } from '@/utils/modelSelection'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
 import { isTransportError } from '@/utils/networkError'
@@ -436,40 +437,25 @@ export function useChatSession(options: UseChatSessionOptions) {
   const { currentSessionTitle, currentBackend, currentSessionType, currentAgentId, currentModelId, currentModelName, runningSessions, runningSessionsVersion, availableCommands, autoApprove, cruise, modeState } = identity
 
   // ── Agents from singleton ──
-  const { agents, loadAgents, getAgentBackend, getAgentName, getAgent, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle, supportsACP } = useAgents()
-
-  // Helper: sync model state from agent config when agent changes
-  function syncModelFromAgentLocal(agentId: string) {
-    const { modelId, modelName } = syncModelFromAgent(agentId)
-    currentModelId.value = modelId
-    currentModelName.value = modelName
-  }
+  const { agents, loadAgents, getAgentBackend, getAgentName, getAgent, getAgentModel, agentHeaderTitle: makeAgentTitle, supportsACP } = useAgents()
 
   // Helper: sync model state from server data, preferring persisted modelId
   // over the agent default. Falls back to agent default when server has no model.
-  // Also checks localStorage for a previously saved preference.
+  //
+  // Both sources are resolved against the agent's CURRENT list: a persisted id
+  // the agent no longer offers (refreshed away) falls back to the new default
+  // instead of keeping a dead id on the chip and shipping it on the next turn.
   function syncModelFromData(agentId: string, modelIdFromServer: string) {
-    if (modelIdFromServer) {
-      // Server has a model — use it (it was explicitly chosen for this session)
-      currentModelId.value = modelIdFromServer
-      const model = getAgentModel(agentId, modelIdFromServer)
-      currentModelName.value = model?.name || modelIdFromServer
-    } else {
-      // No server model — check localStorage for saved preference
-      const savedModelId = identity.loadModelPref(agentId)
-      if (savedModelId) {
-        const model = getAgentModel(agentId, savedModelId)
-        if (model) {
-          currentModelId.value = savedModelId
-          currentModelName.value = model.name
-        } else {
-          // Saved model no longer available — clear stale pref and use default
-          syncModelFromAgentLocal(agentId)
-        }
-      } else {
-        syncModelFromAgentLocal(agentId)
-      }
-    }
+    const agent = getAgent(agentId)
+    const candidate = modelIdFromServer || identity.loadModelPref(agentId) || ''
+    const { modelId, modelName } = resolveModelSelection(
+      agent?.models || [],
+      agent?.preferredModel || '',
+      candidate,
+      (id) => getAgentModel(agentId, id)?.name,
+    )
+    currentModelId.value = modelId
+    currentModelName.value = modelName
   }
 
   // Helper: sync thinking effort from server data.

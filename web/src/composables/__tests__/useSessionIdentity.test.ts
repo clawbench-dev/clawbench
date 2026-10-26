@@ -77,7 +77,7 @@ vi.mock('@/utils/chatSessionUtils', () => ({
     parseMessages: vi.fn().mockReturnValue([]),
 }))
 
-import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, applyCruiseAutoApproveDefault, getSessionId, registerSessionDrawerRef, registerOpenSessionTabOverride, reconcileRunningSessions, renameSession } from '@/composables/useSessionIdentity'
+import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, applyCruiseAutoApproveDefault, getSessionId, registerSessionDrawerRef, registerOpenSessionTabOverride, reconcileRunningSessions, reconcileModelSelection, renameSession } from '@/composables/useSessionIdentity'
 import { recordRecentSession } from '@/composables/useRecentSession'
 import { store } from '@/stores/app'
 import { useChatContext } from '@/composables/useChatContext'
@@ -86,6 +86,10 @@ describe('useSessionIdentity', () => {
     beforeEach(() => {
         vi.clearAllMocks()
         localStorage.clear()
+        // Return values (unlike call records) survive clearAllMocks; reset them
+        // so a fixture set by one test cannot decide another's model resolution.
+        mockGetAgent.mockReturnValue(null)
+        mockGetAgentModel.mockReturnValue(undefined)
     })
 
     // ── Identity refs ──
@@ -113,6 +117,66 @@ describe('useSessionIdentity', () => {
 
             // Reset
             id1.thinkingEffortState.currentId.value = ''
+        })
+    })
+
+    // ── Model reconciliation after a list refresh ──
+
+    describe('reconcileModelSelection', () => {
+        it('moves the chip to the new default when the current model was retired', () => {
+            const identity = useSessionIdentity()
+            identity.currentAgentId.value = 'agent-1'
+            identity.currentModelId.value = 'old-model'
+            identity.currentModelName.value = 'Old Model'
+
+            mockGetAgent.mockReturnValue({
+                models: [{ id: 'new-default', name: 'New Default', default: true }],
+            })
+
+            reconcileModelSelection('agent-1')
+
+            expect(identity.currentModelId.value).toBe('new-default')
+            expect(identity.currentModelName.value).toBe('New Default')
+        })
+
+        it('ignores an agent that is not the current session', () => {
+            const identity = useSessionIdentity()
+            identity.currentAgentId.value = 'agent-1'
+            identity.currentModelId.value = 'old-model'
+
+            reconcileModelSelection('other-agent')
+
+            expect(identity.currentModelId.value).toBe('old-model')
+        })
+
+        it('leaves the selection alone while the list is empty (ACP has not reported)', () => {
+            const identity = useSessionIdentity()
+            identity.currentAgentId.value = 'agent-1'
+            identity.currentModelId.value = 'acp-model'
+            identity.currentModelName.value = 'ACP Model'
+
+            mockGetAgent.mockReturnValue({ models: [] })
+
+            reconcileModelSelection('agent-1')
+
+            expect(identity.currentModelId.value).toBe('acp-model')
+            expect(identity.currentModelName.value).toBe('ACP Model')
+        })
+
+        it('keeps a model the refreshed list still offers, refreshing its name', () => {
+            const identity = useSessionIdentity()
+            identity.currentAgentId.value = 'agent-1'
+            identity.currentModelId.value = 'kept-model'
+            identity.currentModelName.value = 'Old Label'
+
+            mockGetAgent.mockReturnValue({
+                models: [{ id: 'kept-model', name: 'New Label', default: true }],
+            })
+
+            reconcileModelSelection('agent-1')
+
+            expect(identity.currentModelId.value).toBe('kept-model')
+            expect(identity.currentModelName.value).toBe('New Label')
         })
     })
 
@@ -699,6 +763,9 @@ describe('useSessionIdentity', () => {
             vi.stubGlobal('fetch', mockFetch)
 
             mockGetAgentModel.mockReturnValue({ name: 'Model One' })
+            mockGetAgent.mockReturnValue({
+                models: [{ id: 'model-1', name: 'Model One', default: true }],
+            })
 
             await initSessionFromAPI()
 
@@ -952,14 +1019,18 @@ describe('useSessionIdentity', () => {
             })
             vi.stubGlobal('fetch', mockFetch)
 
-            mockGetAgent.mockReturnValue({ preferredModel: 'stale-model' })
+            mockGetAgent.mockReturnValue({
+                preferredModel: 'stale-model',
+                // A populated list that no longer offers the saved model: the
+                // preference is genuinely retired, so the default wins.
+                models: [{ id: 'default-model', name: 'Default', default: true }],
+            })
             mockGetAgentModel.mockReturnValue(null) // Model no longer exists
-            mockSyncModelFromAgent.mockReturnValue({ modelId: 'default-model', modelName: 'Default' })
 
             await initSessionFromAPI()
 
-            expect(mockSyncModelFromAgent).toHaveBeenCalled()
             expect(identity.currentModelId.value).toBe('default-model')
+            expect(identity.currentModelName.value).toBe('Default')
 
             vi.unstubAllGlobals()
         })
