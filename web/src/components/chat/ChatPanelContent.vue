@@ -2478,6 +2478,41 @@ defineExpose({
   overflow: hidden;
 }
 
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ⚠️  THE ONLY COMPOSITING BOUNDARY IN THE CHAT TREE (native hosts)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Android WebView's compositor has a bug: when a composited LAYER changes
+   size, it redraws the old texture stretched into the delta instead of
+   repainting that strip. Every ghost this project has chased for weeks —
+   phantom metadata text on another message, the dock's orange disc in the
+   gap above the composer, a 9px `--bg-tertiary` band and a 4px squashed
+   copy of the meta bar under a finished reply's action bar — was the same
+   failure: some element that resizes at turn end had been promoted to its
+   own layer by a `will-change`/`backdrop-filter` fix.
+
+   The durable fix is structural, not another per-element patch:
+   **exactly one layer boundary per stable-size container, zero inside it.**
+
+   This panel is that boundary. Its height is the pane's height and does not
+   change when a reply finishes, the meta bar appears, a tool card expands or
+   the "all messages loaded" hint leaves — so its layer never resizes on the
+   code path that triggers the bug. Everything inside it (message rows, meta
+   bars, tool cards, the scroller) must stay uncomposited: their heights are
+   exactly what changes at turn end, and a composited one reproduces the bug.
+
+   `contain: paint` additionally bounds the panel's painting to its own box,
+   so nothing inside can bleed into the dock/composer area.
+
+   Scoped to [data-app-mode]: desktop browsers do not have the compositor bug,
+   and a permanent layer would cost subpixel text antialiasing there.
+
+   Guarded by web/src/components/chat/__tests__/chatCompositingBoundary.css.test.ts
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+:root[data-app-mode] .chat-panel-content {
+  will-change: transform;
+  contain: paint;
+}
+
 /* Session swipe indicator — floats at top of message area */
 .session-switch-indicator {
   display: flex;

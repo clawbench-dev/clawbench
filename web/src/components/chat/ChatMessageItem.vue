@@ -1096,36 +1096,37 @@ const copyPayload = quotableText
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    DO NOT REMOVE this rule. It is the sole fix for a persistent Android
    WebView rendering bug where layout reflow causes GPU compositing
-   cross-layer pixel pollution — phantom metadata text (e.g. model name,
-   timestamp) from one message appears overlaid on another message.
+   cross-layer pixel pollution — phantom metadata text from one message
+   appears overlaid on another message, or a stale slice of a reply's own
+   bubble/meta bar survives below it.
 
-   Root cause: WebView's GPU compositor incorrectly re-composites adjacent
-   layers when a layout reflow occurs (e.g. DOM insertion/removal, height
-   changes). This happens ~2s after opening a session when the "all loaded"
-   hint's <Transition> leave animation removes a DOM node from .chat-load-area.
+   Root cause: WebView's GPU compositor incorrectly re-composites when a
+   layout reflow occurs (DOM insertion/removal, height changes).
 
-   Fix: `will-change: transform` forces each .chat-message into its own
-   independent GPU compositing layer. Reflows still happen, but they can no
-   longer cause cross-layer pixel contamination.
+   Fix: `contain: paint` bounds every row's paint to its own box, so one
+   row's pixels can never land in a neighbour's area. That is the whole
+   isolation mechanism — and it is deliberately achieved WITHOUT promoting
+   each row to its own compositing layer.
 
-   Previous attempt (v-if→v-show everywhere) was a whack-a-mole approach
-   that was incomplete and lost Transition animations. This single rule
-   makes ALL layout reflows harmless in WebView.
+   ⚠️ DO NOT reintroduce `will-change: transform` (or a transform) on this
+   rule. It was the previous fix and it backfired: a promoted row is a
+   GPU texture whose size changes whenever the row grows, and this WebView
+   version redraws the resized texture into the delta instead of repainting
+   it. Users saw the result as a thin band of the reply's own pixels squashed
+   into the strip just below its action bar (measured 4px = `.chat-meta-bar`'s
+   `margin-top`, containing a vertically squashed copy of "1m · 刚刚" and its
+   action icons), appearing exactly when a reply finished streaming and the
+   meta bar — a new child — grew the row. Every row being a layer also made
+   the scroller's edge tiles resize-able, the source of the earlier ~9px
+   `--bg-tertiary` band. Keeping rows uncomposited lets the scroller repaint
+   the changed region normally; containment alone already prevents the
+   cross-row bleeding the layer promotion was originally added for.
 
-   Scoped to [data-app-mode] (WebView only) to avoid unnecessary GPU
-   memory overhead on desktop browsers.
+   Scoped to [data-app-mode] (native hosts) so desktop browsers, which do
+   not have this compositor bug, keep normal paint behaviour.
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 :root[data-app-mode] .chat-message {
-    will-change: transform;
-    /* `will-change` alone only makes the row its own LAYER — it does not clip
-       what that layer paints. WebView can still leave a stale slice of the
-       bubble's own background below the row: users report a ~9px band of
-       `--bg-tertiary` sitting under the action bar of the reply that just
-       finished streaming (the older replies are clean, because their layer was
-       composited long ago). `contain: paint` bounds the row's paint to its own
-       box, so the slice cannot survive a re-composite.
-
-       ⚠️ CONTAINMENT CLIPS INJECTED FIXED OVERLAYS. This rule is only safe
+    /* ⚠️ CONTAINMENT CLIPS INJECTED FIXED OVERLAYS. This rule is only safe
        because of the escape hatch below it — do NOT read it as "this row holds
        nothing that overflows". It does: `useCodeBlockHeader.ts` injects a
        `position: fixed` `.table-block-copy-menu` into every markdown table at
@@ -1157,11 +1158,15 @@ const copyPayload = quotableText
 
    `contain: style` (not `none`): it restores exactly the containment the
    unscoped `.chat-message` rule declares, so only the PAINT clip is dropped.
-   Verified in Chromium that the containing block's origin is identical in both
-   states — `will-change: transform` keeps providing it — so the menu does not
-   jump when this rule flips. The ghost-artifact fix is unaffected: it applies
-   while streaming, when no menu is open. */
+   `will-change: transform` is re-applied HERE, not on the base rule: the
+   fixed menu is positioned against the row only while the row is a containing
+   block for fixed descendants, and dropping `contain: paint` would otherwise
+   let it jump to the viewport. Scoping the promotion to the open menu keeps
+   rows uncomposited (the ghost fix above) for the ~99.9% of the time no menu
+   is open, while the containing block's origin is identical in both states —
+   verified in Chromium — so the menu does not jump when this rule flips. */
 :root[data-app-mode] .chat-message:has(.table-block-copy-menu.is-open) {
+    will-change: transform;
     contain: style;
 }
 
