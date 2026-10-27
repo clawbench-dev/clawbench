@@ -283,9 +283,10 @@ describe('landing page', () => {
       const doc = dom.window.document
       const items = Array.from(doc.querySelectorAll('.strip-list li:not(.more)'))
 
-      // 20 = the full backend registry (internal/ai/backends). Bumping the
-      // count here is the reminder to add a logo when a backend is added.
-      expect(items.length).toBe(20)
+      // 19 = the backend registry (internal/ai/backends) minus Qoder CN,
+      // which is the same product as Qoder and reads as a duplicate here.
+      // Bumping this number is the reminder to add a logo when one is added.
+      expect(items.length).toBe(19)
       for (const li of items) {
         const svg = li.querySelector('svg.strip-logo')
         expect(svg, `no inline logo for "${li.textContent?.trim()}"`).toBeTruthy()
@@ -317,7 +318,7 @@ describe('landing page', () => {
       const dom = new JSDOM(html)
       const doc = dom.window.document
       const logos = Array.from(doc.querySelectorAll('svg.strip-logo'))
-      expect(logos.length).toBe(20)
+      expect(logos.length).toBe(19)
       const kept = logos.filter((svg) => svg.getAttribute('fill-rule') === 'evenodd')
       expect(kept.length).toBeGreaterThanOrEqual(15)
       dom.window.close()

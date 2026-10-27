@@ -928,40 +928,39 @@ main {
   padding: 0 var(--pad);
 }
 
+/* 标题独立成行、字号提到正文级别：它是一句主张，不是图标的注释。
+   和下面的图标网格之间用一条分隔线断开，两者不再挤在一行里。 */
 .strip-label {
-  margin-bottom: 14px;
-  color: var(--fg-faint);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-}
-
-.strip-list {
-  /* 20 个条目用 flex-wrap 会排成 3/4/4/3/2/2/2 这种参差的尾行；
-     网格能让每一列对齐，扫读时不会被缺口打断。 */
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 11px 20px;
-  color: var(--fg-muted);
-  font-size: 13px;
+  margin: 0 0 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-dim);
+  font-size: 17px;
   font-weight: 500;
-}
-
-@media (min-width: 640px) {
-  .strip-list {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
+  letter-spacing: -0.01em;
+  line-height: 1.4;
 }
 
 @media (min-width: 900px) {
-  .strip-list {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+  .strip-label {
+    font-size: 19px;
   }
 }
 
-@media (min-width: 1180px) {
-  .strip-list {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
+.strip-list {
+  /* 固定列数在 19 这个条数下总会留空（2/3/4 列都除不尽）。
+     用 auto-fill + 最小列宽：列数跟着容器宽度走，条目从左到右
+     自然填满，尾行不会出现大块空白。 */
+  display: grid;
+  /* auto-fill + 最小列宽，列数跟着容器走：
+     390px → 2 列，640px → 3 列，810px → 4 列，宽屏 → 5 列。
+     上限 5 列靠 max-width 压住，否则 1440 会挤成 7 列。 */
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  max-width: 900px;
+  gap: 12px 20px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .strip-list li {
@@ -1922,11 +1921,9 @@ main {
     margin-top: 96px;
   }
 
-  .strip-inner {
-    display: flex;
-    align-items: baseline;
-    gap: 32px;
-  }
+  /* 标题已经独立成行，这里不再需要把标签和列表并排。
+     保留 flex 会让 ul 作为 flex item 收缩到内容宽度，
+     auto-fill 网格只能算出一列。 */
 
   .strip-label {
     flex-shrink: 0;
