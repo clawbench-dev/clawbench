@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="drawer.effectiveOpen.value" auto :title="t('chat.messageClusters.title')" @close="drawer.close()">
+  <BottomSheet :open="drawer.effectiveOpen.value" auto size="wide" :title="t('chat.messageClusters.title')" @close="drawer.close()">
     <template #header>
       <SparklesIcon :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('chat.messageClusters.title') }}</span>
@@ -50,7 +50,7 @@
     </div>
 
     <!-- Variants detail dialog -->
-    <ModalDialog :open="variantsDialogOpen" @close="variantsDialogOpen = false">
+    <ModalDialog :open="variantsDialogOpen" size="wide" @close="variantsDialogOpen = false">
       <template #header>
         <ListIcon :size="16" class="modal-header-icon" />
         <span class="modal-title">{{ t('chat.messageClusters.variantsTitle') }}</span>

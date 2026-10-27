@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" auto @close="handleClose">
+  <BottomSheet :open="open" auto size="wide" @close="handleClose">
     <template #header>
       <Search :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('search.title') }}</span>

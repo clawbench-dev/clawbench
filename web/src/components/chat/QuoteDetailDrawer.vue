@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" auto @close="$emit('close')">
+  <BottomSheet :open="open" auto size="wide" @close="$emit('close')">
     <template #header>
       <MessageSquare :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('quoteBar.drawerTitle') }}</span>

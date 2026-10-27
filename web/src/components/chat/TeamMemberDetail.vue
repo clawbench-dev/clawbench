@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" auto maximized panel-class="team-member-sheet" @close="$emit('close')">
+  <BottomSheet :open="open" auto maximized size="wide" panel-class="team-member-sheet" @close="$emit('close')">
     <template #header>
       <div class="team-member-detail__header">
         <span class="team-member-detail__dot" :style="{ background: accentColor }" aria-hidden="true" />
@@ -384,17 +384,5 @@ function handleBodyClick(e: MouseEvent) {
 .team-member-detail__markdown :deep(img) {
   max-width: 100%;
   height: auto;
-}
-</style>
-
-<style>
-/* Wide-screen: the member sheet carries the member's full instructions, which
-   are long-form Markdown (headings, lists, tables, code fences). The default
-   624px card wraps those badly. Mirrors .tool-detail-sheet / .session-search-sheet.
-   Only takes effect in BottomSheet's wide-screen card mode (the narrow-mode
-   bottom sheet ignores --modal-max-width).
-   Non-scoped because the class is bound inside BottomSheet's own template. */
-.team-member-sheet {
-  --modal-max-width: calc(900 * var(--dp));
 }
 </style>

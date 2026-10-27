@@ -1,5 +1,5 @@
 <template>
-  <ModalDialog :open="show" :zIndex="2500" @close="$emit('close')">
+  <ModalDialog :open="show" size="wide" :zIndex="2500" @close="$emit('close')">
     <template #header>
       <FileText :size="16" class="modal-header-icon" />
       <span class="modal-title">{{ t('chat.metadata.title') }}</span>

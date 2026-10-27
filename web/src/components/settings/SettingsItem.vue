@@ -284,11 +284,14 @@
       </div>
     </template>
   </BottomSheet>
-  <!-- Theme picker BottomSheet with color preview swatches -->
+  <!-- Theme picker BottomSheet with color preview swatches. Wide tier: it is a
+       swatch GRID, so extra width turns rows into more columns instead of
+       stretching every tile. -->
   <BottomSheet
     v-if="type === 'select' && isThemeSelect"
     :open="themePicker.effectiveOpen.value"
     auto
+    size="wide"
     @close="themePicker.close()"
   >
     <template #header>

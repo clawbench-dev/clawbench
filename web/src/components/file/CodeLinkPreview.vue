@@ -4,6 +4,7 @@
     v-if="preview.visible.value && preview.mode.value === 'sheet'"
     :open="preview.visible.value"
     auto
+    size="wide"
     panel-class="code-preview-sheet-panel"
     class="code-preview-sheet"
     :title="sheetTitle"

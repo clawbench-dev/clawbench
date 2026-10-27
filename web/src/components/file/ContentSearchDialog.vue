@@ -3,6 +3,7 @@
     :open="drawer.effectiveOpen.value"
     auto
     maximized
+    size="wide"
     panel-class="content-search-sheet"
     @close="handleClose"
   >
@@ -845,15 +846,5 @@ defineExpose({
   color: var(--text-muted);
   font-size: var(--font-size-sm);
   font-style: italic;
-}
-</style>
-
-<style>
-/* Wide-screen: the content search benefits from extra width — code lines and
-   paths wrap badly in a narrow card. Mirrors .session-search-sheet. Only takes
-   effect in BottomSheet's wide-screen card mode; the narrow-mode bottom sheet
-   ignores --modal-max-width and stays a full-height drawer. */
-.content-search-sheet {
-  --modal-max-width: calc(900 * var(--dp));
 }
 </style>

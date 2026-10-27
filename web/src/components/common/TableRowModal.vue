@@ -1,6 +1,7 @@
 <template>
   <ModalDialog
     :open="!!data"
+    size="wide"
     @close="$emit('close')"
   >
     <template #header>

@@ -266,7 +266,7 @@ test.describe('Agent Team Panel', () => {
   test('member detail sheet is wide and renders the role as Markdown', async ({ page }) => {
     // The sheet carries the member's full instructions, which are long-form
     // Markdown. Two things must hold in a REAL browser (jsdom has no layout and
-    // no Markdown pipeline): the card is wider than the 624px default, and the
+    // no Markdown pipeline): the card is wider than the narrow tier, and the
     // text renders as Markdown rather than a literal dump.
     const role = [
       '你是 ClawBench 仓库的代码审查员。',
@@ -316,8 +316,9 @@ test.describe('Agent Team Panel', () => {
       }
     })
 
-    // Wider than modal-card.css's 624px default — that is what "wider" means.
-    expect(card.panelWidth).toBeGreaterThan(624)
+    // Wider than the narrow tier (--modal-width-narrow, 520px) — that is what
+    // "wide" means here, and the sheet asks for it with size="wide".
+    expect(card.panelWidth).toBeGreaterThan(520)
     expect(card.h2).toBe(1)
     expect(card.table).toBe(1)
     expect(card.pre).toBe(1)

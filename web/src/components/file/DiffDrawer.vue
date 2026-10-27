@@ -3,6 +3,7 @@
     :open="visible"
     :auto="true"
     :transparent-overlay="true"
+    size="wide"
     @close="emit('close')"
   >
     <template #header>

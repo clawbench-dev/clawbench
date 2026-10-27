@@ -271,7 +271,7 @@ defineExpose({ show, forceShow, visible })
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   width: 100%;
-  max-width: calc(420 * var(--dp));
+  max-width: var(--modal-width-narrow);
   max-height: 80vh;
   display: flex;
   flex-direction: column;
