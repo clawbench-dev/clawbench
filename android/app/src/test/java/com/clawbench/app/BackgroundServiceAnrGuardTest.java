@@ -1,6 +1,7 @@
 package com.clawbench.app;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 
 import com.jcraft.jsch.Session;
 
@@ -148,13 +149,12 @@ public class BackgroundServiceAnrGuardTest {
 
         // And a later attempt is accepted again (the flag is genuinely reusable).
         ExecutorService second = Executors.newSingleThreadExecutor();
-        setField("networkExecutor", second);
         AtomicInteger queued = new AtomicInteger();
         setField("networkExecutor", countingExecutor(second, queued));
         BackgroundService.forceReconnectAsync(15000, null);
         assertEquals("a settled attempt must not block the next one", 1, queued.get());
         second.shutdown();
-        second.awaitTermination(5, TimeUnit.SECONDS);
+        assertTrue(second.awaitTermination(5, TimeUnit.SECONDS));
     }
 
     /**
@@ -173,9 +173,11 @@ public class BackgroundServiceAnrGuardTest {
     }
 
     /**
-     * Duplicate expressions must not fire twice: the JS side installs one global
-     * callback, and evaluating it twice would resolve an already-settled promise
-     * a second time.
+     * Duplicate expressions are stored once. This is an optimisation, not a
+     * correctness requirement: the JS side installs a single global
+     * ({@code window.__clawbenchReconnectResult}) whose {@code done} already has
+     * a {@code settled} guard, so a second evaluation is a harmless no-op. The
+     * set merely avoids doing that work twice.
      */
     @Test
     public void forceReconnectAsync_identicalCallbacks_areDeduplicated() throws Exception {
@@ -271,18 +273,20 @@ public class BackgroundServiceAnrGuardTest {
                 throw new RuntimeException(e);
             }
         }, "fake-main");
+        // Daemon: if the production change regresses, onDestroy blocks on the
+        // service monitor and this thread would otherwise keep the Gradle worker
+        // alive after the assertion fails (a hang instead of a clean failure).
+        destroyer.setDaemon(true);
         destroyer.start();
         destroyer.join(5000);
         assertFalse("onDestroy itself must return promptly", destroyer.isAlive());
 
-        testExecutor.shutdown();
-        assertTrue("the queued teardown must run",
-                testExecutor.awaitTermination(5, TimeUnit.SECONDS));
-
-        verify(session).disconnect();
-        // The decisive part: the disconnect ran on the executor, not on the
-        // thread that called onDestroy. "Did it run at all" alone passes for the
-        // original buggy code too.
+        // The teardown runs on its own daemon thread, so wait for the disconnect
+        // itself rather than for the executor.
+        org.mockito.Mockito.verify(session, org.mockito.Mockito.timeout(5000)).disconnect();
+        // The decisive part: the disconnect ran off the thread that called
+        // onDestroy. "Did it run at all" alone passes for the original buggy code
+        // too.
         assertNotNull("the teardown must have run", teardownThread.get());
         assertFalse("the teardown must not run on the onDestroy caller (that was the ANR)",
                 destroyCaller.get().equals(teardownThread.get()));
@@ -301,8 +305,87 @@ public class BackgroundServiceAnrGuardTest {
             service.ensureConnection();
             org.junit.Assert.fail("ensureConnection must refuse to run while shutting down");
         } catch (Exception expected) {
-            assertTrue("the refusal must be explicit: " + expected.getMessage(),
-                    expected.getMessage().contains("shutting down"));
+            assertTrue("the refusal must be a distinct type so callers can tell it "
+                            + "apart from a real connection failure, got " + expected.getClass().getName(),
+                    expected instanceof BackgroundService.ServiceShuttingDownException);
+        }
+    }
+
+    /**
+     * The shutdown abort must not be mistaken for a connection failure by
+     * {@code addPortForward}: its catch block deletes the mapping from memory and
+     * from {@code forwarded_ports}, which would silently drop a mapping the
+     * frontend has already registered on the server.
+     *
+     * <p>The window is real but narrow: {@code addPortForward} checks
+     * {@code isShuttingDown} on entry, then calls {@code saveForwardedPorts()},
+     * and only then {@code ensureConnection()} — where the new guard throws.
+     * {@code onDestroy()} can set the flag inside that window. The test closes it
+     * deterministically by flipping the flag from the prefs stub that
+     * {@code saveForwardedPorts()} hits.
+     */
+    @Test
+    public void addPortForward_shutdownRacingTheConnect_keepsTheMapping() throws Exception {
+        BackgroundService spied = spyWithShutdownRaceOnSave();
+
+        // Deliberately NOT pre-populated: `saveForwardedPorts()` (which is what
+        // closes the race in this fixture) only runs on the not-yet-tracked path.
+        invokeOn(spied, "addPortForward", 3080, 80, "127.0.0.1");
+        assertTrue("a shutdown abort must keep the desired mapping",
+                forwardedPortsOf(spied).containsKey(3080));
+        assertFalse("a shutdown abort must not surface as an SSH error",
+                lastErrorMentionsShutdown());
+    }
+
+    /**
+     * The same contract for reverse forwards (their catch also deletes + saves).
+     */
+    @Test
+    public void addReversePortForward_shutdownRacingTheConnect_keepsTheMapping() throws Exception {
+        BackgroundService spied = spyWithShutdownRaceOnSave();
+
+        invokeOn(spied, "addReversePortForward", 9000, 3000, "");
+
+        assertTrue("a shutdown abort must keep the desired reverse mapping",
+                reversePortsOf(spied).containsKey(9000));
+    }
+
+    /**
+     * A connect that started before onDestroy() can still succeed after it. It
+     * must not re-post the ongoing notification (that leaves a permanent
+     * "N 个端口转发" entry with no service behind it) nor re-arm the monitor on a
+     * destroyed service.
+     */
+    @Test
+    public void updateNotification_afterShutdownStarted_doesNotPost() throws Exception {
+        android.app.NotificationManager nm =
+                (android.app.NotificationManager) RuntimeEnvironment.getApplication()
+                        .getSystemService(Context.NOTIFICATION_SERVICE);
+        nm.cancelAll();
+
+        setField("isShuttingDown", true);
+        invoke("updateNotification", 3, null);
+
+        assertEquals("no notification may be posted after shutdown",
+                0, org.robolectric.Shadows.shadowOf(nm).getActiveNotifications().length);
+
+        // Control: the same call without the guard DOES post, so the assertion
+        // above is discriminating rather than vacuously true.
+        setField("isShuttingDown", false);
+        invoke("updateNotification", 3, null);
+        assertEquals("the guard is what suppresses the post, not the fixture",
+                1, org.robolectric.Shadows.shadowOf(nm).getActiveNotifications().length);
+    }
+
+    @Test
+    public void startConnectionMonitor_afterShutdownStarted_doesNotArm() throws Exception {
+        setField("isShuttingDown", true);
+        invoke("startConnectionMonitor");
+        try {
+            assertFalse("the monitor must not be armed on a destroyed service",
+                    field("monitorActive", Boolean.class));
+        } finally {
+            invoke("stopConnectionMonitor");
         }
     }
 
@@ -355,6 +438,74 @@ public class BackgroundServiceAnrGuardTest {
         return field("reconnectInFlight", Boolean.class);
     }
 
+    /**
+     * A spy whose {@code getSharedPreferences} flips {@code isShuttingDown} the
+     * first time it is consulted — i.e. exactly between {@code addPortForward}'s
+     * entry check and its {@code ensureConnection()} call.
+     */
+    private BackgroundService spyWithShutdownRaceOnSave() throws Exception {
+        BackgroundService spied = org.mockito.Mockito.spy(service);
+        SharedPreferences prefs = org.mockito.Mockito.mock(SharedPreferences.class);
+        SharedPreferences.Editor editor = org.mockito.Mockito.mock(SharedPreferences.Editor.class);
+        org.mockito.Mockito.when(prefs.edit()).thenReturn(editor);
+        org.mockito.Mockito.when(editor.putStringSet(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    setFieldOn(spied, "isShuttingDown", true);
+                    return editor;
+                });
+        org.mockito.Mockito.doNothing().when(editor).apply();
+        org.mockito.Mockito.when(prefs.getString(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn("");
+        org.mockito.Mockito.doReturn(prefs).when(spied)
+                .getSharedPreferences(org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.anyInt());
+        return spied;
+    }
+
+    private boolean lastErrorMentionsShutdown() {
+        String err = BackgroundService.getLastError();
+        return err != null && err.contains("shutting down");
+    }
+
+    @SuppressWarnings("unchecked")
+    private java.util.Map<Integer, BackgroundService.PortInfo> forwardedPortsOf(BackgroundService target)
+            throws Exception {
+        return fieldOn(target, "forwardedPorts", java.util.Map.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    private java.util.Map<Integer, BackgroundService.PortInfo> reversePortsOf(BackgroundService target)
+            throws Exception {
+        return fieldOn(target, "reversePorts", java.util.Map.class);
+    }
+
+    private void invokeOn(BackgroundService target, String name, Object... args) throws Exception {
+        Class<?>[] types = new Class<?>[args.length];
+        for (int i = 0; i < args.length; i++) {
+            if (args[i] instanceof Integer) types[i] = int.class;
+            else if (args[i] instanceof Boolean) types[i] = boolean.class;
+            else types[i] = String.class;
+        }
+        Method m = BackgroundService.class.getDeclaredMethod(name, types);
+        m.setAccessible(true);
+        m.invoke(target, args);
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> T fieldOn(Object target, String name, Class<T> type) throws Exception {
+        Field f = BackgroundService.class.getDeclaredField(name);
+        f.setAccessible(true);
+        return (T) f.get(target);
+    }
+
+    private void setFieldOn(Object target, String name, Object value) throws Exception {
+        Field f = BackgroundService.class.getDeclaredField(name);
+        f.setAccessible(true);
+        f.set(target, value);
+    }
+
     @SuppressWarnings("unchecked")
     private Set<String> callbacks() throws Exception {
         return field("pendingReconnectCallbacks", Set.class);
@@ -371,6 +522,18 @@ public class BackgroundServiceAnrGuardTest {
         Method m = BackgroundService.class.getDeclaredMethod(name);
         m.setAccessible(true);
         m.invoke(service);
+    }
+
+    private void invoke(String name, Object... args) throws Exception {
+        Class<?>[] types = new Class<?>[args.length];
+        for (int i = 0; i < args.length; i++) {
+            if (args[i] instanceof Integer) types[i] = int.class;
+            else if (args[i] instanceof Boolean) types[i] = boolean.class;
+            else types[i] = String.class;
+        }
+        Method m = BackgroundService.class.getDeclaredMethod(name, types);
+        m.setAccessible(true);
+        m.invoke(service, args);
     }
 
     private void setField(String name, Object value) throws Exception {

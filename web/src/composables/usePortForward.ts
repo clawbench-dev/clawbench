@@ -145,6 +145,12 @@ const SCAN_TIMEOUT_MS = 60_000
 let tunnelPollTimer: ReturnType<typeof setTimeout> | null = null
 let tunnelPollActive = false
 let tunnelPollFailures = 0
+// Bumped by every start/stop. A round captures it when it is armed and refuses
+// to re-arm if it changed: a round that was already awaiting when the poll was
+// stopped and restarted must not fork a second chain, which would fire the
+// reconnect twice as often (and can overlap two rounds, breaking the
+// single-flight contract below).
+let tunnelPollGeneration = 0
 
 const TUNNEL_POLL_DELAYS_MS = [5_000, 15_000, 30_000, 60_000]
 
@@ -1121,11 +1127,19 @@ export function usePortForward() {
    * One poll round: read the tunnel's health and, if it is down while ports are
    * still wanted, ask the native side to reconnect.
    *
-   * Resolves true when the tunnel is healthy again (the caller then stops
-   * polling). MUST NOT be run concurrently with itself — the reconnect call
-   * alone can take 15–25s.
+   * Returns `ok` when the tunnel is healthy again (the caller then stops
+   * polling), `degraded` when the tunnel is up but no enabled port is
+   * answering, and `down` when the tunnel itself is not usable.
+   *
+   * The distinction matters for the retry cadence: `degraded` means the wire is
+   * fine and only the target service is not up yet, which resolves in seconds —
+   * backing off there would delay recovery to 60s for no reason. Only `down`
+   * backs off.
+   *
+   * MUST NOT be run concurrently with itself — the reconnect call alone can take
+   * 15–25s.
    */
-  async function runTunnelPollRound(): Promise<boolean> {
+  async function runTunnelPollRound(): Promise<'ok' | 'degraded' | 'down'> {
     // Check native status first (fast, no network)
     const nativeConnected = await getNativeTunnelStatus()
     if (nativeConnected === true) {
@@ -1134,11 +1148,11 @@ export function usePortForward() {
       if (tunnelStatusFromPorts(hasPorts) === 'ok') {
         tunnelStatus.value = 'ok'
         tunnelMessage.value = ''
-        return true
+        return 'ok'
       }
       tunnelStatus.value = 'degraded'
       tunnelMessage.value = gt('portForward.tunnelDegraded', { transport: transportAnnotation() })
-      return false
+      return 'degraded'
     }
 
     // Native reports the tunnel down while ports are still wanted: ask it to
@@ -1151,7 +1165,7 @@ export function usePortForward() {
       // one settles, so a slow connect cannot stack calls on the native queue.
       await nativeReconnectTunnel()
       await loadPorts()
-      return false
+      return 'down'
     }
 
     // Fall back to server-side check
@@ -1165,11 +1179,11 @@ export function usePortForward() {
       if (tunnelStatusFromPorts(hasPorts) === 'ok') {
         tunnelStatus.value = 'ok'
         tunnelMessage.value = ''
-        return true
+        return 'ok'
       }
       tunnelStatus.value = 'degraded'
       tunnelMessage.value = gt('portForward.tunnelDegraded', { transport: transportAnnotation() })
-      return false
+      return 'degraded'
     }
 
     // Server says disconnected — still check if ports are actually active
@@ -1177,9 +1191,9 @@ export function usePortForward() {
     if (hasActivePorts()) {
       tunnelStatus.value = 'ok'
       tunnelMessage.value = ''
-      return true
+      return 'ok'
     }
-    return false
+    return 'down'
   }
 
   /** Delay before the next round, backing off while the tunnel stays down. */
@@ -1188,23 +1202,41 @@ export function usePortForward() {
     return TUNNEL_POLL_DELAYS_MS[idx]
   }
 
+  /**
+   * Arm the next round. Never leaves two timers armed: any existing one is
+   * cancelled first, and the round only re-arms if its generation is still the
+   * live one.
+   */
   function scheduleTunnelPollRound() {
     if (!tunnelPollActive) return
+    const generation = tunnelPollGeneration
+    if (tunnelPollTimer) clearTimeout(tunnelPollTimer)
     tunnelPollTimer = setTimeout(async () => {
       tunnelPollTimer = null
-      if (!tunnelPollActive) return
-      let healthy = false
+      // A stop→start straddling this await makes `tunnelPollActive` true again,
+      // so the flag alone cannot tell "my chain is still live" from "someone
+      // replaced it". Without the generation check this round would arm a
+      // second chain alongside the new one.
+      if (!tunnelPollActive || generation !== tunnelPollGeneration) return
+      let outcome: 'ok' | 'degraded' | 'down' = 'down'
+      let threw = false
       try {
-        healthy = await runTunnelPollRound()
+        outcome = await runTunnelPollRound()
       } catch (e) {
-        appLog.w(TAG, 'tunnel poll round failed', e)
+        threw = true
+        appLog.w(TAG, `tunnel poll round failed (consecutive failures: ${tunnelPollFailures + 1})`, e)
       }
-      if (!tunnelPollActive) return
-      if (healthy) {
+      if (!tunnelPollActive || generation !== tunnelPollGeneration) return
+      if (outcome === 'ok') {
         stopTunnelPoll()
         return
       }
-      tunnelPollFailures++
+      // Only a genuinely down tunnel backs off. `degraded` keeps the base
+      // cadence so a target service that is still booting flips to ok within
+      // seconds, and a thrown round is a transport/API blip rather than a
+      // tunnel failure (counting it would back a flaky-but-healthy link off to
+      // 60s).
+      tunnelPollFailures = outcome === 'down' && !threw ? tunnelPollFailures + 1 : 0
       scheduleTunnelPollRound()
     }, tunnelPollDelayMs())
   }
@@ -1213,15 +1245,16 @@ export function usePortForward() {
    * Start polling tunnel health while it is unhealthy.
    *
    * Self-scheduling (not setInterval): the next round is armed only after the
-   * previous one settled, and the delay backs off 5s → 15s → 30s → 60s. A fixed
-   * 5s interval with a 15–25s reconnect inside each round queued work faster
-   * than it drained, which on Android starved the single-threaded executor and
-   * held the service lock almost continuously (main thread → ANR).
+   * previous one settled, and the delay steps 5s → 15s → 30s → 60s. A fixed 5s
+   * interval with a 15–25s reconnect inside each round queued work faster than
+   * it drained, which on Android starved the single-threaded executor and held
+   * the service lock almost continuously (main thread → ANR).
    */
   function startTunnelPoll() {
     if (tunnelPollActive) return
     tunnelPollActive = true
     tunnelPollFailures = 0
+    tunnelPollGeneration++
     scheduleTunnelPollRound()
   }
 
@@ -1229,6 +1262,7 @@ export function usePortForward() {
   function stopTunnelPoll() {
     tunnelPollActive = false
     tunnelPollFailures = 0
+    tunnelPollGeneration++
     if (tunnelPollTimer) {
       clearTimeout(tunnelPollTimer)
       tunnelPollTimer = null
