@@ -25,7 +25,7 @@ type recordingProvider struct {
 
 // forgeEnabledCfg is the config supplier these tests pass to the poller.
 //
-// It spells Enabled: true explicitly because the poller now honours the master
+// It spells Enabled: true explicitly because the poller now honors the master
 // switch, and a zero-value model.Config reads as "disabled" — production never
 // sees that state (ApplyDefaults defaults the flag to true when absent), but a
 // bare `model.Config{}` in a test would silently stop every poll and turn these

@@ -484,6 +484,13 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	serveShareFileRoute(w, r, rest, absPath, shareRoot)
+}
+
+// serveShareFileRoute dispatches a resolved file-share token to the endpoint
+// named by the trailing path segment. Split out of ServeSharePublic to keep
+// that function's branch count readable.
+func serveShareFileRoute(w http.ResponseWriter, r *http.Request, rest, absPath, shareRoot string) {
 	switch {
 	case rest == "" || rest == entryTypeFile:
 		serveShareFileContent(w, r, absPath)

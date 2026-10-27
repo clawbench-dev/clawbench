@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -179,43 +180,55 @@ func ClearAllProjectForges() (int64, error) {
 
 	// Collect the affected projects BEFORE deleting: afterwards there is nothing
 	// left to derive the set from.
-	rows, err := tx.Query(`SELECT DISTINCT project_id FROM project_forges`)
-	if err != nil {
-		return 0, err
+	projectIDs, collectErr := collectProjectIDs(tx)
+	if collectErr != nil {
+		return 0, collectErr
 	}
-	var projectIDs []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return 0, err
-		}
-		projectIDs = append(projectIDs, id)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return 0, err
-	}
-	_ = rows.Close()
 
-	res, err := tx.Exec("DELETE FROM project_forges")
+	res, err := tx.ExecContext(context.Background(), "DELETE FROM project_forges")
 	if err != nil {
 		return 0, err
 	}
 	removed, _ := res.RowsAffected()
 
 	for _, id := range projectIDs {
-		if _, err := tx.Exec(
+		if _, execErr := tx.ExecContext(context.Background(),
 			`UPDATE projects SET forge_bind_opt_out = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 			id,
-		); err != nil {
-			return 0, err
+		); execErr != nil {
+			return 0, execErr
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return removed, nil
+}
+
+// collectProjectIDs returns the distinct project ids currently holding a forge
+// binding. Extracted from ClearAllProjectForges to keep that function's
+// complexity in check and to make the row-walking teardown obvious: the
+// deferred Close runs on every return path, including scan and iteration
+// errors.
+func collectProjectIDs(tx *sql.Tx) ([]int64, error) {
+	rows, err := tx.QueryContext(context.Background(), `SELECT DISTINCT project_id FROM project_forges`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var projectIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		projectIDs = append(projectIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return projectIDs, nil
 }
 
 // DeleteProjectForge removes a project's binding.

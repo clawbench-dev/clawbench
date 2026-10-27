@@ -600,7 +600,7 @@ func TestServeConfig_Patch_ForgeEnabledRoundTrip(t *testing.T) {
 		"GET must echo the switch, otherwise the UI resets it on reload")
 }
 
-// TestServeConfig_Patch_ForgeDisableClearsBindings is the behaviour the user
+// TestServeConfig_Patch_ForgeDisableClearsBindings is the behavior the user
 // asked for: turning the integration off is a real disable, not a hidden tab —
 // every project's repository binding must be removed so polling has nothing to
 // fetch and nothing can be notified about.

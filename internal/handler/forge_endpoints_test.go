@@ -19,7 +19,7 @@ import (
 func setupForgeEnv(t *testing.T) (*testEnv, func()) {
 	t.Helper()
 	env, teardown := setupPersistTestEnv(t)
-	// Enabled: true explicitly. The forge handlers honour the master switch, and
+	// Enabled: true explicitly. The forge handlers honor the master switch, and
 	// a zero-value Config reads as "disabled" — production never sees that
 	// (ApplyDefaults defaults it to true when the key is absent), but a bare
 	// model.Config{} here would silently block auto-binding and make every
@@ -1051,7 +1051,7 @@ func TestServeForgeBinding_DisabledDoesNotAutoBind(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, opted, "the global switch must not rewrite the per-project opt-out")
 
-	// Re-enabling restores normal behaviour: the same GET now auto-binds.
+	// Re-enabling restores normal behavior: the same GET now auto-binds.
 	model.ConfigInstance = model.Config{Forge: model.ForgeConfig{Enabled: true}}
 	req = newRequest(t, http.MethodGet, "/api/forge/binding", nil)
 	withProjectCookie(req, env.ProjectDir)
