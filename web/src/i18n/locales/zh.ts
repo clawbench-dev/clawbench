@@ -3141,6 +3141,7 @@ export default {
       tunnelStatusUnavailable: '端口映射不可用：SSH 隧道服务器已关闭，且当前传输方式不支持 H2',
       tunnelStatusChecking: '正在检测隧道状态…',
       tunnelStatusUnknown: '隧道状态未知',
+      forgeEnabledSection: '启用',
       forgeSection: '凭据',
       forgeEnabled: '启用 GitHub/GitLab 集成',
       forgeEnabledDesc: '关闭后会停止同步，并解除所有项目已关联的仓库。重新启用不会自动恢复这些关联。',

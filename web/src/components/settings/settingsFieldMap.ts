@@ -368,15 +368,18 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.mcpSection', descriptionKey: 'settings.items.mcpDesc', key: 'mcpServers', type: 'info', source: 'server', sectionHeader: 'settings.items.mcpSection' } },
   ],
   forgeIntegration: [
-    // The master switch for the whole integration (issue #590). Server-side, not
-    // per-device: "stop talking to GitHub" is about the credentials and the
-    // outbound polling, which live on the server, so every client of one server
-    // must agree.
+    // The master switch gets its OWN card, ahead of everything else: it decides
+    // whether the rest of this page applies at all, so burying it inside the
+    // credentials card made it read as one more credential field (issue #590).
+    //
+    // Server-side, not per-device: "stop talking to GitHub" is about the
+    // credentials and the outbound polling, which live on the server, so every
+    // client of one server must agree.
     //
     // Turning it OFF is destructive — it clears every project's repository
     // binding — so SettingsCategory asks for confirmation first. The description
     // says so; do not soften it into a mere "hide the entry" toggle.
-    { type: 'item', spec: { labelKey: 'settings.items.forgeEnabled', descriptionKey: 'settings.items.forgeEnabledDesc', key: 'forge.enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.forgeEnabled', descriptionKey: 'settings.items.forgeEnabledDesc', key: 'forge.enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeEnabledSection' } },
     // Credentials row is a dedicated component (tokens are write-only; the
     // server never returns them, so a plain text field cannot round-trip).
     { type: 'item', spec: { labelKey: 'settings.items.forgeCredentials', descriptionKey: 'settings.items.forgeCredentialsDesc', key: 'forgeCredentials', type: 'info', source: 'server', sectionHeader: 'settings.items.forgeSection' } },

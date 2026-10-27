@@ -639,6 +639,18 @@ describe('settingsFieldMap', () => {
     expect(item).toBeDefined()
     expect(item!.type).toBe('switch')
     expect(item!.source).toBe('server')
+    // Its own card, and the FIRST entry of the category: the switch decides
+    // whether the rest of the page applies at all, so sharing the credentials
+    // card made it read as one more credential field.
+    expect(item!.sectionHeader).toBe('settings.items.forgeEnabledSection')
+    const first = categoryItems['forgeIntegration'][0]
+    expect(first.type === 'item' && first.spec.key).toBe('forge.enabled')
+    // And it must not be grouped with the credentials row that follows it.
+    const credentials = categoryItems['forgeIntegration']
+      .filter(e => e.type === 'item')
+      .map(e => e.spec)
+      .find(i => i.key === 'forgeCredentials')
+    expect(credentials!.sectionHeader).toBe('settings.items.forgeSection')
     // It IS a restart-dialog field (it is a server key), so it must appear in the
     // cold-field label map — otherwise a restart prompt would name it raw.
     expect(getServerFieldToLabelKey()['forge.enabled']).toBe('settings.items.forgeEnabled')
@@ -658,6 +670,7 @@ describe('settingsFieldMap', () => {
     for (const [name, loc] of [['en', en], ['zh', zh]] as const) {
       const items = loc.settings.items as unknown as Record<string, string>
       for (const key of [
+        'forgeEnabledSection',
         'forgeEnabled',
         'forgeEnabledDesc',
         'forgeDisableConfirmTitle',

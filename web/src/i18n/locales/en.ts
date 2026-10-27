@@ -3145,6 +3145,7 @@ export default {
       tunnelStatusUnavailable: 'Port mapping unavailable: the SSH tunnel server is off and this transport does not support H2',
       tunnelStatusChecking: 'Checking tunnel status…',
       tunnelStatusUnknown: 'Tunnel status unknown',
+      forgeEnabledSection: 'Enable',
       forgeSection: 'Credentials',
       forgeEnabled: 'Enable GitHub/GitLab integration',
       forgeEnabledDesc: 'Turning this off stops syncing and unlinks every project from its repository. Re-enabling does not restore those links.',

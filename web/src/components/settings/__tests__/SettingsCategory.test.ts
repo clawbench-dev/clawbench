@@ -329,6 +329,7 @@ const i18n = createI18n({
           serverRestart: '重启服务器',
           logCapture: '日志抓取',
           reconfigureServer: '重新配置服务器',
+          forgeEnabledSection: '启用',
           forgeSection: '凭据',
           forgeEnabled: '启用 GitHub/GitLab 集成',
           forgeEnabledDesc: '关闭后会停止同步，并解除所有项目已关联的仓库。',
