@@ -10,6 +10,7 @@ import (
 	"clawbench/internal/forge"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/store"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1086,4 +1087,55 @@ func TestServeForgeBinding_PostRefusedWhileDisabled(t *testing.T) {
 	got, err := service.GetProjectForge(env.ProjectDir)
 	require.NoError(t, err)
 	assert.Nil(t, got, "no binding may be written")
+}
+
+// TestServeForgeBinding_StoreErrorsAnswer500 covers the two 500 branches added
+// when the GET body was extracted. Both are "the database is unavailable"
+// paths, so the only acceptable answer is a server error — never an empty
+// binding, which the panel would render as "not bound" and invite the user to
+// re-bind on top of a broken store.
+func TestServeForgeBinding_StoreErrorsAnswer500(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	// Close the database out from under the handler: the read path fails.
+	raw := store.UnsafeDBForTest()
+	require.NoError(t, raw.Close())
+
+	req := newRequest(t, http.MethodGet, "/api/forge/binding", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.NotContains(t, w.Body.String(), `"binding":null`,
+		"a store failure must not be reported as an unbound project")
+}
+
+// TestServeForgeBinding_AutoBindFailureAnswers500 covers the remaining error
+// branch of the GET: the remote looks bindable but the write fails. Reporting
+// an empty binding here would make the panel offer "bind" for a project whose
+// binding is actually broken, hiding the real problem.
+func TestServeForgeBinding_AutoBindFailureAnswers500(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = env.ProjectDir
+	require.NoError(t, cmd.Run())
+	cmd = exec.Command("git", "remote", "add", "origin", "https://github.com/acme/widgets.git")
+	cmd.Dir = env.ProjectDir
+	require.NoError(t, cmd.Run())
+
+	// Drop the bindings table: the read path still works (no row), so the
+	// handler proceeds to auto-bind, which then fails.
+	_, err := store.WriteExec(`DROP TABLE project_forges`)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/forge/binding", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.NotContains(t, w.Body.String(), `"binding":null`)
 }

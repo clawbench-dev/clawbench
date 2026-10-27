@@ -634,3 +634,73 @@ func TestClearAllProjectForges_NilDB(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(0), removed)
 }
+
+// TestClearAllProjectForges_ErrorsArePropagated covers the failure branches:
+// a partially provisioned schema must surface an error instead of reporting
+// "0 removed" (which the settings handler would render as a silent success —
+// the user turns the integration off, believes the bindings are gone, and the
+// poller keeps using them).
+func TestClearAllProjectForges_ErrorsArePropagated(t *testing.T) {
+	t.Run("missing project_forges table", func(t *testing.T) {
+		db, err := sql.Open("sqlite", ":memory:")
+		require.NoError(t, err)
+		db.SetMaxOpenConns(1)
+		// Only the projects registry: the SELECT in collectProjectIDs fails.
+		_, err = db.Exec(store.ProjectsDDL)
+		require.NoError(t, err)
+		cleanup := store.SetDBForTest(db, db)
+		t.Cleanup(func() {
+			cleanup()
+			_ = db.Close()
+		})
+
+		removed, err := service.ClearAllProjectForges()
+		require.Error(t, err)
+		assert.Equal(t, int64(0), removed)
+	})
+
+	t.Run("missing projects table", func(t *testing.T) {
+		db, err := sql.Open("sqlite", ":memory:")
+		require.NoError(t, err)
+		db.SetMaxOpenConns(1)
+		// Bindings exist but the UPDATE target does not: the delete succeeds,
+		// the opt-out write fails, and the transaction must be rolled back.
+		_, err = db.Exec(service.ProjectForgesDDL)
+		require.NoError(t, err)
+		_, err = db.Exec(`INSERT INTO project_forges (project_id, platform, host, owner, repo) VALUES (1,'github','github.com','a','b')`)
+		require.NoError(t, err)
+		cleanup := store.SetDBForTest(db, db)
+		t.Cleanup(func() {
+			cleanup()
+			_ = db.Close()
+		})
+
+		removed, err := service.ClearAllProjectForges()
+		require.Error(t, err)
+		assert.Equal(t, int64(0), removed, "a failed transaction reports nothing removed")
+
+		// Rollback means the binding survives: a half-applied clear would leave
+		// the user with polling still driven by a row the UI says is gone.
+		var count int
+		require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM project_forges`).Scan(&count))
+		assert.Equal(t, 1, count, "the delete must be rolled back with the failed opt-out write")
+	})
+}
+
+// TestClearAllProjectForges_ClosedDB covers WriteBegin's error path.
+func TestClearAllProjectForges_ClosedDB(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	_, err = db.Exec(service.ProjectForgesDDL)
+	require.NoError(t, err)
+	_, err = db.Exec(store.ProjectsDDL)
+	require.NoError(t, err)
+	cleanup := store.SetDBForTest(db, db)
+	t.Cleanup(cleanup)
+
+	require.NoError(t, db.Close())
+
+	removed, err := service.ClearAllProjectForges()
+	require.Error(t, err, "a dead handle must not be reported as a successful clear")
+	assert.Equal(t, int64(0), removed)
+}

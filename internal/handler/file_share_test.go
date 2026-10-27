@@ -1292,3 +1292,113 @@ func TestShareDocDirKey_RoundTrips(t *testing.T) {
 		assert.NotContains(t, key, "/")
 	}
 }
+
+// ─── /doc/ edge cases: malformed keys and unknown asset types ───────────────
+
+func TestSharePublic_DocBareAndMalformedPaths_404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "docs/a.md", "hi")
+	token := createShareViaAPI(t, env, absPath)
+
+	// Each of these reaches a distinct guard in serveShareDoc. They are all
+	// hand-typed URLs (the SPA always supplies a complete key + relative path),
+	// so the only correct answer is 404 — never a directory listing, never the
+	// shared file itself by accident.
+	cases := map[string]string{
+		"bare /doc (no directory key)":       "/api/share/" + token + "/doc",
+		"trailing slash only":                "/api/share/" + token + "/doc/",
+		"key without a relative path":        "/api/share/" + token + "/doc/" + encodeShareDocDir(env.ProjectDir),
+		"key without a relative path, slash": "/api/share/" + token + "/doc/" + encodeShareDocDir(env.ProjectDir) + "/",
+		"undecodable key":                    "/api/share/" + token + "/doc/!!!notbase64!!!/x.html",
+		"key decoding to a relative path":    "/api/share/" + token + "/doc/" + encodeShareDocDir("relative/dir") + "/x.html",
+		"key decoding to empty":              "/api/share/" + token + "/doc//x.html",
+	}
+	for name, url := range cases {
+		req := newRequest(t, http.MethodGet, url, nil)
+		w := callHandler(ServeSharePublic, req)
+		assert.Equal(t, http.StatusNotFound, w.Code, "%s", name)
+	}
+}
+
+func TestSharePublic_DocRejectsDotAndAbsoluteRelativePaths_404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "docs/index.html", "<html></html>")
+	absPath := createShareTestFile(t, env, "docs/a.md", "hi")
+	token := createShareViaAPI(t, env, absPath)
+	dir := filepath.Join(env.ProjectDir, "docs")
+	key := encodeShareDocDir(dir)
+
+	// "." and ".." name the directory itself; an absolute path would let the
+	// relative segment escape the key's directory entirely. All are refused
+	// before ValidatePath sees them.
+	for _, rel := range []string{".", "..", "/etc/passwd"} {
+		req := newRequest(t, http.MethodGet, "/api/share/"+token+"/doc/"+key+"/"+rel, nil)
+		w := callHandler(ServeSharePublic, req)
+		assert.Equal(t, http.StatusNotFound, w.Code, "rel %q must be refused", rel)
+	}
+}
+
+func TestSharePublic_DocMissingFile_404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "docs/a.md", "hi")
+	token := createShareViaAPI(t, env, absPath)
+	dir := filepath.Join(env.ProjectDir, "docs")
+
+	// Referenced asset that does not exist (or a directory named like one).
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "assets"), 0o755))
+	for _, rel := range []string{"missing.css", "assets"} {
+		req := newRequest(t, http.MethodGet, shareDocTestURL(token, dir, rel), nil)
+		w := callHandler(ServeSharePublic, req)
+		assert.Equal(t, http.StatusNotFound, w.Code, "rel %q", rel)
+	}
+}
+
+func TestSharePublic_DocUnknownExtensionFallsBackToSniffedType(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// `.wasm` is not in the curated web-asset table but the platform knows it;
+	// the response must say so rather than octet-stream, otherwise a shared
+	// WebAssembly module is served as a download.
+	createTestFile(t, env.ProjectDir, "web/landing/mod.wasm", "asm")
+	absPath := createShareTestFile(t, env, "web/landing/index.html", "<html></html>")
+	token := createShareViaAPI(t, env, absPath)
+	dir := filepath.Join(env.ProjectDir, "web", "landing")
+
+	req := newRequest(t, http.MethodGet, shareDocTestURL(token, dir, "mod.wasm"), nil)
+	w := callHandler(ServeSharePublic, req)
+	assertOK(t, w)
+	assert.Equal(t, "application/wasm", w.Header().Get("Content-Type"))
+	// The sandbox must still be applied: an unusual extension is not a reason
+	// to drop the opaque-origin guarantee.
+	assert.Contains(t, w.Header().Get("Content-Security-Policy"), "sandbox")
+}
+
+func TestSharePublic_DocUnknownExtensionWithoutPlatformType_IsOctetStream(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "web/landing/blob.zzzunknownzzz", "opaque")
+	absPath := createShareTestFile(t, env, "web/landing/index.html", "<html></html>")
+	token := createShareViaAPI(t, env, absPath)
+	dir := filepath.Join(env.ProjectDir, "web", "landing")
+
+	req := newRequest(t, http.MethodGet, shareDocTestURL(token, dir, "blob.zzzunknownzzz"), nil)
+	w := callHandler(ServeSharePublic, req)
+	assertOK(t, w)
+	assert.Equal(t, "application/octet-stream", w.Header().Get("Content-Type"))
+}
+
+func TestShareScopeRoot_EmptyRootFallsBackToFileDir(t *testing.T) {
+	// Rows predating the share_root column have an empty root. The scope must
+	// then be the shared file's own directory (fail closed) — never the
+	// filesystem, and never "whatever the caller's key says".
+	assert.Equal(t, "/a/b", shareScopeRoot("/a/b/c.txt", ""))
+	assert.Equal(t, "/proj", shareScopeRoot("/a/b/c.txt", "/proj"))
+}

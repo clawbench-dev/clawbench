@@ -203,10 +203,13 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// The MCP command renders four operations whose descriptions carry the
 		// full config and agent contracts (mcp.servers validation rules, the
 		// whole-replacement semantics, the per-agent policy shape). Measured at
-		// 8293. The bulk is unavoidable: those descriptions ARE the contract the
-		// AI must follow, and trimming them would push the rules into the prompt
-		// template instead — same bytes, worse locality.
-		CommandMCP: 8600,
+		// 9314 after `forge.enabled` joined both config descriptions (GET and
+		// PATCH): that switch is destructive — PATCH clears every project's
+		// repository binding — so its semantics have to be stated here rather
+		// than inferred. The bulk is unavoidable: those descriptions ARE the
+		// contract the AI must follow, and trimming them would push the rules
+		// into the prompt template instead — same bytes, worse locality.
+		CommandMCP: 9600,
 	}
 	for cmd, budget := range budgets {
 		out, err := RenderCommand(cmd)
