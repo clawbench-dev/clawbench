@@ -51,6 +51,7 @@ func TestACPUsageProbe(t *testing.T) {
 		{"cursor", "cursor-agent", []string{"acp"}},
 		{"dsh", "dsh", []string{"--profile", "acp"}},
 		{"qoder", "qodercli", []string{"--acp"}},
+		{"qodercn", "qoderclicn", []string{"--acp"}},
 	}
 
 	for _, a := range agents {

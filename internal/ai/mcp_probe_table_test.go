@@ -32,6 +32,7 @@ var mcpProbeBackends = []mcpProbeBackend{
 	{ID: "codex", Args: []string{"npx", "-y", "@agentclientprotocol/codex-acp@latest"}, CLI: "codex"},
 	{ID: "codebuddy", Args: []string{"codebuddy", "--acp"}, CLI: "codebuddy"},
 	{ID: "qoder", Args: []string{"qodercli", "--acp"}, CLI: "qodercli"},
+	{ID: "qodercn", Args: []string{"qoderclicn", "--acp"}, CLI: "qoderclicn"},
 	{ID: "kimi", Args: []string{"kimi", "acp"}, CLI: "kimi"},
 	{ID: "opencode", Args: []string{"opencode", "acp"}, CLI: "opencode"},
 	{ID: "mimo", Args: []string{"mimo", "acp"}, CLI: "mimo"},

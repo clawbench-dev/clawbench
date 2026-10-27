@@ -6,10 +6,18 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"clawbench/internal/model"
 )
+
+// QoderTextsRelPath is where both Qoder distributions cache the localized
+// dynamic-texts table inside their own config root.
+//
+// The root differs per distribution (`~/.qoder` vs `~/.qoder-cn`) but the
+// layout inside it does not.
+const QoderTextsRelPath = ".auth/dynamic-texts.json"
 
 func init() {
 	model.RegisterModelSource(model.PluginSource("qoder", discoverQoderModels))
@@ -30,41 +38,63 @@ var qoderModelKeyRe = regexp.MustCompile(`^modelSelector\.item\.(.+)$`)
 
 // qoderTextsPath is overridable in tests.
 var qoderTextsPath = func() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".qoder", ".auth", "dynamic-texts.json"), nil
+	return TextsPathFor("~/.qoder")
 }
 
-// discoverQoderModels reads Qoder's cached model catalog from
-// ~/.qoder/.auth/dynamic-texts.json. The file is written by the Qoder CLI on
-// login, so its absence means the CLI has never authenticated.
+// TextsPathFor resolves the dynamic-texts cache path for a config root.
+// configRoot may start with "~/" (expanded to the user's home).
+func TextsPathFor(configRoot string) (string, error) {
+	root := configRoot
+	if strings.HasPrefix(root, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		root = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(root, "~"), "/"))
+	}
+	return filepath.Join(root, filepath.FromSlash(QoderTextsRelPath)), nil
+}
+
+// DiscoverModelsIn reads one Qoder distribution's cached model catalog.
+//
+// label is the backend id used in diagnostic strings ("qoder" / "qodercn"),
+// configRoot is that distribution's user config root. The file is written by
+// the CLI on login, so its absence means the CLI has never authenticated.
+func DiscoverModelsIn(label, configRoot string) ([]model.AgentModel, string) {
+	path, err := TextsPathFor(configRoot)
+	if err != nil {
+		return nil, fmt.Sprintf("%s: cannot determine home directory: %v", label, err)
+	}
+	return discoverModelsAt(label, path)
+}
+
+// discoverQoderModels reads the international build's catalog.
 func discoverQoderModels() ([]model.AgentModel, string) {
 	path, err := qoderTextsPath()
 	if err != nil {
 		return nil, fmt.Sprintf("qoder: cannot determine home directory: %v", err)
 	}
+	return discoverModelsAt("qoder", path)
+}
 
+func discoverModelsAt(label, path string) ([]model.AgentModel, string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Sprintf("qoder: %s not found (log in with the qoder CLI first)", path)
+		return nil, fmt.Sprintf("%s: %s not found (log in with the %s CLI first)", label, path, label)
 	}
 
-	var raw struct {
-		Texts map[string]interface{} `json:"texts"`
+	texts, err := parseQoderTexts(data)
+	if err != nil {
+		return nil, fmt.Sprintf("%s: %s: %v", label, path, err)
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Sprintf("qoder: %s is not valid JSON: %v", path, err)
-	}
-	if len(raw.Texts) == 0 {
-		return nil, fmt.Sprintf("qoder: %s contains no texts", path)
+	if len(texts) == 0 {
+		return nil, fmt.Sprintf("%s: %s contains no texts", label, path)
 	}
 
 	type entry struct{ id, name string }
 	var entries []entry
 
-	for key, val := range raw.Texts {
+	for key, val := range texts {
 		m := qoderModelKeyRe.FindStringSubmatch(key)
 		if len(m) < 2 {
 			continue
@@ -81,7 +111,7 @@ func discoverQoderModels() ([]model.AgentModel, string) {
 	}
 
 	if len(entries) == 0 {
-		return nil, fmt.Sprintf("qoder: no model entries under modelSelector.item.* in %s", path)
+		return nil, fmt.Sprintf("%s: no model entries under modelSelector.item.* in %s", label, path)
 	}
 
 	models := make([]model.AgentModel, 0, len(entries))
@@ -91,6 +121,53 @@ func discoverQoderModels() ([]model.AgentModel, string) {
 	return models, ""
 }
 
+// parseQoderTexts extracts the flat key→text table from a dynamic-texts file.
+//
+// Two on-disk shapes exist:
+//
+//	schemaVersion 1–2 (legacy): {"texts": {"modelSelector.item.x": "X"}}
+//	schemaVersion 3   (current): {"locales": {"en": {...}, "zh-CN": {...}}}
+//
+// The current shape is what ships today. A parser that only reads `texts`
+// finds nothing and reports "contains no texts" — which is exactly what the
+// old implementation did against every real install. Both shapes are accepted;
+// when both are present `texts` wins (it is the older, more specific table).
+//
+// Locale selection: English first, then the remaining locales in sorted order.
+// Model *ids* are identical across locales (only display names differ), so a
+// non-preferred locale would only change labels — but the choice is made
+// deterministic anyway, since map iteration order is randomized and a flapping
+// label source makes discovery results look unstable.
+func parseQoderTexts(data []byte) (map[string]interface{}, error) {
+	var raw struct {
+		Texts   map[string]interface{}            `json:"texts"`
+		Locales map[string]map[string]interface{} `json:"locales"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("not valid JSON: %w", err)
+	}
+	if len(raw.Texts) > 0 {
+		return raw.Texts, nil
+	}
+	if len(raw.Locales) == 0 {
+		return nil, nil
+	}
+	if en, ok := raw.Locales["en"]; ok && len(en) > 0 {
+		return en, nil
+	}
+	names := make([]string, 0, len(raw.Locales))
+	for name := range raw.Locales {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if len(raw.Locales[name]) > 0 {
+			return raw.Locales[name], nil
+		}
+	}
+	return nil, nil
+}
+
 // isQoderModelID filters out the keys that share the modelSelector.item.*
 // prefix but are not selectable models: description variants, tier aliases,
 // internal preview builds and metadata keys.
@@ -98,7 +175,8 @@ func discoverQoderModels() ([]model.AgentModel, string) {
 // The metadata check looks for a KNOWN metadata suffix rather than any dot:
 // real model IDs contain dots too ("gpt-4.1"), so a blanket dot rule would drop
 // them. Metadata keys observed in the wild: "lite.description.quest",
-// "auto.markdownDescription".
+// "auto.markdownDescription", "kmodel.functionSwitch.highspeed.description",
+// "experts-ultimate.teams.markdownDescription".
 func isQoderModelID(id string) bool {
 	if strings.Contains(id, ".") {
 		for _, suffix := range qoderMetadataSuffixes {

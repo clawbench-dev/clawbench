@@ -12,6 +12,7 @@ const backendDisplayNames: Record<string, string> = {
   codex: 'Codex',
   copilot: 'Copilot',
   qoder: 'Qoder',
+  qodercn: 'Qoder CN',
   kimi: 'Kimi',
   mimo: 'MiMo-Code',
   pi: 'Pi',

@@ -18,7 +18,7 @@ import (
 // fall through to parseGenericACPToolCall.
 func parseACPToolCall(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
 	switch backend {
-	case "claude", "qoder":
+	case "claude", "qoder", "qodercn":
 		return parseClaudeACPToolCall(tc)
 	case "codebuddy":
 		return parseCodeBuddyACPToolCall(tc)
@@ -47,7 +47,7 @@ func parseACPToolCall(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
 // Backends not listed here fall through to parseGenericACPToolCallUpdate.
 func parseACPToolCallUpdate(backend string, tcu acp.SessionToolCallUpdate) *ToolCall {
 	switch backend {
-	case "claude", "qoder":
+	case "claude", "qoder", "qodercn":
 		return parseClaudeACPToolCallUpdate(tcu)
 	case "codebuddy":
 		return parseCodeBuddyACPToolCallUpdate(tcu)
