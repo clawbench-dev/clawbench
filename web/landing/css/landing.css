@@ -666,7 +666,9 @@ main {
   width: 100%;
   max-width: 640px;
   margin: 0 auto;
-  padding: 20px 0 8px;
+  /* 底部留出手机探出显示器下沿的那一截（bottom 是负值），
+     不留就会被下一节裁掉，看起来像手机被切了半截。 */
+  padding: 20px 0 64px;
 }
 
 .stage-glow {
@@ -811,11 +813,18 @@ main {
 .device-phone {
   position: absolute;
   right: -10px;
-  bottom: -14px;
+  /* 往下压：手机下半截探出显示器下沿，前后关系才成立；
+     同时给底部 dock 留出可见空间，不被舞台裁切。 */
+  bottom: -46px;
   z-index: 3;
   width: 25%;
   max-width: 128px;
-  filter: drop-shadow(-10px 18px 26px rgba(0, 0, 0, 0.75));
+  /* 两层投影：一层近距贴合的接触阴影（把手机"按"在桌面上），
+     一层远距柔和投影（交代它悬在显示器前方的高度差）。
+     只有远距投影时手机会显得在飘。 */
+  filter:
+    drop-shadow(0 6px 10px rgba(0, 0, 0, 0.6))
+    drop-shadow(-10px 22px 30px rgba(0, 0, 0, 0.7));
 }
 
 /* 窄屏：显示器 + 手机的叠放会缩到文字全糊（桌面稿 1.62cqw 在 350px 容器
@@ -881,7 +890,10 @@ main {
   overflow: hidden;
   border-radius: 16px;
   background: #0b0907;
-  aspect-ratio: 560 / 1111;
+  /* 必须与截图实际比例一致（900×1980）。原来是 560/1111（1.984），
+     截图是 2.2 —— cover 按宽度铺满后高度多出 30px，被从底部裁掉，
+     正好切掉底部 dock 栏。 */
+  aspect-ratio: 900 / 1980;
   container-type: inline-size;
 }
 
@@ -1995,7 +2007,7 @@ main {
   .device-phone {
     width: 26%;
     max-width: 150px;
-    bottom: 30px;
+    bottom: -52px;
   }
 }
 
