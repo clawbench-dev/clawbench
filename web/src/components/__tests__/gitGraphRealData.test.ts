@@ -1,8 +1,12 @@
 /**
  * Integration tests for computeGraphData using real git repo data.
  *
- * These tests use the actual commit SHAs and parent relationships from
- * the test git repos in test/git-graph-repos/ to verify that:
+ * The fixtures are transcribed from hand-built git repos (a linear history,
+ * a single merge, an octopus merge, …) whose SHAs and parent relationships
+ * are inlined below as plain arrays — nothing is read from disk, so these
+ * tests run the same in a shallow clone.
+ *
+ * They verify that:
  * 1. Lane assignments match the expected visual graph structure
  * 2. Connection types (VERT/FORK/MERGE-IN) are correct
  * 3. Partial loading produces correct continuation lines with exact SVG paths
