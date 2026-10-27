@@ -299,6 +299,37 @@ describe('landing page', () => {
       dom.window.close()
     })
 
+    it('gives every inlined SVG a unique id', () => {
+      // Colour logos carry <linearGradient id="..."> and reference it with
+      // url(#...). Inlined into one document, two copies of the same id make
+      // the later definition win, so an icon silently paints with another
+      // brand's gradient. Ids are prefixed per agent to prevent that.
+      const dom = new JSDOM(html)
+      const doc = dom.window.document
+      const ids = Array.from(doc.querySelectorAll('[id]')).map((el) => el.id)
+      const dupes = ids.filter((id, i) => ids.indexOf(id) !== i)
+      expect(dupes).toEqual([])
+      dom.window.close()
+    })
+
+    it('pairs every hover colour layer with a mono layer', () => {
+      // The two layers are stacked; a colour layer without its mono base
+      // would leave a hole in the row until the pointer arrives.
+      const dom = new JSDOM(html)
+      const doc = dom.window.document
+      const items = Array.from(doc.querySelectorAll('.strip-list li'))
+      expect(items.length).toBe(19)
+      for (const li of items) {
+        expect(li.querySelector('svg.strip-logo-mono'), li.textContent?.trim()).toBeTruthy()
+        const colour = li.querySelector('svg.strip-logo-color')
+        if (colour) {
+          // Colour layers must not be recoloured by the surrounding text.
+          expect(colour.getAttribute('fill')).toBeNull()
+        }
+      }
+      dom.window.close()
+    })
+
     it('keeps fill-rule on the logos whose source declares it', () => {
       // Dropping `fill-rule="evenodd"` from the root flips which regions of a
       // compound path are filled. OpenCode's mark turns from a thick frame
@@ -314,10 +345,12 @@ describe('landing page', () => {
         expect(readFileSync(src, 'utf8'), slug).toMatch(/fill-rule="evenodd"/)
       }
 
-      // The inlined copies must still carry it.
+      // The inlined copies must still carry it. Counted on the mono layer
+      // only — each agent also has an optional colour layer for hover, so
+      // `svg.strip-logo` alone would double-count.
       const dom = new JSDOM(html)
       const doc = dom.window.document
-      const logos = Array.from(doc.querySelectorAll('svg.strip-logo'))
+      const logos = Array.from(doc.querySelectorAll('svg.strip-logo-mono'))
       expect(logos.length).toBe(19)
       const kept = logos.filter((svg) => svg.getAttribute('fill-rule') === 'evenodd')
       expect(kept.length).toBeGreaterThanOrEqual(15)
