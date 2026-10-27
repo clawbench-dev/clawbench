@@ -283,7 +283,9 @@ describe('landing page', () => {
       const doc = dom.window.document
       const items = Array.from(doc.querySelectorAll('.strip-list li:not(.more)'))
 
-      expect(items.length).toBeGreaterThanOrEqual(10)
+      // 20 = the full backend registry (internal/ai/backends). Bumping the
+      // count here is the reminder to add a logo when a backend is added.
+      expect(items.length).toBe(20)
       for (const li of items) {
         const svg = li.querySelector('svg.strip-logo')
         expect(svg, `no inline logo for "${li.textContent?.trim()}"`).toBeTruthy()
@@ -296,17 +298,28 @@ describe('landing page', () => {
       dom.window.close()
     })
 
-    it('keeps fill-rule on inlined logos', () => {
+    it('keeps fill-rule on the logos whose source declares it', () => {
       // Dropping `fill-rule="evenodd"` from the root flips which regions of a
       // compound path are filled. OpenCode's mark turns from a thick frame
       // into a solid block (or the reverse) with no other symptom.
+      //
+      // Not every logo declares it (VeCLI and Command Code ship without), so
+      // the guard is "preserved where present", checked against the source
+      // files rather than a blanket assertion that would fail on those two.
+      const withEvenOdd = ['opencode', 'cursor', 'grok', 'pi', 'hermesagent', 'zhipu']
+      for (const slug of withEvenOdd) {
+        const src = resolve(here, '../../node_modules/@lobehub/icons-static-svg/icons', slug + '.svg')
+        if (!existsSync(src)) continue
+        expect(readFileSync(src, 'utf8'), slug).toMatch(/fill-rule="evenodd"/)
+      }
+
+      // The inlined copies must still carry it.
       const dom = new JSDOM(html)
       const doc = dom.window.document
       const logos = Array.from(doc.querySelectorAll('svg.strip-logo'))
-      expect(logos.length).toBeGreaterThanOrEqual(10)
-      for (const svg of logos) {
-        expect(svg.getAttribute('fill-rule')).toBe('evenodd')
-      }
+      expect(logos.length).toBe(20)
+      const kept = logos.filter((svg) => svg.getAttribute('fill-rule') === 'evenodd')
+      expect(kept.length).toBeGreaterThanOrEqual(15)
       dom.window.close()
     })
 

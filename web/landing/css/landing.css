@@ -912,8 +912,10 @@ main {
 .strip {
   position: relative;
   z-index: 1;
-  margin-top: 64px;
-  padding: 26px 0;
+  /* 20 个条目比原来 12 个高不少，上边距收一档，
+     否则 hero 和横条之间会出现一条空得过分的暗带。 */
+  margin-top: 40px;
+  padding: 28px 0 30px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   background: linear-gradient(180deg, rgba(254, 128, 25, 0.02), transparent);
@@ -934,13 +936,32 @@ main {
 }
 
 .strip-list {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 22px;
+  /* 20 个条目用 flex-wrap 会排成 3/4/4/3/2/2/2 这种参差的尾行；
+     网格能让每一列对齐，扫读时不会被缺口打断。 */
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px 20px;
   color: var(--fg-muted);
   font-size: 13px;
   font-weight: 500;
+}
+
+@media (min-width: 640px) {
+  .strip-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 900px) {
+  .strip-list {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1180px) {
+  .strip-list {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
 }
 
 .strip-list li {
@@ -972,12 +993,6 @@ main {
 .strip-list li:hover .strip-logo {
   color: var(--accent);
   opacity: 1;
-}
-
-.strip-list li.more {
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-size: 11px;
 }
 
 /* ── 多端卡片 ───────────────────────────────────────────────── */

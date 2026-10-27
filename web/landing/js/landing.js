@@ -45,7 +45,6 @@
     'stat.deployVal': '1 binary',
 
     'strip.label': 'One interface, every agent you already use',
-    'strip.more': '+7 more',
 
     'plat.kicker': 'One server, many screens',
     'plat.title': 'A single backend,<br>three kinds of client.',
