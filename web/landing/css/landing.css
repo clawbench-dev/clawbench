@@ -666,8 +666,8 @@ main {
   width: 100%;
   max-width: 640px;
   margin: 0 auto;
-  /* 底部留出手机探出显示器下沿的那一截（bottom 是负值），
-     不留就会被下一节裁掉，看起来像手机被切了半截。 */
+  /* 底部留白必须 ≥ 手机 bottom 的绝对值，否则探出的那一截
+     会被下一节盖住（手机是绝对定位，不参与 stage 的高度计算）。 */
   padding: 20px 0 64px;
 }
 
@@ -816,9 +816,9 @@ main {
 .device-phone {
   position: absolute;
   right: -10px;
-  /* 往下压：手机下半截探出显示器下沿，前后关系才成立；
-     同时给底部 dock 留出可见空间，不被舞台裁切。 */
-  bottom: -46px;
+  /* 轻微探出显示器下沿即可：再往下就会比支架还低一大截，
+     视觉上像手机悬在桌外。收到与支架底边大致齐平。 */
+  bottom: -8px;
   z-index: 3;
   width: 25%;
   max-width: 128px;
@@ -2010,7 +2010,7 @@ main {
   .device-phone {
     width: 26%;
     max-width: 150px;
-    bottom: -52px;
+    bottom: -10px;
   }
 }
 
