@@ -702,7 +702,10 @@ main {
   overflow: hidden;
   border-radius: 5px;
   background: #0b0907;
-  aspect-ratio: 1600 / 845;
+  /* 与截图实际比例一致（1920×1040）。原值 1600/845（0.5281）比截图
+     的 0.5417 略扁，cover 会上下各裁掉 4px —— 顶部标题栏和底部状态栏
+     都会被切掉一条。 */
+  aspect-ratio: 1920 / 1040;
   container-type: inline-size;
 }
 

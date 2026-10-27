@@ -27,6 +27,37 @@ const css = readFileSync(resolve(here, 'css/landing.css'), 'utf8')
 
 const CJK = /[\u3400-\u9fff]/
 
+/** Reads width/height out of a WebP container without an image library. */
+function webpSize(buf: Buffer): { width: number; height: number } {
+  if (buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WEBP') {
+    throw new Error('not a WebP file')
+  }
+  const chunk = buf.toString('ascii', 12, 16)
+  if (chunk === 'VP8X') {
+    // 4 bytes flags/reserved, then 3-byte little-endian (width-1), (height-1)
+    return {
+      width: 1 + (buf[24] | (buf[25] << 8) | (buf[26] << 16)),
+      height: 1 + (buf[27] | (buf[28] << 8) | (buf[29] << 16)),
+    }
+  }
+  if (chunk === 'VP8 ') {
+    // Lossy: sync code at 23..25, then 14-bit width/height at 26..29
+    return {
+      width: (buf[26] | (buf[27] << 8)) & 0x3fff,
+      height: (buf[28] | (buf[29] << 8)) & 0x3fff,
+    }
+  }
+  if (chunk === 'VP8L') {
+    // Lossless: 14 bits each, packed after a 0x2f signature byte
+    const b = buf.readUInt32LE(21)
+    return {
+      width: (b & 0x3fff) + 1,
+      height: ((b >> 14) & 0x3fff) + 1,
+    }
+  }
+  throw new Error(`unsupported WebP chunk: ${chunk}`)
+}
+
 /** Boots the page with the script executed, at the given navigator language. */
 function boot(language: string): JSDOM {
   const dom = new JSDOM(html, {
@@ -176,6 +207,39 @@ describe('landing page', () => {
       expect(refs.length).toBeGreaterThan(0)
       const missing = refs.filter((src) => !existsSync(resolve(here, src)))
       expect(missing).toEqual([])
+    })
+
+    it('sizes each device screen to its screenshot, so cover crops nothing', () => {
+      // Both frames are `object-fit: cover`. When the frame ratio differs from
+      // the image ratio, the excess is cropped — silently. The phone lost its
+      // whole bottom dock that way (560/1111 vs an actual 2.2), and the
+      // monitor lost a few px off the top title bar and bottom status bar.
+      // Reading the real image dimensions is the only way to catch it: a
+      // hand-written ratio looks perfectly fine in review.
+      const cases = [
+        { frame: /\.device-screen\s*\{[^}]*aspect-ratio:\s*(\d+)\s*\/\s*(\d+)/, img: 'img/desktop.webp' },
+        { frame: /\.phone-screen\s*\{[^}]*aspect-ratio:\s*(\d+)\s*\/\s*(\d+)/, img: 'img/phone.webp' },
+      ]
+
+      for (const { frame, img } of cases) {
+        const m = css.match(frame)
+        expect(m, `no aspect-ratio found for ${img}`).toBeTruthy()
+        const frameRatio = Number(m![2]) / Number(m![1])
+
+        const bytes = readFileSync(resolve(here, img))
+        // Minimal WebP VP8X/VP8 header parse: walk RIFF chunks to the image
+        // payload rather than pulling in an image library for two numbers.
+        const { width, height } = webpSize(bytes)
+        expect(Math.abs(frameRatio - height / width), `${img} frame ${frameRatio} vs image ${height / width}`)
+          .toBeLessThan(0.005)
+      }
+    })
+
+    it('serves the screenshots at their native aspect', () => {
+      // The pre-generated assets must keep the source ratio; downscaling must
+      // not letterbox or pad them.
+      expect(webpSize(readFileSync(resolve(here, 'img/desktop.webp')))).toEqual({ width: 1920, height: 1040 })
+      expect(webpSize(readFileSync(resolve(here, 'img/phone.webp')))).toEqual({ width: 900, height: 1980 })
     })
 
     it('gives every gallery card a caption', () => {
