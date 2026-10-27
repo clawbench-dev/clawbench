@@ -1308,9 +1308,11 @@ export default {
     members: '成员',
     left: '已离场',
     memberDetail: {
-      open: '查看该成员的上下文',
+      open: '查看该成员设置',
       agent: '智能体',
       model: '模型',
+      modelOverridden: '该成员使用 {model}（单独指定）',
+      modelInherited: '该成员使用 {model}（继承智能体默认）',
       noUsage: '该成员还没有上报上下文用量。使用 CLI 传输的智能体不上报上下文窗口。',
       noUsageShort: '该成员未上报上下文用量',
       compactUnavailable: '当前无法压缩：群聊正在执行本轮讨论，或该成员不在讨论中。',

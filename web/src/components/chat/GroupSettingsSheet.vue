@@ -44,18 +44,31 @@
               <AgentIcon :backend="m.backend" :name="m.name" :avatar="m.avatar || getAgentAvatar(m.agentId)" size="lg" />
             </span>
             <span class="gm-identity">
-              <span class="gm-name">{{ m.name }}</span>
-              <!-- Real-agent disclosure: a member whose nickname was auto-derived
-                   (pool name) shows the underlying agent's real name right after
-                   it, the same convention as the message speaker label. -->
-              <RealAgentNameTag class="gm-real-name" :agent-name="m.agentName" :display-name="m.name" />
-              <!-- Host / left pills sit INSIDE the identity group, right after
-                   the name + real name. They describe the member, so they belong
-                   next to who it is — pinned to the far right they read like a
-                   row-level action and broke the alignment across rows (the
-                   usage chip is the only right-hand column). -->
-              <span v-if="m.isHost" class="gm-tag gm-tag--host"><Crown :size="11" class="gm-tag-crown" />{{ t('group.host') }}</span>
-              <span v-else-if="m.left" class="gm-tag gm-tag--left">{{ t('group.left') }}</span>
+              <span class="gm-name-line">
+                <span class="gm-name">{{ m.name }}</span>
+                <!-- Real-agent disclosure: a member whose nickname was auto-derived
+                     (pool name) shows the underlying agent's real name right after
+                     it, the same convention as the message speaker label. -->
+                <RealAgentNameTag class="gm-real-name" :agent-name="m.agentName" :display-name="m.name" />
+                <!-- Host / left pills sit INSIDE the identity group, right after
+                     the name + real name. They describe the member, so they belong
+                     next to who it is — pinned to the far right they read like a
+                     row-level action and broke the alignment across rows (the
+                     usage chip is the only right-hand column). -->
+                <span v-if="m.isHost" class="gm-tag gm-tag--host"><Crown :size="11" class="gm-tag-crown" />{{ t('group.host') }}</span>
+                <span v-else-if="m.left" class="gm-tag gm-tag--left">{{ t('group.left') }}</span>
+              </span>
+              <!-- The model this member actually runs, as a SECOND line. On a
+                   phone the row only has room for one trailing column (the usage
+                   chip), so an inline model label would be squeezed to a couple
+                   of characters AND push the chip off. A member with no override
+                   inherits the agent's default, which is a real answer — it is
+                   named rather than left blank, so "who runs what" is readable
+                   without opening each drawer. -->
+              <span v-if="!m.left" class="gm-model" :class="{ 'gm-model--default': !m.model }" :title="modelTitle(m)">
+                <ProviderIcon :model-name="modelLabel(m)" :size="10" />
+                <span class="gm-model-name">{{ modelLabel(m) }}</span>
+              </span>
             </span>
             <!-- Context usage chip: the member's OWN window, not the group's.
                  A member that never reported usage shows an em dash — 0% would
@@ -97,12 +110,14 @@
            consistent: one component, one mental model — a member is a session.
            `target-session-id` is the member row id, which is exactly the
            session id that owns the agent binding and the member's own context
-           window. -->
+           window.
+           `initial-tab` is deliberately NOT passed: the drawer then opens on its
+           own default (model), the same behaviour as the single-chat session
+           info dialog. -->
       <SessionDrawer
         :open="memberSheetOpen"
         :agent-id="selectedMember?.agentId || ''"
         :target-session-id="selectedMemberId"
-        :initial-tab="memberDrawerTab"
         @close="memberSheetOpen = false"
         @changed="onMemberChanged"
       />
@@ -200,12 +215,14 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
+import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import SessionDrawer from '@/components/chat/SessionDrawer.vue'
-import { getAgentAvatar } from '@/composables/useAgents'
+import { getAgentAvatar, useAgents } from '@/composables/useAgents'
 import { addGroupMembers, generateMemberAvatars, removeGroupMember, setGroupParallelDefault, setGroupCruise, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { toggleAutoApprove, applyCruiseAutoApproveDefault } from '@/composables/useSessionIdentity'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { usagePct as usagePctOf, usageColor as usageColorOf } from '@/utils/usageDisplay'
+import { formatModelIdForDisplay } from '@/utils/modelDisplay'
 import { appLog } from '@/utils/appLog'
 import { store } from '@/stores/app.ts'
 
@@ -230,6 +247,10 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'changed'): void }>()
 
 const { t } = useI18n()
+// Model resolution for the roster's model line. `useAgents()` is the singleton
+// store accessor (no fetch — loadAgents is called by the app shell), so reading
+// it here costs nothing and keeps the row's label in step with a model refresh.
+const { getAgentModel, getDefaultModelId } = useAgents()
 const open = ref(false)
 const pickerOpen = ref(false)
 
@@ -260,15 +281,16 @@ function openAdd() { pickerOpen.value = true }
 // member left) is reflected without reopening the panel.
 const memberSheetOpen = ref(false)
 const selectedMemberId = ref('')
-// Always opens on the usage tab: the roster chip the user just tapped IS a
-// usage number, so that is what they came to see. Model/mode are one tap away
-// in the same drawer.
-const memberDrawerTab = ref('usage')
+// No `initialTab` override: clicking a member opens the drawer on its OWN
+// default tab (model), exactly as the single-chat session info dialog does.
+// The roster used to force 'usage', which made the member path the one place
+// where "open the session info" landed somewhere else — and now that the row
+// itself shows the model, landing on the model tab is also what the row is
+// about.
 const selectedMember = computed(() => props.members.find(m => m.id === selectedMemberId.value) || null)
 
 function openMember(m: GroupMemberInfo) {
   selectedMemberId.value = m.id
-  memberDrawerTab.value = 'usage'
   memberSheetOpen.value = true
 }
 
@@ -388,6 +410,30 @@ function usageTitle(m: GroupMemberInfo) {
   })
 }
 
+/** The model label a member row shows.
+ *
+ * `m.model` is the member row's OWN override; empty means it inherits the
+ * agent's default model. Both are real answers, so both are labelled — an empty
+ * cell would read as "unknown" and hide the thing the row exists to show.
+ *
+ * The id is run through `formatModelIdForDisplay` because some ACP agents
+ * (DeepSeek Harness) identify a model by a JSON-stringified provider/model pair;
+ * rendering that raw in a roster row is unreadable.
+ */
+function modelLabel(m: GroupMemberInfo): string {
+  const id = m.model || getDefaultModelId(m.agentId)
+  if (!id) return t('chat.sessionInfo.default')
+  return getAgentModel(m.agentId, id)?.name || formatModelIdForDisplay(id)
+}
+
+/** Tooltip: which model, and whether it is the member's own pick or inherited. */
+function modelTitle(m: GroupMemberInfo): string {
+  const label = modelLabel(m)
+  return m.model
+    ? t('group.memberDetail.modelOverridden', { model: label })
+    : t('group.memberDetail.modelInherited', { model: label })
+}
+
 // Delegate to the shared toggle: it PATCHes the current session (the group) and
 // the backend fans the flag out to every member row. We deliberately do NOT
 // keep local state — the parent passes the server value back down, so the
@@ -504,10 +550,21 @@ defineExpose({ open: openSheet })
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(2 * var(--dp));
   /* The host/left pill rides with the name, so the identity group must be
      allowed to shrink the NAME (ellipsis) before the pill overflows. */
+  overflow: hidden;
+}
+/* First line: name + real name + host/left pill. Horizontal, and it owns the
+   ellipsis so the pill is never the thing that gets cut. */
+.gm-name-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
 }
 .gm-name {
@@ -517,6 +574,32 @@ defineExpose({ open: openSheet })
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Second line: the model this member runs.
+   A single line with an ellipsis — model ids are long (`claude-opus-4-5`), and
+   wrapping would make one row taller than its neighbours for no information
+   gain. `max-width: 100%` keeps it inside the identity column so it can never
+   push the usage chip (the row's only trailing column) off the right edge. */
+.gm-model {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(3 * var(--dp));
+  max-width: 100%;
+  min-width: 0;
+  font-size: var(--font-size-2xs);
+  color: var(--text-secondary);
+  line-height: calc(14 * var(--dp));
+}
+.gm-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Inherited (no per-member override): one step quieter, so a row that DOES
+   override stands out while an inherited one still names its model. */
+.gm-model--default {
+  color: var(--text-muted);
 }
 
 /* ── Context usage chip ──

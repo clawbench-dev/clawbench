@@ -113,6 +113,60 @@ func TestServeSessionSettings_Guards(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 }
 
+// TestSessionSettingsRoute_DispatchesPatch is the route-level guard for
+// PATCH /api/ai/session/settings.
+//
+// Every other test in this file calls the handler functions directly, which is
+// exactly why a shipped defect went unnoticed: the route was registered with
+// the GET-only handler, so every write from the settings drawer (a group
+// member's model / effort / mode / transport) hit ServeSessionSettings and got
+// 405 "MethodNotAllowed" — the user-visible symptom was "切换模型报错 方法不允许".
+// Nothing below the mux can catch that, so this test must go through it.
+func TestSessionSettingsRoute_DispatchesPatch(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "codebuddy", "Routed", "codebuddy", "", "user", "chat")
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux)
+
+	// PATCH must reach the write handler and persist.
+	req := withProjectCookie(newRequest(t, http.MethodPatch, "/api/ai/session/settings", map[string]any{
+		"sessionId": sid,
+		"cruise":    true,
+	}), env.ProjectDir)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code,
+		"PATCH must be routed to the write handler, not the GET-only one: %s", w.Body.String())
+	assert.True(t, service.GetSessionCruise(sid), "the PATCH must have reached the write path")
+
+	// GET still reaches the read handler on the same path.
+	req = withProjectCookie(newRequest(t, http.MethodGet,
+		"/api/ai/session/settings?session_id="+sid, nil), env.ProjectDir)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var got struct {
+		OK        bool   `json:"ok"`
+		SessionID string `json:"sessionId"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.True(t, got.OK)
+	assert.Equal(t, sid, got.SessionID)
+
+	// An unsupported method is still a 405 — the dispatcher must not turn the
+	// path into a catch-all.
+	req = withProjectCookie(newRequest(t, http.MethodDelete,
+		"/api/ai/session/settings?session_id="+sid, nil), env.ProjectDir)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
 // TestServeSessionSettingsUpdate_WritesTargetSession pins that the write goes to
 // the session named in the body (a member row), not the request's current one.
 func TestServeSessionSettingsUpdate_WritesTargetSession(t *testing.T) {

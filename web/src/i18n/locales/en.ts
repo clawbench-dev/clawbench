@@ -1303,9 +1303,11 @@ export default {
     members: 'Members',
     left: 'Left',
     memberDetail: {
-      open: 'View this member\u2019s context',
+      open: 'View this member\u2019s settings',
       agent: 'Agent',
       model: 'Model',
+      modelOverridden: 'This member uses {model} (set individually)',
+      modelInherited: 'This member uses {model} (agent default)',
       noUsage: 'This member has not reported any context usage yet. Agents on the CLI transport do not report a context window.',
       noUsageShort: 'This member has not reported context usage',
       compactUnavailable: 'Compaction is unavailable right now: the group is mid-turn, or this member has left.',

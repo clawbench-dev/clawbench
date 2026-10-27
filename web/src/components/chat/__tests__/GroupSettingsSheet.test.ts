@@ -32,8 +32,22 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   applyCruiseAutoApproveDefault: (...a: any[]) => mockApplyCruiseDefault(...a),
 }))
 
+// The roster's model line resolves a member's model id against the agent's
+// list (name lookup + the agent's own default). Both live on the shared
+// useAgents store; stub them here so a row's label is deterministic.
+const AGENT_MODELS: Record<string, Array<{ id: string; name: string; default: boolean }>> = {
+  a1: [
+    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', default: true },
+    { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', default: false },
+  ],
+}
+const AGENT_DEFAULT_MODEL: Record<string, string> = { a1: 'claude-sonnet-4-6' }
 vi.mock('@/composables/useAgents', () => ({
   getAgentAvatar: (agentId: string) => (agentId ? `<svg>agent-${agentId}</svg>` : ''),
+  useAgents: () => ({
+    getAgentModel: (agentId: string, modelId: string) => AGENT_MODELS[agentId]?.find(m => m.id === modelId),
+    getDefaultModelId: (agentId: string) => AGENT_DEFAULT_MODEL[agentId] || '',
+  }),
 }))
 vi.mock('@/components/common/AgentIcon.vue', () => ({
   default: { name: 'AgentIcon', props: ['backend', 'name', 'avatar', 'size'], template: '<span class="agent-icon-stub" />' },
@@ -405,17 +419,57 @@ describe('GroupSettingsSheet', () => {
       expect(w.find('.mcs-stub').attributes('data-open')).toBe('false')
     })
 
-    it('opens the shared settings drawer on the member row, usage tab first', async () => {
+    it('opens the shared settings drawer on the member row, on the drawer default tab', async () => {
       // The whole point of the change: a member is a session, so clicking one
       // opens the SAME drawer a single chat opens — addressed at the member row
       // (which owns the agent binding and that member's own context window).
+      //
+      // `initialTab` must NOT be overridden: the drawer's own default (model) is
+      // what the single-chat session info dialog opens on, and the roster used
+      // to force 'usage', making the member path the one place that landed
+      // somewhere else. `undefined` is the assertion — passing 'model'
+      // explicitly would keep the two paths coupled to a value that could drift
+      // from SessionDrawer's default.
       const w = mountSheet(WITH_USAGE)
       await w.findAll('.gm-row-main')[0].trigger('click')
       const drawer = w.findComponent({ name: 'SessionDrawer' })
       expect(drawer.props('open')).toBe(true)
       expect(drawer.props('targetSessionId')).toBe('m1')
       expect(drawer.props('agentId')).toBe('a1')
-      expect(drawer.props('initialTab')).toBe('usage')
+      expect(drawer.props('initialTab')).toBeUndefined()
+    })
+
+    it('shows each member’s model on a second line of the row', () => {
+      // The roster must answer "who runs what" without opening every drawer.
+      // A member with an override names that model; one without names the
+      // agent's default (a real answer, not "unknown").
+      const w = mountSheet([
+        { id: 'm1', name: 'Host', backend: 'claude', agentId: 'a1', isHost: true, model: 'claude-opus-4-5' },
+        { id: 'm2', name: 'Alice', backend: 'claude', agentId: 'a1', isHost: false },
+        { id: 'm3', name: 'Gone', backend: 'claude', agentId: 'a1', isHost: false, left: true },
+      ])
+      const rows = w.findAll('.gm-row')
+      // Overridden: the member's own model.
+      expect(rows[0].find('.gm-model').text()).toContain('Claude Opus 4.5')
+      expect(rows[0].find('.gm-model').classes()).not.toContain('gm-model--default')
+      // Inherited: the agent's default, marked as such.
+      expect(rows[1].find('.gm-model').text()).toContain('Claude Sonnet 4.6')
+      expect(rows[1].find('.gm-model').classes()).toContain('gm-model--default')
+      // A left member has no live model to report.
+      expect(rows[2].find('.gm-model').exists()).toBe(false)
+    })
+
+    it('keeps the model line out of the usage chip’s trailing column', () => {
+      // The row has room for ONE trailing column on a phone. The model must
+      // live inside the identity column (stacked under the name), or a long id
+      // would squeeze the usage chip off the right edge.
+      const w = mountSheet(WITH_USAGE)
+      const row = w.findAll('.gm-row')[0]
+      expect(row.find('.gm-identity .gm-model').exists()).toBe(true)
+      const identity = row.find('.gm-identity').element
+      const usage = row.find('.gm-usage').element
+      // Model line precedes the chip in document order (i.e. is not after it).
+      expect(identity.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
 
     it('refreshes the roster when the member drawer writes', async () => {
