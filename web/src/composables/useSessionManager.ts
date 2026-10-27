@@ -3,7 +3,7 @@ import { useSessionIdentity, runningSessions } from '@/composables/useSessionIde
 import { cancelChat } from '@/utils/api'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
-import { buildSendChannels, type FileEntry } from '@/utils/fileAttachmentUtils'
+import { buildSendChannels, dedupeFiles, type FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 import { isSubagentToolName } from '@/utils/chatStreamUtils.ts'
 import { clearAskStatesByPrefix, askSessionPrefix } from '@/utils/askQuestionState.ts'
@@ -103,10 +103,15 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     // fails to decode server-side and 400s every enqueue that carries an
     // attachment.
     const { filePaths } = buildSendChannels(attachedFiles)
-    const allFileEntries: FileEntry[] = [
+    // Deduplicate: a fresh upload lives in BOTH lists (pendingFiles tracks the
+    // transfer, attachedFiles holds the resulting reference), and a whole-file
+    // attachment also travels in `filePaths`. Sending the raw concatenation
+    // stored one extra copy per channel — the reported "the same image appears
+    // twice, then three times" growth as the queue advanced.
+    const allFileEntries: FileEntry[] = dedupeFiles([
       ...pendingFiles,
       ...attachedFiles,
-    ]
+    ])
 
     // Carry the current session's agent/model/transport so a queued message
     // resolves against the same configuration as a direct send. Only for the
