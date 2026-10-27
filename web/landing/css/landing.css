@@ -936,7 +936,8 @@ main {
 .strip-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 20px;
+  align-items: center;
+  gap: 10px 22px;
   color: var(--fg-muted);
   font-size: 13px;
   font-weight: 500;
@@ -944,12 +945,33 @@ main {
 
 .strip-list li {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   white-space: nowrap;
   transition: color 0.25s;
 }
 
 .strip-list li:hover {
   color: var(--fg);
+}
+
+/* logo 统一走 currentColor（单色品牌标在深底上比彩色版干净，
+   也不会出现某个 logo 比别的亮一截）。
+   亮度单独给一档：跟着 --fg-muted 会太暗 —— 18px 的实心形状在
+   深色底上需要比 13px 的文字更高的对比才看得出轮廓。 */
+.strip-logo {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  color: var(--fg-dim);
+  opacity: 0.9;
+  transition: color 0.25s, opacity 0.25s;
+}
+
+.strip-list li:hover .strip-logo {
+  color: var(--accent);
+  opacity: 1;
 }
 
 .strip-list li.more {

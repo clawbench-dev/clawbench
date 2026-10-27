@@ -273,6 +273,43 @@ describe('landing page', () => {
   })
 
   describe('markup contracts', () => {
+    it('inlines every agent logo instead of linking an <img>', () => {
+      // `currentColor` inside an <img>-loaded SVG resolves against the image's
+      // own document, where there is no inherited colour — the marks render
+      // black on a near-black page. Inlining is the only way to tint them.
+      // Counted per item so a dropped logo fails rather than silently leaving
+      // a bare name.
+      const dom = new JSDOM(html)
+      const doc = dom.window.document
+      const items = Array.from(doc.querySelectorAll('.strip-list li:not(.more)'))
+
+      expect(items.length).toBeGreaterThanOrEqual(10)
+      for (const li of items) {
+        const svg = li.querySelector('svg.strip-logo')
+        expect(svg, `no inline logo for "${li.textContent?.trim()}"`).toBeTruthy()
+        expect(svg!.getAttribute('fill')).toBe('currentColor')
+        // Decorative: the name is already next to it, so an aria-label would
+        // just make screen readers announce the agent twice.
+        expect(svg!.getAttribute('aria-hidden')).toBe('true')
+        expect(li.querySelector('img')).toBeNull()
+      }
+      dom.window.close()
+    })
+
+    it('keeps fill-rule on inlined logos', () => {
+      // Dropping `fill-rule="evenodd"` from the root flips which regions of a
+      // compound path are filled. OpenCode's mark turns from a thick frame
+      // into a solid block (or the reverse) with no other symptom.
+      const dom = new JSDOM(html)
+      const doc = dom.window.document
+      const logos = Array.from(doc.querySelectorAll('svg.strip-logo'))
+      expect(logos.length).toBeGreaterThanOrEqual(10)
+      for (const svg of logos) {
+        expect(svg.getAttribute('fill-rule')).toBe('evenodd')
+      }
+      dom.window.close()
+    })
+
     it('declares no inline event handlers, which a strict CSP would block', () => {
       const dom = new JSDOM(html)
       const withHandlers = Array.from(dom.window.document.querySelectorAll('*')).filter((el) =>
