@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { THEMES, isDarkTheme, getThemeStatusBarColor } from '@/utils/themeMeta'
+import { THEMES, isDarkTheme, getThemeStatusBarColor, getDefaultDarkTheme, getDefaultLightTheme } from '@/utils/themeMeta'
 
 /**
  * Drift guards for the pre-CSS theme bootstrap scripts.
@@ -76,5 +76,51 @@ describe('index.html SB_COLORS', () => {
     for (const theme of THEMES) {
       expect(sbColors[theme.id], `SB_COLORS mismatch for ${theme.id}`).toBe(getThemeStatusBarColor(theme.id))
     }
+  })
+})
+
+/**
+ * Factory-theme parity between the two entries.
+ *
+ * A share link is the first thing a recipient may ever see of ClawBench, and it
+ * is served from the same origin as the app — so both entries read and write the
+ * SAME `clawbench-settings-theme` key. If they disagreed, a reader who picks a
+ * theme on a share page would land in the app on a different one (or vice
+ * versa), and a fresh device would see the app's factory theme on one page and
+ * the system scheme on the other.
+ *
+ * The share page originally resolved the system scheme for a fresh install but
+ * never persisted anything, which is exactly that drift: "no stored theme" is
+ * the durable definition of a fresh install, so the app persists gruvbox-dark
+ * while the share page fell through to github-light on a light-scheme device.
+ */
+describe.each(['index.html', 'share.html'])('%s factory theme', (file) => {
+  const html = readHtml(file)
+
+  it('persists the factory theme instead of only applying it', () => {
+    // The persist() helper must be called from the "never chosen" branch — a
+    // page that only sets data-theme reverts to the system scheme next load.
+    expect(html).toMatch(/function persist\(/)
+    expect(html).toMatch(/chosen = DARK_DEFAULT;\s*\n\s*persist\(chosen\)/)
+  })
+
+  it('treats auto as the system scheme without persisting the resolved id', () => {
+    // Persisting the resolution would pin the page and stop it following the
+    // system (issue #458).
+    expect(html).toMatch(/chosen === 'auto'/)
+    expect(html).toMatch(/prefers-color-scheme: dark/)
+    expect(html).toMatch(/DARK_DEFAULT : LIGHT_DEFAULT/)
+  })
+
+  it('migrates the legacy light/dark values to the named defaults', () => {
+    expect(html).toMatch(/chosen === 'light'/)
+    expect(html).toMatch(/chosen === 'dark'/)
+  })
+
+  it('uses the same factory defaults as the registry', () => {
+    const dark = /var DARK_DEFAULT = '([^']+)'/.exec(html)?.[1]
+    const light = /var LIGHT_DEFAULT = '([^']+)'/.exec(html)?.[1]
+    expect(dark).toBe(getDefaultDarkTheme())
+    expect(light).toBe(getDefaultLightTheme())
   })
 })

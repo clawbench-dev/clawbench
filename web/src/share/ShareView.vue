@@ -16,7 +16,10 @@
       <span class="share-file-name" :title="file?.name || ''">{{ file?.name || '' }}</span>
       <span v-if="loading" class="share-status">{{ t('share.loading') }}</span>
       <span v-else-if="error" class="share-status share-error">{{ error }}</span>
-      <span v-else class="share-spacer" />
+      <!-- Unconditional: the right-hand actions (theme / download) must stay at
+           the far edge in the loading and error states too, not drift next to
+           the status text. -->
+      <span class="share-spacer" />
       <div v-if="(hasToc || showToggleView) && !error" class="share-top-actions">
         <!-- Toggle between rendered preview and source (markdown/html/openapi) -->
         <button
@@ -43,6 +46,11 @@
       >
         <Download :size="16" />
       </button>
+      <!-- Theme picker is the right-most control and is ALWAYS available (not
+           behind hasToc / error): it is the one action a reader needs on a page
+           that failed to load or whose palette is unreadable, and keeping it in
+           a fixed slot means it never shifts when the others appear. -->
+      <ShareThemeButton />
     </div>
 
     <!-- Body: content + optional TOC -->
@@ -240,13 +248,17 @@ import { flashElement } from '@/utils/domFlash'
 import { extractToc, type TocItem } from '@/utils/toc.ts'
 import { setShareToken, setSharedFile, shareApiUrl } from '@/share/shareMode'
 import { SHARE_OPEN_FILE_EVENT, shareDeepLink } from '@/share/shareLinks'
+import ShareThemeButton from './ShareThemeButton.vue'
+import { shareThemeId } from './shareTheme'
 import { buildLocalFileUrl } from '@/utils/download'
 import { store } from '@/stores/app.ts'
 
 // Share the resolved theme id with child components (OpenApiPreview reads it via
-// inject('theme') to pick Swagger UI colors). share.html sets data-theme on <html>.
-const themeId = ref(document.documentElement.getAttribute('data-theme') || 'gruvbox-dark')
-provide('theme', readonly(themeId))
+// inject('theme') to pick Swagger UI colors). It is the SPA-wide reactive ref,
+// NOT a snapshot of the attribute at mount: the topbar's theme picker can
+// switch the palette at any time, and an iframe-based viewer that captured the
+// old id would keep its old colours until the page was reloaded.
+provide('theme', readonly(shareThemeId))
 
 /** The file payload returned by the share /file endpoint (FileContent JSON)
  *  extended with the viewer flags set by decorateFile. */

@@ -32,6 +32,10 @@
         >
           <Download :size="16" />
         </button>
+        <!-- Theme picker last: it is the only action available in every state
+             (loading / error / empty snapshot), so it must not shift position
+             when the others appear. -->
+        <ShareThemeButton />
       </div>
     </div>
 
@@ -253,6 +257,7 @@ import { localConfig } from '@/composables/useSettingsConfig'
 import { getBackendDisplayName } from '@/utils/backendNames'
 import { flashElement } from '@/utils/domFlash'
 import { setShareSessionData, shareApiUrl, type ShareToolCallData } from './shareMode'
+import ShareThemeButton from './ShareThemeButton.vue'
 import { downloadBlob } from '@/utils/download.ts'
 import { formatDuration } from '@/utils/format.ts'
 import { store } from '@/stores/app.ts'

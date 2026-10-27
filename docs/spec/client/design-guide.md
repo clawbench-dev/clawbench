@@ -40,7 +40,7 @@
 | `code-block.css` / `code-block-header.css` | 代码块行结构与头部栏 |
 | `content.css` | `.markdown-body` 阅读列、标题、表格、mermaid、KaTeX |
 | `media-block.css` | 统一媒体图（`.image-block-wrapper`）+ 浮动工具栏 |
-| `components.css` | **跨组件共享的全局类**（`.count-badge`、`.drilldown-*`、`.context-menu`、引用附件卡） |
+| `components.css` | **跨组件共享的全局类**（`.count-badge`、`.drilldown-*`、`.context-menu`、引用附件卡、**app-menu 弹层容器** `.app-menu-title`/`.app-menu-scroll`/`.app-menu-column`/`.menu-divider`/`.theme-picker`） |
 | `diff-rows.css` | 四种 diff 界面共用的行语言 |
 | `share-chrome.css` | 分享 SPA 专用（由 `web/src/share/main.ts` 引入，不在 index.html） |
 
@@ -52,7 +52,9 @@
 
 ### 第三层：SFC `<style scoped>` — 组件私有
 
-绝大多数组件样式在这里。**唯一例外**是 `ChatMessageItem.vue` 里那段**非 scoped** 的 `<style>`（`.chat-message` 相关）——因为聊天正文是 `v-html` 注入的，scoped 规则**永远匹配不到注入的元素**。见[红线 1](#红线-1v-html-注入的内容匹配不到-scoped-规则)。
+绝大多数组件样式在这里。**例外只有两种**：① `ChatMessageItem.vue` 里那段**非 scoped** 的 `<style>`（`.chat-message` 相关）——因为聊天正文是 `v-html` 注入的，scoped 规则**永远匹配不到注入的元素**（见[红线 1](#红线-1v-html-注入的内容匹配不到-scoped-规则)）；② 组件里**非 scoped** 的 `<style>` 用来给 `Teleport to="body"` 的弹层写样式。
+
+**② 是个陷阱**：非 scoped 的组件样式能生效，只因为该组件挂载了。`AppHeader.vue` 的全局块曾经装着 `.app-menu-title` / `.app-menu-scroll` / `.app-menu-column` / `.menu-divider` / `.theme-picker`——这些是**所有** appSurface 弹层（含终端主题选择器、通知筛选、分享页主题选择器）共用的容器样式，但因为 AppHeader 在每个应用页面都挂着，问题一直没暴露；分享 SPA 不挂 AppHeader，于是「除了唯一还需要它的宿主以外都正常」。**判据**：这段规则除了本组件，还有没有别的宿主（尤其是 `web/src/share/` 这个独立入口）需要？需要就下沉到 `css/components.css`（两个入口都会加载）。
 
 ---
 
@@ -196,6 +198,7 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
   - `data-hljs-theme="light|dark"` — 代码高亮主题
 - **出厂默认主题 = `gruvbox-dark`**，全平台一致（web 内联脚本 / 桌面壳 `DEFAULT_THEME_ID` / Android `ThemePalette.DEFAULT_THEME_ID`）。它就是 `'auto'` 在深色系统下的解析结果（`getDefaultDarkTheme()`）。
 - `'auto'` 解析为 `matchMedia('(prefers-color-scheme: dark)')` → `gruvbox-dark` / `github-light`。
+- **`web/share.html` 的内联脚本必须与 `index.html` 语义完全一致**：分享页与主应用**同源、同一把 `clawbench-settings-theme` 键**。分享链接常常是收件人第一次看到 ClawBench，所以「从未存过主题」也必须落盘 `gruvbox-dark`，否则同一台新设备会「应用是 gruvbox-dark、分享页是系统浅色」。「只改 DOM 不落盘」正是这个漂移的历史形态。`themeBootstrap.test.ts` 对两个 HTML 逐条比对（落盘、`auto` 不落盘、旧 `light`/`dark` 迁移、出厂默认值与 registry 一致）。
 - **首屏不闪白**：`web/index.html` 有一段**在 CSS 加载前**跑的内联脚本读 localStorage 并设属性。它同时是**出厂主题的唯一权威**：`localStorage` 里从未存过主题 ⇒ 判定为全新安装，**当场把 `gruvbox-dark` 落盘**（不是只改 DOM），因此重启 / 刷新后依然是它。**不要**再用服务端 `config.first_run` 判定——那个标记是进程级的，`InitDB` 建库后就翻成 false，重启（docker restart / 升级 / 重启机器）会把新安装静默打回系统主题；而且它要等 `/api/config` 异步返回，首屏必然先闪一下系统主题。`clawbench-fresh-theme-guess` 与 `applyFirstRunThemeDefaults` 已随该方案一并删除。
 - 主题是**纯前端本地设置**（只进 localStorage）——同一服务器多设备各选各的，互不干扰。
 
@@ -214,6 +217,12 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 `web/src/assets/theme-picker.css`：行本身**刻意中性**（用当前主题的底色/文字），只用两个小载体表达主题——左边 13px 圆形 `.theme-swatch`（预览色）、右边太阳/月亮图标（用该主题自己的强调色染色）。
 
 选中态靠**三件事**表达：2px 强调色竖条（`.theme-item.active::before`）+ 12% 强调色底纹 + 字重提升。**竖条是承重的**——实测对比度 2.04，而底纹只有 1.09，光靠底纹在浅色主题上看不出来。
+
+**三个宿主共用同一套状态机**：`composables/useThemePicker.ts`。宿主是应用头部的 Palette 按钮（`AppHeader.vue`）、终端工具栏的主题选择器（`TerminalPanelContent.vue`）和**分享页顶栏**（`share/ShareThemeButton.vue`）。状态机承载三条会静默失效的规则：① 切换**必须等弹层 `after-leave` 再启动**圆形扩散，否则正在淡出的菜单会被拍进新快照、两段动画重叠；② 必须走 `setLocalConfig('theme', …)`（它才是把 `data-theme` / `data-theme-base` / `data-hljs-theme` 一起刷新的地方），直接写 localStorage 会留下旧配色；③ 扩散原点取按钮自身（`originFromElement`），退回 `headerThemeOrigin()`。`themeReveal.test.ts` 钉住这三条 + 「每个宿主都用共享模块、不得自己 `applyThemeWithReveal`」。
+
+**弹层容器样式在 `css/components.css`，不在 `AppHeader.vue` 的全局块里**：`.app-menu-title` / `.app-menu-scroll` / `.app-menu-column` / `.menu-divider` / `.theme-picker` 原先声明在 AppHeader 的非 scoped `<style>` 里，能生效只是因为 AppHeader 在每个应用页面都挂着——分享页不挂 AppHeader，于是「除了唯一还需要它的宿主以外都正常」。凡是非应用宿主也要用的规则，放 `components.css`。
+
+**分享页没有 App.vue，主题变更的两条副作用要自己接**（`share/shareTheme.ts` 的 `installShareThemeSync`）：① 响应式主题 ref（`provide('theme')` 给 OpenApiPreview 选 Swagger UI 配色）② mermaid 重渲染（配色是 `initialize({theme})` 时烘进 SVG 的，不跟 CSS）。另在 `share/main.ts` 调 `startSystemThemeWatcher()`，否则「跟随系统」只在加载时解析一次、系统切换深浅色不跟随。守卫：`share/__tests__/shareTheme.test.ts`、e2e `share-theme.spec.ts`。
 
 ### 壁纸
 
@@ -643,6 +652,10 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `utils/__tests__/codeHighlightStyle.test.ts` | CodeMirror 语法高亮映射全局唯一（不得在组件里重复 `HighlightStyle.define`）、颜色必须来自 CSS 变量 |
 | `components/__tests__/wideDockIconSize.css.test.ts` | 宽屏 dock 图标尺寸 |
 | `assets/__tests__/themePicker.css.test.ts` | 主题选择器中性底 + 色点载体 |
+| `utils/__tests__/themeReveal.test.ts` | 主题圆形扩散（百分比 clip、reduced-motion 回退、in-flight 守卫）+ **三个宿主共用 `useThemePicker`**：切换只在 `after-leave` 生效、必须走 `setLocalConfig`、原点取按钮；宿主不得自己调 `applyThemeWithReveal` |
+| `utils/__tests__/themeBootstrap.test.ts` | `index.html` / `share.html` 的内联主题脚本与 registry 同步：`DARK_IDS`、`SB_COLORS`、出厂默认值，且**两页语义一致**（新设备落盘 `gruvbox-dark`、`auto` 不落盘、旧 `light`/`dark` 迁移） |
+| `share/__tests__/shareTheme.test.ts` | 分享页主题变更的两条副作用：响应式主题 ref（provide 给 iframe 查看器）+ mermaid 重渲染；不得自己再刷一遍属性 |
+| `share/__tests__/ShareThemeButton.test.ts` | 分享顶栏选择器：行数 = registry + auto、选中行跟随存储值、点击只关菜单、`after-leave` 才落 `setLocalConfig` |
 | `assets/__tests__/annotationButtons.css.test.ts` | 标注按钮全局作用域 |
 | `__tests__/scrollbarNoArrowButtons.test.ts` | 滚动条唯一定义在 `css/scrollbar.css`（四文档内联：应用/OpenAPI/导出/HTML 预览）、两档宽度按 `(pointer: coarse)`（移动 4px / 桌面 10px，须整数像素——Chromium 截断小数宽度）、`scrollbar-color` 必须关在 `@supports not selector(::-webkit-scrollbar)` 里（否则 Chromium 弃用 `::-webkit-scrollbar-*`，箭头按钮复活）、任何文档不得重写宽度、变量必须带 fallback、HTML 预览注入须插在 head 最前且幂等、预览配色须从宿主读（thumb/`--text-muted`/`--bg-primary` 三槽 + Firefox 门控）且两个预览面都接主题监听 |
 | `__tests__/platformAxes.test.ts` | 三条平台轴保持正交：`isPC` 不得回归、共享宿主谓词不得各组件重声明、iPadOS 陷阱（Macintosh UA + `maxTouchPoints>0`）不得重开 |

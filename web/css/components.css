@@ -1262,3 +1262,65 @@
 :where(svg[width="44"]) { width: calc(44 * var(--dp)); height: calc(44 * var(--dp)); }
 :where(svg[width="48"]) { width: calc(48 * var(--dp)); height: calc(48 * var(--dp)); }
 :where(svg[width="56"]) { width: calc(56 * var(--dp)); height: calc(56 * var(--dp)); }
+
+/* ==========================================================================
+   App-menu popup chrome (title / scrollable middle / column / divider)
+
+   Shared by every PopupMenu with `appSurface` — the app-header project /
+   recent-files / branch / theme dropdowns, the terminal toolbar theme picker,
+   the notifications project filter, and the public share topbar theme picker.
+
+   Declared GLOBALLY here, not in AppHeader.vue's unscoped <style> block, for a
+   reason that is not obvious: AppHeader is mounted on every app page, so its
+   unscoped rules silently reach all of those popups — but the public share SPA
+   (web/src/share/) mounts no header at all. A rule kept there therefore worked
+   everywhere except the one host that also needed it, and the share picker
+   would have rendered as an unpositioned column with a stretched title.
+
+   Layout contract: the popup root supplies an inline `max-height`; the column
+   inherits it and lets the scrollable middle absorb the deficit, so a pinned
+   title or footer row is never clipped on a short viewport.
+   ========================================================================== */
+
+.app-menu-title {
+    padding: calc(5 * var(--dp)) var(--space-6) var(--space-2);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.app-menu-scroll {
+    overflow-y: auto;
+    overflow-x: hidden;
+    max-height: calc(300 * var(--dp));
+}
+
+.menu-divider {
+    height: 1px;
+    background: var(--border-color);
+    margin: var(--space-1) 0;
+}
+
+.theme-picker { min-width: calc(160 * var(--dp)); }
+
+.app-menu-column {
+    display: flex;
+    flex-direction: column;
+    max-height: inherit;
+    min-height: 0;
+}
+
+.app-menu-column > .app-menu-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+/* Title / divider / footer rows must never shrink — the scrollable middle
+   absorbs any height deficit first. */
+.app-menu-column > :not(.app-menu-scroll) {
+    flex-shrink: 0;
+}

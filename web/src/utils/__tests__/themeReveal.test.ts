@@ -232,42 +232,62 @@ describe('applyThemeWithReveal', () => {
 })
 
 /**
- * Source guard: the quick theme picker is the ONE entry point that should play
- * the reveal. A refactor that calls setLocalConfig('theme', …) directly would
- * silently drop the animation with no behavioural test failure (jsdom has no
- * View Transitions), so pin the wiring at the source level.
+ * Source guards for the quick theme picker.
  *
- * The reveal must also not start until the picker has finished its leave
- * transition — otherwise the still-fading menu is captured in the "new"
- * snapshot and the wipe visibly overlaps the close. That ordering is enforced
- * by starting the reveal from the menu's `after-leave` handler.
+ * The picker's behaviour (deferred reveal, persistence, wipe origin) is shared
+ * by its hosts through `composables/useThemePicker.ts`, because it carries three
+ * rules that each fail silently:
+ *
+ *   1. The reveal must NOT start in `selectTheme` — it starts from the popup's
+ *      `after-leave`, or the still-fading menu is captured into the transition's
+ *      "new" snapshot and the wipe visibly overlaps the close.
+ *   2. The change must go through `setLocalConfig('theme', …)`; writing
+ *      localStorage directly leaves the document on the old palette.
+ *   3. The wipe must start from the button (falling back to the app header's
+ *      top-right corner) so it grows out of what the user pressed.
+ *
+ * None of this is observable in jsdom (no View Transitions), so it is pinned at
+ * the source level — and every host must actually USE the shared module, or it
+ * will drift back to a hand-rolled copy.
  */
-describe('AppHeader theme picker wiring', () => {
-  const source = readFileSync(
-    resolve(__dirname, '../../components/common/AppHeader.vue'),
+describe('quick theme picker wiring', () => {
+  const picker = readFileSync(
+    resolve(__dirname, '../../composables/useThemePicker.ts'),
     'utf8',
   )
 
   it('closes the menu in selectTheme and defers the reveal to after-leave', () => {
-    const body = source.match(/function selectTheme\(value: string\) \{([\s\S]*?)\n\}/)
+    const body = picker.match(/function selectTheme\(value: string\) \{([\s\S]*?)\n  \}/)
     expect(body, 'selectTheme not found').not.toBeNull()
     // selectTheme only closes the menu; it must NOT start the reveal itself.
-    expect(body![1]).toContain('themeMenuOpen.value = false')
+    expect(body![1]).toContain('close()')
     expect(body![1]).not.toContain('applyThemeWithReveal')
   })
 
   it('runs the reveal from the after-leave handler using the shared origin helper', () => {
-    const body = source.match(/function onThemeMenuAfterLeave\(\) \{([\s\S]*?)\n\}/)
-    expect(body, 'onThemeMenuAfterLeave not found').not.toBeNull()
+    const body = picker.match(/function onMenuAfterLeave\(\) \{([\s\S]*?)\n  \}/)
+    expect(body, 'onMenuAfterLeave not found').not.toBeNull()
     expect(body![1]).toContain('applyThemeWithReveal')
     expect(body![1]).toContain("setLocalConfig('theme', value)")
-    // Both entry points must share headerThemeOrigin() so they wipe from the
-    // identical spot (the settings grid uses the same helper).
+    // The wipe starts from the trigger; headerThemeOrigin() is the fallback for
+    // a host whose button has no box. The settings grid uses the same helper.
     expect(body![1]).toContain('headerThemeOrigin()')
+    expect(body![1]).toContain('originFromElement(btnRef.value)')
   })
 
-  it('wires the popup menu after-leave event to the handler', () => {
-    expect(source).toMatch(/<PopupMenu[\s\S]*?@after-leave="onThemeMenuAfterLeave"/)
+  it('every host renders the shared picker and wires after-leave to it', () => {
+    for (const rel of [
+      '../../components/common/AppHeader.vue',
+      '../../share/ShareThemeButton.vue',
+    ]) {
+      const host = readFileSync(resolve(__dirname, rel), 'utf8')
+      expect(host, `${rel} must use useThemePicker`).toContain("from '@/composables/useThemePicker'")
+      expect(host, `${rel} must defer the reveal to after-leave`).toMatch(
+        /<PopupMenu[\s\S]*?@after-leave="on(Theme)?MenuAfterLeave"/,
+      )
+      // A hand-rolled picker would call setLocalConfig directly on click.
+      expect(host, `${rel} must not apply the theme itself`).not.toContain('applyThemeWithReveal')
+    }
   })
 
   it('shares headerThemeOrigin() with the settings theme grid', () => {
@@ -278,7 +298,7 @@ describe('AppHeader theme picker wiring', () => {
       resolve(__dirname, '../../components/settings/SettingsItem.vue'),
       'utf8',
     )
-    expect(source).toContain('headerThemeOrigin()')
+    expect(picker).toContain('headerThemeOrigin()')
     expect(settingsItem).toContain('headerThemeOrigin()')
   })
 })
