@@ -1048,7 +1048,9 @@ function applyPanelTab(tab: string) {
  * no surviving file is stored back as 'browse').
  */
 function applyProjectPanel(root: string) {
-  applyPanelTab(resolvePanelTab(loadProjectPanel(root), isWideScreen.value, !!store.state.currentFile))
+  applyPanelTab(
+    resolvePanelTab(loadProjectPanel(root), isWideScreen.value, !!store.state.currentFile, isForgeTabHidden.value),
+  )
   saveProjectPanel(root, currentPanelTab.value)
 }
 
@@ -1161,6 +1163,20 @@ const browseFileSession = ref(false)
 const directoryReturn = useDirectoryReturn(browseFileSession)
 
 function switchTab(tab: string, force = false) {
+  // A disabled integration must not be reachable through any programmatic path.
+  // There are several — notification deep links, the task panel's jump, and
+  // `returnToOrigin()`/`abandonJump()` in useNavigationCoordinator (which
+  // replays a remembered tab, including 'forge'). With the integration off the
+  // panel has nothing to show (polling stopped, bindings cleared), and landing
+  // there strands the user on a surface with no dock entry pointing at it.
+  //
+  // Refused rather than "re-enable it for them": the switch is a real disable
+  // now, so silently turning it back on because a stale notification was tapped
+  // would contradict a setting the user just changed deliberately.
+  //
+  // `switchTab` is hoisted, so it must not read the `const`s below directly —
+  // see forgeTabBlocked.
+  if (tab === 'forge' && forgeTabBlocked()) return
   // Opening the Issues & PRs tab does NOT clear its unread badge. Read state is
   // per item now: opening a row clears that row, and the "mark all read" button
   // clears the rest. Clearing on tab open is what made the badge number
@@ -1368,6 +1384,18 @@ function handleOpenForge(e: Event) {
   // Accept either name — see forgeTargetFromDetail. The native shell sends the
   // whole NotificationNav (field `forgeTarget`), the in-page producers `target`.
   const target = forgeTargetFromDetail(detail)
+
+  // Refuse the whole navigation while the integration is disabled, BEFORE any
+  // state is written. `switchTab` would otherwise reject the tab on its own, but
+  // by then this handler has already published a pending target and registered a
+  // back-origin — so the next time the panel mounts (after the user re-enables
+  // it) it would jump to a stale item, and Back would point at a jump that never
+  // happened. A notification queued before the switch was turned off is the
+  // realistic way to get here.
+  if (forgeTabBlocked()) {
+    clearPendingForgeTarget()
+    return
+  }
 
   // Publish the target before switching tabs so the panel sees it whichever
   // path it takes to become visible (mount, activation, or ref change).
@@ -1821,6 +1849,35 @@ const isPlatformUnsupported = computed(() => platformSupported.value === false)
 // the terminal manager actually exists.  `null` means "not yet loaded" → treat as
 // disabled to avoid a flash of the terminal button on first mount.
 const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
+// Forge dock entry visibility follows the SERVER's master switch (issue #590).
+//
+// This is not a per-device preference: turning the integration off stops
+// polling and unlinks every project's repository on the server, so the dock must
+// agree on every client. `!== false` (rather than `=== true`) keeps the entry
+// for a client that has not loaded the config yet — a missing value is "not yet
+// known", and hiding the tab during the first paint would make it flicker in.
+const isForgeTabHidden = computed(
+  () => ((serverConfig.value?.forge ?? {}) as Record<string, unknown>).enabled === false,
+)
+
+/**
+ * Whether a programmatic navigation may enter the forge panel.
+ *
+ * The integration is now really disabled when the switch is off (polling
+ * stopped, every binding cleared), so the panel has nothing to show. Navigating
+ * there would land the user on an empty panel with no dock entry pointing at it
+ * — the wide dock's indicator falls back to index 0, pointing at a different tab
+ * than the content. A stale notification (queued before the switch was turned
+ * off) is the realistic way to hit this, so it is refused rather than silently
+ * re-enabling the integration behind the user's back.
+ *
+ * Defined after the `const`s it reads because `switchTab` is hoisted and would
+ * otherwise be a latent TDZ crash the day anything calls it during setup.
+ */
+function forgeTabBlocked(): boolean {
+  return isForgeTabHidden.value
+}
+
 watch(isPortForwardUnavailable, (disabled) => {
   if (disabled && panelIsActive('proxy')) {
     switchTab(isWideScreen.value ? 'browse' : 'chat')
@@ -1830,6 +1887,14 @@ watch(isTerminalDisabled, (disabled) => {
   // Only force-switch when terminal is config-disabled (not platform unsupported).
   // Platform unsupported shows a dedicated empty state — user can stay on the tab.
   if (disabled && !isPlatformUnsupported.value && panelIsActive('terminal')) {
+    switchTab(isWideScreen.value ? 'browse' : 'chat')
+  }
+})
+watch(isForgeTabHidden, (hidden) => {
+  // Leaving the tab mounted with its entry gone would strand the user on a
+  // panel they can only leave via another dock button — move them out, same as
+  // the terminal/proxy gates above.
+  if (hidden && panelIsActive('forge')) {
     switchTab(isWideScreen.value ? 'browse' : 'chat')
   }
 })
@@ -3070,6 +3135,7 @@ const overflowTabs = computed(() =>
   secondaryDockTabs({
     terminalDisabled: isTerminalDisabled.value,
     portForwardUnavailable: isPortForwardUnavailable.value,
+    forgeHidden: isForgeTabHidden.value,
   }),
 )
 
@@ -3193,7 +3259,12 @@ function handleInlineOverflowClick(tab: string) {
 watch(isWideScreen, (val) => {
   if (val) {
     // Continuity-first (Q1A): adopt activeTab if non-chat, else keep persisted leftTab
-    const next = resolveLeftTabOnEnter(activeTab.value, leftTab.value)
+    // A disabled forge integration is excluded here too: this path assigns
+    // `leftTab` directly (through switchLeftTab / activeTab), so it does not pass
+    // the switchTab guard, and landing on a panel with no dock entry also throws
+    // the wide dock's indicator off (indexOf → -1 → falls back to index 0).
+    const candidate = resolveLeftTabOnEnter(activeTab.value, leftTab.value)
+    const next = candidate === 'forge' && forgeTabBlocked() ? 'browse' : candidate
     // Focus continuity is resolved from the tab we ENTERED with, captured before
     // the block below rewrites `activeTab` to a left-column tab. Passing the
     // post-rewrite value made resolveActivePaneOnEnter's `chat` branch
@@ -3518,7 +3589,10 @@ watch(() => store.state.portForwardEnabledCount, (n, o) => {
 })
 
 const overflowBadgeCount = computed(() => {
-  let count = forgeUnreadCount.value + store.state.taskUnreadCount
+  // A hidden forge tab must not contribute to the aggregate badge either — the
+  // count would advertise unread items behind a menu that cannot show them.
+  let count = store.state.taskUnreadCount
+  if (!isForgeTabHidden.value) count += forgeUnreadCount.value
   if (!isPortForwardUnavailable.value) count += store.state.portForwardEnabledCount
   if (!isTerminalDisabled.value) count += store.state.terminalSessionCount
   // Subtract counts for ALL inline overflow tabs, so the aggregate badge only

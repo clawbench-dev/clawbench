@@ -153,6 +153,7 @@ var hotReloadFields = map[string]bool{
 	"feishu.app_secret":         true,
 	"feishu.users":              true,
 	"push_mode":                 true,
+	"forge.enabled":             true,
 	"forge.insecure_tls":        true,
 	"forge.notify.opened":       true,
 	"forge.notify.closed":       true,
@@ -513,6 +514,9 @@ type configFeishu struct {
 // deliberately NOT returned: the response carries only the set of hosts that
 // have a token (has_token), so a token can be written but never read back.
 type configForge struct {
+	// Enabled is the master switch. Off means polling is stopped, every
+	// project's binding has been cleared, and the dock entry is hidden.
+	Enabled bool `json:"enabled"`
 	// CredentialHosts lists hosts with a configured token, sorted.
 	CredentialHosts []string `json:"credential_hosts"`
 	// CredentialSchemes maps each host with a token to the API scheme it is
@@ -698,6 +702,7 @@ func buildConfigForge(cfg model.Config) configForge {
 	}
 
 	return configForge{
+		Enabled:           cfg.Forge.Enabled,
 		CredentialHosts:   hosts,
 		CredentialSchemes: schemes,
 		InsecureTLS:       cfg.Forge.InsecureTLS,
@@ -870,6 +875,7 @@ var PatchableConfigPaths = map[string]bool{
 	"feishu.app_secret":                 true,
 	"feishu.users":                      true,
 	"push_mode":                         true,
+	"forge.enabled":                     true,
 	"forge.insecure_tls":                true,
 	"forge.notify.opened":               true,
 	"forge.notify.closed":               true,
@@ -1227,6 +1233,37 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	// Sort changed fields for deterministic response
 	sort.Strings(changedFields)
 
+	// Turning the integration off clears every project's repository binding.
+	// Deliberately AFTER the config write succeeded: clearing first and then
+	// failing to persist would destroy the user's bindings while the switch
+	// stayed on, i.e. the worst of both states.
+	//
+	// Bindings are the thing that actually drives polling, so this is what makes
+	// "disabled" mean "no outbound requests" rather than just "hidden". The
+	// poller also checks the flag each cycle (belt and braces for the window
+	// before this runs).
+	//
+	// A failure here is reported as a WARNING, not a 500. The config is already
+	// persisted and in memory — that is the authoritative fact — so answering 500
+	// would make the client roll its cached `forge.enabled` back to true and
+	// redraw the dock and the switch as enabled, while the server is disabled.
+	// The user would then be told "save failed" about a change that did take
+	// effect. The stale bindings are harmless on their own (the poller checks the
+	// flag first) and the next disable attempt retries the cleanup.
+	clearWarnings := []string{}
+	if forgeMap, ok := patch["forge"].(map[string]any); ok {
+		if enabled, ok := forgeMap["enabled"].(bool); ok && !enabled {
+			removed, cerr := service.ClearAllProjectForges()
+			if cerr != nil {
+				slog.Error("forge: clear bindings after disable failed", "err", cerr)
+				clearWarnings = append(clearWarnings,
+					fmt.Sprintf("forge disabled, but clearing repository bindings failed: %v", cerr))
+			} else if removed > 0 {
+				slog.Info("forge: integration disabled, bindings cleared", "removed", removed)
+			}
+		}
+	}
+
 	// Classify fields into hot (no restart) and cold (needs restart)
 	coldFields := make([]string, 0) // always non-nil so JSON serializes as [] not null
 	for _, f := range changedFields {
@@ -1238,6 +1275,7 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 
 	// Collect warnings from hot-reload (e.g. DingTalk connection failure)
 	warnings := applyHotReloadWarnings()
+	warnings = append(warnings, clearWarnings...)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"needs_restart":       len(coldFields) > 0,
@@ -2332,6 +2370,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	}
 
 	if forgeMap, ok := patch["forge"].(map[string]any); ok {
+		if v, ok := forgeMap["enabled"].(bool); ok {
+			cfg.Forge.Enabled = v
+		}
 		if v, ok := forgeMap["insecure_tls"].(bool); ok {
 			cfg.Forge.InsecureTLS = v
 		}

@@ -19,7 +19,12 @@ import (
 func setupForgeEnv(t *testing.T) (*testEnv, func()) {
 	t.Helper()
 	env, teardown := setupPersistTestEnv(t)
-	model.ConfigInstance = model.Config{}
+	// Enabled: true explicitly. The forge handlers honour the master switch, and
+	// a zero-value Config reads as "disabled" — production never sees that
+	// (ApplyDefaults defaults it to true when the key is absent), but a bare
+	// model.Config{} here would silently block auto-binding and make every
+	// binding test pass for the wrong reason.
+	model.ConfigInstance = model.Config{Forge: model.ForgeConfig{Enabled: true}}
 	return env, teardown
 }
 
@@ -1003,4 +1008,82 @@ func TestServeForgeUnreadItems_ReadFilterUnboundIsEmpty(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, float64(0), resp["count"])
 	assert.Equal(t, []any{}, resp["items"], "items must be an array, never null")
+}
+
+// TestServeForgeBinding_DisabledDoesNotAutoBind is the property that makes
+// "disable" stick. Turning the integration off clears the bindings; without
+// this guard the very next GET would re-bind the repository from the project's
+// git remote and the user's choice would silently undo itself on the next panel
+// visit.
+//
+// The per-project opt-out flag is deliberately NOT used for this: it records a
+// decision about one project and must survive an enable/disable cycle.
+func TestServeForgeBinding_DisabledDoesNotAutoBind(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	// Give the project an official-host remote, which is what auto-bind keys on.
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = env.ProjectDir
+	require.NoError(t, cmd.Run())
+	cmd = exec.Command("git", "remote", "add", "origin", "https://github.com/acme/widgets.git")
+	cmd.Dir = env.ProjectDir
+	require.NoError(t, cmd.Run())
+
+	model.ConfigInstance = model.Config{Forge: model.ForgeConfig{Enabled: false}}
+
+	req := newRequest(t, http.MethodGet, "/api/forge/binding", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Nil(t, resp["binding"], "a disabled integration must not auto-bind")
+	assert.Nil(t, resp["suggested"], "and must not offer to bind either")
+
+	got, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	assert.Nil(t, got, "no binding may be written while disabled")
+
+	opted, err := service.IsForgeBindOptedOut(env.ProjectDir)
+	require.NoError(t, err)
+	assert.False(t, opted, "the global switch must not rewrite the per-project opt-out")
+
+	// Re-enabling restores normal behaviour: the same GET now auto-binds.
+	model.ConfigInstance = model.Config{Forge: model.ForgeConfig{Enabled: true}}
+	req = newRequest(t, http.MethodGet, "/api/forge/binding", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w = callHandler(ServeForgeBinding, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	got, err = service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	assert.NotNil(t, got, "re-enabling must restore auto-bind")
+}
+
+// TestServeForgeBinding_PostRefusedWhileDisabled keeps the API consistent with
+// the switch. Creating a binding while the integration is off would leave a row
+// that GET reports back and that starts polling the moment it is re-enabled —
+// without the user ever binding it through the UI.
+func TestServeForgeBinding_PostRefusedWhileDisabled(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{Forge: model.ForgeConfig{Enabled: false}}
+
+	req := newRequest(t, http.MethodPost, "/api/forge/binding",
+		map[string]any{"url": "https://github.com/acme/widgets.git"})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code, "a disabled integration must refuse new bindings")
+	assert.Contains(t, w.Body.String(), "ForgeDisabled")
+
+	got, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	assert.Nil(t, got, "no binding may be written")
 }

@@ -144,6 +144,80 @@ func UpsertProjectForge(pf ProjectForge) error {
 	return err
 }
 
+// ClearAllProjectForges removes every project's forge binding.
+//
+// This is what turning the integration off means: the user asked to stop using
+// GitHub/GitLab, so the bindings go away rather than being silently kept and
+// revived on the next enable. Bindings are also what drives polling, so an
+// empty table means the poller has nothing to fetch.
+//
+// Projects that HAD a binding are marked forge_bind_opt_out so the next
+// GET /api/forge/binding cannot auto-bind the same repository straight back
+// from the git remote. That is what makes "re-enabling does not restore these
+// links" true rather than a promise the code breaks on the first panel visit —
+// and it matches what a manual unbind does.
+//
+// Projects that were never bound are deliberately NOT marked: the flag records
+// a decision about a specific project, and stamping it everywhere would make
+// re-enabling behave differently from a fresh install for projects the user
+// never touched.
+//
+// Both statements run in one transaction: a partial clear would leave some
+// projects bound while polling is already disabled.
+//
+// Returns the number of bindings removed.
+func ClearAllProjectForges() (int64, error) {
+	if !store.DBReady() {
+		return 0, nil
+	}
+	tx, err := store.WriteBegin()
+	if err != nil {
+		return 0, err
+	}
+	defer store.WriteUnlock()
+	defer func() { _ = tx.Rollback() }()
+
+	// Collect the affected projects BEFORE deleting: afterwards there is nothing
+	// left to derive the set from.
+	rows, err := tx.Query(`SELECT DISTINCT project_id FROM project_forges`)
+	if err != nil {
+		return 0, err
+	}
+	var projectIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		projectIDs = append(projectIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, err
+	}
+	_ = rows.Close()
+
+	res, err := tx.Exec("DELETE FROM project_forges")
+	if err != nil {
+		return 0, err
+	}
+	removed, _ := res.RowsAffected()
+
+	for _, id := range projectIDs {
+		if _, err := tx.Exec(
+			`UPDATE projects SET forge_bind_opt_out = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			id,
+		); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return removed, nil
+}
+
 // DeleteProjectForge removes a project's binding.
 func DeleteProjectForge(projectPath string) error {
 	if !store.DBReady() {
