@@ -116,7 +116,7 @@ describe('the shared scrollbar sheet is the single source', () => {
     assertScrollbarSite(shared, SHARED)
   })
 
-  it('declares a desktop 8px bar plus a coarse-pointer 4px override', () => {
+  it('declares a desktop 10px bar plus a coarse-pointer 4px override', () => {
     // Two widths by INPUT DEVICE, not by host or viewport: `(pointer: coarse)`
     // is the only discriminator that travels with the stylesheet (the OpenAPI
     // iframe and the file:// export carry no host info and no reliable viewport
@@ -126,12 +126,15 @@ describe('the shared scrollbar sheet is the single source', () => {
     const coarseAt = clean.indexOf('@media (pointer: coarse)')
     expect(coarseAt, 'a (pointer: coarse) block must exist').toBeGreaterThanOrEqual(0)
 
-    // Base rule: desktop 8px, declared exactly once and OUTSIDE the media block.
+    // Base rule: desktop 10px, declared exactly once and OUTSIDE the media block.
+    // Whole pixels only — Chromium truncates a fractional computed width
+    // (measured: 9.6px paints 9px), so a fractional value silently cancels the
+    // increase instead of applying it.
     const beforeMedia = clean.slice(0, coarseAt)
     const base = beforeMedia.match(/::-webkit-scrollbar\s*\{[^}]*\}/g) || []
     expect(base, 'the shared sheet must define the base rule exactly once').toHaveLength(1)
-    expect(base[0]).toMatch(/(width):\s*(?:calc\(\s*8\s*\*\s*var\(--dp\)\s*\)|8px)/)
-    expect(base[0]).toMatch(/(height):\s*(?:calc\(\s*8\s*\*\s*var\(--dp\)\s*\)|8px)/)
+    expect(base[0]).toMatch(/(width):\s*(?:calc\(\s*10\s*\*\s*var\(--dp\)\s*\)|10px)/)
+    expect(base[0]).toMatch(/(height):\s*(?:calc\(\s*10\s*\*\s*var\(--dp\)\s*\)|10px)/)
 
     // Coarse override: 4px on both axes, inside the media block.
     const coarse = clean.slice(coarseAt)
@@ -217,23 +220,58 @@ describe('the HTML preview adopts the app bar', () => {
     // against appendChild would forbid that legitimate branch; pinning the call
     // site is what actually says "the scrollbar sheet goes first".
     const src = readWebFile('src/utils/htmlPreview.ts')
-    const call = src.match(/installPreviewStyle\([^)]*\)/)
+    const call = src.match(/installPreviewStyle\([\s\S]*?\n\s*\)/)
     expect(call, 'installPreviewScrollbar must delegate to the shared helper').not.toBeNull()
     expect(call![0], 'the scrollbar sheet must keep the default first=true').not.toMatch(/\bfalse\b/)
   })
 
-  it('is wired into both preview surfaces and is idempotent', () => {
+  it('paints the preview bar in the app palette, track included', () => {
+    // Geometry alone is not "the same scrollbar": without the palette the
+    // shared sheet falls back to its neutral grey, which reads as a different
+    // app's bar next to the themed one. The track is the panel background by
+    // request (the gutter belongs to the app's surface, not to the previewed
+    // page's own background), so the palette must carry all three colours and
+    // the Firefox gate too.
+    const src = readWebFile('src/utils/htmlPreview.ts')
+    expect(src, 'the palette must be resolved from the host theme').toMatch(
+      /getComputedStyle\(document\.documentElement\)/,
+    )
+    for (const token of ['--scrollbar-thumb', '--text-muted', '--bg-primary']) {
+      expect(src, `the palette must read ${token}`).toContain(token)
+    }
+    // The palette must be appended to the shared geometry, not replace it —
+    // dropping scrollbarCss would lose the width and the arrow-hiding rule.
+    expect(src, 'the injected sheet must keep the shared geometry').toMatch(
+      /scrollbarCss\s*\+\s*scrollbarPaletteCss\(/,
+    )
+    for (const rule of ['::-webkit-scrollbar-thumb', '::-webkit-scrollbar-thumb:hover', '::-webkit-scrollbar-track']) {
+      expect(src, `the palette must repaint ${rule}`).toContain(rule)
+    }
+  })
+
+  it('is wired into both preview surfaces, idempotent, and repaints on theme change', () => {
     // Both the full-screen viewer and the quick code-link pane render a preview
     // iframe; both must call the installer on load.
     for (const rel of ['src/components/file/FileViewer.vue', 'src/components/file/HtmlPreviewBody.vue']) {
       const src = readWebFile(rel)
       expect(src, `${rel} must call installPreviewScrollbar`).toContain('installPreviewScrollbar(')
       expect(src, `${rel} must bind it to the iframe load event`).toMatch(/@load="on[A-Za-z]*Load"/)
+      // The injected colours are RESOLVED values, so a theme switch while the
+      // preview is open would keep the old palette until the document reloads
+      // (which may never happen). Both surfaces must re-register the watcher on
+      // load and dispose it on unmount.
+      expect(src, `${rel} must repaint on theme change`).toContain('watchPreviewTheme(')
+      expect(src, `${rel} must dispose the theme watcher`).toMatch(/dispose\w*ThemeWatcher\?\.\(\)/)
     }
     // A reload must not stack copies of the sheet. The attribute is a parameter
     // of the shared helper now, so the guard follows it there.
     expect(readWebFile('src/utils/htmlPreview.ts')).toMatch(
       /querySelector\(`style\[\$\{attr\}\]`\)/,
+    )
+    // ...and a re-run must REWRITE the existing sheet rather than early-return,
+    // or the theme repaint silently keeps the previous palette.
+    expect(readWebFile('src/utils/htmlPreview.ts')).toMatch(
+      /if\s*\(existing\)\s*\{[\s\S]*?existing\.textContent\s*=\s*css/,
     )
   })
 })
@@ -243,8 +281,9 @@ describe('the rendered documents keep the custom bar without arrows', () => {
     const html = buildSwaggerSrcdoc('{"openapi":"3.0.0"}')
     assertScrollbarSite(html, 'swaggerHtml')
     // The inlined sheet, not a copy: the width and the arrow-hiding rule must
-    // be present in the output the iframe actually renders.
-    expect(html).toMatch(/::-webkit-scrollbar\s*\{\s*width:\s*8px/)
+    // be present in the output the iframe actually renders. Comments are
+    // stripped first — the rule carries one explaining the whole-pixel value.
+    expect(stripComments(html)).toMatch(/::-webkit-scrollbar\s*\{\s*width:\s*10px/)
     expect(html).toContain('--scrollbar-thumb: #c1c1c1')
   })
 
@@ -292,7 +331,7 @@ describe('the width is uniform and has no token', () => {
     }
     // Desktop base + coarse-pointer override, both in the shared sheet.
     expect(widths, 'only the shared sheet may declare the webkit scrollbar width').toEqual([
-      [SHARED, '8px'],
+      [SHARED, '10px'],
       [SHARED, '4px'],
     ])
   })

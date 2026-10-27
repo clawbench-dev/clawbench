@@ -22,7 +22,7 @@
 
    TWO WIDTHS, by input device (not by host or viewport):
      - touch / pen (`pointer: coarse`)  → 4px, the original mobile width
-     - mouse / trackpad (`pointer: fine`) → 8px, easier to grab on desktop
+     - mouse / trackpad (`pointer: fine`) → 10px, easier to grab on desktop
    `(pointer: coarse)` is the discriminator because it is the only one that
    travels with the stylesheet: the OpenAPI iframe and the file:// export carry
    no host information and no reliable viewport width, but the media feature is
@@ -36,8 +36,12 @@
    It also lives in four separate documents (app, OpenAPI iframe, HTML export,
    HTML preview) where `--dp` may not be defined. */
 ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    /* 10px, not 9.6px: Chromium truncates the computed bar width to whole CSS
+       pixels (measured: 9.6px paints 9, 10px paints 10), so "+20% of 8px" is
+       expressed as the next whole value. Anything fractional here silently
+       loses the increase. */
+    width: 10px;
+    height: 10px;
 }
 /* Touch / pen: the original 4px bar. A coarse pointer cannot hover, so a fat
    bar buys nothing and only eats content width on a phone. */

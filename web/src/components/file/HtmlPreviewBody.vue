@@ -35,7 +35,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { installPreviewScrollbar, installPreviewSearchStyles } from '@/utils/htmlPreview.ts'
+import { installPreviewScrollbar, installPreviewSearchStyles, watchPreviewTheme } from '@/utils/htmlPreview.ts'
 import {
   attachIframeSelectionQuoteBridge,
   installIframeSearchShortcut,
@@ -277,6 +277,7 @@ async function getQuoteQuestion(): Promise<QuoteBar> {
 
 let disposeSearchShortcut: (() => void) | null = null
 let disposeQuoteBridge: (() => void) | null = null
+let disposeThemeWatcher: (() => void) | null = null
 
 /**
  * Give the previewed document the app's scrollbar bar, the search-match
@@ -297,6 +298,13 @@ function onLoad() {
   // `load` fires before webfonts settle, so the first measurement can be a
   // fallback-font height; one compensation pass follows (see the function).
   scheduleFontRemeasure()
+
+  // The injected colours are RESOLVED from the host theme, so a theme switch
+  // while this preview is open would otherwise leave the bar in the previous
+  // palette until the document reloads — which may never happen. Re-registered
+  // per load so a reload cannot stack listeners.
+  disposeThemeWatcher?.()
+  disposeThemeWatcher = watchPreviewTheme(() => iframeRef.value)
 
   disposeSearchShortcut?.()
   disposeSearchShortcut = null
@@ -332,6 +340,8 @@ function disposeAll() {
   disposeSearchShortcut = null
   disposeQuoteBridge?.()
   disposeQuoteBridge = null
+  disposeThemeWatcher?.()
+  disposeThemeWatcher = null
 }
 
 onBeforeUnmount(disposeAll)

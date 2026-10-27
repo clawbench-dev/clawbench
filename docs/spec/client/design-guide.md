@@ -515,9 +515,23 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 
 **唯一定义在 `web/css/scrollbar.css`**。四个消费方各自内联它——`web/css/base.css` 用 `@import`（同时覆盖 share SPA），`src/utils/swaggerHtml.ts`（Swagger 预览 srcdoc）、`src/utils/exportMarkdownHtml.ts`（导出 HTML）用 `?raw` 内联，`src/utils/htmlPreview.ts`（HTML 文件预览）用 `?raw` 注入预览文档。**为什么用文件而不是 `--scrollbar-size` token**：后三者是独立文档（iframe srcdoc / `file://` 导出 / 用户 HTML），看不到 app 的 `:root`，token 在那里是 undefined ⇒ 宽度声明整条消失 ⇒ 静默退回原生条。只有内联同一份文件才算真正收敛。每个文档自己的配色走 `--scrollbar-thumb` / `--scrollbar-track` 两个变量（**必须带 fallback**，否则在独立文档里同样失效）。
 
-**两档宽度，按输入设备而非宿主/视口**：`(pointer: coarse)`（触屏/笔）**4px**（移动端原样），其余（鼠标/触控板）**8px**。选 `(pointer: coarse)` 是因为它是唯一能随样式表走的判据——iframe 与导出文档既无宿主信息也无可靠视口宽度，而媒体特性由浏览器在各文档内各自求值；它也是分割条触屏感应区用的同一条轴。守卫 `__tests__/scrollbarNoArrowButtons.test.ts` 拒绝任何重新引入的分档：任何一份文档重写 `::-webkit-scrollbar { width }`、出现 `--scrollbar-size`、变量缺 fallback、或少了 coarse 覆盖都会失败。
+**两档宽度，按输入设备而非宿主/视口**：`(pointer: coarse)`（触屏/笔）**4px**（移动端原样），其余（鼠标/触控板）**10px**。**必须是整数 CSS 像素**：Chromium 会把计算出的条宽截断到整像素（实测 9.6px 只画出 9px），所以「比 8px 加 20%」只能落成 10px——写 9.6px 会静默吃掉这次加宽。选 `(pointer: coarse)` 是因为它是唯一能随样式表走的判据——iframe 与导出文档既无宿主信息也无可靠视口宽度，而媒体特性由浏览器在各文档内各自求值；它也是分割条触屏感应区用的同一条轴。守卫 `__tests__/scrollbarNoArrowButtons.test.ts` 拒绝任何重新引入的分档：任何一份文档重写 `::-webkit-scrollbar { width }`、出现 `--scrollbar-size`、变量缺 fallback、或少了 coarse 覆盖都会失败。
 
 **HTML 文件预览套用同一套逻辑**：预览文档按 URL 加载（独立文档，链接不到 app 样式表），`load` 时由 `installPreviewScrollbar` 注入共享样式表。**插在 `<head>` 最前**（不是 append），因此预览文件自己写的滚动条规则（内联 / `<style>` / 外链）在源码顺序上更靠后、**优先级更高**——契约是「仅在预览文件未自定义滚动条时生效」，预览不该覆盖被预览文档自己的样式。注入是幂等的（按 `data-clawbench-scrollbar` 标记查重），两个预览面（全屏 FileViewer 与代码链接预览 `HtmlPreviewBody`）都接了 `@load`。
+
+**预览的滚动条要连配色一起套，否则只是「同款几何、别人的颜色」**：共享文件里的 `var(--scrollbar-thumb, …)` 在预览文档里取不到 app 的 `:root`，只剩中性灰 fallback。因此 `readHostScrollbarPalette()` 从宿主 `getComputedStyle(documentElement)` 读出三个值并**烘进注入的样式表**：
+
+| 槽位 | 取自 | 为什么 |
+|---|---|---|
+| 滑块 | `--scrollbar-thumb` | 与 app 同一个 token |
+| 悬停 | **`--text-muted`** | 共享文件的 hover 规则读的就是它（不是 `--scrollbar-thumb-hover`），照抄才能同款变亮 |
+| 轨道 | **`--bg-primary`**（面板底色） | 用户明确要求：滚动条那一列属于 app 表面，不跟随被预览网页自己的底色 |
+
+配色写成**具体色值规则**追加在共享几何之后，而不是在预览文档的 `:root` 上设同名变量：被预览页面可能自己定义 `--scrollbar-thumb` / `--text-muted`，设变量要么被它的 `:root` 按源码顺序压掉，要么连带改掉页面里读到同名变量的其它元素。Firefox 的 `scrollbar-color` 门控要在配色段里**再写一遍**（共享段那份带的是 fallback 变量）。
+
+**注入必须是「重写」而非「查重后早退」**：色值是解析后的具体值，早退会让主题切换永远停在旧配色。`installPreviewStyle` 因此对已存在的 `style[attr]` **原地改 `textContent`**（保留原位置——重新 insert 会改变它和被预览文档自身规则的胜负关系）。配套 `watchPreviewTheme(getIframe)` 监听 `clawbench-theme-change`，同时重刷滚动条与查找高亮（后者也内联了 accent）；两个预览面都在 `@load` 里重新注册、卸载时 dispose（重新注册前先 dispose，否则每次 reload 叠一个监听）。
+
+> 验证必须 headed（headless 的 overlay 滚动条量不到 gutter）：实测注入后 gutter=8px、滑块像素 `#928374`、轨道 `#282828`，无箭头。
 
 **分割条侧的冲突解法**：拖拽分隔条的高亮**只能是那条细线本身**——host 从 1px 长到 2px（`margin: ±0.5px` 保持外footprint不变），共享的 `.resize-divider__line` 填满它并染成 `--accent-color`。**不得再画半透明/不透明色带**：色带以分隔条为轴跨到两侧窗格上，而窗格紧贴分隔条处就有滚动条，色带会把它盖住。可点击感应区（`::before`）在鼠标面为分隔条两侧各 4px（共 9px），触屏面（`pointer: coarse`）仍是各 12px。守卫 `resizeDivider.css.test.ts` 断言共享文件里**没有** `color-mix`、没有 `calc((100% - 2px) / 2)` 居中偏移，且两个消费组件的触发态规则块**不得**声明 `background`。
 
@@ -626,7 +640,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/__tests__/wideDockIconSize.css.test.ts` | 宽屏 dock 图标尺寸 |
 | `assets/__tests__/themePicker.css.test.ts` | 主题选择器中性底 + 色点载体 |
 | `assets/__tests__/annotationButtons.css.test.ts` | 标注按钮全局作用域 |
-| `__tests__/scrollbarNoArrowButtons.test.ts` | 滚动条唯一定义在 `css/scrollbar.css`（四文档内联：应用/OpenAPI/导出/HTML 预览）、两档宽度按 `(pointer: coarse)`（移动 4px / 桌面 8px）、`scrollbar-color` 必须关在 `@supports not selector(::-webkit-scrollbar)` 里（否则 Chromium 弃用 `::-webkit-scrollbar-*`，箭头按钮复活）、任何文档不得重写宽度、变量必须带 fallback、HTML 预览注入须插在 head 最前且幂等 |
+| `__tests__/scrollbarNoArrowButtons.test.ts` | 滚动条唯一定义在 `css/scrollbar.css`（四文档内联：应用/OpenAPI/导出/HTML 预览）、两档宽度按 `(pointer: coarse)`（移动 4px / 桌面 10px，须整数像素——Chromium 截断小数宽度）、`scrollbar-color` 必须关在 `@supports not selector(::-webkit-scrollbar)` 里（否则 Chromium 弃用 `::-webkit-scrollbar-*`，箭头按钮复活）、任何文档不得重写宽度、变量必须带 fallback、HTML 预览注入须插在 head 最前且幂等、预览配色须从宿主读（thumb/`--text-muted`/`--bg-primary` 三槽 + Firefox 门控）且两个预览面都接主题监听 |
 | `__tests__/platformAxes.test.ts` | 三条平台轴保持正交：`isPC` 不得回归、共享宿主谓词不得各组件重声明、iPadOS 陷阱（Macintosh UA + `maxTouchPoints>0`）不得重开 |
 
 **写新守卫时注意两个坑**（都实际栽过）：
