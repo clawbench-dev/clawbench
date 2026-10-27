@@ -656,6 +656,8 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `utils/__tests__/themeBootstrap.test.ts` | `index.html` / `share.html` 的内联主题脚本与 registry 同步：`DARK_IDS`、`SB_COLORS`、出厂默认值，且**两页语义一致**（新设备落盘 `gruvbox-dark`、`auto` 不落盘、旧 `light`/`dark` 迁移） |
 | `share/__tests__/shareTheme.test.ts` | 分享页主题变更的两条副作用：响应式主题 ref（provide 给 iframe 查看器）+ mermaid 重渲染；不得自己再刷一遍属性 |
 | `share/__tests__/ShareThemeButton.test.ts` | 分享顶栏选择器：行数 = registry + auto、选中行跟随存储值、点击只关菜单、`after-leave` 才落 `setLocalConfig` |
+| `share/__tests__/shareMode.test.ts` | `shareDocUrl`/`encodeShareDocDir` 与 Go 侧 base64url 同字节（无 `=`/`+`/`/`）、非 ASCII 目录经 UTF-8 往返一致——不一致会让分享页每个相对资源 404 |
+| e2e `share-page.spec.ts`「Shared HTML document」 | 分享的 HTML 以真实 URL 加载（`text/html`）、同目录样式表 `text/css` 且 200、所有资源同一 `dirKey`、iframe 仍是不透明源且 sandbox 无 `allow-same-origin` |
 | `assets/__tests__/annotationButtons.css.test.ts` | 标注按钮全局作用域 |
 | `__tests__/scrollbarNoArrowButtons.test.ts` | 滚动条唯一定义在 `css/scrollbar.css`（四文档内联：应用/OpenAPI/导出/HTML 预览）、两档宽度按 `(pointer: coarse)`（移动 4px / 桌面 10px，须整数像素——Chromium 截断小数宽度）、`scrollbar-color` 必须关在 `@supports not selector(::-webkit-scrollbar)` 里（否则 Chromium 弃用 `::-webkit-scrollbar-*`，箭头按钮复活）、任何文档不得重写宽度、变量必须带 fallback、HTML 预览注入须插在 head 最前且幂等、预览配色须从宿主读（thumb/`--text-muted`/`--bg-primary` 三槽 + Firefox 门控）且两个预览面都接主题监听 |
 | `__tests__/platformAxes.test.ts` | 三条平台轴保持正交：`isPC` 不得回归、共享宿主谓词不得各组件重声明、iPadOS 陷阱（Macintosh UA + `maxTouchPoints>0`）不得重开 |

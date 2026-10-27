@@ -50,6 +50,42 @@ export function shareApiUrl(subpath: string): string {
     return `/api/share/${t}/${clean}`
 }
 
+/**
+ * URL for a shared HTML DOCUMENT and the assets it references.
+ *
+ * Addressed by path (`/doc/{dirKey}/{rel}`) rather than by query string, because
+ * an iframe needs the document's own URL as the base for its relative
+ * references: `/local?path=…` derives a base of `/local` (a query is not part of
+ * the base path), so `css/x.css` inside the document would resolve against the
+ * share page and 404 — the document renders as unstyled HTML.
+ *
+ * `dirKey` is the base64url of the document's absolute DIRECTORY, matching
+ * `serveShareDoc` in internal/handler/file_share.go. `rel` is a path relative to
+ * that directory ('' for the document itself).
+ *
+ * Only meaningful in share mode; callers outside it keep using the authenticated
+ * `/api/fs/raw/` URLs.
+ */
+export function shareDocUrl(dirKey: string, rel = ''): string {
+    const clean = rel.replace(/^\/+/, '')
+    return shareApiUrl(`doc/${dirKey}/${clean}`)
+}
+
+/**
+ * Encode a document directory the way the share backend expects.
+ *
+ * base64url, no padding: the key is a URL path segment, so `+`, `/` and `=`
+ * would be illegal or ambiguous there. Mirrors `encodeShareDocDir` in
+ * internal/handler/file_share.go — the two must produce identical bytes, which
+ * `shareMode.test.ts` pins with a vector.
+ */
+export function encodeShareDocDir(dir: string): string {
+    const bytes = new TextEncoder().encode(dir)
+    let binary = ''
+    for (const b of bytes) binary += String.fromCharCode(b)
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
 // ─── Session-share data provider ─────────────────────────────────────────────
 //
 // A session snapshot inlines every tool call's input/output and every thinking

@@ -1557,17 +1557,21 @@ func TestServeLocalFile_IndexHtml_TargetForm_NoRedirect(t *testing.T) {
 	assert.Equal(t, "text/html", w.Header().Get("Content-Type"))
 }
 
-// The web-asset MIME additions must NOT leak into the base table, because that
-// table is shared with the PUBLIC token-scoped share endpoint. Serving text/html
-// from an unauthenticated endpoint turns any shared .html file into same-origin
-// script execution for a logged-in visitor (it would run with their session
-// cookie). Verified in a browser: with text/html the shared page reached
-// authenticated APIs; with the octet-stream fallback the browser downloads it.
-func TestWebAssetMimeTypes_NotSharedWithPublicShareEndpoint(t *testing.T) {
+// The web-asset MIME additions must NOT leak into the BASE table, because that
+// table is what the unsandboxed public endpoints (`/local/`, `/download/`)
+// serve. Serving text/html from those turns any shared .html into same-origin
+// script execution for a logged-in visitor (it runs with their session cookie).
+// Verified in a browser: with text/html the shared page reached authenticated
+// APIs; with the octet-stream fallback the browser merely downloads it.
+//
+// The ONE public endpoint that may answer text/html is `/doc/`, and it does so
+// only under a `sandbox` CSP — see serveShareDocFile and
+// TestSharePublic_DocServesDocumentWithRealBasePath.
+func TestWebAssetMimeTypes_NotSharedWithUnsandboxedPublicEndpoints(t *testing.T) {
 	for _, ext := range []string{".html", ".htm", ".xhtml", ".js", ".mjs", ".css"} {
 		_, inBase := mimeTypes[ext]
 		assert.False(t, inBase,
-			"%s must not be in mimeTypes: that table is served by the unauthenticated share endpoint", ext)
+			"%s must not be in mimeTypes: that table is served by unsandboxed public endpoints", ext)
 	}
 
 	// The authenticated resolver still yields them.
@@ -1577,6 +1581,16 @@ func TestWebAssetMimeTypes_NotSharedWithPublicShareEndpoint(t *testing.T) {
 	// ...and the base table's own entries still win / fall through correctly.
 	assert.Equal(t, "image/png", mimeForLocalFile(".png"))
 	assert.Equal(t, "application/octet-stream", mimeForLocalFile(".xyz"))
+}
+
+// Every response from the /doc/ endpoint must carry the sandbox CSP, and that
+// CSP must never grant same-origin. A shared document that could reach the
+// reader's origin would run with their session — the exact XSS the separate
+// MIME table above exists to prevent.
+func TestShareDocSandboxCSP_IsSandboxedWithoutSameOrigin(t *testing.T) {
+	assert.Contains(t, shareDocSandboxCSP, "sandbox")
+	assert.Contains(t, shareDocSandboxCSP, "allow-scripts")
+	assert.NotContains(t, shareDocSandboxCSP, "allow-same-origin")
 }
 
 // --- ServeProjects method handling ---

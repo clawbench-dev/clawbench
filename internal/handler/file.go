@@ -68,17 +68,23 @@ var mimeTypes = map[string]string{
 // webAssetMimeTypes maps the additional extensions the HTML file preview needs,
 // on top of mimeTypes.
 //
-// Kept SEPARATE from mimeTypes on purpose. mimeTypes is shared with the public,
-// token-scoped share endpoint (serveShareRaw), which is unauthenticated. Serving
-// text/html there would turn any shared .html file into same-origin script
-// execution the moment a LOGGED-IN user opens the link: the document would run
-// with that user's session cookie. Verified — with text/html the shared page
-// could call authenticated APIs and exfiltrate the response; with the previous
-// application/octet-stream fallback the browser merely downloaded it.
+// Kept SEPARATE from mimeTypes on purpose: mimeTypes is the generic table that
+// `serveShareRaw` (the unauthenticated /local/ and /download/ endpoints) also
+// uses, and it must never contain an ACTIVE type. Serving text/html there —
+// without a sandbox — turns any shared .html into same-origin script execution
+// the moment a LOGGED-IN reader opens the link: verified, with text/html the
+// shared page could call authenticated APIs and exfiltrate the response.
 //
-// The authenticated /api/fs/raw/ endpoint has no such problem: the document it
-// serves already runs inside a sandboxed iframe that the user opened
-// deliberately (see FileViewer.vue), so active types are granted only here.
+// Two callers grant these types, each with its own safety argument:
+//
+//   - `mimeForLocalFile` (the authenticated /api/fs/raw/ endpoint). The document
+//     it serves already runs inside a sandboxed iframe the user opened
+//     deliberately (see FileViewer.vue).
+//   - `serveShareDocFile` (the public /doc/ endpoint), which grants them ONLY
+//     together with a `sandbox allow-scripts` CSP — no `allow-same-origin`, so
+//     the document stays in an opaque origin and the same cookie/API reach is
+//     impossible. See shareDocSandboxCSP; do not serve text/html from any other
+//     public endpoint.
 //
 // Without these entries the fallback is application/octet-stream: stylesheets
 // are silently dropped, ES modules are refused, and the document itself is not

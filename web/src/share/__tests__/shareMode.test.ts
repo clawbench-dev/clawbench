@@ -12,6 +12,8 @@ import {
   getShareThinking,
   getShareToolCall,
   shareDataKey,
+  shareDocUrl,
+  encodeShareDocDir,
 } from '@/share/shareMode'
 
 describe('shareMode', () => {
@@ -110,5 +112,40 @@ describe('shareMode session-share data provider', () => {
   it('builds the composite key the same way callers do', () => {
     expect(shareDataKey(7, 'th_1')).toBe('7:th_1')
     expect(shareDataKey('7', 'th_1')).toBe('7:th_1')
+  })
+})
+
+describe('shareDocUrl / encodeShareDocDir', () => {
+  afterEach(() => setShareToken(null))
+
+  it('builds a path-addressed URL under the token', () => {
+    setShareToken('tok1')
+    expect(shareDocUrl('KEY', 'index.html')).toBe('/api/share/tok1/doc/KEY/index.html')
+    // No rel → the directory key alone (the share SPA always supplies a file,
+    // but the builder must not emit a stray double slash).
+    expect(shareDocUrl('KEY')).toBe('/api/share/tok1/doc/KEY/')
+  })
+
+  it('encodes the directory as unpadded base64url', () => {
+    // Vectors pinned against Go's base64.RawURLEncoding: the share SPA and
+    // serveShareDoc must produce identical bytes or every relative asset 404s.
+    expect(encodeShareDocDir('/tmp')).toBe('L3RtcA')
+    expect(encodeShareDocDir('/')).toBe('Lw')
+    expect(encodeShareDocDir('/a b/c')).toBe('L2EgYi9j')
+    for (const key of ['L3RtcA', 'Lw', 'L2EgYi9j']) {
+      // A path segment must not carry padding, '+', or '/'.
+      expect(key).not.toMatch(/[=+/]/)
+    }
+  })
+
+  it('round-trips a non-ASCII directory', () => {
+    const dir = '/项目/子目录'
+    const key = encodeShareDocDir(dir)
+    expect(key).not.toMatch(/[=+/]/)
+    // btoa cannot take non-Latin1 directly, so the encoder must go through
+    // UTF-8 bytes — decoding the base64 must give back the same UTF-8 string.
+    const binary = atob(key.replace(/-/g, '+').replace(/_/g, '/'))
+    const bytes = Uint8Array.from(binary, c => c.charCodeAt(0))
+    expect(new TextDecoder().decode(bytes)).toBe(dir)
   })
 })

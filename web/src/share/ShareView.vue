@@ -144,11 +144,25 @@
             <OpenApiPreview :file="file" />
           </div>
 
-          <!-- HTML rendered -->
+          <!-- HTML rendered. Loaded by REAL URL (not srcdoc) so the document
+               has its own base and its relative references — stylesheet, images,
+               scripts, fonts — resolve beside it. A srcdoc document has no URL,
+               inherits the share page's base (/share/{token}), and every
+               `css/x.css` in it therefore 404s: a styled landing page rendered
+               as unstyled black-on-white HTML.
+
+               The URL is path-addressed (/doc/ + the file's own directory), so
+               the browser derives the base for free. That endpoint serves
+               text/html under a `sandbox allow-scripts` CSP, which keeps the
+               document in an OPAQUE ORIGIN — no cookies, no authenticated API,
+               no parent DOM. `allow-scripts` mirrors the iframe sandbox below:
+               a shared document legitimately runs its own JS, but nothing that
+               needs an origin. Do NOT add `allow-same-origin` here: that pair
+               would let the document remove its own sandbox. -->
           <iframe
             v-else-if="isHtml && canRenderInline && viewMode === 'rendered'"
             class="share-html-iframe"
-            :srcdoc="file.content"
+            :src="htmlPreviewSrc"
             sandbox="allow-scripts"
           />
 
@@ -246,11 +260,12 @@ import { getFileType } from '@/utils/fileType.ts'
 import { downloadUrlWithProgress } from '@/utils/download.ts'
 import { flashElement } from '@/utils/domFlash'
 import { extractToc, type TocItem } from '@/utils/toc.ts'
-import { setShareToken, setSharedFile, shareApiUrl } from '@/share/shareMode'
+import { setShareToken, setSharedFile, shareApiUrl, shareDocUrl, encodeShareDocDir } from '@/share/shareMode'
 import { SHARE_OPEN_FILE_EVENT, shareDeepLink } from '@/share/shareLinks'
 import ShareThemeButton from './ShareThemeButton.vue'
 import { shareThemeId } from './shareTheme'
 import { buildLocalFileUrl } from '@/utils/download'
+import { baseName, dirName } from '@/utils/path'
 import { store } from '@/stores/app.ts'
 
 // Share the resolved theme id with child components (OpenApiPreview reads it via
@@ -346,6 +361,21 @@ const canGoBack = computed(() => pushedDepth.value > 0)
 const shareImageUrl = computed(() => {
   if (!file.value?.path) return ''
   return buildLocalFileUrl(file.value.path)
+})
+
+/**
+ * Iframe URL for the rendered HTML preview — the document's REAL url, so it has
+ * its own base and its relative references resolve beside it.
+ *
+ * The base is the file's own directory, encoded as one opaque segment (see
+ * `shareDocUrl`). Empty when no file is loaded; the iframe branch also requires
+ * `isHtml`.
+ */
+const htmlPreviewSrc = computed(() => {
+  const path = file.value?.path
+  if (!path) return ''
+  const dir = dirName(path) || '/'
+  return shareDocUrl(encodeShareDocDir(dir), baseName(path))
 })
 
 const rawLanguage = computed(() => {

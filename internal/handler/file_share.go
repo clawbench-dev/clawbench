@@ -9,8 +9,10 @@
 package handler
 
 import (
+	"encoding/base64"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"path"
@@ -22,6 +24,18 @@ import (
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
+
+// shareDocSegment is the URL path segment that serves a shared HTML document
+// (and everything it references) by PATH rather than by query string.
+//
+// Why a separate segment: an iframe loading a document needs the document's own
+// URL to be the base for its relative references (`css/x.css`, `img/y.png`).
+// The query-string forms (`/local?path=…`, `/local/<rel>`) either lose the
+// directory (a query is not part of the base path) or cannot express a path
+// outside the shared file's own directory. `/doc/<rel>` keeps the full
+// directory in the PATH, so the browser derives the right base for free —
+// which is what makes a shared landing page render with its real stylesheet.
+const shareDocSegment = "doc"
 
 // shareLocalSegment is the URL path segment that addresses a file relative to
 // the shared file's directory (see serveShareLocal). Named so the parser and
@@ -489,6 +503,8 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 		serveShareRaw(w, r, target, filepath.Base(target), true)
 	case rest == shareLocalSegment || strings.HasPrefix(rest, shareLocalSegment+"/"):
 		serveShareLocal(w, r, absPath, shareRoot, rest)
+	case rest == shareDocSegment || strings.HasPrefix(rest, shareDocSegment+"/"):
+		serveShareDoc(w, r, absPath, shareRoot, rest)
 	default:
 		http.NotFound(w, r)
 	}
@@ -609,6 +625,181 @@ func serveShareRaw(w http.ResponseWriter, r *http.Request, absPath, name string,
 	w.Header().Set("Content-Type", mime)
 	http.ServeFile(w, r, absPath)
 }
+
+// serveShareDoc serves a shared HTML document and everything it references,
+// addressed by PATH under /api/share/{token}/doc/{dirKey}/{rel}.
+//
+// This exists because the share SPA renders a shared .html in an iframe, and an
+// iframe needs the document's own URL as the base for its relative references.
+// The query-string forms cannot supply one: `/local?path=…` derives a base of
+// `/local` (a query is not part of the base path), and `/local/<rel>` resolves
+// only against the shared file's own directory. With either, a shared landing
+// page whose stylesheet is `css/landing.css` resolved to `/share/css/landing.css`
+// and rendered as unstyled black-on-white HTML.
+//
+// {dirKey} is the base64url encoding of the DOCUMENT'S DIRECTORY (absolute), and
+// {rel} is the referenced file relative to it:
+//
+//	shared: <proj>/web/landing/index.html
+//	GET /api/share/{token}/doc/<b64 of /…/web/landing>/index.html
+//	  → <proj>/web/landing/index.html
+//	GET /api/share/{token}/doc/<b64 of /…/web/landing>/css/landing.css
+//	  → <proj>/web/landing/css/landing.css
+//
+// so the browser's base is `/api/share/{token}/doc/<dirKey>/` and the document's
+// own `css/landing.css` resolves there directly.
+//
+// Why encode the directory instead of using its literal path: the base must be
+// a SINGLE stable directory prefix for every document in the share, including
+// one reached through a followed link in a sibling directory. A literal path
+// cannot express "up and over" (`doc/../other/`) because the browser normalises
+// the URL before sending it. An opaque key can point anywhere in scope.
+//
+// SECURITY — this is the one public endpoint that answers `text/html`, and it
+// does so only under a `sandbox` CSP (see serveShareDocFile). The sandbox makes
+// the document an OPAQUE ORIGIN: it cannot read cookies, cannot call the
+// authenticated API with the reader's session, and cannot touch the parent
+// document — the same guarantee the iframe's own `sandbox="allow-scripts"` gave
+// when the document was inlined via srcdoc. Serving text/html WITHOUT that CSP
+// would be a session-level XSS (verified in a browser before this design: the
+// shared page reached authenticated APIs), which is why the generic
+// `mimeTypes` table still must not contain `.html`.
+func serveShareDoc(w http.ResponseWriter, r *http.Request, sharedAbsPath, shareRoot, rest string) {
+	rel := strings.TrimPrefix(rest, shareDocSegment)
+	rel = strings.TrimLeft(rel, "/")
+	if rel == "" {
+		// No directory key: nothing to serve. (The share SPA always supplies
+		// one; a bare /doc is a hand-typed URL.)
+		http.NotFound(w, r)
+		return
+	}
+
+	slash := strings.IndexByte(rel, '/')
+	if slash < 0 {
+		http.NotFound(w, r)
+		return
+	}
+	dirKey, filePath := rel[:slash], rel[slash+1:]
+	docDir, ok := decodeShareDocDir(dirKey)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	// The key is opaque and caller-supplied, so it is only a HINT: the real
+	// authority is the confinement check below. Without it, anyone holding a
+	// token could read the whole filesystem by encoding "/etc".
+	if !isPathUnderBase(docDir, shareScopeRoot(sharedAbsPath, shareRoot)) {
+		http.NotFound(w, r)
+		return
+	}
+
+	filePath = path.Clean(strings.TrimLeft(filePath, "/"))
+	if filePath == "." || filePath == ".." || strings.HasPrefix(filePath, "../") || path.IsAbs(filePath) {
+		http.NotFound(w, r)
+		return
+	}
+	// ValidatePath resolves symlinks and refuses anything escaping docDir, so a
+	// symlinked asset cannot be used to read outside the share's scope.
+	absTarget, valid := model.ValidatePath(docDir, filePath)
+	if !valid {
+		http.NotFound(w, r)
+		return
+	}
+	serveShareDocFile(w, r, absTarget)
+}
+
+// encodeShareDocDir is the inverse of decodeShareDocDir (tests build URLs with
+// it). base64url with no padding: the key is a URL path segment, so `+`, `/`
+// and `=` are all illegal or ambiguous there.
+func encodeShareDocDir(dir string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(dir))
+}
+
+func decodeShareDocDir(key string) (string, bool) {
+	raw, err := base64.RawURLEncoding.DecodeString(key)
+	if err != nil {
+		return "", false
+	}
+	dir := string(raw)
+	if dir == "" || !filepath.IsAbs(dir) {
+		return "", false
+	}
+	return filepath.Clean(dir), true
+}
+
+// shareScopeRoot mirrors confineSharePath's root selection: the stored root, or
+// the shared file's directory for rows predating that column (fail closed).
+func shareScopeRoot(sharedAbsPath, shareRoot string) string {
+	if shareRoot != "" {
+		return shareRoot
+	}
+	return filepath.Dir(sharedAbsPath)
+}
+
+// serveShareDocFile streams one file for the /doc/ endpoint.
+//
+// Every response carries the sandbox CSP — not just HTML. A shared document can
+// reference `.svg` and `.js` too, and an SVG is scriptable when navigated to
+// directly; applying the sandbox uniformly means the grant cannot be forgotten
+// for one content type. `allow-scripts` is required (documents legitimately run
+// their own JS, e.g. the landing page's language switch); `allow-same-origin` is
+// deliberately ABSENT, which is what keeps the document in an opaque origin.
+func serveShareDocFile(w http.ResponseWriter, r *http.Request, absPath string) {
+	info, err := os.Stat(absPath)
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(absPath))
+	// The web-asset table (html/css/js/fonts) applies HERE and only here on the
+	// public side; `mimeTypes` stays free of active types. Anything not in
+	// either table falls back to octet-stream, which the browser will not
+	// execute or style.
+	contentType := mimeForLocalFile(ext)
+	if contentType == mimeOctetStream && ext != "" {
+		// A shared document referencing an unusual asset extension should still
+		// get a usable type where the platform knows one (`.webmanifest`, `.map`,
+		// `.wasm`…). Safe despite the sniffing surface: the CSP sandbox makes
+		// active content inert regardless of the declared type.
+		if sniffed := mime.TypeByExtension(ext); sniffed != "" {
+			contentType = sniffed
+		}
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Security-Policy", shareDocSandboxCSP)
+	// The token is in the URL, so a Referer would hand it to every third-party
+	// asset the document embeds — the same reason the share PAGE sets it.
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	// Never let a browser re-sniff the body into something executable.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	// ServeContent, not ServeFile: ServeFile treats a file named index.html as a
+	// directory index and answers 301 to "./", which would rewrite the URL and
+	// destroy the base this endpoint exists to provide.
+	f, err := os.Open(absPath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer func() { _ = f.Close() }()
+	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+}
+
+// shareDocSandboxCSP keeps a shared document in an opaque origin while letting
+// it run its own scripts.
+//
+// `sandbox allow-scripts` (no `allow-same-origin`) is the load-bearing part: the
+// document gets a unique opaque origin, so it cannot read the reader's cookies,
+// cannot call the authenticated API as them, and cannot reach the parent page.
+// The remaining directives only restrict where it may load assets from — they
+// are deliberately permissive about `https:`/`data:` because a shared document
+// legitimately embeds third-party images, and restrictive about framing and
+// plugins.
+const shareDocSandboxCSP = "sandbox allow-scripts; " +
+	"default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: http:; " +
+	"frame-ancestors 'self'; object-src 'none'"
 
 // serveShareLocal serves a file referenced by the shared document (markdown
 // images etc.). Relative paths resolve against the shared file's directory;

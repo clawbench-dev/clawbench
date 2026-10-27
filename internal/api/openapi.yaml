@@ -3690,8 +3690,23 @@ paths:
       description: |
         免鉴权。子路径分派：`{token}` 或 `{token}/file`（原文件）、`{token}/content?path=`
         （文档内引用的文件，同样返回 FileContent JSON）、`{token}/download`（强制下载，
-        支持 `?path=`）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）。
-        token 不存在一律 404，零信息暴露。
+        支持 `?path=`）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）、
+        `{token}/doc/{dirKey}/{rel}`（HTML 文档及其资源，见下）。token 不存在一律 404，
+        零信息暴露。
+
+        **`{token}/doc/{dirKey}/{rel}` 是唯一会返回 `text/html` 的公开端点**，供分享页
+        在 iframe 里以**真实 URL** 渲染被分享的 HTML：`{dirKey}` 是文档所在**目录**的
+        base64url（无填充），`{rel}` 是相对该目录的资源路径。这样浏览器能直接推导出
+        base，文档里的 `css/x.css`、`img/y.png`、`js/z.js` 全部解析到正确位置。
+        此前用 `srcdoc` 内联，`about:srcdoc` 没有自己的 URL、继承分享页的 base，所有
+        相对引用都打到 `/share/...` 而 404，带样式的页面会渲染成白底裸 HTML。
+
+        **安全边界靠 CSP 而不是 MIME**：该端点所有响应都带
+        `Content-Security-Policy: sandbox allow-scripts`（**不含** `allow-same-origin`），
+        文档因此处于不透明源——读不到读者 Cookie、不能以读者身份调用鉴权接口、也够不到
+        父页面，与原先 iframe 的 `sandbox="allow-scripts"` 等价。`{dirKey}` 只是提示，
+        实际以分享范围校验为准（编码 `/` 或项目外目录一律 404）。其余资源类型走
+        `.css/.js/.woff2` 等网页资源 MIME；基础表 `mimeTypes` 仍**不得**含 `.html`。
 
         会话分享走另外两个子路径：`{token}/meta`（返回 `kind` 为 `file` 或
         `session`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回**实时装配**的
