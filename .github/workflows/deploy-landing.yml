@@ -1,0 +1,56 @@
+name: Deploy Landing
+
+# The landing page (`web/landing/`) is hosted on Cloudflare Pages.
+#
+# Why a workflow instead of Cloudflare's own Git integration: the Pages
+# builder runs `git submodule update --init --recursive` after cloning and
+# this repo carries 8 historical gitlinks under `test/git-graph-repos/`
+# (nested fixture repos committed as submodules) with no `.gitmodules`
+# entry for them. That step fails with "No url found for submodule path"
+# before the build ever starts. Deploying from a checkout we already have
+# sidesteps it entirely.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/landing/**'
+      - '.github/workflows/deploy-landing.yml'
+  workflow_dispatch:
+
+concurrency:
+  # A newer push supersedes an in-flight deploy; the site is a single
+  # artifact, so running two at once would race on which one goes live.
+  group: deploy-landing
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to Cloudflare Pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # `wrangler pages deploy` uploads a directory as-is; there is no build
+      # step for this page. The test file must be excluded — it would
+      # otherwise be published at /landing.test.ts.
+      - name: Stage site
+        run: |
+          mkdir -p dist
+          cp -r web/landing/css web/landing/img web/landing/js \
+                web/landing/index.html web/landing/_headers dist/
+          rm -f dist/*.test.ts
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=clawbench --branch=main
