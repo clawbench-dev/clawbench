@@ -492,13 +492,22 @@ describe('landing page', () => {
       dom.window.close()
     })
 
-    it('pauses on hover and resumes on leave', () => {
+    it('pauses over a card but keeps scrolling in the gaps between them', () => {
+      // Pausing is bound to the individual card, not the strip. The strip is
+      // ~1344x539 on a desktop viewport — binding it to the container means
+      // any pointer resting mid-page freezes the loop, which reads as "the
+      // marquee never started".
       const dom = boot('zh-CN')
       const doc = dom.window.document
       const gal = doc.getElementById('gal') as HTMLElement
+      const card = gal.querySelector('.gal-item') as HTMLElement
 
-      gal.dispatchEvent(new dom.window.MouseEvent('pointerenter', { bubbles: false }))
+      card.dispatchEvent(new dom.window.MouseEvent('pointermove', { bubbles: true }))
       expect(gal.classList.contains('is-paused')).toBe(true)
+
+      // Pointer over the strip itself (the gap below the cards) must resume.
+      gal.dispatchEvent(new dom.window.MouseEvent('pointermove', { bubbles: true }))
+      expect(gal.classList.contains('is-paused')).toBe(false)
 
       gal.dispatchEvent(new dom.window.MouseEvent('pointerleave', { bubbles: false }))
       expect(gal.classList.contains('is-paused')).toBe(false)

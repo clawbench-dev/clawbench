@@ -570,9 +570,19 @@
       gal.classList.remove('is-paused');
     }
 
-    // pointerenter 覆盖鼠标与触控笔；touchstart 单独兜住触摸设备
-    gal.addEventListener('pointerenter', galPause);
+    // 暂停的判定放在「单张卡片」上，而不是整个画廊。
+    // 画廊在宽屏下占 1344×539，几乎铺满视口 —— 绑在容器上意味着
+    // 只要鼠标在页面中间就永远暂停，看起来就是"跑马灯没跑起来"。
+    // 挂在卡片上，指针落在卡片之间的空隙里仍然继续滚。
+    // pointermove 比 over/out 稳：out 在移到子元素时也会触发，
+    // relatedTarget 为 null（移出窗口）时又会被误判成"离开卡片"。
+    // 每次移动直接看指针当前压在哪张卡上，状态只由事实决定。
+    gal.addEventListener('pointermove', function (e) {
+      var onCard = !!(e.target.closest && e.target.closest('.gal-item'));
+      if (onCard) galPause(); else galResume();
+    });
     gal.addEventListener('pointerleave', galResume);
+    // 触摸设备：手指按在画廊上时停（此时没有 pointerover 的 hover 语义）
     gal.addEventListener('touchstart', galPause, { passive: true });
     gal.addEventListener('touchend', galResume);
     gal.addEventListener('touchcancel', galResume);
