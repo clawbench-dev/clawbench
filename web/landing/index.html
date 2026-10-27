@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-locale="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>ClawBench — 从掌心到桌面，同一个 AI 工作台</title>
+<meta name="description" content="ClawBench 把 CodeBuddy、Claude Code、Codex 等 19 个 AI 编程智能体封装成一个 Web 工作台。服务端执行，客户端呈现，一个会话在手机、平板和桌面之间无缝继续。单文件部署，MIT 开源。">
+<meta name="theme-color" content="#0a0806">
+<meta property="og:type" content="website">
+<meta property="og:title" content="ClawBench — 从掌心到桌面，同一个 AI 工作台">
+<meta property="og:description" content="19 个 AI 编程智能体，一块屏幕就够。服务端执行，客户端呈现，单文件部署。">
+<meta property="og:image" content="img/og.jpg">
+<link rel="icon" type="image/png" sizes="32x32" href="img/favicon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
+<link rel="stylesheet" href="css/landing.css">
+</head>
+<body>
+
+<!-- 环境光：整页固定的暖色光晕，不参与滚动 -->
+<div class="ambient" aria-hidden="true">
+  <div class="ambient-glow"></div>
+  <div class="ambient-grid"></div>
+  <div class="ambient-grain"></div>
+</div>
+
+<a class="skip-link" href="#main" data-i18n="skip">跳到主要内容</a>
+
+<!-- ══ 导航 ═══════════════════════════════════════════════════ -->
+<header class="nav" id="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top" aria-label="ClawBench">
+      <img class="brand-logo" src="img/logo.webp" alt="" width="36" height="36">
+      <span class="brand-name">ClawBench</span>
+      <span class="brand-tag">MIT</span>
+    </a>
+
+    <nav class="nav-links" aria-label="主导航" data-i18n-label="nav.aria">
+      <a href="#platforms" data-i18n="nav.platforms">多端</a>
+      <a href="#features" data-i18n="nav.features">功能</a>
+      <a href="#deploy" data-i18n="nav.deploy">部署</a>
+      <a href="#faq" data-i18n="nav.faq">常见问题</a>
+      <a href="https://github.com/clawbench-dev/clawbench/tree/main/docs/user-guide" target="_blank" rel="noopener" data-i18n="nav.docs">使用手册</a>
+    </nav>
+
+    <div class="nav-actions">
+      <button class="lang-toggle" id="langToggle" type="button" aria-label="切换语言" data-i18n-label="lang.toggle">
+        <span class="lang-opt is-active" data-lang="zh">中</span>
+        <span class="lang-sep" aria-hidden="true">/</span>
+        <span class="lang-opt" data-lang="en">EN</span>
+      </button>
+      <a class="icon-btn" href="https://github.com/clawbench-dev/clawbench" target="_blank" rel="noopener" aria-label="GitHub">
+        <svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+      <a class="nav-cta" href="#deploy" data-i18n="nav.cta">立即部署</a>
+      <button class="burger" id="burger" type="button" aria-label="打开菜单" aria-expanded="false" aria-controls="mobileMenu" data-i18n-label="nav.menu">
+        <span></span><span></span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- 移动端全屏菜单 -->
+<div class="mobile-menu" id="mobileMenu" hidden>
+  <nav class="mobile-menu-inner" aria-label="移动端导航" data-i18n-label="menu.aria">
+    <a href="#platforms" data-i18n="nav.platforms">多端</a>
+    <a href="#features" data-i18n="nav.features">功能</a>
+    <a href="#deploy" data-i18n="nav.deploy">部署</a>
+    <a href="#gallery" data-i18n="nav.gallery">界面</a>
+    <a href="#faq" data-i18n="nav.faq">常见问题</a>
+    <a href="https://github.com/clawbench-dev/clawbench/tree/main/docs/user-guide" target="_blank" rel="noopener" data-i18n="nav.docs">使用手册</a>
+  </nav>
+  <div class="mobile-menu-foot">
+    <a class="btn btn-ghost" href="https://github.com/clawbench-dev/clawbench" target="_blank" rel="noopener">GitHub</a>
+    <a class="btn btn-solid" href="#deploy" data-i18n="nav.cta">立即部署</a>
+  </div>
+</div>
+
+<main id="main">
+  <span id="top"></span>
+
+  <!-- ══ Hero ═════════════════════════════════════════════════ -->
+  <section class="hero">
+    <div class="hero-inner">
+      <div class="hero-copy">
+        <p class="eyebrow">
+          <span class="dot" aria-hidden="true"></span>
+          <span data-i18n="hero.eyebrow">开源 · MIT 许可 · 单文件部署</span>
+        </p>
+
+        <h1 class="hero-title" data-i18n-html="hero.title">
+          从掌心到桌面，<br>同一个<em>工作台</em>。
+        </h1>
+
+        <p class="hero-sub" data-i18n-html="hero.sub">
+          把 CodeBuddy、Claude Code、Codex 等 <strong>19 个</strong> AI 编程智能体封装成一个 Web 工作台。执行在服务端，呈现于任意客户端——<strong>一个会话</strong>，在手机、平板和桌面之间无缝继续。
+        </p>
+
+        <div class="hero-cta">
+          <a class="btn btn-solid btn-lg" href="#deploy">
+            <span data-i18n="hero.cta1">立即开始</span>
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
+          </a>
+          <a class="btn btn-ghost btn-lg" href="https://github.com/clawbench-dev/clawbench" target="_blank" rel="noopener">
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+            <span data-i18n="hero.cta2">查看源码</span>
+          </a>
+        </div>
+
+        <dl class="hero-stats">
+          <div><dt data-i18n="stat.agents">AI 智能体</dt><dd>19</dd></div>
+          <div><dt data-i18n="stat.themes">内置主题</dt><dd>36</dd></div>
+          <div><dt data-i18n="stat.langs">语法高亮</dt><dd>170+</dd></div>
+          <div><dt data-i18n="stat.deploy">部署体积</dt><dd data-i18n="stat.deployVal">单文件</dd></div>
+        </dl>
+      </div>
+
+      <!-- 设备舞台：桌面显示器 + 手机，手机屏幕轮播 -->
+      <div class="stage" aria-hidden="true">
+        <div class="stage-glow"></div>
+
+        <figure class="device device-desktop">
+          <div class="device-frame">
+            <div class="device-screen">
+              <img src="img/desktop.webp" alt="" width="1920" height="1040" loading="eager" decoding="async">
+            </div>
+            <div class="device-chin"><span class="chin-dot"></span>ClawBench</div>
+          </div>
+          <div class="device-stand"><span class="stand-neck"></span><span class="stand-base"></span></div>
+        </figure>
+
+        <figure class="device device-phone">
+          <div class="phone-shell">
+            <span class="phone-island"></span>
+            <div class="phone-screen">
+              <img src="img/phone.webp" alt="" width="900" height="1980" loading="eager" decoding="async">
+            </div>
+          </div>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 支持的后端 ═══════════════════════════════════════════ -->
+  <section class="strip" aria-label="支持的 AI 后端" data-i18n-label="strip.aria">
+    <div class="strip-inner">
+      <p class="strip-label" data-i18n="strip.label">一个界面，调度你已经在用的智能体</p>
+      <ul class="strip-list">
+        <li>CodeBuddy</li><li>Claude Code</li><li>Codex</li><li>OpenCode</li>
+        <li>Cursor</li><li>Qoder</li><li>Kimi</li><li>Copilot</li>
+        <li>Grok Build</li><li>Hermes Agent</li><li>Pi</li><li class="more" data-i18n="strip.more">+7 更多</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ══ 多端 ═════════════════════════════════════════════════ -->
+  <section class="section" id="platforms">
+    <div class="section-head reveal">
+      <p class="kicker" data-i18n="plat.kicker">多端一体</p>
+      <h2 data-i18n-html="plat.title">一块服务端，<br>三种形态的客户端。</h2>
+      <p class="lede" data-i18n="plat.lede">
+        Go 后端把前端、API 与数据全部打进一个二进制。你可以把它跑在 PC 上、塞进 Docker、或者直接在安卓手机的 Termux 里运行。
+      </p>
+    </div>
+
+    <div class="plat-grid">
+      <article class="plat-card reveal">
+        <div class="plat-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M10.5 18.5h3"/></svg>
+        </div>
+        <h3 data-i18n="plat.phone.t">手机</h3>
+        <p data-i18n="plat.phone.d">Android App、PWA、或者 Termux 里直接跑服务端。触控优先的交互，软键盘不遮挡输入区。</p>
+        <p class="plat-meta" data-i18n="plat.phone.m">Android · PWA · Termux</p>
+      </article>
+
+      <article class="plat-card reveal">
+        <div class="plat-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M2 12h20M11 18v3M7 21h10"/></svg>
+        </div>
+        <h3 data-i18n="plat.tablet.t">平板</h3>
+        <p data-i18n="plat.tablet.d">宽屏下自动切到多栏布局：左侧文件与目录，中间文档，右侧会话。手指和触控板都能用。</p>
+        <p class="plat-meta" data-i18n="plat.tablet.m">响应式多栏 · 可拖拽分栏</p>
+      </article>
+
+      <article class="plat-card reveal">
+        <div class="plat-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        </div>
+        <h3 data-i18n="plat.desktop.t">桌面</h3>
+        <p data-i18n="plat.desktop.d">Electron 客户端复用同一套界面，补齐系统通知、原生右键菜单、SSH 端口映射与应用内自升级。</p>
+        <p class="plat-meta" data-i18n="plat.desktop.m">Windows · macOS · Linux</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- ══ 手机端 ═══════════════════════════════════════════════ -->
+  <section class="section split" id="mobile">
+    <div class="split-copy reveal">
+      <p class="kicker" data-i18n="mob.kicker">手机 · Android / iOS 浏览器</p>
+      <h2 data-i18n-html="mob.title">口袋里，<br>装着一台开发机。</h2>
+      <p class="lede" data-i18n="mob.lede">
+        在地铁上、在沙发上、在等咖啡的五分钟里——掏出手机就能继续昨天那一轮对话。会话不会因为切换设备而中断。
+      </p>
+      <ul class="ticks">
+        <li data-i18n="mob.b1">完整会话历史，切换设备后从同一处继续</li>
+        <li data-i18n="mob.b2">为触控与软键盘重做的输入区，不遮挡内容</li>
+        <li data-i18n="mob.b3">文件、Git、终端、任务，一个底部导航全部覆盖</li>
+        <li data-i18n="mob.b4">长按选词即引用，拖拽文件即上传</li>
+        <li data-i18n="mob.b5">桌面端系统通知与 Android 原生通知双通道</li>
+      </ul>
+      <a class="link-arrow" href="#deploy">
+        <span data-i18n="mob.link">看看怎么装</span>
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
+      </a>
+
+      <!-- 手机截图比文案高，左栏底部补一条说明把高度补齐；
+           内容刻意不复述图注，而是补"这轮对话从哪来"这个跨端要点。 -->
+      <div class="mob-note">
+        <span class="mob-note-dot" aria-hidden="true"></span>
+        <p data-i18n-html="mob.note">这一轮就是从上面那台桌面端发起的——中间换了设备，<code>Bash</code> 的输出和思考记录一条没丢。</p>
+      </div>
+    </div>
+
+    <div class="split-visual reveal">
+      <!-- 整机一张，配点击放大。手机截图信息密度极高，任何局部裁切都会
+           切在半句话上、看起来像没做完；完整一张 + 原尺寸放大反而更诚实，
+           也和"这一屏就是一整轮对话"的主张一致。 -->
+      <figure class="phone-showcase">
+        <button class="shot-zoom phone-zoom" type="button" data-zoom="img/phone.webp" aria-label="放大查看手机端截图" data-i18n-label="mob.zoom">
+          <span class="showcase-shell">
+            <span class="showcase-island"></span>
+            <img src="img/phone.webp" alt="ClawBench 手机端界面：深度思考折叠行、Bash 工具调用卡、Markdown 回复与底部输入区" width="900" height="1980" loading="lazy" decoding="async">
+          </span>
+        </button>
+        <figcaption data-i18n="mob.cap">一整轮对话在一屏内：思考过程、工具调用、结论与输入区</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ══ 桌面端 ═══════════════════════════════════════════════ -->
+  <section class="section" id="desktop">
+    <div class="desk-head">
+      <div class="reveal">
+        <p class="kicker" data-i18n="desk.kicker">桌面 · macOS / Windows / Linux</p>
+        <h2 data-i18n-html="desk.title">坐在桌前，<br>它就是主界面。</h2>
+      </div>
+
+      <div class="desk-side reveal">
+        <p class="lede" data-i18n="desk.lede">
+          文件树、文档、对话、终端可以同屏并排，分栏比例随手拖。窗口最小化后通知照常送达——因为事件走的是 WebSocket，而不是页面里的 Notification。
+        </p>
+        <a class="link-arrow" href="#deploy">
+          <span data-i18n="desk.link">下载桌面客户端</span>
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
+        </a>
+      </div>
+    </div>
+
+    <ul class="ticks ticks-row reveal">
+      <li data-i18n="desk.b1">可拖拽多栏布局，宽屏下不再来回切页签</li>
+      <li data-i18n="desk.b2">CodeMirror 编辑 + VS Code 风格 sticky scroll</li>
+      <li data-i18n="desk.b3">无边框窗口、原生右键菜单、外链走默认浏览器</li>
+      <li data-i18n="desk.b4">应用内自升级：侧装多版本 + 指针切换，可回滚</li>
+    </ul>
+
+    <!-- 桌面截图整幅展开：它信息密度高，塞进半栏宽度后每个面板的
+         文字都读不出来，反而看不出这是"真在工作"的界面。 -->
+    <figure class="desk-shot reveal">
+      <button class="shot-zoom" type="button" data-zoom="img/desktop.webp" aria-label="放大查看桌面端截图" data-i18n-label="desk.zoom">
+        <img src="img/desktop.webp" alt="ClawBench 桌面端界面：文件树、文档预览、AI 对话与会话列表同屏并排" width="1920" height="1040" loading="lazy" decoding="async">
+        <span class="zoom-hint" data-i18n="desk.zoomHint">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14M7 5v4M5 7h4"/></svg>
+          点击放大
+        </span>
+      </button>
+      <figcaption data-i18n="desk.cap">三栏并排：文件与文档、AI 对话、会话列表</figcaption>
+    </figure>
+  </section>
+
+  <!-- ══ 功能网格 ═════════════════════════════════════════════ -->
+  <section class="section" id="features">
+    <div class="section-head reveal">
+      <p class="kicker" data-i18n="feat.kicker">功能</p>
+      <h2 data-i18n-html="feat.title">不是一个聊天框，<br>是一整套工作流。</h2>
+      <p class="lede" data-i18n="feat.lede">
+        从读文件到提交代码，从定时任务到公网访问——原本需要在终端里敲命令的事，都在同一块界面里完成。
+      </p>
+    </div>
+
+    <div class="feat-grid">
+      <article class="feat reveal">
+        <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.2A8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4z"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01"/></svg></div>
+        <h3 data-i18n="feat.chat.t">AI 对话</h3>
+        <p data-i18n="feat.chat.d">流式输出、工具调用可视化、思维过程可见、交互式提问卡，以及会话内的运行中插话。</p>
+      </article>
+
+      <article class="feat reveal">
+        <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3"/><circle cx="17" cy="8" r="3"/><circle cx="12.5" cy="17" r="3"/><path d="M10.4 9.9 11.6 14M15 10.2 13.7 14.3"/></svg></div>
+        <h3 data-i18n="feat.group.t">多智能体群聊</h3>
+        <p data-i18n="feat.group.d">把多个后端拉进一个群，主持人模式轮流发言，或自由模式用 @ 接力。可开自动巡航跑到任务完成。</p>
+      </article>
+
+      <article class="feat reveal">
+        <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+        <h3 data-i18n="feat.files.t">文件管理</h3>
+        <p data-i18n="feat.files.d">递归浏览、按 .gitignore 灰显、多选批量操作、拖放移动、目录树下载与文件分享链接。</p>
+      </article>
+
+      <article class="feat reveal">
+        <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 8-5 4 5 4M15 8l5 4-5 4"/></svg></div>
+        <h3 data-i18n="feat.code.t">代码编辑</h3>
+        <p data-i18n="feat.code.d">CodeMirror 浏览与编辑双模式，语法高亮覆盖 170+ 种语言，长尾语言按需懒加载，首屏不为它付费。</p>
+      </article>
+
+      <article class="feat reveal">
+        <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5M4 19h16"/><path d="m7 15 3-4 3 2 4-6"/></svg></div>
+        <h3 data-i18n="feat.md.t">Markdown 与图表</h3>
+        <p data-i18n="feat.md.d">LaTeX 公式、Mermaid 图表、目录抽屉、代码链接预览，以及自包含的 HTML 导出。</p>
+      </article>
+
+      <article class="feat reveal">
+        <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg></div>
+        <h3 data-i18n="feat.office.t">文档与媒体</h3>
+        <p data-i18n="feat.office.d">Word、Excel、PowerPoint 原生渲染，PDF 分页缩放，图片、音频、视频内联播放与灯箱放大。</p>
+      </article>
+
+      <article class="feat reveal">
+        <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-6 3-6 5"/></svg></div>
+        <h3 data-i18n="feat.git.t">Git 与 Forge</h3>
+        <p data-i18n="feat.git.d">提交历史、分支图、Diff 视图与工作树管理；GitHub / GitLab 的议题、合并与流水线可以直接引用进对话。</p>
+      </article>
+
+      <article class="feat reveal">
+        <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="16" rx="2"/><path d="m7 9 2.5 2L7 13M12 13.5h5"/></svg></div>
+        <h3 data-i18n="feat.term.t">Web 终端</h3>
+        <p data-i18n="feat.term.d">基于 PTY 的多标签终端，三模式手势系统、虚拟修饰键、157 个终端主题，手机上也能用 vim。</p>
+      </article>
+
+      <article class="feat reveal">
+        <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></div>
+        <h3 data-i18n="feat.cron.t">定时与事件任务</h3>
+        <p data-i18n="feat.cron.d">Cron 定时或 Git 事件触发，可选前置脚本：脚本静默成功就跳过本次 AI，也不发通知。</p>
+      </article>
+
+      <article class="feat reveal">
+        <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4"/><circle cx="12" cy="12" r="3"/></svg></div>
+        <h3 data-i18n="feat.ssh.t">SSH 与端口映射</h3>
+        <p data-i18n="feat.ssh.d">正向与反向端口映射，全协议透明（HTTP / WS / SSE / gRPC），也可以在手机上直连家里的 localhost。</p>
+      </article>
+
+      <article class="feat reveal">
+        <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></div>
+        <h3 data-i18n="feat.notify.t">通知与推送</h3>
+        <p data-i18n="feat.notify.d">通知中心汇总会话、任务与仓库事件；同时支持钉钉、飞书机器人，在 IM 里查看会话并回消息。</p>
+      </article>
+
+      <article class="feat reveal">
+        <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18 4.5 4.5 0 0 1 0-9 4.5 4.5 0 0 0 0-9z"/></svg></div>
+        <h3 data-i18n="feat.theme.t">主题与壁纸</h3>
+        <p data-i18n="feat.theme.d">36 个命名主题、跟随系统切换、圆形扩散动效；本地图库、Bing 每日与动态壁纸三种来源。</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- ══ 部署 ═════════════════════════════════════════════════ -->
+  <section class="section" id="deploy">
+    <div class="section-head reveal">
+      <p class="kicker" data-i18n="dep.kicker">部署</p>
+      <h2 data-i18n-html="dep.title">一条命令，<br>六十秒跑起来。</h2>
+      <p class="lede" data-i18n="dep.lede">
+        不需要 Node 运行时，不需要额外的数据库服务。首次启动会生成随机密码并打印到控制台。
+      </p>
+    </div>
+
+    <div class="deploy-wrap reveal">
+      <div class="tabs" role="tablist" aria-label="安装方式" data-i18n-label="dep.aria">
+        <button class="tab is-active" role="tab" aria-selected="true" data-tab="npm" type="button">npm</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="docker" type="button">Docker</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="binary" type="button" data-i18n="dep.tab.binary">安装包</button>
+      </div>
+
+      <div class="code-panels">
+        <div class="code-panel is-active" data-panel="npm">
+          <div class="code-head"><span class="code-dots"><i></i><i></i><i></i></span><span class="code-title">bash</span></div>
+          <pre><code><span class="c-cmt" data-i18n="code.npm.cmt"># 国内用户建议先走镜像，秒下</span>
+npm config set registry https://registry.npmmirror.com/
+npm install -g @xulongzhe/clawbench
+clawbench</code></pre>
+          <button class="copy-btn" type="button" data-copy="npm config set registry https://registry.npmmirror.com/
+npm install -g @xulongzhe/clawbench
+clawbench">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"/></svg>
+            <span data-i18n="dep.copy">复制</span>
+          </button>
+        </div>
+
+        <div class="code-panel" data-panel="docker" hidden>
+          <div class="code-head"><span class="code-dots"><i></i><i></i><i></i></span><span class="code-title">docker</span></div>
+          <pre><code>docker pull ghcr.io/clawbench-dev/clawbench:latest
+docker run -d --restart unless-stopped \
+  -p 20000:20000 \
+  -v clawbench-data:/data \
+  ghcr.io/clawbench-dev/clawbench:latest</code></pre>
+          <button class="copy-btn" type="button" data-copy="docker pull ghcr.io/clawbench-dev/clawbench:latest
+docker run -d --restart unless-stopped -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawbench:latest">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"/></svg>
+            <span data-i18n="dep.copy">复制</span>
+          </button>
+        </div>
+
+        <div class="code-panel" data-panel="binary" hidden>
+          <div class="code-head"><span class="code-dots"><i></i><i></i><i></i></span><span class="code-title">bash</span></div>
+          <pre><code><span class="c-cmt" data-i18n="code.bin.cmt"># 从 Releases 下载对应平台的压缩包，解压即用</span>
+TAG=$(curl -sI https://github.com/clawbench-dev/clawbench/releases/latest \
+  | grep -i '^location:' | sed 's|.*/tag/||' | tr -d '\r\n')
+wget "https://github.com/clawbench-dev/clawbench/releases/download/${TAG}/clawbench-linux-amd64-${TAG}.zip"
+unzip "clawbench-linux-amd64-${TAG}.zip" && cd clawbench && ./clawbench</code></pre>
+          <button class="copy-btn" type="button" data-copy="TAG=$(curl -sI https://github.com/clawbench-dev/clawbench/releases/latest | grep -i '^location:' | sed 's|.*/tag/||' | tr -d '\r\n')
+wget &quot;https://github.com/clawbench-dev/clawbench/releases/download/${TAG}/clawbench-linux-amd64-${TAG}.zip&quot;
+unzip &quot;clawbench-linux-amd64-${TAG}.zip&quot; &amp;&amp; cd clawbench &amp;&amp; ./clawbench">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"/></svg>
+            <span data-i18n="dep.copy">复制</span>
+          </button>
+        </div>
+      </div>
+
+      <p class="deploy-note" data-i18n-html="dep.note">
+        部署完成后，用手机 App 或任意浏览器访问 <code>http://服务器IP:20000</code> 即可开始使用。
+      </p>
+
+      <div class="arch">
+        <img class="arch-zh" src="img/architecture.zh.svg" alt="ClawBench 部署架构：浏览器 / 手机 App / 桌面客户端通过 HTTP 与 WebSocket 连接单一 Go 服务端，服务端调用本机 AI CLI 与 SQLite。" width="720" height="410" loading="lazy">
+        <img class="arch-en" src="img/architecture.en.svg" alt="ClawBench deployment architecture" width="720" height="410" loading="lazy" hidden>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 界面 ═════════════════════════════════════════════════ -->
+  <section class="section section-wide" id="gallery">
+    <div class="section-head reveal">
+      <p class="kicker" data-i18n="gal.kicker">界面</p>
+      <h2 data-i18n-html="gal.title">截屏胜过形容词。</h2>
+      <p class="lede" data-i18n="gal.lede">以下全部是真实运行截图，未做视觉修饰。</p>
+    </div>
+
+    <div class="gal-wrap">
+      <div class="gal" id="gal">
+        <figure class="gal-item"><img src="img/g-chat.webp" alt="AI 对话与工具调用" loading="lazy" decoding="async"><figcaption data-i18n="gal.chat">AI 对话 · 工具调用可视化</figcaption></figure>
+        <figure class="gal-item"><img src="img/g-office.webp" alt="Excel 预览" loading="lazy" decoding="async"><figcaption data-i18n="gal.office">文档 · Office 原生渲染</figcaption></figure>
+        <figure class="gal-item"><img src="img/g-agents.webp" alt="智能体选择" loading="lazy" decoding="async"><figcaption data-i18n="gal.agents">智能体 · 19 个后端</figcaption></figure>
+        <figure class="gal-item"><img src="img/g-ppt.webp" alt="PPT 幻灯片预览" loading="lazy" decoding="async"><figcaption data-i18n="gal.ppt">文档 · 幻灯片原生渲染</figcaption></figure>
+        <figure class="gal-item"><img src="img/g-git.webp" alt="Git 提交历史与分支图" loading="lazy" decoding="async"><figcaption data-i18n="gal.git">Git · 分支图与提交历史</figcaption></figure>
+        <figure class="gal-item"><img src="img/g-mermaid.webp" alt="Mermaid 图表" loading="lazy" decoding="async"><figcaption data-i18n="gal.mermaid">Markdown · Mermaid 图表</figcaption></figure>
+        <figure class="gal-item"><img src="img/g-tasks.webp" alt="定时任务" loading="lazy" decoding="async"><figcaption data-i18n="gal.tasks">任务 · Cron 与事件触发</figcaption></figure>
+        <figure class="gal-item"><img src="img/g-ssh.webp" alt="端口映射" loading="lazy" decoding="async"><figcaption data-i18n="gal.ssh">隧道 · 端口映射</figcaption></figure>
+        <figure class="gal-item"><img src="img/g-rag.webp" alt="RAG 检索" loading="lazy" decoding="async"><figcaption data-i18n="gal.rag">检索 · 会话聚合搜索</figcaption></figure>
+        <figure class="gal-item"><img src="img/g-terminal.webp" alt="Web 终端" loading="lazy" decoding="async"><figcaption data-i18n="gal.term">终端 · 多标签 PTY</figcaption></figure>
+      </div>
+      <div class="gal-hint" data-i18n="gal.hint">左右滑动查看更多</div>
+    </div>
+  </section>
+
+  <!-- ══ 常见问题 ═════════════════════════════════════════════ -->
+  <section class="section" id="faq">
+    <div class="section-head reveal">
+      <p class="kicker" data-i18n="faq.kicker">常见问题</p>
+      <h2 data-i18n-html="faq.title">你可能想先问清楚的事。</h2>
+    </div>
+
+    <div class="faq-list reveal">
+      <details class="faq-item" open>
+        <summary><span data-i18n="faq.q1">开始之前需要准备什么？</span><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4"/></svg></summary>
+        <div class="faq-body"><p data-i18n-html="faq.a1">一台能运行 AI 编程智能体 CLI 的机器（Linux / macOS / Windows，或装了 Termux 的安卓手机），以及至少装好其中一个智能体。然后在同一台机器上运行 ClawBench，用任意浏览器访问它的地址即可。</p></div>
+      </details>
+
+      <details class="faq-item">
+        <summary><span data-i18n="faq.q2">真的能在手机上完整运行吗？</span><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4"/></svg></summary>
+        <div class="faq-body"><p data-i18n-html="faq.a2">可以。后端是纯 Go 的 <code>linux-arm64</code> 静态二进制，前端已经内嵌，通过 Termux 的 npm 安装后直接运行——AI 智能体也在手机本地执行，不需要额外的 PC 或服务器。</p></div>
+      </details>
+
+      <details class="faq-item">
+        <summary><span data-i18n="faq.q3">数据存在哪里？会不会被上传？</span><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4"/></svg></summary>
+        <div class="faq-body"><p data-i18n-html="faq.a3">全部落在你自己的机器上：一个 SQLite 数据库加上数据目录里的文件，没有第三方中转。密码用 SHA-256 加盐存储，本机请求也要带 HMAC 短时令牌。想从公网访问时，建议配合隧道或反向代理并启用 TLS。</p></div>
+      </details>
+
+      <details class="faq-item">
+        <summary><span data-i18n="faq.q4">支持哪些 AI 智能体？</span><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4"/></svg></summary>
+        <div class="faq-body"><p data-i18n-html="faq.a4">内置 19 个后端：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw。另外可以添加<strong>自定义 ACP 智能体</strong>——任何以 stdio 说 ACP 的工具，填一条启动命令就能接入。</p></div>
+      </details>
+
+      <details class="faq-item">
+        <summary><span data-i18n="faq.q5">在外面怎么访问家里的机器？</span><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4"/></svg></summary>
+        <div class="faq-body"><p data-i18n-html="faq.a5">支持 IPv6 直连、EasyTier 去中心化组网（不需要 VPS）、SSH 隧道以及 HTTP/2 流隧道。反向映射只绑 <code>127.0.0.1</code> 并禁用保留端口，避免把不该暴露的服务带出去。</p></div>
+      </details>
+
+      <details class="faq-item">
+        <summary><span data-i18n="faq.q6">收费吗？</span><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4"/></svg></summary>
+        <div class="faq-body"><p data-i18n-html="faq.a6">ClawBench 本身是 MIT 许可的开源软件，不收费。你自己在用的智能体（及其订阅或 API 计费）另算，费用归各自的提供方。</p></div>
+      </details>
+    </div>
+  </section>
+
+  <!-- ══ 结尾 CTA ═════════════════════════════════════════════ -->
+  <section class="outro">
+    <div class="outro-inner reveal">
+      <img class="outro-logo" src="img/logo.webp" alt="" width="64" height="64" loading="lazy">
+      <h2 data-i18n-html="outro.title">现在，把工作台<br>放进你的口袋。</h2>
+      <p data-i18n="outro.sub">一条命令，一个二进制，剩下的交给你已经在用的智能体。</p>
+      <div class="outro-cta">
+        <a class="btn btn-solid btn-lg" href="#deploy" data-i18n="outro.cta">开始部署</a>
+        <a class="btn btn-ghost btn-lg" href="https://github.com/clawbench-dev/clawbench" target="_blank" rel="noopener" data-i18n="outro.cta2">在 GitHub 上查看</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <img src="img/logo.webp" alt="" width="26" height="26" loading="lazy">
+      <span>ClawBench</span>
+      <span class="footer-year">· 2026</span>
+    </div>
+    <nav class="footer-links" aria-label="页脚导航" data-i18n-label="foot.aria">
+      <a href="https://github.com/clawbench-dev/clawbench/tree/main/docs/user-guide" target="_blank" rel="noopener" data-i18n="nav.docs">使用手册</a>
+      <a href="https://github.com/clawbench-dev/clawbench/blob/main/README.md" target="_blank" rel="noopener">README</a>
+      <a href="https://github.com/clawbench-dev/clawbench/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
+      <a href="https://github.com/clawbench-dev/clawbench/issues" target="_blank" rel="noopener" data-i18n="foot.issues">反馈</a>
+    </nav>
+  </div>
+</footer>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- 截图放大：手机端宽截图只有几十像素高，必须能点开看原尺寸 -->
+<div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" aria-label="截图预览" data-i18n-label="zoom.dialog">
+  <button class="lightbox-close" type="button" aria-label="关闭" data-i18n-label="zoom.close">
+    <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+  </button>
+  <img id="lightboxImg" alt="">
+</div>
+
+<script src="js/landing.js" defer></script>
+</body>
+</html>
