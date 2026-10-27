@@ -24,8 +24,8 @@
       :title="homeTitle"
       @dragstart="onCrumbDragStart(homeDragPath, 'Home', $event)"
       @dragend="cleanupDragGhost()"
-      @click="$emit('navigate', homePath)"
-      :class="{ external: isExternalBrowse }"
+      @click="!isAtProjectRoot && $emit('navigate', homePath)"
+      :class="{ external: isExternalBrowse, current: isAtProjectRoot }"
     >
       <Home :size="14" />
     </span>
@@ -40,7 +40,9 @@
         @click="i < parts.length - 1 && $emit('navigate', crumbPath(parts.slice(0, i + 1)))"
       >{{ part }}</span>
     </template>
-    <span class="crumb-sep" />
+    <!-- Separator before the copy button. Hidden at the project root, where
+         there are no segments — a dangling "/" would read as a missing crumb. -->
+    <span v-if="!isAtProjectRoot" class="crumb-sep" />
     <CopyButton :text="fullPath" :size="13" title-key="jump.copyPath" class="crumb-copy-btn" @click.stop />
   </div>
 </template>
@@ -120,7 +122,17 @@ function onCrumbDragStart(path, name, e) {
  */
 const fullPath = computed(() => {
   const value = props.path
-  if (!value) return ''
+  // At the project root `path` is "" (the backend resolves that), so the only
+  // meaningful copy target is the project root directory itself — that is what
+  // the Home crumb stands for. An empty string would make CopyButton a no-op
+  // (it never writes an empty clipboard), leaving the button visibly dead.
+  if (!value) {
+    if (!props.projectScoped) return ''
+    // Strip a trailing separator so the copied value matches how paths are
+    // written elsewhere (a bare "/" root keeps its single slash).
+    const root = normalizeSlashes(store.state.projectRoot || '')
+    return root.length > 1 ? root.replace(/\/+$/, '') : root
+  }
   const normValue = normalizeSlashes(value)
   const root = normalizeSlashes(store.state.projectRoot || '')
   return isAbsolutePath(value)
@@ -165,14 +177,37 @@ const parts = computed(() => {
 })
 
 /**
- * Whether to render at all. `parts` is empty both for "nothing to show"
- * (the picker at its top level, an empty path) and for the POSIX filesystem
- * root, where `splitPath('/')` yields no segments. Hiding the bar in the latter
- * case traps the user: the up-one-level button is a no-op there (`dirName('/')`
- * is `'/'`) and the Home crumb is the only way back to the project. Windows
- * never hit this — `C:\` keeps a `C:` segment, so the bar stayed visible.
+ * Sitting at the project root itself: nothing below the Home crumb, and the
+ * path is project-relative (an absolute path is an external browse). Home is
+ * then the current location — it must not offer a self-navigation.
+ *
+ * Requires a KNOWN project root: with no project loaded there is nothing to
+ * point at, and the copy button would copy an empty string.
  */
-const showBreadcrumb = computed(() => parts.value.length > 0 || isExternalBrowse.value)
+const isAtProjectRoot = computed(
+  () =>
+    props.projectScoped &&
+    parts.value.length === 0 &&
+    !isExternalBrowse.value &&
+    !!store.state.projectRoot,
+)
+
+/**
+ * Whether to render at all. `parts` is empty both for "nothing to show"
+ * (the picker at its top level) and for the POSIX filesystem root, where
+ * `splitPath('/')` yields no segments. Hiding the bar in the latter case traps
+ * the user: the up-one-level button is a no-op there (`dirName('/')` is `'/'`)
+ * and the Home crumb is the only way back to the project. Windows never hit
+ * this — `C:\` keeps a `C:` segment, so the bar stayed visible.
+ *
+ * The file manager ALSO keeps the bar at the project root: the Home crumb is
+ * then the current location, and the path-copy button is the one place to grab
+ * the absolute project root. The directory picker (no project concept) still
+ * hides at its top level — there `parts` empty genuinely means "nothing".
+ */
+const showBreadcrumb = computed(
+  () => parts.value.length > 0 || isExternalBrowse.value || isAtProjectRoot.value,
+)
 
 /** Browsing the filesystem root itself — there is nothing above it. */
 const isAtFsRoot = computed(() => isExternalBrowse.value && fsRootPath.value === normalizeSlashes(props.path))

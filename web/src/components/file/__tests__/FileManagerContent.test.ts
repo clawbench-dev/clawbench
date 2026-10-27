@@ -411,7 +411,7 @@ const i18n = createI18n({
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称' },
         toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败', operationFailedDetail: '操作失败: {error}' },
         search: { placeholder: '搜索文件名...', recursive: '递归搜索', exact: '精确匹配', scopeGlobal: '全局搜索', scopeCurrent: '当前目录', wordExact: '精确', wordRecursive: '递归', wordCurrent: '在当前目录', wordGlobal: '在当前项目下', wordVerb: '搜索', reset: '重置', noResults: '未找到文件', searching: '搜索中...', resultCount: '找到 {count} 个文件', resultCountPlus: '找到 {limit}+ 个文件', truncated: '如需找到更多文件，请输入更精确的关键词', searchFrom: '搜索范围: {path}' },
-        nav: { parentDir: '返回上一级', fsRoot: '文件系统根目录' },
+        nav: { parentDir: '返回上一级', fsRoot: '文件系统根目录', projectRoot: '项目根目录' },
       },
       chat: {
         actions: { attachToChat: '附加到聊天' },
@@ -4420,11 +4420,26 @@ describe('FileManagerContent — internal move helpers', () => {
   })
 
   it('leaves the project root up button enabled when it is the only parent', () => {
-    // The project root itself hides the whole nav row, but a single-segment
-    // project-relative dir must still be able to walk up to it — that parent is
-    // "" and is a real destination, not a self-reference.
+    // A single-segment project-relative dir must be able to walk up to the
+    // project root — that parent is "" and is a real destination, not a
+    // self-reference.
     const wrapper = mountContent({ currentDir: 'src', entries: [] })
     expect(wrapper.find('.dir-up-btn').attributes('disabled')).toBeUndefined()
+  })
+
+  it('explains the dead up button at the project root as the project root', () => {
+    // The nav row stays at the project root now, so the disabled button needs a
+    // reason that is not "filesystem root" — that would be factually wrong.
+    const wrapper = mountContent({ currentDir: '', entries: [] })
+    expect(wrapper.find('.dir-up-btn').attributes('title')).toBe('项目根目录')
+  })
+
+  it('keeps the breadcrumb row at the project root', () => {
+    // The breadcrumb (with its copy-path button) is the only place that names
+    // the current location at the root, so the row must not disappear there.
+    const wrapper = mountContent({ currentDir: '', entries: [] })
+    expect(wrapper.find('.dir-nav-bottom').exists()).toBe(true)
+    expect(wrapper.find('.dir-breadcrumb-stub').exists()).toBe(true)
   })
 
   it('does not emit navigateDir when the up button is disabled at "/"', async () => {
@@ -4931,12 +4946,16 @@ describe('FileManagerContent — up one level', () => {
     { name: 'other.ts', type: 'file', modified: '2025-01-01T00:00:00Z', size: 10 },
   ]
 
-  it('renders the up button only when a currentDir is set', async () => {
+  it('keeps the up button at the project root but disables it', async () => {
+    // The nav row (and therefore the breadcrumb + copy-path button) stays
+    // visible at the project root, so the up button is rendered there too —
+    // greyed out, because "" has no parent.
     const atRoot = mountContent({ currentDir: '' })
-    expect(atRoot.find('.dir-up-btn').exists()).toBe(false)
+    expect(atRoot.find('.dir-up-btn').exists()).toBe(true)
+    expect(atRoot.find('.dir-up-btn').attributes('disabled')).toBeDefined()
 
     const nested = mountContent({ currentDir: 'src' })
-    expect(nested.find('.dir-up-btn').exists()).toBe(true)
+    expect(nested.find('.dir-up-btn').attributes('disabled')).toBeUndefined()
   })
 
   it('clicking the up button emits navigateDir with the parent directory', async () => {
@@ -4952,8 +4971,8 @@ describe('FileManagerContent — up one level', () => {
     await wrapper.find('.dir-up-btn').trigger('click')
     expect(wrapper.emitted('navigateDir')![0][0]).toBe('')
 
-    // Root listing: the nav row is hidden (v-if="currentDir") but the entry we
-    // left must still be selected there.
+    // Root listing: the nav row stays (breadcrumb at the project root) but the
+    // entry we left must still be selected there.
     await wrapper.setProps({ currentDir: '', entries: [{ name: 'src', type: 'dir', modified: '2025-01-01T00:00:00Z', size: 0 }] })
     await nextTick()
     expect(wrapper.vm._getSelectedPath()).toBe('src')

@@ -8,6 +8,9 @@ import { _setWideScreenForTest, _resetForTest } from '@/composables/useWideScree
 vi.mock('@/stores/app', () => ({
   store: { state: { projectRoot: '/project' } },
 }))
+// The real module, so a test can temporarily blank projectRoot (the same
+// reactive object the component reads).
+import { store } from '@/stores/app'
 
 const mockCopyText = vi.hoisted(() => vi.fn())
 vi.mock('@/utils/clipboard', () => ({
@@ -120,13 +123,18 @@ describe('DirBreadcrumb', () => {
       expect(crumbs[1].text()).toBe('D:\\')
     })
 
-    it('returns empty for empty path', () => {
-      const wrapper = mountBreadcrumb({ path: '' })
+    it('returns empty for an empty path in the picker (no project concept)', () => {
+      // The file manager keeps the bar at its project root (see below); the
+      // picker has no root to name, so "" is genuinely nothing to show.
+      const wrapper = mountPicker({ path: '' })
       expect(wrapper.find('.dir-breadcrumb').exists()).toBe(false)
     })
 
-    it('returns empty for dot path', () => {
-      const wrapper = mountBreadcrumb({ path: '.' })
+    it('returns empty for dot path in the picker', () => {
+      // "." carries no segments, so the picker (no project root to name) has
+      // nothing to render. In the file manager "." IS the project root, which
+      // now keeps the bar — covered below.
+      const wrapper = mountPicker({ path: '.' })
       expect(wrapper.find('.dir-breadcrumb').exists()).toBe(false)
     })
 
@@ -199,6 +207,55 @@ describe('DirBreadcrumb', () => {
       const wrapper = mountPicker({ path: '/home/user' })
       await wrapper.find('.crumb-home').trigger('click')
       expect(wrapper.emitted('navigate')![0][0]).toBe('')
+    })
+  })
+
+  // ── The project root itself ──
+
+  describe('at the project root', () => {
+    it('keeps the breadcrumb visible with an empty (project-relative) path', () => {
+      // The file manager passes "" at the project root. Hiding the bar there
+      // removed the only place that names the current location and offers the
+      // copy-path button.
+      const wrapper = mountBreadcrumb({ path: '' })
+      expect(wrapper.find('.dir-breadcrumb').exists()).toBe(true)
+      expect(wrapper.find('.crumb-home').exists()).toBe(true)
+    })
+
+    it('marks Home as current and does not navigate on click', async () => {
+      const wrapper = mountBreadcrumb({ path: '' })
+      const home = wrapper.find('.crumb-home')
+      expect(home.classes()).toContain('current')
+      await home.trigger('click')
+      expect(wrapper.emitted('navigate')).toBeUndefined()
+    })
+
+    it('treats "." as the project root too', () => {
+      const wrapper = mountBreadcrumb({ path: '.' })
+      expect(wrapper.find('.dir-breadcrumb').exists()).toBe(true)
+      expect(wrapper.find('.crumb-home').classes()).toContain('current')
+    })
+
+    it('offers the copy button and copies the absolute project root', async () => {
+      mockCopyText.mockReset()
+      mockCopyText.mockImplementation((_text: string, onSuccess?: () => void) => onSuccess?.())
+      const wrapper = mountBreadcrumb({ path: '' })
+      const copyBtn = wrapper.find('.crumb-copy-btn')
+      expect(copyBtn.exists()).toBe(true)
+      await copyBtn.trigger('click')
+      expect(mockCopyText).toHaveBeenCalledWith('/project', expect.any(Function))
+    })
+
+    it('hides the bar when no project is loaded', () => {
+      // Without a project root there is no location to name and nothing to
+      // copy — an empty bar with a dead copy button would be worse than none.
+      const saved = store.state.projectRoot
+      store.state.projectRoot = ''
+      try {
+        expect(mountBreadcrumb({ path: '' }).find('.dir-breadcrumb').exists()).toBe(false)
+      } finally {
+        store.state.projectRoot = saved
+      }
     })
   })
 

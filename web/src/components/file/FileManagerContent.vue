@@ -192,15 +192,17 @@
       </div>
 
       <!-- Breadcrumb (multi-select info is merged into the bottom bar so the
-           directory context is never obscured) -->
-      <div v-if="currentDir" class="dir-nav-bottom">
+           directory context is never obscured). Shown at the project root too:
+           the breadcrumb then carries the current location plus the copy-path
+           button, which is the only place to grab the absolute root. -->
+      <div v-if="showDirNav" class="dir-nav-bottom">
         <!-- Disabled at a filesystem root: dirName("/") is "/", so the walk-up
              is a no-op. Leaving it enabled there offers an affordance that
              silently does nothing. -->
         <button
           class="dir-up-btn"
           :disabled="!hasParentDir"
-          :title="hasParentDir ? t('file.nav.parentDir') : t('file.nav.fsRoot')"
+          :title="upTitle"
           @click="goToParentDir"
         >
           <ArrowLeft :size="14" />
@@ -1650,6 +1652,25 @@ const hasParentDir = computed(() => {
   if (dir === '') return false
   return dirName(dir) !== dir
 })
+
+/**
+ * The nav row exists for the project root too (see the template), so the dead
+ * up-button there needs its own explanation: "up one level" from the project
+ * root goes nowhere, but that is not a filesystem root — saying so would be
+ * wrong.
+ */
+const upTitle = computed(() => {
+  if (hasParentDir.value) return t('file.nav.parentDir')
+  return isExternalDir.value ? t('file.nav.fsRoot') : t('file.nav.projectRoot')
+})
+
+/**
+ * The nav row is shown for every listed directory, including the project root
+ * (empty `currentDir`), so the breadcrumb and its copy-path button stay
+ * available there. It stays hidden when no project is loaded — there is no root
+ * to name and nothing to copy.
+ */
+const showDirNav = computed(() => (props.currentDir || '') !== '' || !!store.state.projectRoot)
 
 function currentDirPath() {
     const dir = props.currentDir || ''
