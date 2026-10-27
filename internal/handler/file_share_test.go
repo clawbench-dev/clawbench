@@ -1226,7 +1226,7 @@ func TestSharePublic_DocRejectsOutOfScopeDirectoryKey(t *testing.T) {
 	// The directory key is caller-supplied and opaque, so it must be treated as
 	// a hint only: encoding "/" must not turn the endpoint into a filesystem
 	// reader for anyone holding the token.
-	for _, dir := range []string{"/", "/etc", filepath.Dir(env.ProjectDir)} {
+	for _, dir := range outOfScopeDirs(env.ProjectDir) {
 		req := newRequest(t, http.MethodGet, shareDocTestURL(token, dir, "passwd"), nil)
 		w := callHandler(ServeSharePublic, req)
 		assert.Equal(t, http.StatusNotFound, w.Code, "dir %s must be out of scope", dir)
@@ -1274,12 +1274,18 @@ func TestSharePublic_DocUnknownToken_404(t *testing.T) {
 func TestShareDocDirKey_RoundTrips(t *testing.T) {
 	// The share SPA encodes this key in the browser; the two implementations
 	// must produce identical bytes or every relative asset 404s.
-	dirs := []string{"/", "/tmp", "/a b/c", "/项目/子目录"}
+	//
+	// The cases must be ABSOLUTE on the running platform: decodeShareDocDir
+	// rejects anything else (it is the guard that stops a caller-supplied key
+	// from meaning something other than a real directory), and
+	// filepath.IsAbs("/") is false on Windows. Hard-coding POSIX paths made
+	// this test fail on the Windows runner for a reason that has nothing to do
+	// with the encoding it is supposed to verify.
+	var dirs []string
 	if runtime.GOOS == "windows" {
-		// A Windows document's directory is what the browser will encode; the
-		// key must round-trip there too (IsAbs is platform-dependent, so this
-		// case cannot be asserted on Unix).
-		dirs = append(dirs, `C:\Users\x`)
+		dirs = []string{`C:\`, `C:\Users\x`, `C:\a b\c`, `C:\项目\子目录`}
+	} else {
+		dirs = []string{"/", "/tmp", "/a b/c", "/项目/子目录"}
 	}
 	for _, dir := range dirs {
 		key := encodeShareDocDir(dir)
@@ -1291,6 +1297,20 @@ func TestShareDocDirKey_RoundTrips(t *testing.T) {
 		assert.NotContains(t, key, "+")
 		assert.NotContains(t, key, "/")
 	}
+}
+
+// outOfScopeDirs returns absolute directories that are guaranteed to lie
+// outside the project, for the /doc/ confinement tests. Built per platform for
+// the same reason as above: a POSIX literal is not absolute on Windows, so it
+// would be rejected by the key decoder and the confinement check under test
+// would never run.
+func outOfScopeDirs(projectDir string) []string {
+	// The project's parent directory is outside the share scope on every
+	// platform (scope is the project root), so it always belongs here.
+	if runtime.GOOS == "windows" {
+		return []string{filepath.VolumeName(projectDir) + `\`, filepath.Dir(projectDir)}
+	}
+	return []string{"/", "/etc", filepath.Dir(projectDir)}
 }
 
 // ─── /doc/ edge cases: malformed keys and unknown asset types ───────────────
@@ -1399,6 +1419,10 @@ func TestShareScopeRoot_EmptyRootFallsBackToFileDir(t *testing.T) {
 	// Rows predating the share_root column have an empty root. The scope must
 	// then be the shared file's own directory (fail closed) — never the
 	// filesystem, and never "whatever the caller's key says".
-	assert.Equal(t, "/a/b", shareScopeRoot("/a/b/c.txt", ""))
-	assert.Equal(t, "/proj", shareScopeRoot("/a/b/c.txt", "/proj"))
+	//
+	// Built with filepath so the assertion holds on Windows too: the function
+	// returns filepath.Dir of the input, which is separator-native.
+	shared := filepath.Join("a", "b", "c.txt")
+	assert.Equal(t, filepath.Join("a", "b"), shareScopeRoot(shared, ""))
+	assert.Equal(t, filepath.Join("p", "roj"), shareScopeRoot(shared, filepath.Join("p", "roj")))
 }
