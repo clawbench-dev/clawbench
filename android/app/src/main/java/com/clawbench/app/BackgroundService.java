@@ -43,16 +43,19 @@ import java.net.URL;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -249,6 +252,35 @@ public class BackgroundService extends Service {
     // Reconnect state
     private volatile boolean isReconnecting = false;
     private volatile int reconnectAttempt = 0;
+
+    /**
+     * Guards {@link #reconnectInFlight} and {@link #pendingReconnectCallbacks}.
+     *
+     * <p>One lock for both, because the two decisions are inseparable: "join the
+     * running attempt and get its result" must be atomic with "register my
+     * callback". Splitting them lets a callback be registered after the attempt
+     * has drained the set but before it clears the flag — that callback would
+     * then never fire, and the frontend's `await` would stall until its 16s
+     * safety timeout.
+     */
+    private final Object reconnectLock = new Object();
+
+    /**
+     * True while a {@link #forceReconnectAsync} attempt owns the network
+     * executor. The frontend polls while the tunnel is down, so without this the
+     * queue grows without bound: each attempt takes up to 15s and every one of
+     * them re-takes the service object lock inside {@code ensureConnection()},
+     * which is what made the main thread's {@code onDestroy()} block for tens of
+     * seconds (ANR).
+     */
+    private boolean reconnectInFlight = false;
+
+    /**
+     * Callback expressions waiting on the single in-flight reconnect attempt.
+     * A caller that arrives mid-attempt is coalesced onto it instead of queueing
+     * another one, and still receives the real outcome.
+     */
+    private final Set<String> pendingReconnectCallbacks = new LinkedHashSet<>();
 
     // SSH suspended due to screen off — SSH is only needed for port forwarding
     // which requires screen-on interaction. Disconnecting while suspended saves battery.
@@ -679,40 +711,87 @@ public class BackgroundService extends Service {
         BackgroundService svc = instance; // volatile read, single snapshot
         if (svc == null) return;
 
-        final String cbExpr = callbackJsExpr;
-        final WeakReference<android.webkit.WebView> webViewRefSnapshot = svc.webViewRef;
-
-        svc.networkExecutor.execute(() -> {
-            boolean success = false;
-            try {
-                svc.intentionalDisconnect = false;
-                svc.disconnectInternal();
-                svc.ensureConnection();
-                success = true;
-                AppLog.i(TAG, "SSH: forceReconnectAsync succeeded");
-            } catch (Exception e) {
-                lastError = e.getMessage();
-                AppLog.e(TAG, "SSH: forceReconnectAsync failed: " + e.getMessage(), e);
+        final boolean startAttempt;
+        synchronized (svc.reconnectLock) {
+            // Coalesce onto the attempt already running. The frontend polls while
+            // the tunnel is down while one attempt can take up to 15s, so queueing
+            // each call would grow the single-threaded executor without bound —
+            // and every queued attempt re-takes the service lock, which is what
+            // blocked the main thread long enough to ANR.
+            if (callbackJsExpr != null) {
+                svc.pendingReconnectCallbacks.add(callbackJsExpr);
             }
+            startAttempt = !svc.reconnectInFlight;
+            if (startAttempt) {
+                svc.reconnectInFlight = true;
+            }
+        }
+        if (!startAttempt) {
+            AppLog.d(TAG, "SSH: forceReconnectAsync already in flight, coalescing");
+            return;
+        }
 
-            // Notify the WebView on the UI thread
-            if (cbExpr != null && !svc.isShuttingDown) {
-                final boolean finalSuccess = success;
-                MainActivity activity = MainActivity.instance;
-                if (activity != null && !activity.isFinishing() && !activity.isDestroyed()) {
-                    activity.runOnUiThread(() -> {
-                        if (svc.isShuttingDown) return;
-                        android.webkit.WebView webView = webViewRefSnapshot != null ? webViewRefSnapshot.get() : null;
-                        if (webView != null) {
-                            try {
-                                webView.evaluateJavascript(
-                                    cbExpr + "(" + finalSuccess + ")", null);
-                            } catch (Exception e) {
-                                AppLog.d(TAG, "SSH: forceReconnectAsync callback failed", e);
-                            }
-                        }
-                    });
-                }
+        try {
+            svc.networkExecutor.execute(svc::runReconnectAttempt);
+        } catch (RejectedExecutionException e) {
+            // Executor already shut down (onDestroy). Release the flag and drop
+            // the callbacks so a later attempt is not silently swallowed and the
+            // waiters fall through to the frontend's safety timeout.
+            synchronized (svc.reconnectLock) {
+                svc.reconnectInFlight = false;
+                svc.pendingReconnectCallbacks.clear();
+            }
+            AppLog.w(TAG, "SSH: forceReconnectAsync rejected, service shutting down", e);
+        }
+    }
+
+    /**
+     * Perform the coalesced reconnect attempt and fan the result out to every
+     * callback that joined it. MUST run on {@code networkExecutor}.
+     */
+    private void runReconnectAttempt() {
+        boolean success = false;
+        try {
+            intentionalDisconnect = false;
+            disconnectInternal();
+            ensureConnection();
+            success = true;
+            AppLog.i(TAG, "SSH: forceReconnectAsync succeeded");
+        } catch (Exception e) {
+            lastError = e.getMessage();
+            AppLog.e(TAG, "SSH: forceReconnectAsync failed: " + e.getMessage(), e);
+        }
+
+        List<String> callbacks;
+        synchronized (reconnectLock) {
+            // Clear the flag and take the callbacks in ONE critical section: a
+            // caller that joins between the two would otherwise have its callback
+            // dropped here and never fired, leaving the frontend awaiting until
+            // its 16s safety timeout. Taking the flag down first means such a
+            // caller starts a fresh attempt instead (and is fanned out by it).
+            reconnectInFlight = false;
+            callbacks = new ArrayList<>(pendingReconnectCallbacks);
+            pendingReconnectCallbacks.clear();
+        }
+        for (String cb : callbacks) {
+            notifyReconnectCallback(cb, success);
+        }
+    }
+
+    /** Evaluate one reconnect callback expression on the WebView UI thread. */
+    private void notifyReconnectCallback(String cbExpr, boolean success) {
+        if (cbExpr == null || isShuttingDown) return;
+        final WeakReference<android.webkit.WebView> webViewRefSnapshot = webViewRef;
+        MainActivity activity = MainActivity.instance;
+        if (activity == null || activity.isFinishing() || activity.isDestroyed()) return;
+        activity.runOnUiThread(() -> {
+            if (isShuttingDown) return;
+            android.webkit.WebView webView = webViewRefSnapshot != null ? webViewRefSnapshot.get() : null;
+            if (webView == null) return;
+            try {
+                webView.evaluateJavascript(cbExpr + "(" + success + ")", null);
+            } catch (Exception e) {
+                AppLog.d(TAG, "SSH: forceReconnectAsync callback failed", e);
             }
         });
     }
@@ -1109,7 +1188,8 @@ public class BackgroundService extends Service {
                 + ", nativeWsActive=" + nativeWsActive);
         // Mark as shutting down FIRST — prevents addPortForward and
         // notifyPortForwardResult from posting to UI thread or modifying
-        // forwardedPorts during teardown.
+        // forwardedPorts during teardown. It also stops ensureConnection() from
+        // starting a new session after the teardown below has run.
         isShuttingDown = true;
         intentionalDisconnect = true;
         // Unregister screen state receiver
@@ -1127,13 +1207,27 @@ public class BackgroundService extends Service {
             liveUpdateManager.destroy();
             liveUpdateManager = null;
         }
+        // Cheap, lock-free cleanup: stopping the monitor only flips a flag and
+        // interrupts a sleeping thread, and the power locks are released through
+        // their own managers. None of it waits on the service object lock, so it
+        // stays on the main thread (and must, so the monitor cannot re-arm
+        // between here and the teardown).
         stopConnectionMonitor();
         releaseWifiLock();
         releaseWakeLock();
-        disconnectInternal();
+        // CRITICAL: the tunnel teardown must NOT run on the main thread.
+        // disconnectInternal() is a synchronized method sharing the service
+        // object lock with ensureConnection(), which performs Session.connect()
+        // (15s timeout) and fetchSSHPort() (5s + 5s) INSIDE that lock. With the
+        // frontend's reconnect poll keeping a connect attempt in flight almost
+        // continuously, calling it here blocked the main thread past Android's
+        // 5s input dispatch timeout — the "应用无响应" ANR (the
+        // ActivityThread.handleStopService → onDestroy frame in the trace).
+        // Serialising it on networkExecutor both keeps the main thread free and
+        // lets it run after (not during) any in-flight connect.
+        scheduleTunnelDisconnect();
         isRunning = false;
         instance = null;
-        networkExecutor.shutdownNow();
 
         // If there are no forwarded ports, clean up SharedPreferences
         // so the service won't be unnecessarily restored on next cold start.
@@ -1148,6 +1242,36 @@ public class BackgroundService extends Service {
 
         stopForeground(true);
         super.onDestroy();
+    }
+
+    /**
+     * Hand {@code disconnectInternal()} to {@code networkExecutor} and shut it
+     * down gracefully (queued tasks still run). Never blocks the caller — this
+     * is called from {@code onDestroy()} on the main thread.
+     */
+    private void scheduleTunnelDisconnect() {
+        Runnable disconnect = () -> {
+            try {
+                disconnectInternal();
+                AppLog.i(TAG, "SSH: tunnel disconnected after service destroy");
+            } catch (Exception e) {
+                AppLog.w(TAG, "SSH: tunnel disconnect after service destroy failed", e);
+            }
+        };
+        try {
+            networkExecutor.execute(disconnect);
+            // shutdown(), not shutdownNow(): the queued disconnect must still
+            // run, and interrupting an in-flight Session.connect() would not
+            // unblock it anyway (blocking socket I/O is not interruptible).
+            networkExecutor.shutdown();
+        } catch (RejectedExecutionException e) {
+            // Executor already shut down — fall back to a detached thread so the
+            // main thread still never waits on the service lock.
+            AppLog.w(TAG, "SSH: networkExecutor rejected teardown, using detached thread", e);
+            Thread t = new Thread(disconnect, "SSH-Teardown");
+            t.setDaemon(true);
+            t.start();
+        }
     }
 
     @Override
@@ -1544,6 +1668,13 @@ public class BackgroundService extends Service {
      * picks up the persisted value.
      */
     synchronized void ensureConnection() throws Exception {
+        // Never open a session once the service is being destroyed. onDestroy()
+        // no longer tears the tunnel down on the main thread (that was the ANR),
+        // so a connect queued just before shutdown would otherwise run after the
+        // teardown and leave a live session behind a dead service.
+        if (isShuttingDown) {
+            throw new Exception("Service is shutting down");
+        }
         // The preference change takes effect on the next (re)connect, and that
         // reconnect must not leave the *previous* transport's session/listeners
         // alive: both would then forward the same ports at once. This is the

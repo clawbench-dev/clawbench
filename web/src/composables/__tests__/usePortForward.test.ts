@@ -3231,6 +3231,102 @@ describe('usePortForward', () => {
             delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
+
+        /**
+         * The reconnect call inside a poll round can take 15–25s (SSH connect
+         * timeout + fetchSSHPort), which is longer than the old fixed 5s
+         * interval. The interval therefore started a new round while the
+         * previous one was still awaiting, so on Android the single-threaded
+         * network executor queued attempts faster than it drained them and the
+         * service lock was held almost continuously — the main thread then
+         * blocked in onDestroy() and the OS raised "应用无响应".
+         */
+        it('never starts a new round while the previous reconnect is still running', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: false, enabled: true }] }
+                }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+            })
+            // A reconnect that takes the full 15s connect timeout.
+            const mockReconnect = vi.fn().mockImplementation(
+                () => new Promise(resolve => setTimeout(() => resolve(false), 15000)),
+            )
+            ;(window as any).ClawBenchNative = {
+                isTunnelConnected: async () => false,
+                reconnectTunnelAsync: mockReconnect,
+                getTunnelError: async () => '',
+                getTunnelErrorType: async () => '',
+            }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth } = usePortForward()
+
+            await checkTunnelHealth()
+            mockReconnect.mockClear()
+
+            // 22s spans four ticks of the old 5s interval but only ONE full
+            // reconnect (armed at 5s, settling at 20s).
+            await vi.advanceTimersByTimeAsync(22000)
+
+            expect(mockReconnect).toHaveBeenCalledTimes(1)
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        /**
+         * A permanently unreachable port must not be retried forever at a fixed
+         * cadence: the delay grows 5s → 15s → 30s → 60s so a hopeless tunnel
+         * stops hammering the radio (and the native executor).
+         */
+        it('backs off the retry delay while the tunnel stays down', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: false, enabled: true }] }
+                }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+            })
+            const mockReconnect = vi.fn().mockResolvedValue(false)
+            ;(window as any).ClawBenchNative = {
+                isTunnelConnected: async () => false,
+                reconnectTunnelAsync: mockReconnect,
+                getTunnelError: async () => '',
+                getTunnelErrorType: async () => '',
+            }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth } = usePortForward()
+
+            await checkTunnelHealth()
+            mockReconnect.mockClear()
+
+            // Round 1 fires at 5s (first delay).
+            await vi.advanceTimersByTimeAsync(5000)
+            expect(mockReconnect).toHaveBeenCalledTimes(1)
+
+            // Round 2 is now 15s away, not 5s: at 19s there is still one call.
+            await vi.advanceTimersByTimeAsync(14000)
+            expect(mockReconnect).toHaveBeenCalledTimes(1)
+            await vi.advanceTimersByTimeAsync(2000)
+            expect(mockReconnect).toHaveBeenCalledTimes(2)
+
+            // Round 3 waits 30s from round 2 (t=20s), i.e. fires at t=50s.
+            // At t=49s there are still two calls; at t=51s three.
+            await vi.advanceTimersByTimeAsync(28000)
+            expect(mockReconnect).toHaveBeenCalledTimes(2)
+            await vi.advanceTimersByTimeAsync(2000)
+            expect(mockReconnect).toHaveBeenCalledTimes(3)
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
     })
     describe('reverse direction (ssh -R)', () => {
         it('sends direction=reverse when registering a reverse mapping', async () => {
