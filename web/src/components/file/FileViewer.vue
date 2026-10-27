@@ -301,6 +301,7 @@ import DiffDrawer from './DiffDrawer.vue'
 import { useDiffDrawer } from '@/composables/useDiffDrawer.ts'
 import { diffDrawer } from '@/composables/useMarkdownDiff.ts'
 import { useFileScrollRestore } from '@/composables/useFileScrollRestore'
+import { refreshTick } from '@/composables/useFileRefresh.ts'
 import FileHeader from './FileHeader.vue'
 import TocDock from './TocDock.vue'
 import { getFileType } from '@/utils/fileType.ts'
@@ -890,6 +891,23 @@ watch(() => props.file?.content, (content) => {
     // (fsnotify-driven refresh, or an AI edit) does NOT re-render it the way the
     // old srcdoc binding did. Bump the cache-buster to force a re-fetch.
     if (isHtml.value) htmlPreviewTimestamp.value = Date.now()
+})
+
+/**
+ * Re-run the previewed document on every refresh, even a no-op one.
+ *
+ * The content watcher above only fires when the BYTES changed, but a previewed
+ * page can change appearance without its own source changing — an external
+ * stylesheet, script or image it references. Clicking refresh in that case
+ * produced no visible effect at all (same content ⇒ same `?t=` ⇒ no navigation),
+ * which reads as a dead button. `refreshTick` is bumped by every completed
+ * refresh, so this is the signal that the user asked, not that the file moved.
+ *
+ * The timestamp is monotonic rather than `Date.now()` so two refreshes in the
+ * same millisecond still change the URL.
+ */
+watch(refreshTick, () => {
+    if (isHtml.value) htmlPreviewTimestamp.value += 1
 })
 
 // Sync scroll position when toggling rendered <-> raw view for a markdown file.

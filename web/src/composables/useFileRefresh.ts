@@ -62,6 +62,18 @@ let refreshGeneration = 0
 // refresh buttons (FileManagerContent / FileHeader) can show a spin that
 // tracks the real load duration instead of a fixed timer.
 export const isRefreshing = ref(false)
+// Bumped on EVERY completed refresh, including one that found the content
+// unchanged.
+//
+// Surfaces that render the file from its CONTENT (`watch(currentFile.content)`)
+// are unaffected by a no-op refresh — nothing to re-render. But an HTML preview
+// renders the document from its URL, so "the user asked for a refresh" must
+// reach it even when the bytes are identical: a page can change appearance
+// without changing a byte of its own source (an external stylesheet, script or
+// image it references), and re-running the document is the whole point of the
+// button. Keying the preview off the content alone made refresh look dead in
+// exactly that case.
+export const refreshTick = ref(0)
 // If a new refresh arrives while one is in-flight, we defer it
 let pendingRefreshOptions: { loadDir?: boolean; clearOnError?: boolean } | null = null
 
@@ -314,6 +326,10 @@ export async function refreshCurrentFile(options: {
     await doRefreshCurrentFile(options)
   } finally {
     isRefreshing.value = false
+    // Announced AFTER the content settled, so a URL-rendered surface re-runs
+    // against the new bytes rather than the old ones. Bumped even when nothing
+    // changed on disk — see refreshTick.
+    refreshTick.value += 1
     // If a refresh was deferred while we were running, execute it now
     if (pendingRefreshOptions) {
       const opts = pendingRefreshOptions
