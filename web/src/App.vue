@@ -709,6 +709,7 @@ import {
 } from './composables/useProjectPanel.ts'
 import { openPendingSessionWhenReady, armPendingOpenSession, clearPendingOpenSession } from './composables/usePendingSessionOpen.ts'
 import { markSessionRead } from '@/utils/sessionRead.ts'
+import { markLandedSessionRead } from '@/utils/landedSessionRead.ts'
 import { setLayoutProjectRoot } from './utils/panelState'
 import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
@@ -942,6 +943,23 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   // tasks or opens a session, and THAT landing panel is what the user should come
   // back to the next time this project is opened.
   releasePanelSwitch()
+
+  // The user has landed on this project's session: its conversation is what the
+  // remounted panel loaded, and it is on screen. Nothing "clicked" it, so no
+  // switchSession ran and — since loading history no longer marks read
+  // (360241f44) — its unread badge would stay lit until the user switched away
+  // and back. Skipped for the two pending navigations: a task jump never shows
+  // the chat, and a session jump marks read itself in Phase 7 WITH project_path.
+  if (!pendingTaskNav) {
+    void markLandedSessionRead({
+      sessionId: sessionIdentity.currentSessionId.value,
+      pendingSessionId,
+      isWideScreen: isWideScreen.value,
+      chatCollapsed: chatCollapsed.value,
+      activeTab: activeTab.value,
+      onMarked: () => { loadSessionsOnce() },
+    }).catch(() => {})
+  }
 
   // ── Phase 7: Handle cross-project pending navigation ──
   if (pendingTaskNav) {
@@ -2643,6 +2661,19 @@ async function initializeApp() {
   // only flips after this function resolves, so the dock/file manager do not
   // exist here. `currentFile` is already populated by the restore above.
   applyProjectPanel(store.state.projectRoot)
+
+  // Cold start lands on a session the same way a project switch does: identity
+  // comes from initSessionFromAPI and the panel's first loadHistory fetches the
+  // conversation, so nothing marks it read (see markLandedSessionRead). The
+  // panel visibility gate is evaluated against the layout that was just
+  // restored, so a start that lands on the file manager leaves the badge alone.
+  void markLandedSessionRead({
+    sessionId: sessionIdentity.currentSessionId.value,
+    isWideScreen: isWideScreen.value,
+    chatCollapsed: chatCollapsed.value,
+    activeTab: activeTab.value,
+    onMarked: () => { loadSessionsOnce() },
+  }).catch(() => {})
 
   // Web Share Target: an installed PWA receives shared files as a POST to
   // /share-target, which stores them and redirects here with the paths. Runs

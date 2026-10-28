@@ -458,6 +458,45 @@ describe('the panel-state registry stays a leaflet', () => {
   })
 })
 
+describe('the landing session is marked read', () => {
+  // Loading history stopped marking read in 360241f44 so background reloads
+  // could not clear a badge the user never saw. Every explicit-open path was
+  // given its own read call; the LANDING paths (project switch, cold start)
+  // were not — a project switch resolves identity in initSessionFromAPI and the
+  // remounted panel's first loadHistory fetches the conversation, so no
+  // switchSession runs and the session the user is now looking at keeps its
+  // unread dot until they switch away and back.
+  const body = functionBody(code, 'hotSwitchProject')
+
+  it('marks the landed session read after the project switch settles', () => {
+    const callAt = body.indexOf('markLandedSessionRead({')
+    expect(callAt, 'hotSwitchProject never marks the landed session read').toBeGreaterThan(-1)
+    // Must run after the panel restore: the visibility gate has to see the
+    // panel the user actually landed on, not the pre-switch one.
+    expect(callAt).toBeGreaterThan(body.indexOf('applyProjectPanel('))
+    // The cross-project target marks its own read in Phase 7 WITH project_path;
+    // passing the id here would fire a second, 403-ing POST without it.
+    const call = body.slice(callAt, body.indexOf('})', callAt))
+    expect(call, 'the cross-project target is not excluded').toContain('pendingSessionId')
+  })
+
+  it('does not mark read for a task jump (the chat is never shown)', () => {
+    const callAt = body.indexOf('markLandedSessionRead({')
+    const guardAt = body.lastIndexOf('if (!pendingTaskNav)', callAt)
+    expect(guardAt, 'a task navigation would mark a session read sight unseen').toBeGreaterThan(-1)
+  })
+
+  it('marks the cold-start landing too', () => {
+    // Cold start has the same shape and used to be covered by the GET handler's
+    // old side effect; without this a reload leaves the remembered session
+    // unread despite it being the first thing on screen.
+    const initBody = functionBody(code, 'initializeApp')
+    const callAt = initBody.indexOf('markLandedSessionRead({')
+    expect(callAt, 'cold start never marks the landing session read').toBeGreaterThan(-1)
+    expect(callAt).toBeGreaterThan(initBody.indexOf('applyProjectPanel('))
+  })
+})
+
 describe('stripComments removes trailing comments too', () => {
   // The same-line `toContain` assertions above are only meaningful if a comment
   // on that line cannot satisfy them. A trailing `//` comment is the realistic
