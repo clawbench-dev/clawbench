@@ -925,14 +925,14 @@ describe('ChatPanelContent — group auto-speech is per speaker', () => {
   it('registers onTurnBoundary and re-anchors last_read_at when the user is watching', async () => {
     // A group member finalize (stream_finalize) is a turn boundary: the member
     // reply just stamped its completed_at, so the session is unread for the rest
-    // of the run. The host must re-anchor — same gate as the completion path.
+    // of the run. The host must re-anchor — same gate as the completion path,
+    // which now lives in sessionReadGate (foreground + panel visible).
     const src = await source()
     expect(src).toContain('onTurnBoundary: handleTurnBoundary')
     const start = src.indexOf('function handleTurnBoundary(')
     expect(start, 'handleTurnBoundary must exist').toBeGreaterThan(-1)
     const region = src.slice(start, src.indexOf('\n}\n', start))
-    expect(region).toMatch(/markSessionRead/)
-    expect(region).toMatch(/appInForeground\.value/)
+    expect(region).toMatch(/markVisibleSessionRead/)
     expect(region).toMatch(/currentSessionId\.value/)
   })
 })

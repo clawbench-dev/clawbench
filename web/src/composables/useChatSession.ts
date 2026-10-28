@@ -2,7 +2,7 @@ import { ref, computed, type Ref } from 'vue'
 import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useSessionIdentity, refreshGroupRosterIfRegistered } from '@/composables/useSessionIdentity.ts'
-import { useAppForeground, onAppResume } from '@/composables/useAppForeground'
+import { onAppResume } from '@/composables/useAppForeground'
 import { useAppMode } from '@/composables/useAppMode'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { appLog } from '@/utils/appLog'
@@ -24,6 +24,7 @@ import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
 import { syncFromHistory, clearQueue, beginQueueSnapshot } from '@/composables/useMessageQueue.ts'
 import { hasChatScrollPosition, shouldRestoreChatScroll } from '@/utils/chatScrollMemory'
 import { markSessionRead as markSessionReadRequest } from '@/utils/sessionRead'
+import { markVisibleSessionRead } from '@/composables/sessionReadGate'
 import { takePendingOpenSession } from '@/composables/usePendingSessionOpen'
 
 // Module-level one-time session list load (replaces continuous polling)
@@ -192,16 +193,15 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   const toast = useToast()
 
-  // Reliable app foreground/background signal. Completion events must only
-  // auto-mark a session read while the user is actually looking at the app —
-  // otherwise a session finishing in the background (e.g. Android app paused,
-  // floating window active) would clear its unread badge before the floating
-  // window ever showed it.
-  const { appInForeground } = useAppForeground()
   // HOST axis. The resume handler rebuilds the session ONLY on Android, where
   // the OS freezes the WebView while paused (see the resume listener below).
   // Same predicate as App.vue's syncToNative gate: isAppMode alone is also true
   // in the Electron shell, whose window merely minimizes and keeps running.
+  //
+  // The foreground signal itself is no longer read here: every "may I clear the
+  // badge" decision moved into sessionReadGate, which consults it alongside the
+  // chat-panel visibility predicate. Reading it locally is what let six copies
+  // of the rule drift apart.
   const { isAppMode, isDesktopApp } = useAppMode()
   // True while the global WS is replaying events missed while disconnected.
   // Replayed completions (session finished while the app was backgrounded and
@@ -987,14 +987,14 @@ export function useChatSession(options: UseChatSessionOptions) {
       // switchSession (inside reopenCurrentSession) already awaits
       // markSessionRead before loadSessionsOnce, so the badge clears in the
       // right order — doing it here as well would only duplicate the POST.
+      //
+      // switchSession's own read is NOT visibility-gated on purpose: the user
+      // explicitly asked to reopen THIS session (refresh button / Android
+      // resume rebuild), so it is an explicit open, not an inference from
+      // "something became visible". The gate governs inferred reads only.
       reopenCurrentSession().catch(() => {})
       return
     }
-    // Await the read BEFORE refreshing the list, for the same reason
-    // switchSession does: UpdateLastRead must land server-side first, or the
-    // list comes back still carrying the unread badge this call exists to
-    // clear. Firing both concurrently made the badge's disappearance a race
-    // the resume lost whenever the list response arrived first.
     void (async () => {
       // Snapshot BEFORE the refresh: `reconcileRunningSessions` replaces the
       // whole set from the API response, so a failed/empty response would erase
@@ -1003,7 +1003,14 @@ export function useChatSession(options: UseChatSessionOptions) {
       // later). A turn known to be running on either side of the refresh is
       // still running.
       const wasRunning = runningSessions.value.has(sid)
-      await markSessionRead(sid).catch(() => {})
+      // Same gate as every other inferred read: foreground + chat panel on
+      // screen. A desktop resume that lands on the file manager must leave the
+      // badge alone — it is still telling the truth.
+      await markVisibleSessionRead(sid, {
+        onMarked: () => { loadSessionsOnce() },
+      })
+      // A gated-out read still needs the list refreshed (running state, badges
+      // of OTHER sessions), so this is unconditional — unlike the read above.
       await loadSessionsOnce().catch(() => {})
       // Repair a subscription the server may have dropped while the tab was
       // hidden. Without the rebuild there is no other repair path on desktop:
@@ -1080,6 +1087,12 @@ export function useChatSession(options: UseChatSessionOptions) {
     // reloads (WS reconnect refresh, completion-event refresh) hit loadHistory
     // too, so marking read must happen HERE, at the user-intent switch point,
     // and not inside loadHistory itself.
+    //
+    // NOT routed through sessionReadGate's visibility check: the user explicitly
+    // asked to open THIS session (clicked a row, a notification, a search hit),
+    // which is a stronger signal than "the panel happens to be visible". The
+    // gate exists to stop INFERRED reads — a completion arriving, a resume
+    // landing, a list refresh — from clearing a badge nobody looked at.
     //
     // projectPath must be forwarded for cross-project opens. The backend
     // verifies session ownership against it; omitting it falls back to the
@@ -1460,19 +1473,22 @@ export function useChatSession(options: UseChatSessionOptions) {
         // even when the chat_stream 'done' event was missed (e.g. WS reconnect
         // delivers a fresh session_update). Loading history (GET /api/ai/chat)
         // no longer marks read — only an explicit mark-as-read call does.
-        // Guarded on app foreground + not a replayed event: a completion
-        // delivered while the app is paused (Android) must NOT clear the badge
-        // — the floating window shows unread sessions only in the background,
-        // and a session finishing there is exactly what should surface as
-        // unread. Same for events replayed after a reconnect: the user was not
-        // watching when it finished, so the badge must survive until opened.
-        if ((data.status === 'completed' || data.status === 'cancelled')
-            && appInForeground.value && !isReplayingEvents.value) {
+        //
+        // The gate (foreground + chat panel on screen + not a replay) lives in
+        // sessionReadGate so this path cannot drift from the other five again.
+        // A completion delivered while the app is paused (Android) must NOT
+        // clear the badge — the floating window shows unread sessions only in
+        // the background. Same for events replayed after a reconnect: the user
+        // was not watching when it finished.
+        if (data.status === 'completed' || data.status === 'cancelled') {
           // Pass the session's owning project (from the WS event) so a
           // cross-project session that finished while viewed still gets marked
           // read; without it the backend falls back to the cookie project and
           // rejects ownership for a different project.
-          markSessionRead(sid, data.project_path).catch(() => {})
+          markVisibleSessionRead(sid, {
+            projectPath: data.project_path,
+            replaying: isReplayingEvents.value,
+          }).catch(() => {})
         }
       }
       // Recalculate chatUnread from backend instead of optimistically setting true.
@@ -1524,8 +1540,9 @@ export function useChatSession(options: UseChatSessionOptions) {
   async function runReload() {
     if (!currentSessionId.value) return
 
-    // If the app is in the foreground, the user has been looking at this session
-    // the whole time — a WS blip is not a reason to leave its unread badge lit.
+    // If the app is in the foreground AND the chat panel is on screen, the user
+    // has been looking at this session the whole time — a WS blip is not a
+    // reason to leave its unread badge lit.
     //
     // Why this is needed even though the completion paths already mark read:
     // they are all gated on !isReplayingEvents, and a reconnect delivers the
@@ -1536,18 +1553,18 @@ export function useChatSession(options: UseChatSessionOptions) {
     // the replay is suppressed — the badge would stick until the user switched
     // away and back.
     //
-    // appInForeground is the correct discriminator: it separates "the app was
-    // genuinely backgrounded when the reply landed" (badge must survive — the
-    // Android floating window shows it) from "the socket merely hiccuped while
-    // the user was watching". The authoritative reload (refresh button /
-    // foreground return) does not go through here at all — it reopens the
-    // session, which marks read as part of the switch-session flow.
+    // The gate (sessionReadGate) is the shared one: it separates "the app was
+    // genuinely backgrounded, or the user is on another panel" (badge must
+    // survive — the Android floating window shows it) from "the socket merely
+    // hiccuped while the user was watching". The authoritative reload (refresh
+    // button / foreground return) does not go through here at all — it reopens
+    // the session, which marks read as part of the switch-session flow.
     //
     // Await before the loadSessionsOnce below so the session list reflects the
-    // cleared unread state — same ordering requirement as switchSession.
-    if (appInForeground.value) {
-      await markSessionRead(currentSessionId.value).catch(() => {})
-    }
+    // cleared unread state — same ordering requirement as switchSession. The
+    // gate (foreground + chat panel on screen) is the shared one: a WS blip
+    // while the user is on another tab must not clear a badge they cannot see.
+    await markVisibleSessionRead(currentSessionId.value)
 
     // Refresh runningSessions from the backend so the current-session decision
     // below reflects any change that happened on the server side.
@@ -1880,8 +1897,11 @@ export function useChatSession(options: UseChatSessionOptions) {
       // Unlike switchSession this keeps the identity, cookie, WS subscription
       // and input bar — the rewind operates on the current session.
       await loadHistory(false, false, false)
-      // The truncating edit clears unread like an explicit open would.
-      markSessionRead(sessionId).catch(() => {})
+      // The truncating edit clears unread like an explicit open would. Rewind
+      // is initiated from the message list, so the panel is on screen by
+      // construction; the shared gate still applies for consistency (and
+      // covers a rewind driven from a task/notification surface).
+      markVisibleSessionRead(sessionId).catch(() => {})
       loadSessionsOnce()
       toast.show(gt('chat.session.rewinded'), { icon: 'rewind', type: 'success', duration: 1500 })
       return data.restoredText || ''
@@ -1911,6 +1931,14 @@ export function useChatSession(options: UseChatSessionOptions) {
     loadMoreMessages,
     switchSession,
     markSessionRead,
+    /**
+     * Mark a session read only if the user is actually looking at it
+     * (foreground + chat panel on screen + not a replay). The shared rule for
+     * every INFERRED read — completion, cancel, resume, reconnect, turn
+     * boundary. `switchSession` deliberately uses `markSessionRead` instead:
+     * an explicit open is a stronger signal than visibility.
+     */
+    markVisibleSessionRead,
     createSession,
     archiveSession,
     destroySession,
