@@ -209,7 +209,7 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		// side would ship the raw message id to that locale.
 		"UsageMeterQuotaNegative",
 		"UsageMeterQuotaNotNumber",
-		"UsageMeterAnchorRequired",
+		"UsageMeterEnabledNotBool",
 		"UsageMeterAnchorInvalid",
 		"UsageMeterAnchorNotString",
 		"UsageMeterPeriodRange",
@@ -264,8 +264,6 @@ func TestUsageMeterAnchorRejectionNamesBothAcceptedShapes(t *testing.T) {
 
 	// The field is called "start time" now that it carries a clock, matching the
 	// settings row's own label; "start date" would contradict the input.
-	assert.Contains(t, en("UsageMeterAnchorRequired"), "start time")
-	assert.Contains(t, zh("UsageMeterAnchorRequired"), "起始时间")
 	assert.NotContains(t, en("UsageMeterAnchorInvalid"), "start date")
 	assert.NotContains(t, zh("UsageMeterAnchorInvalid"), "起始日期")
 }

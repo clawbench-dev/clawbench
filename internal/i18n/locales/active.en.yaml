@@ -324,10 +324,10 @@ UsageMeterFullBody: The {{.Quota}} quota for this cycle is used up; actual usage
 # the `error` field). The field path travels separately in `detail.field`.
 UsageMeterQuotaNegative: The quota cannot be negative
 UsageMeterQuotaNotNumber: The quota must be a number
-UsageMeterAnchorRequired: A start time is required when a quota is set
+UsageMeterEnabledNotBool: The enable switch must be true or false
 UsageMeterAnchorInvalid: "The start time must be a valid date (YYYY-MM-DD) or date and time (YYYY-MM-DDTHH:MM[:SS])"
 UsageMeterAnchorNotString: "The start time must be text in YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS] form"
-UsageMeterPeriodRange: The cycle length must be between 1 and {{.Max}} days
+UsageMeterPeriodRange: The cycle length must be between 0 and {{.Max}} days (0 means no cycle, so it never rolls over)
 UsageMeterPeriodNotNumber: The cycle length must be a number
 UsageMeterMetricInvalid: "The metric must be one of: tokens, credit, cost"
 UsageMeterMetricNotString: "The metric must be one of: tokens, credit, cost"

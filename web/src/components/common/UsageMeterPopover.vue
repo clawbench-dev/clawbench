@@ -35,16 +35,23 @@
            ambiguous next to the file/project badges. -->
       <Gauge :size="13" class="usage-icon" aria-hidden="true" />
       <span class="usage-label">{{ t('usageMeter.label') }}</span>
-      <span class="usage-bar" aria-hidden="true">
+      <!-- The bar only exists when there is a quota to fill it against. An
+           unlimited budget has no percentage, so the track is omitted rather
+           than drawn empty (which would read as "0% used of nothing"). -->
+      <span v-if="hasQuota" class="usage-bar" aria-hidden="true">
         <span class="usage-fill" :style="{ width: fillPercent + '%' }"></span>
         <!-- Baseline tick: where a linear spend would be right now. Reading the
              fill against this tick is the whole point of the capsule. -->
-        <span class="usage-mark" :style="{ left: expectedPercent + '%' }"></span>
+        <span v-if="hasCycle" class="usage-mark" :style="{ left: expectedPercent + '%' }"></span>
         <span v-if="state === 'full'" class="usage-cap"></span>
       </span>
       <span class="usage-text">
         <span class="usage-used">{{ fmtCompact(actual) }}</span>
-        <span class="usage-quota">/ {{ fmtCompact(quota) }}</span>
+        <!-- An unset quota is INFINITE, not absent: the user asked to see the
+             total, and "12 / ∞" says exactly that in the same shape as a
+             budgeted readout. Dropping the denominator instead made the capsule
+             change shape depending on configuration. -->
+        <span class="usage-quota">/ {{ quotaLabel }}</span>
       </span>
     </button>
 
@@ -80,12 +87,13 @@
         </div>
 
         <div class="um-period">
-          {{ t('usageMeter.dayOfCycle', { day: status.dayInCycle, days: status.periodDays ?? 0 }) }}
-          <span class="um-sep">·</span>
-          <span class="um-dates">{{ dateRange }}</span>
+          {{ periodLine }}
         </div>
 
-        <!-- Three bars on one axis so their lengths are directly comparable. -->
+        <!-- Three bars on one axis so their lengths are directly comparable.
+             Only the rows that have a reference point are rendered: a quota row
+             without a quota, or an expected row without a baseline, would be an
+             empty track claiming a measurement that does not exist. -->
         <div class="um-compare">
           <div class="um-row">
             <span class="um-row-name">{{ t('usageMeter.actual') }}</span>
@@ -99,14 +107,14 @@
             <span class="um-track">
               <span class="um-bar is-expected" :style="{ width: expectedPercent + '%' }"></span>
             </span>
-            <span class="um-row-val">{{ fmt(expected) }}</span>
+            <span class="um-row-val">{{ hasPlan ? fmt(expected) : INFINITE }}</span>
           </div>
           <div class="um-row">
             <span class="um-row-name">{{ t('usageMeter.quota') }}</span>
             <span class="um-track">
               <span class="um-bar is-quota"></span>
             </span>
-            <span class="um-row-val is-muted">{{ fmt(quota) }}</span>
+            <span class="um-row-val is-muted">{{ quotaLabel }}</span>
           </div>
         </div>
 
@@ -122,8 +130,8 @@
           :aria-label="t('usageMeter.trendLabel')"
         >
           <line x1="8" :y1="PLOT_BOTTOM" x2="280" :y2="PLOT_BOTTOM" class="um-axis" />
-          <line x1="8" :y1="PLOT_TOP" x2="280" :y2="PLOT_TOP" class="um-quota-line" />
-          <polyline :points="expectedLine" class="um-expected-line" />
+          <line v-if="hasQuota" x1="8" :y1="PLOT_TOP" x2="280" :y2="PLOT_TOP" class="um-quota-line" />
+          <polyline v-if="hasPlan" :points="expectedLine" class="um-expected-line" />
           <polyline :points="actualLine" class="um-actual-line" :class="`is-${state}`" />
           <line
             v-if="projection"
@@ -135,18 +143,22 @@
         </svg>
         <div v-if="points.length > 1" class="um-legend">
           <span><i class="um-dot is-actual"></i>{{ t('usageMeter.legendActual') }}</span>
-          <span><i class="um-dot is-expected"></i>{{ t('usageMeter.legendExpected') }}</span>
+          <span v-if="hasPlan"><i class="um-dot is-expected"></i>{{ t('usageMeter.legendExpected') }}</span>
           <span><i class="um-dot is-today"></i>{{ t('usageMeter.legendToday') }}</span>
         </div>
 
+        <!-- All four stats always render: the shape must not change with
+             configuration. An unset budget or period is INFINITE, which is what
+             "I never set a bound" actually means — showing 0 would read as "you
+             have nothing left", the opposite of the truth. -->
         <div class="um-stats">
           <div>
             <div class="um-stat-label">{{ t('usageMeter.remaining') }}</div>
-            <div class="um-stat-value">{{ fmt(remaining) }}</div>
+            <div class="um-stat-value">{{ hasQuota ? fmt(remaining) : INFINITE }}</div>
           </div>
           <div>
             <div class="um-stat-label">{{ t('usageMeter.remainingDays') }}</div>
-            <div class="um-stat-value">{{ t('usageMeter.days', { n: status.remainingDays }) }}</div>
+            <div class="um-stat-value">{{ hasCycle ? t('usageMeter.days', { n: status.remainingDays }) : INFINITE }}</div>
           </div>
           <div>
             <div class="um-stat-label">{{ t('usageMeter.projected') }}</div>
@@ -156,7 +168,7 @@
           </div>
           <div>
             <div class="um-stat-label">{{ t('usageMeter.dailyLeft') }}</div>
-            <div class="um-stat-value">{{ fmt(dailyLeft) }}</div>
+            <div class="um-stat-value">{{ hasPlan ? fmt(dailyLeft) : INFINITE }}</div>
           </div>
         </div>
       </div>
@@ -199,8 +211,29 @@ const metric = computed(() => props.status.metric ?? 'cost')
 const actual = computed(() => props.status.actual ?? 0)
 const expected = computed(() => props.status.expected ?? 0)
 const quota = computed(() => props.status.quota ?? 0)
-const remaining = computed(() => Math.max(0, quota.value - actual.value))
+
+/**
+ * The three gates every quota/cycle-derived figure hangs off.
+ *
+ * The rule is a set of independent optional fields, so the popover shows the
+ * largest readout the configuration supports: a total alone, a total against a
+ * budget, a total within a cycle, or all three. Each gate is computed here
+ * rather than in the template so the same predicate drives the bar, the row,
+ * the stat and the chart line — a divergence would render a track with no
+ * measurement behind it.
+ */
+const hasQuota = computed(() => quota.value > 0)
+const hasCycle = computed(() => (props.status.periodDays ?? 0) > 0)
+/** A baseline needs BOTH a quota and a cycle: quota/periodDays has no meaning otherwise. */
+const hasPlan = computed(() => hasQuota.value && hasCycle.value && expected.value > 0)
+
+const remaining = computed(() => (hasQuota.value ? Math.max(0, quota.value - actual.value) : 0))
+
+/** An unset quota reads as infinite, not as "no quota". */
+const INFINITE = '\u221e'
+const quotaLabel = computed(() => (hasQuota.value ? fmtCompact(quota.value) : INFINITE))
 const dailyLeft = computed(() => {
+  if (!hasPlan.value) return 0
   const days = props.status.remainingDays
   if (days <= 0) return remaining.value
   return remaining.value / days
@@ -223,6 +256,11 @@ const badgeText = computed(() => {
     const pct = expected.value > 0 ? Math.round(((actual.value - expected.value) / expected.value) * 100) : 0
     return t('usageMeter.badgeOver', { pct })
   }
+  // "On plan" is a claim about a budget AND a time axis. Without a quota there
+  // is nothing to be within; without a cycle there is no "by now" to compare
+  // against. Either way the badge reports what it CAN see instead.
+  if (!hasQuota.value) return t('usageMeter.badgeNoQuota')
+  if (!hasCycle.value) return t('usageMeter.badgeNoCycle')
   return t('usageMeter.badgeOk')
 })
 
@@ -235,9 +273,35 @@ const dateRange = computed(() => {
   return `${s.slice(0, 10)} → ${e.slice(0, 10)}`
 })
 
+/**
+ * The line under the title.
+ *
+ * Three shapes, because the rule is three optional fields:
+ *   no anchor → the whole ledger: no day counter, no date range
+ *   no cycle  → "day N of ∞ · since DATE": the counter is real, the bound is not
+ *   both      → "day N of M · start → end", the original readout
+ */
+const periodLine = computed(() => {
+  if (!hasCycle.value) {
+    // No cycle means an INFINITE period: it never rolls over. Report the day
+    // counter against infinity rather than dropping it, so "how long have I been
+    // counting" stays visible; with no anchor at all there is no start either,
+    // and the window is simply the whole ledger.
+    if (!props.status.cycleStart) return t('usageMeter.allTime')
+    const dayPart = t('usageMeter.dayOfCycle', { day: props.status.dayInCycle, days: INFINITE })
+    return `${dayPart} · ${t('usageMeter.sinceDate', { date: props.status.cycleStart.slice(0, 10) })}`
+  }
+  const dayPart = t('usageMeter.dayOfCycle', { day: props.status.dayInCycle, days: props.status.periodDays ?? 0 })
+  const range = dateRange.value
+  return range ? `${dayPart} · ${range}` : dayPart
+})
+
 const projectionText = computed(() => {
   const day = props.status.projectedExhaustDay
   if (props.state === 'full') return t('usageMeter.projectedDone')
+  // No quota (or no cycle) means an infinite budget, which by definition never
+  // runs out — "this cycle will not exhaust it" is the accurate reading, not a
+  // blank.
   if (!day) return t('usageMeter.projectedNone')
   return t('usageMeter.projectedDay', { day })
 })
@@ -248,7 +312,15 @@ const projectionText = computed(() => {
 // onto the "today" marker and was invisible. y spans [0, max(quota, peak)] so
 // the quota line is always on screen — and with no quota it spans the peak
 // alone, so the curve is not squashed flat against an axis whose top is 0.
-const axisDays = computed(() => Math.max(1, props.status.periodDays ?? points.value.length))
+//
+// With no cycle there is no planned length to span, so the axis is however many
+// days the series covers: the curve still has a shape, it just has no
+// "remaining part of the cycle" to the right of today.
+const axisDays = computed(() => {
+  const period = props.status.periodDays ?? 0
+  if (period > 0) return period
+  return Math.max(1, points.value.length)
+})
 const yMax = computed(() => {
   const peak = points.value.reduce((m, p) => Math.max(m, p.actual, p.expected), 0)
   return Math.max(quota.value, peak, 1)
@@ -273,7 +345,9 @@ const actualLine = computed(() =>
 // (quota / periodDays, counted from day 1), so the two agree where they overlap.
 const expectedLine = computed(() => {
   const days = axisDays.value
-  if (quota.value <= 0) return ''
+  // A baseline needs a quota AND a cycle: with either missing there is no
+  // plan to draw, and an empty polyline is what keeps the legend honest.
+  if (!hasPlan.value) return ''
   const perDay = quota.value / days
   const coords: string[] = []
   for (let i = 0; i < days; i++) {
@@ -294,9 +368,10 @@ const todayY = computed(() => {
  */
 const projection = computed(() => {
   const n = points.value.length
-  // The projection predicts the day the QUOTA runs out; with no quota there is
-  // no such day, so the dashed extrapolation would be a line to nowhere.
-  if (n < 2) return null
+  // The projection predicts the day the QUOTA runs out; with no quota (or no
+  // cycle to run out within) there is no such day, so the dashed extrapolation
+  // would be a line to nowhere.
+  if (!hasPlan.value || n < 2) return null
   const last = points.value[n - 1]
   const first = points.value[0]
   const elapsed = Math.max(1, n - 1)

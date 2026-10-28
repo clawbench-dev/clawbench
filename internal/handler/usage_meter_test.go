@@ -22,7 +22,20 @@ import (
 
 // setMeterRuleForTest installs a rule and restores it afterwards. The rule is
 // process-wide state, so a leak would affect every later test in this package.
+//
+// A configured rule is switched ON unless the test says otherwise, mirroring
+// ApplyDefaults' treatment of a config.yaml written before the enable flag
+// existed. Tests of the off state use setMeterRuleRawForTest.
 func setMeterRuleForTest(t *testing.T, rule model.UsageMeterConfig) {
+	t.Helper()
+	if model.UsageMeterConfigured(rule) {
+		rule.Enabled = true
+	}
+	setMeterRuleRawForTest(t, rule)
+}
+
+// setMeterRuleRawForTest installs a rule verbatim, including Enabled.
+func setMeterRuleRawForTest(t *testing.T, rule model.UsageMeterConfig) {
 	t.Helper()
 	prev := model.ConfigInstance.UsageMeter
 	model.ConfigInstance.UsageMeter = rule
@@ -202,9 +215,14 @@ func TestValidateUsageMeterRule(t *testing.T) {
 	}{
 		{"disabled with nothing else set", model.UsageMeterConfig{Quota: 0}, false},
 		{"negative quota", model.UsageMeterConfig{Quota: -1}, true},
-		{"quota without anchor", model.UsageMeterConfig{Quota: 10, PeriodDays: 30, Metric: model.UsageMeterMetricCost}, true},
+		{"negative period", model.UsageMeterConfig{AnchorDate: "2026-10-05", PeriodDays: -1, Metric: model.UsageMeterMetricCost}, true},
+		// Every field is optional: each of these is a SMALLER readout, not an
+		// error. The meter reports what the input supports.
+		{"quota without anchor", model.UsageMeterConfig{Quota: 10, PeriodDays: 30, Metric: model.UsageMeterMetricCost}, false},
+		{"anchor without quota", model.UsageMeterConfig{AnchorDate: "2026-10-05", PeriodDays: 30, Metric: model.UsageMeterMetricCost}, false},
+		{"anchor without period", model.UsageMeterConfig{Quota: 10, AnchorDate: "2026-10-05", PeriodDays: 0, Metric: model.UsageMeterMetricCost}, false},
+		{"quota with nothing else", model.UsageMeterConfig{Quota: 10}, false},
 		{"malformed anchor", model.UsageMeterConfig{Quota: 10, AnchorDate: "10/05/2026", PeriodDays: 30, Metric: model.UsageMeterMetricCost}, true},
-		{"zero period", model.UsageMeterConfig{Quota: 10, AnchorDate: "2026-10-05", PeriodDays: 0, Metric: model.UsageMeterMetricCost}, true},
 		{"period over the cap", model.UsageMeterConfig{Quota: 10, AnchorDate: "2026-10-05", PeriodDays: model.MaxUsageMeterPeriodDays + 1, Metric: model.UsageMeterMetricCost}, true},
 		{"unknown metric", model.UsageMeterConfig{Quota: 10, AnchorDate: "2026-10-05", PeriodDays: 30, Metric: "usd"}, true},
 		{"unknown cycle mode", model.UsageMeterConfig{Quota: 10, AnchorDate: "2026-10-05", CycleMode: "weekly", PeriodDays: 30, Metric: model.UsageMeterMetricCost}, true},
@@ -212,12 +230,11 @@ func TestValidateUsageMeterRule(t *testing.T) {
 		{"valid token rule", model.UsageMeterConfig{Quota: 5_000_000, AnchorDate: "2026-10-05", PeriodDays: 7, Metric: model.UsageMeterMetricTokens}, false},
 		{"valid fixed mode", model.UsageMeterConfig{Quota: 20, AnchorDate: "2026-10-05", CycleMode: model.UsageMeterCycleFixed, PeriodDays: 30, Metric: model.UsageMeterMetricCost}, false},
 		{"valid monthly mode", model.UsageMeterConfig{Quota: 20, AnchorDate: "2026-10-01", CycleMode: model.UsageMeterCycleMonthly, PeriodDays: 30, Metric: model.UsageMeterMetricCost}, false},
-		// The settings page HIDES the period field in monthly mode, so a zero
-		// there is unreachable by a user and must not be an error they cannot
-		// fix. ApplyDefaults keeps a sane value in storage.
+		// Monthly mode takes its length from the calendar, so a zero period is
+		// dormant rather than wrong.
 		{"monthly mode ignores a zero period", model.UsageMeterConfig{Quota: 20, AnchorDate: "2026-10-01", CycleMode: model.UsageMeterCycleMonthly, PeriodDays: 0, Metric: model.UsageMeterMetricCost}, false},
-		// ...but a fixed rule still needs one.
-		{"fixed mode still requires a period", model.UsageMeterConfig{Quota: 20, AnchorDate: "2026-10-01", CycleMode: model.UsageMeterCycleFixed, PeriodDays: 0, Metric: model.UsageMeterMetricCost}, true},
+		// ...and so is a fixed rule with no period: it simply does not roll over.
+		{"fixed mode accepts a zero period", model.UsageMeterConfig{Quota: 20, AnchorDate: "2026-10-01", CycleMode: model.UsageMeterCycleFixed, PeriodDays: 0, Metric: model.UsageMeterMetricCost}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := validateUsageMeterRule(tc.rule)
@@ -301,22 +318,16 @@ func TestValidateUsageMeterRule_EachFailureNamesItsField(t *testing.T) {
 			wantField: "usage_meter.quota",
 		},
 		{
-			name:      "quota without anchor",
-			rule:      model.UsageMeterConfig{Quota: 10, PeriodDays: 30, Metric: model.UsageMeterMetricCost},
-			wantKey:   "UsageMeterAnchorRequired",
-			wantField: "usage_meter.anchor_date",
+			name:      "negative period",
+			rule:      model.UsageMeterConfig{AnchorDate: "2026-10-05", PeriodDays: -1, Metric: model.UsageMeterMetricCost},
+			wantKey:   "UsageMeterPeriodRange",
+			wantField: "usage_meter.period_days",
 		},
 		{
 			name:      "malformed anchor",
 			rule:      model.UsageMeterConfig{Quota: 10, AnchorDate: "10/05/2026", PeriodDays: 30, Metric: model.UsageMeterMetricCost},
 			wantKey:   "UsageMeterAnchorInvalid",
 			wantField: "usage_meter.anchor_date",
-		},
-		{
-			name:      "zero period",
-			rule:      model.UsageMeterConfig{Quota: 10, AnchorDate: "2026-10-05", PeriodDays: 0, Metric: model.UsageMeterMetricCost},
-			wantKey:   "UsageMeterPeriodRange",
-			wantField: "usage_meter.period_days",
 		},
 		{
 			name:      "period over the cap",
@@ -502,9 +513,11 @@ func TestServeConfig_Patch_UsageMeterSameCycleModeDoesNotRearm(t *testing.T) {
 }
 
 // A fresh install that picks "calendar month" sends no period_days (the field is
-// hidden). The stored value must come out usable anyway, or a later switch back
-// to "fixed" fails validation on a field the user cannot see.
-func TestServeConfig_Patch_MonthlyFillsMissingPeriod(t *testing.T) {
+// hidden). The patch must be accepted, and the stored period must stay 0 rather
+// than being filled with a synthesized 30: monthly mode derives its length from
+// the calendar, and inventing a number would make a later switch back to
+// "fixed" silently mean a 30-day cycle the user never chose.
+func TestServeConfig_Patch_MonthlyLeavesMissingPeriodUnset(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -517,8 +530,8 @@ func TestServeConfig_Patch_MonthlyFillsMissingPeriod(t *testing.T) {
 	w := callHandler(ServeConfig, req)
 
 	require.Equal(t, http.StatusOK, w.Code, "a monthly rule must be accepted without a period")
-	assert.Equal(t, 30, model.ConfigInstance.UsageMeter.PeriodDays,
-		"period_days must be filled in so a later switch to fixed is valid")
+	assert.Equal(t, 0, model.ConfigInstance.UsageMeter.PeriodDays,
+		"an unset period must stay unset, not be synthesized")
 	assert.Equal(t, model.UsageMeterCycleMonthly, model.ConfigInstance.UsageMeter.CycleMode)
 }
 
@@ -833,4 +846,80 @@ func TestPersistUsageMeterState_RollsBackOnWriteFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, service.UsageMeterStageOver, model.ConfigInstance.UsageMeter.NotifiedStage,
 		"the in-memory state must be rolled back when the write fails")
+}
+
+// ── Enable flag ──────────────────────────────────────────────────────────────
+
+// The switch is part of the wire contract in both directions: GET must report
+// it (or the panel renders an off switch for an enabled rule) and PATCH must
+// accept it.
+func TestServeConfig_UsageMeterEnabledRoundTrip(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.UsageMeter = model.UsageMeterConfig{
+		Enabled: true, AnchorDate: "2026-10-01", PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 20,
+	}
+	model.ConfigInstance = cfg
+
+	req := newRequest(t, http.MethodGet, "/api/config", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	um, ok := resp["usage_meter"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, true, um["enabled"], "the switch must reach the client, or it renders as off")
+}
+
+func TestServeConfig_Patch_UsageMeterEnabledToggle(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.UsageMeter = model.UsageMeterConfig{
+		Enabled: true, AnchorDate: "2026-10-01", PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 20,
+		NotifiedCycleStart: "2026-10-01T00:00:00+08:00",
+		NotifiedStage:      service.UsageMeterStageOver,
+	}
+	model.ConfigInstance = cfg
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(`{"usage_meter":{"enabled":false}}`))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, model.ConfigInstance.UsageMeter.Enabled)
+	// Turning the feature back on later must warn again rather than inherit the
+	// old cycle's "already told you".
+	assert.Empty(t, model.ConfigInstance.UsageMeter.NotifiedStage)
+	assert.Empty(t, model.ConfigInstance.UsageMeter.NotifiedCycleStart)
+}
+
+// A wrong-typed flag is an error, not a silent skip: writeConfigYAML would
+// persist `enabled: "false"` verbatim and the next startup would fail to
+// unmarshal the config.
+func TestServeConfig_Patch_UsageMeterEnabledWrongType(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	model.ConfigInstance = model.Config{}
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(`{"usage_meter":{"enabled":"true"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "UsageMeterEnabledNotBool", resp["msgKey"])
+	detail, ok := resp["detail"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "usage_meter.enabled", detail["field"])
 }

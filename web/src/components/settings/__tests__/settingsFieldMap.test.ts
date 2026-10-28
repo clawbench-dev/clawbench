@@ -1115,3 +1115,32 @@ describe('usage meter cycle type', () => {
     expect(keys.indexOf('usage_meter.period_days')).toBeGreaterThan(modeAt)
   })
 })
+
+// Every field of the usage-meter rule is optional; the enable switch is the only
+// on/off. These pin the panel wiring that makes that visible: the switch must be
+// part of the snapshot/save contract, and the numeric fields must accept 0
+// rather than treating it as "unset" (0 means "no cycle" / "no budget").
+describe('usage meter enable switch and optional fields', () => {
+  const cfg = () => getCategoryPanels('usageMeter')[0]
+
+  it('exposes the enable switch as the panel enable key', () => {
+    expect(cfg().enableKey).toBe('usage_meter.enabled')
+    // The label must exist and name the action, or the switch renders blank.
+    expect(cfg().enableLabelKey).toBe('settings.items.usageMeterEnabled')
+  })
+
+  // The enable key must be in the server-side field→label map, otherwise the
+  // restart dialog (and the panel's own save) cannot name it.
+  it('maps the enable key to its label', () => {
+    expect(getServerFieldToLabelKey()['usage_meter.enabled']).toBe('settings.items.usageMeterEnabled')
+  })
+
+  it('accepts 0 for the period and the quota', () => {
+    const period = cfg().commonFields.find(f => f.key === 'usage_meter.period_days')
+    const quota = cfg().commonFields.find(f => f.key === 'usage_meter.quota')
+    expect(period!.min).toBe(0)
+    expect(quota!.min).toBe(0)
+    // Neither is required: a rule with only an anchor is valid.
+    expect(cfg().requiredFields).toEqual([])
+  })
+})

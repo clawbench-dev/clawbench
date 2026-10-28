@@ -346,6 +346,21 @@ paths:
         **口径固定为全局**（所有项目合计），没有 `scope` 参数——额度回答的是
         「我这个周期总共花了多少」，与当前停在哪个项目无关。
 
+        **开关与可选项**：`usage_meter.enabled` 是唯一的开关。其余字段全部可选，
+        服务端按已配置的内容做最大程度展示：
+
+        - 都没有（或开关关闭）→ `enabled: false`（无内容可报）
+        - 只有 `anchor_date` → 从该时刻到现在的累计，无周期（周期视作无限）、无基准
+        - 只有 `quota` → 全部历史累计；额度存在但没有周期，故不按天摊出应花
+        - `anchor_date` + `period_days` → 周期、第几天/共几天，无基准
+        - 三者齐全 → 完整读数（含应花、剩余、用尽预测）
+
+        客户端把**未设置的项按「无限」展示**：没额度时额度/剩余显示 `∞`，没周期时
+        天数显示 `∞`。服务端只负责用 0 表达「未设置」，由客户端决定呈现方式。
+
+        **没有周期 ≠ 默认 30 天**：`period_days` 为 0 表示窗口不滚动，累计值永不
+        归零。**没有额度 ≠ 关闭**：仍然返回实际用量，只是没有应花 / 剩余 / 预测。
+
         **周期定位**：由 `usage_meter.cycle_mode` 决定，时区为**服务端本地时区**。
 
         - `fixed`（缺省值，也是本字段出现前所有安装的行为）：从 `anchor_date`
@@ -364,6 +379,7 @@ paths:
         **应花（`expected`）= 额度 × 第几天 / 本周期天数**，按整天向下取整：
         周期第 1 天就有 1 天额度（不会开局误报），最后一天等于总额度。
         「本周期天数」在 `monthly` 下是当月实际天数，不是 `period_days`。
+        **额度或周期任一缺失时 `expected` 恒为 0**（没有可摊的基准）。
 
         **指标口径**：
         - `tokens`：`total_tokens`，为 0 时回退到 `input_tokens + output_tokens`
@@ -371,10 +387,10 @@ paths:
         - `credit`：`SUM(credit)`
         - `cost`：`SUM(cost_usd)`，单位 USD。非 USD 的上报值按原值累加，不做汇率换算。
 
-        **未配置规则**（`quota <= 0`）返回 200 与 `enabled: false`，不是 404：
-        「没有预算」是正常状态而非错误，且此时没有任何可报的数字——
-        周期、应花、剩余、预测全部由额度派生，所以除 `enabled` 外的数值字段
-        全为 0，`metric` / `periodDays` / `cycleStart` / `cycleEnd` / `series`
+        **未启用或完全没有配置**（`enabled: false`，或 `enabled` 为真但三项全空）
+        返回 200 与 `enabled: false`，不是 404：「没有预算」是正常状态而非错误，
+        且此时没有任何可报的数字，所以除 `enabled` 外的数值字段全为 0，
+        `metric` / `periodDays` / `cycleStart` / `cycleEnd` / `series`
         一律不返回。客户端据此渲染**占位入口**（提示用户去设置用量提醒），
         而不是一个数值全为零的空胶囊。
 
@@ -385,20 +401,23 @@ paths:
         "200":
           description: |
             用量提醒状态。字段：
-            - `enabled`：是否配置了规则（`quota > 0`）。它决定**响应里有没有
+            - `enabled`：是否在统计（`usage_meter.enabled`）。它决定**响应里有没有
               用量数字**，不只是「要不要画比例」
             - `metric` / `anchorDate` / `periodDays` / `quota`：规则回显
               （`enabled=false` 时这几项**不返回**）。`periodDays` 是**当前周期**
-              的天数：`monthly` 下随月份在 28–31 之间变化
-            - `cycleStart` / `cycleEnd`：当前周期边界（RFC3339）
-              （`enabled=false` 时**不返回**：没有周期）
-            - `dayInCycle`：当前是周期第几天（1 起；0 表示起始日在未来或未配置）
-            - `actual` / `expected`：实际用量 / 按时间比例的应花
-              （`enabled=false` 时两者均为 0）
-            - `remainingDays`：今天之后还剩几天（未配置时为 0）
-            - `projectedExhaustDay`：按当前速度预计第几天用尽（0 = 本周期不会用尽或未配置规则）
+              的天数：`monthly` 下随月份在 28–31 之间变化；**0 表示没有周期**
+            - `cycleStart` / `cycleEnd`：当前周期边界（RFC3339）。`cycleEnd`
+              **缺失表示没有周期**（`period_days` 为 0）：窗口从 `cycleStart`
+              一直延伸到当前，永不滚动
+            - `dayInCycle`：当前是第几天（1 起；0 表示起始日在未来或没有周期）
+            - `actual` / `expected`：实际用量 / 按时间比例的应花。
+              没有额度或没有周期时 `expected` 为 0（没有可摊的基准）
+            - `remainingDays`：今天之后还剩几天（没有周期时为 0）
+            - `projectedExhaustDay`：按当前速度预计第几天用尽
+              （0 = 本周期不会用尽、没有额度，或没有周期）
             - `series[]`：逐日累计，每项含 `day` / `actual` / `expected`
-              （`enabled=false` 时**不返回**）
+              （`enabled=false` 时**不返回**；没有锚点时从最早一条记录起算，
+              并裁剪到与 `/api/usage/stats` 相同的 370 天上限）
 
             `enabled=false` 的响应体恰为六个键：
             `enabled` / `dayInCycle` / `actual` / `expected` / `remainingDays` /
@@ -575,7 +594,7 @@ paths:
               为出错的配置路径（如 `usage_meter.period_days`）。`usage_meter.*`
               的校验错误全部走这一形态：
               `UsageMeterQuotaNegative` / `UsageMeterQuotaNotNumber` /
-              `UsageMeterAnchorRequired` / `UsageMeterAnchorInvalid` /
+              `UsageMeterEnabledNotBool` / `UsageMeterAnchorInvalid` /
               `UsageMeterAnchorNotString` / `UsageMeterPeriodRange`
               （带 `detail.Max`）/ `UsageMeterPeriodNotNumber` /
               `UsageMeterMetricInvalid` / `UsageMeterMetricNotString` /

@@ -1414,10 +1414,10 @@ func TestServeConfig_Patch_UsageMeterInvalidIsSpecificAndLocalized(t *testing.T)
 			wantField: "usage_meter.quota",
 		},
 		{
-			name:      "quota without an anchor",
-			body:      `{"usage_meter":{"quota":10,"period_days":30,"metric":"cost"}}`,
-			wantKey:   "UsageMeterAnchorRequired",
-			wantField: "usage_meter.anchor_date",
+			name:      "negative period",
+			body:      `{"usage_meter":{"anchor_date":"2026-10-05","period_days":-1,"metric":"cost"}}`,
+			wantKey:   "UsageMeterPeriodRange",
+			wantField: "usage_meter.period_days",
 		},
 		{
 			name:      "unknown metric",

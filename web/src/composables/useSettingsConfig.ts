@@ -601,6 +601,14 @@ const serverDefaults: Record<string, unknown> = {
   'push_mode': 'native',
   'file_search.display_limit': 100,
   'tls.cert_dir': '',
+  // Mirrors the server: a rule with nothing configured is off, and every other
+  // field is optional (no cycle, no budget). The panel reads these before
+  // /api/config lands so the enable switch does not flash.
+  'usage_meter.enabled': false,
+  'usage_meter.cycle_mode': 'fixed',
+  'usage_meter.metric': 'cost',
+  'usage_meter.period_days': 0,
+  'usage_meter.quota': 0,
 }
 
 // ── Agent preference helpers ──────────────────────────────

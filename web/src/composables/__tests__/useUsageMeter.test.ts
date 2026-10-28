@@ -245,4 +245,44 @@ describe('useUsageMeter', () => {
 
     expect(meter.hasData.value).toBe(true)
   })
+
+  // ── Optional quota / cycle ────────────────────────────────────────────────
+  // The rule's fields are independent, so "enabled with no quota" is a valid
+  // state that must render a total without any budget-derived judgement.
+
+  it('stays enabled and reports the total when there is no quota', async () => {
+    const mod = await load()
+    const meter = mod.useUsageMeter()
+    mockedGet.mockResolvedValueOnce({
+      enabled: true, metric: 'cost', anchorDate: '2026-10-05',
+      periodDays: 0, quota: 0, cycleStart: '2026-10-05T00:00:00+08:00',
+      dayInCycle: 10, actual: 42, expected: 0, remainingDays: 0, projectedExhaustDay: 0,
+    })
+    await meter.refresh()
+
+    expect(meter.status.value.enabled).toBe(true)
+    expect(meter.hasQuota.value).toBe(false)
+    expect(meter.hasCycle.value).toBe(false)
+    // 'ok' rather than 'off': there IS a readout, it just has no budget. The
+    // popover keys its quota-derived branches off hasQuota, not off this state.
+    expect(meter.meterState.value).toBe('ok')
+    expect(meter.isOverPlan.value).toBe(false)
+    expect(meter.isQuotaExhausted.value).toBe(false)
+    expect(meter.fillPercent.value).toBe(0)
+  })
+
+  it('exposes the cycle gates for a quota-only rule', async () => {
+    const mod = await load()
+    const meter = mod.useUsageMeter()
+    mockedGet.mockResolvedValueOnce({
+      enabled: true, metric: 'cost',
+      periodDays: 0, quota: 20, cycleStart: undefined,
+      dayInCycle: 0, actual: 5, expected: 0, remainingDays: 0, projectedExhaustDay: 0,
+    })
+    await meter.refresh()
+
+    expect(meter.hasQuota.value).toBe(true)
+    expect(meter.hasCycle.value).toBe(false)
+    expect(meter.fillPercent.value).toBe(25)
+  })
 })

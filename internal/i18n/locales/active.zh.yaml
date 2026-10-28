@@ -318,10 +318,10 @@ UsageMeterFullBody: 本周期额度 {{.Quota}} 已用尽，实际用量 {{.Actua
 # detail.field 中下发。
 UsageMeterQuotaNegative: 额度不能为负数
 UsageMeterQuotaNotNumber: 额度必须是数字
-UsageMeterAnchorRequired: 设置额度时必须填写起始时间
+UsageMeterEnabledNotBool: 启用开关必须是布尔值
 UsageMeterAnchorInvalid: 起始时间必须是 YYYY-MM-DD 或 YYYY-MM-DDTHH:MM[:SS] 格式的有效时间
 UsageMeterAnchorNotString: 起始时间必须是 YYYY-MM-DD 或 YYYY-MM-DDTHH:MM[:SS] 格式的文本
-UsageMeterPeriodRange: 周期长度必须在 1 到 {{.Max}} 天之间
+UsageMeterPeriodRange: 周期长度必须在 0 到 {{.Max}} 天之间（0 表示不设周期，永不滚动）
 UsageMeterPeriodNotNumber: 周期长度必须是数字
 UsageMeterMetricInvalid: 统计口径必须是 tokens、credit 或 cost 之一
 UsageMeterMetricNotString: 统计口径必须是 tokens、credit 或 cost 之一
