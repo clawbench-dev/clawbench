@@ -11,7 +11,7 @@ Windows 桌面客户端点一个按钮，把**屏幕画面 + 系统声音 + 麦�
 
 - 分享模型与现有文件/会话分享一致：**token 即凭证**（`/share/{token}`）。
 - **纯 P2P WebRTC**（`RTCPeerConnection`）：媒体点对点直传，**不经服务器**。
-- **支持多人语音**（可选、逐人授权）：发布端默认只听，开启后观众可"按住说话"回传麦克风，**其他观众也能听到**（经发布端混音，见 §8.3）。
+- **支持多人语音**（可选）：发布端默认只听，开启后观众自行打开麦克风开关即可发言，**其他观众也能听到**（经发布端混音，见 §8.3）。
 - 观众端不能控制键鼠、不能看发布端的其它内容。
 
 ### 1.2 非目标
@@ -56,7 +56,7 @@ Windows 桌面客户端点一个按钮，把**屏幕画面 + 系统声音 + 麦�
 | 房间存储 | **内存**，不落库。进程重启即失效（语义正确：直播是瞬时的） |
 | 观众上限 | 8 |
 | 声音来源 | 系统声音（`audio: 'loopback'`）+ 麦克风，`AudioContext` 混音 |
-| **多人语音** | **支持，但默认关闭**。发布端显式开启 + 逐人授权 + 按住说话；**观众之间可互相听到**（发布端为每个观众建独立混音，排除自己） |
+| **多人语音** | **支持，但默认关闭**。发布端显式开启后，观众自行开关麦克风；发布端可单人静音/全部静音；**观众之间可互相听到**（发布端为每个观众建独立混音，排除自己） |
 | **观众上行** | 复用同一条 `sendrecv` 音频 m-line，靠 `replaceTrack` 开关，**不重新协商**（见 §8.3.4） |
 | **多人语音拓扑** | **发布端混音**（0 条额外连接、0 服务端媒体工作、+256kbps@8人、多一跳 100–200ms），**不上 SFU**（见 §8.3.1） |
 | 安全上下文 | 主进程 `unsafely-treat-insecure-origin-as-secure`（见 §5） |
@@ -258,7 +258,7 @@ WS /api/share/{token}/signal
 {"type":"ice","candidate":{...}}
 ```
 
-`talkEnabled` 告诉观众端是否渲染「请求发言」入口。**它只是 UI 提示，不是授权**——真正的门在服务端（未开启时 `talk-request` 直接被拒）。
+`talkEnabled` 告诉观众端是否渲染麦克风开关。**它只是 UI 提示，不是授权**——真正的门在服务端（未开启时 `talk-start` 直接被拒，回 `talk-disabled`）。
 
 观众侧的音频 transceiver 必须建为 `sendrecv`（见 §8.3.1）：
 
@@ -399,7 +399,7 @@ const mixed = new MediaStream([display.getVideoTracks()[0], ...dest.stream.getAu
 | 文件 | 改动 |
 |---|---|
 | `web/src/share/ShareRoot.vue:68` | `kind` 联合类型加 `'live'`；渲染 `<LiveShareView>` |
-| `web/src/share/LiveShareView.vue` | **新增**。`<video autoplay playsinline>` + 连接状态提示 + **「按住说话」按钮（仅 `talkEnabled` 时）** |
+| `web/src/share/LiveShareView.vue` | **新增**。`<video autoplay playsinline>` + 连接状态提示 + **麦克风开关（仅 `talkEnabled` 时）** |
 | `web/src/share/liveViewer.ts` | **新增**。信令 WS + `RTCPeerConnection` + 重连 + **`sendrecv` 音频 transceiver 与 `replaceTrack` 开关** |
 | `web/src/i18n/locales/{zh,en}.ts` | `share.live.*` 新增一组键 |
 
@@ -491,25 +491,21 @@ dest[B] → B 那条 PC 的 audio sender (replaceTrack)
 
 | 层级 | 机制 |
 |---|---|
-| 房间级 | 发布端弹窗里显式勾选「允许观众发言」，默认**不勾**。未勾选时观众端不渲染「按住说话」按钮，服务端也拒绝 `talk-request` |
-| 人级 | 即使房间级开启，仍需**逐人授权**：观众点「请求发言」→ 发布端观众列表出现待批准项 → 发布端点「批准」 |
-| 时长 | 批准是**单次会话**有效，观众刷新页面需重新申请 |
-| 撤回 | 发布端随时可撤销单人授权；另有「全部静音」panic 按钮 |
+| 房间级 | 发布端弹窗里显式勾选「允许观众发言」，默认**不勾**。未勾选时观众端不渲染麦克风开关，服务端也拒绝 `talk-start` |
+| 人级 | 房间开启后，观众**自行**开关麦克风即可发言；发布端可随时静音某个人，或「全部静音」 |
 
-#### 8.3.6 交互：按住说话
+**刻意没有「申请 → 批准」这一层**（早期设计有，后来移除）。房间开关本身就是安全边界：它默认关闭，只有发布端能打开，一旦打开就意味着「这个房间允许观众说话」。在其之上再加一层逐人确认只是摩擦，没有对应的威胁模型。
+
+#### 8.3.6 交互：麦克风开关
 
 ```
-观众：pointerdown → replaceTrack(micTrack) → 发 {"type":"talk-start"}
-       pointerup  → replaceTrack(null)     → 发 {"type":"talk-end"}
-       pointercancel → 同样 replaceTrack(null)   ← 手指滑出按钮必须也停
+观众：点击 → replaceTrack(micTrack) → 发 {"type":"talk-start"}   （开）
+      再点 → replaceTrack(null)     → 发 {"type":"talk-end"}     （关）
 ```
 
-按住说话而不是开关式，理由有两个：
+用开关而不是按住说话，理由：多人语音的典型场景是「一起聊」，而不是「轮流发言」。按住说话在长时间讨论里是纯粹的负担（每说一句都要按着），而房间开关已经保证了只有发布端主动开启时观众才能说话。
 
-1. **误触成本**：开关式一旦忘了关就是持续灌音，按住式松开即静音。
-2. **恶意刷屏的体验价值低**：要持续说话必须一直按着，比"点一下开始刷"更费力。
-
-发布端 UI 在观众列表里显示谁正在说话（绿点 + 音量条），这样"谁在说话"一目了然。
+发布端 UI 在观众列表里显示谁正在说话（「正在说话」/「麦克风关」），并提供单人静音。
 
 #### 8.3.7 信令扩展
 
@@ -517,21 +513,17 @@ dest[B] → B 那条 PC 的 audio sender (replaceTrack)
 
 ```json
 // 观众 → 服务端
-{"type":"talk-request"}                 // 请求发言
-{"type":"talk-start"}                   // 开始说话（已 replaceTrack）
-{"type":"talk-end"}                     // 结束
+{"type":"talk-start"}                   // 打开麦克风（已 replaceTrack）
+{"type":"talk-end"}                     // 关闭麦克风
 
 // 服务端 → 观众
-{"type":"talk-granted"}                 // 已批准，可以按住说话
-{"type":"talk-revoked","reason":"..."}  // 被撤销/房间关闭
-{"type":"talk-denied"}                  // 房间未开启多人语音
+{"type":"talk-revoked","reason":"..."}  // 被发布端静音 / 房间开关关闭
+{"type":"talk-disabled"}                // 房间未开启多人语音，开关弹回
 
 // 发布端侧（§6.2 加）
 // 服务端 → 发布端
-{"type":"talk-request","viewerId":"c3d4","name":"..."}
 {"type":"talk-state","viewerId":"c3d4","talking":true}
 // 发布端 → 服务端
-{"type":"talk-grant","viewerId":"c3d4"}
 {"type":"talk-revoke","viewerId":"c3d4"}
 {"type":"talk-mute-all"}
 ```
@@ -624,7 +616,7 @@ Chromium 在未授予媒体权限时会把 host candidate 伪装成 `<uuid>.loca
 |---|---|
 | token 泄露 = 任何人可看屏幕 | token 32 位 hex（与文件分享同级）；`DELETE` 立即失效；房间 30 分钟无观众自动回收 |
 | **token 泄露 = 任何人可灌声音** | 房间级「允许观众发言」默认关闭；开启后仍需逐人授权；单次会话有效；「全部静音」panic 按钮 |
-| 观众恶意持续灌音 | 按住说话（松开即停）；发布端可单人撤销 |
+| 观众恶意持续灌音 | 发布端可单人静音或「全部静音」；房间开关一关连带静音所有人 |
 | 页面 Referer 泄露 token | 复用 `ServeSharePage` 的 `Referrer-Policy: no-referrer`（`file_share.go:876`） |
 | 任何页面静默抓屏 | `setPendingCaptureSource` 一次性消费；`setDisplayMediaRequestHandler` 只在有 pending 源时回调 |
 | 发布端伪造他人 token | 房间记录 `PublisherID`，第二个 `publish` 直接 409 |
@@ -661,8 +653,9 @@ Chromium 在未授予媒体权限时会把 host candidate 伪装成 `<uuid>.loca
 - **`setPendingCaptureSource` 一次性**：源码守卫断言消费后清空。
 - **多人语音**：
   - 未授权时 `replaceTrack` 不被调用（守卫断言 `sender.track` 恒为 null）。
-  - 按住说话的 `pointerdown`/`pointerup` 成对，`pointercancel` 也要 `replaceTrack(null)`（否则手指滑出按钮会永久开麦）。
-  - 房间未开启多人语音时，「按住说话」按钮不渲染。
+  - 开关关闭时 `replaceTrack(null)` 必须被调用（否则麦克风仍在采集）。
+  - 收到 `talk-revoked` / `talk-disabled` 时，本地也要 `replaceTrack(null)`，不能只翻 UI 标志。
+  - 房间未开启多人语音时，麦克风开关不渲染。
   - **混音图排除自己**：用 `OfflineAudioContext` + DFT 验证（实测已跑通，见 §8.3.2）——`dest[A]` 在 A 的频率上能量 < 0.005，在 B 的频率上 > 0.05。这是行为测试，不是源码守卫，能真正区分对错。
   - **观众进出不重建 track**：断言 `dest[X].stream.getAudioTracks()[0].id` 在 B 加入/离开前后不变。
   - **观众离开时 `disconnect` 其音源**：断言 `MediaStreamAudioSourceNode` 的 Map 大小回到 N。
@@ -689,9 +682,9 @@ Playwright 支持 `--use-fake-device-for-media-stream`，但**测不了真实的
 - [ ] 发布端关闭窗口 → 观众显示「共享已结束」
 - [ ] 观众数达到 8 → 第 9 个被拒
 - [ ] 切换服务器后 → 提示需要重启才能用屏幕共享
-- [ ] **多人语音关闭时** → 观众端没有「按住说话」按钮
+- [ ] **多人语音关闭时** → 观众端没有麦克风开关
 - [ ] **多人语音开启但未授权** → 观众点请求后，发布端看到待批准项；批准前说话无声音
-- [ ] **按住说话** → 发布端能听到观众，松开即静音；`pointercancel`（手指滑出）也停
+- [ ] **麦克风开关** → 打开后发布端能听到观众，关掉即静音
 - [ ] **观众之间互听** → A 说话，B 能听到；A 听不到自己（验证 §8.3.3 的排除自己）
 - [ ] **回声** → 发布端外放时，观众听不到自己延迟的声音，也听不到同一句话两遍（验证 §8.3.8 两条回路）
 - [ ] **全部静音** → 正在说话的观众被立即切断
@@ -707,7 +700,7 @@ Playwright 支持 `--use-fake-device-for-media-stream`，但**测不了真实的
 | 2 | 三个 HTTP/WS 端点 + OpenAPI | ✅ `wscat` 手工走通信令 |
 | 3 | 发布端采集（Electron 桥 + `useLiveShare` + 弹窗），**单向** | ✅ 本机自己连自己 |
 | 4 | 观众端 `LiveShareView` + share SPA 分派 + i18n，**单向** | ✅ 双机实测 |
-| 5 | **多人语音**：`talk.go` 状态机 + 信令控制帧 + 按住说话 UI + 授权面板 + **每观众独立混音图** | ✅ 双机对讲 + 三机互听 |
+| 5 | **多人语音**：`talk.go` 状态机 + 信令控制帧 + 麦克风开关 UI + 静音控制 + **每观众独立混音图** | ✅ 双机对讲 + 三机互听 |
 | 6 | E2E mock 发布端 + 文档同步 | ✅ CI |
 
 **多人语音刻意排在阶段 5，不并入阶段 3/4**：单向链路先跑通并验收，再做多人。理由是多人引入了 token 语义变化、混音图与回声这三类新风险，混在一起会让「画面出不来」和「声音不对」两类故障难以分离定位。
@@ -730,7 +723,7 @@ Playwright 支持 `--use-fake-device-for-media-stream`，但**测不了真实的
 | **观众之间全互联（mesh 语音）** | 8 人需 28 条额外 PC；可行但连接数多、要额外的观众↔观众信令。发布端混音用 0 条额外连接达到同样效果（§8.3.1） |
 | **服务端混音 / SFU 做语音** | 需 Go 侧 Opus 编解码（cgo，破坏纯 Go 构建）或自建 pion SFU；而发布端本来就有全部音频，混音成本为 0 |
 | **多人语音默认开启** | token 从只读变成写权限，泄露即可灌音，且**其他所有观众都会听到**。必须显式开启 + 逐人授权 |
-| **开关式发言（点一下开始/再点结束）** | 忘了关就是持续灌音；按住说话松开即停，误触与恶意刷屏的成本都更高 |
+| **按住说话（hold-to-talk）** | 已改为开关式。多人语音是「一起聊」而非「轮流发言」，长时间讨论里每句都要按着是纯负担；房间开关已保证只有发布端主动开启时才能说话 |
 | **发言时重新 offer/answer** | 实测 `replaceTrack` 对同 kind 轨道不触发重新协商（§8.3.1），重新协商只会引入 SDP 抖动与连接重建风险 |
 
 ## 13. 依赖清单

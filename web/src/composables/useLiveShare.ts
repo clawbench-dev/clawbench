@@ -23,7 +23,8 @@ export interface LiveViewerInfo {
   id: string
   name: string
   /** Speech state reported by the server. */
-  talk: 'none' | 'pending' | 'granted' | 'talking'
+  /** 'talking' = that viewer's microphone is on; 'muted' = it is off. */
+  talk: 'muted' | 'talking'
 }
 
 export interface CaptureSource {
@@ -278,11 +279,10 @@ export function useLiveShare() {
       case 'ice':
         await onRemoteICE(viewerId, msg.candidate as RTCIceCandidateInit)
         break
-      case 'talk-request':
-        updateViewer(viewerId, { talk: 'pending' })
-        break
       case 'talk-state':
-        updateViewer(viewerId, { talk: msg.talking ? 'talking' : 'granted' })
+        // The only per-viewer state is "microphone on / off"; there is no
+        // approval queue to track.
+        updateViewer(viewerId, { talk: msg.talking ? 'talking' : 'muted' })
         break
       default:
         appLog.d(TAG, 'unhandled publisher frame', type)
@@ -295,7 +295,7 @@ export function useLiveShare() {
 
     const pc = new RTCPeerConnection({ iceServers: [] })
     peers.set(viewerId, { pc, viewerId })
-    viewers.value = [...viewers.value, { id: viewerId, name: '', talk: 'none' }]
+    viewers.value = [...viewers.value, { id: viewerId, name: '', talk: 'muted' }]
 
     // One destination per viewer, carrying system audio + mic + the OTHER
     // viewers. Excluding this viewer is what keeps it from hearing itself.
@@ -372,17 +372,13 @@ export function useLiveShare() {
     send({ type: 'set-talk-enabled', enabled: on })
   }
 
-  function grantTalk(viewerId: string): void {
-    send({ type: 'talk-grant', viewerId })
-  }
-
   function revokeTalk(viewerId: string): void {
     send({ type: 'talk-revoke', viewerId })
   }
 
   function muteAll(): void {
     send({ type: 'talk-mute-all' })
-    viewers.value = viewers.value.map((v) => ({ ...v, talk: 'none' }))
+    viewers.value = viewers.value.map((v) => ({ ...v, talk: 'muted' }))
   }
 
   /** End the share and release every device. Idempotent. */
@@ -420,7 +416,6 @@ export function useLiveShare() {
     start,
     stop,
     setTalkEnabled,
-    grantTalk,
     revokeTalk,
     muteAll,
   }

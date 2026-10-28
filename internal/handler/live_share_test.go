@@ -400,7 +400,7 @@ func TestLiveWS_ICEIsForwardedBothWays(t *testing.T) {
 	assert.NotNil(t, toView.Candidate)
 }
 
-func TestLiveWS_TalkDeniedWhenRoomDisabled(t *testing.T) {
+func TestLiveWS_TalkStartRefusedWhenRoomDisabled(t *testing.T) {
 	srv, token := liveWSServer(t)
 
 	pub := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
@@ -409,14 +409,17 @@ func TestLiveWS_TalkDeniedWhenRoomDisabled(t *testing.T) {
 	_ = readViewerMsg(t, view)
 	_ = readPublisherMsg(t, pub)
 
-	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlTalkRequest})
+	// The room switch is off, so turning the microphone on must be refused
+	// loudly rather than silently ignored (a silent drop is an undiagnosable
+	// "the toggle does nothing").
+	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlTalkStart})
 
-	denied := readViewerMsg(t, view)
-	assert.Equal(t, liveshare.MsgTalkDenied, denied.Type)
-	assert.Equal(t, "disabled", denied.Reason)
+	refused := readViewerMsg(t, view)
+	assert.Equal(t, liveshare.MsgTalkDisabled, refused.Type)
+	assert.Equal(t, liveshare.ReasonDisabled, refused.Reason)
 }
 
-func TestLiveWS_TalkGrantFlow(t *testing.T) {
+func TestLiveWS_TalkToggleFlow(t *testing.T) {
 	srv, token := liveWSServer(t)
 
 	pub := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
@@ -425,22 +428,14 @@ func TestLiveWS_TalkGrantFlow(t *testing.T) {
 	joined := readViewerMsg(t, view)
 	_ = readPublisherMsg(t, pub)
 
-	// Enable audience speech, then request.
+	// Turn the room switch on, then the viewer simply turns its mic on — no
+	// request, no approval.
 	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetTalkEnabled, Enabled: true})
-	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlTalkRequest})
 
-	req := readPublisherMsg(t, pub)
-	require.Equal(t, liveshare.MsgTalkRequest, req.Type)
-	require.Equal(t, joined.ViewerID, req.ViewerID)
-
-	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlTalkGrant, ViewerID: joined.ViewerID})
-	granted := readViewerMsg(t, view)
-	require.Equal(t, liveshare.MsgTalkGranted, granted.Type)
-
-	// Speaking now reports state to the publisher.
 	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlTalkStart})
 	st := readPublisherMsg(t, pub)
-	assert.Equal(t, liveshare.MsgTalkState, st.Type)
+	require.Equal(t, liveshare.MsgTalkState, st.Type)
+	require.Equal(t, joined.ViewerID, st.ViewerID)
 	assert.True(t, st.Talking)
 
 	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlTalkEnd})
@@ -449,7 +444,55 @@ func TestLiveWS_TalkGrantFlow(t *testing.T) {
 	assert.False(t, st.Talking)
 }
 
-func TestLiveWS_TalkStartWithoutGrantIsRejected(t *testing.T) {
+func TestLiveWS_PublisherMuteReachesViewer(t *testing.T) {
+	srv, token := liveWSServer(t)
+
+	pub := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
+	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+
+	joined := readViewerMsg(t, view)
+	_ = readPublisherMsg(t, pub)
+
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetTalkEnabled, Enabled: true})
+	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlTalkStart})
+	_ = readPublisherMsg(t, pub) // talk-state true
+
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlTalkRevoke, ViewerID: joined.ViewerID})
+
+	revoked := readViewerMsg(t, view)
+	assert.Equal(t, liveshare.MsgTalkRevoked, revoked.Type)
+	// The publisher is told too, so its viewer list stops showing "speaking".
+	st := readPublisherMsg(t, pub)
+	assert.Equal(t, liveshare.MsgTalkState, st.Type)
+	assert.False(t, st.Talking)
+}
+
+func TestLiveWS_DisablingRoomMutesEveryViewer(t *testing.T) {
+	srv, token := liveWSServer(t)
+
+	pub := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
+	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+
+	joined := readViewerMsg(t, view)
+	_ = readPublisherMsg(t, pub)
+
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetTalkEnabled, Enabled: true})
+	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlTalkStart})
+	_ = readPublisherMsg(t, pub) // talk-state true
+
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetTalkEnabled, Enabled: false})
+
+	revoked := readViewerMsg(t, view)
+	assert.Equal(t, liveshare.MsgTalkRevoked, revoked.Type)
+	assert.Equal(t, liveshare.ReasonDisabled, revoked.Reason)
+
+	st := readPublisherMsg(t, pub)
+	assert.Equal(t, liveshare.MsgTalkState, st.Type)
+	assert.Equal(t, joined.ViewerID, st.ViewerID)
+	assert.False(t, st.Talking)
+}
+
+func TestLiveWS_MuteAllReachesSpeakingViewer(t *testing.T) {
 	srv, token := liveWSServer(t)
 
 	pub := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
@@ -458,13 +501,15 @@ func TestLiveWS_TalkStartWithoutGrantIsRejected(t *testing.T) {
 	_ = readViewerMsg(t, view)
 	_ = readPublisherMsg(t, pub)
 
-	// The room has speech disabled; a talk-start must be refused loudly rather
-	// than silently ignored (a silent drop is an undiagnosable "nothing happens").
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetTalkEnabled, Enabled: true})
 	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlTalkStart})
+	_ = readPublisherMsg(t, pub) // talk-state true
 
-	denied := readViewerMsg(t, view)
-	assert.Equal(t, liveshare.MsgTalkDenied, denied.Type)
-	assert.Equal(t, "not-granted", denied.Reason)
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlTalkMuteAll})
+
+	revoked := readViewerMsg(t, view)
+	assert.Equal(t, liveshare.MsgTalkRevoked, revoked.Type)
+	assert.Equal(t, liveshare.ReasonMuted, revoked.Reason)
 }
 
 func TestLiveWS_PublisherGoneOnViewer(t *testing.T) {

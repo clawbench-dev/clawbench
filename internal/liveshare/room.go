@@ -30,8 +30,6 @@ var (
 	ErrViewerExists = errors.New("liveshare: viewer already present")
 	// ErrTalkNotAllowed means the room has not enabled audience speech.
 	ErrTalkNotAllowed = errors.New("liveshare: talking is not enabled for this room")
-	// ErrTalkNotGranted means the viewer asked to talk without being granted.
-	ErrTalkNotGranted = errors.New("liveshare: viewer is not allowed to talk")
 )
 
 // Defaults chosen so a room cannot outlive the publisher's intent. The idle
@@ -62,8 +60,8 @@ type Sink interface {
 
 // Viewer is one audience member.
 //
-// CanTalk and Talking are read by the room and written only through its
-// methods, so a caller must never mutate them directly.
+// talking is read by the room and written only through its methods, so a caller
+// must never mutate it directly.
 type Viewer struct {
 	// ID is assigned by the room on join and is stable for the connection.
 	ID string
@@ -72,15 +70,12 @@ type Viewer struct {
 
 	sink Sink
 
-	canTalk bool
+	// talking is the viewer's microphone state. There is no per-viewer grant:
+	// the room-level switch is the only authorisation (see talk.go).
 	talking bool
-	pending bool
 }
 
-// CanTalk reports whether this viewer has been granted speech.
-func (v *Viewer) CanTalk() bool { return v.canTalk }
-
-// Talking reports whether this viewer is currently speaking.
+// Talking reports whether this viewer's microphone is on.
 func (v *Viewer) Talking() bool { return v.talking }
 
 // Room is a single live share. All methods are safe for concurrent use.
@@ -125,15 +120,14 @@ func (r *Room) TalkEnabled() bool {
 	return r.talkEnabled
 }
 
-// SetTalkEnabled flips the room-level speech switch. Turning it off revokes
-// every outstanding grant: leaving them in place would let a viewer keep
-// speaking after the publisher disabled the feature.
+// SetTalkEnabled flips the room-level speech switch. Turning it off also mutes
+// everyone: leaving a viewer's microphone live after the publisher disabled the
+// feature would keep sending audio the publisher believes is off.
 func (r *Room) SetTalkEnabled(on bool) {
 	r.mu.Lock()
 	r.talkEnabled = on
 	if !on {
 		for _, v := range r.viewers {
-			v.canTalk = false
 			v.talking = false
 		}
 	}

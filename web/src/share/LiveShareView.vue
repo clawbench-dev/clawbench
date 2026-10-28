@@ -42,34 +42,28 @@
       </button>
     </div>
 
+    <!-- One toggle: on = your microphone is live, off = muted. There is no
+         request/approval step — the publisher's room-level switch is the whole
+         authorisation model, and it can be turned off at any moment (which
+         arrives as talk-revoked and flips this back to off). -->
     <div v-if="talkEnabled" class="live-talkbar">
-      <template v-if="canTalk">
-        <button
-          class="live-talk-btn"
-          :class="{ 'live-talk-btn--active': talking }"
-          type="button"
-          @pointerdown.prevent="onTalkDown"
-          @pointerup.prevent="onTalkUp"
-          @pointerleave="onTalkUp"
-          @pointercancel="onTalkUp"
-        >
-          <Mic :size="16" />
-          {{ talking ? t('share.live.talking') : t('share.live.holdToTalk') }}
-        </button>
-        <span class="live-talk-hint">{{ t('share.live.talkHint') }}</span>
-      </template>
-      <template v-else>
-        <button
-          class="live-talk-btn"
-          type="button"
-          :disabled="talkPending"
-          @click="requestTalk"
-        >
-          <Mic :size="16" />
-          {{ talkPending ? t('share.live.talkPending') : t('share.live.requestTalk') }}
-        </button>
-        <span class="live-talk-hint">{{ t('share.live.talkNeedsApproval') }}</span>
-      </template>
+      <button
+        class="live-talk-btn"
+        :class="{ 'live-talk-btn--active': talking }"
+        type="button"
+        role="switch"
+        :aria-checked="talking"
+        :aria-label="t('share.live.micToggle')"
+        data-action="mic-toggle"
+        @click="toggleMic"
+      >
+        <Mic v-if="talking" :size="16" />
+        <MicOff v-else :size="16" />
+        {{ talking ? t('share.live.micOn') : t('share.live.micOff') }}
+      </button>
+      <span class="live-talk-hint">
+        {{ talking ? t('share.live.micOnHint') : t('share.live.micOffHint') }}
+      </span>
     </div>
   </div>
 </template>
@@ -84,7 +78,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Mic, VideoOff, VolumeX } from 'lucide-vue-next'
+import { Mic, MicOff, VideoOff, VolumeX } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ShareThemeButton from './ShareThemeButton.vue'
 import { LiveViewer, type LiveViewerState } from './liveViewer'
@@ -100,9 +94,7 @@ const state = ref<LiveViewerState>('connecting')
 const title = ref('')
 const failReason = ref('')
 const talkEnabled = ref(false)
-const canTalk = ref(false)
 const talking = ref(false)
-const talkPending = ref(false)
 const needsSoundUnlock = ref(false)
 
 let viewer: LiveViewer | null = null
@@ -189,7 +181,7 @@ function start(): void {
   }
   state.value = 'connecting'
   failReason.value = ''
-  talkPending.value = false
+  talking.value = false
 
   viewer = new LiveViewer({
     token,
@@ -202,22 +194,16 @@ function start(): void {
         state.value = s
         if (detail?.reason) failReason.value = detail.reason
         if (s === 'ended' || s === 'full' || s === 'failed') {
-          canTalk.value = false
           talking.value = false
-          talkPending.value = false
         }
       },
       onTalkEnabled: (v) => {
         talkEnabled.value = v
       },
-      onTalkGranted: () => {
-        canTalk.value = true
-        talkPending.value = false
-      },
       onTalkRevoked: () => {
-        canTalk.value = false
+        // Muted by the publisher, or the room switch went off: the toggle must
+        // reflect reality rather than staying "on" while sending nothing.
         talking.value = false
-        talkPending.value = false
       },
     },
   })
@@ -230,24 +216,24 @@ function retry(): void {
   start()
 }
 
-function requestTalk(): void {
+/**
+ * Flip the microphone.
+ *
+ * Optimistic: the UI flips first so the button feels responsive, and flips back
+ * if the microphone could not be opened (permission denied, no device) or the
+ * server refused (room switch off, reported later as talk-disabled).
+ */
+function toggleMic(): void {
   if (!viewer) return
-  talkPending.value = true
-  viewer.requestTalk()
-}
-
-function onTalkDown(): void {
-  if (!viewer || !canTalk.value) return
+  if (talking.value) {
+    talking.value = false
+    void viewer.stopTalking()
+    return
+  }
   talking.value = true
   void viewer.startTalking().then((ok) => {
     if (!ok) talking.value = false
   })
-}
-
-function onTalkUp(): void {
-  if (!viewer || !talking.value) return
-  talking.value = false
-  void viewer.stopTalking()
 }
 
 // A hidden tab can lose the media pipeline; re-attaching on return is cheaper

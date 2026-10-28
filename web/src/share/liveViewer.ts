@@ -45,7 +45,7 @@ export interface LiveViewerCallbacks {
   onTitle?: (title: string) => void
   /** Whether the room allows audience speech. Drives the "hold to talk" UI. */
   onTalkEnabled?: (enabled: boolean) => void
-  onTalkGranted?: () => void
+  /** The publisher muted us, or the room switch was turned off. */
   onTalkRevoked?: (reason: string) => void
 }
 
@@ -80,7 +80,6 @@ export class LiveViewer {
 
   private _state: LiveViewerState = 'idle'
   private _talkEnabled = false
-  private _canTalk = false
   private _talking = false
   private _closed = false
 
@@ -95,10 +94,6 @@ export class LiveViewer {
 
   get talkEnabled(): boolean {
     return this._talkEnabled
-  }
-
-  get canTalk(): boolean {
-    return this._canTalk
   }
 
   get talking(): boolean {
@@ -165,20 +160,18 @@ export class LiveViewer {
         this.setState('ended', { reason: msg.reason })
         this.teardown()
         break
-      case 'talk-granted':
-        this._canTalk = true
-        this.cb.onTalkGranted?.()
-        break
       case 'talk-revoked':
-        this._canTalk = false
+        // The publisher muted us, or turned the room switch off.
         this._talking = false
+        void this.detachMic()
         this.cb.onTalkRevoked?.(msg.reason ?? '')
         break
-      case 'talk-denied':
-        // The room refused the request (disabled, or a talk-start without a
-        // grant). Surface it so the UI can stop showing a pending state.
-        this._canTalk = false
-        this.cb.onTalkRevoked?.(msg.reason ?? 'denied')
+      case 'talk-disabled':
+        // We asked to speak while the room switch was off. Flip the toggle back
+        // instead of leaving it on and silently sending nothing.
+        this._talking = false
+        void this.detachMic()
+        this.cb.onTalkRevoked?.(msg.reason ?? 'disabled')
         break
       case 'error':
         appLog.w(TAG, 'server rejected a control frame', msg.message)
@@ -262,18 +255,15 @@ export class LiveViewer {
     }
   }
 
-  /** Ask the publisher for permission to speak. */
-  requestTalk(): void {
-    if (!this._talkEnabled || this._canTalk) return
-    this.send({ type: 'talk-request' })
-  }
-
   /**
-   * Start speaking. Requires a grant; the server rejects it otherwise, and the
-   * rejection arrives as `talk-denied`.
+   * Turn our microphone on.
+   *
+   * There is no approval step: the room-level switch is the whole authorisation
+   * model. The server rejects it (with `talk-disabled`) if that switch is off,
+   * which also covers a stale UI whose toggle was enabled by an older `joined`.
    */
   async startTalking(): Promise<boolean> {
-    if (!this._canTalk || !this.talkTx) return false
+    if (!this.talkTx) return false
     if (!this.micTrack) {
       try {
         const gum =
@@ -296,18 +286,23 @@ export class LiveViewer {
   }
 
   /**
-   * Stop speaking. Always safe to call, including when the grant was revoked
-   * mid-sentence: leaving the track attached would keep the mic live.
+   * Turn our microphone off. Always safe to call, including when the publisher
+   * already muted us: leaving the track attached would keep the mic live.
    */
   async stopTalking(): Promise<void> {
     if (!this._talking && !this.talkTx?.sender.track) return
     this._talking = false
+    await this.detachMic()
+    this.send({ type: 'talk-end' })
+  }
+
+  /** Detach the microphone track without reporting it (used on mute). */
+  private async detachMic(): Promise<void> {
     try {
       await this.talkTx?.sender.replaceTrack(null)
     } catch (e) {
       appLog.d(TAG, 'replaceTrack(null) failed', e)
     }
-    this.send({ type: 'talk-end' })
   }
 
   private send(payload: Record<string, unknown>): void {

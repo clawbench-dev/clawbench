@@ -22,8 +22,6 @@ const (
 	MsgAnswer = "answer"
 	// MsgICE carries one ICE candidate in either direction.
 	MsgICE = "ice"
-	// MsgTalkRequest tells the publisher a viewer asked to speak.
-	MsgTalkRequest = "talk-request"
 	// MsgTalkState reports a viewer's speech state change.
 	MsgTalkState = "talk-state"
 )
@@ -36,12 +34,12 @@ const (
 	MsgFull = "full"
 	// MsgPublisherGone means the publisher detached; the share is over.
 	MsgPublisherGone = "publisher-gone"
-	// MsgTalkGranted means the viewer may now speak.
-	MsgTalkGranted = "talk-granted"
-	// MsgTalkRevoked means the grant was withdrawn.
+	// MsgTalkRevoked means the publisher muted this viewer (or the room switch
+	// was turned off), so its microphone must stop.
 	MsgTalkRevoked = "talk-revoked"
-	// MsgTalkDenied means the room has audience speech disabled.
-	MsgTalkDenied = "talk-denied"
+	// MsgTalkDisabled means the viewer asked to speak while the room switch is
+	// off. The viewer's mic must go back to off.
+	MsgTalkDisabled = "talk-disabled"
 	// MsgError reports a rejected control frame without closing the socket.
 	MsgError = "error"
 )
@@ -52,9 +50,7 @@ const (
 	CtrlPublish = "publish"
 	// CtrlEnd ends the share and disconnects every viewer.
 	CtrlEnd = "end"
-	// CtrlTalkGrant approves a viewer's speech request.
-	CtrlTalkGrant = "talk-grant"
-	// CtrlTalkRevoke withdraws a viewer's grant.
+	// CtrlTalkRevoke silences one viewer.
 	CtrlTalkRevoke = "talk-revoke"
 	// CtrlTalkMuteAll revokes every grant at once.
 	CtrlTalkMuteAll = "talk-mute-all"
@@ -71,9 +67,7 @@ const (
 const (
 	// CtrlJoin is the viewer's first frame.
 	CtrlJoin = "join"
-	// CtrlTalkRequest asks to speak.
-	CtrlTalkRequest = "talk-request"
-	// CtrlTalkStart reports that the viewer started speaking.
+	// CtrlTalkStart reports that the viewer turned its microphone on.
 	CtrlTalkStart = "talk-start"
 	// CtrlTalkEnd reports that the viewer stopped speaking.
 	CtrlTalkEnd = "talk-end"
@@ -102,8 +96,6 @@ type PublisherMessage struct {
 const (
 	// ReasonDisabled means the room-level audience-speech switch is off.
 	ReasonDisabled = "disabled"
-	// ReasonNotGranted means the viewer spoke without an approval.
-	ReasonNotGranted = "not-granted"
 	// ReasonRevoked means the publisher withdrew this viewer's approval.
 	ReasonRevoked = "revoked"
 	// ReasonMuted means a mute-all cleared every approval.

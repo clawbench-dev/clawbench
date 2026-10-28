@@ -258,28 +258,21 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 
 	case liveshare.CtrlSetTalkEnabled:
 		room.SetTalkEnabled(ctl.Enabled)
-		// Disabling revokes grants inside the room; tell the affected viewers so
-		// their "hold to talk" button disappears instead of silently failing.
+		// Disabling mutes everyone inside the room; tell each affected viewer so
+		// its microphone toggle flips back to off instead of silently failing.
 		if !ctl.Enabled {
 			for _, v := range room.Viewers() {
 				room.SendToViewer(v.ID, liveshare.ViewerMessage{
 					Type:   liveshare.MsgTalkRevoked,
 					Reason: liveshare.ReasonDisabled,
 				})
+				notifyTalkState(room, v.ID, false)
 			}
 		}
 		return false
 
-	case liveshare.CtrlTalkGrant:
-		if err := room.GrantTalk(ctl.ViewerID); err != nil {
-			_ = sink.Send(liveshare.PublisherMessage{Type: liveshare.MsgError, ViewerID: ctl.ViewerID, Name: err.Error()})
-			return false
-		}
-		room.SendToViewer(ctl.ViewerID, liveshare.ViewerMessage{Type: liveshare.MsgTalkGranted})
-		return false
-
 	case liveshare.CtrlTalkRevoke:
-		if err := room.RevokeTalk(ctl.ViewerID); err != nil {
+		if err := room.SetTalking(ctl.ViewerID, false); err != nil {
 			_ = sink.Send(liveshare.PublisherMessage{Type: liveshare.MsgError, ViewerID: ctl.ViewerID, Name: err.Error()})
 			return false
 		}
@@ -406,32 +399,15 @@ func handleViewerControl(room *liveshare.Room, viewer *liveshare.Viewer, ctl liv
 			Candidate: ctl.Candidate,
 		})
 
-	case liveshare.CtrlTalkRequest:
-		st, err := room.RequestTalk(viewer.ID)
-		if err != nil {
-			reason := "denied"
-			if errors.Is(err, liveshare.ErrTalkNotAllowed) {
-				reason = liveshare.ReasonDisabled
-			}
-			room.SendToViewer(viewer.ID, liveshare.ViewerMessage{Type: liveshare.MsgTalkDenied, Reason: reason})
-			return
-		}
-		if st == liveshare.TalkGranted {
-			// Already granted (a repeat request): no need to bother the publisher.
-			room.SendToViewer(viewer.ID, liveshare.ViewerMessage{Type: liveshare.MsgTalkGranted})
-			return
-		}
-		room.SendToPublisher(liveshare.PublisherMessage{
-			Type:     liveshare.MsgTalkRequest,
-			ViewerID: viewer.ID,
-			Name:     viewer.Name,
-		})
-
 	case liveshare.CtrlTalkStart:
 		if err := room.SetTalking(viewer.ID, true); err != nil {
-			// Rejected loudly: a client that skipped the grant handshake has a
-			// bug, and silence would turn it into "the button does nothing".
-			room.SendToViewer(viewer.ID, liveshare.ViewerMessage{Type: liveshare.MsgTalkDenied, Reason: liveshare.ReasonNotGranted})
+			// Rejected loudly: a client that turns its mic on with the room
+			// switch off has a bug, and silence would turn it into "the toggle
+			// does nothing". The viewer flips its switch back to off on this.
+			room.SendToViewer(viewer.ID, liveshare.ViewerMessage{
+				Type:   liveshare.MsgTalkDisabled,
+				Reason: liveshare.ReasonDisabled,
+			})
 			return
 		}
 		notifyTalkState(room, viewer.ID, true)

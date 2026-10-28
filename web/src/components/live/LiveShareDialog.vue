@@ -91,21 +91,16 @@
             <span class="live-viewer-talk" :class="`live-viewer-talk--${v.talk}`">
               {{ talkLabel(v.talk) }}
             </span>
-            <template v-if="v.talk === 'pending'">
-              <button class="live-btn live-btn--sm" type="button" @click="share.grantTalk(v.id)">
-                {{ t('liveShare.approve') }}
-              </button>
-              <button class="live-btn live-btn--sm" type="button" @click="share.revokeTalk(v.id)">
-                {{ t('liveShare.deny') }}
-              </button>
-            </template>
+            <!-- Only speaking viewers need an action: there is no approval
+                 queue, so the publisher's controls are "mute this one" and
+                 "mute everyone" (below). -->
             <button
-              v-else-if="v.talk === 'granted' || v.talk === 'talking'"
+              v-if="v.talk === 'talking'"
               class="live-btn live-btn--sm"
               type="button"
               @click="share.revokeTalk(v.id)"
             >
-              {{ t('liveShare.revoke') }}
+              {{ t('liveShare.mute') }}
             </button>
           </li>
         </ul>
@@ -181,21 +176,10 @@ const supported = ref(false)
 const loadingSources = ref(false)
 const starting = ref(false)
 
-const hasTalkers = computed(() =>
-  share.viewers.value.some((v) => v.talk === 'talking' || v.talk === 'granted' || v.talk === 'pending'),
-)
+const hasTalkers = computed(() => share.viewers.value.some((v) => v.talk === 'talking'))
 
 function talkLabel(talk: string): string {
-  switch (talk) {
-    case 'pending':
-      return t('liveShare.talkPending')
-    case 'granted':
-      return t('liveShare.talkGranted')
-    case 'talking':
-      return t('liveShare.talkTalking')
-    default:
-      return t('liveShare.talkNone')
-  }
+  return talk === 'talking' ? t('liveShare.talkTalking') : t('liveShare.talkMuted')
 }
 
 /** Load sources lazily: enumerating screens is not free and is only needed here. */
@@ -301,7 +285,9 @@ function onClose(): void {
   background: var(--bg-tertiary, #ffebe9);
   color: var(--color-red, #cf222e);
   font-size: var(--font-size-sm, 13px);
-  word-break: break-word;
+  /* overflow-wrap (not the deprecated word-break: break-word) so a long error
+     message wraps instead of stretching the dialog. */
+  overflow-wrap: anywhere;
 }
 
 .live-source-grid {

@@ -358,28 +358,22 @@ func TestRoom_ViewersSnapshotIsACopy(t *testing.T) {
 	}
 }
 
-func TestSetTalkEnabledOffRevokesGrants(t *testing.T) {
+func TestSetTalkEnabledOffMutesSpeakingViewer(t *testing.T) {
 	g := newTestRegistry(t)
 	room, _ := g.Create("/proj/a", "A")
 	v, _ := room.AddViewer("", &fakeSink{})
 
 	room.SetTalkEnabled(true)
-	if _, err := room.RequestTalk(v.ID); err != nil {
-		t.Fatalf("RequestTalk: %v", err)
+	if err := room.SetTalking(v.ID, true); err != nil {
+		t.Fatalf("SetTalking: %v", err)
 	}
-	if err := room.GrantTalk(v.ID); err != nil {
-		t.Fatalf("GrantTalk: %v", err)
-	}
-	if !v.CanTalk() {
-		t.Fatal("viewer should be granted")
+	if !v.Talking() {
+		t.Fatal("viewer should be speaking")
 	}
 
 	room.SetTalkEnabled(false)
 
-	if v.CanTalk() {
-		t.Fatal("disabling audience speech must revoke outstanding grants")
-	}
 	if v.Talking() {
-		t.Fatal("disabling audience speech must also stop speech in progress")
+		t.Fatal("disabling audience speech must stop speech in progress")
 	}
 }

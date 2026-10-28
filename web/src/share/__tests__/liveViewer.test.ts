@@ -308,66 +308,29 @@ describe('LiveViewer terminal states', () => {
 })
 
 describe('LiveViewer talk', () => {
-  it('does not request talk when the room disabled it', () => {
-    const { viewer } = setup()
-    joinRoom(viewer, { talkEnabled: false })
-
-    viewer.requestTalk()
-
-    expect(lastWS().sentJSON().some((m) => m.type === 'talk-request')).toBe(false)
-  })
-
-  it('requests talk when enabled', () => {
-    const { viewer } = setup()
-    joinRoom(viewer, { talkEnabled: true })
-
-    viewer.requestTalk()
-
-    expect(lastWS().sentJSON()).toContainEqual({ type: 'talk-request' })
-  })
-
-  it('marks canTalk on talk-granted', () => {
-    const { viewer } = setup()
-    joinRoom(viewer, { talkEnabled: true })
-
-    lastWS().emit({ type: 'talk-granted' })
-
-    expect(viewer.canTalk).toBe(true)
-  })
-
-  it('clears canTalk on talk-revoked', () => {
-    const { viewer } = setup()
-    joinRoom(viewer, { talkEnabled: true })
-    lastWS().emit({ type: 'talk-granted' })
-
-    lastWS().emit({ type: 'talk-revoked', reason: 'muted' })
-
-    expect(viewer.canTalk).toBe(false)
-    expect(viewer.talking).toBe(false)
-  })
-
-  it('attaches the mic via replaceTrack and sends talk-start', async () => {
+  it('turns the mic on and reports it, with no approval step', async () => {
     const micTrack = makeTrack('audio')
     const getUserMedia = vi.fn(async () => ({ getAudioTracks: () => [micTrack] }) as unknown as MediaStream)
     const { viewer } = setup({ getUserMedia })
     joinRoom(viewer, { talkEnabled: true })
-    lastWS().emit({ type: 'talk-granted' })
 
     const ok = await viewer.startTalking()
 
     expect(ok).toBe(true)
     expect(getUserMedia).toHaveBeenCalledOnce()
     expect(lastPC().transceivers[0].sender.track).toBe(micTrack)
-    expect(lastWS().sentJSON()).toContainEqual({ type: 'talk-start' })
+    // The only control frame is talk-start: no talk-request, no grant round trip.
+    const sent = lastWS().sentJSON()
+    expect(sent).toContainEqual({ type: 'talk-start' })
+    expect(sent.some((m) => m.type === 'talk-request')).toBe(false)
     expect(viewer.talking).toBe(true)
   })
 
-  it('does not renegotiate when talking starts', async () => {
+  it('does not renegotiate when the mic is turned on', async () => {
     const micTrack = makeTrack('audio')
     const getUserMedia = vi.fn(async () => ({ getAudioTracks: () => [micTrack] }) as unknown as MediaStream)
     const { viewer } = setup({ getUserMedia })
     joinRoom(viewer, { talkEnabled: true })
-    lastWS().emit({ type: 'talk-granted' })
     await vi.waitFor(() => expect(viewer.state).toBe('negotiating'))
     const offersBefore = lastPC().createOffer.mock.calls.length
 
@@ -378,22 +341,11 @@ describe('LiveViewer talk', () => {
     expect(lastWS().sentJSON().filter((m) => m.type === 'offer')).toHaveLength(1)
   })
 
-  it('refuses to talk without a grant', async () => {
-    const { viewer } = setup()
-    joinRoom(viewer, { talkEnabled: true })
-
-    const ok = await viewer.startTalking()
-
-    expect(ok).toBe(false)
-    expect(lastWS().sentJSON().some((m) => m.type === 'talk-start')).toBe(false)
-  })
-
-  it('stops talking by detaching the track', async () => {
+  it('turns the mic off by detaching the track', async () => {
     const micTrack = makeTrack('audio')
     const getUserMedia = vi.fn(async () => ({ getAudioTracks: () => [micTrack] }) as unknown as MediaStream)
     const { viewer } = setup({ getUserMedia })
     joinRoom(viewer, { talkEnabled: true })
-    lastWS().emit({ type: 'talk-granted' })
     await viewer.startTalking()
 
     await viewer.stopTalking()
@@ -403,12 +355,11 @@ describe('LiveViewer talk', () => {
     expect(viewer.talking).toBe(false)
   })
 
-  it('reuses one microphone stream across talk sessions', async () => {
+  it('reuses one microphone stream across on/off cycles', async () => {
     const micTrack = makeTrack('audio')
     const getUserMedia = vi.fn(async () => ({ getAudioTracks: () => [micTrack] }) as unknown as MediaStream)
     const { viewer } = setup({ getUserMedia })
     joinRoom(viewer, { talkEnabled: true })
-    lastWS().emit({ type: 'talk-granted' })
 
     await viewer.startTalking()
     await viewer.stopTalking()
@@ -418,17 +369,49 @@ describe('LiveViewer talk', () => {
     expect(getUserMedia).toHaveBeenCalledOnce()
   })
 
-  it('treats talk-denied as a revocation so the UI stops waiting', () => {
+  it('fails to start when the microphone is unavailable', async () => {
+    const getUserMedia = vi.fn(async () => {
+      throw new Error('NotAllowedError')
+    })
+    const { viewer } = setup({ getUserMedia })
+    joinRoom(viewer, { talkEnabled: true })
+
+    const ok = await viewer.startTalking()
+
+    // The caller flips its toggle back on a false result.
+    expect(ok).toBe(false)
+    expect(viewer.talking).toBe(false)
+    expect(lastWS().sentJSON().some((m) => m.type === 'talk-start')).toBe(false)
+  })
+
+  it('stops sending when the publisher mutes us', async () => {
+    const micTrack = makeTrack('audio')
+    const getUserMedia = vi.fn(async () => ({ getAudioTracks: () => [micTrack] }) as unknown as MediaStream)
+    const { viewer } = setup({ getUserMedia })
+    joinRoom(viewer, { talkEnabled: true })
+    await viewer.startTalking()
+
+    lastWS().emit({ type: 'talk-revoked', reason: 'muted' })
+
+    expect(viewer.talking).toBe(false)
+    // The track must be detached locally too, not just flagged: otherwise the
+    // microphone keeps feeding a stream nobody is listening to.
+    await vi.waitFor(() => expect(lastPC().transceivers[0].sender.track).toBeNull())
+  })
+
+  it('flips back when the room switch is off (talk-disabled)', async () => {
     const revoked: string[] = []
     const { viewer } = setup({
       callbacks: { onTalkRevoked: (r: string) => revoked.push(r) },
     })
     joinRoom(viewer, { talkEnabled: true })
 
-    lastWS().emit({ type: 'talk-denied', reason: 'not-granted' })
+    // A stale UI whose toggle was enabled by an older `joined` tries to speak
+    // after the publisher disabled the room switch.
+    lastWS().emit({ type: 'talk-disabled', reason: 'disabled' })
 
-    expect(revoked).toEqual(['not-granted'])
-    expect(viewer.canTalk).toBe(false)
+    expect(revoked).toEqual(['disabled'])
+    expect(viewer.talking).toBe(false)
   })
 })
 

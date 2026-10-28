@@ -391,25 +391,24 @@ describe('talk authorisation', () => {
     expect(lastWS().sentJSON()).toContainEqual({ type: 'set-talk-enabled', enabled: true })
   })
 
-  it('marks a requesting viewer as pending', async () => {
-    const { share } = await startSharing()
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
-    await vi.waitFor(() => expect(share.viewers.value).toHaveLength(1))
-
-    lastWS().emit({ type: 'talk-request', viewerId: 'v1' })
-
-    expect(share.viewers.value[0].talk).toBe('pending')
-  })
-
-  it('relays grant and revoke', async () => {
+  it('only needs revoke — there is no approval queue', async () => {
     const { share } = await startSharing()
 
-    share.grantTalk('v1')
     share.revokeTalk('v1')
 
     const sent = lastWS().sentJSON()
-    expect(sent).toContainEqual({ type: 'talk-grant', viewerId: 'v1' })
     expect(sent).toContainEqual({ type: 'talk-revoke', viewerId: 'v1' })
+    // The grant verb no longer exists: the room switch is the authorisation.
+    expect(sent.some((m) => m.type === 'talk-grant')).toBe(false)
+  })
+
+  it('starts every viewer muted', async () => {
+    const { share } = await startSharing()
+
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    await vi.waitFor(() => expect(share.viewers.value).toHaveLength(1))
+
+    expect(share.viewers.value[0].talk).toBe('muted')
   })
 
   it('tracks speaking state from the server', async () => {
@@ -421,7 +420,7 @@ describe('talk authorisation', () => {
     expect(share.viewers.value[0].talk).toBe('talking')
 
     lastWS().emit({ type: 'talk-state', viewerId: 'v1', talking: false })
-    expect(share.viewers.value[0].talk).toBe('granted')
+    expect(share.viewers.value[0].talk).toBe('muted')
   })
 
   it('mute-all clears every viewer locally and notifies the server', async () => {
@@ -434,7 +433,7 @@ describe('talk authorisation', () => {
     share.muteAll()
 
     expect(lastWS().sentJSON()).toContainEqual({ type: 'talk-mute-all' })
-    expect(share.viewers.value.every((v) => v.talk === 'none')).toBe(true)
+    expect(share.viewers.value.every((v) => v.talk === 'muted')).toBe(true)
   })
 })
 
