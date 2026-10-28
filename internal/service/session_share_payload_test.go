@@ -1166,11 +1166,13 @@ func TestSessionSharePayload_GroupCarriesHostMemberID(t *testing.T) {
 
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model, session_type, context_state)
-		 VALUES ('g1', 1, 'codebuddy', 'Group', 'codebuddy', 'm', 'group', '{"host_member_id":"row-host-1"}')`)
+		 VALUES ('g1', 1, 'codebuddy', 'Group', 'codebuddy', 'm', 'group', '{"host_member_id":"row-host-1"}')`,
+	)
 	require.NoError(t, err)
 	_, err = db.Exec(
 		`INSERT INTO chat_history (project_id, role, content, session_id, backend, agent_id, streaming, indexed)
-		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 'g1', 'codebuddy', 'row-host-1', 0, 0)`)
+		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 'g1', 'codebuddy', 'row-host-1', 0, 0)`,
+	)
 	require.NoError(t, err)
 
 	raw, _, err := buildAllForSession(t, "g1")
@@ -1191,11 +1193,13 @@ func TestSessionSharePayload_PlainSessionHasNoHostMemberID(t *testing.T) {
 	defer db.Close()
 
 	_, err := db.Exec(
-		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model) VALUES ('s1', 1, 'claude', 'Plain', 'claude', 'm')`)
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model) VALUES ('s1', 1, 'claude', 'Plain', 'claude', 'm')`,
+	)
 	require.NoError(t, err)
 	_, err = db.Exec(
 		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, indexed)
-		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 's1', 'claude', 0, 0)`)
+		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 's1', 'claude', 0, 0)`,
+	)
 	require.NoError(t, err)
 
 	raw, _, err := buildAllForSession(t, "s1")
@@ -1220,7 +1224,8 @@ func TestSessionSharePayload_GroupCarriesOrderedActiveMembers(t *testing.T) {
 
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model, session_type, context_state)
-		 VALUES ('g1', 1, 'codebuddy', 'Group', 'codebuddy', 'm', 'group', '{"host_member_id":"m-host"}')`)
+		 VALUES ('g1', 1, 'codebuddy', 'Group', 'codebuddy', 'm', 'group', '{"host_member_id":"m-host"}')`,
+	)
 	require.NoError(t, err)
 	// Member rows: the host first (created_at order), then a plain member, then a
 	// DISABLED member that must be excluded. group_id points each row at the group.
@@ -1230,7 +1235,8 @@ func TestSessionSharePayload_GroupCarriesOrderedActiveMembers(t *testing.T) {
 		_, err := db.Exec(
 			`INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id, disabled, created_at)
 			 VALUES (?, 1, ?, '', ?, ?, 'group_member', 'g1', ?, ?)`,
-			id, backend, name, id, disabled, createdAt)
+			id, backend, name, id, disabled, createdAt,
+		)
 		require.NoError(t, err)
 	}
 	insertMember("m-host", "Host", "codebuddy", 0, "2026-01-01 10:00:00")
@@ -1239,7 +1245,8 @@ func TestSessionSharePayload_GroupCarriesOrderedActiveMembers(t *testing.T) {
 
 	_, err = db.Exec(
 		`INSERT INTO chat_history (project_id, role, content, session_id, backend, agent_id, streaming, indexed)
-		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 'g1', 'codebuddy', 'm-host', 0, 0)`)
+		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 'g1', 'codebuddy', 'm-host', 0, 0)`,
+	)
 	require.NoError(t, err)
 
 	raw, _, err := buildAllForSession(t, "g1")
@@ -1276,11 +1283,13 @@ func TestSessionSharePayload_PlainSessionHasNoGroupMembers(t *testing.T) {
 	defer db.Close()
 
 	_, err := db.Exec(
-		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model) VALUES ('s1', 1, 'claude', 'Plain', 'claude', 'm')`)
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model) VALUES ('s1', 1, 'claude', 'Plain', 'claude', 'm')`,
+	)
 	require.NoError(t, err)
 	_, err = db.Exec(
 		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, indexed)
-		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 's1', 'claude', 0, 0)`)
+		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 's1', 'claude', 0, 0)`,
+	)
 	require.NoError(t, err)
 
 	raw, _, err := buildAllForSession(t, "s1")
@@ -1336,7 +1345,8 @@ func TestSessionSharePayload_SessionTypeIsExplicit(t *testing.T) {
 			_, err := db.Exec(
 				`INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id, disabled)
 				 VALUES (?, 1, 'codebuddy', '', ?, ?, 'group_member', 'g1', 1)`,
-				id, id, id)
+				id, id, id,
+			)
 			require.NoError(t, err)
 		}
 		seedMessage(t, db, "g1", "user", `<clawbench-mention targets="m-host">hi</clawbench-mention>`, 0, 0)
