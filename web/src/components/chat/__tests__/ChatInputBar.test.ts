@@ -2297,6 +2297,30 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.showFileMenu).toBe(false)
   })
 
+  it('@ menu opens mid-sentence right after CJK text', async () => {
+    // Chinese has no word separators, so requiring whitespace before "@" made
+    // the menu look like it only worked at the head of the input.
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '看看这个@main'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    const items = wrapper.findAll('.completion-item')
+    expect(items).toHaveLength(1)
+    expect(items[0].find('.completion-label').text()).toBe('main.ts')
+
+    // Selecting replaces only the trigger, keeping the leading Chinese prose.
+    await items[0].trigger('mousedown')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('add-attached')![0]).toEqual(['src/main.ts', false])
+    expect(wrapper.vm.inputText).toBe('看看这个')
+
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
   it('selecting an @ candidate emits add-attached and removes the query', async () => {
     const { store } = await import('@/stores/app.ts')
     store.state.currentDir = 'src'
@@ -2323,16 +2347,16 @@ describe('ChatInputBar', () => {
     const wrapper = mountBar({
       isGroupSession: true,
       groupMembers: [
-        { id: 'm-a', name: 'Alice', left: false },
-        { id: 'm-b', name: 'Bob', left: false },
-        { id: 'm-gone', name: 'Gone', left: true },
+        { id: 'm-a', name: 'Alice', disabled: false },
+        { id: 'm-b', name: 'Bob', disabled: false },
+        { id: 'm-gone', name: 'Gone', disabled: true },
       ],
     })
     wrapper.vm.inputText = '@'
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.showFileMenu).toBe(true)
     const labels = wrapper.findAll('.completion-item .completion-label').map(i => i.text())
-    // Active members are listed; the left member is not.
+    // Speaking members are listed; the disabled member is not.
     expect(labels).toEqual(['Alice', 'Bob'])
 
     await wrapper.findAll('.completion-item')[1].trigger('mousedown')
@@ -2416,7 +2440,7 @@ describe('ChatInputBar', () => {
     store.state.dirEntries = [] as any
     const wrapper = mountBar({
       isGroupSession: true,
-      groupMembers: [{ id: 'm-a', name: 'Alice', left: false, agentId: 'a-1', backend: 'claude' }],
+      groupMembers: [{ id: 'm-a', name: 'Alice', disabled: false, agentId: 'a-1', backend: 'claude' }],
     })
     wrapper.vm.inputText = '@'
     await wrapper.vm.$nextTick()
@@ -2433,7 +2457,7 @@ describe('ChatInputBar', () => {
     store.state.dirEntries = [] as any
     const wrapper = mountBar({
       isGroupSession: true,
-      groupMembers: [{ id: 'm-a', name: 'Alice', left: false, agentId: 'a-1', agentName: 'Claude', backend: 'claude' }],
+      groupMembers: [{ id: 'm-a', name: 'Alice', disabled: false, agentId: 'a-1', agentName: 'Claude', backend: 'claude' }],
     })
     wrapper.vm.inputText = '@'
     await wrapper.vm.$nextTick()
@@ -2449,8 +2473,8 @@ describe('ChatInputBar', () => {
     const wrapper = mountBar({
       isGroupSession: true,
       groupMembers: [
-        { id: 'm-a', name: 'Alice', left: false, agentId: 'a-1', avatar: 'MEMBER_A', backend: 'claude' },
-        { id: 'm-b', name: 'Alicia', left: false, agentId: 'a-1', avatar: 'MEMBER_B', backend: 'claude' },
+        { id: 'm-a', name: 'Alice', disabled: false, agentId: 'a-1', avatar: 'MEMBER_A', backend: 'claude' },
+        { id: 'm-b', name: 'Alicia', disabled: false, agentId: 'a-1', avatar: 'MEMBER_B', backend: 'claude' },
       ],
     })
     wrapper.vm.inputText = '@'
@@ -2467,7 +2491,7 @@ describe('ChatInputBar', () => {
 
   it('does not list members in the @ menu outside a group session', async () => {
     const wrapper = mountBar({
-      groupMembers: [{ id: 'm-a', name: 'Alice', left: false }],
+      groupMembers: [{ id: 'm-a', name: 'Alice', disabled: false }],
     })
     wrapper.vm.inputText = '@'
     await wrapper.vm.$nextTick()

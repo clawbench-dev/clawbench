@@ -508,6 +508,80 @@ func TestSchema_AwaitingUserAtMigration(t *testing.T) {
 	require.NoError(t, InitDB())
 }
 
+// TestSchema_DisabledColumnAndMemberConversion verifies the whole upgrade path for
+// the group "禁用" flag on a database created BEFORE it existed:
+//
+//   - the `disabled` column is re-added (a fresh InitDB only proves the CREATE TABLE
+//     DDL mentions it — the ALTER branch would never run, so deleting it would
+//     stay green while every real upgrade hit `no such column: disabled` on every
+//     roster query);
+//   - the one-time data migration turns a legacy `archived=1` group_member row
+//     into `disabled=1` IN THE SAME InitDB run, which is what pins the ORDER
+//     (column first, migration second);
+//   - an archived CHAT row keeps its meaning;
+//   - a second InitDB is a no-op.
+func TestSchema_DisabledColumnAndMemberConversion(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+
+	// Phase 1: build the current schema, seed rows, then drop the column and
+	// put the member row back into the legacy "removed" shape.
+	require.NoError(t, InitDB())
+	store.Close()
+
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, session_type) VALUES ('grp', 1, 'codebuddy', 'G', 'group')")
+	require.NoError(t, err)
+	// The legacy "removed from the group" shape: a member row with archived=1.
+	_, err = raw.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, session_type, group_id, archived)
+		VALUES ('mem-old', 1, 'claude', '', 'Gone', 'group_member', 'grp', 1)`)
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, session_type, archived) VALUES ('chat-old', 1, 'claude', 'C', 'chat', 1)")
+	require.NoError(t, err)
+	_, err = raw.Exec("ALTER TABLE chat_sessions DROP COLUMN disabled")
+	require.NoError(t, err)
+	// The conversion is ledger-gated and Phase 1 already recorded it (it ran on an
+	// empty roster), so forget it here — otherwise Phase 2 skips the conversion
+	// and this test would pass without ever exercising it. Must happen on the raw
+	// connection: the store is closed at this point, so ResetSchemaMigrationsForTest
+	// would silently fail.
+	_, err = raw.Exec("DELETE FROM schema_migrations")
+	require.NoError(t, err)
+	raw.Close()
+
+	// Phase 2: one InitDB must both re-add the column and convert the row.
+	require.NoError(t, InitDB())
+	defer store.Close()
+
+	assert.Contains(t, getTableColumns(t, store.UnsafeDBForTest(), "chat_sessions"), "disabled",
+		"the migration must re-add the column to a pre-existing database")
+
+	var archived, disabled int
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
+		"SELECT archived, disabled FROM chat_sessions WHERE id = 'mem-old'",
+	).Scan(&archived, &disabled))
+	assert.Equal(t, 0, archived, "a legacy archived member must be un-archived")
+	assert.Equal(t, 1, disabled, "a legacy archived member must come out disabled")
+
+	var chatArchived, chatDisabled int
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
+		"SELECT archived, disabled FROM chat_sessions WHERE id = 'chat-old'",
+	).Scan(&chatArchived, &chatDisabled))
+	assert.Equal(t, 1, chatArchived, "an archived CHAT must keep its archived flag")
+	assert.Equal(t, 0, chatDisabled, "an archived CHAT must not be disabled")
+
+	// Idempotent: the pragma guard and the ledger both skip.
+	require.NoError(t, InitDB())
+}
+
 // TestSchema_SortOrderMigration verifies chat_sessions.sort_order is added to a
 // database created before the column existed (#492), that the migration is
 // idempotent, and that it leaves pre-existing rows at the default 0 — so the

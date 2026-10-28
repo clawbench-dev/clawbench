@@ -153,6 +153,7 @@ var hotReloadFields = map[string]bool{
 	"feishu.app_secret":         true,
 	"feishu.users":              true,
 	"push_mode":                 true,
+	"forge.enabled":             true,
 	"forge.insecure_tls":        true,
 	"forge.notify.opened":       true,
 	"forge.notify.closed":       true,
@@ -176,6 +177,7 @@ var hotReloadFields = map[string]bool{
 	// Usage meter — the worker re-reads the rule every tick, so a changed rule
 	// takes effect without a restart. The handler also recreates the worker so
 	// the new rule is checked immediately instead of up to one interval later.
+	"usage_meter.enabled":     true,
 	"usage_meter.anchor_date": true,
 	"usage_meter.cycle_mode":  true,
 	"usage_meter.period_days": true,
@@ -365,6 +367,7 @@ func parseMCPServers(raw []any) ([]model.MCPServer, error) {
 // are deliberately absent: they describe the server's notification progress,
 // not user configuration, and the UI has nothing to do with them.
 type configUsageMeter struct {
+	Enabled    bool    `json:"enabled"`
 	AnchorDate string  `json:"anchor_date"`
 	CycleMode  string  `json:"cycle_mode"`
 	PeriodDays int     `json:"period_days"`
@@ -513,6 +516,9 @@ type configFeishu struct {
 // deliberately NOT returned: the response carries only the set of hosts that
 // have a token (has_token), so a token can be written but never read back.
 type configForge struct {
+	// Enabled is the master switch. Off means polling is stopped, every
+	// project's binding has been cleared, and the dock entry is hidden.
+	Enabled bool `json:"enabled"`
 	// CredentialHosts lists hosts with a configured token, sorted.
 	CredentialHosts []string `json:"credential_hosts"`
 	// CredentialSchemes maps each host with a token to the API scheme it is
@@ -698,6 +704,7 @@ func buildConfigForge(cfg model.Config) configForge {
 	}
 
 	return configForge{
+		Enabled:           cfg.Forge.Enabled,
 		CredentialHosts:   hosts,
 		CredentialSchemes: schemes,
 		InsecureTLS:       cfg.Forge.InsecureTLS,
@@ -870,6 +877,7 @@ var PatchableConfigPaths = map[string]bool{
 	"feishu.app_secret":                 true,
 	"feishu.users":                      true,
 	"push_mode":                         true,
+	"forge.enabled":                     true,
 	"forge.insecure_tls":                true,
 	"forge.notify.opened":               true,
 	"forge.notify.closed":               true,
@@ -892,6 +900,7 @@ var PatchableConfigPaths = map[string]bool{
 	// (notified_cycle_start / notified_stage) are deliberately absent: they are
 	// service-owned bookkeeping, and letting a client write them would let it
 	// suppress or duplicate the notification.
+	"usage_meter.enabled":     true,
 	"usage_meter.anchor_date": true,
 	"usage_meter.cycle_mode":  true,
 	"usage_meter.period_days": true,
@@ -1072,6 +1081,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Appearance: buildConfigAppearance(cfg),
 		Forge:      buildConfigForge(cfg),
 		UsageMeter: configUsageMeter{
+			Enabled:    cfg.UsageMeter.Enabled,
 			AnchorDate: cfg.UsageMeter.AnchorDate,
 			// Normalized, never the raw stored value: an install from before
 			// cycle_mode existed stores "" and the settings page has to show a
@@ -1156,33 +1166,7 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	normalizeUserNicknameInPatch(patch)
 
 	if err := validatePatchValues(patch); err != nil {
-		// A nickname colliding with an existing agent is a conflict, not a
-		// malformed value: answer 409 with the localized key so the UI can show
-		// the same reason the agent-side guard does.
-		if errors.Is(err, errUserNicknameTaken) {
-			writeLocalizedErrorf(w, r, http.StatusConflict, "UserNicknameTaken")
-			return
-		}
-		// A malformed nickname answers 400 with the localized key (the raw
-		// English fmt.Errorf message would not be translated by the UI).
-		if errors.Is(err, errInvalidUserNickname) {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidUserNickname")
-			return
-		}
-		// A rejected config value names the offending field in the user's
-		// language. The generic `invalid_value` body this replaces was
-		// unactionable: the API helper surfaces only `error`, so the user saw
-		// "invalid_value" and could not tell which of the four usage-meter
-		// fields was wrong, let alone what the rule is.
-		var valueErr *configValueError
-		if errors.As(err, &valueErr) {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, valueErr.MsgKey, valueErr.templateData())
-			return
-		}
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error":   "invalid_value",
-			"message": err.Error(),
-		})
+		writePatchValueError(w, r, err)
 		return
 	}
 
@@ -1227,6 +1211,25 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	// Sort changed fields for deterministic response
 	sort.Strings(changedFields)
 
+	// Turning the integration off clears every project's repository binding.
+	// Deliberately AFTER the config write succeeded: clearing first and then
+	// failing to persist would destroy the user's bindings while the switch
+	// stayed on, i.e. the worst of both states.
+	//
+	// Bindings are the thing that actually drives polling, so this is what makes
+	// "disabled" mean "no outbound requests" rather than just "hidden". The
+	// poller also checks the flag each cycle (belt and braces for the window
+	// before this runs).
+	//
+	// A failure here is reported as a WARNING, not a 500. The config is already
+	// persisted and in memory — that is the authoritative fact — so answering 500
+	// would make the client roll its cached `forge.enabled` back to true and
+	// redraw the dock and the switch as enabled, while the server is disabled.
+	// The user would then be told "save failed" about a change that did take
+	// effect. The stale bindings are harmless on their own (the poller checks the
+	// flag first) and the next disable attempt retries the cleanup.
+	clearWarnings := clearForgeBindingsOnDisable(patch)
+
 	// Classify fields into hot (no restart) and cold (needs restart)
 	coldFields := make([]string, 0) // always non-nil so JSON serializes as [] not null
 	for _, f := range changedFields {
@@ -1238,12 +1241,68 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 
 	// Collect warnings from hot-reload (e.g. DingTalk connection failure)
 	warnings := applyHotReloadWarnings()
+	warnings = append(warnings, clearWarnings...)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"needs_restart":       len(coldFields) > 0,
 		"changed_cold_fields": coldFields,
 		"warnings":            warnings,
 	})
+}
+
+// writePatchValueError maps a validatePatchValues failure onto the response
+// that names the problem. Split out of serveConfigPatch purely for complexity.
+func writePatchValueError(w http.ResponseWriter, r *http.Request, err error) {
+	// A nickname colliding with an existing agent is a conflict, not a
+	// malformed value: answer 409 with the localized key so the UI can show
+	// the same reason the agent-side guard does.
+	if errors.Is(err, errUserNicknameTaken) {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "UserNicknameTaken")
+		return
+	}
+	// A malformed nickname answers 400 with the localized key (the raw
+	// English fmt.Errorf message would not be translated by the UI).
+	if errors.Is(err, errInvalidUserNickname) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidUserNickname")
+		return
+	}
+	// A rejected config value names the offending field in the user's
+	// language. The generic `invalid_value` body this replaces was
+	// unactionable: the API helper surfaces only `error`, so the user saw
+	// "invalid_value" and could not tell which of the four usage-meter
+	// fields was wrong, let alone what the rule is.
+	var valueErr *configValueError
+	if errors.As(err, &valueErr) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, valueErr.MsgKey, valueErr.templateData())
+		return
+	}
+	writeJSON(w, http.StatusBadRequest, map[string]any{
+		"error":   "invalid_value",
+		"message": err.Error(),
+	})
+}
+
+// clearForgeBindingsOnDisable removes every project's repository binding when
+// this patch turned the integration off. Returns warnings to surface to the
+// client.
+func clearForgeBindingsOnDisable(patch map[string]any) []string {
+	forgeMap, ok := patch["forge"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	enabled, ok := forgeMap["enabled"].(bool)
+	if !ok || enabled {
+		return nil
+	}
+	removed, cerr := service.ClearAllProjectForges()
+	if cerr != nil {
+		slog.Error("forge: clear bindings after disable failed", "err", cerr)
+		return []string{fmt.Sprintf("forge disabled, but clearing repository bindings failed: %v", cerr)}
+	}
+	if removed > 0 {
+		slog.Info("forge: integration disabled, bindings cleared", "removed", removed)
+	}
+	return nil
 }
 
 func validatePatchFields(patch map[string]any, prefix string) ([]string, error) {
@@ -1383,36 +1442,42 @@ func validUserNickname(s string) bool {
 // with the stored config, so a partial PATCH is validated against the values it
 // will actually run with.
 //
-// A zero quota is valid and means "disabled" — in that case the other fields may
-// be empty and are simply not used. Once a quota exists the rule must be
-// complete: the worker cannot compute a cycle without an anchor, and a metric it
-// does not know would silently count nothing.
+// Every field is optional. A rule with nothing configured is valid (it means
+// "off in practice" — the meter reports nothing), and so is any subset:
+// an anchor with no quota, a quota with no anchor, an anchor with no period.
+// The point of the feature is to show the largest thing the user's input
+// supports, so a missing field is a smaller readout, not an error.
+//
+// What is NOT allowed is a value the arithmetic cannot use: an unparsable
+// anchor, an unknown metric or cycle mode, or a negative quota / period. Those
+// would silently produce wrong numbers rather than obviously missing ones.
 func validateUsageMeterRule(r model.UsageMeterConfig) error {
 	if r.Quota < 0 {
 		return &configValueError{MsgKey: "UsageMeterQuotaNegative", Field: "usage_meter.quota"}
 	}
-	if r.Quota == 0 {
-		return nil
+	if r.PeriodDays < 0 {
+		return &configValueError{
+			MsgKey: "UsageMeterPeriodRange", Field: "usage_meter.period_days",
+			Data: map[string]any{"Max": model.MaxUsageMeterPeriodDays},
+		}
 	}
 	if !model.IsValidUsageMeterCycleMode(r.CycleMode) {
 		return &configValueError{MsgKey: "UsageMeterCycleModeInvalid", Field: "usage_meter.cycle_mode"}
 	}
-	if r.AnchorDate == "" {
-		return &configValueError{MsgKey: "UsageMeterAnchorRequired", Field: "usage_meter.anchor_date"}
-	}
-	// Parsed in local time to match how the service interprets the anchor: a
-	// date-only value means 00:00, a date-time value means that wall-clock
-	// instant, both in the server's timezone.
-	if _, err := model.ParseUsageMeterAnchor(r.AnchorDate); err != nil {
-		return &configValueError{MsgKey: "UsageMeterAnchorInvalid", Field: "usage_meter.anchor_date"}
+	// An empty anchor is legal ("since the beginning of the ledger"). Only a
+	// value that is present but unparsable is an error.
+	if r.AnchorDate != "" {
+		// Parsed in local time to match how the service interprets the anchor: a
+		// date-only value means 00:00, a date-time value means that wall-clock
+		// instant, both in the server's timezone.
+		if _, err := model.ParseUsageMeterAnchor(r.AnchorDate); err != nil {
+			return &configValueError{MsgKey: "UsageMeterAnchorInvalid", Field: "usage_meter.anchor_date"}
+		}
 	}
 	// PeriodDays only governs "fixed" cycles. In "monthly" mode the cycle
-	// length comes from the calendar, and the settings page HIDES this field —
-	// so rejecting a zero here would produce an error the user cannot act on
-	// (the field is not on screen to fix). ApplyDefaults pins a sane value
-	// instead, keeping the stored config tidy for a later switch back.
+	// length comes from the calendar, so a stored day count is dormant.
 	if model.NormalizeUsageMeterCycleMode(r.CycleMode) == model.UsageMeterCycleFixed {
-		if r.PeriodDays < 1 || r.PeriodDays > model.MaxUsageMeterPeriodDays {
+		if r.PeriodDays > model.MaxUsageMeterPeriodDays {
 			return &configValueError{
 				MsgKey: "UsageMeterPeriodRange",
 				Field:  "usage_meter.period_days",
@@ -1420,7 +1485,9 @@ func validateUsageMeterRule(r model.UsageMeterConfig) error {
 			}
 		}
 	}
-	if !model.IsValidUsageMeterMetric(r.Metric) {
+	// Metric may be empty on a rule that was never configured; the service
+	// treats that as "disabled" until ApplyDefaults fills the default in.
+	if r.Metric != "" && !model.IsValidUsageMeterMetric(r.Metric) {
 		return &configValueError{MsgKey: "UsageMeterMetricInvalid", Field: "usage_meter.metric"}
 	}
 	return nil
@@ -1599,6 +1666,13 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		// writes verbatim: a string quota persists as `quota: "5000000"` and the
 		// NEXT STARTUP FAILS to unmarshal the config and exits. The frontend
 		// happens to send numbers today; the server must not depend on that.
+		if raw, present := um["enabled"]; present {
+			v, ok := raw.(bool)
+			if !ok {
+				return &configValueError{MsgKey: "UsageMeterEnabledNotBool", Field: "usage_meter.enabled"}
+			}
+			effective.Enabled = v
+		}
 		if raw, present := um["anchor_date"]; present {
 			v, ok := raw.(string)
 			if !ok {
@@ -2332,6 +2406,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	}
 
 	if forgeMap, ok := patch["forge"].(map[string]any); ok {
+		if v, ok := forgeMap["enabled"].(bool); ok {
+			cfg.Forge.Enabled = v
+		}
 		if v, ok := forgeMap["insecure_tls"].(bool); ok {
 			cfg.Forge.InsecureTLS = v
 		}
@@ -2365,6 +2442,18 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	// time they opened the panel and pressed save without changing anything.
 	if um, ok := patch["usage_meter"].(map[string]any); ok {
 		before := cfg.UsageMeter
+		// Normalize the BASELINE the same way as the post-patch value below, so
+		// the change detection compares like with like. An empty cycle_mode IS
+		// "fixed" and an empty metric IS the default, so filling them in must not
+		// register as "the user changed the rule" — that would re-arm the
+		// notification and clear the quota on a save that changed nothing.
+		before.CycleMode = model.NormalizeUsageMeterCycleMode(before.CycleMode)
+		if before.Metric == "" {
+			before.Metric = model.UsageMeterMetricCost
+		}
+		if v, ok := um["enabled"].(bool); ok {
+			cfg.UsageMeter.Enabled = v
+		}
 		if v, ok := um["anchor_date"].(string); ok {
 			cfg.UsageMeter.AnchorDate = v
 		}
@@ -2388,21 +2477,41 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if _, quotaInPatch := um["quota"]; !quotaInPatch && before.Metric != cfg.UsageMeter.Metric {
 			cfg.UsageMeter.Quota = 0
 		}
-		// Keep period_days usable whenever a quota is set. The settings page
-		// HIDES this field in monthly mode, so a fresh install that picks
-		// "calendar month" would otherwise leave it at 0 — and a later switch
-		// back to "fixed" would then fail validation on a field the user cannot
-		// see. Mirrors ApplyDefaults, applied here because the PATCH response is
-		// built from ConfigInstance before the next restart.
-		if cfg.UsageMeter.Quota > 0 {
-			if cfg.UsageMeter.PeriodDays <= 0 {
-				cfg.UsageMeter.PeriodDays = 30
-			}
-			if cfg.UsageMeter.PeriodDays > model.MaxUsageMeterPeriodDays {
-				cfg.UsageMeter.PeriodDays = model.MaxUsageMeterPeriodDays
+		// Clamp the period to the range the arithmetic can aggregate. Unlike the
+		// quota-derived defaults, 0 is a MEANINGFUL value here ("no cycle"), so
+		// it is left alone rather than replaced with a synthesized 30 days —
+		// that would silently reset the user's running total every month.
+		if cfg.UsageMeter.PeriodDays < 0 {
+			cfg.UsageMeter.PeriodDays = 0
+		}
+		if cfg.UsageMeter.PeriodDays > model.MaxUsageMeterPeriodDays {
+			cfg.UsageMeter.PeriodDays = model.MaxUsageMeterPeriodDays
+		}
+		// A rule the user just configured (anything set, but no enable flag
+		// written) is implicitly on: the whole panel is sent on save, and a
+		// checkbox the user never touched reads as false. Only a rule with
+		// nothing configured stays off, so an untouched panel cannot turn a
+		// working meter off by accident.
+		//
+		// Deliberately NOT here: enabling is not implied by the patch. The
+		// settings panel always sends `enabled` (it is a field of the panel), so
+		// inferring it would only cover hand-written API calls — at the price of
+		// making every partial patch look like a change and re-arming the
+		// notification. Upgrades are covered by ApplyDefaults instead.
+		//
+		// Mirror ApplyDefaults for the shape a rule needs in order to compute
+		// anything. Without this, a rule created from a fresh install (where the
+		// metric has never been written) would reach the service with an empty
+		// metric and report itself disabled until the next restart: the panel
+		// would look saved while the capsule stayed a placeholder.
+		if model.UsageMeterConfigured(cfg.UsageMeter) {
+			cfg.UsageMeter.CycleMode = model.NormalizeUsageMeterCycleMode(cfg.UsageMeter.CycleMode)
+			if cfg.UsageMeter.Metric == "" {
+				cfg.UsageMeter.Metric = model.UsageMeterMetricCost
 			}
 		}
-		changed := before.AnchorDate != cfg.UsageMeter.AnchorDate ||
+		changed := before.Enabled != cfg.UsageMeter.Enabled ||
+			before.AnchorDate != cfg.UsageMeter.AnchorDate ||
 			before.CycleMode != cfg.UsageMeter.CycleMode ||
 			before.PeriodDays != cfg.UsageMeter.PeriodDays ||
 			before.Metric != cfg.UsageMeter.Metric ||

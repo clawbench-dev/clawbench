@@ -57,10 +57,10 @@ func TestAddGroupMembers_AssignsUniqueNames(t *testing.T) {
 	assertNames(t, names, "Claude", groupNamePool[0], groupNamePool[1], groupNamePool[2])
 }
 
-// TestAddGroupMembers_OrdinalNotReusedAfterRemoval covers D6: removing an
-// instance does not free its ordinal, because member rows are only archived
-// (the count includes them). A later add continues past the removed ordinal.
-func TestAddGroupMembers_OrdinalNotReusedAfterRemoval(t *testing.T) {
+// TestAddGroupMembers_OrdinalNotReusedAfterDisable covers D6: disabling an instance
+// does not free its ordinal, because the member row is never deleted (the count
+// includes it). A later add continues past the disabled ordinal.
+func TestAddGroupMembers_OrdinalNotReusedAfterDisable(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/group-names-reuse"
 	if _, err := store.ProjectIDForPath(project); err != nil {
@@ -84,17 +84,17 @@ func TestAddGroupMembers_OrdinalNotReusedAfterRemoval(t *testing.T) {
 		t.Fatalf("AddGroupMembers: %v", err)
 	}
 	// 首个实例保留本名 "Claude"，其后两个取池名：ids[0]=Claude, ids[1]=pool[0],
-	// ids[2]=pool[1]。删除 ids[1]（pool[0]）；再加一个不得复用已占用（含被删归档）
-	// 的池名，故取下一个未占用的 pool[2]。active = Claude, pool[1], pool[2]。
-	if err := RemoveGroupMember(groupID, ids[1]); err != nil {
-		t.Fatalf("RemoveGroupMember: %v", err)
+	// ids[2]=pool[1]。给 ids[1] 禁用；再加一个不得复用已占用（含已禁用成员）
+	// 的池名，故取下一个未占用的 pool[2]。发言成员 = Claude, pool[1], pool[2]。
+	if err := SetGroupMemberDisabled(groupID, ids[1], true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
 	}
 	if _, err := AddGroupMembers(project, groupID, []GroupMemberSpec{
 		{AgentID: "claude", Backend: "claude"},
 	}); err != nil {
 		t.Fatalf("AddGroupMembers (after removal): %v", err)
 	}
-	active := activeMemberNames(t, groupID, "claude")
+	active := speakingMemberNames(t, groupID, "claude")
 	assertNames(t, active, "Claude", groupNamePool[1], groupNamePool[2])
 }
 
@@ -131,7 +131,7 @@ func TestAddGroupMembers_NameCollisionWithUserNickname(t *testing.T) {
 	assertNames(t, names, "Claude 2")
 }
 
-// memberNames returns the names of ALL rows (archived included) for an agent.
+// memberNames returns the names of ALL rows (disabled included) for an agent.
 func memberNames(t *testing.T, groupID, agentID string) []string {
 	t.Helper()
 	members, err := ListGroupMembers(groupID)
@@ -147,8 +147,8 @@ func memberNames(t *testing.T, groupID, agentID string) []string {
 	return out
 }
 
-// activeMemberNames returns the names of ACTIVE (non-archived) rows for an agent.
-func activeMemberNames(t *testing.T, groupID, agentID string) []string {
+// speakingMemberNames returns the names of the speaking (enabled) rows for an agent.
+func speakingMemberNames(t *testing.T, groupID, agentID string) []string {
 	t.Helper()
 	members, err := ListGroupMembers(groupID)
 	if err != nil {
@@ -156,7 +156,7 @@ func activeMemberNames(t *testing.T, groupID, agentID string) []string {
 	}
 	var out []string
 	for _, m := range members {
-		if m.AgentID == agentID && !m.Left {
+		if m.AgentID == agentID && !m.Disabled {
 			out = append(out, m.Name)
 		}
 	}

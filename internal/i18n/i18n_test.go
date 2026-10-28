@@ -170,7 +170,13 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"CruiseMaxRounds",
 		"GroupCruiseSatisfied",
 		"GroupMemberJoined",
-		"GroupMemberLeft",
+		"GroupMemberDisabled",
+		"GroupMemberEnabled",
+		// Handler-side 409 for the disable toggle. Rendered from a request, but a
+		// one-sided add (only one locale) would silently fall back to a raw key
+		// in the other language, so it is pinned like the rest.
+		"CannotDisableHost",
+		"CannotDisableLastMember",
 		"GroupMemberUnknown",
 		"GroupMemberListSeparator",
 		"GroupSpecialtySuffix",
@@ -196,12 +202,14 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"ForgeEventLabelEvent",
 		"ForgeEventLabelAuthor",
 		"ForgeEventViewDetail",
+		// The forge master switch refuses bindings while it is off.
+		"ForgeDisabled",
 		// Usage-meter rule rejections. These are the entire user-visible
 		// explanation for a rejected settings save, so a key added on only one
 		// side would ship the raw message id to that locale.
 		"UsageMeterQuotaNegative",
 		"UsageMeterQuotaNotNumber",
-		"UsageMeterAnchorRequired",
+		"UsageMeterEnabledNotBool",
 		"UsageMeterAnchorInvalid",
 		"UsageMeterAnchorNotString",
 		"UsageMeterPeriodRange",
@@ -256,8 +264,6 @@ func TestUsageMeterAnchorRejectionNamesBothAcceptedShapes(t *testing.T) {
 
 	// The field is called "start time" now that it carries a clock, matching the
 	// settings row's own label; "start date" would contradict the input.
-	assert.Contains(t, en("UsageMeterAnchorRequired"), "start time")
-	assert.Contains(t, zh("UsageMeterAnchorRequired"), "起始时间")
 	assert.NotContains(t, en("UsageMeterAnchorInvalid"), "start date")
 	assert.NotContains(t, zh("UsageMeterAnchorInvalid"), "起始日期")
 }

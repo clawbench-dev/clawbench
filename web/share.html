@@ -5,18 +5,38 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#1d2021">
 
-    <!-- Resolve theme BEFORE CSS loads to prevent flash of default colors. -->
+    <!-- Resolve theme BEFORE CSS loads to prevent flash of default colors.
+
+         Same contract as index.html (see the long note there): this script is
+         the sole authority for the factory theme, and "this browser has never
+         stored a theme" is what defines a fresh install — so the factory theme
+         is PERSISTED here, not merely applied. A share link opened on a device
+         that has never run the app must therefore look identical to the app,
+         instead of silently falling back to the system scheme. The app and the
+         share page read/write the same key, so a reader who then signs in keeps
+         whatever they picked from the share topbar. -->
     <script>
       (function() {
         var DARK_IDS = ['solarized-dark','monokai','material-darker','dark-plus','bluloco-dark','nord','everforest-dark','one-dark-pro','dracula','rose-pine','gruvbox-dark','solarized-deep','github-dark','catppuccin-mocha','vitesse-dark','tokyo-night','kanagawa','ayu-dark','night-owl','high-contrast-dark'];
-        var t = null;
-        try { var s = localStorage.getItem('clawbench-settings-theme'); if (s) t = JSON.parse(s); } catch {}
-        if (t === null) { try { t = localStorage.getItem('theme'); } catch {} }
-        if (t === 'light') { t = 'github-light'; }
-        else if (t === 'dark') { t = 'gruvbox-dark'; }
-        if (!t || t === 'auto') {
-          t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'gruvbox-dark' : 'github-light';
+        var STORE_KEY = 'clawbench-settings-theme';
+        var DARK_DEFAULT = 'gruvbox-dark';
+        var LIGHT_DEFAULT = 'github-light';
+        function persist(id) { try { localStorage.setItem(STORE_KEY, JSON.stringify(id)); } catch {} }
+        var chosen = null;
+        try { var s = localStorage.getItem(STORE_KEY); if (s !== null) chosen = JSON.parse(s); } catch {}
+        if (chosen === null) { try { chosen = localStorage.getItem('theme'); } catch {} }
+        // Migration: old 'light'/'dark' → named theme IDs
+        if (chosen === 'light') { chosen = LIGHT_DEFAULT; persist(chosen); }
+        else if (chosen === 'dark') { chosen = DARK_DEFAULT; persist(chosen); }
+        if (chosen === null || chosen === '') {
+          chosen = DARK_DEFAULT;
+          persist(chosen);
         }
+        // 'auto' follows the system but must never be persisted as a concrete
+        // ID — that would pin the page and stop it following the system (#458).
+        var t = (chosen === 'auto')
+          ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? DARK_DEFAULT : LIGHT_DEFAULT)
+          : chosen;
         var base = DARK_IDS.indexOf(t) >= 0 ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);
         document.documentElement.setAttribute('data-theme-base', base);

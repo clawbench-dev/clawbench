@@ -54,8 +54,12 @@ describe('chat compositing boundary (Android WebView GPU ghost)', () => {
     // is no compositor bug to work around.
     const bare = panelSource.match(/^\.chat-panel-content\s*\{([^}]*)\}/m)
     expect(bare, 'the base .chat-panel-content rule must exist').not.toBeNull()
-    expect(bare![1]).not.toMatch(/will-change/)
-    expect(bare![1]).not.toMatch(/contain:\s*paint/)
+    // Strip comments first, like `decls()` above: the rule's own doc block
+    // mentions `contain: paint` when explaining the app-mode boundary that
+    // follows it, and prose must neither satisfy nor trip a declaration scan.
+    const declsOnly = stripComments(bare![1])
+    expect(declsOnly).not.toMatch(/will-change/)
+    expect(declsOnly).not.toMatch(/contain:\s*paint/)
   })
 
   /**

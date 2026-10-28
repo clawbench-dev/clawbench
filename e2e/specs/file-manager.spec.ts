@@ -68,6 +68,28 @@ test.describe('File Manager', () => {
     await expect(page.locator('.file-item, .grid-item').first()).toBeVisible({ timeout: 10000 })
   })
 
+  test('should show the breadcrumb and copy-path button at the project root', async ({ page }) => {
+    // Climb to the project root first: the manager may restore a remembered
+    // subdirectory, and the point of the test is the ROOT case specifically.
+    const upBtn = page.locator('.dir-nav-bottom .dir-up-btn')
+    const breadcrumb = page.locator('.dir-nav-bottom .dir-breadcrumb')
+    for (let i = 0; i < 12 && !(await upBtn.isDisabled()); i++) {
+      const before = await breadcrumb.locator('.crumb').count()
+      await upBtn.click()
+      // Condition wait instead of a fixed timeout: each successful walk-up
+      // drops exactly one crumb.
+      await expect.poll(() => breadcrumb.locator('.crumb').count()).toBeLessThan(before)
+    }
+    await expect(upBtn).toBeDisabled()
+
+    // The nav row used to be hidden at the root, which also hid the only
+    // "copy absolute path" entry. Now Home is the current crumb and the copy
+    // button stays reachable.
+    await expect(breadcrumb).toBeVisible()
+    await expect(breadcrumb.locator('.crumb-home.current')).toBeVisible()
+    await expect(breadcrumb.locator('.crumb-copy-btn')).toBeVisible()
+  })
+
   test('should switch back to the file manager tab when the open file is closed', async ({ page }) => {
     // Double-click the first file to open it in the viewer (single click only selects on PC)
     const firstFile = page.locator('.file-item:not(.dir-item), .grid-item:not(.grid-dir)').first()
@@ -84,5 +106,42 @@ test.describe('File Manager', () => {
     // The file manager tab becomes active again automatically
     await expect(nav.getTabButton('browse')).toHaveClass(/active/)
     await expect(page.locator('.file-item, .grid-item').first()).toBeVisible({ timeout: 10000 })
+  })
+
+  /**
+   * Sharing must work for a file the user has NOT opened: the context menu is
+   * the only entry point that knows a path without the viewer being involved.
+   * The dialog is shared with the viewer's "Share link" item, so this asserts
+   * the menu → dialog hand-off (target path) plus the real create round-trip.
+   */
+  test('should create a public share link from a file row context menu', async ({ page }) => {
+    const fileRow = page.locator('.file-item:not(.dir-item), .grid-item:not(.grid-dir)').first()
+    await expect(fileRow).toBeVisible({ timeout: 10000 })
+    const fileName = (await fileRow.locator('.file-name, .grid-name').first().textContent())?.trim() || ''
+    expect(fileName).not.toBe('')
+
+    // Right-click the name (the entry hit zone; row padding opens the empty-area menu).
+    await fileRow.locator('.file-name, .grid-name').first().click({ button: 'right' })
+    const shareItem = page.locator('.context-menu .context-menu-item[data-menu-item="share-link"]')
+    await expect(shareItem).toBeVisible({ timeout: 5000 })
+
+    await shareItem.click()
+
+    // The dialog opens on the menu's target, not on whatever file is open.
+    const dialog = page.locator('.modal-dialog')
+    await expect(dialog).toBeVisible({ timeout: 5000 })
+    await expect(dialog.locator('.share-dialog-file-name')).toHaveText(fileName)
+
+    // No link yet → the primary action creates one and fills the link bar.
+    await dialog.locator('.modal-footer .fbtn-primary').click()
+    const linkInput = dialog.locator('.share-dialog-link-input')
+    await expect(linkInput).toBeVisible({ timeout: 10000 })
+    await expect(linkInput).toHaveValue(/\/share\/[0-9a-f]+$/)
+
+    // Revoke so the spec leaves no live public link behind (the DB is shared by
+    // the three browser projects). Revoking is destructive → confirm dialog.
+    await dialog.locator('.modal-footer .fbtn-danger').click()
+    await page.locator('.dlg-box .dlg-ok').click()
+    await expect(linkInput).toHaveCount(0, { timeout: 5000 })
   })
 })

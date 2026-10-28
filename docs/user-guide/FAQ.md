@@ -6,7 +6,7 @@ A: 支持 Linux（x86_64 / ARM64）、macOS（Apple Silicon / Intel）和 Window
 
 **Q: 支持哪些 AI 后端？**
 
-A: 支持 CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw 十九种后端，均支持 CLI 和/或 ACP 传输模式。可在 Web UI 中实时切换，会话数据隔离。CLI 后端需确保对应 CLI 已安装并在 PATH 中可用。OpenClaw 走 ACP 桥接，需要先跑起它自己的 Gateway（`openclaw gateway start`），否则桥连不上会表现为「Agent 启动超时」。
+A: 支持 CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、Qoder CN（国内版）、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw 十九种后端，均支持 CLI 和/或 ACP 传输模式。可在 Web UI 中实时切换，会话数据隔离。CLI 后端需确保对应 CLI 已安装并在 PATH 中可用。OpenClaw 走 ACP 桥接，需要先跑起它自己的 Gateway（`openclaw gateway start`），否则桥连不上会表现为「Agent 启动超时」。
 
 **Q: 如何添加新的智能体？**
 
@@ -14,7 +14,7 @@ A: 从欢迎屏幕安装智能体，或在 Web UI 中创建新智能体，选择
 
 **Q: 是否需要配置 API Key？**
 
-A: 不需要。ClawBench 通过调用本地已装好的 CLI / ACP 后端（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw 共 19 种）实现 AI 功能，凭据由这些工具自己管理；ClawBench 只在「创建智能体」时让你填 LLM 提供商的 API Key（用于标题生成、摘要等旁路能力）。个别后端需要额外前置条件——例如 OpenClaw 走 ACP 桥接，要先跑起它自己的 Gateway（`openclaw gateway start`），否则表现为「Agent 启动超时」。
+A: 不需要。ClawBench 通过调用本地已装好的 CLI / ACP 后端（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、Qoder CN（国内版）、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw 共 20 种）实现 AI 功能，凭据由这些工具自己管理；ClawBench 只在「创建智能体」时让你填 LLM 提供商的 API Key（用于标题生成、摘要等旁路能力）。个别后端需要额外前置条件——例如 OpenClaw 走 ACP 桥接，要先跑起它自己的 Gateway（`openclaw gateway start`），否则表现为「Agent 启动超时」。
 
 **Q: TTS 语音合成可以使用本地模型吗？**
 
@@ -59,7 +59,7 @@ A: 所有智能体存储在数据库中（`agents` 表），通过欢迎面板�
 
 **Q: 为什么删不掉某个智能体？**
 
-A: 只要该智能体还有**会话、定时任务或未离场的群成员关系**，删除就会被拒绝并提示剩余数量——这是为了避免留下悬空的 `agent_id`。请先清理这些内容。注意会话「**归档**」不算清理（归档是软删除、行仍在），需要在归档确认框里点「**移除**」（或会话列表长按菜单的移除项）彻底删除该行。若只是暂时不想用它，可以改用**禁用**：禁用后它从所有新建入口消失，但已有会话与任务仍可继续使用。
+A: 只要该智能体还有**会话、定时任务或仍在群里的成员关系**，删除就会被拒绝并提示剩余数量——这是为了避免留下悬空的 `agent_id`。请先清理这些内容。注意会话「**归档**」不算清理（归档是软删除、行仍在），需要在归档确认框里点「**移除**」（或会话列表长按菜单的移除项）彻底删除该行。若只是暂时不想用它，可以改用**禁用**：禁用后它从所有新建入口消失，但已有会话与任务仍可继续使用。群聊里的**禁用**也不释放成员关系（禁用只是不安排它发言）。
 
 **Q: 如何让某个技能只对某个项目可见？**
 

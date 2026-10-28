@@ -18,6 +18,7 @@ import zh from '@/i18n/locales/zh'
  * text AND the fact that it still carries the warning.
  */
 const KEYS = [
+  'usageMeterEnabled',
   'usageMeterMetric',
   'usageMeterMetricDesc',
   'usageMeterMetricTokens',
@@ -84,6 +85,31 @@ describe('usage meter settings copy', () => {
     }
   })
 
+  // The enable switch is the ONLY on/off now (the quota used to double as it).
+  // A missing key would render as the raw key path on the panel's first row.
+  it('names the enable switch in both locales', () => {
+    expect(en.settings.items.usageMeterEnabled).toBeTruthy()
+    expect(zh.settings.items.usageMeterEnabled).toBeTruthy()
+    // Must not be the category title: that would read as a repeat of the page
+    // heading rather than "this turns the feature on".
+    expect(en.settings.items.usageMeterEnabled).not.toBe(en.settings.items.usageMeter)
+    expect(zh.settings.items.usageMeterEnabled).not.toBe(zh.settings.items.usageMeter)
+    // It must name ENABLING something, not just "usage".
+    expect(en.settings.items.usageMeterEnabled.toLowerCase()).toMatch(/enabl/)
+    expect(zh.settings.items.usageMeterEnabled).toMatch(/启用|开启/)
+  })
+
+  // The quota description used to promise "0 or empty turns it off". With a
+  // dedicated switch that is now wrong and would tell the user the wrong thing
+  // about a field they are editing.
+  it('the quota description no longer claims 0 turns the feature off', () => {
+    expect(en.settings.items.usageMeterQuotaDesc).not.toMatch(/turns it off/i)
+    expect(zh.settings.items.usageMeterQuotaDesc).not.toMatch(/即关闭/)
+    // ...but it must still say what 0 means, since it is a valid value.
+    expect(en.settings.items.usageMeterQuotaDesc).toMatch(/no budget|0/i)
+    expect(zh.settings.items.usageMeterQuotaDesc).toMatch(/不设预算|0/)
+  })
+
   // The two cycle types are the whole point of the field, and the option labels
   // must be distinguishable — an identical pair would render a dropdown with two
   // indistinguishable rows.
@@ -103,6 +129,19 @@ describe('usage meter settings copy', () => {
   // The placeholder entry is the only thing an unconfigured user sees, and its
   // label carries the entire message ("set up usage alerts"). A missing or
   // echo-of-the-key value would leave a bare feature name with no action.
+  // Two distinct "no plan" states, because the reason differs: no budget at
+  // all, versus a budget with no time axis to compare it against. Sharing one
+  // string would tell a user with a quota that they have none.
+  it('distinguishes "no quota" from "no cycle" badges', () => {
+    for (const items of [en.usageMeter as Record<string, string>, zh.usageMeter as Record<string, string>]) {
+      expect(items.badgeNoQuota).toBeTruthy()
+      expect(items.badgeNoCycle).toBeTruthy()
+      expect(items.badgeNoQuota).not.toBe(items.badgeNoCycle)
+      expect(items.badgeNoQuota).not.toBe(items.badgeOk)
+      expect(items.badgeNoCycle).not.toBe(items.badgeOk)
+    }
+  })
+
   it('the placeholder hint exists in both locales', () => {
     expect(en.usageMeter.setupHint).toBeTruthy()
     expect(zh.usageMeter.setupHint).toBeTruthy()

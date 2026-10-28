@@ -370,10 +370,29 @@ func GetMessagesBySessionID(sessionID string) ([]model.ChatMessage, error) {
 // summary. Callers that need the full history — e.g. fork context injection —
 // must use this function.
 func GetMessagesBySessionIDRaw(sessionID string) ([]model.ChatMessage, error) {
-	rows, err := store.ReadDB().Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id, injected FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
-		sessionID,
-	)
+	return getMessagesBySessionIDRaw(sessionID, false)
+}
+
+// GetMessagesBySessionIDRawIncludingStreaming is GetMessagesBySessionIDRaw plus
+// the session's in-flight replies (streaming=1).
+//
+// Only the "/btw" side question wants this: it is asked WHILE the agent is
+// replying, and the user's question is usually about the reply being written
+// ("what does that mean?"). Every other caller must keep the finalized-only
+// view — a fork/rewind point is a completed position in the conversation, and a
+// half-written reply injected as history would be indistinguishable from a
+// finished answer.
+func GetMessagesBySessionIDRawIncludingStreaming(sessionID string) ([]model.ChatMessage, error) {
+	return getMessagesBySessionIDRaw(sessionID, true)
+}
+
+func getMessagesBySessionIDRaw(sessionID string, includeStreaming bool) ([]model.ChatMessage, error) {
+	const base = "SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id, injected FROM chat_history WHERE session_id = ?"
+	query := base + " AND streaming = 0 ORDER BY id ASC"
+	if includeStreaming {
+		query = base + " ORDER BY id ASC"
+	}
+	rows, err := store.ReadDB().Query(query, sessionID)
 	if err != nil {
 		return nil, err
 	}

@@ -60,9 +60,15 @@ vi.mock('@/composables/useUsageMeter', () => ({
       const s = mockMeterStatus.value
       if (!s.enabled) return 'off'
       if (s.quota > 0 && s.actual >= s.quota) return 'full'
-      if (s.actual > s.expected) return 'over'
+      // "Over plan" needs a real baseline: expected is 0 without a quota or a
+      // cycle, and comparing against it would call any spend an overspend.
+      if (s.expected > 0 && s.actual > s.expected) return 'over'
       return 'ok'
     }),
+    // Same three gates the real composable exposes; the panel branches on them
+    // to decide whether a bar / baseline tick / badge has a meaning at all.
+    hasQuota: computed(() => (mockMeterStatus.value.quota ?? 0) > 0),
+    hasCycle: computed(() => (mockMeterStatus.value.periodDays ?? 0) > 0),
     fillPercent: computed(() => {
       const s = mockMeterStatus.value
       return s.quota > 0 ? Math.min(100, (s.actual / s.quota) * 100) : 0
@@ -372,5 +378,29 @@ describe('SystemResourcesPanel', () => {
   it('keeps the meter out of the list when the connection is down', () => {
     const wrapper = mountPanel({ wsStatus: 'disconnected' })
     expect(wrapper.find('.usage-row').exists()).toBe(false)
+  })
+})
+
+// The phone row mirrors the desktop capsule's "unset means infinite" reading:
+// the shape does not change with configuration, and ∞ is what an unset bound
+// shows. Without this the row silently changed shape (and read as "no data").
+describe('SystemResourcesPanel — optional quota and cycle', () => {
+  it('shows ∞ for the quota and the days-left when they are unset', () => {
+    mockMeterStatus.value = {
+      ...mockMeterStatus.value,
+      quota: 0,
+      expected: 0,
+      periodDays: 0,
+      remainingDays: 0,
+      // An anchor but no period: the day counter survives, the cycle does not.
+      cycleStart: '2026-10-05T00:00:00+08:00',
+    }
+    const wrapper = mountPanel()
+
+    expect(wrapper.get('.usage-quota').text()).toContain('\u221e')
+    // No bar: there is no budget to fill against.
+    expect(wrapper.find('.usage-bar').exists()).toBe(false)
+    // The day counter is still real information; only its denominator is ∞.
+    expect(wrapper.get('.usage-meta').text()).toContain('usageMeter.dayOfCycle')
   })
 })

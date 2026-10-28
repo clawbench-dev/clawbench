@@ -254,7 +254,7 @@ watch(visible, (v) => {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   width: 100%;
-  max-width: calc(380 * var(--dp));
+  max-width: var(--modal-width-narrow);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
 }

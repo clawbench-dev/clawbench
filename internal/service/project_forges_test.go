@@ -549,3 +549,158 @@ func TestUniqueForgeRepos_ErrorPath(t *testing.T) {
 	_, err = service.UniqueForgeRepos()
 	require.Error(t, err)
 }
+
+// TestClearAllProjectForges_RemovesEveryBinding covers the "disable the
+// integration" path: every project's binding must go, not just the current
+// one, and every project must be marked opted out so the next GET
+// /api/forge/binding cannot auto-bind the same repository straight back.
+func TestClearAllProjectForges_RemovesEveryBinding(t *testing.T) {
+	setupTestDBForProjectForges(t)
+
+	dirs := []string{t.TempDir(), t.TempDir(), t.TempDir()}
+	for _, dir := range dirs {
+		require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
+			ProjectPath: dir, Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets", Source: "auto",
+		}))
+	}
+
+	removed, err := service.ClearAllProjectForges()
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), removed)
+
+	for _, dir := range dirs {
+		got, gerr := service.GetProjectForge(dir)
+		require.NoError(t, gerr)
+		assert.Nil(t, got, "every binding must be gone")
+
+		// Projects that HAD a binding are marked opted out, so the next GET
+		// cannot auto-bind the same repository back from the git remote. This is
+		// what makes "re-enabling does not restore these links" true.
+		opted, oerr := service.IsForgeBindOptedOut(dir)
+		require.NoError(t, oerr)
+		assert.True(t, opted, "a cleared project must not auto-rebind")
+	}
+
+	// A project that never had a binding is NOT marked: the flag records a
+	// decision about one project, and stamping it everywhere would make
+	// re-enabling behave differently from a fresh install.
+	untouched := t.TempDir()
+	opted, err := service.IsForgeBindOptedOut(untouched)
+	require.NoError(t, err)
+	assert.False(t, opted, "the global switch must not rewrite the opt-out of unbound projects")
+
+	// A second clear is a no-op, not an error.
+	removed, err = service.ClearAllProjectForges()
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), removed)
+}
+
+// TestClearAllProjectForges_AutoBindStaysBlocked pins the promise the settings
+// copy makes: "re-enabling does not restore these links". Without the opt-out
+// the very next GET would re-bind from the git remote and the user would see
+// their cleared integration come back by itself.
+func TestClearAllProjectForges_AutoBindStaysBlocked(t *testing.T) {
+	setupTestDBForProjectForges(t)
+	dir := t.TempDir()
+	require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
+		ProjectPath: dir, Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets", Source: "auto",
+	}))
+
+	_, err := service.ClearAllProjectForges()
+	require.NoError(t, err)
+
+	created, err := service.AutoBindProjectForge(dir, forge.Remote{
+		Platform: forge.PlatformGitHub, Host: "github.com", Owner: "acme", Repo: "widgets",
+	})
+	require.NoError(t, err)
+	assert.False(t, created, "a cleared binding must not come back on its own")
+
+	// An explicit bind still works — that is the user asking for it again.
+	require.NoError(t, service.SetForgeBindOptOut(dir, false))
+	created, err = service.AutoBindProjectForge(dir, forge.Remote{
+		Platform: forge.PlatformGitHub, Host: "github.com", Owner: "acme", Repo: "widgets",
+	})
+	require.NoError(t, err)
+	assert.True(t, created, "an explicit re-bind must still work")
+}
+
+// TestClearAllProjectForges_NilDB is the "no database" branch: the forge
+// integration is optional, so disabling it must not panic on a DB-less build.
+func TestClearAllProjectForges_NilDB(t *testing.T) {
+	cleanup := store.SetDBForTest(nil, nil)
+	t.Cleanup(cleanup)
+
+	removed, err := service.ClearAllProjectForges()
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), removed)
+}
+
+// TestClearAllProjectForges_ErrorsArePropagated covers the failure branches:
+// a partially provisioned schema must surface an error instead of reporting
+// "0 removed" (which the settings handler would render as a silent success —
+// the user turns the integration off, believes the bindings are gone, and the
+// poller keeps using them).
+func TestClearAllProjectForges_ErrorsArePropagated(t *testing.T) {
+	t.Run("missing project_forges table", func(t *testing.T) {
+		db, err := sql.Open("sqlite", ":memory:")
+		require.NoError(t, err)
+		db.SetMaxOpenConns(1)
+		// Only the projects registry: the SELECT in collectProjectIDs fails.
+		_, err = db.Exec(store.ProjectsDDL)
+		require.NoError(t, err)
+		cleanup := store.SetDBForTest(db, db)
+		t.Cleanup(func() {
+			cleanup()
+			_ = db.Close()
+		})
+
+		removed, err := service.ClearAllProjectForges()
+		require.Error(t, err)
+		assert.Equal(t, int64(0), removed)
+	})
+
+	t.Run("missing projects table", func(t *testing.T) {
+		db, err := sql.Open("sqlite", ":memory:")
+		require.NoError(t, err)
+		db.SetMaxOpenConns(1)
+		// Bindings exist but the UPDATE target does not: the delete succeeds,
+		// the opt-out write fails, and the transaction must be rolled back.
+		_, err = db.Exec(service.ProjectForgesDDL)
+		require.NoError(t, err)
+		_, err = db.Exec(`INSERT INTO project_forges (project_id, platform, host, owner, repo) VALUES (1,'github','github.com','a','b')`)
+		require.NoError(t, err)
+		cleanup := store.SetDBForTest(db, db)
+		t.Cleanup(func() {
+			cleanup()
+			_ = db.Close()
+		})
+
+		removed, err := service.ClearAllProjectForges()
+		require.Error(t, err)
+		assert.Equal(t, int64(0), removed, "a failed transaction reports nothing removed")
+
+		// Rollback means the binding survives: a half-applied clear would leave
+		// the user with polling still driven by a row the UI says is gone.
+		var count int
+		require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM project_forges`).Scan(&count))
+		assert.Equal(t, 1, count, "the delete must be rolled back with the failed opt-out write")
+	})
+}
+
+// TestClearAllProjectForges_ClosedDB covers WriteBegin's error path.
+func TestClearAllProjectForges_ClosedDB(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	_, err = db.Exec(service.ProjectForgesDDL)
+	require.NoError(t, err)
+	_, err = db.Exec(store.ProjectsDDL)
+	require.NoError(t, err)
+	cleanup := store.SetDBForTest(db, db)
+	t.Cleanup(cleanup)
+
+	require.NoError(t, db.Close())
+
+	removed, err := service.ClearAllProjectForges()
+	require.Error(t, err, "a dead handle must not be reported as a successful clear")
+	assert.Equal(t, int64(0), removed)
+}

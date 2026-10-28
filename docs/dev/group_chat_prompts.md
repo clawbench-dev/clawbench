@@ -2,7 +2,7 @@
 
 > 本文档是群聊流程中所有提示词的**原始字符串快照**（未渲染、未翻译）。
 > 内容由源码构建器直接生成，样例成员为 `主持人A` / `CodeBuddy（代码编写与推理）` /
-> `Claude（长文写作与评审）` / `Gone（数据分析，已离场）`，用户昵称取默认值 `User`。
+> `Claude（长文写作与评审）` / `Gone（数据分析，已禁用）`，用户昵称取默认值 `User`。
 >
 > 生成方式：临时 Go 测试调用 `BuildHostSystemPrompt` / `BuildMemberSystemPrompt` /
 > `BuildHostSummaryPrompt` / `BuildFreeMemberSystemPrompt` / `participantHeader` /
@@ -24,7 +24,10 @@ system prompt = agent 自己配置的 SystemPrompt（与群聊无关）
 
 - `{selfName}`：该智能体自己的群内显示名（多实例时带序号，如 `CodeBuddy 2`）。
 - `{成员列表}` / `{其他成员列表}`：`renderMemberList` 渲染为 `A（描述）、B、C`；
-  已离场者渲染成 `名字（已离场）`；无描述者只有裸名。
+  无描述者只有裸名。
+- **主持人提示词的可点名名单只含未禁用成员**（被禁用的成员不进这个列表）；被禁用的成员由
+  紧随其后的 `disabledNotice` 单独点名并附一句「不要点名、也不要密送」——成员提示词与
+  自由模式提示词同样附这一句（它们的「其他成员」列表仍列出被禁用的成员，让人知道屋里还有谁）。
 - `{User}`：`groupUserTarget()`，即用户昵称（默认 `User`）。
 
 ---
@@ -54,7 +57,8 @@ system prompt = agent 自己配置的 SystemPrompt（与群聊无关）
   <clawbench-group-end/>
 在结束标签之后，必须再写一段简短的讨论结论（最终汇总），供用户阅读。
 注意：你本人不在可点名名单里，**不要点名你自己**——只能点名下列其他成员。
-可选的成员名：User、CodeBuddy（代码编写与推理）、Claude（长文写作与评审）、Gone（已离场）。
+可选的成员名：User、CodeBuddy（代码编写与推理）、Claude（长文写作与评审）。
+（Gone 已禁用，当前不发言：**不要点名、也不要密送**给他们；他们启用后会自行看到这段讨论。）
 可点名 User（即用户本人）让其发言；点到 User 后本轮结束，等待用户发言，用户发言后你会在下一轮看到并继续主持。
 
 可选：密送（只给个别成员看，其他成员看不到）
@@ -83,7 +87,8 @@ targets 可写多个，用逗号分隔，如 targets="A,B"；targets="User" 即�
   <clawbench-mention …>…</clawbench-mention>
   <clawbench-group-end/>
 发言要求：紧扣话题、简洁、直接给出你的观点；不要复述或模仿主持人的指令格式。
-本群其他成员：主持人A（控场）、CodeBuddy（代码编写与推理）、Gone（已离场）、User。
+本群其他成员：主持人A（控场）、CodeBuddy（代码编写与推理）、Gone（已禁用）、User。
+（Gone 已禁用，当前不发言：**不要点名、也不要密送**给他们；他们启用后会自行看到这段讨论。）
 
 ```
 
@@ -99,7 +104,7 @@ targets 可写多个，用逗号分隔，如 targets="A,B"；targets="User" 即�
 你的群内显示名是「主持人A」。在群里就用这个名字自称——不要用名单里别人的名字，也不要自己编造带数字的名字。
 请直接写一段简短的讨论结论（最终汇总），总结各成员观点与你的判断，供用户阅读。
 不要再输出任何路由标签或结束标签。
-参与成员：User、CodeBuddy（代码编写与推理）、Claude（长文写作与评审）、Gone（已离场）。
+参与成员：User、CodeBuddy（代码编写与推理）、Claude（长文写作与评审）、Gone（已禁用）。
 
 ```
 
@@ -123,7 +128,8 @@ targets 可写多个，用逗号分隔，如 targets="A,B"；targets="User" 即�
 你也可以 @ User（即用户本人）把话筒交回给用户，用户回复后讨论继续。
 可选：密送（只给个别成员看，其他成员看不到）——给标签加 private 属性：
   <clawbench-mention targets="成员名" private>只有该成员能看到的内容</clawbench-mention>
-本群其他成员：主持人A（控场）、CodeBuddy（代码编写与推理）、Gone（已离场）、User。
+本群其他成员：主持人A（控场）、CodeBuddy（代码编写与推理）、Gone（已禁用）、User。
+（Gone 已禁用，当前不发言：**不要点名、也不要密送**给他们；他们启用后会自行看到这段讨论。）
 
 ```
 
@@ -153,7 +159,7 @@ targets 可写多个，用逗号分隔，如 targets="A,B"；targets="User" 即�
 [系统] {系统行文案}
 {User}: {用户消息（附件摘要已展开）}
 {成员名}: {成员发言}
-{成员名（已离场）}: {发言}
+{成员名（已禁用）}: {发言}
 [{发言者} 向用户提问，等待用户回答] {问题+选项}
 ```
 
@@ -181,7 +187,8 @@ targets 可写多个，用逗号分隔，如 targets="A,B"；targets="User" 即�
 GroupYourTurn:               轮到用户发言
 GroupDiscussionLimitReached: 成员间讨论次数达到上限
 GroupMemberJoined:           {Name}加入了讨论
-GroupMemberLeft:             {Name} 已离场
+GroupMemberDisabled:            {Name} 已禁用
+GroupMemberEnabled:          {Name} 已启用
 GroupUnknownMention:         {Speaker} @ 了一个不存在的成员：{Names}（已忽略）
 GroupMemberUnknown:          成员
 ```

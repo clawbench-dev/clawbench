@@ -14,7 +14,7 @@
       <div
         class="bs-panel"
         :class="[
-          { 'bs-leaving': leaving, 'bs-instant': instant, 'bs-auto': auto, 'bs-handle-only': handleOnly, 'bs-wide-auto': isWideScreen, 'bs-maximized': maximized },
+          { 'bs-leaving': leaving, 'bs-instant': instant, 'bs-auto': auto, 'bs-handle-only': handleOnly, 'bs-wide-auto': isWideScreen, 'bs-maximized': maximized, 'bs-panel--narrow': size === 'narrow', 'bs-panel--wide': size === 'wide' },
           panelClass
         ]"
       >
@@ -94,6 +94,22 @@ const props = defineProps({
   maximized: Boolean,
   closeGuard: Boolean, // 阻止一切关闭操作（overlay点击/header点击/返回手势），用于内部有原生选择器等场景
   backEvent: String, // 自定义"返回"手势发出的事件名（默认 close）。用于下钻抽屉：边缘内滑返回时发出指定事件而非关闭。
+  /**
+   * Width tier for the wide-screen centered card (the narrow bottom drawer is
+   * always full width). Exactly two tiers, both declared in css/variables.css
+   * as `--modal-width-narrow` / `--modal-width-wide`; this prop only selects
+   * one (see modal-card.css). Consumers must NOT override
+   * `--modal-max-width` locally — that is what made four drawers wider than
+   * the rest for no stated reason.
+   *
+   *   'narrow' (default) — forms, lists, settings: one readable column
+   *   'wide'             — diffs, code, transcripts, tables/grids
+   */
+  size: {
+    type: String,
+    default: 'narrow',
+    validator: (v) => v === 'narrow' || v === 'wide',
+  },
   panelClass: {
     type: [String, Array, Object],
     default: '',

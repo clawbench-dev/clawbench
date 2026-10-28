@@ -16,7 +16,8 @@
         :class="{
           'modal-leaving': leaving,
           'modal-full-height': fullHeight,
-          'modal-dialog--compact': size === 'compact',
+          'modal-dialog--narrow': size === 'narrow',
+          'modal-dialog--wide': size === 'wide',
         }"
         @click.stop
       >
@@ -60,11 +61,19 @@ const props = defineProps({
   zIndex: { type: Number, default: 2100 },
   fullHeight: { type: Boolean, default: false },
   /**
-   * Named width variant. Arbitrary per-call-site widths are forbidden (see
-   * ModalDialog.test.ts): a compact card is a shared primitive so its cap lives
-   * in modal-card.css next to the default one.
+   * Width tier. There are exactly two, and both live in css/variables.css as
+   * `--modal-width-narrow` / `--modal-width-wide`; this prop only selects one
+   * (see modal-card.css). Arbitrary per-call-site widths are forbidden
+   * (ModalDialog.test.ts): a dialog chooses a tier, never a number.
+   *
+   *   'narrow' (default) — forms, lists, confirmations: one readable column
+   *   'wide'             — diffs, code, transcripts, tables/grids
    */
-  size: { type: String, default: 'default' },
+  size: {
+    type: String,
+    default: 'narrow',
+    validator: (v) => v === 'narrow' || v === 'wide',
+  },
 })
 
 const emit = defineEmits(['close'])

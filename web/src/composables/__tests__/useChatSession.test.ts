@@ -155,6 +155,9 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     mockAppMode.isAppMode = false
     mockAppMode.isDesktopApp = false
     resumeHandlers.length = 0
+    // The visibility predicate is module-level state in sessionReadGate; a test
+    // that leaves it "hidden" would gate out every later test's read calls.
+    _resetChatPanelVisibilityForTest()
   }
   return { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockForceCleanupStreamingState, mockIdentityFns, mockGroupChatFns, mockOnAppResume, resetAdditionalMocks }
 })
@@ -440,6 +443,7 @@ import { store } from '@/stores/app.ts'
 import { chatMessageReducer, resetInFlightSendsForTest, trackInFlightSend, isInFlightSend } from '@/utils/chatStreamUtils.ts'
 import { addQueued, getQueue, removeQueued, resetQueuesForTest, markSendCommitted } from '@/composables/useMessageQueue.ts'
 import { updatePlanEntries, clearPlanState, usePlanProgress } from '@/composables/usePlanProgress'
+import { registerChatPanelVisibility, _resetChatPanelVisibilityForTest } from '@/composables/sessionReadGate'
 
 // Get direct references to the mocked functions from useSessionIdentity
 const mockUpdateUsageState = vi.hoisted(() => vi.fn())
@@ -1566,6 +1570,41 @@ describe('onSessionEvent', () => {
     // the unread badge must survive — even though the app is now foreground.
     mockAppInForeground.value = true
     mockIsReplayingEvents.value = true
+    mockState.currentSessionId = 'current-s1'
+
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1',
+        messages: [],
+        total: 0,
+        running: false,
+      }),
+    })
+    globalThis.fetch = fetchSpy as any
+
+    const session = createSession()
+    session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
+
+    await vi.waitFor(() => fetchSpy.mock.calls.length > 0)
+    await new Promise(r => setTimeout(r, 50))
+
+    const readCalls = fetchSpy.mock.calls.filter(
+      ([url, init]) =>
+        typeof url === 'string' &&
+        url.startsWith('/api/ai/chat/read') &&
+        (init as RequestInit | undefined)?.method === 'POST'
+    )
+    expect(readCalls.length).toBe(0)
+  })
+
+  it('does NOT mark read for a completion while the chat panel is off screen', async () => {
+    // Foregrounded but looking at another panel (file manager, tasks, or a
+    // collapsed chat column). The badge is still telling the truth, so the
+    // shared gate must refuse — this is the case no earlier copy of the rule
+    // handled, because they only checked the foreground flag.
+    mockAppInForeground.value = true
+    registerChatPanelVisibility(() => false)
     mockState.currentSessionId = 'current-s1'
 
     const fetchSpy = vi.fn().mockResolvedValue({

@@ -358,46 +358,17 @@ func ServeForgeBinding(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		pf, err := service.GetProjectForge(projectPath)
-		if err != nil {
-			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-			return
-		}
-		if pf == nil {
-			// Unbound: bind the highest-priority git remote automatically when it
-			// points at a platform-operated host, so the common case needs no
-			// dialog at all. Users who bind the wrong repository can change or
-			// clear it from the panel header.
-			//
-			// Non-official hosts (a self-hosted GitLab, say) are NOT auto-bound:
-			// binding them sends credentials to a host we cannot vouch for, and
-			// auto-binding would do it without the user ever seeing the warning.
-			// Those come back as a suggestion instead, so the bind — and the
-			// warning that precedes it — stays an explicit user action.
-			if remote, _, ok := pickForgeRemote(projectPath); ok && isOfficialForgeHost(remote.Host) {
-				created, aerr := service.AutoBindProjectForge(projectPath, remote)
-				if aerr != nil {
-					writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-					return
-				}
-				if created {
-					if bound, gerr := service.GetProjectForge(projectPath); gerr == nil && bound != nil {
-						writeJSON(w, http.StatusOK, map[string]any{jsonBinding: bindingView(bound)})
-						return
-					}
-				}
-			}
-			// Either nothing to bind, a non-official host needing confirmation,
-			// or the user previously opted out (AutoBindProjectForge is a no-op
-			// then) — report unbound, with a suggestion when one exists.
-			writeJSON(w, http.StatusOK, map[string]any{
-				jsonBinding: nil,
-				"suggested": suggestForgeBinding(projectPath),
-			})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{jsonBinding: bindingView(pf)})
+		serveForgeBindingGet(w, r, projectPath)
 	case http.MethodPost:
+		// Creating a binding while the integration is off would leave a row that
+		// GET reports back (the `pf != nil` branch above) and that starts polling
+		// the moment the switch is turned on — without the user ever binding it
+		// through the UI. Refused rather than silently accepted: the switch means
+		// "do not talk to GitHub/GitLab", and a binding is what enables talking.
+		if !model.ConfigInstance.Forge.Enabled {
+			writeLocalizedErrorf(w, r, http.StatusConflict, "ForgeDisabled")
+			return
+		}
 		serveForgeBindingSet(w, r, projectPath)
 	case http.MethodDelete:
 		// Record the opt-out BEFORE deleting, so the auto-bind on the next GET
@@ -415,6 +386,65 @@ func ServeForgeBinding(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", "GET, POST, DELETE")
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 	}
+}
+
+// serveForgeBindingGet reports the project's binding, auto-binding the highest
+// priority git remote when nothing is bound yet.
+func serveForgeBindingGet(w http.ResponseWriter, r *http.Request, projectPath string) {
+	pf, err := service.GetProjectForge(projectPath)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	if pf != nil {
+		writeJSON(w, http.StatusOK, map[string]any{jsonBinding: bindingView(pf)})
+		return
+	}
+	// Unbound: bind the highest-priority git remote automatically when it
+	// points at a platform-operated host, so the common case needs no dialog at
+	// all. Users who bind the wrong repository can change or clear it from the
+	// panel header.
+	//
+	// Non-official hosts (a self-hosted GitLab, say) are NOT auto-bound:
+	// binding them sends credentials to a host we cannot vouch for, and
+	// auto-binding would do it without the user ever seeing the warning.
+	// Those come back as a suggestion instead, so the bind — and the warning
+	// that precedes it — stays an explicit user action.
+	//
+	// The master switch also blocks auto-binding. Turning the integration off
+	// clears the bindings; without this check the very next GET would bind them
+	// straight back from the git remote and the user's "off" would silently
+	// undo itself. (The clear also marks the affected projects opted out, so
+	// this is the second line of defense rather than the only one — it still
+	// matters for a project whose binding was created while the switch was off,
+	// and for the window before the clear commits.)
+	if !model.ConfigInstance.Forge.Enabled {
+		writeJSON(w, http.StatusOK, map[string]any{
+			jsonBinding: nil,
+			"suggested": nil,
+		})
+		return
+	}
+	if remote, _, ok := pickForgeRemote(projectPath); ok && isOfficialForgeHost(remote.Host) {
+		created, aerr := service.AutoBindProjectForge(projectPath, remote)
+		if aerr != nil {
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
+		if created {
+			if bound, gerr := service.GetProjectForge(projectPath); gerr == nil && bound != nil {
+				writeJSON(w, http.StatusOK, map[string]any{jsonBinding: bindingView(bound)})
+				return
+			}
+		}
+	}
+	// Either nothing to bind, a non-official host needing confirmation, or the
+	// user previously opted out (AutoBindProjectForge is a no-op then) — report
+	// unbound, with a suggestion when one exists.
+	writeJSON(w, http.StatusOK, map[string]any{
+		jsonBinding: nil,
+		"suggested": suggestForgeBinding(projectPath),
+	})
 }
 
 // forgeBindingRequest accepts either an explicit platform/host/owner/repo or a

@@ -654,6 +654,36 @@ describe('BottomSheet wide-screen card (all drawers match ModalDialog)', () => {
     expect($('.bs-overlay')?.classList.contains('custom-overlay-class')).toBe(true)
     expect($('.bs-panel')?.classList.contains('custom-panel-class')).toBe(true)
   })
+
+  it('defaults to the narrow width tier', async () => {
+    // The wide-screen card would otherwise be an untiered 960px void; the
+    // narrow tier is the readable column a form/list wants.
+    wrapper = mount(BottomSheet, {
+      props: { open: true, title: 'Test' },
+      attachTo: document.body,
+    })
+    await nextTick()
+    expect($('.bs-panel')?.classList.contains('bs-panel--narrow')).toBe(true)
+    expect($('.bs-panel')?.classList.contains('bs-panel--wide')).toBe(false)
+  })
+
+  it('maps size="wide" onto the wide modifier class', async () => {
+    wrapper = mount(BottomSheet, {
+      props: { open: true, title: 'Test', size: 'wide' },
+      attachTo: document.body,
+    })
+    await nextTick()
+    expect($('.bs-panel')?.classList.contains('bs-panel--wide')).toBe(true)
+    expect($('.bs-panel')?.classList.contains('bs-panel--narrow')).toBe(false)
+  })
+
+  it('rejects any third width tier', () => {
+    const validator = BottomSheet.props!.size.validator as (v: string) => boolean
+    expect(validator('narrow')).toBe(true)
+    expect(validator('wide')).toBe(true)
+    expect(validator('compact')).toBe(false)
+    expect(validator('960px')).toBe(false)
+  })
 })
 
 

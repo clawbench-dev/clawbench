@@ -13,6 +13,7 @@ describe('getBackendDisplayName', () => {
     expect(getBackendDisplayName('cursor')).toBe('Cursor')
     expect(getBackendDisplayName('commandcode')).toBe('Command Code')
     expect(getBackendDisplayName('openclaw')).toBe('OpenClaw')
+    expect(getBackendDisplayName('qodercn')).toBe('Qoder CN')
   })
 
   it('falls back to the backend id for unknown backends', () => {

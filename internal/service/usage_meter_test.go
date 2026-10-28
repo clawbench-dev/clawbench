@@ -16,7 +16,22 @@ import (
 // Every test in this file mutates the process-wide ConfigInstance, so the
 // restore is not optional — a leaked rule makes later tests in the same package
 // emit notifications.
+//
+// A configured rule is switched ON unless the test says otherwise: that is what
+// ApplyDefaults does for a config.yaml written before the enable flag existed
+// (a missing key means "inherit from the rule", not "off"). Tests that want the
+// off state either pass a rule with nothing configured or set Enabled
+// explicitly through setUsageMeterRuleRaw.
 func setUsageMeterRule(t *testing.T, rule model.UsageMeterConfig) {
+	t.Helper()
+	if model.UsageMeterConfigured(rule) {
+		rule.Enabled = true
+	}
+	setUsageMeterRuleRaw(t, rule)
+}
+
+// setUsageMeterRuleRaw installs a rule verbatim, including Enabled.
+func setUsageMeterRuleRaw(t *testing.T, rule model.UsageMeterConfig) {
 	t.Helper()
 	prev := model.ConfigInstance.UsageMeter
 	model.ConfigInstance.UsageMeter = rule
@@ -488,9 +503,11 @@ func TestUsageMeterCycle_MonthlyWorksWithZeroPeriodDays(t *testing.T) {
 	assert.Equal(t, 15, st.DayInCycle)
 }
 
-// The mirror: a FIXED rule with no period has nothing to compute and must stay
-// disabled. Without this, dropping the period check entirely would also pass.
-func TestUsageMeterCycle_FixedStillRequiresPeriodDays(t *testing.T) {
+// A FIXED rule with no period is not an error: it means "no cycle". The meter
+// still reports the total since the anchor, it just has no day axis, no
+// baseline and no rollover. Filling in 30 would reset the user's running total
+// every month without ever being asked to.
+func TestUsageMeterCycle_FixedWithoutPeriodIsUnbounded(t *testing.T) {
 	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.Local)
 	setUsageMeterRule(t, model.UsageMeterConfig{
 		AnchorDate: "2026-10-01",
@@ -503,7 +520,17 @@ func TestUsageMeterCycle_FixedStillRequiresPeriodDays(t *testing.T) {
 
 	st, err := service.ComputeUsageMeter(context.Background(), now)
 	require.NoError(t, err)
-	assert.False(t, st.Enabled, "a fixed rule without a period is incomplete")
+	require.True(t, st.Enabled, "a rule without a period still has a total to report")
+	assert.Zero(t, st.PeriodDays, "no cycle means no cycle length")
+	assert.Empty(t, st.CycleEnd, "an unbounded window has no end")
+	assert.Zero(t, st.RemainingDays, "there is no 'days left' without a cycle")
+	// Day 15 since the anchor still counts: the elapsed days are real even
+	// though nothing rolls over.
+	assert.Equal(t, 15, st.DayInCycle)
+	// No cycle → the quota cannot be spread over days → no baseline, no
+	// projection. Showing one would invent a plan the user never set.
+	assert.Zero(t, st.Expected)
+	assert.Zero(t, st.ProjectedExhaustDay)
 }
 
 // An empty cycle_mode must keep behaving exactly like "fixed". This is the
@@ -706,7 +733,6 @@ func TestUsageMeter_InvalidRuleIsDisabledNotError(t *testing.T) {
 		rule model.UsageMeterConfig
 	}{
 		{"unknown metric", model.UsageMeterConfig{Quota: 10, PeriodDays: 30, Metric: "usd", AnchorDate: "2026-10-01"}},
-		{"zero period", model.UsageMeterConfig{Quota: 10, PeriodDays: 0, Metric: model.UsageMeterMetricCost, AnchorDate: "2026-10-01"}},
 		{"bad anchor", model.UsageMeterConfig{Quota: 10, PeriodDays: 30, Metric: model.UsageMeterMetricCost, AnchorDate: "not-a-date"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1007,9 +1033,8 @@ func TestComputeUsageMeter_MalformedRuleIsDisabledNotAnError(t *testing.T) {
 		rule model.UsageMeterConfig
 	}{
 		{"unknown metric", model.UsageMeterConfig{Quota: 10, PeriodDays: 30, Metric: "usd", AnchorDate: anchorOn(now, 5)}},
-		{"zero period", model.UsageMeterConfig{Quota: 10, PeriodDays: 0, Metric: model.UsageMeterMetricCost, AnchorDate: anchorOn(now, 5)}},
 		{"malformed anchor", model.UsageMeterConfig{Quota: 10, PeriodDays: 30, Metric: model.UsageMeterMetricCost, AnchorDate: "10/05/2026"}},
-		{"zero quota", model.UsageMeterConfig{Quota: 0, PeriodDays: 30, Metric: model.UsageMeterMetricCost, AnchorDate: anchorOn(now, 5)}},
+		{"unknown metric", model.UsageMeterConfig{Quota: 10, PeriodDays: 30, Metric: "usd", AnchorDate: anchorOn(now, 5)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			setUsageMeterRule(t, tc.rule)

@@ -60,7 +60,9 @@
                exactly like a single chat, so the user who built one needs to
                know why nobody else is answering — and that the fix is adding a
                member, not that the group is broken. -->
-          <span v-if="isSoloGroup" class="group-welcome-solo">{{ t('chat.messageList.groupSoloMemberHint') }}</span>
+          <span v-if="isSoloGroup" class="group-welcome-solo">
+            {{ hasOnlyDisabledPeers ? t('chat.messageList.groupSoloDisabledHint') : t('chat.messageList.groupSoloMemberHint') }}
+          </span>
           <ul class="group-welcome-tips">
             <li v-for="(tip, i) in groupModeTips" :key="i">{{ tip }}</li>
           </ul>
@@ -308,6 +310,48 @@ const props = defineProps({
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'open-btw', 'open-agent-config'])
 
 const messagesRef = ref(null)
+
+/**
+ * The scrollbar's layout cost, mirrored onto `--chat-scrollbar-lane`.
+ *
+ * WHY MEASURE: the message column and the composer island must share both side
+ * edges, but a classic scrollbar takes its width out of THIS element's layout
+ * box, so the column's content box ends up one bar-width short on the end side
+ * and the whole column drifts half of that off centre. The width cannot be
+ * written in CSS — it is 0 wherever scrollbars overlay the content (macOS/iOS
+ * default, most Android WebViews, headless Chromium), 10 for a classic bar, 4
+ * on a coarse pointer — and WebKit's `scrollbar-gutter: stable` only reserves
+ * it once the content actually overflows, so a short thread there reports a
+ * lane of 0 while a long one reports 10. Measuring `offsetWidth - clientWidth`
+ * is the one value that is correct on every engine and platform, and it is
+ * exactly the amount the box lost.
+ *
+ * `scrollbar-gutter: stable` (in the stylesheet) keeps the lane from appearing
+ * and disappearing as a thread grows, so this only has to run when the scroller
+ * or its content resizes — not on every message.
+ */
+function syncScrollbarLane() {
+  const el = messagesRef.value
+  if (!el) return
+  const lane = el.offsetWidth - el.clientWidth
+  if (lane < 0) return
+  el.style.setProperty('--chat-scrollbar-lane', `${lane}px`)
+}
+
+let scrollbarLaneObserver = null
+
+function observeScrollbarLane() {
+  scrollbarLaneObserver?.disconnect()
+  scrollbarLaneObserver = null
+  const el = messagesRef.value
+  if (!el) return
+  syncScrollbarLane()
+  if (typeof ResizeObserver === 'undefined') return
+  // Both axes matter: the lane depends on whether a bar is present, which can
+  // flip on a width change (content re-wraps) as well as a height change.
+  scrollbarLaneObserver = new ResizeObserver(() => syncScrollbarLane())
+  scrollbarLaneObserver.observe(el)
+}
 const { openFilePath, readLineTargetFromEl } = useFilePathAnnotation()
 const dialog = useDialog()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
@@ -320,16 +364,16 @@ function isLastAssistant(msg, _i) {
   return isLastAssistantMessage(props.messages, msg)
 }
 
-// Active group members shaped for AvatarStack (the host gets the accent ring).
-// Left members are excluded — they are not part of the group any more.
+// Speaking group members shaped for AvatarStack (the host gets the accent ring).
+// Disabled members are excluded — they are still in the group, but disabled.
 const groupStackMembers = computed(() =>
   (props.groupMembers || [])
-    .filter((m) => !m.left)
+    .filter((m) => !m.disabled)
     .map((m) => ({ id: m.id, agentId: m.agentId, name: m.name, backend: m.backend, avatar: m.avatar, isHost: m.isHost })),
 )
 
 /**
- * A group with exactly ONE active member.
+ * A group with exactly ONE speaking member.
  *
  * Only host mode can be created this way (free mode requires two members
  * server-side), and it behaves like a single chat — nothing routes to a second
@@ -337,11 +381,23 @@ const groupStackMembers = computed(() =>
  * leaving the user wondering why the group is silent.
  *
  * Derived from `groupStackMembers` rather than `props.groupMembers` so it uses
- * the SAME "active member" definition the avatar stack above renders: a member
- * who left is not a participant, and counting them would hide the hint from the
- * group that most needs it.
+ * the SAME "speaking member" definition the avatar stack above renders: a disabled
+ * member is not a participant right now, and counting them would hide the hint
+ * from the group that most needs it.
  */
 const isSoloGroup = computed(() => props.isGroupSession && groupStackMembers.value.length === 1)
+
+/**
+ * True when the only speaking member is the host BUT other member rows exist and
+ * are all disabled. The hint then must not tell the user to "add members" — the
+ * roster already has them; the actual fix is to enable (adding another instance
+ * would just create a duplicate). Counted from the raw roster so it can see the
+ * disabled rows the stack above filters out.
+ */
+const hasOnlyDisabledPeers = computed(() => {
+  const all = props.groupMembers || []
+  return props.isGroupSession && all.some(m => m.disabled) && all.every(m => m.isHost || m.disabled)
+})
 
 // Group empty-state copy, selected by mode. The two modes route completely
 // differently — a host decides who speaks, free mode relays via @-mentions — so
@@ -933,7 +989,12 @@ function observeContentGrowth() {
   // listKey change, so re-observe via the listKey watcher below.
   const inner = el.firstElementChild
   if (inner) {
-    contentResizeObserver = new ResizeObserver(() => onContentGrown())
+    contentResizeObserver = new ResizeObserver(() => {
+      onContentGrown()
+      // Content growth can also be what makes the bar appear on engines whose
+      // `scrollbar-gutter: stable` is a no-op until overflow (WebKit).
+      syncScrollbarLane()
+    })
     contentResizeObserver.observe(inner)
   }
 }
@@ -946,6 +1007,7 @@ onMounted(() => {
   // set — permanently suppressing force pins.
   document.addEventListener('mouseup', onDocumentMouseUp)
   observeContentGrowth()
+  observeScrollbarLane()
 })
 onBeforeUnmount(() => {
   // Teardown without a session switch (e.g. the whole panel unmounts) still
@@ -956,6 +1018,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('mouseup', onDocumentMouseUp)
   contentResizeObserver?.disconnect()
   contentResizeObserver = null
+  scrollbarLaneObserver?.disconnect()
+  scrollbarLaneObserver = null
   cancelAnimationFrame(contentGrownRaf)
   scrollFrameScheduler.cancelAll()
   clearTimeout(scrollStopTimer)
@@ -1669,13 +1733,39 @@ defineExpose({
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-6) 0;
+  /* Vertical rhythm, plus the chat reading measure as horizontal PADDING.
+     Padding, not margin: the scroll container itself must keep the pane's full
+     width so its scrollbar is painted at the SESSION AREA's right edge. With
+     `margin-inline` the whole box narrowed and the bar moved inwards, ending up
+     glued to the message column — the bar belongs to the pane, not to the
+     column.
+
+     Percentage padding resolves against the containing block (the pane), so the
+     START edge lands on the composer's. The END side additionally subtracts
+     --chat-scrollbar-lane: a classic scrollbar takes its width out of this
+     element's layout box, so without that the content box would end one
+     bar-width short and the message column's right edge would sit 10px left of
+     the composer island's (reported as "the messages and the input box are not
+     aligned"). The token is 0 on engines whose bar takes no layout width, so
+     Firefox is untouched. On a pane narrower than the measure the inset is 0
+     and both sides collapse to 0 / the lane — the area stays flush as before. */
+  padding: var(--space-6) max(0px, var(--chat-content-inset) - var(--chat-scrollbar-lane)) var(--space-6) var(--chat-content-inset);
+  /* Reserve the bar's lane up front, so the column's right edge does not move
+     when a conversation first grows past one screen. Chromium and Firefox both
+     honour this; WebKit reports support but only reserves once the content
+     actually overflows (measured), so a short thread there stays 10px wider —
+     the one engine where the two columns can still disagree, and only until the
+     first scrollbar appears. */
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
 }
 
-/* Message list container */
+/* Message list container.
+   No horizontal inset of its own: the reading measure comes from the
+   scroller's padding above, so the list is exactly the 900 measure wide on a
+   wide pane and stays flush to both edges on a narrower one. */
 .chat-messages-list {
   display: flex;
   flex-direction: column;

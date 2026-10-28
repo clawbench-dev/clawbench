@@ -571,7 +571,7 @@ describe('SessionList', () => {
     })
 
     it('omits the mode label when the roster is empty (mode unknowable)', async () => {
-      // A failed preview fetch (or a free group whose members all left) leaves
+      // A failed preview fetch (or a free group whose members are all disabled) leaves
       // the roster empty; guessing the mode from that is worse than omitting it.
       mockFetch.mockResolvedValue({
         ok: true,

@@ -490,6 +490,12 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	cfg.Feishu.Enabled = cfg.PushMode == "feishu"
 
 	// --- Forge (GitHub / GitLab integration) ---
+	// The master switch defaults to ON: bool zero-value trap, same as terminal /
+	// port_forward. An absent key means "keep the integration", so upgrading
+	// never silently turns it off; an explicit `enabled: false` is respected.
+	if !presence["forge.enabled"] {
+		cfg.Forge.Enabled = true
+	}
 	// Notification toggles default to ENABLED. Go's bool zero value is false, so
 	// without this block every flag would silently default to off — the opposite
 	// of the documented behavior. Presence is used to distinguish "user wrote
@@ -548,18 +554,24 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	// (a synthesized "30 days / $20" would fire a false alarm on every fresh
 	// install, and the number would be wrong for essentially everyone).
 	//
-	// Quota <= 0 is the off switch and is left untouched.
-	if cfg.UsageMeter.Quota > 0 {
+	// Every field is optional, so each one is normalized only when it can be
+	// used: a quota without a period keeps PeriodDays at 0, which the service
+	// reads as "no cycle" rather than silently inventing a 30-day rollover that
+	// would reset the user's running total every month.
+	if UsageMeterConfigured(cfg.UsageMeter) {
+		// A rule configured before the enable flag existed must stay on. The
+		// presence map is what distinguishes "the file has no such key" (an old
+		// install → inherit from the rule) from "the user turned it off" (a
+		// written false, which must be respected).
+		if !presence["usage_meter.enabled"] {
+			cfg.UsageMeter.Enabled = true
+		}
 		// Normalize the mode even when it is empty: "" means "fixed", and
 		// writing that back keeps config.yaml readable and makes the value the
 		// settings page shows identical to the one the arithmetic uses.
 		cfg.UsageMeter.CycleMode = NormalizeUsageMeterCycleMode(cfg.UsageMeter.CycleMode)
-		// PeriodDays stays valid in BOTH modes. It is what "fixed" runs on, and
-		// in "monthly" mode it is a dormant value the user can switch back to —
-		// the settings page hides the field there, so leaving it at 0 would make
-		// a later switch to "fixed" silently fail validation.
-		if cfg.UsageMeter.PeriodDays <= 0 {
-			cfg.UsageMeter.PeriodDays = 30
+		if cfg.UsageMeter.PeriodDays < 0 {
+			cfg.UsageMeter.PeriodDays = 0
 		}
 		if cfg.UsageMeter.PeriodDays > MaxUsageMeterPeriodDays {
 			cfg.UsageMeter.PeriodDays = MaxUsageMeterPeriodDays

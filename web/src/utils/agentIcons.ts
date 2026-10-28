@@ -55,6 +55,11 @@ const agentSvgMap: Record<string, AgentSvgData> = {
     codex: { svg: extractSvgInner(codexIcon), viewBox: extractViewBox(codexIcon) },
     copilot: { svg: extractSvgInner(copilotIcon), viewBox: extractViewBox(copilotIcon) },
     qoder: { svg: extractSvgInner(qoderIcon), viewBox: extractViewBox(qoderIcon) },
+    // Qoder CN is the same product compiled with a different brand constant
+    // (`Gs="cn"==(Z4a="cn")` vs `"global"`), so it ships the same mark. Two
+    // entries rather than an alias because the backend ids are independent:
+    // each agent's icon is looked up by its own BackendSpec.Backend.
+    qodercn: { svg: extractSvgInner(qoderIcon), viewBox: extractViewBox(qoderIcon) },
     deepseek: { svg: extractSvgInner(deepseekIcon), viewBox: extractViewBox(deepseekIcon) },
     // DeepSeek Harness is DeepSeek's official agent, so it shares the DeepSeek mark.
     dsh: { svg: extractSvgInner(deepseekIcon), viewBox: extractViewBox(deepseekIcon) },

@@ -41,7 +41,7 @@ func extractParentToolCallID(backendID string, meta map[string]any) string {
 	switch backendID {
 	case "codebuddy":
 		return metaString(meta[metaKeyCodeBuddyParentToolCallID])
-	case "claude", "qoder":
+	case "claude", "qoder", "qodercn":
 		if ns, ok := meta["claudeCode"].(map[string]any); ok {
 			return metaString(ns[metaKeyClaudeParentToolUseID])
 		}

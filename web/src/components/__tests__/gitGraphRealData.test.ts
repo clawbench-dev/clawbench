@@ -1,12 +1,8 @@
 /**
  * Integration tests for computeGraphData using real git repo data.
  *
- * The fixtures are transcribed from hand-built git repos (a linear history,
- * a single merge, an octopus merge, …) whose SHAs and parent relationships
- * are inlined below as plain arrays — nothing is read from disk, so these
- * tests run the same in a shallow clone.
- *
- * They verify that:
+ * These tests use the actual commit SHAs and parent relationships from
+ * the test git repos in test/git-graph-repos/ to verify that:
  * 1. Lane assignments match the expected visual graph structure
  * 2. Connection types (VERT/FORK/MERGE-IN) are correct
  * 3. Partial loading produces correct continuation lines with exact SVG paths
@@ -17,6 +13,12 @@
 
 import { describe, expect, it } from 'vitest'
 import { computeGraphData } from '@/utils/gitGraph'
+import { ensureFixtures, readRepo } from './gitGraphFixtures'
+
+// Builds the fixture repos if this is a fresh clone. Runs at module load
+// because the fixtures below are read at module scope; it is a no-op when
+// they are already present.
+ensureFixtures()
 
 const ROW_HEIGHT = 64
 const LANE_WIDTH = 20
@@ -96,13 +98,7 @@ function getGraphInfo(commits: any[], rowHeight = ROW_HEIGHT, previousShaToLane?
 // 01-linear: 5 commits, single branch
 // ═══════════════════════════════════════════════════════════════════════════
 
-const LINEAR = [
-  { sha: 'ab44778', parents: ['993e655'], msg: 'commit 5' },
-  { sha: '993e655', parents: ['23097ad'], msg: 'commit 4' },
-  { sha: '23097ad', parents: ['c4416dd'], msg: 'commit 3' },
-  { sha: 'c4416dd', parents: ['88b5155'], msg: 'commit 2' },
-  { sha: '88b5155', parents: [], msg: 'commit 1' },
-]
+const LINEAR = readRepo('01-linear')
 
 describe('01-linear (real data)', () => {
   const { nodes, connections, laneCount, lines } = getGraphInfo(LINEAR)
@@ -139,15 +135,7 @@ describe('01-linear (real data)', () => {
 // 02-single-merge: main + feature branch, one merge
 // ═══════════════════════════════════════════════════════════════════════════
 
-const SINGLE_MERGE = [
-  { sha: 'e48a09e', parents: ['7e8265c'], msg: 'main: commit 4', refs: ['HEAD -> master'] },
-  { sha: '7e8265c', parents: ['3bb4df1', '0971cee'], msg: 'merge: integrate feature' },
-  { sha: '0971cee', parents: ['3cc90b7'], msg: 'feature: commit 2', refs: ['feature'] },
-  { sha: '3cc90b7', parents: ['357d91a'], msg: 'feature: commit 1' },
-  { sha: '3bb4df1', parents: ['357d91a'], msg: 'main: commit 3' },
-  { sha: '357d91a', parents: ['cd74ef5'], msg: 'main: commit 2' },
-  { sha: 'cd74ef5', parents: [], msg: 'main: commit 1' },
-]
+const SINGLE_MERGE = readRepo('02-single-merge')
 
 describe('02-single-merge (real data)', () => {
   const { nodes, connections, laneCount, lines } = getGraphInfo(SINGLE_MERGE)
@@ -206,19 +194,7 @@ describe('02-single-merge (real data)', () => {
 // 03-multi-branch: two feature branches merged sequentially
 // ═══════════════════════════════════════════════════════════════════════════
 
-const MULTI_BRANCH = [
-  { sha: '964f480', parents: ['482d32e'], msg: 'main: after merges' },
-  { sha: '482d32e', parents: ['b007c8b', '682ca0c'], msg: 'merge: feature-b' },
-  { sha: '682ca0c', parents: ['f7b2c27'], msg: 'feature-b: work 3', refs: ['feature-b'] },
-  { sha: 'f7b2c27', parents: ['caa37e7'], msg: 'feature-b: work 2' },
-  { sha: 'caa37e7', parents: ['c929e3f'], msg: 'feature-b: work 1' },
-  { sha: 'b007c8b', parents: ['1aeaffd', '50930e4'], msg: 'merge: feature-a' },
-  { sha: '50930e4', parents: ['f49756e'], msg: 'feature-a: work 2', refs: ['feature-a'] },
-  { sha: 'f49756e', parents: ['c929e3f'], msg: 'feature-a: work 1' },
-  { sha: '1aeaffd', parents: ['c929e3f'], msg: 'main: third' },
-  { sha: 'c929e3f', parents: ['074dbaa'], msg: 'main: second' },
-  { sha: '074dbaa', parents: [], msg: 'main: init' },
-]
+const MULTI_BRANCH = readRepo('03-multi-branch')
 
 describe('03-multi-branch (real data)', () => {
   const { nodes, connections, laneCount } = getGraphInfo(MULTI_BRANCH)
@@ -251,17 +227,7 @@ describe('03-multi-branch (real data)', () => {
 // 04-frequent-merge: dev branch with frequent merges from main
 // ═══════════════════════════════════════════════════════════════════════════
 
-const FREQUENT_MERGE = [
-  { sha: 'ff36d18', parents: ['7fc1158'], msg: 'main: final', refs: ['HEAD -> master'] },
-  { sha: '7fc1158', parents: ['1fe1097'], msg: 'dev: work 3', refs: ['dev'] },
-  { sha: '1fe1097', parents: ['9620ba1', 'a19508b'], msg: 'dev: merge main 2' },
-  { sha: 'a19508b', parents: ['14dcef9'], msg: 'main: work 2' },
-  { sha: '9620ba1', parents: ['539b985'], msg: 'dev: work 2' },
-  { sha: '539b985', parents: ['e121a5d', '14dcef9'], msg: 'dev: merge main 1' },
-  { sha: '14dcef9', parents: ['074dbaa'], msg: 'main: work 1' },
-  { sha: 'e121a5d', parents: ['074dbaa'], msg: 'dev: work 1' },
-  { sha: '074dbaa', parents: [], msg: 'main: init' },
-]
+const FREQUENT_MERGE = readRepo('04-frequent-merge')
 
 describe('04-frequent-merge (real data)', () => {
   const { nodes, connections, laneCount } = getGraphInfo(FREQUENT_MERGE)
@@ -285,18 +251,7 @@ describe('04-frequent-merge (real data)', () => {
 // 05-long-lived-branch: release branch alongside main
 // ═══════════════════════════════════════════════════════════════════════════
 
-const LONG_LIVED = [
-  { sha: 'e1c63f7', parents: ['08e88f7'], msg: 'main: post-release', refs: ['HEAD -> master'] },
-  { sha: '08e88f7', parents: ['91a7f14', 'bc644a9'], msg: 'merge: release-1.0' },
-  { sha: 'bc644a9', parents: ['555f1bd'], msg: 'release: bugfix', refs: ['release-1.0'] },
-  { sha: '555f1bd', parents: ['eba78a8'], msg: 'release: prep 2' },
-  { sha: 'eba78a8', parents: ['074dbaa'], msg: 'release: prep 1' },
-  { sha: '91a7f14', parents: ['68cd412'], msg: 'main: feature 4' },
-  { sha: '68cd412', parents: ['4955893'], msg: 'main: feature 3' },
-  { sha: '4955893', parents: ['7e864f0'], msg: 'main: feature 2' },
-  { sha: '7e864f0', parents: ['074dbaa'], msg: 'main: feature 1' },
-  { sha: '074dbaa', parents: [], msg: 'main: init' },
-]
+const LONG_LIVED = readRepo('05-long-lived-branch')
 
 describe('05-long-lived-branch (real data)', () => {
   const { nodes, connections, laneCount } = getGraphInfo(LONG_LIVED)
@@ -320,15 +275,7 @@ describe('05-long-lived-branch (real data)', () => {
 // 06-octopus-merge: merge of 3 feature branches at once
 // ═══════════════════════════════════════════════════════════════════════════
 
-const OCTOPUS = [
-  { sha: '04a2046', parents: ['55731c9'], msg: 'main: final', refs: ['HEAD -> master'] },
-  { sha: '55731c9', parents: ['5388f87', '8d500bc', '64621af', '185fe1e'], msg: 'merge: combine all' },
-  { sha: '185fe1e', parents: ['af44737'], msg: 'feature-c: work', refs: ['feature-c'] },
-  { sha: '64621af', parents: ['af44737'], msg: 'feature-b: work', refs: ['feature-b'] },
-  { sha: '8d500bc', parents: ['af44737'], msg: 'feature-a: work', refs: ['feature-a'] },
-  { sha: '5388f87', parents: ['af44737'], msg: 'main: second' },
-  { sha: 'af44737', parents: [], msg: 'main: init' },
-]
+const OCTOPUS = readRepo('06-octopus-merge')
 
 describe('06-octopus-merge (real data)', () => {
   const { connections, laneCount } = getGraphInfo(OCTOPUS)
@@ -356,14 +303,7 @@ describe('06-octopus-merge (real data)', () => {
 // 07-open-branches: multiple branches that haven't been merged
 // ═══════════════════════════════════════════════════════════════════════════
 
-const OPEN_BRANCHES = [
-  { sha: '4512f9f', parents: ['04335a1'], msg: 'feature-a: work 2', refs: ['feature-a'] },
-  { sha: '04335a1', parents: ['5388f87'], msg: 'feature-a: work 1' },
-  { sha: 'fb83ca6', parents: ['5388f87'], msg: 'feature-b: work 1', refs: ['feature-b'] },
-  { sha: 'e16ecb4', parents: ['5388f87'], msg: 'main: third', refs: ['HEAD -> master'] },
-  { sha: '5388f87', parents: ['af44737'], msg: 'main: second' },
-  { sha: 'af44737', parents: [], msg: 'main: init' },
-]
+const OPEN_BRANCHES = readRepo('07-open-branches')
 
 describe('07-open-branches (real data)', () => {
   const { nodes, connections } = getGraphInfo(OPEN_BRANCHES)
@@ -391,18 +331,7 @@ describe('07-open-branches (real data)', () => {
 // 08-long-linear: test pagination / scroll scenario
 // ═══════════════════════════════════════════════════════════════════════════
 
-const LONG_LINEAR = [
-  { sha: '31b22c8', parents: ['65c2645'], msg: 'commit 40' },
-  { sha: '65c2645', parents: ['2e722a8'], msg: 'commit 39' },
-  { sha: '2e722a8', parents: ['99f0ee6'], msg: 'commit 38' },
-  { sha: '99f0ee6', parents: ['4745ad4'], msg: 'commit 37' },
-  { sha: '4745ad4', parents: ['b652381'], msg: 'commit 36' },
-  { sha: 'b652381', parents: ['fcd96f6'], msg: 'commit 35' },
-  { sha: 'fcd96f6', parents: ['149e621'], msg: 'commit 34' },
-  { sha: '149e621', parents: ['597b791'], msg: 'commit 33' },
-  { sha: '597b791', parents: ['17dbced'], msg: 'commit 32' },
-  { sha: '17dbced', parents: ['fd5c695'], msg: 'commit 31' },
-]
+const LONG_LINEAR = readRepo('08-long-linear', { limit: 10 })
 
 describe('08-long-linear (real data, first 10)', () => {
   const { nodes, connections } = getGraphInfo(LONG_LINEAR)

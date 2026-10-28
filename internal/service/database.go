@@ -42,6 +42,7 @@ const (
 	migEffortPickFlag       = "2026-10-18_mark_legacy_effort_picks"
 	migUsageLedgerHeal      = "2026-10-19_heal_usage_ledger"
 	migLedgerWallClock      = "2026-10-25_backfill_ledger_wall_clock"
+	migGroupMemberDisabled  = "2026-10-28_group_member_disabled"
 )
 
 // dataMigrationNames 是上表的名字集合，供测试遍历。
@@ -54,6 +55,7 @@ var dataMigrationNames = []string{
 	migEffortPickFlag,
 	migUsageLedgerHeal,
 	migLedgerWallClock,
+	migGroupMemberDisabled,
 }
 
 // ensureSchemaMigrationsTable 幂等建台账表。必须在任何 runOnce 之前调用。
@@ -481,6 +483,14 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			group_id TEXT DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0,
+			-- disabled marks a group MEMBER row the user has disabled (禁用): it
+			-- stays a full member — its row, context window and history are
+			-- untouched — but the orchestrator never schedules it to speak.
+			-- Re-enabling is a plain flag flip, so a member disabled for a while
+			-- resumes with everything that happened in between (its cursor was
+			-- never advanced while disabled, so its next turn injects the whole
+			-- backlog). Always 0 for non-member rows.
+			disabled INTEGER NOT NULL DEFAULT 0,
 			last_read_at DATETIME,
 			-- awaiting_user_at marks a GROUP session whose last finished turn
 			-- handed the floor back to the human and that the user has not read
@@ -1467,6 +1477,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add chat_sessions.disabled — the group member "禁用" flag (see the
+	// DDL comment). Additive with a 0 default, so no backfill is needed here; the
+	// legacy "removed member" rows are converted by MigrateGroupMemberDisabled below.
+	var hasDisabled int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='disabled'").Scan(&hasDisabled)
+	if hasDisabled == 0 {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed to add disabled column: %w", err)
+		}
+	}
+
 	// Migrate: create session tag registry + session↔tag links.
 	//
 	// Tags are a separate registry (not a JSON column on chat_sessions) so a
@@ -2013,6 +2034,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// sees the repaired created_at values — a re-stamped row would otherwise
 	// derive a runtime of hours.
 	runOnce(migLedgerWallClock, MigrateLedgerWallClock)
+
+	// Migrate: archived group MEMBER rows (the old "removed from the group"
+	// representation) become disabled rows. Runs last so it sees rows created by any
+	// earlier migration.
+	runOnce(migGroupMemberDisabled, MigrateGroupMemberDisabled)
 
 	return nil
 }

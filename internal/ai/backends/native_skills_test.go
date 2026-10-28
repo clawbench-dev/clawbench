@@ -23,6 +23,7 @@ import (
 	_ "clawbench/internal/ai/backends/opencode"
 	_ "clawbench/internal/ai/backends/pi"
 	_ "clawbench/internal/ai/backends/qoder"
+	_ "clawbench/internal/ai/backends/qodercn"
 	_ "clawbench/internal/ai/backends/vecli"
 	_ "clawbench/internal/ai/backends/zcode"
 )
@@ -45,6 +46,7 @@ var skillAwareBackends = map[string]bool{
 	"opencode":    true, // .config/opencode/skill + .opencode/skills + .agents/skills
 	"mimo":        true, // OpenCode fork: .mimocode/skills + .agents/skills
 	"qoder":       true, // .qoder/skills + .agents/skills
+	"qodercn":     true, // .qoder-cn/skills + .agents/skills (user root follows the brand; project root stays .qoder)
 	"dsh":         true, // .dsh/skills + .agents/skills
 	"deepseek":    true, // CodeWhale: .codewhale/skills + .agents/skills
 	"pi":          true, // ~/.pi/agent/skills + <available_skills> injection
@@ -55,9 +57,13 @@ var skillAwareBackends = map[string]bool{
 
 	// Do NOT load their own skills → ClawBench must inject.
 	//
-	// codebuddy is the important one: its TUI reads ~/.codebuddy/skills but its
-	// ACP process does not, which is why ClawBench has always injected them.
-	// Setting this true would make CodeBuddy agents lose every skill.
+	// codebuddy: the "ACP does not scan ~/.codebuddy/skills" premise this row
+	// was originally written on is no longer accurate — measured on 2.177.0,
+	// `codebuddy --acp` DOES report user (source="user") and project
+	// (source="project") skills, both keyed off the process cwd. The row stays
+	// false on purpose: injection is the fallback for older builds that did not
+	// scan, and MergeCommands dedupes the overlap on the canonical command name,
+	// so the only cost on current builds is a redundant scan.
 	"codebuddy": false,
 
 	// No skill directory at all (nothing to load, nothing to inject).
@@ -122,7 +128,7 @@ func TestSharedSkillsDirDeclaredWhereReadable(t *testing.T) {
 	// Verified by grepping each shipped CLI for ".agents/skills".
 	readsShared := map[string]bool{
 		"codex": true, "copilot": true, "opencode": true,
-		"mimo": true, "qoder": true, "dsh": true, "deepseek": true,
+		"mimo": true, "qoder": true, "qodercn": true, "dsh": true, "deepseek": true,
 		"cursor": true, "commandcode": true, "openclaw": true,
 	}
 	for _, p := range backends.All() {

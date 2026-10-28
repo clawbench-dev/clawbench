@@ -2,6 +2,7 @@
   <BottomSheet
     :open="drawer.effectiveOpen.value"
     auto
+    size="wide"
     :title="t('chat.btw.title')"
     @close="drawer.close()"
   >

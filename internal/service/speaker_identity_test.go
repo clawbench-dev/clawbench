@@ -59,8 +59,8 @@ func TestResolveSessionSpeakers_Group(t *testing.T) {
 	require.NoError(t, err)
 	bobID, err := AddGroupMember(project, groupID, "codex", "codex", "Bob")
 	require.NoError(t, err)
-	// Bob leaves; his speech remains in the timeline.
-	require.NoError(t, RemoveGroupMember(groupID, bobID))
+	// Bob is disabled; his speech remains in the timeline.
+	require.NoError(t, SetGroupMemberDisabled(groupID, bobID, true))
 
 	sessionAgent, speakers := ResolveSessionSpeakers(groupID)
 	require.NotNil(t, sessionAgent)
@@ -70,7 +70,7 @@ func TestResolveSessionSpeakers_Group(t *testing.T) {
 
 	require.Contains(t, speakers, hostMemberID)
 	require.Contains(t, speakers, aliceID)
-	require.Contains(t, speakers, bobID, "a left member must still resolve (past speech)")
+	require.Contains(t, speakers, bobID, "a disabled member must still resolve (past speech)")
 
 	// Member names are the STORED names (agent_name), NOT the live agents.name.
 	// The registry calls them "Alice Agent"/"Bob Agent", but the members joined

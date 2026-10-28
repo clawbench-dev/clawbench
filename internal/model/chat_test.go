@@ -296,6 +296,78 @@ func TestChatMessageUnmarshalNoFiles(t *testing.T) {
 	}
 }
 
+// TestDedupeFileEntries pins the identity rule the queue endpoint relies on.
+//
+// The regression it guards: the same upload arrives through BOTH channels
+// (legacy filePaths + structured files) and the endpoint concatenated them, so
+// a queued message stored one duplicate per send and its bubble rendered the
+// same image twice, then three times as the queue advanced.
+func TestDedupeFileEntries(t *testing.T) {
+	t.Run("identical whole-file entries collapse to one", func(t *testing.T) {
+		in := []FileEntry{
+			{Path: "/p/.clawbench/uploads/a.png"},
+			{Path: "/p/.clawbench/uploads/a.png"},
+			{Path: "/p/.clawbench/uploads/a.png"},
+		}
+		got := DedupeFileEntries(in)
+		if len(got) != 1 {
+			t.Fatalf("want 1 entry, got %d: %+v", len(got), got)
+		}
+		if got[0].Path != "/p/.clawbench/uploads/a.png" {
+			t.Errorf("unexpected survivor: %+v", got[0])
+		}
+	})
+
+	t.Run("distinct line ranges of one path are separate attachments", func(t *testing.T) {
+		in := []FileEntry{
+			{Path: "/p/a.go"},
+			{Path: "/p/a.go", StartLine: 10, EndLine: 20},
+			{Path: "/p/a.go", StartLine: 30, EndLine: 40},
+			{Path: "/p/a.go", StartLine: 10, EndLine: 20},
+		}
+		got := DedupeFileEntries(in)
+		if len(got) != 3 {
+			t.Fatalf("want 3 entries (whole file + two ranges), got %d: %+v", len(got), got)
+		}
+	})
+
+	t.Run("URLs key on address, not label", func(t *testing.T) {
+		in := []FileEntry{
+			{Path: "acme/widgets#1", Kind: "url", URL: "https://github.com/acme/widgets/issues/1"},
+			{Path: "renamed label", Kind: "url", URL: "https://github.com/acme/widgets/issues/1"},
+		}
+		got := DedupeFileEntries(in)
+		if len(got) != 1 {
+			t.Fatalf("want 1 entry, got %d: %+v", len(got), got)
+		}
+		if got[0].Path != "acme/widgets#1" {
+			t.Errorf("dedupe must keep the FIRST occurrence, got %q", got[0].Path)
+		}
+	})
+
+	t.Run("quotes with different text survive", func(t *testing.T) {
+		in := []FileEntry{
+			{Kind: "quote", ID: "q1", Path: "/p/a.go", Text: "alpha"},
+			{Kind: "quote", ID: "q1", Path: "/p/a.go", Text: "beta"},
+			{Kind: "quote", ID: "q1", Path: "/p/a.go", Text: "alpha"},
+		}
+		got := DedupeFileEntries(in)
+		if len(got) != 2 {
+			t.Fatalf("want 2 entries, got %d: %+v", len(got), got)
+		}
+	})
+
+	t.Run("order is preserved and a single entry is returned untouched", func(t *testing.T) {
+		one := []FileEntry{{Path: "/p/b.go"}}
+		if got := DedupeFileEntries(one); len(got) != 1 || got[0].Path != "/p/b.go" {
+			t.Fatalf("single entry must pass through, got %+v", got)
+		}
+		if got := DedupeFileEntries(nil); got != nil {
+			t.Fatalf("nil must stay nil, got %+v", got)
+		}
+	})
+}
+
 func TestFileEntriesFromPaths(t *testing.T) {
 	entries := FileEntriesFromPaths([]string{"/a.go", "/b.ts"})
 	if len(entries) != 2 {

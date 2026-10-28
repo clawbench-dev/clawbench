@@ -10,13 +10,13 @@ vi.mock('vue-i18n', () => ({
 }))
 
 const mockAdd = vi.fn().mockResolvedValue(undefined)
-const mockRemove = vi.fn().mockResolvedValue(undefined)
+const mockSetDisabled = vi.fn().mockResolvedValue(undefined)
 const mockSetParallel = vi.fn().mockResolvedValue(undefined)
 const mockSetCruise = vi.fn().mockResolvedValue(undefined)
 const mockGenerateAvatars = vi.fn().mockResolvedValue(undefined)
 vi.mock('@/composables/useGroupChat', () => ({
   addGroupMembers: (...a: any[]) => mockAdd(...a),
-  removeGroupMember: (...a: any[]) => mockRemove(...a),
+  setGroupMemberDisabled: (...a: any[]) => mockSetDisabled(...a),
   setGroupParallelDefault: (...a: any[]) => mockSetParallel(...a),
   setGroupCruise: (...a: any[]) => mockSetCruise(...a),
   generateMemberAvatars: (...a: any[]) => mockGenerateAvatars(...a),
@@ -32,8 +32,22 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   applyCruiseAutoApproveDefault: (...a: any[]) => mockApplyCruiseDefault(...a),
 }))
 
+// The roster's model line resolves a member's model id against the agent's
+// list (name lookup + the agent's own default). Both live on the shared
+// useAgents store; stub them here so a row's label is deterministic.
+const AGENT_MODELS: Record<string, Array<{ id: string; name: string; default: boolean }>> = {
+  a1: [
+    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', default: true },
+    { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', default: false },
+  ],
+}
+const AGENT_DEFAULT_MODEL: Record<string, string> = { a1: 'claude-sonnet-4-6' }
 vi.mock('@/composables/useAgents', () => ({
   getAgentAvatar: (agentId: string) => (agentId ? `<svg>agent-${agentId}</svg>` : ''),
+  useAgents: () => ({
+    getAgentModel: (agentId: string, modelId: string) => AGENT_MODELS[agentId]?.find(m => m.id === modelId),
+    getDefaultModelId: (agentId: string) => AGENT_DEFAULT_MODEL[agentId] || '',
+  }),
 }))
 vi.mock('@/components/common/AgentIcon.vue', () => ({
   default: { name: 'AgentIcon', props: ['backend', 'name', 'avatar', 'size'], template: '<span class="agent-icon-stub" />' },
@@ -74,13 +88,13 @@ function mountSheet(members: any[], props: Record<string, unknown> = {}) {
 // sheet must pin it to the top regardless of the incoming order.
 const MEMBERS = [
   { id: 'm2', name: 'Alice', backend: 'claude', agentId: 'a2', isHost: false },
-  { id: 'm3', name: 'Gone', backend: 'claude', agentId: 'a3', isHost: false, left: true },
+  { id: 'm3', name: 'Gone', backend: 'claude', agentId: 'a3', isHost: false, disabled: true },
   { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
 ]
 
 describe('GroupSettingsSheet', () => {
   beforeEach(() => {
-    mockRemove.mockClear()
+    mockSetDisabled.mockClear()
     mockAdd.mockClear()
     mockGenerateAvatars.mockClear()
     mockToggleAutoApprove.mockClear()
@@ -114,16 +128,35 @@ describe('GroupSettingsSheet', () => {
     expect(w.findAll('.gm-name').map(n => n.text())).toEqual(['Host', 'Alice', 'Bob'])
   })
 
-  it('tags the host and a left member, and only offers remove on active non-hosts', () => {
+  it('tags the host and a disabled member, and offers a disable toggle on every row', () => {
     const w = mountSheet(MEMBERS)
     expect(w.find('.gm-tag--host').exists()).toBe(true)
-    expect(w.find('.gm-tag--left').exists()).toBe(true)
-    // The host tag carries a crown icon alongside the label.
+    expect(w.find('.gm-tag--disabled').exists()).toBe(true)
+    // The host tag carries a crown icon alongside the label, the disabled tag a
+    // BAN glyph — the same "disabled" icon the agent settings use, so the state
+    // reads the same way in both places (and is legible without the tooltip).
     expect(w.find('.gm-tag--host .gm-tag-crown').exists()).toBe(true)
     expect(w.find('.gm-tag--host .lucide-crown').exists()).toBe(true)
-    // Both LIVE members have a remove control (the host's is disabled), so the
-    // trailing column is identical on every row; the left member has none.
-    expect(w.findAll('.gm-remove')).toHaveLength(2)
+    const tagIcon = w.find('.gm-tag--disabled .gm-tag-disabled-icon')
+    expect(tagIcon.exists()).toBe(true)
+    expect(tagIcon.classes()).toContain('lucide-ban')
+    expect(tagIcon.classes()).not.toContain('lucide-mic-off')
+    // EVERY row keeps the trailing control (the host's is disabled), so the
+    // usage chip holds the same x-position across rows.
+    expect(w.findAll('.gm-disable-toggle')).toHaveLength(3)
+  })
+
+  it('shows a Ban glyph on an enabled member and a Play glyph on a disabled one', () => {
+    // The toggle's ICON carries the action: Ban = "disable this member",
+    // Play = "turn it back on". Same pair the agent settings use, so "disabled"
+    // is the same visual vocabulary everywhere.
+    const w = mountSheet(MEMBERS)
+    const enabledRow = w.findAll('.gm-row').find(r => !r.classes().includes('is-disabled'))!
+    const disabledRow = w.findAll('.gm-row').find(r => r.classes().includes('is-disabled'))!
+    const enabledIcon = enabledRow.find('.gm-disable-toggle svg')
+    const disabledIcon = disabledRow.find('.gm-disable-toggle svg')
+    expect(enabledIcon.classes()).toContain('lucide-ban')
+    expect(disabledIcon.classes()).toContain('lucide-play')
   })
 
   it('puts the host pill with the name, not in a trailing column', () => {
@@ -133,23 +166,82 @@ describe('GroupSettingsSheet', () => {
     const w = mountSheet(MEMBERS)
     const hostRow = w.findAll('.gm-row')[0]
     expect(hostRow.find('.gm-identity .gm-tag--host').exists()).toBe(true)
-    // And the identity group comes BEFORE the usage chip / remove control.
+    // And the identity group comes BEFORE the usage chip / disable control.
     const identity = hostRow.find('.gm-identity').element
     const usage = hostRow.find('.gm-usage').element
-    const remove = hostRow.find('.gm-remove').element
+    const disable = hostRow.find('.gm-disable-toggle').element
     expect(identity.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(usage.compareDocumentPosition(remove) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(usage.compareDocumentPosition(disable) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('keeps the host remove button disabled and inert', async () => {
+  it('keeps the host disable button disabled and inert', async () => {
     const w = mountSheet(MEMBERS)
     const hostRow = w.findAll('.gm-row')[0]
-    const btn = hostRow.find('.gm-remove')
+    const btn = hostRow.find('.gm-disable-toggle')
     expect(btn.attributes('disabled')).toBeDefined()
-    expect(btn.classes()).toContain('gm-remove--disabled')
-    expect(btn.attributes('title')).toBe('group.hostNotRemovable')
+    expect(btn.classes()).toContain('gm-disable-toggle--inert')
+    expect(btn.attributes('title')).toBe('group.hostCannotDisable')
     await btn.trigger('click')
-    expect(mockRemove).not.toHaveBeenCalled()
+    expect(mockSetDisabled).not.toHaveBeenCalled()
+  })
+
+  // The last member still able to speak cannot be turned off: the group would
+  // have nobody to answer and no turn could ever run again. Mirrors the server
+  // guard (ErrCannotDisableLastMember) so the click never comes back as a 409.
+  //
+  // A free group (no host) is used because in host mode the host itself speaks,
+  // so "host + 1 member" still has a speaker left — that shape legitimately
+  // degrades to a single chat and is NOT blocked.
+  it('keeps the last speaking member’s disable button inert', async () => {
+    const w = mountSheet([
+      { id: 'm2', name: 'Solo', backend: 'claude', agentId: 'a2', isHost: false },
+      { id: 'm3', name: 'Gone', backend: 'claude', agentId: 'a3', isHost: false, disabled: true },
+    ])
+    const soloRow = w.findAll('.gm-row').find(r => r.text().includes('Solo'))!
+    const btn = soloRow.find('.gm-disable-toggle')
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.classes()).toContain('gm-disable-toggle--inert')
+    expect(btn.attributes('title')).toBe('group.lastSpeakerCannotDisable')
+    await btn.trigger('click')
+    expect(mockSetDisabled).not.toHaveBeenCalled()
+  })
+
+  it('allows disabling a member while another speaker remains', async () => {
+    const w = mountSheet([
+      { id: 'm2', name: 'Alice', backend: 'claude', agentId: 'a2', isHost: false },
+      { id: 'm3', name: 'Bob', backend: 'claude', agentId: 'a3', isHost: false },
+    ])
+    const aliceRow = w.findAll('.gm-row').find(r => r.text().includes('Alice'))!
+    const btn = aliceRow.find('.gm-disable-toggle')
+    expect(btn.attributes('disabled')).toBeUndefined()
+    expect(btn.attributes('title')).toBe('group.disable')
+    await btn.trigger('click')
+    expect(mockSetDisabled).toHaveBeenCalledWith('g1', 'm2', true)
+  })
+
+  // Enabling is never blocked by the last-speaker rule: a disabled member is the
+  // one that makes the group non-empty again, so the guard must not leak onto it.
+  it('still allows re-enabling a disabled member when nobody else speaks', async () => {
+    const w = mountSheet([
+      { id: 'm2', name: 'Solo', backend: 'claude', agentId: 'a2', isHost: false },
+      { id: 'm3', name: 'Gone', backend: 'claude', agentId: 'a3', isHost: false, disabled: true },
+    ])
+    const goneRow = w.findAll('.gm-row').find(r => r.text().includes('Gone'))!
+    const btn = goneRow.find('.gm-disable-toggle')
+    expect(btn.attributes('disabled')).toBeUndefined()
+    expect(btn.attributes('title')).toBe('group.enable')
+  })
+
+  // In host mode the host itself speaks, so "host + one member" still has a
+  // speaker left — that group legitimately degrades to a single chat, so the
+  // member's toggle stays usable.
+  it('still allows disabling the only non-host member when a host speaks', async () => {
+    const w = mountSheet([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
+      { id: 'm2', name: 'Solo', backend: 'claude', agentId: 'a2', isHost: false },
+    ])
+    const soloRow = w.findAll('.gm-row').find(r => r.text().includes('Solo'))!
+    expect(soloRow.find('.gm-disable-toggle').attributes('disabled')).toBeUndefined()
   })
 
   it('renders each member own avatar, falling back to the agent avatar', () => {
@@ -176,16 +268,29 @@ describe('GroupSettingsSheet', () => {
     expect(w.find('.gm-identity .gm-real-name').exists()).toBe(true)
   })
 
-  it('removes a member through the API and emits changed', async () => {
+  it('disables an enabled member through the API and emits changed', async () => {
     const w = mountSheet(MEMBERS)
-    // The host also renders a (disabled) remove button, so target the one that
-    // is actually enabled rather than relying on position.
+    // The host also renders a (disabled) disable button, so target the one that is
+    // actually enabled rather than relying on position.
     // `attributes('disabled')` is "" (not undefined) on a disabled button, so
     // a truthiness check would pick the HOST's inert button first.
-    await w.findAll('.gm-remove').find(b => b.attributes('disabled') === undefined)!.trigger('click')
+    // Both non-host members have an enabled toggle (Alice enabled, Gone disabled);
+    // the action differs, so select by data-action rather than position.
+    const disableButtons = w.findAll('.gm-disable-toggle[data-action="disable-member"]')
+    expect(disableButtons).toHaveLength(1)
+    await disableButtons[0].trigger('click')
     await flushPromises()
-    expect(mockRemove).toHaveBeenCalledWith('g1', 'm2')
+    expect(mockSetDisabled).toHaveBeenCalledWith('g1', 'm2', true)
     expect(w.emitted('changed')).toBeTruthy()
+  })
+
+  it('re-enables a disabled member (the toggle is the same control)', async () => {
+    const w = mountSheet(MEMBERS)
+    const disabledRow = w.findAll('.gm-row').find(r => r.classes().includes('is-disabled'))!
+    expect(disabledRow.find('.gm-disable-toggle').attributes('data-action')).toBe('enable-member')
+    await disabledRow.find('.gm-disable-toggle').trigger('click')
+    await flushPromises()
+    expect(mockSetDisabled).toHaveBeenCalledWith('g1', 'm3', false)
   })
 
   // Adding is the sheet's primary action: it lives in the drawer header (right
@@ -348,7 +453,7 @@ describe('GroupSettingsSheet', () => {
     const WITH_USAGE = [
       { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true, usage: { used: 50000, size: 200000 } },
       { id: 'm2', name: 'Alice', backend: 'claude', agentId: 'a2', isHost: false, usage: null },
-      { id: 'm3', name: 'Gone', backend: 'claude', agentId: 'a3', isHost: false, left: true, usage: { used: 90000, size: 100000 } },
+      { id: 'm3', name: 'Gone', backend: 'claude', agentId: 'a3', isHost: false, disabled: true, usage: { used: 90000, size: 100000 } },
     ]
 
     it('renders a bar + percentage for a member that reported usage', () => {
@@ -367,10 +472,14 @@ describe('GroupSettingsSheet', () => {
       expect(chip.find('.gm-usage-pct').text()).toBe('—')
     })
 
-    it('renders no chip at all for a left member', () => {
+    it('keeps the chip for a disabled member (the number is still real)', () => {
+      // Muting only takes the member off the schedule; its context window is
+      // untouched, and that is exactly what may need compacting while it is off
+      // the mic. Hiding the chip would make the row look empty for no reason.
       const w = mountSheet(WITH_USAGE)
-      // Two live members have chips; the left one does not.
-      expect(w.findAll('.gm-usage')).toHaveLength(2)
+      expect(w.findAll('.gm-usage')).toHaveLength(3)
+      const disabledRow = w.findAll('.gm-row').find(r => r.classes().includes('is-disabled'))!
+      expect(disabledRow.find('.gm-usage-pct').text()).toBe('90%')
     })
 
     it('opens the member panel when the row is clicked', async () => {
@@ -383,39 +492,82 @@ describe('GroupSettingsSheet', () => {
       expect(stub.attributes('data-target')).toBe('m1')
     })
 
-    it('does not make a left member row interactive', () => {
+    it('keeps a disabled member row interactive', async () => {
+      // A disabled member is still a member: its context window is inspectable and
+      // compactable, so the row must stay a button.
       const w = mountSheet(WITH_USAGE)
       const rows = w.findAll('.gm-row-main')
-      // Host and Alice are buttons; the left member is a plain div.
-      expect(rows[2].element.tagName).toBe('DIV')
+      expect(rows).toHaveLength(3)
+      for (const r of rows) expect(r.element.tagName).toBe('BUTTON')
+      await rows[2].trigger('click')
+      expect(w.find('.mcs-stub').attributes('data-target')).toBe('m3')
     })
 
-    it('keeps the remove control outside the row button (no nested buttons)', () => {
+    it('keeps the disable control outside the row button (no nested buttons)', () => {
       const w = mountSheet(WITH_USAGE)
       const rowButton = w.findAll('.gm-row-main')[1]
-      expect(rowButton.find('.gm-remove').exists()).toBe(false)
-      // Both live members have one (the host's is disabled); the left member
-      // has none.
-      expect(w.findAll('.gm-remove')).toHaveLength(2)
+      expect(rowButton.find('.gm-disable-toggle').exists()).toBe(false)
+      // Every row has one (the host's is disabled).
+      expect(w.findAll('.gm-disable-toggle')).toHaveLength(3)
     })
 
-    it('does not open the panel when remove is clicked', async () => {
+    it('does not open the panel when the disable control is clicked', async () => {
       const w = mountSheet(WITH_USAGE)
-      await w.find('.gm-remove').trigger('click')
+      await w.findAll('.gm-disable-toggle').find(b => b.attributes('disabled') === undefined)!.trigger('click')
       expect(w.find('.mcs-stub').attributes('data-open')).toBe('false')
     })
 
-    it('opens the shared settings drawer on the member row, usage tab first', async () => {
+    it('opens the shared settings drawer on the member row, on the drawer default tab', async () => {
       // The whole point of the change: a member is a session, so clicking one
       // opens the SAME drawer a single chat opens — addressed at the member row
       // (which owns the agent binding and that member's own context window).
+      //
+      // `initialTab` must NOT be overridden: the drawer's own default (model) is
+      // what the single-chat session info dialog opens on, and the roster used
+      // to force 'usage', making the member path the one place that landed
+      // somewhere else. `undefined` is the assertion — passing 'model'
+      // explicitly would keep the two paths coupled to a value that could drift
+      // from SessionDrawer's default.
       const w = mountSheet(WITH_USAGE)
       await w.findAll('.gm-row-main')[0].trigger('click')
       const drawer = w.findComponent({ name: 'SessionDrawer' })
       expect(drawer.props('open')).toBe(true)
       expect(drawer.props('targetSessionId')).toBe('m1')
       expect(drawer.props('agentId')).toBe('a1')
-      expect(drawer.props('initialTab')).toBe('usage')
+      expect(drawer.props('initialTab')).toBeUndefined()
+    })
+
+    it('shows each member’s model on a second line of the row', () => {
+      // The roster must answer "who runs what" without opening every drawer.
+      // A member with an override names that model; one without names the
+      // agent's default (a real answer, not "unknown").
+      const w = mountSheet([
+        { id: 'm1', name: 'Host', backend: 'claude', agentId: 'a1', isHost: true, model: 'claude-opus-4-5' },
+        { id: 'm2', name: 'Alice', backend: 'claude', agentId: 'a1', isHost: false },
+        { id: 'm3', name: 'Gone', backend: 'claude', agentId: 'a1', isHost: false, disabled: true },
+      ])
+      const rows = w.findAll('.gm-row')
+      // Overridden: the member's own model.
+      expect(rows[0].find('.gm-model').text()).toContain('Claude Opus 4.5')
+      expect(rows[0].find('.gm-model').classes()).not.toContain('gm-model--default')
+      // Inherited: the agent's default, marked as such.
+      expect(rows[1].find('.gm-model').text()).toContain('Claude Sonnet 4.6')
+      expect(rows[1].find('.gm-model').classes()).toContain('gm-model--default')
+      // A disabled member still reports the model it will use when enabled.
+      expect(rows[2].find('.gm-model').exists()).toBe(true)
+    })
+
+    it('keeps the model line out of the usage chip’s trailing column', () => {
+      // The row has room for ONE trailing column on a phone. The model must
+      // live inside the identity column (stacked under the name), or a long id
+      // would squeeze the usage chip off the right edge.
+      const w = mountSheet(WITH_USAGE)
+      const row = w.findAll('.gm-row')[0]
+      expect(row.find('.gm-identity .gm-model').exists()).toBe(true)
+      const identity = row.find('.gm-identity').element
+      const usage = row.find('.gm-usage').element
+      // Model line precedes the chip in document order (i.e. is not after it).
+      expect(identity.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
 
     it('refreshes the roster when the member drawer writes', async () => {

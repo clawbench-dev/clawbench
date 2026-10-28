@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" auto panel-class="session-search-sheet" @close="handleClose">
+  <BottomSheet :open="open" auto size="wide" panel-class="session-search-sheet" @close="handleClose">
     <template #header>
       <!-- Search results list view -->
       <template v-if="!selectedSession">
@@ -1394,15 +1394,6 @@ defineExpose({ focusSearchInput })
 </style>
 
 <style>
-/* Wide-screen: the search dialog benefits from extra width — result rows carry
-   a title, time, preview and badges, and the drilldown renders full chunks.
-   Only takes effect in BottomSheet's wide-screen card mode (the narrow-mode
-   bottom sheet ignores --modal-max-width). Non-scoped because the class is
-   bound inside BottomSheet's own template. */
-.session-search-sheet {
-  --modal-max-width: calc(960 * var(--dp));
-}
-
 /* Dark theme overrides — non-scoped for [data-theme] selector */
 [data-theme-base="dark"] .session-search-item-preview mark {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);

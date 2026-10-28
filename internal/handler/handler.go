@@ -580,7 +580,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/queue/interrupt", QueueInterruptHandler)
 	register("/api/ai/queue/merge", QueueMergeHandler)
 	register("/api/ai/session/update", ServeAISessionUpdate)
-	register("/api/ai/session/settings", ServeSessionSettings)
+	register("/api/ai/session/settings", ServeSessionSettingsRoute)
 	register("/api/ai/session/generate-title", ServeGenerateSessionTitle)
 	register("/api/ai/session/tags", ServeSessionTags)
 	register("/api/ai/sessions", ServeSessions)

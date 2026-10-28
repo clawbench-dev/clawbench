@@ -199,6 +199,20 @@ var acpBackends = []acpTestConfig{
 		SupportedTests: allACPTestPoints(), // no config tests
 	},
 	{
+		// Qoder CN: same codebase as "qoder" with a different brand constant
+		// (verified flag-by-flag in qoder_cn_acp_probe_integration_test.go), so
+		// it runs the same test points. It is a SEPARATE install with separate
+		// credentials — the CN binary must never be pointed at ~/.qoder.
+		ID:             "qodercn",
+		Backend:        "qodercn",
+		AcpCommand:     "qoderclicn --acp",
+		DefaultCmd:     "qoderclicn",
+		Timeout:        90 * time.Second,
+		HasThinking:    false,
+		SupportsConfig: false,
+		SupportedTests: allACPTestPoints(), // no config tests
+	},
+	{
 		ID:             "kimi",
 		Backend:        "kimi",
 		AcpCommand:     "kimi acp",

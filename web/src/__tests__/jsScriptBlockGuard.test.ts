@@ -102,11 +102,19 @@ describe('check-js-script-blocks', () => {
       ['enum', 'enum E { A }'],
       ['type params', 'function f<T>(a) { return a }'],
     ]
+    // One fixture tree, one subprocess. Running the checker per case made this
+    // test's wall clock the sum of six node startups (each loading TypeScript);
+    // under full-suite load that crossed the 5s test timeout and reported a
+    // timeout as if the guard were broken. Per-case files also give a stronger
+    // assertion than a bare exit code: every construct must be named.
+    const files: Record<string, string> = {}
     for (const [label, body] of cases) {
-      const r = runChecker({
-        'A.vue': `<template><div/></template>\n<script setup>\n${body}\n</script>\n`,
-      })
-      expect(r.code, `${label} should be rejected`).toBe(1)
+      files[`${label}.vue`] = `<template><div/></template>\n<script setup>\n${body}\n</script>\n`
+    }
+    const r = runChecker(files)
+    expect(r.code, 'TS syntax in a plain-JS block must fail the check').toBe(1)
+    for (const [label] of cases) {
+      expect(r.stderr, `${label} should be rejected`).toContain(`${label}.vue`)
     }
   })
 
@@ -119,16 +127,20 @@ describe('check-js-script-blocks', () => {
     // not JavaScript".
     const cases: Array<[string, string]> = [
       ['namespace', 'namespace NS { export const a = 1 }'],
-      ['type-only import', "import type { Foo } from './foo'"],
+      ['type-only-import', "import type { Foo } from './foo'"],
       ['decorator', '@decorator class Foo {}'],
-      ['tagged template generic', 'const a = tag<boolean>`x`'],
-      ['angle-bracket cast', 'const x = <string>foo'],
+      ['tagged-template-generic', 'const a = tag<boolean>`x`'],
+      ['angle-bracket-cast', 'const x = <string>foo'],
     ]
+    // Same single-subprocess shape as the previous case (see the note there).
+    const files: Record<string, string> = {}
     for (const [label, body] of cases) {
-      const r = runChecker({
-        'A.vue': `<template><div/></template>\n<script setup>\n${body}\n</script>\n`,
-      })
-      expect(r.code, `${label} should be rejected`).toBe(1)
+      files[`${label}.vue`] = `<template><div/></template>\n<script setup>\n${body}\n</script>\n`
+    }
+    const r = runChecker(files)
+    expect(r.code).toBe(1)
+    for (const [label] of cases) {
+      expect(r.stderr, `${label} should be rejected`).toContain(`${label}.vue`)
     }
   })
 

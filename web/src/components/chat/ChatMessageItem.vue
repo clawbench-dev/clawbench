@@ -47,7 +47,7 @@
          BOTH host and free modes. The mentions also render INLINE in the body
          (as @name chips, see renderMentionChips); this row is the scannable
          summary. It shows the raw parsed targets (a routing intent that may
-         name a member who has since left must stay visible).
+         name a member who is currently disabled must stay visible).
          ASSISTANT-only: the row exists to scan an AGENT's routing at a glance.
          On a user bubble the chips already sit inline in the message the user
          just typed, so a second "@ B" line would only duplicate them. -->
@@ -1331,11 +1331,36 @@ const copyPayload = quotableText
     overflow-wrap: break-word;
 }
 
-/* ── The bubble itself ── */
+/* ── The bubble itself ──
+   Square and full-bleed by default: with the pane at or below the reading
+   measure there is no side gutter, and a rounded band touching both edges
+   would just look clipped. */
 .chat-message.assistant .msg-card {
     background: var(--bg-tertiary);
     border-radius: 0;
     overflow: hidden;
+}
+
+/* ── Wide pane: the reply becomes a card ──
+   Once the pane outgrows --chat-content-max-width the message column is inset
+   from the pane on both sides (see ChatMessageList's `--chat-content-inset`),
+   so the grey band ends in mid-air. Square corners there read as a hard-cut
+   slab; rounding them makes the edge look deliberate.
+
+   `60rem` IS the measure: `--dp` is 1rem/15, so 900 design px = 60rem, and
+   `calc(60rem + 1px)` flips exactly when the gutter stops being zero. Written
+   in rem rather than px so the threshold follows the UI scale — verified in
+   Chromium, Firefox and WebKit that a fractional/calc rem threshold evaluates
+   against the ROOT font size inside a container query.
+
+   The container is `.chat-panel-content` (container-name: chat-pane). Views
+   that reuse ChatMessageItem without that ancestor — the share page, the /btw
+   drawer — keep the square band, which is right: they are always one fixed
+   column wide and have no pane gutter to justify a card. */
+@container chat-pane (min-width: calc(60rem + 1px)) {
+    .chat-message.assistant .msg-card {
+        border-radius: var(--radius-lg);
+    }
 }
 
 .chat-message.user .msg-card {
@@ -1753,7 +1778,7 @@ const copyPayload = quotableText
   line-height: 1.5;
 }
 
-/* ── Group-chat system event row (member joined / left) ──
+/* ── Group-chat system event row (member joined / disabled / enabled) ──
    A centered thin pill: NOT a bubble (no .msg-card, no avatar, no meta bar).
    A single Megaphone glyph marks it as an announcement — the same unified icon
    the conversation index and the share-selection dialog use for system rows.

@@ -32,7 +32,8 @@
   border: 1px solid var(--border-color, #e0e0e0);
   border-radius: var(--radius-lg);
   width: 100%;
-  max-width: var(--modal-max-width, 624px);
+  /* Fallback only — every card gets its tier from the two rules below. */
+  max-width: var(--modal-max-width, var(--modal-width-narrow, 520px));
   max-height: 100%;
   height: auto;
   display: flex;
@@ -42,21 +43,25 @@
   animation: modal-scaleIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-/* ModalDialog width is capped by a shared token, not a per-call-site prop:
-   the default is 900px and `--compact` above is the only other variant.
-   BottomSheet keeps the narrower 624px default (plus its own
-   --modal-max-width overrides) because those are drawers that read better as
-   a narrower column.
+/* ── The only two widths ──
+   Both shells expose `size="narrow" | "wide"` and render it as a modifier
+   class; the class maps onto ONE of the two `--modal-width-*` tokens from
+   css/variables.css. There is deliberately no `maxWidth` prop and no
+   per-call-site `--modal-max-width` override: a dialog picks a tier, it does
+   not pick a number. Narrow is the default so an unclassified dialog lands on
+   the readable column instead of a 960px void.
    On narrow viewports this is inert — `.modal-dialog` is `width: 100%` inside
    an overlay with `--space-8` side padding, so the cap never binds. */
-.modal-dialog {
-  --modal-max-width: calc(900 * var(--dp));
+.modal-dialog,
+.bs-panel.bs-wide-auto,
+.modal-dialog.modal-dialog--narrow,
+.bs-panel.bs-wide-auto.bs-panel--narrow {
+  --modal-max-width: var(--modal-width-narrow);
 }
 
-/* Compact card for short, list-shaped dialogs (e.g. server switching). A named
-   variant rather than a per-call-site width so the cap cannot drift. */
-.modal-dialog.modal-dialog--compact {
-  --modal-max-width: calc(430 * var(--dp));
+.modal-dialog.modal-dialog--wide,
+.bs-panel.bs-wide-auto.bs-panel--wide {
+  --modal-max-width: var(--modal-width-wide);
 }
 
 /* Dark themes: the black shadow falls on an almost-black scrim, so deepen it

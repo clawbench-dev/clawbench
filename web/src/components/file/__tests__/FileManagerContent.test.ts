@@ -320,6 +320,17 @@ vi.mock('@/components/file/JumpDirDialog.vue', () => ({
   }),
 }))
 
+// Stub the share dialog: its own create/regenerate/revoke behaviour is covered
+// by ShareLinkDialog.test.ts. Here we only assert the menu hands it the right
+// target path, so the stub exposes that as an attribute.
+vi.mock('@/components/file/ShareLinkDialog.vue', () => ({
+  default: defineComponent({
+    props: ['open', 'file'],
+    emits: ['close'],
+    template: '<div v-if="open" class="share-link-dialog-stub" :data-path="file && file.path" />',
+  }),
+}))
+
 // Mock the shared path-annotation opener so the content-search delegation can be
 // asserted without a real file fetch. The component must route a chosen hit
 // through openFilePath — a bare `open-file-overlay` dispatch would skip
@@ -388,7 +399,7 @@ const i18n = createI18n({
   messages: {
     zh: {
       file: {
-        context: { newFile: '新建文件', newFolder: '新建文件夹', paste: '粘贴', rename: '重命名', delete: '删除', archiveDir: '归档', openAsProject: '打开为项目', copy: '复制', cut: '剪切', copyPath: '拷贝路径', pathCopied: '路径已拷贝' },
+        context: { newFile: '新建文件', newFolder: '新建文件夹', paste: '粘贴', rename: '重命名', delete: '删除', archiveDir: '归档', openAsProject: '打开为项目', copy: '复制', cut: '剪切', copyPath: '拷贝路径', pathCopied: '路径已拷贝', shareLink: '分享链接', shareExternal: '分享' },
         uploadHere: '上传到此处',
         dropToUpload: '松开上传到当前目录',
         pasteToUpload: '粘贴上传文件...',
@@ -411,7 +422,7 @@ const i18n = createI18n({
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称' },
         toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败', operationFailedDetail: '操作失败: {error}' },
         search: { placeholder: '搜索文件名...', recursive: '递归搜索', exact: '精确匹配', scopeGlobal: '全局搜索', scopeCurrent: '当前目录', wordExact: '精确', wordRecursive: '递归', wordCurrent: '在当前目录', wordGlobal: '在当前项目下', wordVerb: '搜索', reset: '重置', noResults: '未找到文件', searching: '搜索中...', resultCount: '找到 {count} 个文件', resultCountPlus: '找到 {limit}+ 个文件', truncated: '如需找到更多文件，请输入更精确的关键词', searchFrom: '搜索范围: {path}' },
-        nav: { parentDir: '返回上一级', fsRoot: '文件系统根目录' },
+        nav: { parentDir: '返回上一级', fsRoot: '文件系统根目录', projectRoot: '项目根目录' },
       },
       chat: {
         actions: { attachToChat: '附加到聊天' },
@@ -1940,6 +1951,56 @@ describe('FileManagerContent — context menu', () => {
     const items = wrapper.findAll('.context-menu-item')
     const copyPathItem = items.find(el => el.text().includes('拷贝路径'))
     expect(copyPathItem).toBeTruthy()
+  })
+
+  // ── Public share link (capability URL) ──
+  //
+  // The context menu is the only entry point that can share a file the user is
+  // not currently viewing, so the menu item and its dialog wiring are asserted
+  // here. The dialog itself (create/regenerate/revoke) is covered by
+  // ShareLinkDialog.test.ts; what matters here is that the MENU ENTRY's path
+  // reaches it, not the open file's path.
+  describe('share link', () => {
+    it('renders the share-link item for a file entry', async () => {
+      const wrapper = mountContent()
+      wrapper.vm.ctxMenu.visible = true
+      wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+      await nextTick()
+
+      const item = wrapper.findAll('.context-menu-item').find(el => el.text().includes('分享链接'))
+      expect(item).toBeTruthy()
+    })
+
+    it('hides the share-link item for a directory (directories cannot be shared)', async () => {
+      const wrapper = mountContent()
+      wrapper.vm.ctxMenu.visible = true
+      wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
+      await nextTick()
+
+      const item = wrapper.findAll('.context-menu-item').find(el => el.text().includes('分享链接'))
+      expect(item).toBeFalsy()
+    })
+
+    it('opens the dialog with the context-menu entry, then closes the menu', async () => {
+      const wrapper = mountContent()
+      wrapper.vm.ctxMenu.visible = true
+      wrapper.vm.ctxMenu.entry = { type: 'file', name: 'other.md', path: 'docs/other.md' }
+      await nextTick()
+
+      wrapper.vm.doShareLink()
+      await nextTick()
+
+      expect(wrapper.vm.ctxMenu.visible).toBe(false)
+      expect(wrapper.vm.shareDialogOpen).toBe(true)
+      // The menu entry, NOT the currently open file (null here) — sharing must
+      // work for a file the user never opened.
+      expect(wrapper.vm.shareTarget).toEqual({ name: 'other.md', path: 'docs/other.md' })
+      // …and the dialog really receives it (catches a template binding that
+      // passes the wrong object even when the state is right).
+      const dialog = wrapper.find('.share-link-dialog-stub')
+      expect(dialog.exists()).toBe(true)
+      expect(dialog.attributes('data-path')).toBe('docs/other.md')
+    })
   })
 })
 
@@ -4420,11 +4481,26 @@ describe('FileManagerContent — internal move helpers', () => {
   })
 
   it('leaves the project root up button enabled when it is the only parent', () => {
-    // The project root itself hides the whole nav row, but a single-segment
-    // project-relative dir must still be able to walk up to it — that parent is
-    // "" and is a real destination, not a self-reference.
+    // A single-segment project-relative dir must be able to walk up to the
+    // project root — that parent is "" and is a real destination, not a
+    // self-reference.
     const wrapper = mountContent({ currentDir: 'src', entries: [] })
     expect(wrapper.find('.dir-up-btn').attributes('disabled')).toBeUndefined()
+  })
+
+  it('explains the dead up button at the project root as the project root', () => {
+    // The nav row stays at the project root now, so the disabled button needs a
+    // reason that is not "filesystem root" — that would be factually wrong.
+    const wrapper = mountContent({ currentDir: '', entries: [] })
+    expect(wrapper.find('.dir-up-btn').attributes('title')).toBe('项目根目录')
+  })
+
+  it('keeps the breadcrumb row at the project root', () => {
+    // The breadcrumb (with its copy-path button) is the only place that names
+    // the current location at the root, so the row must not disappear there.
+    const wrapper = mountContent({ currentDir: '', entries: [] })
+    expect(wrapper.find('.dir-nav-bottom').exists()).toBe(true)
+    expect(wrapper.find('.dir-breadcrumb-stub').exists()).toBe(true)
   })
 
   it('does not emit navigateDir when the up button is disabled at "/"', async () => {
@@ -4931,12 +5007,16 @@ describe('FileManagerContent — up one level', () => {
     { name: 'other.ts', type: 'file', modified: '2025-01-01T00:00:00Z', size: 10 },
   ]
 
-  it('renders the up button only when a currentDir is set', async () => {
+  it('keeps the up button at the project root but disables it', async () => {
+    // The nav row (and therefore the breadcrumb + copy-path button) stays
+    // visible at the project root, so the up button is rendered there too —
+    // greyed out, because "" has no parent.
     const atRoot = mountContent({ currentDir: '' })
-    expect(atRoot.find('.dir-up-btn').exists()).toBe(false)
+    expect(atRoot.find('.dir-up-btn').exists()).toBe(true)
+    expect(atRoot.find('.dir-up-btn').attributes('disabled')).toBeDefined()
 
     const nested = mountContent({ currentDir: 'src' })
-    expect(nested.find('.dir-up-btn').exists()).toBe(true)
+    expect(nested.find('.dir-up-btn').attributes('disabled')).toBeUndefined()
   })
 
   it('clicking the up button emits navigateDir with the parent directory', async () => {
@@ -4952,8 +5032,8 @@ describe('FileManagerContent — up one level', () => {
     await wrapper.find('.dir-up-btn').trigger('click')
     expect(wrapper.emitted('navigateDir')![0][0]).toBe('')
 
-    // Root listing: the nav row is hidden (v-if="currentDir") but the entry we
-    // left must still be selected there.
+    // Root listing: the nav row stays (breadcrumb at the project root) but the
+    // entry we left must still be selected there.
     await wrapper.setProps({ currentDir: '', entries: [{ name: 'src', type: 'dir', modified: '2025-01-01T00:00:00Z', size: 0 }] })
     await nextTick()
     expect(wrapper.vm._getSelectedPath()).toBe('src')

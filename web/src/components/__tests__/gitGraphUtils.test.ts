@@ -41,7 +41,7 @@ function getConnections(commits: any[], rowHeight = ROW_HEIGHT) {
   return { nodes, lines, laneCount, graphWidth, connections: connections as any[], nodeByRow }
 }
 
-// ─── Test data: one shape per fixture repo (linear, single merge, octopus, …) ───
+// ─── Test data: all 7 git-graph-repos ───
 
 const LINEAR = [
   { sha: 'a1', parents: ['a2'], msg: 'commit 5' },

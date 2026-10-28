@@ -150,4 +150,31 @@ describe('resolvePanelTab', () => {
       expect(wideTabs).toContain(resolvePanelTab(tab, true, true))
     }
   })
+
+  it('falls back when the remembered panel is forge and the entry is hidden', () => {
+    // Issue #590: hiding the integration removes the dock entry, so restoring a
+    // project that was last on forge would land the user on a panel with no
+    // entry pointing at it (and no way back except another dock button). The
+    // registry check alone cannot see this — forge is still a valid tab id.
+    expect(resolvePanelTab('forge', true, false, true)).toBe('browse')
+    expect(resolvePanelTab('forge', false, false, true)).toBe('chat')
+  })
+
+  it('the hidden-forge rule touches nothing else', () => {
+    // Guards against over-reach: the new rule must only special-case forge. An
+    // open file still restores the viewer, and the layout defaults are
+    // unchanged — a mutation that widened the condition would break this.
+    expect(resolvePanelTab('view', true, true, true)).toBe('view')
+    expect(resolvePanelTab('tasks', true, false, true)).toBe('tasks')
+    expect(resolvePanelTab('settings', false, false, true)).toBe('settings')
+    expect(resolvePanelTab(null, true, false, true)).toBe('browse')
+  })
+
+  it('keeps forge when the entry is visible', () => {
+    // The flag must default to "visible" for every caller that does not pass it
+    // (older call sites, tests): forge is a legitimate landing tab.
+    expect(resolvePanelTab('forge', true, false)).toBe('forge')
+    expect(resolvePanelTab('forge', false, false)).toBe('forge')
+    expect(resolvePanelTab('forge', true, false, false)).toBe('forge')
+  })
 })

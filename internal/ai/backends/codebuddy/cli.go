@@ -23,11 +23,20 @@ func init() {
 			ACPLoadSession: true,
 			InstallCmd:     "npm install -g @tencent-ai/codebuddy-code",
 			SortOrder:      2,
-			// CodeBuddy's TUI loads ~/.codebuddy/skills, but its ACP process
-			// does NOT scan the directory — ClawBench has always had to inject
-			// these skills itself (see the removed ScanCodeBuddySkills wiring).
-			// AutoLoadsNativeSkills stays false so they keep being injected;
-			// they still shadow same-named skills from lower-priority sources.
+			// This comment used to claim CodeBuddy's ACP process does NOT scan
+			// ~/.codebuddy/skills. That is no longer true (measured on 2.177.0:
+			// `codebuddy --acp` reports all 21 user skills with
+			// _meta.source="user", plus <cwd>/.codebuddy/skills as "project" —
+			// both keyed off the PROCESS cwd, which spawnLocked sets to the
+			// project root).
+			//
+			// AutoLoadsNativeSkills stays false anyway, so ClawBench keeps
+			// injecting them: that is the fallback for older builds that really
+			// did not scan, and the injected entries still shadow same-named
+			// skills from lower-priority sources. On current builds this means
+			// both sides advertise the same skill; MergeCommands dedupes on the
+			// canonical name (leading "/" ignored), so the slash menu shows it
+			// once and the cost is a redundant scan, not a duplicate entry.
 			//
 			// Its plugin-cache skills are a separate mechanism (issue #383).
 			NativeSkillsDirs: []string{".codebuddy/skills"},

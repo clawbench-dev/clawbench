@@ -38,9 +38,9 @@ describe('ModalDialog', () => {
   })
 
   it('does not accept an arbitrary per-call-site width', async () => {
-    // Width lives in modal-card.css (`.modal-dialog { --modal-max-width: 900px }`)
-    // so it can never drift per dialog. Passing the old `maxWidth` prop must be
-    // inert rather than silently re-introducing an inline override.
+    // Width comes from the two tiers in css/variables.css via `size`; passing
+    // the old `maxWidth` prop must be inert rather than silently re-introducing
+    // an inline override.
     const wrapper = mount(ModalDialog, {
       props: { open: true, maxWidth: 600 } as never,
       slots: { default: 'Body' },
@@ -52,16 +52,40 @@ describe('ModalDialog', () => {
     expect(dialog.attributes('style') ?? '').not.toContain('max-width')
   })
 
-  it('applies the named compact width variant without inline styles', async () => {
+  it('defaults to the narrow tier', async () => {
+    // An unclassified dialog lands on the readable column, not a 960px void.
     const wrapper = mount(ModalDialog, {
-      props: { open: true, size: 'compact' },
+      props: { open: true },
       slots: { default: 'Body' },
       global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
     })
     await flushPromises()
     const dialog = wrapper.find('.modal-dialog')
-    expect(dialog.classes()).toContain('modal-dialog--compact')
+    expect(dialog.classes()).toContain('modal-dialog--narrow')
+    expect(dialog.classes()).not.toContain('modal-dialog--wide')
+  })
+
+  it('maps size="wide" onto the wide modifier class', async () => {
+    const wrapper = mount(ModalDialog, {
+      props: { open: true, size: 'wide' },
+      slots: { default: 'Body' },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    await flushPromises()
+    const dialog = wrapper.find('.modal-dialog')
+    expect(dialog.classes()).toContain('modal-dialog--wide')
+    expect(dialog.classes()).not.toContain('modal-dialog--narrow')
     expect(dialog.attributes('style')).toBeUndefined()
+  })
+
+  it('rejects any third tier', () => {
+    // The validator is the fence around "exactly two": `size="compact"` (the
+    // retired variant) must not silently render an untiered card.
+    const validator = ModalDialog.props!.size.validator as (v: string) => boolean
+    expect(validator('narrow')).toBe(true)
+    expect(validator('wide')).toBe(true)
+    expect(validator('compact')).toBe(false)
+    expect(validator('900px')).toBe(false)
   })
 
   it('exposes close method', async () => {

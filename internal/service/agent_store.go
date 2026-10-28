@@ -332,8 +332,9 @@ func DeleteAgent(id string) error {
 //
 // Sessions is the number of conversations the agent takes part in:
 //   - 1:1 chats (session_type='chat', archived included), plus
-//   - group chats it is an ACTIVE member of (session_type='group_member',
-//     archived=0).
+//   - group chats it is a member of (session_type='group_member', not archived;
+//     a member the user disabled still counts — it is in the group, just not
+//     scheduled).
 //
 // A group's timeline row (session_type='group') names only its host (or, in
 // free mode, its first member); every OTHER member exists only as a hidden
@@ -346,10 +347,12 @@ func DeleteAgent(id string) error {
 //
 // Tasks counts scheduled_tasks rows (any status).
 //
-// Memberships counts ACTIVE group-member rows. It is a SUBSET of Sessions (each
-// active group membership IS one of the agent's group-chat sessions); it is
+// Memberships counts group-member rows that are not archived. It is a SUBSET of
+// Sessions (each membership IS one of the agent's group-chat sessions); it is
 // reported separately only so the UI can explain that some sessions are groups.
-// A left member is archived and no longer counts or blocks.
+// A member the user disabled still counts and still blocks deletion: disabling
+// only takes it off the schedule, the agent's context is still bound to that
+// group.
 type AgentUsageCounts struct {
 	Sessions    int
 	Tasks       int
@@ -375,8 +378,9 @@ func GetAgentUsage(agentID string) (AgentUsageCounts, error) {
 		return u, fmt.Errorf("count chat sessions for agent %s: %w", agentID, err)
 	}
 
-	// Group chats the agent is an active member of. Counted here (not from the
-	// group row, which names only the host) and folded into Sessions.
+	// Group chats the agent is a member of (members the user disabled count too —
+	// disabling only takes them off the schedule). Counted here (not from the group
+	// row, which names only the host) and folded into Sessions.
 	err = store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND session_type = ? AND archived = 0",
 		agentID, store.SessionTypeGroupMember,

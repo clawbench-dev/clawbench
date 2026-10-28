@@ -17,51 +17,64 @@
     </template>
 
     <div class="group-settings-sheet">
-      <!-- Member roster -->
+      <!-- Member roster. Disabled members stay fully inspectable: muting only
+           takes them off the schedule, so their context window and usage are
+           still real numbers the user may want to look at (or compact). -->
       <ul class="gm-list">
         <li
           v-for="m in orderedMembers"
           :key="m.id"
           class="gm-row"
-          :class="{ 'is-left': m.left }"
+          :class="{ 'is-disabled': m.disabled }"
         >
           <!-- The row's main region is a BUTTON (opens the member's context
-               panel). The remove control is a SIBLING, never a child: a
+               panel). The disable control is a SIBLING, never a child: a
                <button> inside a <button> is invalid HTML and the browser
                hoists the inner one out, which makes both targets behave
-               unpredictably. Left members render a plain div — there is
-               nothing live to inspect and the frozen usage would mislead. -->
-          <component
-            :is="m.left ? 'div' : 'button'"
+               unpredictably. -->
+          <button
+            type="button"
             class="gm-row-main"
-            :class="{ 'gm-row-main--static': m.left }"
-            :type="m.left ? undefined : 'button'"
-            :data-action="m.left ? undefined : 'member-context'"
-            :title="m.left ? undefined : t('group.memberDetail.open')"
-            @click="m.left ? undefined : openMember(m)"
+            data-action="member-context"
+            :title="t('group.memberDetail.open')"
+            @click="openMember(m)"
           >
             <span class="gm-avatar">
               <AgentIcon :backend="m.backend" :name="m.name" :avatar="m.avatar || getAgentAvatar(m.agentId)" size="lg" />
             </span>
             <span class="gm-identity">
-              <span class="gm-name">{{ m.name }}</span>
-              <!-- Real-agent disclosure: a member whose nickname was auto-derived
-                   (pool name) shows the underlying agent's real name right after
-                   it, the same convention as the message speaker label. -->
-              <RealAgentNameTag class="gm-real-name" :agent-name="m.agentName" :display-name="m.name" />
-              <!-- Host / left pills sit INSIDE the identity group, right after
-                   the name + real name. They describe the member, so they belong
-                   next to who it is — pinned to the far right they read like a
-                   row-level action and broke the alignment across rows (the
-                   usage chip is the only right-hand column). -->
-              <span v-if="m.isHost" class="gm-tag gm-tag--host"><Crown :size="11" class="gm-tag-crown" />{{ t('group.host') }}</span>
-              <span v-else-if="m.left" class="gm-tag gm-tag--left">{{ t('group.left') }}</span>
+              <span class="gm-name-line">
+                <span class="gm-name">{{ m.name }}</span>
+                <!-- Real-agent disclosure: a member whose nickname was auto-derived
+                     (pool name) shows the underlying agent's real name right after
+                     it, the same convention as the message speaker label. -->
+                <RealAgentNameTag class="gm-real-name" :agent-name="m.agentName" :display-name="m.name" />
+                <!-- Host / disabled pills sit INSIDE the identity group, right after
+                     the name + real name. They describe the member, so they belong
+                     next to who it is — pinned to the far right they read like a
+                     row-level action and broke the alignment across rows (the
+                     usage chip is the only right-hand column). -->
+                <span v-if="m.isHost" class="gm-tag gm-tag--host"><Crown :size="11" class="gm-tag-crown" />{{ t('group.host') }}</span>
+                <span v-else-if="m.disabled" class="gm-tag gm-tag--disabled"><Ban :size="11" class="gm-tag-disabled-icon" />{{ t('group.disabled') }}</span>
+              </span>
+              <!-- The model this member actually runs, as a SECOND line. On a
+                   phone the row only has room for one trailing column (the usage
+                   chip), so an inline model label would be squeezed to a couple
+                   of characters AND push the chip off. A member with no override
+                   inherits the agent's default, which is a real answer — it is
+                   named rather than left blank, so "who runs what" is readable
+                   without opening each drawer. -->
+              <span class="gm-model" :class="{ 'gm-model--default': !m.model }" :title="modelTitle(m)">
+                <ProviderIcon :model-name="modelLabel(m)" :size="10" />
+                <span class="gm-model-name">{{ modelLabel(m) }}</span>
+              </span>
             </span>
             <!-- Context usage chip: the member's OWN window, not the group's.
                  A member that never reported usage shows an em dash — 0% would
-                 claim a measurement that does not exist. Left members show
-                 nothing at all. -->
-            <span v-if="!m.left" class="gm-usage" :class="{ 'gm-usage--empty': !usageOf(m) }" :title="usageTitle(m)">
+                 claim a measurement that does not exist. A disabled member keeps
+                 its chip: the number is still real and is exactly what may need
+                 compacting while it is disabled. -->
+            <span class="gm-usage" :class="{ 'gm-usage--empty': !usageOf(m) }" :title="usageTitle(m)">
               <Activity :size="11" class="gm-usage-icon" />
               <template v-if="usageOf(m)">
                 <span class="gm-usage-bar">
@@ -71,22 +84,23 @@
               </template>
               <span v-else class="gm-usage-pct">—</span>
             </span>
-          </component>
-          <!-- Every live member has a remove control, including the host: a
-               disabled one keeps the column aligned across rows (a missing
-               button shifted the usage chip left on the host row). The host's
-               is greyed and inert — it is the group's only router, so removing
-               it would strand the group. -->
+          </button>
+          <!-- Disable toggle. Every row has one, including the host: a disabled one
+               keeps the trailing column aligned across rows (a missing button
+               shifted the usage chip left on the host row). The host's is greyed
+               and inert — it is the group's only router, so muting it would
+               strand the group. -->
           <button
-            v-if="!m.left"
-            class="gm-remove"
-            :class="{ 'gm-remove--disabled': m.isHost }"
-            :disabled="m.isHost"
-            :title="m.isHost ? t('group.hostNotRemovable') : t('common.remove')"
-            :aria-label="m.isHost ? t('group.hostNotRemovable') : t('common.remove')"
-            @click="m.isHost ? undefined : remove(m)"
+            class="gm-disable-toggle"
+            :class="{ 'gm-disable-toggle--inert': !canToggleDisabled(m), 'is-disabled': m.disabled }"
+            :disabled="!canToggleDisabled(m)"
+            :title="toggleTitle(m)"
+            :aria-label="toggleTitle(m)"
+            :data-action="!canToggleDisabled(m) ? undefined : (m.disabled ? 'enable-member' : 'disable-member')"
+            @click="canToggleDisabled(m) ? toggleDisabled(m) : undefined"
           >
-            <Trash2 :size="14" />
+            <Play v-if="m.disabled" :size="14" />
+            <Ban v-else :size="14" />
           </button>
         </li>
       </ul>
@@ -97,12 +111,14 @@
            consistent: one component, one mental model — a member is a session.
            `target-session-id` is the member row id, which is exactly the
            session id that owns the agent binding and the member's own context
-           window. -->
+           window.
+           `initial-tab` is deliberately NOT passed: the drawer then opens on its
+           own default (model), the same behaviour as the single-chat session
+           info dialog. -->
       <SessionDrawer
         :open="memberSheetOpen"
         :agent-id="selectedMember?.agentId || ''"
         :target-session-id="selectedMemberId"
-        :initial-tab="memberDrawerTab"
         @close="memberSheetOpen = false"
         @changed="onMemberChanged"
       />
@@ -181,7 +197,7 @@
       multiple
       allow-instances
       :max-instances="store.state.groupMaxMembers"
-      :used-instances="activeMemberCount"
+      :used-instances="speakingMemberCount"
       :showAgentActions="false"
       :modelValue="[]"
       :title="t('group.addMembers')"
@@ -195,17 +211,19 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Trash2, Plus, Crown, Activity } from 'lucide-vue-next'
+import { Plus, Crown, Activity, Ban, Play } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
+import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import SessionDrawer from '@/components/chat/SessionDrawer.vue'
-import { getAgentAvatar } from '@/composables/useAgents'
-import { addGroupMembers, generateMemberAvatars, removeGroupMember, setGroupParallelDefault, setGroupCruise, type GroupMemberInfo } from '@/composables/useGroupChat'
+import { getAgentAvatar, useAgents } from '@/composables/useAgents'
+import { addGroupMembers, generateMemberAvatars, setGroupMemberDisabled, setGroupParallelDefault, setGroupCruise, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { toggleAutoApprove, applyCruiseAutoApproveDefault } from '@/composables/useSessionIdentity'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { usagePct as usagePctOf, usageColor as usageColorOf } from '@/utils/usageDisplay'
+import { formatModelIdForDisplay } from '@/utils/modelDisplay'
 import { appLog } from '@/utils/appLog'
 import { store } from '@/stores/app.ts'
 
@@ -230,13 +248,17 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'changed'): void }>()
 
 const { t } = useI18n()
+// Model resolution for the roster's model line. `useAgents()` is the singleton
+// store accessor (no fetch — loadAgents is called by the app shell), so reading
+// it here costs nothing and keeps the row's label in step with a model refresh.
+const { getAgentModel, getDefaultModelId } = useAgents()
 const open = ref(false)
 const pickerOpen = ref(false)
 
 // The host always leads the roster. The server orders members by created_at, so
-// a host that joined later (or was removed and re-added) would otherwise appear
-// mid-list, which reads as "not in charge". Everyone else keeps their incoming
-// order, and the removed members stay wherever they were.
+// a host that joined later would otherwise appear mid-list, which reads as "not
+// in charge". Everyone else keeps their incoming order, and disabled members stay
+// wherever they were.
 const orderedMembers = computed(() => {
   const host = props.members.find(m => m.isHost)
   if (!host) return props.members
@@ -257,18 +279,19 @@ function openAdd() { pickerOpen.value = true }
 // Nested inside this sheet (not a replacement): the roster stays behind it, so
 // comparing members is "close, tap the next row". The selected member is looked
 // up by id against the CURRENT props, so a roster refresh (usage arrived, a
-// member left) is reflected without reopening the panel.
+// member got disabled) is reflected without reopening the panel.
 const memberSheetOpen = ref(false)
 const selectedMemberId = ref('')
-// Always opens on the usage tab: the roster chip the user just tapped IS a
-// usage number, so that is what they came to see. Model/mode are one tap away
-// in the same drawer.
-const memberDrawerTab = ref('usage')
+// No `initialTab` override: clicking a member opens the drawer on its OWN
+// default tab (model), exactly as the single-chat session info dialog does.
+// The roster used to force 'usage', which made the member path the one place
+// where "open the session info" landed somewhere else — and now that the row
+// itself shows the model, landing on the model tab is also what the row is
+// about.
 const selectedMember = computed(() => props.members.find(m => m.id === selectedMemberId.value) || null)
 
 function openMember(m: GroupMemberInfo) {
   selectedMemberId.value = m.id
-  memberDrawerTab.value = 'usage'
   memberSheetOpen.value = true
 }
 
@@ -333,10 +356,30 @@ watch(memberSheetOpen, (isOpen) => {
 
 onBeforeUnmount(stopListeningNow)
 
-// Instances ALREADY in the group (active only; left members do not occupy a
-// slot). The picker counts these against the group-wide cap so "+" disables at
-// the right point, and the footer total includes them.
-const activeMemberCount = computed(() => props.members.filter(m => !m.left).length)
+// Instances ALREADY speaking (disabled members do not occupy a slot). The picker
+// counts these against the group-wide cap so "+" disables at the right point,
+// and the footer total includes them.
+const speakingMemberCount = computed(() => props.members.filter(m => !m.disabled).length)
+
+/** The last member still able to speak cannot be turned off: the group would have
+ *  nobody to answer and no turn could ever run again. Mirrors the server guard
+ *  (ErrCannotDisableLastMember) so the button explains itself instead of the
+ *  click coming back as a 409. */
+const isLastSpeaker = (m: GroupMemberInfo) => !m.disabled && speakingMemberCount.value <= 1
+
+/** Whether this row's toggle may fire: the host is the only router and the last
+ *  speaker is the only remaining voice, so both are inert (their button stays in
+ *  place so every row keeps the same trailing column). */
+function canToggleDisabled(m: GroupMemberInfo): boolean {
+  if (m.isHost) return false
+  return m.disabled || !isLastSpeaker(m)
+}
+
+function toggleTitle(m: GroupMemberInfo): string {
+  if (m.isHost) return t('group.hostCannotDisable')
+  if (!m.disabled && isLastSpeaker(m)) return t('group.lastSpeakerCannotDisable')
+  return m.disabled ? t('group.enable') : t('group.disable')
+}
 
 async function onAgentsPicked(ids: string | string[]) {
   const list = Array.isArray(ids) ? ids : [ids]
@@ -356,9 +399,14 @@ async function onAgentsPicked(ids: string | string[]) {
   pickerOpen.value = false
 }
 
-async function remove(m: GroupMemberInfo) {
+/** toggleDisabled disables (禁用) or re-enables (启用) a member.
+ *
+ *  Disabling never removes anything: the member row, its context window and its
+ *  history stay intact, so re-enabling brings it back with everything that
+ *  happened while it was disabled. */
+async function toggleDisabled(m: GroupMemberInfo) {
   try {
-    await removeGroupMember(props.groupId, m.id)
+    await setGroupMemberDisabled(props.groupId, m.id, !m.disabled)
     emit('changed')
   } catch { /* ignore */ }
 }
@@ -386,6 +434,30 @@ function usageTitle(m: GroupMemberInfo) {
     size: u.size.toLocaleString(),
     pct: usagePctOf(u),
   })
+}
+
+/** The model label a member row shows.
+ *
+ * `m.model` is the member row's OWN override; empty means it inherits the
+ * agent's default model. Both are real answers, so both are labelled — an empty
+ * cell would read as "unknown" and hide the thing the row exists to show.
+ *
+ * The id is run through `formatModelIdForDisplay` because some ACP agents
+ * (DeepSeek Harness) identify a model by a JSON-stringified provider/model pair;
+ * rendering that raw in a roster row is unreadable.
+ */
+function modelLabel(m: GroupMemberInfo): string {
+  const id = m.model || getDefaultModelId(m.agentId)
+  if (!id) return t('chat.sessionInfo.default')
+  return getAgentModel(m.agentId, id)?.name || formatModelIdForDisplay(id)
+}
+
+/** Tooltip: which model, and whether it is the member's own pick or inherited. */
+function modelTitle(m: GroupMemberInfo): string {
+  const label = modelLabel(m)
+  return m.model
+    ? t('group.memberDetail.modelOverridden', { model: label })
+    : t('group.memberDetail.modelInherited', { model: label })
 }
 
 // Delegate to the shared toggle: it PATCHes the current session (the group) and
@@ -471,7 +543,7 @@ defineExpose({ open: openSheet })
   transition: background var(--duration-base);
 }
 @media (hover: hover) {
-  .gm-row-main:not(.gm-row-main--static):hover {
+  .gm-row-main:hover {
     background: color-mix(in srgb, var(--text-primary) 5%, transparent);
   }
 }
@@ -479,13 +551,12 @@ defineExpose({ open: openSheet })
   outline: 2px solid var(--accent-color, #0066cc);
   outline-offset: 1px;
 }
-/* Left members render a <div>: nothing to inspect, no hover/press affordance. */
-.gm-row-main--static {
-  cursor: default;
-}
-.gm-row.is-left .gm-avatar,
-.gm-row.is-left .gm-name,
-.gm-row.is-left :deep(.gm-real-name) {
+/* A disabled member is still a full member: the row stays interactive (its
+   context window is real and compactable), only the identity is dimmed so the
+   roster reads at a glance as "who is scheduled to speak". */
+.gm-row.is-disabled .gm-avatar,
+.gm-row.is-disabled .gm-name,
+.gm-row.is-disabled :deep(.gm-real-name) {
   opacity: var(--opacity-disabled, 0.4);
 }
 .gm-avatar {
@@ -499,15 +570,26 @@ defineExpose({ open: openSheet })
   justify-content: center;
 }
 /* Nickname + real-agent label sit together; the wrapper takes the flex slack
-   so the host tag / remove button stay pinned to the trailing edge. */
+   so the host tag / disable button stay pinned to the trailing edge. */
 .gm-identity {
   flex: 1;
   min-width: 0;
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(2 * var(--dp));
+  /* The host/disabled pill rides with the name, so the identity group must be
+     allowed to shrink the NAME (ellipsis) before the pill overflows. */
+  overflow: hidden;
+}
+/* First line: name + real name + host/disabled pill. Horizontal, and it owns the
+   ellipsis so the pill is never the thing that gets cut. */
+.gm-name-line {
+  display: flex;
   align-items: center;
   gap: var(--space-2);
-  /* The host/left pill rides with the name, so the identity group must be
-     allowed to shrink the NAME (ellipsis) before the pill overflows. */
+  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
 }
 .gm-name {
@@ -517,6 +599,32 @@ defineExpose({ open: openSheet })
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Second line: the model this member runs.
+   A single line with an ellipsis — model ids are long (`claude-opus-4-5`), and
+   wrapping would make one row taller than its neighbours for no information
+   gain. `max-width: 100%` keeps it inside the identity column so it can never
+   push the usage chip (the row's only trailing column) off the right edge. */
+.gm-model {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(3 * var(--dp));
+  max-width: 100%;
+  min-width: 0;
+  font-size: var(--font-size-2xs);
+  color: var(--text-secondary);
+  line-height: calc(14 * var(--dp));
+}
+.gm-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Inherited (no per-member override): one step quieter, so a row that DOES
+   override stands out while an inherited one still names its model. */
+.gm-model--default {
+  color: var(--text-muted);
 }
 
 /* ── Context usage chip ──
@@ -569,7 +677,7 @@ defineExpose({ open: openSheet })
   text-align: center;
 }
 
-/* Pills: host (accent) / left (muted). */
+/* Pills: host (accent) / disabled (neutral). */
 .gm-tag {
   flex-shrink: 0;
   display: inline-flex;
@@ -580,20 +688,25 @@ defineExpose({ open: openSheet })
   font-size: var(--font-size-xs);
   line-height: calc(16 * var(--dp));
 }
-.gm-tag-crown {
+.gm-tag-crown,
+.gm-tag-disabled-icon {
   flex-shrink: 0;
 }
 .gm-tag--host {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
   color: var(--accent-color, #0066cc);
 }
-.gm-tag--left {
+.gm-tag--disabled {
   background: var(--bg-tertiary);
   color: var(--text-muted);
 }
 
-/* Remove: icon button, muted at rest, red on hover. */
-.gm-remove {
+/* Disable toggle: a quiet icon button. A disabled member shows the "enable" glyph
+   (Play) in the accent hue, so the action reads as "turn it back on" and the
+   state is visible without reading the tooltip. The Ban glyph is the same one
+   the agent settings use for a disabled agent, so "disabled" reads the same way
+   in both places. */
+.gm-disable-toggle {
   flex-shrink: 0;
   width: calc(26 * var(--dp));
   height: calc(26 * var(--dp));
@@ -609,22 +722,25 @@ defineExpose({ open: openSheet })
   transition: background var(--duration-base), color var(--duration-base);
 }
 @media (hover: hover) {
-  .gm-remove:hover {
-    color: var(--color-red, #dc2626);
-    background: color-mix(in srgb, var(--color-red, #dc2626) 12%, transparent);
+  .gm-disable-toggle:hover {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
   }
 }
-/* Host's remove control: present but inert, so every live row has the same
-   trailing column (the usage chip keeps its x-position across rows). */
-.gm-remove--disabled,
-.gm-remove--disabled:hover {
+.gm-disable-toggle.is-disabled {
+  color: var(--accent-color, #0066cc);
+}
+/* Host's disable control: present but inert, so every row has the same trailing
+   column (the usage chip keeps its x-position across rows). */
+.gm-disable-toggle--inert,
+.gm-disable-toggle--inert:hover {
   color: var(--text-muted);
   background: none;
   opacity: var(--opacity-disabled);
   cursor: not-allowed;
 }
 
-.gm-remove:focus-visible {
+.gm-disable-toggle:focus-visible {
   outline: 2px solid var(--accent-color, #0066cc);
   outline-offset: 1px;
 }

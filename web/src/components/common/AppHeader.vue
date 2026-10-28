@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-  <header class="header" :class="{ 'header--frameless': hasCustomControls }">
+  <header class="header" :class="{ 'header--frameless': hasCustomControls, 'header--has-meter': showUsageMeter }">
     <button
       class="header-logo-btn"
       type="button"
@@ -77,7 +77,7 @@
          settings page. Gating on `enabled` would hide the only hint that the
          feature exists. -->
     <UsageMeterPopover
-      v-if="isWideScreen && usageMeter.hasData.value"
+      v-if="showUsageMeter"
       :status="usageMeter.status.value"
       :state="usageMeter.meterState.value"
       :fill-percent="usageMeter.fillPercent.value"
@@ -241,7 +241,7 @@
     <button ref="themeBtnRef" class="theme-quick-toggle" :title="t('appHeader.themePicker')" :aria-label="t('appHeader.themePicker')" @click="toggleThemeMenu">
       <Palette :size="18" />
     </button>
-    <PopupMenu v-model:show="themeMenuOpen" :target-element="themeBtnRef" :max-width="200" :max-height="440" :menu-items-count="1 + THEME_IDS.length" anchor="right" app-surface @after-leave="onThemeMenuAfterLeave">
+    <PopupMenu v-model:show="themeMenuOpen" :target-element="themeBtnRef" :max-width="200" :max-height="440" :menu-items-count="themeOptions.length" anchor="right" app-surface @after-leave="onThemeMenuAfterLeave">
       <div class="theme-picker app-menu-column">
         <div class="app-menu-title">{{ t('terminal.theme') }}</div>
         <div class="app-menu-scroll">
@@ -345,7 +345,7 @@
 </template>
 
 <script setup lang="ts">
-import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Sun, Moon, Minus } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Minus } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -366,7 +366,7 @@ import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useMenuKeyboard } from '@/composables/useMenuKeyboard'
 import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiPost } from '@/utils/api'
-import { localConfig, setLocalConfig } from '@/composables/useSettingsConfig'
+import { localConfig } from '@/composables/useSettingsConfig'
 import { useSystemResources } from '@/composables/useSystemResources'
 import { useUsageMeter } from '@/composables/useUsageMeter'
 import UsageMeterPopover from '@/components/common/UsageMeterPopover.vue'
@@ -377,8 +377,7 @@ import { recentProjectDisplayPath } from '@/utils/recentProjects'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
-import { isDarkTheme, resolveThemeId, THEME_IDS, getThemeLabelKey, getThemePreviewColor } from '@/utils/themeMeta'
-import { applyThemeWithReveal, headerThemeOrigin } from '@/utils/themeReveal'
+import { useThemePicker } from '@/composables/useThemePicker'
 import ShortcutTipsDialog from '@/components/common/ShortcutTipsDialog.vue'
 import AppMenuPanel from '@/components/common/AppMenuPanel.vue'
 import type { ShortcutContext } from '@/config/shortcutTips'
@@ -399,6 +398,12 @@ const { resources, startBackgroundPolling, stopBackgroundPolling } = useSystemRe
 const usageMeter = useUsageMeter()
 const switchTab = inject<(tab: string) => void>('switchTab')
 const { isWideScreen, leftTab, activePane } = useWideScreenLayout()
+// Single source for "is the capsule in the header" — the template gate and the
+// `header--has-meter` class (which moves the auto margin onto the capsule, see
+// the style block) must never disagree: a class without the element leaves the
+// theme button unpushed, and an element without the class leaves the capsule
+// stranded next to the project badge.
+const showUsageMeter = computed(() => isWideScreen.value && usageMeter.hasData.value)
 const activeTab = inject<Ref<string>>('activeTab', ref('chat'))
 const shortcutContext = computed<ShortcutContext>(() =>
   resolveShortcutContext({
@@ -410,50 +415,27 @@ const shortcutContext = computed<ShortcutContext>(() =>
 )
 const shortcutTipsOpen = ref(false)
 
-// Quick theme picker
-const themeBtnRef = ref<HTMLElement | null>(null)
-const themeMenuOpen = ref(false)
-const currentThemeValue = computed(() => localConfig.theme || 'auto')
-const autoPreviewColors = computed(() => getThemePreviewColor(resolveThemeId('auto')))
-
-const themeOptions = computed(() => [
-  { label: t('settings.items.themeAuto'), value: 'auto' },
-  ...THEME_IDS.map(id => ({ label: t(getThemeLabelKey(id)), value: id })),
-])
-
-function toggleThemeMenu() {
-  if (themeMenuOpen.value) {
-    themeMenuOpen.value = false
-    return
-  }
-  dropdownOpen.value = false
-  fileDropdownOpen.value = false
-  branchDropdownOpen.value = false
-  themeMenuOpen.value = true
-}
-
-/** Pending theme value to apply once the picker has finished closing. */
-const pendingThemeValue = ref<string | null>(null)
-
-function selectTheme(value: string) {
-  // Close the menu first; the reveal only starts once it has finished leaving
-  // (see onThemeMenuAfterLeave). Starting immediately would put the still-fading
-  // menu into the transition's "new" snapshot and overlap the two animations.
-  pendingThemeValue.value = value
-  themeMenuOpen.value = false
-}
-
-/** PopupMenu emits this after its leave transition completes. */
-function onThemeMenuAfterLeave() {
-  const value = pendingThemeValue.value
-  if (value === null) return
-  pendingThemeValue.value = null
-  // Same origin helper as the settings theme grid, so both entry points wipe
-  // from the identical spot.
-  applyThemeWithReveal(() => setLocalConfig('theme', value), {
-    origin: headerThemeOrigin(),
-  })
-}
+// Quick theme picker. The state machine (deferred reveal, persistence, origin)
+// lives in useThemePicker so the public share topbar shares it verbatim — see
+// that module for the three rules a re-implementation would silently break.
+const {
+  btnRef: themeBtnRef,
+  menuOpen: themeMenuOpen,
+  currentValue: currentThemeValue,
+  options: themeOptions,
+  toggle: toggleThemeMenu,
+  selectTheme,
+  onMenuAfterLeave: onThemeMenuAfterLeave,
+  previewStyle: getThemePreviewStyle,
+  baseIcon: getThemeBaseIcon,
+} = useThemePicker({
+  // Only one header popup may be open at a time.
+  onBeforeOpen: () => {
+    dropdownOpen.value = false
+    fileDropdownOpen.value = false
+    branchDropdownOpen.value = false
+  },
+})
 
 /** Deep-link into the full appearance settings (theme grid + fonts + UI scale).
  *  Mirrors the branch-badge → history deep-link: a module-level pending request
@@ -470,20 +452,6 @@ function openMoreAppearanceOptions() {
 function openAboutSettings() {
   setPendingSettingsCategory('about')
   switchTab?.('settings')
-}
-
-/** Per-row preview colours consumed by assets/theme-picker.css: the swatch
- *  background and the sun/moon tint. The row surface itself stays neutral, so
- *  the theme's foreground colour is no longer needed. */
-function getThemePreviewStyle(value: string) {
-  const c = value === 'auto' ? autoPreviewColors.value : getThemePreviewColor(value)
-  if (!c) return undefined
-  return { '--tterm-preview-bg': c.bg, '--tterm-preview-accent': c.accent }
-}
-
-function getThemeBaseIcon(value: string) {
-  const resolved = value === 'auto' ? resolveThemeId('auto') : value
-  return isDarkTheme(resolved) ? Moon : Sun
 }
 
 const props = defineProps({
@@ -1557,12 +1525,21 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     align-items: center;
     justify-content: center;
     color: var(--accent-color);
-    /* Pushes the theme button (and everything after it) to the right edge. The
-       usage capsule sits just before it, so it inherits that alignment too.
-       Keeping the auto margin HERE rather than on the capsule matters when the
-       capsule is absent (rule disabled): the theme button must still be pushed
-       right. Two auto margins would split the slack and strand the capsule. */
+    /* Pushes the theme button (and everything after it) to the right edge.
+       This is the FALLBACK: it must stay for the case where no capsule is
+       rendered at all (narrow screens, or before the first fetch lands), or the
+       whole right-hand cluster would drift left. When the capsule IS present it
+       takes the auto margin instead and this one is cancelled — two would split
+       the slack and strand the capsule in the middle. */
     margin-left: auto;
+}
+
+/* The capsule owns the push while it exists. `margin-left: 0` rather than
+   `auto` on the theme button: with only one auto margin the slack all lands on
+   the capsule, which is what puts the capsule itself against the right edge
+   instead of leaving it wherever the flow dropped it. */
+.header--has-meter .theme-quick-toggle {
+    margin-left: 0;
 }
 
 @media (hover: hover) {
@@ -1597,10 +1574,22 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 }
 
 /* Usage capsule sits in the right-hand control cluster, just left of the theme
-   button. It deliberately has NO auto margin of its own: the theme button owns
-   it (see below), and a second auto margin would split the slack and leave the
-   capsule stranded mid-header. */
+   button. It owns the `margin-left: auto` that pushes the cluster right, and the
+   theme button drops its own while the capsule is present (see
+   `.header--has-meter` below). Two auto margins would split the slack and strand
+   the capsule mid-header.
+
+   Why the capsule and not the theme button: the capsule is the FIRST element of
+   the cluster, so only an auto margin on it survives the ticker disappearing.
+   `.header-tips` is `flex: 1` — while it renders it eats all the slack and drags
+   the capsule right by itself, which is why putting the auto margin on the theme
+   button looked correct on a PC. But the ticker is gated on
+   `!isAppMode || isDesktopApp`, so on a tablet / Android WebView (wide enough
+   for `isWideScreen`, no physical keyboard) it is absent, nothing eats the
+   slack, and the theme button's own auto margin then flew to the right edge
+   alone — leaving the capsule back beside the project badge. */
 .usage-meter-slot {
+    margin-left: auto;
     margin-right: var(--space-2);
 }
 
@@ -1767,23 +1756,6 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     padding: calc(3 * var(--dp)) 0;
     display: flex;
     flex-direction: column;
-}
-
-.app-menu-title {
-    padding: calc(5 * var(--dp)) var(--space-6) var(--space-2);
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-semibold);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-muted);
-    border-bottom: 1px solid var(--border-color);
-    flex-shrink: 0;
-}
-
-.app-menu-scroll {
-    overflow-y: auto;
-    overflow-x: hidden;
-    max-height: calc(300 * var(--dp));
 }
 
 .app-menu-message {
@@ -2062,12 +2034,6 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     color: var(--text-secondary);
 }
 
-.menu-divider {
-    height: 1px;
-    background: var(--border-color);
-    margin: var(--space-1) 0;
-}
-
 /* Dropdown transition (teleported to body) */
 .dropdown-enter-active,
 .dropdown-leave-active {
@@ -2169,31 +2135,13 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     color: var(--text-secondary, #666);
 }
 
-/* ─── Theme picker popup (unified with terminal theme picker) ───────────
-   Container surface is the PopupMenu appSurface (.app-menu look). The inner
-   column lays out title + scrollable list + pinned footer (the "more
-   appearance options" row reuses the project dropdown's divider + other-item
-   structure so it looks identical to the "browse" row). */
-.theme-picker { min-width: 160px; }
-/* Column layout shared by app-menu-styled pickers (app-header theme picker +
-   terminal theme picker). max-height: inherit ties it to the PopupMenu root's
-   computed inline max-height, so on short viewports the scrollable middle
-   shrinks and the pinned footer never gets clipped. */
-.app-menu-column {
-  display: flex;
-  flex-direction: column;
-  max-height: inherit;
-  min-height: 0;
-}
-.app-menu-column > .app-menu-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-/* Header (title) / divider / footer row must never shrink — the scrollable
-   middle absorbs any height deficit first. */
-.app-menu-column > :not(.app-menu-scroll) {
-  flex-shrink: 0;
-}
+/* ─── Theme picker popup ────────────────────────────────────────────────
+   Container surface is the PopupMenu appSurface (.app-menu look). The
+   `.theme-picker` / `.app-menu-column` / `.app-menu-title` / `.app-menu-scroll`
+   / `.menu-divider` chrome these popups rely on lives in css/components.css,
+   because the terminal picker and the public share picker need the identical
+   rules and the share SPA mounts no AppHeader. Only the header-specific focus
+   ring stays here. */
 /* The .theme-item row rules live in assets/theme-picker.css — shared with the
    terminal toolbar picker (both popups are teleported to <body>). Only the
    focus ring is header-specific, since the terminal rows are not tabbable. */

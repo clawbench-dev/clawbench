@@ -125,6 +125,14 @@ func (p *ForgePoller) run() {
 // syncAll syncs every distinct bound repository. Failures are logged per repo
 // and never abort the whole cycle.
 func (p *ForgePoller) syncAll(opts SyncOptions) {
+	// The master switch is re-read every cycle, so turning the integration off
+	// takes effect without a restart. Clearing the bindings is what actually
+	// stops the requests (an empty list returns below), but this check also
+	// covers the window between the switch being written and the clear
+	// committing, and the case where a binding is created while disabled.
+	if p.cfgFn != nil && !p.cfgFn().Forge.Enabled {
+		return
+	}
 	repos, err := ListProjectForges()
 	if err != nil {
 		slog.Warn("forge poller: list bindings failed", slog.String("err", err.Error()))

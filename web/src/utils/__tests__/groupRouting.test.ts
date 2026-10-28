@@ -259,10 +259,10 @@ describe('buildMemberCandidates', () => {
   const members = [
     { id: 'm-a', name: 'Alice' },
     { id: 'm-b', name: 'Bob' },
-    { id: 'm-gone', name: 'Gone', left: true },
+    { id: 'm-gone', name: 'Gone', disabled: true },
   ]
 
-  it('lists every active member for an empty query', () => {
+  it('lists every speaking member for an empty query', () => {
     expect(buildMemberCandidates(members, '').map((c) => c.label)).toEqual(['Alice', 'Bob'])
   })
 
@@ -290,7 +290,7 @@ describe('buildMemberCandidates', () => {
     expect(c.score).toBeUndefined()
   })
 
-  it('excludes left members', () => {
+  it('excludes disabled members', () => {
     expect(buildMemberCandidates(members, 'gone')).toEqual([])
   })
 

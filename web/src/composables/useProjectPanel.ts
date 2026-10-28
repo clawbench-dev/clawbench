@@ -84,16 +84,23 @@ export function loadProjectPanel(root: string): string | null {
  *    the file viewer" decision (commit e1bb5fb55), which this feature otherwise
  *    supersedes.
  * 4. Anything not in the dock-tab registry → the same default as rule 1.
+ * 5. `forge` while the user has hidden the integration entry → the same default
+ *    as rule 1. Registry membership alone is not enough here: the forge tab is
+ *    still switchable (a notification deep link opens it), but the user has
+ *    asked for it not to be part of the dock, so restoring a project must not
+ *    land them on a panel with no entry pointing at it (issue #590).
  */
 export function resolvePanelTab(
   remembered: string | null,
   isWideScreen: boolean,
   hasOpenFile: boolean,
+  forgeHidden = false,
 ): TabId {
   const fallback: TabId = isWideScreen ? 'browse' : 'chat'
   if (!remembered) return fallback
   if (isWideScreen && remembered === 'chat') return 'browse'
   if (remembered === 'view' && !hasOpenFile) return 'browse'
+  if (remembered === 'forge' && forgeHidden) return fallback
   return isDockTabId(remembered) ? remembered : fallback
 }
 

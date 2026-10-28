@@ -105,7 +105,18 @@ jobs:
         shell: bash
 
       - name: Go test
-        run: go test ./...
+        # `-timeout` is per TEST BINARY (one per package), and the default is
+        # 10 minutes. `internal/service` already runs 271–464 s on the Windows
+        # runner (measured on main across 8 runs: 271/315/324/339/342/407/420/464),
+        # i.e. it sits on the default limit. A slower runner or a busier disk
+        # pushes it over, and the whole package fails with "test timed out after
+        # 10m0s" — which has already happened on main (run 40170014829, where the
+        # reported culprit was a test that had only been running 1 s; the stack
+        # dump showed no lock holder, so it was accumulated wall clock, not a
+        # deadlock). Raise the ceiling with margin instead of re-running until it
+        # fits: the goal is to catch hangs, and 20 min still does that while
+        # leaving the slowest observed run ~2.5x headroom.
+        run: go test -timeout 20m ./...
 
       - name: Go build
         run: go build ./cmd/server

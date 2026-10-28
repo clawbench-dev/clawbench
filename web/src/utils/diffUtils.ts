@@ -27,7 +27,14 @@ export interface LineDiff {
 
 /**
  * Full diff: line-level + char-level for changed lines.
- * Uses jsdiff's Myers algorithm with timeout support.
+ *
+ * No `timeout` option: jsdiff aborts on wall-clock time and returns
+ * `undefined`, which is indistinguishable from "nothing changed" once coerced.
+ * A 3 ms budget is far below a GC pause, so a large file under load silently
+ * rendered as unchanged (the flake in the >500 line test was this bug, not a
+ * slow algorithm — Myers with a small edit distance is linear-ish here). If
+ * jsdiff still gives up (maxEditLength), the honest fallback is "everything
+ * changed", never "nothing changed".
  */
 export function computeDiff(oldText: string, newText: string): LineDiff {
     const result: LineDiff = {
@@ -39,7 +46,17 @@ export function computeDiff(oldText: string, newText: string): LineDiff {
     }
 
     // Line-level diff using jsdiff
-    const changes = diffLines(oldText, newText, { timeout: 3 }) ?? []
+    const changes = diffLines(oldText, newText)
+
+    if (!changes) {
+        // jsdiff could not complete: report a full replacement rather than
+        // pretending the texts are identical.
+        const oldLines = oldText === '' ? 0 : oldText.replace(/\n$/, '').split('\n').length
+        const newLines = newText === '' ? 0 : newText.replace(/\n$/, '').split('\n').length
+        for (let i = 1; i <= oldLines; i++) result.deletedInOld.push(i)
+        for (let i = 1; i <= newLines; i++) result.addedInNew.push(i)
+        return result
+    }
 
     // Track line numbers in old and new texts
     let oldLine = 1
@@ -137,7 +154,15 @@ export function charDiff(oldLine: string, newLine: string, oldLineNum: number, n
     // If lines are identical, no char-level diff needed
     if (oldLine === newLine) return
 
-    const changes = diffChars(oldLine, newLine, { timeout: 1 }) ?? []
+    const changes = diffChars(oldLine, newLine)
+
+    if (!changes) {
+        // Same reasoning as computeDiff: an aborted char diff must not look
+        // like an unchanged line. Mark the whole line as replaced.
+        result.deletedChars.set(oldLineNum, [{ start: 0, end: oldLine.length }])
+        result.addedChars.set(newLineNum, [{ start: 0, end: newLine.length }])
+        return
+    }
 
     // Convert char-level changes to offset ranges
     const deletedOffsets: number[] = []

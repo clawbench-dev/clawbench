@@ -45,12 +45,18 @@ test.describe.serial('group @ member card (UI)', () => {
     const textarea = page.locator('.chat-textarea')
     await expect(textarea).toBeVisible({ timeout: 15000 })
 
-    // Type "@" to open the member menu, then pick the first member.
-    await textarea.fill('@')
+    // Type "@" mid-sentence to open the member menu, then pick the first member.
+    // The "@" sits right after a Chinese character on purpose: Chinese has no
+    // word separators, so a whitespace-only boundary rule made the menu feel
+    // like it only worked at the head of the input.
+    await textarea.fill('请@')
     const menu = page.locator('.completion-item')
     await expect(menu.first()).toBeVisible({ timeout: 5000 })
     // The roster is listed FIRST (before file candidates) in a group session.
     await menu.first().click()
+
+    // Only the trigger is removed; the prose typed before it survives.
+    await expect(textarea).toHaveValue('请')
 
     // (1) The textarea must NOT contain the protocol tag — the whole point.
     await expect(textarea).not.toHaveValue(/clawbench-mention/)

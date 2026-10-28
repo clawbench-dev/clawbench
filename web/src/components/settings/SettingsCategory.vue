@@ -86,7 +86,7 @@
         />
         <SettingsItem
           v-for="item in card.items"
-          :key="item.key"
+          :key="item.key + (item.key === 'forge.enabled' ? '-' + configRenderEpoch : '')"
           :label="getItemLabel(item)"
           :description="item.descriptionKey ? t(item.descriptionKey) : ''"
           :type="item.type"
@@ -158,7 +158,7 @@ import { useSettingsConfig, getEffectiveUIScale, autoFitUIScale } from '@/compos
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
-import { setLogCaptureEnabled } from '@/utils/appLog'
+import { appLog, setLogCaptureEnabled } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
@@ -195,6 +195,15 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const toast = useToast()
+// Bumped to force ONE settings row to re-mount after a rejected change. The
+// switch checkbox is uncontrolled (`:checked` + `@change`), so cancelling a
+// destructive toggle has to replace the element — otherwise it stays visually
+// flipped while the model value is still the old one.
+//
+// Scoped to the forge row in the template key: remounting every row of the card
+// would also destroy any in-progress edit state (an open inline editor, a
+// half-typed text field) for a change that was rejected anyway.
+const configRenderEpoch = ref(0)
 const dialog = useDialog()
 const { localConfig, serverConfig, setLocalConfig, getServerValueWithDefault, setServerValue } = useSettingsConfig()
 const { loadAgents } = useAgents()
@@ -508,6 +517,31 @@ async function handleUpdate(item: ItemSpec, value: unknown) {
     if (!value) return
   }
 
+  // Disabling the forge integration is destructive: the server clears every
+  // project's repository binding, and re-enabling does NOT bring them back. A
+  // switch that silently deletes data on the way off needs a confirmation, or
+  // a stray tap costs the user all their bindings.
+  //
+  // Only the OFF transition asks. Turning it back on is not destructive, and
+  // prompting there would train users to click through the dialog.
+  if (item.key === 'forge.enabled' && value === false) {
+    const ok = await dialog.confirm(
+      t('settings.items.forgeDisableConfirm'),
+      {
+        title: t('settings.items.forgeDisableConfirmTitle'),
+        confirmText: t('settings.items.forgeDisableConfirmAction'),
+        dangerous: true,
+      },
+    )
+    if (!ok) {
+      // Re-render the switch in its current (on) position: the checkbox has
+      // already flipped visually, and the model value only changes after the
+      // server round trip, so nothing else would undo the DOM state.
+      configRenderEpoch.value++
+      return
+    }
+  }
+
   if (item.source === 'local') {
     setLocalConfig(item.key, value as string | number | boolean)
     if (item.key === 'logCapture') {
@@ -530,6 +564,17 @@ async function handleUpdate(item: ItemSpec, value: unknown) {
     const result = await setServerValue(item.key, value as string | number | boolean)
     if (result.needsRestart && result.changedColdFields.length > 0) {
       emit('restartNeeded', result.changedColdFields)
+    }
+    // Server-side warnings are the ONLY channel for "the setting was saved but a
+    // follow-up step failed". Ignoring them made one case invisible: disabling
+    // the forge integration persists the switch and then clears the bindings; if
+    // the clear fails the user is told nothing, sees the switch off, and later
+    // re-enables it to find their bindings still there — the opposite of what
+    // the dialog promised. Surfaced as an error toast because the user does have
+    // to act (retry the disable, or unbind manually).
+    for (const w of result.warnings ?? []) {
+      appLog.w('SettingsCategory', `${item.key} saved with warning: ${w}`)
+      toast.show(w, { icon: 'warning', type: 'error', duration: 8000 })
     }
   } catch {
     toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })

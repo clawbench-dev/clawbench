@@ -43,7 +43,8 @@ func InitInMemoryDB() (*sql.DB, error) {
 			agent_id TEXT DEFAULT '',
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			group_id TEXT DEFAULT '',
-			archived INTEGER NOT NULL DEFAULT 0
+			archived INTEGER NOT NULL DEFAULT 0,
+			disabled INTEGER NOT NULL DEFAULT 0
 		);
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -2,6 +2,7 @@
   <BottomSheet
     :open="state.open"
     auto
+    size="wide"
     panel-class="inert-path-sheet"
     @close="handleClose"
   >

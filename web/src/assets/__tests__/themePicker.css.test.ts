@@ -146,3 +146,55 @@ describe('theme picker rows in both callers', () => {
     }
   })
 })
+
+/**
+ * The popup CONTAINER chrome is shared by three hosts — the app header, the
+ * terminal toolbar and the public share topbar (web/src/share/). It must live
+ * in `css/components.css`, which both entries load.
+ *
+ * It used to be declared in AppHeader.vue's unscoped <style> block. That worked
+ * only because AppHeader is mounted on every app page; the share SPA mounts no
+ * header, so the picker there rendered as an unpositioned column with a
+ * stretched title. A `.vue`-local copy is therefore not a harmless duplicate —
+ * it is the specific arrangement that made the bug invisible.
+ */
+describe('app-menu popup chrome lives in the global stylesheet', () => {
+  const componentsCss = stripComments(readWebFile('css/components.css'))
+
+  it.each([
+    '.app-menu-title',
+    '.app-menu-scroll',
+    '.app-menu-column',
+    '.menu-divider',
+    '.theme-picker',
+  ])('%s is declared globally', (selector) => {
+    expect(declarationsFor(componentsCss, selector), `${selector} missing from css/components.css`).not.toBe('')
+  })
+
+  it('no component re-declares the container chrome', () => {
+    // A component-local copy would win/lose by source order and silently
+    // diverge; and it would again be invisible to the share entry.
+    for (const path of [
+      APP_HEADER,
+      TERMINAL_PANEL,
+      'src/share/ShareThemeButton.vue',
+    ]) {
+      const globalCss = stripComments(readGlobalStyleBlocks(path))
+      for (const selector of ['.app-menu-title', '.app-menu-scroll', '.app-menu-column', '.menu-divider', '.theme-picker {']) {
+        expect(globalCss, `${path} must not declare ${selector}`).not.toContain(selector)
+      }
+    }
+  })
+
+  it('the share picker is one of the hosts', () => {
+    // Ties the chrome above to its third consumer: without this, deleting the
+    // share picker would leave the rules looking covered.
+    const share = readWebFile('src/share/ShareThemeButton.vue')
+    expect(share).toContain('class="theme-picker app-menu-column"')
+    expect(share).toContain('class="app-menu-title"')
+    expect(share).toContain('class="app-menu-scroll"')
+    // The row stylesheet is imported by the component (the popup is teleported
+    // to <body>, so a scoped rule could never match it).
+    expect(share).toMatch(/import\s+['"]@\/assets\/theme-picker\.css['"]/)
+  })
+})

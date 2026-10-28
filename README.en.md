@@ -8,6 +8,8 @@
 
 **From Palm to Desktop** — An AI workbench for every screen.
 
+> 🏠 **Homepage**: [https://clawbench.pages.dev/](https://clawbench.pages.dev/)
+
 Brings the full power of AI coding agents to every screen — phone, tablet, and desktop. File browsing, code editing, AI conversation, Git operations, tasks, one app does it all, whether you're on the go or at your desk.
 
 Core Advantage: Native passthrough of AI capabilities (tool calls, extended thinking, Skills, MCP) with zero adaptation cost, fully preserving the power of coding agents. ClawBench is a complete workbench on every platform — files, code, Git, AI, tasks, TTS — with mobile interactions carefully crafted for one-handed use and full desktop support for serious work.

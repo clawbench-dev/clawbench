@@ -164,7 +164,7 @@ function makePayload() {
       agentId: 'codebuddy',
       model: 'claude-sonnet-4',
       // Explicit session type. The view must NOT infer "group" from a non-empty
-      // roster: a group whose members all left has an empty roster and would
+      // roster: a group whose members are all disabled has an empty roster and would
       // then render raw <clawbench-mention> tags instead of resolved chips.
       sessionType: 'chat',
     },

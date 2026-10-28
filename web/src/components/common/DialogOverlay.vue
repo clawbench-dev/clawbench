@@ -202,7 +202,10 @@ onBeforeUnmount(() => {
   background: var(--bg-secondary, #fff);
   border-radius: var(--radius-lg);
   padding: calc(18 * var(--dp)) var(--space-7) calc(14 * var(--dp));
-  max-width: calc(320 * var(--dp));
+  /* The generic confirm/prompt popup is a narrow-tier card; the token keeps it
+     on the same two-tier scale as ModalDialog / BottomSheet (it draws its own
+     shell, so it cannot take the `size` prop). */
+  max-width: var(--modal-width-narrow);
   width: 100%;
   box-shadow: 0 calc(2 * var(--dp)) calc(10 * var(--dp)) rgba(0, 0, 0, 0.16), 0 calc(14 * var(--dp)) calc(44 * var(--dp)) rgba(0, 0, 0, 0.3);
   animation: dlg-in 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);

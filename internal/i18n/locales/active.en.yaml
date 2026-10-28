@@ -4,7 +4,8 @@ SessionStreamBusy: Session stream is being viewed on another device
 ServiceBusy: The server is busy assembling shared conversations, please retry shortly
 SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old sessions
 SessionIdRequired: session_id required
-CannotRemoveHost: The host is the group's only scheduler and cannot be removed
+CannotDisableHost: The host is the group's only scheduler and cannot be disabled
+CannotDisableLastMember: The last member who can speak cannot be disabled — the group would have nobody left to answer
 GroupMemberLimitReached: A group can have at most {{.MaxCount}} members
 ForkContextInjectedChat: The history of "{{.Title}}" was injected into this session as background
 ForkContextInjectedGroup: The history of "{{.Title}}" was injected into this group as background; each member receives it on their first turn
@@ -245,7 +246,8 @@ CruiseMaxRounds: "Auto-cruise: reached the confirmation-round limit"
 # readable sentence, never a key. A locale switch therefore does not retranslate
 # history — matching decision 96b.
 GroupMemberJoined: '{{.Name}} joined the discussion'
-GroupMemberLeft: '{{.Name}} left'
+GroupMemberDisabled: '{{.Name}} was disabled'
+GroupMemberEnabled: '{{.Name}} was enabled'
 GroupMemberCompactionStarted: '{{.Name}} is compacting its context…'
 GroupMemberCompactionDone: '{{.Name}} compacted its context ({{.Before}} → {{.After}})'
 GroupMemberCompactionFailed: '{{.Name}} failed to compact its context'
@@ -308,6 +310,7 @@ ForgeEventLabelRepo: Repo
 ForgeEventLabelEvent: Event
 ForgeEventLabelAuthor: Author
 ForgeEventViewDetail: View details
+ForgeDisabled: the GitHub/GitLab integration is disabled
 PortForwardUnavailable: port forwarding is not available
 TunnelTargetUnreachable: tunnel target is unreachable
 TunnelReverseRequiresHTTP2: reverse forwarding requires HTTP/2; use the SSH transport on HTTP/1.1
@@ -321,10 +324,10 @@ UsageMeterFullBody: The {{.Quota}} quota for this cycle is used up; actual usage
 # the `error` field). The field path travels separately in `detail.field`.
 UsageMeterQuotaNegative: The quota cannot be negative
 UsageMeterQuotaNotNumber: The quota must be a number
-UsageMeterAnchorRequired: A start time is required when a quota is set
+UsageMeterEnabledNotBool: The enable switch must be true or false
 UsageMeterAnchorInvalid: "The start time must be a valid date (YYYY-MM-DD) or date and time (YYYY-MM-DDTHH:MM[:SS])"
 UsageMeterAnchorNotString: "The start time must be text in YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS] form"
-UsageMeterPeriodRange: The cycle length must be between 1 and {{.Max}} days
+UsageMeterPeriodRange: The cycle length must be between 0 and {{.Max}} days (0 means no cycle, so it never rolls over)
 UsageMeterPeriodNotNumber: The cycle length must be a number
 UsageMeterMetricInvalid: "The metric must be one of: tokens, credit, cost"
 UsageMeterMetricNotString: "The metric must be one of: tokens, credit, cost"

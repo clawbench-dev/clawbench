@@ -3,6 +3,7 @@
     :open="visible"
     :auto="true"
     :transparent-overlay="true"
+    size="wide"
     @close="emit('close')"
   >
     <template #header>
@@ -161,7 +162,14 @@ const renderedRows = computed<RenderedRow[]>(() => {
  * Unchanged regions are plain escaped text.
  */
 function charDiffHtml(oldText: string, newText: string, side: 'del' | 'add'): string {
-  const changes = diffChars(oldText, newText, { timeout: 3 }) ?? []
+  // No `timeout`: jsdiff aborts on wall-clock time and returns undefined, which
+  // would render as "no changed characters" — a wrong answer that looks valid.
+  const changes = diffChars(oldText, newText)
+  if (!changes) {
+    // Could not diff: mark the whole side as changed rather than showing it as
+    // unchanged.
+    return `<span class="${side === 'del' ? 'diff-char-del' : 'diff-char-add'}">${escapeHtml(side === 'del' ? oldText : newText)}</span>`
+  }
   const cls = side === 'del' ? 'diff-char-del' : 'diff-char-add'
   let html = ''
   for (const change of changes) {

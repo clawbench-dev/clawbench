@@ -301,6 +301,7 @@ import DiffDrawer from './DiffDrawer.vue'
 import { useDiffDrawer } from '@/composables/useDiffDrawer.ts'
 import { diffDrawer } from '@/composables/useMarkdownDiff.ts'
 import { useFileScrollRestore } from '@/composables/useFileScrollRestore'
+import { refreshTick } from '@/composables/useFileRefresh.ts'
 import FileHeader from './FileHeader.vue'
 import TocDock from './TocDock.vue'
 import { getFileType } from '@/utils/fileType.ts'
@@ -311,7 +312,7 @@ import { useFileEditor } from '@/composables/useFileEditor.ts'
 import { useTocDockPreference } from '@/composables/useTocDockPreference.ts'
 import { exportMarkdownToHtml, imageIssueReasonKey } from '@/utils/exportMarkdownHtml.ts'
 import { downloadBlob, downloadFileByPath } from '@/utils/download.ts'
-import { buildHtmlPreviewSrc, installPreviewScrollbar, installPreviewSearchStyles } from '@/utils/htmlPreview.ts'
+import { buildHtmlPreviewSrc, installPreviewScrollbar, installPreviewSearchStyles, watchPreviewTheme } from '@/utils/htmlPreview.ts'
 import { attachIframeSelectionQuoteBridge, installIframeSearchShortcut, resolveIframeWindow } from '@/utils/iframeSelectionQuote.ts'
 import { makeIframeQuoteShowHandler, useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useToast } from '@/composables/useToast.ts'
@@ -379,6 +380,8 @@ let disposeHtmlQuoteBridgeFn = null
 let htmlQuoteBridgePath = ''
 /** Ctrl+F forwarder installed inside the previewed document. */
 let disposeHtmlSearchShortcut = null
+/** Repaints the injected sheets when the app theme changes. */
+let disposeHtmlThemeWatcher = null
 
 // HTML preview loads the document through /api/fs/raw/ rather than inlining it
 // via srcdoc, so the browser resolves the document's own relative references
@@ -394,10 +397,16 @@ const htmlPreviewSrc = computed(() =>
  *  highlight styles (see installPreviewScrollbar / installPreviewSearchStyles).
  *  Runs on every load — including the srcdoc fallback and reloads — and both
  *  helpers are idempotent. Also (re)attaches the selection→quote bridge: a
- *  reload is a NEW document, so the previous bridge's listeners are gone. */
+ *  reload is a NEW document, so the previous bridge's listeners are gone.
+ *
+ *  The bar's colours are resolved from the host theme, so the theme watcher is
+ *  (re)registered here too: a theme switch while the preview is open must
+ *  repaint it, and a reload must not stack listeners. */
 function onHtmlPreviewLoad() {
     installPreviewScrollbar(htmlPreviewRef.value)
     installPreviewSearchStyles(htmlPreviewRef.value)
+    disposeHtmlThemeWatcher?.()
+    disposeHtmlThemeWatcher = watchPreviewTheme(() => htmlPreviewRef.value)
     void attachHtmlQuoteBridge()
     attachHtmlSearchShortcut()
 }
@@ -831,6 +840,8 @@ onBeforeUnmount(() => {
     detachHtmlQuoteBridge()
     disposeHtmlSearchShortcut?.()
     disposeHtmlSearchShortcut = null
+    disposeHtmlThemeWatcher?.()
+    disposeHtmlThemeWatcher = null
 })
 
 // Save/restore scroll position when switching files. The watcher keeps the
@@ -880,6 +891,23 @@ watch(() => props.file?.content, (content) => {
     // (fsnotify-driven refresh, or an AI edit) does NOT re-render it the way the
     // old srcdoc binding did. Bump the cache-buster to force a re-fetch.
     if (isHtml.value) htmlPreviewTimestamp.value = Date.now()
+})
+
+/**
+ * Re-run the previewed document on every refresh, even a no-op one.
+ *
+ * The content watcher above only fires when the BYTES changed, but a previewed
+ * page can change appearance without its own source changing — an external
+ * stylesheet, script or image it references. Clicking refresh in that case
+ * produced no visible effect at all (same content ⇒ same `?t=` ⇒ no navigation),
+ * which reads as a dead button. `refreshTick` is bumped by every completed
+ * refresh, so this is the signal that the user asked, not that the file moved.
+ *
+ * The timestamp is monotonic rather than `Date.now()` so two refreshes in the
+ * same millisecond still change the URL.
+ */
+watch(refreshTick, () => {
+    if (isHtml.value) htmlPreviewTimestamp.value += 1
 })
 
 // Sync scroll position when toggling rendered <-> raw view for a markdown file.

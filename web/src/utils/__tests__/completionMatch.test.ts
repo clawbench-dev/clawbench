@@ -214,6 +214,20 @@ describe('parseAtQuery', () => {
 
   it('ignores an @ that is not preceded by whitespace (email-like)', () => {
     expect(parseAtQuery('a@b', 3)).toBeNull()
+    expect(parseAtQuery('user.name@example.com', 20)).toBeNull()
+  })
+
+  it('opens right after CJK text, which carries no word separators', () => {
+    // The menu used to require whitespace before "@", so a Chinese sentence
+    // written without spaces ("请@某人") never triggered — it read as
+    // "the menu only works at the head of the input".
+    expect(parseAtQuery('\u8bf7@Ali', 6)).toEqual({ start: 1, end: 6, query: 'Ali' })
+    expect(parseAtQuery('\u8bf7@', 2)).toEqual({ start: 1, end: 2, query: '' })
+  })
+
+  it('opens right after punctuation', () => {
+    expect(parseAtQuery('(@main', 6)).toEqual({ start: 1, end: 6, query: 'main' })
+    expect(parseAtQuery('\u3002@main', 6)).toEqual({ start: 1, end: 6, query: 'main' })
   })
 
   it('rejects a query containing whitespace', () => {

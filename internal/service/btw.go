@@ -96,6 +96,12 @@ Rules:
 // by btwContextBudgetChars. It reuses the fork-context compressor so /btw and
 // fork/rewind cannot drift apart in how they trim and prioritize history.
 //
+// Unlike the fork paths it INCLUDES the in-flight reply (IncludeStreaming): the
+// question is typically asked while the agent is still writing ("what does that
+// mean?"), so the half-written reply is the subject, not noise. The renderer
+// marks it as partial so the model does not read a mid-sentence stop as a
+// finished answer.
+//
 // Returns "" when the session has no renderable history; the caller still asks
 // the question, just without context.
 func BuildBtwContext(sessionID string) string {
@@ -105,6 +111,7 @@ func BuildBtwContext(sessionID string) string {
 		CapitalizeRoles:   true,
 		PlainTextFallback: true,
 		BudgetChars:       btwContextBudgetChars,
+		IncludeStreaming:  true,
 	})
 }
 

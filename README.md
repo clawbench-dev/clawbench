@@ -6,6 +6,8 @@
   <img src="docs/screenshots/product_hero.png" alt="ClawBench" width="960">
 </p>
 
+> 🏠 **项目主页**：[https://clawbench.pages.dev/](https://clawbench.pages.dev/)
+>
 > 🎬 **演示视频**：[OpenClaw 和 Hermes 就是玩具，于是我写了一个能干活的](https://b23.tv/ewACF0h) — Bilibili
 
 **从掌心到桌面，多端一体的 AI 工作台。**

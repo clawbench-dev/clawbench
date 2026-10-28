@@ -80,6 +80,83 @@
        on large scales while gaining nothing. */
     --radius-full: 999px;
 
+    /* ── Modal / centered-sheet card widths. Exactly TWO tiers, and they are
+       the only place a dialog width may be declared: ModalDialog and
+       BottomSheet each take `size="narrow" | "wide"` and map it onto one of
+       these, so a call site chooses a tier but cannot invent a width.
+       (History: six per-call-site widths, each silently multiplied by a 1.3
+       fudge factor, plus four drawers overriding the cap in their own
+       stylesheet. Every one of those overrides is gone — see
+       assets/__tests__/modalWidth.css.test.ts.)
+         narrow → forms, lists, confirmations: one readable column
+         wide   → content that needs the room: diffs, code, transcripts,
+                  multi-column tables and grids
+       Both are inert on phones: the card is `width: 100%` inside an overlay
+       with `--space-8` side padding. ── */
+    --modal-width-narrow: calc(520 * var(--dp));
+    --modal-width-wide: calc(960 * var(--dp));
+
+    /* ── The chat column's reading measure. ONE number for the whole chat
+       pane: the message column, the composer block (action bar / recommendation
+       / input box / session info) and the stacked cards above it (plan, team,
+       queued) are all held to this width and centred, so on a wide monitor the
+       conversation stops stretching to ~2000px while the chat TITLE BAR keeps
+       spanning the pane (it is window chrome, not content).
+
+       900 matches the Markdown preview's reading column and the share page's
+       conversation column (`.session-share-column`), so the same thread reads
+       at the same measure in-app and when shared.
+
+       Below the measure NOTHING changes: the message area stays flush to both
+       edges (its gutter floors at 0) and the composer keeps its original 8px
+       inset, so a phone looks exactly as it did before this cap existed.
+       Guarded by web/src/components/chat/__tests__/chatContentMeasure.css.test.ts. ── */
+    --chat-content-max-width: calc(900 * var(--dp));
+
+    /* The message column's horizontal gutter: zero until the pane is wider than
+       the measure, then half the slack, which centres the column. The floor is
+       `0px` (not `0` — a bare 0 is a <number> and `max()` would drop the whole
+       declaration) because a narrow pane must stay flush: the message area has
+       never had a side inset.
+
+       Spent as `padding` on the message SCROLLER, and the right side is further
+       reduced by --chat-scrollbar-lane (see ChatMessageList). Percentage padding
+       resolves against the containing block (the pane), so the left edge lands
+       on the same vertical line as the composer's, which spends
+       --chat-content-gutter below.
+
+       Note `100%` resolves against whichever element CONSUMES the token, not
+       against :root — custom properties substitute as tokens and compute in
+       place. ── */
+    --chat-content-inset: max(0px, (100% - var(--chat-content-max-width)) / 2);
+
+    /* ── Scrollbar lane, for boxes that must line up with a NON-scrolling one ──
+       A classic (non-overlay) scrollbar takes its width out of the scroll
+       container's layout box, so the message column's content box ends up one
+       bar-width narrower than the composer island's — the two right edges are
+       off by that width and the column drifts half of it off centre.
+
+       The width cannot be expressed in CSS: it is 0 on overlay-scrollbar
+       platforms (macOS/iOS default, most Android WebViews, headless Chromium),
+       10 on a classic bar, 4 on a coarse pointer, and WebKit's
+       `scrollbar-gutter: stable` only reserves it once the content actually
+       overflows. So ChatMessageList MEASURES the live lane (`offsetWidth -
+       clientWidth`, which is exactly the bar's layout cost) and writes this
+       variable on the scroller; 0px is the pre-measurement default, which is
+       also the correct value for every overlay platform. ── */
+    --chat-scrollbar-lane: 0px;
+
+    /* The composer's gutter: the same centring, but flooring at its original
+       --space-4 inset so a narrow pane keeps the composer's side padding. ── */
+    --chat-content-gutter: max(var(--space-4), (100% - var(--chat-content-max-width)) / 2);
+
+    /* The stacked cards' gutter (plan / team / queued): same centring, flooring
+       at the --space-5 inset those cards have always had, so a phone keeps
+       their original look. A separate token rather than a shared one because
+       the three floors genuinely differ — the composer sits 8px in, the cards
+       10px. ── */
+    --chat-content-card-gutter: max(var(--space-5), (100% - var(--chat-content-max-width)) / 2);
+
     /* ── Spacing scale. Numbers are step names, not sizes: the same step can
        mean "inset of a dense row" or "gap between cards" depending on where
        it lands, so semantic names would mislead more than they help. The

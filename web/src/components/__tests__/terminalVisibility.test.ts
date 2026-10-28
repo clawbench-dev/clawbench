@@ -26,11 +26,18 @@ vi.mock('@/utils/fileType.ts', () => ({
   getFileType: () => ({ color: '#666', isImage: false, isAudio: false }),
 }))
 
-vi.mock('@/utils/path.ts', () => ({
-  dirName: (p: string) => p.split('/').slice(0, -1).join('/') || '',
-  joinPath: (...parts: string[]) => parts.filter(Boolean).join('/').replace(/\/+/g, '/'),
-  splitPath: (p: string) => p.split('/').filter(Boolean),
-}))
+// Partial mock: the component now evaluates isAbsolutePath even at the project
+// root (the breadcrumb row is shown there too), so a hand-listed subset of the
+// module would throw "No export is defined" for the rest.
+vi.mock('@/utils/path.ts', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/utils/path.ts')>()
+  return {
+    ...actual,
+    dirName: (p: string) => p.split('/').slice(0, -1).join('/') || '',
+    joinPath: (...parts: string[]) => parts.filter(Boolean).join('/').replace(/\/+/g, '/'),
+    splitPath: (p: string) => p.split('/').filter(Boolean),
+  }
+})
 
 vi.mock('@/composables/useSettingsConfig', () => ({
   useSettingsConfig: () => ({
@@ -89,6 +96,7 @@ const i18n = createI18n({
           openTerminal: '在此打开终端',
           archiveDir: '压缩',
         },
+        nav: { parentDir: '返回上一级', projectRoot: '项目根目录', fsRoot: '文件系统根目录' },
       },
       search: { defaultPlaceholder: '搜索' },
       nav: { refresh: '刷新' },

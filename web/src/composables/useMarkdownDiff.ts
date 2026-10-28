@@ -542,9 +542,15 @@ function toMarker(type: MarkerType, block: BlockInfo, blockIndex: number, charDi
 
 /**
  * Compute char-level diff between two text strings.
+ *
+ * Deliberately passes no `timeout`: jsdiff's timeout is wall-clock based and
+ * returns undefined on abort, which downstream reads as "no differences" — a
+ * large document under load would silently render as unchanged. An empty
+ * change list here means "could not diff", so callers fall back to showing
+ * the texts as-is rather than as equal.
  */
 export function computeCharDiff(oldText: string, newText: string): CharDiff {
-    const changes = diffChars(oldText, newText, { timeout: 3 })
+    const changes = diffChars(oldText, newText)
     return { oldText, newText, changes: changes || [] }
 }
 

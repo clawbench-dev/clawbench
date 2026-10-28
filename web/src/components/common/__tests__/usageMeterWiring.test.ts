@@ -41,7 +41,10 @@ describe('usage meter — capsule wiring', () => {
   it('the capsule is gated on isWideScreen (no mobile header UI)', () => {
     // Mobile has no capsule by design: the meter is header-only and the phone
     // channel is the notification.
-    expect(header).toMatch(/v-if="isWideScreen && usageMeter\.hasData\.value"/)
+    expect(header).toMatch(
+      /const showUsageMeter = computed\(\(\) => isWideScreen\.value && usageMeter\.hasData\.value\)/,
+    )
+    expect(header).toMatch(/v-if="showUsageMeter"/)
     // And NOT on `enabled`: an unconfigured user still gets a spend total, so
     // gating on the rule would hide the capsule for exactly the people who
     // never opened the settings page.
@@ -62,15 +65,35 @@ describe('usage meter — capsule wiring', () => {
     expect(capsule).toBeLessThan(theme)
   })
 
-  it('only one auto margin pushes the right-hand cluster', () => {
-    // Two `margin-left: auto` items split the slack and strand the capsule in
-    // the middle. The theme button owns it (it must still reach the right edge
-    // when the meter is disabled and the capsule is absent).
-    const slot = header.slice(header.indexOf('.usage-meter-slot'))
-    const slotRule = slot.slice(0, slot.indexOf('}'))
-    expect(slotRule).not.toContain('margin-left: auto')
+  it('the capsule owns the push to the right edge, not the theme button', () => {
+    // The capsule must be pinned right by its OWN `margin-left: auto`.
+    //
+    // This used to be the theme button's job, which only looked correct because
+    // the shortcut-tips ticker (`flex: 1`) ate the slack and dragged the capsule
+    // along with it. The ticker is hidden on tablets / the Android WebView
+    // (`isAppMode && !isDesktopApp`), so there the capsule collapsed back beside
+    // the project badge while the theme button flew to the right edge alone.
+    // Asserting the auto margin lives on the FIRST element of the cluster is the
+    // only source-level way to state "alignment must not depend on the ticker".
+    const slot = header.slice(header.indexOf('.usage-meter-slot {'))
+    expect(slot.slice(0, slot.indexOf('}'))).toContain('margin-left: auto')
+
+    // The theme button keeps its auto margin as the fallback for when no capsule
+    // is rendered at all (narrow screens, first fetch not landed yet)…
     const themeRule = header.slice(header.indexOf('.theme-quick-toggle {'))
     expect(themeRule.slice(0, themeRule.indexOf('}'))).toContain('margin-left: auto')
+    // …but drops it while the capsule is present, or the two auto margins would
+    // split the slack and strand the capsule in the middle.
+    const hasMeter = header.slice(header.indexOf('.header--has-meter .theme-quick-toggle {'))
+    expect(hasMeter.slice(0, hasMeter.indexOf('}'))).toContain('margin-left: 0')
+  })
+
+  it('the header--has-meter class and the capsule render gate cannot drift', () => {
+    // Both must read the same expression: a class without the element leaves the
+    // theme button unpushed (cluster drifts left), an element without the class
+    // leaves the capsule stranded next to the project badge.
+    expect(header).toMatch(/'header--has-meter': showUsageMeter/)
+    expect(header).toMatch(/v-if="showUsageMeter"/)
   })
 
   it('the popover reacts to the open request (notification tap)', () => {

@@ -252,6 +252,83 @@ func enqueuedUserMessage(t *testing.T, messages []model.ChatMessage) model.ChatM
 	return model.ChatMessage{}
 }
 
+// TestQueueHandler_Enqueue_DedupesAttachmentAcrossChannels pins the fix for
+// "the same image appears twice in the user bubble, then three times after the
+// next queued message".
+//
+// The frontend sends a fresh upload through BOTH channels — `filePaths` (legacy)
+// and `files` (structured) — so validateQueueFiles' concatenation stored one
+// duplicate per enqueue, and the duplicates accumulated as the queue advanced.
+// The direct-send path already cross-deduped; this endpoint did not.
+func TestQueueHandler_Enqueue_DedupesAttachmentAcrossChannels(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-enqueue-dedupe"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	// A real upload under .clawbench/uploads, as the picker produces it.
+	uploads := filepath.Join(env.ProjectDir, ".clawbench", "uploads")
+	require.NoError(t, os.MkdirAll(uploads, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(uploads, "shot.png"), []byte("png"), 0o644))
+
+	// The exact payload enqueueMessage sends: same attachment in both channels.
+	body := map[string]any{
+		"message":   "看看这个",
+		"filePaths": []string{".clawbench/uploads/shot.png"},
+		"files": []map[string]any{
+			{"path": ".clawbench/uploads/shot.png", "isDir": false},
+		},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(QueueHandler, req)
+	assertOK(t, w)
+
+	messages, err := service.GetChatHistory(env.ProjectDir, "claude", sessionID)
+	require.NoError(t, err)
+	msg := enqueuedUserMessage(t, messages)
+	require.Len(t, msg.Files, 1, "the same attachment must be stored once, not once per channel: %+v", msg.Files)
+
+	service.CancelSession(sessionID)
+}
+
+// TestQueueHandler_Enqueue_KeepsDistinctLineRanges: dedupe must key on the
+// entry identity (path + line range), not the path alone. Two ranges of one
+// file are two genuinely different attachments.
+func TestQueueHandler_Enqueue_KeepsDistinctLineRanges(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-enqueue-ranges"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "main.go"), []byte("package main"), 0o644))
+
+	body := map[string]any{
+		"message": "compare these two regions",
+		"files": []map[string]any{
+			{"path": "main.go", "isDir": false, "startLine": 1, "endLine": 5},
+			{"path": "main.go", "isDir": false, "startLine": 20, "endLine": 30},
+		},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(QueueHandler, req)
+	assertOK(t, w)
+
+	messages, err := service.GetChatHistory(env.ProjectDir, "claude", sessionID)
+	require.NoError(t, err)
+	msg := enqueuedUserMessage(t, messages)
+	require.Len(t, msg.Files, 2, "distinct line ranges must both survive dedupe: %+v", msg.Files)
+
+	service.CancelSession(sessionID)
+}
+
 // TestQueueHandler_Enqueue_URLAttachment verifies a URL attachment survives the
 // queue endpoint.
 //

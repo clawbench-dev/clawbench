@@ -28,11 +28,13 @@ type ParticipantInfo struct {
 //     included (the member's own past speech is excluded by the author filter).
 //   - self is the speaking member's ROW id (matches msg.AgentID).
 //   - names maps a member row id -> display name; unknown ids fall back to a
-//     short placeholder so a removed/renamed member's speech is still labeled.
-//   - leftIDs marks members that have left: their speech stays on the timeline
-//     (the cursor is not reset on leave) but is labeled "（已离场）" so the
-//     reader does not treat it as an active participant (decision #39).
-//   - roster lists the OTHER active participants for the header. It is omitted
+//     short placeholder so a renamed member's speech is still labeled.
+//   - disabledIDs marks members the user has turned off: their speech stays on the
+//     timeline (disabling never rewinds a cursor) but is labeled "（已禁用）" so the
+//     reader does not expect an answer from them (decision #39). A disabled member
+//     still reads everything once enabled — the label only explains the silence,
+//     it does not censor the backlog.
+//   - roster lists the OTHER enabled participants for the header. It is omitted
 //     entirely when no participant has a specialty (a bare "参与者：" line is
 //     pure noise).
 //   - instruction is the host's directive to this member, rendered as a
@@ -51,7 +53,7 @@ type ParticipantInfo struct {
 // User messages are rendered as "User: ..."; member speech as "<name>: ...";
 // membership changes (role='system') as "[系统] ..." so they are never mistaken
 // for user speech.
-func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, names map[string]string, leftIDs map[string]bool, roster []ParticipantInfo, instruction, bcc string) string {
+func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, names map[string]string, disabledIDs map[string]bool, roster []ParticipantInfo, instruction, bcc string) string {
 	var b strings.Builder
 	if header := participantHeader(roster); header != "" {
 		b.WriteString(header)
@@ -80,7 +82,7 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 		if text == "" && len(questions) == 0 && len(m.Files) == 0 {
 			continue
 		}
-		if line := renderTimelineLine(m, text, questions, names, leftIDs); line != "" {
+		if line := renderTimelineLine(m, text, questions, names, disabledIDs); line != "" {
 			b.WriteString(line)
 		}
 	}
@@ -105,7 +107,7 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 // rendered as plain text). They are appended as a directional line so the
 // reader knows the question is addressed to the USER, not to it — without that
 // a member reads the question as ordinary discussion and may answer it.
-func renderTimelineLine(m model.ChatMessage, text string, questions []string, names map[string]string, leftIDs map[string]bool) string {
+func renderTimelineLine(m model.ChatMessage, text string, questions []string, names map[string]string, disabledIDs map[string]bool) string {
 	if m.Role == "system" {
 		return "[系统] " + text + "\n"
 	}
@@ -129,8 +131,8 @@ func renderTimelineLine(m model.ChatMessage, text string, questions []string, na
 	if name == "" {
 		name = "成员"
 	}
-	if leftIDs[m.AgentID] {
-		name += "（已离场）"
+	if disabledIDs[m.AgentID] {
+		name += "（已禁用）"
 	}
 	line := name + ": " + renderMentionsReadable(text, names)
 	if q := renderAskQuestions(name, questions); q != "" {
@@ -366,18 +368,18 @@ func groupInjectionTextWithRoster(groupID, selfMemberRowID string, cursor int64,
 	if err != nil {
 		return "", fmt.Errorf("load group timeline: %w", err)
 	}
-	leftIDs, roster := participantMetadata(members, selfMemberRowID)
-	return buildInjectionText(msgs, cursor, selfMemberRowID, names, leftIDs, roster, instruction, bcc), nil
+	disabledIDs, roster := participantMetadata(members, selfMemberRowID)
+	return buildInjectionText(msgs, cursor, selfMemberRowID, names, disabledIDs, roster, instruction, bcc), nil
 }
 
-// participantMetadata derives the left-member set and the active-participant
+// participantMetadata derives the disabled-member set and the speaking-participant
 // roster (excluding the speaker) from the group's members.
 func participantMetadata(members []GroupMember, selfMemberRowID string) (map[string]bool, []ParticipantInfo) {
-	leftIDs := make(map[string]bool)
+	disabledIDs := make(map[string]bool)
 	roster := make([]ParticipantInfo, 0, len(members))
 	for _, m := range members {
-		if m.Left {
-			leftIDs[m.ID] = true
+		if m.Disabled {
+			disabledIDs[m.ID] = true
 			continue
 		}
 		if m.ID == selfMemberRowID {
@@ -385,5 +387,5 @@ func participantMetadata(members []GroupMember, selfMemberRowID string) (map[str
 		}
 		roster = append(roster, ParticipantInfo{Name: m.Name, Specialty: GetAgentSpecialty(m.AgentID)})
 	}
-	return leftIDs, roster
+	return disabledIDs, roster
 }

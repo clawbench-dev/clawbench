@@ -132,6 +132,10 @@ describe('useSettingsConfig', () => {
     expect('terminalCopyOnSelect' in localConfig).toBe(true)
     expect('logCapture' in localConfig).toBe(true)
     expect('swipeSession' in localConfig).toBe(true)
+    // The forge master switch is a SERVER setting (forge.enabled): turning it
+    // off stops polling and unlinks every project, so it cannot be per-device.
+    // A local copy would let one client show an entry the server has disabled.
+    expect('showForgeTab' in localConfig).toBe(false)
   })
 
   it('localDefaults carries the per-device wallpaper choice', () => {

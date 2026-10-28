@@ -105,6 +105,45 @@ func FileEntriesFromPaths(paths []string) []FileEntry {
 	return entries
 }
 
+// FileEntryIdentity returns the dedupe identity of an attachment entry,
+// mirroring the frontend's entryKey (web/src/utils/fileAttachmentUtils.ts).
+//
+// A path may carry MULTIPLE independent references — a whole-file attach plus
+// one or more distinct line ranges — so path alone is not an identity: using it
+// would collapse genuinely different attachments. URLs key on their address,
+// quotes on their stable id plus content, plain files on path + line range.
+func FileEntryIdentity(f FileEntry) string {
+	switch {
+	case f.IsURL():
+		return "url|" + f.URL
+	case f.IsQuote():
+		return fmt.Sprintf("quote|%s|%s|%d|%d|%s", f.ID, f.Path, f.StartLine, f.EndLine, f.Text)
+	default:
+		return fmt.Sprintf("%s|%d|%d", f.Path, f.StartLine, f.EndLine)
+	}
+}
+
+// DedupeFileEntries keeps the first occurrence of each identity, preserving
+// order. Exact duplicates are the common case: the same upload travels through
+// both the legacy filePaths channel and the structured files channel, and the
+// two are concatenated when a message is persisted.
+func DedupeFileEntries(entries []FileEntry) []FileEntry {
+	if len(entries) < 2 {
+		return entries
+	}
+	out := make([]FileEntry, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+	for _, e := range entries {
+		key := FileEntryIdentity(e)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, e)
+	}
+	return out
+}
+
 // PathsFromFileEntries extracts plain paths from []FileEntry.
 //
 // Deprecated: Use FileEntryLabel instead to preserve line info.
@@ -327,8 +366,8 @@ type ChatSession struct {
 	// not stored on the session row itself). Always omitted when empty so the
 	// payload for untagged sessions is unchanged.
 	Tags []SessionTag `json:"tags,omitempty"`
-	// GroupMembers is a compact preview of a group session's ACTIVE members,
-	// populated only for session_type='group' rows by the session list /
+	// GroupMembers is a compact preview of a group session's SPEAKING (enabled)
+	// members, populated only for session_type='group' rows by the session list /
 	// overview endpoints (batch-loaded, never stored on the session row).
 	// Omitted when empty, so a non-group session's payload is unchanged.
 	GroupMembers []GroupMemberPreview `json:"groupMembers,omitempty"`

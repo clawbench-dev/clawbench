@@ -79,7 +79,7 @@ onBeforeUnmount(() => {
   background: var(--bg-secondary, #fff);
   border-radius: var(--radius-lg);
   padding: calc(18 * var(--dp)) var(--space-7) calc(14 * var(--dp));
-  max-width: calc(420 * var(--dp));
+  max-width: var(--modal-width-narrow);
   width: 100%;
   display: flex;
   flex-direction: column;

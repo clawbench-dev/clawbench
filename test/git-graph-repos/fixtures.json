@@ -1,0 +1,838 @@
+{
+  "_comment": [
+    "GitGraph fixture topology. Each entry is one commit:",
+    "  sha     - logical id used by gitGraphRealData.test.ts",
+    "  parents - logical ids of parents (empty = root)",
+    "  msg     - commit subject",
+    "  refs    - branches pointing at this commit",
+    "",
+    "scripts/gen-git-graph-fixtures.mjs turns this into real git repos",
+    "under test/git-graph-repos/ (gitignored). Real SHAs differ from the",
+    "logical ids here; the test maps between them via that file's output."
+  ],
+  "fixtures": {
+    "01-linear": {
+      "head": "master",
+      "commits": [
+        {
+          "sha": "ab44778",
+          "parents": [
+            "993e655"
+          ],
+          "msg": "commit 5",
+          "refs": []
+        },
+        {
+          "sha": "993e655",
+          "parents": [
+            "23097ad"
+          ],
+          "msg": "commit 4",
+          "refs": []
+        },
+        {
+          "sha": "23097ad",
+          "parents": [
+            "c4416dd"
+          ],
+          "msg": "commit 3",
+          "refs": []
+        },
+        {
+          "sha": "c4416dd",
+          "parents": [
+            "88b5155"
+          ],
+          "msg": "commit 2",
+          "refs": []
+        },
+        {
+          "sha": "88b5155",
+          "parents": [],
+          "msg": "commit 1",
+          "refs": []
+        }
+      ]
+    },
+    "02-single-merge": {
+      "head": "master",
+      "commits": [
+        {
+          "sha": "e48a09e",
+          "parents": [
+            "7e8265c"
+          ],
+          "msg": "main: commit 4",
+          "refs": [
+            "HEAD -> master"
+          ]
+        },
+        {
+          "sha": "7e8265c",
+          "parents": [
+            "3bb4df1",
+            "0971cee"
+          ],
+          "msg": "merge: integrate feature",
+          "refs": []
+        },
+        {
+          "sha": "0971cee",
+          "parents": [
+            "3cc90b7"
+          ],
+          "msg": "feature: commit 2",
+          "refs": [
+            "feature"
+          ]
+        },
+        {
+          "sha": "3cc90b7",
+          "parents": [
+            "357d91a"
+          ],
+          "msg": "feature: commit 1",
+          "refs": []
+        },
+        {
+          "sha": "3bb4df1",
+          "parents": [
+            "357d91a"
+          ],
+          "msg": "main: commit 3",
+          "refs": []
+        },
+        {
+          "sha": "357d91a",
+          "parents": [
+            "cd74ef5"
+          ],
+          "msg": "main: commit 2",
+          "refs": []
+        },
+        {
+          "sha": "cd74ef5",
+          "parents": [],
+          "msg": "main: commit 1",
+          "refs": []
+        }
+      ]
+    },
+    "03-multi-branch": {
+      "head": "master",
+      "commits": [
+        {
+          "sha": "964f480",
+          "parents": [
+            "482d32e"
+          ],
+          "msg": "main: after merges",
+          "refs": []
+        },
+        {
+          "sha": "482d32e",
+          "parents": [
+            "b007c8b",
+            "682ca0c"
+          ],
+          "msg": "merge: feature-b",
+          "refs": []
+        },
+        {
+          "sha": "682ca0c",
+          "parents": [
+            "f7b2c27"
+          ],
+          "msg": "feature-b: work 3",
+          "refs": [
+            "feature-b"
+          ]
+        },
+        {
+          "sha": "f7b2c27",
+          "parents": [
+            "caa37e7"
+          ],
+          "msg": "feature-b: work 2",
+          "refs": []
+        },
+        {
+          "sha": "caa37e7",
+          "parents": [
+            "c929e3f"
+          ],
+          "msg": "feature-b: work 1",
+          "refs": []
+        },
+        {
+          "sha": "b007c8b",
+          "parents": [
+            "1aeaffd",
+            "50930e4"
+          ],
+          "msg": "merge: feature-a",
+          "refs": []
+        },
+        {
+          "sha": "50930e4",
+          "parents": [
+            "f49756e"
+          ],
+          "msg": "feature-a: work 2",
+          "refs": [
+            "feature-a"
+          ]
+        },
+        {
+          "sha": "f49756e",
+          "parents": [
+            "c929e3f"
+          ],
+          "msg": "feature-a: work 1",
+          "refs": []
+        },
+        {
+          "sha": "1aeaffd",
+          "parents": [
+            "c929e3f"
+          ],
+          "msg": "main: third",
+          "refs": []
+        },
+        {
+          "sha": "c929e3f",
+          "parents": [
+            "074dbaa"
+          ],
+          "msg": "main: second",
+          "refs": []
+        },
+        {
+          "sha": "074dbaa",
+          "parents": [],
+          "msg": "main: init",
+          "refs": []
+        }
+      ]
+    },
+    "04-frequent-merge": {
+      "head": "master",
+      "commits": [
+        {
+          "sha": "ff36d18",
+          "parents": [
+            "7fc1158"
+          ],
+          "msg": "main: final",
+          "refs": [
+            "HEAD -> master"
+          ]
+        },
+        {
+          "sha": "7fc1158",
+          "parents": [
+            "1fe1097"
+          ],
+          "msg": "dev: work 3",
+          "refs": [
+            "dev"
+          ]
+        },
+        {
+          "sha": "1fe1097",
+          "parents": [
+            "9620ba1",
+            "a19508b"
+          ],
+          "msg": "dev: merge main 2",
+          "refs": []
+        },
+        {
+          "sha": "a19508b",
+          "parents": [
+            "14dcef9"
+          ],
+          "msg": "main: work 2",
+          "refs": []
+        },
+        {
+          "sha": "9620ba1",
+          "parents": [
+            "539b985"
+          ],
+          "msg": "dev: work 2",
+          "refs": []
+        },
+        {
+          "sha": "539b985",
+          "parents": [
+            "e121a5d",
+            "14dcef9"
+          ],
+          "msg": "dev: merge main 1",
+          "refs": []
+        },
+        {
+          "sha": "14dcef9",
+          "parents": [
+            "074dbaa"
+          ],
+          "msg": "main: work 1",
+          "refs": []
+        },
+        {
+          "sha": "e121a5d",
+          "parents": [
+            "074dbaa"
+          ],
+          "msg": "dev: work 1",
+          "refs": []
+        },
+        {
+          "sha": "074dbaa",
+          "parents": [],
+          "msg": "main: init",
+          "refs": []
+        }
+      ]
+    },
+    "05-long-lived-branch": {
+      "head": "master",
+      "commits": [
+        {
+          "sha": "e1c63f7",
+          "parents": [
+            "08e88f7"
+          ],
+          "msg": "main: post-release",
+          "refs": [
+            "HEAD -> master"
+          ]
+        },
+        {
+          "sha": "08e88f7",
+          "parents": [
+            "91a7f14",
+            "bc644a9"
+          ],
+          "msg": "merge: release-1.0",
+          "refs": []
+        },
+        {
+          "sha": "bc644a9",
+          "parents": [
+            "555f1bd"
+          ],
+          "msg": "release: bugfix",
+          "refs": [
+            "release-1.0"
+          ]
+        },
+        {
+          "sha": "555f1bd",
+          "parents": [
+            "eba78a8"
+          ],
+          "msg": "release: prep 2",
+          "refs": []
+        },
+        {
+          "sha": "eba78a8",
+          "parents": [
+            "074dbaa"
+          ],
+          "msg": "release: prep 1",
+          "refs": []
+        },
+        {
+          "sha": "91a7f14",
+          "parents": [
+            "68cd412"
+          ],
+          "msg": "main: feature 4",
+          "refs": []
+        },
+        {
+          "sha": "68cd412",
+          "parents": [
+            "4955893"
+          ],
+          "msg": "main: feature 3",
+          "refs": []
+        },
+        {
+          "sha": "4955893",
+          "parents": [
+            "7e864f0"
+          ],
+          "msg": "main: feature 2",
+          "refs": []
+        },
+        {
+          "sha": "7e864f0",
+          "parents": [
+            "074dbaa"
+          ],
+          "msg": "main: feature 1",
+          "refs": []
+        },
+        {
+          "sha": "074dbaa",
+          "parents": [],
+          "msg": "main: init",
+          "refs": []
+        }
+      ]
+    },
+    "06-octopus-merge": {
+      "head": "master",
+      "commits": [
+        {
+          "sha": "04a2046",
+          "parents": [
+            "55731c9"
+          ],
+          "msg": "main: final",
+          "refs": [
+            "HEAD -> master"
+          ]
+        },
+        {
+          "sha": "55731c9",
+          "parents": [
+            "5388f87",
+            "8d500bc",
+            "64621af",
+            "185fe1e"
+          ],
+          "msg": "merge: combine all",
+          "refs": []
+        },
+        {
+          "sha": "185fe1e",
+          "parents": [
+            "af44737"
+          ],
+          "msg": "feature-c: work",
+          "refs": [
+            "feature-c"
+          ]
+        },
+        {
+          "sha": "64621af",
+          "parents": [
+            "af44737"
+          ],
+          "msg": "feature-b: work",
+          "refs": [
+            "feature-b"
+          ]
+        },
+        {
+          "sha": "8d500bc",
+          "parents": [
+            "af44737"
+          ],
+          "msg": "feature-a: work",
+          "refs": [
+            "feature-a"
+          ]
+        },
+        {
+          "sha": "5388f87",
+          "parents": [
+            "af44737"
+          ],
+          "msg": "main: second",
+          "refs": []
+        },
+        {
+          "sha": "af44737",
+          "parents": [],
+          "msg": "main: init",
+          "refs": []
+        }
+      ]
+    },
+    "07-open-branches": {
+      "head": "master",
+      "commits": [
+        {
+          "sha": "4512f9f",
+          "parents": [
+            "04335a1"
+          ],
+          "msg": "feature-a: work 2",
+          "refs": [
+            "feature-a"
+          ]
+        },
+        {
+          "sha": "04335a1",
+          "parents": [
+            "5388f87"
+          ],
+          "msg": "feature-a: work 1",
+          "refs": []
+        },
+        {
+          "sha": "fb83ca6",
+          "parents": [
+            "5388f87"
+          ],
+          "msg": "feature-b: work 1",
+          "refs": [
+            "feature-b"
+          ]
+        },
+        {
+          "sha": "e16ecb4",
+          "parents": [
+            "5388f87"
+          ],
+          "msg": "main: third",
+          "refs": [
+            "HEAD -> master"
+          ]
+        },
+        {
+          "sha": "5388f87",
+          "parents": [
+            "af44737"
+          ],
+          "msg": "main: second",
+          "refs": []
+        },
+        {
+          "sha": "af44737",
+          "parents": [],
+          "msg": "main: init",
+          "refs": []
+        }
+      ]
+    },
+    "08-long-linear": {
+      "head": "main",
+      "commits": [
+        {
+          "sha": "31b22c8",
+          "parents": [
+            "65c2645"
+          ],
+          "msg": "commit 40",
+          "refs": []
+        },
+        {
+          "sha": "65c2645",
+          "parents": [
+            "2e722a8"
+          ],
+          "msg": "commit 39",
+          "refs": []
+        },
+        {
+          "sha": "2e722a8",
+          "parents": [
+            "99f0ee6"
+          ],
+          "msg": "commit 38",
+          "refs": []
+        },
+        {
+          "sha": "99f0ee6",
+          "parents": [
+            "4745ad4"
+          ],
+          "msg": "commit 37",
+          "refs": []
+        },
+        {
+          "sha": "4745ad4",
+          "parents": [
+            "b652381"
+          ],
+          "msg": "commit 36",
+          "refs": []
+        },
+        {
+          "sha": "b652381",
+          "parents": [
+            "fcd96f6"
+          ],
+          "msg": "commit 35",
+          "refs": []
+        },
+        {
+          "sha": "fcd96f6",
+          "parents": [
+            "149e621"
+          ],
+          "msg": "commit 34",
+          "refs": []
+        },
+        {
+          "sha": "149e621",
+          "parents": [
+            "597b791"
+          ],
+          "msg": "commit 33",
+          "refs": []
+        },
+        {
+          "sha": "597b791",
+          "parents": [
+            "17dbced"
+          ],
+          "msg": "commit 32",
+          "refs": []
+        },
+        {
+          "sha": "17dbced",
+          "parents": [
+            "c300000"
+          ],
+          "msg": "commit 31",
+          "refs": []
+        },
+        {
+          "sha": "c300000",
+          "parents": [
+            "c290000"
+          ],
+          "msg": "commit 30",
+          "refs": []
+        },
+        {
+          "sha": "c290000",
+          "parents": [
+            "c280000"
+          ],
+          "msg": "commit 29",
+          "refs": []
+        },
+        {
+          "sha": "c280000",
+          "parents": [
+            "c270000"
+          ],
+          "msg": "commit 28",
+          "refs": []
+        },
+        {
+          "sha": "c270000",
+          "parents": [
+            "c260000"
+          ],
+          "msg": "commit 27",
+          "refs": []
+        },
+        {
+          "sha": "c260000",
+          "parents": [
+            "c250000"
+          ],
+          "msg": "commit 26",
+          "refs": []
+        },
+        {
+          "sha": "c250000",
+          "parents": [
+            "c240000"
+          ],
+          "msg": "commit 25",
+          "refs": []
+        },
+        {
+          "sha": "c240000",
+          "parents": [
+            "c230000"
+          ],
+          "msg": "commit 24",
+          "refs": []
+        },
+        {
+          "sha": "c230000",
+          "parents": [
+            "c220000"
+          ],
+          "msg": "commit 23",
+          "refs": []
+        },
+        {
+          "sha": "c220000",
+          "parents": [
+            "c210000"
+          ],
+          "msg": "commit 22",
+          "refs": []
+        },
+        {
+          "sha": "c210000",
+          "parents": [
+            "c200000"
+          ],
+          "msg": "commit 21",
+          "refs": []
+        },
+        {
+          "sha": "c200000",
+          "parents": [
+            "c190000"
+          ],
+          "msg": "commit 20",
+          "refs": []
+        },
+        {
+          "sha": "c190000",
+          "parents": [
+            "c180000"
+          ],
+          "msg": "commit 19",
+          "refs": []
+        },
+        {
+          "sha": "c180000",
+          "parents": [
+            "c170000"
+          ],
+          "msg": "commit 18",
+          "refs": []
+        },
+        {
+          "sha": "c170000",
+          "parents": [
+            "c160000"
+          ],
+          "msg": "commit 17",
+          "refs": []
+        },
+        {
+          "sha": "c160000",
+          "parents": [
+            "c150000"
+          ],
+          "msg": "commit 16",
+          "refs": []
+        },
+        {
+          "sha": "c150000",
+          "parents": [
+            "c140000"
+          ],
+          "msg": "commit 15",
+          "refs": []
+        },
+        {
+          "sha": "c140000",
+          "parents": [
+            "c130000"
+          ],
+          "msg": "commit 14",
+          "refs": []
+        },
+        {
+          "sha": "c130000",
+          "parents": [
+            "c120000"
+          ],
+          "msg": "commit 13",
+          "refs": []
+        },
+        {
+          "sha": "c120000",
+          "parents": [
+            "c110000"
+          ],
+          "msg": "commit 12",
+          "refs": []
+        },
+        {
+          "sha": "c110000",
+          "parents": [
+            "c100000"
+          ],
+          "msg": "commit 11",
+          "refs": []
+        },
+        {
+          "sha": "c100000",
+          "parents": [
+            "c090000"
+          ],
+          "msg": "commit 10",
+          "refs": []
+        },
+        {
+          "sha": "c090000",
+          "parents": [
+            "c080000"
+          ],
+          "msg": "commit 9",
+          "refs": []
+        },
+        {
+          "sha": "c080000",
+          "parents": [
+            "c070000"
+          ],
+          "msg": "commit 8",
+          "refs": []
+        },
+        {
+          "sha": "c070000",
+          "parents": [
+            "c060000"
+          ],
+          "msg": "commit 7",
+          "refs": []
+        },
+        {
+          "sha": "c060000",
+          "parents": [
+            "c050000"
+          ],
+          "msg": "commit 6",
+          "refs": []
+        },
+        {
+          "sha": "c050000",
+          "parents": [
+            "c040000"
+          ],
+          "msg": "commit 5",
+          "refs": []
+        },
+        {
+          "sha": "c040000",
+          "parents": [
+            "c030000"
+          ],
+          "msg": "commit 4",
+          "refs": []
+        },
+        {
+          "sha": "c030000",
+          "parents": [
+            "c020000"
+          ],
+          "msg": "commit 3",
+          "refs": []
+        },
+        {
+          "sha": "c020000",
+          "parents": [
+            "c010000"
+          ],
+          "msg": "commit 2",
+          "refs": []
+        },
+        {
+          "sha": "c010000",
+          "parents": [],
+          "msg": "commit 1",
+          "refs": []
+        }
+      ]
+    }
+  }
+}

@@ -28,6 +28,10 @@ afterEach(() => {
     clearInterval(id)
   }
   pendingIntervals.length = 0
+  // Unconditional: fake-timer tests restore the clock as their last statement,
+  // so an assertion that throws would otherwise leave every later test in this
+  // file running against a frozen clock.
+  vi.useRealTimers()
 })
 
 // Mock API utilities
@@ -3226,6 +3230,218 @@ describe('usePortForward', () => {
 
             // Nothing enabled to maintain → do not churn the tunnel.
             expect(mockReconnect).not.toHaveBeenCalled()
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        /**
+         * The reconnect call inside a poll round can take 15–25s (SSH connect
+         * timeout + fetchSSHPort), which is longer than the old fixed 5s
+         * interval. The interval therefore started a new round while the
+         * previous one was still awaiting, so on Android the single-threaded
+         * network executor queued attempts faster than it drained them and the
+         * service lock was held almost continuously — the main thread then
+         * blocked in onDestroy() and the OS raised "应用无响应".
+         */
+        it('never starts a new round while the previous reconnect is still running', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: false, enabled: true }] }
+                }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+            })
+            // A reconnect that takes the full 15s connect timeout.
+            const mockReconnect = vi.fn().mockImplementation(
+                () => new Promise(resolve => setTimeout(() => resolve(false), 15000)),
+            )
+            ;(window as any).ClawBenchNative = {
+                isTunnelConnected: async () => false,
+                reconnectTunnelAsync: mockReconnect,
+                getTunnelError: async () => '',
+                getTunnelErrorType: async () => '',
+            }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth } = usePortForward()
+
+            await checkTunnelHealth()
+            mockReconnect.mockClear()
+
+            // 22s spans four ticks of the old 5s interval but only ONE full
+            // reconnect (armed at 5s, settling at 20s).
+            await vi.advanceTimersByTimeAsync(22000)
+
+            expect(mockReconnect).toHaveBeenCalledTimes(1)
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        /**
+         * A permanently unreachable port must not be retried forever at a fixed
+         * cadence: the delay grows 5s → 15s → 30s → 60s so a hopeless tunnel
+         * stops hammering the radio (and the native executor).
+         */
+        it('backs off the retry delay while the tunnel stays down', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: false, enabled: true }] }
+                }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+            })
+            const mockReconnect = vi.fn().mockResolvedValue(false)
+            ;(window as any).ClawBenchNative = {
+                isTunnelConnected: async () => false,
+                reconnectTunnelAsync: mockReconnect,
+                getTunnelError: async () => '',
+                getTunnelErrorType: async () => '',
+            }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth } = usePortForward()
+
+            await checkTunnelHealth()
+            mockReconnect.mockClear()
+
+            // Round 1 fires at 5s (first delay).
+            await vi.advanceTimersByTimeAsync(5000)
+            expect(mockReconnect).toHaveBeenCalledTimes(1)
+
+            // Round 2 is now 15s away, not 5s: at 19s there is still one call.
+            await vi.advanceTimersByTimeAsync(14000)
+            expect(mockReconnect).toHaveBeenCalledTimes(1)
+            await vi.advanceTimersByTimeAsync(2000)
+            expect(mockReconnect).toHaveBeenCalledTimes(2)
+
+            // Round 3 waits 30s from round 2 (t=20s), i.e. fires at t=50s.
+            // At t=49s there are still two calls; at t=51s three.
+            await vi.advanceTimersByTimeAsync(28000)
+            expect(mockReconnect).toHaveBeenCalledTimes(2)
+            await vi.advanceTimersByTimeAsync(2000)
+            expect(mockReconnect).toHaveBeenCalledTimes(3)
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        /**
+         * `tunnelPollActive` cannot distinguish "my chain is still live" from
+         * "someone stopped mine and started a new one". A stop→start straddling
+         * a round's 15s await therefore lets the stale round re-arm: it bumps the
+         * shared failure counter and (via `clearTimeout` in
+         * `scheduleTunnelPollRound`) cancels the new chain's timer, pushing
+         * recovery out to 60s — the storm this change exists to prevent, in the
+         * opposite direction.
+         */
+        it('a stale round cannot hijack the chain after a stop→start', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: false, enabled: true }] }
+                }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+            })
+            // Every reconnect takes 15s and fails.
+            const mockReconnect = vi.fn().mockImplementation(
+                () => new Promise(resolve => setTimeout(() => resolve(false), 15000)),
+            )
+            // Togglable so the test can drive a real healthy→degraded transition
+            // (stopTunnelPoll only happens on the healthy branch).
+            let connected = false
+            ;(window as any).ClawBenchNative = {
+                isTunnelConnected: async () => connected,
+                reconnectTunnelAsync: mockReconnect,
+                getTunnelError: async () => '',
+                getTunnelErrorType: async () => '',
+            }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth } = usePortForward()
+
+            await checkTunnelHealth()
+            mockReconnect.mockClear()
+
+            // t=5s: stale round R1 starts, settles at t=20s.
+            await vi.advanceTimersByTimeAsync(5000)
+            expect(mockReconnect).toHaveBeenCalledTimes(1)
+
+            // t=10s: health says healthy → stopTunnelPoll; then degraded →
+            // startTunnelPoll arms a fresh chain (R2 due at t=15s, settles t=30s).
+            connected = true
+            mockTunnelStatusFromPorts.mockImplementation(() => 'ok')
+            await checkTunnelHealth()
+            connected = false
+            mockTunnelStatusFromPorts.mockImplementation(() => 'degraded')
+            await checkTunnelHealth()
+
+            // t=25s: R2 fired at t=15s (2nd call). R1 settled at t=20s and must
+            // not have armed anything — a stale chain's round would have fired by
+            // now or be sitting on the new chain's timer.
+            await vi.advanceTimersByTimeAsync(15000)
+            expect(mockReconnect).toHaveBeenCalledTimes(2)
+
+            // t=50s: the live chain keeps its OWN cadence (5s then 15s then 15s
+            // → rounds at 5s, 15s, 45s = 3 calls). A stale round that re-armed
+            // would have bumped the shared failure counter and cancelled the
+            // 45s timer, leaving only 2.
+            await vi.advanceTimersByTimeAsync(25000)
+            expect(mockReconnect).toHaveBeenCalledTimes(3)
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        /**
+         * `degraded` means the wire is up and only the target service is not
+         * answering yet — that resolves in seconds, so it must keep the base
+         * cadence instead of backing off to 60s.
+         */
+        it('does not back off while the tunnel is up but ports are degraded', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'A', protocol: 'http', active: false, enabled: true }] }
+                }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+            })
+            // Tunnel is UP; only the port is unresponsive.
+            const mockReconnect = vi.fn().mockResolvedValue(true)
+            ;(window as any).ClawBenchNative = {
+                isTunnelConnected: async () => true,
+                reconnectTunnelAsync: mockReconnect,
+                getTunnelError: async () => '',
+                getTunnelErrorType: async () => '',
+            }
+            mockTunnelStatusFromPorts.mockImplementation(() => 'degraded')
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus } = usePortForward()
+
+            await checkTunnelHealth()
+            expect(tunnelStatus.value).toBe('degraded')
+
+            // Keep the base cadence: several rounds inside 20s. With backoff the
+            // second round would not arrive until t=20s.
+            const loadCount = () => mockApiGet.mock.calls.filter(c => c[0] === '/api/proxy/ports').length
+            const before = loadCount()
+            await vi.advanceTimersByTimeAsync(5000)
+            const afterFirst = loadCount()
+            await vi.advanceTimersByTimeAsync(5000)
+            const afterSecond = loadCount()
+
+            expect(afterFirst).toBeGreaterThan(before)
+            expect(afterSecond).toBeGreaterThan(afterFirst)
 
             vi.useRealTimers()
             delete (window as any).ClawBenchNative

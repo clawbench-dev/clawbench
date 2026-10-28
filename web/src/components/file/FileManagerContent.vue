@@ -192,15 +192,17 @@
       </div>
 
       <!-- Breadcrumb (multi-select info is merged into the bottom bar so the
-           directory context is never obscured) -->
-      <div v-if="currentDir" class="dir-nav-bottom">
+           directory context is never obscured). Shown at the project root too:
+           the breadcrumb then carries the current location plus the copy-path
+           button, which is the only place to grab the absolute root. -->
+      <div v-if="showDirNav" class="dir-nav-bottom">
         <!-- Disabled at a filesystem root: dirName("/") is "/", so the walk-up
              is a no-op. Leaving it enabled there offers an affordance that
              silently does nothing. -->
         <button
           class="dir-up-btn"
           :disabled="!hasParentDir"
-          :title="hasParentDir ? t('file.nav.parentDir') : t('file.nav.fsRoot')"
+          :title="upTitle"
           @click="goToParentDir"
         >
           <ArrowLeft :size="14" />
@@ -503,6 +505,10 @@
             <Download :size="14" />
             {{ t('common.download') }}
           </div>
+          <div class="context-menu-item" data-menu-item="share-link" v-if="ctxMenu.entry.type !== 'dir'" @click.stop="doShareLink">
+            <ScreenShare :size="14" />
+            {{ t('file.context.shareLink') }}
+          </div>
           <div class="context-menu-item" v-if="isNativeApp && ctxMenu.entry.type !== 'dir'" @click.stop="doShareExternal">
             <Share2 :size="14" />
             {{ t('file.context.shareExternal') }}
@@ -552,6 +558,10 @@
       @open-file="onContentSearchOpenFile"
     />
     <SharedFilesDrawer ref="sharedDrawerRef" @selectFile="onSharedFileOpen" />
+    <!-- Public share link for the context-menu entry. Mounted here rather than
+         in App.vue because the dialog is owned by the file manager's own menu:
+         the target file is the menu entry, not necessarily the open file. -->
+    <ShareLinkDialog :open="shareDialogOpen" :file="shareTarget" @close="shareDialogOpen = false" />
 
     <!-- Drop upload overlay — covers the whole file manager panel -->
     <DropOverlay :visible="isDragOver" :label="t('file.dropToUpload')" />
@@ -601,6 +611,7 @@ import SearchInput from '@/components/common/SearchInput.vue'
 import JumpDirDialog from './JumpDirDialog.vue'
 import ContentSearchDialog from './ContentSearchDialog.vue'
 import SharedFilesDrawer from './SharedFilesDrawer.vue'
+import ShareLinkDialog from './ShareLinkDialog.vue'
 import CodeLinkPreview from './CodeLinkPreview.vue'
 import DirPreviewBody from './DirPreviewBody.vue'
 import { useFileSearch } from '@/composables/useFileSearch'
@@ -861,6 +872,9 @@ const sharedDrawerRef = ref(null)
 function onSharedFileOpen(path) {
   emit('selectFile', path)
 }
+// Public share-link dialog, driven from the entry context menu.
+const shareDialogOpen = ref(false)
+const shareTarget = ref(null)
 const { terminalRuntimeEnabled } = useTerminalStatus()
 const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
 const { isWideScreen } = useWideScreenLayout()
@@ -1650,6 +1664,25 @@ const hasParentDir = computed(() => {
   if (dir === '') return false
   return dirName(dir) !== dir
 })
+
+/**
+ * The nav row exists for the project root too (see the template), so the dead
+ * up-button there needs its own explanation: "up one level" from the project
+ * root goes nowhere, but that is not a filesystem root — saying so would be
+ * wrong.
+ */
+const upTitle = computed(() => {
+  if (hasParentDir.value) return t('file.nav.parentDir')
+  return isExternalDir.value ? t('file.nav.fsRoot') : t('file.nav.projectRoot')
+})
+
+/**
+ * The nav row is shown for every listed directory, including the project root
+ * (empty `currentDir`), so the breadcrumb and its copy-path button stay
+ * available there. It stays hidden when no project is loaded — there is no root
+ * to name and nothing to copy.
+ */
+const showDirNav = computed(() => (props.currentDir || '') !== '' || !!store.state.projectRoot)
 
 function currentDirPath() {
     const dir = props.currentDir || ''
@@ -2477,6 +2510,18 @@ function doDownload() {
     const name = ctxMenu.entry.name
     closeCtxMenu()
     downloadFileByPath(path, name)
+}
+
+function doShareLink() {
+    const entry = ctxMenu.entry
+    closeCtxMenu()
+    if (!entry?.path) return
+    // The dialog talks to /api/share with this exact path, so it must be the
+    // same form the rest of the file API uses: project-relative entries stay
+    // relative (resolved server-side against the project cookie), and entries
+    // browsed outside the project are already absolute.
+    shareTarget.value = { name: entry.name || entry.path.split('/').pop() || '', path: entry.path }
+    shareDialogOpen.value = true
 }
 
 function doShareExternal() {

@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { getServerFieldToLabelKey, categoryItems, categoryHasPanels, isPanelOnlyCategory, getCategoryPanels, isSubPageRoute, getSubPagePanel, getSubPageTitleKey, subPagePanelMap, buildFontFamilyOptions, isDependsOnMet, formatAnchorForDisplay } from '@/components/settings/settingsFieldMap'
 import { UI_SCALE_STEP, UI_SCALE_MANUAL_MIN, UI_SCALE_MANUAL_MAX } from '@/utils/uiScale'
 import i18n from '@/i18n'
+import en from '@/i18n/locales/en'
+import zh from '@/i18n/locales/zh'
 
 describe('settingsFieldMap', () => {
   it('maps all server-side dot-path keys to i18n label keys', () => {
@@ -625,6 +627,62 @@ describe('settingsFieldMap', () => {
     expect(item!.appOnly).toBeFalsy()
   })
 
+  it('forge master switch is a SERVER switch that gates the whole integration', () => {
+    // Issue #590. Server-side, not per-device: turning it off stops polling and
+    // unlinks every project's repository, so one client cannot keep polling
+    // after another "disabled" it.
+    const item = categoryItems['forgeIntegration']
+      .filter(e => e.type === 'item')
+      .map(e => e.spec)
+      .find(i => i.key === 'forge.enabled')
+
+    expect(item).toBeDefined()
+    expect(item!.type).toBe('switch')
+    expect(item!.source).toBe('server')
+    // Its own card, and the FIRST entry of the category: the switch decides
+    // whether the rest of the page applies at all, so sharing the credentials
+    // card made it read as one more credential field.
+    expect(item!.sectionHeader).toBe('settings.items.forgeEnabledSection')
+    const first = categoryItems['forgeIntegration'][0]
+    expect(first.type === 'item' && first.spec.key).toBe('forge.enabled')
+    // And it must not be grouped with the credentials row that follows it.
+    const credentials = categoryItems['forgeIntegration']
+      .filter(e => e.type === 'item')
+      .map(e => e.spec)
+      .find(i => i.key === 'forgeCredentials')
+    expect(credentials!.sectionHeader).toBe('settings.items.forgeSection')
+    // It IS a restart-dialog field (it is a server key), so it must appear in the
+    // cold-field label map — otherwise a restart prompt would name it raw.
+    expect(getServerFieldToLabelKey()['forge.enabled']).toBe('settings.items.forgeEnabled')
+
+    // No per-device leftover: a local `showForgeTab` would let the dock disagree
+    // with the server, which is exactly what this design avoids.
+    const localForge = categoryItems['forgeIntegration']
+      .filter(e => e.type === 'item')
+      .map(e => e.spec)
+      .find(i => i.key === 'showForgeTab')
+    expect(localForge).toBeUndefined()
+  })
+
+  it('the forge master switch has copy and a confirmation dialog in both locales', () => {
+    // A missing key renders the raw path ("settings.items.forgeEnabled") in the
+    // row, and nothing else fails.
+    for (const [name, loc] of [['en', en], ['zh', zh]] as const) {
+      const items = loc.settings.items as unknown as Record<string, string>
+      for (const key of [
+        'forgeEnabledSection',
+        'forgeEnabled',
+        'forgeEnabledDesc',
+        'forgeDisableConfirmTitle',
+        'forgeDisableConfirm',
+        'forgeDisableConfirmAction',
+      ]) {
+        expect(items[key], `${name} is missing settings.items.${key}`).toBeTruthy()
+        expect(items[key], `${name}.${key} must not echo its key`).not.toBe(`settings.items.${key}`)
+      }
+    }
+  })
+
   it('desktop/system notification items are Android-only, not merely app-only', () => {
     // `appOnly` is filtered as `!isAppMode`, and BOTH native hosts report
     // isAppMode === true — so an appOnly row also renders in the Electron
@@ -1055,5 +1113,34 @@ describe('usage meter cycle type', () => {
     expect(modeAt).toBe(0)
     expect(keys.indexOf('usage_meter.anchor_date')).toBeGreaterThan(modeAt)
     expect(keys.indexOf('usage_meter.period_days')).toBeGreaterThan(modeAt)
+  })
+})
+
+// Every field of the usage-meter rule is optional; the enable switch is the only
+// on/off. These pin the panel wiring that makes that visible: the switch must be
+// part of the snapshot/save contract, and the numeric fields must accept 0
+// rather than treating it as "unset" (0 means "no cycle" / "no budget").
+describe('usage meter enable switch and optional fields', () => {
+  const cfg = () => getCategoryPanels('usageMeter')[0]
+
+  it('exposes the enable switch as the panel enable key', () => {
+    expect(cfg().enableKey).toBe('usage_meter.enabled')
+    // The label must exist and name the action, or the switch renders blank.
+    expect(cfg().enableLabelKey).toBe('settings.items.usageMeterEnabled')
+  })
+
+  // The enable key must be in the server-side field→label map, otherwise the
+  // restart dialog (and the panel's own save) cannot name it.
+  it('maps the enable key to its label', () => {
+    expect(getServerFieldToLabelKey()['usage_meter.enabled']).toBe('settings.items.usageMeterEnabled')
+  })
+
+  it('accepts 0 for the period and the quota', () => {
+    const period = cfg().commonFields.find(f => f.key === 'usage_meter.period_days')
+    const quota = cfg().commonFields.find(f => f.key === 'usage_meter.quota')
+    expect(period!.min).toBe(0)
+    expect(quota!.min).toBe(0)
+    // Neither is required: a rule with only an anchor is valid.
+    expect(cfg().requiredFields).toEqual([])
   })
 })

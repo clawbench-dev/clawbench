@@ -13,8 +13,9 @@ import (
 //
 // Several service strings are localized at WRITE time from a background
 // goroutine with no HTTP request in scope — the group-timeline system rows
-// (member joined/left, the unknown-mention notice) and the forge event-context
-// block — via i18n.LocalizerForLocale(model.Language). In a bare test binary
+// (member joined/disabled/enabled, the unknown-mention notice) and the forge
+// event-context block — via i18n.LocalizerForLocale(model.Language). In a bare
+// test binary
 // model.Language is the zero value "", which the localizer resolves to English,
 // so assertions on the Chinese wording would fail even though production (which
 // sets model.Language from config, defaulting to zh) renders Chinese.

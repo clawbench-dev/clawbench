@@ -25,7 +25,8 @@ RAG：同一数据库文件，独立连接池
 | external_session_id | TEXT | | `''` | 外部 CLI 会话 ID |
 | session_type | TEXT | NOT NULL | `'chat'` | chat / task / **group**（群会话）/ **group_member**（群成员连接绑定行，用户不可见） |
 | group_id | TEXT | | `''` | 所属群会话 id（仅 `group_member` 行非空）；索引 `idx_sessions_group(group_id, session_type)` |
-| archived | INTEGER | NOT NULL | `0` | 归档标记（归档会话默认不在列表显示） |
+| archived | INTEGER | NOT NULL | `0` | 归档标记（归档会话默认不在列表显示）。**群成员行不用它表示"离开"**——那是 `disabled` |
+| disabled | INTEGER | NOT NULL | `0` | **群成员行专用**（`session_type='group_member'`）：禁用该成员。只影响调度（不安排该成员发言），成员行、上下文窗口与历史全部保留；启用是一次普通置位，`seen_cursor` 在禁用期间不推进，故启用后下一轮注入禁用期间的全部积压。与 `archived` 正交：旧的"移除成员"（`archived=1`）由一次性迁移 `MigrateGroupMemberDisabled` 转成 `disabled=1`。**注意与 `agents.disabled` 同名不同义**：那个是智能体全局禁用（从所有新建入口消失），这个是单个群里的成员禁用，两者互不影响 |
 | last_read_at | DATETIME | | — | 最后阅读时间 |
 | awaiting_user_at | DATETIME | | — | **群会话专用**：最后一轮已结束、发言权已交回用户且用户尚未读。**是标记不是水位线** —— 交回时置位、`UpdateLastRead` 清空；群未读因此是 0/1（"群在等我"），不按成员发言条数累加（见 `unreadCountSubquery`）。非群会话恒为 NULL |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |

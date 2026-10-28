@@ -48,16 +48,52 @@ func TestBuildHostSystemPrompt_Specialty(t *testing.T) {
 	}
 }
 
-// TestBuildHostSystemPrompt_LeftMarked: a member that left keeps its slot in the
-// prompt list (its past speech is still on the timeline) but must be visibly
-// marked so the host does not route to it (decision #39).
-func TestBuildHostSystemPrompt_LeftMarked(t *testing.T) {
+// TestBuildHostSystemPrompt_DisabledNotRoutable: a disabled member must NOT appear in
+// the host's routable name list — it cannot be addressed — but must still be
+// named in a separate sentence that tells the host not to @ or bcc it. Leaving it
+// in the list invited a routing attempt the orchestrator then silently dropped
+// (falling back to round-robin).
+func TestBuildHostSystemPrompt_DisabledNotRoutable(t *testing.T) {
 	p := BuildHostSystemPrompt("Host", []HostMemberInfo{
 		{Name: "Active", Specialty: "X"},
-		{Name: "Gone", Left: true},
+		{Name: "Gone", Disabled: true},
 	})
-	if !strings.Contains(p, "Gone（已离场）") {
-		t.Fatalf("left member must be marked 已离场: %q", p)
+	start := strings.Index(p, "可选的成员名：")
+	if start < 0 {
+		t.Fatalf("the prompt must list the routable members: %q", p)
+	}
+	routable := p[start:]
+	if i := strings.Index(routable, "（Gone 已禁用"); i >= 0 {
+		routable = routable[:i]
+	}
+	if strings.Contains(routable, "Gone") {
+		t.Fatalf("a disabled member must not be in the routable list: %q", p)
+	}
+	if !strings.Contains(p, "Gone 已禁用") {
+		t.Fatalf("a disabled member must still be named so the host knows it exists: %q", p)
+	}
+	if !strings.Contains(p, "不要点名、也不要密送") {
+		t.Fatalf("the prompt must state the no-@ / no-bcc rule for disabled members: %q", p)
+	}
+}
+
+// A member-facing prompt lists disabled peers (so a member is not surprised by
+// speech from a name it never saw) but forbids addressing them.
+func TestBuildMemberSystemPrompt_DisabledNotice(t *testing.T) {
+	p := BuildMemberSystemPrompt([]HostMemberInfo{
+		{Name: "Self"}, {Name: "Gone", Disabled: true},
+	}, "Self", "Host")
+	if !strings.Contains(p, "Gone 已禁用") || !strings.Contains(p, "不要点名、也不要密送") {
+		t.Fatalf("member prompt must carry the disabled notice: %q", p)
+	}
+}
+
+// No disabled member ⇒ no notice line at all (the prompt must stay byte-identical
+// for the common case).
+func TestBuildHostSystemPrompt_NoDisabledNoticeWhenNoneDisabled(t *testing.T) {
+	p := BuildHostSystemPrompt("Host", []HostMemberInfo{{Name: "A"}})
+	if strings.Contains(p, "已禁用") {
+		t.Fatalf("a group with no disabled member must not mention disabling: %q", p)
 	}
 }
 

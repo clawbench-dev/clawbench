@@ -117,19 +117,22 @@
           <template v-if="meterStatus.enabled">
             <span class="resource-label">{{ t('usageMeter.label') }}</span>
             <span class="resource-value" :class="`usage-value is-${meterState}`">
-              {{ meterUsed }}<span class="usage-quota"> / {{ meterQuota }}</span>
+              {{ meterUsed }}<span class="usage-quota"> / {{ hasQuota ? meterQuota : INFINITE }}</span>
             </span>
           </template>
           <span v-else class="resource-label">{{ t('usageMeter.setupHint') }}</span>
           <ChevronRight :size="12" class="usage-chevron" />
         </span>
         <template v-if="meterStatus.enabled">
-          <span class="progress-bar usage-bar">
+          <!-- The bar only means something against a budget: without one it
+               would be an empty track claiming a measurement that does not
+               exist. Same rule as the desktop capsule. -->
+          <span v-if="hasQuota" class="progress-bar usage-bar">
             <span class="usage-fill" :class="`is-${meterState}`" :style="{ width: fillPercent + '%' }"></span>
-            <span class="usage-mark" :style="{ left: expectedPercent + '%' }"></span>
+            <span v-if="hasCycle" class="usage-mark" :style="{ left: expectedPercent + '%' }"></span>
           </span>
           <span class="usage-meta">
-            <span>{{ t('usageMeter.dayOfCycle', { day: meterStatus.dayInCycle, days: meterStatus.periodDays ?? 0 }) }}</span>
+            <span>{{ periodLabel }}</span>
             <span class="usage-badge" :class="`is-${meterState}`">{{ meterBadge }}</span>
           </span>
         </template>
@@ -160,7 +163,7 @@ import { formatUsageMeterValue } from '@/utils/usageFormat'
 
 const { t } = useI18n()
 const { resources, startPolling, stopPolling } = useSystemResources()
-const { status: meterStatus, meterState, fillPercent, expectedPercent, hasData } = useUsageMeter()
+const { status: meterStatus, meterState, fillPercent, expectedPercent, hasData, hasQuota, hasCycle } = useUsageMeter()
 const { isWideScreen } = useWideScreenLayout()
 
 const props = defineProps({
@@ -186,6 +189,10 @@ const meterQuota = computed(() =>
     formatUsageMeterValue(meterStatus.value.metric ?? 'cost', meterStatus.value.quota ?? 0, { compact: true }),
 )
 
+/** An unset quota / period means infinite, not absent (same rule as the capsule). */
+const INFINITE = '\u221e'
+
+
 const meterBadge = computed(() => {
     if (meterState.value === 'full') return t('usageMeter.badgeFull')
     if (meterState.value === 'over') {
@@ -194,7 +201,28 @@ const meterBadge = computed(() => {
         const pct = expected > 0 ? Math.round(((actual - expected) / expected) * 100) : 0
         return t('usageMeter.badgeOver', { pct })
     }
+    // Without a quota there is nothing to be within; without a cycle there is no
+    // "by now" to compare against. Either way the badge reports what it can see
+    // rather than asserting a budget the user never set.
+    if (!hasQuota.value) return t('usageMeter.badgeNoQuota')
+    if (!hasCycle.value) return t('usageMeter.badgeNoCycle')
     return t('usageMeter.badgeOk')
+})
+
+/**
+ * The window line. Same three shapes as the desktop popover: no cycle counts
+ * against ∞ (it never rolls over), and no anchor at all means the whole ledger.
+ */
+const periodLabel = computed(() => {
+    const start = meterStatus.value.cycleStart
+    if (!hasCycle.value) {
+        if (!start) return t('usageMeter.allTime')
+        return t('usageMeter.dayOfCycle', { day: meterStatus.value.dayInCycle, days: INFINITE })
+    }
+    return t('usageMeter.dayOfCycle', {
+        day: meterStatus.value.dayInCycle,
+        days: meterStatus.value.periodDays ?? 0,
+    })
 })
 
 const wsDisconnected = computed(() => props.wsStatus === 'disconnected' || props.wsStatus === 'reconnecting')

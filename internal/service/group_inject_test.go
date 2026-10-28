@@ -27,16 +27,16 @@ func TestBuildMemberInjection(t *testing.T) {
 	}
 }
 
-// A member that has left keeps its speech on the timeline but must be visibly
-// marked, so a reader does not treat it as an active participant (decision #39).
-func TestBuildMemberInjection_LeftMemberMarked(t *testing.T) {
+// A disabled member keeps its speech on the timeline but must be visibly marked,
+// so a reader does not expect an answer from someone disabled (decision #39).
+func TestBuildMemberInjection_DisabledMemberMarked(t *testing.T) {
 	msgs := []model.ChatMessage{
 		{ID: 2, Role: "assistant", AgentID: "row-gone", Content: `{"blocks":[{"type":"text","text":"legacy"}]}`},
 	}
 	names := map[string]string{"row-gone": "Gone"}
 	got := buildInjectionText(msgs, 0, "row-self", names, map[string]bool{"row-gone": true}, nil, "", "")
-	if !strings.Contains(got, "Gone（已离场）: legacy") {
-		t.Fatalf("left member's speech must be marked 已离场: %q", got)
+	if !strings.Contains(got, "Gone（已禁用）: legacy") {
+		t.Fatalf("disabled member's speech must be marked 已禁用: %q", got)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestBuildMemberInjection_CursorExcludesOlder(t *testing.T) {
 	}
 }
 
-// participantMetadata must exclude the speaker itself and classify left members
+// participantMetadata must exclude the speaker itself and classify disabled members
 // separately, so the header never tells a member about itself.
 func TestParticipantMetadata(t *testing.T) {
 	origAgents := model.Agents
@@ -122,17 +122,17 @@ func TestParticipantMetadata(t *testing.T) {
 	members := []GroupMember{
 		{ID: "row-self", AgentID: "agent-claude", Name: "Self"},
 		{ID: "row-other", AgentID: "agent-claude", Name: "Other"},
-		{ID: "row-gone", AgentID: "agent-claude", Name: "Gone", Left: true},
+		{ID: "row-gone", AgentID: "agent-claude", Name: "Gone", Disabled: true},
 	}
-	leftIDs, roster := participantMetadata(members, "row-self")
-	if !leftIDs["row-gone"] {
-		t.Fatalf("left member must be in leftIDs: %v", leftIDs)
+	disabledIDs, roster := participantMetadata(members, "row-self")
+	if !disabledIDs["row-gone"] {
+		t.Fatalf("disabled member must be in disabledIDs: %v", disabledIDs)
 	}
-	if leftIDs["row-self"] || leftIDs["row-other"] {
-		t.Fatalf("active members must not be in leftIDs: %v", leftIDs)
+	if disabledIDs["row-self"] || disabledIDs["row-other"] {
+		t.Fatalf("speaking members must not be in disabledIDs: %v", disabledIDs)
 	}
 	if len(roster) != 1 || roster[0].Name != "Other" {
-		t.Fatalf("roster must exclude self and left members, got %+v", roster)
+		t.Fatalf("roster must exclude self and disabled members, got %+v", roster)
 	}
 	if roster[0].Specialty != "代码编写与推理" {
 		t.Fatalf("roster entry must carry the specialty, got %q", roster[0].Specialty)

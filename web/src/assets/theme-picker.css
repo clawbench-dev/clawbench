@@ -1,10 +1,17 @@
 /**
  * Theme picker rows.
  *
- * Shared by the app-header quick theme picker (components/common/AppHeader.vue)
- * and the terminal toolbar theme picker
- * (components/terminal/TerminalPanelContent.vue). Both popups are teleported to
- * <body>, so the rules are global rather than scoped.
+ * Shared by the app-header quick theme picker (components/common/AppHeader.vue),
+ * the terminal toolbar theme picker (components/terminal/TerminalPanelContent.vue)
+ * and the public share topbar picker (share/ShareThemeButton.vue). All three
+ * popups are teleported to <body>, so the rules are global rather than scoped.
+ *
+ * The container chrome these popups share with every other app-menu popup
+ * (`.theme-picker`, `.app-menu-column`, `.app-menu-title`, `.app-menu-scroll`,
+ * `.menu-divider`) lives in `css/components.css`. It used to be declared in
+ * AppHeader.vue's unscoped block, which only worked because that header is
+ * mounted on every app page — the share SPA has no header, so a rule kept there
+ * reached everything except the one host that also needed it.
  *
  * The row surface is deliberately NEUTRAL (the current theme's own background /
  * text colours). Each theme's palette is carried by two small carriers instead
@@ -14,7 +21,7 @@
  * unrelated solid blocks that clashed with whatever theme was active — and on
  * light themes the row text was frequently unreadable.
  *
- * `--tterm-preview-*` are set per row by the two callers.
+ * `--tterm-preview-*` are set per row by the callers.
  *
  * Selection is signalled by three things: the 2px accent rail, a 12% accent
  * tint, and a weight bump on the name. A trailing check mark was removed — it

@@ -185,10 +185,19 @@ type Config struct {
 // list later is a backward-compatible YAML change (an old single object reads
 // as a one-element list).
 //
-// The quota doubles as the on/off switch: Quota <= 0 disables the feature
-// entirely (no worker query, no header capsule, no notification). A separate
-// enable flag would admit a contradictory "enabled but no quota" state.
+// The rule is opt-in via Enabled. Every field below it is optional: the meter
+// reports whatever it can, and only a rule with nothing at all is silent.
+// (Quota used to double as the on/off switch, which made "I want to see my
+// spend since this date" impossible without inventing a budget.)
 type UsageMeterConfig struct {
+	// Enabled turns the meter on. It is the ONLY switch: a rule with an anchor
+	// but no quota is meaningful ("how much have I used since then"), so the
+	// absence of a quota can no longer stand for "off".
+	//
+	// Existing installs have no such key. ApplyDefaults treats a missing key
+	// with a configured rule as enabled, so upgrading does not silently turn
+	// anyone's meter off.
+	Enabled bool `yaml:"enabled"`
 	// AnchorDate is the cycle start, in the SERVER's local timezone (same
 	// convention as cron expressions). Two shapes are accepted:
 	//
@@ -199,6 +208,9 @@ type UsageMeterConfig struct {
 	// original meaning, so no migration is needed. Use
 	// ParseUsageMeterAnchor/FormatUsageMeterAnchor rather than parsing this
 	// string directly — they are the single definition of the accepted shapes.
+	//
+	// Empty means "since the beginning of the ledger": the meter then reports a
+	// single running total with no cycle boundary and no rollover.
 	AnchorDate string `yaml:"anchor_date"`
 	// CycleMode selects how cycles roll: a fixed number of days, or the
 	// calendar month. Empty means "fixed" (every install written before this
@@ -214,11 +226,17 @@ type UsageMeterConfig struct {
 	// Cycle boundaries are computed as fixed 24h spans from the anchor rather
 	// than calendar-date differences, so the cycle length stays constant across
 	// DST transitions.
+	//
+	// 0 means "no cycle": the window runs from the anchor to now and never
+	// rolls over. That is the honest reading of "the user never configured a
+	// period" — inventing 30 days would silently reset their total every month.
 	PeriodDays int `yaml:"period_days"`
 	// Metric selects what is counted: "tokens" | "credit" | "cost".
 	Metric string `yaml:"metric"`
 	// Quota is the budget for one full cycle, in the metric's own unit
-	// (tokens / credit / USD). 0 disables the feature.
+	// (tokens / credit / USD). 0 means "no budget": the meter still reports the
+	// running total, it just has no baseline, no remaining amount and no
+	// exhaustion projection.
 	Quota float64 `yaml:"quota"`
 
 	// NotifiedCycleStart is the cycle start (RFC3339) the last notification
@@ -242,6 +260,18 @@ type UsageMeterConfig struct {
 // its own token. Notification toggles are global and default to enabled (set in
 // ApplyDefaults — Go's bool zero value would otherwise disable everything).
 type ForgeConfig struct {
+	// Enabled is the master switch for the whole integration. Off means: no
+	// polling, no event notifications, no dock entry, and every project's
+	// repository binding has been cleared (turning it off deletes them — see
+	// service.ClearAllProjectForges). Defaults to TRUE via ApplyDefaults'
+	// presence check, so an install that has never written the key keeps the
+	// integration it already had.
+	//
+	// This is a SERVER-side switch, unlike most UI preferences: "stop talking to
+	// GitHub" is about the credentials and the outbound traffic, which live on
+	// the server, so every client of one server must agree. A per-device flag
+	// would leave one client polling after another had "disabled" it.
+	Enabled bool `yaml:"enabled"`
 	// Credentials maps a host (e.g. "github.com", "git.acme.internal:8443") to
 	// its token. Hosts are stored lowercased.
 	Credentials map[string]string `yaml:"credentials"`

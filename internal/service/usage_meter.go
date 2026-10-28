@@ -42,12 +42,23 @@ type UsageMeterPoint struct {
 
 // UsageMeterStatus is the full state of the meter, shaped for GET /api/usage/meter
 // and for the header capsule.
+//
+// Every quota-derived field is OPTIONAL, because the rule is a set of
+// independent switches: an anchor alone means "how much have I used since then",
+// a quota alone means "against this much", and neither means "the whole ledger".
+// The client distinguishes the cases by presence rather than by a mode flag:
+//
+//   - Quota == 0        → no budget: no baseline, no remaining, no projection.
+//   - PeriodDays == 0   → no cycle: the window never rolls over, CycleEnd is ""
+//     and DayInCycle is 0.
+//   - DayInCycle == 0 with a non-empty CycleEnd → the anchor is in the future.
 type UsageMeterStatus struct {
 	Enabled bool   `json:"enabled"`
 	Metric  string `json:"metric,omitempty"`
 	// AnchorDate/PeriodDays echo the rule so the popover can render "day N of M"
 	// without a second request to /api/config. PeriodDays is the length of the
-	// CURRENT cycle (in monthly mode it follows the calendar month).
+	// CURRENT cycle (in monthly mode it follows the calendar month), or 0 when
+	// the rule has no cycle at all.
 	//
 	// The cycle MODE is deliberately not echoed: every consumer derives what it
 	// needs from "day N of M" plus the cycle bounds, and the settings page reads
@@ -57,16 +68,21 @@ type UsageMeterStatus struct {
 	PeriodDays int     `json:"periodDays,omitempty"`
 	Quota      float64 `json:"quota,omitempty"`
 	// CycleStart/CycleEnd are RFC3339 instants in the server's local timezone.
+	// CycleEnd is EMPTY when the rule has no cycle (no period configured): the
+	// window runs from the anchor to now and never rolls over.
 	CycleStart string `json:"cycleStart,omitempty"`
 	CycleEnd   string `json:"cycleEnd,omitempty"`
-	// DayInCycle is 1-based. 0 means "the anchor is still in the future".
+	// DayInCycle is 1-based. 0 means "no cycle counter" — either the anchor is
+	// still in the future or the rule has no cycle.
 	DayInCycle int     `json:"dayInCycle"`
 	Actual     float64 `json:"actual"`
 	Expected   float64 `json:"expected"`
 	// RemainingDays counts whole days left after today (periodDays - dayInCycle).
+	// 0 when the rule has no cycle: there is no "left" to count.
 	RemainingDays int `json:"remainingDays"`
 	// ProjectedExhaustDay is the day of the cycle on which the quota is
-	// projected to run out at the current rate; 0 means "not within this cycle".
+	// projected to run out at the current rate; 0 means "not within this cycle",
+	// or that there is no quota / no cycle to project against.
 	ProjectedExhaustDay int `json:"projectedExhaustDay"`
 	// Series is the per-day cumulative curve, oldest first, ending today.
 	Series []UsageMeterPoint `json:"series,omitempty"`
@@ -153,38 +169,72 @@ func usageMeterRowExpr(metric string) (string, bool) {
 // "monthly" mode is the opposite trade: cycles follow the calendar, so their
 // length varies (28-31 days) and days are counted by calendar date rather than
 // elapsed hours.
+//
+// The zero value means "unbounded": a rule with no anchor starts at the
+// beginning of the ledger, and a rule with no period never rolls over.
 type usageMeterCycle struct {
+	// start is the lower bound of the window. Zero means "no lower bound" — the
+	// whole ledger, which is what an unset anchor means.
 	start time.Time
-	end   time.Time
-	// dayInCycle is 1-based; 0 when now < anchor.
+	// end is the upper bound of the current cycle. Zero means "no cycle": the
+	// window runs to now and never rolls over, which is what an unset period
+	// means. Consumers must treat a zero end as "there is no cycle", not as an
+	// instant (time.Time's zero value is year 1, which would render as a
+	// nonsense date).
+	end time.Time
+	// dayInCycle is 1-based; 0 when there is nothing to count from (no anchor)
+	// or now < anchor.
 	dayInCycle int
 	// periodDays is the length of THIS cycle. In "fixed" mode it is the rule's
 	// PeriodDays; in "monthly" mode it is however many days this month's cycle
-	// spans. Every caller must use this rather than rule.PeriodDays — using the
-	// rule's value in monthly mode would divide a 31-day month's budget by 30
-	// and let `expected` exceed the quota before the month is over.
+	// spans. 0 means "unbounded": no rollover, no "days left", no per-day
+	// budget. Every caller must use this rather than rule.PeriodDays — using
+	// the rule's value in monthly mode would divide a 31-day month's budget by
+	// 30 and let `expected` exceed the quota before the month is over.
 	periodDays int
 }
 
 // locateUsageMeterCycle dispatches on the rule's cycle mode.
+//
+// A zero anchor (no start time configured) yields an unbounded window that
+// starts at the beginning of the ledger; a zero period yields a window that
+// never rolls over. Both are legitimate configurations now, not errors.
 func locateUsageMeterCycle(anchor time.Time, rule model.UsageMeterConfig, now time.Time) usageMeterCycle {
 	if model.NormalizeUsageMeterCycleMode(rule.CycleMode) == model.UsageMeterCycleMonthly {
+		if anchor.IsZero() {
+			return usageMeterCycle{}
+		}
 		return locateMonthlyCycle(anchor, now)
 	}
 	return locateFixedCycle(anchor, rule.PeriodDays, now)
 }
 
 func locateFixedCycle(anchor time.Time, periodDays int, now time.Time) usageMeterCycle {
+	if anchor.IsZero() {
+		// No anchor: the window starts at the beginning of the ledger and never
+		// rolls over (there is no boundary to roll from).
+		return usageMeterCycle{}
+	}
 	day := 24 * time.Hour
 	elapsed := now.Sub(anchor)
 	if elapsed < 0 {
 		return usageMeterCycle{
-			start:      anchor,
-			end:        anchor.Add(time.Duration(periodDays) * day),
+			start: anchor,
+			// A future anchor with a period still has a known first cycle; with
+			// no period there is nothing to end at.
+			end:        cycleEndOrZero(anchor, periodDays),
 			periodDays: periodDays,
 		}
 	}
 	elapsedDays := int(elapsed / day)
+	if periodDays <= 0 {
+		// Unbounded: report how long the window has been open, but never roll.
+		return usageMeterCycle{
+			start:      anchor,
+			dayInCycle: elapsedDays + 1,
+			periodDays: 0,
+		}
+	}
 	periodIndex := elapsedDays / periodDays
 	start := anchor.Add(time.Duration(periodIndex*periodDays) * day)
 	return usageMeterCycle{
@@ -193,6 +243,15 @@ func locateFixedCycle(anchor time.Time, periodDays int, now time.Time) usageMete
 		dayInCycle: elapsedDays - periodIndex*periodDays + 1,
 		periodDays: periodDays,
 	}
+}
+
+// cycleEndOrZero returns the cycle end for a period, or the zero time when
+// there is no period (an unbounded window has no end).
+func cycleEndOrZero(start time.Time, periodDays int) time.Time {
+	if periodDays <= 0 {
+		return time.Time{}
+	}
+	return start.Add(time.Duration(periodDays) * 24 * time.Hour)
 }
 
 // locateMonthlyCycle puts the cycle boundary on the anchor's day-of-month,
@@ -290,54 +349,59 @@ func calendarDaySpan(from, to time.Time) int {
 // worker and the turn-completion trigger all call it; a second implementation
 // anywhere would drift from this one and show up as "the header says one thing
 // and the notification says another".
+//
+// The rule is a set of independent, OPTIONAL fields, and the meter reports the
+// largest thing it can from what is configured:
+//
+//	enabled=false                    → nothing (the user turned it off)
+//	enabled, nothing else            → nothing (nothing configured to report)
+//	anchor only                      → total since the anchor, no cycle, no plan
+//	quota only                       → total over the whole ledger, plan = quota
+//	anchor + period                  → the cycle, day N of M, no plan
+//	anchor + period + quota          → the full readout with a baseline
+//
+// "No cycle" is not "a 30-day cycle": it means an unbounded window, which is the
+// literal reading of a period the user never set.
 func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, error) {
 	rule := model.ConfigInstance.UsageMeter
-	if rule.Quota <= 0 {
+	// Two gates, and they answer different questions: `Enabled` is the user's
+	// explicit decision, `UsageMeterConfigured` is whether there is anything to
+	// report. An enabled-but-empty rule shows nothing — "show as much as the
+	// configuration supports" has no floor to stand on when nothing is set.
+	if !rule.Enabled || !model.UsageMeterConfigured(rule) {
 		return &UsageMeterStatus{Enabled: false}, nil
 	}
-	if !model.IsValidUsageMeterMetric(rule.Metric) || !usageMeterPeriodUsable(rule) {
+	if !model.IsValidUsageMeterMetric(rule.Metric) {
 		// A malformed rule is reported as disabled rather than as an error: the
 		// caller is a header badge, and a 500 there would be noise. The PATCH
 		// validator rejects such rules, so this only happens for a hand-edited
 		// config.yaml.
-		slog.Warn("usage meter: rule is incomplete, treating as disabled",
-			"metric", rule.Metric, "cycle_mode", rule.CycleMode,
-			"period_days", rule.PeriodDays)
-		return &UsageMeterStatus{Enabled: false}, nil
-	}
-	anchor, err := model.ParseUsageMeterAnchor(rule.AnchorDate)
-	if err != nil {
-		slog.Warn("usage meter: invalid anchor date, treating as disabled",
-			"anchor", rule.AnchorDate, "error", err)
+		slog.Warn("usage meter: rule has an unknown metric, treating as disabled",
+			"metric", rule.Metric)
 		return &UsageMeterStatus{Enabled: false}, nil
 	}
 
-	cycle := locateUsageMeterCycle(anchor, rule, now)
-	st := &UsageMeterStatus{
-		Enabled:    true,
-		Metric:     rule.Metric,
-		AnchorDate: rule.AnchorDate,
-		// PeriodDays is the length of the CURRENT cycle, not the configured
-		// one: in monthly mode that is 28-31 and varies month to month, and
-		// every consumer ("day N of M", the chart's x axis, the per-day budget)
-		// must agree with the arithmetic below.
-		PeriodDays: cycle.periodDays,
-		Quota:      rule.Quota,
-		CycleStart: cycle.start.Format(time.RFC3339),
-		CycleEnd:   cycle.end.Format(time.RFC3339),
-		DayInCycle: cycle.dayInCycle,
+	// An empty anchor is legal: it means "since the beginning of the ledger".
+	// Only a NON-empty, unparsable anchor is a configuration error.
+	var anchor time.Time
+	if rule.AnchorDate != "" {
+		parsed, err := model.ParseUsageMeterAnchor(rule.AnchorDate)
+		if err != nil {
+			slog.Warn("usage meter: invalid anchor date, treating as disabled",
+				"anchor", rule.AnchorDate, "error", err)
+			return &UsageMeterStatus{Enabled: false}, nil
+		}
+		anchor = parsed
 	}
-	if cycle.dayInCycle == 0 {
+
+	cycle := locateUsageMeterCycle(anchor, rule, now)
+	st := newUsageMeterStatus(rule, cycle)
+	if cycle.dayInCycle == 0 && !cycle.start.IsZero() {
 		// The anchor is in the future: nothing has been counted yet and there is
 		// no budget to compare against.
 		return st, nil
 	}
-
-	st.Expected = rule.Quota * float64(cycle.dayInCycle) / float64(cycle.periodDays)
-	st.RemainingDays = cycle.periodDays - cycle.dayInCycle
-	if st.RemainingDays < 0 {
-		st.RemainingDays = 0
-	}
+	applyUsageMeterDerived(st, rule, cycle)
 
 	if !store.ReadDBReady() {
 		return st, nil
@@ -361,29 +425,63 @@ func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, e
 	return st, nil
 }
 
-// usageMeterPeriodUsable reports whether the rule carries the cycle length its
-// mode needs.
-//
-// Only "fixed" needs period_days. A "monthly" rule derives its length from the
-// calendar, so requiring the field would disable a perfectly valid monthly rule
-// that was configured from a fresh install (where period_days starts at 0
-// because the settings page hides the field). ApplyDefaults normally fills it
-// in, but a rule can reach here straight after a PATCH that ran before the
-// defaults were re-applied.
-func usageMeterPeriodUsable(rule model.UsageMeterConfig) bool {
-	if model.NormalizeUsageMeterCycleMode(rule.CycleMode) == model.UsageMeterCycleMonthly {
-		return true
+// newUsageMeterStatus echoes the rule and the located window. Everything that
+// depends on the ledger is filled in later, so a future anchor can return this
+// half-built readout as-is.
+func newUsageMeterStatus(rule model.UsageMeterConfig, cycle usageMeterCycle) *UsageMeterStatus {
+	st := &UsageMeterStatus{
+		Enabled:    true,
+		Metric:     rule.Metric,
+		AnchorDate: rule.AnchorDate,
+		// PeriodDays is the length of the CURRENT cycle, not the configured
+		// one: in monthly mode that is 28-31 and varies month to month, and
+		// every consumer ("day N of M", the chart's x axis, the per-day budget)
+		// must agree with the arithmetic below. 0 = no cycle at all.
+		PeriodDays: cycle.periodDays,
+		Quota:      rule.Quota,
+		DayInCycle: cycle.dayInCycle,
 	}
-	return rule.PeriodDays > 0
+	if !cycle.start.IsZero() {
+		st.CycleStart = cycle.start.Format(time.RFC3339)
+	}
+	if !cycle.end.IsZero() {
+		st.CycleEnd = cycle.end.Format(time.RFC3339)
+	}
+	return st
+}
+
+// applyUsageMeterDerived fills the numbers that are pure arithmetic on the rule
+// and the window — no database involved.
+//
+// The baseline only exists when BOTH halves are present: a quota with no cycle
+// cannot be spread over days, and a cycle with no quota has nothing to spread.
+// `expected` staying 0 is what tells the client "there is no plan to compare
+// against", and it is also what keeps the notification path quiet.
+func applyUsageMeterDerived(st *UsageMeterStatus, rule model.UsageMeterConfig, cycle usageMeterCycle) {
+	if cycle.periodDays <= 0 || cycle.dayInCycle <= 0 {
+		return
+	}
+	if rule.Quota > 0 {
+		st.Expected = rule.Quota * float64(cycle.dayInCycle) / float64(cycle.periodDays)
+	}
+	st.RemainingDays = cycle.periodDays - cycle.dayInCycle
+	if st.RemainingDays < 0 {
+		st.RemainingDays = 0
+	}
 }
 
 // sumUsageInCycle totals one metric over the cycle window.
+//
+// A zero cycle.start means "no anchor": the window starts at the beginning of
+// the ledger, which is expressed as the empty lower bound rather than a
+// fabricated instant.
 func sumUsageInCycle(ctx context.Context, rowExpr string, cycle usageMeterCycle, now time.Time) (float64, error) {
 	var actual float64
-	err := store.ReadDB().QueryRowContext(ctx,
+	err := store.ReadDB().QueryRowContext(
+		ctx,
 		"SELECT COALESCE(SUM("+rowExpr+"), 0) FROM chat_metadata m "+
 			"WHERE m.created_at >= ? AND m.created_at < ?",
-		cycle.start.UTC().Format("2006-01-02 15:04:05"),
+		usageMeterLowerBound(cycle),
 		now.UTC().Format("2006-01-02 15:04:05"),
 	).Scan(&actual)
 	if err != nil {
@@ -392,14 +490,29 @@ func sumUsageInCycle(ctx context.Context, rowExpr string, cycle usageMeterCycle,
 	return actual, nil
 }
 
+// usageMeterLowerBound renders the window's lower bound for SQL. An unbounded
+// window uses the empty string, which sorts before every real DATETIME in
+// SQLite's text comparison — the same thing as "from the beginning".
+func usageMeterLowerBound(cycle usageMeterCycle) string {
+	if cycle.start.IsZero() {
+		return ""
+	}
+	return cycle.start.UTC().Format("2006-01-02 15:04:05")
+}
+
 // projectExhaustDay estimates which day of the cycle the quota runs out on.
 //
 // Rate-based: how many days of the cycle the remaining quota lasts at the pace
 // observed so far. Measured against elapsed time rather than whole days so day
 // 1 does not divide by one day of usage that has only been accumulating for an
-// hour. Returns 0 when no projection is possible or the quota outlasts the
-// cycle.
+// hour. Returns 0 when no projection is possible — no quota, no cycle, or the
+// quota outlasts the cycle.
 func projectExhaustDay(actual float64, rule model.UsageMeterConfig, cycle usageMeterCycle, now time.Time) int {
+	if rule.Quota <= 0 || cycle.periodDays <= 0 || cycle.start.IsZero() {
+		// Without a quota there is nothing to exhaust; without a cycle there is
+		// no day axis to project onto.
+		return 0
+	}
 	elapsedHours := now.Sub(cycle.start).Hours()
 	if actual <= 0 || elapsedHours <= 0 {
 		return 0
@@ -440,10 +553,20 @@ func projectExhaustDay(actual float64, rule model.UsageMeterConfig, cycle usageM
 // the query only selects two columns, so the cost is a linear pass over one
 // cycle's ledger rows.
 func queryUsageMeterSeries(ctx context.Context, rowExpr string, cycle usageMeterCycle, now time.Time) ([]UsageMeterPoint, error) {
-	rows, err := store.ReadDB().QueryContext(ctx,
+	daily, err := scanUsageMeterDailyTotals(ctx, rowExpr, cycle, now)
+	if err != nil {
+		return nil, err
+	}
+	return buildUsageMeterSeries(daily, cycle, now), nil
+}
+
+// scanUsageMeterDailyTotals buckets the window's rows by LOCAL day.
+func scanUsageMeterDailyTotals(ctx context.Context, rowExpr string, cycle usageMeterCycle, now time.Time) (map[string]float64, error) {
+	rows, err := store.ReadDB().QueryContext(
+		ctx,
 		"SELECT m.created_at, "+rowExpr+" AS v "+
 			"FROM chat_metadata m WHERE m.created_at >= ? AND m.created_at < ?",
-		cycle.start.UTC().Format("2006-01-02 15:04:05"),
+		usageMeterLowerBound(cycle),
 		now.UTC().Format("2006-01-02 15:04:05"),
 	)
 	if err != nil {
@@ -473,13 +596,26 @@ func queryUsageMeterSeries(ctx context.Context, rowExpr string, cycle usageMeter
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("usage meter series rows: %w", err)
 	}
+	return daily, nil
+}
 
+// buildUsageMeterSeries turns the per-day buckets into the cumulative curve,
+// filling gaps so the line is continuous and clipping an unbounded window to the
+// chart's max range.
+func buildUsageMeterSeries(daily map[string]float64, cycle usageMeterCycle, now time.Time) []UsageMeterPoint {
 	rule := model.ConfigInstance.UsageMeter
 	// The baseline is spread over THIS cycle's length. In monthly mode that is
 	// the calendar month's length, not the configured period_days — otherwise a
 	// 31-day month's curve would reach the quota on day 30 and then keep
 	// climbing past it for the rest of the month.
-	perDay := rule.Quota / float64(cycle.periodDays)
+	//
+	// No quota or no cycle means no plan at all, so the expected curve stays
+	// flat at 0 rather than dividing by zero (which would put NaN into every
+	// point and make the client's y-axis scale collapse).
+	perDay := 0.0
+	if rule.Quota > 0 && cycle.periodDays > 0 {
+		perDay = rule.Quota / float64(cycle.periodDays)
+	}
 
 	// Build the curve from the buckets that actually exist, then fill the gaps.
 	//
@@ -497,31 +633,43 @@ func queryUsageMeterSeries(ctx context.Context, rowExpr string, cycle usageMeter
 	}
 	sort.Strings(keys)
 
-	// The cycle covers [start, now); a bucket can only fall inside it, but clamp
-	// anyway so a stray row (clock skew, a hand-edited row) cannot extend the
-	// axis past the cycle.
-	firstKey := cycle.start.In(time.Local).Format("2006-01-02")
+	axisStart, firstKey, ok := usageMeterAxisStart(cycle, keys, now)
+	if !ok {
+		// Nothing recorded at all in an unbounded window: an empty curve, not a
+		// fabricated axis running from year 1.
+		return nil
+	}
 	lastKey := now.In(time.Local).Format("2006-01-02")
 
 	points := make([]UsageMeterPoint, 0, len(keys))
 	var cumulative float64
+	// Buckets older than the axis start (only possible when an unbounded window
+	// was clipped to the chart's max range) are folded into the running total
+	// rather than dropped: the curve must still end at the same number the
+	// aggregate reports, and starting it at a non-zero value is exactly what
+	// "you had already spent this much before the visible window" looks like.
+	clippedBefore := make(map[string]bool)
+	for _, k := range keys {
+		if k < firstKey {
+			cumulative += daily[k]
+			clippedBefore[k] = true
+		}
+	}
 	// A bucket that has no usage still needs a point so the curve is continuous
 	// (a flat segment, not a gap). Walk calendar days from the cycle start to
 	// today, pulling each day's bucket — but iterate the day axis by calendar
 	// date while summing whatever buckets land in it.
-	day := cycle.start.In(time.Local)
-	endDay := now.In(time.Local)
-	for !day.After(endDay) {
+	for day := axisStart; !day.After(now.In(time.Local)); day = day.AddDate(0, 0, 1) {
 		key := day.Format("2006-01-02")
-		if key >= firstKey && key <= lastKey {
-			cumulative += daily[key]
-			points = append(points, UsageMeterPoint{
-				Day:      key,
-				Actual:   cumulative,
-				Expected: perDay * float64(len(points)+1),
-			})
+		if key < firstKey || key > lastKey {
+			continue
 		}
-		day = day.AddDate(0, 0, 1)
+		cumulative += daily[key]
+		points = append(points, UsageMeterPoint{
+			Day:      key,
+			Actual:   cumulative,
+			Expected: perDay * float64(len(points)+1),
+		})
 	}
 
 	// Any bucket the day walk could not reach (a date before the cycle start in
@@ -532,7 +680,7 @@ func queryUsageMeterSeries(ctx context.Context, rowExpr string, cycle usageMeter
 		seen[p.Day] = true
 	}
 	for _, k := range keys {
-		if seen[k] {
+		if seen[k] || clippedBefore[k] {
 			continue
 		}
 		cumulative += daily[k]
@@ -542,7 +690,38 @@ func queryUsageMeterSeries(ctx context.Context, rowExpr string, cycle usageMeter
 			Expected: perDay * float64(len(points)+1),
 		})
 	}
-	return points, nil
+	return points
+}
+
+// usageMeterAxisStart decides where the chart's day axis begins.
+//
+// With an anchor it is the cycle start, and the caller's clamp keeps a stray
+// row (clock skew, a hand-edited row) from extending the axis past it. Without
+// one there is no lower bound: the axis starts at the first bucket that exists,
+// capped at the same window the stats panel accepts (a ledger that is years old
+// would otherwise emit one SVG point per day since the first row). The
+// aggregate total is unaffected — only the curve is clipped.
+//
+// Returns ok=false when an unbounded window has no rows at all, which the caller
+// reports as "no curve" rather than as a fabricated axis.
+func usageMeterAxisStart(cycle usageMeterCycle, keys []string, now time.Time) (start time.Time, firstKey string, ok bool) {
+	if !cycle.start.IsZero() {
+		start = cycle.start.In(time.Local)
+		return start, start.Format("2006-01-02"), true
+	}
+	if len(keys) == 0 {
+		return time.Time{}, "", false
+	}
+	firstKey = keys[0]
+	start = now.In(time.Local)
+	if t, err := time.ParseInLocation("2006-01-02", firstKey, time.Local); err == nil {
+		start = t
+	}
+	if earliest := now.AddDate(0, 0, -maxRangeDays); start.Before(earliest) {
+		start = earliest
+		firstKey = start.Format("2006-01-02")
+	}
+	return start, firstKey, true
 }
 
 // usageMeterStageToSend decides whether this cycle needs a notification.
@@ -554,8 +733,13 @@ func queryUsageMeterSeries(ctx context.Context, rowExpr string, cycle usageMeter
 //   - Each stage fires at most once per cycle, and never moves backwards.
 //   - `actual > expected` is strict: expected is exactly "you may have used
 //     this much", so equality is still on plan.
+//   - A rule with no quota or no cycle sends NOTHING. "Over plan" is a
+//     statement about a baseline, and a baseline only exists when a quota is
+//     spread over a cycle; without one, expected is 0 and every non-zero spend
+//     would look like an overspend. Reaching the quota is likewise meaningless
+//     without a quota.
 func usageMeterStageToSend(st *UsageMeterStatus, notifiedStage string) string {
-	if !st.Enabled || st.DayInCycle <= 0 || st.Quota <= 0 {
+	if !st.Enabled || st.Quota <= 0 || st.Expected <= 0 {
 		return ""
 	}
 	if st.Actual >= st.Quota && notifiedStage != UsageMeterStageFull {
@@ -574,7 +758,8 @@ func usageMeterStageToSend(st *UsageMeterStatus, notifiedStage string) string {
 // be cheap when there is nothing to do (disabled rule → one config read) and
 // must never panic on a missing DB.
 func CheckUsageMeter(ctx context.Context) string {
-	if model.ConfigInstance.UsageMeter.Quota <= 0 {
+	rule := model.ConfigInstance.UsageMeter
+	if !rule.Enabled || !model.UsageMeterConfigured(rule) {
 		// No rule: no threshold to cross, so no notification. The capsule still
 		// has to LEARN that the rule went away, though — without this the client
 		// keeps rendering the last numbers it was pushed (or never learns the
@@ -614,7 +799,7 @@ func CheckUsageMeter(ctx context.Context) string {
 	// Re-read the rule AFTER the aggregate query: the user may have edited it
 	// (or the cycle may have rolled) while we were querying. Reading it once at
 	// the start would let a stale rule decide whether to notify.
-	rule := model.ConfigInstance.UsageMeter
+	rule = model.ConfigInstance.UsageMeter
 	notifiedStage := rule.NotifiedStage
 	// A cycle start that differs from the stored one means the cycle rolled
 	// over (or the rule was just changed): re-arm from scratch.
@@ -645,14 +830,7 @@ func CheckUsageMeter(ctx context.Context) string {
 		broadcastUsageMeterStage(eventID, stage, title, body, st)
 	}
 
-	// IM channels. PushForgeEvent-style: transport only, wording comes from here.
-	// A successful IM push deletes the pending event so a later Android
-	// reconnect does not raise a second notification for the same crossing.
-	if dingtalk.IsStarted() && dingtalk.PushUsageMeterEvent(title, body) {
-		_ = DeletePendingEvent(eventID)
-	} else if feishu.IsStarted() && feishu.PushUsageMeterEvent(title, body) {
-		_ = DeletePendingEvent(eventID)
-	}
+	pushUsageMeterToIM(eventID, title, body)
 
 	// Update the in-memory rule FIRST: memory is the authority for "already
 	// told you", and the next check reads it. Relying on the saver alone would
@@ -675,6 +853,21 @@ func CheckUsageMeter(ctx context.Context) string {
 		}
 	}
 	return stage
+}
+
+// pushUsageMeterToIM forwards the notification to the configured IM channels.
+//
+// PushForgeEvent-style: transport only, wording comes from here. A successful IM
+// push deletes the pending event so a later Android reconnect does not raise a
+// second notification for the same crossing.
+func pushUsageMeterToIM(eventID, title, body string) {
+	if dingtalk.IsStarted() && dingtalk.PushUsageMeterEvent(title, body) {
+		_ = DeletePendingEvent(eventID)
+		return
+	}
+	if feishu.IsStarted() && feishu.PushUsageMeterEvent(title, body) {
+		_ = DeletePendingEvent(eventID)
+	}
 }
 
 // broadcastUsageMeterStage pushes the crossing to connected clients and to the
@@ -863,9 +1056,9 @@ func broadcastUsageMeterNumbers(st *UsageMeterStatus) bool {
 
 // broadcastDisabledUsageMeter pushes the "no rule" state to every client.
 //
-// Called when the rule is turned off (quota <= 0). The capsule has to be told,
-// or it keeps showing the quota it was last pushed until something else makes
-// the client refetch — in practice, the user clicking the capsule.
+// Called when the rule is turned off or nothing is configured. The capsule has
+// to be told, or it keeps showing the quota it was last pushed until something
+// else makes the client refetch — in practice, the user clicking the capsule.
 //
 // Deliberately carries no numbers: the client replaces the whole readout with
 // the placeholder, and sending stale figures would let a stale value survive a

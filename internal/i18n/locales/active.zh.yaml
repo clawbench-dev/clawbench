@@ -4,7 +4,8 @@ SessionStreamBusy: 会话流正在其他设备上查看
 ServiceBusy: 服务器正在装配分享的会话，请稍后重试
 SessionLimitReached: 已达会话数量上限（{{.MaxCount}}），请先归档旧会话
 SessionIdRequired: session_id 为必填项
-CannotRemoveHost: 主持人是群的唯一调度者，不能移除
+CannotDisableHost: 主持人是群的唯一调度者，不能禁用
+CannotDisableLastMember: 最后一位可发言的成员不能禁用——否则群里就没有人能接话了
 GroupMemberLimitReached: 一个群最多 {{.MaxCount}} 个成员
 ForkContextInjectedChat: 「{{.Title}}」的历史消息已作为背景注入当前会话
 ForkContextInjectedGroup: 「{{.Title}}」的历史消息已作为背景注入本群，每位成员首次发言时都会收到
@@ -242,7 +243,8 @@ CruiseMaxRounds: '自动巡航：已达确认轮数上限'
 # 同时还会以 "[系统] <文案>" 注入每个成员的上下文（group_inject.go），因此必须是
 # 可读句子、绝不能是键名。切换语言不会追溯翻译历史（与决策 96b 一致）。
 GroupMemberJoined: '{{.Name}}加入了讨论'
-GroupMemberLeft: '{{.Name}} 已离场'
+GroupMemberDisabled: '{{.Name}} 已禁用'
+GroupMemberEnabled: '{{.Name}} 已启用'
 GroupMemberCompactionStarted: '{{.Name}} 正在压缩上下文…'
 GroupMemberCompactionDone: '{{.Name}} 已压缩上下文（{{.Before}} → {{.After}}）'
 GroupMemberCompactionFailed: '{{.Name}} 的上下文压缩失败'
@@ -303,6 +305,7 @@ ForgeEventLabelRepo: 仓库
 ForgeEventLabelEvent: 事件
 ForgeEventLabelAuthor: 作者
 ForgeEventViewDetail: 查看详情
+ForgeDisabled: GitHub/GitLab 集成已关闭
 PortForwardUnavailable: 端口转发不可用
 TunnelTargetUnreachable: 隧道目标不可达
 TunnelReverseRequiresHTTP2: 反向转发需要 HTTP/2；HTTP/1.1 下请使用 SSH 传输
@@ -315,10 +318,10 @@ UsageMeterFullBody: 本周期额度 {{.Quota}} 已用尽，实际用量 {{.Actua
 # detail.field 中下发。
 UsageMeterQuotaNegative: 额度不能为负数
 UsageMeterQuotaNotNumber: 额度必须是数字
-UsageMeterAnchorRequired: 设置额度时必须填写起始时间
+UsageMeterEnabledNotBool: 启用开关必须是布尔值
 UsageMeterAnchorInvalid: 起始时间必须是 YYYY-MM-DD 或 YYYY-MM-DDTHH:MM[:SS] 格式的有效时间
 UsageMeterAnchorNotString: 起始时间必须是 YYYY-MM-DD 或 YYYY-MM-DDTHH:MM[:SS] 格式的文本
-UsageMeterPeriodRange: 周期长度必须在 1 到 {{.Max}} 天之间
+UsageMeterPeriodRange: 周期长度必须在 0 到 {{.Max}} 天之间（0 表示不设周期，永不滚动）
 UsageMeterPeriodNotNumber: 周期长度必须是数字
 UsageMeterMetricInvalid: 统计口径必须是 tokens、credit 或 cost 之一
 UsageMeterMetricNotString: 统计口径必须是 tokens、credit 或 cost 之一

@@ -205,17 +205,22 @@ describe('ChatMessageList — single-member group hint', () => {
     expect(wrapper.find('.group-welcome-solo').exists()).toBe(false)
   })
 
-  it('counts only ACTIVE members: a left member does not hide the hint', () => {
-    // The group that most needs the hint is the one whose other members all
-    // left. Counting rows instead of active members would hide it there.
+  it('counts only speaking members: a disabled member does not hide the hint', () => {
+    // The group that most needs the hint is the one whose other members are all
+    // disabled. Counting rows instead of speaking members would hide it there.
     const wrapper = mountEmptyGroup({
       groupMode: 'host',
       groupMembers: [
         ...soloHost,
-        { id: 'm2', agentId: 'a2', name: 'B', backend: 'claude', isHost: false, left: true },
+        { id: 'm2', agentId: 'a2', name: 'B', backend: 'claude', isHost: false, disabled: true },
       ],
     })
-    expect(wrapper.find('.group-welcome-solo').exists()).toBe(true)
+    const hint = wrapper.find('.group-welcome-solo')
+    expect(hint.exists()).toBe(true)
+    // ...and it must point at the ACTUAL fix (enable), not "add members" — the
+    // roster already has them, so adding would create a duplicate instance.
+    expect(hint.text()).toBe(ml.groupSoloDisabledHint)
+    expect(hint.text()).not.toBe(ml.groupSoloMemberHint)
   })
 
   it('does not render for a non-group session', () => {

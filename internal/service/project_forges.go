@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -142,6 +143,92 @@ func UpsertProjectForge(pf ProjectForge) error {
 		slog.Warn("project_forges: upsert failed", "error", err, "project_id", projectID)
 	}
 	return err
+}
+
+// ClearAllProjectForges removes every project's forge binding.
+//
+// This is what turning the integration off means: the user asked to stop using
+// GitHub/GitLab, so the bindings go away rather than being silently kept and
+// revived on the next enable. Bindings are also what drives polling, so an
+// empty table means the poller has nothing to fetch.
+//
+// Projects that HAD a binding are marked forge_bind_opt_out so the next
+// GET /api/forge/binding cannot auto-bind the same repository straight back
+// from the git remote. That is what makes "re-enabling does not restore these
+// links" true rather than a promise the code breaks on the first panel visit —
+// and it matches what a manual unbind does.
+//
+// Projects that were never bound are deliberately NOT marked: the flag records
+// a decision about a specific project, and stamping it everywhere would make
+// re-enabling behave differently from a fresh install for projects the user
+// never touched.
+//
+// Both statements run in one transaction: a partial clear would leave some
+// projects bound while polling is already disabled.
+//
+// Returns the number of bindings removed.
+func ClearAllProjectForges() (int64, error) {
+	if !store.DBReady() {
+		return 0, nil
+	}
+	tx, err := store.WriteBegin()
+	if err != nil {
+		return 0, err
+	}
+	defer store.WriteUnlock()
+	defer func() { _ = tx.Rollback() }()
+
+	// Collect the affected projects BEFORE deleting: afterwards there is nothing
+	// left to derive the set from.
+	projectIDs, collectErr := collectProjectIDs(tx)
+	if collectErr != nil {
+		return 0, collectErr
+	}
+
+	res, err := tx.ExecContext(context.Background(), "DELETE FROM project_forges")
+	if err != nil {
+		return 0, err
+	}
+	removed, _ := res.RowsAffected()
+
+	for _, id := range projectIDs {
+		if _, execErr := tx.ExecContext(context.Background(),
+			`UPDATE projects SET forge_bind_opt_out = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			id,
+		); execErr != nil {
+			return 0, execErr
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return removed, nil
+}
+
+// collectProjectIDs returns the distinct project ids currently holding a forge
+// binding. Extracted from ClearAllProjectForges to keep that function's
+// complexity in check and to make the row-walking teardown obvious: the
+// deferred Close runs on every return path, including scan and iteration
+// errors.
+func collectProjectIDs(tx *sql.Tx) ([]int64, error) {
+	rows, err := tx.QueryContext(context.Background(), `SELECT DISTINCT project_id FROM project_forges`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var projectIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		projectIDs = append(projectIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return projectIDs, nil
 }
 
 // DeleteProjectForge removes a project's binding.

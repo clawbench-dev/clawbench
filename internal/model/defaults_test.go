@@ -1345,18 +1345,59 @@ func TestApplyDefaultsUsageMeter(t *testing.T) {
 		}
 	})
 
-	t.Run("zero period defaults to 30 days and cost metric", func(t *testing.T) {
+	// A quota with no period means "against this budget, no rollover". Filling
+	// in 30 would silently reset the user's running total every month — the
+	// exact opposite of what "I did not configure a cycle" means.
+	t.Run("zero period stays unbounded and only the metric is filled", func(t *testing.T) {
 		cfg := Config{}
 		cfg.UsageMeter = UsageMeterConfig{Quota: 20}
 		ApplyDefaults(&cfg, nil)
-		if cfg.UsageMeter.PeriodDays != 30 {
-			t.Errorf("PeriodDays = %d, want 30", cfg.UsageMeter.PeriodDays)
+		if cfg.UsageMeter.PeriodDays != 0 {
+			t.Errorf("PeriodDays = %d, want 0 (no cycle must not be synthesized)", cfg.UsageMeter.PeriodDays)
 		}
 		if cfg.UsageMeter.Metric != UsageMeterMetricCost {
 			t.Errorf("Metric = %q, want %q", cfg.UsageMeter.Metric, UsageMeterMetricCost)
 		}
 		if cfg.UsageMeter.Quota != 20 {
 			t.Errorf("Quota = %v, want 20 (the rule itself must not be rewritten)", cfg.UsageMeter.Quota)
+		}
+	})
+
+	// Upgrading must not turn a working meter off: the enable flag did not exist
+	// before, so its absence means "inherit from the rule", not "false".
+	t.Run("a pre-existing rule without the flag is enabled", func(t *testing.T) {
+		cfg := Config{}
+		cfg.UsageMeter = UsageMeterConfig{AnchorDate: "2026-10-01", PeriodDays: 30, Metric: UsageMeterMetricCost, Quota: 20}
+		ApplyDefaults(&cfg, nil)
+		if !cfg.UsageMeter.Enabled {
+			t.Error("a configured rule with no enable key must stay enabled after upgrade")
+		}
+	})
+
+	// The realistic migration shape: the section exists (anchor / quota written
+	// by an older build) but the `enabled` KEY does not. Presence is tracked per
+	// leaf key, so the section being present must not be mistaken for the flag
+	// being present.
+	t.Run("section present without the flag is still enabled", func(t *testing.T) {
+		cfg := Config{}
+		cfg.UsageMeter = UsageMeterConfig{AnchorDate: "2026-10-01", PeriodDays: 30, Metric: UsageMeterMetricCost, Quota: 20}
+		ApplyDefaults(&cfg, map[string]bool{
+			"usage_meter":             true,
+			"usage_meter.anchor_date": true,
+			"usage_meter.quota":       true,
+		})
+		if !cfg.UsageMeter.Enabled {
+			t.Error("a pre-flag rule must stay enabled: the section existing is not the flag being written")
+		}
+	})
+
+	// ...but a written false is the user's decision and must survive.
+	t.Run("an explicit false is respected", func(t *testing.T) {
+		cfg := Config{}
+		cfg.UsageMeter = UsageMeterConfig{AnchorDate: "2026-10-01", PeriodDays: 30, Metric: UsageMeterMetricCost, Quota: 20}
+		ApplyDefaults(&cfg, map[string]bool{"usage_meter": true, "usage_meter.enabled": true})
+		if cfg.UsageMeter.Enabled {
+			t.Error("an explicitly disabled rule must not be re-enabled by the defaults pass")
 		}
 	})
 
@@ -1391,15 +1432,15 @@ func TestApplyDefaultsUsageMeter(t *testing.T) {
 	})
 
 	// Monthly mode takes its cycle length from the calendar, so period_days is
-	// dormant — but it must stay valid, because the settings page HIDES the
-	// field there. Leaving it at 0 would make a later switch back to "fixed"
-	// fail validation on a value the user cannot see.
-	t.Run("monthly keeps a usable period for a later switch back", func(t *testing.T) {
+	// dormant. 0 is left as 0: the field is not needed, and inventing 30 would
+	// make a later switch back to "fixed" silently mean a 30-day cycle the user
+	// never chose.
+	t.Run("monthly leaves the dormant period alone", func(t *testing.T) {
 		cfg := Config{}
 		cfg.UsageMeter = UsageMeterConfig{Quota: 20, CycleMode: UsageMeterCycleMonthly}
 		ApplyDefaults(&cfg, nil)
-		if cfg.UsageMeter.PeriodDays != 30 {
-			t.Errorf("PeriodDays = %d, want a usable 30 even in monthly mode", cfg.UsageMeter.PeriodDays)
+		if cfg.UsageMeter.PeriodDays != 0 {
+			t.Errorf("PeriodDays = %d, want 0 left untouched in monthly mode", cfg.UsageMeter.PeriodDays)
 		}
 		if cfg.UsageMeter.CycleMode != UsageMeterCycleMonthly {
 			t.Errorf("CycleMode = %q, want monthly preserved", cfg.UsageMeter.CycleMode)
@@ -1447,5 +1488,34 @@ func TestApplyDefaults_UploadRetentionClampsNonPositiveDays(t *testing.T) {
 		if cfg.Upload.RetentionDays != 30 {
 			t.Errorf("RetentionDays(%d) = %d, want 30", in, cfg.Upload.RetentionDays)
 		}
+	}
+}
+
+// TestApplyDefaults_ForgeEnabledPresence covers the master switch's default.
+// Go's bool zero value is false, so without the presence check every existing
+// install would read "forge disabled" on upgrade and lose its integration.
+func TestApplyDefaults_ForgeEnabledPresence(t *testing.T) {
+	setupTestBinDir(t)
+
+	// Absent from the config file → default ON.
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if !cfg.Forge.Enabled {
+		t.Error("Forge.Enabled should default to true when absent from config")
+	}
+
+	// Explicitly false → respected, not overwritten.
+	cfg = Config{}
+	cfg.Forge.Enabled = false
+	ApplyDefaults(&cfg, map[string]bool{"forge.enabled": true})
+	if cfg.Forge.Enabled {
+		t.Error("Forge.Enabled must stay false when explicitly set")
+	}
+
+	// The whole forge section absent (nil presence map) still defaults ON.
+	cfg = Config{}
+	ApplyDefaults(&cfg, map[string]bool{})
+	if !cfg.Forge.Enabled {
+		t.Error("Forge.Enabled should default to true when the forge section is absent")
 	}
 }
