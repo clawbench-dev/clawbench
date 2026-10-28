@@ -753,6 +753,26 @@ func (c *ACPConn) reapplyConfigOption(ctx context.Context, acpSID, configID, val
 		// offer) is NOT recorded — otherwise the retry is suppressed forever and
 		// the session keeps reporting a level the agent never accepted (#552).
 		c.markConfigSet(configID, value)
+		// Write the re-applied value back into the SESSION cache too. Without
+		// this the cache keeps whatever the agent announced while resume was in
+		// flight, and every consumer of the cache — EmitSessionStateEvents,
+		// injectSessionMetadata, GET /api/ai/chat — keeps reporting the agent's
+		// default even though the agent has just accepted the user's value.
+		//
+		// This is not hypothetical: measured on the wire against a live
+		// codebuddy process, session/resume makes the agent announce its OWN
+		// persisted mode (config_option_update currentValue="default" ~200ms
+		// before the resume response arrives). The notification handler applies
+		// it as an authoritative change (it is one — the agent really is on
+		// "default" at that instant), so by the time this function re-sends
+		// "bypassPermissions" the cache says "default". MergeResumedSessionState
+		// then preserves that value over the resume response's own default,
+		// emitting mode_update=default, which the client persists back into
+		// context_state — so the user's mode is lost on both the chip and the
+		// next turn's prompt.
+		if category := c.configCategoryForWireIDLocked(configID); category != "" {
+			c.UpdateCachedCurrent(category, value)
+		}
 		slog.Info("acp conn: re-applied config after resume", "config_id", configID, "value", value, "clawbench_sid", c.clawbenchSID)
 	}
 }
@@ -1338,6 +1358,32 @@ func (c *ACPConn) resolveConfigCategory(configID string) (category, wireID strin
 		// used by the well-known cases above).
 		return configID, configID
 	}
+}
+
+// configCategoryForWireIDLocked is the category-only half of
+// resolveConfigCategory, for callers that already hold c.mu (resolveWireConfigID
+// would self-deadlock there, and wireConfigIDs is guarded by c.mu).
+//
+// It accepts both spellings because reapplyConfigOption receives an
+// already-resolved wire id: for well-known categories that is the agent's own id
+// (e.g. "mode", or claude-agent-acp's "effort"), which is not always the
+// internal category key.
+func (c *ACPConn) configCategoryForWireIDLocked(configID string) string {
+	switch configID {
+	case "mode", "model":
+		return configID
+	case "thought_level", "thinkingEffort", "thinking_effort":
+		return "thought_level"
+	}
+	// An agent that advertises a non-standard id for one of our categories
+	// (mergeWireConfigIDs stores it under the internal key). Match it back so
+	// the cache write still lands on the right field.
+	for category, wireID := range c.wireConfigIDs {
+		if wireID != "" && wireID == configID {
+			return category
+		}
+	}
+	return ""
 }
 
 // setSessionConfigOption sets a config option and returns the agent's error, if
