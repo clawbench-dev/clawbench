@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-ClawBench 是面向手机 / 平板 / 桌面的多端 AI 工作台，移动端交互适配优先、桌面端完整支持，将 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、DeepSeek Harness、Hermes Agent、Cursor、Command Code、OpenClaw）封装为 Web 平台。Go 后端调用 CLI 工具，通过 WebSocket 流式传输 JSON 事件；Vue 3 前端实时渲染。支持 ACP (Agent Client Protocol) stdio 传输（含桥接适配器）、**多智能体群聊**（主持人 / 自由两种模式 + 正交的自动巡航开关）、SSH 隧道端口转发、任务系统（含 GitHub/GitLab 事件触发）。
+ClawBench 是面向手机 / 平板 / 桌面的多端 AI 工作台，移动端交互适配优先、桌面端完整支持，将 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、Qoder CN、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、DeepSeek Harness、Hermes Agent、Cursor、Command Code、OpenClaw）封装为 Web 平台。Go 后端调用 CLI 工具，通过 WebSocket 流式传输 JSON 事件；Vue 3 前端实时渲染。支持 ACP (Agent Client Protocol) stdio 传输（含桥接适配器）、**多智能体群聊**（主持人 / 自由两种模式 + 正交的自动巡航开关）、SSH 隧道端口转发、任务系统（含 GitHub/GitLab 事件触发）。
 
 规格文档：`docs/spec/`（模块索引见 `docs/spec/README.md`）。面向使用者的图文操作手册：`docs/user-guid/user-guid.md`（截图维护流程见 `docs/Skills/clawbench-user-guide/SKILL.md`）。
 
@@ -81,7 +81,7 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 | `internal/ws/` | WebSocket 事件通道：StreamHub 会话级扇出，Manager 广播 + 重连缓冲回放；`delivery_stats.go` 记录按原因的投递丢弃计数（`GET /api/ws/delivery-stats`），关键事件在通道满时等待空位（ACP 来源除外）。遥测类事件（`system_resources`）走**非缓冲投递**路径（不写回放缓冲、队列满时丢弃而非断连），需求由客户端 `metrics_preference` 声明 |
 | `internal/ssh/` + `internal/proxy/` | SSH 隧道服务器；HTTP 反向代理 + 端口转发。反向映射仅绑 127.0.0.1 且禁绑保留端口 |
 | `internal/tunnel/` | h2 流隧道的传输无关内核（`/api/tunnel/stream` 数据面 + `/api/tunnel/control` 反向控制面）：`bind.go`（端口分配 + 白名单/保留端口）、`guard.go`（`PortGuard` 镜像 `internal/ssh` 的端口策略，保证 h2 与 SSH 同一套规则）、`claim.go`（`-R` 的单次 token 认领）、`ndjson.go`（控制流分帧）、`relay.go`（双向转发 + 半关闭）、`target.go`（目标地址解析） |
-| `internal/forge/` | GitHub/GitLab 集成：平台无关的只读 `Provider` 抽象（统一 Issue/PR/Comment/Pipeline 模型）+ `github/`（go-github）/ `gitlab/`（轻量 REST client）adapter；remote URL 解析（host 与 scheme 分离解析）、per-host 令牌桶限流、事件推导引擎。**无 host 安全闸门**（内网/自建实例一律放行，风险提示在前端绑定弹窗） |
+| `internal/forge/` | GitHub/GitLab 集成：平台无关的只读 `Provider` 抽象（统一 Issue/PR/Comment/Pipeline 模型）+ `github/`（go-github）/ `gitlab/`（轻量 REST client）adapter；remote URL 解析（host 与 scheme 分离解析）、per-host 令牌桶限流、事件推导引擎；**服务端总开关 `forge.enabled`（默认开）**——关闭即停轮询、不再自动绑定、并清空全部项目的仓库绑定且打 opt-out 标记（重新启用不自动恢复），关的是出站流量与凭据故必须服务端一致而非每设备偏好。**无 host 安全闸门**（内网/自建实例一律放行，风险提示在前端绑定弹窗） |
 | `internal/push/` | IM 机器人推送：`common/`（共享接口 + 会话命令）、`dingtalk/`（Stream API）、`feishu/`（Lark SDK WebSocket + 互动卡片） |
 | `internal/symbol/` | 基于 tree-sitter 的代码符号提取（纯 Go，无 CGO） |
 | `internal/skill/` | 后端无关的跨智能体 Skill 发现框架（Skill = 含 `SKILL.md` 的目录）。只依赖 `internal/model`（不得 import `internal/ai`/`backends`，否则成环）：`scanner.go` 递归扫描（有界深度、跳过 `.git`/`node_modules` 等）、`registry.go` 按 `SourceKind`（本智能体原生 > 项目 `.agents/skills` > 用户目录 > git > 其他原生）去重、`git.go`+`worker.go` clone/pull git 源（单例 worker，启动 + 定时 + 手动 `POST /api/skills/refresh` 三触发）。**项目级来源**：按会话项目根扫 `<projectPath>/.agents/skills`（`InjectedForProject` / `AllForProject`，`GET /api/skills` 按项目 Cookie 只列当前项目；qoder/codewhale 在 cwd=项目根时也读它，故总是注入）。**本地目录新增走 PATCH 同步重扫、Git 仓库新增由前端在 addRepo 成功后自动调一次 refresh**（PATCH 只落盘不联网，避免在 config 写锁内做网络 IO）；`POST /api/skills/rescan` 是**纯本地重扫**（不联网、不写同步状态）。系统提示词注入在 `service.AppendSkillsSection`，**两个 `ai.ChatRequest.SystemPrompt` 生产者都必须调用**（`chat_request.go` 与 `scheduler.go`）。`AutoLoadsNativeSkills` 决定后端是否自加载（codebuddy=false 必须注入；其余多为 true），取值由 `internal/ai/backends/native_skills_test.go` 双向表钉住 |
