@@ -22,9 +22,11 @@ export interface UsageMeterStatus {
   enabled: boolean
   metric?: UsageMeterMetric
   anchorDate?: string
-  /** Length of the CURRENT cycle: in monthly mode this follows the calendar month. */
+  /** Length of the CURRENT cycle: in monthly mode this follows the calendar month. 0/absent = no cycle. */
   periodDays?: number
+  /** Budget for one cycle. 0/absent = no budget: the total is still reported, with no plan. */
   quota?: number
+  /** RFC3339. `cycleEnd` is absent when the rule has no cycle (no period configured). */
   cycleStart?: string
   cycleEnd?: string
   dayInCycle: number
@@ -69,16 +71,17 @@ let inflight: Promise<void> | null = null
 let subscribed = false
 
 /**
- * True when usage has passed the linear baseline.
+ * Whether usage has passed the linear baseline.
  *
- * Requires `enabled`: with no rule there is no baseline, so `expected` is 0 and
- * `actual > 0` would report every user with any spend as "over plan".
+ * Requires a real baseline: `expected` is 0 when the rule has no quota or no
+ * cycle, and `actual > 0` would then report every user with any spend as "over
+ * plan" — a claim about a budget they never set.
  */
 const isOverPlan = computed(
-  () => status.value.enabled && status.value.actual > status.value.expected,
+  () => status.value.enabled && status.value.expected > 0 && status.value.actual > status.value.expected,
 )
 
-/** True when the whole quota is consumed. */
+/** True when the whole quota is consumed. Needs a quota; without one nothing is exhausted. */
 const isQuotaExhausted = computed(
   () =>
     status.value.enabled &&
@@ -101,6 +104,12 @@ const meterState = computed<'ok' | 'over' | 'full' | 'off'>(() => {
   if (isOverPlan.value) return 'over'
   return 'ok'
 })
+
+/** Whether a quota exists at all — the gate for every ratio-derived figure. */
+const hasQuota = computed(() => (status.value.quota ?? 0) > 0)
+
+/** Whether the rule has a cycle at all — the gate for "day N of M" and the date range. */
+const hasCycle = computed(() => (status.value.periodDays ?? 0) > 0)
 
 /** Fill width, clamped to 100% so an overshoot does not overflow the track. */
 const fillPercent = computed(() => {
@@ -219,6 +228,8 @@ export function useUsageMeter() {
     isOverPlan,
     isQuotaExhausted,
     meterState,
+    hasQuota,
+    hasCycle,
     fillPercent,
     expectedPercent,
     refresh: fetchStatus,

@@ -3471,6 +3471,187 @@ func TestRefactor_ReapplyConfigAfterResume_SkipsUnsupportedEffort(t *testing.T) 
 	assert.Equal(t, "", conn.lastSetEffort, "unsupported thinkingEffort must not be re-applied after resume")
 }
 
+// TestRefactor_ReapplyConfigOption_UpdatesSessionCache is the regression guard
+// for "the绘画 session's mode silently reverts to Always Ask".
+//
+// The mechanism, measured on the wire against a live codebuddy process:
+// session/resume makes the agent announce its OWN persisted mode
+// (config_option_update currentValue="default") BEFORE the resume response is
+// returned. The SDK drains notifications before returning, so that announcement
+// is applied to the session cache as an authoritative change — which it is, the
+// agent really is on "default" at that instant. reapplyConfigAfterResume then
+// re-sends the user's "bypassPermissions", and the agent accepts it, but the old
+// code only recorded it in lastSetMode (dedup bookkeeping) and left the SESSION
+// cache on "default".
+//
+// Everything downstream reads that cache: EmitSessionStateEvents (the WS
+// mode_update the chip follows), injectSessionMetadata (the mode persisted into
+// the message row) and GET /api/ai/chat. So the user's choice was lost on both
+// the chip and the persisted context_state, and the next turn's prompt
+// inherited "default" — the agent then really ran Always Ask.
+func TestRefactor_ReapplyConfigOption_UpdatesSessionCache(t *testing.T) {
+	agent := &model.Agent{ID: "test-reapply-cache", Backend: "codebuddy", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-reapply-cache")
+	conn.SetAliveForTest()
+	conn.SetSessionMappingForTest("test-reapply-cache", "acp-sid-reapply-cache")
+	conn.SetConfigOptionFnForTest(func(context.Context, string, string, string) error { return nil })
+
+	// The agent's own announcement during resume lands in the cache first.
+	conn.SetCurrentModeID("default")
+	conn.SetCurrentThinkingEffortID("low")
+	conn.SetCurrentModelID("agent-default-model")
+
+	conn.mu.Lock()
+	conn.reapplyConfigAfterResume(context.Background(), "acp-sid-reapply-cache", cachedConfigSnapshot{
+		mode:   "bypassPermissions",
+		model:  "deepseek-v4-flash",
+		effort: "xhigh",
+	})
+	conn.mu.Unlock()
+
+	assert.Equal(t, "bypassPermissions", conn.GetCurrentModeID(),
+		"the re-applied mode must reach the session cache — the WS mode_update, "+
+			"the message metadata and GET /api/ai/chat all read it")
+	assert.Equal(t, "xhigh", conn.GetCurrentThinkingEffortID(),
+		"the re-applied thinking effort must reach the session cache")
+	assert.Equal(t, "deepseek-v4-flash", conn.GetCurrentModelID(),
+		"the re-applied model must reach the session cache")
+}
+
+// TestRefactor_ReapplyConfigOption_AgentRejectedValueLeavesCache pins the other
+// half: a value the agent explicitly REFUSED must not be written back, or the
+// session would report a setting the agent never accepted (issue #552).
+func TestRefactor_ReapplyConfigOption_AgentRejectedValueLeavesCache(t *testing.T) {
+	agent := &model.Agent{ID: "test-reapply-refused", Backend: "opencode", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-reapply-refused")
+	conn.SetAliveForTest()
+	conn.SetSessionMappingForTest("test-reapply-refused", "acp-sid-reapply-refused")
+	conn.SetConfigOptionFnForTest(func(context.Context, string, string, string) error {
+		return errors.New("Invalid params: effort not found: low")
+	})
+	conn.SetCurrentThinkingEffortID("high")
+
+	conn.mu.Lock()
+	conn.reapplyConfigOption(context.Background(), "acp-sid-reapply-refused", "thinkingEffort", "low")
+	conn.mu.Unlock()
+
+	assert.Equal(t, "high", conn.GetCurrentThinkingEffortID(),
+		"a refused level must not overwrite the cached one")
+}
+
+// TestRefactor_ReapplyConfigOption_NonStandardWireID covers agents that
+// advertise their own id for a category (claude-agent-acp calls thinking effort
+// "effort"). reapplyConfigOption receives the RESOLVED wire id, so the cache
+// write must map it back to the internal category — otherwise the re-applied
+// value is recorded in the dedup cache but the session keeps reporting the
+// agent's stale announcement.
+func TestRefactor_ReapplyConfigOption_NonStandardWireID(t *testing.T) {
+	agent := &model.Agent{ID: "test-reapply-wire", Backend: "claude", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-reapply-wire")
+	conn.SetAliveForTest()
+	conn.SetSessionMappingForTest("test-reapply-wire", "acp-sid-reapply-wire")
+	conn.SetConfigOptionFnForTest(func(context.Context, string, string, string) error { return nil })
+	// The agent advertised "effort" as its thinking-effort config id.
+	conn.mu.Lock()
+	conn.wireConfigIDs = map[string]string{"thought_level": "effort"}
+	conn.mu.Unlock()
+	conn.SetCurrentThinkingEffortID("low")
+
+	conn.mu.Lock()
+	conn.reapplyConfigOption(context.Background(), "acp-sid-reapply-wire", "effort", "high")
+	conn.mu.Unlock()
+
+	assert.Equal(t, "high", conn.GetCurrentThinkingEffortID(),
+		"the re-applied value must land on the thought_level cache even though the wire id is %q", "effort")
+}
+
+// TestRefactor_ResumeSequence_KeepsUserMode replays the exact production
+// sequence captured from a live codebuddy process, in order:
+//
+//  1. session/resume is sent; the agent announces its OWN persisted mode
+//     (config_option_update currentValue="default") ~200ms before the response.
+//  2. The resume response arrives carrying that same "default".
+//  3. reapplyConfigAfterResume re-sends the user's "bypassPermissions".
+//  4. MergeResumedSessionState runs, then EmitSessionStateEvents.
+//
+// The user's mode must survive all four steps: the WS mode_update the chip
+// follows, and the value the next turn inherits from context_state, both come
+// out of this path. Before the fix, step 3's success was recorded only in the
+// dedup cache, so step 4 preserved the clobbered "default" and the session
+// silently fell back to Always Ask.
+func TestRefactor_ResumeSequence_KeepsUserMode(t *testing.T) {
+	const userMode = "bypassPermissions"
+	agent := &model.Agent{ID: "test-resume-seq", Backend: "codebuddy", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-resume-seq")
+	conn.SetAliveForTest()
+	conn.SetSessionMappingForTest("test-resume-seq", "acp-sid-resume-seq")
+	conn.SetConfigOptionFnForTest(func(context.Context, string, string, string) error { return nil })
+	GetAgentCapabilityRegistry().UpdateModes(agent.ID, []ModeDef{
+		{ID: "default", Name: "Always Ask"},
+		{ID: userMode, Name: "Bypass Permissions"},
+	})
+	// seedModeFromDB ran when the connection was created.
+	conn.SetCurrentModeID(userMode)
+
+	modeCat := acp.SessionConfigOptionCategoryMode
+	staleAnnouncement := acp.SessionUpdate{
+		ConfigOptionUpdate: &acp.SessionConfigOptionUpdate{
+			SessionUpdate: "config_option_update",
+			ConfigOptions: []acp.SessionConfigOption{{
+				Select: &acp.SessionConfigOptionSelect{
+					Category:     &modeCat,
+					Id:           "mode",
+					Name:         "Mode",
+					CurrentValue: "default",
+				},
+			}},
+		},
+	}
+	ch := make(chan StreamEvent, 64)
+
+	// 1. Agent announces its own mode while resume is in flight.
+	mapACPSessionUpdate(staleAnnouncement, ch, context.Background(), conn, nil)
+
+	// 2 + 3. Resume response arrives; re-apply the user's mode.
+	conn.mu.Lock()
+	conn.lastResumeSessionResp = &acp.ResumeSessionResponse{
+		Modes: &acp.SessionModeState{
+			CurrentModeId: "default",
+			AvailableModes: []acp.SessionMode{
+				{Id: "default", Name: "Always Ask"},
+				{Id: userMode, Name: "Bypass Permissions"},
+			},
+		},
+		ConfigOptions: []acp.SessionConfigOption{{
+			Select: &acp.SessionConfigOptionSelect{
+				Category:     &modeCat,
+				Id:           "mode",
+				Name:         "Mode",
+				CurrentValue: "default",
+			},
+		}},
+	}
+	conn.reapplyConfigAfterResume(context.Background(), "acp-sid-resume-seq", cachedConfigSnapshot{mode: userMode})
+	conn.mu.Unlock()
+
+	// 4. Merge + emit.
+	conn.MergeResumedSessionState()
+	conn.EmitSessionStateEvents(ch)
+	close(ch)
+
+	assert.Equal(t, userMode, conn.GetCurrentModeID(), "the session cache must hold the user's mode")
+
+	var emitted []string
+	for ev := range ch {
+		if ev.Type == "mode_update" && ev.Mode != nil {
+			emitted = append(emitted, ev.Mode.CurrentModeID)
+		}
+	}
+	require.NotEmpty(t, emitted, "a mode_update must be emitted on stream start")
+	assert.Equal(t, userMode, emitted[len(emitted)-1],
+		"the LAST mode_update is what the chip adopts; it must be the user's mode")
+}
+
 func TestRefactor_RecoverViaResumeSession_AliveConn(t *testing.T) {
 	agent := &model.Agent{ID: "test-recover-resume", Backend: "acp-stdio", AcpCommand: "echo"}
 	conn := newACPConn(agent, "test-recover-resume")

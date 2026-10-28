@@ -19,7 +19,8 @@ export interface GroupMemberInfo {
   avatar: string
   /** 底层真实智能体名；与 name 相同时也带回，供 UI 判定是否披露。 */
   agentName: string
-  left: boolean
+  /** 禁用：仍是在群成员，但调度时不安排它发言。启用后能看到禁用期间的全部内容。 */
+  disabled: boolean
   isHost: boolean
   /**
    * 该成员**自己**的上下文用量（成员行 context_state.usage，或活连接的缓存）。
@@ -64,7 +65,7 @@ export async function createGroup(hostAgentId: string, memberAgentIds: string[])
   }
 }
 
-/** listGroupMembers fetches the group roster (including left members) plus the
+/** listGroupMembers fetches the group roster (including disabled members) plus the
  *  group's mode ("host" | "free"), its parallelDefault (the free-mode
  *  action-bar "并发执行" switch's server value) and its cruise switch (auto-cruise,
  *  design §15). The member-speech cap is a global setting
@@ -121,9 +122,9 @@ export async function setMemberAvatars(groupId: string, avatars: { memberId: str
  * apart, so no generated avatar is written (the icon falls back to
  * getAgentAvatar).
  *
- * "First instance" is decided over ACTIVE members in roster order (which is
- * creation order): a left (archived) member does not count, since the group
- * shows a single active copy. A member that already has an avatar is never
+ * "First instance" is decided over SPEAKING (enabled) members in roster order
+ * (which is creation order): a disabled member does not count, since the group
+ * shows a single speaking copy. A member that already has an avatar is never
  * re-generated (idempotent, so a partial failure can be retried by a later add).
  *
  * Called right after a create/add. onlyMemberIds, when given, scopes the
@@ -138,9 +139,9 @@ export async function generateMemberAvatars(groupId: string, onlyMemberIds?: str
   const { members } = await listGroupMembers(groupId)
   const seenAgents = new Set<string>()
   const targets = members.filter(m => {
-    if (m.left) return false
-    // Roster order is creation order, so the first ACTIVE member of an agent is
-    // its first instance; it keeps the agent avatar. Later instances are the
+    if (m.disabled) return false
+    // Roster order is creation order, so the first SPEAKING member of an agent
+    // is its first instance; it keeps the agent avatar. Later instances are the
     // repeated copies that need their own generated avatar.
     const isFirstInstance = !seenAgents.has(m.agentId)
     seenAgents.add(m.agentId)
@@ -154,13 +155,22 @@ export async function generateMemberAvatars(groupId: string, onlyMemberIds?: str
   await setMemberAvatars(groupId, avatars)
 }
 
-/** removeGroupMember soft-removes a member (keeps their past speech). */
-export async function removeGroupMember(groupId: string, memberId: string): Promise<void> {
+/** setGroupMemberDisabled disables (禁用) or re-enables (启用) a member.
+ *
+ *  Muting is NOT removal: the member row, its context window and its whole
+ *  history stay intact, and unmuting is a plain flag flip — so a member disabled
+ *  for a while comes back with everything that happened in the meantime. */
+export async function setGroupMemberDisabled(groupId: string, memberId: string, disabled: boolean): Promise<void> {
   const resp = await fetch('/api/group/members', {
-    method: 'DELETE',
+    method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ groupId, memberId }),
+    body: JSON.stringify({ groupId, memberId, disabled }),
   })
+  // Consume the body: an unread response stream keeps the request "in flight"
+  // for the browser, which stalls `networkidle` waits. Same reason as
+  // utils/sessionRead.ts — this one is user-triggered rather than on page load,
+  // so it could not fail a reload, but the leak is identical.
+  await resp.body?.cancel().catch(() => {})
   if (!resp.ok) throw new Error(`request failed: ${resp.status}`)
 }
 

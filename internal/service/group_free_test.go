@@ -632,37 +632,74 @@ func TestFreeLoop_UnknownNoteTargetNotStored(t *testing.T) {
 	}
 }
 
-// Removing a member drops the private note awaiting it (it can never be
-// delivered once the member has left).
-func TestRemoveGroupMember_DropsPendingNotes(t *testing.T) {
+// Disabling a member KEEPS the private notes already queued for it: they were
+// validly addressed while it was speaking, and they are delivered on its next
+// turn — which is the turn after it is enabled. Dropping them would silently lose
+// what someone said to it.
+func TestSetGroupMemberDisabled_KeepsAlreadyQueuedNotes(t *testing.T) {
 	setupGroupDB(t)
-	project := "/tmp/free-remove-note"
+	project := "/tmp/free-disable-note"
 	groupID, byName := createFreeGroup(t, project, "A", "B")
 
 	addPendingBcc(groupID, "B", "SECRET_FOR_B", bccRoleMember, "A")
 	if got := pendingBccForTarget(groupID, "B"); len(got) != 1 {
 		t.Fatalf("setup: pending note not stored, got %v", got)
 	}
-	if err := RemoveGroupMember(groupID, byName["B"]); err != nil {
-		t.Fatalf("RemoveGroupMember: %v", err)
+	if err := SetGroupMemberDisabled(groupID, byName["B"], true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
 	}
-	if got := pendingBccForTarget(groupID, "B"); len(got) != 0 {
-		t.Fatalf("a departed member's pending note must be dropped; got %v", got)
+	if got := pendingBccForTarget(groupID, "B"); len(got) != 1 {
+		t.Fatalf("notes queued before the disable must survive it; got %v", got)
 	}
 }
 
-// A note addressed (by ROW ID) to a member who has ALREADY left must not be
-// stored: the member can never speak again, so it would sit in
-// group_pending_bcc forever. byID includes left members (only byName excludes
-// them), so the guard has to be explicit — without it, resolving a user's
-// id-targeted note through byID would resurrect the unbounded-growth bug.
-func TestStoreRouteNotes_DropsNoteToLeftMemberByID(t *testing.T) {
+// A note addressed to a DISABLED member is dropped, by ROW ID and by NAME alike: a
+// disabled member is disabled, so it must not keep receiving briefings the group
+// cannot see it answer. Both resolution paths are covered because only the user
+// writes ids — an agent writes names, and name resolution goes through byName.
+func TestStoreRouteNotes_DropsNoteToDisabledMember(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		target func(memberID string) string
+	}{
+		{"by row id (user mention)", func(id string) string { return id }},
+		{"by display name (agent mention)", func(string) string { return "B" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupGroupDB(t)
+			project := "/tmp/free-note-disabled"
+			groupID, byName := createFreeGroup(t, project, "A", "B")
+			disabledID := byName["B"]
+			if err := SetGroupMemberDisabled(groupID, disabledID, true); err != nil {
+				t.Fatalf("SetGroupMemberDisabled: %v", err)
+			}
+
+			members, err := ListGroupMembers(groupID)
+			if err != nil {
+				t.Fatalf("ListGroupMembers: %v", err)
+			}
+			byID, byNameMap := memberLookups(members)
+			route := grouprouting.Parse(`<clawbench-mention targets="` + tc.target(disabledID) + `" private>给被禁用的成员</clawbench-mention>`)
+			storeRouteNotes(groupID, route, groupUserTargetID, byID, byNameMap,
+				NewGroupOrchestrator(groupID).notePolicy(groupUserTargetID, byID))
+
+			if got := pendingBccForTarget(groupID, "B"); len(got) != 0 {
+				t.Fatalf("a note to a disabled member must be dropped; got %v", got)
+			}
+		})
+	}
+}
+
+// A disabled member's NAME still resolves (it is in the roster, just disabled),
+// so naming it is silently dropped rather than reported as a non-existent
+// member. This is what keeps the free-mode relay from writing a false
+// "no such member" notice about someone who is plainly in the group.
+func TestFreeGroupFromRoute_DisabledMentionIsSilentNotUnknown(t *testing.T) {
 	setupGroupDB(t)
-	project := "/tmp/free-note-left"
+	project := "/tmp/free-disabled-mention"
 	groupID, byName := createFreeGroup(t, project, "A", "B")
-	leftID := byName["B"]
-	if err := RemoveGroupMember(groupID, leftID); err != nil {
-		t.Fatalf("RemoveGroupMember: %v", err)
+	if err := SetGroupMemberDisabled(groupID, byName["B"], true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
 	}
 
 	members, err := ListGroupMembers(groupID)
@@ -670,12 +707,22 @@ func TestStoreRouteNotes_DropsNoteToLeftMemberByID(t *testing.T) {
 		t.Fatalf("ListGroupMembers: %v", err)
 	}
 	byID, byNameMap := memberLookups(members)
-	route := grouprouting.Parse(`<clawbench-mention targets="` + leftID + `" private>给离场者</clawbench-mention>`)
-	storeRouteNotes(groupID, route, groupUserTargetID, byID, byNameMap,
-		NewGroupOrchestrator(groupID).notePolicy(groupUserTargetID, byID))
+	if _, ok := byNameMap["B"]; !ok {
+		t.Fatal("a disabled member must still resolve by name (disabled != unknown)")
+	}
 
-	if got := pendingBccForTarget(groupID, "B"); len(got) != 0 {
-		t.Fatalf("a note to a left member must not be stored; got %v", got)
+	o := NewGroupOrchestrator(groupID)
+	rl := &freeRelay{
+		groupID: groupID, speakerID: byName["A"], members: members,
+		names: memberNameMap(members), byID: byID, byName: byNameMap,
+		waiting: map[string]bool{},
+	}
+	g, unknown := o.freeGroupFromRoute(grouprouting.MentionGroup{Members: []string{"B"}}, rl)
+	if len(g.turns) != 0 {
+		t.Fatalf("a disabled member must not be queued; got %+v", g.turns)
+	}
+	if len(unknown) != 0 {
+		t.Fatalf("a disabled member must not be reported as unknown; got %v", unknown)
 	}
 }
 
@@ -1741,5 +1788,70 @@ func TestAddPendingBcc_IgnoresEmptyInputs(t *testing.T) {
 
 	if got := pendingBccForTarget(groupID, "B"); len(got) != 0 {
 		t.Fatalf("empty inputs must not be stored; got %v", got)
+	}
+}
+
+// A disabled member is skipped by the scheduler, and re-enabling brings it back
+// with the whole backlog it missed (issue #597): disabling only removes the member
+// from the schedule, its seen_cursor is never advanced while disabled, so the next
+// turn after re-enabling injects everything that happened in between.
+func TestFreeLoop_DisabledMemberSkippedThenCatchesUp(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-disabled-catchup"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	script := map[string][]string{
+		byName["A"]: {"A 第一条", "A 第二条"},
+		byName["B"]: {"B 迟到"},
+	}
+	base, order := freeScriptedRunner(t, project, groupID, script)
+	prompts := map[string][]string{}
+	var mu sync.Mutex
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		mu.Lock()
+		prompts[turn.MemberRowID] = append(prompts[turn.MemberRowID], turn.Prompt)
+		mu.Unlock()
+		return base(ctx, gid, turn)
+	}
+
+	if err := SetGroupMemberDisabled(groupID, byName["B"], true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "禁用期间的第一句", nil)
+
+	// Only A spoke: B is disabled.
+	for _, spoke := range *order {
+		if spoke == byName["B"] {
+			t.Fatalf("a disabled member must not be scheduled; order=%v", *order)
+		}
+	}
+	if len(*order) != 1 || (*order)[0] != byName["A"] {
+		t.Fatalf("only A may speak while B is disabled; order=%v", *order)
+	}
+	if _, called := prompts[byName["B"]]; called {
+		t.Fatal("a disabled member must not receive a turn at all")
+	}
+
+	// Enable, then talk again. B's prompt must carry the discussion it missed.
+	if err := SetGroupMemberDisabled(groupID, byName["B"], false); err != nil {
+		t.Fatalf("SetGroupMemberDisabled(false): %v", err)
+	}
+	o2 := NewGroupOrchestrator(groupID)
+	o2.runTurn = runner
+	_ = runGroupTurnForTest(t, o2, project, "启用后的一句话", nil)
+
+	got := prompts[byName["B"]]
+	if len(got) == 0 {
+		t.Fatal("an enabled member must be scheduled again")
+	}
+	joined := strings.Join(got, "\n")
+	if !strings.Contains(joined, "禁用期间的第一句") {
+		t.Fatalf("the enabled member must see what it missed while disabled; prompt=%q", joined)
+	}
+	if !strings.Contains(joined, "A 第一条") {
+		t.Fatalf("the enabled member must see the speech it missed while disabled; prompt=%q", joined)
 	}
 }

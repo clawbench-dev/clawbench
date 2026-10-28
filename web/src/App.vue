@@ -82,21 +82,20 @@
               <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
             </div>
           </div>
-          <!-- Chat visibility toggle pinned to the bottom of the vertical dock -->
-          <div class="wide-dock-bottom">
-            <button class="dock-btn" data-tab="chat" :class="{ active: !chatCollapsed }" @click.stop="handleWideDockChatToggle" :title="chatToggleTitle" :aria-label="chatToggleTitle" :aria-pressed="!chatCollapsed">
-              <component :is="chatCollapsed ? MessageSquareOff : MessageSquare" />
-            </button>
-          </div>
         </div>
 
-        <div class="content-area" id="contentArea">
+        <div class="content-area" id="contentArea" :class="{ 'has-chat-rail': isWideScreen && chatCollapsed }">
           <SplitView
             :enabled="isWideScreen"
             :ratio="splitRatio"
             :collapsed="leftCollapsed"
             :right-collapsed="chatCollapsed && isWideScreen"
+            :collapse-left="isWideScreen"
+            :collapse-right="isWideScreen"
+            :collapse-left-title="t('nav.hideLeftPane')"
+            :collapse-right-title="t('nav.hideChat')"
             @update:ratio="onSplitRatioChange"
+            @collapse="onSplitCollapse"
           >
             <template #left>
               <div class="col-left" v-show="isWideScreen || activeTab !== 'chat'" @pointerdown="onLeftPanePointerDown" @focusin="setActivePane('left')">
@@ -381,6 +380,27 @@
               </div>
             </template>
           </SplitView>
+
+          <!-- Collapsed-chat rail. When the chat pane is hidden it is
+               `display:none`, so this 24px strip at the right edge is the ONLY
+               thing left of it — and therefore the only way back. Keeping a
+               sliver (rather than a floating button) is what makes the pane
+               read as "pushed aside" instead of "gone": it preserves the
+               boundary the user just collapsed, and the unread count stays
+               visible while the conversation is out of sight. -->
+          <button
+            v-if="isWideScreen && chatCollapsed"
+            class="chat-rail"
+            data-action="show-chat"
+            :title="t('nav.showChat')"
+            :aria-label="t('nav.showChat')"
+            @click.stop="toggleChatPane"
+          >
+            <span class="chat-rail-icon">
+              <MessageSquare />
+              <span v-if="store.state.chatUnreadCount > 0" class="count-badge chat-rail-badge">{{ formatBadgeCount(store.state.chatUnreadCount) }}</span>
+            </span>
+          </button>
         </div>
       </main>
 
@@ -592,7 +612,7 @@ import { maybePromptStartupUIScale } from '@/composables/useStartupUIScalePrompt
 import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 import { useAnimatedWallpaperParams } from '@/composables/useAnimatedWallpaperParams'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab, PencilLine } from 'lucide-vue-next'
+import { MessageSquare, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab, PencilLine } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -709,6 +729,7 @@ import {
 } from './composables/useProjectPanel.ts'
 import { openPendingSessionWhenReady, armPendingOpenSession, clearPendingOpenSession } from './composables/usePendingSessionOpen.ts'
 import { markSessionRead } from '@/utils/sessionRead.ts'
+import { registerChatPanelVisibility, markVisibleSessionRead } from '@/composables/sessionReadGate.ts'
 import { setLayoutProjectRoot } from './utils/panelState'
 import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
@@ -943,6 +964,18 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   // back to the next time this project is opened.
   releasePanelSwitch()
 
+  // The user has landed on this project's session: its conversation is what the
+  // remounted panel loaded, and it is on screen. Nothing "clicked" it, so no
+  // switchSession ran and — since loading history no longer marks read
+  // (360241f44) — its unread badge would stay lit until the user switched away
+  // and back. Skipped for the two pending navigations: a task jump never shows
+  // the chat, and a session jump marks read itself in Phase 7 WITH project_path.
+  if (!pendingTaskNav && !pendingSessionId) {
+    void markVisibleSessionRead(sessionIdentity.currentSessionId.value, {
+      onMarked: () => { loadSessionsOnce() },
+    }).catch(() => {})
+  }
+
   // ── Phase 7: Handle cross-project pending navigation ──
   if (pendingTaskNav) {
     // Task navigation: ensure tasks loaded, then open the task settings + exec detail
@@ -1062,6 +1095,76 @@ watch(currentPanelTab, (tab) => {
 })
 
 /**
+ * Hand the chat-panel visibility predicate to `sessionReadGate`.
+ *
+ * The gate owns the ONE rule for inferred mark-as-read (completion, cancel,
+ * resume, reconnect, turn boundary, landing) and cannot compute visibility
+ * itself: that needs the narrow-layout `activeTab` (a ref owned here) plus the
+ * wide-screen collapse state. Registered UNCONDITIONALLY during setup — the
+ * gate fails open when nothing is registered, so a conditional registration
+ * would silently restore the bug it exists to prevent.
+ *
+ * Read live on every call (not a snapshot), so a stale closure can never decide
+ * visibility for a layout the user has since left.
+ */
+registerChatPanelVisibility(() =>
+  isChatPanelVisible({
+    isWideScreen: isWideScreen.value,
+    chatCollapsed: chatCollapsed.value,
+    activeTab: activeTab.value,
+  }),
+)
+
+/**
+ * "The chat panel just became visible showing the current session" ⇒ mark it
+ * read. The counterpart of the gate above, and the reason the gate is safe.
+ *
+ * Every gated read answers "was the panel on screen WHEN this event happened?".
+ * That deliberately leaves a badge lit when the answer was no — but the user
+ * may then reveal the panel themselves (switch to the chat tab, expand the
+ * collapsed column, open the session list and pick the row). Without this
+ * watcher none of those paths mark read:
+ *   - `switchTab('chat')` only reloads the session list;
+ *   - ChatPanelContent's `watch(props.active)` only calls `loadHistory`;
+ *   - clicking the ALREADY-current row early-returns in handleSessionSelect.
+ * The badge would then stay lit while the user is staring at the reply — the
+ * exact symptom the gate was introduced to prevent, just from the other side.
+ *
+ * Both dependencies matter: the panel can become visible because the tab/column
+ * changed, and it can start showing a DIFFERENT session while already visible
+ * (the list click path, where the panel never toggles). Watching the composite
+ * key covers both with one trigger.
+ *
+ * `switchSession` also marks read on its own, so a list click issues the read
+ * twice. That is deliberate and harmless: UpdateLastRead is idempotent
+ * (`MAX(now, newest completed_at)`), and dropping this watcher to avoid the
+ * duplicate would leave the tab-switch and column-expand paths uncovered.
+ */
+watch(
+  () => [
+    isChatPanelVisible({
+      isWideScreen: isWideScreen.value,
+      chatCollapsed: chatCollapsed.value,
+      activeTab: activeTab.value,
+    }),
+    sessionIdentity.currentSessionId.value,
+  ] as const,
+  ([visible, sid]) => {
+    if (!visible || !sid) return
+    // Deferred one tick: this fires mid-transition (the session was just set,
+    // the panel is mounting), and issuing the read before the panel's own
+    // loadHistory has settled would race the list refresh against a list
+    // response that still carries the old unread count.
+    nextTick(() => {
+      void markVisibleSessionRead(sid, {
+        onMarked: () => { loadSessionsOnce() },
+      }).catch(() => {})
+    })
+  },
+  { flush: 'post' },
+)
+
+/**
  * Tell the panel-state registry which project is current, so per-project
  * layout keys (and the "布局记忆 = 按项目" seed) resolve against the right root.
  *
@@ -1082,11 +1185,29 @@ function onSplitRatioChange(ratio: number) {
   setSplitRatio(ratio)
 }
 
-// Chat visibility toggle (wide-screen dock bottom button): hide → the chat pane
-// is removed and the left pane takes the full width; show → the split view is
-// restored. Hiding routes focus to the left pane so the user keeps working
-// there (chat shortcuts are intentionally inactive while hidden).
-function handleWideDockChatToggle() {
+// Divider collapse handles: one per side of the boundary.
+//  - 'right' hides the chat pane; focus moves to the left pane so the user keeps
+//    working there (chat shortcuts are intentionally inactive while hidden).
+//  - 'left' hides the left pane. That is the same action as clicking the active
+//    dock tab again, and it goes through the same setter, so the mutual-exclusion
+//    guard (never both panes hidden) lives in exactly one place.
+// Showing the chat pane again is the rail's job: with the pane `display:none`
+// there is no divider left to put a handle on.
+function onSplitCollapse(side: 'left' | 'right') {
+  if (side === 'right') {
+    setChatCollapsed(true)
+    setActivePane(PANE_LEFT)
+    return
+  }
+  setLeftCollapsed(true)
+  setActivePane(PANE_RIGHT)
+}
+
+// Chat visibility toggle, driven by the right-edge rail: show → the split view
+// is restored; hide → the chat pane is removed and the left pane takes the full
+// width. Hiding routes focus to the left pane so the user keeps working there
+// (chat shortcuts are intentionally inactive while hidden).
+function toggleChatPane() {
   const hiding = !chatCollapsed.value
   setChatCollapsed(hiding)
   if (hiding) setActivePane(PANE_LEFT)
@@ -2644,6 +2765,15 @@ async function initializeApp() {
   // exist here. `currentFile` is already populated by the restore above.
   applyProjectPanel(store.state.projectRoot)
 
+  // Cold start lands on a session the same way a project switch does: identity
+  // comes from initSessionFromAPI and the panel's first loadHistory fetches the
+  // conversation, so nothing marks it read (see sessionReadGate). The gate is
+  // evaluated against the layout that was just restored, so a start that lands
+  // on the file manager leaves the badge alone.
+  void markVisibleSessionRead(sessionIdentity.currentSessionId.value, {
+    onMarked: () => { loadSessionsOnce() },
+  }).catch(() => {})
+
   // Web Share Target: an installed PWA receives shared files as a POST to
   // /share-target, which stores them and redirects here with the paths. Runs
   // after the project cookie is set (that is what the upload was written into)
@@ -3474,8 +3604,6 @@ function wideDockTabIcon(tab: string) {
   if (tab === 'forge') return dockTabIcon('forge')
   return dockTabMeta(tab)?.icon ?? FolderOpen
 }
-/** Chat toggle button tooltip: points at the action that will happen on click. */
-const chatToggleTitle = computed(() => (chatCollapsed.value ? t('nav.showChat') : t('nav.hideChat')))
 function wideDockBtnClass(tab: string) {
   return {
     // When the left pane is collapsed no dock tab is active (VS Code-style).
@@ -4786,15 +4914,90 @@ onUnmounted(() => {
     display: none;
 }
 
-/* Bottom section of the vertical dock: chat visibility toggle. The tab group
-   (.wide-dock-center) grows and scrolls; this stays pinned at the bottom. */
-.wide-dock-bottom {
-    flex-shrink: 0;
-    margin-top: auto;
-    padding-bottom: var(--space-4);
+/* Collapsed-chat rail — the 24px strip left at the right edge when the chat
+   pane is hidden. It replaces a floating restore button: a rail keeps the
+   boundary the user just collapsed, so the pane reads as "pushed aside"
+   rather than "gone", and it leaves room for the unread count.
+
+   Positioned over `.content-area` (the SplitView already fills it, and the
+   right pane is `display:none`), so it occupies the exact edge the chat pane
+   used to sit on. `--dp`-based width so it follows the interface scale, but
+   capped: the rail is a target, not content, and 24px is already narrow — at
+   2× it must not eat 48px of the editor.
+
+   Colour follows the same recipe as the divider handles: mix `--text-primary`
+   into the pane colour instead of assuming `--bg-tertiary` differs from
+   `--bg-secondary` (design-guide red line 4). */
+.chat-rail {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 4;
+    width: min(calc(24 * var(--dp)), 30px);
+    padding: 0;
     display: flex;
-    flex-direction: column;
     align-items: center;
+    justify-content: center;
+    border: none;
+    border-left: 1px solid color-mix(in srgb, var(--text-primary) 22%, transparent);
+    background: color-mix(in srgb, var(--text-primary) 6%, var(--bg-secondary));
+    color: var(--text-secondary);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background var(--duration-base), color var(--duration-base);
+}
+/* The icon sits at the vertical centre, where the eye lands, and stays put
+   when the badge appears — the badge is absolutely positioned around it
+   instead of joining the flex flow. */
+.chat-rail-icon {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.chat-rail-icon svg {
+    width: calc(16 * var(--dp));
+    height: calc(16 * var(--dp));
+}
+/* Unread count above the icon, centred inside the rail.
+   The rail is only 24px wide and flush against the viewport edge, so neither of
+   the dock's conventions works here: hanging the badge off the icon's right
+   (`right: -6dp`, what `.dock-badge-count` does) would clip it against the
+   window edge, and growing it leftwards would spill over the panel content the
+   rail sits next to. Stacking it above the icon keeps every part of the
+   affordance inside the rail — which is also why the padding is tightened:
+   the widest case ("99+") is 25px at the shared `.count-badge` metrics and must
+   fit in 24. */
+.chat-rail-badge {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + var(--space-1));
+    transform: translateX(-50%);
+    padding: 0 1px;
+    background: var(--accent-color);
+    color: var(--bg-primary);
+    font-weight: var(--font-weight-bold);
+    pointer-events: none;
+}
+@media (hover: hover) {
+    .chat-rail:hover {
+        color: var(--accent-color);
+        background: color-mix(in srgb, var(--accent-color) 12%, var(--bg-secondary));
+    }
+}
+.chat-rail:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: -2px;
+}
+
+/* The rail is an overlay on the content area's right edge, so the pane under
+   it must give up exactly that width — otherwise the rail covers the last 24px
+   of whatever the left pane is showing (a file list's rightmost column, a
+   terminal's last characters). Padding (not a smaller SplitView) keeps the
+   divider geometry untouched while the chat pane is hidden. */
+.content-area.has-chat-rail {
+    padding-right: min(calc(24 * var(--dp)), 30px);
 }
 
 /* VS Code activity-bar style active highlight: faint translucent theme tint

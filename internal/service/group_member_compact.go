@@ -46,8 +46,10 @@ var (
 	// connection is busy during its own turn, and compaction mid-turn would
 	// interleave two prompts on one ACP session.
 	ErrGroupRunning = errors.New("group turn is running")
-	// ErrGroupMemberNotFound is returned when memberID is not an active member
-	// of groupID (wrong group, removed member, or a non-member row id).
+	// ErrGroupMemberNotFound is returned when memberID is not a member of
+	// groupID (wrong group, or a non-member row id). A DISABLED member still
+	// qualifies: muting only takes it off the schedule, its context window is
+	// exactly what the user may want to compact while it is disabled.
 	ErrGroupMemberNotFound = errors.New("group member not found")
 	// ErrCompactNeedsACP is returned for a CLI-transport member, which has no
 	// slash-command channel.
@@ -114,11 +116,12 @@ func GroupHasCompactingMember(groupID string) bool {
 //
 // Guards, in order:
 //   - the group must be idle (a member connection is busy during a group turn);
-//   - the member must be an ACTIVE member of that group;
+//   - the member must be a member of that group (a DISABLED one qualifies: it is
+//     disabled, but its context window is exactly what may need compacting);
 //   - the member must run over ACP (a CLI agent has no command channel);
 //   - the member must not already be compacting.
 func CompactGroupMember(ctx context.Context, groupID, memberID string) (*ai.UsageState, error) {
-	member, err := activeMember(groupID, memberID)
+	member, err := memberRowInGroup(groupID, memberID)
 	if err != nil {
 		return nil, err
 	}
@@ -238,11 +241,12 @@ func wakeQueuedAfterCompaction(groupID string) {
 	EnsureConsumer(groupID)
 }
 
-// activeMember resolves memberID within groupID, rejecting an empty id, a
-// member of another group, and a member that has left. The group must also be
-// idle: a group turn owns every member connection, so a second prompt on one of
-// them would interleave with the running turn.
-func activeMember(groupID, memberID string) (*GroupMember, error) {
+// memberRowInGroup resolves memberID within groupID, rejecting an empty id and a
+// member of another group. A disabled member is accepted on purpose: it is still a
+// member with its own context window. The group must also be idle: a group turn
+// owns every member connection, so a second prompt on one of them would
+// interleave with the running turn.
+func memberRowInGroup(groupID, memberID string) (*GroupMember, error) {
 	if groupID == "" || memberID == "" {
 		return nil, ErrGroupMemberNotFound
 	}
@@ -256,9 +260,6 @@ func activeMember(groupID, memberID string) (*GroupMember, error) {
 	for i := range members {
 		if members[i].ID != memberID {
 			continue
-		}
-		if members[i].Left {
-			return nil, ErrGroupMemberNotFound
 		}
 		// The member row IS the agent binding: its agent_id is the real agent
 		// (ListGroupMembers reads it from that row), so use it directly rather

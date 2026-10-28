@@ -34,9 +34,11 @@ const (
 	SessionTypeGroup = "group"
 	// SessionTypeGroupMember is a HIDDEN chat_sessions row binding one group
 	// member to its ACP connection (group_id set). It must never surface in a
-	// user-facing session list/count/search, and — because a member that LEFT
-	// a group is archived=1 by design — it must never be treated as
-	// retention-expired either (decision #48).
+	// user-facing session list/count/search, and it must never be treated as
+	// retention-expired either: its row id attributes past speech in the group
+	// timeline (decision #48). Muting a member keeps the row (disabled=1), and
+	// legacy pre-disable databases may still hold archived=1 member rows until the
+	// one-time conversion runs, so the retention query excludes the whole type.
 	SessionTypeGroupMember = "group_member"
 	// SessionTypeScheduled is one task execution's session; listed only via
 	// the explicit "task" type filter, never alongside conversations.
@@ -559,11 +561,13 @@ func MessageIndexCounts() (total int, indexed int, err error) {
 //
 //nolint:errcheck,noctx // legacy query moved from service; rationale documented at the call site
 func GetExpiredArchivedSessions(cutoff time.Time) ([]string, error) {
-	// Exclude hidden group member rows (session_type='group_member'). A member
-	// that LEFT a group is archived=1 by design and must be retained: its past
-	// speech in the group timeline is attributed by its row id (decision #48).
-	// Without this filter, enabling ArchiveRetention would treat "left the
-	// group" as "expired" and hard-delete the row, orphaning that attribution.
+	// Exclude hidden group member rows (session_type='group_member'). A disabled
+	// member keeps its row and must be retained: its past speech in the group
+	// timeline is attributed by its row id (decision #48). Legacy databases may
+	// still hold archived=1 member rows (the pre-disable "removed" representation),
+	// which the one-time conversion turns into disabled=1 — but this filter must not
+	// depend on that migration having run, or enabling ArchiveRetention would
+	// hard-delete the row and orphan the attribution.
 	rows, err := dbRead.Query("SELECT id FROM chat_sessions WHERE archived = 1 AND session_type != ? AND updated_at < ?", SessionTypeGroupMember, cutoff)
 	if err != nil {
 		return nil, err

@@ -620,7 +620,7 @@ const props = defineProps({
    *  session-info bar still renders for a group, but shows ONLY the group-level
    *  switches (auto-cruise, free-mode concurrency, auto-approve). */
   isGroupSession: { type: Boolean, default: false },
-  /** Group member roster ({ id, name, left }). Feeds the @ completion menu so a
+  /** Group member roster ({ id, name, disabled }). Feeds the @ completion menu so a
    *  user can name a speaker in a group chat (design §13.4). */
   groupMembers: { type: Array, default: () => [] },
   /** The group's auto-cruise switch value (server-authoritative, owned by the
@@ -1026,8 +1026,10 @@ function onUsagePopupUpdate(v) {
 // source and select behaviour:
 //   - slash: input starts with "/" and has no space; selecting writes the
 //            command back and closes.
-//   - at:    an "@" preceded by whitespace; selecting attaches the file,
-//            removes the "@query" and keeps the menu open for multi-select.
+//   - at:    an "@" anywhere except straight after an ASCII word character
+//            (so `a@b` stays prose, but `请@某人` triggers); selecting
+//            attaches the file, removes the "@query" and keeps the menu open
+//            for multi-select.
 const clawbenchCommands = computed(() => {
   return [
     { key: '/cb-chatsearch', label: '/cb-chatsearch', description: t('chat.clawbenchCommand.chatsearchDesc') },
@@ -2293,14 +2295,65 @@ defineExpose({
 </script>
 
 <style scoped>
-/* Outer wrapper: top actions + input box stacked vertically */
+/* Outer wrapper: top actions + input box stacked vertically.
+   The horizontal padding is --chat-content-gutter: it grows to half the pane's
+   slack once the pane is wider than the chat reading measure, so the composer
+   block — action bar, recommendation chip, input box, session info — stops
+   stretching and lines up with the message column. Below the measure it
+   collapses to the original 8px inset, so a phone is unchanged.
+   The wrapper itself stays full width, which keeps the top hairline (the inset
+   box-shadow) running edge to edge; a divider that stops mid-pane reads as a
+   broken border. */
 .chat-input-wrapper {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
   margin: 0 0 var(--space-4);
-  padding: var(--space-4) var(--space-4) 0;
+  padding: var(--space-4) var(--chat-content-gutter) 0;
   box-shadow: inset 0 1px 0 var(--border-color, #e5e5e5);
+}
+
+/* ── Wide pane: the composer becomes a dock island ──
+   Once the pane outgrows the chat reading measure the message column is inset
+   from the pane on both sides, so a composer still spanning the full width
+   reads as belonging to a different layout. The whole composer block — action
+   bar, recommendation chip, input box, session info — is lifted onto its own
+   surface instead: inset by the same gutter as the message column, docked to
+   the pane's bottom edge, and rounded on its TOP two corners only (the bottom
+   is the pane edge, so rounding it would leave the island floating with a
+   visible gap under it).
+
+   `60rem` IS `--chat-content-max-width` (`--dp` = 1rem/15, so 900 design px),
+   and `+1px` flips exactly when the gutter stops being zero. In rem rather
+   than px so the threshold follows the UI scale. The container is
+   `.chat-panel-content` (container-name: chat-pane).
+
+   Below the measure none of this applies: the composer stays the flat,
+   full-width strip it has always been, separated from the messages by its
+   hairline. */
+@container chat-pane (min-width: calc(60rem + 1px)) {
+  .chat-input-wrapper {
+    margin: 0 var(--chat-content-gutter);
+    padding: var(--space-4) var(--space-4) var(--space-3);
+    /* Surface: a text-primary mix rather than a fixed `--bg-tertiary` step,
+       because 15 of the 36 themes have a secondary↔tertiary contrast under
+       1.12 and the island would vanish (see design-guide 红线 4).
+       The outer mix applies --panel-alpha, which is 100% unless a wallpaper is
+       active — then it goes translucent like every other card surface, instead
+       of becoming an opaque block over the wallpaper. Nested color-mix is
+       supported in Chromium, Firefox and WebKit (verified). */
+    background: color-mix(
+      in srgb,
+      color-mix(in srgb, var(--text-primary) 4%, var(--bg-secondary)) var(--panel-alpha),
+      transparent
+    );
+    border: 1px solid var(--border-color);
+    /* No bottom border: that edge is the pane's own. */
+    border-bottom: none;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    /* The island's top border replaces the hairline separator. */
+    box-shadow: none;
+  }
 }
 
 /* Session info bar (model + mode, below input box) */

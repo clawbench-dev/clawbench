@@ -317,6 +317,23 @@ describe('SettingsPage — header', () => {
 })
 
 describe('SettingsPage — deep link from theme picker (more appearance options)', () => {
+  it('opens a detail deep link together with its parent list', async () => {
+    // Agent drawer gear → agent detail. The detail page is a child of the
+    // agents list, so the trail must read 设置 › 智能体 › <名称> — pushing the
+    // detail alone dropped the intermediate level entirely.
+    const wrapper = mountPage({}, { pendingCategory: 'agents:abc' })
+    await flushPromises()
+    expect(mockNavStack.value).toEqual(['agents', 'agents:abc'])
+    wrapper.unmount()
+  })
+
+  it('opens a top-level deep link without inventing a parent', async () => {
+    const wrapper = mountPage({}, { pendingCategory: 'about' })
+    await flushPromises()
+    expect(mockNavStack.value).toEqual(['about'])
+    wrapper.unmount()
+  })
+
   it('opens the pending category on first mount (lazy TabPanel mount)', async () => {
     const wrapper = mountPage({}, { pendingCategory: 'appearance' })
     await flushPromises()
@@ -445,16 +462,22 @@ describe('SettingsPage — breadcrumbs', () => {
   })
 
   it('uses the agent name for agents:{id} routes', () => {
-    const wrapper = mountPage({}, { navStack: ['agents:abc'], currentCategory: 'agents:abc' })
+    const wrapper = mountPage({}, { navStack: ['agents', 'agents:abc'], currentCategory: 'agents:abc' })
     const crumbs = wrapper.findAll('.crumb')
-    expect(crumbs.map(c => c.text())).toEqual(['nav.settings', 'Agent One'])
+    expect(crumbs.map(c => c.text())).toEqual(['nav.settings', 'settings.categories.agents', 'Agent One'])
   })
 
-  it('falls back to categories.agents when the agent is not found', () => {
+  it('falls back to a distinct detail label when the agent is not found', () => {
+    // The parent crumb already says 智能体; repeating it here read
+    // 设置 › 智能体 › 智能体. Same rule as project:<id> → 项目详情.
     mockGetAgent.mockReturnValueOnce(null)
-    const wrapper = mountPage({}, { navStack: ['agents:unknown'], currentCategory: 'agents:unknown' })
+    const wrapper = mountPage({}, { navStack: ['agents', 'agents:unknown'], currentCategory: 'agents:unknown' })
     const crumbs = wrapper.findAll('.crumb')
-    expect(crumbs.map(c => c.text())).toEqual(['nav.settings', 'settings.categories.agents'])
+    expect(crumbs.map(c => c.text())).toEqual([
+      'nav.settings',
+      'settings.categories.agents',
+      'settings.items.agentDetailTitle',
+    ])
   })
 
   it('marks only the last crumb as current', () => {

@@ -388,7 +388,8 @@ const hasUsage = computed(() => {
 const hasWindow = computed(() => (usageSnapshot.value?.size ?? 0) > 0)
 // Compaction is offered for a group member (it is a group-only action) and for
 // the current single chat. A member that never reported a window has nothing to
-// compact, and a left member cannot run a turn.
+// compact. A DISABLED member still can: muting only removes it from the schedule,
+// its context window is untouched (and is what most needs compacting).
 //
 // A CLI-transport member must NOT offer it either: /compact is an ACP slash
 // command, and a CLI agent has no command channel — sending the text would reach

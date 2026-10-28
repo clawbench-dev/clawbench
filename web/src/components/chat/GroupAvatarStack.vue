@@ -64,8 +64,10 @@ const { t } = useI18n()
 const sheetRef = ref<InstanceType<typeof GroupSettingsSheet> | null>(null)
 
 // Map the group roster to the generic stack shape (isHost drives the ring).
+// Disabled members are still listed in the settings sheet, but the header stack
+// shows who is actually scheduled to speak.
 const stackMembers = computed(() =>
-  props.members.map(m => ({
+  props.members.filter(m => !m.disabled).map(m => ({
     id: m.id,
     agentId: m.agentId,
     name: m.name,

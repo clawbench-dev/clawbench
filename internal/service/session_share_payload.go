@@ -103,12 +103,12 @@ type SessionSharePayload struct {
 	// only for group sessions.
 	SessionAgent *SpeakerIdentity           `json:"sessionAgent,omitempty"`
 	Speakers     map[string]SpeakerIdentity `json:"speakers,omitempty"`
-	// GroupMembers is the group's ACTIVE roster, in roster order, with the host
-	// flagged — present only for group sessions. The viewer's topbar renders the
-	// same overlapping avatar stack the in-app group header shows. Speakers
-	// cannot serve this: it is a map (JSON-marshaled with UUID-sorted keys, so
-	// the order is random) that also includes LEFT members, and it carries no
-	// isHost flag. Each preview carries the member's own avatar (agent_avatar),
+	// GroupMembers is the group's SPEAKING roster (disabled members excluded), in
+	// roster order, with the host flagged — present only for group sessions. The
+	// viewer's topbar renders the same overlapping avatar stack the in-app group
+	// header shows. Speakers cannot serve this: it is a map (JSON-marshaled with
+	// UUID-sorted keys, so the order is random) that also includes disabled members,
+	// and it carries no isHost flag. Each preview carries the member's own avatar (agent_avatar),
 	// so the viewer draws the same discs without a DiceBear runtime; a member
 	// with no avatar falls back to the per-backend brand icon.
 	GroupMembers []model.GroupMemberPreview `json:"groupMembers,omitempty"`
@@ -134,8 +134,8 @@ type SessionShareSession struct {
 	UserNickname string `json:"userNickname,omitempty"`
 	// SessionType is the chat_sessions.session_type value ("chat" / "group" /
 	// "group_member"). The viewer needs an EXPLICIT signal: the roster is not
-	// one — GroupMembersForGroups returns only ACTIVE members, so a group whose
-	// members all left would look like a single-agent session, and the reader
+	// one — GroupMembersForGroups returns only SPEAKING members, so a group whose
+	// members are all disabled would look like a single-agent session, and the reader
 	// would then see the raw <clawbench-mention> routing tags instead of
 	// resolved @-chips.
 	SessionType string `json:"sessionType,omitempty"`
@@ -354,13 +354,13 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, createdAt ti
 	sessionAgent, speakers := resolveSessionSpeakersWithInfo(info, sessionID)
 
 	// The viewer's topbar renders the same avatar stack the in-app group header
-	// shows: the ACTIVE roster in roster order with the host flagged.
+	// shows: the SPEAKING roster in roster order with the host flagged.
 	// GroupMembersForGroups is the exact source the session list uses. Best-effort:
 	// a failure must not fail the share (the topbar then falls back to the single
 	// session-agent icon).
 	//
 	// Read once and reused for SessionType: the payload must report the type even
-	// when the roster comes back empty (every member left), so the viewer cannot
+	// when the roster comes back empty (every member disabled), so the viewer cannot
 	// use "roster is non-empty" as the group signal.
 	sessionType := GetSessionType(sessionID)
 	var groupMembers []model.GroupMemberPreview

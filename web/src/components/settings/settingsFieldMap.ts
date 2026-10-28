@@ -463,15 +463,18 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   // (cycle, metric, budget) is a distinct subject — burying it as a card
   // under 推送通知 made it read as one more push channel.
   usageMeter: [
-    // A single global rule (cycle + metric + quota).
-    //
-    // Grouped into a panel rather than four flat rows: the fields are
-    // meaningless in isolation (a quota without a cycle has no baseline), and
-    // the entry row shows the metric so the user can see which unit they are
-    // budgeting in without opening it.
+    // A single global rule. Every field is optional: the meter shows the largest
+    // readout the configuration supports, from "total for all time" up to
+    // "day N of M against a budget". The enable switch is the only on/off.
   { type: 'panel', config: {
     panelId: 'usageMeter',
     titleKey: 'settings.items.usageMeter',
+    // The switch is its own row at the top of the panel rather than a field in
+    // the list: it decides whether ANY of the rows below take effect. While it
+    // is off the rows are disabled (not hidden), so the stored rule stays
+    // visible — switching it back on does not require retyping anything.
+    enableKey: 'usage_meter.enabled',
+    enableLabelKey: 'settings.items.usageMeterEnabled',
     entrySelector: {
       // "Usage type", not "Usage": the row selects WHAT is counted (tokens /
       // credit / cost). Reusing the category title made it read as a repeat of
@@ -502,10 +505,15 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.usageMeterAnchor', descriptionKey: 'settings.items.usageMeterAnchorDesc', key: 'usage_meter.anchor_date', type: 'datetime', source: 'server', displayTransform: formatAnchorForDisplay },
       // Hidden in monthly mode: the cycle length comes from the calendar, so an
       // editable day count would be a value the user can change that has no
-      // effect. The server keeps the stored number valid so switching back to
-      // "fixed" does not land on 0 (see ApplyDefaults).
-      { labelKey: 'settings.items.usageMeterPeriod', descriptionKey: 'settings.items.usageMeterPeriodDesc', key: 'usage_meter.period_days', type: 'number', source: 'server', dependsOn: { key: 'usage_meter.cycle_mode', value: 'fixed' } },
-      { labelKey: 'settings.items.usageMeterQuota', descriptionKey: 'settings.items.usageMeterQuotaDesc', key: 'usage_meter.quota', type: 'number', source: 'server' },
+      // effect.
+      //
+      // 0 is meaningful ("no cycle: the total never resets"), so it is not
+      // replaced with a default — inventing 30 would silently roll the user's
+      // running total over every month.
+      { labelKey: 'settings.items.usageMeterPeriod', descriptionKey: 'settings.items.usageMeterPeriodDesc', key: 'usage_meter.period_days', type: 'number', source: 'server', min: 0, max: 366, dependsOn: { key: 'usage_meter.cycle_mode', value: 'fixed' } },
+      // 0 is meaningful here too ("no budget"), which is why the row is not
+      // required and the panel never blocks a save on it.
+      { labelKey: 'settings.items.usageMeterQuota', descriptionKey: 'settings.items.usageMeterQuotaDesc', key: 'usage_meter.quota', type: 'number', source: 'server', min: 0 },
     ],
     requiredFields: [],
     // Switching the metric changes the unit, so a stored quota would silently

@@ -172,6 +172,21 @@ describe('SplitView', () => {
     expect(wrapper.find('.split-view__divider').exists()).toBe(true)
   })
 
+  it('collapseLeft/collapseRight forward both handles and relay the side clicked', async () => {
+    // These handles are the only way to hide either pane (the dock button that
+    // used to hide the chat pane was removed), so the wiring through SplitView
+    // must hold for both sides.
+    wrapper = mountSplit({ enabled: true, ratio: 0.5, collapseLeft: true, collapseRight: true })
+    await wrapper.find('[data-collapse="left"]').trigger('click')
+    await wrapper.find('[data-collapse="right"]').trigger('click')
+    expect(wrapper.emitted('collapse')).toEqual([['left'], ['right']])
+  })
+
+  it('no collapse handles by default', () => {
+    wrapper = mountSplit({ enabled: true, ratio: 0.5 })
+    expect(wrapper.find('.split-view__collapse-btn').exists()).toBe(false)
+  })
+
   it('aria-valuenow/min/max are on the same percentage scale', async () => {
     const rect = { left: 0, width: 1000, top: 0, bottom: 0, height: 600, right: 1000, x: 0, y: 0, toJSON() {} }
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rect as DOMRect)

@@ -131,11 +131,11 @@ export class NavigationPage {
     await this.waitForLayoutSettled()
     const wide = await this.page.evaluate(() => window.innerWidth >= 960)
     if (wide) {
-      // In wide mode chat lives in the right pane and is toggled by its own
-      // button; aria-pressed reflects whether chat is shown.
-      const chatToggle = this.page.locator('.wide-dock-bottom .dock-btn[data-tab="chat"]')
-      const pressed = await chatToggle.getAttribute('aria-pressed')
-      if (pressed !== 'true') await chatToggle.click()
+      // In wide mode chat lives in the right pane. When it is collapsed the
+      // pane is `display:none` and a 24px rail remains at the right edge; the
+      // rail only exists while collapsed, so its presence IS the state check.
+      const rail = this.page.locator('[data-action="show-chat"]')
+      if (await rail.isVisible().catch(() => false)) await rail.click()
       await expect(this.page.locator('.chat-textarea')).toBeVisible({ timeout: 10000 })
       return
     }

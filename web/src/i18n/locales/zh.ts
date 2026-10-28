@@ -85,6 +85,7 @@ export default {
     more: '更多',
     settings: '设置',
     stats: '数据统计',
+    hideLeftPane: '隐藏左侧面板',
     hideChat: '隐藏聊天区域',
     showChat: '显示聊天区域',
   },
@@ -218,6 +219,15 @@ export default {
     badgeOk: '在计划内',
     badgeOver: '超出计划 {pct}%',
     badgeFull: '已用尽',
+    // Shown when the rule has no quota. "On plan" would claim a budget the user
+    // never set, so the badge states what it can actually see instead.
+    badgeNoQuota: '仅统计用量',
+    // Shown when a quota exists but no cycle does. There is a budget, but no
+    // time axis to be "on plan" against, so the badge must not claim one.
+    badgeNoCycle: '未设周期',
+    // Window description when the rule has no cycle (no period configured).
+    allTime: '全部历史累计',
+    sinceDate: '自 {date} 起累计',
     adjust: '调整额度与周期 →',
     openSettings: '打开用量设置',
     trendLabel: '累计用量与匀速基准对比',
@@ -1005,6 +1015,7 @@ export default {
       // that; free mode requires two). The group is valid — it just routes like
       // a single chat, which is why it looks silent.
       groupSoloMemberHint: '这是一个只有你自己的群。添加成员后，他们才能参与对话。',
+      groupSoloDisabledHint: '其他成员都已禁用，所以现在只有你在说话。启用他们就能继续讨论。',
       noAgentsTitle: '暂无可用智能体',
       noAgentsDesc: '安装并配置 AI 智能体以开始对话。',
       noAgentsAction: '配置智能体',
@@ -1304,7 +1315,8 @@ export default {
     newGroup: '新建群聊',
     title: '群聊',
     host: '主持人',
-    hostNotRemovable: '主持人是群的唯一调度者，不能移除',
+    hostCannotDisable: '主持人是群的唯一调度者，不能禁用',
+    lastSpeakerCannotDisable: '最后一位可发言的成员不能禁用——否则群里就没有人能接话了',
     realAgent: '真实智能体',
     // The reserved human participant name ("User") shown to the reader.
     you: '你',
@@ -1318,7 +1330,9 @@ export default {
     addMembers: '添加成员',
     settings: '群聊设置',
     members: '成员',
-    left: '已离场',
+    disabled: '已禁用',
+    disable: '禁用（调度时不再安排它发言）',
+    enable: '启用（恢复发言，并让它看到禁用期间的内容）',
     memberDetail: {
       open: '查看该成员设置',
       agent: '智能体',
@@ -1327,7 +1341,7 @@ export default {
       modelInherited: '该成员使用 {model}（继承智能体默认）',
       noUsage: '该成员还没有上报上下文用量。使用 CLI 传输的智能体不上报上下文窗口。',
       noUsageShort: '该成员未上报上下文用量',
-      compactUnavailable: '当前无法压缩：群聊正在执行本轮讨论，或该成员不在讨论中。',
+      compactUnavailable: '当前无法压缩：群聊正在执行本轮讨论。',
       compactHint: '压缩只影响该成员自己的上下文，不会写入群聊记录。',
       compacting: '正在压缩该成员的上下文，通常需要十几秒…',
     },
@@ -1761,6 +1775,7 @@ export default {
       archiveDir: '打包下载',
       downloadTree: '下载',
       shareExternal: '分享',
+      shareLink: '分享链接',
     },
     multiSelect: {
       enter: '多选',
@@ -2855,6 +2870,10 @@ export default {
       agentNotFound: '智能体不存在或已被移除',
       agentNotFoundHint: '它可能已被删除，或在重新扫描后不再可用。返回列表查看当前可用的智能体。',
       agentBackToList: '返回智能体列表',
+      // Breadcrumb label for the agent detail level while its name is unknown
+      // (list not fetched yet, or the agent was deleted). Using the parent's
+      // label instead would read 设置 › 智能体 › 智能体.
+      agentDetailTitle: '智能体详情',
       chatInitialMessages: '初始消息数',
       chatInitialMessagesDesc: '首次加载聊天时获取的历史消息数量',
       chatPageSize: '每页消息数',
@@ -3271,19 +3290,20 @@ export default {
       feishuAppSecretDesc: '企业应用 App Secret，保存后脱敏显示',
       usageMeterSection: '用量',
       usageMeter: '用量',
-      usageMeterDesc: '按周期统计全部项目的用量。系统按时间比例算出此刻「最多该用多少」，实际超出时提醒一次，用尽再提醒一次。额度留空即关闭。',
+      usageMeterDesc: '统计全部项目的用量。每一项都是可选的：只填起始时间就显示「从那时起到现在用了多少」；再加周期就按周期统计并算出此刻「最多该用多少」，超出提醒一次、用尽再提醒一次；额度留空则只统计不设预算。',
+      usageMeterEnabled: '启用用量统计',
       usageMeterCycleMode: '周期类型',
       usageMeterCycleModeDesc: '自然月按日历月滚动：换周期的日子取自「起始时间」的日号（1 号即自然月），周期长度是当月实际天数。固定天数则从起始时间起每 N 天一轮。',
       usageMeterCycleModeMonthly: '自然月',
       usageMeterCycleModeFixed: '固定天数',
       usageMeterAnchor: '起始时间',
-      usageMeterAnchorDesc: '周期从这个时刻开始，按服务端本地时区计算。时间留空即从当天 0 点开始；填上时间可让周期在指定的时刻滚动。选自然月时，这里的日号就是每月换周期的那一天。',
+      usageMeterAnchorDesc: '从这个时刻开始统计，按服务端本地时区计算。留空表示统计全部历史。填上时间可让周期在指定的时刻滚动；选自然月时，这里的日号就是每月换周期的那一天。',
       usageMeterPeriod: '周期',
-      usageMeterPeriodDesc: '从起始日期起每 N 天为一轮，到点自动滚动到下一轮（1–366）',
+      usageMeterPeriodDesc: '从起始时间起每 N 天为一轮，到点自动滚动（1–366）。留 0 表示不设周期，累计值永不归零',
       usageMeterMetric: '用量类型',
       usageMeterMetricDesc: '额度按什么计量。token、credit 与费用是不同的量纲，无法互相换算，因此切换类型会清空额度。',
       usageMeterQuota: '额度',
-      usageMeterQuotaDesc: '一个完整周期允许的用量，填 0 或留空即关闭',
+      usageMeterQuotaDesc: '一个周期的预算。填 0 或留空表示不设预算，只统计用量、不做超额提醒',
       usageMeterMetricTokens: 'Token',
       usageMeterMetricCredit: 'Credit',
       usageMeterMetricCost: '费用（USD）',

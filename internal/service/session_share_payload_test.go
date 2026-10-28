@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 			transport TEXT NOT NULL DEFAULT '',
 			auto_approve INTEGER NOT NULL DEFAULT 0,
 			archived INTEGER NOT NULL DEFAULT 0,
+			disabled INTEGER NOT NULL DEFAULT 0,
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			group_id TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1165,11 +1166,13 @@ func TestSessionSharePayload_GroupCarriesHostMemberID(t *testing.T) {
 
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model, session_type, context_state)
-		 VALUES ('g1', 1, 'codebuddy', 'Group', 'codebuddy', 'm', 'group', '{"host_member_id":"row-host-1"}')`)
+		 VALUES ('g1', 1, 'codebuddy', 'Group', 'codebuddy', 'm', 'group', '{"host_member_id":"row-host-1"}')`,
+	)
 	require.NoError(t, err)
 	_, err = db.Exec(
 		`INSERT INTO chat_history (project_id, role, content, session_id, backend, agent_id, streaming, indexed)
-		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 'g1', 'codebuddy', 'row-host-1', 0, 0)`)
+		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 'g1', 'codebuddy', 'row-host-1', 0, 0)`,
+	)
 	require.NoError(t, err)
 
 	raw, _, err := buildAllForSession(t, "g1")
@@ -1190,11 +1193,13 @@ func TestSessionSharePayload_PlainSessionHasNoHostMemberID(t *testing.T) {
 	defer db.Close()
 
 	_, err := db.Exec(
-		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model) VALUES ('s1', 1, 'claude', 'Plain', 'claude', 'm')`)
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model) VALUES ('s1', 1, 'claude', 'Plain', 'claude', 'm')`,
+	)
 	require.NoError(t, err)
 	_, err = db.Exec(
 		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, indexed)
-		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 's1', 'claude', 0, 0)`)
+		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 's1', 'claude', 0, 0)`,
+	)
 	require.NoError(t, err)
 
 	raw, _, err := buildAllForSession(t, "s1")
@@ -1209,9 +1214,9 @@ func TestSessionSharePayload_PlainSessionHasNoHostMemberID(t *testing.T) {
 	assert.Empty(t, payload.Session.HostMemberID)
 }
 
-// A shared GROUP must carry its ACTIVE roster (ordered, host flagged) so the
+// A shared GROUP must carry its speaking roster (ordered, host flagged) so the
 // public topbar can render the same overlapping avatar stack the in-app group
-// header shows. Left members must be excluded and order must be roster order
+// header shows. Disabled members must be excluded and order must be roster order
 // (created_at, rowid) — NOT the UUID-sorted order the `speakers` map marshals.
 func TestSessionSharePayload_GroupCarriesOrderedActiveMembers(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
@@ -1219,26 +1224,29 @@ func TestSessionSharePayload_GroupCarriesOrderedActiveMembers(t *testing.T) {
 
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model, session_type, context_state)
-		 VALUES ('g1', 1, 'codebuddy', 'Group', 'codebuddy', 'm', 'group', '{"host_member_id":"m-host"}')`)
+		 VALUES ('g1', 1, 'codebuddy', 'Group', 'codebuddy', 'm', 'group', '{"host_member_id":"m-host"}')`,
+	)
 	require.NoError(t, err)
 	// Member rows: the host first (created_at order), then a plain member, then a
-	// LEFT member that must be excluded. group_id points each row at the group.
+	// DISABLED member that must be excluded. group_id points each row at the group.
 	// The member's display name lives in agent_name (title is left empty).
-	insertMember := func(id, name, backend string, archived int, createdAt string) {
+	insertMember := func(id, name, backend string, disabled int, createdAt string) {
 		t.Helper()
 		_, err := db.Exec(
-			`INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id, archived, created_at)
+			`INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id, disabled, created_at)
 			 VALUES (?, 1, ?, '', ?, ?, 'group_member', 'g1', ?, ?)`,
-			id, backend, name, id, archived, createdAt)
+			id, backend, name, id, disabled, createdAt,
+		)
 		require.NoError(t, err)
 	}
 	insertMember("m-host", "Host", "codebuddy", 0, "2026-01-01 10:00:00")
 	insertMember("m-second", "Second", "claude", 0, "2026-01-01 10:01:00")
-	insertMember("m-left", "Gone", "gemini", 1, "2026-01-01 10:02:00")
+	insertMember("m-disabled", "Gone", "gemini", 1, "2026-01-01 10:02:00")
 
 	_, err = db.Exec(
 		`INSERT INTO chat_history (project_id, role, content, session_id, backend, agent_id, streaming, indexed)
-		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 'g1', 'codebuddy', 'm-host', 0, 0)`)
+		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 'g1', 'codebuddy', 'm-host', 0, 0)`,
+	)
 	require.NoError(t, err)
 
 	raw, _, err := buildAllForSession(t, "g1")
@@ -1255,16 +1263,16 @@ func TestSessionSharePayload_GroupCarriesOrderedActiveMembers(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(raw), &payload))
 
-	require.Len(t, payload.GroupMembers, 2, "left members must be excluded from the stack")
+	require.Len(t, payload.GroupMembers, 2, "disabled members must be excluded from the stack")
 	// Roster order: host first (created_at), then the second member.
 	assert.Equal(t, "m-host", payload.GroupMembers[0].ID)
 	assert.Equal(t, "Host", payload.GroupMembers[0].Name)
 	assert.True(t, payload.GroupMembers[0].IsHost, "the host must be flagged")
 	assert.Equal(t, "m-second", payload.GroupMembers[1].ID)
 	assert.False(t, payload.GroupMembers[1].IsHost)
-	// The left member is absent.
+	// The disabled member is absent.
 	for _, m := range payload.GroupMembers {
-		assert.NotEqual(t, "m-left", m.ID)
+		assert.NotEqual(t, "m-disabled", m.ID)
 	}
 }
 
@@ -1275,11 +1283,13 @@ func TestSessionSharePayload_PlainSessionHasNoGroupMembers(t *testing.T) {
 	defer db.Close()
 
 	_, err := db.Exec(
-		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model) VALUES ('s1', 1, 'claude', 'Plain', 'claude', 'm')`)
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model) VALUES ('s1', 1, 'claude', 'Plain', 'claude', 'm')`,
+	)
 	require.NoError(t, err)
 	_, err = db.Exec(
 		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, indexed)
-		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 's1', 'claude', 0, 0)`)
+		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 's1', 'claude', 0, 0)`,
+	)
 	require.NoError(t, err)
 
 	raw, _, err := buildAllForSession(t, "s1")
@@ -1324,18 +1334,19 @@ func TestSessionSharePayload_SessionTypeIsExplicit(t *testing.T) {
 	})
 
 	// Regression guard for "roster is not a group signal": every member row is
-	// archived (left), so GroupMembersForGroups returns nothing, yet the session
-	// is still a group and the viewer must strip the routing protocol.
-	t.Run("group with every member gone still reports group", func(t *testing.T) {
+	// disabled, so GroupMembersForGroups returns nothing, yet the session is still a
+	// group and the viewer must strip the routing protocol.
+	t.Run("group with every member disabled still reports group", func(t *testing.T) {
 		db := setupTestDBForSessionSharePayload(t)
 		defer db.Close()
 
 		seedGroupSession(t, db, "g1")
 		for _, id := range []string{"m-host", "m-second"} {
 			_, err := db.Exec(
-				`INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id, archived)
+				`INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id, disabled)
 				 VALUES (?, 1, 'codebuddy', '', ?, ?, 'group_member', 'g1', 1)`,
-				id, id, id)
+				id, id, id,
+			)
 			require.NoError(t, err)
 		}
 		seedMessage(t, db, "g1", "user", `<clawbench-mention targets="m-host">hi</clawbench-mention>`, 0, 0)
@@ -1347,7 +1358,7 @@ func TestSessionSharePayload_SessionTypeIsExplicit(t *testing.T) {
 		// The roster is genuinely empty — this is exactly why the type must be
 		// carried separately rather than inferred from the member list.
 		members, _ := payload["groupMembers"].([]any)
-		assert.Empty(t, members, "all members left, so the active roster is empty")
+		assert.Empty(t, members, "all members are disabled, so the speaking roster is empty")
 
 		session, ok := payload["session"].(map[string]any)
 		require.True(t, ok)

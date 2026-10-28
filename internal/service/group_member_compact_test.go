@@ -343,7 +343,7 @@ func TestActiveMember_AgentIDRequired(t *testing.T) {
 	_, werr := store.WriteExec("UPDATE chat_sessions SET agent_id = '' WHERE id = ?", memberID)
 	require.NoError(t, werr)
 
-	_, err = activeMember(groupID, memberID)
+	_, err = memberRowInGroup(groupID, memberID)
 	assert.ErrorIs(t, err, ErrGroupMemberNotFound)
 }
 
@@ -363,7 +363,7 @@ func TestActiveMember_ListErrorPropagates(t *testing.T) {
 
 	restore := store.SnapshotDBForTest()
 	store.Close()
-	_, err = activeMember(groupID, "whatever")
+	_, err = memberRowInGroup(groupID, "whatever")
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, ErrGroupMemberNotFound),
 		"a DB failure must not be reported as a missing member")

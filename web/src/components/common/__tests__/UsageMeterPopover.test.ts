@@ -224,3 +224,133 @@ describe('UsageMeterPopover — no rule configured', () => {
     expect(mockSwitchTab).toHaveBeenCalledWith('settings')
   })
 })
+
+// ── Partial rules: show the largest readout the configuration supports ──────
+// Every field is optional, and an unset one means INFINITE, not absent: no quota
+// is an unlimited budget, no period is a cycle that never rolls over. The
+// popover therefore keeps the full readout shape and shows ∞ where the user
+// never set a bound — dropping the row instead made the panel change shape
+// depending on configuration, and read as "measurement missing".
+describe('UsageMeterPopover — optional quota and cycle', () => {
+  const INFINITE = '\u221e'
+
+  function withoutQuota(): UsageMeterStatus {
+    return status({
+      quota: 0,
+      expected: 0,
+      projectedExhaustDay: 0,
+      series: Array.from({ length: 10 }, (_, i) => ({
+        day: `2026-10-${String(i + 1).padStart(2, '0')}`,
+        actual: (i + 1) * 1.5,
+        expected: 0,
+      })),
+    })
+  }
+
+  function withoutCycle(): UsageMeterStatus {
+    return status({
+      periodDays: 0,
+      cycleEnd: undefined,
+      expected: 0,
+      remainingDays: 0,
+      projectedExhaustDay: 0,
+    })
+  }
+
+  it('keeps the capsule and shows ∞ instead of a quota', () => {
+    const wrapper = mountPopover(withoutQuota(), 'ok')
+
+    expect(wrapper.find('[data-action="usage-meter"]').exists()).toBe(true)
+    expect(wrapper.find('.usage-used').exists()).toBe(true)
+    expect(wrapper.get('.usage-quota').text()).toContain(INFINITE)
+    // The bar has no meaning against an unlimited budget: a track filled to 0%
+    // would read as "you have used none of nothing".
+    expect(wrapper.find('.usage-bar').exists()).toBe(false)
+  })
+
+  it('does not claim "on plan" when there is no plan to be on', () => {
+    const wrapper = mountPopover(withoutQuota(), 'ok')
+    const pop = wrapper.get('.um-pop')
+    expect(pop.text()).toContain('usageMeter.badgeNoQuota')
+    expect(pop.text()).not.toContain('usageMeter.badgeOk')
+  })
+
+  it('keeps every comparison row, showing ∞ for the unbounded ones', () => {
+    const wrapper = mountPopover(withoutQuota(), 'ok')
+    const rows = wrapper.findAll('.um-row')
+    expect(rows).toHaveLength(3)
+
+    const [actualRow, expectedRow, quotaRow] = rows
+    expect(actualRow.text()).toContain('usageMeter.actual')
+    expect(expectedRow.text()).toContain('usageMeter.expected')
+    expect(expectedRow.text()).toContain(INFINITE)
+    expect(quotaRow.text()).toContain('usageMeter.quota')
+    expect(quotaRow.text()).toContain(INFINITE)
+  })
+
+  it('keeps every stat, showing ∞ for the budget-derived ones', () => {
+    const wrapper = mountPopover(withoutQuota(), 'ok')
+    const labels = wrapper.findAll('.um-stat-label').map(n => n.text())
+    expect(labels).toEqual([
+      'usageMeter.remaining',
+      'usageMeter.remainingDays',
+      'usageMeter.projected',
+      'usageMeter.dailyLeft',
+    ])
+
+    const values = wrapper.findAll('.um-stat-value').map(n => n.text())
+    // remaining and daily-left are infinite; the projection says it never runs
+    // out (which is the accurate reading of an unlimited budget).
+    expect(values[0]).toContain(INFINITE)
+    expect(values[2]).toContain('usageMeter.projectedNone')
+    expect(values[3]).toContain(INFINITE)
+  })
+
+  it('still draws the actual curve without a quota, but no baseline', () => {
+    const wrapper = mountPopover(withoutQuota(), 'ok')
+
+    expect(wrapper.find('.um-actual-line').exists()).toBe(true)
+    expect(wrapper.find('.um-expected-line').exists()).toBe(false)
+    expect(wrapper.find('.um-quota-line').exists()).toBe(false)
+    expect(wrapper.find('.um-projection').exists()).toBe(false)
+  })
+
+  it('counts days against ∞ when there is no cycle', () => {
+    const wrapper = mountPopover(withoutCycle(), 'ok')
+    const period = wrapper.get('.um-period').text()
+
+    // The day counter stays (it is real information); only its denominator
+    // becomes infinite.
+    expect(period).toContain('usageMeter.dayOfCycle')
+    expect(period).toContain('usageMeter.sinceDate')
+  })
+
+  it('falls back to "all time" when neither a cycle nor an anchor exists', () => {
+    const wrapper = mountPopover(
+      status({ periodDays: 0, cycleStart: undefined, cycleEnd: undefined, dayInCycle: 0, expected: 0, remainingDays: 0 }),
+      'ok',
+    )
+    expect(wrapper.get('.um-period').text()).toContain('usageMeter.allTime')
+  })
+
+  it('does not claim "on plan" when there is a quota but no cycle', () => {
+    // A budget with no time axis has no "by now" to compare against, so the
+    // baseline never exists and "on plan" would be an unsupported claim.
+    const wrapper = mountPopover(withoutCycle(), 'ok')
+    const pop = wrapper.get('.um-pop')
+    expect(pop.text()).toContain('usageMeter.badgeNoCycle')
+    expect(pop.text()).not.toContain('usageMeter.badgeOk')
+  })
+
+  it('keeps the quota row but shows ∞ days-left without a cycle', () => {
+    const wrapper = mountPopover(withoutCycle(), 'ok')
+
+    const quotaRow = wrapper.findAll('.um-row')[2]
+    expect(quotaRow.text()).toContain('30')
+
+    const labels = wrapper.findAll('.um-stat-label').map(n => n.text())
+    const values = wrapper.findAll('.um-stat-value').map(n => n.text())
+    const daysLeft = values[labels.indexOf('usageMeter.remainingDays')]
+    expect(daysLeft).toContain(INFINITE)
+  })
+})

@@ -96,6 +96,12 @@ Rules:
 // by btwContextBudgetChars. It reuses the fork-context compressor so /btw and
 // fork/rewind cannot drift apart in how they trim and prioritize history.
 //
+// Unlike the fork paths it INCLUDES the in-flight reply (IncludeStreaming): the
+// question is typically asked while the agent is still writing ("what does that
+// mean?"), so the half-written reply is the subject, not noise. The renderer
+// marks it as partial so the model does not read a mid-sentence stop as a
+// finished answer.
+//
 // Returns "" when the session has no renderable history; the caller still asks
 // the question, just without context.
 func BuildBtwContext(sessionID string) string {
@@ -105,6 +111,7 @@ func BuildBtwContext(sessionID string) string {
 		CapitalizeRoles:   true,
 		PlainTextFallback: true,
 		BudgetChars:       btwContextBudgetChars,
+		IncludeStreaming:  true,
 	})
 }
 
@@ -212,7 +219,8 @@ func persistBtwQuestion(sessionID, projectPath string, anchorID int64, question,
 // ListBtwQuestions returns a session's /btw records in chronological order,
 // oldest first. The chat list groups them by anchor to render its markers.
 func ListBtwQuestions(sessionID string) ([]BtwQuestion, error) {
-	rows, err := store.ReadDB().QueryContext(context.Background(),
+	rows, err := store.ReadDB().QueryContext(
+		context.Background(),
 		`SELECT b.id, b.session_id, COALESCE(p.path, ''), b.anchor_message_id, b.question, b.answer, b.model, b.error, b.created_at
 		   FROM btw_questions b
 		   LEFT JOIN projects p ON p.id = b.project_id

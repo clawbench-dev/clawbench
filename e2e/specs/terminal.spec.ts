@@ -86,10 +86,12 @@ test.describe('Terminal multi-tab', () => {
   test('should disconnect tabs when switching away from terminal', async ({ page }) => {
     await terminal.ensureTerminalConnected(0, 15000)
 
-    // Switch to Chat tab (stable data-tab selector; the old positional
-    // `.dock-center .dock-btn` targeted the v-show-hidden narrow dock).
-    const chatBtn = page.locator('.dock-btn[data-tab="chat"]').filter({ visible: true }).first()
-    await chatBtn.click()
+    // Switch away from the terminal panel. The chat pane is not a dock tab in
+    // wide mode (it is hidden from the split divider), so a chat click would be
+    // a no-op there; the file manager tab is a real panel switch in BOTH
+    // layouts, which is what deactivates the terminal.
+    const browseBtn = page.locator('.dock-btn[data-tab="browse"]').filter({ visible: true }).first()
+    await browseBtn.click()
 
     // Switch back to terminal
     await terminal.switchToTerminal()

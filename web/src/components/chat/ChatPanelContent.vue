@@ -315,7 +315,6 @@ import { playNotificationSound } from '@/composables/useNotificationSound.ts'
 import { useAutoSpeech, extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { useSwipeSession } from '@/composables/useSwipeSession.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
-import { useAppForeground } from '@/composables/useAppForeground'
 import { store } from '@/stores/app.ts'
 
 import { useDialog } from '@/composables/useDialog'
@@ -867,9 +866,6 @@ const {
 // Debounce map for onToolUpdate fetches — max one fetch per 3s per tool
 const toolUpdateFetchDebounce = new Map()
 
-// Reliable app foreground/background signal (Android JS bridge + fallback).
-const { appInForeground } = useAppForeground()
-
 const session = useChatSession({
   currentSessionId: identity.currentSessionId,
   messages,
@@ -910,10 +906,11 @@ const session = useChatSession({
 function handleTurnBoundary(sessionId) {
   if (!sessionId) return
   if (sessionId !== identity.currentSessionId.value) return
-  if (!appInForeground.value) return
   // Idempotent: UpdateLastRead anchors to MAX(now, newest completed_at), so
-  // this can never pull the watermark backwards.
-  session.markSessionRead(sessionId).catch(() => {})
+  // this can never pull the watermark backwards. The foreground + visibility
+  // gate lives in sessionReadGate (shared with the completion, resume, landing
+  // and reconnect paths) — see its header for why it is stated once.
+  session.markVisibleSessionRead(sessionId).catch(() => {})
 }
 
 // onMemberFinalize: fires per producer turn (group chats: one member) when the
@@ -974,12 +971,12 @@ async function onStreamEnd(reason) {
     // Recalculate chatUnread after stream completes — mark the current session
     // read first so the session list reflects the cleared unread state, then
     // refresh so chatUnread is false if no other sessions have unread messages.
-    // Only mark read while the app is in the foreground: a session that
-    // completes in the background (app paused, floating window showing) must
-    // keep its unread badge so the floating window displays it.
+    // The foreground + visibility gate is the shared one (sessionReadGate): a
+    // turn finishing while the app is backgrounded, or while the user is on a
+    // panel that is not the chat, must keep its badge.
     const sid = identity.currentSessionId.value
-    if (sid && appInForeground.value) {
-      await session.markSessionRead(sid).catch(() => {})
+    if (sid) {
+      await session.markVisibleSessionRead(sid).catch(() => {})
     }
     loadSessionsOnce()
     // Refresh git branch — AI agent may have checked out a different branch
@@ -990,11 +987,10 @@ async function onStreamEnd(reason) {
     // Restore screen lock — output was cancelled, no TTS will play
     autoSpeech.onOutputEndNoSpeech()
     // User was viewing this session while cancelling — clear its unread badge.
-    // Guarded on foreground: a cancellation arriving while the app is paused
-    // must leave the badge intact for the floating window.
+    // Same shared gate as the completion branch above.
     const sid = identity.currentSessionId.value
-    if (sid && appInForeground.value) {
-      session.markSessionRead(sid).catch(() => {})
+    if (sid) {
+      session.markVisibleSessionRead(sid).catch(() => {})
     }
     // Refresh git state — agent may have modified files before cancellation
     store.loadGitBranch().catch(() => {})
@@ -1512,6 +1508,11 @@ async function handleForkFromMessage(msg) {
  * instances included, since each member is an independent instance) and the
  * original host pre-selected; a single-chat source opens on the single tab with
  * the current agent, which the picker already highlights via modelValue.
+ *
+ * DISABLED members are left out on purpose: the picker creates a brand-new group,
+ * and a new group has no disable state — pre-selecting a disabled member would bring it
+ * back as a speaker, silently undoing the user's decision. Their speech is still
+ * carried into the new group as fork context, so nothing they said is lost.
  */
 function seedForkPicker(sourceIsGroup) {
   forkHostAgentId.value = ''
@@ -1520,8 +1521,8 @@ function seedForkPicker(sourceIsGroup) {
   if (!sourceIsGroup) return
   forkCreatingGroup.value = true
   const members = props.groupMembers || []
-  forkMemberAgentIds.value = members.filter(m => !m.left).map(m => m.agentId)
-  const host = members.find(m => m.isHost && !m.left)
+  forkMemberAgentIds.value = members.filter(m => !m.disabled).map(m => m.agentId)
+  const host = members.find(m => m.isHost && !m.disabled)
   forkHostAgentId.value = host?.agentId || ''
 }
 
@@ -2480,6 +2481,29 @@ defineExpose({
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  /* ── The chat pane is a size query container ──
+     The wide layout is not a breakpoint on the VIEWPORT: it depends on how much
+     room the CHAT PANE got, which the split view hands out independently of the
+     window. Everything that changes shape when the pane outgrows the reading
+     measure (the assistant bubble gains corners, the composer becomes a dock
+     island) is therefore written as `@container chat-pane (…)` in the component
+     that owns the box, with the threshold `calc(60rem + 1px)` — 60rem IS
+     `--chat-content-max-width` (900 design px, since `--dp` is 1rem/15), so the
+     shape flips exactly when the gutter stops being zero. A px threshold would
+     stop tracking the UI scale.
+     Guarded by __tests__/chatContentMeasure.css.test.ts.
+
+     `inline-size` (not `size`): the panel's HEIGHT must stay driven by its flex
+     parent, and size containment would zero it out.
+
+     Interplay with the app-mode `contain: paint` below, measured in all three
+     engines: `container-type` on its own does NOT make an element the
+     containing block for `position: fixed` descendants, and adding it next to
+     `contain: paint` changes nothing (the paint containment already did that).
+     So the table copy menu's placement is exactly as before — and it is placed
+     by runtime measurement anyway (utils/fixedPosition.ts). */
+  container-type: inline-size;
+  container-name: chat-pane;
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

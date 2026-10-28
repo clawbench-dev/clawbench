@@ -10,19 +10,20 @@ import "strings"
 // may route to, plus the context that makes routing sensible (decision #39).
 //
 // Specialty is the agent's short description ("代码编写与推理"); it is rendered
-// as a parenthetical and omitted entirely when empty. Left marks a member that
-// has left the group — its past speech stays on the timeline, so it is still
-// listed, but visibly marked so the host does not route to it.
+// as a parenthetical and omitted entirely when empty. Disabled marks a member the
+// user has turned off (禁用): it is still in the group and may be re-enabled at
+// any time, so it stays listed, but visibly marked so the host does not route to
+// someone who cannot answer right now.
 type HostMemberInfo struct {
 	Name      string
 	Specialty string
-	Left      bool
+	Disabled  bool
 }
 
 // renderHostMember renders one entry of the host's routable-member list.
 func renderHostMember(m HostMemberInfo) string {
-	if m.Left {
-		return m.Name + "（已离场）"
+	if m.Disabled {
+		return m.Name + "（已禁用）"
 	}
 	if m.Specialty != "" {
 		return m.Name + "（" + m.Specialty + "）"
@@ -38,6 +39,27 @@ func renderMemberList(members []HostMemberInfo) string {
 		rendered = append(rendered, renderHostMember(m))
 	}
 	return strings.Join(rendered, "、")
+}
+
+// disabledNotice names the disabled members in one sentence, or "" when none is
+// disabled.
+//
+// A disabled member can be neither @-ed nor handed a private note (the
+// orchestrator drops both), so a prompt that merely marked it "（已禁用）" inside
+// the routable list would invite a routing attempt that silently falls back to
+// round-robin. Stating the rule in one place keeps every prompt (host, member,
+// free) telling the same story.
+func disabledNotice(members []HostMemberInfo) string {
+	names := make([]string, 0, len(members))
+	for _, m := range members {
+		if m.Disabled && strings.TrimSpace(m.Name) != "" {
+			names = append(names, m.Name)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return "（" + strings.Join(names, "、") + " 已禁用，当前不发言：**不要点名、也不要密送**给他们；他们启用后会自行看到这段讨论。）\n"
 }
 
 // selfIdentityLine states the acting agent's OWN group display name. Without it
@@ -99,18 +121,32 @@ func BuildHostSystemPrompt(selfName string, members []HostMemberInfo) string {
 	b.WriteString("  <clawbench-group-end/>\n")
 	b.WriteString("在结束标签之后，必须再写一段简短的讨论结论（最终汇总），供用户阅读。\n")
 	b.WriteString("注意：你本人不在可点名名单里，**不要点名你自己**——只能点名下列其他成员。\n")
+	// The routable list contains only members that can actually speak right now:
+	// a disabled member is dropped here (and named separately below), so the host
+	// never reads a name it is not allowed to address.
+	routable := make([]HostMemberInfo, 0, len(members))
+	for _, m := range members {
+		if !m.Disabled {
+			routable = append(routable, m)
+		}
+	}
 	b.WriteString("可选的成员名：")
-	if len(members) == 0 {
-		// No routable participant at all (the orchestrator always appends the
-		// user, so this only happens for a caller that passes an empty list).
-		// Tell the host to answer directly instead of naming a non-existent
-		// member.
+	if len(routable) == 0 {
+		// No routable participant at all. Tell the host to answer directly
+		// instead of naming a non-existent member — but keep the disabled roster
+		// visible so it understands why the room is empty.
 		b.WriteString("（暂无其他成员）\n")
-		b.WriteString("当前群内没有其他成员，你无需路由，直接回答用户即可。\n")
+		b.WriteString("当前群内没有可点名的成员，你无需路由，直接回答用户即可。\n")
+		if notice := disabledNotice(members); notice != "" {
+			b.WriteString(notice)
+		}
 		return b.String()
 	}
-	b.WriteString(renderMemberList(members))
+	b.WriteString(renderMemberList(routable))
 	b.WriteString("。\n")
+	if notice := disabledNotice(members); notice != "" {
+		b.WriteString(notice)
+	}
 
 	// Addressing the human user: the user participates as a named participant
 	// (the configured nickname, default "User"). Naming the user ENDS this round
@@ -171,6 +207,9 @@ func BuildMemberSystemPrompt(members []HostMemberInfo, selfName, hostName string
 	// The human user is a participant too; a member should know a person is in
 	// the room (and may be addressed as "User").
 	b.WriteString(othersLine(members, selfName))
+	// Disabled peers stay in the roster (marked) so a member is not surprised by
+	// speech from a name it never saw — but it must not try to address them.
+	b.WriteString(disabledNotice(members))
 	return b.String()
 }
 
@@ -230,6 +269,7 @@ func BuildFreeMemberSystemPrompt(members []HostMemberInfo, selfName string) stri
 	b.WriteString("本群没有主持人，你可以密送给任何成员或用户。\n")
 
 	b.WriteString(othersLine(members, selfName))
+	b.WriteString(disabledNotice(members))
 	return b.String()
 }
 

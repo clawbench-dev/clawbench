@@ -57,9 +57,13 @@ var skillAwareBackends = map[string]bool{
 
 	// Do NOT load their own skills → ClawBench must inject.
 	//
-	// codebuddy is the important one: its TUI reads ~/.codebuddy/skills but its
-	// ACP process does not, which is why ClawBench has always injected them.
-	// Setting this true would make CodeBuddy agents lose every skill.
+	// codebuddy: the "ACP does not scan ~/.codebuddy/skills" premise this row
+	// was originally written on is no longer accurate — measured on 2.177.0,
+	// `codebuddy --acp` DOES report user (source="user") and project
+	// (source="project") skills, both keyed off the process cwd. The row stays
+	// false on purpose: injection is the fallback for older builds that did not
+	// scan, and MergeCommands dedupes the overlap on the canonical command name,
+	// so the only cost on current builds is a redundant scan.
 	"codebuddy": false,
 
 	// No skill directory at all (nothing to load, nothing to inject).

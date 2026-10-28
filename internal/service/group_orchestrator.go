@@ -427,7 +427,7 @@ func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) Dr
 	//     floor is not back until the LAST one runs;
 	//   - ZERO member speeches: a clean turn in which nobody spoke is not a turn
 	//     the user owes anything on. runFreeLoop returns an empty result when the
-	//     roster is empty (every member left, or none is active), and lighting the
+	//     roster is empty (every member disabled), and lighting the
 	//     badge there would tell the user to speak in a group that cannot answer.
 	//     The speech cap is not an exclusion — a capped turn did speak, and the
 	//     floor does go back.
@@ -1101,7 +1101,7 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 	// It is rebuilt on EVERY refill (not once) so toggling cruise mid-turn takes
 	// effect on the very next host turn — see cruiseOn().
 	hostPrompt := func() string {
-		p := BuildHostSystemPrompt(s.names[hostMemberID], activeMemberNamesExcept(s.members, hostMemberID))
+		p := BuildHostSystemPrompt(s.names[hostMemberID], speakingMemberNamesExcept(s.members, hostMemberID))
 		if o.cruiseOn() {
 			p += BuildCruiseHostAddendum()
 		}
@@ -1320,7 +1320,7 @@ func routeNamesUser(route grouprouting.Result, members []GroupMember) bool {
 // route must win over the question.
 //
 // The filter mirrors resolveCruiseSpeakerGroups EXACTLY (resolve → not host → not
-// user → not left). That matters: if this said "dispatchable" for something the
+// user → not disabled). That matters: if this said "dispatchable" for something the
 // resolver then drops, the turn would skip the confirmation round AND produce no
 // speakers, which is the spin the confirmation exists to prevent. Keeping the
 // two in step is what makes "route wins" safe.
@@ -1335,7 +1335,7 @@ func routeHasDispatchableMembers(route grouprouting.Result, members []GroupMembe
 			if !ok || m.ID == excludeID || m.ID == groupUserTargetID {
 				continue
 			}
-			if m.Left {
+			if m.Disabled {
 				continue
 			}
 			return true
@@ -1449,9 +1449,9 @@ func (o *GroupOrchestrator) confirmCruiseDone() ([]speakerGroup, bool, DrainResu
 
 // resolveSpeakerGroups maps a parsed route's public mention GROUPS to member
 // groups, preserving each tag's mode and instruction. Members are matched by
-// row id then name; unknown/left targets and excludeID are dropped; a member
+// row id then name; unknown/disabled targets and excludeID are dropped; a member
 // claimed by an earlier group is not re-listed (it would speak twice). A group
-// left with no unclaimed members is dropped.
+// with no unclaimed members is dropped.
 //
 // turnFor builds each member's queued turn. It MUST differ by mode: host mode
 // passes memberTurn (the host's directive + the "member, not host" prompt), free
@@ -1475,7 +1475,7 @@ func resolveSpeakerGroups(route grouprouting.Result, members []GroupMember, excl
 			if !ok || seen[m.ID] || m.ID == excludeID {
 				continue
 			}
-			if m.Left && m.ID != groupUserTargetID {
+			if m.Disabled && m.ID != groupUserTargetID {
 				continue
 			}
 			seen[m.ID] = true
@@ -1633,7 +1633,7 @@ func (o *GroupOrchestrator) runFreeConfirmRound(ctx context.Context, s groupTurn
 	// Guard BEFORE announcing: with no active members there is no round to run,
 	// so the "checking with the members" line would be user-visible noise with no
 	// verdict behind it.
-	active := activeMembers(s.members)
+	active := speakingMembers(s.members)
 	if len(active) == 0 {
 		return false, DrainResult{}
 	}
@@ -1706,7 +1706,7 @@ func (o *GroupOrchestrator) memberOutputAfter(groupID, memberID string, floor in
 // the re-seed a non-confirmed cruise iteration runs before the next
 // confirmation, so the relay keeps making progress.
 func (o *GroupOrchestrator) freeDiscussionGroups(s groupTurnSetup) []speakerGroup {
-	active := activeMembers(s.members)
+	active := speakingMembers(s.members)
 	if len(active) == 0 {
 		return nil
 	}
@@ -1790,7 +1790,7 @@ func (o *GroupOrchestrator) freeInitialGroups(s groupTurnSetup) []speakerGroup {
 		}
 		return groups
 	}
-	active := activeMembers(s.members)
+	active := speakingMembers(s.members)
 	if len(active) == 0 {
 		return nil
 	}
@@ -1814,7 +1814,7 @@ func mergeParallel(groups []speakerGroup) speakerGroup {
 }
 
 // pickFallbackMember picks the next round-robin fallback speaker, skipping the
-// host and left members, and advances o.fallbackIdx. Returns false when no
+// host and disabled members, and advances o.fallbackIdx. Returns false when no
 // eligible member exists.
 //
 // The pick ROTATES via o.fallbackIdx (decision #56): when the host's routing is
@@ -1823,7 +1823,7 @@ func mergeParallel(groups []speakerGroup) speakerGroup {
 // picked and wraps.
 func (o *GroupOrchestrator) pickFallbackMember(hostMemberID string, members []GroupMember) (GroupMember, bool) {
 	eligible := make([]GroupMember, 0, len(members))
-	for _, m := range activeMembers(members) {
+	for _, m := range speakingMembers(members) {
 		if m.ID == hostMemberID {
 			continue
 		}
@@ -1885,11 +1885,17 @@ type notePolicy struct {
 }
 
 // storeRouteNotes persists a parsed route's private notes, validating each
-// target against the roster: an unknown or left target is dropped (it could
-// never be delivered — storing it would be silent loss plus unbounded growth of
+// target against the roster: an unknown target is dropped (it could never be
+// delivered — storing it would be silent loss plus unbounded growth of
 // group_pending_bcc), a self-directed note is dropped (it would be delivered on
-// the speaker's own next turn), and a note the group's MODE forbids is dropped
-// (see noteAllowed — in a host-mode group every note must involve the host).
+// the speaker's own next turn), a DISABLED target is dropped (a disabled member is off
+// the mic — it can neither be addressed nor handed a private note), and a note
+// the group's MODE forbids is dropped (see noteAllowed — in a host-mode group
+// every note must involve the host).
+//
+// A note stored BEFORE its target was disabled stays queued and is delivered on
+// that member's next turn after it is enabled: it was validly addressed at write
+// time, and discarding it would silently lose what someone said to it.
 //
 // The target is resolved by ROW ID first, then by display name (lookupMember).
 // A USER's note carries a member ROW ID (the frontend writes ids), while an
@@ -1904,11 +1910,11 @@ func storeRouteNotes(groupID string, route grouprouting.Result, speakerID string
 			if !ok || m.ID == speakerID {
 				continue
 			}
-			// A LEFT member never speaks again, so a note stored for one could
-			// never be delivered — it would sit in group_pending_bcc forever.
-			// (byID includes left members, so the check must be explicit; the
-			// name map already excludes them. The user sentinel is never left.)
-			if m.Left && m.ID != groupUserTargetID {
+			// A disabled member is disabled: it can be neither @-ed nor handed a
+			// private note (the user's rule — a silent member must not keep
+			// receiving briefings the group cannot see it answer). Dropped
+			// silently, like a self-mention.
+			if m.Disabled && m.ID != groupUserTargetID {
 				continue
 			}
 			// Mode policy: in a host-mode group a private note must involve the
@@ -1986,10 +1992,10 @@ type freeRelay struct {
 // that has already spoken may be @-ed again and will speak again — this is what
 // makes unlimited relay possible (A@B, B@A loops).
 //
-// Invalid targets (decision #F7): a self-mention and a left-member mention are
+// Invalid targets (decision #F7): a self-mention and a disabled-member mention are
 // dropped silently (model slips not worth surfacing); an unknown NAME emits a
-// visible system notice (it usually means a member was removed/renamed, or the
-// model hallucinated — the user should know).
+// visible system notice (it usually means a member was renamed, or the model
+// hallucinated — the user should know).
 func (o *GroupOrchestrator) appendFreeTargets(outer, appended []speakerGroup, pending []speakerTurn, groupID, speakerID string, members []GroupMember, names map[string]string) []speakerGroup {
 	output := o.lastMemberOutput(groupID, speakerID)
 	if output == "" {
@@ -2046,7 +2052,7 @@ func (o *GroupOrchestrator) appendFreeTargets(outer, appended []speakerGroup, pe
 }
 
 // freeGroupFromRoute resolves ONE mention group's targets to a speakerGroup,
-// applying the free-mode validity rules (unknown → reported, self/left → silent)
+// applying the free-mode validity rules (unknown → reported, self/disabled → silent)
 // and the waiting-set dedup (marking each accepted member as waiting). Returns
 // the group plus the unknown names it saw.
 func (o *GroupOrchestrator) freeGroupFromRoute(gr grouprouting.MentionGroup, rl *freeRelay) (speakerGroup, []string) {
@@ -2061,8 +2067,8 @@ func (o *GroupOrchestrator) freeGroupFromRoute(gr grouprouting.MentionGroup, rl 
 		if m.ID == rl.speakerID {
 			continue // self-mention: drop silently
 		}
-		if m.Left && m.ID != groupUserTargetID {
-			continue // left member: drop silently
+		if m.Disabled && m.ID != groupUserTargetID {
+			continue // disabled member: drop silently
 		}
 		if rl.waiting[m.ID] {
 			continue // already queued: do not duplicate
@@ -2158,7 +2164,7 @@ func memberAskedQuestion(groupID, memberID string) bool {
 func (o *GroupOrchestrator) summarize(ctx context.Context, s groupTurnSetup, hostMemberID string) {
 	hostMember := GroupMember{ID: hostMemberID, Name: s.names[hostMemberID]}
 	o.runSpeakerTurn(ctx, s, hostMember, "",
-		BuildHostSummaryPrompt(s.names[hostMemberID], activeMemberNamesExcept(s.members, hostMemberID)))
+		BuildHostSummaryPrompt(s.names[hostMemberID], speakingMemberNamesExcept(s.members, hostMemberID)))
 }
 
 // advanceCursorOnSuccess records a member's seen_cursor after a turn, applying
@@ -2283,16 +2289,22 @@ func memberNameMap(members []GroupMember) map[string]string {
 
 // memberLookups builds the two maps a mention target is resolved through: by
 // member ROW id (the frontend's user mentions carry ids) and by display name
-// (an agent writes names). Left members are excluded from the name map (they
-// cannot speak), and the human user is added under its reserved name.
+// (an agent writes names). The human user is added under its reserved name.
+//
+// DISABLED members are INCLUDED in both maps. Resolution must be able to tell "this
+// name belongs to a member that is currently disabled" apart from "this name does
+// not exist": every consumer filters disabled members explicitly (routing,
+// free-mode relay, note storage), and the difference is user-visible — an
+// unknown name emits a "no such member" notice while a disabled one is dropped
+// silently. Leaving them out of byName made an agent that named a disabled member
+// produce that false notice, and made a private note addressed by NAME vanish
+// as "unknown target" instead of being rejected as disabled.
 func memberLookups(members []GroupMember) (byID, byName map[string]GroupMember) {
 	byID = make(map[string]GroupMember, len(members))
 	byName = make(map[string]GroupMember, len(members)+1)
 	for _, m := range members {
 		byID[m.ID] = m
-		if !m.Left {
-			byName[strings.TrimSpace(m.Name)] = m
-		}
+		byName[strings.TrimSpace(m.Name)] = m
 	}
 	byName[groupUserTarget()] = GroupMember{ID: groupUserTargetID, Name: groupUserTarget()}
 	return byID, byName
@@ -2312,17 +2324,17 @@ func lookupMember(tgt string, byID, byName map[string]GroupMember) (GroupMember,
 }
 
 // memberInfos converts the group's members into the HostMemberInfo shape the
-// prompt builders use (name + specialty + left marker). excludeID, when
+// prompt builders use (name + specialty + disabled marker). excludeID, when
 // non-empty, drops that member (the host must not be offered as a routing
 // target: naming itself caused the self-route loop). withUser appends the human
 // user as a routable participant (reserved name "User") — used by the host
 // prompt, which must be able to call on the user, but not by a member's own
 // roster (a member already knows the user is in the room via othersLine).
 //
-// Left members are INCLUDED (marked, not dropped): their past speech is still
-// on the timeline, so omitting them would leave speech from a name that cannot
-// be addressed. Marking them is what stops the host routing to someone gone
-// (which would silently fall back to round-robin).
+// Disabled members are INCLUDED (marked, not dropped): they are still in the group
+// and may be enabled at any moment, so the roster must show them — but marked,
+// so the host does not route to someone who cannot answer right now (which
+// would silently fall back to round-robin).
 func memberInfos(members []GroupMember, excludeID string, withUser bool) []HostMemberInfo {
 	out := make([]HostMemberInfo, 0, len(members)+1)
 	for _, m := range members {
@@ -2332,7 +2344,7 @@ func memberInfos(members []GroupMember, excludeID string, withUser bool) []HostM
 		out = append(out, HostMemberInfo{
 			Name:      m.Name,
 			Specialty: GetAgentSpecialty(m.AgentID),
-			Left:      m.Left,
+			Disabled:  m.Disabled,
 		})
 	}
 	if withUser {
@@ -2347,19 +2359,19 @@ func memberRoster(members []GroupMember) []HostMemberInfo {
 	return memberInfos(members, "", false)
 }
 
-// activeMemberNamesExcept is the host's routable list: every member but the host
+// speakingMemberNamesExcept is the host's routable list: every member but the host
 // itself, plus the human user.
-func activeMemberNamesExcept(members []GroupMember, hostMemberID string) []HostMemberInfo {
+func speakingMemberNamesExcept(members []GroupMember, hostMemberID string) []HostMemberInfo {
 	return memberInfos(members, hostMemberID, true)
 }
 
-// activeMembers returns the members that can still speak (not left), in roster
+// speakingMembers returns the members that can speak (not disabled), in roster
 // order. Shared by the free-mode seed and the round-robin fallback so the
 // "who is eligible" rule lives in one place.
-func activeMembers(members []GroupMember) []GroupMember {
+func speakingMembers(members []GroupMember) []GroupMember {
 	out := make([]GroupMember, 0, len(members))
 	for _, m := range members {
-		if !m.Left {
+		if !m.Disabled {
 			out = append(out, m)
 		}
 	}

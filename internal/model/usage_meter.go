@@ -102,9 +102,22 @@ func FormatUsageMeterAnchor(t time.Time) string {
 	return t.Format("2006-01-02T15:04:05")
 }
 
+// UsageMeterConfigured reports whether the rule carries anything at all.
+//
+// The meter no longer needs a quota to be useful: an anchor alone means "how
+// much have I spent since then", a quota alone means "against this much in
+// total". So "is there anything to show" is the OR of the fields the user can
+// fill, and only a rule with none of them has nothing to say.
+//
+// Metric is deliberately excluded: it defaults to cost and therefore says
+// nothing about whether the user configured the feature.
+func UsageMeterConfigured(rule UsageMeterConfig) bool {
+	return rule.AnchorDate != "" || rule.Quota > 0 || rule.PeriodDays > 0
+}
+
 // IsValidUsageMeterMetric reports whether m is one of the three supported
 // metrics. The empty string is NOT valid here: callers that want "unset" must
-// check for "" first (ApplyDefaults fills it only when a quota exists).
+// check for "" first (ApplyDefaults fills it only when the rule is configured).
 func IsValidUsageMeterMetric(m string) bool {
 	switch m {
 	case UsageMeterMetricTokens, UsageMeterMetricCredit, UsageMeterMetricCost:

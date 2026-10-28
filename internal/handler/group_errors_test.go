@@ -229,28 +229,28 @@ func TestServeGroupMembers_AddSkipsUnknownAgents(t *testing.T) {
 	assert.Len(t, resp.MemberIDs, 1, "only the resolvable agent is added")
 }
 
-func TestServeGroupMembers_RemoveMissingFields(t *testing.T) {
+func TestServeGroupMembers_DisableMissingFields(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{"groupId": "", "memberId": ""})
+	req := newRequest(t, http.MethodPatch, "/api/group/members", map[string]any{"groupId": "", "memberId": ""})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandlerWithAuth(ServeGroupMembers, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 }
 
-func TestServeGroupMembers_RemoveUnknownGroup(t *testing.T) {
+func TestServeGroupMembers_DisableUnknownGroup(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{"groupId": "nope", "memberId": "m1"})
+	req := newRequest(t, http.MethodPatch, "/api/group/members", map[string]any{"groupId": "nope", "memberId": "m1", "disabled": true})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandlerWithAuth(ServeGroupMembers, req)
 	assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 }
 
-// Removing a non-host member succeeds and archives the row.
-func TestServeGroupMembers_RemoveMemberOK(t *testing.T) {
+// Muting a non-host member succeeds and flips the flag; unmuting restores it.
+func TestServeGroupMembers_DisableMemberOK(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -259,7 +259,7 @@ func TestServeGroupMembers_RemoveMemberOK(t *testing.T) {
 	memberID, err := service.AddGroupMember(env.ProjectDir, groupID, "claude", "claude", "Claude")
 	require.NoError(t, err)
 
-	req := newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{"groupId": groupID, "memberId": memberID})
+	req := newRequest(t, http.MethodPatch, "/api/group/members", map[string]any{"groupId": groupID, "memberId": memberID, "disabled": true})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandlerWithAuth(ServeGroupMembers, req)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -268,9 +268,39 @@ func TestServeGroupMembers_RemoveMemberOK(t *testing.T) {
 	require.NoError(t, err)
 	for _, m := range members {
 		if m.ID == memberID {
-			assert.True(t, m.Left, "removed member must be archived")
+			assert.True(t, m.Disabled, "disabled member must carry disabled=true")
 		}
 	}
+
+	// Unmuting through the same endpoint restores the member.
+	req = newRequest(t, http.MethodPatch, "/api/group/members", map[string]any{"groupId": groupID, "memberId": memberID, "disabled": false})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	members, err = service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	for _, m := range members {
+		if m.ID == memberID {
+			assert.False(t, m.Disabled, "enabling must clear the flag")
+		}
+	}
+}
+
+// `disabled` is REQUIRED: an absent field is a malformed request, not "false", so
+// a client that forgets it can never silently enable someone.
+func TestServeGroupMembers_DisableFieldRequired(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+	memberID, err := service.AddGroupMember(env.ProjectDir, groupID, "claude", "claude", "Claude")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/group/members", map[string]any{"groupId": groupID, "memberId": memberID})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 }
 
 // --- ServeGroupSettings error branches ---
@@ -449,11 +479,11 @@ func TestServeGroupMembers_AddMalformedBody(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 }
 
-func TestServeGroupMembers_RemoveMalformedBody(t *testing.T) {
+func TestServeGroupMembers_DisableMalformedBody(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodDelete, "/api/group/members", nil)
+	req := newRequest(t, http.MethodPatch, "/api/group/members", nil)
 	req.Body = http.NoBody
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandlerWithAuth(ServeGroupMembers, req)

@@ -85,6 +85,7 @@ export default {
     more: 'More',
     settings: 'Settings',
     stats: 'Statistics',
+    hideLeftPane: 'Hide left panel',
     hideChat: 'Hide chat area',
     showChat: 'Show chat area',
   },
@@ -213,6 +214,15 @@ export default {
     badgeOk: 'On plan',
     badgeOver: '{pct}% over plan',
     badgeFull: 'Exhausted',
+    // Shown when the rule has no quota. "On plan" would claim a budget the user
+    // never set, so the badge states what it can actually see instead.
+    badgeNoQuota: 'Usage only',
+    // Shown when a quota exists but no cycle does. There is a budget, but no
+    // time axis to be "on plan" against, so the badge must not claim one.
+    badgeNoCycle: 'No cycle',
+    // Window description when the rule has no cycle (no period configured).
+    allTime: 'All time',
+    sinceDate: 'Since {date}',
     adjust: 'Adjust quota and cycle →',
     openSettings: 'Open usage settings',
     trendLabel: 'Cumulative usage against the linear plan',
@@ -1000,6 +1010,7 @@ export default {
       // that; free mode requires two). The group is valid — it just routes like
       // a single chat, which is why it looks silent.
       groupSoloMemberHint: 'This group only has you in it. Add members before they can join the conversation.',
+      groupSoloDisabledHint: 'Every other member is disabled, so you are the only one talking. Enable them to continue the discussion.',
       noAgentsTitle: 'No agents available',
       noAgentsDesc: 'Install and configure an AI agent to start chatting.',
       noAgentsAction: 'Configure agents',
@@ -1299,7 +1310,8 @@ export default {
     newGroup: 'New group chat',
     title: 'Group',
     host: 'Host',
-    hostNotRemovable: 'The host is the group\u2019s only scheduler and cannot be removed',
+    hostCannotDisable: 'The host is the group\u2019s only scheduler and cannot be disabled',
+    lastSpeakerCannotDisable: 'The last member who can speak cannot be disabled \u2014 nobody would be left to answer',
     realAgent: 'Agent',
     // The reserved human participant name ("User") shown to the reader.
     you: 'you',
@@ -1313,7 +1325,9 @@ export default {
     addMembers: 'Add members',
     settings: 'Group settings',
     members: 'Members',
-    left: 'Left',
+    disabled: 'Disabled',
+    disable: 'Disable (stop scheduling it to speak)',
+    enable: 'Enable (resume speaking, with everything it missed)',
     memberDetail: {
       open: 'View this member\u2019s settings',
       agent: 'Agent',
@@ -1322,7 +1336,7 @@ export default {
       modelInherited: 'This member uses {model} (agent default)',
       noUsage: 'This member has not reported any context usage yet. Agents on the CLI transport do not report a context window.',
       noUsageShort: 'This member has not reported context usage',
-      compactUnavailable: 'Compaction is unavailable right now: the group is mid-turn, or this member has left.',
+      compactUnavailable: 'Compaction is unavailable right now: the group is mid-turn.',
       compactHint: 'Compaction affects only this member\u2019s own context; nothing is written to the group timeline.',
       compacting: 'Compacting this member\u2019s context \u2014 usually takes a few seconds\u2026',
     },
@@ -1761,6 +1775,7 @@ export default {
       archiveDir: 'Pack & download',
       downloadTree: 'Download',
       shareExternal: 'Share',
+      shareLink: 'Share link',
     },
     multiSelect: {
       enter: 'Select',
@@ -2859,6 +2874,10 @@ export default {
       agentNotFound: 'Agent not found or already removed',
       agentNotFoundHint: 'It may have been deleted, or is no longer available after a rescan. Go back to the list to see the current agents.',
       agentBackToList: 'Back to agent list',
+      // Breadcrumb label for the agent detail level while its name is unknown
+      // (list not fetched yet, or the agent was deleted). Using the parent's
+      // label instead would read Settings › Agents › Agents.
+      agentDetailTitle: 'Agent details',
       chatInitialMessages: 'Initial Messages',
       chatInitialMessagesDesc: 'Number of history messages loaded on first chat open',
       chatPageSize: 'Page Size',
@@ -3275,19 +3294,20 @@ export default {
       feishuAppSecretDesc: 'Enterprise app App Secret, masked after save',
       usageMeterSection: 'Usage',
       usageMeter: 'Usage',
-      usageMeterDesc: 'Tracks usage across all projects over a cycle. The server computes how much you may have spent by now, warns once when you exceed it, and once more when the quota runs out. Leave the quota empty to turn it off.',
+      usageMeterDesc: 'Tracks usage across all projects. Every field is optional: a start time alone shows how much you have used since then; adding a cycle also computes how much you may have used by now and warns once when you exceed it and once more when the quota runs out; with no quota it just reports the total.',
+      usageMeterEnabled: 'Enable usage tracking',
       usageMeterCycleMode: 'Cycle type',
       usageMeterCycleModeDesc: 'Calendar month rolls on a calendar month: the day it restarts comes from the day of the start time (the 1st is a plain calendar month), and the cycle is as long as that month. Fixed length rolls every N days from the start time.',
       usageMeterCycleModeMonthly: 'Calendar month',
       usageMeterCycleModeFixed: 'Fixed length',
       usageMeterAnchor: 'Start time',
-      usageMeterAnchorDesc: 'When the cycle starts, in the server\u2019s local timezone. Leave the time empty to start at 00:00; set it to make the cycle roll over at a specific time of day. With a calendar month, the day-of-month here is the day the cycle restarts each month.',
+      usageMeterAnchorDesc: 'Counts usage from this instant, in the server\u2019s local timezone. Leave it empty to count the whole history. Set a time to make the cycle roll over at a specific time of day; with a calendar month, the day-of-month here is the day the cycle restarts each month.',
       usageMeterPeriod: 'Cycle length',
-      usageMeterPeriodDesc: 'Days per cycle, counted from the start date; rolls over automatically (1\u2013366)',
+      usageMeterPeriodDesc: 'Days per cycle, counted from the start time; rolls over automatically (1\u2013366). 0 means no cycle, so the total never resets',
       usageMeterMetric: 'Usage type',
       usageMeterMetricDesc: 'What the quota is measured in. Tokens, credits and cost are different units and cannot be converted, so switching it clears the quota.',
       usageMeterQuota: 'Quota',
-      usageMeterQuotaDesc: 'Usage allowed per full cycle. 0 or empty turns it off',
+      usageMeterQuotaDesc: 'Budget for one cycle. 0 or empty means no budget: usage is still reported, just with no over-plan alert',
       usageMeterMetricTokens: 'Token',
       usageMeterMetricCredit: 'Credit',
       usageMeterMetricCost: 'Cost (USD)',

@@ -366,8 +366,8 @@ type ChatSession struct {
 	// not stored on the session row itself). Always omitted when empty so the
 	// payload for untagged sessions is unchanged.
 	Tags []SessionTag `json:"tags,omitempty"`
-	// GroupMembers is a compact preview of a group session's ACTIVE members,
-	// populated only for session_type='group' rows by the session list /
+	// GroupMembers is a compact preview of a group session's SPEAKING (enabled)
+	// members, populated only for session_type='group' rows by the session list /
 	// overview endpoints (batch-loaded, never stored on the session row).
 	// Omitted when empty, so a non-group session's payload is unchanged.
 	GroupMembers []GroupMemberPreview `json:"groupMembers,omitempty"`

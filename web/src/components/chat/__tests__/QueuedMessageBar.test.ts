@@ -655,9 +655,16 @@ describe('QueuedMessageBar density + coexistence (source contract)', () => {
   }
 
   it('uses the same horizontal inset as the plan card', () => {
-    expect(planSrc, 'reference: plan panel inset').toMatch(/\.plan-panel\s*\{[^}]*margin:\s*0\s+var\(--space-5\)/)
+    // Both cards spend --chat-content-card-gutter, whose floor is the 10px
+    // inset they have always had. Asserting the TOKEN rather than the literal
+    // is the stronger contract: it keeps them in one column on a wide pane too
+    // (the token grows to centre them against the chat reading measure), and
+    // it fails if either side goes back to a hard-coded inset.
+    expect(planSrc, 'reference: plan panel inset').toMatch(
+      /\.plan-panel\s*\{[^}]*margin:\s*0\s+var\(--chat-content-card-gutter\)/,
+    )
     expect(rule('.queued-bar'), 'queue card must share the plan card column').toMatch(
-      /margin:\s*0\s+var\(--space-5\)\s+var\(--space-4\)/,
+      /margin:\s*0\s+var\(--chat-content-card-gutter\)\s+var\(--space-4\)/,
     )
   })
 

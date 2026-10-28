@@ -320,6 +320,17 @@ vi.mock('@/components/file/JumpDirDialog.vue', () => ({
   }),
 }))
 
+// Stub the share dialog: its own create/regenerate/revoke behaviour is covered
+// by ShareLinkDialog.test.ts. Here we only assert the menu hands it the right
+// target path, so the stub exposes that as an attribute.
+vi.mock('@/components/file/ShareLinkDialog.vue', () => ({
+  default: defineComponent({
+    props: ['open', 'file'],
+    emits: ['close'],
+    template: '<div v-if="open" class="share-link-dialog-stub" :data-path="file && file.path" />',
+  }),
+}))
+
 // Mock the shared path-annotation opener so the content-search delegation can be
 // asserted without a real file fetch. The component must route a chosen hit
 // through openFilePath — a bare `open-file-overlay` dispatch would skip
@@ -388,7 +399,7 @@ const i18n = createI18n({
   messages: {
     zh: {
       file: {
-        context: { newFile: '新建文件', newFolder: '新建文件夹', paste: '粘贴', rename: '重命名', delete: '删除', archiveDir: '归档', openAsProject: '打开为项目', copy: '复制', cut: '剪切', copyPath: '拷贝路径', pathCopied: '路径已拷贝' },
+        context: { newFile: '新建文件', newFolder: '新建文件夹', paste: '粘贴', rename: '重命名', delete: '删除', archiveDir: '归档', openAsProject: '打开为项目', copy: '复制', cut: '剪切', copyPath: '拷贝路径', pathCopied: '路径已拷贝', shareLink: '分享链接', shareExternal: '分享' },
         uploadHere: '上传到此处',
         dropToUpload: '松开上传到当前目录',
         pasteToUpload: '粘贴上传文件...',
@@ -1940,6 +1951,56 @@ describe('FileManagerContent — context menu', () => {
     const items = wrapper.findAll('.context-menu-item')
     const copyPathItem = items.find(el => el.text().includes('拷贝路径'))
     expect(copyPathItem).toBeTruthy()
+  })
+
+  // ── Public share link (capability URL) ──
+  //
+  // The context menu is the only entry point that can share a file the user is
+  // not currently viewing, so the menu item and its dialog wiring are asserted
+  // here. The dialog itself (create/regenerate/revoke) is covered by
+  // ShareLinkDialog.test.ts; what matters here is that the MENU ENTRY's path
+  // reaches it, not the open file's path.
+  describe('share link', () => {
+    it('renders the share-link item for a file entry', async () => {
+      const wrapper = mountContent()
+      wrapper.vm.ctxMenu.visible = true
+      wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+      await nextTick()
+
+      const item = wrapper.findAll('.context-menu-item').find(el => el.text().includes('分享链接'))
+      expect(item).toBeTruthy()
+    })
+
+    it('hides the share-link item for a directory (directories cannot be shared)', async () => {
+      const wrapper = mountContent()
+      wrapper.vm.ctxMenu.visible = true
+      wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
+      await nextTick()
+
+      const item = wrapper.findAll('.context-menu-item').find(el => el.text().includes('分享链接'))
+      expect(item).toBeFalsy()
+    })
+
+    it('opens the dialog with the context-menu entry, then closes the menu', async () => {
+      const wrapper = mountContent()
+      wrapper.vm.ctxMenu.visible = true
+      wrapper.vm.ctxMenu.entry = { type: 'file', name: 'other.md', path: 'docs/other.md' }
+      await nextTick()
+
+      wrapper.vm.doShareLink()
+      await nextTick()
+
+      expect(wrapper.vm.ctxMenu.visible).toBe(false)
+      expect(wrapper.vm.shareDialogOpen).toBe(true)
+      // The menu entry, NOT the currently open file (null here) — sharing must
+      // work for a file the user never opened.
+      expect(wrapper.vm.shareTarget).toEqual({ name: 'other.md', path: 'docs/other.md' })
+      // …and the dialog really receives it (catches a template binding that
+      // passes the wrong object even when the state is right).
+      const dialog = wrapper.find('.share-link-dialog-stub')
+      expect(dialog.exists()).toBe(true)
+      expect(dialog.attributes('data-path')).toBe('docs/other.md')
+    })
   })
 })
 

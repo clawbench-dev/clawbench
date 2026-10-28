@@ -346,6 +346,21 @@ paths:
         **口径固定为全局**（所有项目合计），没有 `scope` 参数——额度回答的是
         「我这个周期总共花了多少」，与当前停在哪个项目无关。
 
+        **开关与可选项**：`usage_meter.enabled` 是唯一的开关。其余字段全部可选，
+        服务端按已配置的内容做最大程度展示：
+
+        - 都没有（或开关关闭）→ `enabled: false`（无内容可报）
+        - 只有 `anchor_date` → 从该时刻到现在的累计，无周期（周期视作无限）、无基准
+        - 只有 `quota` → 全部历史累计；额度存在但没有周期，故不按天摊出应花
+        - `anchor_date` + `period_days` → 周期、第几天/共几天，无基准
+        - 三者齐全 → 完整读数（含应花、剩余、用尽预测）
+
+        客户端把**未设置的项按「无限」展示**：没额度时额度/剩余显示 `∞`，没周期时
+        天数显示 `∞`。服务端只负责用 0 表达「未设置」，由客户端决定呈现方式。
+
+        **没有周期 ≠ 默认 30 天**：`period_days` 为 0 表示窗口不滚动，累计值永不
+        归零。**没有额度 ≠ 关闭**：仍然返回实际用量，只是没有应花 / 剩余 / 预测。
+
         **周期定位**：由 `usage_meter.cycle_mode` 决定，时区为**服务端本地时区**。
 
         - `fixed`（缺省值，也是本字段出现前所有安装的行为）：从 `anchor_date`
@@ -364,6 +379,7 @@ paths:
         **应花（`expected`）= 额度 × 第几天 / 本周期天数**，按整天向下取整：
         周期第 1 天就有 1 天额度（不会开局误报），最后一天等于总额度。
         「本周期天数」在 `monthly` 下是当月实际天数，不是 `period_days`。
+        **额度或周期任一缺失时 `expected` 恒为 0**（没有可摊的基准）。
 
         **指标口径**：
         - `tokens`：`total_tokens`，为 0 时回退到 `input_tokens + output_tokens`
@@ -371,10 +387,10 @@ paths:
         - `credit`：`SUM(credit)`
         - `cost`：`SUM(cost_usd)`，单位 USD。非 USD 的上报值按原值累加，不做汇率换算。
 
-        **未配置规则**（`quota <= 0`）返回 200 与 `enabled: false`，不是 404：
-        「没有预算」是正常状态而非错误，且此时没有任何可报的数字——
-        周期、应花、剩余、预测全部由额度派生，所以除 `enabled` 外的数值字段
-        全为 0，`metric` / `periodDays` / `cycleStart` / `cycleEnd` / `series`
+        **未启用或完全没有配置**（`enabled: false`，或 `enabled` 为真但三项全空）
+        返回 200 与 `enabled: false`，不是 404：「没有预算」是正常状态而非错误，
+        且此时没有任何可报的数字，所以除 `enabled` 外的数值字段全为 0，
+        `metric` / `periodDays` / `cycleStart` / `cycleEnd` / `series`
         一律不返回。客户端据此渲染**占位入口**（提示用户去设置用量提醒），
         而不是一个数值全为零的空胶囊。
 
@@ -385,20 +401,23 @@ paths:
         "200":
           description: |
             用量提醒状态。字段：
-            - `enabled`：是否配置了规则（`quota > 0`）。它决定**响应里有没有
+            - `enabled`：是否在统计（`usage_meter.enabled`）。它决定**响应里有没有
               用量数字**，不只是「要不要画比例」
             - `metric` / `anchorDate` / `periodDays` / `quota`：规则回显
               （`enabled=false` 时这几项**不返回**）。`periodDays` 是**当前周期**
-              的天数：`monthly` 下随月份在 28–31 之间变化
-            - `cycleStart` / `cycleEnd`：当前周期边界（RFC3339）
-              （`enabled=false` 时**不返回**：没有周期）
-            - `dayInCycle`：当前是周期第几天（1 起；0 表示起始日在未来或未配置）
-            - `actual` / `expected`：实际用量 / 按时间比例的应花
-              （`enabled=false` 时两者均为 0）
-            - `remainingDays`：今天之后还剩几天（未配置时为 0）
-            - `projectedExhaustDay`：按当前速度预计第几天用尽（0 = 本周期不会用尽或未配置规则）
+              的天数：`monthly` 下随月份在 28–31 之间变化；**0 表示没有周期**
+            - `cycleStart` / `cycleEnd`：当前周期边界（RFC3339）。`cycleEnd`
+              **缺失表示没有周期**（`period_days` 为 0）：窗口从 `cycleStart`
+              一直延伸到当前，永不滚动
+            - `dayInCycle`：当前是第几天（1 起；0 表示起始日在未来或没有周期）
+            - `actual` / `expected`：实际用量 / 按时间比例的应花。
+              没有额度或没有周期时 `expected` 为 0（没有可摊的基准）
+            - `remainingDays`：今天之后还剩几天（没有周期时为 0）
+            - `projectedExhaustDay`：按当前速度预计第几天用尽
+              （0 = 本周期不会用尽、没有额度，或没有周期）
             - `series[]`：逐日累计，每项含 `day` / `actual` / `expected`
-              （`enabled=false` 时**不返回**）
+              （`enabled=false` 时**不返回**；没有锚点时从最早一条记录起算，
+              并裁剪到与 `/api/usage/stats` 相同的 370 天上限）
 
             `enabled=false` 的响应体恰为六个键：
             `enabled` / `dayInCycle` / `actual` / `expected` / `remainingDays` /
@@ -575,7 +594,7 @@ paths:
               为出错的配置路径（如 `usage_meter.period_days`）。`usage_meter.*`
               的校验错误全部走这一形态：
               `UsageMeterQuotaNegative` / `UsageMeterQuotaNotNumber` /
-              `UsageMeterAnchorRequired` / `UsageMeterAnchorInvalid` /
+              `UsageMeterEnabledNotBool` / `UsageMeterAnchorInvalid` /
               `UsageMeterAnchorNotString` / `UsageMeterPeriodRange`
               （带 `detail.Max`）/ `UsageMeterPeriodNotNumber` /
               `UsageMeterMetricInvalid` / `UsageMeterMetricNotString` /
@@ -1598,12 +1617,12 @@ paths:
         "200":
           description: |
             会话列表。
-            群会话（`sessionType: "group"`）额外携带 `groupMembers`（紧凑的**在群**成员预览
-            `{id, agentId, name, backend, avatar?, isHost?}`，用于会话列表渲染成员头像堆叠；
+            群会话（`sessionType: "group"`）额外携带 `groupMembers`（紧凑的**可发言**成员预览
+            `{id, agentId, name, backend, avatar?, isHost?}`——已禁用成员不在其中，用于会话列表渲染成员头像堆叠；
             `avatar` 为成员自身冻结的头像 SVG，缺失时前端回退智能体头像）；
             `isHost` 来自群行的主持人指针，客户端据此在行内展示模式标签（有主持人 = 主持人模式，
             非空名单无主持人 = 自由模式；名单为空时不显示，不猜测）。非群会话省略该键。
-            完整成员名单（含已离场）见 `GET /api/group/members`。
+            完整成员名单（含已禁用）见 `GET /api/group/members`。
 
             每行还带 `agentName`（智能体显示名，注册表可解析时返回）。本端点按调用方
             当前项目取数，智能体通常能由客户端自行反查，`agentName` 主要覆盖「智能体已被
@@ -3716,11 +3735,11 @@ paths:
         单聊用）、`speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`
         （仅群会话：**在群**成员的有序预览 `{id, agentId, name, backend, avatar?, isHost?}`，
         与 `GET /api/sessions` 的 `groupMembers` 同形，供顶栏渲染与群聊 header 一致的
-        头像堆叠；已离场成员不在其中）。`speakers` 是 map（JSON 键按 UUID 排序、且含
-        已离场成员），只用于逐条消息解析；成员堆叠请用 `groupMembers`。
+        头像堆叠；已禁用成员不在其中）。`speakers` 是 map（JSON 键按 UUID 排序、且含
+        已禁用成员），只用于逐条消息解析；成员堆叠请用 `groupMembers`。
 
         `session.sessionType`（`chat` / `group` / `group_member`）是**判断是否群会话的
-        唯一显式依据**：`groupMembers` 只含在群成员，成员全部离场时为空数组，据其推断
+        唯一显式依据**：`groupMembers` 只含可发言成员，成员全部禁用时为空数组，据其推断
         会把群分享误当单聊，读者就会看到原始的 `<clawbench-mention>` 路由标签。
 
         **头像在每次请求时实时解析**：匿名查看者无法访问 `/api/agents`，所以
@@ -5465,7 +5484,7 @@ paths:
             聚合结果。会话带 `title_match`、`title_match_positions`（标题内
             字符级偏移，用于高亮）与 `title_only`（无内容分块，需懒加载首条消息）。
             群聊会话另带 `group_members`（在线成员预览，渲染头像堆叠）与
-            `group_speakers`（成员行 id → 显示名，**含已离场成员**，供详情把
+            `group_speakers`（成员行 id → 显示名，**含已禁用成员**，供详情把
             chunk 的 `agent_id` 归属到具体发言人）；1:1 与任务会话不含这两项。
             每条命中分块带 `agent_id`（发言人成员行 id，1:1 会话为空）。
 
@@ -6136,7 +6155,7 @@ paths:
       tags: [Group]
       summary: 列出群成员
       description: |
-        返回群的全部成员，含已离场（`left=true`）的成员。`isHost` 标识主持人。
+        返回群的全部成员，含已禁用（`disabled=true`）的成员。`isHost` 标识主持人。
         同时返回 `mode`（`"host"` 主持人模式 / `"free"` 自由聊天模式）、
         `parallelDefault`（自由模式 actionbar「并发执行」开关的服务端值；缺省
         `false` 即串行）与 `cruise`（自动巡航开关；缺省 `false`）。成员发言次数
@@ -6168,7 +6187,12 @@ paths:
                         backend: {type: string}
                         avatar: {type: string}
                         agentName: {type: string}
-                        left: {type: boolean}
+                        disabled:
+                          type: boolean
+                          description: |
+                            该成员当前是否禁用。禁用只是**调度时不安排它发言**，成员行、
+                            上下文窗口与历史全部保留；启用后它会看到禁用期间的全部内容
+                            （禁用期间 seen_cursor 不推进）。
                         isHost: {type: boolean}
                         model:
                           type: string
@@ -6207,11 +6231,12 @@ paths:
       tags: [Group]
       summary: 批量添加群成员
       description: |
-        活跃成员数上限为 12（每个成员是一个独立的 ACP 子进程，连接池无上限）。
-        `agentIds` 允许重复：每个元素是一个**新的独立成员实例**（不再复用已有
-        行，也没有「重新加入」语义——离场成员再加会新建实例）。后端按批内出现
-        顺序为每个实例生成唯一显示名（首个用原名，其后 `名字 2`、`名字 3`……）。
-        上限按**实例数**在**整批**上判定：超限则整批拒绝、不落任何行。
+        发言成员数上限为 12（每个成员是一个独立的 ACP 子进程，连接池无上限）；
+        禁用成员不占名额。`agentIds` 允许重复：每个元素是一个**新的独立成员实例**
+        （复用已有行会让两个实例共享同一份上下文，故「加人」永远是新建；把禁用的
+        成员叫回来请用 `PATCH` 启用，而不是再加一次）。后端按批内出现顺序为每个
+        实例生成唯一显示名（首个用原名，其后 `名字 2`、`名字 3`……）。上限按
+        **实例数**在**整批**上判定：超限则整批拒绝、不落任何行。
       operationId: groupMembersAdd
       requestBody:
         required: true
@@ -6231,29 +6256,47 @@ paths:
           description: 添加成功，返回 memberIds
         "409":
           description: 成员数超过上限（`msgKey=GroupMemberLimitReached`）
-    delete:
+    patch:
       tags: [Group]
-      summary: 移除群成员（软删除，保留其历史发言）
+      summary: 禁用 / 启用（成员不会被移除）
       description: |
-        主持人模式（`mode="host"`）下主持人**不可移除**（`409`）——它是群唯一的
-        调度者，移除后群无法再起回合。（v1 不提供更换主持人的入口；如需换人请另建群。）
-        自由模式（`mode="free"`）无主持人，任何成员都可移除。
-      operationId: groupMembersRemove
+        禁用只是**调度时不安排该成员发言**：成员行、它的上下文窗口与全部历史都
+        保留，任何入口都能随时启用。启用后该成员能读到禁用期间的所有内容——禁用
+        期间 `seen_cursor` 不推进，所以它的下一轮会把整段积压注入上下文。
+
+        主持人模式（`mode="host"`）下主持人**不可禁用**（`409`）——它是群唯一的
+        调度器，禁用后群无法再起回合。**最后一位可发言的成员也不可禁用**（`409`）：
+        群里没人能接话，之后一个回合都跑不起来。（v1 不提供更换主持人的入口；如需换人请另建群。）
+        自由模式（`mode="free"`）无主持人，任何成员都可禁用。
+
+        `disabled` 必填：缺字段是非法请求（`400`），而不是「设为 false」——否则漏传
+        的客户端会静默把成员启用。重复设置同一状态是幂等的（不重复写系统行）。
+      operationId: groupMembersSetDisabled
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [groupId, memberId]
+              required: [groupId, memberId, disabled]
               properties:
                 groupId: {type: string}
                 memberId: {type: string}
+                disabled:
+                  type: boolean
+                  description: true = 禁用（不参与调度），false = 启用
       responses:
         "200":
-          description: 移除成功
+          description: 设置成功
+        "400":
+          description: 缺少 groupId / memberId / disabled
         "409":
-          description: 目标是主持人（`msgKey=CannotRemoveHost`）
+          description: |
+            拒绝禁用（启用永不 409）：
+            - 目标是主持人（`msgKey=CannotDisableHost`）——它是群唯一的调度器；
+            - 目标是最后一位可发言成员（`msgKey=CannotDisableLastMember`）——
+              群里没人能接话，之后一个回合都跑不起来；
+            - 启用会让可发言成员超过上限（`msgKey=GroupMemberLimitReached`）。
 
   /api/group/member-avatars:
     post:
@@ -6324,7 +6367,8 @@ paths:
         讨论内容。本端点直接驱动该成员的 ACP 连接，**不在群时间线上产生任何输出**。
 
         守卫（按顺序）：群正在执行回合 → 409 `GroupRunning`（成员连接在本轮中忙）；
-        该成员不属于此群或已离场 → 404 `GroupMemberNotFound`；成员不是 ACP 传输 →
+        该成员不属于此群 → 404 `GroupMemberNotFound`（**已禁用的成员仍可压缩**——禁用只是
+        不参与调度，它的上下文窗口恰恰是禁用期间值得整理的对象）；成员不是 ACP 传输 →
         400 `CompactNeedsACP`（CLI 没有斜杠命令通道）；同一成员已在压缩 → 409
         `GroupMemberCompacting`。
 

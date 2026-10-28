@@ -160,8 +160,10 @@ function fileLabel(f) {
   flex-shrink: 0;
   /* Same horizontal inset + bottom rhythm as the plan card (.plan-panel) and
      the same corner radius as its collapsed chip (.plan-chip), so the two
-     cards stack as one column when both are visible. */
-  margin: 0 var(--space-5) var(--space-4);
+     cards stack as one column when both are visible.
+     --chat-content-card-gutter centres the card once the pane is wider than
+     the chat measure and keeps its original 10px gutter below that. */
+  margin: 0 var(--chat-content-card-gutter) var(--space-4);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   background: var(--bg-secondary);

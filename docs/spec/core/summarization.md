@@ -41,7 +41,7 @@ flowchart LR
 - **摘要视图 warning/error 横幅**：摘要生成时把原回复中的 warning/error 块收集进 `SummaryCards.Warnings` 通道（与 file-changes 卡片同机制），随 DB → loadHistory API / summary_update WS 透传到前端，摘要分支渲染时复用原文的横幅样式与继续/重试按钮逻辑——消息一旦有摘要，后端会把 content 剥离为 `{"blocks":[]}`，warning/error 数据不再随原文下发，因此必须走摘要卡片通道才能在摘要视图保留错误提示
 - **TTS 语音摘要**：TTS 请求触发时按需生成语音专用摘要。提取 AI 结论和 AskUserQuestion 内容，合并为可朗读文本。结果缓存到独立的 `tts_summaries` 表。语音摘要后端可配置：`simple`（提取结论）、`api`（LLM 二次压缩）或 `auto`（按内容杂质比例自动在两者间分流）
 - **多 pass 压缩**：AI（语音）摘要结果超过 4KB 时自动触发二次摘要，最多两轮。防止超长中间结果传递给下游（尤其是 TTS）
-- **Block 提取算法**：`ExtractLastAnswerFromBlocks` 跳过中间推理，提取最后一个 tool_use 之后的文本作为 AI 结论。无后续文本时回退到最长的文本块——AI Agent 的对话模式通常在工具调用后给出最终综合回答
+- **Block 提取算法**：`ExtractLastAnswerFromBlocks` 跳过中间推理，提取最后一个 tool_use 之后的文本作为 AI 结论。若工具调用之后没有文本（AI 说完结论就直接调了终结型工具，如 AskUserQuestion），回退到该工具**之前最后一段非空文本**——**不是最长的那个块**：中间推理常常比结论长得多，按长度取会把推理当成摘要（实测一条消息 16135 字的思考盖过 2637 字的答案）。完全没有工具调用时仍取最长文本块（先一句引言再给正文是常见形态，末块可能只是一句收尾）。纯空白块一律跳过，否则单独一个空格会被当成答案产出空摘要
 - **Markdown 清理**：TTS 模式的 `StripMarkdown` 多阶段清理：代码块移除、行内代码按长度保留或删除（短变量名保留，长代码片段移除）、粗体/标题/列表/表格/脚注剥离、AskUserQuestion 块转为自然语言朗读格式
 - **热重载**：语音摘要配置（`summarize.tts_backend`）通过 PATCH 端点即时生效，TTS 摘要器原子重建，进行中的调用继续使用旧实例
 - **推荐回复**：会话完成后可选生成下一步建议（`chat.recommend_enabled`），由 `RecommendNextStep` 调用 LLM 生成。Payload 分为 stable（项目上下文 + 快捷指令，可缓存）和 rolling（对话 + 结论，每轮变化）两部分，支持 prompt caching。结果通过 `chat_recommendation` WS 事件推送，持久化到 `chat_recommendations` 表。详见 [推荐回复](../features/chat-recommendation.md)

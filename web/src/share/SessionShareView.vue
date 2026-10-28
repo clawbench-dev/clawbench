@@ -351,7 +351,7 @@ const resolveSpeaker = computed(() => makeSpeakerResolver(sessionAgent.value, sp
 // The group's ACTIVE roster, frozen in roster order with the host flagged
 // (group shares only; empty for single-agent). The topbar renders the same
 // overlapping avatar stack the in-app group header shows. This is NOT derived
-// from `speakers`: that is a map (UUID-sorted keys) and includes left members.
+// from `speakers`: that is a map (UUID-sorted keys) and includes disabled members.
 interface ShareGroupMember {
   id: string
   agentId?: string
@@ -366,7 +366,7 @@ interface ShareGroupMember {
 const groupMembers = ref<ShareGroupMember[]>([])
 // The session's OWN type, carried explicitly by the payload. This is the only
 // reliable group signal: `groupMembers` is the ACTIVE roster, so a group whose
-// members have all left comes back empty — deriving the flag from it would make
+// members are all disabled comes back empty — deriving the flag from it would make
 // that thread render as a single-agent session, and the reader would then see
 // raw <clawbench-mention> routing tags instead of resolved @-chips.
 const sessionType = ref('')

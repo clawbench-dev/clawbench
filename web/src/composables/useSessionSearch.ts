@@ -49,8 +49,8 @@ export interface SessionSearchResult {
    */
   group_members?: GroupMemberPreview[]
   /**
-   * Group member row id → display name, INCLUDING members who have since left.
-   * Resolves a chunk's `agent_id` to a speaker name in the detail view (a left
+   * Group member row id → display name, INCLUDING currently disabled members.
+   * Resolves a chunk's `agent_id` to a speaker name in the detail view (a disabled
    * member's past speech must still resolve to their own name). Absent for 1:1
    * and task sessions.
    */

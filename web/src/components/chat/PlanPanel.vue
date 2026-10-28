@@ -138,7 +138,9 @@ watch(
 <style scoped>
 .plan-panel {
   width: auto;
-  margin: 0 var(--space-5) var(--space-4);
+  /* --chat-content-card-gutter: centres the card once the pane is wider than
+     the chat measure, and keeps its original 10px gutter on a phone. */
+  margin: 0 var(--chat-content-card-gutter) var(--space-4);
 }
 
 /* ── Collapsed chip ── */

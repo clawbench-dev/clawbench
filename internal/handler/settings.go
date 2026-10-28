@@ -177,6 +177,7 @@ var hotReloadFields = map[string]bool{
 	// Usage meter — the worker re-reads the rule every tick, so a changed rule
 	// takes effect without a restart. The handler also recreates the worker so
 	// the new rule is checked immediately instead of up to one interval later.
+	"usage_meter.enabled":     true,
 	"usage_meter.anchor_date": true,
 	"usage_meter.cycle_mode":  true,
 	"usage_meter.period_days": true,
@@ -366,6 +367,7 @@ func parseMCPServers(raw []any) ([]model.MCPServer, error) {
 // are deliberately absent: they describe the server's notification progress,
 // not user configuration, and the UI has nothing to do with them.
 type configUsageMeter struct {
+	Enabled    bool    `json:"enabled"`
 	AnchorDate string  `json:"anchor_date"`
 	CycleMode  string  `json:"cycle_mode"`
 	PeriodDays int     `json:"period_days"`
@@ -898,6 +900,7 @@ var PatchableConfigPaths = map[string]bool{
 	// (notified_cycle_start / notified_stage) are deliberately absent: they are
 	// service-owned bookkeeping, and letting a client write them would let it
 	// suppress or duplicate the notification.
+	"usage_meter.enabled":     true,
 	"usage_meter.anchor_date": true,
 	"usage_meter.cycle_mode":  true,
 	"usage_meter.period_days": true,
@@ -1078,6 +1081,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Appearance: buildConfigAppearance(cfg),
 		Forge:      buildConfigForge(cfg),
 		UsageMeter: configUsageMeter{
+			Enabled:    cfg.UsageMeter.Enabled,
 			AnchorDate: cfg.UsageMeter.AnchorDate,
 			// Normalized, never the raw stored value: an install from before
 			// cycle_mode existed stores "" and the settings page has to show a
@@ -1438,36 +1442,42 @@ func validUserNickname(s string) bool {
 // with the stored config, so a partial PATCH is validated against the values it
 // will actually run with.
 //
-// A zero quota is valid and means "disabled" — in that case the other fields may
-// be empty and are simply not used. Once a quota exists the rule must be
-// complete: the worker cannot compute a cycle without an anchor, and a metric it
-// does not know would silently count nothing.
+// Every field is optional. A rule with nothing configured is valid (it means
+// "off in practice" — the meter reports nothing), and so is any subset:
+// an anchor with no quota, a quota with no anchor, an anchor with no period.
+// The point of the feature is to show the largest thing the user's input
+// supports, so a missing field is a smaller readout, not an error.
+//
+// What is NOT allowed is a value the arithmetic cannot use: an unparsable
+// anchor, an unknown metric or cycle mode, or a negative quota / period. Those
+// would silently produce wrong numbers rather than obviously missing ones.
 func validateUsageMeterRule(r model.UsageMeterConfig) error {
 	if r.Quota < 0 {
 		return &configValueError{MsgKey: "UsageMeterQuotaNegative", Field: "usage_meter.quota"}
 	}
-	if r.Quota == 0 {
-		return nil
+	if r.PeriodDays < 0 {
+		return &configValueError{
+			MsgKey: "UsageMeterPeriodRange", Field: "usage_meter.period_days",
+			Data: map[string]any{"Max": model.MaxUsageMeterPeriodDays},
+		}
 	}
 	if !model.IsValidUsageMeterCycleMode(r.CycleMode) {
 		return &configValueError{MsgKey: "UsageMeterCycleModeInvalid", Field: "usage_meter.cycle_mode"}
 	}
-	if r.AnchorDate == "" {
-		return &configValueError{MsgKey: "UsageMeterAnchorRequired", Field: "usage_meter.anchor_date"}
-	}
-	// Parsed in local time to match how the service interprets the anchor: a
-	// date-only value means 00:00, a date-time value means that wall-clock
-	// instant, both in the server's timezone.
-	if _, err := model.ParseUsageMeterAnchor(r.AnchorDate); err != nil {
-		return &configValueError{MsgKey: "UsageMeterAnchorInvalid", Field: "usage_meter.anchor_date"}
+	// An empty anchor is legal ("since the beginning of the ledger"). Only a
+	// value that is present but unparsable is an error.
+	if r.AnchorDate != "" {
+		// Parsed in local time to match how the service interprets the anchor: a
+		// date-only value means 00:00, a date-time value means that wall-clock
+		// instant, both in the server's timezone.
+		if _, err := model.ParseUsageMeterAnchor(r.AnchorDate); err != nil {
+			return &configValueError{MsgKey: "UsageMeterAnchorInvalid", Field: "usage_meter.anchor_date"}
+		}
 	}
 	// PeriodDays only governs "fixed" cycles. In "monthly" mode the cycle
-	// length comes from the calendar, and the settings page HIDES this field —
-	// so rejecting a zero here would produce an error the user cannot act on
-	// (the field is not on screen to fix). ApplyDefaults pins a sane value
-	// instead, keeping the stored config tidy for a later switch back.
+	// length comes from the calendar, so a stored day count is dormant.
 	if model.NormalizeUsageMeterCycleMode(r.CycleMode) == model.UsageMeterCycleFixed {
-		if r.PeriodDays < 1 || r.PeriodDays > model.MaxUsageMeterPeriodDays {
+		if r.PeriodDays > model.MaxUsageMeterPeriodDays {
 			return &configValueError{
 				MsgKey: "UsageMeterPeriodRange",
 				Field:  "usage_meter.period_days",
@@ -1475,7 +1485,9 @@ func validateUsageMeterRule(r model.UsageMeterConfig) error {
 			}
 		}
 	}
-	if !model.IsValidUsageMeterMetric(r.Metric) {
+	// Metric may be empty on a rule that was never configured; the service
+	// treats that as "disabled" until ApplyDefaults fills the default in.
+	if r.Metric != "" && !model.IsValidUsageMeterMetric(r.Metric) {
 		return &configValueError{MsgKey: "UsageMeterMetricInvalid", Field: "usage_meter.metric"}
 	}
 	return nil
@@ -1654,6 +1666,13 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		// writes verbatim: a string quota persists as `quota: "5000000"` and the
 		// NEXT STARTUP FAILS to unmarshal the config and exits. The frontend
 		// happens to send numbers today; the server must not depend on that.
+		if raw, present := um["enabled"]; present {
+			v, ok := raw.(bool)
+			if !ok {
+				return &configValueError{MsgKey: "UsageMeterEnabledNotBool", Field: "usage_meter.enabled"}
+			}
+			effective.Enabled = v
+		}
 		if raw, present := um["anchor_date"]; present {
 			v, ok := raw.(string)
 			if !ok {
@@ -2423,6 +2442,18 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	// time they opened the panel and pressed save without changing anything.
 	if um, ok := patch["usage_meter"].(map[string]any); ok {
 		before := cfg.UsageMeter
+		// Normalize the BASELINE the same way as the post-patch value below, so
+		// the change detection compares like with like. An empty cycle_mode IS
+		// "fixed" and an empty metric IS the default, so filling them in must not
+		// register as "the user changed the rule" — that would re-arm the
+		// notification and clear the quota on a save that changed nothing.
+		before.CycleMode = model.NormalizeUsageMeterCycleMode(before.CycleMode)
+		if before.Metric == "" {
+			before.Metric = model.UsageMeterMetricCost
+		}
+		if v, ok := um["enabled"].(bool); ok {
+			cfg.UsageMeter.Enabled = v
+		}
 		if v, ok := um["anchor_date"].(string); ok {
 			cfg.UsageMeter.AnchorDate = v
 		}
@@ -2446,21 +2477,41 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if _, quotaInPatch := um["quota"]; !quotaInPatch && before.Metric != cfg.UsageMeter.Metric {
 			cfg.UsageMeter.Quota = 0
 		}
-		// Keep period_days usable whenever a quota is set. The settings page
-		// HIDES this field in monthly mode, so a fresh install that picks
-		// "calendar month" would otherwise leave it at 0 — and a later switch
-		// back to "fixed" would then fail validation on a field the user cannot
-		// see. Mirrors ApplyDefaults, applied here because the PATCH response is
-		// built from ConfigInstance before the next restart.
-		if cfg.UsageMeter.Quota > 0 {
-			if cfg.UsageMeter.PeriodDays <= 0 {
-				cfg.UsageMeter.PeriodDays = 30
-			}
-			if cfg.UsageMeter.PeriodDays > model.MaxUsageMeterPeriodDays {
-				cfg.UsageMeter.PeriodDays = model.MaxUsageMeterPeriodDays
+		// Clamp the period to the range the arithmetic can aggregate. Unlike the
+		// quota-derived defaults, 0 is a MEANINGFUL value here ("no cycle"), so
+		// it is left alone rather than replaced with a synthesized 30 days —
+		// that would silently reset the user's running total every month.
+		if cfg.UsageMeter.PeriodDays < 0 {
+			cfg.UsageMeter.PeriodDays = 0
+		}
+		if cfg.UsageMeter.PeriodDays > model.MaxUsageMeterPeriodDays {
+			cfg.UsageMeter.PeriodDays = model.MaxUsageMeterPeriodDays
+		}
+		// A rule the user just configured (anything set, but no enable flag
+		// written) is implicitly on: the whole panel is sent on save, and a
+		// checkbox the user never touched reads as false. Only a rule with
+		// nothing configured stays off, so an untouched panel cannot turn a
+		// working meter off by accident.
+		//
+		// Deliberately NOT here: enabling is not implied by the patch. The
+		// settings panel always sends `enabled` (it is a field of the panel), so
+		// inferring it would only cover hand-written API calls — at the price of
+		// making every partial patch look like a change and re-arming the
+		// notification. Upgrades are covered by ApplyDefaults instead.
+		//
+		// Mirror ApplyDefaults for the shape a rule needs in order to compute
+		// anything. Without this, a rule created from a fresh install (where the
+		// metric has never been written) would reach the service with an empty
+		// metric and report itself disabled until the next restart: the panel
+		// would look saved while the capsule stayed a placeholder.
+		if model.UsageMeterConfigured(cfg.UsageMeter) {
+			cfg.UsageMeter.CycleMode = model.NormalizeUsageMeterCycleMode(cfg.UsageMeter.CycleMode)
+			if cfg.UsageMeter.Metric == "" {
+				cfg.UsageMeter.Metric = model.UsageMeterMetricCost
 			}
 		}
-		changed := before.AnchorDate != cfg.UsageMeter.AnchorDate ||
+		changed := before.Enabled != cfg.UsageMeter.Enabled ||
+			before.AnchorDate != cfg.UsageMeter.AnchorDate ||
 			before.CycleMode != cfg.UsageMeter.CycleMode ||
 			before.PeriodDays != cfg.UsageMeter.PeriodDays ||
 			before.Metric != cfg.UsageMeter.Metric ||

@@ -27,11 +27,12 @@ test.describe.serial('Session switch scroll memory', () => {
     chat = new ChatPage(page)
     await page.goto('/')
     // The chat pane's collapsed state is persisted per profile, and a collapsed
-    // pane has no visible transcript to scroll — the dock button is the stable
-    // hook (data-tab), and aria-pressed tells us which way it currently is.
-    const chatToggle = page.locator('[data-tab="chat"]').first()
-    if ((await chatToggle.getAttribute('aria-pressed')) === 'false') {
-      await chatToggle.click()
+    // pane has no visible transcript to scroll. While collapsed a 24px rail
+    // remains at the right edge; it only exists in that state, so its presence
+    // IS the check.
+    const rail = page.locator('[data-action="show-chat"]')
+    if (await rail.isVisible().catch(() => false)) {
+      await rail.click()
     }
     await expect(chat.textarea).toBeVisible({ timeout: 20000 })
   })
