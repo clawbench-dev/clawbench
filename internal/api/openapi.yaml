@@ -6246,7 +6246,8 @@ paths:
         期间 `seen_cursor` 不推进，所以它的下一轮会把整段积压注入上下文。
 
         主持人模式（`mode="host"`）下主持人**不可禁用**（`409`）——它是群唯一的
-        调度器，禁用后群无法再起回合。（v1 不提供更换主持人的入口；如需换人请另建群。）
+        调度器，禁用后群无法再起回合。**最后一位可发言的成员也不可禁用**（`409`）：
+        群里没人能接话，之后一个回合都跑不起来。（v1 不提供更换主持人的入口；如需换人请另建群。）
         自由模式（`mode="free"`）无主持人，任何成员都可禁用。
 
         `disabled` 必填：缺字段是非法请求（`400`），而不是「设为 false」——否则漏传
@@ -6271,7 +6272,12 @@ paths:
         "400":
           description: 缺少 groupId / memberId / disabled
         "409":
-          description: 目标是主持人且试图禁用（`msgKey=CannotDisableHost`）
+          description: |
+            拒绝禁用（启用永不 409）：
+            - 目标是主持人（`msgKey=CannotDisableHost`）——它是群唯一的调度器；
+            - 目标是最后一位可发言成员（`msgKey=CannotDisableLastMember`）——
+              群里没人能接话，之后一个回合都跑不起来；
+            - 启用会让可发言成员超过上限（`msgKey=GroupMemberLimitReached`）。
 
   /api/group/member-avatars:
     post:

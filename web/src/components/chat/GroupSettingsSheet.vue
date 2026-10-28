@@ -92,12 +92,12 @@
                strand the group. -->
           <button
             class="gm-disable-toggle"
-            :class="{ 'gm-disable-toggle--inert': m.isHost, 'is-disabled': m.disabled }"
-            :disabled="m.isHost"
-            :title="m.isHost ? t('group.hostCannotDisable') : (m.disabled ? t('group.enable') : t('group.disable'))"
-            :aria-label="m.isHost ? t('group.hostCannotDisable') : (m.disabled ? t('group.enable') : t('group.disable'))"
-            :data-action="m.isHost ? undefined : (m.disabled ? 'enable-member' : 'disable-member')"
-            @click="m.isHost ? undefined : toggleDisabled(m)"
+            :class="{ 'gm-disable-toggle--inert': !canToggleDisabled(m), 'is-disabled': m.disabled }"
+            :disabled="!canToggleDisabled(m)"
+            :title="toggleTitle(m)"
+            :aria-label="toggleTitle(m)"
+            :data-action="!canToggleDisabled(m) ? undefined : (m.disabled ? 'enable-member' : 'disable-member')"
+            @click="canToggleDisabled(m) ? toggleDisabled(m) : undefined"
           >
             <Play v-if="m.disabled" :size="14" />
             <Ban v-else :size="14" />
@@ -361,6 +361,26 @@ onBeforeUnmount(stopListeningNow)
 // and the footer total includes them.
 const speakingMemberCount = computed(() => props.members.filter(m => !m.disabled).length)
 
+/** The last member still able to speak cannot be turned off: the group would have
+ *  nobody to answer and no turn could ever run again. Mirrors the server guard
+ *  (ErrCannotDisableLastMember) so the button explains itself instead of the
+ *  click coming back as a 409. */
+const isLastSpeaker = (m: GroupMemberInfo) => !m.disabled && speakingMemberCount.value <= 1
+
+/** Whether this row's toggle may fire: the host is the only router and the last
+ *  speaker is the only remaining voice, so both are inert (their button stays in
+ *  place so every row keeps the same trailing column). */
+function canToggleDisabled(m: GroupMemberInfo): boolean {
+  if (m.isHost) return false
+  return m.disabled || !isLastSpeaker(m)
+}
+
+function toggleTitle(m: GroupMemberInfo): string {
+  if (m.isHost) return t('group.hostCannotDisable')
+  if (!m.disabled && isLastSpeaker(m)) return t('group.lastSpeakerCannotDisable')
+  return m.disabled ? t('group.enable') : t('group.disable')
+}
+
 async function onAgentsPicked(ids: string | string[]) {
   const list = Array.isArray(ids) ? ids : [ids]
   if (list.length > 0) {
@@ -381,9 +401,9 @@ async function onAgentsPicked(ids: string | string[]) {
 
 /** toggleDisabled disables (禁用) or re-enables (启用) a member.
  *
- *  Muting never removes anything: the member row, its context window and its
- *  history stay intact, so unmuting brings it back with everything that happened
- *  while it was disabled. */
+ *  Disabling never removes anything: the member row, its context window and its
+ *  history stay intact, so re-enabling brings it back with everything that
+ *  happened while it was disabled. */
 async function toggleDisabled(m: GroupMemberInfo) {
   try {
     await setGroupMemberDisabled(props.groupId, m.id, !m.disabled)

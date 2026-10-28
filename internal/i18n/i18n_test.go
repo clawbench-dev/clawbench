@@ -176,6 +176,7 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		// one-sided add (only one locale) would silently fall back to a raw key
 		// in the other language, so it is pinned like the rest.
 		"CannotDisableHost",
+		"CannotDisableLastMember",
 		"GroupMemberUnknown",
 		"GroupMemberListSeparator",
 		"GroupSpecialtySuffix",

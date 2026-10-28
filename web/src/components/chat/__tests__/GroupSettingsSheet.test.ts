@@ -185,6 +185,65 @@ describe('GroupSettingsSheet', () => {
     expect(mockSetDisabled).not.toHaveBeenCalled()
   })
 
+  // The last member still able to speak cannot be turned off: the group would
+  // have nobody to answer and no turn could ever run again. Mirrors the server
+  // guard (ErrCannotDisableLastMember) so the click never comes back as a 409.
+  //
+  // A free group (no host) is used because in host mode the host itself speaks,
+  // so "host + 1 member" still has a speaker left — that shape legitimately
+  // degrades to a single chat and is NOT blocked.
+  it('keeps the last speaking member’s disable button inert', async () => {
+    const w = mountSheet([
+      { id: 'm2', name: 'Solo', backend: 'claude', agentId: 'a2', isHost: false },
+      { id: 'm3', name: 'Gone', backend: 'claude', agentId: 'a3', isHost: false, disabled: true },
+    ])
+    const soloRow = w.findAll('.gm-row').find(r => r.text().includes('Solo'))!
+    const btn = soloRow.find('.gm-disable-toggle')
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.classes()).toContain('gm-disable-toggle--inert')
+    expect(btn.attributes('title')).toBe('group.lastSpeakerCannotDisable')
+    await btn.trigger('click')
+    expect(mockSetDisabled).not.toHaveBeenCalled()
+  })
+
+  it('allows disabling a member while another speaker remains', async () => {
+    const w = mountSheet([
+      { id: 'm2', name: 'Alice', backend: 'claude', agentId: 'a2', isHost: false },
+      { id: 'm3', name: 'Bob', backend: 'claude', agentId: 'a3', isHost: false },
+    ])
+    const aliceRow = w.findAll('.gm-row').find(r => r.text().includes('Alice'))!
+    const btn = aliceRow.find('.gm-disable-toggle')
+    expect(btn.attributes('disabled')).toBeUndefined()
+    expect(btn.attributes('title')).toBe('group.disable')
+    await btn.trigger('click')
+    expect(mockSetDisabled).toHaveBeenCalledWith('g1', 'm2', true)
+  })
+
+  // Enabling is never blocked by the last-speaker rule: a disabled member is the
+  // one that makes the group non-empty again, so the guard must not leak onto it.
+  it('still allows re-enabling a disabled member when nobody else speaks', async () => {
+    const w = mountSheet([
+      { id: 'm2', name: 'Solo', backend: 'claude', agentId: 'a2', isHost: false },
+      { id: 'm3', name: 'Gone', backend: 'claude', agentId: 'a3', isHost: false, disabled: true },
+    ])
+    const goneRow = w.findAll('.gm-row').find(r => r.text().includes('Gone'))!
+    const btn = goneRow.find('.gm-disable-toggle')
+    expect(btn.attributes('disabled')).toBeUndefined()
+    expect(btn.attributes('title')).toBe('group.enable')
+  })
+
+  // In host mode the host itself speaks, so "host + one member" still has a
+  // speaker left — that group legitimately degrades to a single chat, so the
+  // member's toggle stays usable.
+  it('still allows disabling the only non-host member when a host speaks', async () => {
+    const w = mountSheet([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
+      { id: 'm2', name: 'Solo', backend: 'claude', agentId: 'a2', isHost: false },
+    ])
+    const soloRow = w.findAll('.gm-row').find(r => r.text().includes('Solo'))!
+    expect(soloRow.find('.gm-disable-toggle').attributes('disabled')).toBeUndefined()
+  })
+
   it('renders each member own avatar, falling back to the agent avatar', () => {
     const w = mountSheet([
       { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true, avatar: '<svg>member-1</svg>' },

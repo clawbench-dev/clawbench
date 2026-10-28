@@ -335,6 +335,8 @@ func serveGroupMembersSetDisabled(w http.ResponseWriter, r *http.Request, projec
 		switch {
 		case errors.Is(err, service.ErrCannotDisableHost):
 			writeLocalizedErrorf(w, r, http.StatusConflict, "CannotDisableHost")
+		case errors.Is(err, service.ErrCannotDisableLastMember):
+			writeLocalizedErrorf(w, r, http.StatusConflict, "CannotDisableLastMember")
 		case errors.Is(err, service.ErrGroupMemberLimit):
 			writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberLimitReached", map[string]any{jsonMaxCount: service.MaxGroupMembers})
 		default:

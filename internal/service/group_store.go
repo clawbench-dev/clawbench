@@ -1121,6 +1121,13 @@ func GroupMemberSpeakersForGroups(groupIDs []string) (map[string]map[string]stri
 // unable to run another turn.
 var ErrCannotDisableHost = errors.New("cannot disable the group host")
 
+// ErrCannotDisableLastMember is returned when disabling the target would leave
+// the group with NO speaking member. A group with nobody on the roster cannot
+// run a turn at all (the orchestrator has no one to dispatch), so it would be
+// silently dead until the user happened to notice and re-enable someone — the
+// same dead end "remove the last member" had.
+var ErrCannotDisableLastMember = errors.New("cannot disable the last speaking member")
+
 // ErrGroupMemberLimit is returned when adding a member would push the group's
 // speaking (enabled) member count past maxGroupMembers.
 var ErrGroupMemberLimit = errors.New("group member limit reached")
@@ -1160,7 +1167,9 @@ const maxGroupMembers = MaxGroupMembers
 // with a new context (issue #597).
 //
 // The host member cannot be disabled (ErrCannotDisableHost): it is the group's
-// only router, so turning it off would strand the group.
+// only router, so turning it off would strand the group. The LAST speaking member
+// cannot be disabled either (ErrCannotDisableLastMember): a group with no one to
+// dispatch cannot run a turn, which is the same dead end as an empty roster.
 //
 // ENABLING is cap-checked. Disabled members do not occupy a slot (they spawn
 // nothing while off), so without this check a user could park twelve disabled
@@ -1173,7 +1182,11 @@ func SetGroupMemberDisabled(groupID, memberID string, disabled bool) error {
 	if disabled && memberID != "" && memberID == GetGroupHostMember(groupID) {
 		return ErrCannotDisableHost
 	}
-	if !disabled {
+	if disabled {
+		if err := ensureRemainingSpeaker(groupID, memberID); err != nil {
+			return err
+		}
+	} else {
 		if err := ensureEnableSlot(groupID, memberID); err != nil {
 			return err
 		}
@@ -1201,6 +1214,38 @@ func SetGroupMemberDisabled(groupID, memberID string, disabled bool) error {
 		return nil
 	}
 	writeDisabledSystemEvent(groupID, memberID, disabled)
+	return nil
+}
+
+// ensureRemainingSpeaker returns ErrCannotDisableLastMember when memberID is the
+// only member still scheduled to speak. A member that is ALREADY disabled does
+// not count against the group, so re-asserting its current state stays a no-op
+// success (there is nothing to lose).
+func ensureRemainingSpeaker(groupID, memberID string) error {
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, m := range members {
+		if m.ID != memberID {
+			continue
+		}
+		found = true
+		if m.Disabled {
+			return nil
+		}
+		break
+	}
+	// A member id from a DIFFERENT group matches no row here; the UPDATE will
+	// affect nothing, which is the documented no-op. Do not turn that into a
+	// "last member" error.
+	if !found {
+		return nil
+	}
+	if countSpeakingMembers(members) <= 1 {
+		return ErrCannotDisableLastMember
+	}
 	return nil
 }
 

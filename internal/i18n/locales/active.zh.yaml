@@ -5,6 +5,7 @@ ServiceBusy: 服务器正在装配分享的会话，请稍后重试
 SessionLimitReached: 已达会话数量上限（{{.MaxCount}}），请先归档旧会话
 SessionIdRequired: session_id 为必填项
 CannotDisableHost: 主持人是群的唯一调度者，不能禁用
+CannotDisableLastMember: 最后一位可发言的成员不能禁用——否则群里就没有人能接话了
 GroupMemberLimitReached: 一个群最多 {{.MaxCount}} 个成员
 ForkContextInjectedChat: 「{{.Title}}」的历史消息已作为背景注入当前会话
 ForkContextInjectedGroup: 「{{.Title}}」的历史消息已作为背景注入本群，每位成员首次发言时都会收到

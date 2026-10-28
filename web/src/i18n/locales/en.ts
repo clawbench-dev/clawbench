@@ -1301,6 +1301,7 @@ export default {
     title: 'Group',
     host: 'Host',
     hostCannotDisable: 'The host is the group\u2019s only scheduler and cannot be disabled',
+    lastSpeakerCannotDisable: 'The last member who can speak cannot be disabled \u2014 nobody would be left to answer',
     realAgent: 'Agent',
     // The reserved human participant name ("User") shown to the reader.
     you: 'you',

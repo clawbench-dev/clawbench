@@ -289,6 +289,12 @@ func TestGroupUnread_MidDrainDoesNotRaiseBadge(t *testing.T) {
 // result. Without the speech-count guard the badge would tell the user to speak
 // in a group that cannot answer.
 //
+// The flag is written DIRECTLY rather than through SetGroupMemberDisabled: the
+// API now refuses to disable the last speaking member (ErrCannotDisableLastMember),
+// but an all-disabled roster is still reachable from data written before that
+// guard existed (the flag used to be free-form). The orchestrator must stay
+// defensive about it regardless of how the state came to be.
+//
 // Verified by mutation: dropping `o.memberSpeeches > 0` makes this fail.
 func TestGroupUnread_SilentTurnDoesNotRaiseBadge(t *testing.T) {
 	setupGroupDB(t)
@@ -298,8 +304,10 @@ func TestGroupUnread_SilentTurnDoesNotRaiseBadge(t *testing.T) {
 	// Both members are disabled: the roster still lists them but the relay has no
 	// speaker, so the turn produces no speech at all.
 	for _, name := range []string{"A", "B"} {
-		if err := SetGroupMemberDisabled(groupID, byName[name], true); err != nil {
-			t.Fatalf("SetGroupMemberDisabled(%s): %v", name, err)
+		if _, err := store.WriteExec(
+			"UPDATE chat_sessions SET disabled = 1 WHERE id = ?", byName[name],
+		); err != nil {
+			t.Fatalf("disable %s: %v", name, err)
 		}
 	}
 

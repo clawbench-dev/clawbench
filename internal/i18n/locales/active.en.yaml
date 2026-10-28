@@ -5,6 +5,7 @@ ServiceBusy: The server is busy assembling shared conversations, please retry sh
 SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old sessions
 SessionIdRequired: session_id required
 CannotDisableHost: The host is the group's only scheduler and cannot be disabled
+CannotDisableLastMember: The last member who can speak cannot be disabled — the group would have nobody left to answer
 GroupMemberLimitReached: A group can have at most {{.MaxCount}} members
 ForkContextInjectedChat: The history of "{{.Title}}" was injected into this session as background
 ForkContextInjectedGroup: The history of "{{.Title}}" was injected into this group as background; each member receives it on their first turn

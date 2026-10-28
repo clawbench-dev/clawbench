@@ -790,6 +790,66 @@ func TestSetGroupAutoApprove_AppliesToAllMembers(t *testing.T) {
 
 // The host controls the flow, so disabling it would leave the group unroutable.
 // Refuse the disable rather than silently orphaning the group (decision: N5).
+// The LAST speaking member cannot be disabled: with nobody on the roster the
+// group can never run another turn, which is the same dead end the old
+// "remove the last member" had. Re-asserting an ALREADY disabled member is still
+// a no-op success (there is nothing left to lose).
+func TestSetGroupMemberDisabled_RefusesLastSpeaker(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-last"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	// A FREE group (no host), so the host guard cannot mask the last-member guard.
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	if err := SetGroupMemberDisabled(groupID, byName["B"], true); err != nil {
+		t.Fatalf("disabling one of two members must work: %v", err)
+	}
+	if err := SetGroupMemberDisabled(groupID, byName["A"], true); !errors.Is(err, ErrCannotDisableLastMember) {
+		t.Fatalf("disabling the last speaker must be refused with ErrCannotDisableLastMember, got %v", err)
+	}
+	// The refusal must not have half-applied.
+	for _, m := range mustListMembers(t, groupID) {
+		if m.ID == byName["A"] && m.Disabled {
+			t.Fatal("a refused disable must leave the last speaker enabled")
+		}
+	}
+	// Re-asserting an already disabled member stays a no-op success.
+	if err := SetGroupMemberDisabled(groupID, byName["B"], true); err != nil {
+		t.Fatalf("re-disabling an already disabled member must be a no-op success: %v", err)
+	}
+	// Enabling it back gives the group two speakers again, so A may be disabled.
+	if err := SetGroupMemberDisabled(groupID, byName["B"], false); err != nil {
+		t.Fatalf("re-enabling must work: %v", err)
+	}
+	if err := SetGroupMemberDisabled(groupID, byName["A"], true); err != nil {
+		t.Fatalf("disabling A with two speakers must work: %v", err)
+	}
+}
+
+// A member id belonging to a DIFFERENT group resolves to no row: the update is a
+// documented no-op, not a "last speaker" error.
+func TestSetGroupMemberDisabled_ForeignMemberIsNoOp(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-foreign"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupA, byNameA := createFreeGroup(t, project, "A", "B")
+	_ = groupA
+	groupB, _ := createFreeGroup(t, "/tmp/grouptest-foreign-b", "C", "D")
+
+	if err := SetGroupMemberDisabled(groupB, byNameA["A"], true); err != nil {
+		t.Fatalf("a member id from another group must be a no-op success, got %v", err)
+	}
+	for _, m := range mustListMembers(t, groupA) {
+		if m.Disabled {
+			t.Fatalf("a foreign disable must not touch any row, got %+v", m)
+		}
+	}
+}
+
 func TestSetGroupMemberDisabled_RefusesHost(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/grouptest"
