@@ -470,6 +470,11 @@ paths:
         SharedPreferences 开关 `tunnel_transport_h2_enabled`），服务端读不到，
         这正是监听器必须常开的原因：服务端无法用该值决定是否监听。
 
+        `forge.enabled` 是 GitHub/GitLab 集成的总开关（默认 `true`）。关闭后服务端
+        停止轮询、不再产生 forge 事件与通知，**并清空所有项目的仓库绑定**（见
+        `PATCH` 段）。这是服务端开关而非每设备偏好：轮询与凭据都在服务端，同一服务器
+        的所有客户端必须一致。
+
         `chat.user_nickname` 是群聊中人类用户的保留显示名（默认 `User`）。它被
         写进路由标签的 `targets` 属性，故不能包含引号 / 尖括号 / 逗号 / 控制字符，
         且不得与任何智能体同名（与智能体命名双向校验）。
@@ -497,6 +502,15 @@ paths:
         壁纸的共享资源（`appearance.local.items` / `appearance.bing.file`）不在白名单，
         须经专用端点写入；每设备的壁纸选择（来源 / 开关 / 选中项）存在浏览器
         localStorage，PATCH 会被白名单拒绝。
+
+        `forge.enabled` 是**破坏性**开关：置为 `false` 时，在配置写入成功后清空
+        `project_forges` 全表（所有项目的仓库绑定），并把**原本有绑定**的项目标记为
+        「已解绑」，以免下一次 GET 按 git remote 自动绑回。从未绑定过的项目不会被标记。
+        重新置为 `true` **不会**恢复这些绑定（要重新关联需显式绑定一次）。
+
+        清空失败**不返回 500**：配置已是权威事实，返回 500 会让客户端把
+        `forge.enabled` 回滚成 `true`，界面显示「已启用」而服务端实际已停用。改为
+        `200` + `warnings` 里的一条说明；残留绑定本身无害（轮询器先判开关）。
 
         `port_forward.enabled` 仍为白名单键，但**值被忽略**：任何值都返回 200，
         存储值恒为 `true`（监听器常开，与 `ApplyDefaults` 一致）。
@@ -3676,8 +3690,23 @@ paths:
       description: |
         免鉴权。子路径分派：`{token}` 或 `{token}/file`（原文件）、`{token}/content?path=`
         （文档内引用的文件，同样返回 FileContent JSON）、`{token}/download`（强制下载，
-        支持 `?path=`）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）。
-        token 不存在一律 404，零信息暴露。
+        支持 `?path=`）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）、
+        `{token}/doc/{dirKey}/{rel}`（HTML 文档及其资源，见下）。token 不存在一律 404，
+        零信息暴露。
+
+        **`{token}/doc/{dirKey}/{rel}` 是唯一会返回 `text/html` 的公开端点**，供分享页
+        在 iframe 里以**真实 URL** 渲染被分享的 HTML：`{dirKey}` 是文档所在**目录**的
+        base64url（无填充），`{rel}` 是相对该目录的资源路径。这样浏览器能直接推导出
+        base，文档里的 `css/x.css`、`img/y.png`、`js/z.js` 全部解析到正确位置。
+        此前用 `srcdoc` 内联，`about:srcdoc` 没有自己的 URL、继承分享页的 base，所有
+        相对引用都打到 `/share/...` 而 404，带样式的页面会渲染成白底裸 HTML。
+
+        **安全边界靠 CSP 而不是 MIME**：该端点所有响应都带
+        `Content-Security-Policy: sandbox allow-scripts`（**不含** `allow-same-origin`），
+        文档因此处于不透明源——读不到读者 Cookie、不能以读者身份调用鉴权接口、也够不到
+        父页面，与原先 iframe 的 `sandbox="allow-scripts"` 等价。`{dirKey}` 只是提示，
+        实际以分享范围校验为准（编码 `/` 或项目外目录一律 404）。其余资源类型走
+        `.css/.js/.woff2` 等网页资源 MIME；基础表 `mimeTypes` 仍**不得**含 `.html`。
 
         会话分享走另外两个子路径：`{token}/meta`（返回 `kind` 为 `file` 或
         `session`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回**实时装配**的
@@ -4236,6 +4265,10 @@ paths:
         事件触发的任务只在项目已绑定仓库时才会被触发，创建这类任务前应先用本端点确认
         `binding` 非空。
 
+        **集成被关闭时（`forge.enabled=false`）不会自动绑定**，`binding` 与 `suggested`
+        都为 `null`：关闭会清空所有绑定，若这里仍按 remote 自动绑定，用户的选择会被
+        下一次打开面板悄悄撤销。
+
         `scheme` 是请求该主机实际使用的协议（`http` / `https`），已解析而非原始值：
         远程为 ssh 形式时无法推断协议，此时由凭据记录的协议提示决定，最终仍会落到
         `http` 或 `https`。
@@ -4258,6 +4291,10 @@ paths:
 
         `host` 是绑定与凭据的关联键，**不含协议**——同一实例的 http 与 https 视为同一
         个仓库，因此不会因协议不同而产生两份轮询/未读状态。
+
+        集成关闭时（`forge.enabled=false`）返回 **409**（`msgKey=ForgeDisabled`）：
+        此时绑定一行会让 GET 立刻回报它，并在重新启用后开始轮询，而用户从未在界面上
+        做过这个绑定。`DELETE` 不受限制——解除关联在任何状态下都允许。
       requestBody:
         required: false
         content:
@@ -4286,6 +4323,8 @@ paths:
       responses:
         "200":
           description: 结果
+        "409":
+          description: 集成已关闭（`msgKey=ForgeDisabled`），拒绝新建绑定
     delete:
       tags: [Forge]
       summary: 解除绑定

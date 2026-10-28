@@ -76,7 +76,7 @@ const displayFields = computed(() =>
   border-radius: var(--radius-lg);
   padding: var(--space-8);
   margin: calc(24 * var(--dp));
-  max-width: calc(320 * var(--dp));
+  max-width: var(--modal-width-narrow);
   width: 100%;
   box-shadow: var(--shadow-md);
 }

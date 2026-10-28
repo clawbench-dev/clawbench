@@ -389,22 +389,6 @@ func CancelQueuedMessage(sessionID, queueID string) error {
 	return err
 }
 
-// fileEntryKey is the dedupe identity of a FileEntry, mirroring the frontend's
-// entryKey (web/src/utils/fileAttachmentUtils.ts): URLs key on their address,
-// quotes on their stable id plus content (two quotes of the same range with
-// different text are genuinely different attachments), plain files on
-// path + line range.
-func fileEntryKey(f model.FileEntry) string {
-	switch {
-	case f.IsURL():
-		return "url|" + f.URL
-	case f.IsQuote():
-		return fmt.Sprintf("quote|%s|%s|%d|%d|%s", f.ID, f.Path, f.StartLine, f.EndLine, f.Text)
-	default:
-		return fmt.Sprintf("%s|%d|%d", f.Path, f.StartLine, f.EndLine)
-	}
-}
-
 // loadQueuedParts reads every queued message of a session in queue (DB-id)
 // order. The caller must already hold the write mutex/transaction so no drain
 // can claim a row between this read and the delete that follows the merge.
@@ -440,22 +424,14 @@ func loadQueuedParts(tx *sql.Tx, sessionID string) ([]QueuedRow, error) {
 }
 
 // mergeQueuedFiles concatenates the attachments of the merged rows in queue
-// order, keeping the first occurrence of each identity (same order the
-// frontend's dedupeFiles uses).
+// order, keeping the first occurrence of each identity (the same rule
+// model.DedupeFileEntries applies).
 func mergeQueuedFiles(parts []QueuedRow) []model.FileEntry {
 	var merged []model.FileEntry
-	seen := make(map[string]bool)
 	for _, r := range parts {
-		for _, f := range r.Files {
-			key := fileEntryKey(f)
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			merged = append(merged, f)
-		}
+		merged = append(merged, r.Files...)
 	}
-	return merged
+	return model.DedupeFileEntries(merged)
 }
 
 // MergeQueuedMessages collapses every queued message of a session into ONE
@@ -470,7 +446,7 @@ func mergeQueuedFiles(parts []QueuedRow) []model.FileEntry {
 // Content is the rows' text joined in DB-id order (which is queue order) with a
 // blank line between parts; empty parts (attachment-only entries) are skipped so
 // a file-only message does not inject stray blank lines. Attachments are
-// concatenated in the same order and deduped by fileEntryKey.
+// concatenated in the same order and deduped by identity (model.DedupeFileEntries).
 //
 // Returns ok=false when the session has fewer than two queued messages (there is
 // nothing to merge) — that is not an error. On success the returned row's
@@ -514,10 +490,10 @@ func MergeQueuedMessages(sessionID, queueID string) (merged QueuedRow, oldQueueI
 	mergedFiles := mergeQueuedFiles(parts)
 
 	// Merging is only meaningful if the result carries something. Two
-	// attachment-only messages whose attachments are identical (fileEntryKey
-	// dedupes them) collapse to an empty body AND an empty file list — a queue
-	// row the user cannot send, and one the UI renders as "attachment" while
-	// opening it shows nothing. Decline instead: the originals stay queued.
+	// attachment-only messages whose attachments are identical (the identity
+	// dedupe collapses them) become a queue row the user cannot send, and one
+	// the UI renders as "attachment" while opening it shows nothing. Decline
+	// instead: the originals stay queued.
 	if mergedContent == "" && len(mergedFiles) == 0 {
 		return QueuedRow{}, nil, false, nil
 	}

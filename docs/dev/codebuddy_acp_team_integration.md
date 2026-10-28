@@ -364,13 +364,14 @@ slim 块没有 `input`，`sessionId` 也可能不再可解析 ⇒ prompt 静默�
 
 **不要把它再塞回事实网格**——它就是下方那段 Markdown 正文，两边都放会重复显示。
 
-**宽度**：`--modal-max-width: 900px`，写在**非 scoped** 样式块里（`BottomSheet`
-渲染在 `<Teleport to="body">` 内，组件的 scope 属性到不了那里，scoped 规则永远
-匹配不到 → 静默失效）。默认 624px 卡放长 Markdown 会挤成一团。
+**宽度**：面板传 `size="wide"`（`BottomSheet` 的宽档），宽度来自 `css/variables.css`
+的 `--modal-width-wide`。**不要**再在组件里写 `--modal-max-width`——那条覆盖已删除，
+`assets/__tests__/modalWidth.css.test.ts` 会拒绝任何组件级宽度覆盖。窄档（520px）放
+长 Markdown 会挤成一团，所以这里必须显式选宽档。
 
-守卫：`teamMemberDetailSheet.css.test.ts`（宽屏非 scoped + 不再拉 prompt，含变异
+守卫：`teamMemberDetailSheet.css.test.ts`（选宽档 + 不再拉 prompt，含变异
 验证）、`TeamPanel.test.ts`（description 直渲 Markdown + 不重复进事实网格）、
-`e2e/specs/team-panel.spec.ts`（真实浏览器：面板 >624px、H2/表格/代码块、路径 chip）。
+`e2e/specs/team-panel.spec.ts`（真实浏览器：面板宽于窄档、H2/表格/代码块、路径 chip）。
 
 ### 4.3 权限卡成员徽标
 

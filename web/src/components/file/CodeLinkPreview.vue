@@ -4,6 +4,7 @@
     v-if="preview.visible.value && preview.mode.value === 'sheet'"
     :open="preview.visible.value"
     auto
+    size="wide"
     panel-class="code-preview-sheet-panel"
     class="code-preview-sheet"
     :title="sheetTitle"
@@ -492,6 +493,7 @@ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick, i
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronUp, Download, Pin, X } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import { refreshTick } from '@/composables/useFileRefresh.ts'
 import CodePreviewToolbar from '@/components/file/CodePreviewToolbar.vue'
 import CodePreviewBody from '@/components/file/CodePreviewBody.vue'
 import MarkdownPreviewBody from '@/components/file/MarkdownPreviewBody.vue'
@@ -715,6 +717,15 @@ watch(
     htmlPreviewTimestamp.value = Date.now()
   }
 )
+
+// A refresh must re-run the document even when the file's BYTES did not change:
+// the page can pick up a new external stylesheet / script / image, which is
+// exactly what the button is for. Without this the URL (and therefore the
+// navigation) stayed identical and the card looked frozen. Monotonic rather than
+// `Date.now()` so two refreshes in one millisecond still differ.
+watch(refreshTick, () => {
+  if (isHtmlView.value) htmlPreviewTimestamp.value += 1
+})
 
 const htmlPreviewSrc = computed(() =>
   buildHtmlPreviewSrc(props.preview.target.value?.filePath || '', htmlPreviewTimestamp.value)

@@ -490,6 +490,12 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	cfg.Feishu.Enabled = cfg.PushMode == "feishu"
 
 	// --- Forge (GitHub / GitLab integration) ---
+	// The master switch defaults to ON: bool zero-value trap, same as terminal /
+	// port_forward. An absent key means "keep the integration", so upgrading
+	// never silently turns it off; an explicit `enabled: false` is respected.
+	if !presence["forge.enabled"] {
+		cfg.Forge.Enabled = true
+	}
 	// Notification toggles default to ENABLED. Go's bool zero value is false, so
 	// without this block every flag would silently default to off — the opposite
 	// of the documented behavior. Presence is used to distinguish "user wrote

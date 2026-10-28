@@ -122,15 +122,24 @@ export function isDockTabId(tab: string): tab is DockTabId {
  * port forwarding is genuinely unusable — no wire can carry it). Both are still
  * declared in DOCK_TABS — this function is where the runtime gate is applied.
  *
+ * `forgeHidden` is a USER-facing switch, not a runtime capability: issue #590 asks
+ * for a way to turn the integration off when it is not in use. On the server
+ * that switch stops polling and clears every project's repository binding, so by
+ * the time this flag is true there is nothing left for the panel to show — the
+ * dock entry is simply the visible half of a real disable.
+ *
  * The proxy flag is `portForwardUnavailable`, not `sshDisabled`: an install
  * forwarding over the stream tunnel has no SSH listener yet works fine, so
  * keying the dock off SSH alone hid the whole tab there. Callers compute it with
  * `portForwardUnavailable()` from utils/portForwardUtils — this module stays
  * import-free on purpose (see the header), so it takes the resulting boolean.
  */
-export function secondaryDockTabs(opts: { terminalDisabled?: boolean; portForwardUnavailable?: boolean } = {}): DockTabId[] {
+export function secondaryDockTabs(
+  opts: { terminalDisabled?: boolean; portForwardUnavailable?: boolean; forgeHidden?: boolean } = {},
+): DockTabId[] {
   return DOCK_TABS.filter((t) => !t.primary)
     .filter((t) => !(t.id === 'terminal' && opts.terminalDisabled))
     .filter((t) => !(t.id === 'proxy' && opts.portForwardUnavailable))
+    .filter((t) => !(t.id === 'forge' && opts.forgeHidden))
     .map((t) => t.id)
 }

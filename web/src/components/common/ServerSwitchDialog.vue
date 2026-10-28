@@ -3,7 +3,7 @@
     :open="open"
     :title="t('serverSwitch.title')"
     :z-index="2500"
-    size="compact"
+    size="narrow"
     @close="$emit('close')"
   >
     <div class="server-switch">

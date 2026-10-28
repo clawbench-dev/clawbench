@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" auto back-event="back" @close="$emit('close')" @back="$emit('back')">
+  <BottomSheet :open="open" auto size="wide" back-event="back" @close="$emit('close')" @back="$emit('back')">
     <template #header>
       <button class="fd-back-btn" :title="t('common.back')" :aria-label="t('common.back')" @click.stop="$emit('back')">
         <ArrowLeft :size="16" />

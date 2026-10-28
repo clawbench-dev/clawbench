@@ -242,6 +242,18 @@ type UsageMeterConfig struct {
 // its own token. Notification toggles are global and default to enabled (set in
 // ApplyDefaults — Go's bool zero value would otherwise disable everything).
 type ForgeConfig struct {
+	// Enabled is the master switch for the whole integration. Off means: no
+	// polling, no event notifications, no dock entry, and every project's
+	// repository binding has been cleared (turning it off deletes them — see
+	// service.ClearAllProjectForges). Defaults to TRUE via ApplyDefaults'
+	// presence check, so an install that has never written the key keeps the
+	// integration it already had.
+	//
+	// This is a SERVER-side switch, unlike most UI preferences: "stop talking to
+	// GitHub" is about the credentials and the outbound traffic, which live on
+	// the server, so every client of one server must agree. A per-device flag
+	// would leave one client polling after another had "disabled" it.
+	Enabled bool `yaml:"enabled"`
 	// Credentials maps a host (e.g. "github.com", "git.acme.internal:8443") to
 	// its token. Hosts are stored lowercased.
 	Credentials map[string]string `yaml:"credentials"`

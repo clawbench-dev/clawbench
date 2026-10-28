@@ -2087,10 +2087,11 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 }
 
 /* Terminal theme picker (unscoped because PopupMenu teleports to body).
-   Container surface comes from PopupMenu appSurface; title uses the shared
-   .app-menu-title. The .theme-item row rules are shared with the app-header
-   picker and live in assets/theme-picker.css (both popups are teleported). */
-.theme-picker { min-width: 160px; }
+   Container surface comes from PopupMenu appSurface; the column / title /
+   min-width chrome is in css/components.css and the .theme-item row rules in
+   assets/theme-picker.css — both shared with the app-header and public-share
+   pickers (all of them are teleported to <body>). Only the load/error states
+   are terminal-specific. */
 .theme-picker-status { padding: var(--space-5) var(--space-6); text-align: center; color: var(--text-muted); font-size: var(--font-size-sm); }
 .theme-picker-error { display: flex; flex-direction: column; gap: var(--space-4); align-items: center; }
 .theme-retry-btn { padding: var(--space-2) var(--space-6); border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: transparent; color: var(--text-primary); cursor: pointer; font-size: var(--font-size-sm); }

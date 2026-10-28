@@ -10,7 +10,7 @@
  * in-flight, new calls are deferred until the current one completes.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { nextTick } from 'vue'
+import { nextTick, watch } from 'vue'
 
 // ── Timer leak prevention ──
 
@@ -158,6 +158,7 @@ vi.mock('@/composables/useDialog.ts', () => ({
 import {
   refreshCurrentFile,
   isRefreshing,
+  refreshTick,
   flashRanges,
   flashType,
   markFileSaved,
@@ -291,6 +292,84 @@ describe('useFileRefresh deduplication', () => {
     await refreshCurrentFile()
 
     expect(store.selectFile).not.toHaveBeenCalled()
+  })
+
+  /**
+   * refreshTick is the signal URL-rendered surfaces (the HTML previews) use.
+   *
+   * Those surfaces render the document from its URL, not from `content`, so a
+   * refresh whose bytes are identical produced NO observable change: same
+   * content ⇒ same `?t=` ⇒ no navigation ⇒ a button that looks dead. A page can
+   * change appearance without its own source changing (an external stylesheet,
+   * script or image), which is precisely the case the button exists for.
+   */
+  describe('refreshTick', () => {
+    it('bumps even when the file content did not change', async () => {
+      store.state.currentFile = { name: 'a.html', path: 'a.html', content: '<h1>x</h1>' }
+      const originalFetch = globalThis.fetch
+      // The fetch returns the SAME bytes the viewer already holds.
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ content: '<h1>x</h1>' }),
+      })
+      store.selectFile.mockResolvedValue(true)
+
+      const before = refreshTick.value
+      await refreshCurrentFile()
+
+      expect(refreshTick.value, 'a no-op refresh must still announce itself').toBe(before + 1)
+      globalThis.fetch = originalFetch
+    })
+
+    it('bumps only after the content settled, so a consumer re-runs on new bytes', async () => {
+      // Order matters: a consumer watching the tick re-reads the document. If
+      // the tick fired before selectFile applied the new content, the preview
+      // would reload the OLD bytes and then never be told again.
+      store.state.currentFile = { name: 'a.html', path: 'a.html', content: 'old' }
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ content: 'new' }),
+      })
+      let contentAtTick: string | null = null
+      const unwatch = watch(refreshTick, () => {
+        contentAtTick = store.state.currentFile?.content ?? null
+      })
+      store.selectFile.mockImplementation(async () => {
+        store.state.currentFile.content = 'new'
+        return true
+      })
+
+      await refreshCurrentFile()
+      await nextTick()
+
+      expect(contentAtTick).toBe('new')
+      unwatch()
+      globalThis.fetch = originalFetch
+    })
+
+    it('bumps exactly once per completed refresh', async () => {
+      // A refresh button click while one is already running is deferred and
+      // merged, then re-enters refreshCurrentFile. Each COMPLETED pass bumps
+      // once, so N sequential clicks never leave a stale preview.
+      store.state.currentFile = { name: 'a.html', path: 'a.html', content: 'x' }
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ content: 'x' }),
+      })
+      store.selectFile.mockResolvedValue(true)
+
+      const before = refreshTick.value
+      // Both start in the same tick: the second sees isRefreshing and defers.
+      const first = refreshCurrentFile()
+      const second = refreshCurrentFile()
+      await first
+      await second
+
+      expect(refreshTick.value, 'both completed passes must announce').toBe(before + 2)
+      globalThis.fetch = originalFetch
+    })
   })
 
   describe('syncMarkersFor (accumulated baseline)', () => {

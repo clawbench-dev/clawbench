@@ -241,7 +241,7 @@
     <button ref="themeBtnRef" class="theme-quick-toggle" :title="t('appHeader.themePicker')" :aria-label="t('appHeader.themePicker')" @click="toggleThemeMenu">
       <Palette :size="18" />
     </button>
-    <PopupMenu v-model:show="themeMenuOpen" :target-element="themeBtnRef" :max-width="200" :max-height="440" :menu-items-count="1 + THEME_IDS.length" anchor="right" app-surface @after-leave="onThemeMenuAfterLeave">
+    <PopupMenu v-model:show="themeMenuOpen" :target-element="themeBtnRef" :max-width="200" :max-height="440" :menu-items-count="themeOptions.length" anchor="right" app-surface @after-leave="onThemeMenuAfterLeave">
       <div class="theme-picker app-menu-column">
         <div class="app-menu-title">{{ t('terminal.theme') }}</div>
         <div class="app-menu-scroll">
@@ -345,7 +345,7 @@
 </template>
 
 <script setup lang="ts">
-import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Sun, Moon, Minus } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Minus } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -366,7 +366,7 @@ import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useMenuKeyboard } from '@/composables/useMenuKeyboard'
 import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiPost } from '@/utils/api'
-import { localConfig, setLocalConfig } from '@/composables/useSettingsConfig'
+import { localConfig } from '@/composables/useSettingsConfig'
 import { useSystemResources } from '@/composables/useSystemResources'
 import { useUsageMeter } from '@/composables/useUsageMeter'
 import UsageMeterPopover from '@/components/common/UsageMeterPopover.vue'
@@ -377,8 +377,7 @@ import { recentProjectDisplayPath } from '@/utils/recentProjects'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
-import { isDarkTheme, resolveThemeId, THEME_IDS, getThemeLabelKey, getThemePreviewColor } from '@/utils/themeMeta'
-import { applyThemeWithReveal, headerThemeOrigin } from '@/utils/themeReveal'
+import { useThemePicker } from '@/composables/useThemePicker'
 import ShortcutTipsDialog from '@/components/common/ShortcutTipsDialog.vue'
 import AppMenuPanel from '@/components/common/AppMenuPanel.vue'
 import type { ShortcutContext } from '@/config/shortcutTips'
@@ -410,50 +409,27 @@ const shortcutContext = computed<ShortcutContext>(() =>
 )
 const shortcutTipsOpen = ref(false)
 
-// Quick theme picker
-const themeBtnRef = ref<HTMLElement | null>(null)
-const themeMenuOpen = ref(false)
-const currentThemeValue = computed(() => localConfig.theme || 'auto')
-const autoPreviewColors = computed(() => getThemePreviewColor(resolveThemeId('auto')))
-
-const themeOptions = computed(() => [
-  { label: t('settings.items.themeAuto'), value: 'auto' },
-  ...THEME_IDS.map(id => ({ label: t(getThemeLabelKey(id)), value: id })),
-])
-
-function toggleThemeMenu() {
-  if (themeMenuOpen.value) {
-    themeMenuOpen.value = false
-    return
-  }
-  dropdownOpen.value = false
-  fileDropdownOpen.value = false
-  branchDropdownOpen.value = false
-  themeMenuOpen.value = true
-}
-
-/** Pending theme value to apply once the picker has finished closing. */
-const pendingThemeValue = ref<string | null>(null)
-
-function selectTheme(value: string) {
-  // Close the menu first; the reveal only starts once it has finished leaving
-  // (see onThemeMenuAfterLeave). Starting immediately would put the still-fading
-  // menu into the transition's "new" snapshot and overlap the two animations.
-  pendingThemeValue.value = value
-  themeMenuOpen.value = false
-}
-
-/** PopupMenu emits this after its leave transition completes. */
-function onThemeMenuAfterLeave() {
-  const value = pendingThemeValue.value
-  if (value === null) return
-  pendingThemeValue.value = null
-  // Same origin helper as the settings theme grid, so both entry points wipe
-  // from the identical spot.
-  applyThemeWithReveal(() => setLocalConfig('theme', value), {
-    origin: headerThemeOrigin(),
-  })
-}
+// Quick theme picker. The state machine (deferred reveal, persistence, origin)
+// lives in useThemePicker so the public share topbar shares it verbatim — see
+// that module for the three rules a re-implementation would silently break.
+const {
+  btnRef: themeBtnRef,
+  menuOpen: themeMenuOpen,
+  currentValue: currentThemeValue,
+  options: themeOptions,
+  toggle: toggleThemeMenu,
+  selectTheme,
+  onMenuAfterLeave: onThemeMenuAfterLeave,
+  previewStyle: getThemePreviewStyle,
+  baseIcon: getThemeBaseIcon,
+} = useThemePicker({
+  // Only one header popup may be open at a time.
+  onBeforeOpen: () => {
+    dropdownOpen.value = false
+    fileDropdownOpen.value = false
+    branchDropdownOpen.value = false
+  },
+})
 
 /** Deep-link into the full appearance settings (theme grid + fonts + UI scale).
  *  Mirrors the branch-badge → history deep-link: a module-level pending request
@@ -470,20 +446,6 @@ function openMoreAppearanceOptions() {
 function openAboutSettings() {
   setPendingSettingsCategory('about')
   switchTab?.('settings')
-}
-
-/** Per-row preview colours consumed by assets/theme-picker.css: the swatch
- *  background and the sun/moon tint. The row surface itself stays neutral, so
- *  the theme's foreground colour is no longer needed. */
-function getThemePreviewStyle(value: string) {
-  const c = value === 'auto' ? autoPreviewColors.value : getThemePreviewColor(value)
-  if (!c) return undefined
-  return { '--tterm-preview-bg': c.bg, '--tterm-preview-accent': c.accent }
-}
-
-function getThemeBaseIcon(value: string) {
-  const resolved = value === 'auto' ? resolveThemeId('auto') : value
-  return isDarkTheme(resolved) ? Moon : Sun
 }
 
 const props = defineProps({
@@ -1769,23 +1731,6 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     flex-direction: column;
 }
 
-.app-menu-title {
-    padding: calc(5 * var(--dp)) var(--space-6) var(--space-2);
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-semibold);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-muted);
-    border-bottom: 1px solid var(--border-color);
-    flex-shrink: 0;
-}
-
-.app-menu-scroll {
-    overflow-y: auto;
-    overflow-x: hidden;
-    max-height: calc(300 * var(--dp));
-}
-
 .app-menu-message {
     text-align: center;
     padding: var(--space-5) var(--space-6);
@@ -2062,12 +2007,6 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     color: var(--text-secondary);
 }
 
-.menu-divider {
-    height: 1px;
-    background: var(--border-color);
-    margin: var(--space-1) 0;
-}
-
 /* Dropdown transition (teleported to body) */
 .dropdown-enter-active,
 .dropdown-leave-active {
@@ -2169,31 +2108,13 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     color: var(--text-secondary, #666);
 }
 
-/* ─── Theme picker popup (unified with terminal theme picker) ───────────
-   Container surface is the PopupMenu appSurface (.app-menu look). The inner
-   column lays out title + scrollable list + pinned footer (the "more
-   appearance options" row reuses the project dropdown's divider + other-item
-   structure so it looks identical to the "browse" row). */
-.theme-picker { min-width: 160px; }
-/* Column layout shared by app-menu-styled pickers (app-header theme picker +
-   terminal theme picker). max-height: inherit ties it to the PopupMenu root's
-   computed inline max-height, so on short viewports the scrollable middle
-   shrinks and the pinned footer never gets clipped. */
-.app-menu-column {
-  display: flex;
-  flex-direction: column;
-  max-height: inherit;
-  min-height: 0;
-}
-.app-menu-column > .app-menu-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-/* Header (title) / divider / footer row must never shrink — the scrollable
-   middle absorbs any height deficit first. */
-.app-menu-column > :not(.app-menu-scroll) {
-  flex-shrink: 0;
-}
+/* ─── Theme picker popup ────────────────────────────────────────────────
+   Container surface is the PopupMenu appSurface (.app-menu look). The
+   `.theme-picker` / `.app-menu-column` / `.app-menu-title` / `.app-menu-scroll`
+   / `.menu-divider` chrome these popups rely on lives in css/components.css,
+   because the terminal picker and the public share picker need the identical
+   rules and the share SPA mounts no AppHeader. Only the header-specific focus
+   ring stays here. */
 /* The .theme-item row rules live in assets/theme-picker.css — shared with the
    terminal toolbar picker (both popups are teleported to <body>). Only the
    focus ring is header-specific, since the terminal rows are not tabbable. */

@@ -7,6 +7,23 @@ import (
 	"clawbench/internal/service"
 )
 
+// ServeSessionSettingsRoute mounts the shared /api/ai/session/settings path.
+//
+// GET and PATCH are two handlers on one path, so the route needs a dispatcher.
+// Registering only the GET handler is a real failure mode, not a hypothetical
+// one: it shipped that way, and every PATCH from the settings drawer (a group
+// member's model / effort / mode / transport) answered 405 "MethodNotAllowed"
+// because the mux never reached ServeSessionSettingsUpdate. The handler tests
+// all call the functions directly, so none of them could see it —
+// TestSessionSettingsRoute_DispatchesPatch is the route-level guard.
+func ServeSessionSettingsRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPatch {
+		ServeSessionSettingsUpdate(w, r)
+		return
+	}
+	ServeSessionSettings(w, r)
+}
+
 // ServeSessionSettings returns one session's settings state in the exact shape
 // the settings drawer (SessionDrawer) needs: model, thinking effort, mode,
 // transport, auto-approve, auto-cruise, plus the context-usage snapshot.

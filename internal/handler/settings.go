@@ -153,6 +153,7 @@ var hotReloadFields = map[string]bool{
 	"feishu.app_secret":         true,
 	"feishu.users":              true,
 	"push_mode":                 true,
+	"forge.enabled":             true,
 	"forge.insecure_tls":        true,
 	"forge.notify.opened":       true,
 	"forge.notify.closed":       true,
@@ -513,6 +514,9 @@ type configFeishu struct {
 // deliberately NOT returned: the response carries only the set of hosts that
 // have a token (has_token), so a token can be written but never read back.
 type configForge struct {
+	// Enabled is the master switch. Off means polling is stopped, every
+	// project's binding has been cleared, and the dock entry is hidden.
+	Enabled bool `json:"enabled"`
 	// CredentialHosts lists hosts with a configured token, sorted.
 	CredentialHosts []string `json:"credential_hosts"`
 	// CredentialSchemes maps each host with a token to the API scheme it is
@@ -698,6 +702,7 @@ func buildConfigForge(cfg model.Config) configForge {
 	}
 
 	return configForge{
+		Enabled:           cfg.Forge.Enabled,
 		CredentialHosts:   hosts,
 		CredentialSchemes: schemes,
 		InsecureTLS:       cfg.Forge.InsecureTLS,
@@ -870,6 +875,7 @@ var PatchableConfigPaths = map[string]bool{
 	"feishu.app_secret":                 true,
 	"feishu.users":                      true,
 	"push_mode":                         true,
+	"forge.enabled":                     true,
 	"forge.insecure_tls":                true,
 	"forge.notify.opened":               true,
 	"forge.notify.closed":               true,
@@ -1156,33 +1162,7 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	normalizeUserNicknameInPatch(patch)
 
 	if err := validatePatchValues(patch); err != nil {
-		// A nickname colliding with an existing agent is a conflict, not a
-		// malformed value: answer 409 with the localized key so the UI can show
-		// the same reason the agent-side guard does.
-		if errors.Is(err, errUserNicknameTaken) {
-			writeLocalizedErrorf(w, r, http.StatusConflict, "UserNicknameTaken")
-			return
-		}
-		// A malformed nickname answers 400 with the localized key (the raw
-		// English fmt.Errorf message would not be translated by the UI).
-		if errors.Is(err, errInvalidUserNickname) {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidUserNickname")
-			return
-		}
-		// A rejected config value names the offending field in the user's
-		// language. The generic `invalid_value` body this replaces was
-		// unactionable: the API helper surfaces only `error`, so the user saw
-		// "invalid_value" and could not tell which of the four usage-meter
-		// fields was wrong, let alone what the rule is.
-		var valueErr *configValueError
-		if errors.As(err, &valueErr) {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, valueErr.MsgKey, valueErr.templateData())
-			return
-		}
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error":   "invalid_value",
-			"message": err.Error(),
-		})
+		writePatchValueError(w, r, err)
 		return
 	}
 
@@ -1227,6 +1207,25 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	// Sort changed fields for deterministic response
 	sort.Strings(changedFields)
 
+	// Turning the integration off clears every project's repository binding.
+	// Deliberately AFTER the config write succeeded: clearing first and then
+	// failing to persist would destroy the user's bindings while the switch
+	// stayed on, i.e. the worst of both states.
+	//
+	// Bindings are the thing that actually drives polling, so this is what makes
+	// "disabled" mean "no outbound requests" rather than just "hidden". The
+	// poller also checks the flag each cycle (belt and braces for the window
+	// before this runs).
+	//
+	// A failure here is reported as a WARNING, not a 500. The config is already
+	// persisted and in memory — that is the authoritative fact — so answering 500
+	// would make the client roll its cached `forge.enabled` back to true and
+	// redraw the dock and the switch as enabled, while the server is disabled.
+	// The user would then be told "save failed" about a change that did take
+	// effect. The stale bindings are harmless on their own (the poller checks the
+	// flag first) and the next disable attempt retries the cleanup.
+	clearWarnings := clearForgeBindingsOnDisable(patch)
+
 	// Classify fields into hot (no restart) and cold (needs restart)
 	coldFields := make([]string, 0) // always non-nil so JSON serializes as [] not null
 	for _, f := range changedFields {
@@ -1238,12 +1237,68 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 
 	// Collect warnings from hot-reload (e.g. DingTalk connection failure)
 	warnings := applyHotReloadWarnings()
+	warnings = append(warnings, clearWarnings...)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"needs_restart":       len(coldFields) > 0,
 		"changed_cold_fields": coldFields,
 		"warnings":            warnings,
 	})
+}
+
+// writePatchValueError maps a validatePatchValues failure onto the response
+// that names the problem. Split out of serveConfigPatch purely for complexity.
+func writePatchValueError(w http.ResponseWriter, r *http.Request, err error) {
+	// A nickname colliding with an existing agent is a conflict, not a
+	// malformed value: answer 409 with the localized key so the UI can show
+	// the same reason the agent-side guard does.
+	if errors.Is(err, errUserNicknameTaken) {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "UserNicknameTaken")
+		return
+	}
+	// A malformed nickname answers 400 with the localized key (the raw
+	// English fmt.Errorf message would not be translated by the UI).
+	if errors.Is(err, errInvalidUserNickname) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidUserNickname")
+		return
+	}
+	// A rejected config value names the offending field in the user's
+	// language. The generic `invalid_value` body this replaces was
+	// unactionable: the API helper surfaces only `error`, so the user saw
+	// "invalid_value" and could not tell which of the four usage-meter
+	// fields was wrong, let alone what the rule is.
+	var valueErr *configValueError
+	if errors.As(err, &valueErr) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, valueErr.MsgKey, valueErr.templateData())
+		return
+	}
+	writeJSON(w, http.StatusBadRequest, map[string]any{
+		"error":   "invalid_value",
+		"message": err.Error(),
+	})
+}
+
+// clearForgeBindingsOnDisable removes every project's repository binding when
+// this patch turned the integration off. Returns warnings to surface to the
+// client.
+func clearForgeBindingsOnDisable(patch map[string]any) []string {
+	forgeMap, ok := patch["forge"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	enabled, ok := forgeMap["enabled"].(bool)
+	if !ok || enabled {
+		return nil
+	}
+	removed, cerr := service.ClearAllProjectForges()
+	if cerr != nil {
+		slog.Error("forge: clear bindings after disable failed", "err", cerr)
+		return []string{fmt.Sprintf("forge disabled, but clearing repository bindings failed: %v", cerr)}
+	}
+	if removed > 0 {
+		slog.Info("forge: integration disabled, bindings cleared", "removed", removed)
+	}
+	return nil
 }
 
 func validatePatchFields(patch map[string]any, prefix string) ([]string, error) {
@@ -2332,6 +2387,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	}
 
 	if forgeMap, ok := patch["forge"].(map[string]any); ok {
+		if v, ok := forgeMap["enabled"].(bool); ok {
+			cfg.Forge.Enabled = v
+		}
 		if v, ok := forgeMap["insecure_tls"].(bool); ok {
 			cfg.Forge.InsecureTLS = v
 		}

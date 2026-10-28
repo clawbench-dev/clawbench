@@ -513,6 +513,61 @@ describe('useSessionManager', () => {
             fetchSpy.mockRestore()
         })
 
+        it('dedupes an attachment that arrives through both the pending and attached lists', async () => {
+            // Regression: "the same image appears twice in the user bubble, then
+            // three times after the next queued message". A fresh upload lives
+            // in BOTH lists (pendingFiles tracks the transfer, attachedFiles
+            // holds the resulting reference) and ALSO travels in `filePaths`,
+            // so the raw concatenation stored one extra copy per channel and the
+            // duplicates accumulated as the queue advanced.
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ ok: true, started: false }),
+            } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.enqueueMessage(
+                'session-1', '看看这个', 
+                [{ path: '.clawbench/uploads/shot.png', isDir: false }],
+                [{ path: '.clawbench/uploads/shot.png', isDir: false }],
+                'pending-dup',
+            )
+
+            const body = JSON.parse((fetchSpy.mock.calls[0] as any[])[1].body)
+            expect(body.files).toEqual([{ path: '.clawbench/uploads/shot.png', isDir: false }])
+            expect(body.filePaths).toEqual(['.clawbench/uploads/shot.png'])
+
+            fetchSpy.mockRestore()
+        })
+
+        it('keeps distinct line ranges of one path as separate attachments', async () => {
+            // Dedupe must key on entry identity (path + line range), not path
+            // alone — two regions of one file are genuinely different context.
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ ok: true, started: false }),
+            } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.enqueueMessage(
+                'session-1', 'compare', 
+                [
+                    { path: 'main.go', isDir: false, startLine: 1, endLine: 5 },
+                    { path: 'main.go', isDir: false, startLine: 20, endLine: 30 },
+                ],
+                [],
+                'pending-ranges',
+            )
+
+            const body = JSON.parse((fetchSpy.mock.calls[0] as any[])[1].body)
+            expect(body.files).toHaveLength(2)
+            expect(body.filePaths).toEqual([])
+
+            fetchSpy.mockRestore()
+        })
+
         it('sends clientId so the backend user_message broadcast can skip self-echo', async () => {
             // Regression: without clientId the backend broadcasts user_message
             // with an empty senderClientId, the frontend cannot skip its own

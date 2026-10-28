@@ -224,28 +224,22 @@ describe('ToolDetailDrawer — restore with no rendered body', () => {
 
 // On desktop the drawer renders as a centered card (BottomSheet's wide-screen
 // mode) and the tool body is exactly what needs the room: diffs, terminal
-// output and markdown all wrap badly in the default 624px card. The width comes
-// from `--modal-max-width`, which modal-card.css reads on .bs-panel.bs-wide-auto
-// — so it must be set by a non-scoped block (BottomSheet renders inside
-// <Teleport to="body">, where this component's scope attribute never lands) on
-// the panelClass passed to BottomSheet.
+// output and markdown all wrap badly in the narrow tier. The width now comes
+// from the shared `size="wide"` tier (css/variables.css), NOT from a local
+// `--modal-max-width` override — those overrides are what let four drawers
+// drift wider than the rest, and modalWidth.css.test.ts now forbids them.
 describe('ToolDetailDrawer — wide desktop card', () => {
   const src = readWebFile('src/components/chat/ToolDetailDrawer.vue')
 
-  it('passes a panelClass to BottomSheet so the width rule can reach the panel', () => {
+  it('asks BottomSheet for the wide tier', () => {
     const m = src.match(/<BottomSheet\b[^>]*>/)
     expect(m, 'the BottomSheet element must exist').not.toBeNull()
-    expect(m![0]).toContain('tool-detail-sheet')
+    expect(m![0]).toMatch(/\ssize="wide"/)
   })
 
-  it('widens the card via --modal-max-width in a non-scoped style block', () => {
-    const unscoped = src.slice(src.indexOf('<style>'))
-    expect(unscoped, 'the width rule must be non-scoped to reach the teleported panel')
-      .toMatch(/\.tool-detail-sheet\s*\{[^}]*--modal-max-width:\s*calc\(\s*960\s*\*\s*var\(--dp\)\s*\)/)
-  })
-
-  it('keeps the panelClass out of the scoped block, where it would never match', () => {
-    const scoped = src.slice(src.indexOf('<style scoped>'), src.indexOf('<style>'))
-    expect(scoped).not.toContain('--modal-max-width')
+  it('does not widen itself with a local --modal-max-width override', () => {
+    // A per-component cap is invisible to the shared tier and reintroduces
+    // exactly the drift the two-tier contract removes.
+    expect(src).not.toContain('--modal-max-width')
   })
 })

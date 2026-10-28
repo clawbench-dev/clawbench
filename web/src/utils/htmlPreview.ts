@@ -54,7 +54,72 @@ export function buildHtmlPreviewSrc(path: string, timestamp: number): string {
 const SCROLLBAR_STYLE_ATTR = 'data-clawbench-scrollbar'
 
 /**
- * Give the previewed document the app's scrollbar bar.
+ * The colours the preview document's bar is painted with, resolved from the
+ * HOST document.
+ *
+ * A preview document is a separate document, so it never sees the app's
+ * `:root`: the shared sheet's `var(--scrollbar-thumb, …)` falls back to its
+ * neutral grey, and the bar reads as "some other app's scrollbar" next to the
+ * app's own themed one. These three values are therefore read from the host and
+ * baked into the injected sheet.
+ *
+ * `hover` mirrors the app exactly — the shared sheet's hover rule reads
+ * `--text-muted`, not `--scrollbar-thumb-hover` — so the two bars brighten the
+ * same way under the cursor. `track` is the panel background: the user's
+ * choice is that the gutter belongs to the app's surface, not to the previewed
+ * page's own background.
+ */
+export interface PreviewScrollbarPalette {
+  thumb: string
+  hover: string
+  track: string
+}
+
+/** Resolve the palette from the app's current theme. */
+export function readHostScrollbarPalette(): PreviewScrollbarPalette {
+  const style = getComputedStyle(document.documentElement)
+  const read = (name: string, fallback: string) =>
+    style.getPropertyValue(name).trim() || fallback
+  return {
+    thumb: read('--scrollbar-thumb', '#c1c1c1'),
+    hover: read('--text-muted', '#999'),
+    track: read('--bg-primary', '#ffffff'),
+  }
+}
+
+/**
+ * The palette half of the injected sheet, appended AFTER the shared geometry.
+ *
+ * Concrete colours rather than variables on the document's `:root`: a previewed
+ * page is free to define `--scrollbar-thumb` / `--text-muted` for its own
+ * palette, and setting them here would either be silently overridden by its own
+ * `:root` rule (source order) or — worse — repaint parts of the page that read
+ * the same names. Explicit rules can only affect the scrollbar.
+ *
+ * The Firefox gate is repeated because the shared sheet's copy carries the
+ * fallback variables; the later block in the same <style> wins for `*`.
+ */
+function scrollbarPaletteCss(palette: PreviewScrollbarPalette): string {
+  return `
+::-webkit-scrollbar-thumb {
+    background: ${palette.thumb};
+}
+::-webkit-scrollbar-thumb:hover {
+    background: ${palette.hover};
+}
+::-webkit-scrollbar-track {
+    background: ${palette.track};
+}
+@supports not selector(::-webkit-scrollbar) {
+    * {
+        scrollbar-color: ${palette.thumb} ${palette.track};
+    }
+}
+`
+}
+
+/**
+ * Give the previewed document the app's scrollbar bar, in the app's colours.
  *
  * The preview is a separate document loaded by URL (see buildHtmlPreviewSrc)
  * and cannot link the app's stylesheets, so without this its scrollbars are the
@@ -70,17 +135,51 @@ const SCROLLBAR_STYLE_ATTR = 'data-clawbench-scrollbar'
  * own preference. Appending instead would override the document's styling,
  * which is not what a preview should do.
  *
- * Colours come from the sheet's fallbacks (a neutral grey thumb, transparent
- * track): the previewed document's own theme is unknown, so the app's themed
- * colours would be arbitrary there. The width split (4px on a coarse pointer,
- * 8px otherwise) still follows the app, since the media feature is evaluated in
- * this document.
+ * The width split (4px on a coarse pointer, 8px otherwise) follows the app,
+ * since the media feature is evaluated in this document.
+ *
+ * Re-running this on a document that already has the sheet REWRITES it with the
+ * current palette (see installPreviewStyle) — that is what watchPreviewTheme
+ * relies on after a theme switch.
  *
  * Returns true when the sheet is present afterwards (installed now or already
  * there), false when the document was unreachable.
  */
-export function installPreviewScrollbar(iframe: HTMLIFrameElement | null): boolean {
-  return installPreviewStyle(iframe, SCROLLBAR_STYLE_ATTR, scrollbarCss)
+export function installPreviewScrollbar(
+  iframe: HTMLIFrameElement | null,
+  palette: PreviewScrollbarPalette = readHostScrollbarPalette(),
+): boolean {
+  return installPreviewStyle(
+    iframe,
+    SCROLLBAR_STYLE_ATTR,
+    scrollbarCss + scrollbarPaletteCss(palette),
+  )
+}
+
+/**
+ * Repaint the preview document's app-supplied sheets when the host theme
+ * changes, and return a disposer.
+ *
+ * The injected colours are resolved values, so a theme switch while a preview is
+ * open would leave the bar in the previous theme's palette until the document
+ * reloaded (which may be never — the user can sit on one preview). The search
+ * highlight is re-installed for the same reason: it inlines the accent.
+ *
+ * Registered per load (a reload is a new document, but the host listener is
+ * unchanged) — the caller disposes the previous registration first, exactly like
+ * the other in-frame hooks.
+ */
+export function watchPreviewTheme(
+  getIframe: () => HTMLIFrameElement | null,
+): () => void {
+  const onThemeChange = () => {
+    const iframe = getIframe()
+    if (!iframe) return
+    installPreviewScrollbar(iframe)
+    installPreviewSearchStyles(iframe)
+  }
+  window.addEventListener('clawbench-theme-change', onThemeChange)
+  return () => window.removeEventListener('clawbench-theme-change', onThemeChange)
 }
 
 /** Marks the search-highlight style element we inject into a preview document. */
@@ -149,7 +248,18 @@ export function installPreviewSearchStyles(
   return installPreviewStyle(iframe, SEARCH_STYLE_ATTR, searchHighlightCss(accent), false)
 }
 
-/** Shared injector for the preview document's app-supplied stylesheets. */
+/**
+ * Shared injector for the preview document's app-supplied stylesheets.
+ *
+ * Idempotent by attribute: a second call REPLACES the existing sheet's text
+ * rather than stacking a copy. Rewriting (not returning early) is what lets a
+ * theme switch repaint the sheet in place — the resolved colours are baked into
+ * the text, so keeping the old node would keep the old palette.
+ *
+ * A sheet that is already present keeps its original position: `first` decides
+ * where a NEW sheet lands, and moving an existing one on every repaint would
+ * silently change which rules win against the previewed document's own.
+ */
 function installPreviewStyle(
   iframe: HTMLIFrameElement | null,
   attr: string,
@@ -165,7 +275,11 @@ function installPreviewStyle(
     return false
   }
   if (!doc || !doc.head) return false
-  if (doc.head.querySelector(`style[${attr}]`)) return true
+  const existing = doc.head.querySelector(`style[${attr}]`)
+  if (existing) {
+    if (existing.textContent !== css) existing.textContent = css
+    return true
+  }
 
   const style = doc.createElement('style')
   style.setAttribute(attr, '')

@@ -142,3 +142,58 @@ test.describe('HTML preview: find and quote', () => {
     await expect(quoteCard).toContainText(HTML_FILE)
   })
 })
+
+/**
+ * Refresh must re-run the previewed DOCUMENT, not just re-fetch the file.
+ *
+ * The preview renders from its URL, and the `?t=` cache-buster was derived from
+ * the file's content alone. Clicking refresh while the bytes were unchanged
+ * therefore produced an identical URL — no navigation, no repaint — and the
+ * button looked dead. That is exactly the case it exists for: a page can change
+ * appearance without its own source changing, because it references an external
+ * stylesheet / script / image.
+ *
+ * Asserted on the iframe's `src`: it is the only observable that proves the
+ * document was re-navigated rather than silently left alone (a visual assertion
+ * would need the page to actually look different, which would not distinguish
+ * "reloaded" from "already correct").
+ */
+test.describe('HTML preview: refresh', () => {
+  test('refresh re-navigates the frame even when the file is unchanged', async ({ page }) => {
+    const fm = new FileManagerPage(page)
+    const nav = new NavigationPage(page)
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const file = 'e2e-html-refresh.html'
+    fs.writeFileSync(
+      path.join(process.cwd(), file),
+      '<!doctype html><html><head><title>t</title></head><body><h1>static</h1></body></html>',
+    )
+
+    try {
+      await nav.switchToFileManager()
+      await fm.waitForContent(15000)
+      await page.locator('.toolbar-btn[title="Refresh"], .toolbar-btn[title="刷新"]').first().click()
+      await expect(fm.getFileItem(file)).toBeVisible({ timeout: 15000 })
+
+      await fm.openFile(file)
+      const iframe = page.locator('iframe.html-preview-iframe')
+      await expect(page.frameLocator('iframe.html-preview-iframe').locator('h1'))
+        .toHaveText('static', { timeout: 15000 })
+
+      const before = await iframe.getAttribute('src')
+      expect(before, 'the preview must load by URL, not srcdoc').toContain('?t=')
+
+      // Nothing on disk changes between the two reads — that is the point.
+      await page.locator('.file-header-btn[title="Refresh"], .file-header-btn[title="刷新"]')
+        .first().click()
+
+      await expect.poll(() => iframe.getAttribute('src'), { timeout: 10000 })
+        .not.toBe(before)
+      // Still the same document, just re-requested.
+      expect(await iframe.getAttribute('src')).toContain(file)
+    } finally {
+      fs.rmSync(path.join(process.cwd(), file), { force: true })
+    }
+  })
+})

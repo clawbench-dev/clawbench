@@ -512,24 +512,29 @@ describe('wide dock tab reachability (regression)', () => {
   })
 
   it('still holds for every runtime gate combination', () => {
-    // The gates change *which* tabs render; all four combinations must remain
+    // The gates change *which* tabs render; every combination must remain
     // switchable. This is the case the old registry-vs-registry test could not
     // see, because the gates live outside the registry.
     for (const terminalDisabled of [false, true]) {
       for (const portForwardUnavailable of [false, true]) {
-        const rendered = wideDockTabOrder(secondaryDockTabs({ terminalDisabled, portForwardUnavailable }))
-        expect(
-          rendered.filter((tab) => !WIDE_SCREEN_DOCK_TABS.includes(tab)),
-          `gate combination terminalDisabled=${terminalDisabled} portForwardUnavailable=${portForwardUnavailable}`,
-        ).toEqual([])
+        for (const forgeHidden of [false, true]) {
+          const rendered = wideDockTabOrder(
+            secondaryDockTabs({ terminalDisabled, portForwardUnavailable, forgeHidden }),
+          )
+          expect(
+            rendered.filter((tab) => !WIDE_SCREEN_DOCK_TABS.includes(tab)),
+            `gate combination terminalDisabled=${terminalDisabled} portForwardUnavailable=${portForwardUnavailable} forgeHidden=${forgeHidden}`,
+          ).toEqual([])
+        }
       }
     }
   })
 
-  it('gates hide exactly terminal and proxy, and nothing else', () => {
+  it('gates hide exactly terminal, proxy and forge, and nothing else', () => {
     const all = secondaryDockTabs()
     expect(all).toContain('terminal')
     expect(all).toContain('proxy')
+    expect(all).toContain('forge')
     expect(secondaryDockTabs({ terminalDisabled: true })).not.toContain('terminal')
     expect(secondaryDockTabs({ terminalDisabled: true })).toContain('proxy')
     expect(secondaryDockTabs({ portForwardUnavailable: true })).not.toContain('proxy')
@@ -540,6 +545,27 @@ describe('wide dock tab reachability (regression)', () => {
     expect(secondaryDockTabs({ terminalDisabled: true, portForwardUnavailable: true })).toEqual(
       all.filter((t) => t !== 'terminal' && t !== 'proxy'),
     )
+  })
+
+  it('hides only the forge entry when the user turns the integration off', () => {
+    // Issue #590: turning the integration off removes its dock entry. It must
+    // disappear from the rendered list and NOTHING else may move.
+    const hidden = secondaryDockTabs({ forgeHidden: true })
+    expect(hidden).not.toContain('forge')
+    expect(hidden).toEqual(secondaryDockTabs().filter((t) => t !== 'forge'))
+    // The other gates stay independent: hiding forge must not hide terminal or
+    // proxy, and their gates must not hide forge.
+    expect(hidden).toContain('terminal')
+    expect(hidden).toContain('proxy')
+    expect(secondaryDockTabs({ terminalDisabled: true, portForwardUnavailable: true })).toContain('forge')
+  })
+
+  it('shows the forge entry when the switch is unset', () => {
+    // `undefined` is "config not loaded yet" (or a server that predates the
+    // switch) and must read as visible — hiding the tab during the first paint
+    // would make it flicker in once /api/config arrives.
+    expect(secondaryDockTabs({ forgeHidden: false })).toContain('forge')
+    expect(secondaryDockTabs({})).toContain('forge')
   })
 
   it('keeps the proxy tab on an h2-only install (SSH off, h2 allowed)', () => {

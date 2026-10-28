@@ -182,7 +182,7 @@ func extractMetaUsage(backend string, meta map[string]any) *metaExtraction {
 	switch backend {
 	case "codebuddy":
 		return extractCodeBuddyMeta(meta)
-	case "claude", "codex", "qoder":
+	case "claude", "codex", "qoder", "qodercn":
 		return extractClaudeMeta(meta)
 	default:
 		return extractGenericMeta(meta)

@@ -1,10 +1,6 @@
 package qoder
 
 import (
-	"log/slog"
-	"os/exec"
-	"strings"
-
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
 	"clawbench/internal/model"
@@ -26,46 +22,17 @@ func init() {
 			// must not inject them again.
 			NativeSkillsDirs:      []string{".qoder/skills", ".agents/skills"},
 			AutoLoadsNativeSkills: true,
+			// Sessions are gated on a signed-in account: without one,
+			// session/new answers -32000 AUTH_REQUIRED. Naming the login
+			// command here renders that as an actionable instruction instead
+			// of a raw JSON-RPC blob. The CN build needs its own (qoderclicn
+			// login) — see backends/qodercn.
+			LoginCmd: "qodercli login",
 		},
 	})
 }
 
 // newQoderBackend returns a CLIBackend instance for Qoder CLI.
 func newQoderBackend() ai.AIBackend {
-	return &ai.CLIBackend{
-		BackendName:  "qoder",
-		Cmd:          "qodercli",
-		BuildArgsFn:  buildQoderStreamArgs,
-		NewParserFn:  func() ai.LineParser { return &ai.StreamParser{} },
-		FilterLineFn: nil, // skip empty lines only (default)
-		PreStartFn: func(cmd *exec.Cmd, req ai.ChatRequest) {
-			// Qoder CLI in --print mode with stdout piped (non-TTY) requires
-			// prompt via stdin — positional prompt argument is not recognized.
-			// Both new sessions and resume sessions use stdin for prompt.
-			cmd.Stdin = strings.NewReader(req.Prompt)
-		},
-	}
-}
-
-// buildQoderStreamArgs constructs the CLI arguments for Qoder streaming
-func buildQoderStreamArgs(req ai.ChatRequest) []string {
-	args := []string{"--print", "--output-format", "stream-json"}
-	if req.Resume && req.SessionID != "" {
-		args = append(args, "--resume", req.SessionID)
-	} else if req.Resume {
-		slog.Warn("cli: resume requested but no session_id, starting fresh (qoder)")
-	} else if req.SessionID != "" {
-		args = append(args, "--session-id", req.SessionID)
-	}
-	if req.WorkDir != "" {
-		args = append(args, "--cwd", req.WorkDir)
-	}
-	args = append(args, "--dangerously-skip-permissions")
-	if req.SystemPrompt != "" {
-		args = append(args, "--system-prompt", req.SystemPrompt)
-	}
-	if req.Model != "" {
-		args = append(args, "--model", req.Model)
-	}
-	return args
+	return NewCLIBackend("qoder", "qodercli")
 }

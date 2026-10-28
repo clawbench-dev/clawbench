@@ -42,6 +42,7 @@ import (
 	_ "clawbench/internal/ai/backends/opencode"
 	_ "clawbench/internal/ai/backends/pi"
 	_ "clawbench/internal/ai/backends/qoder"
+	_ "clawbench/internal/ai/backends/qodercn"
 	_ "clawbench/internal/ai/backends/vecli"
 	_ "clawbench/internal/ai/backends/zcode"
 	"clawbench/internal/cli"

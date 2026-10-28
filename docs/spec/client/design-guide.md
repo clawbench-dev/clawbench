@@ -40,7 +40,7 @@
 | `code-block.css` / `code-block-header.css` | 代码块行结构与头部栏 |
 | `content.css` | `.markdown-body` 阅读列、标题、表格、mermaid、KaTeX |
 | `media-block.css` | 统一媒体图（`.image-block-wrapper`）+ 浮动工具栏 |
-| `components.css` | **跨组件共享的全局类**（`.count-badge`、`.drilldown-*`、`.context-menu`、引用附件卡） |
+| `components.css` | **跨组件共享的全局类**（`.count-badge`、`.drilldown-*`、`.context-menu`、引用附件卡、**app-menu 弹层容器** `.app-menu-title`/`.app-menu-scroll`/`.app-menu-column`/`.menu-divider`/`.theme-picker`） |
 | `diff-rows.css` | 四种 diff 界面共用的行语言 |
 | `share-chrome.css` | 分享 SPA 专用（由 `web/src/share/main.ts` 引入，不在 index.html） |
 
@@ -52,7 +52,9 @@
 
 ### 第三层：SFC `<style scoped>` — 组件私有
 
-绝大多数组件样式在这里。**唯一例外**是 `ChatMessageItem.vue` 里那段**非 scoped** 的 `<style>`（`.chat-message` 相关）——因为聊天正文是 `v-html` 注入的，scoped 规则**永远匹配不到注入的元素**。见[红线 1](#红线-1v-html-注入的内容匹配不到-scoped-规则)。
+绝大多数组件样式在这里。**例外只有两种**：① `ChatMessageItem.vue` 里那段**非 scoped** 的 `<style>`（`.chat-message` 相关）——因为聊天正文是 `v-html` 注入的，scoped 规则**永远匹配不到注入的元素**（见[红线 1](#红线-1v-html-注入的内容匹配不到-scoped-规则)）；② 组件里**非 scoped** 的 `<style>` 用来给 `Teleport to="body"` 的弹层写样式。
+
+**② 是个陷阱**：非 scoped 的组件样式能生效，只因为该组件挂载了。`AppHeader.vue` 的全局块曾经装着 `.app-menu-title` / `.app-menu-scroll` / `.app-menu-column` / `.menu-divider` / `.theme-picker`——这些是**所有** appSurface 弹层（含终端主题选择器、通知筛选、分享页主题选择器）共用的容器样式，但因为 AppHeader 在每个应用页面都挂着，问题一直没暴露；分享 SPA 不挂 AppHeader，于是「除了唯一还需要它的宿主以外都正常」。**判据**：这段规则除了本组件，还有没有别的宿主（尤其是 `web/src/share/` 这个独立入口）需要？需要就下沉到 `css/components.css`（两个入口都会加载）。
 
 ---
 
@@ -196,6 +198,7 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
   - `data-hljs-theme="light|dark"` — 代码高亮主题
 - **出厂默认主题 = `gruvbox-dark`**，全平台一致（web 内联脚本 / 桌面壳 `DEFAULT_THEME_ID` / Android `ThemePalette.DEFAULT_THEME_ID`）。它就是 `'auto'` 在深色系统下的解析结果（`getDefaultDarkTheme()`）。
 - `'auto'` 解析为 `matchMedia('(prefers-color-scheme: dark)')` → `gruvbox-dark` / `github-light`。
+- **`web/share.html` 的内联脚本必须与 `index.html` 语义完全一致**：分享页与主应用**同源、同一把 `clawbench-settings-theme` 键**。分享链接常常是收件人第一次看到 ClawBench，所以「从未存过主题」也必须落盘 `gruvbox-dark`，否则同一台新设备会「应用是 gruvbox-dark、分享页是系统浅色」。「只改 DOM 不落盘」正是这个漂移的历史形态。`themeBootstrap.test.ts` 对两个 HTML 逐条比对（落盘、`auto` 不落盘、旧 `light`/`dark` 迁移、出厂默认值与 registry 一致）。
 - **首屏不闪白**：`web/index.html` 有一段**在 CSS 加载前**跑的内联脚本读 localStorage 并设属性。它同时是**出厂主题的唯一权威**：`localStorage` 里从未存过主题 ⇒ 判定为全新安装，**当场把 `gruvbox-dark` 落盘**（不是只改 DOM），因此重启 / 刷新后依然是它。**不要**再用服务端 `config.first_run` 判定——那个标记是进程级的，`InitDB` 建库后就翻成 false，重启（docker restart / 升级 / 重启机器）会把新安装静默打回系统主题；而且它要等 `/api/config` 异步返回，首屏必然先闪一下系统主题。`clawbench-fresh-theme-guess` 与 `applyFirstRunThemeDefaults` 已随该方案一并删除。
 - 主题是**纯前端本地设置**（只进 localStorage）——同一服务器多设备各选各的，互不干扰。
 
@@ -214,6 +217,12 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 `web/src/assets/theme-picker.css`：行本身**刻意中性**（用当前主题的底色/文字），只用两个小载体表达主题——左边 13px 圆形 `.theme-swatch`（预览色）、右边太阳/月亮图标（用该主题自己的强调色染色）。
 
 选中态靠**三件事**表达：2px 强调色竖条（`.theme-item.active::before`）+ 12% 强调色底纹 + 字重提升。**竖条是承重的**——实测对比度 2.04，而底纹只有 1.09，光靠底纹在浅色主题上看不出来。
+
+**三个宿主共用同一套状态机**：`composables/useThemePicker.ts`。宿主是应用头部的 Palette 按钮（`AppHeader.vue`）、终端工具栏的主题选择器（`TerminalPanelContent.vue`）和**分享页顶栏**（`share/ShareThemeButton.vue`）。状态机承载三条会静默失效的规则：① 切换**必须等弹层 `after-leave` 再启动**圆形扩散，否则正在淡出的菜单会被拍进新快照、两段动画重叠；② 必须走 `setLocalConfig('theme', …)`（它才是把 `data-theme` / `data-theme-base` / `data-hljs-theme` 一起刷新的地方），直接写 localStorage 会留下旧配色；③ 扩散原点取按钮自身（`originFromElement`），退回 `headerThemeOrigin()`。`themeReveal.test.ts` 钉住这三条 + 「每个宿主都用共享模块、不得自己 `applyThemeWithReveal`」。
+
+**弹层容器样式在 `css/components.css`，不在 `AppHeader.vue` 的全局块里**：`.app-menu-title` / `.app-menu-scroll` / `.app-menu-column` / `.menu-divider` / `.theme-picker` 原先声明在 AppHeader 的非 scoped `<style>` 里，能生效只是因为 AppHeader 在每个应用页面都挂着——分享页不挂 AppHeader，于是「除了唯一还需要它的宿主以外都正常」。凡是非应用宿主也要用的规则，放 `components.css`。
+
+**分享页没有 App.vue，主题变更的两条副作用要自己接**（`share/shareTheme.ts` 的 `installShareThemeSync`）：① 响应式主题 ref（`provide('theme')` 给 OpenApiPreview 选 Swagger UI 配色）② mermaid 重渲染（配色是 `initialize({theme})` 时烘进 SVG 的，不跟 CSS）。另在 `share/main.ts` 调 `startSystemThemeWatcher()`，否则「跟随系统」只在加载时解析一次、系统切换深浅色不跟随。守卫：`share/__tests__/shareTheme.test.ts`、e2e `share-theme.spec.ts`。
 
 ### 壁纸
 
@@ -360,7 +369,10 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - **`PopupMenu.vue`**：`Teleport to="body"` + `<Transition name="menu-fade">`，定位走 `@/utils/popupMenuPosition`。
 - **`position: fixed` 不等于「视口就是包含块」——定位必须实测包含块**：全站浮层（PopupMenu 及其十余个消费方、表格复制菜单）都用 `fixed` 以免被祖先的 `overflow: hidden` 裁剪，但这笔便利换来一个错误假设。本仓有**两处**会打破它：`.chat-message` 在 App 模式下带 `will-change: transform`（Android WebView 的 GPU 重影修复），而 `will-change: transform` **会为 fixed 后代建立包含块**（实测：按 `top: rect.bottom + 4` 写入的菜单低了 60px，误差随祖先自身的偏移增大）；以及页面可能仍带着 CSS `zoom`——当前构建的界面缩放走根字号、坐标空间不变，但用户样式表、浏览器扩展、或升级前遗留的旧标签页都可能留下 zoom。两者都无法从 `getBoundingClientRect()` 单独看出来，因此统一由 `utils/fixedPosition.ts` 的 `measureFixedContainingBlock` **测量**：先写一个已知偏移、观察元素实际落在哪，再解出原点与缩放比（探针量程 100px，大到取整误差压不掉比例、小到同步布局期间不出屏）。**它解得的是缩放比而不是假定 1**，正因如此上面两种来源都不需要单独分支。`popupMenuPosition` 在调用方传入 `containingBlock` 时把每个坐标都经它换算，未传时退回「视口即包含块 + zoom 换算」的旧路径。**测量本身有三个坑**：①**必须用克隆**探测，不能挪动真实菜单（否则用户会看到菜单先跳到角落再回来）；②克隆必须**清空 `className` 与 transition**——菜单被 `<Transition>` 包裹，`*-enter-active` 声明的 `transform` 让元素自己成为 fixed 后代的包含块，克隆继承同一组类时量到的是菜单自身的 380×59 而不是视口（实测 `bottom: -596.6px`）；③盒子尚未布局（0×0）时测出的包含块是垃圾值，直接返回 `null` 让调用方回退。**最后一道兜底必须判双向**：算完若把菜单放到视口外就丢弃重算纯 zoom 版本——只拒绝「bottom 为负」（菜单掉到下方）会漏掉相反方向（实测群聊 `@` 菜单落在 `top: -542` / `bottom: 962`，视口只有 720），因此要求 `top`/`bottom`/`left`/`right` **全部**落在 `[0, 视口尺寸]` 内。**单一实现**：`fixedPosition.ts` 是唯一来源，导出文档（`buildCodeBlockJs` 的表格菜单）手工镜像同一套逻辑——重复实现正是两个浮层漂移的原因
 - 弹窗外壳用 `ModalDialog.vue`（宽屏）/ `BottomSheet.vue`（窄屏），样式在 `modal-card.css` / `BottomSheet.vue` 的 keyframes 里。
-- **宽度只有两个值，都写在 CSS 里、不给调用方留口子**：`ModalDialog` 恒为 **900px**（`.modal-dialog { --modal-max-width: 900px }`），所有弹窗同一宽度，**没有 `maxWidth` prop**——曾经每处调用传 380/420/480/520/560/720 六种值，渲染时再统一乘一个 1.3 的魔法系数，导致同屏弹窗宽度互不一致且无人知道 1.3 从哪来。`BottomSheet` 的宽屏居中卡片仍是 **624px**（`modal-card.css` 的 `var(--modal-max-width, 624px)` 兜底），抽屉比弹窗窄是因为它读起来该是一列而非一页；个别抽屉（`.tool-detail-sheet` / `.session-search-sheet` / `.team-member-sheet` / `.content-search-sheet`）在**非 scoped** 样式块里覆盖该变量加宽。**窄屏（手机）不受影响**：`.modal-dialog` 是 `width: 100%`，overlay 左右各有 `--space-8`(20px) 内边距，任何 ≥ 视口宽度的 `max-width` 都不会生效。
+- **宽度只有两档，都写在 token 里、不给调用方留口子**：`css/variables.css` 定义 `--modal-width-narrow`（520）与 `--modal-width-wide`（960），`ModalDialog` / `BottomSheet` 各有一个 `size="narrow" | "wide"`（默认 `narrow`），渲染成修饰类 `.modal-dialog--narrow/--wide`、`.bs-panel--narrow/--wide`，`modal-card.css` 把修饰类映射到这两个 token。调用方**选档位，不选数字**：没有 `maxWidth` prop，也**不允许**在组件里覆盖 `--modal-max-width`（`assets/__tests__/modalWidth.css.test.ts` 全仓扫描拒绝）。历史包袱两笔：曾经每处调用传 380/420/480/520/560/720 六种值再统一乘一个 1.3 的魔法系数；后来又变成「弹窗 900 + 抽屉 624 + 四个抽屉在非 scoped 样式块里各自覆盖 900/960」——同一屏两种规则，`.tool-detail-sheet` / `.session-search-sheet` / `.team-member-sheet` / `.content-search-sheet` 这些覆盖已全部删除，改传 `size="wide"`。
+  - **选档判据是「多出来的宽度会不会变成信息」**：会（diff 行更少折行、代码/终端不折、消息原文更少截断、表格列更松、网格多一列）→ `wide`；不会（表单字段、开关列表、确认框、单列设置项）→ `narrow`，否则只是把一行字拉成一页宽。当前 `wide` 的是：消息推荐（含其下钻页）、工具详情、文件变更/diff、Git 历史、代码预览、文件内搜索、内容搜索、会话搜索、群成员详情、/btw 旁路回答、引用详情、快捷键表、消息元数据、表格行、头像选择、主题选择、终端按键配置。
+  - **自绘外壳的弹窗也得在同一把尺子上**：`DialogOverlay`（通用确认/输入）、`UpgradeDialog`、`UpgradePromptOverlay`、`SettingsRestartDialog`、`AgentInstallDialog`、`WelcomeOverlay` 不用共享组件，但它们的 `max-width` 一律写 `var(--modal-width-narrow)`——否则同一屏又出现 320/380/420 三种宽度。
+  - **窄屏（手机）不受影响**：`.modal-dialog` 是 `width: 100%`，overlay 左右各有 `--space-8`(20px) 内边距，任何 ≥ 视口宽度的 `max-width` 都不会生效。
 - **共享外壳的关闭按钮与返回**：两个外壳各有一个右上角圆形关闭按钮 `.modal-close-btn`（lucide `X`、28px，与下钻返回键 `.fd-back-btn` 同尺寸；底色沿用 `.window-controls` 的 `--text-primary` 混入 `--bg-secondary` 配方，静止 16% / hover 24% / active 32%，跨 36 主题最差对比 1.110，hover 用 `@media (hover:hover)` 门控避免触屏残留）。**它必须绝对定位**——header 的右侧动作簇（如 `.bs-header-actions`）自带 `margin-left:auto`，把它作为 flex 子项会被挤走；因此 header 预留对应右内边距（窄屏 BottomSheet 用 `.bs-header-has-close` 修饰类，因 TabPanel 复用 `.bs-header` 却无关闭按钮）。**header 点击不再关闭**（避免误触），backdrop 点击与 Escape 保留。**ModalDialog 会注册返回处理器**（优先级 `PRIORITY_OVERLAY+1`，高于所有 BottomSheet 抽屉），因此 Android 返回键与左右边缘内划都能关闭弹窗——此前它没注册，弹窗对返回无响应。
 - **跨面板弹层不要用 `useTabDrawer` 的单 tab 绑定**（`effectiveOpen = currentTab===tabId && open`）——窄屏下会把可从多面板触发的弹层在其它 tab 静默吞掉。正解是直绑共享 `open` + 切 tab 时显式关闭。
 
@@ -515,9 +527,23 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 
 **唯一定义在 `web/css/scrollbar.css`**。四个消费方各自内联它——`web/css/base.css` 用 `@import`（同时覆盖 share SPA），`src/utils/swaggerHtml.ts`（Swagger 预览 srcdoc）、`src/utils/exportMarkdownHtml.ts`（导出 HTML）用 `?raw` 内联，`src/utils/htmlPreview.ts`（HTML 文件预览）用 `?raw` 注入预览文档。**为什么用文件而不是 `--scrollbar-size` token**：后三者是独立文档（iframe srcdoc / `file://` 导出 / 用户 HTML），看不到 app 的 `:root`，token 在那里是 undefined ⇒ 宽度声明整条消失 ⇒ 静默退回原生条。只有内联同一份文件才算真正收敛。每个文档自己的配色走 `--scrollbar-thumb` / `--scrollbar-track` 两个变量（**必须带 fallback**，否则在独立文档里同样失效）。
 
-**两档宽度，按输入设备而非宿主/视口**：`(pointer: coarse)`（触屏/笔）**4px**（移动端原样），其余（鼠标/触控板）**8px**。选 `(pointer: coarse)` 是因为它是唯一能随样式表走的判据——iframe 与导出文档既无宿主信息也无可靠视口宽度，而媒体特性由浏览器在各文档内各自求值；它也是分割条触屏感应区用的同一条轴。守卫 `__tests__/scrollbarNoArrowButtons.test.ts` 拒绝任何重新引入的分档：任何一份文档重写 `::-webkit-scrollbar { width }`、出现 `--scrollbar-size`、变量缺 fallback、或少了 coarse 覆盖都会失败。
+**两档宽度，按输入设备而非宿主/视口**：`(pointer: coarse)`（触屏/笔）**4px**（移动端原样），其余（鼠标/触控板）**10px**。**必须是整数 CSS 像素**：Chromium 会把计算出的条宽截断到整像素（实测 9.6px 只画出 9px），所以「比 8px 加 20%」只能落成 10px——写 9.6px 会静默吃掉这次加宽。选 `(pointer: coarse)` 是因为它是唯一能随样式表走的判据——iframe 与导出文档既无宿主信息也无可靠视口宽度，而媒体特性由浏览器在各文档内各自求值；它也是分割条触屏感应区用的同一条轴。守卫 `__tests__/scrollbarNoArrowButtons.test.ts` 拒绝任何重新引入的分档：任何一份文档重写 `::-webkit-scrollbar { width }`、出现 `--scrollbar-size`、变量缺 fallback、或少了 coarse 覆盖都会失败。
 
 **HTML 文件预览套用同一套逻辑**：预览文档按 URL 加载（独立文档，链接不到 app 样式表），`load` 时由 `installPreviewScrollbar` 注入共享样式表。**插在 `<head>` 最前**（不是 append），因此预览文件自己写的滚动条规则（内联 / `<style>` / 外链）在源码顺序上更靠后、**优先级更高**——契约是「仅在预览文件未自定义滚动条时生效」，预览不该覆盖被预览文档自己的样式。注入是幂等的（按 `data-clawbench-scrollbar` 标记查重），两个预览面（全屏 FileViewer 与代码链接预览 `HtmlPreviewBody`）都接了 `@load`。
+
+**预览的滚动条要连配色一起套，否则只是「同款几何、别人的颜色」**：共享文件里的 `var(--scrollbar-thumb, …)` 在预览文档里取不到 app 的 `:root`，只剩中性灰 fallback。因此 `readHostScrollbarPalette()` 从宿主 `getComputedStyle(documentElement)` 读出三个值并**烘进注入的样式表**：
+
+| 槽位 | 取自 | 为什么 |
+|---|---|---|
+| 滑块 | `--scrollbar-thumb` | 与 app 同一个 token |
+| 悬停 | **`--text-muted`** | 共享文件的 hover 规则读的就是它（不是 `--scrollbar-thumb-hover`），照抄才能同款变亮 |
+| 轨道 | **`--bg-primary`**（面板底色） | 用户明确要求：滚动条那一列属于 app 表面，不跟随被预览网页自己的底色 |
+
+配色写成**具体色值规则**追加在共享几何之后，而不是在预览文档的 `:root` 上设同名变量：被预览页面可能自己定义 `--scrollbar-thumb` / `--text-muted`，设变量要么被它的 `:root` 按源码顺序压掉，要么连带改掉页面里读到同名变量的其它元素。Firefox 的 `scrollbar-color` 门控要在配色段里**再写一遍**（共享段那份带的是 fallback 变量）。
+
+**注入必须是「重写」而非「查重后早退」**：色值是解析后的具体值，早退会让主题切换永远停在旧配色。`installPreviewStyle` 因此对已存在的 `style[attr]` **原地改 `textContent`**（保留原位置——重新 insert 会改变它和被预览文档自身规则的胜负关系）。配套 `watchPreviewTheme(getIframe)` 监听 `clawbench-theme-change`，同时重刷滚动条与查找高亮（后者也内联了 accent）；两个预览面都在 `@load` 里重新注册、卸载时 dispose（重新注册前先 dispose，否则每次 reload 叠一个监听）。
+
+> 验证必须 headed（headless 的 overlay 滚动条量不到 gutter）：实测注入后 gutter=8px、滑块像素 `#928374`、轨道 `#282828`，无箭头。
 
 **分割条侧的冲突解法**：拖拽分隔条的高亮**只能是那条细线本身**——host 从 1px 长到 2px（`margin: ±0.5px` 保持外footprint不变），共享的 `.resize-divider__line` 填满它并染成 `--accent-color`。**不得再画半透明/不透明色带**：色带以分隔条为轴跨到两侧窗格上，而窗格紧贴分隔条处就有滚动条，色带会把它盖住。可点击感应区（`::before`）在鼠标面为分隔条两侧各 4px（共 9px），触屏面（`pointer: coarse`）仍是各 12px。守卫 `resizeDivider.css.test.ts` 断言共享文件里**没有** `color-mix`、没有 `calc((100% - 2px) / 2)` 居中偏移，且两个消费组件的触发态规则块**不得**声明 `background`。
 
@@ -598,6 +624,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/common/__tests__/countBadge.css.test.ts` | 角标几何全局唯一、scoped 未重加圆角 |
 | `components/common/__tests__/wrapCheck.css.test.ts` | 菜单「该项当前是开的」勾选 `.wrap-check` 全局唯一、两个菜单共用同一 class |
 | `components/common/__tests__/modalFooterBtn.theme.css.test.ts` | `.fbtn` 深色主题前景提亮 |
+| `assets/__tests__/modalWidth.css.test.ts` | **宽度只有两档**：`--modal-width-narrow/wide` 各一份且窄 < 宽、`modal-card.css` 只把修饰类映射到 token、全仓组件**不得**自设 `--modal-max-width` 或给弹窗外壳写裸 `max-width` 数字 |
 | `components/common/__tests__/wallpaperSurfaceTransparency.css.test.ts` | 壁纸开启后各表面透明度不叠乘 |
 | `components/common/__tests__/wallpaperBlurCost.css.test.ts` | 壁纸模糊不留 `will-change` |
 | `components/common/__tests__/resizeDivider.css.test.ts` | 拖拽分隔条外观 |
@@ -625,8 +652,14 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `utils/__tests__/codeHighlightStyle.test.ts` | CodeMirror 语法高亮映射全局唯一（不得在组件里重复 `HighlightStyle.define`）、颜色必须来自 CSS 变量 |
 | `components/__tests__/wideDockIconSize.css.test.ts` | 宽屏 dock 图标尺寸 |
 | `assets/__tests__/themePicker.css.test.ts` | 主题选择器中性底 + 色点载体 |
+| `utils/__tests__/themeReveal.test.ts` | 主题圆形扩散（百分比 clip、reduced-motion 回退、in-flight 守卫）+ **三个宿主共用 `useThemePicker`**：切换只在 `after-leave` 生效、必须走 `setLocalConfig`、原点取按钮；宿主不得自己调 `applyThemeWithReveal` |
+| `utils/__tests__/themeBootstrap.test.ts` | `index.html` / `share.html` 的内联主题脚本与 registry 同步：`DARK_IDS`、`SB_COLORS`、出厂默认值，且**两页语义一致**（新设备落盘 `gruvbox-dark`、`auto` 不落盘、旧 `light`/`dark` 迁移） |
+| `share/__tests__/shareTheme.test.ts` | 分享页主题变更的两条副作用：响应式主题 ref（provide 给 iframe 查看器）+ mermaid 重渲染；不得自己再刷一遍属性 |
+| `share/__tests__/ShareThemeButton.test.ts` | 分享顶栏选择器：行数 = registry + auto、选中行跟随存储值、点击只关菜单、`after-leave` 才落 `setLocalConfig` |
+| `share/__tests__/shareMode.test.ts` | `shareDocUrl`/`encodeShareDocDir` 与 Go 侧 base64url 同字节（无 `=`/`+`/`/`）、非 ASCII 目录经 UTF-8 往返一致——不一致会让分享页每个相对资源 404 |
+| e2e `share-page.spec.ts`「Shared HTML document」 | 分享的 HTML 以真实 URL 加载（`text/html`）、同目录样式表 `text/css` 且 200、所有资源同一 `dirKey`、iframe 仍是不透明源且 sandbox 无 `allow-same-origin` |
 | `assets/__tests__/annotationButtons.css.test.ts` | 标注按钮全局作用域 |
-| `__tests__/scrollbarNoArrowButtons.test.ts` | 滚动条唯一定义在 `css/scrollbar.css`（四文档内联：应用/OpenAPI/导出/HTML 预览）、两档宽度按 `(pointer: coarse)`（移动 4px / 桌面 8px）、`scrollbar-color` 必须关在 `@supports not selector(::-webkit-scrollbar)` 里（否则 Chromium 弃用 `::-webkit-scrollbar-*`，箭头按钮复活）、任何文档不得重写宽度、变量必须带 fallback、HTML 预览注入须插在 head 最前且幂等 |
+| `__tests__/scrollbarNoArrowButtons.test.ts` | 滚动条唯一定义在 `css/scrollbar.css`（四文档内联：应用/OpenAPI/导出/HTML 预览）、两档宽度按 `(pointer: coarse)`（移动 4px / 桌面 10px，须整数像素——Chromium 截断小数宽度）、`scrollbar-color` 必须关在 `@supports not selector(::-webkit-scrollbar)` 里（否则 Chromium 弃用 `::-webkit-scrollbar-*`，箭头按钮复活）、任何文档不得重写宽度、变量必须带 fallback、HTML 预览注入须插在 head 最前且幂等、预览配色须从宿主读（thumb/`--text-muted`/`--bg-primary` 三槽 + Firefox 门控）且两个预览面都接主题监听 |
 | `__tests__/platformAxes.test.ts` | 三条平台轴保持正交：`isPC` 不得回归、共享宿主谓词不得各组件重声明、iPadOS 陷阱（Macintosh UA + `maxTouchPoints>0`）不得重开 |
 
 **写新守卫时注意两个坑**（都实际栽过）：

@@ -1449,3 +1449,32 @@ func TestApplyDefaults_UploadRetentionClampsNonPositiveDays(t *testing.T) {
 		}
 	}
 }
+
+// TestApplyDefaults_ForgeEnabledPresence covers the master switch's default.
+// Go's bool zero value is false, so without the presence check every existing
+// install would read "forge disabled" on upgrade and lose its integration.
+func TestApplyDefaults_ForgeEnabledPresence(t *testing.T) {
+	setupTestBinDir(t)
+
+	// Absent from the config file → default ON.
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if !cfg.Forge.Enabled {
+		t.Error("Forge.Enabled should default to true when absent from config")
+	}
+
+	// Explicitly false → respected, not overwritten.
+	cfg = Config{}
+	cfg.Forge.Enabled = false
+	ApplyDefaults(&cfg, map[string]bool{"forge.enabled": true})
+	if cfg.Forge.Enabled {
+		t.Error("Forge.Enabled must stay false when explicitly set")
+	}
+
+	// The whole forge section absent (nil presence map) still defaults ON.
+	cfg = Config{}
+	ApplyDefaults(&cfg, map[string]bool{})
+	if !cfg.Forge.Enabled {
+		t.Error("Forge.Enabled should default to true when the forge section is absent")
+	}
+}

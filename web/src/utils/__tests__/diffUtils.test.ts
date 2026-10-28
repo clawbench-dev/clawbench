@@ -77,12 +77,16 @@ describe('computeDiff', () => {
         const newLines = [...oldLines]
         newLines[250] = 'MODIFIED'
         const result = computeDiff(oldLines.join('\n'), newLines.join('\n'))
-        // Should detect the change at line level or char level.
-        // Under high system load, jsdiff may timeout and skip char-level diff,
-        // so check for either line-level or char-level detection.
-        const hasLineDiff = result.deletedInOld.length > 0 || result.addedInNew.length > 0
-        const hasCharDiff = result.deletedChars.size > 0 || result.addedChars.size > 0
-        expect(hasLineDiff || hasCharDiff).toBe(true)
+        // The change must be reported at line level. Asserting "line OR char"
+        // let a silent no-op pass whenever the char-level stage was skipped,
+        // which is exactly what a diff timeout used to produce.
+        expect(result.modifiedPairs).toEqual([[251, 251]])
+        expect(result.deletedChars.get(251)).toEqual([{ start: 0, end: 8 }])
+        expect(result.addedChars.get(251)).toEqual([{ start: 0, end: 8 }])
+        // Nothing else may be reported as changed: a fallback that marks
+        // everything would also satisfy a "something changed" assertion.
+        expect(result.deletedInOld).toEqual([])
+        expect(result.addedInNew).toEqual([])
     })
 
     it('preserves common lines in LCS diff', () => {
@@ -316,11 +320,12 @@ describe('computeDiff integration scenarios', () => {
         const modified = [...lines]
         modified[300] = 'CHANGED'
         const result = computeDiff(lines.join('\n'), modified.join('\n'))
-        // Under CI load, jsdiff may timeout and skip char-level diff;
-        // either line-level or char-level detection is acceptable.
-        const hasAnyDiff = result.deletedChars.size + result.addedChars.size > 0 ||
-            result.deletedInOld.length + result.addedInNew.length > 0
-        expect(hasAnyDiff).toBe(true)
+        // Same contract as the >500 case above: the single edit is reported as
+        // a modified pair at line 301, and nothing else is flagged. "Some diff
+        // exists" was too weak — the all-changed fallback satisfied it too.
+        expect(result.modifiedPairs).toEqual([[301, 301]])
+        expect(result.deletedInOld).toEqual([])
+        expect(result.addedInNew).toEqual([])
     })
 
     it('pairs proximal deleted/added lines for char-level diff', () => {

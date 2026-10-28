@@ -23,6 +23,7 @@ import (
 	_ "clawbench/internal/ai/backends/opencode"
 	_ "clawbench/internal/ai/backends/pi"
 	_ "clawbench/internal/ai/backends/qoder"
+	_ "clawbench/internal/ai/backends/qodercn"
 	_ "clawbench/internal/ai/backends/vecli"
 	_ "clawbench/internal/ai/backends/zcode"
 )
@@ -45,6 +46,7 @@ var skillAwareBackends = map[string]bool{
 	"opencode":    true, // .config/opencode/skill + .opencode/skills + .agents/skills
 	"mimo":        true, // OpenCode fork: .mimocode/skills + .agents/skills
 	"qoder":       true, // .qoder/skills + .agents/skills
+	"qodercn":     true, // .qoder-cn/skills + .agents/skills (user root follows the brand; project root stays .qoder)
 	"dsh":         true, // .dsh/skills + .agents/skills
 	"deepseek":    true, // CodeWhale: .codewhale/skills + .agents/skills
 	"pi":          true, // ~/.pi/agent/skills + <available_skills> injection
@@ -122,7 +124,7 @@ func TestSharedSkillsDirDeclaredWhereReadable(t *testing.T) {
 	// Verified by grepping each shipped CLI for ".agents/skills".
 	readsShared := map[string]bool{
 		"codex": true, "copilot": true, "opencode": true,
-		"mimo": true, "qoder": true, "dsh": true, "deepseek": true,
+		"mimo": true, "qoder": true, "qodercn": true, "dsh": true, "deepseek": true,
 		"cursor": true, "commandcode": true, "openclaw": true,
 	}
 	for _, p := range backends.All() {

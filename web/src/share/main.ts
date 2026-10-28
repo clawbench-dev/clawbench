@@ -70,6 +70,14 @@ import { installMediaFullscreenGuard } from '../utils/mediaFullscreenGuard'
 import { installInlineZoom } from '../utils/inlineZoom'
 import { installSvgMediaAutoFit } from '../utils/svgMediaFit'
 import { installExternalLinkClick } from '../utils/externalLinkClick'
+// Follow theme switches made from the share topbar: updates the reactive theme
+// ref (iframe-hosted viewers read it through provide/inject) and re-renders
+// mermaid diagrams, whose colours are baked into the SVG at render time. The
+// app does both from App.vue; the share SPA mounts no App.vue, so it must wire
+// them itself or a switch would leave diagrams and Swagger docs on the old
+// palette.
+import { installShareThemeSync } from './shareTheme'
+import { startSystemThemeWatcher } from '../composables/useSettingsConfig'
 
 configureMarkedRenderer()
 
@@ -90,6 +98,14 @@ installSvgMediaAutoFit()
 // a shared document would be dead text. The layer is installed once and never
 // removed: this entry lives for the whole page's lifetime.
 installExternalLinkClick()
+
+installShareThemeSync()
+
+// Follow the system light/dark preference while the stored choice is 'auto',
+// exactly as the app does. Without this, picking "System" in the share topbar
+// would resolve once at load and then never react to the OS flipping scheme —
+// a visible gap in the very feature the picker offers.
+startSystemThemeWatcher()
 
 const app = createApp(ShareRoot)
 app.use(i18n)

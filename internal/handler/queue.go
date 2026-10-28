@@ -472,7 +472,20 @@ func validateQueueFiles(w http.ResponseWriter, r *http.Request, projectPath stri
 			EndLine:   fEntry.EndLine,
 		})
 	}
-	return validated, true
+	// Deduplicate across BOTH channels before persisting.
+	//
+	// The frontend sends a fresh upload through `filePaths` (its legacy channel)
+	// AND `files` (the structured channel) — buildSendChannels puts whole files
+	// in the former and every entry in the latter — so the concatenation above
+	// stores the same attachment twice per send. The direct-send path already
+	// cross-dedupes (internal/handler/chat.go passes the filePaths set into
+	// ClassifyAttachments); this endpoint had no equivalent, so a queued message
+	// accumulated one extra copy per enqueue and the user bubble rendered the
+	// same image N times.
+	//
+	// Identity (not path) is the key: distinct line ranges of one path are
+	// genuinely different attachments and must both survive.
+	return model.DedupeFileEntries(validated), true
 }
 
 func handleQueueGet(w http.ResponseWriter, r *http.Request) {

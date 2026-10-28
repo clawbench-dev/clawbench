@@ -68,6 +68,28 @@ test.describe('File Manager', () => {
     await expect(page.locator('.file-item, .grid-item').first()).toBeVisible({ timeout: 10000 })
   })
 
+  test('should show the breadcrumb and copy-path button at the project root', async ({ page }) => {
+    // Climb to the project root first: the manager may restore a remembered
+    // subdirectory, and the point of the test is the ROOT case specifically.
+    const upBtn = page.locator('.dir-nav-bottom .dir-up-btn')
+    const breadcrumb = page.locator('.dir-nav-bottom .dir-breadcrumb')
+    for (let i = 0; i < 12 && !(await upBtn.isDisabled()); i++) {
+      const before = await breadcrumb.locator('.crumb').count()
+      await upBtn.click()
+      // Condition wait instead of a fixed timeout: each successful walk-up
+      // drops exactly one crumb.
+      await expect.poll(() => breadcrumb.locator('.crumb').count()).toBeLessThan(before)
+    }
+    await expect(upBtn).toBeDisabled()
+
+    // The nav row used to be hidden at the root, which also hid the only
+    // "copy absolute path" entry. Now Home is the current crumb and the copy
+    // button stays reachable.
+    await expect(breadcrumb).toBeVisible()
+    await expect(breadcrumb.locator('.crumb-home.current')).toBeVisible()
+    await expect(breadcrumb.locator('.crumb-copy-btn')).toBeVisible()
+  })
+
   test('should switch back to the file manager tab when the open file is closed', async ({ page }) => {
     // Double-click the first file to open it in the viewer (single click only selects on PC)
     const firstFile = page.locator('.file-item:not(.dir-item), .grid-item:not(.grid-dir)').first()

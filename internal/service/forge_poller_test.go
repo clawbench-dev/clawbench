@@ -23,6 +23,17 @@ type recordingProvider struct {
 	items        []forge.Item
 }
 
+// forgeEnabledCfg is the config supplier these tests pass to the poller.
+//
+// It spells Enabled: true explicitly because the poller now honors the master
+// switch, and a zero-value model.Config reads as "disabled" — production never
+// sees that state (ApplyDefaults defaults the flag to true when absent), but a
+// bare `model.Config{}` in a test would silently stop every poll and turn these
+// cases into tautologies that pass without syncing anything.
+var forgeEnabledCfg = func() model.Config {
+	return model.Config{Forge: model.ForgeConfig{Enabled: true}}
+}
+
 func (p *recordingProvider) CurrentUser(context.Context) (forge.Author, error) {
 	return forge.Author{Login: "me"}, nil
 }
@@ -82,7 +93,7 @@ func TestForgePoller_SyncNowDeduplicatesRepos(t *testing.T) {
 	}, nil)
 
 	limiter := forge.NewLimiter(1000, 1000, 4)
-	poller := service.NewForgePoller(syncer, limiter, func() model.Config { return model.Config{} })
+	poller := service.NewForgePoller(syncer, limiter, forgeEnabledCfg)
 	poller.SyncNow()
 
 	assert.Equal(t, 1, factoryCalls, "the same repo bound to two projects must be polled once")
@@ -97,7 +108,7 @@ func TestForgePoller_SyncNowSkipsWhenNoBindings(t *testing.T) {
 		called = true
 		return &recordingProvider{}, nil
 	}, nil)
-	poller := service.NewForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), func() model.Config { return model.Config{} })
+	poller := service.NewForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), forgeEnabledCfg)
 
 	poller.SyncNow()
 	assert.False(t, called, "no bindings means no provider is built")
@@ -109,7 +120,7 @@ func TestForgePoller_StartStop(t *testing.T) {
 	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) {
 		return &recordingProvider{}, nil
 	}, nil)
-	poller := service.NewForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), func() model.Config { return model.Config{} })
+	poller := service.NewForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), forgeEnabledCfg)
 
 	poller.Start()
 	poller.Start() // idempotent
@@ -124,8 +135,8 @@ func TestForgePoller_GlobalLifecycle(t *testing.T) {
 		return &recordingProvider{}, nil
 	}, nil)
 
-	service.StartForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), func() model.Config { return model.Config{} })
-	service.StartForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), func() model.Config { return model.Config{} }) // no-op
+	service.StartForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), forgeEnabledCfg)
+	service.StartForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), forgeEnabledCfg) // no-op
 	assert.True(t, service.ForgePollerRunning())
 
 	service.StopForgePoller()
@@ -165,7 +176,7 @@ func TestForgePoller_PrunesStaleSnapshots(t *testing.T) {
 	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) {
 		return provider, nil
 	}, nil)
-	poller := service.NewForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), func() model.Config { return model.Config{} })
+	poller := service.NewForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), forgeEnabledCfg)
 	poller.SyncNow()
 
 	snaps, err := service.ListForgeItemSnapshots(repoKey)
@@ -206,7 +217,7 @@ func TestForgePoller_SyncNowSurvivesProviderError(t *testing.T) {
 
 	provider := &failingProvider{err: &forge.Error{Kind: forge.ErrKindNetwork, Message: "unreachable"}}
 	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, nil)
-	poller := service.NewForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), func() model.Config { return model.Config{} })
+	poller := service.NewForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), forgeEnabledCfg)
 
 	assert.NotPanics(t, poller.SyncNow)
 }
@@ -223,7 +234,7 @@ func TestForgePoller_SyncNowSurvivesFactoryError(t *testing.T) {
 	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) {
 		return nil, assert.AnError
 	}, nil)
-	poller := service.NewForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), func() model.Config { return model.Config{} })
+	poller := service.NewForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), forgeEnabledCfg)
 
 	assert.NotPanics(t, poller.SyncNow)
 }
@@ -363,4 +374,57 @@ func (p *pagingProvider) GetItem(context.Context, forge.ItemType, int) (forge.It
 
 func (p *pagingProvider) ListComments(context.Context, forge.ItemType, int, int, int) ([]forge.Comment, error) {
 	return nil, nil
+}
+
+// TestForgePoller_StopsWhenIntegrationDisabled covers the master switch's
+// early return. Without it a disabled integration would keep polling as long as
+// any binding row survived (e.g. the clear failed), which is the one thing the
+// switch exists to prevent.
+func TestForgePoller_StopsWhenIntegrationDisabled(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
+		ProjectPath: t.TempDir(), Platform: "github", Host: "github.com",
+		Owner: "acme", Repo: "widgets", Source: "manual",
+	}))
+
+	factoryCalls := 0
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) {
+		factoryCalls++
+		return &recordingProvider{}, nil
+	}, nil)
+	poller := service.NewForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), func() model.Config {
+		return model.Config{Forge: model.ForgeConfig{Enabled: false}}
+	})
+
+	poller.SyncNow()
+
+	assert.Equal(t, 0, factoryCalls,
+		"a disabled integration must not build a provider or issue any request")
+}
+
+// TestForgePoller_PollsAgainAfterReenable is the mirror: the flag is re-read
+// each cycle, so turning it back on resumes polling without a restart.
+func TestForgePoller_PollsAgainAfterReenable(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
+		ProjectPath: t.TempDir(), Platform: "github", Host: "github.com",
+		Owner: "acme", Repo: "widgets", Source: "manual",
+	}))
+
+	enabled := false
+	factoryCalls := 0
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) {
+		factoryCalls++
+		return &recordingProvider{}, nil
+	}, nil)
+	poller := service.NewForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), func() model.Config {
+		return model.Config{Forge: model.ForgeConfig{Enabled: enabled}}
+	})
+
+	poller.SyncNow()
+	assert.Equal(t, 0, factoryCalls)
+
+	enabled = true
+	poller.SyncNow()
+	assert.Equal(t, 1, factoryCalls, "re-enabling must resume polling on the next cycle")
 }

@@ -77,7 +77,10 @@ else
 fi
 
 # ─── 2. Go test ───
-run_check "Test (Go)" go test ./...
+# -timeout matches CI: the per-binary default is 10 min and internal/service
+# already runs 271–464 s on the Windows runner, so the default turns a slow
+# machine into a red build. See the note on the `Go test` step in ci.yml.
+run_check "Test (Go)" go test -timeout 20m ./...
 
 # ─── 3. Go build ───
 run_check "Build (Go)" go build ./cmd/server

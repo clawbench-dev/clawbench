@@ -74,10 +74,19 @@ vi.mock('@/composables/useTabDrawer', () => ({
   }),
 }))
 
-vi.mock('@/composables/useFileRefresh.ts', () => ({
-  flashRanges: { value: [] },
-  flashType: { value: null },
-}))
+// Partial mock: the viewer imports more than the two flash refs it renders
+// from, and a hand-written whitelist turns every other export into `undefined`
+// at runtime (a real `watch(undefined)` throws and takes the whole suite down).
+// `importOriginal` keeps the real module's surface — including `refreshTick`,
+// which the HTML preview watches — while the flash state stays inert.
+vi.mock('@/composables/useFileRefresh.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useFileRefresh.ts')>()
+  return {
+    ...actual,
+    flashRanges: { value: [] },
+    flashType: { value: null },
+  }
+})
 
 const fileNavState = vi.hoisted(() => ({
   overlayOpen: { value: false },

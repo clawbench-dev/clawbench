@@ -135,8 +135,24 @@ const scanError = ref('')
 // headroom for very busy hosts.
 const SCAN_TIMEOUT_MS = 60_000
 
-// Auto-refresh interval when tunnel is unhealthy
-let tunnelPollTimer: ReturnType<typeof setInterval> | null = null
+// Auto-refresh while the tunnel is unhealthy. Self-scheduling timeout rather
+// than setInterval so the delay can grow: a failing round asks the native side
+// to reconnect, which can take up to 15s (SSH connect) or 25s (fetchSSHPort +
+// connect). A fixed 5s interval therefore produced rounds faster than they
+// could finish — an unbounded queue on Android's single-threaded network
+// executor, and (because each attempt takes the service lock) a main thread
+// that could not run onDestroy() within Android's 5s input timeout → ANR.
+let tunnelPollTimer: ReturnType<typeof setTimeout> | null = null
+let tunnelPollActive = false
+let tunnelPollFailures = 0
+// Bumped by every start/stop. A round captures it when it is armed and refuses
+// to re-arm if it changed: a round that was already awaiting when the poll was
+// stopped and restarted must not fork a second chain, which would fire the
+// reconnect twice as often (and can overlap two rounds, breaking the
+// single-flight contract below).
+let tunnelPollGeneration = 0
+
+const TUNNEL_POLL_DELAYS_MS = [5_000, 15_000, 30_000, 60_000]
 
 // Callback set by usePortForward() to handle port-forward-result events.
 // We need this indirection because loadPorts() is defined inside usePortForward(),
@@ -1107,69 +1123,148 @@ export function usePortForward() {
     }
   }
 
-  /** Start polling tunnel health every 5s while unhealthy */
+  /**
+   * One poll round: read the tunnel's health and, if it is down while ports are
+   * still wanted, ask the native side to reconnect.
+   *
+   * Returns `ok` when the tunnel is healthy again (the caller then stops
+   * polling), `degraded` when the tunnel is up but no enabled port is
+   * answering, and `down` when the tunnel itself is not usable.
+   *
+   * The distinction matters for the retry cadence: `degraded` means the wire is
+   * fine and only the target service is not up yet, which resolves in seconds —
+   * backing off there would delay recovery to 60s for no reason. Only `down`
+   * backs off.
+   *
+   * MUST NOT be run concurrently with itself — the reconnect call alone can take
+   * 15–25s.
+   */
+  async function runTunnelPollRound(): Promise<'ok' | 'degraded' | 'down'> {
+    // Check native status first (fast, no network)
+    const nativeConnected = await getNativeTunnelStatus()
+    if (nativeConnected === true) {
+      await loadPorts()
+      const hasPorts = ports.value.length > 0
+      if (tunnelStatusFromPorts(hasPorts) === 'ok') {
+        tunnelStatus.value = 'ok'
+        tunnelMessage.value = ''
+        return 'ok'
+      }
+      tunnelStatus.value = 'degraded'
+      tunnelMessage.value = gt('portForward.tunnelDegraded', { transport: transportAnnotation() })
+      return 'degraded'
+    }
+
+    // Native reports the tunnel down while ports are still wanted: ask it to
+    // reconnect. The desktop shell self-heals via its own monitor, but doing
+    // it here too means recovery does not depend on that monitor being armed.
+    // Only for an explicit `false` — `null` means "no native status", where a
+    // reconnect call would be meaningless.
+    if (nativeConnected === false && ports.value.some(p => p.enabled)) {
+      // Single attempt per round: the next round is scheduled only after this
+      // one settles, so a slow connect cannot stack calls on the native queue.
+      await nativeReconnectTunnel()
+      await loadPorts()
+      return 'down'
+    }
+
+    // Fall back to server-side check
+    await loadSSHInfo()
+    const info = sshInfo.value
+    const stats = info?.connectionStats
+    if (stats?.connected) {
+      // Re-check full health (ports + ssh)
+      await loadPorts()
+      const hasPorts = ports.value.length > 0
+      if (tunnelStatusFromPorts(hasPorts) === 'ok') {
+        tunnelStatus.value = 'ok'
+        tunnelMessage.value = ''
+        return 'ok'
+      }
+      tunnelStatus.value = 'degraded'
+      tunnelMessage.value = gt('portForward.tunnelDegraded', { transport: transportAnnotation() })
+      return 'degraded'
+    }
+
+    // Server says disconnected — still check if ports are actually active
+    await loadPorts()
+    if (hasActivePorts()) {
+      tunnelStatus.value = 'ok'
+      tunnelMessage.value = ''
+      return 'ok'
+    }
+    return 'down'
+  }
+
+  /** Delay before the next round, backing off while the tunnel stays down. */
+  function tunnelPollDelayMs(): number {
+    const idx = Math.min(tunnelPollFailures, TUNNEL_POLL_DELAYS_MS.length - 1)
+    return TUNNEL_POLL_DELAYS_MS[idx]
+  }
+
+  /**
+   * Arm the next round. Never leaves two timers armed: any existing one is
+   * cancelled first, and the round only re-arms if its generation is still the
+   * live one.
+   */
+  function scheduleTunnelPollRound() {
+    if (!tunnelPollActive) return
+    const generation = tunnelPollGeneration
+    if (tunnelPollTimer) clearTimeout(tunnelPollTimer)
+    tunnelPollTimer = setTimeout(async () => {
+      tunnelPollTimer = null
+      // A stop→start straddling this await makes `tunnelPollActive` true again,
+      // so the flag alone cannot tell "my chain is still live" from "someone
+      // replaced it". Without the generation check this round would arm a
+      // second chain alongside the new one.
+      if (!tunnelPollActive || generation !== tunnelPollGeneration) return
+      let outcome: 'ok' | 'degraded' | 'down' = 'down'
+      let threw = false
+      try {
+        outcome = await runTunnelPollRound()
+      } catch (e) {
+        threw = true
+        appLog.w(TAG, `tunnel poll round failed (consecutive failures: ${tunnelPollFailures + 1})`, e)
+      }
+      if (!tunnelPollActive || generation !== tunnelPollGeneration) return
+      if (outcome === 'ok') {
+        stopTunnelPoll()
+        return
+      }
+      // Only a genuinely down tunnel backs off. `degraded` keeps the base
+      // cadence so a target service that is still booting flips to ok within
+      // seconds, and a thrown round is a transport/API blip rather than a
+      // tunnel failure (counting it would back a flaky-but-healthy link off to
+      // 60s).
+      tunnelPollFailures = outcome === 'down' && !threw ? tunnelPollFailures + 1 : 0
+      scheduleTunnelPollRound()
+    }, tunnelPollDelayMs())
+  }
+
+  /**
+   * Start polling tunnel health while it is unhealthy.
+   *
+   * Self-scheduling (not setInterval): the next round is armed only after the
+   * previous one settled, and the delay steps 5s → 15s → 30s → 60s. A fixed 5s
+   * interval with a 15–25s reconnect inside each round queued work faster than
+   * it drained, which on Android starved the single-threaded executor and held
+   * the service lock almost continuously (main thread → ANR).
+   */
   function startTunnelPoll() {
-    if (tunnelPollTimer) return
-    tunnelPollTimer = setInterval(async () => {
-      // Check native status first (fast, no network)
-      const nativeConnected = await getNativeTunnelStatus()
-      if (nativeConnected === true) {
-        await loadPorts()
-        const hasPorts = ports.value.length > 0
-        if (tunnelStatusFromPorts(hasPorts) === 'ok') {
-          tunnelStatus.value = 'ok'
-          tunnelMessage.value = ''
-          stopTunnelPoll()
-        } else {
-          tunnelStatus.value = 'degraded'
-          tunnelMessage.value = gt('portForward.tunnelDegraded', { transport: transportAnnotation() })
-        }
-        return
-      }
-
-      // Native reports the tunnel down while ports are still wanted: ask it to
-      // reconnect. The desktop shell self-heals via its own monitor, but doing
-      // it here too means recovery does not depend on that monitor being armed.
-      // Only for an explicit `false` — `null` means "no native status", where a
-      // reconnect call would be meaningless.
-      if (nativeConnected === false && ports.value.some(p => p.enabled)) {
-        await nativeReconnectTunnel()
-        await loadPorts()
-        return
-      }
-
-      // Fall back to server-side check
-      await loadSSHInfo()
-      const info = sshInfo.value
-      const stats = info?.connectionStats
-      if (stats?.connected) {
-        // Re-check full health (ports + ssh)
-        await loadPorts()
-        const hasPorts = ports.value.length > 0
-        if (tunnelStatusFromPorts(hasPorts) === 'ok') {
-          tunnelStatus.value = 'ok'
-          tunnelMessage.value = ''
-          stopTunnelPoll()
-        } else {
-          tunnelStatus.value = 'degraded'
-          tunnelMessage.value = gt('portForward.tunnelDegraded', { transport: transportAnnotation() })
-        }
-      } else {
-        // Server says disconnected — still check if ports are actually active
-        await loadPorts()
-        if (hasActivePorts()) {
-          tunnelStatus.value = 'ok'
-          tunnelMessage.value = ''
-          stopTunnelPoll()
-        }
-      }
-    }, 5000)
+    if (tunnelPollActive) return
+    tunnelPollActive = true
+    tunnelPollFailures = 0
+    tunnelPollGeneration++
+    scheduleTunnelPollRound()
   }
 
   /** Stop the tunnel health polling */
   function stopTunnelPoll() {
+    tunnelPollActive = false
+    tunnelPollFailures = 0
+    tunnelPollGeneration++
     if (tunnelPollTimer) {
-      clearInterval(tunnelPollTimer)
+      clearTimeout(tunnelPollTimer)
       tunnelPollTimer = null
     }
   }

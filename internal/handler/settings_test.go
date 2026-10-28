@@ -572,6 +572,93 @@ func TestServeConfig_Patch_ForgePauseEventTasks(t *testing.T) {
 	assert.Contains(t, gw.Body.String(), `"pause_event_tasks":true`)
 }
 
+// TestServeConfig_Patch_ForgeEnabledRoundTrip covers the master switch: the
+// value must reach ConfigInstance (a whitelisted-but-unapplied field is the bug
+// the guard below exists for) and must be echoed by GET, or the toggle snaps
+// back on the reload patchConfig() performs.
+func TestServeConfig_Patch_ForgeEnabledRoundTrip(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{Forge: model.ForgeConfig{Enabled: true}}
+
+	body := `{"forge":{"enabled":false}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, model.ConfigInstance.Forge.Enabled,
+		"forge.enabled must be applied to ConfigInstance")
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(getReq, model.SessionToken)
+	gw := callHandler(ServeConfig, getReq)
+	assert.Equal(t, http.StatusOK, gw.Code)
+	assert.Contains(t, gw.Body.String(), `"enabled":false`,
+		"GET must echo the switch, otherwise the UI resets it on reload")
+}
+
+// TestServeConfig_Patch_ForgeDisableClearsBindings is the behavior the user
+// asked for: turning the integration off is a real disable, not a hidden tab —
+// every project's repository binding must be removed so polling has nothing to
+// fetch and nothing can be notified about.
+func TestServeConfig_Patch_ForgeDisableClearsBindings(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{Forge: model.ForgeConfig{Enabled: true}}
+
+	// Bind the test project (and a second one) so the clear has something to do.
+	dirs := []string{env.ProjectDir, filepath.Join(env.WatchDir, "project2")}
+	for _, dir := range dirs {
+		_ = os.MkdirAll(dir, 0o755)
+		require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
+			ProjectPath: dir, Platform: "github", Host: "github.com",
+			Owner: "acme", Repo: "widgets", Source: "auto",
+		}))
+	}
+
+	body := `{"forge":{"enabled":false}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	for _, dir := range dirs {
+		got, err := service.GetProjectForge(dir)
+		require.NoError(t, err)
+		assert.Nil(t, got, "disabling must clear every project's binding, not just the active one")
+	}
+}
+
+// TestServeConfig_Patch_ForgeEnableKeepsBindings is the mirror image: turning it
+// back on must NOT clear anything. A switch whose "off" is destructive and
+// whose "on" also mutates state would make the value meaningless.
+func TestServeConfig_Patch_ForgeEnableKeepsBindings(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{Forge: model.ForgeConfig{Enabled: false}}
+	require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
+		ProjectPath: env.ProjectDir, Platform: "github", Host: "github.com",
+		Owner: "acme", Repo: "widgets", Source: "auto",
+	}))
+
+	body := `{"forge":{"enabled":true}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	got, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	assert.NotNil(t, got, "enabling must not touch bindings")
+}
+
 // TestApplyConfigPatchCoversEveryPatchableField is the structural guard for the
 // class of bug above. PatchableConfigPaths decides what a PATCH may contain;
 // applyConfigPatch decides what actually reaches ConfigInstance. Nothing forces

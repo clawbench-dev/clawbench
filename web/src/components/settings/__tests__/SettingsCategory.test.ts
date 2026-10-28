@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, reactive, nextTick } from 'vue'
 import SettingsCategory from '@/components/settings/SettingsCategory.vue'
@@ -329,6 +329,15 @@ const i18n = createI18n({
           serverRestart: '重启服务器',
           logCapture: '日志抓取',
           reconfigureServer: '重新配置服务器',
+          forgeEnabledSection: '启用',
+          forgeSection: '凭据',
+          forgeEnabled: '启用 GitHub/GitLab 集成',
+          forgeEnabledDesc: '关闭后会停止同步，并解除所有项目已关联的仓库。',
+          forgeDisableConfirmTitle: '关闭 GitHub/GitLab 集成',
+          forgeDisableConfirm: '关闭后将解除所有项目已关联的仓库。',
+          forgeDisableConfirmAction: '关闭集成',
+          forgeCredentials: '访问令牌',
+          forgeCredentialsDesc: '访问令牌',
           agentModel: '首选模型',
           agentThinking: '思考强度',
           themeAuto: '自动',
@@ -1340,3 +1349,114 @@ describe('SettingsCategory', () => {
 
 })
 
+
+describe('forge master switch (issue #590)', () => {
+  // `vi.clearAllMocks()` in the outer beforeEach clears call history but NOT the
+  // `mockResolvedValueOnce` queue, so a queued answer from a previous case leaks
+  // into the next one and the assertion order becomes meaningless. Reset the
+  // dialog mock to a known state per case.
+  beforeEach(() => {
+    mockDialogConfirm.mockReset()
+    mockDialogConfirm.mockResolvedValue(false)
+  })
+
+  // Disabling is destructive on the server: it clears every project's
+  // repository binding, and re-enabling does not restore them. A switch that
+  // silently deletes data on the way off must ask first, and a refused
+  // confirmation must not send the PATCH at all.
+  it('asks for confirmation before disabling and sends nothing when refused', async () => {
+    mockDialogConfirm.mockResolvedValueOnce(false)
+    const wrapper = mountCategory('forgeIntegration')
+    const item = wrapper
+      .findAllComponents({ name: 'SettingsItem' })
+      .find(i => i.props().label === '启用 GitHub/GitLab 集成')
+    expect(item, 'the master switch row must render').toBeTruthy()
+
+    await item!.vm.$emit('update:modelValue', false)
+    await flushPromises()
+
+    expect(mockDialogConfirm).toHaveBeenCalledTimes(1)
+    expect(mockSetServerValue).not.toHaveBeenCalled()
+  })
+
+  it('PATCHes forge.enabled when the confirmation is accepted', async () => {
+    mockDialogConfirm.mockResolvedValueOnce(true)
+    const wrapper = mountCategory('forgeIntegration')
+    const item = wrapper
+      .findAllComponents({ name: 'SettingsItem' })
+      .find(i => i.props().label === '启用 GitHub/GitLab 集成')
+
+    await item!.vm.$emit('update:modelValue', false)
+    await flushPromises()
+
+    expect(mockDialogConfirm).toHaveBeenCalledTimes(1)
+    expect(mockSetServerValue).toHaveBeenCalledWith('forge.enabled', false)
+  })
+
+  it('does NOT ask when enabling — only the destructive direction prompts', async () => {
+    // Prompting on the safe direction trains users to click through the dialog,
+    // which is exactly what makes the dangerous one useless.
+    mockDialogConfirm.mockClear()
+    const wrapper = mountCategory('forgeIntegration')
+    const item = wrapper
+      .findAllComponents({ name: 'SettingsItem' })
+      .find(i => i.props().label === '启用 GitHub/GitLab 集成')
+
+    await item!.vm.$emit('update:modelValue', true)
+    await flushPromises()
+
+    expect(mockDialogConfirm).not.toHaveBeenCalled()
+    expect(mockSetServerValue).toHaveBeenCalledWith('forge.enabled', true)
+  })
+})
+
+describe('server warnings surfaced to the user', () => {
+  // This block sits outside the main describe, so it does not inherit its
+  // beforeEach. Without an explicit reset the previous case's toast call leaks
+  // into the next assertion.
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  // The server's only channel for "saved, but a follow-up step failed". Ignoring
+  // it made one case invisible: disabling the forge integration persists the
+  // switch and then clears the bindings; a failed clear told the user nothing,
+  // so they later re-enabled it and found the bindings still there.
+  it('toasts every warning returned by a server save', async () => {
+    mockSetServerValue.mockResolvedValueOnce({
+      needsRestart: false,
+      changedColdFields: [],
+      warnings: ['forge disabled, but clearing repository bindings failed: boom'],
+    })
+    const wrapper = mountCategory('chat')
+    const item = wrapper
+      .findAllComponents({ name: 'SettingsItem' })
+      .find(i => i.props().label === '初始消息数')
+
+    await item!.vm.$emit('update:modelValue', 30)
+    await flushPromises()
+
+    expect(mockToastShow).toHaveBeenCalledWith(
+      'forge disabled, but clearing repository bindings failed: boom',
+      expect.objectContaining({ type: 'error' }),
+    )
+  })
+
+  it('does not toast when the save returns no warnings', async () => {
+    // `warnings` is absent for most saves; a missing field must not produce an
+    // empty toast.
+    mockSetServerValue.mockResolvedValueOnce({
+      needsRestart: false,
+      changedColdFields: [],
+    })
+    const wrapper = mountCategory('chat')
+    const item = wrapper
+      .findAllComponents({ name: 'SettingsItem' })
+      .find(i => i.props().label === '初始消息数')
+
+    await item!.vm.$emit('update:modelValue', 30)
+    await flushPromises()
+
+    expect(mockToastShow).not.toHaveBeenCalled()
+  })
+})

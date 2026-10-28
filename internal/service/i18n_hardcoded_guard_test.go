@@ -89,6 +89,7 @@ var allowedCJKFiles = map[string]string{
 	"internal/ai/backends/openclaw/register.go":    "Specialty metadata (user-visible; localization pending a product decision)",
 	"internal/ai/backends/pi/cli.go":               "Specialty metadata (user-visible; localization pending a product decision)",
 	"internal/ai/backends/qoder/cli.go":            "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/qodercn/register.go":     "Specialty metadata (user-visible; localization pending a product decision)",
 	"internal/ai/backends/vecli/custom.go":         "Specialty metadata (user-visible; localization pending a product decision)",
 	"internal/ai/backends/zcode/register.go":       "Specialty metadata (user-visible; localization pending a product decision)",
 }
