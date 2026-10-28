@@ -276,15 +276,27 @@ function parseTrigger(
 }
 
 /**
- * Parse an `@` file-reference trigger from the text left of the caret.
+ * Characters that make an `@` a continuation of a word rather than a trigger.
+ * Only the ASCII local-part alphabet is excluded: an email address (`a@b`,
+ * `user.name@x`) never opens the menu, while CJK text — which carries no word
+ * separators — still does. Requiring whitespace before `@` made the menu feel
+ * "head-only" in Chinese: `请@某人` never triggered, because the character
+ * before `@` is a Chinese one.
+ */
+const AT_WORD_CHAR_RE = /[A-Za-z0-9_]/
+
+/**
+ * Parse an `@` file/member-reference trigger from the text left of the caret.
  *
- * The `@` must sit at the start of a line or right after whitespace (so an
- * email-like `a@b` never triggers). The query runs from `@` to the caret and
- * must not contain whitespace. Returns null when there is no active trigger.
+ * The `@` may sit ANYWHERE in the input: at the start, after whitespace, after
+ * CJK text or punctuation. The only excluded position is immediately after an
+ * ASCII word character (so an email-like `a@b` never triggers). The query runs
+ * from `@` to the caret and must not contain whitespace. Returns null when
+ * there is no active trigger.
  */
 export function parseAtQuery(text: string, caret: number): TriggerRange | null {
   return parseTrigger(text, caret, '@', (left, at) =>
-    at === 0 || /\s/.test(left[at - 1]))
+    at === 0 || !AT_WORD_CHAR_RE.test(left[at - 1]))
 }
 
 /**
@@ -295,10 +307,11 @@ export function parseAtQuery(text: string, caret: number): TriggerRange | null {
  * prefix), so a trigger mid-text would offer entries the server then treats as
  * plain text — and would false-positive on paths such as `cd /test`.
  *
- * Unlike `@` (which may sit anywhere on a whitespace boundary), the trigger
- * character must be the first non-whitespace character. The query runs from the
- * trigger to the caret and must not contain whitespace, so text already present
- * after the trigger (or after the caret) does not suppress the menu.
+ * Unlike `@` (which may sit anywhere, including right after CJK text), the
+ * trigger character must be the first non-whitespace character. The query runs
+ * from the trigger to the caret and must not contain whitespace, so text
+ * already present after the trigger (or after the caret) does not suppress the
+ * menu.
  */
 function parseFirstTokenQuery(text: string, caret: number, char: string): TriggerRange | null {
   return parseTrigger(text, caret, char, (left, at) =>

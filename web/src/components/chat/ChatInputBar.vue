@@ -1026,8 +1026,10 @@ function onUsagePopupUpdate(v) {
 // source and select behaviour:
 //   - slash: input starts with "/" and has no space; selecting writes the
 //            command back and closes.
-//   - at:    an "@" preceded by whitespace; selecting attaches the file,
-//            removes the "@query" and keeps the menu open for multi-select.
+//   - at:    an "@" anywhere except straight after an ASCII word character
+//            (so `a@b` stays prose, but `请@某人` triggers); selecting
+//            attaches the file, removes the "@query" and keeps the menu open
+//            for multi-select.
 const clawbenchCommands = computed(() => {
   return [
     { key: '/cb-chatsearch', label: '/cb-chatsearch', description: t('chat.clawbenchCommand.chatsearchDesc') },

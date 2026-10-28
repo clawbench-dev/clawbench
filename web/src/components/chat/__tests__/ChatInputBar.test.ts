@@ -2297,6 +2297,30 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.showFileMenu).toBe(false)
   })
 
+  it('@ menu opens mid-sentence right after CJK text', async () => {
+    // Chinese has no word separators, so requiring whitespace before "@" made
+    // the menu look like it only worked at the head of the input.
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '看看这个@main'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    const items = wrapper.findAll('.completion-item')
+    expect(items).toHaveLength(1)
+    expect(items[0].find('.completion-label').text()).toBe('main.ts')
+
+    // Selecting replaces only the trigger, keeping the leading Chinese prose.
+    await items[0].trigger('mousedown')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('add-attached')![0]).toEqual(['src/main.ts', false])
+    expect(wrapper.vm.inputText).toBe('看看这个')
+
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
   it('selecting an @ candidate emits add-attached and removes the query', async () => {
     const { store } = await import('@/stores/app.ts')
     store.state.currentDir = 'src'
