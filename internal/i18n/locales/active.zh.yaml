@@ -4,7 +4,7 @@ SessionStreamBusy: 会话流正在其他设备上查看
 ServiceBusy: 服务器正在装配分享的会话，请稍后重试
 SessionLimitReached: 已达会话数量上限（{{.MaxCount}}），请先归档旧会话
 SessionIdRequired: session_id 为必填项
-CannotRemoveHost: 主持人是群的唯一调度者，不能移除
+CannotDisableHost: 主持人是群的唯一调度者，不能禁用
 GroupMemberLimitReached: 一个群最多 {{.MaxCount}} 个成员
 ForkContextInjectedChat: 「{{.Title}}」的历史消息已作为背景注入当前会话
 ForkContextInjectedGroup: 「{{.Title}}」的历史消息已作为背景注入本群，每位成员首次发言时都会收到
@@ -242,7 +242,8 @@ CruiseMaxRounds: '自动巡航：已达确认轮数上限'
 # 同时还会以 "[系统] <文案>" 注入每个成员的上下文（group_inject.go），因此必须是
 # 可读句子、绝不能是键名。切换语言不会追溯翻译历史（与决策 96b 一致）。
 GroupMemberJoined: '{{.Name}}加入了讨论'
-GroupMemberLeft: '{{.Name}} 已离场'
+GroupMemberDisabled: '{{.Name}} 已禁用'
+GroupMemberEnabled: '{{.Name}} 已启用'
 GroupMemberCompactionStarted: '{{.Name}} 正在压缩上下文…'
 GroupMemberCompactionDone: '{{.Name}} 已压缩上下文（{{.Before}} → {{.After}}）'
 GroupMemberCompactionFailed: '{{.Name}} 的上下文压缩失败'

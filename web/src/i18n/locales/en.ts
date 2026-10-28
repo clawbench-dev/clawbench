@@ -1000,6 +1000,7 @@ export default {
       // that; free mode requires two). The group is valid — it just routes like
       // a single chat, which is why it looks silent.
       groupSoloMemberHint: 'This group only has you in it. Add members before they can join the conversation.',
+      groupSoloDisabledHint: 'Every other member is disabled, so you are the only one talking. Enable them to continue the discussion.',
       noAgentsTitle: 'No agents available',
       noAgentsDesc: 'Install and configure an AI agent to start chatting.',
       noAgentsAction: 'Configure agents',
@@ -1299,7 +1300,7 @@ export default {
     newGroup: 'New group chat',
     title: 'Group',
     host: 'Host',
-    hostNotRemovable: 'The host is the group\u2019s only scheduler and cannot be removed',
+    hostCannotDisable: 'The host is the group\u2019s only scheduler and cannot be disabled',
     realAgent: 'Agent',
     // The reserved human participant name ("User") shown to the reader.
     you: 'you',
@@ -1313,7 +1314,9 @@ export default {
     addMembers: 'Add members',
     settings: 'Group settings',
     members: 'Members',
-    left: 'Left',
+    disabled: 'Disabled',
+    disable: 'Disable (stop scheduling it to speak)',
+    enable: 'Enable (resume speaking, with everything it missed)',
     memberDetail: {
       open: 'View this member\u2019s settings',
       agent: 'Agent',
@@ -1322,7 +1325,7 @@ export default {
       modelInherited: 'This member uses {model} (agent default)',
       noUsage: 'This member has not reported any context usage yet. Agents on the CLI transport do not report a context window.',
       noUsageShort: 'This member has not reported context usage',
-      compactUnavailable: 'Compaction is unavailable right now: the group is mid-turn, or this member has left.',
+      compactUnavailable: 'Compaction is unavailable right now: the group is mid-turn.',
       compactHint: 'Compaction affects only this member\u2019s own context; nothing is written to the group timeline.',
       compacting: 'Compacting this member\u2019s context \u2014 usually takes a few seconds\u2026',
     },

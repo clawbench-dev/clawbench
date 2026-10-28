@@ -67,12 +67,12 @@ func groupUserTarget() string {
 
 // GroupMember is one member of a group (a hidden chat_sessions row).
 type GroupMember struct {
-	ID      string // member session row id (also the speaker id in chat_history.agent_id)
-	AgentID string // real agent id
-	Name    string // display name (member row agent_name)
-	Backend string
-	Avatar  string // per-member avatar SVG snapshot (may be empty → fall back to agent avatar)
-	Left    bool   // archived=1: removed from the group but its speech is kept
+	ID       string // member session row id (also the speaker id in chat_history.agent_id)
+	AgentID  string // real agent id
+	Name     string // display name (member row agent_name)
+	Backend  string
+	Avatar   string // per-member avatar SVG snapshot (may be empty → fall back to agent avatar)
+	Disabled bool   // disabled=1: stays a member, but the orchestrator never schedules it
 }
 
 // CreateGroup creates a group timeline row plus its host member row. The host
@@ -115,17 +115,17 @@ func validateGroupSpecs(specs []GroupMemberSpec) error {
 // back to "<base> <ordinal>", numbered from 2 so "<base> 1" is never produced.
 //
 // "First instance" is the instance index k == 1, i.e. (existing member rows for
-// that agent in the group, archived included) + (ordinal within this batch) ==
+// that agent in the group, disabled included) + (ordinal within this batch) ==
 // 0. An instance that ALREADY exists is never renamed (its name is a historical
 // snapshot referenced by past mentions/rolls), so adding a 2nd instance later
-// leaves the first with its bare name and names only the new ones. Because rows
-// are only ever archived (never deleted) the index is monotonic and a
-// historical nickname always refers to the same member. A collision (with
+// leaves the first with its bare name and names only the new ones. Because
+// member rows are never deleted while the group lives, the index is monotonic
+// and a historical nickname always refers to the same member. A collision (with
 // another member's name, a pool name, or the reserved user nickname) advances
 // until unique, so routing by name stays unambiguous.
 //
 // existingCounts maps agent id → number of member rows already in the group
-// (archived included). It may be nil (no existing members). taken holds names
+// (disabled included). It may be nil (no existing members). taken holds names
 // already in use in the group, including the reserved user nickname.
 //
 // A spec's DisplayName, when non-empty, is used as the BASE name (callers such
@@ -485,7 +485,7 @@ func createMemberRow(projectPath, groupID, backend, agentID, displayName string)
 // duplicates of one agent each consume a slot.
 //
 // Every spec gets a UNIQUE display name assigned here (design §4): existing
-// member rows of the same agent in this group (archived included) determine the
+// member rows of the same agent in this group (disabled included) determine the
 // starting ordinal, and the name is bumped on collision, so routing by name
 // stays unambiguous.
 //
@@ -510,9 +510,11 @@ func AddGroupMembers(projectPath, groupID string, specs []GroupMemberSpec) ([]st
 	if err != nil {
 		return nil, err
 	}
-	active := countActiveMembers(members)
+	// Disabled members are excluded: they spawn nothing while off, so the cap is
+	// about how many agents can be scheduled to speak at once.
+	active := countSpeakingMembers(members)
 
-	// Each spec is a new instance, so every non-empty spec consumes a slot.
+	// Each spec is a new (enabled) instance, so every non-empty spec consumes a slot.
 	netNew := 0
 	for _, s := range specs {
 		if s.AgentID != "" {
@@ -535,8 +537,8 @@ func AddGroupMembers(projectPath, groupID string, specs []GroupMemberSpec) ([]st
 		return nil, nil
 	}
 
-	// Seed unique names. existingCounts counts ALL member rows (archived
-	// included) per agent, so the ordinal is monotonic across add/remove cycles.
+	// Seed unique names. existingCounts counts ALL member rows (disabled included)
+	// per agent, so the ordinal is monotonic across add/disable cycles.
 	existingCounts := make(map[string]int, len(members))
 	taken := make(map[string]bool, len(members))
 	for _, m := range members {
@@ -769,7 +771,7 @@ func deletePendingBcc(ids []int64) {
 
 // deletePendingBccForTarget drops every stored note for one target in a group.
 // Used when the target is the USER (its notes are shown in the UI card rather
-// than delivered to an AI turn) and when a member leaves.
+// than delivered to an AI turn).
 func deletePendingBccForTarget(groupID, targetName string) {
 	target := strings.TrimSpace(targetName)
 	if groupID == "" || target == "" {
@@ -826,15 +828,15 @@ func memberSpecialtySuffix(agentID string) string {
 	return i18n.T(i18n.LocalizerForLocale(model.Language), "GroupSpecialtySuffix", map[string]any{"Specialty": s})
 }
 
-// ensureGroupMemberSlot returns ErrGroupMemberLimit when the group is already at
-// maxGroupMembers active members. Callers invoke it only on paths that would
-// ADD a new member instance.
+// ensureGroupMemberSlot returns ErrGroupMemberLimit when the group already has
+// maxGroupMembers speaking (enabled) members. Callers invoke it only on paths
+// that would ADD a new member instance.
 func ensureGroupMemberSlot(groupID string) error {
 	members, err := ListGroupMembers(groupID)
 	if err != nil {
 		return err
 	}
-	if countActiveMembers(members) >= maxGroupMembers {
+	if countSpeakingMembers(members) >= maxGroupMembers {
 		return ErrGroupMemberLimit
 	}
 	return nil
@@ -876,18 +878,18 @@ func SetMemberAvatar(groupID, memberID, avatar string) (int64, error) {
 	return n, nil
 }
 
-// ListGroupMembers returns every member row of a group, including removed
-// (archived) ones so the timeline can still label their past speech. Active
-// members are those with Left == false.
+// ListGroupMembers returns every member row of a group, disabled ones included so
+// the roster can show and toggle them. Members that may speak are those with
+// Disabled == false.
 //
-// Order is JOIN order (created_at, then rowid): free mode speaks every active
+// Order is JOIN order (created_at, then rowid): free mode speaks every enabled
 // member in roster order when the user @s nobody, so the order must be stable
 // and match the order members were added. created_at has second granularity, so
 // members added in one transaction tie; rowid (insertion order) breaks the tie
 // deterministically, whereas `id` (a random UUID) would not.
 func ListGroupMembers(groupID string) ([]GroupMember, error) {
 	rows, err := store.ReadDB().Query(
-		`SELECT id, agent_id, agent_name, backend, agent_avatar, archived FROM chat_sessions
+		`SELECT id, agent_id, agent_name, backend, agent_avatar, disabled FROM chat_sessions
 		 WHERE group_id = ? AND session_type = ?
 		 ORDER BY created_at ASC, rowid ASC`,
 		groupID, groupMemberSessionType,
@@ -900,11 +902,11 @@ func ListGroupMembers(groupID string) ([]GroupMember, error) {
 	members := make([]GroupMember, 0)
 	for rows.Next() {
 		var m GroupMember
-		var archived int
-		if err := rows.Scan(&m.ID, &m.AgentID, &m.Name, &m.Backend, &m.Avatar, &archived); err != nil {
+		var disabled int
+		if err := rows.Scan(&m.ID, &m.AgentID, &m.Name, &m.Backend, &m.Avatar, &disabled); err != nil {
 			return nil, err
 		}
-		m.Left = archived != 0
+		m.Disabled = disabled != 0
 		members = append(members, m)
 	}
 	return members, rows.Err()
@@ -924,8 +926,8 @@ type GroupMemberContext struct {
 }
 
 // GroupMemberContexts returns the context state of every member row of a group,
-// keyed by member row id (removed members included, so the caller can decide
-// whether to show them).
+// keyed by member row id (disabled members included — their window is real and is
+// exactly what may need compacting while they are disabled).
 //
 // One query for the whole roster: the member sheet must not fan out a query per
 // member. Deliberately separate from ListGroupMembers, which runs on every group
@@ -970,22 +972,22 @@ func GroupMemberContexts(groupID string) (map[string]GroupMemberContext, error) 
 	return out, rows.Err()
 }
 
-// countActiveMembers returns how many members have not left the group.
-func countActiveMembers(members []GroupMember) int {
+// countSpeakingMembers returns how many members can still speak (not disabled).
+func countSpeakingMembers(members []GroupMember) int {
 	n := 0
 	for _, m := range members {
-		if !m.Left {
+		if !m.Disabled {
 			n++
 		}
 	}
 	return n
 }
 
-// GroupMembersForGroups returns the ACTIVE (non-archived) members of each group
-// id, keyed by group id, as compact previews for the session list's stacked
-// avatars. One query for all ids — the sessions list must not fan out a query
-// per group (the same reason GetTagsForSessions exists). Group ids with no
-// active members are absent from the map; empty input returns an empty map
+// GroupMembersForGroups returns the members that can speak (not disabled) of each
+// group id, keyed by group id, as compact previews for the session list's
+// stacked avatars. One query for all ids — the sessions list must not fan out a
+// query per group (the same reason GetTagsForSessions exists). Group ids with no
+// speaking member are absent from the map; empty input returns an empty map
 // without touching the DB.
 func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPreview, error) {
 	out := map[string][]model.GroupMemberPreview{}
@@ -1016,8 +1018,8 @@ func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPre
 		args = append(args, id)
 	}
 
-	// archived = 0 keeps left members out of the list preview (the full roster,
-	// left members included, is only in GET /api/group/members). Order matches
+	// disabled = 0 keeps disabled members out of the list preview (the full roster,
+	// disabled members included, is only in GET /api/group/members). Order matches
 	// ListGroupMembers so the stack is stable across reloads.
 	//
 	// is_host comes from the GROUP row's context_state (the host pointer is
@@ -1029,7 +1031,7 @@ func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPre
 		       (m.id = COALESCE(json_extract(g.context_state, '$.host_member_id'), '')) AS is_host
 		FROM chat_sessions m
 		LEFT JOIN chat_sessions g ON g.id = m.group_id
-		WHERE m.group_id IN (%s) AND m.session_type = ? AND m.archived = 0
+		WHERE m.group_id IN (%s) AND m.session_type = ? AND m.disabled = 0
 		ORDER BY m.group_id, m.created_at ASC, m.id ASC`, placeholders)
 	args = append(args, groupMemberSessionType)
 
@@ -1053,11 +1055,11 @@ func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPre
 }
 
 // GroupMemberSpeakersForGroups returns each group's member-row-id → display-name
-// map, INCLUDING removed (archived) members. It is the speaker-resolution
-// companion to GroupMembersForGroups (which is active-only, for the avatar
-// stack): a message's chat_history.agent_id may name a member who has since
-// left, and their past speech must still resolve to their own name rather than
-// a generic "Assistant" (mirrors ListGroupMembers' include-left rule).
+// map, INCLUDING disabled members. It is the speaker-resolution companion to
+// GroupMembersForGroups (which is disabled-filtered, for the avatar stack): a
+// message's chat_history.agent_id may name a member who is currently disabled, and
+// their speech must still resolve to their own name rather than a generic
+// "Assistant" (mirrors ListGroupMembers' include-disabled rule).
 //
 // One query for all ids. Groups with no members are absent from the map; empty
 // input returns an empty map without touching the DB.
@@ -1087,7 +1089,7 @@ func GroupMemberSpeakersForGroups(groupIDs []string) (map[string]map[string]stri
 		args = append(args, id)
 	}
 
-	// No archived filter: left members are included on purpose (their speech is
+	// No disabled filter: disabled members are included on purpose (their speech is
 	// kept in the timeline). The name is the member row's agent_name.
 	query := fmt.Sprintf(
 		`SELECT group_id, id, agent_name FROM chat_sessions
@@ -1114,23 +1116,26 @@ func GroupMemberSpeakersForGroups(groupIDs []string) (map[string]map[string]stri
 	return out, rows.Err()
 }
 
-// ErrCannotRemoveHost is returned when a caller tries to remove the group's
-// host member. The host is the only router, so removing it would leave the
-// group unable to run another turn.
-var ErrCannotRemoveHost = errors.New("cannot remove the group host")
+// ErrCannotDisableHost is returned when a caller tries to disable the group's host
+// member. The host is the only router, so a disabled host would leave the group
+// unable to run another turn.
+var ErrCannotDisableHost = errors.New("cannot disable the group host")
 
 // ErrGroupMemberLimit is returned when adding a member would push the group's
-// ACTIVE member count past maxGroupMembers.
+// speaking (enabled) member count past maxGroupMembers.
 var ErrGroupMemberLimit = errors.New("group member limit reached")
 
 // ErrFreeGroupNeedsTwoMembers is returned when a free-mode group (no host) is
 // created with fewer than two members (design §13.1 #F10).
 var ErrFreeGroupNeedsTwoMembers = errors.New("free group needs at least two members")
 
-// MaxGroupMembers caps a group's ACTIVE members (decision #78). Exported so the
-// handler can report the limit to the user. The count is INSTANCES, not unique
-// agents: the same agent may be added several times, and each instance is a
-// separate member (and a separate ACP subprocess).
+// MaxGroupMembers caps a group's SPEAKING members (decision #78). Exported so
+// the handler can report the limit to the user. The count is INSTANCES, not
+// unique agents: the same agent may be added several times, and each instance is
+// a separate member (and a separate ACP subprocess).
+//
+// Disabled members do not occupy a slot — they spawn nothing while off, so a
+// user can park a dozen agents and rotate which ones are active.
 //
 // Why a cap at all: every member is a separate ACP subprocess carrying its own
 // node/npx runtime (hundreds of MB), and the ACP connection pool has no upper
@@ -1143,28 +1148,51 @@ const MaxGroupMembers = 12
 // maxGroupMembers is the internal alias used by the store.
 const maxGroupMembers = MaxGroupMembers
 
-// RemoveGroupMember soft-removes a member: the row is archived (kept) so its
-// past speech in the group timeline stays attributed. Idempotent.
+// SetGroupMemberDisabled disables or re-enables a member (禁用 / 启用). Idempotent.
 //
-// The host member cannot be removed (ErrCannotRemoveHost): it is the group's
-// only router, so dropping it would silently strand the group.
-func RemoveGroupMember(groupID, memberID string) error {
-	if memberID != "" && memberID == GetGroupHostMember(groupID) {
-		return ErrCannotRemoveHost
+// Disabling is NOT removal: the member row, its agent binding, its own context
+// window and its whole history stay intact, and enabling is a plain flag flip —
+// so a member disabled for a while comes back with everything that happened in
+// the meantime (its seen_cursor is never advanced while disabled, so its next
+// turn injects the entire backlog it missed). That is exactly why the flag
+// replaced the old "removed = archived" representation: archiving was
+// irreversible from the UI and re-adding the same agent created a fresh instance
+// with a new context (issue #597).
+//
+// The host member cannot be disabled (ErrCannotDisableHost): it is the group's
+// only router, so turning it off would strand the group.
+//
+// ENABLING is cap-checked. Disabled members do not occupy a slot (they spawn
+// nothing while off), so without this check a user could park twelve disabled
+// agents, add twelve more, and then enable everything — putting 24 members on the
+// speaking roster in one turn, which is exactly what MaxGroupMembers exists to
+// prevent (every member is a separate ACP subprocess). Only the
+// disabled→speaking transition is checked, so a repeated disable/enable of an
+// already-speaking member is a no-op success rather than a spurious 409.
+func SetGroupMemberDisabled(groupID, memberID string, disabled bool) error {
+	if disabled && memberID != "" && memberID == GetGroupHostMember(groupID) {
+		return ErrCannotDisableHost
 	}
+	if !disabled {
+		if err := ensureEnableSlot(groupID, memberID); err != nil {
+			return err
+		}
+	}
+	flag := 0
+	if disabled {
+		flag = 1
+	}
+	// `disabled != ?` makes the UPDATE a no-op when the flag is already in the
+	// requested state, so a repeated call (or a member id belonging to a
+	// DIFFERENT group, which matches no row) cannot append a duplicate
+	// "已禁用 / 已启用" line to the timeline.
 	res, err := store.WriteExec(
-		"UPDATE chat_sessions SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND group_id = ? AND archived = 0",
-		memberID, groupID,
+		"UPDATE chat_sessions SET disabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND group_id = ? AND session_type = ? AND disabled != ?",
+		flag, memberID, groupID, groupMemberSessionType, flag,
 	)
 	if err != nil {
 		return err
 	}
-	// Record the departure on the timeline (decision #40) ONLY when a row
-	// actually changed. Without this check a repeated removal (already archived)
-	// or a member id belonging to a DIFFERENT group would still append a
-	// "X 已离场" row — polluting the minutes with an event about someone who did
-	// not leave THIS group, and feeding it into every member's cursor/context.
-	// The UPDATE is already scoped by group_id, so RowsAffected == 0 covers both.
 	affected, err := res.RowsAffected()
 	if err != nil {
 		return err
@@ -1172,21 +1200,52 @@ func RemoveGroupMember(groupID, memberID string) error {
 	if affected == 0 {
 		return nil
 	}
-	// Best-effort: the member is already archived, so a write failure must not
-	// surface as a failed removal.
-	if name := memberDisplayName(memberID); name != "" {
-		// Drop any private note awaiting this member: it can never be delivered
-		// now (left members are excluded from name resolution), so keeping it
-		// would be silent loss plus unbounded growth of group_pending_bcc.
-		deletePendingBccForTarget(groupID, name)
-		text := i18n.T(i18n.LocalizerForLocale(model.Language), "GroupMemberLeft", map[string]any{"Name": name})
-		if msgID, err := AddSystemMessage(GetSessionProjectPathAnyPath(groupID), groupID, text); err != nil {
-			slog.Warn("group: writing departure system event failed", "group", groupID, "err", err)
-		} else {
-			emitGroupSystemMessage(groupID, msgID, text)
+	writeDisabledSystemEvent(groupID, memberID, disabled)
+	return nil
+}
+
+// ensureEnableSlot returns ErrGroupMemberLimit when putting memberID back on the
+// roster would exceed the cap. A member that is ALREADY speaking does not consume
+// a new slot, so re-asserting its current state stays a no-op success.
+func ensureEnableSlot(groupID, memberID string) error {
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		return err
+	}
+	for _, m := range members {
+		if m.ID != memberID {
+			continue
 		}
+		if !m.Disabled {
+			return nil
+		}
+		break
+	}
+	if countSpeakingMembers(members) >= maxGroupMembers {
+		return ErrGroupMemberLimit
 	}
 	return nil
+}
+
+// writeDisabledSystemEvent records the toggle on the group timeline (best-effort: the
+// flag is already written, so a failure here must not surface as a failed
+// toggle).
+func writeDisabledSystemEvent(groupID, memberID string, disabled bool) {
+	name := memberDisplayName(memberID)
+	if name == "" {
+		return
+	}
+	key := "GroupMemberDisabled"
+	if !disabled {
+		key = "GroupMemberEnabled"
+	}
+	text := i18n.T(i18n.LocalizerForLocale(model.Language), key, map[string]any{"Name": name})
+	msgID, err := AddSystemMessage(GetSessionProjectPathAnyPath(groupID), groupID, text)
+	if err != nil {
+		slog.Warn("group: writing disable system event failed", "group", groupID, "disabled", disabled, "err", err)
+		return
+	}
+	emitGroupSystemMessage(groupID, msgID, text)
 }
 
 // memberDisplayName returns a member row's display name (empty if unknown).

@@ -170,7 +170,12 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"CruiseMaxRounds",
 		"GroupCruiseSatisfied",
 		"GroupMemberJoined",
-		"GroupMemberLeft",
+		"GroupMemberDisabled",
+		"GroupMemberEnabled",
+		// Handler-side 409 for the disable toggle. Rendered from a request, but a
+		// one-sided add (only one locale) would silently fall back to a raw key
+		// in the other language, so it is pinned like the rest.
+		"CannotDisableHost",
 		"GroupMemberUnknown",
 		"GroupMemberListSeparator",
 		"GroupSpecialtySuffix",

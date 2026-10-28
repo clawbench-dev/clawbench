@@ -647,9 +647,9 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 // attachGroupMembersToSearchResults batch-loads the group preview and speaker
-// roster for group-chat results. GroupMembers (active only) drives the stacked
-// avatars; GroupSpeakers (left members included) resolves a chunk's speaker to
-// a name even after that member has left. The rag package owns no service
+// roster for group-chat results. GroupMembers (enabled only) drives the stacked
+// avatars; GroupSpeakers (disabled members included) resolves a chunk's speaker to
+// a name even while that member is disabled. The rag package owns no service
 // dependency, so the enrichment lives here. Like the session list's
 // attachGroupMembers, a lookup failure is logged and swallowed: this is
 // decoration and must not take down a search that otherwise succeeded.

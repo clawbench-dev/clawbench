@@ -1005,6 +1005,7 @@ export default {
       // that; free mode requires two). The group is valid — it just routes like
       // a single chat, which is why it looks silent.
       groupSoloMemberHint: '这是一个只有你自己的群。添加成员后，他们才能参与对话。',
+      groupSoloDisabledHint: '其他成员都已禁用，所以现在只有你在说话。启用他们就能继续讨论。',
       noAgentsTitle: '暂无可用智能体',
       noAgentsDesc: '安装并配置 AI 智能体以开始对话。',
       noAgentsAction: '配置智能体',
@@ -1304,7 +1305,7 @@ export default {
     newGroup: '新建群聊',
     title: '群聊',
     host: '主持人',
-    hostNotRemovable: '主持人是群的唯一调度者，不能移除',
+    hostCannotDisable: '主持人是群的唯一调度者，不能禁用',
     realAgent: '真实智能体',
     // The reserved human participant name ("User") shown to the reader.
     you: '你',
@@ -1318,7 +1319,9 @@ export default {
     addMembers: '添加成员',
     settings: '群聊设置',
     members: '成员',
-    left: '已离场',
+    disabled: '已禁用',
+    disable: '禁用（调度时不再安排它发言）',
+    enable: '启用（恢复发言，并让它看到禁用期间的内容）',
     memberDetail: {
       open: '查看该成员设置',
       agent: '智能体',
@@ -1327,7 +1330,7 @@ export default {
       modelInherited: '该成员使用 {model}（继承智能体默认）',
       noUsage: '该成员还没有上报上下文用量。使用 CLI 传输的智能体不上报上下文窗口。',
       noUsageShort: '该成员未上报上下文用量',
-      compactUnavailable: '当前无法压缩：群聊正在执行本轮讨论，或该成员不在讨论中。',
+      compactUnavailable: '当前无法压缩：群聊正在执行本轮讨论。',
       compactHint: '压缩只影响该成员自己的上下文，不会写入群聊记录。',
       compacting: '正在压缩该成员的上下文，通常需要十几秒…',
     },

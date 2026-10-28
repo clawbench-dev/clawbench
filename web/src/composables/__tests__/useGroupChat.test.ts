@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createGroup, listGroupMembers, generateMemberAvatars, addGroupMembers, removeGroupMember, setGroupParallelDefault, setGroupCruise, compactGroupMember } from '@/composables/useGroupChat'
+import { createGroup, listGroupMembers, generateMemberAvatars, addGroupMembers, setGroupMemberDisabled, setGroupParallelDefault, setGroupCruise, compactGroupMember } from '@/composables/useGroupChat'
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -75,11 +75,20 @@ describe('useGroupChat API', () => {
     expect(JSON.parse(opts.body)).toEqual({ groupId: 'g1', agentIds: ['agent-b'] })
   })
 
-  it('removeGroupMember uses DELETE', async () => {
+  it('setGroupMemberDisabled PATCHes the disabled flag', async () => {
     vi.stubGlobal('fetch', mockFetch(200, { ok: true }))
-    await removeGroupMember('g1', 'm2')
+    await setGroupMemberDisabled('g1', 'm2', true)
+    const [url, opts] = (fetch as any).mock.calls[0]
+    expect(url).toBe('/api/group/members')
+    expect(opts.method).toBe('PATCH')
+    expect(JSON.parse(opts.body)).toEqual({ groupId: 'g1', memberId: 'm2', disabled: true })
+  })
+
+  it('setGroupMemberDisabled can enable (disabled:false)', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { ok: true }))
+    await setGroupMemberDisabled('g1', 'm2', false)
     const [, opts] = (fetch as any).mock.calls[0]
-    expect(opts.method).toBe('DELETE')
+    expect(JSON.parse(opts.body)).toEqual({ groupId: 'g1', memberId: 'm2', disabled: false })
   })
 
   it('setGroupParallelDefault PATCHes parallelDefault', async () => {
@@ -282,11 +291,11 @@ describe('generateMemberAvatars', () => {
     expect(fetchUrls()).toHaveLength(1)
   })
 
-  // A left (archived) copy does not count: the remaining active instance is the
-  // first and keeps the agent avatar.
-  it('ignores left members when deciding the first instance', async () => {
+  // A disabled copy does not count: the remaining speaking instance is the first
+  // and keeps the agent avatar.
+  it('ignores disabled members when deciding the first instance', async () => {
     stubRoutes([
-      { id: 'm0', agentId: 'a1', name: 'Old', avatar: '', left: true },
+      { id: 'm0', agentId: 'a1', name: 'Old', avatar: '', disabled: true },
       { id: 'm1', agentId: 'a1', name: 'Claude', avatar: '' },
     ])
     await generateMemberAvatars('g1')

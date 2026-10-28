@@ -47,7 +47,7 @@
          BOTH host and free modes. The mentions also render INLINE in the body
          (as @name chips, see renderMentionChips); this row is the scannable
          summary. It shows the raw parsed targets (a routing intent that may
-         name a member who has since left must stay visible).
+         name a member who is currently disabled must stay visible).
          ASSISTANT-only: the row exists to scan an AGENT's routing at a glance.
          On a user bubble the chips already sit inline in the message the user
          just typed, so a second "@ B" line would only duplicate them. -->
@@ -1753,7 +1753,7 @@ const copyPayload = quotableText
   line-height: 1.5;
 }
 
-/* ── Group-chat system event row (member joined / left) ──
+/* ── Group-chat system event row (member joined / disabled / enabled) ──
    A centered thin pill: NOT a bubble (no .msg-card, no avatar, no meta bar).
    A single Megaphone glyph marks it as an announcement — the same unified icon
    the conversation index and the share-selection dialog use for system rows.

@@ -52,9 +52,9 @@ func TestServeGroupCreateAndMembers(t *testing.T) {
 
 	var listed struct {
 		Members []struct {
-			ID     string `json:"id"`
-			IsHost bool   `json:"isHost"`
-			Left   bool   `json:"left"`
+			ID       string `json:"id"`
+			IsHost   bool   `json:"isHost"`
+			Disabled bool   `json:"disabled"`
 		} `json:"members"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &listed))
@@ -164,7 +164,7 @@ func TestServeGroupMembersAdd_SkipsDisabledAgent(t *testing.T) {
 	require.NoError(t, err)
 	added := 0
 	for _, m := range members {
-		if m.AgentID == "claude" && !m.Left {
+		if m.AgentID == "claude" && !m.Disabled {
 			added++
 		}
 	}
@@ -424,9 +424,9 @@ func TestServeSessionsOverview_GroupRowCarriesMemberPreview(t *testing.T) {
 	assert.True(t, found, "group session must appear in the overview")
 }
 
-// Removing the host must be refused with 409 so the frontend can explain why,
+// Muting the host must be refused with 409 so the frontend can explain why,
 // rather than the generic 500 the unguarded path produced.
-func TestServeGroupMembers_RefuseHostRemoval(t *testing.T) {
+func TestServeGroupMembers_RefuseHostDisable(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -441,11 +441,11 @@ func TestServeGroupMembers_RefuseHostRemoval(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
 
-	req = newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{"groupId": created.GroupID, "memberId": created.HostMemberID})
+	req = newRequest(t, http.MethodPatch, "/api/group/members", map[string]any{"groupId": created.GroupID, "memberId": created.HostMemberID, "disabled": true})
 	req = withProjectCookie(req, env.ProjectDir)
 	w = callHandlerWithAuth(ServeGroupMembers, req)
 	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
-	assert.Contains(t, w.Body.String(), "CannotRemoveHost")
+	assert.Contains(t, w.Body.String(), "CannotDisableHost")
 }
 
 // TestAIChatGet_ReturnsSessionType pins decision #62: GET /api/ai/chat must
@@ -591,7 +591,7 @@ func TestServeGroupMembers_BatchOverLimitIsAtomic(t *testing.T) {
 	require.NoError(t, err)
 	active := 0
 	for _, m := range members {
-		if !m.Left {
+		if !m.Disabled {
 			active++
 		}
 	}

@@ -173,7 +173,7 @@ func RenderGroupForkContext(groupID string, cutoff int64, o ForkContextOptions) 
 }
 
 // groupSpeakerNames maps a member ROW id to its display name for background
-// rendering. Left members are included on purpose: their speech stays on the
+// rendering. Disabled members are included on purpose: their speech stays on the
 // timeline and must stay attributed.
 func groupSpeakerNames(groupID string) map[string]string {
 	members, err := ListGroupMembers(groupID)

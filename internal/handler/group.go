@@ -161,11 +161,15 @@ func writeGroupCreateError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
-// ServeGroupMembers lists, adds, or removes group members.
+// ServeGroupMembers lists, adds, or (un)disables group members.
 //
-//	GET    /api/group/members?groupId=            -> {ok, members:[...]}
-//	POST   /api/group/members  {groupId, agentIds:[]} -> {ok, memberIds:[]}
-//	DELETE /api/group/members  {groupId, memberId}     -> {ok}
+//	GET   /api/group/members?groupId=                          -> {ok, members:[...]}
+//	POST  /api/group/members  {groupId, agentIds:[]}           -> {ok, memberIds:[]}
+//	PATCH /api/group/members  {groupId, memberId, disabled:bool}  -> {ok}
+//
+// There is no removal: a member can only be disabled (禁用), which takes it off the
+// schedule without touching its row, context or history — unmuting restores it
+// with everything it missed. See service.SetGroupMemberDisabled.
 func ServeGroupMembers(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := requireProject(w, r)
 	if !ok {
@@ -176,8 +180,8 @@ func ServeGroupMembers(w http.ResponseWriter, r *http.Request) {
 		serveGroupMembersList(w, r, projectPath)
 	case http.MethodPost:
 		serveGroupMembersAdd(w, r, projectPath)
-	case http.MethodDelete:
-		serveGroupMembersRemove(w, r, projectPath)
+	case http.MethodPatch:
+		serveGroupMembersSetDisabled(w, r, projectPath)
 	default:
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 	}
@@ -228,7 +232,7 @@ func serveGroupMembersList(w http.ResponseWriter, r *http.Request, projectPath s
 			jsonBackend: m.Backend,
 			"avatar":    m.Avatar,
 			"agentName": agentName,
-			"left":      m.Left,
+			"disabled":  m.Disabled,
 			"isHost":    m.ID == hostMemberID,
 			jsonModel:   c.Model,
 			// usage is null (not {}) when the member never reported any: the
@@ -307,28 +311,35 @@ func serveGroupMembersAdd(w http.ResponseWriter, r *http.Request, projectPath st
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "memberIds": memberIDs})
 }
 
-// serveGroupMembersRemove handles DELETE /api/group/members {groupId, memberId}.
-func serveGroupMembersRemove(w http.ResponseWriter, r *http.Request, projectPath string) {
+// serveGroupMembersSetDisabled handles PATCH /api/group/members
+// {groupId, memberId, disabled}. `disabled` is a required pointer: an absent field is
+// a malformed request, not "false", so a client that forgets it can never
+// silently enable someone.
+func serveGroupMembersSetDisabled(w http.ResponseWriter, r *http.Request, projectPath string) {
 	var req struct {
 		GroupID  string `json:"groupId"`
 		MemberID string `json:"memberId"`
+		Disabled *bool  `json:"disabled"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.GroupID == "" || req.MemberID == "" {
+	if req.GroupID == "" || req.MemberID == "" || req.Disabled == nil {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
 		return
 	}
 	if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
 		return
 	}
-	if err := service.RemoveGroupMember(req.GroupID, req.MemberID); err != nil {
-		if errors.Is(err, service.ErrCannotRemoveHost) {
-			writeLocalizedErrorf(w, r, http.StatusConflict, "CannotRemoveHost")
-			return
+	if err := service.SetGroupMemberDisabled(req.GroupID, req.MemberID, *req.Disabled); err != nil {
+		switch {
+		case errors.Is(err, service.ErrCannotDisableHost):
+			writeLocalizedErrorf(w, r, http.StatusConflict, "CannotDisableHost")
+		case errors.Is(err, service.ErrGroupMemberLimit):
+			writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberLimitReached", map[string]any{jsonMaxCount: service.MaxGroupMembers})
+		default:
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		}
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

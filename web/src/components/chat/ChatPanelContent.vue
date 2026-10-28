@@ -1512,6 +1512,11 @@ async function handleForkFromMessage(msg) {
  * instances included, since each member is an independent instance) and the
  * original host pre-selected; a single-chat source opens on the single tab with
  * the current agent, which the picker already highlights via modelValue.
+ *
+ * DISABLED members are left out on purpose: the picker creates a brand-new group,
+ * and a new group has no disable state — pre-selecting a disabled member would bring it
+ * back as a speaker, silently undoing the user's decision. Their speech is still
+ * carried into the new group as fork context, so nothing they said is lost.
  */
 function seedForkPicker(sourceIsGroup) {
   forkHostAgentId.value = ''
@@ -1520,8 +1525,8 @@ function seedForkPicker(sourceIsGroup) {
   if (!sourceIsGroup) return
   forkCreatingGroup.value = true
   const members = props.groupMembers || []
-  forkMemberAgentIds.value = members.filter(m => !m.left).map(m => m.agentId)
-  const host = members.find(m => m.isHost && !m.left)
+  forkMemberAgentIds.value = members.filter(m => !m.disabled).map(m => m.agentId)
+  const host = members.find(m => m.isHost && !m.disabled)
   forkHostAgentId.value = host?.agentId || ''
 }
 

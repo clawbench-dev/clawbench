@@ -436,7 +436,8 @@ function escapeChipText(s: string): string {
 export interface MentionableMember {
   id: string
   name: string
-  left?: boolean
+  /** 禁用：仍是在群成员，但当前不参与调度，故不进 @ 候选。 */
+  disabled?: boolean
   /** The underlying agent id. Carried through so the caller can fall back to
    *  the AGENT avatar when the member has no avatar snapshot of its own. */
   agentId?: string
@@ -483,15 +484,16 @@ export interface MemberCandidate {
  * buildMemberCandidates returns the group members matching `query`, for the `@`
  * completion menu. The query is matched with the same fuzzy subsequence matcher
  * as the @-file menu (case-insensitive), and the matched indices are returned
- * as `positions` so the shared menu can highlight them. Left members are
- * excluded (they cannot speak). Order follows the roster. An empty query
- * returns every active member, so typing a bare "@" lists the whole roster.
+ * as `positions` so the shared menu can highlight them. Disabled members are
+ * excluded (they are not scheduled to speak right now). Order follows the
+ * roster. An empty query returns every speaking member, so typing a bare "@"
+ * lists the whole speaking roster.
  */
 export function buildMemberCandidates(members: MentionableMember[], query: string): MemberCandidate[] {
   const q = query.trim()
   const out: MemberCandidate[] = []
   for (const m of members) {
-    if (m.left) continue
+    if (m.disabled) continue
     if (!m.id || !m.name) continue
     // Match through the SAME fuzzy matcher the @-file menu uses, so a member
     // name highlights the matched characters exactly like a filename does.

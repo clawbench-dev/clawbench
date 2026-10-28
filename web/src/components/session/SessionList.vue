@@ -446,7 +446,7 @@ function rowStatus(session) {
  * and a non-empty roster without one means free mode.
  *
  * Returns '' when the mode cannot be told apart — an empty roster (a preview
- * fetch that failed, or a free group whose members all left). The chip is then
+ * fetch that failed, or a free group whose members are all disabled). The chip is then
  * simply omitted rather than guessed: showing the wrong mode is worse than
  * showing none.
  */

@@ -26,7 +26,7 @@ describe('useGroupMembers', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => ({
-        members: [{ id: 'm1', agentId: 'a1', name: 'A', backend: 'claude', left: false, isHost: true }],
+        members: [{ id: 'm1', agentId: 'a1', name: 'A', backend: 'claude', disabled: false, isHost: true }],
       }),
     })))
 
@@ -83,7 +83,7 @@ describe('useGroupMembers', () => {
       json: async () => ({
         members: [{
           id: 'm1', agentId: 'agent-claude', name: 'Alice', backend: 'claude',
-          avatar: '<svg>member</svg>', agentName: 'Claude', left: false, isHost: false,
+          avatar: '<svg>member</svg>', agentName: 'Claude', disabled: false, isHost: false,
         }],
       }),
     })))
@@ -105,7 +105,7 @@ describe('useGroupMembers', () => {
       json: async () => ({
         members: [{
           id: 'm1', agentId: 'agent-claude', name: 'Alice', backend: 'claude',
-          avatar: '', agentName: 'Claude', left: false, isHost: false,
+          avatar: '', agentName: 'Claude', disabled: false, isHost: false,
         }],
       }),
     })))
@@ -127,7 +127,7 @@ describe('useGroupMembers', () => {
       json: async () => ({
         members: [{
           id: 'm1', agentId: 'agent-claude', name: 'Alice', backend: 'claude',
-          avatar: '<svg>member</svg>', agentName: 'Claude', left: false, isHost: false,
+          avatar: '<svg>member</svg>', agentName: 'Claude', disabled: false, isHost: false,
         }],
       }),
     })))

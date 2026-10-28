@@ -60,7 +60,9 @@
                exactly like a single chat, so the user who built one needs to
                know why nobody else is answering — and that the fix is adding a
                member, not that the group is broken. -->
-          <span v-if="isSoloGroup" class="group-welcome-solo">{{ t('chat.messageList.groupSoloMemberHint') }}</span>
+          <span v-if="isSoloGroup" class="group-welcome-solo">
+            {{ hasOnlyDisabledPeers ? t('chat.messageList.groupSoloDisabledHint') : t('chat.messageList.groupSoloMemberHint') }}
+          </span>
           <ul class="group-welcome-tips">
             <li v-for="(tip, i) in groupModeTips" :key="i">{{ tip }}</li>
           </ul>
@@ -320,16 +322,16 @@ function isLastAssistant(msg, _i) {
   return isLastAssistantMessage(props.messages, msg)
 }
 
-// Active group members shaped for AvatarStack (the host gets the accent ring).
-// Left members are excluded — they are not part of the group any more.
+// Speaking group members shaped for AvatarStack (the host gets the accent ring).
+// Disabled members are excluded — they are still in the group, but disabled.
 const groupStackMembers = computed(() =>
   (props.groupMembers || [])
-    .filter((m) => !m.left)
+    .filter((m) => !m.disabled)
     .map((m) => ({ id: m.id, agentId: m.agentId, name: m.name, backend: m.backend, avatar: m.avatar, isHost: m.isHost })),
 )
 
 /**
- * A group with exactly ONE active member.
+ * A group with exactly ONE speaking member.
  *
  * Only host mode can be created this way (free mode requires two members
  * server-side), and it behaves like a single chat — nothing routes to a second
@@ -337,11 +339,23 @@ const groupStackMembers = computed(() =>
  * leaving the user wondering why the group is silent.
  *
  * Derived from `groupStackMembers` rather than `props.groupMembers` so it uses
- * the SAME "active member" definition the avatar stack above renders: a member
- * who left is not a participant, and counting them would hide the hint from the
- * group that most needs it.
+ * the SAME "speaking member" definition the avatar stack above renders: a disabled
+ * member is not a participant right now, and counting them would hide the hint
+ * from the group that most needs it.
  */
 const isSoloGroup = computed(() => props.isGroupSession && groupStackMembers.value.length === 1)
+
+/**
+ * True when the only speaking member is the host BUT other member rows exist and
+ * are all disabled. The hint then must not tell the user to "add members" — the
+ * roster already has them; the actual fix is to enable (adding another instance
+ * would just create a duplicate). Counted from the raw roster so it can see the
+ * disabled rows the stack above filters out.
+ */
+const hasOnlyDisabledPeers = computed(() => {
+  const all = props.groupMembers || []
+  return props.isGroupSession && all.some(m => m.disabled) && all.every(m => m.isHost || m.disabled)
+})
 
 // Group empty-state copy, selected by mode. The two modes route completely
 // differently — a host decides who speaks, free mode relays via @-mentions — so

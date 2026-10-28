@@ -4,7 +4,7 @@ SessionStreamBusy: Session stream is being viewed on another device
 ServiceBusy: The server is busy assembling shared conversations, please retry shortly
 SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old sessions
 SessionIdRequired: session_id required
-CannotRemoveHost: The host is the group's only scheduler and cannot be removed
+CannotDisableHost: The host is the group's only scheduler and cannot be disabled
 GroupMemberLimitReached: A group can have at most {{.MaxCount}} members
 ForkContextInjectedChat: The history of "{{.Title}}" was injected into this session as background
 ForkContextInjectedGroup: The history of "{{.Title}}" was injected into this group as background; each member receives it on their first turn
@@ -245,7 +245,8 @@ CruiseMaxRounds: "Auto-cruise: reached the confirmation-round limit"
 # readable sentence, never a key. A locale switch therefore does not retranslate
 # history — matching decision 96b.
 GroupMemberJoined: '{{.Name}} joined the discussion'
-GroupMemberLeft: '{{.Name}} left'
+GroupMemberDisabled: '{{.Name}} was disabled'
+GroupMemberEnabled: '{{.Name}} was enabled'
 GroupMemberCompactionStarted: '{{.Name}} is compacting its context…'
 GroupMemberCompactionDone: '{{.Name}} compacted its context ({{.Before}} → {{.After}})'
 GroupMemberCompactionFailed: '{{.Name}} failed to compact its context'

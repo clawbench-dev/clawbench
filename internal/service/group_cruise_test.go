@@ -570,7 +570,7 @@ func TestCruiseHost_AskQuestionCardAfterRouteStillDispatches(t *testing.T) {
 func TestRouteHasDispatchableMembers(t *testing.T) {
 	members := []GroupMember{
 		{ID: "m1", Name: "A"},
-		{ID: "m2", Name: "B", Left: true},
+		{ID: "m2", Name: "B", Disabled: true},
 		{ID: groupUserTargetID, Name: "User"},
 	}
 	cases := []struct {
@@ -580,7 +580,7 @@ func TestRouteHasDispatchableMembers(t *testing.T) {
 	}{
 		{"no route", "没有标签", false},
 		{"live member", `<clawbench-mention targets="A">做</clawbench-mention>`, true},
-		{"left member only", `<clawbench-mention targets="B">做</clawbench-mention>`, false},
+		{"disabled member only", `<clawbench-mention targets="B">做</clawbench-mention>`, false},
 		{"user only", `<clawbench-mention targets="User">你来定</clawbench-mention>`, false},
 		{"unknown name only", `<clawbench-mention targets="Nope">做</clawbench-mention>`, false},
 		{"host only", `<clawbench-mention targets="Host">我自己来</clawbench-mention>`, false},

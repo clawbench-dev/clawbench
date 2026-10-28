@@ -159,6 +159,20 @@ describe('GroupAvatarStack', () => {
     expect(badge.getAttribute('title')).toBe('group.hostMode')
   })
 
+  // A disabled member is still in the roster (the settings sheet lists it and lets
+  // you enable it) but is disabled, so the header strip shows who is actually
+  // speaking. Without this the stack would advertise a silent member as active.
+  it('excludes disabled members from the strip', () => {
+    const w = mountStack([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
+      { id: 'm2', name: 'A', backend: 'claude', agentId: 'a2', isHost: false },
+      { id: 'm3', name: 'Gone', backend: 'claude', agentId: 'a3', isHost: false, disabled: true },
+    ])
+    expect(w.findAll('.avatar-disc')).toHaveLength(2)
+    const names = w.findAllComponents({ name: 'AgentIcon' }).map(c => c.props('name'))
+    expect(names).toEqual(['Host', 'A'])
+  })
+
   it('passes each member own avatar through the stack (falls back to the agent avatar)', () => {
     const w = mountStack([
       { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true, avatar: '<svg>member-1</svg>' },

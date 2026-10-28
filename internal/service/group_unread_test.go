@@ -284,7 +284,7 @@ func TestGroupUnread_MidDrainDoesNotRaiseBadge(t *testing.T) {
 }
 
 // A clean turn in which NOBODY spoke is not a turn the user owes anything on.
-// The roster can be non-empty while every member has LEFT: the relay then has
+// The roster can be non-empty while every member is DISABLED: the relay then has
 // nobody to dispatch to, drains without a single speech, and returns an empty
 // result. Without the speech-count guard the badge would tell the user to speak
 // in a group that cannot answer.
@@ -295,11 +295,11 @@ func TestGroupUnread_SilentTurnDoesNotRaiseBadge(t *testing.T) {
 	project := "/tmp/gunread-silent"
 	groupID, byName := createFreeGroup(t, project, "A", "B")
 
-	// Both members leave: the roster still lists them (as Left) but the relay
-	// has no active speaker, so the turn produces no speech at all.
+	// Both members are disabled: the roster still lists them but the relay has no
+	// speaker, so the turn produces no speech at all.
 	for _, name := range []string{"A", "B"} {
-		if err := RemoveGroupMember(groupID, byName[name]); err != nil {
-			t.Fatalf("RemoveGroupMember(%s): %v", name, err)
+		if err := SetGroupMemberDisabled(groupID, byName[name], true); err != nil {
+			t.Fatalf("SetGroupMemberDisabled(%s): %v", name, err)
 		}
 	}
 

@@ -65,8 +65,8 @@ func TestCreateGroupAndMembers(t *testing.T) {
 		t.Fatalf("AddGroupMember: %v", err)
 	}
 
-	// I-1: ListGroupMembers includes archived members, so after removal the
-	// total stays 2 while the active count drops to 1.
+	// I-1: ListGroupMembers includes disabled members, so after disabling the total
+	// stays 2 while the speaking count drops to 1.
 	members, err := ListGroupMembers(groupID)
 	if err != nil {
 		t.Fatalf("ListGroupMembers: %v", err)
@@ -74,27 +74,43 @@ func TestCreateGroupAndMembers(t *testing.T) {
 	if len(members) != 2 {
 		t.Fatalf("want 2 members, got %d", len(members))
 	}
-	if countActiveMembers(members) != 2 {
-		t.Fatalf("want 2 active members, got %d", countActiveMembers(members))
+	if countSpeakingMembers(members) != 2 {
+		t.Fatalf("want 2 speaking members, got %d", countSpeakingMembers(members))
 	}
 
-	if err := RemoveGroupMember(groupID, m); err != nil {
-		t.Fatalf("RemoveGroupMember: %v", err)
+	if err := SetGroupMemberDisabled(groupID, m, true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
 	}
 	members, _ = ListGroupMembers(groupID)
 	if len(members) != 2 {
-		t.Fatalf("removal keeps the row (已离场) -> still 2, got %d", len(members))
+		t.Fatalf("disabling keeps the row (已禁用) -> still 2, got %d", len(members))
 	}
-	if active := countActiveMembers(members); active != 1 {
-		t.Fatalf("want 1 active member, got %d", active)
+	if active := countSpeakingMembers(members); active != 1 {
+		t.Fatalf("want 1 speaking member, got %d", active)
+	}
+	// Re-enabling restores it — the whole point of the flag (issue #597): the row,
+	// its id and its context never went away, so nothing new is created.
+	if err := SetGroupMemberDisabled(groupID, m, false); err != nil {
+		t.Fatalf("SetGroupMemberDisabled(false): %v", err)
+	}
+	members, _ = ListGroupMembers(groupID)
+	if len(members) != 2 || countSpeakingMembers(members) != 2 {
+		t.Fatalf("re-enabling must restore the same row: %+v", members)
+	}
+	for _, got := range members {
+		if got.ID == m && got.Disabled {
+			t.Fatal("enabled member must not stay disabled")
+		}
 	}
 }
 
 // TestAddGroupMemberCreatesNewInstance covers the multi-instance contract:
 // adding the same agent again creates a SECOND independent row (the same agent
-// may appear several times in one group), and re-adding an agent that LEFT also
-// creates a new row (there is no rejoin). Each row's display name comes from
-// the caller; uniqueness across a batch is assigned by AddGroupMembers.
+// may appear several times in one group), and adding an agent whose OTHER
+// instance is disabled still creates a new row (adding never reuses a row — a
+// disabled member is revived with SetGroupMemberDisabled instead). Each row's display
+// name comes from the caller; uniqueness across a batch is assigned by
+// AddGroupMembers.
 func TestAddGroupMemberCreatesNewInstance(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/groupdedup"
@@ -124,26 +140,27 @@ func TestAddGroupMemberCreatesNewInstance(t *testing.T) {
 		t.Fatalf("want 2 rows for agent-a, got %d", got)
 	}
 
-	// Removing then re-adding creates ANOTHER new row (no rejoin): the removed
-	// row stays archived, a fresh instance is added.
-	if err := RemoveGroupMember(groupID, first); err != nil {
-		t.Fatalf("RemoveGroupMember: %v", err)
+	// Disabling then adding creates ANOTHER new row: "add" always means a new
+	// instance, and the disabled row keeps its own history and cursor.
+	if err := SetGroupMemberDisabled(groupID, first, true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
 	}
-	rejoined, err := AddGroupMember(project, groupID, "claude", "agent-a", "A 3")
+	added, err := AddGroupMember(project, groupID, "claude", "agent-a", "A 3")
 	if err != nil {
-		t.Fatalf("AddGroupMember (after remove): %v", err)
+		t.Fatalf("AddGroupMember (after disable): %v", err)
 	}
-	if rejoined == first {
-		t.Fatal("re-adding after removal must create a NEW row, not reactivate the old one")
+	if added == first {
+		t.Fatal("adding a member must create a NEW row, not revive a disabled one")
 	}
 	members, _ = ListGroupMembers(groupID)
 	if got := countAgentRows(members, "agent-a"); got != 3 {
-		t.Fatalf("want 3 rows for agent-a (2 active + 1 archived), got %d", got)
+		t.Fatalf("want 3 rows for agent-a (2 speaking + 1 disabled), got %d", got)
 	}
-	// The first row must remain archived (its past speech stays attributed).
+	// The first row must stay disabled (its past speech stays attributed, and only
+	// an explicit enable brings it back).
 	for _, m := range members {
-		if m.ID == first && !m.Left {
-			t.Fatal("the removed row must stay archived (no rejoin)")
+		if m.ID == first && !m.Disabled {
+			t.Fatal("the disabled row must stay disabled (adding does not revive it)")
 		}
 	}
 }
@@ -183,7 +200,7 @@ func TestCreateGroupWithMembers(t *testing.T) {
 	if len(members) != 3 {
 		t.Fatalf("want 3 members after one call, got %d", len(members))
 	}
-	if got := countActiveMembers(members); got != 3 {
+	if got := countSpeakingMembers(members); got != 3 {
 		t.Fatalf("want 3 active members, got %d", got)
 	}
 	for _, m := range members {
@@ -460,8 +477,8 @@ func TestGroupCruiseRoundTrip(t *testing.T) {
 }
 
 // TestGroupMembersForGroups pins the batch preview used by the session list:
-// one call covers many groups, left members are excluded, group ids with no
-// active members are absent, and an empty input never touches the DB.
+// one call covers many groups, disabled members are excluded, group ids with no
+// speaking members are absent, and an empty input never touches the DB.
 func TestGroupMembersForGroups(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/grouptest"
@@ -469,7 +486,7 @@ func TestGroupMembersForGroups(t *testing.T) {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
 
-	// Group A: host + two members; one of the two is then removed.
+	// Group A: host + two members; one of the two is then disabled.
 	gA, hostA, err := CreateGroup(project, "A", "codebuddy", "agent-host", "Host A")
 	if err != nil {
 		t.Fatalf("CreateGroup A: %v", err)
@@ -481,8 +498,8 @@ func TestGroupMembersForGroups(t *testing.T) {
 	if _, err := AddGroupMember(project, gA, "codex", "agent-b", "B"); err != nil {
 		t.Fatalf("AddGroupMember A: %v", err)
 	}
-	if err := RemoveGroupMember(gA, leftMember); err != nil {
-		t.Fatalf("RemoveGroupMember: %v", err)
+	if err := SetGroupMemberDisabled(gA, leftMember, true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
 	}
 
 	// Group B: only the host.
@@ -496,10 +513,10 @@ func TestGroupMembersForGroups(t *testing.T) {
 		t.Fatalf("GroupMembersForGroups: %v", err)
 	}
 
-	// A: host + B survive; the removed member is excluded.
+	// A: host + B survive; the disabled member is excluded.
 	aMembers := got[gA]
 	if len(aMembers) != 2 {
-		t.Fatalf("group A preview: want 2 active members, got %d", len(aMembers))
+		t.Fatalf("group A preview: want 2 speaking members, got %d", len(aMembers))
 	}
 	names := map[string]bool{}
 	for _, m := range aMembers {
@@ -512,7 +529,7 @@ func TestGroupMembersForGroups(t *testing.T) {
 		t.Fatalf("group A preview names=%v want Host A + B", names)
 	}
 	if names["Gone"] {
-		t.Fatal("left member must not appear in the list preview")
+		t.Fatal("disabled member must not appear in the list preview")
 	}
 	_ = hostA
 
@@ -643,9 +660,9 @@ func TestArchiveGroup_DoesNotArchiveMemberRows(t *testing.T) {
 	}
 }
 
-// Removing a member refreshes updated_at, so a left member is not mistaken for
-// a retention-expired session (decision #48).
-func TestRemoveGroupMember_RefreshesUpdatedAt(t *testing.T) {
+// Disabling a member refreshes updated_at, so a long-disabled member is not mistaken
+// for a retention-expired session (decision #48).
+func TestSetGroupMemberDisabled_RefreshesUpdatedAt(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/grouptest"
 	if _, err := store.ProjectIDForPath(project); err != nil {
@@ -660,14 +677,14 @@ func TestRemoveGroupMember_RefreshesUpdatedAt(t *testing.T) {
 		t.Fatalf("AddGroupMember: %v", err)
 	}
 
-	// Age the member row, then remove it — the removal must refresh updated_at.
+	// Age the member row, then disable it — the toggle must refresh updated_at.
 	if _, err := store.UnsafeDBForTest().Exec(
 		"UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", memberID,
 	); err != nil {
 		t.Fatalf("age member row: %v", err)
 	}
-	if err := RemoveGroupMember(groupID, memberID); err != nil {
-		t.Fatalf("RemoveGroupMember: %v", err)
+	if err := SetGroupMemberDisabled(groupID, memberID, true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
 	}
 
 	// Assert the timestamp directly: the retention query ALSO excludes
@@ -681,7 +698,7 @@ func TestRemoveGroupMember_RefreshesUpdatedAt(t *testing.T) {
 		t.Fatalf("read member updated_at: %v", err)
 	}
 	if old != 0 {
-		t.Fatalf("RemoveGroupMember must refresh updated_at, but the row is still >90 days old")
+		t.Fatalf("SetGroupMemberDisabled must refresh updated_at, but the row is still >90 days old")
 	}
 
 	// Belt-and-braces: the retention sweep must not pick the member up either.
@@ -692,7 +709,7 @@ func TestRemoveGroupMember_RefreshesUpdatedAt(t *testing.T) {
 	}
 	for _, id := range ids {
 		if id == memberID {
-			t.Fatalf("a removed member must not be treated as retention-expired: %v", ids)
+			t.Fatalf("a disabled member must not be treated as retention-expired: %v", ids)
 		}
 	}
 }
@@ -714,12 +731,11 @@ func TestGetExpiredArchivedSessions_ExcludesGroupMemberRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddGroupMember: %v", err)
 	}
-	if err := RemoveGroupMember(groupID, memberID); err != nil {
-		t.Fatalf("RemoveGroupMember: %v", err)
-	}
-	// Simulate legacy/edge data: an archived member row with an old timestamp.
+	// Simulate legacy data from before disabling existed: an ARCHIVED member row
+	// with an old timestamp. The retention sweep must still skip it, because its
+	// past speech is attributed by its row id.
 	if _, err := store.UnsafeDBForTest().Exec(
-		"UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", memberID,
+		"UPDATE chat_sessions SET archived = 1, updated_at = datetime('now', '-100 days') WHERE id = ?", memberID,
 	); err != nil {
 		t.Fatalf("age member row: %v", err)
 	}
@@ -772,8 +788,9 @@ func TestSetGroupAutoApprove_AppliesToAllMembers(t *testing.T) {
 	}
 }
 
-// The host controls the flow, so removing it would leave the group unroutable.// Refuse the removal rather than silently orphaning the group (decision: N5).
-func TestRemoveGroupMember_RefusesHost(t *testing.T) {
+// The host controls the flow, so disabling it would leave the group unroutable.
+// Refuse the disable rather than silently orphaning the group (decision: N5).
+func TestSetGroupMemberDisabled_RefusesHost(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/grouptest"
 	if _, err := store.ProjectIDForPath(project); err != nil {
@@ -789,26 +806,26 @@ func TestRemoveGroupMember_RefusesHost(t *testing.T) {
 		t.Fatalf("AddGroupMember: %v", err)
 	}
 
-	// Removing the host must fail...
-	if err := RemoveGroupMember(groupID, hostMemberID); err == nil {
-		t.Fatal("removing the host must be refused")
+	// Disabling the host must fail...
+	if err := SetGroupMemberDisabled(groupID, hostMemberID, true); !errors.Is(err, ErrCannotDisableHost) {
+		t.Fatalf("disabling the host must be refused with ErrCannotDisableHost, got %v", err)
 	}
-	// ...and must NOT have archived the host row.
+	// ...and must NOT have disabled the host row.
 	for _, m := range mustListMembers(t, groupID) {
-		if m.ID == hostMemberID && m.Left {
-			t.Fatal("host row must remain active after a refused removal")
+		if m.ID == hostMemberID && m.Disabled {
+			t.Fatal("host row must stay enabled after a refused disable")
 		}
 	}
 
-	// Removing a normal member still works (the guard must not over-reach).
-	if err := RemoveGroupMember(groupID, other); err != nil {
-		t.Fatalf("removing a non-host member must still work: %v", err)
+	// Disabling a normal member still works (the guard must not over-reach).
+	if err := SetGroupMemberDisabled(groupID, other, true); err != nil {
+		t.Fatalf("disabling a non-host member must still work: %v", err)
 	}
 }
 
-// Idempotency must survive the guard: removing an already-left non-host member
-// stays a no-op success, and removing the host stays refused.
-func TestRemoveGroupMember_HostGuardIdempotent(t *testing.T) {
+// The host guard is evaluated on every call, not just the first: a repeated disable
+// of the host must keep being refused (never a silent success).
+func TestSetGroupMemberDisabled_HostGuardIsStable(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/grouptest"
 	if _, err := store.ProjectIDForPath(project); err != nil {
@@ -818,8 +835,11 @@ func TestRemoveGroupMember_HostGuardIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
-	if err := RemoveGroupMember(groupID, hostMemberID); err == nil {
-		t.Fatal("second removal of the host must also be refused")
+	if err := SetGroupMemberDisabled(groupID, hostMemberID, true); !errors.Is(err, ErrCannotDisableHost) {
+		t.Fatalf("first disable of the host: err=%v want ErrCannotDisableHost", err)
+	}
+	if err := SetGroupMemberDisabled(groupID, hostMemberID, true); !errors.Is(err, ErrCannotDisableHost) {
+		t.Fatalf("second disable of the host must also be refused, got %v", err)
 	}
 }
 
@@ -867,8 +887,9 @@ func TestCreateGroupWithMembers_RejectsTooMany(t *testing.T) {
 }
 
 // The cap counts INSTANCES: filling the roster to the cap and then adding any
-// further instance (even of an agent already present) must be refused. There is
-// no rejoin, so a removed member frees a slot for a NEW instance only.
+// further instance (even of an agent already present) must be refused. Adding is
+// always a NEW instance — reviving a disabled member is SetGroupMemberDisabled, which
+// does not go through this path — so a disabled member frees a slot for a new one.
 func TestAddGroupMember_CapCountsInstances(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/grouptest"
@@ -892,10 +913,11 @@ func TestAddGroupMember_CapCountsInstances(t *testing.T) {
 	if _, err := AddGroupMember(project, groupID, "claude", "agent-0", "M0 2"); err == nil {
 		t.Fatal("adding another instance at the cap must be refused")
 	}
-	// A member leaves: a slot frees up and a NEW instance fits.
+	// A member is disabled: a slot frees up (it spawns nothing while silent) and a
+	// NEW instance fits.
 	leaver := mustMemberID(t, groupID, "agent-5")
-	if err := RemoveGroupMember(groupID, leaver); err != nil {
-		t.Fatalf("RemoveGroupMember: %v", err)
+	if err := SetGroupMemberDisabled(groupID, leaver, true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
 	}
 	if _, err := AddGroupMember(project, groupID, "claude", "agent-new", "New"); err != nil {
 		t.Fatalf("filling the freed slot: %v", err)
@@ -903,6 +925,57 @@ func TestAddGroupMember_CapCountsInstances(t *testing.T) {
 	// Back at the cap, one more is refused again.
 	if _, err := AddGroupMember(project, groupID, "claude", "agent-0", "M0 2"); err == nil {
 		t.Fatal("adding at the cap must be refused (it would exceed the cap)")
+	}
+}
+
+// Re-enabling is cap-checked: disabled members do not occupy a slot, so without the
+// check a user could park disabled agents, fill every freed slot with new members,
+// and then enable everything — putting more than MaxGroupMembers members on the
+// mic in one turn (every member is its own ACP subprocess, which is exactly what
+// the cap bounds).
+func TestSetGroupMemberDisabled_EnableRespectsCap(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-enable-cap"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	specs := make([]GroupMemberSpec, 0, maxGroupMembers)
+	for i := range maxGroupMembers {
+		specs = append(specs, GroupMemberSpec{
+			AgentID:     fmt.Sprintf("agent-%d", i),
+			Backend:     "claude",
+			DisplayName: fmt.Sprintf("M%d", i),
+		})
+	}
+	groupID, _, err := CreateGroupWithMembers(project, "满员群", "agent-0", specs)
+	if err != nil {
+		t.Fatalf("CreateGroupWithMembers: %v", err)
+	}
+
+	// Disable one member: it stops occupying a slot, so a NEW instance fits.
+	disabledID := mustMemberID(t, groupID, "agent-3")
+	if err := SetGroupMemberDisabled(groupID, disabledID, true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
+	}
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-new", "New"); err != nil {
+		t.Fatalf("filling the freed slot: %v", err)
+	}
+
+	// The roster is at the cap again, so re-enabling the parked member would put
+	// one member too many scheduled to speak.
+	if err := SetGroupMemberDisabled(groupID, disabledID, false); !errors.Is(err, ErrGroupMemberLimit) {
+		t.Fatalf("re-enabling past the cap must be refused with ErrGroupMemberLimit, got %v", err)
+	}
+	// ...and it must still be disabled (the refusal must not half-apply).
+	for _, m := range mustListMembers(t, groupID) {
+		if m.ID == disabledID && !m.Disabled {
+			t.Fatal("a refused enable must leave the member disabled")
+		}
+	}
+
+	// Disabling it again is an idempotent no-op success (already disabled).
+	if err := SetGroupMemberDisabled(groupID, disabledID, true); err != nil {
+		t.Fatalf("re-disabling must stay a no-op success: %v", err)
 	}
 }
 
@@ -971,13 +1044,13 @@ func TestGroupMemberSystemEvents_LocalizedAtWriteTime(t *testing.T) {
 	defer func() { model.Language = origLang }()
 
 	for _, tc := range []struct {
-		lang   string
-		joined string
-		left   string
-		notKey bool
+		lang     string
+		joined   string
+		disabled string
+		enabled  string
 	}{
-		{lang: "zh", joined: "加入了讨论", left: "已离场"},
-		{lang: "en", joined: "joined the discussion", left: "left"},
+		{lang: "zh", joined: "加入了讨论", disabled: "已禁用", enabled: "已启用"},
+		{lang: "en", joined: "joined the discussion", disabled: "was disabled", enabled: "was enabled"},
 	} {
 		model.Language = tc.lang
 		setupGroupDB(t)
@@ -993,35 +1066,45 @@ func TestGroupMemberSystemEvents_LocalizedAtWriteTime(t *testing.T) {
 		if err != nil {
 			t.Fatalf("AddGroupMember: %v", err)
 		}
-		if err := RemoveGroupMember(groupID, memberID); err != nil {
-			t.Fatalf("RemoveGroupMember: %v", err)
+		if err := SetGroupMemberDisabled(groupID, memberID, true); err != nil {
+			t.Fatalf("SetGroupMemberDisabled(true): %v", err)
+		}
+		if err := SetGroupMemberDisabled(groupID, memberID, false); err != nil {
+			t.Fatalf("SetGroupMemberDisabled(false): %v", err)
 		}
 
 		joined := false
-		left := false
+		disabled := false
+		enabled := false
 		for _, m := range systemMessages(t, groupID) {
 			// A raw key would mean the row was stored untranslated.
-			if strings.Contains(m.Content, "GroupMemberJoined") || strings.Contains(m.Content, "GroupMemberLeft") {
+			if strings.Contains(m.Content, "GroupMemberJoined") || strings.Contains(m.Content, "GroupMemberDisabled") || strings.Contains(m.Content, "GroupMemberEnabled") {
 				t.Fatalf("%s: system row leaked a raw i18n key: %q", tc.lang, m.Content)
 			}
 			if strings.Contains(m.Content, tc.joined) {
 				joined = true
 			}
-			if strings.Contains(m.Content, tc.left) {
-				left = true
+			if strings.Contains(m.Content, tc.disabled) {
+				disabled = true
+			}
+			if strings.Contains(m.Content, tc.enabled) {
+				enabled = true
 			}
 		}
 		if !joined {
 			t.Errorf("%s: no joined event matching %q", tc.lang, tc.joined)
 		}
-		if !left {
-			t.Errorf("%s: no departure event matching %q", tc.lang, tc.left)
+		if !disabled {
+			t.Errorf("%s: no disable event matching %q", tc.lang, tc.disabled)
+		}
+		if !enabled {
+			t.Errorf("%s: no enable event matching %q", tc.lang, tc.enabled)
 		}
 	}
 }
 
-// Removing a member writes a departure system event.
-func TestRemoveGroupMember_WritesSystemEvent(t *testing.T) {
+// Disabling a member writes a disable system event.
+func TestSetGroupMemberDisabled_WritesSystemEvent(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/grouptest"
 	if _, err := store.ProjectIDForPath(project); err != nil {
@@ -1037,16 +1120,26 @@ func TestRemoveGroupMember_WritesSystemEvent(t *testing.T) {
 	}
 	before := len(systemMessages(t, groupID))
 
-	if err := RemoveGroupMember(groupID, memberID); err != nil {
-		t.Fatalf("RemoveGroupMember: %v", err)
+	if err := SetGroupMemberDisabled(groupID, memberID, true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
 	}
 	sysMsgs := systemMessages(t, groupID)
 	if len(sysMsgs) != before+1 {
-		t.Fatalf("expected one more system event after removal: before=%d after=%d", before, len(sysMsgs))
+		t.Fatalf("expected one more system event after disabling: before=%d after=%d", before, len(sysMsgs))
 	}
 	last := sysMsgs[len(sysMsgs)-1].Content
-	if !strings.Contains(last, "A") || !strings.Contains(last, "已离场") {
-		t.Fatalf("departure event must name the member and say they left: %q", last)
+	if !strings.Contains(last, "A") || !strings.Contains(last, "已禁用") {
+		t.Fatalf("disable event must name the member and say they were disabled: %q", last)
+	}
+
+	// Re-enabling writes the counterpart line, so the timeline explains the return.
+	if err := SetGroupMemberDisabled(groupID, memberID, false); err != nil {
+		t.Fatalf("SetGroupMemberDisabled(false): %v", err)
+	}
+	sysMsgs = systemMessages(t, groupID)
+	last = sysMsgs[len(sysMsgs)-1].Content
+	if !strings.Contains(last, "A") || !strings.Contains(last, "已启用") {
+		t.Fatalf("enable event must name the member and say they were enabled: %q", last)
 	}
 }
 
@@ -1109,8 +1202,8 @@ func TestAddGroupMember_BroadcastsSystemEvent(t *testing.T) {
 	}
 }
 
-// Removing a member broadcasts the departure system_message event too.
-func TestRemoveGroupMember_BroadcastsSystemEvent(t *testing.T) {
+// Disabling a member broadcasts the disable system_message event too.
+func TestSetGroupMemberDisabled_BroadcastsSystemEvent(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/grouptest"
 	if _, err := store.ProjectIDForPath(project); err != nil {
@@ -1136,14 +1229,14 @@ func TestRemoveGroupMember_BroadcastsSystemEvent(t *testing.T) {
 	}
 	t.Cleanup(func() { emitGroupSystemMessage = orig })
 
-	if err := RemoveGroupMember(groupID, memberID); err != nil {
-		t.Fatalf("RemoveGroupMember: %v", err)
+	if err := SetGroupMemberDisabled(groupID, memberID, true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
 	}
 	if len(got) != 1 {
-		t.Fatalf("expected exactly one departure broadcast, got %d: %+v", len(got), got)
+		t.Fatalf("expected exactly one disable broadcast, got %d: %+v", len(got), got)
 	}
-	if !strings.Contains(got[0].text, "A") || !strings.Contains(got[0].text, "已离场") {
-		t.Fatalf("departure broadcast must name the member and say they left: %q", got[0].text)
+	if !strings.Contains(got[0].text, "A") || !strings.Contains(got[0].text, "已禁用") {
+		t.Fatalf("disable broadcast must name the member and say they were disabled: %q", got[0].text)
 	}
 	sysMsgs := systemMessages(t, groupID)
 	last := sysMsgs[len(sysMsgs)-1]
@@ -1201,11 +1294,11 @@ func systemMessages(t *testing.T, groupID string) []model.ChatMessage {
 	return out
 }
 
-// Removing the same member twice must write the departure event only ONCE. The
-// second call changes no row (already archived), so a second "已离场" row would
-// be pure timeline noise — and it counts toward every member's cursor, so it
-// gets injected into their context too.
-func TestRemoveGroupMember_RepeatedRemovalWritesOneEvent(t *testing.T) {
+// Disabling the same member twice must write the disable event only ONCE. The second
+// call changes no row (already disabled), so a second "已禁用" row would be pure
+// timeline noise — and it counts toward every member's cursor, so it gets
+// injected into their context too.
+func TestSetGroupMemberDisabled_RepeatedDisableWritesOneEvent(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/grouptest"
 	if _, err := store.ProjectIDForPath(project); err != nil {
@@ -1221,25 +1314,25 @@ func TestRemoveGroupMember_RepeatedRemovalWritesOneEvent(t *testing.T) {
 	}
 	before := len(systemMessages(t, groupID))
 
-	if err := RemoveGroupMember(groupID, memberID); err != nil {
-		t.Fatalf("first RemoveGroupMember: %v", err)
+	if err := SetGroupMemberDisabled(groupID, memberID, true); err != nil {
+		t.Fatalf("first SetGroupMemberDisabled: %v", err)
 	}
-	if err := RemoveGroupMember(groupID, memberID); err != nil {
-		t.Fatalf("second RemoveGroupMember: %v", err)
+	if err := SetGroupMemberDisabled(groupID, memberID, true); err != nil {
+		t.Fatalf("second SetGroupMemberDisabled: %v", err)
 	}
 
 	after := len(systemMessages(t, groupID))
 	if after != before+1 {
-		t.Fatalf("repeated removal must write exactly one departure event: before=%d after=%d", before, after)
+		t.Fatalf("repeated disable must write exactly one disable event: before=%d after=%d", before, after)
 	}
 }
 
-// Removing a member id that belongs to a DIFFERENT group must not write an
-// event into this group's timeline. The UPDATE is scoped by group_id so it
-// changes no row here, and without a RowsAffected check the old code still
-// appended "X 已离场" — naming a member who was never in this group and
-// polluting its minutes.
-func TestRemoveGroupMember_CrossGroupRemovalWritesNoEvent(t *testing.T) {
+// Disabling a member id that belongs to a DIFFERENT group must not write an event
+// into this group's timeline. The UPDATE is scoped by group_id so it changes no
+// row here; without a RowsAffected check the code would still append
+// "X 已禁用" — naming a member who was never in this group and polluting its
+// minutes.
+func TestSetGroupMemberDisabled_CrossGroupWritesNoEvent(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/grouptest"
 	if _, err := store.ProjectIDForPath(project); err != nil {
@@ -1253,7 +1346,7 @@ func TestRemoveGroupMember_CrossGroupRemovalWritesNoEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroup B: %v", err)
 	}
-	// A member of B, removed via A's id.
+	// A member of B, disabled via A's id.
 	memberB, err := AddGroupMember(project, groupB, "claude", "agent-a", "A")
 	if err != nil {
 		t.Fatalf("AddGroupMember: %v", err)
@@ -1261,13 +1354,13 @@ func TestRemoveGroupMember_CrossGroupRemovalWritesNoEvent(t *testing.T) {
 	before := len(systemMessages(t, groupA))
 
 	// Must not error and must not touch A's timeline.
-	_ = RemoveGroupMember(groupA, memberB)
+	_ = SetGroupMemberDisabled(groupA, memberB, true)
 
 	after := len(systemMessages(t, groupA))
 	if after != before {
-		t.Fatalf("a cross-group removal must not write an event into group A: before=%d after=%d", before, after)
+		t.Fatalf("a cross-group disable must not write an event into group A: before=%d after=%d", before, after)
 	}
-	// And B's member must remain active (A's UPDATE is scoped by group_id).
+	// And B's member must stay enabled (A's UPDATE is scoped by group_id).
 	members, err := ListGroupMembers(groupB)
 	if err != nil {
 		t.Fatalf("ListGroupMembers: %v", err)
@@ -1276,8 +1369,8 @@ func TestRemoveGroupMember_CrossGroupRemovalWritesNoEvent(t *testing.T) {
 	for _, m := range members {
 		if m.ID == memberB {
 			found = true
-			if m.Left {
-				t.Fatal("a cross-group removal must not archive the member in its real group")
+			if m.Disabled {
+				t.Fatal("a cross-group disable must not disable the member in its real group")
 			}
 		}
 	}
@@ -1367,8 +1460,8 @@ func TestAddGroupMembers_BatchCapIsAtomic(t *testing.T) {
 		}
 	}
 	before, _ := ListGroupMembers(groupID)
-	if countActiveMembers(before) != maxGroupMembers-1 {
-		t.Fatalf("precondition: want %d active, got %d", maxGroupMembers-1, countActiveMembers(before))
+	if countSpeakingMembers(before) != maxGroupMembers-1 {
+		t.Fatalf("precondition: want %d active, got %d", maxGroupMembers-1, countSpeakingMembers(before))
 	}
 
 	// Batch of 2 new instances would exceed the cap → must reject the WHOLE batch.
@@ -1380,8 +1473,8 @@ func TestAddGroupMembers_BatchCapIsAtomic(t *testing.T) {
 		t.Fatal("a batch exceeding the cap must be rejected")
 	}
 	after, _ := ListGroupMembers(groupID)
-	if countActiveMembers(after) != maxGroupMembers-1 {
-		t.Fatalf("a rejected batch must not add ANY member: active %d -> %d", countActiveMembers(before), countActiveMembers(after))
+	if countSpeakingMembers(after) != maxGroupMembers-1 {
+		t.Fatalf("a rejected batch must not add ANY member: active %d -> %d", countSpeakingMembers(before), countSpeakingMembers(after))
 	}
 
 	// A batch of exactly 1 is accepted (cap-1 -> cap).
@@ -1391,8 +1484,8 @@ func TestAddGroupMembers_BatchCapIsAtomic(t *testing.T) {
 		t.Fatalf("a batch within the cap must be accepted: %v", err)
 	}
 	final, _ := ListGroupMembers(groupID)
-	if countActiveMembers(final) != maxGroupMembers {
-		t.Fatalf("want %d active after the accepted batch, got %d", maxGroupMembers, countActiveMembers(final))
+	if countSpeakingMembers(final) != maxGroupMembers {
+		t.Fatalf("want %d active after the accepted batch, got %d", maxGroupMembers, countSpeakingMembers(final))
 	}
 }
 
@@ -1414,8 +1507,8 @@ func TestAddGroupMembers_EverySpecConsumesSlot(t *testing.T) {
 			t.Fatalf("AddGroupMember %d: %v", i, err)
 		}
 	}
-	if members, _ := ListGroupMembers(groupID); countActiveMembers(members) != maxGroupMembers {
-		t.Fatalf("precondition: want %d active, got %d", maxGroupMembers, countActiveMembers(members))
+	if members, _ := ListGroupMembers(groupID); countSpeakingMembers(members) != maxGroupMembers {
+		t.Fatalf("precondition: want %d active, got %d", maxGroupMembers, countSpeakingMembers(members))
 	}
 
 	// Adding another instance of an ALREADY-present agent is a new member and
@@ -1587,17 +1680,18 @@ func TestGroupMemberSpeakersForGroups(t *testing.T) {
 		t.Fatalf("group A must have exactly 3 members, got %d (%+v)", len(got[groupA]), got[groupA])
 	}
 
-	// A member who LEFT must still resolve (include-left rule): their earlier
-	// messages keep their name instead of degrading to a generic assistant.
-	if err := RemoveGroupMember(groupA, mA2); err != nil {
-		t.Fatalf("RemoveGroupMember: %v", err)
+	// A member who was DISABLED must still resolve (include-disabled rule): their
+	// earlier messages keep their name instead of degrading to a generic
+	// assistant.
+	if err := SetGroupMemberDisabled(groupA, mA2, true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
 	}
 	got, err = GroupMemberSpeakersForGroups([]string{groupA})
 	if err != nil {
-		t.Fatalf("GroupMemberSpeakersForGroups after removal: %v", err)
+		t.Fatalf("GroupMemberSpeakersForGroups after disabling: %v", err)
 	}
 	if got[groupA][mA2] != "A2" {
-		t.Fatalf("a left member must still resolve its name, got %+v", got[groupA])
+		t.Fatalf("a disabled member must still resolve its name, got %+v", got[groupA])
 	}
 
 	// An unknown group id is simply absent from the map (no error).
@@ -1818,12 +1912,13 @@ func TestGroupMemberContexts(t *testing.T) {
 	assert.Nil(t, other.Usage, "a member that never reported usage must be nil, not zero-valued")
 	assert.Equal(t, "claude-sonnet-4", other.Model)
 
-	// A removed member keeps its row (archived), so its context is still
-	// returned — the frontend decides not to render it.
-	require.NoError(t, RemoveGroupMember(groupID, otherID))
+	// A disabled member keeps its row (and its context window — that is exactly
+	// what may need compacting while it is disabled), so its context is still
+	// returned.
+	require.NoError(t, SetGroupMemberDisabled(groupID, otherID, true))
 	got, err = GroupMemberContexts(groupID)
 	require.NoError(t, err)
-	require.Contains(t, got, otherID, "removed members must still resolve")
+	require.Contains(t, got, otherID, "disabled members must still resolve")
 }
 
 // TestGroupMemberContexts_MalformedJSONIsNotFatal pins the degradation policy:
@@ -1879,12 +1974,13 @@ func TestCompactGroupMemberGuards(t *testing.T) {
 	if _, err := CompactGroupMember(context.Background(), otherGroup, hostMemberID); !errors.Is(err, ErrGroupMemberNotFound) {
 		t.Fatalf("cross-group member: err=%v", err)
 	}
-	// Removed member.
-	if err := RemoveGroupMember(groupID, otherID); err != nil {
-		t.Fatalf("RemoveGroupMember: %v", err)
+	// A DISABLED member is NOT rejected: disabling only takes it off the schedule, and
+	// its context window is still a legitimate compaction target.
+	if err := SetGroupMemberDisabled(groupID, otherID, true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
 	}
-	if _, err := CompactGroupMember(context.Background(), groupID, otherID); !errors.Is(err, ErrGroupMemberNotFound) {
-		t.Fatalf("left member: err=%v", err)
+	if _, err := CompactGroupMember(context.Background(), groupID, otherID); errors.Is(err, ErrGroupMemberNotFound) {
+		t.Fatalf("a disabled member must not be reported as not-found: err=%v", err)
 	}
 	// CLI transport (the test agents default to CLI) has no command channel.
 	_, err = CompactGroupMember(context.Background(), groupID, hostMemberID)

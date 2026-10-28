@@ -620,7 +620,7 @@ const props = defineProps({
    *  session-info bar still renders for a group, but shows ONLY the group-level
    *  switches (auto-cruise, free-mode concurrency, auto-approve). */
   isGroupSession: { type: Boolean, default: false },
-  /** Group member roster ({ id, name, left }). Feeds the @ completion menu so a
+  /** Group member roster ({ id, name, disabled }). Feeds the @ completion menu so a
    *  user can name a speaker in a group chat (design §13.4). */
   groupMembers: { type: Array, default: () => [] },
   /** The group's auto-cruise switch value (server-authoritative, owned by the

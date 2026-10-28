@@ -1039,7 +1039,7 @@ sqlite3 "file:$HOME/.clawbench/ClawBench.db?mode=ro&immutable=1" \
   "select id, title, context_state from chat_sessions where session_type='group';"
 ```
 
-`context_state` 里 **`group_mode`** 决定模式（`"host"` / `"free"`），`host_member_id` 是主持人成员行 id，`parallelDefault` 是自由模式的并发开关。成员行查 `where group_id='<群id>'`（**展示名在 `agent_name` 列，不是 `title`**——成员行 `title` 留空；`archived=1` 即已离场，`agent_avatar` 非空表示该实例有自己的头像）。
+`context_state` 里 **`group_mode`** 决定模式（`"host"` / `"free"`），`host_member_id` 是主持人成员行 id，`parallelDefault` 是自由模式的并发开关。成员行查 `where group_id='<群id>'`（**展示名在 `agent_name` 列，不是 `title`**——成员行 `title` 留空；`disabled=1` 即已禁用，`agent_avatar` 非空表示该实例有自己的头像）。
 
 **多实例命名/头像**：首个实例用智能体本名 + 原头像；第 2+ 个实例取名池名（`Alice`/`Bob`…，池尽回退 `本名 序号` 且永不 `本名 1`）并生成自己的头像。
 
@@ -1061,7 +1061,7 @@ sqlite3 "file:$HOME/.clawbench/ClawBench.db?mode=ro&immutable=1" \
 | @ 汇总行 | `.msg-mention-summary` | 气泡顶部「@ A、B」一行 |
 | 密送卡 | `.msg-bcc`（成员，折叠）/ `.msg-bcc-user`（发给你，默认展开） | |
 | 系统行 | `.chat-system-row`（图标 `.chat-system-icon`） | 「轮到用户发言」「XX 加入了讨论」等居中细条，统一带 Megaphone 图标 |
-| 成员抽屉 | `.gm-row` / `.gm-tag--host` / `.gm-tag--left` / `.gm-remove` | 行 / 主持人标签 / 已离场标签 / 移除按钮 |
+| 成员抽屉 | `.gm-row` / `.gm-tag--host` / `.gm-tag--disabled` / `.gm-disabled` | 行 / 主持人标签 / 已禁用标签 / 禁用开关 |
 | 抽屉「添加成员」 | `[data-action="add-members"]` | 在**抽屉头部右侧** |
 | 群设置 | `#group-parallel`（仅自由模式）/ `#group-auto-approve`（两者） | 主持人模式只显示自动批准（无并发开关）；成员发言次数上限是全局设置，不在抽屉里 |
 | 建群入口 | `[data-action="create"]`（**共用的 `+`**） | **独立的 `[data-action="create-group"]` 已删除**——群聊改从 `+` 抽屉内的分段开关进入 |

@@ -461,17 +461,17 @@ describe('SessionSearchDrawer', () => {
     expect(wrapper.find('.detail-chunk-role').text()).toBe('Peer')
   })
 
-  it('resolves a departed member via group_speakers (which includes left members)', async () => {
+  it('resolves a disabled member via group_speakers (which includes disabled members)', async () => {
     const groupResult = {
       ...sampleResult,
       session_type: 'group',
-      // group_members (avatar stack) is active-only, but group_speakers keeps
-      // the departed member so their past speech still resolves to their name.
+      // group_members (avatar stack) is speaking-only, but group_speakers keeps
+      // the disabled member so their past speech still resolves to their name.
       group_members: [{ id: 'm1', agentId: 'a1', name: 'Host', backend: 'claude', isHost: true }],
       group_speakers: { m1: 'Host', 'm-gone': 'Former Member' },
       chunks: [{
         chunk_id: 1,
-        chunk_text: 'spoken by someone who left',
+        chunk_text: 'spoken by someone who is disabled',
         match_positions: [],
         score: 0.9,
         role: 'assistant',
