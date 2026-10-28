@@ -1683,13 +1683,28 @@ defineExpose({
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-6) 0;
+  /* Vertical rhythm, plus the chat reading measure as horizontal PADDING.
+     Padding, not margin: the scroll container itself must keep the pane's full
+     width so its scrollbar is painted at the SESSION AREA's right edge. With
+     `margin-inline` the whole box narrowed and the bar moved inwards, ending up
+     glued to the message column — the bar belongs to the pane, not to the
+     column.
+
+     Percentage padding resolves against the containing block (the pane), so the
+     column is centred on the pane, matching the composer and the stacked cards,
+     which spend their own gutter tokens against the same base. On a pane
+     narrower than the measure the token is 0 and the area stays flush to both
+     edges exactly as before. */
+  padding: var(--space-6) var(--chat-content-inset);
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
 }
 
-/* Message list container */
+/* Message list container.
+   No horizontal inset of its own: the reading measure comes from the
+   scroller's padding above, so the list is exactly the 900 measure wide on a
+   wide pane and stays flush to both edges on a narrower one. */
 .chat-messages-list {
   display: flex;
   flex-direction: column;

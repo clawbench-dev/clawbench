@@ -2485,6 +2485,29 @@ defineExpose({
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  /* ── The chat pane is a size query container ──
+     The wide layout is not a breakpoint on the VIEWPORT: it depends on how much
+     room the CHAT PANE got, which the split view hands out independently of the
+     window. Everything that changes shape when the pane outgrows the reading
+     measure (the assistant bubble gains corners, the composer becomes a dock
+     island) is therefore written as `@container chat-pane (…)` in the component
+     that owns the box, with the threshold `calc(60rem + 1px)` — 60rem IS
+     `--chat-content-max-width` (900 design px, since `--dp` is 1rem/15), so the
+     shape flips exactly when the gutter stops being zero. A px threshold would
+     stop tracking the UI scale.
+     Guarded by __tests__/chatContentMeasure.css.test.ts.
+
+     `inline-size` (not `size`): the panel's HEIGHT must stay driven by its flex
+     parent, and size containment would zero it out.
+
+     Interplay with the app-mode `contain: paint` below, measured in all three
+     engines: `container-type` on its own does NOT make an element the
+     containing block for `position: fixed` descendants, and adding it next to
+     `contain: paint` changes nothing (the paint containment already did that).
+     So the table copy menu's placement is exactly as before — and it is placed
+     by runtime measurement anyway (utils/fixedPosition.ts). */
+  container-type: inline-size;
+  container-name: chat-pane;
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

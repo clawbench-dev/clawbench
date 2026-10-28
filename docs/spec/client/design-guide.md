@@ -278,6 +278,17 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - **不要拿宽屏阈值当「布局放得下吗」的通用判据**：那是另一个问题、另一个阈值。例如头部胶囊的段标签用 `@media (min-width: 600px)`（见 `AppHeader.vue` 的 `.seg-label`）——带标签的胶囊实测仅约 215px，600 就够，用 960 反而会在有空间的横屏手机上隐藏标签。
 - **默认分屏比例是 4:6（左侧稍窄）**，常量 `DEFAULT_RATIO` 在 `utils/splitRatio.ts`——composable 初值与 `resetWideScreenState` 都引用它，不要把 0.4 散落成魔数。用户已持久化的自定义比例不受影响（localStorage 优先）。
 
+### 聊天区阅读栏（超宽屏收窄）
+
+- **一个度量管整个聊天窗格**：`--chat-content-max-width`（900 设计 px，与 Markdown 预览阅读栏、分享页 `.session-share-column` 同宽）。消息列、输入区整块（动作条 / 推荐条 / 输入框 / 会话信息条）以及输入框上方的堆叠卡片（计划 / 团队 / 排队）都按它收窄；**标题栏不收窄**——它是窗口结构（底部分隔线、重命名按钮都属于窗格），收窄后会变成一根悬在半途的线。
+- **收窄通过 `max(<floor>, (100% - 度量) / 2)` 的花括号实现，不是 `max-width` + `margin: auto`**：堆叠卡片是拉伸 flex 列里的 `width: auto` 元素，`max-width` 一旦不生效就同时丢了左右留白。三个 floor 刻意不同，所以是三个 token：`--chat-content-inset`（消息列，floor `0px`）、`--chat-content-gutter`（输入区，floor `--space-4`）、`--chat-content-card-gutter`（堆叠卡片，floor `--space-5`）。**窄于度量时一切保持原状**（消息区仍然两边贴边、输入区仍然 8px、卡片仍然 10px）。
+- **消息列的留白花在滚动容器 `.chat-messages` 的 `padding` 上，绝不能用 `margin`**：`padding` 让滚动容器自己的盒子仍占满窗格，滚动条因此画在**会话区域的右边缘**；改成 `margin` 会把整个盒子收窄，滚动条跟着内移、贴到消息列边上（线上被指出「滚动条贴着消息」）。百分比 padding 相对包含块（窗格）解析，左边缘仍与输入区对齐。
+- **形状随留白翻转，判定用 container query 而不是 `@media`**：`ChatPanelContent` 的 `.chat-panel-content` 是 `container-type: inline-size; container-name: chat-pane`，阈值写 `calc(60rem + 1px)`——`60rem` 就是 `--chat-content-max-width`（`--dp` = 1rem/15，900/15 = 60），所以翻转点精确等于「留白不再是 0」。**必须用 rem 不能写 px**：container query 里的 `rem` 按根字号解析（三引擎实测），因此跟随 UI 缩放；写 px 会在大字号下错位。分屏能把窗格宽度和窗口宽度解耦，所以 `@media` 会在错误时刻触发。
+  - **通宽（窗格 ≤ 度量）**：助手回复是**直角通栏色带**，输入区是**扁平通栏条**（顶部一条 `inset` 发丝线）。圆角贴边会被窗格切掉，所以这里必须直角。
+  - **有留白（窗格 > 度量）**：助手回复变**圆角卡片**（`--radius-lg`），输入区变**底部 dock 岛**——按同一个 gutter 两侧内缩、贴窗格底边、**只圆上面两角**（下面那条边就是窗格边，四角全圆会显得岛在悬空）、去底部边框、`box-shadow: none`（岛自己的顶部边框取代发丝线）。岛的底色用 `color-mix(in srgb, var(--text-primary) 4%, var(--bg-secondary))` 再乘 `--panel-alpha`，**不能用 `--bg-tertiary`/`--bg-elevated`**：36 套主题里 15 套 secondary↔tertiary 对比度低于 1.12（ayu-dark 只有 1.062），岛会直接消失（见红线 4）。
+- **`container-type` 与 App 模式的 `contain: paint` 可共存**，实测三引擎：`container-type` 单独**不会**让元素成为 `position: fixed` 子孙的包含块，叠加 `contain: paint` 也不改变既有行为（真正起作用的是后者，app-mode 本来就有）。表格复制菜单的位置仍由运行时测量决定（`utils/fixedPosition.ts`）。
+- 守卫：`components/chat/__tests__/chatContentMeasure.css.test.ts`（度量与阈值换算、三个 gutter 的 floor、消费点不得自己重算公式、滚动容器承担留白、container 声明、形状随留白翻转、岛只圆上两角、底色必须是 text 混色、标题栏不得收窄）+ `e2e/specs/chat-reading-measure.spec.ts`（真实引擎里量两条列的左右边缘是否重合、两种形状的 computed 值）。
+
 ### 安全区
 
 全仓只有两处消费 `env(safe-area-inset-*)`，都在 `variables.css`：`--header-safe-area-top`（顶）与 `--dock-height`（底，`47px + 安全区`）。不要在别处另起一套。
@@ -628,6 +639,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/common/__tests__/wallpaperSurfaceTransparency.css.test.ts` | 壁纸开启后各表面透明度不叠乘 |
 | `components/common/__tests__/wallpaperBlurCost.css.test.ts` | 壁纸模糊不留 `will-change` |
 | `components/common/__tests__/resizeDivider.css.test.ts` | 拖拽分隔条外观 |
+| `components/chat/__tests__/chatContentMeasure.css.test.ts` | 聊天区阅读栏：度量与 container query 阈值换算（`60rem` = 900 设计 px）、三个 gutter 的 floor（消息列 `0px` / 输入区 `--space-4` / 卡片 `--space-5`）、消费点不得自己重算半宽公式、留白花在滚动容器的 **padding**（用 margin 会把滚动条从会话区边缘拽到消息列边上）、`container-type: inline-size` 且不是 `size`、形状随留白翻转（通宽直角色带 + 扁平条 / 有留白圆角卡片 + 只圆上两角的 dock 岛）、岛底色必须是 text 混色且带 `--panel-alpha`、标题栏不收窄 |
 | `components/chat/__tests__/chatRowLayerIsolation.css.test.ts` | 聊天行在 App 模式下同时有 `will-change: transform` 与 `contain: paint`（少任一即 GPU 残影） |
 | `components/__tests__/bottomDockLayerIsolation.css.test.ts` | 底部 Dock 包装层在 App 模式下有 `contain: paint` + `will-change: transform`，且只在 `[data-app-mode]` 下 |
 | `__tests__/forgeDockTabTitleWiring.test.ts` | forge 页签标题按绑定平台取值、三条标题路径（溢出菜单项 / 内联 tooltip / 宽屏 Dock tooltip）都接线、标签与图标永不矛盾 |

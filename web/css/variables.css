@@ -96,6 +96,52 @@
     --modal-width-narrow: calc(520 * var(--dp));
     --modal-width-wide: calc(960 * var(--dp));
 
+    /* ── The chat column's reading measure. ONE number for the whole chat
+       pane: the message column, the composer block (action bar / recommendation
+       / input box / session info) and the stacked cards above it (plan, team,
+       queued) are all held to this width and centred, so on a wide monitor the
+       conversation stops stretching to ~2000px while the chat TITLE BAR keeps
+       spanning the pane (it is window chrome, not content).
+
+       900 matches the Markdown preview's reading column and the share page's
+       conversation column (`.session-share-column`), so the same thread reads
+       at the same measure in-app and when shared.
+
+       Below the measure NOTHING changes: the message area stays flush to both
+       edges (its gutter floors at 0) and the composer keeps its original 8px
+       inset, so a phone looks exactly as it did before this cap existed.
+       Guarded by web/src/components/chat/__tests__/chatContentMeasure.css.test.ts. ── */
+    --chat-content-max-width: calc(900 * var(--dp));
+
+    /* The message column's horizontal gutter: zero until the pane is wider than
+       the measure, then half the slack, which centres the column. The floor is
+       `0px` (not `0` — a bare 0 is a <number> and `max()` would drop the whole
+       declaration) because a narrow pane must stay flush: the message area has
+       never had a side inset.
+
+       Spent as `padding` on the message SCROLLER. Percentage padding resolves
+       against the containing block (the pane), so the left edge lands on the
+       same vertical line as the composer's, which spends --chat-content-gutter
+       below. Spending it on the list INSIDE the scroller would resolve against
+       the scroller's content box instead, which the scrollbar narrows by 10px,
+       putting every message 5px left of the input box.
+
+       Note `100%` resolves against whichever element CONSUMES the token, not
+       against :root — custom properties substitute as tokens and compute in
+       place. ── */
+    --chat-content-inset: max(0px, (100% - var(--chat-content-max-width)) / 2);
+
+    /* The composer's gutter: the same centring, but flooring at its original
+       --space-4 inset so a narrow pane keeps the composer's side padding. ── */
+    --chat-content-gutter: max(var(--space-4), (100% - var(--chat-content-max-width)) / 2);
+
+    /* The stacked cards' gutter (plan / team / queued): same centring, flooring
+       at the --space-5 inset those cards have always had, so a phone keeps
+       their original look. A separate token rather than a shared one because
+       the three floors genuinely differ — the composer sits 8px in, the cards
+       10px. ── */
+    --chat-content-card-gutter: max(var(--space-5), (100% - var(--chat-content-max-width)) / 2);
+
     /* ── Spacing scale. Numbers are step names, not sizes: the same step can
        mean "inset of a dense row" or "gap between cards" depending on where
        it lands, so semantic names would mislead more than they help. The
