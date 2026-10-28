@@ -77,6 +77,12 @@ type ForkContextOptions struct {
 	// path that renders the SOURCE directly does: a fork point in the middle of
 	// a conversation must not carry later messages into the background.
 	CutoffID int64
+	// IncludeStreaming keeps the session's in-flight replies (streaming=1)
+	// instead of dropping them. Only "/btw" sets it: the question is asked while
+	// the agent is still replying, so the half-written reply IS the subject.
+	// Every other caller leaves it false — a fork/rewind point or a first
+	// message of a forked session must only see completed history.
+	IncludeStreaming bool
 }
 
 // ForkContextMessage is one rendered history entry: a role label and its body.
@@ -96,7 +102,15 @@ type ForkContextMessage struct {
 // BuildForkContextWithOptions reads a session's history from the DB, renders it,
 // and bounds the result to the configured budget.
 func BuildForkContextWithOptions(sessionID string, o ForkContextOptions) string {
-	messages, err := GetMessagesBySessionIDRaw(sessionID)
+	var (
+		messages []model.ChatMessage
+		err      error
+	)
+	if o.IncludeStreaming {
+		messages, err = GetMessagesBySessionIDRawIncludingStreaming(sessionID)
+	} else {
+		messages, err = GetMessagesBySessionIDRaw(sessionID)
+	}
 	if err != nil || len(messages) == 0 {
 		return ""
 	}
@@ -268,6 +282,9 @@ func RenderForkContextMessages(msgs []model.ChatMessage, toolCallMap map[string]
 			if content == "" {
 				continue
 			}
+			if m.Streaming {
+				content += forkStreamingSuffix
+			}
 			entries = append(entries, ForkContextMessage{Role: role, Body: content})
 			continue
 		}
@@ -276,10 +293,22 @@ func RenderForkContextMessages(msgs []model.ChatMessage, toolCallMap map[string]
 		if len(parts) == 0 {
 			continue
 		}
-		entries = append(entries, ForkContextMessage{Role: role, Body: strings.Join(parts, "\n\n")})
+		body := strings.Join(parts, "\n\n")
+		if m.Streaming {
+			// The row is still being written, so this is a partial reply. Say so:
+			// otherwise the model reads a sentence that stops mid-thought as a
+			// complete answer and may explain it as if it were finished.
+			body += forkStreamingSuffix
+		}
+		entries = append(entries, ForkContextMessage{Role: role, Body: body})
 	}
 	return entries
 }
+
+// forkStreamingSuffix marks a half-written reply in the injected history. It is
+// appended INSIDE the entry body so the role prefix and the budget accounting
+// stay unchanged.
+const forkStreamingSuffix = "\n\n[This reply is still being generated — the text above is only what has been written so far.]"
 
 // BoundForkContext renders entries into the final injected string.
 //

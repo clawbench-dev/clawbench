@@ -72,6 +72,51 @@ func TestBuildBtwContext_IncludesHistoryAndEnvelope(t *testing.T) {
 	assert.Contains(t, out, "User: ")
 }
 
+// /btw is asked WHILE the agent is replying, so the in-flight row must be part
+// of the context — that half-written reply is usually what the question is
+// about. It must also be MARKED as partial: without the marker the model reads a
+// sentence cut mid-thought as a finished answer.
+func TestBuildBtwContext_IncludesStreamingReplyMarkedPartial(t *testing.T) {
+	_, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	insertSessionWithTitle(t, "sess-btw-live", "t", TitleSourcePlaceholder)
+	insertAutoRenameUserMessage(t, 501, "sess-btw-live", "重构一下这个函数")
+	_, err := store.WriteExec(
+		"INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (?, 1, 'assistant', ?, ?, 1)",
+		502, `{"blocks":[{"type":"text","text":"我先把参数收敛成结构体"}]}`, "sess-btw-live",
+	)
+	require.NoError(t, err)
+
+	out := BuildBtwContext("sess-btw-live")
+	assert.Contains(t, out, "我先把参数收敛成结构体", "the in-flight reply is the subject of the question")
+	assert.Contains(t, out, forkStreamingSuffix, "a partial reply must be labelled as such")
+}
+
+// The finalized-only view is what every other caller keeps: a fork/rewind point
+// must not inherit a half-written reply.
+func TestBuildBtwContext_IncludeStreamingIsOptIn(t *testing.T) {
+	_, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	insertSessionWithTitle(t, "sess-btw-optin", "t", TitleSourcePlaceholder)
+	insertAutoRenameUserMessage(t, 601, "sess-btw-optin", "问题")
+	_, err := store.WriteExec(
+		"INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (?, 1, 'assistant', ?, ?, 1)",
+		602, `{"blocks":[{"type":"text","text":"半截回复"}]}`, "sess-btw-optin",
+	)
+	require.NoError(t, err)
+
+	// Default (fork/rewind) view drops it.
+	plain := BuildForkContextWithOptions("sess-btw-optin", ForkContextOptions{PlainTextFallback: true})
+	assert.NotContains(t, plain, "半截回复")
+	assert.NotContains(t, plain, forkStreamingSuffix)
+
+	// Opting in keeps it.
+	withLive := BuildForkContextWithOptions("sess-btw-optin", ForkContextOptions{PlainTextFallback: true, IncludeStreaming: true})
+	assert.Contains(t, withLive, "半截回复")
+}
+
 func TestAnswerBtwQuestion_EmptyQuestion(t *testing.T) {
 	_, cleanup := setupRecommendTest(t)
 	defer cleanup()
