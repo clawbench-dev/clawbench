@@ -87,9 +87,11 @@ class FakePC {
   constructor(public config: unknown) {
     FakePC.instances.push(this)
   }
-  addTrack(t: FakeTrack) {
+  addTrack(t: FakeTrack, stream?: unknown) {
     this.tracks.push(t)
+    this.addedStreams.push(stream)
   }
+  addedStreams: unknown[] = []
   addTransceiver(kind: string, init?: { direction: string }) {
     const tx = new FakeTransceiver(init?.direction ?? 'sendrecv')
     this.transceivers.push(tx)
@@ -173,6 +175,9 @@ class FakeMediaStream {
   tracks: FakeTrack[]
   constructor(tracks: FakeTrack[] = []) {
     this.tracks = tracks
+  }
+  addTrack(t: FakeTrack) {
+    this.tracks.push(t)
   }
   getTracks() {
     return this.tracks
@@ -268,8 +273,8 @@ describe('start', () => {
 
     expect(ok).toBe(false)
     expect(share.state.value).toBe('idle')
-    // No capture was requested, so nothing to release.
-    expect(bridge.setPendingCaptureSource).not.toHaveBeenCalled()
+    // No real source was ever declared (the teardown path clears with '').
+    expect(bridge.setPendingCaptureSource).not.toHaveBeenCalledWith('screen:1:0', expect.anything())
   })
 
   it('fails when the host cannot declare a capture source', async () => {
@@ -319,6 +324,12 @@ describe('viewers', () => {
     const pc = FakePC.instances[0]
     // One video track (the screen) and one mixed audio track for this viewer.
     expect(pc.tracks.map((t) => t.kind)).toEqual(['video', 'audio'])
+    // CRITICAL: both tracks must belong to the SAME MediaStream. The viewer
+    // assigns `srcObject` per received stream, so two streams would mean the
+    // second assignment replaces the first — the viewer would get either video
+    // or audio, never both.
+    expect(pc.addedStreams).toHaveLength(2)
+    expect(pc.addedStreams[0]).toBe(pc.addedStreams[1])
     // Reserved inbound audio so a speaking viewer needs no renegotiation.
     expect(pc.transceivers.map((t) => t.direction)).toEqual(['sendrecv'])
     expect(share.viewers.value).toHaveLength(1)

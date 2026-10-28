@@ -50,6 +50,8 @@ class FakeDest implements FakeNode {
 class FakeCtx {
   dests: FakeDest[] = []
   sources: FakeSource[] = []
+  /** Stands in for the real speakers. */
+  destination: FakeNode = { id: 'speakers', outputs: [] }
   createMediaStreamDestination(): AudioDestinationNode {
     const d = new FakeDest(this.dests.length)
     this.dests.push(d)
@@ -150,6 +152,41 @@ describe('LiveMixer', () => {
     // A stable track id means the publisher never has to call replaceTrack
     // again — the sender keeps pointing at the same destination.
     expect(mixer.outTrackFor('A')!.id).toBe(before)
+  })
+
+  it('stops routing everyone else into a removed viewer destination', () => {
+    const ctx = new FakeCtx()
+    const mixer = new LiveMixer(ctx as unknown as AudioContext, null, null)
+
+    const trackA = mixer.addViewer('A')
+    mixer.addViewer('B')
+    mixer.attachRemote('A', stream('a-voice'))
+    mixer.attachRemote('B', stream('b-voice'))
+
+    const destB = destFor(ctx, mixer.outTrackFor('B')!.id)
+    // Before removal B's destination is fed by A's audio.
+    expect(fedBy(destB, ctx, 'a-voice')).toBe(true)
+
+    mixer.removeViewer('B')
+
+    // The removed destination must no longer be pulled by anyone, otherwise the
+    // node stays alive (and keeps producing a stream) for the rest of the call.
+    expect(fedBy(destB, ctx, 'a-voice')).toBe(false)
+    expect(fedBy(destFor(ctx, trackA.id), ctx, 'b-voice')).toBe(false)
+  })
+
+  it('routes viewer audio to the publisher speakers, but not its own mix', () => {
+    const ctx = new FakeCtx()
+    const mixer = new LiveMixer(ctx as unknown as AudioContext, stream('sys'), stream('mic'))
+    mixer.addViewer('A')
+
+    mixer.attachRemote('A', stream('a-voice'))
+
+    // The publisher must hear the audience (otherwise "allow viewers to speak"
+    // is a one-way announcement). Only the remote source may reach the
+    // speakers: monitoring the publisher's own mic/system audio would echo.
+    const toSpeakers = ctx.sources.filter((s) => s.outputs.includes(ctx.destination))
+    expect(toSpeakers.map((s) => s.id)).toEqual(['src:a-voice'])
   })
 
   it('stops routing a removed viewer to everyone else', () => {

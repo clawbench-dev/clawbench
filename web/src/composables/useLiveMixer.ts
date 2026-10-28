@@ -109,12 +109,19 @@ export class LiveMixer {
       if (otherId === viewerId) continue
       src.connect(other.dest)
     }
+    // The publisher must hear the audience too, otherwise "allow viewers to
+    // speak" is a one-way announcement rather than a conversation. This is the
+    // ONLY edge into ctx.destination: the publisher's own system audio and mic
+    // must never be monitored, or the publisher hears itself with a delay.
+    src.connect(this.ctx.destination)
   }
 
   /** Stop routing a viewer's inbound audio to everyone else. */
   detachRemote(viewerId: string): void {
     const slot = this.slots.get(viewerId)
     if (!slot?.remoteSource) return
+    // disconnect() with no argument drops every edge, including the monitor
+    // edge to ctx.destination added in attachRemote.
     try {
       slot.remoteSource.disconnect()
     } catch {
@@ -133,7 +140,23 @@ export class LiveMixer {
   removeViewer(viewerId: string): void {
     const slot = this.slots.get(viewerId)
     if (!slot) return
+
+    // Drop this viewer's own inbound audio from everyone else's mix.
     this.detachRemote(viewerId)
+
+    // ...and drop everyone ELSE's audio from this viewer's destination. That
+    // edge was created in attachRemote (and in addViewer for viewers already
+    // present), so leaving it would keep the removed destination alive — still
+    // pulled by N-1 source nodes, still producing a stream nobody reads.
+    for (const [otherId, other] of this.slots) {
+      if (otherId === viewerId || !other.remoteSource) continue
+      try {
+        other.remoteSource.disconnect(slot.dest)
+      } catch {
+        /* not connected */
+      }
+    }
+
     try {
       if (this.systemSource) this.systemSource.disconnect(slot.dest)
     } catch {

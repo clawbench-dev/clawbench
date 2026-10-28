@@ -24,6 +24,8 @@ var (
 	ErrRoomExists = errors.New("liveshare: room already has a publisher")
 	// ErrRoomNotFound means the token names no live room.
 	ErrRoomNotFound = errors.New("liveshare: room not found")
+	// ErrTooManyRooms means the registry's room ceiling has been reached.
+	ErrTooManyRooms = errors.New("liveshare: too many live rooms")
 	// ErrRoomFull means the viewer cap has been reached.
 	ErrRoomFull = errors.New("liveshare: room is full")
 	// ErrViewerExists means the same viewer id was added twice.
@@ -70,13 +72,22 @@ type Viewer struct {
 
 	sink Sink
 
+	// mu guards the mutable fields below. The room holds its own lock while
+	// mutating them, but accessors like TalkState() are reachable from outside,
+	// so the viewer needs its own.
+	mu sync.Mutex
+
 	// talking is the viewer's microphone state. There is no per-viewer grant:
 	// the room-level switch is the only authorisation (see talk.go).
 	talking bool
 }
 
 // Talking reports whether this viewer's microphone is on.
-func (v *Viewer) Talking() bool { return v.talking }
+func (v *Viewer) Talking() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.talking
+}
 
 // Room is a single live share. All methods are safe for concurrent use.
 type Room struct {
@@ -128,7 +139,9 @@ func (r *Room) SetTalkEnabled(on bool) {
 	r.talkEnabled = on
 	if !on {
 		for _, v := range r.viewers {
+			v.mu.Lock()
 			v.talking = false
+			v.mu.Unlock()
 		}
 	}
 	r.mu.Unlock()
@@ -148,6 +161,61 @@ func (r *Room) SetPublisher(s Sink) {
 	r.publisher = s
 	r.mu.Unlock()
 	r.touch()
+}
+
+// ReservePublisher marks the room as having a publisher without attaching a
+// transport yet. Used to reject a second publisher with a real HTTP 409 BEFORE
+// the WebSocket upgrade (once upgraded, the client cannot see a status code).
+// Must be followed by SetPublisher with the real sink, or ReleasePublisher.
+func (r *Room) ReservePublisher() bool {
+	return r.ClaimPublisher(reservedPublisher)
+}
+
+// reservedPublisher is the placeholder attached by ReservePublisher. Any real
+// sink is != it, so compare-and-clear still works.
+var reservedPublisher Sink = reservedSink{}
+
+type reservedSink struct{}
+
+func (reservedSink) Send(any) error { return nil }
+
+// ClaimPublisher attaches s only if no publisher is currently attached.
+//
+// Check-then-set must be one atomic step: two connections arriving together
+// would otherwise both observe "no publisher", and the loser's teardown would
+// delete the room the winner is still using.
+func (r *Room) ClaimPublisher(s Sink) bool {
+	r.mu.Lock()
+	if r.publisher != nil {
+		r.mu.Unlock()
+		return false
+	}
+	r.publisher = s
+	r.mu.Unlock()
+	r.touch()
+	return true
+}
+
+// ReleaseReservation clears a reservation made by ReservePublisher, but only if
+// nothing replaced it (a real sink means the upgrade succeeded).
+func (r *Room) ReleaseReservation() {
+	r.ReleasePublisher(reservedPublisher)
+}
+
+// ReleasePublisher detaches s only if it is still the current publisher.
+//
+// Compare-and-clear: a socket that was replaced (or that lost a race) must not
+// tear down the room its successor now owns.
+func (r *Room) ReleasePublisher(s Sink) bool {
+	r.mu.Lock()
+	if r.publisher != s {
+		r.mu.Unlock()
+		return false
+	}
+	r.publisher = nil
+	r.mu.Unlock()
+	r.touch()
+	return true
 }
 
 // ViewerCount reports how many viewers are currently attached.
@@ -276,6 +344,11 @@ type Registry struct {
 
 	maxViewers  int
 	idleTimeout time.Duration
+
+	// maxRooms caps the total number of live rooms. Enforced inside Create so
+	// the check and the insert are one atomic step — a handler-side check would
+	// let two concurrent creates both pass it.
+	maxRooms int
 }
 
 // NewRegistry returns an empty registry with the default limits.
@@ -301,6 +374,13 @@ func (g *Registry) SetLimits(maxViewers int, idleTimeout time.Duration) {
 	g.mu.Unlock()
 }
 
+// SetMaxRooms caps the total number of live rooms (0 = unlimited).
+func (g *Registry) SetMaxRooms(n int) {
+	g.mu.Lock()
+	g.maxRooms = n
+	g.mu.Unlock()
+}
+
 // Create returns the room for projectKey, creating it when absent.
 //
 // Idempotent by design: the publisher's "start sharing" button may be pressed
@@ -320,6 +400,12 @@ func (g *Registry) Create(projectKey, title string) (*Room, error) {
 		}
 		// Stale index entry (the room was reaped): fall through and recreate.
 		delete(g.byProject, projectKey)
+	}
+
+	// Ceiling applies only to NEW rooms: reusing an existing one does not add
+	// to the count, so it must not be blocked at the limit.
+	if g.maxRooms > 0 && len(g.rooms) >= g.maxRooms {
+		return nil, ErrTooManyRooms
 	}
 
 	token, err := newToken()

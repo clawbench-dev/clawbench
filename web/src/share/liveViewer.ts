@@ -160,6 +160,13 @@ export class LiveViewer {
         this.setState('ended', { reason: msg.reason })
         this.teardown()
         break
+      case 'talk-enabled':
+        // The room-level switch changed after we joined. `joined` carries the
+        // state at attach time, so this is the only way an already-connected
+        // viewer learns the publisher enabled (or re-enabled) speaking.
+        this._talkEnabled = msg.talkEnabled !== false
+        this.cb.onTalkEnabled?.(this._talkEnabled)
+        break
       case 'talk-revoked':
         // The publisher muted us, or turned the room switch off.
         this._talking = false
@@ -170,7 +177,9 @@ export class LiveViewer {
         // We asked to speak while the room switch was off. Flip the toggle back
         // instead of leaving it on and silently sending nothing.
         this._talking = false
+        this._talkEnabled = false
         void this.detachMic()
+        this.cb.onTalkEnabled?.(false)
         this.cb.onTalkRevoked?.(msg.reason ?? 'disabled')
         break
       case 'error':
@@ -205,6 +214,10 @@ export class LiveViewer {
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed') {
         appLog.w(TAG, 'peer connection failed')
+        // Tear down, not just flag it: if the viewer was speaking, its
+        // microphone would otherwise stay live (and the OS mic indicator on)
+        // after the connection is already dead.
+        this.teardown()
         this.setState('failed', { reason: 'ice' })
       }
     }

@@ -40,7 +40,17 @@ func (s TalkState) String() string {
 }
 
 // TalkState reports the viewer's current speech state.
+//
+// The flag is written under the room's mutex, so reading it here needs the same
+// lock. Callers that already hold it must use talkStateLocked instead.
 func (v *Viewer) TalkState() TalkState {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.talkStateLocked()
+}
+
+// talkStateLocked is TalkState for callers already holding v.mu.
+func (v *Viewer) talkStateLocked() TalkState {
 	if v.talking {
 		return TalkTalking
 	}
@@ -63,7 +73,9 @@ func (r *Room) SetTalking(viewerID string, talking bool) error {
 	if talking && !r.talkEnabled {
 		return ErrTalkNotAllowed
 	}
+	v.mu.Lock()
 	v.talking = talking
+	v.mu.Unlock()
 	return nil
 }
 
@@ -73,10 +85,12 @@ func (r *Room) MuteAll() []string {
 	r.mu.Lock()
 	var affected []string
 	for id, v := range r.viewers {
+		v.mu.Lock()
 		if v.talking {
 			affected = append(affected, id)
 		}
 		v.talking = false
+		v.mu.Unlock()
 	}
 	r.mu.Unlock()
 	return affected

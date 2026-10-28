@@ -399,6 +399,41 @@ describe('LiveViewer talk', () => {
     await vi.waitFor(() => expect(lastPC().transceivers[0].sender.track).toBeNull())
   })
 
+  it('learns about the switch being enabled after joining', () => {
+    const enabled: boolean[] = []
+    const { viewer } = setup({
+      callbacks: { onTalkEnabled: (v: boolean) => enabled.push(v) },
+    })
+    // Joined while the switch was OFF: the toggle is not rendered at all.
+    joinRoom(viewer, { talkEnabled: false })
+    expect(viewer.talkEnabled).toBe(false)
+
+    // The publisher enables it later. Without this frame an already-connected
+    // viewer could never discover it (its `joined` is long gone).
+    lastWS().emit({ type: 'talk-enabled', talkEnabled: true })
+
+    expect(viewer.talkEnabled).toBe(true)
+    // `joined` reports the initial (off) state; the later frame flips it on.
+    expect(enabled).toEqual([false, true])
+  })
+
+  it('drops the microphone when the connection fails', async () => {
+    const micTrack = makeTrack('audio')
+    const getUserMedia = vi.fn(async () => ({ getAudioTracks: () => [micTrack] }) as unknown as MediaStream)
+    const { viewer } = setup({ getUserMedia })
+    joinRoom(viewer, { talkEnabled: true })
+    await viewer.startTalking()
+
+    const pc = lastPC()
+    pc.connectionState = 'failed'
+    pc.onconnectionstatechange?.()
+
+    // A dead connection must not leave the OS microphone live.
+    expect(viewer.talking).toBe(false)
+    expect(pc.transceivers[0].sender.track).toBeNull()
+    expect(micTrack.stop).toHaveBeenCalled()
+  })
+
   it('flips back when the room switch is off (talk-disabled)', async () => {
     const revoked: string[] = []
     const { viewer } = setup({

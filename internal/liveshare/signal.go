@@ -34,6 +34,10 @@ const (
 	MsgFull = "full"
 	// MsgPublisherGone means the publisher detached; the share is over.
 	MsgPublisherGone = "publisher-gone"
+	// MsgTalkEnabled tells a viewer that the room-level switch changed. Without
+	// it, a viewer that joined while the switch was off would never learn that
+	// the publisher enabled it later (its `joined` frame is long gone).
+	MsgTalkEnabled = "talk-enabled"
 	// MsgTalkRevoked means the publisher muted this viewer (or the room switch
 	// was turned off), so its microphone must stop.
 	MsgTalkRevoked = "talk-revoked"

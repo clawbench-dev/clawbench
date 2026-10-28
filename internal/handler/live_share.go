@@ -39,6 +39,12 @@ const maxLiveRooms = 20
 // share is transient, and losing it on restart is the correct semantics.
 var liveRegistry = liveshare.NewRegistry()
 
+func init() {
+	// The ceiling lives in the registry so check-and-create is atomic; see
+	// liveshare.Registry.Create.
+	liveRegistry.SetMaxRooms(maxLiveRooms)
+}
+
 // liveSink adapts a websocket connection to liveshare.Sink.
 //
 // Writes are serialized by the shared mutex because both the read loop (error
@@ -90,7 +96,7 @@ func ServeLiveShareManage(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		serveLiveShareStatus(w, projectPath)
 	case http.MethodDelete:
-		serveLiveShareEnd(w, r)
+		serveLiveShareEnd(w, r, projectPath)
 	default:
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 	}
@@ -116,15 +122,12 @@ func liveShareTitle(r *http.Request, projectPath string) string {
 }
 
 func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath string) {
-	// Check the ceiling before creating. An existing room for this project does
-	// not count against it (it is being reused, not added).
-	if liveRegistry.FindByProject(projectPath) == nil && liveRegistry.Len() >= maxLiveRooms {
-		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "LiveShareTooManyRooms")
-		return
-	}
-
 	room, err := liveRegistry.Create(projectPath, liveShareTitle(r, projectPath))
 	if err != nil {
+		if errors.Is(err, liveshare.ErrTooManyRooms) {
+			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "LiveShareTooManyRooms")
+			return
+		}
 		slog.Error("liveshare: create room failed", "err", err)
 		model.WriteError(w, model.Internal(err))
 		return
@@ -145,7 +148,7 @@ func serveLiveShareStatus(w http.ResponseWriter, projectPath string) {
 	writeJSON(w, http.StatusOK, liveShareStatusResponse{Active: true, Viewers: room.ViewerCount()})
 }
 
-func serveLiveShareEnd(w http.ResponseWriter, r *http.Request) {
+func serveLiveShareEnd(w http.ResponseWriter, r *http.Request, projectPath string) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "TokenRequired")
@@ -156,6 +159,16 @@ func serveLiveShareEnd(w http.ResponseWriter, r *http.Request) {
 		// Ending an already-ended share is not an error: the publisher's UI may
 		// retry, and the user-visible outcome is identical.
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+	// Ownership check, mirroring LiveSharePublishWS. Without it any signed-in
+	// user of ANOTHER project could end someone else's share — the token is
+	// handed to every viewer, so it is not a secret from them.
+	//
+	// Same uniform 404 as an unknown token: the response must not reveal that a
+	// room exists which this project does not own.
+	if room.ProjectKey() != projectPath {
+		http.NotFound(w, r)
 		return
 	}
 	// Tell the viewers before dropping the room, so they see "publisher ended
@@ -185,10 +198,19 @@ func LiveSharePublishWS(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if room.Publisher() != nil {
+	// Reserve BEFORE upgrading: a second publisher must receive a real HTTP 409,
+	// which is impossible once the socket has been upgraded.
+	if !room.ReservePublisher() {
 		writeLocalizedErrorf(w, r, http.StatusConflict, "LiveShareAlreadyPublishing")
 		return
 	}
+	reserved := true
+	defer func() {
+		if reserved {
+			// We reserved but never attached a real sink (upgrade failed).
+			room.ReleaseReservation()
+		}
+	}()
 
 	conn, err := acceptLiveWS(w, r)
 	if err != nil {
@@ -200,15 +222,23 @@ func LiveSharePublishWS(w http.ResponseWriter, r *http.Request) {
 	var writeMu sync.Mutex
 	sink := &liveSink{conn: conn, mu: &writeMu}
 
+	// Swap the reservation for the real sink. ClaimPublisher is not needed: we
+	// already own the slot.
+	room.SetPublisher(sink)
+	reserved = false
+
 	// The publisher owns the room's lifetime: when this socket goes away the
 	// share is over, and every viewer must be told rather than left hanging.
+	//
+	// ReleasePublisher is compare-and-clear so a socket that was replaced never
+	// deletes the room its successor is using.
 	defer func() {
-		room.SetPublisher(nil)
+		if !room.ReleasePublisher(sink) {
+			return
+		}
 		room.BroadcastToViewers(liveshare.ViewerMessage{Type: liveshare.MsgPublisherGone, Reason: "ended"}, "")
 		liveRegistry.Delete(token)
 	}()
-
-	room.SetPublisher(sink)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -258,16 +288,25 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 
 	case liveshare.CtrlSetTalkEnabled:
 		room.SetTalkEnabled(ctl.Enabled)
-		// Disabling mutes everyone inside the room; tell each affected viewer so
-		// its microphone toggle flips back to off instead of silently failing.
-		if !ctl.Enabled {
-			for _, v := range room.Viewers() {
+		// Tell EVERY viewer the switch changed, in both directions. A viewer
+		// that joined while the switch was off has no other way to learn it was
+		// enabled later — its `joined` frame is long gone, so without this the
+		// microphone toggle would never appear.
+		for _, v := range room.Viewers() {
+			if ctl.Enabled {
 				room.SendToViewer(v.ID, liveshare.ViewerMessage{
-					Type:   liveshare.MsgTalkRevoked,
-					Reason: liveshare.ReasonDisabled,
+					Type:        liveshare.MsgTalkEnabled,
+					TalkEnabled: true,
 				})
-				notifyTalkState(room, v.ID, false)
+				continue
 			}
+			// Disabling also mutes everyone; the room already cleared the flags,
+			// so the viewer just needs to stop and flip its toggle back.
+			room.SendToViewer(v.ID, liveshare.ViewerMessage{
+				Type:   liveshare.MsgTalkRevoked,
+				Reason: liveshare.ReasonDisabled,
+			})
+			notifyTalkState(room, v.ID, false)
 		}
 		return false
 
@@ -345,6 +384,13 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 			ViewerID: viewer.ID,
 		})
 	}()
+
+	// Re-check after attaching: the publisher may have detached between the
+	// check above and AddViewer. Without this the viewer would receive `joined`,
+	// send an offer, and wait forever for an answer that can never come.
+	if room.Publisher() == nil {
+		return
+	}
 
 	// Tell the publisher a viewer arrived so it can build a PeerConnection for
 	// it, and tell the viewer its id plus whether speech is available.
@@ -482,4 +528,42 @@ func lastPathSegment(p string) string {
 // exporting the registry itself.
 func liveShareRoomCountForTest() int {
 	return liveRegistry.Len()
+}
+
+// ── Idle-room reaper ────────────────────────────────────────────────────────
+
+// liveReapInterval is how often the reaper scans. Rooms are reaped after
+// liveshare.DefaultIdleTimeout (30 min) with no viewers, so a minute of slack is
+// irrelevant to the outcome but keeps the scan cheap.
+const liveReapInterval = time.Minute
+
+// StartLiveShareReaper drops rooms that have had no viewers past the idle
+// timeout. Without it a room whose publisher vanished without a clean close
+// would occupy one of the maxLiveRooms slots forever.
+//
+// Returns a stop function for tests and shutdown.
+func StartLiveShareReaper() func() {
+	stop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(liveReapInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case now := <-t.C:
+				for _, room := range liveRegistry.Reap(now) {
+					// Tell any stragglers before the room disappears, so they see
+					// "share ended" rather than a bare socket close.
+					room.BroadcastToViewers(liveshare.ViewerMessage{
+						Type:   liveshare.MsgPublisherGone,
+						Reason: "expired",
+					}, "")
+					room.SetPublisher(nil)
+					slog.Info("liveshare: reaped idle room", "token", room.Token())
+				}
+			}
+		}
+	}()
+	return func() { close(stop) }
 }

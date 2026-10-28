@@ -1257,6 +1257,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}()
 
 	// Initialize file watcher for auto-refresh (non-critical — continue on failure)
+	// Idle live-share rooms are in-memory and have no other cleanup path: a
+	// publisher that vanished without a clean socket close would otherwise hold
+	// one of the maxLiveRooms slots forever.
+	handler.StartLiveShareReaper()
+
 	if err := service.InitFileWatcher(); err != nil {
 		slog.Warn(
 			"file watcher not available, auto-refresh disabled",

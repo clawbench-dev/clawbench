@@ -87,6 +87,9 @@ function resetSession(): void {
     ws = null
   }
   void getNative()?.setPublishingActive?.(false)
+  // Clear a declared-but-never-consumed source. The declaration is one-shot by
+  // design; leaving it set would let a later getDisplayMedia capture silently.
+  void getNative()?.setPendingCaptureSource?.('', false)
 }
 
 function send(payload: Record<string, unknown>): void {
@@ -174,7 +177,10 @@ export function useLiveShare() {
       const bridge = getNative()
       if (!bridge?.setPendingCaptureSource) {
         fail('screen capture is unavailable on this host')
-        state.value = 'idle'
+        // The room already exists at this point. Leaving it behind would burn a
+        // slot in maxLiveRooms forever (nothing else deletes a room that never
+        // got a publisher), so end it explicitly.
+        await stop()
         return false
       }
       await bridge.setPendingCaptureSource(opts.sourceId, opts.systemAudio)
@@ -226,8 +232,9 @@ export function useLiveShare() {
     } catch (e) {
       appLog.e(TAG, 'start failed', e)
       fail(e instanceof Error ? e.message : String(e))
-      resetSession()
-      state.value = 'idle'
+      // stop() rather than resetSession(): the room may already exist and must
+      // be deleted server-side, not just forgotten locally.
+      await stop()
       return false
     }
   }
@@ -300,8 +307,18 @@ export function useLiveShare() {
     // One destination per viewer, carrying system audio + mic + the OTHER
     // viewers. Excluding this viewer is what keeps it from hearing itself.
     const mixed = mixer?.addViewer(viewerId) ?? null
-    if (outVideoTrack) pc.addTrack(outVideoTrack, new MediaStream([outVideoTrack]))
-    if (mixed) pc.addTrack(mixed, new MediaStream([mixed]))
+    // Both tracks MUST share one MediaStream: the viewer assigns `srcObject`
+    // per received stream, so two streams means the second assignment replaces
+    // the first and the viewer gets either video or audio, never both.
+    const outgoing = new MediaStream()
+    if (outVideoTrack) {
+      outgoing.addTrack(outVideoTrack)
+      pc.addTrack(outVideoTrack, outgoing)
+    }
+    if (mixed) {
+      outgoing.addTrack(mixed)
+      pc.addTrack(mixed, outgoing)
+    }
 
     // Reserve the inbound audio slot so a speaking viewer needs no renegotiation
     // (replaceTrack only). Mirrors the viewer side.

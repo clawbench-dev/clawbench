@@ -24,6 +24,10 @@ func resetLiveRegistry(t *testing.T) {
 	t.Helper()
 	prev := liveRegistry
 	liveRegistry = liveshare.NewRegistry()
+	// init() applies maxLiveRooms to the ORIGINAL registry only, so a replaced
+	// one would silently have no ceiling — tests that fill it up would then
+	// pass for the wrong reason.
+	liveRegistry.SetMaxRooms(maxLiveRooms)
 	t.Cleanup(func() { liveRegistry = prev })
 }
 
@@ -176,6 +180,22 @@ func TestLiveShareEnd_RemovesRoom(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Nil(t, liveRegistry.Get(token))
 	assert.Equal(t, 0, liveShareRoomCountForTest())
+}
+
+func TestLiveShareEnd_RejectsForeignProject(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create("/proj/owner", "A")
+	require.NoError(t, err)
+	token := room.Token()
+
+	// A signed-in user of a DIFFERENT project must not be able to end this
+	// share. The token is handed to every viewer, so it is not a secret.
+	w := httptest.NewRecorder()
+	ServeLiveShareManage(w, liveReq(t, http.MethodDelete, "/api/live-share?token="+token, "/proj/other", nil))
+
+	// Uniform 404: the response must not reveal that a foreign room exists.
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.NotNil(t, liveRegistry.Get(token), "foreign project must not end the room")
 }
 
 func TestLiveShareEnd_UnknownTokenIsOk(t *testing.T) {
@@ -431,6 +451,9 @@ func TestLiveWS_TalkToggleFlow(t *testing.T) {
 	// Turn the room switch on, then the viewer simply turns its mic on — no
 	// request, no approval.
 	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetTalkEnabled, Enabled: true})
+	// Consume the broadcast that tells this viewer the toggle is now available.
+	enabled := readViewerMsg(t, view)
+	require.Equal(t, liveshare.MsgTalkEnabled, enabled.Type)
 
 	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlTalkStart})
 	st := readPublisherMsg(t, pub)
@@ -454,6 +477,8 @@ func TestLiveWS_PublisherMuteReachesViewer(t *testing.T) {
 	_ = readPublisherMsg(t, pub)
 
 	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetTalkEnabled, Enabled: true})
+	_ = readViewerMsg(t, view) // talk-enabled
+
 	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlTalkStart})
 	_ = readPublisherMsg(t, pub) // talk-state true
 
@@ -477,6 +502,8 @@ func TestLiveWS_DisablingRoomMutesEveryViewer(t *testing.T) {
 	_ = readPublisherMsg(t, pub)
 
 	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetTalkEnabled, Enabled: true})
+	_ = readViewerMsg(t, view) // talk-enabled
+
 	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlTalkStart})
 	_ = readPublisherMsg(t, pub) // talk-state true
 
@@ -502,6 +529,11 @@ func TestLiveWS_MuteAllReachesSpeakingViewer(t *testing.T) {
 	_ = readPublisherMsg(t, pub)
 
 	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetTalkEnabled, Enabled: true})
+	// The publisher's switch change is broadcast to every viewer, so an
+	// already-connected viewer learns the toggle became available.
+	enabled := readViewerMsg(t, view)
+	require.Equal(t, liveshare.MsgTalkEnabled, enabled.Type)
+
 	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlTalkStart})
 	_ = readPublisherMsg(t, pub) // talk-state true
 
