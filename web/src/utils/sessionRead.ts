@@ -29,6 +29,17 @@ export async function markSessionRead(sessionId: string, projectPath?: string): 
     if (!resp.ok) {
       appLog.w(TAG, `markSessionRead failed for ${sessionId.slice(0, 12)}: ${resp.status}`)
     }
+    // DRAIN THE BODY, even though nothing reads the payload.
+    //
+    // A `fetch` whose body is never consumed keeps the response stream open, so
+    // the browser still counts the request as in flight: `requestfinished` never
+    // fires and `waitForLoadState('networkidle')` never settles. That is not
+    // theoretical — the cold-start / resume read added with sessionReadGate made
+    // every page load hold one open request, which timed out five Playwright
+    // specs (acp-mode-switching, acp-session-persistence, acp-thinking-model,
+    // chat quick-send, group-member-identity) at `networkidle` after a reload.
+    // Cancelling the stream also releases the connection instead of leaking it.
+    await resp.body?.cancel().catch(() => {})
   } catch (err) {
     // Read state is not a precondition for anything the caller does next; a
     // dropped connection must not turn opening a session into an error.
