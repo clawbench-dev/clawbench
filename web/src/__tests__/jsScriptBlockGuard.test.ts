@@ -226,13 +226,19 @@ describe('check-js-script-blocks', () => {
   it('is clean on the real repository', () => {
     // Regression net for the actual tree: this must stay green so a future
     // occurrence is caught by the same command CI runs.
+    //
+    // This walks every .vue file in the repo through compiler-sfc, which is
+    // ~5s on its own — right on vitest's 5s default. Under the full suite the
+    // machine is saturated by the other workers and it crossed the limit
+    // (measured: 5.4s isolated, timeout under load), so the budget is stated
+    // explicitly rather than inherited.
     const stdout = execFileSync(process.execPath, [SCRIPT, '--list'], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     expect(stdout).toContain('OK')
-  })
+  }, 30_000)
 })
 
 describe('every plain-JS .vue file really has no lang attribute', () => {
