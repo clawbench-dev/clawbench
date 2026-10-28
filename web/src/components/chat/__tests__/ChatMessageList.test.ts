@@ -519,8 +519,12 @@ describe('ChatMessageList — content-growth observer backstop', () => {
   it('observes the content wrapper and re-pins on growth unless the user left', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    // Observe the .chat-messages-list wrapper (its box = content height)
-    expect(source).toContain('new ResizeObserver(() => onContentGrown())')
+    // Observe the .chat-messages-list wrapper (its box = content height). The
+    // callback also re-syncs the scrollbar lane: on WebKit the bar only appears
+    // once the content overflows, so growth is what makes the two columns
+    // finally align. Assert the observer exists and its callback calls the
+    // re-pin path — not the exact one-line arrow, which legitimately grew.
+    expect(source).toMatch(/new ResizeObserver\(\(\) => \{[\s\S]{0,400}?onContentGrown\(\)/)
     expect(source).toContain('contentResizeObserver.observe(inner)')
     // Re-pin guard: unified pin decision — never pull back a user who scrolled
     // away, never fight an active scroll.

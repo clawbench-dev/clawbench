@@ -36,6 +36,10 @@ async function measure(page: import('@playwright/test').Page) {
     const sr = scroller.getBoundingClientRect()
     const wr = wrapper.getBoundingClientRect()
     const px = (v: string) => Math.round(parseFloat(v) || 0)
+    // The lane the browser actually took out of the scroller's layout box. On
+    // engines whose bar overlays the content (or Firefox, whose classic bar does
+    // not shrink the box) this is 0 and nothing needs paying back.
+    const barLane = scroller.offsetWidth - scroller.clientWidth
     return {
       windowWidth: window.innerWidth,
       panelWidth: Math.round(pr.width),
@@ -45,9 +49,11 @@ async function measure(page: import('@playwright/test').Page) {
       // scrollbar is painted).
       scrollerLeft: Math.round(sr.left),
       scrollerRight: Math.round(sr.right),
-      // Content boxes: what the user sees as the column's edges.
-      scrollerContentLeft: Math.round(sr.left) + px(scs.paddingLeft),
-      scrollerContentRight: Math.round(sr.right) - px(scs.paddingRight),
+      // The real left/right edge of the message COLUMN as the user sees it: the
+      // content box, minus the scrollbar's lane on the end side.
+      columnLeft: Math.round(sr.left) + px(scs.paddingLeft),
+      columnRight: Math.round(sr.right) - px(scs.paddingRight) - barLane,
+      barLane,
       wrapperContentLeft: Math.round(wr.left) + px(wcs.paddingLeft),
       wrapperLeft: Math.round(wr.left),
       wrapperRight: Math.round(wr.right),
@@ -101,9 +107,23 @@ test.describe('chat reading measure', () => {
     // its CONTENT box starts further right; the island's visible edge is the
     // border, and that is what must line up with the messages.)
     expect(
-      wide.scrollerContentLeft,
+      wide.columnLeft,
       'message column and composer island must share their left edge',
     ).toBe(wide.wrapperLeft)
+
+    // The END edge too. This is the alignment the scrollbar used to break: a
+    // classic bar is taken out of the scroller's layout box, so without paying
+    // the lane back the column's right edge stopped one bar-width short of the
+    // island's and the whole column drifted left of centre.
+    expect(
+      wide.columnRight,
+      'message column and composer island must share their right edge',
+    ).toBe(wide.wrapperRight)
+    // The column is centred, not merely left-aligned: the two gutters match.
+    expect(
+      wide.columnLeft - wide.wrapperLeft,
+      'the column must be centred inside the island width',
+    ).toBe(wide.wrapperRight - wide.columnRight)
 
     // The reply is a card.
     expect(isRound(wide.cardRadius), 'the reply gains corners once there is a gutter').toBe(true)
@@ -137,7 +157,7 @@ test.describe('chat reading measure', () => {
     expect(narrow.scrollerRight, 'the message area reaches the pane edge again').toBe(
       narrow.panelLeft + narrow.panelWidth,
     )
-    expect(narrow.scrollerContentLeft, 'no gutter at all').toBe(narrow.scrollerLeft)
+    expect(narrow.columnLeft, 'no gutter at all').toBe(narrow.scrollerLeft)
 
     expect(narrow.cardRadius, 'the card reverts to a square band').toBe('0px')
     expect(narrow.wrapperShadow, 'the hairline separator comes back').not.toBe('none')

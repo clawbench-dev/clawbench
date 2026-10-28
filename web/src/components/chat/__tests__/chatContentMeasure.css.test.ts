@@ -161,13 +161,8 @@ describe('every content box spends the shared gutter', () => {
     // `margin-inline` the box narrowed and the bar moved inwards, ending up
     // glued to the message column — reported as "the scrollbar is in the wrong
     // place". The bar belongs to the pane, the gutter to the column.
-    //
-    // Percentage padding also resolves against the containing block (the pane),
-    // so the column's LEFT edge lands exactly on the composer's; the 10px the
-    // scrollbar occupies is simply missing from the column's right edge, which
-    // is where the bar is.
     const scroller = decls(LIST, '.chat-messages')
-    expect(scroller).toMatch(/padding:\s*var\(--space-\d+\)\s+var\(--chat-content-inset\)/)
+    expect(scroller).toMatch(/padding:[^;]*var\(--chat-content-inset\)/)
     expect(
       scroller,
       'margin would move the scrollbar inwards, off the pane edge',
@@ -178,6 +173,75 @@ describe('every content box spends the shared gutter', () => {
       list,
       'the list must not add its own inset — the scroller already provides it',
     ).not.toMatch(/--chat-content-(?:inset|max-width|gutter)/)
+  })
+
+  it('pays the scrollbar lane back on the END side only', () => {
+    // A classic scrollbar is taken out of THIS element's layout box, so the
+    // content box ends one bar-width short of the composer island's right edge
+    // and the column drifts ~5px left of centre — reported as "the messages and
+    // the input box are not aligned".
+    //
+    // The start side must NOT subtract it: doing so would shift the column LEFT
+    // of the composer instead (verified in all three engines).
+    const scroller = decls(LIST, '.chat-messages')
+    const padding = scroller.match(/padding:\s*([^;]+);/)
+    expect(padding, 'the scroller must declare padding').not.toBeNull()
+    const parts = padding![1].trim()
+
+    // Four-value form: top | end | bottom | start.
+    expect(parts, 'the end padding must subtract the lane').toMatch(
+      /var\(--space-6\)\s+max\(0px,\s*var\(--chat-content-inset\)\s*-\s*var\(--chat-scrollbar-lane\)\)\s+var\(--space-6\)\s+var\(--chat-content-inset\)$/,
+    )
+    // The start side carries the bare inset, with no lane subtraction.
+    const startSide = parts.split(/\s+(?![^(]*\))/).pop()!
+    expect(startSide, 'the start side must not subtract the lane').toBe(
+      'var(--chat-content-inset)',
+    )
+
+    // And the lane must be reserved up front. Without `stable` the bar only
+    // takes width once the thread overflows, so the column's right edge jumps
+    // 10px the moment a conversation grows past one screen — the alignment
+    // would be correct only for long threads.
+    expect(scroller, 'the bar lane must be reserved before it appears').toMatch(
+      /scrollbar-gutter:\s*stable/,
+    )
+  })
+
+  it('measures the lane at runtime instead of hard-coding a bar width', () => {
+    // The width is 0 on every overlay-scrollbar platform (macOS/iOS default,
+    // most Android WebViews, headless Chromium), 10 for a classic bar, 4 on a
+    // coarse pointer — and WebKit's `scrollbar-gutter: stable` only reserves it
+    // once the content overflows. A CSS-declared constant is therefore wrong on
+    // some platform no matter which number is picked, so the component measures
+    // `offsetWidth - clientWidth` (exactly the box's layout loss) and writes the
+    // variable itself.
+    expect(stripComments(VARS), 'the token must have a 0px pre-measurement default').toMatch(
+      /--chat-scrollbar-lane:\s*0px;/,
+    )
+    // …and no CSS rule may try to guess it (that is the bug this replaced).
+    expect(
+      stripComments(VARS),
+      'a hard-coded bar width cannot be right on every platform',
+    ).not.toMatch(/@supports selector\(::-webkit-scrollbar\)/)
+
+    const code = stripComments(LIST)
+    expect(code, 'the scroller must measure its own lane').toMatch(
+      /offsetWidth\s*-\s*el\.clientWidth/,
+    )
+    expect(code, 'and publish it on the element the padding reads it from').toMatch(
+      /setProperty\(\s*['"]--chat-scrollbar-lane['"]/,
+    )
+    // Re-measure on mount, on scroller resize, and when content growth makes the
+    // bar appear (the WebKit case).
+    expect(code, 'a ResizeObserver must keep it current').toMatch(
+      /new ResizeObserver\(\(\)\s*=>\s*syncScrollbarLane\(\)\)/,
+    )
+    expect(code, 'the content-growth observer must re-sync it too').toMatch(
+      /onContentGrown\(\)[\s\S]{0,400}?syncScrollbarLane\(\)/,
+    )
+    expect(code, 'the observer must be torn down with the component').toMatch(
+      /scrollbarLaneObserver\?\.disconnect\(\)/,
+    )
   })
 
   it('the composer block is inset by it', () => {

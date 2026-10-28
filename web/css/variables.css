@@ -119,17 +119,32 @@
        declaration) because a narrow pane must stay flush: the message area has
        never had a side inset.
 
-       Spent as `padding` on the message SCROLLER. Percentage padding resolves
-       against the containing block (the pane), so the left edge lands on the
-       same vertical line as the composer's, which spends --chat-content-gutter
-       below. Spending it on the list INSIDE the scroller would resolve against
-       the scroller's content box instead, which the scrollbar narrows by 10px,
-       putting every message 5px left of the input box.
+       Spent as `padding` on the message SCROLLER, and the right side is further
+       reduced by --chat-scrollbar-lane (see ChatMessageList). Percentage padding
+       resolves against the containing block (the pane), so the left edge lands
+       on the same vertical line as the composer's, which spends
+       --chat-content-gutter below.
 
        Note `100%` resolves against whichever element CONSUMES the token, not
        against :root — custom properties substitute as tokens and compute in
        place. ── */
     --chat-content-inset: max(0px, (100% - var(--chat-content-max-width)) / 2);
+
+    /* ── Scrollbar lane, for boxes that must line up with a NON-scrolling one ──
+       A classic (non-overlay) scrollbar takes its width out of the scroll
+       container's layout box, so the message column's content box ends up one
+       bar-width narrower than the composer island's — the two right edges are
+       off by that width and the column drifts half of it off centre.
+
+       The width cannot be expressed in CSS: it is 0 on overlay-scrollbar
+       platforms (macOS/iOS default, most Android WebViews, headless Chromium),
+       10 on a classic bar, 4 on a coarse pointer, and WebKit's
+       `scrollbar-gutter: stable` only reserves it once the content actually
+       overflows. So ChatMessageList MEASURES the live lane (`offsetWidth -
+       clientWidth`, which is exactly the bar's layout cost) and writes this
+       variable on the scroller; 0px is the pre-measurement default, which is
+       also the correct value for every overlay platform. ── */
+    --chat-scrollbar-lane: 0px;
 
     /* The composer's gutter: the same centring, but flooring at its original
        --space-4 inset so a narrow pane keeps the composer's side padding. ── */

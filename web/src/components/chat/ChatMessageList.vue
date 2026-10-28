@@ -310,6 +310,48 @@ const props = defineProps({
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'open-btw', 'open-agent-config'])
 
 const messagesRef = ref(null)
+
+/**
+ * The scrollbar's layout cost, mirrored onto `--chat-scrollbar-lane`.
+ *
+ * WHY MEASURE: the message column and the composer island must share both side
+ * edges, but a classic scrollbar takes its width out of THIS element's layout
+ * box, so the column's content box ends up one bar-width short on the end side
+ * and the whole column drifts half of that off centre. The width cannot be
+ * written in CSS — it is 0 wherever scrollbars overlay the content (macOS/iOS
+ * default, most Android WebViews, headless Chromium), 10 for a classic bar, 4
+ * on a coarse pointer — and WebKit's `scrollbar-gutter: stable` only reserves
+ * it once the content actually overflows, so a short thread there reports a
+ * lane of 0 while a long one reports 10. Measuring `offsetWidth - clientWidth`
+ * is the one value that is correct on every engine and platform, and it is
+ * exactly the amount the box lost.
+ *
+ * `scrollbar-gutter: stable` (in the stylesheet) keeps the lane from appearing
+ * and disappearing as a thread grows, so this only has to run when the scroller
+ * or its content resizes — not on every message.
+ */
+function syncScrollbarLane() {
+  const el = messagesRef.value
+  if (!el) return
+  const lane = el.offsetWidth - el.clientWidth
+  if (lane < 0) return
+  el.style.setProperty('--chat-scrollbar-lane', `${lane}px`)
+}
+
+let scrollbarLaneObserver = null
+
+function observeScrollbarLane() {
+  scrollbarLaneObserver?.disconnect()
+  scrollbarLaneObserver = null
+  const el = messagesRef.value
+  if (!el) return
+  syncScrollbarLane()
+  if (typeof ResizeObserver === 'undefined') return
+  // Both axes matter: the lane depends on whether a bar is present, which can
+  // flip on a width change (content re-wraps) as well as a height change.
+  scrollbarLaneObserver = new ResizeObserver(() => syncScrollbarLane())
+  scrollbarLaneObserver.observe(el)
+}
 const { openFilePath, readLineTargetFromEl } = useFilePathAnnotation()
 const dialog = useDialog()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
@@ -947,7 +989,12 @@ function observeContentGrowth() {
   // listKey change, so re-observe via the listKey watcher below.
   const inner = el.firstElementChild
   if (inner) {
-    contentResizeObserver = new ResizeObserver(() => onContentGrown())
+    contentResizeObserver = new ResizeObserver(() => {
+      onContentGrown()
+      // Content growth can also be what makes the bar appear on engines whose
+      // `scrollbar-gutter: stable` is a no-op until overflow (WebKit).
+      syncScrollbarLane()
+    })
     contentResizeObserver.observe(inner)
   }
 }
@@ -960,6 +1007,7 @@ onMounted(() => {
   // set — permanently suppressing force pins.
   document.addEventListener('mouseup', onDocumentMouseUp)
   observeContentGrowth()
+  observeScrollbarLane()
 })
 onBeforeUnmount(() => {
   // Teardown without a session switch (e.g. the whole panel unmounts) still
@@ -970,6 +1018,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('mouseup', onDocumentMouseUp)
   contentResizeObserver?.disconnect()
   contentResizeObserver = null
+  scrollbarLaneObserver?.disconnect()
+  scrollbarLaneObserver = null
   cancelAnimationFrame(contentGrownRaf)
   scrollFrameScheduler.cancelAll()
   clearTimeout(scrollStopTimer)
@@ -1691,11 +1741,22 @@ defineExpose({
      column.
 
      Percentage padding resolves against the containing block (the pane), so the
-     column is centred on the pane, matching the composer and the stacked cards,
-     which spend their own gutter tokens against the same base. On a pane
-     narrower than the measure the token is 0 and the area stays flush to both
-     edges exactly as before. */
-  padding: var(--space-6) var(--chat-content-inset);
+     START edge lands on the composer's. The END side additionally subtracts
+     --chat-scrollbar-lane: a classic scrollbar takes its width out of this
+     element's layout box, so without that the content box would end one
+     bar-width short and the message column's right edge would sit 10px left of
+     the composer island's (reported as "the messages and the input box are not
+     aligned"). The token is 0 on engines whose bar takes no layout width, so
+     Firefox is untouched. On a pane narrower than the measure the inset is 0
+     and both sides collapse to 0 / the lane — the area stays flush as before. */
+  padding: var(--space-6) max(0px, var(--chat-content-inset) - var(--chat-scrollbar-lane)) var(--space-6) var(--chat-content-inset);
+  /* Reserve the bar's lane up front, so the column's right edge does not move
+     when a conversation first grows past one screen. Chromium and Firefox both
+     honour this; WebKit reports support but only reserves once the content
+     actually overflows (measured), so a short thread there stays 10px wider —
+     the one engine where the two columns can still disagree, and only until the
+     first scrollbar appears. */
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
