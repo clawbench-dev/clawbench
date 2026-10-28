@@ -49,6 +49,14 @@ interface PublisherPeer {
 }
 
 let ws: WebSocket | null = null
+/**
+ * Whether this client ever attached the publisher socket for `token`.
+ *
+ * Only then may it DELETE the room. POST is idempotent per project, so two
+ * devices in the same project share one token; a client that failed during
+ * capture must not delete the room another device is actively publishing to.
+ */
+let ownsRoom = false
 let audioCtx: AudioContext | null = null
 let mixer: LiveMixer | null = null
 let displayStream: MediaStream | null = null
@@ -86,6 +94,7 @@ function resetSession(): void {
     }
     ws = null
   }
+  ownsRoom = false
   void getNative()?.setPublishingActive?.(false)
   // Clear a declared-but-never-consumed source. The declaration is one-shot by
   // design; leaving it set would let a later getDisplayMedia capture silently.
@@ -248,6 +257,8 @@ export function useLiveShare() {
     await new Promise<void>((resolve, reject) => {
       socket.onopen = () => {
         socket.send(JSON.stringify({ type: 'publish', title: title.value }))
+        // The server has claimed the room for us; only now may we delete it.
+        ownsRoom = true
         resolve()
       }
       socket.onerror = () => reject(new Error('publisher socket failed'))
@@ -320,9 +331,10 @@ export function useLiveShare() {
       pc.addTrack(mixed, outgoing)
     }
 
-    // Reserve the inbound audio slot so a speaking viewer needs no renegotiation
-    // (replaceTrack only). Mirrors the viewer side.
-    pc.addTransceiver('audio', { direction: 'sendrecv' })
+    // No extra audio transceiver here: `addTrack(mixed)` above already created a
+    // sendrecv audio transceiver, which is the slot the viewer's microphone
+    // arrives on. Adding a second one would leave an empty m-line that a later
+    // offer could bind to instead of the mixed track.
 
     pc.ontrack = (ev) => {
       if (ev.track.kind !== 'audio') return
@@ -403,6 +415,9 @@ export function useLiveShare() {
     const tok = token.value
     if (state.value === 'idle' && !tok) return
 
+    // Capture ownership before resetSession() clears it.
+    const mayDelete = ownsRoom
+
     send({ type: 'end' })
     resetSession()
     state.value = 'idle'
@@ -411,7 +426,7 @@ export function useLiveShare() {
     viewers.value = []
     talkEnabled.value = false
 
-    if (tok) {
+    if (tok && mayDelete) {
       try {
         await fetch(`/api/live-share?token=${encodeURIComponent(tok)}`, { method: 'DELETE' })
       } catch (e) {

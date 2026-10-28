@@ -3540,7 +3540,9 @@ paths:
     delete:
       tags: [LiveShare]
       summary: 结束共享
-      description: 断开全部观众。token 不存在时同样返回 200（重复结束不是错误）。
+      description: |
+        断开全部观众。token 不存在时返回 200（重复结束不是错误）；
+        token 属于其他项目时返回 404（与「不存在」同样的响应，不泄露房间存在性）。
       operationId: liveShareEnd
       parameters:
         - name: token
@@ -3550,9 +3552,11 @@ paths:
             type: string
       responses:
         "200":
-          description: 已结束
+          description: 已结束（token 不存在时同样 200）
         "400":
           description: 缺少 token
+        "404":
+          description: token 属于其他项目
 
   /api/live-share/publish/ws:
     get:

@@ -330,8 +330,10 @@ describe('viewers', () => {
     // or audio, never both.
     expect(pc.addedStreams).toHaveLength(2)
     expect(pc.addedStreams[0]).toBe(pc.addedStreams[1])
-    // Reserved inbound audio so a speaking viewer needs no renegotiation.
-    expect(pc.transceivers.map((t) => t.direction)).toEqual(['sendrecv'])
+    // No extra transceiver: `addTrack(mixed)` already created the sendrecv
+    // audio slot the viewer's microphone arrives on. A second, empty m-line
+    // would be a hazard if a later offer bound to it instead.
+    expect(pc.transceivers).toHaveLength(0)
     expect(share.viewers.value).toHaveLength(1)
   })
 

@@ -3770,6 +3770,7 @@ export default {
     noViewers: '还没有人加入。把上面的链接发给同事即可。',
     allowTalking: '允许观众发言',
     allowTalkingHint: '开启后观众可自行打开麦克风发言，你随时可以静音某个人或全部静音。观众之间可以互相听到。',
+    headphoneHint: '建议戴耳机：外放时对方会听到自己延迟的声音。',
     mute: '静音',
     muteAll: '全部静音',
     stop: '结束共享',

@@ -240,6 +240,39 @@ func TestRoom_IdleAfterTimeoutWithNoViewers(t *testing.T) {
 	}
 }
 
+func TestRoom_IdleIgnoresRoomsWithPublisher(t *testing.T) {
+	g := newTestRegistry(t)
+	g.SetLimits(10, time.Minute)
+	room, _ := g.Create("/proj/a", "A")
+	room.SetPublisher(&fakeSink{})
+
+	// A room with a live publisher is an ONGOING share — it may simply have no
+	// audience yet. Reaping it would 404 the link while the UI still says
+	// "sharing", so the publisher check must veto idleness.
+	if room.Idle(time.Now().Add(2 * time.Hour)) {
+		t.Fatal("a room with a publisher must never be considered idle")
+	}
+}
+
+func TestRegistry_ReapKeepsRoomsWithPublisher(t *testing.T) {
+	g := newTestRegistry(t)
+	g.SetLimits(10, time.Minute)
+
+	live, _ := g.Create("/proj/live", "live")
+	live.SetPublisher(&fakeSink{})
+	orphan, _ := g.Create("/proj/orphan", "orphan")
+
+	dead := g.Reap(time.Now().Add(2 * time.Minute))
+
+	// Only the room with no publisher AND no viewers is reapable.
+	if len(dead) != 1 || dead[0].Token() != orphan.Token() {
+		t.Fatalf("want only the orphan reaped, got %d", len(dead))
+	}
+	if g.Get(live.Token()) == nil {
+		t.Fatal("room with a publisher must survive")
+	}
+}
+
 func TestRegistry_ReapDropsOnlyIdleRooms(t *testing.T) {
 	g := newTestRegistry(t)
 	g.SetLimits(10, time.Minute)
@@ -375,5 +408,69 @@ func TestSetTalkEnabledOffMutesSpeakingViewer(t *testing.T) {
 
 	if v.Talking() {
 		t.Fatal("disabling audience speech must stop speech in progress")
+	}
+}
+
+func TestReservePublisher_BlocksSecondAndHidesFromPublisher(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/proj/a", "A")
+
+	if !room.ReservePublisher() {
+		t.Fatal("first reservation must succeed")
+	}
+	// A second publisher must be refused BEFORE the upgrade, which is why the
+	// reservation exists.
+	if room.ReservePublisher() {
+		t.Fatal("second reservation must fail")
+	}
+	// But Publisher() must stay nil: a viewer that attached now would be told
+	// `joined` and then wait forever for an answer that cannot come.
+	if room.Publisher() != nil {
+		t.Fatal("a reservation must not look like an attached publisher")
+	}
+}
+
+func TestReservePublisher_ReleaseAllowsAnotherAttempt(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/proj/a", "A")
+
+	_ = room.ReservePublisher()
+	room.ReleaseReservation() // the upgrade failed
+
+	if !room.ReservePublisher() {
+		t.Fatal("a released reservation must be reusable")
+	}
+}
+
+func TestAttachPublisher_ClearsReservation(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/proj/a", "A")
+	_ = room.ReservePublisher()
+
+	sink := &fakeSink{}
+	room.AttachPublisher(sink)
+
+	if room.Publisher() != sink {
+		t.Fatal("publisher must be the attached sink")
+	}
+	// The reservation must be gone, otherwise a later ReleaseReservation would
+	// not matter but a second ReservePublisher would wrongly fail forever.
+	if room.ReservePublisher() {
+		t.Fatal("an attached publisher must still block a new reservation")
+	}
+}
+
+func TestAttachPublisher_NotVisibleAsReservationAfterRelease(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/proj/a", "A")
+	sink := &fakeSink{}
+	room.AttachPublisher(sink)
+
+	// ReleaseReservation only clears the reservation flag; it must never detach
+	// a real publisher.
+	room.ReleaseReservation()
+
+	if room.Publisher() != sink {
+		t.Fatal("ReleaseReservation must not detach an attached publisher")
 	}
 }

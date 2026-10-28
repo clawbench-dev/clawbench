@@ -168,9 +168,17 @@ export class LiveViewer {
         this.cb.onTalkEnabled?.(this._talkEnabled)
         break
       case 'talk-revoked':
-        // The publisher muted us, or turned the room switch off.
+        // Two different meanings share this frame: the publisher muted THIS
+        // viewer ('revoked'/'muted'), or the room switch went off ('disabled').
+        // Only the latter means the microphone toggle itself should disappear —
+        // clearing it on a personal mute would take away the button the viewer
+        // is still entitled to use.
         this._talking = false
         void this.detachMic()
+        if (msg.reason === 'disabled') {
+          this._talkEnabled = false
+          this.cb.onTalkEnabled?.(false)
+        }
         this.cb.onTalkRevoked?.(msg.reason ?? '')
         break
       case 'talk-disabled':

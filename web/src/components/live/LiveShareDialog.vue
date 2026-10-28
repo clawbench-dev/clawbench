@@ -116,6 +116,12 @@
         <div class="live-dialog-hint live-dialog-hint--indent">
           {{ t('liveShare.allowTalkingHint') }}
         </div>
+        <!-- The publisher hears viewers through its speakers, so its own
+             microphone can pick that up and send it back (twice). AEC covers
+             part of it; headphones are the only reliable fix. -->
+        <div v-if="share.talkEnabled.value" class="live-dialog-hint live-dialog-hint--indent">
+          {{ t('liveShare.headphoneHint') }}
+        </div>
         <button
           v-if="share.talkEnabled.value && hasTalkers"
           class="live-btn live-btn--danger"

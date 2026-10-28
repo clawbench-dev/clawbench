@@ -222,9 +222,9 @@ func LiveSharePublishWS(w http.ResponseWriter, r *http.Request) {
 	var writeMu sync.Mutex
 	sink := &liveSink{conn: conn, mu: &writeMu}
 
-	// Swap the reservation for the real sink. ClaimPublisher is not needed: we
-	// already own the slot.
-	room.SetPublisher(sink)
+	// Swap the reservation for the real sink. AttachPublisher is not a claim:
+	// we already own the slot, and it clears the reservation flag.
+	room.AttachPublisher(sink)
 	reserved = false
 
 	// The publisher owns the room's lifetime: when this socket goes away the

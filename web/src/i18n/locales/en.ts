@@ -3774,6 +3774,7 @@ export default {
     noViewers: 'Nobody has joined yet. Send the link above to your colleagues.',
     allowTalking: 'Allow viewers to speak',
     allowTalkingHint: 'Viewers can turn their microphone on themselves. You can mute anyone, or everyone, at any time. Viewers can hear each other.',
+    headphoneHint: 'Headphones recommended: on speakers, others will hear their own delayed voice.',
     mute: 'Mute',
     muteAll: 'Mute all',
     stop: 'Stop sharing',

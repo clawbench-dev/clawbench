@@ -99,8 +99,11 @@ type Room struct {
 	createdAt  time.Time
 
 	publisher Sink
-	viewers   map[string]*Viewer
-	nextID    int
+	// publisherReserved is set between ReservePublisher and AttachPublisher.
+	// Distinct from `publisher != nil` so viewers never see a phantom publisher.
+	publisherReserved bool
+	viewers           map[string]*Viewer
+	nextID            int
 
 	// talkEnabled is the room-level switch. Per-viewer grants are on Viewer.
 	talkEnabled bool
@@ -163,43 +166,41 @@ func (r *Room) SetPublisher(s Sink) {
 	r.touch()
 }
 
-// ReservePublisher marks the room as having a publisher without attaching a
-// transport yet. Used to reject a second publisher with a real HTTP 409 BEFORE
-// the WebSocket upgrade (once upgraded, the client cannot see a status code).
-// Must be followed by SetPublisher with the real sink, or ReleasePublisher.
-func (r *Room) ReservePublisher() bool {
-	return r.ClaimPublisher(reservedPublisher)
-}
-
-// reservedPublisher is the placeholder attached by ReservePublisher. Any real
-// sink is != it, so compare-and-clear still works.
-var reservedPublisher Sink = reservedSink{}
-
-type reservedSink struct{}
-
-func (reservedSink) Send(any) error { return nil }
-
-// ClaimPublisher attaches s only if no publisher is currently attached.
+// ReservePublisher claims the publisher slot WITHOUT attaching a transport, so a
+// second publisher can be rejected with a real HTTP 409 before the WebSocket
+// upgrade (once upgraded, the client cannot see a status code).
 //
-// Check-then-set must be one atomic step: two connections arriving together
-// would otherwise both observe "no publisher", and the loser's teardown would
-// delete the room the winner is still using.
-func (r *Room) ClaimPublisher(s Sink) bool {
+// The reservation is a separate flag rather than a placeholder sink on purpose:
+// Publisher() must keep meaning "a real transport is attached". A placeholder
+// would make viewers believe the room is live and then send them `joined` for a
+// publisher that can never answer their offer.
+//
+// Must be followed by AttachPublisher (upgrade succeeded) or ReleaseReservation.
+func (r *Room) ReservePublisher() bool {
 	r.mu.Lock()
-	if r.publisher != nil {
-		r.mu.Unlock()
+	defer r.mu.Unlock()
+	if r.publisher != nil || r.publisherReserved {
 		return false
 	}
-	r.publisher = s
-	r.mu.Unlock()
-	r.touch()
+	r.publisherReserved = true
 	return true
 }
 
-// ReleaseReservation clears a reservation made by ReservePublisher, but only if
-// nothing replaced it (a real sink means the upgrade succeeded).
+// AttachPublisher completes a reservation with the real transport.
+func (r *Room) AttachPublisher(s Sink) {
+	r.mu.Lock()
+	r.publisher = s
+	r.publisherReserved = false
+	r.mu.Unlock()
+	r.touch()
+}
+
+// ReleaseReservation drops a reservation that never became a real attachment
+// (the upgrade failed). It does not touch an attached publisher.
 func (r *Room) ReleaseReservation() {
-	r.ReleasePublisher(reservedPublisher)
+	r.mu.Lock()
+	r.publisherReserved = false
+	r.mu.Unlock()
 }
 
 // ReleasePublisher detaches s only if it is still the current publisher.
@@ -312,12 +313,17 @@ func (r *Room) BroadcastToViewers(msg any, skipID string) {
 	}
 }
 
-// Idle reports whether the room has been inactive past its idle timeout. A room
-// with viewers is never idle: someone is still watching it.
+// Idle reports whether the room can be reaped: past the idle timeout with no
+// viewers AND no publisher attached.
+//
+// The publisher check is essential. A room with a live publisher socket is an
+// ONGOING share — the publisher may simply have no audience yet. Reaping it would
+// delete a room the publisher is still broadcasting to: the share link would
+// start 404ing while its UI still says "sharing".
 func (r *Room) Idle(now time.Time) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(r.viewers) > 0 {
+	if len(r.viewers) > 0 || r.publisher != nil {
 		return false
 	}
 	return now.Sub(r.lastActive) > r.idleTimeout
