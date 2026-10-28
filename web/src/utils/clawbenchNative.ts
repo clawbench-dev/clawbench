@@ -90,6 +90,31 @@ export interface ClawBenchNative {
   openOemAutoStartSettings(): boolean
   openOemBatterySettings(): boolean
 
+  /**
+   * Desktop only: list the screens/windows that can be captured, for the live
+   * share source picker. Returns a JSON array of `{ id, name, kind, thumbnail }`.
+   * Android and the browser do not implement it — callers must treat absence as
+   * "screen sharing unavailable".
+   */
+  listCaptureSources?(): Promise<string>
+  /**
+   * Desktop only: declare which source the NEXT getDisplayMedia call should
+   * capture, and whether to include system audio. One-shot: the main process
+   * clears it as soon as it is consumed, so a later getDisplayMedia from any
+   * page cannot silently capture the screen.
+   */
+  setPendingCaptureSource?(sourceId: string, systemAudio: boolean): Promise<void>
+  /**
+   * Desktop only: whether the host can capture system (loopback) audio at all.
+   * Windows only today; macOS/Linux return a reason instead.
+   */
+  getAudioCaptureSupport?(): Promise<string>
+  /**
+   * Desktop only: keep the renderer unthrottled while publishing. Without it a
+   * minimized window throttles the encoder and the stream stalls.
+   */
+  setPublishingActive?(active: boolean): Promise<void>
+
   // Async reads (main-process / native state)
   getAppVersion(): Promise<string>
   getServerList(): Promise<string>

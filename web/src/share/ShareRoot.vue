@@ -19,6 +19,7 @@
       <div class="share-root-error-desc">{{ error }}</div>
     </div>
 
+    <LiveShareView v-else-if="kind === 'live'" />
     <SessionShareView v-else-if="kind === 'session'" />
     <ShareView v-else-if="kind === 'file'" />
 
@@ -55,6 +56,7 @@ import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import DownloadProgressBar from '@/components/common/DownloadProgressBar.vue'
 import DialogOverlay from '@/components/common/DialogOverlay.vue'
 import ShareView from './ShareView.vue'
+import LiveShareView from './LiveShareView.vue'
 import SessionShareView from './SessionShareView.vue'
 import { setShareToken, shareApiUrl } from './shareMode'
 import { useDownloadProgress } from '@/composables/useDownloadProgress'
@@ -65,7 +67,7 @@ const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, canc
 
 const loading = ref(true)
 const error = ref('')
-const kind = ref<'file' | 'session' | ''>('')
+const kind = ref<'file' | 'session' | 'live' | ''>('')
 
 /** Extract the capability token from /share/{token}. */
 function parseTokenFromPath(): string {
@@ -90,7 +92,10 @@ onMounted(async () => {
       return
     }
     const data = await resp.json()
-    kind.value = data.kind === 'session' ? 'session' : 'file'
+    // Three kinds now. Anything unrecognized falls back to 'file' — the
+    // pre-existing behaviour — so an older server cannot break this page.
+    kind.value =
+      data.kind === 'session' ? 'session' : data.kind === 'live' ? 'live' : 'file'
   } catch {
     error.value = t('share.notFound')
   } finally {

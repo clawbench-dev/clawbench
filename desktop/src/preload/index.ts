@@ -72,6 +72,17 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   setNativePushEnabled: (enabled: boolean) => { ipcRenderer.send('native:set-push-enabled', enabled) },
   updateLastSeenEventId: (id: string) => { ipcRenderer.send('native:update-last-seen', id) },
   setKeepScreenOn: (on: boolean) => { ipcRenderer.send('native:keep-screen-on', on) },
+
+  // ── Live share (screen + audio capture) ──────────────────────────────────
+  // Listing is async (it enumerates monitors/windows); declaring the source and
+  // toggling throttling are fire-and-forget invokes so a failure cannot block
+  // the renderer's start-up sequence.
+  listCaptureSources: () => ipcRenderer.invoke('native:list-capture-sources') as Promise<string>,
+  setPendingCaptureSource: (sourceId: string, systemAudio: boolean) =>
+    ipcRenderer.invoke('native:set-pending-capture-source', sourceId, systemAudio) as Promise<void>,
+  getAudioCaptureSupport: () => ipcRenderer.invoke('native:get-audio-capture-support') as Promise<string>,
+  setPublishingActive: (active: boolean) =>
+    ipcRenderer.invoke('native:set-publishing-active', active) as Promise<void>,
   log: (level: string, tag: string, msg: string) => { ipcRenderer.send('native:log', level, tag, msg) },
   // The desktop shell DOES have a splash overlay (a native WebContentsView
   // floating above the app while it connects and boots — see main/splash.ts).

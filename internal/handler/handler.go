@@ -668,6 +668,11 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// /api/share/session because that one operates on a single session id, and an
 	// archived session has no addressable id left.
 	register("/api/share/session/list", ServeSessionShareList)
+	// Live screen/audio share. Management is authenticated (the publisher must
+	// own the project); the viewer socket is public because the share token IS
+	// the credential, exactly like the file/session share endpoints above.
+	register("/api/live-share", ServeLiveShareManage)
+	register("/api/live-share/publish/ws", LiveSharePublishWS)
 	registerPublic("/api/share/", ServeSharePublic)
 	registerPublic("/share/", ServeSharePage)
 	register("/api/dir", ListDir)

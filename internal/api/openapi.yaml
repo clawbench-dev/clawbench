@@ -3483,6 +3483,99 @@ paths:
         "101":
           description: 协议升级为 WebSocket
 
+  # ── Live share (screen + audio) ───────────────────────────────────────────
+  #
+  # A live share is a P2P WebRTC session: the server only relays SDP/ICE and
+  # never carries media. The publisher is authenticated and owns a project; the
+  # viewer socket is public because the token is the sole credential (same model
+  # as file/session shares).
+  /api/live-share:
+    post:
+      tags: [LiveShare]
+      summary: 开始屏幕共享
+      description: |
+        为本项目创建（或复用）一个直播房间。同一项目重复调用返回同一个 token，
+        避免用户双击或重试时让已复制的链接失效。房间只存在于内存，进程重启即失效。
+      operationId: liveShareCreate
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  description: 分享页标题；省略时取项目目录名
+      responses:
+        "200":
+          description: 房间 token 与分享路径
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  path:
+                    type: string
+        "503":
+          description: 并发房间数已达上限
+    get:
+      tags: [LiveShare]
+      summary: 查询本项目的共享状态
+      operationId: liveShareStatus
+      responses:
+        "200":
+          description: 是否有活跃房间及观众数
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active:
+                    type: boolean
+                  viewers:
+                    type: integer
+    delete:
+      tags: [LiveShare]
+      summary: 结束共享
+      description: 断开全部观众。token 不存在时同样返回 200（重复结束不是错误）。
+      operationId: liveShareEnd
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 已结束
+        "400":
+          description: 缺少 token
+
+  /api/live-share/publish/ws:
+    get:
+      tags: [LiveShare]
+      summary: 发布端信令 WebSocket（升级）
+      description: |
+        WebSocket 端点，承载发布端的 SDP/ICE 转发与发言授权控制帧。OpenAPI 不建模
+        升级握手。发布端断开即视为共享结束，房间随之销毁。
+      operationId: liveSharePublishWS
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "101":
+          description: Switching Protocols
+        "404":
+          description: token 不存在或不属于当前项目
+        "409":
+          description: 已有发布端在共享
+
   # ── Share ─────────────────────────────────────────────────────────────────
   /api/share:
     post:
