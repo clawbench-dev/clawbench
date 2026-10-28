@@ -1775,6 +1775,7 @@ export default {
       archiveDir: '打包下载',
       downloadTree: '下载',
       shareExternal: '分享',
+      shareLink: '分享链接',
     },
     multiSelect: {
       enter: '多选',

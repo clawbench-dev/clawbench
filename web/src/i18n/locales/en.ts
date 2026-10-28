@@ -1775,6 +1775,7 @@ export default {
       archiveDir: 'Pack & download',
       downloadTree: 'Download',
       shareExternal: 'Share',
+      shareLink: 'Share link',
     },
     multiSelect: {
       enter: 'Select',

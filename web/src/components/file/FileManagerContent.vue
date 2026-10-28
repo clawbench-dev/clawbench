@@ -505,6 +505,10 @@
             <Download :size="14" />
             {{ t('common.download') }}
           </div>
+          <div class="context-menu-item" data-menu-item="share-link" v-if="ctxMenu.entry.type !== 'dir'" @click.stop="doShareLink">
+            <ScreenShare :size="14" />
+            {{ t('file.context.shareLink') }}
+          </div>
           <div class="context-menu-item" v-if="isNativeApp && ctxMenu.entry.type !== 'dir'" @click.stop="doShareExternal">
             <Share2 :size="14" />
             {{ t('file.context.shareExternal') }}
@@ -554,6 +558,10 @@
       @open-file="onContentSearchOpenFile"
     />
     <SharedFilesDrawer ref="sharedDrawerRef" @selectFile="onSharedFileOpen" />
+    <!-- Public share link for the context-menu entry. Mounted here rather than
+         in App.vue because the dialog is owned by the file manager's own menu:
+         the target file is the menu entry, not necessarily the open file. -->
+    <ShareLinkDialog :open="shareDialogOpen" :file="shareTarget" @close="shareDialogOpen = false" />
 
     <!-- Drop upload overlay — covers the whole file manager panel -->
     <DropOverlay :visible="isDragOver" :label="t('file.dropToUpload')" />
@@ -603,6 +611,7 @@ import SearchInput from '@/components/common/SearchInput.vue'
 import JumpDirDialog from './JumpDirDialog.vue'
 import ContentSearchDialog from './ContentSearchDialog.vue'
 import SharedFilesDrawer from './SharedFilesDrawer.vue'
+import ShareLinkDialog from './ShareLinkDialog.vue'
 import CodeLinkPreview from './CodeLinkPreview.vue'
 import DirPreviewBody from './DirPreviewBody.vue'
 import { useFileSearch } from '@/composables/useFileSearch'
@@ -863,6 +872,9 @@ const sharedDrawerRef = ref(null)
 function onSharedFileOpen(path) {
   emit('selectFile', path)
 }
+// Public share-link dialog, driven from the entry context menu.
+const shareDialogOpen = ref(false)
+const shareTarget = ref(null)
 const { terminalRuntimeEnabled } = useTerminalStatus()
 const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
 const { isWideScreen } = useWideScreenLayout()
@@ -2498,6 +2510,18 @@ function doDownload() {
     const name = ctxMenu.entry.name
     closeCtxMenu()
     downloadFileByPath(path, name)
+}
+
+function doShareLink() {
+    const entry = ctxMenu.entry
+    closeCtxMenu()
+    if (!entry?.path) return
+    // The dialog talks to /api/share with this exact path, so it must be the
+    // same form the rest of the file API uses: project-relative entries stay
+    // relative (resolved server-side against the project cookie), and entries
+    // browsed outside the project are already absolute.
+    shareTarget.value = { name: entry.name || entry.path.split('/').pop() || '', path: entry.path }
+    shareDialogOpen.value = true
 }
 
 function doShareExternal() {
