@@ -166,6 +166,11 @@ export async function setGroupMemberDisabled(groupId: string, memberId: string, 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ groupId, memberId, disabled }),
   })
+  // Consume the body: an unread response stream keeps the request "in flight"
+  // for the browser, which stalls `networkidle` waits. Same reason as
+  // utils/sessionRead.ts — this one is user-triggered rather than on page load,
+  // so it could not fail a reload, but the leak is identical.
+  await resp.body?.cancel().catch(() => {})
   if (!resp.ok) throw new Error(`request failed: ${resp.status}`)
 }
 
