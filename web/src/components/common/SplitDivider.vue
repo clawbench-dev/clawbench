@@ -2,7 +2,7 @@
   <div
     ref="dividerRef"
     class="split-view__divider resize-divider"
-    :class="[`split-view__divider--${orientation}`, { 'resize-divider--expanded': dragging }]"
+    :class="[`split-view__divider--${orientation}`, { 'resize-divider--expanded': dragging, 'split-view__divider--revealed': revealed }]"
     role="separator"
     :aria-orientation="ariaOrientation"
     :aria-valuenow="ariaValueNow"
@@ -54,7 +54,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -112,8 +112,70 @@ const dividerRef = ref<HTMLDivElement | null>(null)
 const dragging = ref(false)
 let dragActive = false
 
+/**
+ * Whether the collapse handles are showing on a TOUCH device.
+ *
+ * Mouse/pen users get them from `:hover`; touch has no hover at all, so a
+ * tap-the-line-to-reveal gesture is the only way to reach them without parking
+ * two floating buttons on top of the panes forever. The handles then retract on
+ * their own (`REVEAL_HOLD_MS`) or as soon as the user taps anywhere else.
+ */
+const revealed = ref(false)
+let revealTimer: ReturnType<typeof setTimeout> | null = null
+/** Where the current press started, to tell a tap from a drag. */
+let pressStart: { x: number; y: number } | null = null
+let pressMoved = false
+
+/** How long the handles stay up after a tap, in ms. */
+const REVEAL_HOLD_MS = 3000
+/**
+ * Movement (CSS px) beyond which a press is a DRAG, not a tap. Generous on
+ * purpose: the divider is a 1px line with a fat invisible hit band, and fingers
+ * wobble. Revealing the handles when someone meant to resize (or vice versa) is
+ * the failure this guards against.
+ */
+const TAP_SLOP_PX = 8
+
+function clearRevealTimer() {
+  if (revealTimer !== null) {
+    clearTimeout(revealTimer)
+    revealTimer = null
+  }
+}
+
+function hideHandles() {
+  clearRevealTimer()
+  revealed.value = false
+}
+
+function scheduleHide() {
+  clearRevealTimer()
+  revealTimer = setTimeout(() => {
+    revealed.value = false
+    revealTimer = null
+  }, REVEAL_HOLD_MS)
+}
+
+/**
+ * Dismiss on any press that is not on the divider (or on one of its handles).
+ * Capture phase, so a press on a handle counts as "inside" before the handle's
+ * own `.stop` runs — otherwise tapping a handle would look like an outside tap
+ * and tear the handles down under the finger.
+ */
+function onDocumentPointerDown(e: PointerEvent) {
+  const root = dividerRef.value
+  if (root && e.target instanceof Node && root.contains(e.target)) {
+    // Still inside: keep them up while the user aims.
+    scheduleHide()
+    return
+  }
+  hideHandles()
+}
+
 function onDividerPointerDown(e: PointerEvent) {
   if (e.button !== 0) return
+  pressStart = { x: e.clientX, y: e.clientY }
+  pressMoved = false
   dragActive = true
   dragging.value = true
   dividerRef.value?.setPointerCapture?.(e.pointerId)
@@ -124,19 +186,44 @@ function onDividerPointerDown(e: PointerEvent) {
 
 function onPointerMove(e: PointerEvent) {
   if (!dragActive) return
+  if (pressStart && !pressMoved) {
+    const dx = e.clientX - pressStart.x
+    const dy = e.clientY - pressStart.y
+    if (Math.hypot(dx, dy) > TAP_SLOP_PX) {
+      pressMoved = true
+      // A real drag is not a reveal: drop the handles so they cannot be
+      // clicked by accident while the pointer is still captured.
+      hideHandles()
+    }
+  }
   // Vertical split reads the pointer's Y; horizontal reads X.
   emit('dragmove', isVertical.value ? e.clientY : e.clientX)
 }
 
 function onPointerUp(e: PointerEvent) {
   if (!dragActive) return
+  const wasTap = pressStart !== null && !pressMoved
   dragActive = false
   dragging.value = false
+  pressStart = null
   dividerRef.value?.releasePointerCapture?.(e.pointerId)
   document.body.classList.remove('split-view-dragging')
   document.body.classList.remove('split-view-dragging--vertical', 'split-view-dragging--horizontal')
   emit('dragend')
+  // Mouse and pen have hover, so a click must not toggle anything: the handles
+  // are already up while the pointer is on the line.
+  if (wasTap && e.pointerType !== 'mouse') {
+    revealed.value = true
+    scheduleHide()
+  }
 }
+
+// The outside-press listener only exists while the handles are up; keeping it
+// permanently attached would run on every press in the app.
+watch(revealed, (on) => {
+  if (on) window.addEventListener('pointerdown', onDocumentPointerDown, true)
+  else window.removeEventListener('pointerdown', onDocumentPointerDown, true)
+})
 
 onMounted(() => {
   window.addEventListener('pointermove', onPointerMove)
@@ -148,6 +235,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerup', onPointerUp)
   window.removeEventListener('pointercancel', onPointerUp)
+  window.removeEventListener('pointerdown', onDocumentPointerDown, true)
+  clearRevealTimer()
   document.body.classList.remove('split-view-dragging')
   document.body.classList.remove('split-view-dragging--vertical', 'split-view-dragging--horizontal')
 })
@@ -361,17 +450,19 @@ onBeforeUnmount(() => {
   transform: translate(-50%, min(var(--space-2), 6px));
 }
 
-/* Touch has no hover, so the handles are always shown — and always
-   hit-testable, matching their visible state. The cap is higher here because a
-   finger needs a real target (28px would be below the comfortable minimum). */
+/* Touch has no hover, so the handles are revealed by TAPPING the line instead
+   of being parked on top of the panes permanently: `--revealed` is set by the
+   tap handler and cleared after a hold or on any press elsewhere. The target is
+   bigger than the mouse one (a finger needs it), capped for the same reason as
+   the base size. */
 @media (pointer: coarse) {
-  .split-view__collapse-btn {
+  .split-view__divider--revealed .split-view__collapse-btn {
     opacity: 1;
     pointer-events: auto;
     width: min(calc(26 * var(--dp)), 34px);
     height: min(calc(26 * var(--dp)), 34px);
   }
-  .split-view__collapse-btn svg {
+  .split-view__divider--revealed .split-view__collapse-btn svg {
     width: min(calc(14 * var(--dp)), 18px);
     height: min(calc(14 * var(--dp)), 18px);
   }

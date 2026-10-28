@@ -184,11 +184,28 @@ describe('SplitDivider — collapse handles', () => {
     const base = style.slice(style.indexOf('.split-view__collapse-btn {'), style.indexOf('}', style.indexOf('.split-view__collapse-btn {')))
     expect(base).toContain('opacity: 0')
     expect(base).toContain('pointer-events: none')
-    // Revealed by the divider's hover/focus, and unconditionally on touch
-    // (no hover to reveal it with).
+    // Revealed by the divider's hover/focus on pointer devices.
     expect(style).toMatch(/\.split-view__divider:hover \.split-view__collapse-btn[\s\S]{0,120}pointer-events: auto/)
-    const coarse = style.slice(style.indexOf('@media (pointer: coarse)'))
-    expect(coarse).toContain('.split-view__collapse-btn')
+  })
+
+  it('does NOT park the handles on screen on touch — a tap reveals them', () => {
+    // Regression: the first version made them permanently visible under
+    // `(pointer: coarse)`, which meant a tablet showed two floating buttons on
+    // top of the panes at all times without the user ever touching the divider.
+    const src = readSource()
+    const style = src.slice(src.indexOf('<style'))
+    // There are two `(pointer: coarse)` blocks (the first widens the drag hit
+    // band); take the one that talks about the handles.
+    const coarseBlocks = [...style.matchAll(/@media \(pointer: coarse\)\s*\{([\s\S]*?)\n\}/g)].map((m) => m[1])
+    const handleBlock = coarseBlocks.find((b) => b.includes('split-view__collapse-btn'))
+    expect(handleBlock, 'a coarse-pointer block for the handles must exist').toBeTruthy()
+    // It must gate the reveal on the `--revealed` state…
+    expect(handleBlock).toContain('.split-view__divider--revealed .split-view__collapse-btn')
+    // …and must not touch the bare selector, which would apply unconditionally.
+    // Both patterns are anchored to the START of a rule so the `--revealed`
+    // prefixed selectors (which are fine) do not trip them.
+    expect(handleBlock).not.toMatch(/(^|\n)\s*\.split-view__collapse-btn\s*\{/)
+    expect(handleBlock).not.toMatch(/(^|\n)\s*\.split-view__collapse-btn svg\s*\{/)
   })
 
   it('scales with the UI but stops growing at the cap', () => {
@@ -238,6 +255,113 @@ describe('SplitDivider — collapse handles', () => {
     expect(style).toMatch(/\.split-view__divider--horizontal \.split-view__collapse-btn--second\s*\{[^}]*left:\s*100%;[^}]*translate\(min\(var\(--space-2\), 6px\)/)
     expect(style).toMatch(/\.split-view__divider--vertical \.split-view__collapse-btn--first\s*\{[^}]*top:\s*0;[^}]*translate\(-50%, calc\(-100% - min\(var\(--space-2\), 6px\)\)/)
     expect(style).toMatch(/\.split-view__divider--vertical \.split-view__collapse-btn--second\s*\{[^}]*top:\s*100%;[^}]*translate\(-50%, min\(var\(--space-2\), 6px\)\)/)
+  })
+})
+
+describe('SplitDivider — tap to reveal the handles (touch)', () => {
+  /** Press, then release at the same spot, as a finger tap would. */
+  function tap(el: HTMLElement, pointerType = 'touch') {
+    el.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, button: 0, bubbles: true, clientX: 300, clientY: 300, pointerType }))
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true, clientX: 300, clientY: 300, pointerType }))
+  }
+
+  function setup() {
+    mountDivider({ collapseLeft: true, collapseRight: true })
+    const div = wrapper!.find('.split-view__divider').element as HTMLElement
+    div.setPointerCapture = vi.fn()
+    div.releasePointerCapture = vi.fn()
+    return div
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('is hidden until the line is tapped', () => {
+    setup()
+    expect(wrapper!.find('.split-view__divider').classes()).not.toContain('split-view__divider--revealed')
+  })
+
+  it('reveals the handles on a touch tap', async () => {
+    const div = setup()
+    tap(div)
+    await nextTick()
+    expect(wrapper!.find('.split-view__divider').classes()).toContain('split-view__divider--revealed')
+  })
+
+  it('does not reveal on a mouse click (hover already covers it)', async () => {
+    const div = setup()
+    tap(div, 'mouse')
+    await nextTick()
+    expect(wrapper!.find('.split-view__divider').classes()).not.toContain('split-view__divider--revealed')
+  })
+
+  it('does not reveal when the press was a drag', async () => {
+    const div = setup()
+    div.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, button: 0, bubbles: true, clientX: 300, clientY: 300, pointerType: 'touch' }))
+    // Past the tap slop: this is a resize gesture, not a tap.
+    window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, bubbles: true, clientX: 360, clientY: 300, pointerType: 'touch' }))
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true, clientX: 360, clientY: 300, pointerType: 'touch' }))
+    await nextTick()
+    expect(wrapper!.find('.split-view__divider').classes()).not.toContain('split-view__divider--revealed')
+    // The drag itself still worked.
+    expect(wrapper!.emitted('dragmove')).toBeTruthy()
+  })
+
+  it('tolerates a small wobble and still counts as a tap', async () => {
+    const div = setup()
+    div.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, button: 0, bubbles: true, clientX: 300, clientY: 300, pointerType: 'touch' }))
+    window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, bubbles: true, clientX: 303, clientY: 302, pointerType: 'touch' }))
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true, clientX: 303, clientY: 302, pointerType: 'touch' }))
+    await nextTick()
+    expect(wrapper!.find('.split-view__divider').classes()).toContain('split-view__divider--revealed')
+  })
+
+  it('retracts on its own after the hold', async () => {
+    vi.useFakeTimers()
+    const div = setup()
+    tap(div)
+    await nextTick()
+    expect(wrapper!.find('.split-view__divider').classes()).toContain('split-view__divider--revealed')
+
+    vi.advanceTimersByTime(3100)
+    await nextTick()
+    expect(wrapper!.find('.split-view__divider').classes()).not.toContain('split-view__divider--revealed')
+  })
+
+  it('retracts when the user presses somewhere else', async () => {
+    const div = setup()
+    tap(div)
+    await nextTick()
+    expect(wrapper!.find('.split-view__divider').classes()).toContain('split-view__divider--revealed')
+
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 2, bubbles: true }))
+    await nextTick()
+    expect(wrapper!.find('.split-view__divider').classes()).not.toContain('split-view__divider--revealed')
+  })
+
+  it('stays up while the finger is on a handle', async () => {
+    // Pressing a handle IS "inside the divider" — without that check the
+    // outside-press listener would tear the handles down under the finger.
+    const div = setup()
+    tap(div)
+    await nextTick()
+    const handle = wrapper!.find('[data-collapse="right"]').element as HTMLElement
+    handle.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 3, button: 0, bubbles: true }))
+    await nextTick()
+    expect(wrapper!.find('.split-view__divider').classes()).toContain('split-view__divider--revealed')
+  })
+
+  it('clears the timer and listener on unmount', () => {
+    vi.useFakeTimers()
+    const div = setup()
+    tap(div)
+    expect(() => wrapper!.unmount()).not.toThrow()
+    wrapper = null
+    // A leaked timer would fire against a detached component.
+    expect(() => vi.advanceTimersByTime(5000)).not.toThrow()
+    expect(document.body.classList.contains('split-view-dragging')).toBe(false)
+    void div
   })
 })
 
