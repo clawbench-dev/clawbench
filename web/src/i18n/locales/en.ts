@@ -2874,6 +2874,10 @@ export default {
       agentNotFound: 'Agent not found or already removed',
       agentNotFoundHint: 'It may have been deleted, or is no longer available after a rescan. Go back to the list to see the current agents.',
       agentBackToList: 'Back to agent list',
+      // Breadcrumb label for the agent detail level while its name is unknown
+      // (list not fetched yet, or the agent was deleted). Using the parent's
+      // label instead would read Settings › Agents › Agents.
+      agentDetailTitle: 'Agent details',
       chatInitialMessages: 'Initial Messages',
       chatInitialMessagesDesc: 'Number of history messages loaded on first chat open',
       chatPageSize: 'Page Size',

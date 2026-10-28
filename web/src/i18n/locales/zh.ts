@@ -2870,6 +2870,10 @@ export default {
       agentNotFound: '智能体不存在或已被移除',
       agentNotFoundHint: '它可能已被删除，或在重新扫描后不再可用。返回列表查看当前可用的智能体。',
       agentBackToList: '返回智能体列表',
+      // Breadcrumb label for the agent detail level while its name is unknown
+      // (list not fetched yet, or the agent was deleted). Using the parent's
+      // label instead would read 设置 › 智能体 › 智能体.
+      agentDetailTitle: '智能体详情',
       chatInitialMessages: '初始消息数',
       chatInitialMessagesDesc: '首次加载聊天时获取的历史消息数量',
       chatPageSize: '每页消息数',
