@@ -85,6 +85,7 @@ export default {
     more: 'More',
     settings: 'Settings',
     stats: 'Statistics',
+    hideLeftPane: 'Hide left panel',
     hideChat: 'Hide chat area',
     showChat: 'Show chat area',
   },

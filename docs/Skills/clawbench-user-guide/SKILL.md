@@ -528,7 +528,7 @@ await page.evaluate(async () => {
 1. **代码链接预览的 `enabled` 门控在「预览模式」上，不是全局设置。** `FileManagerContent.vue:900` 传的是 `enabled: computed(() => filePreviewMode.value)`。不开启预览模式，点路径只会跳查看器，浮层永远不弹。**必须先点** `button[title="开启预览模式：单击文件快捷预览"]`。
 2. **浮层根类名不是 `.code-preview-sheet`**（那是移动端 BottomSheet 模式的类）。PC 下实际渲染的是 `.code-preview-header` / `.code-preview-line-row` / `.code-preview-line-code` 等**没有统一根类**的一组元素。判断浮层是否弹出用 `document.querySelectorAll('[class*=code-preview]').length > 0`，不要找单一根节点。
 3. **标注元素在虚拟滚动容器里会被回收**——`el.scrollIntoView()` 后立刻取 `getBoundingClientRect()` 可能拿到 `{x:0,y:0,w:0,h:0}`。滚动与取坐标要在同一次 `page.evaluate` 内完成，或直接用 Playwright 的 `el.click()`。
-4. **聊天区可能被折叠**（`colRight` 宽 0），此时聊天内所有元素尺寸为 0、点击无效。检查 `.wide-dock-bottom .dock-btn` 的 `aria-pressed`，必要时先点它展开。
+4. **聊天区可能被折叠**（`colRight` 宽 0），此时聊天内所有元素尺寸为 0、点击无效。判据是右边缘是否出现 24px 竖条 `[data-action="show-chat"]`——**它只在聊天区折叠时存在**，存在就先点它展开。收起入口是分隔条两侧的 `[data-collapse="left"]` / `[data-collapse="right"]` 把手，需 hover 分隔条才显示，**不要用它们做状态判据**。
 5. **commit 标注点击用「页面内派发 click」最可靠**：`el.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX,clientY}))` 能成功触发跳转；纯 `page.mouse.click` 在虚拟滚动下常落空。
 6. **标注管线在流式期间不运行**——流式中只做纯 Markdown 渲染，回复结束才启动标注。所以截图前必须等流式结束。
 
@@ -732,7 +732,7 @@ if os.path.getsize(out) > 300*1024 and uniq < 60000:   # UI 截图
    **BottomSheet 只用于二级抽屉**（会话搜索/附件/TOC/工具详情/按键配置等 34 处）。
 
 2. **`chat` 不在 `DOCK_TABS` 注册表。**
-   `dockTabs.ts:35` 是 `DockTabId = Exclude<TabId, 'chat'>`；`chat` 是 `App.vue:368` **硬编码的底部 Dock 首项**。宽屏下它反而是 `.wide-dock-bottom` 的独立开关（`App.vue:64-68`）。所以窄屏与宽屏**不是同一份完整注册表**，只有二级项共享 `DOCK_TABS`。
+   `dockTabs.ts:35` 是 `DockTabId = Exclude<TabId, 'chat'>`；`chat` 是窄屏**底部 Dock 硬编码的首项**。宽屏下 Dock 里**完全没有** chat 项——左右面板由分隔条两侧的折叠把手（`SplitDivider` 的 `collapseLeft` / `collapseRight`）收起，聊天区再由右边缘的 24px 竖条 `[data-action="show-chat"]` 恢复（左栏则点任一 Dock 页签恢复）。所以窄屏与宽屏**不是同一份完整注册表**，只有二级项共享 `DOCK_TABS`。
 
 ### 底部 Dock 顺序与角标
 

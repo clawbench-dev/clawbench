@@ -110,6 +110,137 @@ describe('SplitDivider', () => {
   })
 })
 
+describe('SplitDivider — collapse handles', () => {
+  it('renders no handle unless asked', () => {
+    mountDivider()
+    expect(wrapper!.find('.split-view__collapse-btn').exists()).toBe(false)
+  })
+
+  it('renders one handle per requested side, each labelled', () => {
+    mountDivider({ collapseLeft: true, collapseRight: true, collapseLeftTitle: 'Hide files', collapseRightTitle: 'Hide chat' })
+    const left = wrapper!.find('[data-collapse="left"]')
+    const right = wrapper!.find('[data-collapse="right"]')
+    expect(left.attributes('title')).toBe('Hide files')
+    expect(left.attributes('aria-label')).toBe('Hide files')
+    expect(right.attributes('title')).toBe('Hide chat')
+    expect(right.attributes('aria-label')).toBe('Hide chat')
+  })
+
+  it('can render just one side', () => {
+    mountDivider({ collapseRight: true })
+    expect(wrapper!.find('[data-collapse="left"]').exists()).toBe(false)
+    expect(wrapper!.find('[data-collapse="right"]').exists()).toBe(true)
+  })
+
+  it('emits collapse with the side that was clicked', async () => {
+    mountDivider({ collapseLeft: true, collapseRight: true })
+    await wrapper!.find('[data-collapse="left"]').trigger('click')
+    await wrapper!.find('[data-collapse="right"]').trigger('click')
+    expect(wrapper!.emitted('collapse')).toEqual([['left'], ['right']])
+  })
+
+  it('does not start a drag when a handle is pressed', () => {
+    // The handles sit inside the divider, which starts dragging on pointerdown.
+    // Without the stop modifier, pressing one would both begin a resize and
+    // collapse the pane on release.
+    mountDivider({ collapseLeft: true, collapseRight: true })
+    const div = wrapper!.find('.split-view__divider').element as HTMLElement
+    div.setPointerCapture = vi.fn()
+    for (const side of ['left', 'right']) {
+      const btn = wrapper!.find(`[data-collapse="${side}"]`).element as HTMLElement
+      btn.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, button: 0, bubbles: true }))
+    }
+    expect(document.body.classList.contains('split-view-dragging')).toBe(false)
+    expect(wrapper!.emitted('dragstart')).toBeUndefined()
+  })
+
+  it('falls back to a localized label when no title is given', () => {
+    mountDivider({ collapseLeft: true, collapseRight: true })
+    expect(wrapper!.find('[data-collapse="left"]').attributes('title')).toBe(en.common.close)
+    expect(wrapper!.find('[data-collapse="right"]').attributes('title')).toBe(en.common.close)
+  })
+
+  it('points each arrow at the pane it hides', () => {
+    // The glyph must agree with the side: an arrow pointing left on the
+    // right-hand handle would promise the opposite of what the click does.
+    mountDivider({ collapseLeft: true, collapseRight: true })
+    const leftPath = wrapper!.find('[data-collapse="left"] path').attributes('d')
+    const rightPath = wrapper!.find('[data-collapse="right"] path').attributes('d')
+    expect(leftPath).toContain('m15 18-6-6 6-6')
+    expect(rightPath).toContain('m9 18 6-6-6-6')
+  })
+
+  it('flips the arrows for a vertical split (panes on the Y axis)', () => {
+    mountDivider({ orientation: 'vertical', collapseLeft: true, collapseRight: true })
+    expect(wrapper!.find('[data-collapse="left"] path').attributes('d')).toContain('m18 15-6-6-6 6')
+    expect(wrapper!.find('[data-collapse="right"] path').attributes('d')).toContain('m6 9 6 6 6-6')
+  })
+
+  it('keeps the handles invisible and inert at rest', () => {
+    // An invisible hit target floating over the pane edge would swallow clicks
+    // meant for the content next to it, so pointer-events must track opacity.
+    const src = readSource()
+    const style = src.slice(src.indexOf('<style'))
+    const base = style.slice(style.indexOf('.split-view__collapse-btn {'), style.indexOf('}', style.indexOf('.split-view__collapse-btn {')))
+    expect(base).toContain('opacity: 0')
+    expect(base).toContain('pointer-events: none')
+    // Revealed by the divider's hover/focus, and unconditionally on touch
+    // (no hover to reveal it with).
+    expect(style).toMatch(/\.split-view__divider:hover \.split-view__collapse-btn[\s\S]{0,120}pointer-events: auto/)
+    const coarse = style.slice(style.indexOf('@media (pointer: coarse)'))
+    expect(coarse).toContain('.split-view__collapse-btn')
+  })
+
+  it('scales with the UI but stops growing at the cap', () => {
+    // Both halves matter: dropping `--dp` would freeze the handles at scale 1,
+    // and dropping the `min()` lets them reach 40px at 2× — a heavy disc
+    // floating over pane content. The icon and gap are capped with them, else
+    // the glyph keeps growing inside a frozen circle.
+    const src = readSource()
+    const style = src.slice(src.indexOf('<style'))
+    const base = style.slice(style.indexOf('.split-view__collapse-btn {'), style.indexOf('}', style.indexOf('.split-view__collapse-btn {')))
+    expect(base).toMatch(/width:\s*min\(calc\(20 \* var\(--dp\)\), 28px\)/)
+    expect(base).toMatch(/height:\s*min\(calc\(20 \* var\(--dp\)\), 28px\)/)
+    const svg = style.slice(style.indexOf('.split-view__collapse-btn svg'), style.indexOf('}', style.indexOf('.split-view__collapse-btn svg')))
+    expect(svg).toMatch(/width:\s*min\(calc\(12 \* var\(--dp\)\), 16px\)/)
+    // The offset is capped too, or the pair drifts off the line on a big scale.
+    expect(style).toMatch(/translate\(calc\(-100% - min\(var\(--space-2\), 6px\)\), -50%\)/)
+    expect(style).toMatch(/translate\(min\(var\(--space-2\), 6px\), -50%\)/)
+    // Touch gets a bigger cap: a finger cannot hit 28px comfortably.
+    const coarse = style.slice(style.indexOf('@media (pointer: coarse)'))
+    expect(coarse).toMatch(/width:\s*min\(calc\(26 \* var\(--dp\)\), 34px\)/)
+  })
+
+  it('does not rely on a fixed background step for contrast', () => {
+    // Design-guide red line 4: `--bg-tertiary` is not reliably distinguishable
+    // from `--bg-secondary` (15 of 36 themes are under 1.12, ayu-dark 1.062),
+    // and the panes on either side are `--bg-secondary`. The fill must mix
+    // `--text-primary` into the pane colour so the direction of the step is
+    // guaranteed, and the ring must not lean on `--border-color` either.
+    const src = readSource()
+    const style = src.slice(src.indexOf('<style'))
+    const base = style.slice(style.indexOf('.split-view__collapse-btn {'), style.indexOf('}', style.indexOf('.split-view__collapse-btn {')))
+    expect(base).toMatch(/background:\s*color-mix\(in srgb, var\(--text-primary\) 26%, var\(--bg-secondary\)\)/)
+    expect(base).toMatch(/border:\s*1px solid color-mix\(in srgb, var\(--text-primary\) 90%, transparent\)/)
+    expect(base, 'the fill must not be a bare bg token').not.toMatch(/background:\s*var\(--bg-/)
+    expect(base, 'the ring must not be a bare border token').not.toMatch(/border:\s*1px solid var\(--border-color/)
+    // The glyph keeps full text-primary; a muted secondary would drop it below
+    // the 3:1 an icon needs on the tinted fill.
+    expect(base).toContain('color: var(--text-primary)')
+  })
+
+  it('places the handles on opposite sides of the line for each orientation', () => {
+    // A single centred handle could not express "hide left" vs "hide right";
+    // both offsets are per-orientation because the panes swap axes.
+    const src = readSource()
+    const style = src.slice(src.indexOf('<style'))
+    expect(style).toMatch(/\.split-view__divider--horizontal \.split-view__collapse-btn--first\s*\{[^}]*left:\s*0;[^}]*translate\(calc\(-100% - min\(var\(--space-2\), 6px\)\)/)
+    expect(style).toMatch(/\.split-view__divider--horizontal \.split-view__collapse-btn--second\s*\{[^}]*left:\s*100%;[^}]*translate\(min\(var\(--space-2\), 6px\)/)
+    expect(style).toMatch(/\.split-view__divider--vertical \.split-view__collapse-btn--first\s*\{[^}]*top:\s*0;[^}]*translate\(-50%, calc\(-100% - min\(var\(--space-2\), 6px\)\)/)
+    expect(style).toMatch(/\.split-view__divider--vertical \.split-view__collapse-btn--second\s*\{[^}]*top:\s*100%;[^}]*translate\(-50%, min\(var\(--space-2\), 6px\)\)/)
+  })
+})
+
 describe('SplitDivider — vertical orientation', () => {
   it('renders a row-resize divider with horizontal separator semantics', () => {
     mountDivider({ orientation: 'vertical' })

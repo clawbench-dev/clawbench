@@ -21,10 +21,15 @@
       v-if="enabled && !collapsed && !rightCollapsed"
       :orientation="orientation"
       :title="title"
+      :collapse-left="collapseLeft"
+      :collapse-right="collapseRight"
+      :collapse-left-title="collapseLeftTitle"
+      :collapse-right-title="collapseRightTitle"
       :aria-value-now="ariaValueNow"
       :aria-value-min="ariaValueMin"
       :aria-value-max="ariaValueMax"
       @dragmove="onMove"
+      @collapse="emit('collapse', $event)"
     />
     <div class="split-view__right split-view__second" :class="{ 'split-view__right--collapsed': enabled && rightCollapsed }">
       <slot v-if="isVertical" name="bottom" />
@@ -51,6 +56,13 @@ const props = withDefaults(defineProps<{
   title?: string
   collapsed?: boolean
   rightCollapsed?: boolean
+  /** Show a collapse handle on the FIRST-pane side of the divider. */
+  collapseLeft?: boolean
+  /** Show a collapse handle on the SECOND-pane side of the divider. */
+  collapseRight?: boolean
+  /** Tooltips for those handles. */
+  collapseLeftTitle?: string
+  collapseRightTitle?: string
 }>(), {
   orientation: 'horizontal',
   ratio: 0.5,
@@ -59,9 +71,14 @@ const props = withDefaults(defineProps<{
   gutterSize: 1,
   collapsed: false,
   rightCollapsed: false,
+  collapseLeft: false,
+  collapseRight: false,
 })
 
-const emit = defineEmits<{ (e: 'update:ratio', ratio: number): void }>()
+const emit = defineEmits<{
+  (e: 'update:ratio', ratio: number): void
+  (e: 'collapse', side: 'left' | 'right'): void
+}>()
 
 const isVertical = computed(() => props.orientation === 'vertical')
 

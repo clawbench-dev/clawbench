@@ -85,6 +85,7 @@ export default {
     more: '更多',
     settings: '设置',
     stats: '数据统计',
+    hideLeftPane: '隐藏左侧面板',
     hideChat: '隐藏聊天区域',
     showChat: '显示聊天区域',
   },

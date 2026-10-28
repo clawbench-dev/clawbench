@@ -82,21 +82,20 @@
               <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
             </div>
           </div>
-          <!-- Chat visibility toggle pinned to the bottom of the vertical dock -->
-          <div class="wide-dock-bottom">
-            <button class="dock-btn" data-tab="chat" :class="{ active: !chatCollapsed }" @click.stop="handleWideDockChatToggle" :title="chatToggleTitle" :aria-label="chatToggleTitle" :aria-pressed="!chatCollapsed">
-              <component :is="chatCollapsed ? MessageSquareOff : MessageSquare" />
-            </button>
-          </div>
         </div>
 
-        <div class="content-area" id="contentArea">
+        <div class="content-area" id="contentArea" :class="{ 'has-chat-rail': isWideScreen && chatCollapsed }">
           <SplitView
             :enabled="isWideScreen"
             :ratio="splitRatio"
             :collapsed="leftCollapsed"
             :right-collapsed="chatCollapsed && isWideScreen"
+            :collapse-left="isWideScreen"
+            :collapse-right="isWideScreen"
+            :collapse-left-title="t('nav.hideLeftPane')"
+            :collapse-right-title="t('nav.hideChat')"
             @update:ratio="onSplitRatioChange"
+            @collapse="onSplitCollapse"
           >
             <template #left>
               <div class="col-left" v-show="isWideScreen || activeTab !== 'chat'" @pointerdown="onLeftPanePointerDown" @focusin="setActivePane('left')">
@@ -381,6 +380,27 @@
               </div>
             </template>
           </SplitView>
+
+          <!-- Collapsed-chat rail. When the chat pane is hidden it is
+               `display:none`, so this 24px strip at the right edge is the ONLY
+               thing left of it — and therefore the only way back. Keeping a
+               sliver (rather than a floating button) is what makes the pane
+               read as "pushed aside" instead of "gone": it preserves the
+               boundary the user just collapsed, and the unread count stays
+               visible while the conversation is out of sight. -->
+          <button
+            v-if="isWideScreen && chatCollapsed"
+            class="chat-rail"
+            data-action="show-chat"
+            :title="t('nav.showChat')"
+            :aria-label="t('nav.showChat')"
+            @click.stop="toggleChatPane"
+          >
+            <span class="chat-rail-icon">
+              <MessageSquare />
+              <span v-if="store.state.chatUnreadCount > 0" class="count-badge chat-rail-badge">{{ formatBadgeCount(store.state.chatUnreadCount) }}</span>
+            </span>
+          </button>
         </div>
       </main>
 
@@ -592,7 +612,7 @@ import { maybePromptStartupUIScale } from '@/composables/useStartupUIScalePrompt
 import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 import { useAnimatedWallpaperParams } from '@/composables/useAnimatedWallpaperParams'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab, PencilLine } from 'lucide-vue-next'
+import { MessageSquare, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab, PencilLine } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -1100,11 +1120,29 @@ function onSplitRatioChange(ratio: number) {
   setSplitRatio(ratio)
 }
 
-// Chat visibility toggle (wide-screen dock bottom button): hide → the chat pane
-// is removed and the left pane takes the full width; show → the split view is
-// restored. Hiding routes focus to the left pane so the user keeps working
-// there (chat shortcuts are intentionally inactive while hidden).
-function handleWideDockChatToggle() {
+// Divider collapse handles: one per side of the boundary.
+//  - 'right' hides the chat pane; focus moves to the left pane so the user keeps
+//    working there (chat shortcuts are intentionally inactive while hidden).
+//  - 'left' hides the left pane. That is the same action as clicking the active
+//    dock tab again, and it goes through the same setter, so the mutual-exclusion
+//    guard (never both panes hidden) lives in exactly one place.
+// Showing the chat pane again is the rail's job: with the pane `display:none`
+// there is no divider left to put a handle on.
+function onSplitCollapse(side: 'left' | 'right') {
+  if (side === 'right') {
+    setChatCollapsed(true)
+    setActivePane(PANE_LEFT)
+    return
+  }
+  setLeftCollapsed(true)
+  setActivePane(PANE_RIGHT)
+}
+
+// Chat visibility toggle, driven by the right-edge rail: show → the split view
+// is restored; hide → the chat pane is removed and the left pane takes the full
+// width. Hiding routes focus to the left pane so the user keeps working there
+// (chat shortcuts are intentionally inactive while hidden).
+function toggleChatPane() {
   const hiding = !chatCollapsed.value
   setChatCollapsed(hiding)
   if (hiding) setActivePane(PANE_LEFT)
@@ -3505,8 +3543,6 @@ function wideDockTabIcon(tab: string) {
   if (tab === 'forge') return dockTabIcon('forge')
   return dockTabMeta(tab)?.icon ?? FolderOpen
 }
-/** Chat toggle button tooltip: points at the action that will happen on click. */
-const chatToggleTitle = computed(() => (chatCollapsed.value ? t('nav.showChat') : t('nav.hideChat')))
 function wideDockBtnClass(tab: string) {
   return {
     // When the left pane is collapsed no dock tab is active (VS Code-style).
@@ -4817,15 +4853,90 @@ onUnmounted(() => {
     display: none;
 }
 
-/* Bottom section of the vertical dock: chat visibility toggle. The tab group
-   (.wide-dock-center) grows and scrolls; this stays pinned at the bottom. */
-.wide-dock-bottom {
-    flex-shrink: 0;
-    margin-top: auto;
-    padding-bottom: var(--space-4);
+/* Collapsed-chat rail — the 24px strip left at the right edge when the chat
+   pane is hidden. It replaces a floating restore button: a rail keeps the
+   boundary the user just collapsed, so the pane reads as "pushed aside"
+   rather than "gone", and it leaves room for the unread count.
+
+   Positioned over `.content-area` (the SplitView already fills it, and the
+   right pane is `display:none`), so it occupies the exact edge the chat pane
+   used to sit on. `--dp`-based width so it follows the interface scale, but
+   capped: the rail is a target, not content, and 24px is already narrow — at
+   2× it must not eat 48px of the editor.
+
+   Colour follows the same recipe as the divider handles: mix `--text-primary`
+   into the pane colour instead of assuming `--bg-tertiary` differs from
+   `--bg-secondary` (design-guide red line 4). */
+.chat-rail {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 4;
+    width: min(calc(24 * var(--dp)), 30px);
+    padding: 0;
     display: flex;
-    flex-direction: column;
     align-items: center;
+    justify-content: center;
+    border: none;
+    border-left: 1px solid color-mix(in srgb, var(--text-primary) 22%, transparent);
+    background: color-mix(in srgb, var(--text-primary) 6%, var(--bg-secondary));
+    color: var(--text-secondary);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background var(--duration-base), color var(--duration-base);
+}
+/* The icon sits at the vertical centre, where the eye lands, and stays put
+   when the badge appears — the badge is absolutely positioned around it
+   instead of joining the flex flow. */
+.chat-rail-icon {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.chat-rail-icon svg {
+    width: calc(16 * var(--dp));
+    height: calc(16 * var(--dp));
+}
+/* Unread count above the icon, centred inside the rail.
+   The rail is only 24px wide and flush against the viewport edge, so neither of
+   the dock's conventions works here: hanging the badge off the icon's right
+   (`right: -6dp`, what `.dock-badge-count` does) would clip it against the
+   window edge, and growing it leftwards would spill over the panel content the
+   rail sits next to. Stacking it above the icon keeps every part of the
+   affordance inside the rail — which is also why the padding is tightened:
+   the widest case ("99+") is 25px at the shared `.count-badge` metrics and must
+   fit in 24. */
+.chat-rail-badge {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + var(--space-1));
+    transform: translateX(-50%);
+    padding: 0 1px;
+    background: var(--accent-color);
+    color: var(--bg-primary);
+    font-weight: var(--font-weight-bold);
+    pointer-events: none;
+}
+@media (hover: hover) {
+    .chat-rail:hover {
+        color: var(--accent-color);
+        background: color-mix(in srgb, var(--accent-color) 12%, var(--bg-secondary));
+    }
+}
+.chat-rail:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: -2px;
+}
+
+/* The rail is an overlay on the content area's right edge, so the pane under
+   it must give up exactly that width — otherwise the rail covers the last 24px
+   of whatever the left pane is showing (a file list's rightmost column, a
+   terminal's last characters). Padding (not a smaller SplitView) keeps the
+   divider geometry untouched while the chat pane is hidden. */
+.content-area.has-chat-rail {
+    padding-right: min(calc(24 * var(--dp)), 30px);
 }
 
 /* VS Code activity-bar style active highlight: faint translucent theme tint
