@@ -3816,7 +3816,7 @@ export default {
     starting: 'Starting…',
     copyLink: 'Copy link',
     linkHint: 'Anyone with this link can watch in a browser without signing in. Same local network only.',
-    audience: 'Viewers',
+    audienceCount: 'Viewers ({count})',
     noViewers: 'Nobody has joined yet. Send the link above to your colleagues.',
     allowTalking: 'Allow viewers to speak',
     allowTalkingHint: 'Viewers can turn their microphone on themselves. You can mute anyone, or everyone, at any time. Viewers can hear each other.',

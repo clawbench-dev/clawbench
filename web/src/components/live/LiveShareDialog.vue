@@ -43,25 +43,14 @@
             <input v-model="withMicrophone" type="checkbox" />
             <span>{{ t('liveShare.includeMicrophone') }}</span>
           </label>
-
-          <div class="live-dialog-actions">
-            <button class="live-btn" type="button" @click="onClose">{{ t('common.cancel') }}</button>
-            <button
-              class="live-btn live-btn--primary"
-              type="button"
-              :disabled="!selectedSourceId || starting"
-              @click="onStart"
-            >
-              {{ starting ? t('liveShare.starting') : t('liveShare.start') }}
-            </button>
-          </div>
         </template>
       </template>
 
-      <!-- Capturing: brief, but a spinner beats a frozen dialog. -->
-      <div v-else-if="share.state.value === 'capturing'" class="live-dialog-hint">
-        <LoadingIndicator size="sm" inline />
-        {{ t('liveShare.starting') }}
+      <!-- Capturing: brief, but a spinner beats a frozen dialog. Centered in
+           the card — as a plain hint it rendered as 11px text hugging the
+           top-left corner of a mostly empty panel. -->
+      <div v-else-if="share.state.value === 'capturing'" class="live-dialog-loading">
+        <LoadingIndicator :label="t('liveShare.starting')" size="lg" />
       </div>
 
       <!-- Publishing: link + audience + speech controls. -->
@@ -73,7 +62,7 @@
         <div class="live-dialog-hint">{{ t('liveShare.linkHint') }}</div>
 
         <div class="live-dialog-section">
-          {{ t('liveShare.audience') }}（{{ share.viewers.value.length }}）
+          {{ t('liveShare.audienceCount', { count: share.viewers.value.length }) }}
         </div>
         <div v-if="share.viewers.value.length === 0" class="live-dialog-hint">
           {{ t('liveShare.noViewers') }}
@@ -125,14 +114,33 @@
         </button>
 
         <div v-if="share.error.value" class="live-dialog-error">{{ share.error.value }}</div>
-
-        <div class="live-dialog-actions">
-          <button class="live-btn live-btn--danger" type="button" @click="onStop">
-            {{ t('liveShare.stop') }}
-          </button>
-        </div>
       </template>
     </div>
+    <!-- Actions live in ModalDialog's footer, like every other dialog: it
+         already supplies padding, a separating border and the tinted bar. In
+         the body they were flush against the bottom edge with no divider. -->
+    <template #footer>
+      <button class="fbtn" type="button" @click="onClose">
+        {{ t('common.cancel') }}
+      </button>
+      <button
+        v-if="share.state.value === 'idle' && supported"
+        class="fbtn fbtn-primary"
+        type="button"
+        :disabled="!selectedSourceId || starting"
+        @click="onStart"
+      >
+        {{ starting ? t('liveShare.starting') : t('liveShare.start') }}
+      </button>
+      <button
+        v-else-if="share.state.value === 'publishing'"
+        class="fbtn fbtn-danger"
+        type="button"
+        @click="onStop"
+      >
+        {{ t('liveShare.stop') }}
+      </button>
+    </template>
   </ModalDialog>
 </template>
 
@@ -158,6 +166,7 @@ import {
   type CaptureSource,
 } from '@/composables/useLiveShare'
 import { appLog } from '@/utils/appLog'
+import '@/assets/modal-footer-btn.css'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -243,31 +252,65 @@ function onClose(): void {
 </script>
 
 <style scoped>
+/*
+ * The shared .modal-body is padding-free by design (modal-card.css) — each
+ * dialog supplies its own. This one did not, so the link field and the source
+ * grid sat flush against the card edges. The values match SessionShareDialog so
+ * the two share dialogs line up when opened side by side.
+ */
 .live-dialog {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4, 8px);
+  gap: var(--space-5, 10px);
   min-width: 0;
+  padding: var(--space-6, 12px) var(--space-7, 16px);
+  /* A floor on the height keeps the card from jumping when the body switches
+     between "pick a source" and the (shorter) publishing view. */
+  min-height: calc(210 * var(--dp));
 }
 
 .live-dialog-section {
   font-size: var(--font-size-sm, 13px);
   font-weight: 600;
   color: var(--text-primary, #1f2328);
+  /* Air above a heading only: the flex gap already separates it from the
+     content it introduces. */
   margin-top: var(--space-2, 4px);
+}
+
+/* A hairline above every section except the first turns a flat list of lines
+   into blocks. The first one is skipped because a rule directly under the
+   dialog's top padding reads as a stray border. */
+.live-dialog-section:not(:first-child) {
+  margin-top: var(--space-3, 6px);
+  padding-top: var(--space-5, 10px);
+  border-top: 1px solid var(--border-color, #e5e5e5);
 }
 
 .live-dialog-hint {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2, 4px);
   font-size: var(--font-size-xs, 11px);
   color: var(--text-muted, #656d76);
   line-height: 1.6;
 }
 
+/* Indented hints belong to the checkbox above them. The indent matches the
+   checkbox box plus its gap so the text starts under the label, not the box. */
 .live-dialog-hint--indent {
-  padding-left: 22px;
+  padding-left: calc(16 * var(--dp));
+}
+
+/* A blocking "please wait" state gets the whole card, centred. The dialog
+   already reserves a min-height, so this only has to claim that space. */
+.live-dialog-loading {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(170 * var(--dp));
+  color: var(--text-muted, #656d76);
 }
 
 .live-dialog-warn {
@@ -276,6 +319,7 @@ function onClose(): void {
   background: var(--bg-tertiary, #f6f8fa);
   color: var(--text-muted, #656d76);
   font-size: var(--font-size-sm, 13px);
+  line-height: 1.6;
 }
 
 .live-dialog-error {
@@ -289,24 +333,38 @@ function onClose(): void {
   overflow-wrap: anywhere;
 }
 
+/* ── Source picker ─────────────────────────────────────────────────────── */
+
 .live-source-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: var(--space-4, 8px);
   max-height: 240px;
   overflow-y: auto;
+  /* Room for the active card's ring, which would otherwise be clipped by the
+     scroll container on the first and last column. */
+  padding: 2px;
 }
 
 .live-source {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px;
+  gap: var(--space-2, 4px);
+  padding: var(--space-3, 6px);
   border-radius: var(--radius-md, 6px);
   border: 1px solid var(--border-color, #d0d7de);
   background: var(--bg-secondary, #fff);
   cursor: pointer;
   min-width: 0;
+  text-align: left;
+  transition:
+    border-color var(--duration-fast, 0.1s) ease,
+    box-shadow var(--duration-fast, 0.1s) ease,
+    background var(--duration-fast, 0.1s) ease;
+}
+
+.live-source:hover {
+  border-color: var(--accent-color, #0969da);
 }
 
 .live-source--active {
@@ -334,31 +392,26 @@ function onClose(): void {
   white-space: nowrap;
 }
 
+/* ── Checkbox rows ─────────────────────────────────────────────────────── */
+
 .live-check {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2, 4px);
   font-size: var(--font-size-sm, 13px);
   color: var(--text-primary, #1f2328);
   cursor: pointer;
+  /* The checkbox is the click target; the label is part of it. Padding gives
+     the row a comfortable hit area without shifting the text off the grid. */
+  padding: var(--space-1, 2px) 0;
 }
 
-.live-dialog-link {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.live-check input[type='checkbox'] {
+  margin: 0;
+  flex-shrink: 0;
 }
 
-.live-dialog-link-input {
-  flex: 1;
-  min-width: 0;
-  padding: 6px 10px;
-  border-radius: var(--radius-md, 6px);
-  border: 1px solid var(--border-color, #d0d7de);
-  background: var(--bg-secondary, #fff);
-  color: var(--text-primary, #1f2328);
-  font-size: var(--font-size-sm, 13px);
-}
+/* ── Audience ──────────────────────────────────────────────────────────── */
 
 .live-viewer-list {
   list-style: none;
@@ -366,7 +419,7 @@ function onClose(): void {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2, 4px);
   max-height: 180px;
   overflow-y: auto;
 }
@@ -374,8 +427,8 @@ function onClose(): void {
 .live-viewer {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
+  gap: var(--space-3, 6px);
+  padding: var(--space-2, 4px) var(--space-4, 8px);
   border-radius: var(--radius-sm, 4px);
   background: var(--bg-tertiary, #f6f8fa);
   font-size: var(--font-size-sm, 13px);
@@ -401,21 +454,36 @@ function onClose(): void {
   color: var(--color-yellow, #9a6700);
 }
 
-.live-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-4, 8px);
-  margin-top: var(--space-4, 8px);
+/* ── In-body actions ───────────────────────────────────────────────────── */
+
+/*
+ * Only contextual, small actions live in the body (mute this viewer, mute
+ * everyone). Primary/confirm actions use the shared .fbtn in ModalDialog's
+ * footer, so they stay consistent with every other dialog.
+ */
+.live-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2, 4px);
+  padding: var(--space-2, 4px) var(--space-5, 10px);
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid color-mix(in srgb, var(--text-secondary, #4b5563) 35%, transparent);
+  background: var(--bg-secondary, #fff);
+  color: var(--text-secondary, #4b5563);
+  font-size: var(--font-size-xs, 11px);
+  line-height: 1.6;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--duration-fast, 0.1s) ease,
+    border-color var(--duration-fast, 0.1s) ease,
+    color var(--duration-fast, 0.1s) ease;
 }
 
-.live-btn {
-  padding: 6px 14px;
-  border-radius: var(--radius-md, 6px);
-  border: 1px solid var(--border-color, #d0d7de);
-  background: var(--bg-secondary, #fff);
+.live-btn:hover:not(:disabled) {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.04));
   color: var(--text-primary, #1f2328);
-  font-size: var(--font-size-sm, 13px);
-  cursor: pointer;
 }
 
 .live-btn:disabled {
@@ -424,18 +492,24 @@ function onClose(): void {
 }
 
 .live-btn--sm {
-  padding: 2px 8px;
+  padding: 0 var(--space-3, 6px);
   font-size: var(--font-size-xs, 11px);
 }
 
-.live-btn--primary {
-  background: var(--accent-color, #0969da);
-  border-color: var(--accent-color, #0969da);
-  color: #fff;
+.live-btn--danger {
+  border-color: color-mix(in srgb, var(--color-red, #cf222e) 45%, transparent);
+  color: var(--color-red, #cf222e);
+  background: transparent;
 }
 
-.live-btn--danger {
+.live-btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-red, #cf222e) 10%, transparent);
   color: var(--color-red, #cf222e);
-  border-color: currentColor;
+}
+
+/* The "mute everyone" control sits under the audience block, so it needs its
+   own left alignment rather than the flex-end the footer uses. */
+.live-dialog > .live-btn {
+  align-self: flex-start;
 }
 </style>

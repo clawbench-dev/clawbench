@@ -237,21 +237,6 @@
       </div>
     </Teleport>
 
-    <!-- Live screen share. Desktop shell only: it needs Electron's capture
-         APIs, and system audio is Windows-only. The button stays visible while
-         publishing so the user can reopen the dialog after closing it. -->
-    <button
-      v-if="canLiveShare"
-      class="theme-quick-toggle live-share-toggle"
-      :class="{ 'live-share-toggle--active': liveShareState !== 'idle' }"
-      :title="liveShareState === 'idle' ? t('liveShare.button') : t('liveShare.live')"
-      :aria-label="liveShareState === 'idle' ? t('liveShare.button') : t('liveShare.live')"
-      data-action="live-share"
-      @click="openLiveShare"
-    >
-      <MonitorUp :size="18" />
-    </button>
-
     <!-- Quick theme picker -->
     <button ref="themeBtnRef" class="theme-quick-toggle" :title="t('appHeader.themePicker')" :aria-label="t('appHeader.themePicker')" @click="toggleThemeMenu">
       <Palette :size="18" />
@@ -288,6 +273,22 @@
         </div>
       </div>
     </PopupMenu>
+
+    <!-- Live screen share. Sits between the theme picker and the server
+         button. Desktop shell only: it needs Electron's capture APIs, and
+         system audio is Windows-only. The button stays visible while
+         publishing so the user can reopen the dialog after closing it. -->
+    <button
+      v-if="canLiveShare"
+      class="theme-quick-toggle live-share-toggle"
+      :class="{ 'live-share-toggle--active': liveShareState !== 'idle' }"
+      :title="liveShareState === 'idle' ? t('liveShare.button') : t('liveShare.live')"
+      :aria-label="liveShareState === 'idle' ? t('liveShare.button') : t('liveShare.live')"
+      data-action="live-share"
+      @click="openLiveShare"
+    >
+      <MonitorUp :size="18" />
+    </button>
 
     <!-- Server button: merged gauge + status dot. Icon color reflects connection status -->
     <button ref="serverBtnRef" class="server-toggle" :class="[statusDotClass, { 'pressure-alert': isUnderPressure && showMetricIcon }]" @click="toggleResourcesMenu" :title="t('systemResources.title')">
@@ -1261,12 +1262,22 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     flex-shrink: 0;
 }
 
-/* Shares .theme-quick-toggle's geometry but must NOT inherit its
-   `margin-left: auto`: two auto margins would split the header's slack and
-   strand this button in the middle (see the comment on .theme-quick-toggle).
-   It sits immediately left of the theme button instead. */
-.live-share-toggle {
-    margin-left: 0;
+/*
+ * Geometry comes from .theme-quick-toggle, but the margin does NOT: that class
+ * carries `margin-left: auto` to push the right-hand cluster against the edge,
+ * which would strand this button in the middle of the header now that it sits
+ * between the theme picker and the server button.
+ *
+ * -8dp is the gap the server button already uses to tuck up against its
+ * neighbour, so the theme → share → server rhythm matches the old
+ * theme → server rhythm instead of inventing a third spacing.
+ *
+ * The selector is doubled because .theme-quick-toggle sets `margin-left: auto`
+ * at the same specificity but LATER in this file — a bare .live-share-toggle
+ * rule would lose to it.
+ */
+.theme-quick-toggle.live-share-toggle {
+    margin-left: calc(-8 * var(--dp));
     position: relative;
 }
 

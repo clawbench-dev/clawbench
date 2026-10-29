@@ -3811,7 +3811,7 @@ export default {
     starting: '正在启动…',
     copyLink: '复制链接',
     linkHint: '任何拿到链接的人都可以在浏览器中观看，无需登录。仅限同一局域网。',
-    audience: '观众',
+    audienceCount: '观众（{count}）',
     noViewers: '还没有人加入。把上面的链接发给同事即可。',
     allowTalking: '允许观众发言',
     allowTalkingHint: '开启后观众可自行打开麦克风发言，你随时可以静音某个人或全部静音。观众之间可以互相听到。',
