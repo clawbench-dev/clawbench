@@ -1269,6 +1269,31 @@ function scrollToBottomSmooth() {
   // Ownership released by onScrollStopped when the smooth scroll settles.
 }
 
+/**
+ * Bring the in-flight reply into view.
+ *
+ * Falls back to the bottom when no streaming bubble is mounted (the turn ended
+ * between the click and this call), so the control never does nothing.
+ */
+function scrollToStreamingMessage() {
+  const el = messagesRef.value
+  if (!el) return
+  const target = el.querySelector('.chat-messages-list > .chat-message[data-streaming="true"]')
+  if (!target) {
+    scrollToBottomSmooth()
+    return
+  }
+  hideScrollFab()
+  // Same latch the index drawer sets: the reader deliberately left the bottom,
+  // so streaming must not yank the view back down mid-scroll.
+  isAtBottom.value = false
+  userLeftBottom = true
+  setProgrammatic(true)
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  queueMessageHighlight(target)
+  // Ownership released by onScrollStopped when the smooth scroll settles.
+}
+
 // ── User message index ──
 const {
   userMsgIndexList,
@@ -1819,10 +1844,12 @@ defineExpose({
   getRailSpeakerResolver: () => resolveIndexSpeaker,
   getBtwAnchorLookup: () => hasBtwAnchor,
   getMessagesEl,
-  // The rail's pending slot has no index row to jump to, so the host answers
-  // "show me the reply that is being written" with the one control that already
-  // means that: scroll to the bottom, where the streaming bubble lives.
-  scrollToGenerating: () => scrollToBottomSmooth(),
+  // The rail's pending slot has no index row, so this targets the streaming
+  // bubble by its own marker instead of "scroll to the bottom": while a reply is
+  // growing, the bottom keeps moving and a smooth bottom-scroll can be overtaken
+  // by the next chunk. Scrolling to the element itself lands where the reader
+  // asked, and the follow-pin resumes on its own afterwards.
+  scrollToGenerating: () => scrollToStreamingMessage(),
 })
 </script>
 

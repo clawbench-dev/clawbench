@@ -174,6 +174,7 @@
       :bottom-inset="railBottomInset"
       :generating="railGenerating"
       @select="handleRailSelect"
+      @select-pending="handleRailSelectPending"
     />
 
   </div>
@@ -1524,6 +1525,16 @@ function observeComposer() {
 
 function handleRailSelect(msg) {
   messageListRef.value?.jumpToUserMessage(msg)
+}
+
+/**
+ * The pending node has no index row, so `select` cannot carry it: the host
+ * answers "show me the reply being written" instead. This is the ONLY consumer
+ * of `scrollToGenerating` — without the binding the click emitted into nothing
+ * and the node looked dead.
+ */
+function handleRailSelectPending() {
+  messageListRef.value?.scrollToGenerating()
 }
 
 /**

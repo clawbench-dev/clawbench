@@ -61,6 +61,25 @@ function scrollerWithPadding(px: number) {
   return el
 }
 
+/**
+ * jsdom reports every rect as 0, so the rail has to be given a real track
+ * height for the overflow maths to mean anything. `measure()` reads the
+ * PARENT's box, so the component is mounted into a host whose rect is stubbed
+ * — mounting straight onto <body> would leave the parent reporting 0.
+ */
+function mountWithTrack(count: number, props: Record<string, unknown> = {}) {
+  const w = mountRail({ messages: rows(count), ...props })
+  // The component renders two roots (rail + card), so VTU wraps them; the
+  // rail's ACTUAL parent is what `measure()` reads, and that wrapper is not
+  // the mount target. Stub it where it lives.
+  const host = w.find('.msg-rail').element.parentElement as HTMLElement
+  Object.defineProperty(host, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => ({ top: 0, bottom: 300, left: 0, right: 100, width: 100, height: 300, x: 0, y: 0, toJSON: () => ({}) }),
+  })
+  return w
+}
+
 beforeEach(() => {
   document.body.innerHTML = ''
 })
@@ -168,25 +187,6 @@ describe('ChatMessageRail — connector', () => {
 })
 
 describe('ChatMessageRail — edge fades follow the actual overflow', () => {
-  /**
-   * jsdom reports every rect as 0, so the rail has to be given a real track
-   * height for the overflow maths to mean anything. `measure()` reads the
-   * PARENT's box, so the component is mounted into a host whose rect is stubbed
-   * — mounting straight onto <body> would leave the parent reporting 0.
-   */
-  function mountWithTrack(count: number) {
-    const w = mountRail({ messages: rows(count) })
-    // The component renders two roots (rail + card), so VTU wraps them; the
-    // rail's ACTUAL parent is what `measure()` reads, and that wrapper is not
-    // the mount target. Stub it where it lives.
-    const host = w.find('.msg-rail').element.parentElement as HTMLElement
-    Object.defineProperty(host, 'getBoundingClientRect', {
-      configurable: true,
-      value: () => ({ top: 0, bottom: 300, left: 0, right: 100, width: 100, height: 300, x: 0, y: 0, toJSON: () => ({}) }),
-    })
-    return w
-  }
-
   it('fades the bottom only while rows are still hidden below', async () => {
     const w = mountWithTrack(40)
     await w.vm.refresh()
@@ -226,7 +226,7 @@ describe('ChatMessageRail — edge fades follow the actual overflow', () => {
 describe('ChatMessageRail — pending (in-flight reply) node', () => {
   it('adds no pending slot when nothing is being written', () => {
     const w = mountRail()
-    expect(w.findAll('.msg-rail-pending')).toHaveLength(0)
+    expect(w.findAll('.msg-rail-node--pending')).toHaveLength(0)
     expect(w.findAll('.msg-rail-node')).toHaveLength(5)
   })
 
@@ -234,8 +234,9 @@ describe('ChatMessageRail — pending (in-flight reply) node', () => {
     const w = mountRail({ generating: true })
     // The index only lists finalized messages, so this slot is the ONLY thing
     // that tells the reader a turn is still running.
-    expect(w.findAll('.msg-rail-pending')).toHaveLength(1)
-    expect(w.findAll('.msg-rail-node')).toHaveLength(5)
+    expect(w.findAll('.msg-rail-node--pending')).toHaveLength(1)
+    // …and it is an ordinary MessageIndexRow node, not a bespoke marker.
+    expect(w.findAll('.msg-rail-node')).toHaveLength(6)
   })
 
   it('shows a pending row in the card too, so the axis stays row-aligned', () => {
@@ -243,21 +244,21 @@ describe('ChatMessageRail — pending (in-flight reply) node', () => {
     // A node with no row would be an orphan number; the pending slot must appear
     // on BOTH layers, exactly like a numbered one.
     expect(w.findAll('.msg-rail-row--pending')).toHaveLength(1)
-    expect(w.findAll('.msg-rail-row:not(.msg-rail-row--pending)')).toHaveLength(5)
+    expect(w.findAll('.msg-rail-row')).toHaveLength(6)
   })
 
-  it('carries no ordinal — the pending reply has no index row yet', () => {
+  it('shows the ordinal the reply will get, through the shared node', () => {
     const w = mountRail({ generating: true })
-    const pending = w.find('.msg-rail-pending')
-    expect(pending.text()).toBe('')
-    expect(pending.attributes('title')).toBe('Replying')
+    const pending = w.find('.msg-rail-node--pending')
+    expect(pending.find('.msg-index').text()).toBe('6')
+    expect(pending.classes()).toContain('msg-item--node')
   })
 
   it('is clickable and asks the host to reveal the in-flight reply', async () => {
     const w = mountRail({ generating: true })
     // It has no index row, so it cannot go through `select` — a dedicated event
     // lets the host answer with "jump to the streaming bubble".
-    await w.find('.msg-rail-pending').trigger('click')
+    await w.find('.msg-rail-node--pending').trigger('click')
     expect(w.emitted('select')).toBeUndefined()
     expect(w.emitted('select-pending')).toHaveLength(1)
   })
@@ -268,12 +269,38 @@ describe('ChatMessageRail — pending (in-flight reply) node', () => {
     expect(w.emitted('select-pending')).toHaveLength(1)
   })
 
+  it('keeps the pending slot inside the axis while a reply streams', async () => {
+    // The regression: while generating, the axis tracked the ACTIVE message —
+    // the last FINALIZED one, whose row then sits on the bottom edge, putting
+    // the pending slot exactly one row lower: outside the clip box, so it was
+    // invisible AND unclickable (`elementFromPoint` at its centre hit the panel
+    // behind it). With the reader on the tail, the slot must stay on screen.
+    const w = mountWithTrack(40, { activeId: 39, generating: true })
+    await w.vm.refresh()
+    // 40 is the last message, i.e. the row right before the pending slot.
+    await w.setProps({ activeId: 40 })
+    await w.vm.$nextTick()
+
+    const railHeight = parseFloat(
+      (w.find('.msg-rail').attributes('style') || '').match(/height:\s*(-?[\d.]+)px/)![1],
+    )
+    const nodes = w.findAll('.msg-rail-node')
+    const pending = nodes[nodes.length - 1]
+    expect(pending.classes()).toContain('msg-rail-node--pending')
+    const centre = parseFloat(
+      (pending.attributes('style') || '').match(/top:\s*(-?[\d.]+)px/)![1],
+    )
+    // The node is centred on its slot, so half of it must still fit too.
+    expect(centre + 11).toBeLessThanOrEqual(railHeight)
+    expect(centre - 11).toBeGreaterThanOrEqual(0)
+  })
+
   it('never marks the pending slot as the active message', () => {
     // activeId 5 is the last real row; the pending slot must not inherit it even
     // though it is the last item in the list.
     const w = mountRail({ generating: true, activeId: 5 })
     const nodes = w.findAll('.msg-rail-node')
     expect(nodes[4].classes()).toContain('active')
-    expect(w.find('.msg-rail-pending').classes()).not.toContain('active')
+    expect(w.find('.msg-rail-node--pending').classes()).not.toContain('active')
   })
 })

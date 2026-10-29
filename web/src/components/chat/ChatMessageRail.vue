@@ -38,32 +38,20 @@
   >
     <div class="msg-rail-line" :style="lineStyle" aria-hidden="true"></div>
     <template v-for="(it, k) in items" :key="'n' + it.key">
-      <!-- Pending slot: the reply being written. A spinner instead of a number
-           (it has no ordinal yet), but still clickable — jumping to the reply
-           in progress is exactly what a reader wants when the axis shows one. -->
-      <button
-        v-if="it.pending"
-        type="button"
-        class="msg-rail-pending"
-        :class="{ 'msg-item--lit': litIndex === k }"
-        :style="{ top: nodeTop(k) + 'px' }"
-        :title="t('chat.messageList.messageRailGenerating')"
-        :aria-label="t('chat.messageList.messageRailGenerating')"
-        @click="onPendingSelect"
-      >
-        <span class="li-spinner" aria-hidden="true"></span>
-      </button>
+      <!-- Pending slot reuses the numbered node as-is: it carries the ordinal
+           the reply will get, so it needs no styling of its own. Clicking it
+           jumps to the reply in progress. The `--pending` class is a marker
+           only (no rules) — it exists so tests can address the slot. -->
       <MessageIndexRow
-        v-else
         variant="node"
         class="msg-rail-node"
-        :class="{ 'msg-item--lit': litIndex === k }"
+        :class="{ 'msg-item--lit': litIndex === k, 'msg-rail-node--pending': it.pending }"
         :style="{ top: nodeTop(k) + 'px' }"
         :msg="it.msg"
         :index="it.ordinal"
         :active="isActive(it)"
         :resolve-speaker="resolveSpeaker"
-        @select="onSelect"
+        @select="it.pending ? onPendingSelect() : onSelect(it.msg)"
       />
     </template>
   </div>
@@ -94,31 +82,17 @@
       }"
     >
       <template v-for="(it, k) in items" :key="'r' + it.key">
-        <div
-          v-if="it.pending"
-          class="msg-rail-row msg-rail-row--pending"
-          :class="{ 'msg-item--lit': litIndex === k }"
-          :style="{ top: rowTop(k) + 'px', height: gap + 'px' }"
-          role="button"
-          tabindex="0"
-          @click="onPendingSelect"
-          @keydown.enter="onPendingSelect"
-        >
-          <span class="li-spinner" aria-hidden="true"></span>
-          <span class="msg-rail-row-pending-label">{{ t('chat.messageList.messageRailGenerating') }}</span>
-        </div>
         <MessageIndexRow
-          v-else
           variant="body"
           class="msg-rail-row"
-          :class="{ 'msg-item--lit': litIndex === k }"
+          :class="{ 'msg-item--lit': litIndex === k, 'msg-rail-row--pending': it.pending }"
           :style="{ top: rowTop(k) + 'px', height: gap + 'px' }"
           :msg="it.msg"
           :index="it.ordinal"
           :active="isActive(it)"
           :has-btw="hasBtw(it.msg)"
           :resolve-speaker="resolveSpeaker"
-          @select="onSelect"
+          @select="it.pending ? onPendingSelect() : onSelect(it.msg)"
         />
       </template>
     </div>
@@ -173,8 +147,8 @@ const props = withDefaults(defineProps<{
    * The conversation index only lists FINALIZED messages, so without this the
    * rail would look complete while a reply is still streaming — the reader sees
    * no indication that a turn is in flight and the axis ends one row early.
-   * Rendered as a trailing pending node (a spinner, not a number: it has no
-   * ordinal yet) that is not clickable.
+   * Rendered as a trailing slot that reuses the ordinary numbered node — it
+   * carries the ordinal the reply will get, so it needs no styling of its own.
    */
   generating?: boolean
 }>(), {
@@ -215,10 +189,15 @@ const items = computed(() => {
     pending: false,
   }))
   if (!props.generating) return list
-  // Trailing slot for the reply being written. It occupies a real slot (so the
-  // axis extends while the turn runs) but carries no ordinal — it has no row in
-  // the index yet — and never takes part in selection.
-  return [...list, { key: 'pending', ordinal: 0, msg: null as unknown as RailIndexMsg, pending: true }]
+  // Trailing slot for the reply being written. It takes the ordinal the reply
+  // will get and a synthetic row whose text is the "replying" label, so both
+  // layers can be rendered by MessageIndexRow with no bespoke styling.
+  return [...list, {
+    key: 'pending',
+    ordinal: list.length + 1,
+    msg: { id: '', role: 'assistant', summary: t('chat.messageList.messageRailGenerating') } as RailIndexMsg,
+    pending: true,
+  }]
 })
 
 /* ── Geometry ─────────────────────────────────────────────────────────────
@@ -621,7 +600,16 @@ watch(() => props.messages.length, async (next, prev) => {
 // Keep the active node on screen as the reader scrolls the conversation, and
 // re-centre when the list itself changes length.
 watch(activeIndex, (idx) => {
-  if (idx >= 0) ensureVisible(idx)
+  if (idx < 0) return
+  // While a reply streams the axis follows the TAIL, not the active message.
+  // The active message is the last FINALIZED one, so tracking it parked its row
+  // on the bottom edge — which left the pending slot exactly one row lower,
+  // i.e. outside the clip box: invisible, and `elementFromPoint` at its centre
+  // hit the panel behind it, so clicking it did nothing. Following the reader
+  // instead would also make the slot vanish as soon as they scrolled up the
+  // conversation, which is precisely when they reach for it. The slot is an
+  // affordance ("take me back to the reply"), so it must stay on screen.
+  ensureVisible(props.generating ? items.value.length - 1 : idx)
 })
 
 /**
@@ -746,44 +734,6 @@ defineExpose({ refresh })
   height: calc(22 * var(--dp));
 }
 
-/* Pending slot — the reply being written. Same 22px footprint and centre as a
-   numbered node, so it lands on its row exactly like one; the ring inside is the
-   shared spinner, scaled down to fit. */
-.msg-rail-pending {
-  position: absolute;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 1;
-  width: calc(22 * var(--dp));
-  height: calc(22 * var(--dp));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--msg-row-bg, var(--bg-elevated));
-  /* Same border weight and hue family as an idle numbered node, so the pending
-     slot reads as part of the axis rather than as a stray ring. The accent tint
-     is what distinguishes "in flight" from "indexed". */
-  border: 1.5px solid color-mix(in srgb, var(--accent-color) 45%, transparent);
-  /* Clickable: jumping to the reply being written is the point of the slot. */
-  padding: 0;
-  cursor: pointer;
-}
-
-/* Same "lit" treatment as a numbered node when the pointer is nearest it. */
-.msg-rail-pending.msg-item--lit {
-  border-color: var(--accent-color);
-  background: color-mix(in srgb, var(--accent-color) 16%, var(--msg-row-bg, var(--bg-elevated)));
-}
-
-.msg-rail-pending .li-spinner {
-  /* Fills the 22px node's content box (22 − 2×1.5 border = 19): at 12px the
-     ring read as a faint dot, and at 16px it still looked smaller than the
-     numbered circles beside it. */
-  --li-size: calc(18 * var(--dp));
-  --li-color: var(--accent-color);
-}
-
 /* Enlarge the hit area without changing the visual size. */
 .msg-rail-node::after {
   content: '';
@@ -864,30 +814,5 @@ defineExpose({ refresh })
   --msg-row-lit-strength: 14%;
   /* Leave the LEFT lane free: the node column is painted on top of it. */
   --msg-row-pad-start: calc(46 * var(--dp));
-}
-
-/* The pending row is not a MessageIndexRow: it has no preview text, so it is
-   laid out here with the same box metrics to keep the row rhythm identical. */
-.msg-rail-row--pending {
-  display: flex;
-  align-items: center;
-  gap: var(--space-6);
-  padding: 0 var(--space-4) 0 calc(46 * var(--dp));
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  font-style: italic;
-  cursor: pointer;
-}
-
-/* The pending row is not a MessageIndexRow, so it does not inherit the shared
-   lit styling — mirror it here so hovering it looks like hovering any row. */
-.msg-rail-row--pending.msg-item--lit {
-  --rail-punch: color-mix(in srgb, var(--accent-color) var(--msg-row-lit-strength, 5%), var(--msg-row-bg, var(--bg-elevated)));
-  background: var(--rail-punch);
-}
-
-.msg-rail-row--pending .li-spinner {
-  --li-size: calc(14 * var(--dp));
-  --li-color: var(--accent-color);
 }
 </style>
