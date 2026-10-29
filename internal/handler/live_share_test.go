@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -50,7 +51,10 @@ func projPath(p string) string {
 func liveReq(t *testing.T, method, path, project string, body any) *http.Request {
 	t.Helper()
 	req := newRequest(t, method, path, body)
-	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: project})
+	// The value is URL-escaped exactly as the browser sends it: a Windows path
+	// contains backslashes, and net/http silently DROPS a cookie whose Value has
+	// an invalid byte — the request then looks like "no project selected".
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: url.QueryEscape(project)})
 	return req
 }
 
@@ -314,7 +318,7 @@ func liveWSServer(t *testing.T) (*httptest.Server, string) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/live-share/publish/ws", func(w http.ResponseWriter, r *http.Request) {
-		r.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: projPath("/proj/a")})
+		r.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: url.QueryEscape(projPath("/proj/a"))})
 		LiveSharePublishWS(w, r)
 	})
 	mux.HandleFunc("/api/share/", ServeSharePublic)
