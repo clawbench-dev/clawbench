@@ -6,10 +6,13 @@
       <span class="chat-system-text">{{ msg.content }}</span>
     </div>
     <template v-else>
-    <!-- Group-chat speaker attribution: a member (not the user) produced this
-         assistant message. agentId is the member row id, resolved via the
-         speaker resolver prop. Sits OUTSIDE the bubble, at the row's top-left,
-         above the message box.
+    <!-- Speaker attribution: who produced this assistant message. In a group
+         the speaker is the member whose row id is `msg.agentId`, resolved via
+         the `resolveSpeaker` prop; in a 1:1 session there is only one possible
+         speaker, so `sessionSpeaker` supplies the same identity and this block
+         renders verbatim (deliberately ONE header, not a group variant plus a
+         single-chat copy that would drift). Sits OUTSIDE the bubble, at the
+         row's top-left, above the message box.
 
          When the host routes the discussion it @-mentions its targets. The
          "@" sigil is NOT part of the pill: it sits OUTSIDE the chip, which
@@ -375,6 +378,13 @@ const props = defineProps({
   /** Resolves a member DISPLAY NAME (a routing target) to
    *  { name, backend, avatar } for @-mention chips. */
   resolveSpeakerByName: { type: Function, default: null },
+  /** Speaker identity of the session's OWN agent, for 1:1 (single-chat)
+   *  sessions: { name, backend, avatar, agentId, agentName }. A group resolves
+   *  a speaker per message (msg.agentId is a member row id); a 1:1 session has
+   *  exactly one possible speaker, so the header reuses the identical markup
+   *  with this identity. Null for hosts that must stay headerless (share page,
+   *  task execution detail, /btw drawer). Ignored in group sessions. */
+  sessionSpeaker: { type: Object, default: null },
   /** Host member row id, so the host's messages get a distinct style. */
   hostMemberId: { type: String, default: '' },
   /** The configured group-chat user nickname (chat.user_nickname). Renders the
@@ -385,11 +395,18 @@ const props = defineProps({
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message', 'open-agent-config'])
 
-// Group-chat speaker for this message (null for user/single-agent messages).
+// Speaker for this message (null for user messages and headerless hosts).
+// Group: the member row id on the message resolves through `resolveSpeaker`.
+// 1:1: `sessionSpeaker` — the session's own agent — and nothing else, so a
+// group member that no longer resolves can never fall back to the host agent.
 const speaker = computed(() => {
   const id = props.msg?.agentId
-  if (!id || typeof props.resolveSpeaker !== 'function') return null
-  return props.resolveSpeaker(id)
+  if (id && typeof props.resolveSpeaker === 'function') {
+    const resolved = props.resolveSpeaker(id)
+    if (resolved) return resolved
+  }
+  if (props.isGroupSession) return null
+  return props.sessionSpeaker || null
 })
 const isHostMessage = computed(() => !!props.msg?.agentId && props.msg.agentId === props.hostMemberId)
 
@@ -425,15 +442,16 @@ const canToggleSummary = computed(() => {
 // agent speech) the summary row. Unparseable tags are NOT stripped from the
 // body (parseGroupRouting never mutates text).
 //
-// Agent speech keeps its original gate (a resolved speaker): outside a group
-// `resolveSpeaker` is null, so a single-agent reply never parses. A USER row has
-// no agentId, so it is admitted only in a GROUP session — that is what lets the
-// reader audit the private notes they sent. Without the user branch the parse
-// yields nothing and the note card is silently missing (C3).
+// Agent speech keeps its original gate (a group attribution): outside a group
+// the message carries no agentId, so a single-agent reply never parses — even
+// though it now renders the same speaker header. A USER row has no agentId, so
+// it is admitted only in a GROUP session — that is what lets the reader audit
+// the private notes they sent. Without the user branch the parse yields nothing
+// and the note card is silently missing (C3).
 const groupRouting = computed(() => {
   const empty = { found: false, speakers: [], instruction: '', before: '', after: '', bcc: [], mentions: [], end: false, goalSatisfied: false, raw: '' }
   const isUserInGroup = props.isGroupSession && props.msg?.role === 'user'
-  if (!speaker.value && !isUserInGroup) return empty
+  if (!props.msg?.agentId && !isUserInGroup) return empty
   return parseGroupRouting(groupProtocolText.value || '')
 })
 
@@ -1668,13 +1686,18 @@ const copyPayload = quotableText
   vertical-align: middle;
 }
 
-/* ── Group-chat speaker header (outside the bubble, top-left of the row) ── */
+/* ── Speaker header (outside the bubble, top-left of the row) ──
+   The gap below is the header's own breathing room: the avatar reads as glued
+   to the bubble at --space-2, because the bubble's top edge is a flat band with
+   no padding of its own above the text. --space-4 keeps the pair grouped while
+   staying well under the list's inter-message gap (--space-8), so the header
+   still belongs to the reply below it rather than the message above. */
 .msg-speaker {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-2);
-  margin: 0 0 var(--space-2) var(--space-2);
+  margin: 0 0 var(--space-4) var(--space-2);
   font-size: var(--font-size-lg);
   color: var(--text-secondary);
 }

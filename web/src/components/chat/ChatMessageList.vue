@@ -127,6 +127,7 @@
         :forkingMessageId="forkingMessageId"
         :resolveSpeaker="resolveSpeaker"
         :resolveSpeakerByName="resolveSpeakerByName"
+        :sessionSpeaker="sessionSpeaker"
         :hostMemberId="hostMemberId"
         :isGroupSession="isGroupSession"
         :userNickname="userNickname"
@@ -1296,6 +1297,23 @@ function resolveIndexSpeaker(agentId) {
   if (!a || !a.backend) return null
   return { name: a.name, backend: a.backend, avatar: a.avatar }
 }
+
+/**
+ * Speaker identity for the per-message header in a 1:1 session.
+ *
+ * Group sessions resolve a speaker per message (msg.agentId → member row), so
+ * they pass nothing here; a 1:1 session has exactly ONE possible speaker, so
+ * the message header renders the session's own agent through the very same
+ * `msg-speaker` block. `agentId` is the REAL agent id (not a member row id), so
+ * the avatar keeps opening the agent's config page, as it does in a group.
+ * Same gate as resolveIndexSpeaker above, so the message index and the bubbles
+ * can never name different speakers.
+ */
+const sessionSpeaker = computed(() => {
+  const a = props.currentAgent
+  if (!a || !a.backend) return null
+  return { name: a.name, backend: a.backend, avatar: a.avatar, agentName: '', agentId: a.id || '' }
+})
 
 // Nearest user message to viewport center — used for activeId highlight in index
 const scrollTick = ref(0)
