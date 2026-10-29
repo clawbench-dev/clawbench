@@ -504,18 +504,21 @@
     object-fit: contain;
 }
 
-/* Chat inline image — shrink to the thumbnail cap, but never crop or band.
-   `height: auto` (not a fixed px) is load-bearing: with a fixed height,
-   `object-fit: contain` letterboxes the picture INSIDE that box, which shows up
-   as a band above/below the picture — the very artifact this rule used to
-   produce with `cover` (crop) plus `margin`. Sizing the element to the picture
-   lets the figure hug it exactly, so no band can form. */
+/* Chat inline image — same sizing as a document image (see the note in
+   media-block.css: chat no longer has a thumbnail policy). Only the vertical
+   margin is kept here; the figure's margin cancel in media-block.css zeroes it
+   inside a block figure.
+
+   `height: auto` is load-bearing: with a fixed height, `object-fit: contain`
+   letterboxes the picture INSIDE that box, which shows up as a band above and
+   below the picture. Sizing the element to the picture lets the figure hug it
+   exactly, so no band can form. */
 .chat-message.assistant img.chat-img,
 .chat-message.user img.chat-img {
-    max-height: calc(200 * var(--dp));
     height: auto;
     width: auto;
     max-width: 100%;
+    max-height: 60dvh;
     object-fit: contain;
     margin: var(--space-2) 0;
 }

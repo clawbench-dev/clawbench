@@ -481,48 +481,26 @@
     position: relative;
 }
 
-/* ─── Chat message: thumbnail cap for PHOTOS, full size for DIAGRAMS ──────
-   A bubble is a conversation, not a document: a pasted screenshot or an inline
-   SVG the model drew belongs in a 200px thumbnail the reader clicks to inspect.
-   A rendered Mermaid diagram is different — it is the ANSWER, with dense labels
-   that must be legible while scrolling (#570: chat diagrams rendered as an
-   unreadable banner). Mermaid is therefore deliberately NOT in these lists: it
-   gets the same resting sizing and click-to-zoom as the file preview (hug the
-   artwork, height budget, expand to the bubble when active).
+/* ─── Chat messages size media EXACTLY like a document ────────────────────
+   There is deliberately NO chat-specific size rule here.
 
-   These rules must mirror the inline-zoom block's `:has()` selectors INCLUDING
-   the pseudo-class. `:has()` contributes its ARGUMENT's specificity, so the
-   generic `.image-block-wrapper:has(> .lightbox-img-wrap > img)` is 0-2-1 while
-   a plain `.chat-message .image-block-wrapper` is only 0-2-0 — the generic
-   rule's `max-width: 100%` won, and every capped figure grew to the whole
-   column (measured 540px in a 600px bubble; the cap below never applied).
-   Prefixing the same `:has()` selectors restores the 0-3-1 vs 0-2-1 order. */
-/* The cap applies ONLY while the figure is at rest. Once the reader clicks it,
-   the figure becomes the zoom viewport and must span the bubble — otherwise the
-   "zoom" happens inside a 200px box and the image stays tiny no matter how far
-   it is zoomed (reported: 聊天界面点击聚焦后没有全宽). */
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-img-wrap > img),
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg) {
-    max-width: calc(200 * var(--dp));
-}
+   A chat bubble used to cap photos and bare inline SVGs at 200×184dp ("a
+   conversation is not a document — a screenshot belongs in a thumbnail"), with
+   Mermaid carved out because a capped diagram was unreadable (#570). Two size
+   policies for the same artwork meant the same image looked different depending
+   on whether you opened it in a message or in a .md file, and the carve-out had
+   to be re-derived every time a media type was added.
 
-/* The media itself is clamped to a PIXEL cap, not a percentage. The generic
-   rule sizes SVG media with `width: calc(60dvh * var(--svg-ar, 1))` and clears
-   `max-width` with `!important`, so the cap has to be `!important` too (both
-   declarations are important; the more specific selector wins). A percentage
-   would reintroduce the svg↔cell dependency cycle the generic rule documents. */
-/* Same rest-only scoping: while zoomed the media's size belongs to
-   `inlineZoom`, and an `!important` cap here would pin it to 200px. */
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-img-wrap > img) > .lightbox-img-wrap > img,
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap > svg.lightbox-svg {
-    max-width: calc(200 * var(--dp)) !important;
-    max-height: calc(184 * var(--dp));
-}
+   The policy is now single: every surface — chat, file preview, share SPA, HTML
+   export — gets the resting sizing and click-to-zoom defined by the inline-zoom
+   block above (`fit-content` frame, 60dvh height budget, media sized by its own
+   aspect ratio). Media that is small stays small; media taller than the budget
+   is clamped; clicking gives the full-column viewport.
 
-.chat-message .image-block-wrapper:not(.is-zooming) .lightbox-svg-wrap svg.lightbox-svg {
-    max-width: calc(200 * var(--dp));
-    max-height: calc(200 * var(--dp));
-}
+   The `max-width` caps were `!important` (to beat the generic rule's
+   `max-width: none !important`), so they cannot be "left in place but
+   overridden" — they are deleted. A guard test asserts no chat rule reintroduces
+   a size cap. */
 
 /* ─── Missing media: labelled placeholder ────────────────────────────────
    A local image / video / audio that 404s is swapped for `.media-load-error`
