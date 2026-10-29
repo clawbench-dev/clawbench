@@ -153,9 +153,32 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   dismissEventNotification: (taskId: string, sessionId: string) => invoke('native:dismiss-notification', taskId, sessionId),
   reloadApp: () => invoke('native:reload-app'),
   setTheme: (theme: string, bg?: string, text?: string, textSecondary?: string, accent?: string) => {
-    // Desktop has no floating window; only the theme id is meaningful here.
+    // The theme id drives the shell's own surfaces (login page, splash overlay);
+    // the four colours are the capsule palette Android persists, and the desktop
+    // capsule now paints from the same values (see main/floating.ts).
     ipcRenderer.send('native:set-theme', theme, bg ?? null, text ?? null, textSecondary ?? null, accent ?? null)
   },
+  // ── Floating status capsule (desktop counterpart of the Android bubble) ──
+  // Fire-and-forget: the capsule is display-only, and the page must never await a
+  // window the user may have hidden.
+  //
+  // Note there is NO stats setter in the production path: the capsule polls
+  // /api/ai/sessions/overview and computes the counters itself, exactly like the
+  // Android controller, so the web UI has nothing to keep in sync.
+  setFloatingEnabled: (enabled: boolean) => { ipcRenderer.send('native:floating-enabled', !!enabled) },
+  isFloatingEnabled: () => {
+    try {
+      return ipcRenderer.sendSync('native:floating-is-enabled') === true
+    } catch {
+      return false
+    }
+  },
+  // Palette override for the capsule alone, for hosts that theme it separately
+  // from the app-wide setTheme() call.
+  setFloatingTheme: (colors: unknown) => { ipcRenderer.send('native:floating-theme', colors) },
+  // Dev/diagnostic hook: drives the capsule without a server. The poll owns these
+  // numbers in normal use, and a poll response replaces whatever is set here.
+  setFloatingStats: (stats: unknown) => { ipcRenderer.send('native:floating-stats', stats) },
   getTheme: () => { try { return ipcRenderer.sendSync('native:get-theme') } catch { return 'dark' } },
   // Native page zoom (appearance "auto scale"). Fire-and-forget: the main
   // process validates the factor and applies it to the window.

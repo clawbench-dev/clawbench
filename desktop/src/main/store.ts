@@ -2,6 +2,7 @@ import Store from 'electron-store'
 import type { ServerEntry } from './types'
 import type { TransportPreference } from './transport'
 import type { WindowBounds } from './windowGeometry'
+import type { FloatingStats, Rect, ResolvedColors } from './floatingPolicy'
 import { DEFAULT_THEME_ID } from '../shared/theme'
 
 export interface ServerListSchema {
@@ -54,6 +55,22 @@ export interface ServerListSchema {
   windowBounds: WindowBounds | null
   /** Whether the window was maximized at close (restored on next launch). */
   windowMaximized: boolean
+  /**
+   * Whether the always-on-top status capsule (and its tray icon) is on.
+   *
+   * Persisted rather than derived: the user switched it on deliberately, and it
+   * must survive a restart without waiting for the web app to re-assert it.
+   */
+  floatingEnabled: boolean
+  /** Where the user dragged the capsule, in DIPs. Clamped on read. */
+  floatingBounds: Rect | null
+  /**
+   * Last counters seen, kept so a restart shows the previous state instead of
+   * blinking 0/0/0 until the first overview lands.
+   */
+  floatingStats: FloatingStats | null
+  /** Palette the web UI pushed through `setTheme`, for the capsule. */
+  floatingColors: ResolvedColors | null
 }
 
 const defaults: ServerListSchema = {
@@ -66,6 +83,10 @@ const defaults: ServerListSchema = {
   tunnelTransport: 'ssh',
   windowBounds: null,
   windowMaximized: false,
+  floatingEnabled: false,
+  floatingBounds: null,
+  floatingStats: null,
+  floatingColors: null,
 }
 
 let store: Store<ServerListSchema> | null = null

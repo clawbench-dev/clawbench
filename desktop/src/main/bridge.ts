@@ -29,6 +29,7 @@ import { resetCertificateTrust } from './certificate'
 import { applyZoomFactor } from './zoom'
 import { classifyUrl } from './urlPolicy'
 import { shouldUseFramelessWindow } from './windowChrome'
+import { noteFloatingActivity, registerFloatingIpc, updateFloatingColors } from './floating'
 
 export function registerBridge(): void {
   initStore()
@@ -209,6 +210,10 @@ export function registerBridge(): void {
   ipcMain.handle('native:reload-app', () => clearCacheAndReload('cache'))
   ipcMain.handle('native:notify', (_e, title: string, body: string, nav?: unknown) => {
     showTerminalNotification(title, body, nav as NotificationNav | undefined)
+    // The capsule has no WebSocket of its own (the page owns the socket), so a
+    // notification is the shell's only signal that session state just changed —
+    // the desktop stand-in for Android's event-driven overview refresh.
+    noteFloatingActivity()
     return Promise.resolve()
   })
   // Dismiss a notification still in the OS tray once its subject is read.
@@ -254,7 +259,8 @@ export function registerBridge(): void {
   // 'dark'/'light', which matches no [data-theme] rule and would leave the
   // login page with every colour variable undefined.
   ipcMain.on('native:get-theme', (e) => { e.returnValue = normalizeThemeId(getStore().get('theme')) })
-  ipcMain.on('native:set-theme', (_e, theme: string) => {
+  ipcMain.on('native:set-theme', (_e, theme: string, bg?: string | null, text?: string | null,
+    textSecondary?: string | null, accent?: string | null) => {
     // Persist the full theme ID (e.g. 'github-dark', 'nord'), NOT a collapsed
     // 'dark'/'light'. The login page resolves colours from
     // [data-theme="<id>"] and has no rule for a bare 'dark', so collapsing here
@@ -265,6 +271,11 @@ export function registerBridge(): void {
     // nativeTheme only understands light/dark, so derive that from the ID while
     // keeping the full ID in the store.
     nativeTheme.themeSource = isDarkThemeId(id) ? 'dark' : 'light'
+    // The four colour arguments exist because the Android floating capsule is
+    // painted from the live theme. The desktop capsule consumes the same values,
+    // so theming needs no new web-side call; each value is validated in
+    // floatingPolicy before it can reach the capsule's stylesheet.
+    updateFloatingColors({ bg, text, textSecondary, accent })
   })
   // Renderer-side appLog relayed through the native bridge. Android sends these
   // to logcat; the desktop shell has no such sink, so they go to desktop.log
@@ -273,4 +284,7 @@ export function registerBridge(): void {
     const letter = (['D', 'I', 'W', 'E'].includes(level) ? level : 'I') as 'D' | 'I' | 'W' | 'E'
     record(letter, tag || 'Renderer', msg)
   })
+  // The floating status capsule's own channels. Registered here so every native
+  // IPC surface is installed from one place, in one order (see floating.ts).
+  registerFloatingIpc()
 }
