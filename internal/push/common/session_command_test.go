@@ -229,3 +229,90 @@ func (m *mockMessenger) GetSessionInfo(sessionID string) (SessionInfo, error) {
 }
 
 func (m *mockMessenger) SendMessageToSession(string, string, []model.FileEntry) error { return nil }
+
+func TestClassifyIncoming_NewCommands(t *testing.T) {
+	tests := []struct {
+		name      string
+		text      string
+		sticky    string
+		wantKind  RouteKind
+		wantArg   string
+		wantShort string
+		wantMsg   string
+	}{
+		{
+			name: "show without arg", text: "/show", sticky: "s1",
+			wantKind: RouteShowLastReply,
+		},
+		{
+			name: "show with id", text: "/show a1b2c3d4", sticky: "s1",
+			wantKind: RouteShowLastReply, wantArg: "a1b2c3d4",
+		},
+		{
+			name: "show with padded id", text: "  /show   a1b2c3d4  ", sticky: "",
+			wantKind: RouteShowLastReply, wantArg: "a1b2c3d4",
+		},
+		{
+			name: "stop without arg", text: "/stop", sticky: "s1",
+			wantKind: RouteStopSession,
+		},
+		{
+			name: "stop with id", text: "/stop a1b2c3d4", sticky: "",
+			wantKind: RouteStopSession, wantArg: "a1b2c3d4",
+		},
+		{
+			name: "new without arg lists projects", text: "/new", sticky: "s1",
+			wantKind: RouteNewSession, wantArg: "",
+		},
+		{
+			name: "new with index", text: "/new 2", sticky: "s1",
+			wantKind: RouteNewSession, wantArg: "2",
+		},
+		{
+			// A path may contain spaces; the arg must be the whole remainder,
+			// not the first whitespace-delimited token.
+			name: "new with path containing spaces", text: "/new /home/u/my project", sticky: "",
+			wantKind: RouteNewSession, wantArg: "/home/u/my project",
+		},
+		{
+			// "@id" wins over any command word: this is the escape hatch that
+			// sends the literal text "/new" to a session.
+			name: "explicit target beats command", text: "@a1b2c3d4 /new", sticky: "",
+			wantKind: RouteToSession, wantShort: "a1b2c3d4", wantMsg: "/new",
+		},
+		{
+			// A command word embedded mid-sentence is ordinary text.
+			name: "command word embedded is plain text", text: "please /stop it", sticky: "s1",
+			wantKind: RouteToSession, wantMsg: "please /stop it",
+		},
+		{
+			// Commands are lowercase only.
+			name: "uppercase is not a command", text: "/SHOW", sticky: "s1",
+			wantKind: RouteToSession, wantMsg: "/SHOW",
+		},
+		{
+			// Unknown slash commands fall through to the session, so a user can
+			// still type them to the AI.
+			name: "unknown slash command goes to session", text: "/help me", sticky: "s1",
+			wantKind: RouteToSession, wantMsg: "/help me",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ClassifyIncoming(tt.text, tt.sticky)
+			if got.Kind != tt.wantKind {
+				t.Fatalf("Kind = %v, want %v", got.Kind, tt.wantKind)
+			}
+			if got.Arg != tt.wantArg {
+				t.Errorf("Arg = %q, want %q", got.Arg, tt.wantArg)
+			}
+			if got.ShortID != tt.wantShort {
+				t.Errorf("ShortID = %q, want %q", got.ShortID, tt.wantShort)
+			}
+			if got.Message != tt.wantMsg {
+				t.Errorf("Message = %q, want %q", got.Message, tt.wantMsg)
+			}
+		})
+	}
+}
