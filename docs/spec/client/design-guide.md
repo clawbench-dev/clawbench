@@ -292,6 +292,16 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - **`container-type` 与 App 模式的 `contain: paint` 可共存**，实测三引擎：`container-type` 单独**不会**让元素成为 `position: fixed` 子孙的包含块，叠加 `contain: paint` 也不改变既有行为（真正起作用的是后者，app-mode 本来就有）。表格复制菜单的位置仍由运行时测量决定（`utils/fixedPosition.ts`）。
 - 守卫：`components/chat/__tests__/chatContentMeasure.css.test.ts`（度量与阈值换算、三个 gutter 的 floor、消费点不得自己重算公式、滚动容器承担留白、container 声明、形状随留白翻转、岛只圆上两角、底色必须是 text 混色、标题栏不得收窄）+ `e2e/specs/chat-reading-measure.spec.ts`（真实引擎里量两条列的左右边缘是否重合、两种形状的 computed 值）。
 
+### 宽屏面板折叠入口（分隔条把手 + 右缘竖条）
+
+宽屏的左右面板收起/展开**不再有 Dock 里的聊天开关**：收起与展开是两个位置不同的控件，因为它们解决的是两个方向的问题。
+
+- **收起**：`SplitDivider` 的 `collapseLeft` / `collapseRight` 把手，各收起对应一侧。把手必须**放在分隔条内部**——悬停那条 1px 线就能浮出，且指针移到把手上时祖先仍处于 `:hover`（悬停后代会让祖先保持 hover）；做成脱离 DOM 的浮层会在指针离开细线的一瞬间闪烁。
+- **触屏没有 hover**，所以改成**点按分隔条揭示**（位移 ≤ 8px 算点按），3 秒无操作或点别处收回；**真拖动（> 8px）不揭示并立即收回**，避免拖拽途中误点到把手。按在把手上算「内部」（capture 阶段 `contains` 判断），否则手指还没抬起就被收走。鼠标/笔不受影响，仍走 `:hover`。
+- **展开**：聊天区收起后，屏幕右边缘留一条 **24px 竖条**（`[data-action="show-chat"]`，聊天气泡 + 未读角标）作为唯一回程。留一条缝而不是浮一个按钮，是为了让面板读起来像「被推到一边」而不是「消失了」——它保住了用户刚折叠的那条边界，未读数量也仍然可见。竖条是浮层，`.content-area` 必须同步让出等宽，否则会遮住左栏最后 24px。左栏则由点任一 Dock 页签恢复。
+- **配色不能假设 `--bg-tertiary` 与面板底色有差**（红线 4）：把手与竖条都把 `--text-primary` 混进面板色（`--text-primary` 26% 实测 36 套主题填充中位 1.87:1、描边 9.83:1）。尺寸随界面缩放但**封顶**（把手 20dp→28px，触屏揭示时放大到 26dp→34px，竖条 24dp→30px）——它们是点击目标而非内容，2 倍缩放下不该吃掉半个编辑器。
+- 未读角标叠在图标上方居中，不挂到图标右侧：竖条仅 24px 且贴窗口右缘，Dock 那种 `right: -6dp` 会被裁掉，向左生长又会压到面板内容上。
+
 ### 安全区
 
 全仓只有两处消费 `env(safe-area-inset-*)`，都在 `variables.css`：`--header-safe-area-top`（顶）与 `--dock-height`（底，`47px + 安全区`）。不要在别处另起一套。
