@@ -228,6 +228,9 @@ RAGResetFailed: 索引重建失败
 RAGSegmenterUnavailable: "已拒绝重建：分词器不可用。此时重建会把已正确分词的文本替换为未切分文本，导致中文搜索失效 — 请重启服务后重试。"
 RAGRebuildAccepted: 重建已在后台启动
 AutoContinue: 继续
+# 服务重启后恢复被打断会话时唯一落库的一行（role='system' 提示）。它同时是
+# 发给 AI 的指令，因此两种身份下都必须是完整通顺的句子。
+RestartResume: '会话已因服务重启而中断，现已恢复。任务尚未完成，请重新评估当前状态并继续。'
 ACPSessionRecoveredNew: ACP 会话无法恢复，已开启新会话（原有对话上下文已丢失）。
 ACPAuthRequired: '智能体尚未登录。请在终端执行一次 `{{.Command}}`，然后重试。'
 ACPAuthRequiredGeneric: '智能体尚未登录：请先在终端用它的 CLI 登录一次，然后重试。'

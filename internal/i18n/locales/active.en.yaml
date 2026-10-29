@@ -229,6 +229,10 @@ RAGResetFailed: Index rebuild failed
 RAGSegmenterUnavailable: "Rebuild refused: the text segmenter is unavailable. Rebuilding now would replace correctly segmented text with unsplit text and break Chinese search — restart the service and try again."
 RAGRebuildAccepted: Rebuild started in the background
 AutoContinue: Continue
+# Sent as the ONLY persisted row (a role='system' notice) when the server
+# resumes a session whose turn it interrupted. It doubles as the instruction the
+# AI receives, so it must read as a complete sentence in both roles.
+RestartResume: 'Session restored after a service restart. The task was interrupted — please re-evaluate the current state and continue.'
 ACPSessionRecoveredNew: ACP session could not be restored; started a new session (the previous conversation context was lost).
 ACPAuthRequired: 'The agent is not signed in. Run `{{.Command}}` in a terminal once, then retry.'
 ACPAuthRequiredGeneric: 'The agent is not signed in; sign in with its CLI in a terminal once, then retry.'
