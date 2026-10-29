@@ -1612,3 +1612,131 @@ func TestOnMessageReceive_NewMissingDirWarns(t *testing.T) {
 		t.Errorf("expected a missing-directory warning, got %q", box.get())
 	}
 }
+
+func TestOnMessageReceive_ShowNoMessenger(t *testing.T) {
+	mgr, box := feishuCommandEnv(t, &mockSessionMessenger{sessions: stickySessions})
+	// A sticky target is required to reach the handler; without one the command
+	// degrades to the no-target hint before the messenger is consulted.
+	origSM := sessionMessenger
+	sessionMessenger = nil
+	t.Cleanup(func() { sessionMessenger = origSM })
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
+	if !strings.Contains(box.get(), "会话服务不可用") {
+		t.Errorf("expected the service-unavailable reply, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_ShowResolveFails(t *testing.T) {
+	mgr, box := feishuCommandEnv(t, &mockSessionMessenger{sessions: stickySessions})
+	origDB := db
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "", nil },
+	}
+	t.Cleanup(func() { db = origDB })
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
+	if !strings.Contains(box.get(), "尚未选择会话") {
+		t.Errorf("expected the no-target hint, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_ShowReplyReadFails(t *testing.T) {
+	m := &mockSessionMessenger{sessions: stickySessions, lastReplyErr: fmt.Errorf("boom")}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
+	if !strings.Contains(box.get(), "会话不可用") {
+		t.Errorf("expected the session-unavailable reply, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_StopNoMessenger(t *testing.T) {
+	mgr, box := feishuCommandEnv(t, &mockSessionMessenger{sessions: stickySessions})
+	origSM := sessionMessenger
+	sessionMessenger = nil
+	t.Cleanup(func() { sessionMessenger = origSM })
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/stop"))
+	if !strings.Contains(box.get(), "会话服务不可用") {
+		t.Errorf("expected the service-unavailable reply, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_StopResolveFails(t *testing.T) {
+	mgr, box := feishuCommandEnv(t, &mockSessionMessenger{sessions: stickySessions})
+	origDB := db
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "", nil },
+	}
+	t.Cleanup(func() { db = origDB })
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/stop"))
+	if !strings.Contains(box.get(), "尚未选择会话") {
+		t.Errorf("expected the no-target hint, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_StopFails(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions: stickySessions,
+		stopFn:   func() (bool, int, error) { return false, 0, fmt.Errorf("boom") },
+	}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/stop"))
+	if !strings.Contains(box.get(), "boom") {
+		t.Errorf("expected the underlying error, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_NewNoMessenger(t *testing.T) {
+	mgr, box := feishuCommandEnv(t, &mockSessionMessenger{sessions: stickySessions})
+	origSM := sessionMessenger
+	sessionMessenger = nil
+	t.Cleanup(func() { sessionMessenger = origSM })
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new"))
+	if !strings.Contains(box.get(), "会话服务不可用") {
+		t.Errorf("expected the service-unavailable reply, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_NewListProjectsFails(t *testing.T) {
+	m := &mockSessionMessenger{sessions: stickySessions, projectsErr: fmt.Errorf("boom")}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new"))
+	if !strings.Contains(box.get(), "获取会话列表失败") {
+		t.Errorf("expected the list-failure reply, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_NewProjectNotFound(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions: stickySessions,
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+	}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new /nope"))
+	if !strings.Contains(box.get(), "未找到该项目") {
+		t.Errorf("expected the project-not-found error, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_NewCreateFails(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions:  stickySessions,
+		projects:  []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+		createErr: fmt.Errorf("boom"),
+	}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new 1"))
+	if !strings.Contains(box.get(), "boom") {
+		t.Errorf("expected the create error, got %q", box.get())
+	}
+}

@@ -96,8 +96,18 @@ func ClassifyIncoming(text, stickySessionID string) Route {
 				return Route{Kind: RouteListSessions}
 			}
 		case SessionShowCommand:
+			if arg == "" && stickySessionID == "" {
+				// No argument and no sticky target: there is nothing to show.
+				// Report it as the standard no-target case so the user gets the
+				// same "/ls" hint as any other untargeted message, rather than
+				// an internal "no target session" error.
+				return Route{Kind: RouteNoTarget}
+			}
 			return Route{Kind: RouteShowLastReply, Arg: arg}
 		case SessionStopCommand:
+			if arg == "" && stickySessionID == "" {
+				return Route{Kind: RouteNoTarget}
+			}
 			return Route{Kind: RouteStopSession, Arg: arg}
 		case SessionNewCommand:
 			return Route{Kind: RouteNewSession, Arg: arg}

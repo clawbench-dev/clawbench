@@ -1784,3 +1784,198 @@ func TestOnChatBotMessage_NewMissingDirWarns(t *testing.T) {
 		t.Errorf("expected a missing-directory warning, got %s", *body)
 	}
 }
+
+func TestOnChatBotMessage_ShowNoMessenger(t *testing.T) {
+	origDB, origMsg := db, sessionMessenger
+	t.Cleanup(func() { db, sessionMessenger = origDB, origMsg })
+	// A sticky target is required to reach the handler at all: without one the
+	// command degrades to the no-target hint before the messenger is consulted.
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "a1b2c3d4-1111", nil },
+	}
+	sessionMessenger = nil
+
+	body := new([]byte)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	mgr := &Manager{}
+	data := &chatbot.BotCallbackDataModel{
+		ConversationType: "1", SenderStaffId: "s1", ConversationId: "c1",
+		SessionWebhook: server.URL,
+		Text:           chatbot.BotCallbackDataTextModel{Content: "/show"},
+	}
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "会话服务不可用") {
+		t.Errorf("expected the service-unavailable reply, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_ShowResolveFails(t *testing.T) {
+	m := &mockSessionMessenger{}
+	mgr, body := pushCommandEnv(t, m)
+
+	// No arg and no sticky target → the resolver errors out.
+	origDB := db
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "", nil },
+	}
+	t.Cleanup(func() { db = origDB })
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/show")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "尚未选择会话") {
+		t.Errorf("expected the no-target hint, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_ShowReplyReadFails(t *testing.T) {
+	m := &mockSessionMessenger{lastReplyErr: errTestFailure}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/show")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "会话不可用") {
+		t.Errorf("expected the session-unavailable reply, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_StopNoMessenger(t *testing.T) {
+	origDB, origMsg := db, sessionMessenger
+	t.Cleanup(func() { db, sessionMessenger = origDB, origMsg })
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "a1b2c3d4-1111", nil },
+	}
+	sessionMessenger = nil
+
+	body := new([]byte)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	mgr := &Manager{}
+	data := &chatbot.BotCallbackDataModel{
+		ConversationType: "1", SenderStaffId: "s1", ConversationId: "c1",
+		SessionWebhook: server.URL,
+		Text:           chatbot.BotCallbackDataTextModel{Content: "/stop"},
+	}
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "会话服务不可用") {
+		t.Errorf("expected the service-unavailable reply, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_StopResolveFails(t *testing.T) {
+	m := &mockSessionMessenger{}
+	mgr, body := pushCommandEnv(t, m)
+
+	origDB := db
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "", nil },
+	}
+	t.Cleanup(func() { db = origDB })
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/stop")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "尚未选择会话") {
+		t.Errorf("expected the no-target hint, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_StopFails(t *testing.T) {
+	m := &mockSessionMessenger{
+		stopFn: func(string) (bool, int, error) { return false, 0, errTestFailure },
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/stop")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "test failure") {
+		t.Errorf("expected the underlying error, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_NewNoMessenger(t *testing.T) {
+	origDB, origMsg := db, sessionMessenger
+	t.Cleanup(func() { db, sessionMessenger = origDB, origMsg })
+	db = &mockDBWithCallback{upsertFn: func(_, _, _, _ string) error { return nil }}
+	sessionMessenger = nil
+
+	body := new([]byte)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	mgr := &Manager{}
+	data := &chatbot.BotCallbackDataModel{
+		ConversationType: "1", SenderStaffId: "s1", ConversationId: "c1",
+		SessionWebhook: server.URL,
+		Text:           chatbot.BotCallbackDataTextModel{Content: "/new"},
+	}
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "会话服务不可用") {
+		t.Errorf("expected the service-unavailable reply, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_NewListProjectsFails(t *testing.T) {
+	m := &mockSessionMessenger{projectsErr: errTestFailure}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/new")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "获取会话列表失败") {
+		t.Errorf("expected the list-failure reply, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_NewProjectNotFound(t *testing.T) {
+	m := &mockSessionMessenger{
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/new /nope")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "未找到该项目") {
+		t.Errorf("expected the project-not-found error, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_NewCreateFails(t *testing.T) {
+	m := &mockSessionMessenger{
+		projects:  []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+		createErr: errTestFailure,
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/new 1")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "test failure") {
+		t.Errorf("expected the create error, got %s", *body)
+	}
+}

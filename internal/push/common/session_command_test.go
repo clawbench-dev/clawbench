@@ -372,3 +372,23 @@ func TestResolveCommandTarget(t *testing.T) {
 		t.Fatal("expected error for unknown prefix")
 	}
 }
+
+func TestClassifyIncoming_ShowStopWithoutTargetOrSticky(t *testing.T) {
+	// No argument and no sticky target: the user has nothing to act on, so the
+	// command must degrade to the standard no-target hint instead of surfacing
+	// an internal "no target session" error.
+	for _, cmd := range []string{"/show", "/stop"} {
+		got := ClassifyIncoming(cmd, "")
+		if got.Kind != RouteNoTarget {
+			t.Errorf("%s with no sticky = %v, want RouteNoTarget", cmd, got.Kind)
+		}
+	}
+
+	// An explicit argument still routes even without a sticky target.
+	if got := ClassifyIncoming("/show a1b2c3d4", ""); got.Kind != RouteShowLastReply {
+		t.Errorf("/show with id = %v, want RouteShowLastReply", got.Kind)
+	}
+	if got := ClassifyIncoming("/stop a1b2c3d4", ""); got.Kind != RouteStopSession {
+		t.Errorf("/stop with id = %v, want RouteStopSession", got.Kind)
+	}
+}
