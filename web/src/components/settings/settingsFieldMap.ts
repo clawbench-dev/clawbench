@@ -404,13 +404,20 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // switch matters most. It gates the Notification API path and is independent
     // of the server-side push_mode (that one selects the mobile/IM channel).
     { type: 'item', spec: { labelKey: 'settings.items.desktopNotification', descriptionKey: 'settings.items.desktopNotificationDesc', key: 'desktopNotification', type: 'switch', source: 'local', sectionHeader: 'settings.items.desktopNotifySection' } },
-    // Out-of-app desktop/system surfaces. `androidOnly` (NOT `appOnly`): the
-    // floating status window and the Live Updates chip are Android features —
-    // `setFloatingWindowEnabled` / `setLiveUpdateEnabled` / `canPostPromoted-
-    // Notifications` exist only on the Android bridge, and the copy names
-    // Android-only permissions. `appOnly` is `!isAppMode`, which the Electron
-    // shell also satisfies, so these rendered there as dead switches.
-    { type: 'item', spec: { labelKey: 'settings.items.floatingStatusWindow', descriptionKey: 'settings.items.floatingStatusWindowDesc', key: 'floatingStatusWindow', type: 'switch', source: 'local', androidOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
+    // Out-of-app desktop/system surfaces.
+    //
+    // The Live Updates chip is `androidOnly` (NOT `appOnly`): `setLiveUpdateEnabled`
+    // / `canPostPromotedNotifications` exist only on the Android bridge, and the
+    // copy names Android-only permissions. `appOnly` is `!isAppMode`, which the
+    // Electron shell also satisfies, so it rendered there as a dead switch.
+    //
+    // The floating status window is `appOnly` for the same reason but the
+    // opposite conclusion: BOTH hosts implement it — Android draws the bubble
+    // over the launcher, the Electron shell draws an always-on-top capsule plus
+    // a tray icon (`desktop/src/main/floating.ts`). Marking it `androidOnly`
+    // left the desktop feature with no way to be switched on at all, and the
+    // tray's "turn off" then had no way back.
+    { type: 'item', spec: { labelKey: 'settings.items.floatingStatusWindow', descriptionKey: 'settings.items.floatingStatusWindowDesc', key: 'floatingStatusWindow', type: 'switch', source: 'local', appOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.liveUpdate', descriptionKey: 'settings.items.liveUpdateDesc', key: 'liveUpdate', type: 'switch', source: 'local', androidOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
     { type: 'panel', config: {
       panelId: 'push',

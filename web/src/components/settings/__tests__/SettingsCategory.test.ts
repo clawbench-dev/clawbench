@@ -1335,20 +1335,31 @@ describe('SettingsCategory', () => {
       expect(titles).toEqual(['应用内通知', '桌面端通知', '桌面与系统'])
     })
 
-    it('drops the 桌面与系统 card in the Electron desktop shell', () => {
-      // The two rows in that card (桌面悬浮状态窗 / 灵动岛) are Android-only:
-      // their bridge methods exist only on Android and their copy names
-      // Android-only permissions. `appOnly` is implemented as "isAppMode",
-      // which is ALSO true in Electron, so the card used to render there as two
-      // switches that silently did nothing. The rows are now `androidOnly`.
+    it('keeps the floating-window row in the Electron desktop shell, drops the Android-only chip', () => {
+      // The two rows in that card are NOT the same platform.
+      //
+      // 桌面悬浮状态窗 is implemented by BOTH hosts — Android draws a bubble over
+      // the launcher, the Electron shell draws an always-on-top capsule plus a
+      // tray icon (`desktop/src/main/floating.ts`). Marking it `androidOnly`
+      // left the desktop feature with no way to switch it on at all, and the
+      // tray's own "turn off" then had no way back.
+      //
+      // 灵动岛 is genuinely Android-only: `setLiveUpdateEnabled` /
+      // `canPostPromotedNotifications` exist only on the Android bridge and the
+      // copy names Android 16 permissions.
       mockIsAppMode.value = true
       mockIsDesktopApp.value = true
       const wrapper = mountCategory('notification')
       const titles = wrapper.findAllComponents({ name: 'SettingsCard' })
         .map(c => c.props().title)
 
-      expect(titles).not.toContain('桌面与系统')
-      expect(titles).toEqual(['应用内通知', '桌面端通知'])
+      expect(titles).toContain('桌面与系统')
+      // The card survives, but only the floating-window switch is in it.
+      expect(titles).toEqual(['应用内通知', '桌面端通知', '桌面与系统'])
+      const rowLabels = wrapper.findAll('[data-settings-key]')
+        .map(el => el.attributes('data-settings-key'))
+      expect(rowLabels).toContain('floatingStatusWindow')
+      expect(rowLabels).not.toContain('liveUpdate')
     })
 
     it('drops the 桌面与系统 card entirely in browser mode (app-only rows)', () => {
@@ -1356,8 +1367,10 @@ describe('SettingsCategory', () => {
       const titles = wrapper.findAllComponents({ name: 'SettingsCard' })
         .map(c => c.props().title)
 
-      // Both desktop/system rows are appOnly, so the card must not render as an
-      // empty headed card in browser mode. The desktop-notification card stays.
+      // The card is gated on `appOnly`, and both rows inside it are app-only or
+      // stricter, so it must not render as an empty headed card in browser mode
+      // (where there is no native host to show anything). The
+      // desktop-notification card stays.
       expect(titles).not.toContain('桌面与系统')
       expect(titles).toEqual(['应用内通知', '桌面端通知'])
     })

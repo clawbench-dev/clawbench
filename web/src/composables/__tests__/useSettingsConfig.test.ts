@@ -810,6 +810,84 @@ describe('useSettingsConfig', () => {
       localStorage.removeItem('clawbench-settings-floatingStatusWindow')
       restoreNativeMock(original)
     })
+
+    it('adopts the host value when the host turned the feature off behind the page', async () => {
+      // The desktop tray can turn the feature off. The page must converge on
+      // what the host says, not push its own stale `true` back — that would
+      // resurrect a capsule the user just dismissed.
+      const mockSetFloatingWindowEnabled = vi.fn()
+      const original = (window as any).ClawBenchNative
+      ;(window as any).ClawBenchNative = {
+        setFloatingWindowEnabled: mockSetFloatingWindowEnabled,
+        isFloatingWindowEnabled: () => false,
+      }
+      localStorage.setItem('clawbench-settings-floatingStatusWindow', 'true')
+      vi.resetModules()
+      const { apiGet: freshApiGet } = await import('@/utils/api')
+      vi.mocked(freshApiGet).mockResolvedValueOnce({})
+      const { useSettingsConfig: freshUseSettingsConfig, localConfig: freshLocalConfig } =
+        await import('@/composables/useSettingsConfig')
+
+      await freshUseSettingsConfig().loadConfig()
+
+      expect(freshLocalConfig.floatingStatusWindow).toBe(false)
+      // Adopting the value re-runs the side effect, so the push must be `false`.
+      expect(mockSetFloatingWindowEnabled).toHaveBeenCalledWith(false)
+      expect(mockSetFloatingWindowEnabled).not.toHaveBeenCalledWith(true)
+
+      localStorage.removeItem('clawbench-settings-floatingStatusWindow')
+      restoreNativeMock(original)
+    })
+
+    it('does not resurrect a hidden capsule when the host reports the feature on', async () => {
+      // Feature ON but the user hid the capsule from the tray: the host reports
+      // `true` while localConfig also says `true`. Pushing again would show the
+      // capsule, so an equal value must be left alone entirely.
+      const mockSetFloatingWindowEnabled = vi.fn()
+      const original = (window as any).ClawBenchNative
+      ;(window as any).ClawBenchNative = {
+        setFloatingWindowEnabled: mockSetFloatingWindowEnabled,
+        isFloatingWindowEnabled: () => true,
+      }
+      localStorage.setItem('clawbench-settings-floatingStatusWindow', 'true')
+      vi.resetModules()
+      const { apiGet: freshApiGet } = await import('@/utils/api')
+      vi.mocked(freshApiGet).mockResolvedValueOnce({})
+      const { useSettingsConfig: freshUseSettingsConfig, localConfig: freshLocalConfig } =
+        await import('@/composables/useSettingsConfig')
+
+      await freshUseSettingsConfig().loadConfig()
+
+      expect(freshLocalConfig.floatingStatusWindow).toBe(true)
+      expect(mockSetFloatingWindowEnabled).not.toHaveBeenCalled()
+
+      localStorage.removeItem('clawbench-settings-floatingStatusWindow')
+      restoreNativeMock(original)
+    })
+
+    it('follows a host-initiated change event', async () => {
+      // `applyFloatingEnabled(false)` from the tray pushes this event. Without a
+      // listener the settings switch keeps rendering "on".
+      const { setLocalConfig, localConfig } = useSettingsConfig()
+      setLocalConfig('floatingStatusWindow', true)
+
+      window.dispatchEvent(new CustomEvent('clawbench-floating-enabled-changed', { detail: false }))
+
+      expect(localConfig.floatingStatusWindow).toBe(false)
+
+      localStorage.removeItem('clawbench-settings-floatingStatusWindow')
+    })
+
+    it('ignores a malformed change event', async () => {
+      const { setLocalConfig, localConfig } = useSettingsConfig()
+      setLocalConfig('floatingStatusWindow', true)
+
+      window.dispatchEvent(new CustomEvent('clawbench-floating-enabled-changed', { detail: 'false' }))
+
+      expect(localConfig.floatingStatusWindow).toBe(true)
+
+      localStorage.removeItem('clawbench-settings-floatingStatusWindow')
+    })
   })
 
   describe('liveUpdate sync', () => {

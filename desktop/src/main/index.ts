@@ -1,9 +1,10 @@
-import { app, BrowserWindow, Menu, session } from 'electron'
+import { app, Menu, session } from 'electron'
 import { initStore } from './store'
 import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
 import { registerCertificateHandler } from './certificate'
 import { handOffToPointedVersion } from './install'
+import { flushFloatingBounds, hasFloatingTray, initFloating } from './floating'
 import { recordError, flushOnShutdown } from './clientLog'
 import { APP_USER_MODEL_ID } from './identity'
 
@@ -81,6 +82,10 @@ app.whenReady().then(() => {
   // as an OS dialog; that path is gone so the blocking overlay is the only
   // prompt.
   createMainWindow()
+  // The floating status capsule and its tray icon, when the user left the
+  // feature switched on. After the main window so a capsule click during
+  // startup already has something to reveal.
+  initFloating()
 
   // Grant microphone access so voice input (getUserMedia) works in the
   // desktop shell when the server is served over a secure context
@@ -89,14 +94,25 @@ app.whenReady().then(() => {
     callback(permission === 'media')
   })
 
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createMainWindow() })
+  // Asked for the MAIN window, not for a window count: the floating capsule and
+  // its tray are windows too, so "no windows" would never be true while they are
+  // up and the dock click would do nothing.
+  app.on('activate', () => { if (!getMainWindow()) createMainWindow() })
 })
 
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
+// A tray icon means the app is still reachable with no window on screen, so it
+// keeps running until Quit is chosen from the tray — the usual Windows pattern
+// for a background app. Without a tray there is nothing to click, so closing
+// every window still quits.
+app.on('window-all-closed', () => {
+  if (process.platform === 'darwin') return
+  if (hasFloatingTray()) return
+  app.quit()
+})
 
 // Last chance to ship buffered shell logs before the process goes away.
 // `before-quit` is async-unfriendly (Electron does not await handlers), so the
 // flush races the exit; the renderer relay has the same property. Worth doing
 // because the entries most likely still buffered are the ones around whatever
 // caused the quit.
-app.on('before-quit', () => { void flushOnShutdown() })
+app.on('before-quit', () => { flushFloatingBounds(); void flushOnShutdown() })

@@ -54,6 +54,9 @@ function makeResources(unpackedDir: string): void {
   writeTree(path.join(unpackedDir, 'resources'), {
     'app.asar': 'asar',
     'login.html': '<html></html>',
+    // The capsule document: required, and loaded from process.resourcesPath at
+    // runtime, so a payload without it breaks only when the capsule is opened.
+    'floating.html': '<html></html>',
     'logo.png': 'png',
     'app.asar.unpacked/node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node': 'native',
     'app.asar.unpacked/node_modules/cpu-features/build/Release/cpufeatures.node': 'native',
@@ -132,7 +135,7 @@ describe('stagePayload', () => {
     expect(result.payloadDir).toBe(path.resolve(unpacked) + '-payload')
     // The count covers resources/ only, matching the `118 files` the CI log
     // reports: payload.json is written separately.
-    expect(result.fileCount).toBe(6)
+    expect(result.fileCount).toBe(7)
     expect(result.electron).toBe('44.4.3')
     expect(result.shell).toMatch(/^sha256-[0-9a-f]{64}$/)
     expect(fs.existsSync(path.join(result.payloadDir, 'payload.json'))).toBe(true)
@@ -174,6 +177,22 @@ describe('stagePayload', () => {
     writeTree(path.join(unpacked, 'resources'), { 'login.html': '<html></html>' })
 
     expect(() => stagePayload(unpacked, desktopRoot)).toThrow(/missing required files.*app\.asar/)
+  })
+
+  it('treats the capsule document as required, not optional', () => {
+    // `floating.html` is loaded from process.resourcesPath exactly like
+    // login.html, so a payload that drops it installs cleanly and only breaks
+    // when the user turns the capsule on. Pin it in REQUIRED so a future edit to
+    // the copy list cannot quietly omit it again.
+    expect(REQUIRED).toContain('resources/floating.html')
+
+    const desktopRoot = path.join(tmp, 'desktop')
+    const unpacked = path.join(tmp, 'linux-unpacked')
+    makeIdentityInputs(desktopRoot)
+    makeResources(unpacked)
+    fs.rmSync(path.join(unpacked, 'resources', 'floating.html'))
+
+    expect(() => stagePayload(unpacked, desktopRoot)).toThrow(/missing required files.*floating\.html/)
   })
 
   it('throws when resources/ is absent', () => {
