@@ -1591,6 +1591,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		if service.GlobalScheduler != nil {
 			service.GlobalScheduler.CancelAllRunning()
 		}
+		// Record the shutdown BEFORE cancelling: CancelAllSessions only reaches
+		// the runners that exist right now, so a worker that claims a session
+		// afterwards would run while the DB is closing (leaving a fresh
+		// streaming=1 row and a duplicate resume on the next boot). Background
+		// workers that can start new work check this flag.
+		service.MarkShuttingDown()
 		service.CancelAllSessions()
 
 		// 2. Force a final flush of every actively streaming session BEFORE

@@ -2645,6 +2645,11 @@ type SessionInfo struct {
 	Transport   string
 	AutoApprove bool
 	ProjectPath string // populated by GetSessionFullInfo only
+	// SessionType is the raw chat_sessions.session_type ('chat' / 'group' /
+	// 'scheduled' / 'group_member'), COALESCEd to '' when NULL. Carried on the
+	// same snapshot as the rest so a caller that must branch on it does not need
+	// a second query — and cannot see a different row between the two reads.
+	SessionType string
 }
 
 // ContextState holds persisted session context info (mode, thinking effort, usage)
@@ -3139,7 +3144,7 @@ func GetSessionFullInfoAny(sessionID string) *SessionInfo {
 
 func sessionFullInfo(sessionID string, includeArchived bool) *SessionInfo {
 	info := &SessionInfo{}
-	query := `SELECT s.backend, COALESCE(p.path, ''), s.title, s.agent_id, s.model, COALESCE(s.transport, ''), s.auto_approve
+	query := `SELECT s.backend, COALESCE(p.path, ''), s.title, s.agent_id, s.model, COALESCE(s.transport, ''), s.auto_approve, COALESCE(s.session_type, '')
 		   FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
 		  WHERE s.id = ?`
@@ -3147,7 +3152,7 @@ func sessionFullInfo(sessionID string, includeArchived bool) *SessionInfo {
 		query += " AND s.archived = 0"
 	}
 	err := store.ReadDB().QueryRow(query, sessionID).
-		Scan(&info.Backend, &info.ProjectPath, &info.Title, &info.AgentID, &info.Model, &info.Transport, &info.AutoApprove)
+		Scan(&info.Backend, &info.ProjectPath, &info.Title, &info.AgentID, &info.Model, &info.Transport, &info.AutoApprove, &info.SessionType)
 	if err != nil {
 		return nil
 	}

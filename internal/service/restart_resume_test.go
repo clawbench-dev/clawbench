@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -333,7 +334,7 @@ func TestStartRestartResume_ResumesWhenEnabled(t *testing.T) {
 	}
 
 	recordInterruptedSessions([]string{sid})
-	scheduled := startRestartResume(0, resumeSessionFn)
+	scheduled := startRestartResume(0, ResumeInterruptedSession)
 	if len(scheduled) != 1 || scheduled[0] != sid {
 		t.Fatalf("expected the session to be scheduled, got %+v", scheduled)
 	}
@@ -341,6 +342,72 @@ func TestStartRestartResume_ResumesWhenEnabled(t *testing.T) {
 	waitForCount(t, 1, func() int { return launched.count() })
 	if launched.first().SessionID != sid {
 		t.Fatalf("resumed the wrong session: got %q want %q", launched.first().SessionID, sid)
+	}
+}
+
+// The delay is the only thing that keeps a resumed turn from streaming before
+// clients have reconnected and re-subscribed — its whole reason for existing.
+// Pinned here because every other test passes delay=0, so deleting the sleep (or
+// zeroing the default) would otherwise go unnoticed.
+func TestStartRestartResume_HonoursTheDelay(t *testing.T) {
+	setupRestartResumeDB(t)
+	launched := stubRestartLaunch(t)
+	setAutoContinue(t, true)
+
+	sid, err := CreateSession("/proj/resume", "claude", "delayed", "", "", "default", "chat")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	recordInterruptedSessions([]string{sid})
+	// The delay must be several times the observation window: the worker is a
+	// goroutine, so "assert nothing happened" needs an actual window in which it
+	// COULD have happened. Checking immediately after the call would pass even
+	// with the sleep deleted (the goroutine may not be scheduled yet), which is
+	// exactly how this test failed its first mutation.
+	const (
+		delay      = 400 * time.Millisecond
+		observeFor = 150 * time.Millisecond
+	)
+	startRestartResume(delay, ResumeInterruptedSession)
+
+	time.Sleep(observeFor)
+	if n := launched.count(); n != 0 {
+		t.Fatalf("nothing may be resumed during the delay, got %d launches after %v (delay %v)",
+			n, observeFor, delay)
+	}
+	waitForCount(t, 1, launched.count)
+}
+
+// A shutdown during the delay must abort the resume: CancelAllSessions only
+// sweeps the runners that exist at that instant, so a turn claimed afterwards
+// would run while the DB is closing — leaving a fresh streaming=1 row that the
+// NEXT startup resumes again (the user sees the notice twice).
+func TestStartRestartResume_AbortsOnShutdown(t *testing.T) {
+	setupRestartResumeDB(t)
+	launched := stubRestartLaunch(t)
+	setAutoContinue(t, true)
+
+	prevShutdown := ResetShuttingDownForTest()
+	if prevShutdown {
+		t.Fatal("setup: the package must not already be marked as shutting down")
+	}
+	t.Cleanup(func() { ResetShuttingDownForTest() })
+
+	sid, err := CreateSession("/proj/resume", "claude", "shutdown", "", "", "default", "chat")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	recordInterruptedSessions([]string{sid})
+	// Delay long enough to mark the shutdown before the worker wakes.
+	startRestartResume(120*time.Millisecond, ResumeInterruptedSession)
+	MarkShuttingDown()
+
+	// Wait past the delay, then confirm nothing was started.
+	time.Sleep(300 * time.Millisecond)
+	if n := launched.count(); n != 0 {
+		t.Fatalf("a shutdown must abort the resume, got %d launches", n)
 	}
 }
 
@@ -390,20 +457,40 @@ func TestStartRestartResume_GatedOnAutoContinue(t *testing.T) {
 // A panic while resuming ONE session must not kill the process (an uncaught
 // panic in a goroutine terminates everything) and must not stop the remaining
 // sessions from being resumed.
+//
+// The injected function CLAIMS first and then panics. That is what makes the
+// "claim was released" assertion real: without the claim, IsSessionRunning is
+// false no matter what the recover block does, so deleting the FinishSessionRun
+// call would go unnoticed.
 func TestResumeOneSafely_PanicDoesNotStopTheRest(t *testing.T) {
 	setupRestartResumeDB(t)
 	cleanupAllSessionState()
 	t.Cleanup(cleanupAllSessionState)
 
-	calls := stubRestartLaunch(t)
+	// Capture the terminal broadcast: a panic after the claim must clear the
+	// client's spinner, exactly like the notice-write failure branch does.
+	var mu sync.Mutex
+	var statuses []string
+	origEmitWS := emitTerminalWSOnly
+	emitTerminalWSOnly = func(_ string, status string, _ bool) {
+		mu.Lock()
+		statuses = append(statuses, status)
+		mu.Unlock()
+	}
+	t.Cleanup(func() { emitTerminalWSOnly = origEmitWS })
 
-	// The first session panics; the second must still be resumed.
 	var seen []string
 	panicking := func(s string) error {
 		seen = append(seen, s)
+		if _, created := TryClaimSessionRun(s); !created {
+			t.Fatalf("setup: expected to win the claim for %q", s)
+		}
 		if s == "boom" {
 			panic("simulated failure")
 		}
+		// The healthy one owns its claim the way a real resume would; release it
+		// so the test leaves no runner behind.
+		FinishSessionRun(s)
 		return nil
 	}
 
@@ -413,11 +500,21 @@ func TestResumeOneSafely_PanicDoesNotStopTheRest(t *testing.T) {
 	if len(seen) != 2 {
 		t.Fatalf("the second session must still be resumed after the panic, saw %+v", seen)
 	}
-	// The panic path must not leave a claim behind.
+	// The panic path must not leave a claim behind (this is what the
+	// FinishSessionRun inside the recover block is for).
 	if IsSessionRunning("boom") {
 		t.Fatal("a panicking resume must release the session's claim")
 	}
-	_ = calls
+	if IsSessionRunning("ok") {
+		t.Fatal("the healthy session must have released its claim too")
+	}
+	// And the panicking session must have been announced terminal, otherwise the
+	// client keeps its spinner up forever.
+	mu.Lock()
+	defer mu.Unlock()
+	if len(statuses) != 1 || statuses[0] != statusCancelled {
+		t.Fatalf("a panicking resume must announce exactly one cancelled event, got %+v", statuses)
+	}
 }
 
 // The whole point of a group resume is that the host AND the members actually
@@ -607,6 +704,114 @@ func TestInitDB_RecordsInterruptedSessions(t *testing.T) {
 	// Drained: a second call must find nothing (at most once per start).
 	if again := takeInterruptedSessions(); len(again) != 0 {
 		t.Fatalf("take must drain, still holds %+v", again)
+	}
+}
+
+// A session row with an EMPTY session_type must be resumed, not skipped.
+//
+// An empty value means 'chat' in this schema (ADD COLUMN ... DEFAULT 'chat') and that is the
+// convention the rest of the code follows (store.SessionTypeMatchesFilter
+// normalizes ” to 'chat'). Treating ” as "not interactive" would silently stop
+// resuming every legacy/blank row.
+func TestResumeInterruptedSession_EmptySessionTypeIsChat(t *testing.T) {
+	setupRestartResumeDB(t)
+	launched := stubRestartLaunch(t)
+
+	sid, err := CreateSession("/proj/resume", "claude", "blank-type", "", "", "default", "chat")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	// Blank the column the way a legacy row would be.
+	if _, err := store.WriteExec("UPDATE chat_sessions SET session_type = '' WHERE id = ?", sid); err != nil {
+		t.Fatalf("blank session_type: %v", err)
+	}
+
+	if err := ResumeInterruptedSession(sid); err != nil {
+		t.Fatalf("ResumeInterruptedSession: %v", err)
+	}
+	if launched.count() != 1 {
+		t.Fatalf("an empty session_type means 'chat' and must be resumed, got %d launches", launched.count())
+	}
+}
+
+// An archived session must not be resumed: it is not in the session list and the
+// user put it away on purpose. Pinned because GetSessionFullInfoAny sits right
+// next to GetSessionFullInfo and would happily return the row.
+func TestResumeInterruptedSession_SkipsArchivedSession(t *testing.T) {
+	setupRestartResumeDB(t)
+	launched := stubRestartLaunch(t)
+
+	sid, err := CreateSession("/proj/resume", "claude", "archived", "", "", "default", "chat")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := ArchiveSession("/proj/resume", "claude", sid); err != nil {
+		t.Fatalf("ArchiveSession: %v", err)
+	}
+
+	if err := ResumeInterruptedSession(sid); err != nil {
+		t.Fatalf("an archived session must be skipped without error: %v", err)
+	}
+	if launched.count() != 0 {
+		t.Fatalf("an archived session must not be resumed, got %d launches", launched.count())
+	}
+	if rows := systemRowTexts(t, sid); len(rows) != 0 {
+		t.Fatalf("a skipped session must not get a system row, got %+v", rows)
+	}
+	if IsSessionRunning(sid) {
+		t.Fatal("a skipped session must not be claimed")
+	}
+}
+
+// The AddSystemMessage failure branch must release the claim AND announce a
+// terminal state — tryClaimSessionRun already broadcast "running", so dropping
+// the runner silently leaves the client's spinner up forever.
+func TestResumeInterruptedSession_SystemWriteFailureReleasesClaim(t *testing.T) {
+	setupRestartResumeDB(t)
+	launched := stubRestartLaunch(t)
+
+	sid, err := CreateSession("/proj/resume", "claude", "write-fail", "", "", "default", "chat")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// Force the notice write to fail.
+	origAdd := addResumeNotice
+	addResumeNotice = func(_, _, _ string) (int64, error) {
+		return 0, errors.New("simulated write failure")
+	}
+	t.Cleanup(func() { addResumeNotice = origAdd })
+
+	// Capture the terminal broadcast so the "spinner cleared" half is asserted.
+	var mu sync.Mutex
+	var statuses []string
+	origEmitWS := emitTerminalWSOnly
+	emitTerminalWSOnly = func(_ string, status string, _ bool) {
+		mu.Lock()
+		statuses = append(statuses, status)
+		mu.Unlock()
+	}
+	t.Cleanup(func() { emitTerminalWSOnly = origEmitWS })
+
+	if err := ResumeInterruptedSession(sid); err == nil {
+		t.Fatal("a failed notice write must surface an error to the caller's log")
+	}
+
+	// The claim must be released, or the session stays "running" forever.
+	if IsSessionRunning(sid) {
+		t.Fatal("a failed notice write must release the session's claim")
+	}
+	// And a terminal state must be announced, or the client keeps its spinner.
+	mu.Lock()
+	defer mu.Unlock()
+	if len(statuses) != 1 || statuses[0] != statusCompleted {
+		t.Fatalf("exactly one terminal event must be announced, got %+v", statuses)
+	}
+	if launched.count() != 0 {
+		t.Fatalf("nothing may be launched after a failed write, got %d", launched.count())
+	}
+	if rows := systemRowTexts(t, sid); len(rows) != 0 {
+		t.Fatalf("the failed write must not persist a row, got %+v", rows)
 	}
 }
 

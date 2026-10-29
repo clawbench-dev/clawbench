@@ -73,10 +73,6 @@ func takeInterruptedSessions() []string {
 	return ids
 }
 
-// resumeSessionFn is the per-session resume seam. A var so tests can observe the
-// worker's scheduling decisions without starting a real AI backend.
-var resumeSessionFn = ResumeInterruptedSession
-
 // StartRestartResume resumes the sessions the previous process exit interrupted.
 // It returns the session ids it scheduled (nil when the feature is off or there
 // was nothing to do) — the return value is what lets tests assert the gate
@@ -94,7 +90,7 @@ var resumeSessionFn = ResumeInterruptedSession
 // after the main listener is bound (otherwise the resumed turns start streaming
 // before any client can subscribe).
 func StartRestartResume() []string {
-	return startRestartResume(defaultRestartResumeDelay, resumeSessionFn)
+	return startRestartResume(defaultRestartResumeDelay, ResumeInterruptedSession)
 }
 
 // startRestartResume is the parameterized form: delay and the per-session resume
@@ -117,6 +113,17 @@ func startRestartResume(delay time.Duration, resume func(string) error) []string
 	go func() {
 		time.Sleep(delay)
 		for _, sessionID := range ids {
+			// Checked per session, not once: a shutdown landing during the loop
+			// must stop the remaining sessions too. Without this the worker would
+			// claim a session after CancelAllSessions has already swept the
+			// registry, so the new turn is invisible to the drain and runs while
+			// the DB closes — leaving a fresh streaming=1 row that the NEXT
+			// startup resumes again (the user sees the notice twice).
+			if IsShuttingDown() {
+				slog.Info("restart resume: aborted, server is shutting down",
+					slog.String("session", sessionID))
+				return
+			}
 			resumeOneSafely(sessionID, resume)
 		}
 	}()
@@ -141,6 +148,11 @@ func resumeOneSafely(sessionID string, resume func(string) error) {
 			// The claim may have been taken before the panic; release it so the
 			// session is not left "running" with nothing driving it.
 			FinishSessionRun(sessionID)
+			// tryClaimSessionRun already broadcast "running", so releasing the
+			// runner silently would leave the client's spinner up forever. This
+			// mirrors the AddSystemMessage failure branch below (same reason,
+			// same call). "cancelled" rather than "completed": nothing ran.
+			emitTerminalWSOnly(sessionID, statusCancelled, false)
 		}
 	}()
 	if err := resume(sessionID); err != nil {
@@ -149,6 +161,15 @@ func resumeOneSafely(sessionID string, resume func(string) error) {
 			slog.String("err", err.Error()))
 	}
 }
+
+// addResumeNotice is an indirection over AddSystemMessage so tests can force the
+// write to fail and verify the release path. Mirrors launchConsumerExecution and
+// runGroupDrainLoopFn — the same seam style used by the rest of this worker.
+var addResumeNotice = AddSystemMessage
+
+// emitTerminalWSOnly is an indirection over EmitSessionEventWSOnly, so tests can
+// assert the "clear the client's spinner" half of the failure paths.
+var emitTerminalWSOnly = EmitSessionEventWSOnly
 
 // RestartResumePrompt returns the localized instruction sent to a session whose
 // turn the restart interrupted. Rendered from a background goroutine with no
@@ -179,7 +200,17 @@ func ResumeInterruptedSession(sessionID string) error {
 	// file comment): its task_executions row is already 'failed', its session is
 	// not user-visible, and cron will run the task again — resuming it here would
 	// duplicate the work under the wrong execution mode.
-	sessionType := GetSessionType(sessionID)
+	//
+	// Read from the same snapshot as everything else (info.SessionType) rather
+	// than a second query, so the type cannot change between the archived check
+	// and this one. An EMPTY value means 'chat': that is the schema default
+	// (ADD COLUMN ... DEFAULT 'chat') and the convention the rest of the code
+	// follows (store.SessionTypeMatchesFilter normalizes '' to 'chat'), so a
+	// legacy row with a blank column is resumed rather than silently skipped.
+	sessionType := info.SessionType
+	if sessionType == "" {
+		sessionType = store.SessionTypeChat
+	}
 	isGroup := sessionType == groupSessionType
 	if !isGroup && sessionType != store.SessionTypeChat {
 		slog.Info("restart resume: skipping non-interactive session",
@@ -214,7 +245,7 @@ func ResumeInterruptedSession(sessionID string) error {
 	// The single persisted row: a centered system notice that the session was
 	// recovered. For a group it is also what reaches the members (system rows
 	// are injected as "[系统] ..."), so it carries the instruction verbatim.
-	msgID, err := AddSystemMessage(info.ProjectPath, sessionID, prompt)
+	msgID, err := addResumeNotice(info.ProjectPath, sessionID, prompt)
 	if err != nil {
 		// Release the claim AND announce the terminal state: tryClaimSessionRun
 		// already broadcast "running", so dropping the runner silently would leave
@@ -222,7 +253,7 @@ func ResumeInterruptedSession(sessionID string) error {
 		// SetSessionRunning) also cancels the claim's context instead of leaking
 		// it.
 		FinishSessionRun(sessionID)
-		EmitSessionEventWSOnly(sessionID, statusCompleted, false)
+		emitTerminalWSOnly(sessionID, statusCompleted, false)
 		return err
 	}
 	emitGroupSystemMessage(sessionID, msgID, prompt)
