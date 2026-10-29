@@ -439,9 +439,20 @@ const activeIndex = computed(() => {
   return items.value.findIndex(it => !it.pending && String(it.msg.id) === String(id))
 })
 
+/**
+ * Which node carries the "you are here" highlight.
+ *
+ * While a reply streams that is the pending slot, not the last finished
+ * message: the axis follows the tail, so the slot IS the newest row, and
+ * leaving it unhighlighted made it the only node on the axis without the mark
+ * — it read as "not a real message" rather than as "this one is being written".
+ * The finished message loses the mark at the same time, so exactly one node is
+ * ever highlighted.
+ */
 function isActive(it: { msg: RailIndexMsg; pending: boolean }) {
+  if (props.generating) return it.pending
   const id = props.activeId
-  if (id == null || id === '' || it.pending) return false
+  if (id == null || id === '') return false
   return String(it.msg.id) === String(id)
 }
 

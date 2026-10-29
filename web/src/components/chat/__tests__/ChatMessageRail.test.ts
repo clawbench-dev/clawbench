@@ -336,12 +336,23 @@ describe('ChatMessageRail — pending (in-flight reply) node', () => {
     expect(centre - 11).toBeGreaterThanOrEqual(0)
   })
 
-  it('never marks the pending slot as the active message', () => {
-    // activeId 5 is the last real row; the pending slot must not inherit it even
-    // though it is the last item in the list.
+  it('marks the pending slot as the active node while a reply streams', () => {
+    // While streaming, the tail IS the position the axis is showing, so the mark
+    // belongs on the slot. Leaving it unmarked made it the only node without the
+    // highlight — it read as "not a real message" instead of "being written".
     const w = mountRail({ generating: true, activeId: 5 })
-    const nodes = w.findAll('.msg-rail-node')
-    expect(nodes[4].classes()).toContain('active')
-    expect(w.find('.msg-rail-node--pending').classes()).not.toContain('active')
+    expect(w.find('.msg-rail-node--pending').classes()).toContain('active')
+    // …and the finished row it replaced gives the mark up: exactly one node ever
+    // carries it, or the cue stops meaning anything.
+    const marked = w.findAll('.msg-rail-node').filter(n => n.classes().includes('active'))
+    expect(marked).toHaveLength(1)
+    // Both layers agree, or the number is lit while its row is not.
+    expect(w.find('.msg-rail-row--pending').classes()).toContain('active')
+  })
+
+  it('hands the mark back to the message once the turn ends', () => {
+    const w = mountRail({ activeId: 5 })
+    expect(w.findAll('.msg-rail-node')[4].classes()).toContain('active')
+    expect(w.findAll('.msg-rail-node').filter(n => n.classes().includes('active'))).toHaveLength(1)
   })
 })
