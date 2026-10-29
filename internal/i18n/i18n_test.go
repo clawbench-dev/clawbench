@@ -223,6 +223,21 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"UsageMeterMetricInvalid",
 		"UsageMeterMetricNotString",
 		"UsageMeterCycleModeInvalid",
+		"PushShowTitle",
+		"PushShowEmpty",
+		"PushShowSessionLabel",
+		"PushStoppedTitle",
+		"PushStoppedRunning",
+		"PushStoppedIdle",
+		"PushNewTitle",
+		"PushNewCreated",
+		"PushNewListIntro",
+		"PushNewListUsage",
+		"PushNewNoProjects",
+		"PushNewProjectNotFound",
+		"PushNewProjectOutOfRange",
+		"PushNewProjectMissingDir",
+		"PushNewNoAgent",
 	}
 
 	for _, key := range keys {
@@ -369,7 +384,12 @@ func TestPushTemplatesKeepPlaceholders(t *testing.T) {
 		// Reached from the ACP connection-error path (background goroutine, no
 		// request to fall back on). A missing placeholder here would ship
 		// "Run `` in a terminal" to the user, so it is pinned with the rest.
-		"ACPAuthRequired": {"Command": "cmdc login"},
+		"ACPAuthRequired":          {"Command": "cmdc login"},
+		"PushShowSessionLabel":     {"Label": "L"},
+		"PushStoppedRunning":       {"Label": "L", "Count": 2},
+		"PushStoppedIdle":          {"Label": "L", "Count": 0},
+		"PushNewCreated":           {"Label": "L", "ID": "abc"},
+		"PushNewProjectOutOfRange": {"Count": 3},
 	}
 	for key, data := range withData {
 		for _, loc := range []string{"en", "zh"} {

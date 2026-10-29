@@ -38,6 +38,15 @@ type SessionInfo struct {
 	Model       string
 }
 
+// ProjectRef is one row of the /new project list. Index is 1-based and is what
+// the user types back; Path is the canonical registered path.
+type ProjectRef struct {
+	Index        int
+	Path         string
+	Exists       bool // directory still present on disk
+	SessionCount int
+}
+
 // SessionMessenger abstracts session operations needed by push backends.
 // Implemented in main.go to avoid import cycles (service → push → service).
 type SessionMessenger interface {
@@ -58,6 +67,24 @@ type SessionMessenger interface {
 	// empty message with files is valid — a bare file sent from IM carries no
 	// text.
 	SendMessageToSession(sessionID, message string, files []model.FileEntry) error
+	// LastAssistantReply returns the target session's most recent FINALIZED
+	// assistant reply as plain text (group-chat protocol tags already
+	// stripped). ok is false when the session has no finished reply yet — the
+	// caller must say so rather than send an empty message. A reply that is
+	// still streaming is not returned.
+	LastAssistantReply(sessionID string) (text string, ok bool, err error)
+	// StopAndClearSession stops the session's in-flight turn (idempotent) and
+	// drops its queued messages. wasRunning reports whether a turn was actually
+	// cancelled; cleared is the number of queued messages removed.
+	StopAndClearSession(sessionID string) (wasRunning bool, cleared int, err error)
+	// ListProjects returns every registered project, index starting at 1, in
+	// the order /new renders them.
+	ListProjects() ([]ProjectRef, error)
+	// CreateSessionInProject creates an empty chat session in projectPath using
+	// the default agent visible in that project. The path must already be a
+	// registered project; an unknown path is an error rather than an implicit
+	// registration.
+	CreateSessionInProject(projectPath string) (sessionID, title string, err error)
 }
 
 // ConnectedClientChecker checks whether any client is currently connected.

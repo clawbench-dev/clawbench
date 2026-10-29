@@ -195,6 +195,14 @@ func TestResolveTarget(t *testing.T) {
 type mockMessenger struct {
 	sessions []SessionInfo
 	running  map[string]bool
+
+	lastReply       string
+	lastReplyOK     bool
+	wasRunning      bool
+	cleared         int
+	projects        []ProjectRef
+	newSessionID    string
+	newSessionTitle string
 }
 
 func (m *mockMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]SessionInfo, error) {
@@ -314,5 +322,53 @@ func TestClassifyIncoming_NewCommands(t *testing.T) {
 				t.Errorf("Message = %q, want %q", got.Message, tt.wantMsg)
 			}
 		})
+	}
+}
+
+func (m *mockMessenger) LastAssistantReply(string) (string, bool, error) {
+	return m.lastReply, m.lastReplyOK, nil
+}
+
+func (m *mockMessenger) StopAndClearSession(string) (bool, int, error) {
+	return m.wasRunning, m.cleared, nil
+}
+
+func (m *mockMessenger) ListProjects() ([]ProjectRef, error) {
+	return m.projects, nil
+}
+
+func (m *mockMessenger) CreateSessionInProject(string) (string, string, error) {
+	return m.newSessionID, m.newSessionTitle, nil
+}
+
+func TestResolveCommandTarget(t *testing.T) {
+	m := &mockMessenger{
+		sessions: []SessionInfo{
+			{ID: "a1b2c3d4-1111", Title: "T1"},
+			{ID: "b2c3d4e5-2222", Title: "T2"},
+		},
+		running: map[string]bool{"b2c3d4e5-2222": true},
+	}
+
+	// No arg → the sticky session, read back for its title.
+	id, title, err := ResolveCommandTarget(m, "", "a1b2c3d4-1111")
+	if err != nil || id != "a1b2c3d4-1111" || title != "T1" {
+		t.Fatalf("sticky resolve = %q %q %v", id, title, err)
+	}
+
+	// Explicit prefix wins over the sticky target.
+	id, title, err = ResolveCommandTarget(m, "b2c3d4e5", "a1b2c3d4-1111")
+	if err != nil || id != "b2c3d4e5-2222" || title != "T2" {
+		t.Fatalf("prefix resolve = %q %q %v", id, title, err)
+	}
+
+	// No arg and no sticky target is an error, not a silent empty session.
+	if _, _, err := ResolveCommandTarget(m, "", ""); err == nil {
+		t.Fatal("expected error when neither arg nor sticky target is set")
+	}
+
+	// Unknown prefix propagates the not-found error.
+	if _, _, err := ResolveCommandTarget(m, "ffffffff", "a1b2c3d4-1111"); err == nil {
+		t.Fatal("expected error for unknown prefix")
 	}
 }

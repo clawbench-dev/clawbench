@@ -212,6 +212,21 @@ PushMultipleRunningSessions: 'Multiple running sessions matched; use a longer ID
 PushMultipleSessions: 'Multiple sessions matched; use a longer ID ({{.ID}}…)'
 PushSessionNotFound: Session {{.ID}} not found
 PushRecentSessionUnavailable: 'The recent session is unavailable; pick again with /ls: {{.Error}}'
+PushShowTitle: Last reply
+PushShowEmpty: This session has no completed reply yet.
+PushShowSessionLabel: 'Session **{{.Label}}**'
+PushStoppedTitle: Stopped
+PushStoppedRunning: Stopped session **{{.Label}}** and cleared {{.Count}} queued messages.
+PushStoppedIdle: Session **{{.Label}}** was not running; cleared {{.Count}} queued messages.
+PushNewTitle: New session
+PushNewCreated: 'Created a session in **{{.Label}}**. Send `@{{.ID}} <message>` or just type to continue.'
+PushNewListIntro: 'Send **/new <index>** or **/new <full path>** to create a session in a project:'
+PushNewListUsage: 'Usage: /new 1'
+PushNewNoProjects: (no projects)
+PushNewProjectNotFound: 'Project not found (full path or list index only). Send /new to see the project list.'
+PushNewProjectOutOfRange: 'Project index out of range ({{.Count}} projects). Send /new to see the list.'
+PushNewProjectMissingDir: '⚠️ The project directory no longer exists; the session was created but may not run.'
+PushNewNoAgent: No agents available in this project.
 NotFound: Not found
 PermissionNotFound: No pending permission request found
 ACPSessionNotFound: ACP session no longer exists on the agent side

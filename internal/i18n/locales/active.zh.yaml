@@ -211,6 +211,21 @@ PushMultipleRunningSessions: 匹配到多个正在运行的会话，请使用更
 PushMultipleSessions: 匹配到多个会话，请使用更长的 ID（{{.ID}}…）
 PushSessionNotFound: 未找到会话 {{.ID}}
 PushRecentSessionUnavailable: 最近会话不可用，请用 /ls 重新选择：{{.Error}}
+PushShowTitle: 最近回复
+PushShowEmpty: 该会话还没有已完成的回复。
+PushShowSessionLabel: 会话 **{{.Label}}**
+PushStoppedTitle: 已停止
+PushStoppedRunning: 已停止会话 **{{.Label}}**，清空 {{.Count}} 条排队消息。
+PushStoppedIdle: 会话 **{{.Label}}** 未在运行，清空 {{.Count}} 条排队消息。
+PushNewTitle: 新建会话
+PushNewCreated: 已在 **{{.Label}}** 创建会话，发送 `@{{.ID}} <消息>` 或直接发消息继续。
+PushNewListIntro: 发送 **/new 序号** 或 **/new 完整路径** 在指定项目下新建会话：
+PushNewListUsage: '用法：/new 1'
+PushNewNoProjects: （暂无项目）
+PushNewProjectNotFound: 未找到该项目（只支持完整路径或列表序号）。发送 /new 查看项目列表。
+PushNewProjectOutOfRange: 项目序号超出范围（共 {{.Count}} 个），发送 /new 查看列表。
+PushNewProjectMissingDir: '⚠️ 该项目的目录已不存在，会话已创建但可能无法执行。'
+PushNewNoAgent: 该项目下没有可用的智能体。
 NotFound: 未找到
 PermissionNotFound: 未找到待审批的权限请求
 ACPSessionNotFound: 该会话在智能体端已不存在

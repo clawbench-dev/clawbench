@@ -190,6 +190,19 @@ func ResolveTarget(messenger SessionMessenger, route Route, stickySessionID stri
 	return info.ID, info.Title, nil
 }
 
+// ResolveCommandTarget resolves the target of a /show or /stop command.
+//
+// An explicit prefix (the command's argument) resolves like "@{shortID}" does.
+// An empty argument means the sticky session, whose title is read back so the
+// reply can name it. Returns an error when there is no sticky target at all —
+// the caller turns that into the "/ls" hint rather than acting on a guess.
+func ResolveCommandTarget(messenger SessionMessenger, arg, stickySessionID string) (sessionID, title string, err error) {
+	if arg != "" {
+		return ResolveShortSessionID(messenger, arg)
+	}
+	return ResolveTarget(messenger, Route{Kind: RouteToSession}, stickySessionID)
+}
+
 // FormatSessionLabel returns a human-readable label for a session.
 func FormatSessionLabel(sessionID, sessionTitle string) string {
 	if sessionTitle != "" {
