@@ -213,6 +213,23 @@ describe('UsageMeterPopover — no rule configured', () => {
       .toBe('usageMeter.label')
   })
 
+  // The heading sits directly above the figures, so it must name the quantity
+  // they are in. A fixed "Usage" left a $ budget and a token budget reading the
+  // same, which is the one thing the panel exists to distinguish.
+  it('heads the popover with the configured metric', () => {
+    expect(mountPopover(status({ metric: 'cost' }), 'ok').get('.um-title').text())
+      .toBe('usageMeter.titleCost')
+    expect(mountPopover(status({ metric: 'tokens' }), 'ok').get('.um-title').text())
+      .toBe('usageMeter.titleTokens')
+    expect(mountPopover(status({ metric: 'credit' }), 'ok').get('.um-title').text())
+      .toBe('usageMeter.titleCredit')
+  })
+
+  it('falls back to the feature title when the payload carries no metric', () => {
+    expect(mountPopover(status({ metric: undefined }), 'ok').get('.um-title').text())
+      .toBe('usageMeter.title')
+  })
+
   // The mirror: with a rule the capsule and its popover must be back. Without
   // this, deleting the whole body would also satisfy every assertion above.
   it('renders the full capsule and popover once a rule exists', () => {

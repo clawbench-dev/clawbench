@@ -70,7 +70,7 @@
     >
       <div class="um-pop">
         <div class="um-head">
-          <span class="um-title">{{ t('usageMeter.title') }}</span>
+          <span class="um-title">{{ t(titleKey) }}</span>
           <div class="um-head-actions">
             <span class="um-badge" :class="`is-${state}`">{{ badgeText }}</span>
             <!-- Shortcut into the rule that produces every number below. Lives
@@ -184,7 +184,7 @@ import { computed, inject, ref, watch } from 'vue'
 import { Gauge, Settings2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import PopupMenu from '@/components/common/PopupMenu.vue'
-import { formatUsageMeterValue, usageMeterMetricLabelKey } from '@/utils/usageFormat'
+import { formatUsageMeterValue, usageMeterMetricLabelKey, usageMeterTitleKey } from '@/utils/usageFormat'
 import { setPendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import { useUsageMeter, type UsageMeterStatus } from '@/composables/useUsageMeter'
 
@@ -213,6 +213,8 @@ const PLOT_BOTTOM = 82
 const metric = computed(() => props.status.metric ?? 'cost')
 /** The capsule's word, derived from the same metric the numbers are formatted with. */
 const metricLabelKey = computed(() => usageMeterMetricLabelKey(props.status.metric))
+/** The popover heading: "Cost usage" / "费用用量" — same metric, feature noun appended. */
+const titleKey = computed(() => usageMeterTitleKey(props.status.metric))
 const actual = computed(() => props.status.actual ?? 0)
 const expected = computed(() => props.status.expected ?? 0)
 const quota = computed(() => props.status.quota ?? 0)

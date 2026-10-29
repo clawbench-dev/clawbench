@@ -196,7 +196,14 @@ export default {
   // 用量（usage meter）。周期 + 指标 + 额度，按时间比例算出「应花」，
   // 实际超出时提醒一次，用尽再提醒一次。
   usageMeter: {
+    // Feature name, and the heading used when the rule's metric is unknown.
     title: '用量',
+    // Popover heading per metric. The panel's whole subject is one measured
+    // quantity, and a bare "用量" left it ambiguous between a $ budget and a
+    // token budget.
+    titleTokens: 'Token 用量',
+    titleCredit: 'Credit 用量',
+    titleCost: '费用用量',
     // Short form used inside the header capsule (next to the gauge icon).
     // Only for a rule whose metric is unknown; with a rule the capsule names
     // the quantity it counts (see metric* below).

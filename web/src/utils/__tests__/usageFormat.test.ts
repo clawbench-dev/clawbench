@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatCompactCount, formatUsageMeterValue, usageMeterMetricLabelKey } from '@/utils/usageFormat'
+import { formatCompactCount, formatUsageMeterValue, usageMeterMetricLabelKey, usageMeterTitleKey } from '@/utils/usageFormat'
 
 describe('formatCompactCount', () => {
   it('keeps small counts verbatim', () => {
@@ -78,5 +78,21 @@ describe('usageMeterMetricLabelKey', () => {
     // A disabled rule carries no metric; the label must still resolve to a
     // string rather than rendering an empty capsule word.
     expect(usageMeterMetricLabelKey(undefined)).toBe('usageMeter.label')
+  })
+})
+
+describe('usageMeterTitleKey', () => {
+  it('appends the feature noun to each metric', () => {
+    // The popover heading must say which quantity the whole panel is about: a
+    // fixed "Usage" left a $ budget and a token budget indistinguishable.
+    const keys = ['tokens', 'credit', 'cost'].map(m =>
+      usageMeterTitleKey(m as 'tokens' | 'credit' | 'cost'),
+    )
+    expect(keys).toEqual(['usageMeter.titleTokens', 'usageMeter.titleCredit', 'usageMeter.titleCost'])
+    expect(new Set(keys).size).toBe(3)
+  })
+
+  it('falls back to the plain feature title when the metric is unknown', () => {
+    expect(usageMeterTitleKey(undefined)).toBe('usageMeter.title')
   })
 })

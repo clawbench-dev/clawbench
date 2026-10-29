@@ -166,14 +166,29 @@ describe('usage meter capsule carries an icon and a word', () => {
     }
   })
 
-  it('both locales define a label for every metric', () => {
+  it('both locales define a label and a title for every metric', () => {
     for (const loc of ['zh', 'en']) {
       const src = readWebFile(`src/i18n/locales/${loc}.ts`)
-      for (const key of ['label', 'metricTokens', 'metricCredit', 'metricCost']) {
+      for (const key of [
+        'label',
+        'title',
+        'metricTokens',
+        'metricCredit',
+        'metricCost',
+        'titleTokens',
+        'titleCredit',
+        'titleCost',
+      ]) {
         expect(src, `${loc} missing usageMeter.${key}`)
           .toMatch(new RegExp(`\\b${key}:\\s*'[^']+'`))
       }
     }
+  })
+
+  it('the popover heading follows the metric instead of a fixed "Usage"', () => {
+    const src = stripComments(readWebFile('src/components/common/UsageMeterPopover.vue'))
+    expect(src).toContain('t(titleKey)')
+    expect(src).not.toContain("t('usageMeter.title')")
   })
 })
 

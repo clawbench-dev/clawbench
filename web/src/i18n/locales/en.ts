@@ -191,7 +191,14 @@ export default {
     },
   },
   usageMeter: {
+    // Feature name, and the heading used when the rule's metric is unknown.
     title: 'Usage',
+    // Popover heading per metric. The panel's whole subject is one measured
+    // quantity, and a bare "Usage" left it ambiguous between a $ budget and a
+    // token budget.
+    titleTokens: 'Token usage',
+    titleCredit: 'Credit usage',
+    titleCost: 'Cost usage',
     // Short form used inside the header capsule (next to the gauge icon).
     // Only for a rule whose metric is unknown; with a rule the capsule names
     // the quantity it counts (see metric* below).

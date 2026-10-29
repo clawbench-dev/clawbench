@@ -39,6 +39,30 @@ export function usageMeterMetricLabelKey(metric: UsageMeterMetric | undefined): 
   }
 }
 
+/**
+ * i18n key for the popover's heading: the measured quantity followed by the
+ * feature noun ("Cost usage", "费用用量").
+ *
+ * A fixed "Usage" heading sat directly above a figure that could be $20 or 20
+ * tokens, so the panel never said which of the two it was showing. The metric
+ * is the only thing that distinguishes those rules, so it belongs in the title.
+ *
+ * Falls back to the plain feature title when the metric is unknown (a rule that
+ * is off, or an older payload that omits it).
+ */
+export function usageMeterTitleKey(metric: UsageMeterMetric | undefined): string {
+  switch (metric) {
+    case 'tokens':
+      return 'usageMeter.titleTokens'
+    case 'credit':
+      return 'usageMeter.titleCredit'
+    case 'cost':
+      return 'usageMeter.titleCost'
+    default:
+      return 'usageMeter.title'
+  }
+}
+
 /** Compact token count: 999.5K, 1.0M, 1.0B. */
 export function formatCompactCount(v: number): string {
   const n = Math.round(v)
