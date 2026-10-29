@@ -520,3 +520,63 @@ describe('ChatMessageList — "new messages" hint is not fooled by prepends', ()
     wrapper.unmount()
   })
 })
+
+describe('ChatMessageList — older history prefetches before the top edge', () => {
+  /** Scroll to an offset and let the component observe it. */
+  async function scrollTo(wrapper: ReturnType<typeof mountList>, geo: Geometry, top: number) {
+    geo.scrollTop = top
+    containerOf(wrapper).dispatchEvent(new Event('scroll'))
+    await nextTick()
+  }
+
+  it('fires load-more while the top edge is still about a viewport away', async () => {
+    const wrapper = mountList({ messages: msgs(1, 2, 3), hasMore: true, loadingMore: false })
+    // maxScroll = 2500, so the reader sits mid-history, not at the bottom.
+    const geo = fakeGeometry(containerOf(wrapper), {
+      scrollHeight: 3000,
+      clientHeight: 500,
+      scrollTop: 2500,
+    })
+    // Band = max(400, clientHeight=500) = 500px.
+    await scrollTo(wrapper, geo, 1200)
+    expect(wrapper.emitted('load-more')).toBeUndefined()
+
+    // Still 500px from the top — the reader has not reached the edge, and this
+    // is exactly where the request must already be in flight.
+    await scrollTo(wrapper, geo, 500)
+    expect(wrapper.emitted('load-more')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('does not fire at all when there is no older history', async () => {
+    const wrapper = mountList({ messages: msgs(1, 2, 3), hasMore: false })
+    const geo = fakeGeometry(containerOf(wrapper), {
+      scrollHeight: 3000,
+      clientHeight: 500,
+      scrollTop: 2500,
+    })
+    await scrollTo(wrapper, geo, 0)
+    expect(wrapper.emitted('load-more')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('stays armed until the load completes (no overlapping requests)', async () => {
+    const wrapper = mountList({ messages: msgs(1, 2, 3), hasMore: true, loadingMore: false })
+    const geo = fakeGeometry(containerOf(wrapper), {
+      scrollHeight: 3000,
+      clientHeight: 500,
+      scrollTop: 2500,
+    })
+    await scrollTo(wrapper, geo, 400)
+    await scrollTo(wrapper, geo, 200)
+    await scrollTo(wrapper, geo, 0)
+    expect(wrapper.emitted('load-more')).toHaveLength(1)
+
+    // The page arrives: loadingMore true → false re-arms the guard.
+    await wrapper.setProps({ loadingMore: true })
+    await wrapper.setProps({ loadingMore: false })
+    await scrollTo(wrapper, geo, 100)
+    expect(wrapper.emitted('load-more')).toHaveLength(2)
+    wrapper.unmount()
+  })
+})

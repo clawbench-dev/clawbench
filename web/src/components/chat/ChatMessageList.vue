@@ -249,7 +249,7 @@ import { anchorCount, anchorPending, anchorKeyPending, messageAnchorKey } from '
 import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
-import { isUserScrolling, shouldPin, isUserAwayFromBottom, SCROLL_STOP_MS, NEAR_BOTTOM_PX, RESUME_FOLLOW_PX } from '@/utils/scrollState'
+import { isUserScrolling, shouldPin, isUserAwayFromBottom, shouldLoadOlderHistory, SCROLL_STOP_MS, NEAR_BOTTOM_PX, RESUME_FOLLOW_PX } from '@/utils/scrollState'
 import { saveChatScrollPosition, clearChatScrollPosition, getChatScrollPosition, hasChatScrollPosition } from '@/utils/chatScrollMemory'
 import { runningSessions } from '@/composables/useSessionIdentity'
 import { appLog } from '@/utils/appLog'
@@ -654,6 +654,21 @@ watch(() => props.loadingMore, (loading) => {
 watch(() => props.hasMore, (hasMore) => {
   if (hasMore) loadMorePending = false
 })
+// Prefetch older history as soon as the viewport enters the top band (see
+// shouldLoadOlderHistory). Called from both scroll paths — manual and the
+// programmatic scroll-to-top — so they can never disagree about when history
+// loads. The pending flag keeps a band that stays occupied across many scroll
+// events from firing overlapping requests.
+function maybeLoadOlder() {
+  if (loadMorePending) return
+  if (!props.hasMore || props.loadingMore) return
+  const el = messagesRef.value
+  if (!el) return
+  if (!shouldLoadOlderHistory(el.scrollTop, el.clientHeight)) return
+  loadMorePending = true
+  emit('load-more')
+}
+
 // Track whether the user is at the bottom of the chat.
 // When the user scrolls back to the bottom during streaming, auto-scroll resumes.
 // Kept as a ref for external consumers (useUserMsgIndex.setAtBottom,
@@ -783,16 +798,12 @@ function handleScroll() {
       scrolledDown.value = false
       clearTimeout(scrollDownTimer)
     }
-    // A programmatic jump to the top (FAB scroll-to-top) reaches scrollTop=0
-    // just like a manual scroll — load older history the same way. This check
-    // must run BEFORE the programmatic return below, otherwise the top-FAB
-    // scroll never triggers load-more (only a subsequent manual scroll does).
-    if (loadMorePending) return
-    if (!props.hasMore || props.loadingMore) return
-    if (el.scrollTop < 50) {
-      loadMorePending = true
-      emit('load-more')
-    }
+    // A programmatic jump to the top (FAB scroll-to-top) enters the prefetch
+    // band just like a manual scroll — load older history the same way. This
+    // check must run BEFORE the programmatic return below, otherwise the
+    // top-FAB scroll never triggers load-more (only a subsequent manual scroll
+    // does).
+    maybeLoadOlder()
     return
   }
 
@@ -805,6 +816,18 @@ function handleScroll() {
     scrolledDown.value = false
     clearTimeout(scrollDownTimer)
   }
+
+  // Prefetch band, not "pinned to the top": waiting until scrollTop hits 0 means
+  // every trip to the top ends in a visible stall (request round trip, then the
+  // list jumps as content is prepended). Firing while the top edge is still
+  // ~one viewport away lands the older page before the reader gets there.
+  //
+  // Runs BEFORE the scroll-delta gate below: that gate exists to keep finger
+  // tremor from popping the FAB, but a slow drag emits many sub-threshold
+  // deltas — gating the prefetch on it would mean history only starts loading
+  // after the reader has already stopped at the top, which is the stall this
+  // band exists to remove.
+  maybeLoadOlder()
 
   // Determine scroll direction. lastScrollTop was already updated at the top
   // of handleScroll (before any branch), so `prevScrollTop` is the previous
@@ -831,16 +854,6 @@ function handleScroll() {
     scrolledDown.value = true
     clearTimeout(scrollDownTimer)
     scrollDownTimer = setTimeout(() => { scrolledDown.value = false }, SCROLL_BUTTON_HIDE_DELAY)
-  }
-
-  if (loadMorePending) return
-  if (!props.hasMore || props.loadingMore) return
-  // Load-more fires only when truly pinned to the top (< 50px), tighter than
-  // NEAR_TOP_THRESHOLD (FAB hide) — near the top the user is still reading,
-  // fetching history must not trigger on a casual swipe.
-  if (el.scrollTop < 50) {
-    loadMorePending = true
-    emit('load-more')
   }
 }
 
