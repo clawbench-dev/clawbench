@@ -198,7 +198,14 @@ export default {
   usageMeter: {
     title: '用量',
     // Short form used inside the header capsule (next to the gauge icon).
+    // Only for a rule whose metric is unknown; with a rule the capsule names
+    // the quantity it counts (see metric* below).
     label: '用量',
+    // Capsule label per metric: the word must say WHAT the number counts, or
+    // "$20" and "20 tokens" read the same.
+    metricTokens: 'Token',
+    metricCredit: 'Credit',
+    metricCost: '费用',
     capsuleTitle: '查看本周期用量',
     // Placeholder entry when no rule is configured. Names the feature AND the
     // action, so a user who has never opened the settings page knows both that

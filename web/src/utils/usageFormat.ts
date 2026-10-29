@@ -14,6 +14,31 @@
 
 export type UsageMeterMetric = 'tokens' | 'credit' | 'cost'
 
+/**
+ * i18n key naming the measured quantity, for every surface that puts a word in
+ * front of the number (header capsule, phone row).
+ *
+ * The capsule used to say "Usage" regardless of the configured metric, so a
+ * budget of "$20" and one of "20 tokens" were labelled identically — the word
+ * carried no information the number did not already carry, and the unit was
+ * only visible from the currency sign.
+ *
+ * Falls back to the generic feature label when the metric is unknown (a rule
+ * that is off, or an older payload that omits it).
+ */
+export function usageMeterMetricLabelKey(metric: UsageMeterMetric | undefined): string {
+  switch (metric) {
+    case 'tokens':
+      return 'usageMeter.metricTokens'
+    case 'credit':
+      return 'usageMeter.metricCredit'
+    case 'cost':
+      return 'usageMeter.metricCost'
+    default:
+      return 'usageMeter.label'
+  }
+}
+
 /** Compact token count: 999.5K, 1.0M, 1.0B. */
 export function formatCompactCount(v: number): string {
   const n = Math.round(v)

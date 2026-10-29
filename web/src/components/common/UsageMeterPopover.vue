@@ -34,7 +34,10 @@
            WHAT is being measured, and a bare pair of numbers in the header is
            ambiguous next to the file/project badges. -->
       <Gauge :size="13" class="usage-icon" aria-hidden="true" />
-      <span class="usage-label">{{ t('usageMeter.label') }}</span>
+      <!-- The word names the quantity the rule counts, not the feature: with
+           "Usage" fixed, a $20 budget and a 20-token budget were labelled
+           identically. -->
+      <span class="usage-label">{{ t(metricLabelKey) }}</span>
       <!-- The bar only exists when there is a quota to fill it against. An
            unlimited budget has no percentage, so the track is omitted rather
            than drawn empty (which would read as "0% used of nothing"). -->
@@ -181,7 +184,7 @@ import { computed, inject, ref, watch } from 'vue'
 import { Gauge, Settings2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import PopupMenu from '@/components/common/PopupMenu.vue'
-import { formatUsageMeterValue } from '@/utils/usageFormat'
+import { formatUsageMeterValue, usageMeterMetricLabelKey } from '@/utils/usageFormat'
 import { setPendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import { useUsageMeter, type UsageMeterStatus } from '@/composables/useUsageMeter'
 
@@ -208,6 +211,8 @@ const PLOT_TOP = 8
 const PLOT_BOTTOM = 82
 
 const metric = computed(() => props.status.metric ?? 'cost')
+/** The capsule's word, derived from the same metric the numbers are formatted with. */
+const metricLabelKey = computed(() => usageMeterMetricLabelKey(props.status.metric))
 const actual = computed(() => props.status.actual ?? 0)
 const expected = computed(() => props.status.expected ?? 0)
 const quota = computed(() => props.status.quota ?? 0)

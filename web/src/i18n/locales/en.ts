@@ -193,7 +193,14 @@ export default {
   usageMeter: {
     title: 'Usage',
     // Short form used inside the header capsule (next to the gauge icon).
+    // Only for a rule whose metric is unknown; with a rule the capsule names
+    // the quantity it counts (see metric* below).
     label: 'Usage',
+    // Capsule label per metric: the word must say WHAT the number counts, or
+    // "$20" and "20 tokens" read the same.
+    metricTokens: 'Tokens',
+    metricCredit: 'Credits',
+    metricCost: 'Cost',
     capsuleTitle: 'View this cycle’s usage',
     // Placeholder entry when no rule is configured. Names the feature AND the
     // action, so a user who has never opened the settings page knows both that

@@ -194,6 +194,25 @@ describe('UsageMeterPopover — no rule configured', () => {
     expect(mockSwitchTab).toHaveBeenCalledWith('settings')
   })
 
+  // The capsule's word must name WHAT the rule counts. A fixed "Usage" made a
+  // $20 budget and a 20-token budget read identically, so the word carried no
+  // information the number did not already carry.
+  it('labels the capsule with the configured metric', () => {
+    expect(mountPopover(status({ metric: 'cost' }), 'ok').get('.usage-label').text())
+      .toBe('usageMeter.metricCost')
+    expect(mountPopover(status({ metric: 'tokens' }), 'ok').get('.usage-label').text())
+      .toBe('usageMeter.metricTokens')
+    expect(mountPopover(status({ metric: 'credit' }), 'ok').get('.usage-label').text())
+      .toBe('usageMeter.metricCredit')
+  })
+
+  it('falls back to the feature label when the payload carries no metric', () => {
+    // An older frame omits `metric`; the capsule must still say something
+    // rather than render an empty word.
+    expect(mountPopover(status({ metric: undefined }), 'ok').get('.usage-label').text())
+      .toBe('usageMeter.label')
+  })
+
   // The mirror: with a rule the capsule and its popover must be back. Without
   // this, deleting the whole body would also satisfy every assertion above.
   it('renders the full capsule and popover once a rule exists', () => {

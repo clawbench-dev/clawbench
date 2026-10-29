@@ -115,7 +115,7 @@
                blank value. An empty value slot reads as "no data", which is a
                different (and wrong) message from "not configured". -->
           <template v-if="meterStatus.enabled">
-            <span class="resource-label">{{ t('usageMeter.label') }}</span>
+            <span class="resource-label">{{ t(metricLabelKey) }}</span>
             <span class="resource-value" :class="`usage-value is-${meterState}`">
               {{ meterUsed }}<span class="usage-quota"> / {{ hasQuota ? meterQuota : INFINITE }}</span>
             </span>
@@ -159,7 +159,7 @@ import { useI18n } from 'vue-i18n'
 import { useSystemResources } from '@/composables/useSystemResources'
 import { useUsageMeter } from '@/composables/useUsageMeter'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
-import { formatUsageMeterValue } from '@/utils/usageFormat'
+import { formatUsageMeterValue, usageMeterMetricLabelKey } from '@/utils/usageFormat'
 
 const { t } = useI18n()
 const { resources, startPolling, stopPolling } = useSystemResources()
@@ -185,6 +185,8 @@ const showUsageMeter = computed(
 const meterUsed = computed(() =>
     formatUsageMeterValue(meterStatus.value.metric ?? 'cost', meterStatus.value.actual ?? 0, { compact: true }),
 )
+/** The row's word names what is counted, same rule as the header capsule. */
+const metricLabelKey = computed(() => usageMeterMetricLabelKey(meterStatus.value.metric))
 const meterQuota = computed(() =>
     formatUsageMeterValue(meterStatus.value.metric ?? 'cost', meterStatus.value.quota ?? 0, { compact: true }),
 )
