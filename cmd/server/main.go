@@ -679,6 +679,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.ChatForkContextBudget = cfg.Chat.ForkContextBudget
 	model.ChatAutoContinueEnabled = cfg.Chat.AutoContinueEnabled
 	model.ChatAutoContinueMaxRetries = cfg.Chat.AutoContinueMaxRetries
+	model.ChatRestartResumeWindowMinutes = cfg.Chat.RestartResumeWindowMinutes
 	model.ChatAutoRenameEnabled = cfg.Chat.AutoRenameEnabled
 	model.ChatUserNickname = cfg.Chat.UserNickname
 	model.ChatGroupMaxSpeeches = cfg.Chat.GroupMaxSpeeches

@@ -3103,6 +3103,8 @@ export default {
       chatAutoContinueEnabledDesc: '会话因进程崩溃、AI 无输出或后端报错而意外中断时，自动发送「继续」并接着跑，不论当时是否已产出部分内容。服务重启导致的中断也会在启动后自动恢复。手动终止（含打断重发）的会话永不续接',
       chatAutoContinueMaxRetries: '最大重试次数',
       chatAutoContinueMaxRetriesDesc: '每个用户消息允许自动续接的次数。-1 表示不限（服务端仍有硬上限保护），0 表示不重试',
+      chatRestartResumeWindow: '重启恢复时间窗（分钟）',
+      chatRestartResumeWindowDesc: '服务重启后，只恢复在此时间窗内被打断的会话。0 表示不限时间（历史中断的会话也会被恢复）',
       autoRenameSectionHeader: '自动命名',
       chatAutoRenameEnabled: 'AI 自动命名会话',
       chatAutoRenameEnabledDesc: '会话首次命名时，改为让 AI 摘要用户消息来生成标题（Fork 与继续会话会连同此前的用户消息一起总结）。需先在「AI 摘要模型」中配置模型；未配置或调用失败时，仍使用原来的本地标题',

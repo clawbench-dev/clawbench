@@ -3108,6 +3108,8 @@ export default {
       chatAutoContinueEnabledDesc: 'When a session is interrupted unexpectedly — process crash, no AI output, or a backend error — automatically send "Continue" and resume, regardless of how much output it had already produced. Sessions interrupted by a server restart are also resumed on startup. Sessions you stopped yourself (including interrupt-and-send) are never resumed',
       chatAutoContinueMaxRetries: 'Max Retries',
       chatAutoContinueMaxRetriesDesc: 'How many times each user message may be auto-resumed. -1 means unlimited (the server still enforces a hard ceiling); 0 disables retries',
+      chatRestartResumeWindow: 'Restart Resume Window (minutes)',
+      chatRestartResumeWindowDesc: 'After a service restart, only sessions interrupted within this window are resumed. 0 means no time limit (sessions interrupted long ago are resumed too)',
       autoRenameSectionHeader: 'Auto Rename',
       chatAutoRenameEnabled: 'AI Auto-rename Sessions',
       chatAutoRenameEnabledDesc: 'When a session is first named, have AI summarize the user messages into the title instead (forks and continued sessions include the earlier user messages too). Requires a model in "AI Summary Model"; if it is unconfigured or the call fails, the original local title is kept',

@@ -575,6 +575,7 @@ const serverDefaults: Record<string, unknown> = {
   'chat.fork_context_budget': 100000,
   'chat.auto_continue_enabled': false,
   'chat.auto_continue_max_retries': 3,
+  'chat.restart_resume_window_minutes': 60,
   'chat.auto_rename_enabled': true,
   'chat.user_nickname': 'User',
   'chat.group_max_speeches': 100,

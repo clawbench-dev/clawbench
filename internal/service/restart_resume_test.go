@@ -27,6 +27,14 @@ func setupRestartResumeDB(t *testing.T) {
 	setupGroupDB(t)
 	cleanupAllSessionState()
 	t.Cleanup(cleanupAllSessionState)
+	// The resume window is a config-driven global that main.go assigns at
+	// startup. Tests that exercise the age bound must set it explicitly, or the
+	// zero value (0 = no age bound) would silently disable the check — which is
+	// exactly how the first version of the "stale warning" assertion went green
+	// with the bound missing.
+	prevWindow := model.ChatRestartResumeWindowMinutes
+	model.ChatRestartResumeWindowMinutes = model.DefaultRestartResumeWindowMinutes
+	t.Cleanup(func() { model.ChatRestartResumeWindowMinutes = prevWindow })
 }
 
 // launchRecorder records the configs handed to the single-chat launch seam.
@@ -732,6 +740,10 @@ func TestInitDB_RecordsInterruptedSessions(t *testing.T) {
 // executor still appends a `reason=restart` warning block, and that is the
 // second signal.
 func TestInitDB_RecordsSessionsEndingOnRestartWarning(t *testing.T) {
+	prevWindow := model.ChatRestartResumeWindowMinutes
+	model.ChatRestartResumeWindowMinutes = model.DefaultRestartResumeWindowMinutes
+	t.Cleanup(func() { model.ChatRestartResumeWindowMinutes = prevWindow })
+
 	tmpDir := t.TempDir()
 	origBinDir, origDataDir := model.BinDir, model.DataDir
 	model.BinDir = tmpDir
@@ -749,6 +761,17 @@ func TestInitDB_RecordsSessionsEndingOnRestartWarning(t *testing.T) {
 
 	// Exactly what a graceful restart leaves: streaming=0, warning block last.
 	warned := `{"blocks":[{"type":"text","text":"partial"},{"type":"warning","reason":"restart","text":"Server restarted, AI response interrupted"}],"cancelled":true}`
+	// A real chat_sessions row is required: the scan JOINs it to exclude archived
+	// sessions, so a bare session_id would never match.
+	mkSession := func(sessionID string, archived int) {
+		if _, err := store.WriteExec(
+			`INSERT INTO chat_sessions (id, project_id, backend, title, session_type, archived)
+			 VALUES (?, 1, 'claude', 't', 'chat', ?)`,
+			sessionID, archived,
+		); err != nil {
+			t.Fatalf("insert session %s: %v", sessionID, err)
+		}
+	}
 	insertRow := func(sessionID, role, content, ageModifier string) {
 		if _, err := store.WriteExec(
 			`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, created_at)
@@ -758,6 +781,9 @@ func TestInitDB_RecordsSessionsEndingOnRestartWarning(t *testing.T) {
 			t.Fatalf("insert row: %v", err)
 		}
 	}
+	mkSession("sess-graceful", 0)
+	mkSession("sess-continued", 0)
+	mkSession("sess-stale", 0)
 
 	// Detected: the last assistant row is a restart warning.
 	insertRow("sess-graceful", "user", `{"blocks":[]}`, "-5 minutes")
@@ -773,6 +799,12 @@ func TestInitDB_RecordsSessionsEndingOnRestartWarning(t *testing.T) {
 	// bound the first boot after the feature ships would resume every abandoned
 	// session in the whole history.
 	insertRow("sess-stale", "assistant", warned, "-2 days")
+
+	// NOT detected: the session is archived. It is inside the window and its last
+	// row IS a restart warning, so only the archived filter can exclude it — the
+	// user put the session away on purpose, so it must not spend tokens.
+	mkSession("sess-archived", 1)
+	insertRow("sess-archived", "assistant", warned, "-3 minutes")
 
 	if err := InitDB(true); err != nil {
 		t.Fatalf("InitDB (second): %v", err)
@@ -792,12 +824,136 @@ func TestInitDB_RecordsSessionsEndingOnRestartWarning(t *testing.T) {
 	if seen["sess-stale"] {
 		t.Fatalf("a restart warning outside the window must NOT be resumed, got %+v", got)
 	}
+	if seen["sess-archived"] {
+		t.Fatalf("an archived session must NOT be resumed, got %+v", got)
+	}
+}
+
+// The window is a user setting, not a constant: widening it must actually widen
+// what gets resumed, and 0 must mean "no age bound". Pinned because the value is
+// read from a package global that only main.go assigns — a missing wiring shows
+// up as a silently disabled bound (0), not as a compile error.
+func TestSessionsEndingOnRestartWarning_HonoursConfiguredWindow(t *testing.T) {
+	prevWindow := model.ChatRestartResumeWindowMinutes
+	t.Cleanup(func() { model.ChatRestartResumeWindowMinutes = prevWindow })
+
+	tmpDir := t.TempDir()
+	origBinDir, origDataDir := model.BinDir, model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir, model.DataDir = origBinDir, origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+	cleanupAllSessionState()
+	defer cleanupAllSessionState()
+
+	model.ChatRestartResumeWindowMinutes = model.DefaultRestartResumeWindowMinutes
+	if err := InitDB(true); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+
+	warned := `{"blocks":[{"type":"warning","reason":"restart","text":"x"}]}`
+	if _, err := store.WriteExec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, session_type, archived)
+		 VALUES ('sess-3h', 1, 'claude', 't', 'chat', 0)`); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
+	if _, err := store.WriteExec(
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, created_at)
+		 VALUES (1, 'assistant', ?, 'sess-3h', 'claude', 0, datetime('now','-3 hours'))`, warned); err != nil {
+		t.Fatalf("insert row: %v", err)
+	}
+
+	// Default 60-minute window: a 3-hour-old interruption is out of range.
+	if got := sessionsEndingOnRestartWarning(); len(got) != 0 {
+		t.Fatalf("a 3h-old warning must be outside the default 60m window, got %+v", got)
+	}
+
+	// Widen to 4 hours: the same row is now in range.
+	model.ChatRestartResumeWindowMinutes = 240
+	if got := sessionsEndingOnRestartWarning(); len(got) != 1 || got[0] != "sess-3h" {
+		t.Fatalf("widening the window must include the row, got %+v", got)
+	}
+
+	// 0 means "no age bound": even a very old row qualifies.
+	model.ChatRestartResumeWindowMinutes = 0
+	if _, err := store.WriteExec(
+		`UPDATE chat_history SET created_at = datetime('now','-30 days') WHERE session_id = 'sess-3h'`); err != nil {
+		t.Fatalf("age the row: %v", err)
+	}
+	if got := sessionsEndingOnRestartWarning(); len(got) != 1 {
+		t.Fatalf("0 must disable the age bound, got %+v", got)
+	}
+}
+
+// An archived session's orphan row must still be FINALIZED (streaming → 0) even
+// though the session itself is not resumed.
+//
+// The two decisions are separate: leaving the row at streaming=1 would render a
+// permanent "working" bubble for a session the user put away, while resuming it
+// would spend tokens on it.
+func TestInitDB_FinalizesArchivedOrphanWithoutResumingIt(t *testing.T) {
+	prevWindow := model.ChatRestartResumeWindowMinutes
+	model.ChatRestartResumeWindowMinutes = model.DefaultRestartResumeWindowMinutes
+	t.Cleanup(func() { model.ChatRestartResumeWindowMinutes = prevWindow })
+
+	tmpDir := t.TempDir()
+	origBinDir, origDataDir := model.BinDir, model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir, model.DataDir = origBinDir, origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+	cleanupAllSessionState()
+	defer cleanupAllSessionState()
+
+	if err := InitDB(true); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+
+	if _, err := store.WriteExec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, session_type, archived)
+		 VALUES ('sess-arch-orphan', 1, 'claude', 't', 'chat', 1)`); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
+	if _, err := store.WriteExec(
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming)
+		 VALUES (1, 'assistant', '{"blocks":[]}', 'sess-arch-orphan', 'claude', 1)`); err != nil {
+		t.Fatalf("insert orphan: %v", err)
+	}
+
+	if err := InitDB(true); err != nil {
+		t.Fatalf("InitDB (second): %v", err)
+	}
+
+	// Finalized…
+	var streaming int
+	if err := store.ReadDB().QueryRow(
+		`SELECT streaming FROM chat_history WHERE session_id = 'sess-arch-orphan'`,
+	).Scan(&streaming); err != nil {
+		t.Fatalf("read row: %v", err)
+	}
+	if streaming != 0 {
+		t.Fatalf("an archived orphan must still be finalized, streaming=%d", streaming)
+	}
+	// …but NOT resumed.
+	for _, id := range takeInterruptedSessions() {
+		if id == "sess-arch-orphan" {
+			t.Fatal("an archived session must not be in the resume set")
+		}
+	}
 }
 
 // Both signals are unioned: a crash (streaming=1) and a graceful restart
 // (warning block) can happen to different sessions in the same database, and
 // each must be recorded exactly once.
 func TestInitDB_RecordsBothInterruptSignals(t *testing.T) {
+	prevWindow := model.ChatRestartResumeWindowMinutes
+	model.ChatRestartResumeWindowMinutes = model.DefaultRestartResumeWindowMinutes
+	t.Cleanup(func() { model.ChatRestartResumeWindowMinutes = prevWindow })
+
 	tmpDir := t.TempDir()
 	origBinDir, origDataDir := model.BinDir, model.DataDir
 	model.BinDir = tmpDir
@@ -814,6 +970,13 @@ func TestInitDB_RecordsBothInterruptSignals(t *testing.T) {
 	}
 
 	warned := `{"blocks":[{"type":"warning","reason":"restart","text":"x"}]}`
+	// The warning scan JOINs chat_sessions (to exclude archived sessions), so the
+	// graceful session needs a real row; the crash path does not.
+	if _, err := store.WriteExec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, session_type, archived)
+		 VALUES ('sess-graceful', 1, 'claude', 't', 'chat', 0)`); err != nil {
+		t.Fatalf("insert graceful session: %v", err)
+	}
 	// Crash path.
 	if _, err := store.WriteExec(
 		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming)

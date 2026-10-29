@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"clawbench/internal/store"
 
@@ -1707,11 +1706,6 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			return fmt.Errorf("failed to query orphaned streaming messages: %w", err)
 		}
 		defer func() { _ = rows.Close() }()
-		type orphanMsg struct {
-			id        int64
-			sessionID string
-			content   string
-		}
 		var orphans []orphanMsg
 		for rows.Next() {
 			var m orphanMsg
@@ -1777,10 +1771,15 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		//
 		// The set is drained (once) by the worker, so a session is resumed at
 		// most once per process start.
+		// Archived sessions are excluded from the RESUME set but NOT from the
+		// finalize above: their orphan row must still be rewritten to
+		// streaming=0, or the client keeps rendering a "working" bubble for a
+		// session the user put away. Only the resume decision is skipped.
+		archived := archivedSessionSet(orphans)
 		seenInterrupted := make(map[string]bool, len(orphans))
 		interrupted := make([]string, 0, len(orphans))
 		for _, m := range orphans {
-			if m.sessionID == "" || seenInterrupted[m.sessionID] {
+			if m.sessionID == "" || seenInterrupted[m.sessionID] || archived[m.sessionID] {
 				continue
 			}
 			seenInterrupted[m.sessionID] = true
@@ -3666,6 +3665,41 @@ func GetKeyConfig(typeFilter string) ([]KeyConfigItem, error) {
 	return items, nil
 }
 
+// orphanMsg is a chat_history row left mid-stream by a process that died.
+type orphanMsg struct {
+	id        int64
+	sessionID string
+	content   string
+}
+
+// archivedSessionSet returns the subset of the given session ids that are
+// archived (or no longer exist at all).
+//
+// Used by the startup scan to keep archived sessions out of the RESUME set while
+// still finalizing their orphan rows. A missing session row counts as "do not
+// resume" — there is nothing to resume into.
+func archivedSessionSet(msgs []orphanMsg) map[string]bool {
+	out := make(map[string]bool, len(msgs))
+	if len(msgs) == 0 {
+		return out
+	}
+	for _, m := range msgs {
+		if m.sessionID == "" {
+			continue
+		}
+		var archived int
+		// A lookup failure leaves the session resumable: the per-session check in
+		// ResumeInterruptedSession re-verifies archived state before claiming, so
+		// a transient read error here cannot cause a wrong resume.
+		if err := store.ReadDB().QueryRow(
+			"SELECT archived FROM chat_sessions WHERE id = ?", m.sessionID,
+		).Scan(&archived); err == nil && archived == 1 {
+			out[m.sessionID] = true
+		}
+	}
+	return out
+}
+
 // sessionsEndingOnRestartWarning returns the sessions whose LAST assistant row is
 // a turn the previous process interrupted with a restart warning.
 //
@@ -3686,18 +3720,32 @@ func GetKeyConfig(typeFilter string) ([]KeyConfigItem, error) {
 // (session_executor.go's buildResult) and never appears in user text as
 // `"reason":"restart"` — the frontend escapes it.
 //
-// The time window is essential, not cosmetic. A restart warning is written when
-// the OLD process exits, seconds before this one starts — but the same shape
-// stays in the database forever for sessions the user simply walked away from.
-// Without a window the first boot after this feature ships would resume every
-// such session in the whole history (79 in the development database, only 1 of
-// them from the last hour), spending tokens on conversations the user abandoned
-// days ago. An hour is comfortably longer than any restart gap and comfortably
-// shorter than "the user forgot about it".
-const restartWarningWindow = time.Hour
-
+// The age window is essential, not cosmetic, but its job is to express the
+// INTENT — "pick up what the restart just interrupted" — not to keep the result
+// set small. A restart warning stays in the database forever, so without a bound
+// a session the user walked away from days ago looks exactly like one the
+// restart just cut off. The real gate against resuming stale work is
+// "the session is still active" (archived sessions are filtered below), and the
+// window is the second, independent bound: an un-archived old session must not
+// be revived just because its last turn once ended on a restart.
+//
+// The value is user-configurable (chat.restart_resume_window_minutes) because
+// how long "just interrupted" lasts is a preference, not a fact. 0 means no age
+// bound.
+//
+// Archived sessions are excluded HERE rather than only in the per-session check
+// in ResumeInterruptedSession, so the recorded count reflects what will actually
+// be resumed — otherwise the startup log claims N sessions while the worker
+// silently skips most of them, which reads like a bug during incident triage.
 func sessionsEndingOnRestartWarning() []string {
-	rows, err := store.ReadDB().Query(`
+	windowMinutes := model.ChatRestartResumeWindowMinutes
+	// A negative value is unrepresentable (PATCH rejects it); treat it as the
+	// default rather than letting it invert the comparison.
+	if windowMinutes < 0 {
+		windowMinutes = model.DefaultRestartResumeWindowMinutes
+	}
+
+	query := `
 		SELECT h.session_id
 		  FROM chat_history h
 		  JOIN (
@@ -3706,11 +3754,16 @@ func sessionsEndingOnRestartWarning() []string {
 		         WHERE role = 'assistant'
 		         GROUP BY session_id
 		       ) last ON last.session_id = h.session_id AND last.last_id = h.id
+		  JOIN chat_sessions s ON s.id = h.session_id AND s.archived = 0
 		 WHERE h.content LIKE '%"reason":"restart"%'
-		   AND h.created_at > datetime('now', ?)
 		   AND h.session_id IS NOT NULL
-		   AND h.session_id <> ''`,
-		fmt.Sprintf("-%d seconds", int(restartWarningWindow.Seconds())))
+		   AND h.session_id <> ''`
+	args := []any{}
+	if windowMinutes > 0 {
+		query += " AND h.created_at > datetime('now', ?)"
+		args = append(args, fmt.Sprintf("-%d minutes", windowMinutes))
+	}
+	rows, err := store.ReadDB().Query(query, args...)
 	if err != nil {
 		// A failed scan must not abort startup: the streaming=1 signal above is
 		// already recorded, and this is the secondary path.
