@@ -724,6 +724,129 @@ func TestInitDB_RecordsInterruptedSessions(t *testing.T) {
 	}
 }
 
+// A GRACEFUL restart must also be detected.
+//
+// A clean shutdown finalizes every active row before exiting, so streaming is
+// already 0 when the next process starts and the orphan scan alone sees nothing
+// — that was the bug that made "restart the service" never resume anything. The
+// executor still appends a `reason=restart` warning block, and that is the
+// second signal.
+func TestInitDB_RecordsSessionsEndingOnRestartWarning(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir, origDataDir := model.BinDir, model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir, model.DataDir = origBinDir, origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+	cleanupAllSessionState()
+	defer cleanupAllSessionState()
+
+	if err := InitDB(true); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+
+	// Exactly what a graceful restart leaves: streaming=0, warning block last.
+	warned := `{"blocks":[{"type":"text","text":"partial"},{"type":"warning","reason":"restart","text":"Server restarted, AI response interrupted"}],"cancelled":true}`
+	insertRow := func(sessionID, role, content, ageModifier string) {
+		if _, err := store.WriteExec(
+			`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, created_at)
+			 VALUES (1, ?, ?, ?, 'claude', 0, datetime('now', ?))`,
+			role, content, sessionID, ageModifier,
+		); err != nil {
+			t.Fatalf("insert row: %v", err)
+		}
+	}
+
+	// Detected: the last assistant row is a restart warning.
+	insertRow("sess-graceful", "user", `{"blocks":[]}`, "-5 minutes")
+	insertRow("sess-graceful", "assistant", warned, "-5 minutes")
+
+	// NOT detected: the user already continued after the warning — continuing IS
+	// resuming, and another turn on top would redo the work.
+	insertRow("sess-continued", "assistant", warned, "-10 minutes")
+	insertRow("sess-continued", "user", `{"blocks":[]}`, "-9 minutes")
+	insertRow("sess-continued", "assistant", `{"blocks":[]}`, "-9 minutes")
+
+	// NOT detected: the warning is stale (older than the window). Without this
+	// bound the first boot after the feature ships would resume every abandoned
+	// session in the whole history.
+	insertRow("sess-stale", "assistant", warned, "-2 days")
+
+	if err := InitDB(true); err != nil {
+		t.Fatalf("InitDB (second): %v", err)
+	}
+
+	got := takeInterruptedSessions()
+	seen := map[string]bool{}
+	for _, id := range got {
+		seen[id] = true
+	}
+	if !seen["sess-graceful"] {
+		t.Fatalf("a session whose last turn ended on a restart warning must be recorded, got %+v", got)
+	}
+	if seen["sess-continued"] {
+		t.Fatalf("a session the user already continued must NOT be resumed, got %+v", got)
+	}
+	if seen["sess-stale"] {
+		t.Fatalf("a restart warning outside the window must NOT be resumed, got %+v", got)
+	}
+}
+
+// Both signals are unioned: a crash (streaming=1) and a graceful restart
+// (warning block) can happen to different sessions in the same database, and
+// each must be recorded exactly once.
+func TestInitDB_RecordsBothInterruptSignals(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir, origDataDir := model.BinDir, model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir, model.DataDir = origBinDir, origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+	cleanupAllSessionState()
+	defer cleanupAllSessionState()
+
+	if err := InitDB(true); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+
+	warned := `{"blocks":[{"type":"warning","reason":"restart","text":"x"}]}`
+	// Crash path.
+	if _, err := store.WriteExec(
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming)
+		 VALUES (1, 'assistant', '{"blocks":[]}', 'sess-crash', 'claude', 1)`); err != nil {
+		t.Fatalf("insert crash row: %v", err)
+	}
+	// Graceful path.
+	if _, err := store.WriteExec(
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming)
+		 VALUES (1, 'assistant', ?, 'sess-graceful', 'claude', 0)`, warned); err != nil {
+		t.Fatalf("insert graceful row: %v", err)
+	}
+
+	if err := InitDB(true); err != nil {
+		t.Fatalf("InitDB (second): %v", err)
+	}
+
+	got := takeInterruptedSessions()
+	seen := map[string]int{}
+	for _, id := range got {
+		seen[id]++
+	}
+	if seen["sess-crash"] != 1 {
+		t.Fatalf("the crash signal must be recorded once, got %+v", got)
+	}
+	if seen["sess-graceful"] != 1 {
+		t.Fatalf("the graceful signal must be recorded once, got %+v", got)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected exactly the two interrupted sessions, got %+v", got)
+	}
+}
+
 // A session row with an EMPTY session_type must be resumed, not skipped.
 //
 // An empty value means 'chat' in this schema (ADD COLUMN ... DEFAULT 'chat') and that is the

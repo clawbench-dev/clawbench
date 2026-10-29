@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"clawbench/internal/store"
 
@@ -1755,12 +1756,24 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		// Record which sessions the restart interrupted, so the resume worker
 		// (StartRestartResume) can pick them up once the server is listening.
 		//
-		// A streaming=1 row at startup is an EXACT signal for "the previous
-		// process died mid-turn": nothing else can leave one behind (a clean
-		// shutdown finalizes every active stream, and a user cancel finalizes
-		// with streaming=0). That is why no extra status column or resume flag
-		// is needed — and why the worker cannot mistake an idle session for an
-		// interrupted one.
+		// TWO signals, because there are two ways a turn can be cut short:
+		//
+		//  1. streaming=1 at startup — the previous process DIED mid-turn. Exact:
+		//     a clean shutdown finalizes every active stream, and a user cancel
+		//     finalizes with streaming=0, so nothing else can leave one behind.
+		//  2. The session's LAST assistant row carries a restart warning block
+		//     ("Server restarted, AI response interrupted"). That is what a
+		//     GRACEFUL shutdown writes: the executor finalizes the row before the
+		//     process exits, so streaming is already 0 by the time the next
+		//     process starts. Without this signal a normal restart — the most
+		//     common way a turn is interrupted in practice — was never resumed,
+		//     while only hard kills (kill -9 / OOM) were.
+		//
+		// Signal 2 is checked on the session's LAST assistant row only, and only
+		// when no later row exists: a restart warning from three turns ago must
+		// not resurrect a conversation the user has since continued. The user
+		// continuing the conversation IS the "resume" — asking the AI to
+		// re-evaluate on top of that would duplicate the work.
 		//
 		// The set is drained (once) by the worker, so a session is resumed at
 		// most once per process start.
@@ -1772,6 +1785,13 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			}
 			seenInterrupted[m.sessionID] = true
 			interrupted = append(interrupted, m.sessionID)
+		}
+		for _, sessionID := range sessionsEndingOnRestartWarning() {
+			if sessionID == "" || seenInterrupted[sessionID] {
+				continue
+			}
+			seenInterrupted[sessionID] = true
+			interrupted = append(interrupted, sessionID)
 		}
 		recordInterruptedSessions(interrupted)
 		if len(interrupted) > 0 {
@@ -3644,6 +3664,76 @@ func GetKeyConfig(typeFilter string) ([]KeyConfigItem, error) {
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+// sessionsEndingOnRestartWarning returns the sessions whose LAST assistant row is
+// a turn the previous process interrupted with a restart warning.
+//
+// This is the GRACEFUL-shutdown counterpart of the streaming=1 signal: a clean
+// restart finalizes every active row before exiting, so streaming is already 0
+// when the next process starts and the orphan scan alone sees nothing. The
+// executor still appends a `type=warning, reason=restart` block, which is what
+// this looks for.
+//
+// Scope is deliberately "the session's LAST assistant row" (the JOIN below). A
+// restart warning from an earlier turn must not resurrect a conversation the
+// user has since continued — continuing IS resuming, and adding another turn on
+// top would redo work. Once the user sends anything after the warning, a newer
+// assistant row exists and this query no longer matches the session.
+//
+// The warning block is matched on its JSON shape rather than by parsing every
+// row: the reason field is written by exactly one place
+// (session_executor.go's buildResult) and never appears in user text as
+// `"reason":"restart"` — the frontend escapes it.
+//
+// The time window is essential, not cosmetic. A restart warning is written when
+// the OLD process exits, seconds before this one starts — but the same shape
+// stays in the database forever for sessions the user simply walked away from.
+// Without a window the first boot after this feature ships would resume every
+// such session in the whole history (79 in the development database, only 1 of
+// them from the last hour), spending tokens on conversations the user abandoned
+// days ago. An hour is comfortably longer than any restart gap and comfortably
+// shorter than "the user forgot about it".
+const restartWarningWindow = time.Hour
+
+func sessionsEndingOnRestartWarning() []string {
+	rows, err := store.ReadDB().Query(`
+		SELECT h.session_id
+		  FROM chat_history h
+		  JOIN (
+		        SELECT session_id, MAX(id) AS last_id
+		          FROM chat_history
+		         WHERE role = 'assistant'
+		         GROUP BY session_id
+		       ) last ON last.session_id = h.session_id AND last.last_id = h.id
+		 WHERE h.content LIKE '%"reason":"restart"%'
+		   AND h.created_at > datetime('now', ?)
+		   AND h.session_id IS NOT NULL
+		   AND h.session_id <> ''`,
+		fmt.Sprintf("-%d seconds", int(restartWarningWindow.Seconds())))
+	if err != nil {
+		// A failed scan must not abort startup: the streaming=1 signal above is
+		// already recorded, and this is the secondary path.
+		slog.Warn("restart resume: could not scan restart warnings",
+			slog.String("err", err.Error()))
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []string
+	for rows.Next() {
+		var sessionID string
+		if err := rows.Scan(&sessionID); err != nil {
+			continue
+		}
+		out = append(out, sessionID)
+	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("restart resume: restart-warning scan was partial",
+			slog.String("err", err.Error()))
+		return nil
+	}
+	return out
 }
 
 // ReplaceKeyConfig replaces all items of the given type with the provided key IDs.
