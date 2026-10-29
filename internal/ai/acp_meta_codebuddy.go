@@ -48,16 +48,20 @@ const (
 	//nolint:gosec // G101: a _meta key name, not a credential
 	metaKeyCodeBuddyRequestCredits = "codebuddy.ai/requestCredits"
 	metaKeyCodeBuddyRequestID      = "codebuddy.ai/requestId"
-	metaKeyCodeBuddyTraceID        = "codebuddy.ai/traceId"
-	metaKeyCodeBuddyTraceParent    = "codebuddy.ai/traceparent"
-	metaKeyCodeBuddyMessageID      = "codebuddy.ai/messageId"
-	metaKeyCodeBuddyMsgRequestID   = "codebuddy.ai/messageRequestId"
-	metaKeyCodeBuddyReqModelID     = "codebuddy.ai/requestModelId"
-	metaKeyCodeBuddyReqModelName   = "codebuddy.ai/requestModelName"
-	metaKeyCodeBuddyRespModelID    = "codebuddy.ai/responseModelId"
-	metaKeyCodeBuddyFinishReason   = "codebuddy.ai/finishReason"
-	metaKeyCodeBuddyOutcome        = "codebuddy.ai/outcome"
-	metaKeyCodeBuddyAgentPhase     = "codebuddy.ai/agentPhase"
+	// metaKeyCodeBuddyConversationRequestID is the turn-level request id. It is
+	// preferred over RequestID in the chunk de-duplication key, matching
+	// upstream's `conversationRequestId ?? requestId`.
+	metaKeyCodeBuddyConversationRequestID = "codebuddy.ai/conversationRequestId"
+	metaKeyCodeBuddyTraceID               = "codebuddy.ai/traceId"
+	metaKeyCodeBuddyTraceParent           = "codebuddy.ai/traceparent"
+	metaKeyCodeBuddyMessageID             = "codebuddy.ai/messageId"
+	metaKeyCodeBuddyMsgRequestID          = "codebuddy.ai/messageRequestId"
+	metaKeyCodeBuddyReqModelID            = "codebuddy.ai/requestModelId"
+	metaKeyCodeBuddyReqModelName          = "codebuddy.ai/requestModelName"
+	metaKeyCodeBuddyRespModelID           = "codebuddy.ai/responseModelId"
+	metaKeyCodeBuddyFinishReason          = "codebuddy.ai/finishReason"
+	metaKeyCodeBuddyOutcome               = "codebuddy.ai/outcome"
+	metaKeyCodeBuddyAgentPhase            = "codebuddy.ai/agentPhase"
 	// metaKeyCodeBuddyErrorMessage carries the refusal payload on a
 	// stopReason=refusal PromptResponse: a JSON-encoded
 	// {code,message,data} blob whose data.details holds the real cause.
