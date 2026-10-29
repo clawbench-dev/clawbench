@@ -1045,6 +1045,7 @@ export default {
       conversationIndexRoleSystem: 'System',
       conversationIndexNoText: '(no text in this turn)',
       messageRailLabel: 'Message navigation',
+      messageRailGenerating: 'Replying',
     },
     pending: {
       uploadedAttachment: 'Upload',

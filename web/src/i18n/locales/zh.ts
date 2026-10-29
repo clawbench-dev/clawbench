@@ -1050,6 +1050,7 @@ export default {
       conversationIndexRoleSystem: '系统',
       conversationIndexNoText: '（本轮无文字回复）',
       messageRailLabel: '消息导航',
+      messageRailGenerating: '正在输出',
     },
     pending: {
       uploadedAttachment: '上传附件',

@@ -57,6 +57,11 @@ export function useUserMsgIndex(options: {
   /** Fetch (or reuse a cached) list of messages for the current session. */
   async function ensureIndexLoaded(): Promise<void> {
     if (userMsgIndexList.value.length > 0) return
+    await fetchIndex()
+  }
+
+  /** Fetch the index unconditionally, replacing whatever is cached. */
+  async function fetchIndex(): Promise<void> {
     if (!options.getCurrentSessionId()) return
     loadingIndex.value = true
     try {
@@ -96,8 +101,11 @@ export function useUserMsgIndex(options: {
     }
     const lastIndexed = list[list.length - 1]?.id
     if (String(lastIndexed) === String(lastMessageId)) return
-    userMsgIndexList.value = []
-    await ensureIndexLoaded()
+    // Refresh IN PLACE. Clearing first would empty the array for one render,
+    // and the always-visible rail unmounts on an empty list — losing its scroll
+    // position, so the newly added tail row lands off-screen and the reader never
+    // sees it. The fetch is atomic: the old list stays until the new one arrives.
+    await fetchIndex()
   }
 
   async function toggleUserMsgIndex() {

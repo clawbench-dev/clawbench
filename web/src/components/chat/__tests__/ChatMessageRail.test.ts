@@ -49,10 +49,13 @@ function mountRail(props: Record<string, unknown> = {}) {
   })
 }
 
-/** Stub the scroller the rail measures its gutter against. */
+/**
+ * Stub the scroller the rail measures its gutter against. The rail lives in the
+ * START gutter (left in LTR), so that is the padding the gate reads.
+ */
 function scrollerWithPadding(px: number) {
   const el = document.createElement('div')
-  el.style.paddingRight = `${px}px`
+  el.style.paddingInlineStart = `${px}px`
   document.body.appendChild(el)
   return el
 }
@@ -216,5 +219,47 @@ describe('ChatMessageRail — edge fades follow the actual overflow', () => {
     expect(rail.classes()).not.toContain('msg-rail--more-below')
     // …and it is not scrollable at all, so no grab cursor either.
     expect(rail.classes()).not.toContain('msg-rail--scrollable')
+  })
+})
+
+describe('ChatMessageRail — pending (in-flight reply) node', () => {
+  it('adds no pending slot when nothing is being written', () => {
+    const w = mountRail()
+    expect(w.findAll('.msg-rail-pending')).toHaveLength(0)
+    expect(w.findAll('.msg-rail-node')).toHaveLength(5)
+  })
+
+  it('appends one pending node while a reply is streaming', () => {
+    const w = mountRail({ generating: true })
+    // The index only lists finalized messages, so this slot is the ONLY thing
+    // that tells the reader a turn is still running.
+    expect(w.findAll('.msg-rail-pending')).toHaveLength(1)
+    expect(w.findAll('.msg-rail-node')).toHaveLength(5)
+  })
+
+  it('shows a pending row in the card too, so the axis stays row-aligned', () => {
+    const w = mountRail({ generating: true })
+    // A node with no row would be an orphan number; the pending slot must appear
+    // on BOTH layers, exactly like a numbered one.
+    expect(w.findAll('.msg-rail-row--pending')).toHaveLength(1)
+    expect(w.findAll('.msg-rail-row:not(.msg-rail-row--pending)')).toHaveLength(5)
+  })
+
+  it('carries no ordinal — the pending reply has no index row yet', () => {
+    const w = mountRail({ generating: true })
+    const pending = w.find('.msg-rail-pending')
+    expect(pending.text()).toBe('')
+    // …and it is not focusable/clickable: selecting it would target nothing.
+    expect(pending.element.tagName).toBe('SPAN')
+    expect(pending.attributes('role')).toBe('status')
+  })
+
+  it('never marks the pending slot as the active message', () => {
+    // activeId 5 is the last real row; the pending slot must not inherit it even
+    // though it is the last item in the list.
+    const w = mountRail({ generating: true, activeId: 5 })
+    const nodes = w.findAll('.msg-rail-node')
+    expect(nodes[4].classes()).toContain('active')
+    expect(w.find('.msg-rail-pending').classes()).not.toContain('active')
   })
 })

@@ -309,10 +309,11 @@ const speaker = computed<SpeakerIdentity | null>(() => {
 
 /* Preview only: no node in this layer, so the row keeps the index row's
    horizontal rhythm but fills the host's row height instead of adding the
-   index's vertical padding on top of it. `--msg-row-pad-end` is the host's room
-   for the node column it paints over this row. */
+   index's vertical padding on top of it.
+   `--msg-row-pad-start` / `--msg-row-pad-end` are the host's room for the node
+   column it paints over this row — the rail may put that column on either side. */
 .msg-item--body {
-  padding: 0 var(--msg-row-pad-end, var(--space-4)) 0 var(--space-6);
+  padding: 0 var(--msg-row-pad-end, var(--space-4)) 0 var(--msg-row-pad-start, var(--space-6));
 }
 
 .msg-item--body::before {
@@ -323,7 +324,11 @@ const speaker = computed<SpeakerIdentity | null>(() => {
    so hover cannot come from `:hover` on the element itself — the host sets this
    class on the preview row AND the node nearest the pointer. */
 .msg-item--body.msg-item--lit {
-  --rail-punch: color-mix(in srgb, var(--text-primary) 5%, var(--msg-row-bg, var(--bg-secondary)));
+  /* `--msg-row-lit-strength` lets the host calibrate how loud the lit row is:
+     the rail needs more than the index drawer's 5%, because there the row is
+     lit by the pointer resting ON it, while here it is lit by proxy from the
+     axis — with no other cue on the row itself. */
+  --rail-punch: color-mix(in srgb, var(--accent-color) var(--msg-row-lit-strength, 5%), var(--msg-row-bg, var(--bg-secondary)));
   background: var(--rail-punch);
 }
 

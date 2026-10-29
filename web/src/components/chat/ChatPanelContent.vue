@@ -172,6 +172,7 @@
       :has-btw="messageListRef.getBtwAnchorLookup()"
       :get-scroller="messageListRef.getMessagesEl"
       :bottom-inset="railBottomInset"
+      :generating="railGenerating"
       @select="handleRailSelect"
     />
 
@@ -1524,6 +1525,18 @@ function observeComposer() {
 function handleRailSelect(msg) {
   messageListRef.value?.jumpToUserMessage(msg)
 }
+
+/**
+ * Whether THIS session has a turn in flight.
+ *
+ * The index only contains finalized messages, so the rail needs this separately
+ * to show a pending node — otherwise it looks complete while a reply is still
+ * being written. Keyed on the current session only: another session running in
+ * the background must not put a spinner on this thread's axis.
+ */
+const railGenerating = computed(() =>
+  identity.runningSessions.value.has(identity.currentSessionId.value),
+)
 
 /**
  * Open the conversation-share dialog for the current session. The id is
