@@ -32,6 +32,19 @@ func resetLiveRegistry(t *testing.T) {
 	t.Cleanup(func() { liveRegistry = prev })
 }
 
+// projPath normalizes a test project path the SAME way the server does.
+//
+// The handlers read the project from a cookie and run it through
+// model.NormalizeProjectPath (filepath.Abs + EvalSymlinks + Clean), while the
+// tests register rooms under a literal "/proj/a". On POSIX those agree, but on
+// Windows the cookie value becomes `C:\proj\a` — a different project key, so
+// every manage request answered 404/503 and the whole file failed on that one
+// platform. Normalizing here keeps the two sides comparable everywhere; the
+// literal is only a name, never a real directory.
+func projPath(p string) string {
+	return model.NormalizeProjectPath(p)
+}
+
 // liveReq builds a request carrying the project cookie the manage endpoints
 // require.
 func liveReq(t *testing.T, method, path, project string, body any) *http.Request {
@@ -55,7 +68,7 @@ func TestLiveShareCreate_ReturnsTokenAndPath(t *testing.T) {
 	resetLiveRegistry(t)
 
 	w := httptest.NewRecorder()
-	ServeLiveShareManage(w, liveReq(t, http.MethodPost, "/api/live-share", "/proj/a", map[string]string{"title": "我的屏幕"}))
+	ServeLiveShareManage(w, liveReq(t, http.MethodPost, "/api/live-share", projPath("/proj/a"), map[string]string{"title": "我的屏幕"}))
 
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp liveShareManageResponse
@@ -70,11 +83,11 @@ func TestLiveShareCreate_IsIdempotentForSameProject(t *testing.T) {
 
 	var first, second liveShareManageResponse
 	w1 := httptest.NewRecorder()
-	ServeLiveShareManage(w1, liveReq(t, http.MethodPost, "/api/live-share", "/proj/a", nil))
+	ServeLiveShareManage(w1, liveReq(t, http.MethodPost, "/api/live-share", projPath("/proj/a"), nil))
 	require.NoError(t, json.Unmarshal(w1.Body.Bytes(), &first))
 
 	w2 := httptest.NewRecorder()
-	ServeLiveShareManage(w2, liveReq(t, http.MethodPost, "/api/live-share", "/proj/a", nil))
+	ServeLiveShareManage(w2, liveReq(t, http.MethodPost, "/api/live-share", projPath("/proj/a"), nil))
 	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &second))
 
 	// A second POST must not mint a new token: the user may already have copied
@@ -88,11 +101,11 @@ func TestLiveShareCreate_SeparateProjectsGetSeparateRooms(t *testing.T) {
 
 	var a, b liveShareManageResponse
 	w1 := httptest.NewRecorder()
-	ServeLiveShareManage(w1, liveReq(t, http.MethodPost, "/api/live-share", "/proj/a", nil))
+	ServeLiveShareManage(w1, liveReq(t, http.MethodPost, "/api/live-share", projPath("/proj/a"), nil))
 	require.NoError(t, json.Unmarshal(w1.Body.Bytes(), &a))
 
 	w2 := httptest.NewRecorder()
-	ServeLiveShareManage(w2, liveReq(t, http.MethodPost, "/api/live-share", "/proj/b", nil))
+	ServeLiveShareManage(w2, liveReq(t, http.MethodPost, "/api/live-share", projPath("/proj/b"), nil))
 	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &b))
 
 	assert.NotEqual(t, a.Token, b.Token)
@@ -116,12 +129,12 @@ func TestLiveShareCreate_TitleFallsBackToProjectBaseName(t *testing.T) {
 func TestLiveShareCreate_RejectsWhenRoomCeilingReached(t *testing.T) {
 	resetLiveRegistry(t)
 	for i := range maxLiveRooms {
-		_, err := liveRegistry.Create("/proj/"+string(rune('a'+i)), "x")
+		_, err := liveRegistry.Create(projPath("/proj/"+string(rune('a'+i))), "x")
 		require.NoError(t, err)
 	}
 
 	w := httptest.NewRecorder()
-	ServeLiveShareManage(w, liveReq(t, http.MethodPost, "/api/live-share", "/proj/one-more", nil))
+	ServeLiveShareManage(w, liveReq(t, http.MethodPost, "/api/live-share", projPath("/proj/one-more"), nil))
 
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
@@ -129,14 +142,14 @@ func TestLiveShareCreate_RejectsWhenRoomCeilingReached(t *testing.T) {
 func TestLiveShareCreate_AllowsReuseAtCeiling(t *testing.T) {
 	resetLiveRegistry(t)
 	for i := range maxLiveRooms {
-		_, err := liveRegistry.Create("/proj/"+string(rune('a'+i)), "x")
+		_, err := liveRegistry.Create(projPath("/proj/"+string(rune('a'+i))), "x")
 		require.NoError(t, err)
 	}
 
 	// An existing project may still re-POST at the ceiling: that reuses its room
 	// rather than adding one, so the limit must not block it.
 	w := httptest.NewRecorder()
-	ServeLiveShareManage(w, liveReq(t, http.MethodPost, "/api/live-share", "/proj/a", nil))
+	ServeLiveShareManage(w, liveReq(t, http.MethodPost, "/api/live-share", projPath("/proj/a"), nil))
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -145,7 +158,7 @@ func TestLiveShareStatus_NoRoom(t *testing.T) {
 	resetLiveRegistry(t)
 
 	w := httptest.NewRecorder()
-	ServeLiveShareManage(w, liveReq(t, http.MethodGet, "/api/live-share", "/proj/a", nil))
+	ServeLiveShareManage(w, liveReq(t, http.MethodGet, "/api/live-share", projPath("/proj/a"), nil))
 
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp liveShareStatusResponse
@@ -155,13 +168,13 @@ func TestLiveShareStatus_NoRoom(t *testing.T) {
 
 func TestLiveShareStatus_ReportsViewerCount(t *testing.T) {
 	resetLiveRegistry(t)
-	room, err := liveRegistry.Create("/proj/a", "A")
+	room, err := liveRegistry.Create(projPath("/proj/a"), "A")
 	require.NoError(t, err)
 	_, err = room.AddViewer("", &liveSink{})
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
-	ServeLiveShareManage(w, liveReq(t, http.MethodGet, "/api/live-share", "/proj/a", nil))
+	ServeLiveShareManage(w, liveReq(t, http.MethodGet, "/api/live-share", projPath("/proj/a"), nil))
 
 	var resp liveShareStatusResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
@@ -171,12 +184,12 @@ func TestLiveShareStatus_ReportsViewerCount(t *testing.T) {
 
 func TestLiveShareEnd_RemovesRoom(t *testing.T) {
 	resetLiveRegistry(t)
-	room, err := liveRegistry.Create("/proj/a", "A")
+	room, err := liveRegistry.Create(projPath("/proj/a"), "A")
 	require.NoError(t, err)
 	token := room.Token()
 
 	w := httptest.NewRecorder()
-	ServeLiveShareManage(w, liveReq(t, http.MethodDelete, "/api/live-share?token="+token, "/proj/a", nil))
+	ServeLiveShareManage(w, liveReq(t, http.MethodDelete, "/api/live-share?token="+token, projPath("/proj/a"), nil))
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Nil(t, liveRegistry.Get(token))
@@ -185,14 +198,14 @@ func TestLiveShareEnd_RemovesRoom(t *testing.T) {
 
 func TestLiveShareEnd_RejectsForeignProject(t *testing.T) {
 	resetLiveRegistry(t)
-	room, err := liveRegistry.Create("/proj/owner", "A")
+	room, err := liveRegistry.Create(projPath("/proj/owner"), "A")
 	require.NoError(t, err)
 	token := room.Token()
 
 	// A signed-in user of a DIFFERENT project must not be able to end this
 	// share. The token is handed to every viewer, so it is not a secret.
 	w := httptest.NewRecorder()
-	ServeLiveShareManage(w, liveReq(t, http.MethodDelete, "/api/live-share?token="+token, "/proj/other", nil))
+	ServeLiveShareManage(w, liveReq(t, http.MethodDelete, "/api/live-share?token="+token, projPath("/proj/other"), nil))
 
 	// Uniform 404: the response must not reveal that a foreign room exists.
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -205,7 +218,7 @@ func TestLiveShareEnd_UnknownTokenIsOk(t *testing.T) {
 	// Ending twice must not surface an error: the publisher's UI may retry, and
 	// the user-visible outcome (the share is gone) is identical.
 	w := httptest.NewRecorder()
-	ServeLiveShareManage(w, liveReq(t, http.MethodDelete, "/api/live-share?token=deadbeef", "/proj/a", nil))
+	ServeLiveShareManage(w, liveReq(t, http.MethodDelete, "/api/live-share?token=deadbeef", projPath("/proj/a"), nil))
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -214,7 +227,7 @@ func TestLiveShareEnd_RequiresToken(t *testing.T) {
 	resetLiveRegistry(t)
 
 	w := httptest.NewRecorder()
-	ServeLiveShareManage(w, liveReq(t, http.MethodDelete, "/api/live-share", "/proj/a", nil))
+	ServeLiveShareManage(w, liveReq(t, http.MethodDelete, "/api/live-share", projPath("/proj/a"), nil))
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -223,14 +236,14 @@ func TestLiveShareManage_MethodNotAllowed(t *testing.T) {
 	resetLiveRegistry(t)
 
 	w := httptest.NewRecorder()
-	ServeLiveShareManage(w, liveReq(t, http.MethodPut, "/api/live-share", "/proj/a", nil))
+	ServeLiveShareManage(w, liveReq(t, http.MethodPut, "/api/live-share", projPath("/proj/a"), nil))
 
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
 func TestShareMeta_ReportsLiveKind(t *testing.T) {
 	resetLiveRegistry(t)
-	room, err := liveRegistry.Create("/proj/a", "直播标题")
+	room, err := liveRegistry.Create(projPath("/proj/a"), "直播标题")
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -245,7 +258,7 @@ func TestShareMeta_ReportsLiveKind(t *testing.T) {
 
 func TestShareMeta_LiveWinsOverDatabase(t *testing.T) {
 	resetLiveRegistry(t)
-	room, err := liveRegistry.Create("/proj/a", "live")
+	room, err := liveRegistry.Create(projPath("/proj/a"), "live")
 	require.NoError(t, err)
 
 	// A live room must resolve even when no DB row exists for the token — and,
@@ -296,12 +309,12 @@ func TestLastPathSegment(t *testing.T) {
 func liveWSServer(t *testing.T) (*httptest.Server, string) {
 	t.Helper()
 	resetLiveRegistry(t)
-	room, err := liveRegistry.Create("/proj/a", "测试共享")
+	room, err := liveRegistry.Create(projPath("/proj/a"), "测试共享")
 	require.NoError(t, err)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/live-share/publish/ws", func(w http.ResponseWriter, r *http.Request) {
-		r.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: "/proj/a"})
+		r.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: projPath("/proj/a")})
 		LiveSharePublishWS(w, r)
 	})
 	mux.HandleFunc("/api/share/", ServeSharePublic)
@@ -709,7 +722,7 @@ func (p *wsPair) waitFrames(t *testing.T, n int) []json.RawMessage {
 
 func TestHandlePublisherControl_UnknownTypeReportsErrorAndKeepsSocket(t *testing.T) {
 	resetLiveRegistry(t)
-	room, err := liveRegistry.Create("/proj/a", "t")
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
 	require.NoError(t, err)
 	pair := newWSPair(t)
 
@@ -727,7 +740,7 @@ func TestHandlePublisherControl_UnknownTypeReportsErrorAndKeepsSocket(t *testing
 
 func TestHandlePublisherControl_EndClosesSocket(t *testing.T) {
 	resetLiveRegistry(t)
-	room, err := liveRegistry.Create("/proj/a", "t")
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
 	require.NoError(t, err)
 
 	assert.True(t, handlePublisherControl(room, newWSPair(t).sink, liveshare.PublisherControl{Type: liveshare.CtrlEnd}))
@@ -739,7 +752,7 @@ func TestHandlePublisherControl_EndClosesSocket(t *testing.T) {
 // publisher's UI would otherwise believe the mute landed.
 func TestHandlePublisherControl_RevokeForSilentViewerReportsError(t *testing.T) {
 	resetLiveRegistry(t)
-	room, err := liveRegistry.Create("/proj/a", "t")
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
 	require.NoError(t, err)
 	pair := newWSPair(t)
 
@@ -759,7 +772,7 @@ func TestHandlePublisherControl_RevokeForSilentViewerReportsError(t *testing.T) 
 // Turning the room switch off must both mute every viewer and tell each one why.
 func TestHandlePublisherControl_DisableRoomNotifiesEveryViewer(t *testing.T) {
 	resetLiveRegistry(t)
-	room, err := liveRegistry.Create("/proj/a", "t")
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
 	require.NoError(t, err)
 	room.SetTalkEnabled(true)
 
@@ -788,7 +801,7 @@ func TestHandlePublisherControl_DisableRoomNotifiesEveryViewer(t *testing.T) {
 
 func TestHandleViewerControl_JoinIsInformational(t *testing.T) {
 	resetLiveRegistry(t)
-	room, err := liveRegistry.Create("/proj/a", "t")
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
 	require.NoError(t, err)
 	viewer, err := room.AddViewer("a", &recordingSink{})
 	require.NoError(t, err)
@@ -809,7 +822,7 @@ func TestHandleViewerControl_JoinIsInformational(t *testing.T) {
 // earlier `true` had been lost.
 func TestHandleViewerControl_TalkEndWhenNotTalkingIsHarmless(t *testing.T) {
 	resetLiveRegistry(t)
-	room, err := liveRegistry.Create("/proj/a", "t")
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
 	require.NoError(t, err)
 	viewer, err := room.AddViewer("a", &recordingSink{})
 	require.NoError(t, err)
@@ -870,7 +883,7 @@ func (f *recordingSink) last() any {
 func TestLiveSharePublishWS_RejectsNonGet(t *testing.T) {
 	resetLiveRegistry(t)
 	w := httptest.NewRecorder()
-	LiveSharePublishWS(w, liveReq(t, http.MethodPost, "/api/live-share/publish/ws", "/proj/a", nil))
+	LiveSharePublishWS(w, liveReq(t, http.MethodPost, "/api/live-share/publish/ws", projPath("/proj/a"), nil))
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
@@ -897,7 +910,7 @@ func TestLiveShareSignalWS_RejectsMalformedToken(t *testing.T) {
 // would leave that viewer waiting for an answer that can never come.
 func TestLiveShareSignalWS_RefusesRoomWithoutPublisher(t *testing.T) {
 	resetLiveRegistry(t)
-	room, err := liveRegistry.Create("/proj/a", "t")
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
 	require.NoError(t, err)
 	// No SetPublisher: the room exists but nobody is publishing.
 
@@ -924,7 +937,7 @@ func TestLiveShareSignalWS_RefusesRoomWithoutPublisher(t *testing.T) {
 func TestLiveShareReap_DropsIdleRoom(t *testing.T) {
 	resetLiveRegistry(t)
 	liveRegistry.SetLimits(liveshare.DefaultMaxViewers, time.Minute)
-	_, err := liveRegistry.Create("/proj/a", "t")
+	_, err := liveRegistry.Create(projPath("/proj/a"), "t")
 	require.NoError(t, err)
 	require.Equal(t, 1, liveShareRoomCountForTest())
 
@@ -941,7 +954,7 @@ func TestLiveShareReap_DropsIdleRoom(t *testing.T) {
 func TestLiveShareReap_KeepsRoomWithPublisher(t *testing.T) {
 	resetLiveRegistry(t)
 	liveRegistry.SetLimits(liveshare.DefaultMaxViewers, time.Minute)
-	room, err := liveRegistry.Create("/proj/a", "t")
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
 	require.NoError(t, err)
 	room.SetPublisher(&recordingSink{})
 

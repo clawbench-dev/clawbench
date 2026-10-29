@@ -105,7 +105,8 @@ func stubRestartGroupDrain(t *testing.T) (*[]string, <-chan struct{}) {
 func systemRowTexts(t *testing.T, sessionID string) []string {
 	t.Helper()
 	rows, err := store.ReadDB().Query(
-		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'system' ORDER BY id ASC", sessionID)
+		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'system' ORDER BY id ASC", sessionID,
+	)
 	if err != nil {
 		t.Fatalf("query system rows: %v", err)
 	}
@@ -681,6 +682,11 @@ func TestInitDB_RecordsInterruptedSessions(t *testing.T) {
 
 	restoreDB := store.SnapshotDBForTest()
 	defer restoreDB()
+	// Close the temp database BEFORE the snapshot restore puts the previous
+	// handles back. Without this the SQLite file stays open and t.TempDir's
+	// RemoveAll fails on Windows ("being used by another process"), which is a
+	// cleanup failure attributed to every test in this file.
+	defer store.Close()
 	cleanupAllSessionState()
 	defer cleanupAllSessionState()
 
@@ -752,6 +758,11 @@ func TestInitDB_RecordsSessionsEndingOnRestartWarning(t *testing.T) {
 
 	restoreDB := store.SnapshotDBForTest()
 	defer restoreDB()
+	// Close the temp database BEFORE the snapshot restore puts the previous
+	// handles back. Without this the SQLite file stays open and t.TempDir's
+	// RemoveAll fails on Windows ("being used by another process"), which is a
+	// cleanup failure attributed to every test in this file.
+	defer store.Close()
 	cleanupAllSessionState()
 	defer cleanupAllSessionState()
 
@@ -845,6 +856,11 @@ func TestSessionsEndingOnRestartWarning_HonoursConfiguredWindow(t *testing.T) {
 
 	restoreDB := store.SnapshotDBForTest()
 	defer restoreDB()
+	// Close the temp database BEFORE the snapshot restore puts the previous
+	// handles back. Without this the SQLite file stays open and t.TempDir's
+	// RemoveAll fails on Windows ("being used by another process"), which is a
+	// cleanup failure attributed to every test in this file.
+	defer store.Close()
 	cleanupAllSessionState()
 	defer cleanupAllSessionState()
 
@@ -856,12 +872,14 @@ func TestSessionsEndingOnRestartWarning_HonoursConfiguredWindow(t *testing.T) {
 	warned := `{"blocks":[{"type":"warning","reason":"restart","text":"x"}]}`
 	if _, err := store.WriteExec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, session_type, archived)
-		 VALUES ('sess-3h', 1, 'claude', 't', 'chat', 0)`); err != nil {
+		 VALUES ('sess-3h', 1, 'claude', 't', 'chat', 0)`,
+	); err != nil {
 		t.Fatalf("insert session: %v", err)
 	}
 	if _, err := store.WriteExec(
 		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, created_at)
-		 VALUES (1, 'assistant', ?, 'sess-3h', 'claude', 0, datetime('now','-3 hours'))`, warned); err != nil {
+		 VALUES (1, 'assistant', ?, 'sess-3h', 'claude', 0, datetime('now','-3 hours'))`, warned,
+	); err != nil {
 		t.Fatalf("insert row: %v", err)
 	}
 
@@ -879,7 +897,8 @@ func TestSessionsEndingOnRestartWarning_HonoursConfiguredWindow(t *testing.T) {
 	// 0 means "no age bound": even a very old row qualifies.
 	model.ChatRestartResumeWindowMinutes = 0
 	if _, err := store.WriteExec(
-		`UPDATE chat_history SET created_at = datetime('now','-30 days') WHERE session_id = 'sess-3h'`); err != nil {
+		`UPDATE chat_history SET created_at = datetime('now','-30 days') WHERE session_id = 'sess-3h'`,
+	); err != nil {
 		t.Fatalf("age the row: %v", err)
 	}
 	if got := sessionsEndingOnRestartWarning(); len(got) != 1 {
@@ -906,6 +925,11 @@ func TestInitDB_FinalizesArchivedOrphanWithoutResumingIt(t *testing.T) {
 
 	restoreDB := store.SnapshotDBForTest()
 	defer restoreDB()
+	// Close the temp database BEFORE the snapshot restore puts the previous
+	// handles back. Without this the SQLite file stays open and t.TempDir's
+	// RemoveAll fails on Windows ("being used by another process"), which is a
+	// cleanup failure attributed to every test in this file.
+	defer store.Close()
 	cleanupAllSessionState()
 	defer cleanupAllSessionState()
 
@@ -915,12 +939,14 @@ func TestInitDB_FinalizesArchivedOrphanWithoutResumingIt(t *testing.T) {
 
 	if _, err := store.WriteExec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, session_type, archived)
-		 VALUES ('sess-arch-orphan', 1, 'claude', 't', 'chat', 1)`); err != nil {
+		 VALUES ('sess-arch-orphan', 1, 'claude', 't', 'chat', 1)`,
+	); err != nil {
 		t.Fatalf("insert session: %v", err)
 	}
 	if _, err := store.WriteExec(
 		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming)
-		 VALUES (1, 'assistant', '{"blocks":[]}', 'sess-arch-orphan', 'claude', 1)`); err != nil {
+		 VALUES (1, 'assistant', '{"blocks":[]}', 'sess-arch-orphan', 'claude', 1)`,
+	); err != nil {
 		t.Fatalf("insert orphan: %v", err)
 	}
 
@@ -962,6 +988,11 @@ func TestInitDB_RecordsBothInterruptSignals(t *testing.T) {
 
 	restoreDB := store.SnapshotDBForTest()
 	defer restoreDB()
+	// Close the temp database BEFORE the snapshot restore puts the previous
+	// handles back. Without this the SQLite file stays open and t.TempDir's
+	// RemoveAll fails on Windows ("being used by another process"), which is a
+	// cleanup failure attributed to every test in this file.
+	defer store.Close()
 	cleanupAllSessionState()
 	defer cleanupAllSessionState()
 
@@ -974,19 +1005,22 @@ func TestInitDB_RecordsBothInterruptSignals(t *testing.T) {
 	// graceful session needs a real row; the crash path does not.
 	if _, err := store.WriteExec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, session_type, archived)
-		 VALUES ('sess-graceful', 1, 'claude', 't', 'chat', 0)`); err != nil {
+		 VALUES ('sess-graceful', 1, 'claude', 't', 'chat', 0)`,
+	); err != nil {
 		t.Fatalf("insert graceful session: %v", err)
 	}
 	// Crash path.
 	if _, err := store.WriteExec(
 		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming)
-		 VALUES (1, 'assistant', '{"blocks":[]}', 'sess-crash', 'claude', 1)`); err != nil {
+		 VALUES (1, 'assistant', '{"blocks":[]}', 'sess-crash', 'claude', 1)`,
+	); err != nil {
 		t.Fatalf("insert crash row: %v", err)
 	}
 	// Graceful path.
 	if _, err := store.WriteExec(
 		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming)
-		 VALUES (1, 'assistant', ?, 'sess-graceful', 'claude', 0)`, warned); err != nil {
+		 VALUES (1, 'assistant', ?, 'sess-graceful', 'claude', 0)`, warned,
+	); err != nil {
 		t.Fatalf("insert graceful row: %v", err)
 	}
 
@@ -1133,6 +1167,11 @@ func TestInitDB_ToleratesNullSessionIDOnStreamingRow(t *testing.T) {
 
 	restoreDB := store.SnapshotDBForTest()
 	defer restoreDB()
+	// Close the temp database BEFORE the snapshot restore puts the previous
+	// handles back. Without this the SQLite file stays open and t.TempDir's
+	// RemoveAll fails on Windows ("being used by another process"), which is a
+	// cleanup failure attributed to every test in this file.
+	defer store.Close()
 	cleanupAllSessionState()
 	defer cleanupAllSessionState()
 
