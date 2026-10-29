@@ -298,3 +298,157 @@ func TestStopAndClearSession_IdempotentOnEmptyQueue(t *testing.T) {
 		t.Errorf("got wasRunning=%v cleared=%d, want false/0", wasRunning, cleared)
 	}
 }
+
+func TestGetLastAssistantReply_SkipsUnparsableRows(t *testing.T) {
+	teardown := setupTestDBForPushCommands(t)
+	defer teardown()
+
+	projectID, _ := store.ProjectIDForPath("/tmp/push-bad-json")
+	const sid = "e5f6a7b8-0000-0000-0000-000000000000"
+	_, _ = store.WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, title) VALUES (?, ?, ?)", sid, projectID, "T")
+
+	// A malformed row must be skipped, not abort the walk: a single corrupt
+	// historical row would otherwise hide every older reply.
+	_, _ = store.WriteExec(
+		`INSERT INTO chat_history (project_id, session_id, role, content, streaming)
+		 VALUES (?, ?, 'assistant', 'not json at all', 0)`, projectID, sid)
+	_, _ = store.WriteExec(
+		`INSERT INTO chat_history (project_id, session_id, role, content, streaming)
+		 VALUES (?, ?, 'assistant', ?, 0)`, projectID, sid,
+		`{"blocks":[{"type":"text","text":"valid answer"}]}`)
+
+	text, ok := GetLastAssistantReply(sid)
+	if !ok || text != "valid answer" {
+		t.Fatalf("got %q ok=%v, want the valid row", text, ok)
+	}
+}
+
+func TestDefaultAgentForProject_ScopeAware(t *testing.T) {
+	teardown := setupTestDBForPushCommands(t)
+	defer teardown()
+
+	projectID, err := store.ProjectIDForPath("/tmp/push-scope")
+	if err != nil {
+		t.Fatalf("project id: %v", err)
+	}
+	otherID := projectID + 999
+
+	prevAgents, prevList := model.Agents, model.AgentList
+	defer model.ReplaceAgents(prevAgents, prevList)
+
+	// A scoped agent belonging to a DIFFERENT project must never be picked,
+	// even though it is first in the list.
+	foreign := &model.Agent{ID: "foreign", Backend: "codebuddy", ProjectID: &otherID}
+	global := &model.Agent{ID: "global", Backend: "codebuddy"}
+	model.ReplaceAgents(
+		map[string]*model.Agent{foreign.ID: foreign, global.ID: global},
+		[]*model.Agent{foreign, global},
+	)
+
+	if got := defaultAgentForProject(projectID); got != "global" {
+		t.Errorf("defaultAgentForProject = %q, want the visible global agent", got)
+	}
+
+	// An agent scoped to THIS project is visible and wins over a later global.
+	own := &model.Agent{ID: "own", Backend: "codebuddy", ProjectID: &projectID}
+	model.ReplaceAgents(
+		map[string]*model.Agent{own.ID: own, foreign.ID: foreign},
+		[]*model.Agent{own, foreign},
+	)
+	if got := defaultAgentForProject(projectID); got != "own" {
+		t.Errorf("defaultAgentForProject = %q, want the project-scoped agent", got)
+	}
+
+	// No visible agent at all → empty string, which the caller turns into an
+	// error rather than creating an agentless session.
+	model.ReplaceAgents(map[string]*model.Agent{foreign.ID: foreign}, []*model.Agent{foreign})
+	if got := defaultAgentForProject(projectID); got != "" {
+		t.Errorf("defaultAgentForProject = %q, want empty", got)
+	}
+}
+
+func TestCreatePushSession_NoVisibleAgent(t *testing.T) {
+	teardown := setupTestDBForPushCommands(t)
+	defer teardown()
+
+	projectPath := "/tmp/push-no-agent"
+	if _, err := store.ProjectIDForPath(projectPath); err != nil {
+		t.Fatalf("register project: %v", err)
+	}
+
+	prevAgents, prevList := model.Agents, model.AgentList
+	defer model.ReplaceAgents(prevAgents, prevList)
+	model.ReplaceAgents(map[string]*model.Agent{}, nil)
+
+	if _, _, err := CreatePushSession(projectPath); err == nil {
+		t.Fatal("expected an error when no agent is visible in the project")
+	}
+}
+
+func TestGetLastAssistantReply_SkipsEmptyBlocks(t *testing.T) {
+	teardown := setupTestDBForPushCommands(t)
+	defer teardown()
+
+	projectID, _ := store.ProjectIDForPath("/tmp/push-empty-blocks")
+	const sid = "f6a7b8c9-0000-0000-0000-000000000000"
+	_, _ = store.WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, title) VALUES (?, ?, ?)", sid, projectID, "T")
+
+	// A finalized row whose blocks carry no answer (a tool-only turn, or a
+	// summarized row stripped to empty) must not shadow the earlier real one.
+	_, _ = store.WriteExec(
+		`INSERT INTO chat_history (project_id, session_id, role, content, streaming)
+		 VALUES (?, ?, 'assistant', '{"blocks":[]}', 0)`, projectID, sid)
+	_, _ = store.WriteExec(
+		`INSERT INTO chat_history (project_id, session_id, role, content, streaming)
+		 VALUES (?, ?, 'assistant', ?, 0)`, projectID, sid,
+		`{"blocks":[{"type":"text","text":"earlier answer"}]}`)
+
+	text, ok := GetLastAssistantReply(sid)
+	if !ok || text != "earlier answer" {
+		t.Fatalf("got %q ok=%v, want the earlier text block", text, ok)
+	}
+}
+
+func TestGetLastAssistantReply_QueryErrorReturnsNoReply(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	cleanup := store.SetDBForTest(db, db)
+	defer cleanup()
+	// Close before querying so the read fails: the caller must degrade to
+	// "no reply" rather than surfacing a DB error into the IM chat.
+	_ = db.Close()
+
+	if text, ok := GetLastAssistantReply("some-session"); ok || text != "" {
+		t.Fatalf("got %q ok=%v, want the empty degradation", text, ok)
+	}
+}
+
+func TestCreatePushSession_InsertFailurePropagates(t *testing.T) {
+	teardown := setupTestDBForPushCommands(t)
+	defer teardown()
+
+	projectPath := "/tmp/push-insert-fail"
+	if _, err := store.ProjectIDForPath(projectPath); err != nil {
+		t.Fatalf("register project: %v", err)
+	}
+
+	prevAgents, prevList := model.Agents, model.AgentList
+	defer model.ReplaceAgents(prevAgents, prevList)
+	agent := &model.Agent{ID: "a1", Backend: "codebuddy"}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	// Drop the session table so the INSERT fails: the error must surface to the
+	// caller (which reports it in the IM chat) instead of yielding a bogus id.
+	if _, err := store.WriteExec("DROP TABLE chat_sessions"); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+
+	if _, _, err := CreatePushSession(projectPath); err == nil {
+		t.Fatal("expected the insert failure to propagate")
+	}
+}
