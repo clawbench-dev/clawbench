@@ -1747,6 +1747,12 @@ func TestOnChatBotMessage_NewCreatesSessionAndMovesSticky(t *testing.T) {
 	if !strings.Contains(string(*body), "@f1e2d3c4") {
 		t.Errorf("expected the new short id in the reply, got %s", *body)
 	}
+	// The reply must name the PROJECT the session landed in, not the session's
+	// own title — otherwise the user cannot tell which project was chosen (and
+	// cannot notice a shifted /new index).
+	if !strings.Contains(string(*body), "/proj/alpha") {
+		t.Errorf("expected the project path in the reply, got %s", *body)
+	}
 }
 
 func TestOnChatBotMessage_NewOutOfRange(t *testing.T) {
@@ -1946,8 +1952,9 @@ func TestOnChatBotMessage_NewListProjectsFails(t *testing.T) {
 	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/new")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(string(*body), "获取会话列表失败") {
-		t.Errorf("expected the list-failure reply, got %s", *body)
+	// Must be the /new-specific copy, not the subscribe copy ("已订阅…").
+	if !strings.Contains(string(*body), "获取项目列表失败") {
+		t.Errorf("expected the project-list-failure reply, got %s", *body)
 	}
 }
 

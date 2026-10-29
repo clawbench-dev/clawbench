@@ -215,8 +215,7 @@ func (dingtalkSessionMessenger) SendMessageToSession(sessionID, message string, 
 }
 
 func (dingtalkSessionMessenger) LastAssistantReply(sessionID string) (string, bool, error) {
-	text, ok := service.GetLastAssistantReply(sessionID)
-	return text, ok, nil
+	return service.GetLastAssistantReply(sessionID)
 }
 
 func (dingtalkSessionMessenger) StopAndClearSession(sessionID string) (bool, int, error) {
@@ -344,8 +343,7 @@ func (feishuSessionMessenger) SendMessageToSession(sessionID, message string, fi
 }
 
 func (feishuSessionMessenger) LastAssistantReply(sessionID string) (string, bool, error) {
-	text, ok := service.GetLastAssistantReply(sessionID)
-	return text, ok, nil
+	return service.GetLastAssistantReply(sessionID)
 }
 
 func (feishuSessionMessenger) StopAndClearSession(sessionID string) (bool, int, error) {

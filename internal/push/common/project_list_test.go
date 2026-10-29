@@ -84,3 +84,32 @@ func TestSelectProject_Empty(t *testing.T) {
 		t.Fatal("expected error for empty selector")
 	}
 }
+
+func TestSelectProject_IgnoresTextAfterIndex(t *testing.T) {
+	// The agreed contract is that text after the selector is ignored, so
+	// "/new 1 please" still means project 1 rather than failing to resolve.
+	refs := []ProjectRef{
+		{Index: 1, Path: "/a/one", Exists: true},
+		{Index: 2, Path: "/b/two", Exists: true},
+	}
+	path, ref, err := SelectProject(refs, "1 please")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if path != "/a/one" || ref.Index != 1 {
+		t.Errorf("got %q ref %+v, want project 1", path, ref)
+	}
+}
+
+func TestSelectProject_PathWithSpacesKeepsWholeArg(t *testing.T) {
+	// The path form must NOT be truncated at the first space, or projects with
+	// spaces in their names become unreachable.
+	refs := []ProjectRef{{Index: 1, Path: "/a/my project", Exists: true}}
+	path, _, err := SelectProject(refs, "/a/my project")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if path != "/a/my project" {
+		t.Errorf("got %q", path)
+	}
+}

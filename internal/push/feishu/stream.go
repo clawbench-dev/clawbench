@@ -501,7 +501,7 @@ func (m *Manager) handleNewSession(ctx context.Context, openID, arg string) {
 	projects, err := sessionMessenger.ListProjects()
 	if err != nil {
 		slog.Warn("feishu: list projects failed", "error", err)
-		_ = m.SendPostMessage(ctx, openID, common.T("PushSubscribedTitle"), common.T("PushSubscribedListFailedFeishu"))
+		_ = m.SendPostMessage(ctx, openID, common.T("PushErrorTitle"), common.T("PushNewListFailed"))
 		return
 	}
 
@@ -517,7 +517,7 @@ func (m *Manager) handleNewSession(ctx context.Context, openID, arg string) {
 		return
 	}
 
-	sessionID, title, err := sessionMessenger.CreateSessionInProject(path)
+	sessionID, _, err := sessionMessenger.CreateSessionInProject(path)
 	if err != nil {
 		slog.Warn("feishu: create session failed", "error", err, "path", path)
 		_ = m.SendPostMessage(ctx, openID, common.T("PushErrorTitle"), err.Error())
@@ -527,8 +527,8 @@ func (m *Manager) handleNewSession(ctx context.Context, openID, arg string) {
 	m.rememberSession(openID, sessionID)
 
 	body := common.T("PushNewCreated", map[string]any{
-		common.TemplateLabel: common.FormatSessionLabel(sessionID, title),
-		common.TemplateID:    common.ShortSessionID(sessionID),
+		common.TemplateProject: path,
+		common.TemplateID:      common.ShortSessionID(sessionID),
 	})
 	if !ref.Exists {
 		body += "\n\n" + common.T("PushNewProjectMissingDir")

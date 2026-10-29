@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strconv"
-	"strings"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/i18n"
@@ -27,18 +25,25 @@ func i18nT(key string, data ...map[string]any) string {
 }
 
 // GetLastAssistantReply returns the session's most recent FINALIZED assistant
-// reply as plain text. ok is false when there is no finished reply yet.
+// reply as plain text. ok is false when the session has no finished reply yet;
+// a read failure is returned as an error so the bot can say "unavailable"
+// instead of falsely claiming the session has no reply.
 //
 // Reuses GetAssistantRawContents + extractPreviewFromBlocksRaw so the text is
 // identical to what the completion push showed (group-chat protocol tags are
 // stripped there too). It deliberately does NOT read the streaming row: a
 // half-written answer is worse than "no reply yet".
-func GetLastAssistantReply(sessionID string) (string, bool) {
+//
+// Rows are walked newest-first and the first one yielding text wins. A finalized
+// turn that produced no text at all (tool-only, or a summarized row stripped to
+// empty blocks) is skipped rather than treated as "no reply", because the
+// previous turn's real answer is more useful than nothing.
+func GetLastAssistantReply(sessionID string) (string, bool, error) {
 	contents, err := GetAssistantRawContents(sessionID)
 	if err != nil {
 		slog.Warn("push: read assistant replies failed",
 			"session_id", sessionID, "error", err)
-		return "", false
+		return "", false, fmt.Errorf("%s", i18nT("PushSessionUnavailable"))
 	}
 	for _, raw := range contents {
 		var content struct {
@@ -48,32 +53,39 @@ func GetLastAssistantReply(sessionID string) (string, bool) {
 			continue
 		}
 		if text := extractPreviewFromBlocksRaw(sessionID, content.Blocks); text != "" {
-			return text, true
+			return text, true, nil
 		}
 	}
-	return "", false
+	return "", false, nil
 }
 
 // StopAndClearSession stops the session's in-flight turn and drops its queue.
 //
-// CancelSession is idempotent (it returns true for an already-idle session), so
-// wasRunning is sampled BEFORE the cancel. The queue is cleared afterwards:
-// CancelSession's drain-loop branch also collects queue IDs and emits
-// queue_cancel, but that runs on the agent goroutine and can lose the race with
-// this call. Clearing here and emitting again is harmless (the frontend treats
-// an empty queueIds array as a no-op) and is what makes the "not running at all"
-// case deterministic.
+// Both facts reported to the user are sampled BEFORE the cancel, because
+// CancelSession's drain-loop branch clears the queue on its own goroutine as
+// soon as the context is cancelled. Reading afterwards races it and reports
+// "cleared 0" for exactly the case /stop exists for (a running session with a
+// backlog), which would look like the command did nothing.
+//
+// Emitting queue_cancel twice (once here, once from the drain branch) is
+// harmless: the frontend's removeQueuedMany early-returns on an empty list, and
+// emitting ids the drain already removed is a no-op. Doing it here is what makes
+// the "nothing was running at all" case deterministic.
 func StopAndClearSession(sessionID string) (wasRunning bool, cleared int, err error) {
-	wasRunning = IsSessionRunningForSweep(sessionID)
+	wasRunning = IsSessionRunning(sessionID)
+
+	// Snapshot before the cancel — see the doc comment above.
+	queueIDs, listErr := GetQueuedQueueIDs(sessionID)
+	if listErr != nil {
+		slog.Warn("push: list queued messages failed", "session_id", sessionID, "error", listErr)
+		return wasRunning, 0, fmt.Errorf("%s", i18nT("PushStopFailed"))
+	}
 
 	CancelSession(sessionID)
 
-	queueIDs, listErr := GetQueuedQueueIDs(sessionID)
-	if listErr != nil {
-		return wasRunning, 0, fmt.Errorf("list queued messages: %w", listErr)
-	}
 	if err := ClearQueuedMessages(sessionID); err != nil {
-		return wasRunning, 0, fmt.Errorf("clear queued messages: %w", err)
+		slog.Warn("push: clear queued messages failed", "session_id", sessionID, "error", err)
+		return wasRunning, 0, fmt.Errorf("%s", i18nT("PushStopFailed"))
 	}
 	cleared = len(queueIDs)
 
@@ -116,53 +128,34 @@ func ListProjectsForPush() ([]ProjectRef, error) {
 	return refs, nil
 }
 
-// ResolveProjectSelector resolves a /new argument against the project list.
-//
-// Only two forms are accepted: a 1-based index from that same list, or a path
-// that exactly matches a registered project. Basename matching is deliberately
-// absent — two projects named "web" would be indistinguishable, and silently
-// picking one would create the session in the wrong repo.
-//
-// A path that is not registered is refused rather than registered on the fly:
-// store.ProjectIDForPath would happily insert a row for any string, which would
-// let a typo permanently pollute the project list.
-func ResolveProjectSelector(arg string, refs []ProjectRef) (string, error) {
-	arg = strings.TrimSpace(arg)
-	if arg == "" {
-		return "", fmt.Errorf("empty project selector")
-	}
-
-	if n, err := strconv.Atoi(arg); err == nil {
-		for _, r := range refs {
-			if r.Index == n {
-				return r.Path, nil
-			}
-		}
-		return "", fmt.Errorf("project index %d out of range (1-%d)", n, len(refs))
-	}
-
-	canon := store.NormalizeProjectPath(arg)
-	for _, r := range refs {
-		if store.NormalizeProjectPath(r.Path) == canon {
-			return r.Path, nil
-		}
-	}
-	return "", fmt.Errorf("project not registered: %s", arg)
-}
-
 // CreatePushSession creates an empty chat session in projectPath using the
 // default agent visible in that project.
 //
-// Mirrors the handler's create path (scope-aware default agent, numbered
-// placeholder title, auto-approve snapshot) so a session created from IM is
-// indistinguishable from one created in the UI.
+// Mirrors the handler's create path (scope-aware default agent, per-project
+// session cap, numbered placeholder title, auto-approve snapshot) so a session
+// created from IM is indistinguishable from one created in the UI.
+//
+// Errors returned here are already localized: the IM backends reply with
+// err.Error() verbatim, so a raw Go error ("failed to generate unique session
+// ID after 10 attempts", a SQLite message) must never escape.
 func CreatePushSession(projectPath string) (sessionID, title string, err error) {
 	projectID, ok, err := store.ProjectIDByPath(projectPath)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve project: %w", err)
+		slog.Warn("push: resolve project failed", "path", projectPath, "error", err)
+		return "", "", fmt.Errorf("%s", i18nT("PushNewProjectNotFound"))
 	}
 	if !ok {
-		return "", "", fmt.Errorf("project not registered: %s", projectPath)
+		return "", "", fmt.Errorf("%s", i18nT("PushNewProjectNotFound"))
+	}
+
+	// The per-project cap is enforced on every other create entry point
+	// (chat_session.go, group.go, scheduler.go, session_resume.go). Without it
+	// here, a repeated "/new 1" from IM is the only unbounded create path.
+	if model.SessionMaxCount > 0 {
+		if n, cerr := GetSessionCount(projectPath); cerr == nil && n >= model.SessionMaxCount {
+			return "", "", fmt.Errorf("%s", i18nT("SessionLimitReached",
+				map[string]any{"MaxCount": model.SessionMaxCount}))
+		}
 	}
 
 	agentID := defaultAgentForProject(projectID)
@@ -183,7 +176,8 @@ func CreatePushSession(projectPath string) (sessionID, title string, err error) 
 
 	sessionID, err = CreateSession(projectPath, agent.Backend, title, agentID, "", "default", "chat")
 	if err != nil {
-		return "", "", err
+		slog.Warn("push: create session failed", "path", projectPath, "error", err)
+		return "", "", fmt.Errorf("%s", i18nT("PushNewCreateFailed"))
 	}
 	return sessionID, title, nil
 }

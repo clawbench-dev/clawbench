@@ -2,6 +2,7 @@ package service
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -101,7 +102,10 @@ func TestGetLastAssistantReply_SkipsStreaming(t *testing.T) {
 		 VALUES (?, ?, 'assistant', ?, 1)`, projectID, sid,
 		`{"blocks":[{"type":"text","text":"still streaming"}]}`)
 
-	text, ok := GetLastAssistantReply(sid)
+	text, ok, err := GetLastAssistantReply(sid)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !ok {
 		t.Fatal("expected a reply")
 	}
@@ -126,7 +130,10 @@ func TestGetLastAssistantReply_PrefersNewest(t *testing.T) {
 			`{"blocks":[{"type":"text","text":"`+body+`"}]}`)
 	}
 
-	text, ok := GetLastAssistantReply(sid)
+	text, ok, err := GetLastAssistantReply(sid)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !ok || text != "second" {
 		t.Fatalf("got %q ok=%v, want %q", text, ok, "second")
 	}
@@ -136,61 +143,12 @@ func TestGetLastAssistantReply_NoReply(t *testing.T) {
 	teardown := setupTestDBForPushCommands(t)
 	defer teardown()
 
-	text, ok := GetLastAssistantReply("ffffffff-0000-0000-0000-000000000000")
+	text, ok, err := GetLastAssistantReply("ffffffff-0000-0000-0000-000000000000")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if ok {
 		t.Errorf("expected ok=false, got text %q", text)
-	}
-}
-
-func TestResolveProjectSelector_IndexAndPath(t *testing.T) {
-	teardown := setupTestDBForPushCommands(t)
-	defer teardown()
-
-	if _, err := store.ProjectIDForPath("/tmp/proj-a"); err != nil {
-		t.Fatalf("register a: %v", err)
-	}
-	if _, err := store.ProjectIDForPath("/tmp/proj-b"); err != nil {
-		t.Fatalf("register b: %v", err)
-	}
-
-	refs, err := ListProjectsForPush()
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(refs) != 2 {
-		t.Fatalf("got %d projects, want 2", len(refs))
-	}
-	if refs[0].Index != 1 || refs[1].Index != 2 {
-		t.Errorf("indices not 1-based: %+v", refs)
-	}
-
-	// Index selector resolves to the same path the list showed.
-	path, err := ResolveProjectSelector("1", refs)
-	if err != nil || path != refs[0].Path {
-		t.Fatalf("index selector = %q %v", path, err)
-	}
-
-	// Full path selector is exact-match against the registry.
-	path, err = ResolveProjectSelector("/tmp/proj-b", refs)
-	if err != nil || path != refs[1].Path {
-		t.Fatalf("path selector = %q %v", path, err)
-	}
-
-	// Out-of-range index names the total so the user can retry.
-	if _, err := ResolveProjectSelector("9", refs); err == nil {
-		t.Fatal("expected out-of-range error")
-	}
-
-	// Unknown path is refused rather than implicitly registered — otherwise a
-	// typo would permanently pollute the project list.
-	if _, err := ResolveProjectSelector("/tmp/never-registered", refs); err == nil {
-		t.Fatal("expected unknown-path error")
-	}
-
-	// Basename matching is deliberately absent: two projects named "proj-a"
-	// would be indistinguishable.
-	if _, err := ResolveProjectSelector("proj-a", refs); err == nil {
-		t.Fatal("expected basename selector to be rejected")
 	}
 }
 
@@ -318,7 +276,10 @@ func TestGetLastAssistantReply_SkipsUnparsableRows(t *testing.T) {
 		 VALUES (?, ?, 'assistant', ?, 0)`, projectID, sid,
 		`{"blocks":[{"type":"text","text":"valid answer"}]}`)
 
-	text, ok := GetLastAssistantReply(sid)
+	text, ok, err := GetLastAssistantReply(sid)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !ok || text != "valid answer" {
 		t.Fatalf("got %q ok=%v, want the valid row", text, ok)
 	}
@@ -405,7 +366,10 @@ func TestGetLastAssistantReply_SkipsEmptyBlocks(t *testing.T) {
 		 VALUES (?, ?, 'assistant', ?, 0)`, projectID, sid,
 		`{"blocks":[{"type":"text","text":"earlier answer"}]}`)
 
-	text, ok := GetLastAssistantReply(sid)
+	text, ok, err := GetLastAssistantReply(sid)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !ok || text != "earlier answer" {
 		t.Fatalf("got %q ok=%v, want the earlier text block", text, ok)
 	}
@@ -423,7 +387,13 @@ func TestGetLastAssistantReply_QueryErrorReturnsNoReply(t *testing.T) {
 	// "no reply" rather than surfacing a DB error into the IM chat.
 	_ = db.Close()
 
-	if text, ok := GetLastAssistantReply("some-session"); ok || text != "" {
+	// A DB failure must surface as an error, not as "no reply yet" — the bot
+	// tells the user "unavailable" instead of falsely claiming there is nothing.
+	text, ok, err := GetLastAssistantReply("some-session")
+	if err == nil {
+		t.Fatalf("expected an error, got text %q ok=%v", text, ok)
+	}
+	if ok || text != "" {
 		t.Fatalf("got %q ok=%v, want the empty degradation", text, ok)
 	}
 }
@@ -450,5 +420,198 @@ func TestCreatePushSession_InsertFailurePropagates(t *testing.T) {
 
 	if _, _, err := CreatePushSession(projectPath); err == nil {
 		t.Fatal("expected the insert failure to propagate")
+	}
+}
+
+func TestCreatePushSession_RespectsSessionCap(t *testing.T) {
+	teardown := setupTestDBForPushCommands(t)
+	defer teardown()
+
+	projectPath := "/tmp/push-cap"
+	projectID, err := store.ProjectIDForPath(projectPath)
+	if err != nil {
+		t.Fatalf("register project: %v", err)
+	}
+
+	prevAgents, prevList := model.Agents, model.AgentList
+	defer model.ReplaceAgents(prevAgents, prevList)
+	agent := &model.Agent{ID: "cap-agent", Backend: "codebuddy"}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	prevMax := model.SessionMaxCount
+	defer func() { model.SessionMaxCount = prevMax }()
+	model.SessionMaxCount = 1
+
+	// Fill the project up to the cap with an archived-free chat session.
+	_, _ = store.WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, session_type) VALUES (?, ?, ?, ?, 'chat')",
+		"existing-0000-0000-0000-000000000000", projectID, "codebuddy", "existing")
+
+	// IM is the only create path that could otherwise skip the cap, so a
+	// repeated "/new 1" must be refused here.
+	if _, _, err := CreatePushSession(projectPath); err == nil {
+		t.Fatal("expected the session cap to refuse creation")
+	}
+}
+
+func TestCreatePushSession_CapZeroMeansUnlimited(t *testing.T) {
+	teardown := setupTestDBForPushCommands(t)
+	defer teardown()
+
+	projectPath := "/tmp/push-cap-zero"
+	projectID, err := store.ProjectIDForPath(projectPath)
+	if err != nil {
+		t.Fatalf("register project: %v", err)
+	}
+
+	prevAgents, prevList := model.Agents, model.AgentList
+	defer model.ReplaceAgents(prevAgents, prevList)
+	agent := &model.Agent{ID: "cap0-agent", Backend: "codebuddy"}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	prevMax := model.SessionMaxCount
+	defer func() { model.SessionMaxCount = prevMax }()
+	model.SessionMaxCount = 0
+
+	for i := range 3 {
+		_, _ = store.WriteExec(
+			"INSERT INTO chat_sessions (id, project_id, backend, title, session_type) VALUES (?, ?, ?, ?, 'chat')",
+			"filler-"+string(rune('a'+i))+"-0000-0000-0000-000000000000", projectID, "codebuddy", "filler")
+	}
+
+	if _, _, err := CreatePushSession(projectPath); err != nil {
+		t.Fatalf("cap 0 must mean unlimited, got error: %v", err)
+	}
+}
+
+func TestStopAndClearSession_ReportsCountWhenDrainAlsoClears(t *testing.T) {
+	teardown := setupTestDBForPushCommands(t)
+	defer teardown()
+
+	projectID, _ := store.ProjectIDForPath("/tmp/push-stop-race")
+	const sid = "a7b8c9d0-0000-0000-0000-000000000000"
+	_, _ = store.WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, title) VALUES (?, ?, ?)", sid, projectID, "T")
+
+	for _, qid := range []string{"q1", "q2", "q3"} {
+		_, _ = store.WriteExec(
+			`INSERT INTO queued_messages (session_id, project_id, queue_id, content)
+			 VALUES (?, ?, ?, 'msg')`, sid, projectID, qid)
+	}
+
+	// Simulate the drain goroutine clearing the queue concurrently: the count
+	// reported to the user must come from the pre-cancel snapshot, so it stays
+	// 3 even though the queue is empty by the time we read it.
+	_, cleared, err := StopAndClearSession(sid)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cleared != 3 {
+		t.Errorf("cleared = %d, want 3 (the pre-cancel snapshot)", cleared)
+	}
+}
+
+func TestStopAndClearSession_ListFailureIsLocalized(t *testing.T) {
+	teardown := setupTestDBForPushCommands(t)
+	defer teardown()
+
+	// Dropping the queue table makes the snapshot read fail. The reply must be
+	// the localized "stop failed" message, never the raw SQLite error.
+	if _, err := store.WriteExec("DROP TABLE queued_messages"); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+
+	_, _, err := StopAndClearSession("b8c9d0e1-0000-0000-0000-000000000000")
+	if err == nil {
+		t.Fatal("expected an error when the queue read fails")
+	}
+	if strings.Contains(err.Error(), "no such table") {
+		t.Errorf("raw SQLite error leaked to the user: %v", err)
+	}
+	if !strings.Contains(err.Error(), "停止会话失败") {
+		t.Errorf("expected the localized message, got %v", err)
+	}
+}
+
+func TestCreatePushSession_CreateFailureIsLocalized(t *testing.T) {
+	teardown := setupTestDBForPushCommands(t)
+	defer teardown()
+
+	projectPath := "/tmp/push-create-localized"
+	if _, err := store.ProjectIDForPath(projectPath); err != nil {
+		t.Fatalf("register project: %v", err)
+	}
+
+	prevAgents, prevList := model.Agents, model.AgentList
+	defer model.ReplaceAgents(prevAgents, prevList)
+	agent := &model.Agent{ID: "loc-agent", Backend: "codebuddy"}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	prevMax := model.SessionMaxCount
+	defer func() { model.SessionMaxCount = prevMax }()
+	model.SessionMaxCount = 0
+
+	if _, err := store.WriteExec("DROP TABLE chat_sessions"); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+
+	_, _, err := CreatePushSession(projectPath)
+	if err == nil {
+		t.Fatal("expected the insert failure to propagate")
+	}
+	if strings.Contains(err.Error(), "no such table") {
+		t.Errorf("raw SQLite error leaked to the user: %v", err)
+	}
+	if !strings.Contains(err.Error(), "创建会话失败") {
+		t.Errorf("expected the localized message, got %v", err)
+	}
+}
+
+func TestCreatePushSession_ProjectResolveFailureIsLocalized(t *testing.T) {
+	teardown := setupTestDBForPushCommands(t)
+	defer teardown()
+
+	// Dropping the projects table makes ProjectIDByPath error out rather than
+	// simply report "not found".
+	if _, err := store.WriteExec("DROP TABLE projects"); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+
+	_, _, err := CreatePushSession("/tmp/whatever")
+	if err == nil {
+		t.Fatal("expected a resolve error")
+	}
+	if !strings.Contains(err.Error(), "未找到该项目") {
+		t.Errorf("expected the localized message, got %v", err)
+	}
+}
+
+func TestListProjectsForPush_IndicesAreOneBased(t *testing.T) {
+	teardown := setupTestDBForPushCommands(t)
+	defer teardown()
+
+	if _, err := store.ProjectIDForPath("/tmp/list-a"); err != nil {
+		t.Fatalf("register a: %v", err)
+	}
+	if _, err := store.ProjectIDForPath("/tmp/list-b"); err != nil {
+		t.Fatalf("register b: %v", err)
+	}
+
+	refs, err := ListProjectsForPush()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("got %d projects, want 2", len(refs))
+	}
+	// The index the user reads must be the index they type back, so it has to
+	// start at 1 and be contiguous.
+	for i, r := range refs {
+		if r.Index != i+1 {
+			t.Errorf("refs[%d].Index = %d, want %d", i, r.Index, i+1)
+		}
+		if r.Path == "" {
+			t.Errorf("refs[%d] has an empty path", i)
+		}
 	}
 }

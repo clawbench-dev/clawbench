@@ -1577,6 +1577,10 @@ func TestOnMessageReceive_NewCreatesSessionAndMovesSticky(t *testing.T) {
 	if !strings.Contains(box.get(), "@f1e2d3c4") {
 		t.Errorf("expected the new short id in the reply, got %q", box.get())
 	}
+	// The reply must name the PROJECT, not the session title.
+	if !strings.Contains(box.get(), "/proj/alpha") {
+		t.Errorf("expected the project path in the reply, got %q", box.get())
+	}
 }
 
 func TestOnMessageReceive_NewOutOfRange(t *testing.T) {
@@ -1709,8 +1713,9 @@ func TestOnMessageReceive_NewListProjectsFails(t *testing.T) {
 	mgr, box := feishuCommandEnv(t, m)
 
 	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new"))
-	if !strings.Contains(box.get(), "获取会话列表失败") {
-		t.Errorf("expected the list-failure reply, got %q", box.get())
+	// Must be the /new-specific copy, not the subscribe copy ("已订阅…").
+	if !strings.Contains(box.get(), "获取项目列表失败") {
+		t.Errorf("expected the project-list-failure reply, got %q", box.get())
 	}
 }
 

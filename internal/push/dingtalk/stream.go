@@ -488,7 +488,7 @@ func (m *Manager) handleNewSession(ctx context.Context, data *chatbot.BotCallbac
 	projects, err := sessionMessenger.ListProjects()
 	if err != nil {
 		slog.Warn("dingtalk: list projects failed", "error", err)
-		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(common.T("PushSubscribedListFailedDingtalk")))
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(common.T("PushNewListFailed")))
 		return
 	}
 
@@ -505,7 +505,7 @@ func (m *Manager) handleNewSession(ctx context.Context, data *chatbot.BotCallbac
 		return
 	}
 
-	sessionID, title, err := sessionMessenger.CreateSessionInProject(path)
+	sessionID, _, err := sessionMessenger.CreateSessionInProject(path)
 	if err != nil {
 		slog.Warn("dingtalk: create session failed", "error", err, "path", path)
 		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(err.Error()))
@@ -516,8 +516,8 @@ func (m *Manager) handleNewSession(ctx context.Context, data *chatbot.BotCallbac
 
 	body := "### " + common.T("PushNewTitle") + "\n" +
 		common.T("PushNewCreated", map[string]any{
-			common.TemplateLabel: common.FormatSessionLabel(sessionID, title),
-			common.TemplateID:    common.ShortSessionID(sessionID),
+			common.TemplateProject: path,
+			common.TemplateID:      common.ShortSessionID(sessionID),
 		})
 	if !ref.Exists {
 		body += "\n\n" + common.T("PushNewProjectMissingDir")

@@ -238,6 +238,9 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"PushNewProjectOutOfRange",
 		"PushNewProjectMissingDir",
 		"PushNewNoAgent",
+		"PushNewListFailed",
+		"PushNewCreateFailed",
+		"PushStopFailed",
 	}
 
 	for _, key := range keys {
@@ -388,7 +391,7 @@ func TestPushTemplatesKeepPlaceholders(t *testing.T) {
 		"PushShowSessionLabel":     {"Label": "L"},
 		"PushStoppedRunning":       {"Label": "L", "Count": 2},
 		"PushStoppedIdle":          {"Label": "L", "Count": 0},
-		"PushNewCreated":           {"Label": "L", "ID": "abc"},
+		"PushNewCreated":           {"Project": "/p", "ID": "abc"},
 		"PushNewProjectOutOfRange": {"Count": 3},
 	}
 	for key, data := range withData {

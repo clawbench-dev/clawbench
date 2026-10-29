@@ -31,4 +31,6 @@ const (
 	TemplateLabel = "Label"
 	// TemplateID is the short session id placeholder.
 	TemplateID = "ID"
+	// TemplateProject is the project path/label placeholder.
+	TemplateProject = "Project"
 )
