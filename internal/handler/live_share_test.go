@@ -322,6 +322,25 @@ func dialWS(t *testing.T, srv *httptest.Server, path string) *websocket.Conn {
 	return conn
 }
 
+// dialPublisher dials the publisher socket AND waits until the room reports an
+// attached publisher.
+//
+// The server reserves the slot before upgrading (so a second publisher gets a
+// real 409) and only calls AttachPublisher AFTER the handshake returns. The
+// client's Dial therefore completes while `Publisher()` is still nil, and a
+// viewer that dials at that instant is refused with 404 by design. Waiting here
+// is what makes the publisher/viewer pairs deterministic — without it the tests
+// pass locally and fail on a slower runner.
+func dialPublisher(t *testing.T, srv *httptest.Server, token string) *websocket.Conn {
+	t.Helper()
+	conn := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
+	room := liveRegistry.Get(token)
+	require.NotNil(t, room, "the room must still exist right after the publisher attached")
+	require.Eventually(t, func() bool { return room.Publisher() != nil }, 3*time.Second, 5*time.Millisecond,
+		"publisher never attached to the room")
+	return conn
+}
+
 func readViewerMsg(t *testing.T, conn *websocket.Conn) liveshare.ViewerMessage {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -356,7 +375,7 @@ func writeJSONFrame(t *testing.T, conn *websocket.Conn, v any) {
 func TestLiveWS_ViewerJoinReachesPublisher(t *testing.T) {
 	srv, token := liveWSServer(t)
 
-	pub := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
+	pub := dialPublisher(t, srv, token)
 	view := dialWS(t, srv, "/api/share/"+token+"/signal")
 
 	joined := readViewerMsg(t, view)
@@ -374,7 +393,7 @@ func TestLiveWS_ViewerJoinReachesPublisher(t *testing.T) {
 func TestLiveWS_OfferAnswerRoundTrip(t *testing.T) {
 	srv, token := liveWSServer(t)
 
-	pub := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
+	pub := dialPublisher(t, srv, token)
 	view := dialWS(t, srv, "/api/share/"+token+"/signal")
 
 	joined := readViewerMsg(t, view)
@@ -401,7 +420,7 @@ func TestLiveWS_OfferAnswerRoundTrip(t *testing.T) {
 func TestLiveWS_ICEIsForwardedBothWays(t *testing.T) {
 	srv, token := liveWSServer(t)
 
-	pub := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
+	pub := dialPublisher(t, srv, token)
 	view := dialWS(t, srv, "/api/share/"+token+"/signal")
 
 	joined := readViewerMsg(t, view)
@@ -424,7 +443,7 @@ func TestLiveWS_ICEIsForwardedBothWays(t *testing.T) {
 func TestLiveWS_TalkStartRefusedWhenRoomDisabled(t *testing.T) {
 	srv, token := liveWSServer(t)
 
-	pub := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
+	pub := dialPublisher(t, srv, token)
 	view := dialWS(t, srv, "/api/share/"+token+"/signal")
 
 	_ = readViewerMsg(t, view)
@@ -443,7 +462,7 @@ func TestLiveWS_TalkStartRefusedWhenRoomDisabled(t *testing.T) {
 func TestLiveWS_TalkToggleFlow(t *testing.T) {
 	srv, token := liveWSServer(t)
 
-	pub := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
+	pub := dialPublisher(t, srv, token)
 	view := dialWS(t, srv, "/api/share/"+token+"/signal")
 
 	joined := readViewerMsg(t, view)
@@ -471,7 +490,7 @@ func TestLiveWS_TalkToggleFlow(t *testing.T) {
 func TestLiveWS_PublisherMuteReachesViewer(t *testing.T) {
 	srv, token := liveWSServer(t)
 
-	pub := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
+	pub := dialPublisher(t, srv, token)
 	view := dialWS(t, srv, "/api/share/"+token+"/signal")
 
 	joined := readViewerMsg(t, view)
@@ -496,7 +515,7 @@ func TestLiveWS_PublisherMuteReachesViewer(t *testing.T) {
 func TestLiveWS_DisablingRoomMutesEveryViewer(t *testing.T) {
 	srv, token := liveWSServer(t)
 
-	pub := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
+	pub := dialPublisher(t, srv, token)
 	view := dialWS(t, srv, "/api/share/"+token+"/signal")
 
 	joined := readViewerMsg(t, view)
@@ -523,7 +542,7 @@ func TestLiveWS_DisablingRoomMutesEveryViewer(t *testing.T) {
 func TestLiveWS_MuteAllReachesSpeakingViewer(t *testing.T) {
 	srv, token := liveWSServer(t)
 
-	pub := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
+	pub := dialPublisher(t, srv, token)
 	view := dialWS(t, srv, "/api/share/"+token+"/signal")
 
 	_ = readViewerMsg(t, view)
@@ -548,7 +567,7 @@ func TestLiveWS_MuteAllReachesSpeakingViewer(t *testing.T) {
 func TestLiveWS_PublisherGoneOnViewer(t *testing.T) {
 	srv, token := liveWSServer(t)
 
-	pub := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
+	pub := dialPublisher(t, srv, token)
 	view := dialWS(t, srv, "/api/share/"+token+"/signal")
 
 	_ = readViewerMsg(t, view)
@@ -563,7 +582,7 @@ func TestLiveWS_PublisherGoneOnViewer(t *testing.T) {
 func TestLiveWS_EndControlClosesRoom(t *testing.T) {
 	srv, token := liveWSServer(t)
 
-	pub := dialWS(t, srv, "/api/live-share/publish/ws?token="+token)
+	pub := dialPublisher(t, srv, token)
 	view := dialWS(t, srv, "/api/share/"+token+"/signal")
 
 	_ = readViewerMsg(t, view)
