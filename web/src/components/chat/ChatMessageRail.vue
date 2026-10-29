@@ -844,7 +844,11 @@ defineExpose({ refresh })
      hovering the axis, over the chat's own surfaces, so it needs to be
      unmistakable: the accent tint matches the node that lights up beside it. */
   --msg-row-lit-strength: 14%;
-  /* Leave the LEFT lane free: the node column is painted on top of it. */
+  /* Leave the LEFT lane free: the node column is painted on top of it.
+     `--msg-row-pad-end` keeps the preview's right rhythm; declaring it here (as
+     the host that owns the row) is what makes it a real token — an undeclared
+     custom property is invisible to the theme guard and to any future re-theme. */
   --msg-row-pad-start: calc(46 * var(--dp));
+  --msg-row-pad-end: var(--space-4);
 }
 </style>

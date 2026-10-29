@@ -42,6 +42,8 @@ const (
 	jsonAutoApprove = "autoApprove"
 	jsonCruise      = "cruise"
 	jsonMaxCount    = "MaxCount"
+	jsonSessions    = "sessions"
+	jsonCommands    = "commands"
 )
 
 // loc returns the Localizer for the current request.

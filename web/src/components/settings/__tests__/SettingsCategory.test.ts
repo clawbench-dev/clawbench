@@ -709,6 +709,12 @@ describe('SettingsCategory', () => {
         const wrapper = mountCategory('appearance')
         await wrapper.vm.$nextTick()
         const wallpaper = wrapper.findAllComponents({ name: 'WallpaperSetting' })[0]
+        // `SettingsCategory` renders the appearance pane through an async
+        // sub-panel, so the gallery mounts a tick later than the category
+        // itself. Awaiting only one `$nextTick()` made this pass or fail
+        // depending on what else the worker had queued (observed as a 5s
+        // timeout in the full run, green when the file ran alone).
+        await flushPromises()
         expect(wallpaper.find('img.wallpaper-gallery__thumb').exists()).toBe(true)
       } finally {
         localConfig.wallpaperMode = 'wave'

@@ -125,7 +125,7 @@ func ServeSessionSettings(w http.ResponseWriter, r *http.Request) {
 		"thinkingEffortState": st.Effort,
 		"modelListState":      st.ModelList,
 		"usageState":          st.Usage,
-		"commands":            st.Commands,
+		jsonCommands:          st.Commands,
 		"isGroupMember":       service.IsGroupMemberSession(sessionID),
 	})
 }

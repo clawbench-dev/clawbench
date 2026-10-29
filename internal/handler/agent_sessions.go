@@ -85,10 +85,10 @@ func ServeAgentSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"sessions":     page.Sessions,
-		"hasMore":      page.HasMore,
+		jsonSessions:   page.Sessions,
+		jsonHasMore:    page.HasMore,
 		"nextCursor":   page.NextCursor,
 		"nextCursorId": page.NextCursorID,
-		"total":        page.Total,
+		jsonTotal:      page.Total,
 	})
 }

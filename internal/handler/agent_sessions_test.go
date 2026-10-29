@@ -20,7 +20,7 @@ func serveAgentSessions(t *testing.T, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
 	RegisterRoutes(mux)
-	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec
@@ -32,15 +32,18 @@ func TestServeAgentSessions_ShapeAndTotal(t *testing.T) {
 
 	_, err := store.WriteExec(
 		`INSERT INTO chat_sessions (id, agent_id, session_type, title, updated_at)
-		 VALUES ('c1', 'codebuddy', 'chat', 'one', '2026-01-01 10:00:00')`)
+		 VALUES ('c1', 'codebuddy', 'chat', 'one', '2026-01-01 10:00:00')`,
+	)
 	require.NoError(t, err)
 	_, err = store.WriteExec(
 		`INSERT INTO chat_sessions (id, agent_id, session_type, title, updated_at)
-		 VALUES ('g1', 'codebuddy', 'group', 'grp', '2026-01-02 10:00:00')`)
+		 VALUES ('g1', 'codebuddy', 'group', 'grp', '2026-01-02 10:00:00')`,
+	)
 	require.NoError(t, err)
 	_, err = store.WriteExec(
 		`INSERT INTO chat_sessions (id, agent_id, session_type, group_id, updated_at)
-		 VALUES ('m1', 'codebuddy', 'group_member', 'g1', '2026-01-02 10:00:00')`)
+		 VALUES ('m1', 'codebuddy', 'group_member', 'g1', '2026-01-02 10:00:00')`,
+	)
 	require.NoError(t, err)
 
 	rec := serveAgentSessions(t, "/api/agents/codebuddy/sessions")
@@ -93,7 +96,7 @@ func TestServeAgentSessions_MethodNotAllowed(t *testing.T) {
 
 	mux := http.NewServeMux()
 	RegisterRoutes(mux)
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/codebuddy/sessions", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/codebuddy/sessions", http.NoBody)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -112,18 +115,20 @@ func TestServeAgentSessions_PaginationRoundTrip(t *testing.T) {
 	// case a timestamp-only cursor would break.
 	_, err := store.WriteExec(
 		`INSERT INTO chat_sessions (id, agent_id, session_type, title, updated_at)
-		 VALUES ('g', 'other', 'group', 'grp', '2026-01-05 10:00:00')`)
+		 VALUES ('g', 'other', 'group', 'grp', '2026-01-05 10:00:00')`,
+	)
 	require.NoError(t, err)
 	for _, id := range []string{"m1", "m2", "m3", "m4", "m5"} {
 		_, err = store.WriteExec(
 			`INSERT INTO chat_sessions (id, agent_id, session_type, group_id, updated_at)
-			 VALUES (?, 'codebuddy', 'group_member', 'g', '2026-01-05 10:00:00')`, id)
+			 VALUES (?, 'codebuddy', 'group_member', 'g', '2026-01-05 10:00:00')`, id,
+		)
 		require.NoError(t, err)
 	}
 
 	seen := map[string]bool{}
 	cursor, cursorID := "", ""
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		path := "/api/agents/codebuddy/sessions?limit=2"
 		if cursor != "" {
 			// The cursor is a timestamp containing a space; a real client
@@ -166,7 +171,7 @@ func TestServeAgentSessions_LimitIsCapped(t *testing.T) {
 	defer cleanup()
 
 	const rows = maxAgentSessionsPageSize + 5
-	for i := 0; i < rows; i++ {
+	for i := range rows {
 		_, err := store.WriteExec(
 			`INSERT INTO chat_sessions (id, agent_id, session_type, updated_at)
 			 VALUES (?, 'codebuddy', 'chat', '2026-01-01 10:00:00')`,
@@ -196,7 +201,7 @@ func TestServeAgentSessions_DefaultPageSize(t *testing.T) {
 	defer cleanup()
 
 	const rows = defaultAgentSessionsPageSize + 1
-	for i := 0; i < rows; i++ {
+	for i := range rows {
 		_, err := store.WriteExec(
 			`INSERT INTO chat_sessions (id, agent_id, session_type, updated_at)
 			 VALUES (?, 'codebuddy', 'chat', '2026-01-01 10:00:00')`,
@@ -225,7 +230,8 @@ func TestServeAgentSessions_CamelCaseKeys(t *testing.T) {
 
 	_, err := store.WriteExec(
 		`INSERT INTO chat_sessions (id, agent_id, session_type, title, updated_at)
-		 VALUES ('cc1', 'codebuddy', 'chat', 'x', '2026-01-01 10:00:00')`)
+		 VALUES ('cc1', 'codebuddy', 'chat', 'x', '2026-01-01 10:00:00')`,
+	)
 	require.NoError(t, err)
 
 	rec := serveAgentSessions(t, "/api/agents/codebuddy/sessions")

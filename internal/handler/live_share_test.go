@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -617,4 +618,316 @@ func TestLiveWS_SecondPublisherConflicts(t *testing.T) {
 	require.Error(t, err, "a second publisher must be refused")
 	require.NotNil(t, resp)
 	assert.Equal(t, http.StatusConflict, resp.StatusCode)
+}
+
+// ── Control-frame edge cases ────────────────────────────────────────────────
+//
+// handlePublisherControl / handleViewerControl are pure switches over the wire
+// enums, so they can be driven directly. The WS tests above cover the happy
+// paths; these cover the frames that are easy to leave unhandled — an unknown
+// type, a revoke for a viewer that is not speaking, and the informational join.
+
+// wsPair is a liveSink wired to a real websocket whose peer records every frame.
+type wsPair struct {
+	sink *liveSink
+	mu   sync.Mutex
+	got  []json.RawMessage
+}
+
+func (p *wsPair) frames() []json.RawMessage {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]json.RawMessage, len(p.got))
+	copy(out, p.got)
+	return out
+}
+
+// newWSPair returns a sink whose writes land in a peer-side buffer. It uses a
+// real connection because liveSink writes through coder/websocket — a stub
+// would not exercise the marshal+write path the handler relies on.
+func newWSPair(t *testing.T) *wsPair {
+	t.Helper()
+	pair := &wsPair{}
+	ready := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		close(ready)
+		for {
+			_, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			pair.mu.Lock()
+			pair.got = append(pair.got, append(json.RawMessage(nil), data...))
+			pair.mu.Unlock()
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.CloseNow() })
+	<-ready
+
+	pair.sink = &liveSink{conn: conn, mu: &sync.Mutex{}}
+	return pair
+}
+
+// waitFrames polls until at least n frames arrived (writes are asynchronous on
+// the peer side), then returns them.
+func (p *wsPair) waitFrames(t *testing.T, n int) []json.RawMessage {
+	t.Helper()
+	require.Eventually(t, func() bool { return len(p.frames()) >= n }, 3*time.Second, 10*time.Millisecond,
+		"expected %d frame(s)", n)
+	return p.frames()
+}
+
+func TestHandlePublisherControl_UnknownTypeReportsErrorAndKeepsSocket(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create("/proj/a", "t")
+	require.NoError(t, err)
+	pair := newWSPair(t)
+
+	closeConn := handlePublisherControl(room, pair.sink, liveshare.PublisherControl{Type: "nonsense"})
+
+	// Unknown frames must not tear the share down: a newer client may send
+	// something this build does not know yet.
+	assert.False(t, closeConn)
+	frames := pair.waitFrames(t, 1)
+	var msg liveshare.PublisherMessage
+	require.NoError(t, json.Unmarshal(frames[0], &msg))
+	assert.Equal(t, liveshare.MsgError, msg.Type)
+	assert.Contains(t, msg.Name, "nonsense", "the offending type must be named")
+}
+
+func TestHandlePublisherControl_EndClosesSocket(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create("/proj/a", "t")
+	require.NoError(t, err)
+
+	assert.True(t, handlePublisherControl(room, newWSPair(t).sink, liveshare.PublisherControl{Type: liveshare.CtrlEnd}))
+	// The informational publish frame is a no-op.
+	assert.False(t, handlePublisherControl(room, newWSPair(t).sink, liveshare.PublisherControl{Type: liveshare.CtrlPublish}))
+}
+
+// A revoke for a viewer that never spoke is reported back, not swallowed: the
+// publisher's UI would otherwise believe the mute landed.
+func TestHandlePublisherControl_RevokeForSilentViewerReportsError(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create("/proj/a", "t")
+	require.NoError(t, err)
+	pair := newWSPair(t)
+
+	closeConn := handlePublisherControl(room, pair.sink, liveshare.PublisherControl{
+		Type:     liveshare.CtrlTalkRevoke,
+		ViewerID: "nobody",
+	})
+
+	assert.False(t, closeConn)
+	frames := pair.waitFrames(t, 1)
+	var msg liveshare.PublisherMessage
+	require.NoError(t, json.Unmarshal(frames[0], &msg))
+	assert.Equal(t, liveshare.MsgError, msg.Type)
+	assert.Equal(t, "nobody", msg.ViewerID)
+}
+
+// Turning the room switch off must both mute every viewer and tell each one why.
+func TestHandlePublisherControl_DisableRoomNotifiesEveryViewer(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create("/proj/a", "t")
+	require.NoError(t, err)
+	room.SetTalkEnabled(true)
+
+	s1, s2 := &recordingSink{}, &recordingSink{}
+	v1, err := room.AddViewer("a", s1)
+	require.NoError(t, err)
+	_, err = room.AddViewer("b", s2)
+	require.NoError(t, err)
+	require.NoError(t, room.SetTalking(v1.ID, true))
+
+	handlePublisherControl(room, newWSPair(t).sink, liveshare.PublisherControl{
+		Type:    liveshare.CtrlSetTalkEnabled,
+		Enabled: false,
+	})
+
+	// Reason matters: a viewer distinguishes "the publisher muted you" from
+	// "the room switch went off" only by this field.
+	for _, s := range []*recordingSink{s1, s2} {
+		msg, ok := s.last().(liveshare.ViewerMessage)
+		require.True(t, ok, "viewers must receive a ViewerMessage")
+		assert.Equal(t, liveshare.MsgTalkRevoked, msg.Type)
+		assert.Equal(t, liveshare.ReasonDisabled, msg.Reason)
+	}
+	assert.False(t, room.TalkEnabled())
+}
+
+func TestHandleViewerControl_JoinIsInformational(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create("/proj/a", "t")
+	require.NoError(t, err)
+	viewer, err := room.AddViewer("a", &recordingSink{})
+	require.NoError(t, err)
+	pub := &recordingSink{}
+	room.SetPublisher(pub)
+
+	handleViewerControl(room, viewer, liveshare.ViewerControl{Type: liveshare.CtrlJoin})
+
+	// The join already happened when the socket attached; a second frame must
+	// not produce another viewer-join for the publisher.
+	assert.Empty(t, pub.all())
+}
+
+// Stopping a microphone that was never started must be harmless (the viewer may
+// retry after a network blip). It still emits one "not talking" frame: the
+// publisher keys its speaking indicator on these frames, and a duplicate `false`
+// is idempotent, whereas suppressing it would leave the indicator stuck if an
+// earlier `true` had been lost.
+func TestHandleViewerControl_TalkEndWhenNotTalkingIsHarmless(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create("/proj/a", "t")
+	require.NoError(t, err)
+	viewer, err := room.AddViewer("a", &recordingSink{})
+	require.NoError(t, err)
+	pub := &recordingSink{}
+	room.SetPublisher(pub)
+
+	require.NotPanics(t, func() {
+		handleViewerControl(room, viewer, liveshare.ViewerControl{Type: liveshare.CtrlTalkEnd})
+	})
+
+	require.Len(t, pub.all(), 1)
+	msg, ok := pub.last().(liveshare.PublisherMessage)
+	require.True(t, ok)
+	assert.Equal(t, liveshare.MsgTalkState, msg.Type)
+	assert.False(t, msg.Talking)
+	assert.Equal(t, viewer.ID, msg.ViewerID)
+}
+
+func TestLiveSink_SendPropagatesMarshalErrors(t *testing.T) {
+	// A channel cannot be marshaled; Send must report that instead of writing a
+	// half frame.
+	pair := newWSPair(t)
+	require.Error(t, pair.sink.Send(make(chan int)))
+	assert.Empty(t, pair.frames(), "a marshal failure must not put bytes on the wire")
+}
+
+// recordingSink is the in-memory Sink used where the payload is what matters.
+type recordingSink struct {
+	mu   sync.Mutex
+	msgs []any
+}
+
+func (f *recordingSink) Send(msg any) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.msgs = append(f.msgs, msg)
+	return nil
+}
+
+func (f *recordingSink) all() []any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]any, len(f.msgs))
+	copy(out, f.msgs)
+	return out
+}
+
+func (f *recordingSink) last() any {
+	all := f.all()
+	if len(all) == 0 {
+		return nil
+	}
+	return all[len(all)-1]
+}
+
+// A publisher socket opened with a non-GET method must be refused before any
+// upgrade attempt.
+func TestLiveSharePublishWS_RejectsNonGet(t *testing.T) {
+	resetLiveRegistry(t)
+	w := httptest.NewRecorder()
+	LiveSharePublishWS(w, liveReq(t, http.MethodPost, "/api/live-share/publish/ws", "/proj/a", nil))
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// A viewer socket must be refused the same way.
+func TestLiveShareSignalWS_RejectsNonGet(t *testing.T) {
+	resetLiveRegistry(t)
+	w := httptest.NewRecorder()
+	LiveShareSignalWS(w, newRequest(t, http.MethodPost, "/api/share/tok/signal", nil))
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// A malformed token in the signal path is a 404, not a 400: the viewer must not
+// be able to tell "wrong shape" from "no such share".
+func TestLiveShareSignalWS_RejectsMalformedToken(t *testing.T) {
+	resetLiveRegistry(t)
+	for _, tok := range []string{"", "short", strings.Repeat("x", 200), "../../etc"} {
+		w := httptest.NewRecorder()
+		LiveShareSignalWS(w, newRequest(t, http.MethodGet, "/api/share/"+tok+"/signal", nil))
+		assert.Equal(t, http.StatusNotFound, w.Code, "token %q", tok)
+	}
+}
+
+// A room whose publisher detached is not joinable: attaching a viewer to it
+// would leave that viewer waiting for an answer that can never come.
+func TestLiveShareSignalWS_RefusesRoomWithoutPublisher(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create("/proj/a", "t")
+	require.NoError(t, err)
+	// No SetPublisher: the room exists but nobody is publishing.
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/share/", LiveShareSignalWS)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/api/share/"+room.Token()+"/signal", nil)
+	require.Error(t, err, "the upgrade must be refused")
+	if resp != nil {
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	}
+}
+
+// An idle room (no publisher, no viewers) must be dropped so it stops occupying
+// one of the maxLiveRooms slots. The production ticker runs once a minute, so the
+// scan is driven directly here — it is the same code path.
+//
+// The fan-out the ticker performs is asserted separately (a room with a viewer
+// can never be idle, so the two cannot be observed in one room).
+func TestLiveShareReap_DropsIdleRoom(t *testing.T) {
+	resetLiveRegistry(t)
+	liveRegistry.SetLimits(liveshare.DefaultMaxViewers, time.Minute)
+	_, err := liveRegistry.Create("/proj/a", "t")
+	require.NoError(t, err)
+	require.Equal(t, 1, liveShareRoomCountForTest())
+
+	// `Reap` takes the reference time, so "now + 2 minutes" needs no sleep.
+	dead := liveRegistry.Reap(time.Now().Add(2 * time.Minute))
+
+	require.Len(t, dead, 1)
+	assert.Equal(t, 0, liveShareRoomCountForTest())
+}
+
+// A room with a publisher must survive the scan: it is an ongoing share that
+// simply has no audience yet. Reaping it would 404 a link whose UI still says
+// "sharing".
+func TestLiveShareReap_KeepsRoomWithPublisher(t *testing.T) {
+	resetLiveRegistry(t)
+	liveRegistry.SetLimits(liveshare.DefaultMaxViewers, time.Minute)
+	room, err := liveRegistry.Create("/proj/a", "t")
+	require.NoError(t, err)
+	room.SetPublisher(&recordingSink{})
+
+	dead := liveRegistry.Reap(time.Now().Add(2 * time.Minute))
+
+	assert.Empty(t, dead)
+	assert.Equal(t, 1, liveShareRoomCountForTest())
 }

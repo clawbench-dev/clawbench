@@ -1413,7 +1413,7 @@ func refreshViaACPProbe(w http.ResponseWriter, r *http.Request, agent *model.Age
 	// registry: the result is what the agent just said, and the registry may also
 	// hold merged values (pre-scanned plugin commands) that the probe did not
 	// produce.
-	state := map[string]any{"commands": res.Commands}
+	state := map[string]any{jsonCommands: res.Commands}
 	if len(res.Modes) > 0 {
 		state["modeState"] = map[string]any{
 			"currentModeId":  res.CurrentModeID,
@@ -1430,7 +1430,7 @@ func refreshViaACPProbe(w http.ResponseWriter, r *http.Request, agent *model.Age
 	slog.Info("acp state probe refresh done",
 		"agent", agent.ID,
 		"models", len(resolved),
-		"commands", len(res.Commands),
+		jsonCommands, len(res.Commands),
 		"session_deleted", res.SessionDeleted,
 		"elapsed", time.Since(start))
 
