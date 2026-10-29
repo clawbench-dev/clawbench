@@ -152,14 +152,6 @@ export interface FloatingCapsuleLabels {
   quit: string
   /** Tooltip on the capsule body — the desktop stand-in for a long-press hint. */
   hint: string
-  /**
-   * Accessible name for the capsule's close button.
-   *
-   * Separate from `hideFloating`: the menu item is a sentence ("Hide floating
-   * window") while this is a control label on a 16px disc, and screen readers
-   * announce it without any surrounding context.
-   */
-  closeLabel: string
 }
 
 /**
@@ -185,7 +177,6 @@ export function floatingCapsuleLabels(locale: string): FloatingCapsuleLabels {
       hide: '隐藏悬浮窗',
       quit: '退出 ClawBench',
       hint: '点击显示/隐藏主界面，右键更多操作',
-      closeLabel: '隐藏悬浮窗',
     }
   }
   return {
@@ -202,6 +193,5 @@ export function floatingCapsuleLabels(locale: string): FloatingCapsuleLabels {
     hide: 'Hide floating window',
     quit: 'Quit ClawBench',
     hint: 'Click to show or hide the window, right-click for more',
-    closeLabel: 'Hide floating window',
   }
 }

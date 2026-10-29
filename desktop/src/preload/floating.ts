@@ -35,12 +35,12 @@ contextBridge.exposeInMainWorld('FloatingHost', {
   dragEnd(): void {
     ipcRenderer.send('floating:drag-end')
   },
-  hide(): void {
-    ipcRenderer.send('floating:hide')
-  },
-  quit(): void {
-    ipcRenderer.send('floating:quit')
-  },
+  /**
+   * No `hide()` / `quit()`: the capsule has no close button any more. Hiding it
+   * and quitting the app are reachable from the right-click menu, which the main
+   * process builds (`floating:context`) — so those verbs would be dead channels
+   * from a page that never renders a control for them.
+   */
   /** Report the capsule's natural size; the main process clamps it on-screen. */
   resize(width: number, height: number): Promise<boolean> {
     return ipcRenderer.invoke('floating:resize', width, height)

@@ -891,9 +891,11 @@ export function registerFloatingIpc(): void {
   //
   // Every one of these is sender-checked. The capsule shares an IPC namespace
   // with the main window, so without the check any renderer that can reach
-  // `ipcRenderer` could quit the app (`floating:quit`) or hide the capsule.
-  // Today the main window's preload exposes no raw send, but that is a property
-  // of the preload, not of these handlers.
+  // `ipcRenderer` could drive the capsule's native menu.
+  //
+  // There is no `floating:hide` / `floating:quit`: the capsule renders no close
+  // button, and both actions are reachable from the right-click menu that the
+  // main process builds (`popupMenu`).
   const fromCapsule = (e: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): boolean =>
     isAlive() && e.sender === win!.webContents
 
@@ -904,8 +906,6 @@ export function registerFloatingIpc(): void {
   })
   ipcMain.on('floating:activate', (e) => { if (fromCapsule(e)) openMainWindow() })
   ipcMain.on('floating:context', (e) => { if (fromCapsule(e)) popupMenu() })
-  ipcMain.on('floating:hide', (e) => { if (fromCapsule(e)) hideCapsule() })
-  ipcMain.on('floating:quit', (e) => { if (fromCapsule(e)) app.quit() })
   ipcMain.on('floating:drag-start', (e, x, y) => {
     if (fromCapsule(e)) startDrag(Number(x), Number(y))
   })

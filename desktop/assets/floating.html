@@ -44,7 +44,10 @@
        shrink back after the counters drop to zero. */
     width: fit-content; max-width: 100%;
     display: flex; align-items: center; gap: 7px;
-    padding-left: 6px; padding-right: 10px;
+    /* Symmetric: the asymmetry that used to be here (6px left / 10px right)
+       balanced the close button against the logo, and there is no close button
+       any more — leaving it would read as a stray gap on the right. */
+    padding-left: 6px; padding-right: 6px;
     border-radius: 999px;
     background: var(--bg);
     color: var(--text);
@@ -103,16 +106,6 @@
     0%, 100% { box-shadow: 0 0 0 0 rgba(242, 180, 21, .55); }
     50% { box-shadow: 0 0 0 5px rgba(242, 180, 21, 0); }
   }
-
-  #close {
-    flex: 0 0 auto;
-    width: 16px; height: 16px; border-radius: 50%; border: 0;
-    background: rgba(255, 255, 255, .10); color: var(--muted);
-    font-size: 12px; line-height: 1; cursor: pointer;
-    display: none; align-items: center; justify-content: center;
-  }
-  #close:hover { background: rgba(255, 255, 255, .22); color: var(--text); }
-  body.hover #close { display: flex; }
 </style>
 </head>
 <body>
@@ -127,7 +120,6 @@
         <span id="idle">Idle</span>
       </div>
     </div>
-    <button id="close" title="" aria-label="hide">×</button>
   </div>
 </div>
 <script>
@@ -136,7 +128,7 @@
   var host = window.FloatingHost || {};
   var $ = function (id) { return document.getElementById(id); };
   var els = {
-    pill: $('pill'), hit: $('hit'), logo: $('logo'), close: $('close'),
+    pill: $('pill'), hit: $('hit'), logo: $('logo'),
     running: $('seg-running'), pending: $('seg-pending'), unread: $('seg-unread'),
     nRunning: $('n-running'), nPending: $('n-pending'), nUnread: $('n-unread'),
     lRunning: $('lbl-running'), lPending: $('lbl-pending'), lUnread: $('lbl-unread'),
@@ -169,14 +161,6 @@
     if (l.idle) els.idle.textContent = l.idle;
     document.documentElement.lang = state.lang === 'en' ? 'en' : 'zh';
     if (l.hint) els.pill.title = l.hint;
-    // The close button is a 16px disc with no text, so its accessible name IS
-    // the tooltip — both must come from the locale table. They used to be a
-    // hardcoded Chinese literal in the markup, which an English user saw on
-    // hover (the markup is not scanned by the main-process i18n guard).
-    if (l.closeLabel) {
-      els.close.title = l.closeLabel;
-      els.close.setAttribute('aria-label', l.closeLabel);
-    }
 
     var idle = !n.running && !n.pending && !n.unread;
     els.running.hidden = idle || n.running === 0;
@@ -222,11 +206,6 @@
   }
   els.pill.addEventListener('mouseenter', function () { document.body.classList.add('hover'); });
   els.pill.addEventListener('mouseleave', function () { document.body.classList.remove('hover'); });
-  els.close.addEventListener('click', function (e) {
-    e.stopPropagation();
-    if (typeof host.hide === 'function') host.hide();
-  });
-  els.close.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
 
   // Dragging: the page reports only where the grab happened. The main process
   // follows the OS cursor and decides on release whether this was a drag or a

@@ -171,11 +171,62 @@ describe('polling outlives the capsule window', () => {
   })
 })
 
+describe('the capsule has no in-body close button', () => {
+  // Hiding the capsule is a right-click action only. A close button inside the
+  // capsule put a 16px target on the drag surface, and every pointerdown on it
+  // had to be stopped from starting a drag.
+  const HTML = 'desktop/assets/floating.html'
+  const PRELOAD_FLOATING = 'desktop/src/preload/floating.ts'
+
+  it('the document renders no close control', () => {
+    const src = readRepoFile(HTML)
+    expect(src, 'no #close element').not.toContain('id="close"')
+    expect(src, 'no #close styling').not.toContain('#close')
+    expect(src, 'no close label wiring').not.toContain('closeLabel')
+  })
+
+  it('the right-click menu is still the way to hide it', () => {
+    // Removing the button must not remove the capability: the context menu
+    // built in the main process carries it.
+    //
+    // `host.context()` alone is not enough — that call existing does not prove
+    // the handler still routes to the menu. Pin the handler body too, and pin
+    // that the right-click path does NOT go through the removed hide verb.
+    const src = readRepoFile(HTML)
+    const handler = src.match(/addEventListener\('contextmenu', function \(e\) \{([\s\S]*?)\n  \}\)/)
+    expect(handler, 'the capsule must still have a contextmenu handler').not.toBeNull()
+    expect(handler![1], 'right-click must open the native menu').toContain('host.context()')
+    expect(handler![1], 'right-click must not call the removed hide verb').not.toContain('host.hide')
+
+    const main = readRepoFile(FLOATING)
+    expect(main, 'the context menu must still offer hiding the capsule').toContain('t.hide')
+  })
+
+  it('no dead hide/quit channel survives on either side', () => {
+    // A preload verb with no control behind it is a channel nothing can use;
+    // leaving it would invite someone to re-add a button that bypasses the menu.
+    //
+    // Comments are stripped first: the removal is documented in the preload with
+    // the very names being asserted absent.
+    const strip = (src: string) => src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|\s)\/\/[^\n]*/g, '$1')
+
+    const preload = strip(readRepoFile(PRELOAD_FLOATING))
+    expect(preload).not.toMatch(/\bhide\s*\(\)/)
+    expect(preload).not.toMatch(/\bquit\s*\(\)/)
+
+    const main = strip(readRepoFile(FLOATING))
+    expect(main).not.toContain("ipcMain.on('floating:hide'")
+    expect(main).not.toContain("ipcMain.on('floating:quit'")
+  })
+})
+
 describe('capsule IPC is sender-checked', () => {
   it('every capsule channel validates the sender', () => {
     // The capsule shares an IPC namespace with the main window. An unchecked
-    // `floating:quit` is an unauthenticated "quit the app" from any renderer
-    // that can reach ipcRenderer.
+    // channel is a native action any renderer could trigger, without going
+    // through the capsule at all.
     //
     // Matched line by line rather than with a lazy `[\s\S]*?` span: a span runs
     // past the handler's end into the next one and finds `fromCapsule(e)` there,
@@ -187,15 +238,13 @@ describe('capsule IPC is sender-checked', () => {
       'floating:ready',
       'floating:activate',
       'floating:context',
-      'floating:hide',
-      'floating:quit',
       'floating:drag-start',
       'floating:drag-end',
     ]) {
       const start = lines.findIndex((l) => l.includes(`ipcMain.on('${channel}'`))
       expect(start, `${channel} handler not found`).toBeGreaterThan(-1)
 
-      // Some handlers are one line (`ipcMain.on('floating:quit', (e) => { … })`),
+      // Some handlers are one line (`ipcMain.on('floating:activate', (e) => { … })`),
       // others span several. Taking "lines until the next closing brace" missed
       // the single-line form entirely — the scan walked past it into the next
       // handler, which does check its sender. A single-line handler is one that

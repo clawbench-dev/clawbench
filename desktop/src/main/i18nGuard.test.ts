@@ -123,9 +123,9 @@ describe('capsule document CJK guard', () => {
   it('floating.html still receives every label it renders', () => {
     // The guard above is satisfiable by deleting the text entirely, which would
     // leave the capsule rendering blanks. Pin that the four counter words plus
-    // the close label are actually applied from the pushed state.
+    // the body hint are actually applied from the pushed state.
     const src = readFileSync(join(assetsRoot, 'floating.html'), 'utf8')
-    for (const field of ['running', 'pending', 'unread', 'idle', 'closeLabel']) {
+    for (const field of ['running', 'pending', 'unread', 'idle', 'hint']) {
       expect(src, `floating.html must apply labels.${field}`).toContain(`l.${field}`)
     }
   })

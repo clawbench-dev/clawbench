@@ -101,22 +101,22 @@ describe('floatingCapsuleLabels', () => {
   })
 
   it('has no hardcoded Chinese left in the English table', () => {
-    // The capsule's close button renders `closeLabel` as its only accessible
-    // name, so a Chinese value here reaches an English user on hover.
+    // Every value here reaches an English user somewhere: the counter words and
+    // `hint` on the capsule, the rest in the tray and right-click menus.
     const l = floatingCapsuleLabels('en')
     for (const [key, v] of Object.entries(l)) {
       expect(v, `floatingCapsuleLabels('en').${key} must be English`).not.toMatch(/[\u4e00-\u9fff]/)
     }
   })
 
-  it('carries every slot the capsule renders', () => {
+  it('carries every slot the capsule and its menus render', () => {
     // A missing key would render `undefined` into the DOM (the document assigns
     // textContent directly), so pin the full set rather than a sample.
     const l = floatingCapsuleLabels('en')
     for (const key of [
       'running', 'pending', 'unread', 'idle',
       'openMain', 'hideMain', 'showFloating', 'hideFloating',
-      'disableFloating', 'resetPosition', 'hide', 'quit', 'hint', 'closeLabel',
+      'disableFloating', 'resetPosition', 'hide', 'quit', 'hint',
     ] as const) {
       expect(l[key], `floatingCapsuleLabels is missing ${key}`).toBeTruthy()
     }
