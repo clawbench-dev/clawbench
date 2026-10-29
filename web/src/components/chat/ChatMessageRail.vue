@@ -178,6 +178,15 @@ const CARD_WIDTH_DP = 244
  * count must account for it or the last row is clipped by exactly this much.
  */
 const CARD_BORDER = 1
+/**
+ * Distance from the pane's top and start edges, in design px.
+ *
+ * One number for both axes: the card is a floating surface inset from the pane,
+ * so an asymmetric gap reads as a layout mistake rather than as intent. The
+ * stylesheet carries the same value as `left` — CSS cannot read this constant,
+ * so the two must be changed together.
+ */
+const RAIL_INSET_DP = 12
 
 const items = computed(() => {
   const list = props.messages.map((msg, i) => ({
@@ -218,10 +227,15 @@ const cardRef = ref<HTMLElement | null>(null)
 const scrollable = computed(() => maxOffset.value > 0)
 /**
  * The one box the axis, the card and the scroll range all live in: the panel's
- * height minus the composer at its foot.
+ * height minus the inset at the top and the composer at its foot.
+ *
+ * The top inset is subtracted here, not just applied to the card's `top`: the
+ * card must be able to grow DOWN to the composer, and reserving the inset only
+ * when positioning would let its bottom edge run past the band by exactly that
+ * amount.
  */
 const band = computed(() =>
-  Math.max(0, trackHeight.value - props.bottomInset),
+  Math.max(0, trackHeight.value - props.bottomInset - railInset()),
 )
 /**
  * Card height, snapped to WHOLE rows.
@@ -242,7 +256,7 @@ const cardHeight = computed(() => {
   const rows = Math.max(1, Math.floor(usable / gap.value))
   return CARD_BORDER * 2 + listPad() * 2 + rows * gap.value
 })
-const cardTop = computed(() => trackTop.value + listOrigin())
+const cardTop = computed(() => trackTop.value + railInset())
 
 /**
  * Whether rows exist beyond each end of the visible track.
@@ -256,7 +270,11 @@ const moreAbove = computed(() => maxOffset.value > 0 && offset.value > 1)
 const moreBelow = computed(() => maxOffset.value > 0 && offset.value < maxOffset.value - 1)
 
 const cardStyle = computed(() => ({
+  // `top` and `left` are the same number on purpose: the card is inset from the
+  // pane, and an asymmetric gap reads as a mistake. Both live here so there is
+  // one place to change.
   top: `${cardTop.value}px`,
+  left: `${railInset()}px`,
   width: `${designToCss(CARD_WIDTH_DP)}px`,
   height: `${cardHeight.value}px`,
 }))
@@ -271,6 +289,7 @@ const cardStyle = computed(() => ({
  */
 const railStyle = computed(() => ({
   top: `${cardTop.value}px`,
+  left: `${railInset()}px`,
   height: `${cardHeight.value}px`,
 }))
 
@@ -294,7 +313,7 @@ const lineStyle = computed(() => {
  * y, which is what makes a number read as belonging to its row.
  *
  * The rail box is positioned at the card's own top and given its height, so both
- * layers share an origin and no centring term is needed here — `listOrigin` is
+ * layers share an origin and no extra term is needed here — `railInset` is
  * already baked into `cardTop`, which the rail's `top` uses.
  */
 function nodeTop(k: number) {
@@ -315,15 +334,17 @@ function rowTop(k: number) {
 }
 
 /**
- * Centring offset for a list shorter than the track.
+ * The card's inset from the pane's top edge — the SAME number as its `left`.
  *
- * The node layer and the card must use the SAME origin or a number sits beside
- * the wrong row. Derived from the full track (not the card's clipped band)
- * because that is also where the scroll range is computed — a shorter list is
- * never scrolled anyway, so the two can only agree here.
+ * It used to centre the card when the list was shorter than the track, which
+ * made the top gap depend on the row count: a list that happened to fill the
+ * band left a gap of `(band − cardHeight)/2`, anywhere from 0 to half a row,
+ * while the left gap stayed fixed at 12. Flush at the top with 12 on the left
+ * reads as a mistake, and for short conversations the axis floated in the middle
+ * of the pane. Both are gone: the card now hangs from a fixed inset.
  */
-function listOrigin() {
-  return Math.max(0, (band.value - cardHeight.value) / 2)
+function railInset() {
+  return designToCss(RAIL_INSET_DP)
 }
 
 /** Total height the list needs, including the card's top/bottom padding. */
@@ -645,9 +666,9 @@ defineExpose({ refresh })
    read as one surface with it. */
 .msg-rail {
   position: absolute;
-  left: calc(12 * var(--dp));
-  /* Full panel height — the axis runs all the way down past the input island.
-     The height is written from the measured host box (see `railStyle`). */
+  /* `top`, `left` and `height` all come from `railStyle`: the inset has to be
+     the same number on both axes, and CSS cannot read the JS constant. */
+
   top: 0;
   width: calc(34 * var(--dp));
   z-index: 6;
@@ -746,8 +767,8 @@ defineExpose({ refresh })
   position: absolute;
   /* Starts at the SAME x as the axis: the numbers are the card's left column, so
      the card must own that lane (its rows leave room for it) rather than sit
-     beside it as a separate panel. */
-  left: calc(12 * var(--dp));
+     beside it as a separate panel. `top`/`left` come from `cardStyle` so the two
+     insets are one number. */
   z-index: 5;
   overflow: hidden;
   border: 1px solid var(--border-color);

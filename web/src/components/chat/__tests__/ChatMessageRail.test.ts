@@ -67,7 +67,7 @@ function scrollerWithPadding(px: number) {
  * PARENT's box, so the component is mounted into a host whose rect is stubbed
  * — mounting straight onto <body> would leave the parent reporting 0.
  */
-function mountWithTrack(count: number, props: Record<string, unknown> = {}) {
+function mountWithTrack(count: number, props: Record<string, unknown> = {}, height = 300) {
   const w = mountRail({ messages: rows(count), ...props })
   // The component renders two roots (rail + card), so VTU wraps them; the
   // rail's ACTUAL parent is what `measure()` reads, and that wrapper is not
@@ -75,7 +75,7 @@ function mountWithTrack(count: number, props: Record<string, unknown> = {}) {
   const host = w.find('.msg-rail').element.parentElement as HTMLElement
   Object.defineProperty(host, 'getBoundingClientRect', {
     configurable: true,
-    value: () => ({ top: 0, bottom: 300, left: 0, right: 100, width: 100, height: 300, x: 0, y: 0, toJSON: () => ({}) }),
+    value: () => ({ top: 0, bottom: height, left: 0, right: 100, width: 100, height, x: 0, y: 0, toJSON: () => ({}) }),
   })
   return w
 }
@@ -183,6 +183,47 @@ describe('ChatMessageRail — connector', () => {
     expect(w.findAll('.msg-rail-line')).toHaveLength(1)
     const nodes = w.findAll('.msg-rail-node')
     for (const n of nodes) expect(n.find('.msg-rail-line').exists()).toBe(false)
+  })
+})
+
+describe('ChatMessageRail — inset from the pane', () => {
+  /** Inline px value for a declaration, e.g. `top: 12.8px`. */
+  function px(style: string, key: string) {
+    const m = style.match(new RegExp(`${key}:\\s*(-?[\\d.]+)px`))
+    expect(m, `${key} should be written inline (${style})`).not.toBeNull()
+    return parseFloat(m![1])
+  }
+
+  it('insets the card from the top by the same amount as from the left', async () => {
+    // Both a short list (card shorter than the track) and one that overflows.
+    // The short one is the case that used to CENTRE the card, which made the top
+    // gap depend on the row count while the left gap stayed fixed — flush at the
+    // top on one row count, a third of a row on the next.
+    for (const count of [3, 40]) {
+      const w = mountWithTrack(count)
+      await w.vm.refresh()
+      const card = w.find('.msg-rail-card').attributes('style') || ''
+      expect(px(card, 'top'), `count=${count}`).toBeCloseTo(px(card, 'left'), 5)
+
+      // The axis is the card's box exactly: same top, same left, same height.
+      const rail = w.find('.msg-rail').attributes('style') || ''
+      expect(px(rail, 'top'), `count=${count}`).toBeCloseTo(px(card, 'top'), 5)
+      expect(px(rail, 'left'), `count=${count}`).toBeCloseTo(px(card, 'left'), 5)
+    }
+  })
+
+  it('leaves room for that inset at the foot of the card, not just at its top', async () => {
+    // Reserving the inset only when POSITIONING would let the card's bottom edge
+    // run past the band by exactly that amount and collide with the composer.
+    // 290 is chosen so the two readings disagree: a band of 290 fits 7 rows
+    // (card 288 + 12 inset = 300 > 290), a band of 278 fits 6 (250 + 12 = 262).
+    // At 300 both come out at exactly 300 and the assertion cannot tell them
+    // apart — a mutation survived that boundary.
+    const track = 290
+    const w = mountWithTrack(40, {}, track)
+    await w.vm.refresh()
+    const card = w.find('.msg-rail-card').attributes('style') || ''
+    expect(px(card, 'top') + px(card, 'height')).toBeLessThanOrEqual(track)
   })
 })
 
