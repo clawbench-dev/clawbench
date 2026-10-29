@@ -22,6 +22,7 @@
       'msg-rail--scrollable': scrollable,
       'msg-rail--more-above': moreAbove,
       'msg-rail--more-below': moreBelow,
+      'msg-rail--engaged': engaged,
     }"
     :style="railStyle"
     role="navigation"
@@ -37,18 +38,21 @@
   >
     <div class="msg-rail-line" :style="lineStyle" aria-hidden="true"></div>
     <template v-for="(it, k) in items" :key="'n' + it.key">
-      <!-- Pending slot: the reply being written. A spinner instead of a number —
-           it has no ordinal yet, and clicking it would target nothing. -->
-      <span
+      <!-- Pending slot: the reply being written. A spinner instead of a number
+           (it has no ordinal yet), but still clickable — jumping to the reply
+           in progress is exactly what a reader wants when the axis shows one. -->
+      <button
         v-if="it.pending"
+        type="button"
         class="msg-rail-pending"
+        :class="{ 'msg-item--lit': litIndex === k }"
         :style="{ top: nodeTop(k) + 'px' }"
-        role="status"
         :title="t('chat.messageList.messageRailGenerating')"
         :aria-label="t('chat.messageList.messageRailGenerating')"
+        @click="onPendingSelect"
       >
         <span class="li-spinner" aria-hidden="true"></span>
-      </span>
+      </button>
       <MessageIndexRow
         v-else
         variant="node"
@@ -58,6 +62,7 @@
         :msg="it.msg"
         :index="it.ordinal"
         :active="isActive(it)"
+        :resolve-speaker="resolveSpeaker"
         @select="onSelect"
       />
     </template>
@@ -92,7 +97,12 @@
         <div
           v-if="it.pending"
           class="msg-rail-row msg-rail-row--pending"
+          :class="{ 'msg-item--lit': litIndex === k }"
           :style="{ top: rowTop(k) + 'px', height: gap + 'px' }"
+          role="button"
+          tabindex="0"
+          @click="onPendingSelect"
+          @keydown.enter="onPendingSelect"
         >
           <span class="li-spinner" aria-hidden="true"></span>
           <span class="msg-rail-row-pending-label">{{ t('chat.messageList.messageRailGenerating') }}</span>
@@ -106,6 +116,8 @@
           :msg="it.msg"
           :index="it.ordinal"
           :active="isActive(it)"
+          :has-btw="hasBtw(it.msg)"
+          :resolve-speaker="resolveSpeaker"
           @select="onSelect"
         />
       </template>
@@ -174,7 +186,11 @@ const props = withDefaults(defineProps<{
   generating: false,
 })
 
-const emit = defineEmits<{ select: [msg: RailIndexMsg] }>()
+const emit = defineEmits<{
+  select: [msg: RailIndexMsg]
+  /** The reader clicked the in-flight reply's node/row. */
+  'select-pending': []
+}>()
 
 const { t } = useI18n()
 
@@ -431,6 +447,14 @@ function isActive(it: { msg: RailIndexMsg; pending: boolean }) {
 
 /* ── Hover ────────────────────────────────────────────────────────────── */
 const expanded = ref(false)
+/**
+ * Whether the reader is currently engaging with the rail (pointer over the axis
+ * or its card). Drives the resting→full opacity change. Separate from
+ * `expanded` because the two layers are siblings: `:hover` on the rail alone
+ * would drop the axis back to its quiet state as soon as the pointer crossed
+ * onto the card.
+ */
+const engaged = ref(false)
 const litIndex = ref(-1)
 let pointerY = 0
 let hideTimer: ReturnType<typeof setTimeout> | null = null
@@ -452,6 +476,7 @@ function relight() {
 
 function onEnter() {
   if (hideTimer) { clearTimeout(hideTimer); hideTimer = null }
+  engaged.value = true
 }
 
 function onPointerMove(e: MouseEvent) {
@@ -466,6 +491,7 @@ function scheduleCollapse() {
   hideTimer = setTimeout(() => {
     hideTimer = null
     expanded.value = false
+    engaged.value = false
     litIndex.value = -1
   }, 140)
 }
@@ -475,6 +501,20 @@ function onSelect(msg: RailIndexMsg) {
   expanded.value = false
   litIndex.value = -1
   emit('select', msg)
+}
+
+/**
+ * Jump to the reply that is still being written.
+ *
+ * The pending slot has no index row (the API excludes in-flight messages), so
+ * there is nothing to pass to `select`. The host knows which message is
+ * streaming, so it gets a dedicated event instead of a fabricated payload.
+ */
+function onPendingSelect() {
+  if (suppressClick) return
+  expanded.value = false
+  litIndex.value = -1
+  emit('select-pending')
 }
 
 /* ── Wheel: scroll the rail, then hand the rest to the chat ──────────────
@@ -634,8 +674,20 @@ defineExpose({ refresh })
 }
 
 .msg-rail--visible {
-  opacity: 1;
+  /* Resting state: present but quiet. The axis is a permanent fixture in the
+     gutter, so at full opacity it competes with the conversation for attention;
+     a reader only needs it at full strength once they reach for it. */
+  opacity: 0.45;
   pointer-events: auto;
+  transition: opacity var(--duration-base) ease;
+}
+
+/* Full strength while the reader is engaging with it (pointer over the axis or
+   its card). Driven by the `engaged` state, not by `:hover`, because the card is
+   a SIBLING of the rail — `:hover` on the rail would drop to 0.45 the moment
+   the pointer moved onto the card. */
+.msg-rail--visible.msg-rail--engaged {
+  opacity: 1;
 }
 
 /* Scrolling affordance only — the fades below are separate, because a rail that
@@ -713,7 +765,15 @@ defineExpose({ refresh })
      slot reads as part of the axis rather than as a stray ring. The accent tint
      is what distinguishes "in flight" from "indexed". */
   border: 1.5px solid color-mix(in srgb, var(--accent-color) 45%, transparent);
-  pointer-events: none;
+  /* Clickable: jumping to the reply being written is the point of the slot. */
+  padding: 0;
+  cursor: pointer;
+}
+
+/* Same "lit" treatment as a numbered node when the pointer is nearest it. */
+.msg-rail-pending.msg-item--lit {
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 16%, var(--msg-row-bg, var(--bg-elevated)));
 }
 
 .msg-rail-pending .li-spinner {
@@ -816,7 +876,14 @@ defineExpose({ refresh })
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
   font-style: italic;
-  pointer-events: none;
+  cursor: pointer;
+}
+
+/* The pending row is not a MessageIndexRow, so it does not inherit the shared
+   lit styling — mirror it here so hovering it looks like hovering any row. */
+.msg-rail-row--pending.msg-item--lit {
+  --rail-punch: color-mix(in srgb, var(--accent-color) var(--msg-row-lit-strength, 5%), var(--msg-row-bg, var(--bg-elevated)));
+  background: var(--rail-punch);
 }
 
 .msg-rail-row--pending .li-spinner {

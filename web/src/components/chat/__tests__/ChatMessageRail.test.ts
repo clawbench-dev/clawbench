@@ -26,6 +26,7 @@ const i18n = createI18n({
           conversationIndexNoText: '(no text)',
           userMsgIndexAttachment: 'attachment',
           messageRailLabel: 'Message navigation',
+          messageRailGenerating: 'Replying',
         },
       },
     },
@@ -249,9 +250,22 @@ describe('ChatMessageRail — pending (in-flight reply) node', () => {
     const w = mountRail({ generating: true })
     const pending = w.find('.msg-rail-pending')
     expect(pending.text()).toBe('')
-    // …and it is not focusable/clickable: selecting it would target nothing.
-    expect(pending.element.tagName).toBe('SPAN')
-    expect(pending.attributes('role')).toBe('status')
+    expect(pending.attributes('title')).toBe('Replying')
+  })
+
+  it('is clickable and asks the host to reveal the in-flight reply', async () => {
+    const w = mountRail({ generating: true })
+    // It has no index row, so it cannot go through `select` — a dedicated event
+    // lets the host answer with "jump to the streaming bubble".
+    await w.find('.msg-rail-pending').trigger('click')
+    expect(w.emitted('select')).toBeUndefined()
+    expect(w.emitted('select-pending')).toHaveLength(1)
+  })
+
+  it('lets the card row trigger the same jump', async () => {
+    const w = mountRail({ generating: true })
+    await w.find('.msg-rail-row--pending').trigger('click')
+    expect(w.emitted('select-pending')).toHaveLength(1)
   })
 
   it('never marks the pending slot as the active message', () => {

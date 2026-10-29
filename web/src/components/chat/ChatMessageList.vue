@@ -1819,6 +1819,10 @@ defineExpose({
   getRailSpeakerResolver: () => resolveIndexSpeaker,
   getBtwAnchorLookup: () => hasBtwAnchor,
   getMessagesEl,
+  // The rail's pending slot has no index row to jump to, so the host answers
+  // "show me the reply that is being written" with the one control that already
+  // means that: scroll to the bottom, where the streaming bubble lives.
+  scrollToGenerating: () => scrollToBottomSmooth(),
 })
 </script>
 
