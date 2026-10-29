@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -1577,5 +1578,209 @@ func TestOnChatBotMessage_RichTextPartialDownloadSendsRest(t *testing.T) {
 	waitForReply(t, reply)
 	if !strings.Contains(string(*reply), "下载失败") {
 		t.Errorf("reply should name the failure, got %s", string(*reply))
+	}
+}
+
+// ============================================================================
+// /show /stop /new tests
+// ============================================================================
+
+// pushCommandEnv installs a mock DB + messenger and returns a manager plus a
+// server capturing the reply body. The sticky target is "a1b2c3d4-1111".
+func pushCommandEnv(t *testing.T, m *mockSessionMessenger) (*Manager, *[]byte) {
+	t.Helper()
+	origDB, origMsg := db, sessionMessenger
+	t.Cleanup(func() { db, sessionMessenger = origDB, origMsg })
+
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "a1b2c3d4-1111", nil },
+	}
+	if m.allSessions == nil {
+		m.allSessions = []common.SessionInfo{{ID: "a1b2c3d4-1111", Title: "Sticky"}}
+	}
+	sessionMessenger = m
+
+	body := new([]byte)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("CLAWBENCH_TEST_WEBHOOK", server.URL)
+	return &Manager{}, body
+}
+
+func pushCommandData(t *testing.T, text string) *chatbot.BotCallbackDataModel {
+	t.Helper()
+	return &chatbot.BotCallbackDataModel{
+		ConversationType: "1",
+		SenderStaffId:    "staff123",
+		SenderNick:       "TestUser",
+		ConversationId:   "conv1",
+		SessionWebhook:   os.Getenv("CLAWBENCH_TEST_WEBHOOK"),
+		Text:             chatbot.BotCallbackDataTextModel{Content: text},
+	}
+}
+
+func TestOnChatBotMessage_ShowLastReply(t *testing.T) {
+	m := &mockSessionMessenger{lastReply: "the full answer", lastReplyOK: true}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/show")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "the full answer") {
+		t.Errorf("expected the last reply in the response, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_ShowEmptyReply(t *testing.T) {
+	m := &mockSessionMessenger{lastReplyOK: false}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/show")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "还没有已完成的回复") {
+		t.Errorf("expected the empty-reply hint, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_ShowExplicitTarget(t *testing.T) {
+	m := &mockSessionMessenger{
+		allSessions: []common.SessionInfo{
+			{ID: "a1b2c3d4-1111", Title: "Sticky"},
+			{ID: "b2c3d4e5-2222", Title: "Other"},
+		},
+		lastReply: "other answer", lastReplyOK: true,
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/show b2c3d4e5")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "other answer") {
+		t.Errorf("expected the other session's reply, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_StopRunningSession(t *testing.T) {
+	m := &mockSessionMessenger{wasRunning: true, cleared: 2}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/stop")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := string(*body)
+	if !strings.Contains(out, "已停止") {
+		t.Errorf("expected stop confirmation, got %s", out)
+	}
+	if !strings.Contains(out, "2") {
+		t.Errorf("expected cleared count in the reply, got %s", out)
+	}
+}
+
+func TestOnChatBotMessage_StopIdleSession(t *testing.T) {
+	m := &mockSessionMessenger{wasRunning: false, cleared: 0}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/stop")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// An idle stop must not claim it stopped a running turn.
+	if !strings.Contains(string(*body), "未在运行") {
+		t.Errorf("expected the idle wording, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_NewListsProjects(t *testing.T) {
+	m := &mockSessionMessenger{
+		projects: []common.ProjectRef{
+			{Index: 1, Path: "/proj/alpha", Exists: true},
+			{Index: 2, Path: "/proj/beta", Exists: true},
+		},
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/new")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := string(*body)
+	if !strings.Contains(out, "/proj/alpha") || !strings.Contains(out, "/proj/beta") {
+		t.Errorf("expected both projects in the list, got %s", out)
+	}
+	if !strings.Contains(out, "1.") || !strings.Contains(out, "2.") {
+		t.Errorf("expected 1-based indices, got %s", out)
+	}
+}
+
+func TestOnChatBotMessage_NewCreatesSessionAndMovesSticky(t *testing.T) {
+	var createdIn string
+	var stickySet string
+	m := &mockSessionMessenger{
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+		createFn: func(path string) (string, string, error) {
+			createdIn = path
+			return "f1e2d3c4-0000-0000-0000-000000000000", "新会话 1", nil
+		},
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	origDB := db
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "a1b2c3d4-1111", nil },
+		setLastFn: func(_, sid string) error { stickySet = sid; return nil },
+	}
+	t.Cleanup(func() { db = origDB })
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/new 1")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if createdIn != "/proj/alpha" {
+		t.Errorf("created in %q, want /proj/alpha", createdIn)
+	}
+	if stickySet != "f1e2d3c4-0000-0000-0000-000000000000" {
+		t.Errorf("sticky target = %q, want the new session", stickySet)
+	}
+	if !strings.Contains(string(*body), "@f1e2d3c4") {
+		t.Errorf("expected the new short id in the reply, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_NewOutOfRange(t *testing.T) {
+	var called bool
+	m := &mockSessionMessenger{
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+		createFn: func(string) (string, string, error) { called = true; return "", "", nil },
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/new 9")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if called {
+		t.Error("must not create a session for an out-of-range index")
+	}
+	if !strings.Contains(string(*body), "超出范围") {
+		t.Errorf("expected out-of-range error, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_NewMissingDirWarns(t *testing.T) {
+	m := &mockSessionMessenger{
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/gone", Exists: false}},
+		createFn: func(string) (string, string, error) {
+			return "f1e2d3c4-0000-0000-0000-000000000000", "新会话 1", nil
+		},
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/new 1")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "目录已不存在") {
+		t.Errorf("expected a missing-directory warning, got %s", *body)
 	}
 }
