@@ -3802,6 +3802,8 @@ export default {
       micOff: 'Mic off',
       micOnHint: 'Others can hear you',
       micOffHint: 'Tap to turn your microphone on',
+      fullscreen: 'Fullscreen',
+      exitFullscreen: 'Exit fullscreen',
     },
   },
   liveShare: {

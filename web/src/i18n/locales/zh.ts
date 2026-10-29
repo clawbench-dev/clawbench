@@ -3797,6 +3797,8 @@ export default {
       micOff: '麦克风已关',
       micOnHint: '其他人可以听到你说话',
       micOffHint: '点击打开麦克风发言',
+      fullscreen: '全屏',
+      exitFullscreen: '退出全屏',
     },
   },
   liveShare: {

@@ -1,13 +1,5 @@
 <template>
-  <div class="live-share-view">
-    <div class="live-topbar">
-      <img class="live-logo" src="/logo-64.png" alt="ClawBench" />
-      <span class="live-title" :title="title">{{ title || t('share.live.title') }}</span>
-      <span class="live-status" :class="statusClass">{{ statusText }}</span>
-      <span class="live-spacer" />
-      <ShareThemeButton />
-    </div>
-
+  <div ref="rootRef" class="live-share-view">
     <div class="live-stage">
       <!-- The <video> is always mounted so `srcObject` survives a re-render.
            It is hidden while there is nothing to show, which keeps the error
@@ -22,7 +14,12 @@
       />
 
       <div v-if="state !== 'playing'" class="live-overlay">
-        <LoadingIndicator v-if="state === 'connecting' || state === 'negotiating'" />
+        <template v-if="state === 'connecting' || state === 'negotiating'">
+          <LoadingIndicator />
+          <!-- The header used to carry this. A spinner alone does not say
+               whether the viewer is still dialling or already negotiating. -->
+          <div class="live-overlay-desc">{{ statusText }}</div>
+        </template>
         <template v-else>
           <VideoOff :size="40" />
           <div class="live-overlay-title">{{ overlayTitle }}</div>
@@ -32,38 +29,74 @@
           </button>
         </template>
       </div>
-
-      <!-- Autoplay with audio is blocked without a user gesture, so playback
-           starts muted and the viewer opts into sound with one click. Showing an
-           error instead would leave them with a silent stream and no clue. -->
-      <button v-if="needsSoundUnlock" class="live-sound-btn" type="button" @click="unlockSound">
-        <VolumeX :size="16" />
-        {{ t('share.live.enableSound') }}
-      </button>
     </div>
 
-    <!-- One toggle: on = your microphone is live, off = muted. There is no
-         request/approval step — the publisher's room-level switch is the whole
-         authorisation model, and it can be turned off at any moment (which
-         arrives as talk-revoked and flips this back to off). -->
-    <div v-if="talkEnabled" class="live-talkbar">
+    <!-- Floating control dock. Absolutely positioned so it overlays the video
+         instead of taking height from it, and always mounted: fullscreen is
+         useful even when the publisher never allowed speech. -->
+    <div class="live-dock">
+      <!-- Brand. Replaces the header's logo; the dot is the "live" signal the
+           header's status chip used to provide, and the tooltip carries the
+           share title (also mirrored into the tab title). -->
+      <span
+        class="live-dock-brand"
+        :title="title || t('share.live.title')"
+        :aria-label="title || t('share.live.title')"
+      >
+        <img class="live-dock-logo" src="/logo-64.png" alt="ClawBench" />
+        <span v-if="state === 'playing'" class="live-dock-dot" />
+      </span>
+
+      <!-- Autoplay with audio is blocked without a user gesture, so playback
+           starts muted and the viewer opts in here. Showing an error instead
+           would leave them with a silent stream and no clue. -->
       <button
-        class="live-talk-btn"
-        :class="{ 'live-talk-btn--active': talking }"
+        v-if="needsSoundUnlock"
+        class="live-dock-btn live-dock-btn--call"
+        type="button"
+        data-action="enable-sound"
+        @click="unlockSound"
+      >
+        <VolumeX :size="16" />
+        <span class="live-dock-label">{{ t('share.live.enableSound') }}</span>
+      </button>
+
+      <!-- One toggle: on = live, off = muted. No approval step — the
+           publisher's room-level switch is the whole authorisation model, and
+           it can be turned off at any moment (arrives as talk-revoked, which
+           flips this back to off). -->
+      <button
+        v-if="talkEnabled"
+        class="live-dock-btn"
+        :class="{ 'live-dock-btn--live': talking }"
         type="button"
         role="switch"
         :aria-checked="talking"
         :aria-label="t('share.live.micToggle')"
+        :title="talking ? t('share.live.micOnHint') : t('share.live.micOffHint')"
         data-action="mic-toggle"
         @click="toggleMic"
       >
         <Mic v-if="talking" :size="16" />
         <MicOff v-else :size="16" />
-        {{ talking ? t('share.live.micOn') : t('share.live.micOff') }}
+        <span class="live-dock-label">{{ talking ? t('share.live.micOn') : t('share.live.micOff') }}</span>
       </button>
-      <span class="live-talk-hint">
-        {{ talking ? t('share.live.micOnHint') : t('share.live.micOffHint') }}
-      </span>
+
+      <button
+        class="live-dock-btn"
+        type="button"
+        :aria-pressed="isFullscreen"
+        :aria-label="isFullscreen ? t('share.live.exitFullscreen') : t('share.live.fullscreen')"
+        :title="isFullscreen ? t('share.live.exitFullscreen') : t('share.live.fullscreen')"
+        data-action="fullscreen"
+        @click="toggleFullscreen"
+      >
+        <Minimize v-if="isFullscreen" :size="16" />
+        <Maximize v-else :size="16" />
+        <span class="live-dock-label">
+          {{ isFullscreen ? t('share.live.exitFullscreen') : t('share.live.fullscreen') }}
+        </span>
+      </button>
     </div>
   </div>
 </template>
@@ -78,9 +111,8 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Mic, MicOff, VideoOff, VolumeX } from 'lucide-vue-next'
+import { Maximize, Mic, MicOff, Minimize, VideoOff, VolumeX } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import ShareThemeButton from './ShareThemeButton.vue'
 import { LiveViewer, type LiveViewerState } from './liveViewer'
 import { getShareToken } from './shareMode'
 import { appLog } from '@/utils/appLog'
@@ -89,6 +121,7 @@ const TAG = 'LiveShareView'
 
 const { t } = useI18n()
 
+const rootRef = ref<HTMLElement | null>(null)
 const videoRef = ref<HTMLVideoElement | null>(null)
 const state = ref<LiveViewerState>('connecting')
 const title = ref('')
@@ -96,14 +129,10 @@ const failReason = ref('')
 const talkEnabled = ref(false)
 const talking = ref(false)
 const needsSoundUnlock = ref(false)
+/** Mirrors the browser's fullscreen state so the icon can follow Esc / F11. */
+const isFullscreen = ref(false)
 
 let viewer: LiveViewer | null = null
-
-const statusClass = computed(() => ({
-  'live-status--live': state.value === 'playing',
-  'live-status--warn': state.value === 'connecting' || state.value === 'negotiating',
-  'live-status--bad': state.value === 'failed' || state.value === 'ended' || state.value === 'full',
-}))
 
 const statusText = computed(() => {
   switch (state.value) {
@@ -236,15 +265,61 @@ function toggleMic(): void {
   })
 }
 
+function syncFullscreen(): void {
+  // Read from the DOM rather than tracking a boolean: the user can leave
+  // fullscreen with Esc or F11, which never reaches our click handler.
+  isFullscreen.value = !!document.fullscreenElement
+}
+
+/**
+ * Toggle fullscreen for the whole viewer.
+ *
+ * The root element, not the <video>: the dock has to stay reachable, otherwise
+ * there is no way back out except Esc. iOS Safari has no element fullscreen and
+ * only allows the <video> through its prefixed API, so that is the fallback.
+ */
+async function toggleFullscreen(): Promise<void> {
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen()
+      return
+    }
+    const el = rootRef.value
+    if (!el) return
+    if (typeof el.requestFullscreen === 'function') {
+      await el.requestFullscreen()
+      return
+    }
+    const v = videoRef.value as
+      | (HTMLVideoElement & { webkitEnterFullscreen?: () => void })
+      | null
+    v?.webkitEnterFullscreen?.()
+  } catch (e) {
+    // Denied (no user gesture, or the browser blocks it in an iframe). Leaving
+    // the layout as-is is the right failure: nothing changed, nothing broken.
+    appLog.w(TAG, 'fullscreen toggle failed', e)
+  }
+}
+
 // A hidden tab can lose the media pipeline; re-attaching on return is cheaper
 // than tearing the connection down and renegotiating.
 watch(state, (s) => {
   if (s !== 'playing') talking.value = false
 })
 
-onMounted(start)
+// The tab used to be the only "header" left once the bar was removed, so keep
+// the share title there instead of a generic "ClawBench Share".
+watch(title, (v) => {
+  document.title = v ? `${v} · ClawBench` : 'ClawBench Share'
+})
+
+onMounted(() => {
+  start()
+  document.addEventListener('fullscreenchange', syncFullscreen)
+})
 
 onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', syncFullscreen)
   viewer?.close()
   viewer = null
   const el = videoRef.value
@@ -257,59 +332,9 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* Positioning context for the floating dock. */
+  position: relative;
   background: var(--bg-primary, #0d1117);
-}
-
-.live-topbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4, 8px);
-  height: 44px;
-  padding: 0 var(--space-6, 12px);
-  border-bottom: 1px solid var(--border-color, #30363d);
-  flex: 0 0 auto;
-}
-
-.live-logo {
-  width: 20px;
-  height: 20px;
-}
-
-.live-title {
-  font-size: var(--font-size-sm, 13px);
-  font-weight: 600;
-  color: var(--text-primary, #e6edf3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 50%;
-}
-
-.live-status {
-  font-size: var(--font-size-xs, 11px);
-  padding: 2px 8px;
-  border-radius: var(--radius-full, 999px);
-  border: 1px solid var(--border-color, #30363d);
-  color: var(--text-muted, #8b949e);
-}
-
-.live-status--live {
-  color: var(--color-success, #3fb950);
-  border-color: currentColor;
-}
-
-.live-status--warn {
-  color: var(--color-yellow, #d29922);
-  border-color: currentColor;
-}
-
-.live-status--bad {
-  color: var(--color-red, #f85149);
-  border-color: currentColor;
-}
-
-.live-spacer {
-  flex: 1;
 }
 
 .live-stage {
@@ -369,62 +394,147 @@ onBeforeUnmount(() => {
   font-size: var(--font-size-sm, 13px);
 }
 
-.live-sound-btn {
+/*
+ * Floating dock, centred over the bottom of the video.
+ *
+ * Absolute rather than a flex row: a real bar would take height from the
+ * stream, and the whole point of this page is the picture. The translucent
+ * background keeps the controls legible over bright content without the blur
+ * pass that some WebViews composite badly.
+ */
+.live-dock {
   position: absolute;
-  top: var(--space-6, 12px);
   left: 50%;
+  bottom: calc(var(--space-6, 12px) + env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  border-radius: var(--radius-full, 999px);
-  border: 1px solid var(--border-color, #30363d);
-  background: rgba(0, 0, 0, 0.7);
-  color: #fff;
-  cursor: pointer;
-  font-size: var(--font-size-sm, 13px);
-}
-
-.live-talkbar {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: var(--space-4, 8px);
-  padding: var(--space-6, 12px);
-  border-top: 1px solid var(--border-color, #30363d);
-  flex: 0 0 auto;
+  gap: var(--space-2, 4px);
+  padding: var(--space-2, 4px);
+  border-radius: var(--radius-full, 999px);
+  background: color-mix(in srgb, var(--bg-secondary, #161b22) 86%, transparent);
+  border: 1px solid var(--border-color, #30363d);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  z-index: 5;
 }
 
-.live-talk-btn {
+/* Brand inside the dock. Sized to the dock's inner height so the pill keeps a
+   single visual rhythm; the dot reuses the status colour. */
+.live-dock-brand {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 18px;
+  justify-content: center;
+  padding: 0 var(--space-2, 4px) 0 var(--space-3, 6px);
+  flex-shrink: 0;
+}
+
+.live-dock-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: block;
+}
+
+.live-dock-dot {
+  position: absolute;
+  right: 1px;
+  bottom: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-success, #3fb950);
+  box-shadow: 0 0 0 2px var(--bg-secondary, #161b22);
+}
+
+.live-dock-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2, 4px);
+  padding: var(--space-2, 4px) var(--space-5, 10px);
+  border: none;
   border-radius: var(--radius-full, 999px);
-  border: 1px solid var(--border-color, #30363d);
-  background: var(--bg-secondary, #161b22);
-  color: var(--text-primary, #e6edf3);
+  background: transparent;
+  color: var(--text-secondary, #8b949e);
   cursor: pointer;
   font-size: var(--font-size-sm, 13px);
-  /* Hold-to-talk is a press gesture; selecting text mid-press would break it. */
+  line-height: 1.6;
+  white-space: nowrap;
+  /* Tapping repeatedly must not select the label. */
   user-select: none;
-  touch-action: none;
+  touch-action: manipulation;
+  transition:
+    background var(--duration-fast, 0.1s) ease,
+    color var(--duration-fast, 0.1s) ease;
 }
 
-.live-talk-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
+.live-dock-btn:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+  color: var(--text-primary, #e6edf3);
 }
 
-.live-talk-btn--active {
+/* Live microphone: tinted rather than a solid green fill, which would shout
+   next to the status chip in the header. */
+.live-dock-btn--live {
+  background: color-mix(in srgb, var(--color-success, #3fb950) 18%, transparent);
+  color: var(--color-success, #3fb950);
+}
+
+/* The sound prompt is the only control the viewer MUST act on, so it gets the
+   accent tint rather than the neutral one. */
+.live-dock-btn--call {
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 22%, transparent);
+  color: var(--accent-color, #4a90d9);
+}
+
+.live-dock-btn--call:hover {
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 32%, transparent);
+  color: var(--accent-color, #4a90d9);
+}
+
+.live-dock-btn--live:hover {
+  background: color-mix(in srgb, var(--color-success, #3fb950) 26%, transparent);
+  color: var(--color-success, #3fb950);
+}
+
+/* The label is the first thing to drop when space runs out: the icon and the
+   tint still carry the meaning, and the title has the full sentence. */
+@media (max-width: 520px) {
+  .live-dock-label {
+    display: none;
+  }
+
+  /* Brand inside the dock. Sized to the dock's inner height so the pill keeps a
+   single visual rhythm; the dot reuses the status colour. */
+.live-dock-brand {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--space-2, 4px) 0 var(--space-3, 6px);
+  flex-shrink: 0;
+}
+
+.live-dock-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: block;
+}
+
+.live-dock-dot {
+  position: absolute;
+  right: 1px;
+  bottom: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
   background: var(--color-success, #3fb950);
-  border-color: var(--color-success, #3fb950);
-  color: #000;
+  box-shadow: 0 0 0 2px var(--bg-secondary, #161b22);
 }
 
-.live-talk-hint {
-  font-size: var(--font-size-xs, 11px);
-  color: var(--text-muted, #8b949e);
+.live-dock-btn {
+    padding: var(--space-2, 4px) var(--space-3, 6px);
+  }
 }
 </style>
