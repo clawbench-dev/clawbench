@@ -44,10 +44,23 @@
        shrink back after the counters drop to zero. */
     width: fit-content; max-width: 100%;
     display: flex; align-items: center; gap: 7px;
-    /* Symmetric: the asymmetry that used to be here (6px left / 10px right)
-       balanced the close button against the logo, and there is no close button
-       any more — leaving it would read as a stray gap on the right. */
-    padding-left: 6px; padding-right: 6px;
+    /* Asymmetric on purpose. Do NOT "fix" this back to symmetric.
+
+       The two ends hold different KINDS of thing, and a filled shape tolerates
+       a tighter edge than a glyph does. On the left sits a 26px solid disc
+       whose own outline is the visual boundary, so 6px reads as flush. On the
+       right sits text, where the same gap makes the last glyph look pinned to
+       the capsule wall — the eye measures to the glyph's ink, not to the
+       element box.
+
+       The end radius is NOT the reason: at 36px tall the 18px curve insets
+       only 1.6px at the text's top and bottom edges, so geometry cannot
+       account for the difference. It is optical weight.
+
+       Verified by measuring the DOM in all three states (counters / idle only /
+       all three): the icon keeps a 6px gap and the text a 15px gap regardless
+       of how wide the content gets. */
+    padding-left: 6px; padding-right: 15px;
     border-radius: 999px;
     background: var(--bg);
     color: var(--text);
