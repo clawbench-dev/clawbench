@@ -1,5 +1,6 @@
 import { app, Menu, session } from 'electron'
-import { initStore } from './store'
+import { initStore, getStore } from './store'
+import { installDisplayMediaHandler, registerCaptureHandlers } from './capture'
 import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
 import { registerCertificateHandler } from './certificate'
@@ -31,6 +32,37 @@ process.on('unhandledRejection', (reason) => {
   console.error('[main] unhandled rejection:', reason)
   recordError('Main', reason)
 })
+
+// The desktop shell loads the server over plain HTTP on a LAN address, which
+// Chromium does NOT treat as a secure context. Without a secure context
+// `navigator.mediaDevices` is undefined, so microphone capture, screen capture
+// and WebCodecs are all unreachable — voice input has been broken in this shell
+// for exactly that reason.
+//
+// `unsafely-treat-insecure-origin-as-secure` promotes ONE origin to secure-context
+// treatment. It is deliberately scoped to the server the user configured, not
+// applied globally, and it must be set before the app is ready (Chromium reads
+// command-line switches during startup).
+//
+// Consequence to be aware of: this is a process-level switch, so switching to a
+// different server needs a restart before capture works against it. The renderer
+// surfaces that in the connect flow.
+function applySecureContextSwitch(): void {
+  try {
+    const url = getStore().get('serverUrl')
+    if (!url) return
+    const origin = new URL(url).origin
+    if (!origin.startsWith('http://')) return // https is already secure
+    app.commandLine.appendSwitch('unsafely-treat-insecure-origin-as-secure', origin)
+  } catch {
+    // A malformed stored URL is reported by the connect flow; nothing to do here.
+  }
+}
+
+// The store must exist before the switch can read serverUrl, and the switch must
+// run before `whenReady` — hence the early init.
+initStore()
+applySecureContextSwitch()
 
 app.whenReady().then(() => {
   // Self-upgrade handoff. `downloadAndInstall` unpacks the new version and
@@ -70,7 +102,6 @@ app.whenReady().then(() => {
 
   // No OS menu bar — the app is fully UI-driven.
   Menu.setApplicationMenu(null)
-  initStore()
   registerBridge()
   // Prompt (once per connection) when a server's TLS certificate cannot be
   // verified, instead of failing the navigation outright. Mirrors Android's
@@ -87,12 +118,27 @@ app.whenReady().then(() => {
   // startup already has something to reveal.
   initFloating()
 
-  // Grant microphone access so voice input (getUserMedia) works in the
-  // desktop shell when the server is served over a secure context
-  // (localhost or HTTPS). Deny other permission requests by default.
+  // Grant microphone/camera ('media') and screen capture ('display-capture') so
+  // voice input and live screen sharing work in the desktop shell. These are two
+  // distinct permission values: allowing only 'media' makes getDisplayMedia fail
+  // with NotAllowedError even though getUserMedia succeeds. Everything else is
+  // denied by default.
+  const allowedPermissions = new Set(['media', 'display-capture'])
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(permission === 'media')
+    callback(allowedPermissions.has(permission))
   })
+  // Electron asks for BOTH handlers to be implemented: most web APIs run a
+  // permission CHECK before making a request, and a missing check handler makes
+  // that check fail — which shows up as `enumerateDevices()` returning devices
+  // with empty labels, and as some capture paths never reaching the request.
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
+    return allowedPermissions.has(permission)
+  })
+  // Answer getDisplayMedia from the source the renderer declared. Installed
+  // here (after ready) because the default session does not exist earlier.
+  installDisplayMediaHandler()
+  // Source listing / declaration / throttling IPC.
+  registerCaptureHandlers(() => getMainWindow()?.webContents ?? null)
 
   // Asked for the MAIN window, not for a window count: the floating capsule and
   // its tray are windows too, so "no windows" would never be true while they are

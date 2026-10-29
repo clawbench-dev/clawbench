@@ -31,6 +31,9 @@ TTSSpeakerSaysPrefix: "{{.Name}} says: "
 BackendCreateFailed: "Failed to create AI backend: {{.Error}}"
 StreamStartFailed: "Failed to start streaming: {{.Error}}"
 MethodNotAllowed: Method not allowed
+TokenRequired: token is required
+LiveShareAlreadyPublishing: another publisher is already sharing this room
+LiveShareTooManyRooms: too many concurrent screen shares
 InvalidRequestBody: Invalid request body
 NotADirectory: Not a directory
 NotAFile: Not a file

@@ -149,16 +149,7 @@ type sttStreamState struct {
 // newly-appended portion and appends the incremental text. After "end", it
 // re-transcribes the full buffer and sends the final result.
 func STTTranscribeWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns: []string{
-			"http://" + r.Host,
-			"https://" + r.Host,
-			"http://localhost:*",
-			"https://localhost:*",
-			"http://127.0.0.1:*",
-			"https://127.0.0.1:*",
-		},
-	})
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: wsOriginPatterns(r)})
 	if err != nil {
 		slog.Error("stt ws: accept failed", slog.String("error", err.Error()))
 		return

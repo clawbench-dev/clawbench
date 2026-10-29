@@ -449,7 +449,7 @@ func serveSessionShareRevokeAll(w http.ResponseWriter, projectPath string) {
 
 // shareMetaResponse tells the share SPA which kind of share a token addresses.
 type shareMetaResponse struct {
-	Kind         string `json:"kind"` // shareKindFile | shareKindSession
+	Kind         string `json:"kind"` // shareKindFile | shareKindSession | shareKindLive
 	Title        string `json:"title,omitempty"`
 	MessageCount int    `json:"messageCount,omitempty"`
 }
@@ -463,6 +463,18 @@ type shareMetaResponse struct {
 // Unknown tokens get the same uniform 404 as every other public endpoint (no
 // existence disclosure).
 func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
+	// Live shares are checked FIRST: their rooms are in-memory and their tokens
+	// are minted from the same 32-hex space, so a token that is live now must
+	// resolve to "live" even if an old file/session row happens to share the
+	// value. Live also wins on freshness — the room is the current truth.
+	if room := liveRegistry.Get(token); room != nil {
+		writeJSON(w, http.StatusOK, shareMetaResponse{
+			Kind:  shareKindLive,
+			Title: room.Title(),
+		})
+		return
+	}
+
 	share, ok, err := service.GetSessionShareByToken(token)
 	if err != nil {
 		slog.Error("share: meta session lookup failed", "err", err)

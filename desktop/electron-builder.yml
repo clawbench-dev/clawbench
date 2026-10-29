@@ -47,6 +47,14 @@ win:
 mac:
   target: dir
   icon: build/icon.icns
+  # TCC usage descriptions. Without these macOS kills the app the moment it asks
+  # for the microphone or the screen — and it does so WITHOUT showing a prompt,
+  # which makes the failure look like "capture silently does nothing".
+  # Screen sharing itself is Windows-only (system audio is loopback-only there),
+  # but the microphone prompt is still reachable through voice input.
+  extendInfo:
+    NSMicrophoneUsageDescription: ClawBench uses the microphone for voice input and live audio sharing.
+    NSScreenCaptureUsageDescription: ClawBench captures your screen when you start a live share.
 linux:
   target: dir
   icon: build/icon.png

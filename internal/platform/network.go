@@ -202,3 +202,187 @@ var probeIPApiWithClient = func(client *http.Client) bool {
 
 // NpmMirrorRegistry is the China npm mirror URL.
 const NpmMirrorRegistry = "https://registry.npmmirror.com"
+
+// InterfaceKind classifies a local address so the UI can label it. The point is
+// NOT to hide addresses: a user with a Docker bridge or a VPN needs to see every
+// candidate to understand why a colleague cannot open the link. Labeling lets
+// them pick the right one instead of guessing.
+type InterfaceKind string
+
+const (
+	// KindLAN is a normal routable private/public address (Wi-Fi, Ethernet).
+	KindLAN InterfaceKind = "lan"
+	// KindVirtual is a virtual adapter: container bridges, VM host-only nets,
+	// VPN tunnels. Reachable from the host, usually NOT from another machine.
+	KindVirtual InterfaceKind = "virtual"
+	// KindPublic is a globally routable address.
+	KindPublic InterfaceKind = "public"
+	// KindOther is anything unclassified.
+	KindOther InterfaceKind = "other"
+)
+
+// LocalAddress is one address a client might reach this server on.
+type LocalAddress struct {
+	// IP is the bare address, e.g. "192.168.1.7".
+	IP string `json:"ip"`
+	// Interface is the OS interface name, e.g. "wlp1s0". Empty when unknown.
+	Interface string `json:"interface"`
+	// Kind lets the UI label the entry (and sort the likely ones first).
+	Kind InterfaceKind `json:"kind"`
+}
+
+// virtualIfacePrefixes are interface-name prefixes that identify virtual
+// adapters. Deliberately a LABEL, not a filter: the addresses are still
+// returned, because hiding one would leave the user unable to explain why a
+// particular address does not work.
+//
+// The list covers the common cases on the three supported platforms:
+//   - Linux: docker0, br-<id>, veth*, virbr*, tun*/tap*/wg* (VPN), lxcbr*
+//   - macOS: utun* (VPN), bridge*, vmnet*, vboxnet*
+//   - Windows: vEthernet (WSL/Hyper-V), "Loopback", "VirtualBox", "VMware"
+var virtualIfacePrefixes = []string{
+	"docker", "br-", "veth", "virbr", "lxcbr", "cni", "flannel", "kube",
+	"tun", "tap", "wg", "utun", "ppp",
+	"bridge", "vmnet", "vboxnet",
+	"vethernet", "loopback", "virtualbox", "vmware", "hyper-v",
+}
+
+// isVirtualIface labels an interface by name. Matching is case-insensitive
+// because Windows names its adapters "vEthernet (WSL)".
+func isVirtualIface(name string) bool {
+	lower := strings.ToLower(name)
+	for _, p := range virtualIfacePrefixes {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetLocalAddresses returns every address the server can be reached on, each
+// labeled with its interface and a kind. Sorted so the most useful entries come
+// first: LAN before virtual, IPv4 before IPv6, then by address.
+//
+// Unlike GetLocalIPs this keeps virtual adapters, because the caller wants to
+// SHOW them (labeled) rather than silently drop them.
+func GetLocalAddresses() []LocalAddress {
+	out := collectLocalAddresses()
+	sortAddresses(out)
+	return out
+}
+
+// collectLocalAddresses walks the interfaces and keeps every usable address.
+//
+// IPv6 needs one extra step. Modern OSes assign a ROTATING privacy address
+// (RFC 4941) per interface alongside the stable one; measured on a typical
+// dual-stack laptop, 14 of 17 addresses were temporary IPv6 that change every
+// few hours. A share link pointing at one is dead on arrival, and 14 rows of
+// noise bury the 3 addresses that work.
+//
+// net.IP carries no "temporary" flag, so the /64 prefix is used instead: only
+// the first address per (interface, /64) is kept. The stable address and its
+// temporary siblings share a /64, so this collapses the group to one entry
+// without needing to tell them apart.
+func collectLocalAddresses() []LocalAddress {
+	ifaces, err := netInterfaces()
+	if err != nil {
+		return nil
+	}
+	var out []LocalAddress
+	seen := make(map[string]bool)
+	seenV6Prefix := make(map[string]bool)
+	for i := range ifaces {
+		iface := &ifaces[i]
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifaceAddrs(iface)
+		if err != nil {
+			continue
+		}
+		virtual := isVirtualIface(iface.Name)
+		for _, addr := range addrs {
+			ip := addrIP(addr)
+			if ip == nil {
+				continue
+			}
+			s := ip.String()
+			if seen[s] {
+				continue
+			}
+			if prefix, ok := v6PrefixKey(iface.Name, ip); ok {
+				if seenV6Prefix[prefix] {
+					continue
+				}
+				seenV6Prefix[prefix] = true
+			}
+			seen[s] = true
+			out = append(out, LocalAddress{IP: s, Interface: iface.Name, Kind: addressKind(ip, virtual)})
+		}
+	}
+	return out
+}
+
+// v6PrefixKey returns a key identifying an interface's IPv6 /64, and false for
+// an IPv4 address (which needs no collapsing).
+func v6PrefixKey(ifaceName string, ip net.IP) (string, bool) {
+	if ip.To4() != nil {
+		return "", false
+	}
+	return ifaceName + "|" + ip.Mask(net.CIDRMask(64, 128)).String(), true
+}
+
+// addrIP extracts the IP from an interface address, returning nil for anything
+// a client could not use (loopback, link-local).
+func addrIP(addr net.Addr) net.IP {
+	var ip net.IP
+	switch v := addr.(type) {
+	case *net.IPNet:
+		ip = v.IP
+	case *net.IPAddr:
+		ip = v.IP
+	}
+	if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return nil
+	}
+	return ip
+}
+
+// addressKind classifies an address for the UI.
+func addressKind(ip net.IP, virtual bool) InterfaceKind {
+	switch {
+	case virtual:
+		return KindVirtual
+	case ip.To4() != nil && !ip.IsPrivate():
+		return KindPublic
+	default:
+		return KindLAN
+	}
+}
+
+// sortAddresses orders LAN/public first (those are what a colleague can use),
+// then virtual, then IPv4 before IPv6.
+func sortAddresses(list []LocalAddress) {
+	sort.SliceStable(list, func(i, j int) bool {
+		a, b := list[i], list[j]
+		if usableKind(a.Kind) != usableKind(b.Kind) {
+			return usableKind(a.Kind)
+		}
+		a4, b4 := net.ParseIP(a.IP).To4() != nil, net.ParseIP(b.IP).To4() != nil
+		if a4 != b4 {
+			return a4
+		}
+		ai, bi := net.ParseIP(a.IP), net.ParseIP(b.IP)
+		for k := 0; k < len(ai) && k < len(bi); k++ {
+			if ai[k] != bi[k] {
+				return ai[k] < bi[k]
+			}
+		}
+		return a.IP < b.IP
+	})
+}
+
+// usableKind reports whether an address is likely reachable from another machine.
+func usableKind(k InterfaceKind) bool {
+	return k == KindLAN || k == KindPublic
+}

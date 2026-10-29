@@ -673,6 +673,50 @@ paths:
                   version:
                     type: string
 
+  /api/server/addresses:
+    get:
+      tags: [Config]
+      summary: 本机可访问地址列表
+      description: |
+        返回服务端所有可被客户端访问的地址，每条带 OS 接口名与类型
+        （`lan` / `virtual` / `public`）。
+
+        分享弹窗用它拼链接，而不是 `window.location.origin`——后者只知道浏览器
+        恰好用的那**一个**地址。一台机器同时有 Wi-Fi、有线网卡和 Docker 网桥时，
+        同事可能不在同一网段，拿到的链接打不开。
+
+        **不过滤任何地址**：虚拟网卡也会返回，只是标了类型，因为静默丢弃会让
+        用户无法解释「为什么这个地址别人打不开」。
+
+        `port` 取自请求的 Host，因此端口转发或多端口监听时也是对的。
+      operationId: serverAddresses
+      responses:
+        "200":
+          description: 地址列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  port:
+                    type: string
+                    description: 服务端端口（取自请求 Host）
+                  addresses:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ip:
+                          type: string
+                          description: 裸地址，如 192.168.1.7
+                        interface:
+                          type: string
+                          description: OS 接口名，如 wlp1s0；未知时为空
+                        kind:
+                          type: string
+                          enum: [lan, virtual, public, other]
+                          description: 地址类型，供 UI 标注与排序
+
   /api/config/restart:
     post:
       tags: [Config]
@@ -3482,6 +3526,103 @@ paths:
       responses:
         "101":
           description: 协议升级为 WebSocket
+
+  # ── Live share (screen + audio) ───────────────────────────────────────────
+  #
+  # A live share is a P2P WebRTC session: the server only relays SDP/ICE and
+  # never carries media. The publisher is authenticated and owns a project; the
+  # viewer socket is public because the token is the sole credential (same model
+  # as file/session shares).
+  /api/live-share:
+    post:
+      tags: [LiveShare]
+      summary: 开始屏幕共享
+      description: |
+        为本项目创建（或复用）一个直播房间。同一项目重复调用返回同一个 token，
+        避免用户双击或重试时让已复制的链接失效。房间只存在于内存，进程重启即失效。
+      operationId: liveShareCreate
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  description: 分享页标题；省略时取项目目录名
+      responses:
+        "200":
+          description: 房间 token 与分享路径
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  path:
+                    type: string
+        "503":
+          description: 并发房间数已达上限
+    get:
+      tags: [LiveShare]
+      summary: 查询本项目的共享状态
+      operationId: liveShareStatus
+      responses:
+        "200":
+          description: 是否有活跃房间及观众数
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active:
+                    type: boolean
+                  viewers:
+                    type: integer
+    delete:
+      tags: [LiveShare]
+      summary: 结束共享
+      description: |
+        断开全部观众。token 不存在时返回 200（重复结束不是错误）；
+        token 属于其他项目时返回 404（与「不存在」同样的响应，不泄露房间存在性）。
+      operationId: liveShareEnd
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 已结束（token 不存在时同样 200）
+        "400":
+          description: 缺少 token
+        "404":
+          description: token 属于其他项目
+
+  /api/live-share/publish/ws:
+    get:
+      tags: [LiveShare]
+      summary: 发布端信令 WebSocket（升级）
+      description: |
+        WebSocket 端点，承载发布端的 SDP/ICE 转发与发言授权控制帧。OpenAPI 不建模
+        升级握手。发布端断开即视为共享结束，房间随之销毁。
+      operationId: liveSharePublishWS
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "101":
+          description: Switching Protocols
+        "404":
+          description: token 不存在或不属于当前项目
+        "409":
+          description: 已有发布端在共享
 
   # ── Share ─────────────────────────────────────────────────────────────────
   /api/share:

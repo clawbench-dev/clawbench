@@ -31,6 +31,9 @@ TTSSpeakerSaysPrefix: "{{.Name}}说："
 BackendCreateFailed: "创建 AI Backend 失败: {{.Error}}"
 StreamStartFailed: "启动流式输出失败: {{.Error}}"
 MethodNotAllowed: 方法不允许
+TokenRequired: 缺少 token
+LiveShareAlreadyPublishing: 已有发布端在共享这个房间
+LiveShareTooManyRooms: 同时进行的屏幕共享数量已达上限
 InvalidRequestBody: 请求体无效
 NotADirectory: 不是目录
 NotAFile: 不是文件
