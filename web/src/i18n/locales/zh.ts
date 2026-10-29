@@ -2378,6 +2378,9 @@ export default {
     // 媒体文件（图片 / 视频 / 音频）加载失败时就地展示，替代无提示的裂图或空白
     // 窗格。所有媒体界面共用 MediaLoadError.vue（issue #501 后续统一）。
     loadFailed: '媒体加载失败',
+    // Mermaid 图表的加载占位读屏文案。可见部分是纯装饰（骨架节点），所以
+    // 唯一的语义由这一条承载——否则读屏用户在这几秒里听到的是空白。
+    diagramLoading: '正在绘制图表',
   },
   upload: {
     failed: '上传失败: {error}',

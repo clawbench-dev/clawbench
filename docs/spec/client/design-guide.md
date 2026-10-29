@@ -420,8 +420,14 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - **尺寸**：组件档位 `size="sm|md|lg"` = 14 / 28 / 36px。**`size` 是字符串枚举**——传数字（`:size="13"`）会生成不存在的类名并**静默回退 28px**。非档位尺寸（20px / 10px / 8px）的调用方自己在环元素上设 `--li-size`。
 - **粗细由比例推导，全站只有一个比例**：`--li-border: calc(var(--li-size) / 6)`。**调用方只能设 `--li-size`，绝不要写死 `--li-border`**——写死会静默偏离比例，且不对比两个环根本看不出来。守卫 `sharedRingUnification.test.ts` 会走查全部源码，出现字面量 `--li-border` 即失败。
 - **颜色**：`--li-color`（转动的弧）/ `--li-track-color`（静止底环），都回退主题 token。原 SVG 是 `stroke="currentColor"` 的站点用 `--li-color: currentColor` 承接，外观零变化。
-- **速度**：默认 `--li-duration: 0.8s`；从旧实现迁移来的站点（mermaid / tool-call / url-btn）保留各自的 `0.6s`，**统一形状不等于统一节奏**。
-- 覆盖类规则**必须带祖先部分**（如 `.mermaid .mermaid-spinner`）：`.li-spinner` 是单类 (0,1,0)，写成单类会与之打平，胜负取决于打包 chunk 顺序 → 尺寸会随构建**静默回退 28px**。
+- **速度**：默认 `--li-duration: 0.8s`；从旧实现迁移来的站点（tool-call / url-btn）保留各自的 `0.6s`，**统一形状不等于统一节奏**。
+- 覆盖类规则**必须带祖先部分**（如 `.chat-url-open-btn .chat-url-open-btn-spinner`）：`.li-spinner` 是单类 (0,1,0)，写成单类会与之打平，胜负取决于打包 chunk 顺序 → 尺寸会随构建**静默回退 28px**。
+- **环只用于「等待一个点状结果」，不用于「等待一块内容」**：当占位的对象是一个**有形状的块**（面板、消息区、图表）时用骨架屏——环只说「在等」，不说「要来的长什么样」，还会让容器塌成一个字形。这条已经落地在 `PanelSkeleton`（dock 面板）、`ChatSkeleton`（消息区）和 Mermaid 的加载占位（`mermaidSkeleton.test.ts`）；Mermaid 是最后一个从环迁走的。
+  - **Mermaid 的占位是一个「分叉流程图」骨架**：根节点 → 分叉成两个子节点 → 汇合到一个出口节点，每个节点里有一条标签条。**不能做成几条横杠的堆叠**——那读作段落骨架，而不是图。
+  - **几何必须共用同一组百分比**：子节点 `width: 38%` + `gap: 8%` ⇒ 两个中心恰在 27% / 73%，连接线的 `left/right: 27%` 由这两个数推出。第一版用 `calc(dp)` 宽度 + `max-width` 夹取，夹取把真实中心挪到 26.9% 而线还画在 25%，分叉**肉眼可见地没接上节点**。
+  - **竖线归节点所有、长度为半个间隙**（`calc(var(--mm-link) / 2)`），横线落在间隙中线上，两边才严丝合缝。用两条半宽 `border-left/right` 的「臂」会把**两根竖线都放在行中央**，渲染成 T 形；把横线画在行自身边缘则被节点盖住、看起来像浮在旁边。
+  - **不要同时出现环和骨架**：两者回答同一个问题，并列读作「两件事在发生」。
+  - 可见条全部 `aria-hidden`，唯一的 `role="status"` 承载 `media.diagramLoading`（否则读屏用户在这几秒里听到空白）。微光响应 `prefers-reduced-motion`（与骨架原语一致）。
 
 ---
 
@@ -453,6 +459,15 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
   - **只替换首屏，不替换三种「有内容在场」的加载**：①已有数据的刷新遮罩（文件管理器切目录时的 `dirLoading && displayEntries.length > 0`，旧行必须留在原地）②「加载更多」页脚 ③按钮内联 spinner / 进行中动作（如消息索引的 `jumping`）。这三类继续用 `LoadingIndicator`。
   - 守卫：`PanelSkeleton.test.ts`（形状 / a11y / 固定宽度）与 `panelSkeletonUsage.test.ts`（清单内的每个面板都必须渲染骨架；除白名单外的面板级 `LoadingIndicator` 一律失败；`.skeleton-block` 必须留在全局表且组件内不得重述）。
   - **深色背景上的骨架**：原语的两个颜色是变量 `--skeleton-fill` / `--skeleton-sheen`，`.skeleton-block` **只消费不声明**（写成 `var(--skeleton-fill, <主题兜底>)`）。因此覆盖必须写在骨架的**任意祖先**上，且能生效——变量在声明它的元素上解析，若原语自己声明了这两个变量，调用方写在祖先上的覆盖会静默失效（PDF 预览踩过：深色主题下实测仍是 `--bg-tertiary`）。覆盖时**不要**在调用处重述 `background-image`（那会把微光定义复制一份，两边必然漂移）。目前只有 `PdfPreview.vue` 需要这样做；灯箱用的是自己的 `.lb-loading-spinner`，与骨架原语无关。
+- **内容图片的三态占位（等待中 / 已结算 / 加载失败）**：`media-block.css` 的 `pending` 区块 + `localMediaFallback.ts`。一张内容图在样式表里必须能区分三种状态，而标记本身只能表达一种：
+  - **pending**——`data-media-settled` 与 `data-media-missing` **都不存在**。`<img>` 在拿到字节前固有尺寸是 0×0，于是整个 `.image-block-wrapper` 先塌成一根 1px 边框、图片到了再「弹」出来。缩略图让这成了常态而非例外：`/api/fs/thumb` 是**按需栅格化**，一张大 PNG 的首次绘制是真实的往返。占位复用 `.skeleton-block` 的同一套语言（`skeleton-shimmer` keyframes + `--skeleton-fill` / `--skeleton-sheen`，**只消费不声明**，理由同上一条）。
+  - **settled**——`data-media-settled`，由 `localMediaFallback.ts` 的**文档级捕获**监听打上：`load` 打、`error` 也打（外部图失败没有兜底卡片，但微光必须停——否则它在承诺一个永远不来的加载）。`load` / `error` 都是 DOM 事件，任何渲染管线都看不到，所以只能这样标。监听对**所有** `<img>` 生效，由样式表负责把范围收窄到内容媒体——在这里再写一份选择器清单就是两处必然漂移。安装时还要**补扫一次** `complete && naturalWidth > 0` 的图（`load` 只发一次，命中缓存的首屏图片会永远停在 pending）；只看 `complete` 不够，它对视口外/无 src 的图也为真。
+  - **missing**——`data-media-missing` + `.local-media-hidden` + 共享的 `MediaLoadError` 卡片（见下文）。
+  - 三个消费面：`.image-block-wrapper` 里的图（聊天 / 文档 / 分享 / 表格弹窗）、全屏图片查看器（`.image-preview-img`）、代码链接预览卡（`.code-preview-media-img`）。**文件管理器缩略图与附件小图刻意不在内**——它们是 40dp 图标且已有自己的失败兜底，微光只会是噪音。
+  - **`min-width` 用定长、不用百分比**（figure 那一支）：figure 是 shrink-to-fit 包着图片的，百分比会重新引入 figure↔media 循环，把替换元素压回 300px 默认宽。两个单图面板相反，容器由 flex 给了确定宽度，`min(…, 100%)` 才不会在窄分栏里溢出。
+  - **隐藏靠 `backwards` 填充的 0s 延迟 keyframe，不用基础 `opacity: 0`**：HTML 导出会序列化命中规则但只带少数几个具名 keyframes，基础 `opacity: 0` 一旦被导出而 keyframes 没跟过去，导出的文档里**每张图都是隐形的**；这样写缺 keyframes 时退化成「可见、无微光」。延迟 **200ms** 是刻意的：本地图片通常几毫秒就到，闪一帧的占位比没有更糟；延迟期间框是透明的但仍**占位**，布局只落一次。
+  - **换 `src` 必须清掉 `data-media-settled`**：`useMediaWatch.patchImagesForPath`（后台重写同一路径）与两个 Vue 查看器的 `:key`（切到同目录另一张图）。不清的话新图在途时仍显示旧帧像素、且没有任何「在加载」的迹象。导出的静态文档没有 `load` 监听，由 `exportMarkdownHtml.ts` 无条件补上该标记，否则导出件看起来全是空的。
+  - 守卫：`localMediaFallback.test.ts`（打标 / 补扫 / 可逆）、`localMediaFallback.css.test.ts`（不用基础 opacity、排除 missing、复用变量、reduced-motion 只停微光、定长、覆盖两个面板）、`useMediaWatch.test.ts`（清标只作用于被 patch 的图）、`exportMarkdownHtml.test.ts`（导出必带标记）。
 - **分隔条的折叠手柄：离开是「先变半透明、停一会儿、再淡出」两步**（`SplitDivider.vue`）。三档：
   1. **静止**：完全不可见（`opacity: 0` / `pointer-events: none`），触屏同理（点击细线才 `--revealed`）。
   2. **活跃**：`:hover` / `:focus-within` → `opacity: 1`。

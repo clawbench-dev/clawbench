@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,14 +28,44 @@ func setupRestartResumeDB(t *testing.T) {
 	t.Cleanup(cleanupAllSessionState)
 }
 
+// launchRecorder records the configs handed to the single-chat launch seam.
+//
+// Mutex-guarded because the resume worker calls the seam from its OWN goroutine
+// while the test reads it: an unguarded slice here is a real data race (caught
+// by -race), not a theoretical one.
+type launchRecorder struct {
+	mu    sync.Mutex
+	calls []LaunchConfig
+}
+
+func (r *launchRecorder) record(cfg LaunchConfig) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, cfg)
+}
+
+// count returns how many launches were recorded so far.
+func (r *launchRecorder) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.calls)
+}
+
+// at returns the i-th recorded launch.
+func (r *launchRecorder) at(i int) LaunchConfig {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls[i]
+}
+
 // stubRestartLaunch replaces the single-chat launch seam and records the configs.
-func stubRestartLaunch(t *testing.T) *[]LaunchConfig {
+func stubRestartLaunch(t *testing.T) *launchRecorder {
 	t.Helper()
-	var calls []LaunchConfig
+	rec := &launchRecorder{}
 	orig := launchConsumerExecution
-	launchConsumerExecution = func(cfg LaunchConfig) { calls = append(calls, cfg) }
+	launchConsumerExecution = rec.record
 	t.Cleanup(func() { launchConsumerExecution = orig })
-	return &calls
+	return rec
 }
 
 // stubRestartGroupDrain replaces the group drain seam and records the prompts.
@@ -112,16 +143,16 @@ func TestResumeInterruptedSession_SingleChat(t *testing.T) {
 	}
 
 	// The turn was launched with the resume prompt, on the session's own agent.
-	if len(*launched) != 1 {
-		t.Fatalf("expected exactly one launched turn, got %d: %+v", len(*launched), *launched)
+	if launched.count() != 1 {
+		t.Fatalf("expected exactly one launched turn, got %d", launched.count())
 	}
-	if (*launched)[0].SessionID != sid {
-		t.Fatalf("launched for the wrong session: got %q want %q", (*launched)[0].SessionID, sid)
+	if launched.at(0).SessionID != sid {
+		t.Fatalf("launched for the wrong session: got %q want %q", launched.at(0).SessionID, sid)
 	}
-	if (*launched)[0].Message != RestartResumePrompt() {
-		t.Fatalf("launched with the wrong prompt: got %q want %q", (*launched)[0].Message, RestartResumePrompt())
+	if launched.at(0).Message != RestartResumePrompt() {
+		t.Fatalf("launched with the wrong prompt: got %q want %q", launched.at(0).Message, RestartResumePrompt())
 	}
-	if (*launched)[0].RunCtx == nil {
+	if launched.at(0).RunCtx == nil {
 		t.Fatal("the launched turn must carry the claim's context, or a cancel cannot reach it")
 	}
 
@@ -161,8 +192,8 @@ func TestResumeInterruptedSession_SkipsRunningSession(t *testing.T) {
 	if err := ResumeInterruptedSession(sid); err != nil {
 		t.Fatalf("ResumeInterruptedSession: %v", err)
 	}
-	if len(*launched) != 0 {
-		t.Fatalf("a running session must not be resumed again, got %d launches", len(*launched))
+	if launched.count() != 0 {
+		t.Fatalf("a running session must not be resumed again, got %d launches", launched.count())
 	}
 	// The claim is taken before the notice is written, so a skipped resume leaves
 	// no stray system row behind.
@@ -195,8 +226,8 @@ func TestResumeInterruptedSession_DefersToQueueReaper(t *testing.T) {
 	if err := ResumeInterruptedSession(sid); err != nil {
 		t.Fatalf("ResumeInterruptedSession: %v", err)
 	}
-	if len(*launched) != 0 {
-		t.Fatalf("a session with queued work must be left to the reaper, got %d launches", len(*launched))
+	if launched.count() != 0 {
+		t.Fatalf("a session with queued work must be left to the reaper, got %d launches", launched.count())
 	}
 	if rows := systemRowTexts(t, sid); len(rows) != 0 {
 		t.Fatalf("a deferred resume must not write a system row, got %+v", rows)
@@ -211,8 +242,8 @@ func TestResumeInterruptedSession_MissingSessionIsNotAnError(t *testing.T) {
 	if err := ResumeInterruptedSession("no-such-session"); err != nil {
 		t.Fatalf("a missing session must not error: %v", err)
 	}
-	if len(*launched) != 0 {
-		t.Fatalf("nothing may be launched for a missing session, got %d", len(*launched))
+	if launched.count() != 0 {
+		t.Fatalf("nothing may be launched for a missing session, got %d", launched.count())
 	}
 }
 
@@ -236,8 +267,8 @@ func TestResumeInterruptedSession_GroupUsesOrchestrator(t *testing.T) {
 		t.Fatalf("ResumeInterruptedSession: %v", err)
 	}
 
-	if len(*launched) != 0 {
-		t.Fatalf("a group must not run as a single-agent turn, got %d launches", len(*launched))
+	if launched.count() != 0 {
+		t.Fatalf("a group must not run as a single-agent turn, got %d launches", launched.count())
 	}
 	// Wait for the drain goroutine to actually invoke the seam before asserting.
 	select {
@@ -263,41 +294,255 @@ func TestResumeInterruptedSession_GroupUsesOrchestrator(t *testing.T) {
 	}
 }
 
-// The worker is gated on the auto-continue switch: with it off, nothing is
-// resumed and the recorded set is dropped (so enabling later does not resurrect
-// an old restart).
-func TestStartRestartResume_GatedOnAutoContinue(t *testing.T) {
+// setAutoContinue flips the global switch for one test.
+func setAutoContinue(t *testing.T, enabled bool) {
+	t.Helper()
+	prev := model.ChatAutoContinueEnabled
+	model.ChatAutoContinueEnabled = enabled
+	t.Cleanup(func() { model.ChatAutoContinueEnabled = prev })
+}
+
+// waitForCount blocks until cond is true, failing the test after a generous
+// timeout. Used instead of a fixed sleep: the worker runs in a goroutine, so
+// "it has not been called yet" and "it will never be called" are only
+// distinguishable by waiting for a POSITIVE signal.
+func waitForCount(t *testing.T, want int, get func() int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if get() >= want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d calls, got %d", want, get())
+}
+
+// The worker's POSITIVE path: switch on, delay elapsed, the session is actually
+// resumed. Without this the whole goroutine body could be deleted and the gate
+// test below would still pass.
+func TestStartRestartResume_ResumesWhenEnabled(t *testing.T) {
 	setupRestartResumeDB(t)
 	launched := stubRestartLaunch(t)
+	setAutoContinue(t, true)
+
+	sid, err := CreateSession("/proj/resume", "claude", "resumed", "", "", "default", "chat")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	recordInterruptedSessions([]string{sid})
+	scheduled := startRestartResume(0, resumeSessionFn)
+	if len(scheduled) != 1 || scheduled[0] != sid {
+		t.Fatalf("expected the session to be scheduled, got %+v", scheduled)
+	}
+
+	waitForCount(t, 1, func() int { return launched.count() })
+	if launched.at(0).SessionID != sid {
+		t.Fatalf("resumed the wrong session: got %q want %q", launched.at(0).SessionID, sid)
+	}
+}
+
+// The gate: with the switch off nothing is resumed AND the recorded set is still
+// drained (so turning the switch on later cannot resurrect an old restart).
+//
+// The assertion is on the return value plus a POSITIVE-absence check via a
+// recorder seam — no fixed sleep, so it cannot go green on a slow machine by
+// finishing before a wrongly-started worker runs.
+func TestStartRestartResume_GatedOnAutoContinue(t *testing.T) {
+	setupRestartResumeDB(t)
+	setAutoContinue(t, false)
 
 	sid, err := CreateSession("/proj/resume", "claude", "gated", "", "", "default", "chat")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 
-	prevEnabled := model.ChatAutoContinueEnabled
-	model.ChatAutoContinueEnabled = false
-	t.Cleanup(func() { model.ChatAutoContinueEnabled = prevEnabled })
-
-	// Drop the delay so the (gated) worker body would run immediately: without
-	// this the goroutine would still be sleeping when the test ends, and the
-	// "nothing launched" assertion would pass even if the gate were deleted.
-	prevDelay := restartResumeDelay
-	restartResumeDelay = 0
-	t.Cleanup(func() { restartResumeDelay = prevDelay })
+	var mu sync.Mutex
+	var resumed []string
+	record := func(s string) error {
+		mu.Lock()
+		resumed = append(resumed, s)
+		mu.Unlock()
+		return nil
+	}
 
 	recordInterruptedSessions([]string{sid})
-	StartRestartResume()
+	scheduled := startRestartResume(0, record)
 
-	// The set is drained regardless of the gate.
+	// Gated: nothing scheduled, and the set is drained regardless.
+	if len(scheduled) != 0 {
+		t.Fatalf("nothing may be scheduled while auto-continue is off, got %+v", scheduled)
+	}
 	if got := takeInterruptedSessions(); len(got) != 0 {
 		t.Fatalf("the recorded set must be drained on every start, still holds %+v", got)
 	}
-	// Give a wrongly-started worker a chance to be observed. With the gate
-	// removed it launches synchronously within this window.
-	time.Sleep(100 * time.Millisecond)
-	if len(*launched) != 0 {
-		t.Fatalf("nothing may be resumed while auto-continue is off, got %d launches", len(*launched))
+	// No goroutine was started at all, so the recorder can never fire. Reading it
+	// under the mutex is enough — there is nothing to wait for.
+	mu.Lock()
+	defer mu.Unlock()
+	if len(resumed) != 0 {
+		t.Fatalf("nothing may be resumed while auto-continue is off, got %+v", resumed)
+	}
+}
+
+// A panic while resuming ONE session must not kill the process (an uncaught
+// panic in a goroutine terminates everything) and must not stop the remaining
+// sessions from being resumed.
+func TestResumeOneSafely_PanicDoesNotStopTheRest(t *testing.T) {
+	setupRestartResumeDB(t)
+	cleanupAllSessionState()
+	t.Cleanup(cleanupAllSessionState)
+
+	calls := stubRestartLaunch(t)
+
+	// The first session panics; the second must still be resumed.
+	var seen []string
+	panicking := func(s string) error {
+		seen = append(seen, s)
+		if s == "boom" {
+			panic("simulated failure")
+		}
+		return nil
+	}
+
+	resumeOneSafely("boom", panicking)
+	resumeOneSafely("ok", panicking)
+
+	if len(seen) != 2 {
+		t.Fatalf("the second session must still be resumed after the panic, saw %+v", seen)
+	}
+	// The panic path must not leave a claim behind.
+	if IsSessionRunning("boom") {
+		t.Fatal("a panicking resume must release the session's claim")
+	}
+	_ = calls
+}
+
+// The whole point of a group resume is that the host AND the members actually
+// receive the recovery notice: it rides in as a role='system' row, which the
+// injection renders as "[系统] <text>". This drives the REAL orchestration (only
+// the per-member backend is stubbed) and asserts the prompt handed to the first
+// speaker carries it — otherwise the "resume" would start a group turn that has
+// no idea what to continue.
+func TestResumeInterruptedSession_GroupPromptReachesSpeaker(t *testing.T) {
+	setupRestartResumeDB(t)
+
+	project := "/proj/resume-group-inject"
+	groupID, hostID, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	memberID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	// Capture every prompt the orchestrator builds. The host speaks twice — first
+	// to route to A, then to close the discussion — because a single reply
+	// carrying both a mention and the end tag ends the turn without A running.
+	var mu sync.Mutex
+	prompts := map[string][]string{}
+	hostTurns := 0
+	runner := func(_ context.Context, _ string, turn groupMemberTurn) groupMemberResult {
+		mu.Lock()
+		prompts[turn.MemberRowID] = append(prompts[turn.MemberRowID], turn.Prompt)
+		mu.Unlock()
+		text := "继续完成"
+		if turn.MemberRowID == hostID {
+			mu.Lock()
+			hostTurns++
+			first := hostTurns == 1
+			mu.Unlock()
+			if first {
+				text = `<clawbench-mention targets="A">请 A 继续</clawbench-mention>`
+			} else {
+				text = `完成。<clawbench-group-end/>`
+			}
+		}
+		if _, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+			`{"blocks":[{"type":"text","text":`+jsonQuote(text)+`}]}`, nil, false, "", turn.MemberRowID); err != nil {
+			return groupMemberResult{Err: err.Error()}
+		}
+		return groupMemberResult{}
+	}
+	restore := SetGroupDrainRunnerForTest(runner)
+	t.Cleanup(func() { SetGroupDrainRunnerForTest(restore) })
+
+	if err := ResumeInterruptedSession(groupID); err != nil {
+		t.Fatalf("ResumeInterruptedSession: %v", err)
+	}
+
+	// The group drain runs in a goroutine; wait for BOTH the host and the routed
+	// member to have spoken before asserting.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		hostDone, memberDone := len(prompts[hostID]) > 0, len(prompts[memberID]) > 0
+		mu.Unlock()
+		if hostDone && memberDone {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Wait for the drain goroutine to FINISH before touching the assertions: it
+	// holds the session claim until it exits, and letting it outlive the test
+	// would run the real orchestrator against a torn-down DB.
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && IsSessionRunning(groupID) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if IsSessionRunning(groupID) {
+		t.Fatal("the group drain did not finish within the timeout")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(prompts[hostID]) == 0 {
+		t.Fatal("the host never ran — the group resume did not start a turn")
+	}
+	// The recovery notice must arrive as an INJECTED SYSTEM LINE, not merely as
+	// some text in the prompt: the group already has a "[系统] A加入了讨论" row from
+	// AddGroupMember, so asserting on "[系统]" alone (or on the notice text alone)
+	// passes even when the notice is written as a fake user/assistant bubble. The
+	// two must appear TOGETHER.
+	want := "[系统] " + RestartResumePrompt()
+	for _, tc := range []struct {
+		who    string
+		prompt string
+	}{{"host", prompts[hostID][0]}, {"member", prompts[memberID][0]}} {
+		if !strings.Contains(tc.prompt, want) {
+			t.Fatalf("the %s prompt must carry the recovery notice as an injected system line %q, got:\n%s",
+				tc.who, want, tc.prompt)
+		}
+	}
+}
+
+// A task execution (session_type='scheduled') must NOT be resumed: the scheduler
+// already marked its execution 'failed', the session is not user-visible, and
+// cron will run the task again — resuming it here would duplicate the work under
+// the interactive mode.
+func TestResumeInterruptedSession_SkipsScheduledSession(t *testing.T) {
+	setupRestartResumeDB(t)
+	launched := stubRestartLaunch(t)
+
+	sid, err := CreateSession("/proj/resume", "claude", "task run", "", "", "default", "scheduled")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	if err := ResumeInterruptedSession(sid); err != nil {
+		t.Fatalf("a scheduled session must be skipped without error: %v", err)
+	}
+	if launched.count() != 0 {
+		t.Fatalf("a scheduled session must not be resumed, got %d launches", launched.count())
+	}
+	if rows := systemRowTexts(t, sid); len(rows) != 0 {
+		t.Fatalf("a skipped session must not get a system row, got %+v", rows)
+	}
+	if IsSessionRunning(sid) {
+		t.Fatal("a skipped session must not be claimed")
 	}
 }
 
@@ -361,6 +606,56 @@ func TestInitDB_RecordsInterruptedSessions(t *testing.T) {
 	// Drained: a second call must find nothing (at most once per start).
 	if again := takeInterruptedSessions(); len(again) != 0 {
 		t.Fatalf("take must drain, still holds %+v", again)
+	}
+}
+
+// A row with a NULL session_id must not take the whole server down.
+//
+// chat_history.session_id is nullable, and scanning NULL into a plain string
+// fails in modernc sqlite — an InitDB error is os.Exit(1) in main. One legacy
+// row would then turn "a restart" into "the server never starts again". The row
+// must still be finalized; it just has no session to resume.
+func TestInitDB_ToleratesNullSessionIDOnStreamingRow(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir, origDataDir := model.BinDir, model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir, model.DataDir = origBinDir, origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+	cleanupAllSessionState()
+	defer cleanupAllSessionState()
+
+	if err := InitDB(true); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	// session_id left NULL on purpose.
+	if _, err := store.WriteExec(
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming)
+		 VALUES (1, 'assistant', '{"blocks":[]}', NULL, 'claude', 1)`,
+	); err != nil {
+		t.Fatalf("insert NULL-session row: %v", err)
+	}
+
+	// Must not fail — and must still finalize the row.
+	if err := InitDB(true); err != nil {
+		t.Fatalf("InitDB must tolerate a NULL session_id on a streaming row: %v", err)
+	}
+	var streaming int
+	if err := store.ReadDB().QueryRow(
+		`SELECT streaming FROM chat_history WHERE session_id IS NULL`,
+	).Scan(&streaming); err != nil {
+		t.Fatalf("the NULL-session row disappeared: %v", err)
+	}
+	if streaming != 0 {
+		t.Fatalf("the orphan row must still be finalized, streaming=%d", streaming)
+	}
+	// And it must not produce a bogus "" session to resume.
+	for _, id := range takeInterruptedSessions() {
+		if id == "" {
+			t.Fatal("a NULL session_id must not become an empty session id to resume")
+		}
 	}
 }
 

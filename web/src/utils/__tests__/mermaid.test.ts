@@ -194,7 +194,11 @@ describe('mermaid', () => {
             const loadingDiv = el.querySelector('div.mermaid')
             expect(loadingDiv).not.toBeNull()
             expect(loadingDiv?.querySelector('.mermaid-loading')).not.toBeNull()
-            expect(loadingDiv?.querySelector('.mermaid-spinner')).not.toBeNull()
+            // A diagram-shaped skeleton, not a lone ring: the placeholder has to
+            // say WHAT is coming, not just that something is.
+            expect(loadingDiv?.querySelector('.mermaid-skeleton')).not.toBeNull()
+            expect(loadingDiv?.querySelectorAll('.mermaid-skeleton-node')).toHaveLength(4)
+            expect(loadingDiv?.querySelector('.mermaid-spinner')).toBeNull()
             expect(loadingDiv?.dataset.mermaid).toBe('graph TD; A-->B')
 
             // Complete the render

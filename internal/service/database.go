@@ -1701,7 +1701,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// The read connection pool was opened by store.Open before schema creation,
 	// so readers throughout InitDB use store.ReadDB() uniformly.
 	if isServerStartup {
-		rows, err := store.ReadDB().Query("SELECT id, session_id, content FROM chat_history WHERE streaming = 1")
+		rows, err := store.ReadDB().Query("SELECT id, COALESCE(session_id, ''), content FROM chat_history WHERE streaming = 1")
 		if err != nil {
 			return fmt.Errorf("failed to query orphaned streaming messages: %w", err)
 		}

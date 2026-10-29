@@ -291,6 +291,29 @@ describe('patchImagesForPath', () => {
     appendImg({ src: '/api/fs/raw/deep/a.png' })
     expect(patchImagesForPath('a.png', 7)).toBe(0)
   })
+
+  it('drops the load stamp so the pending placeholder comes back', () => {
+    // media-block.css keys the pending shimmer on the ABSENCE of
+    // `data-media-settled`. This patch is the only path that swaps a src WITHOUT
+    // recreating the element, so a stale stamp would keep showing the previous
+    // frame's pixels with no sign that the new file is in flight.
+    const img = appendImg({ src: '/api/fs/raw/a.png', 'data-media-settled': '1' })
+
+    patchImagesForPath('a.png', 7)
+
+    expect(img.hasAttribute('data-media-settled')).toBe(false)
+    expect(img.getAttribute('src')).toContain('t=7')
+  })
+
+  it('leaves an image it does not own stamped', () => {
+    // Only the patched elements restart the wait; clearing the flag document-wide
+    // would re-show the shimmer on every other image on screen.
+    const other = appendImg({ src: '/api/fs/raw/b.png', 'data-media-settled': '1' })
+
+    patchImagesForPath('a.png', 7)
+
+    expect(other.getAttribute('data-media-settled')).toBe('1')
+  })
 })
 
 describe('media path discovery', () => {

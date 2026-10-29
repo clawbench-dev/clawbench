@@ -5,6 +5,7 @@ import {
   uninstallLocalMediaFallback,
   isLocalMediaUrl,
   mediaPathFromSrc,
+  MEDIA_SETTLED_ATTR,
 } from '@/utils/localMediaFallback'
 import { gt } from '@/composables/useLocale'
 
@@ -215,6 +216,99 @@ describe('installLocalMediaFallback', () => {
     first()
     document.body.innerHTML = figure('/api/fs/raw/b.png')
     ;(document.querySelector('img') as HTMLImageElement).dispatchEvent(new Event('error'))
+    expect(document.querySelector(`.${MEDIA_MISSING_CLASS}`)).toBeNull()
+  })
+})
+
+describe('pending media placeholder (data-media-settled)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    uninstallLocalMediaFallback()
+  })
+  afterEach(() => {
+    uninstallLocalMediaFallback()
+  })
+
+  it('stamps a load, which is what ends the pending state', () => {
+    // The stylesheet shows the shimmer while `data-media-settled` is ABSENT, so
+    // this attribute is the whole transition — nothing else can express it,
+    // because `load` is a DOM event and no render pipeline sees it.
+    installLocalMediaFallback()
+    document.body.innerHTML = figure('/api/fs/raw/a.png')
+    const img = document.querySelector('img') as HTMLImageElement
+    expect(img.hasAttribute(MEDIA_SETTLED_ATTR)).toBe(false)
+
+    img.dispatchEvent(new Event('load'))
+
+    expect(img.getAttribute(MEDIA_SETTLED_ATTR)).toBe('1')
+  })
+
+  it('stamps every <img>, not just content media', () => {
+    // The attribute is document-wide on purpose: the surface whitelist lives in
+    // media-block.css, and keeping a second copy here is how the two drift.
+    // Nothing styles a non-content image by it, so stamping is harmless.
+    installLocalMediaFallback()
+    document.body.innerHTML = '<img src="/api/fs/thumb?target=a.png&w=80">'
+    const img = document.querySelector('img') as HTMLImageElement
+
+    img.dispatchEvent(new Event('load'))
+
+    expect(img.getAttribute(MEDIA_SETTLED_ATTR)).toBe('1')
+  })
+
+  it('catches an image that finished before the listener existed', () => {
+    // `load` fires once. An image that finished decoding before this module ran
+    // — a cached image painted on the first render — would never be stamped and
+    // would keep the placeholder for the rest of the session.
+    document.body.innerHTML = figure('/api/fs/raw/cached.png')
+    const img = document.querySelector('img') as HTMLImageElement
+    Object.defineProperty(img, 'complete', { value: true, configurable: true })
+    Object.defineProperty(img, 'naturalWidth', { value: 64, configurable: true })
+
+    installLocalMediaFallback()
+
+    expect(img.getAttribute(MEDIA_SETTLED_ATTR)).toBe('1')
+  })
+
+  it('does not treat a src-less or never-decoded image as settled', () => {
+    // jsdom reports `complete === true` for both, so `complete` alone would mark
+    // them settled — and a failed image would lose its placeholder.
+    document.body.innerHTML = '<img class="lightbox-img">'
+    const img = document.querySelector('img') as HTMLImageElement
+    Object.defineProperty(img, 'complete', { value: true, configurable: true })
+    Object.defineProperty(img, 'naturalWidth', { value: 0, configurable: true })
+
+    installLocalMediaFallback()
+
+    expect(img.hasAttribute(MEDIA_SETTLED_ATTR)).toBe(false)
+  })
+
+  it('a recovered image is stamped settled after the fallback stands down', () => {
+    // The fallback hides the <img> and inserts a card. When the file appears the
+    // card must go AND the pending shimmer must not come back in its place.
+    installLocalMediaFallback()
+    document.body.innerHTML = figure('/api/fs/raw/later.png')
+    const img = document.querySelector('img') as HTMLImageElement
+    img.dispatchEvent(new Event('error'))
+    expect(document.querySelector(`.${MEDIA_MISSING_CLASS}`)).not.toBeNull()
+
+    img.dispatchEvent(new Event('load'))
+
+    expect(img.getAttribute(MEDIA_SETTLED_ATTR)).toBe('1')
+    expect(img.hasAttribute('data-media-missing')).toBe(false)
+    expect(document.querySelector(`.${MEDIA_MISSING_CLASS}`)).toBeNull()
+  })
+
+  it('an error ends the pending state even when no placeholder is substituted', () => {
+    // External images get no failure card (there is no local file to name), but
+    // leaving the shimmer on would promise a load that is never coming.
+    installLocalMediaFallback()
+    document.body.innerHTML = figure('https://example.com/a.png')
+    const img = document.querySelector('img') as HTMLImageElement
+
+    img.dispatchEvent(new Event('error'))
+
+    expect(img.getAttribute(MEDIA_SETTLED_ATTR)).toBe('1')
     expect(document.querySelector(`.${MEDIA_MISSING_CLASS}`)).toBeNull()
   })
 })

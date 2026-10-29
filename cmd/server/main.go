@@ -1144,16 +1144,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// the user cancels and re-sends.
 	service.StartQueueReaper()
 
-	// Resume the sessions the previous process exit interrupted. InitDB already
-	// recorded them (a streaming=1 row at startup is an exact "died mid-turn"
-	// signal) and rewrote those rows to "cancelled + restart warning"; this
-	// starts one follow-up turn per session asking the AI to re-evaluate and
-	// continue, so a long task survives a restart without the user pressing
-	// "continue" by hand. Gated on the same switch as abnormal-end auto-continue
-	// (chat.auto_continue_enabled): resuming spends tokens without the user
-	// asking, so it must be an opt-in.
-	service.StartRestartResume()
-
 	// Start the GitHub/GitLab change poller. It is read-only and only runs when
 	// at least one project is bound to a repository; the provider factory is
 	// supplied by the handler package (which owns credential + TLS policy).
@@ -1646,6 +1636,26 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		slog.Info("shutdown drain complete")
 		close(shutdownComplete)
 	}()
+
+	// Resume the sessions the previous process exit interrupted. InitDB already
+	// recorded them (a streaming=1 row at startup is an exact "died mid-turn"
+	// signal) and rewrote those rows to "cancelled + restart warning"; this
+	// starts one follow-up turn per session asking the AI to re-evaluate and
+	// continue, so a long task survives a restart without the user pressing
+	// "continue" by hand.
+	//
+	// Deliberately started HERE, not next to the other workers: the point of its
+	// delay is to give clients time to reconnect and re-subscribe, which is only
+	// meaningful once the listener is bound. Starting it earlier would count the
+	// delay against the rest of the startup tail (DingTalk/Feishu handshakes, the
+	// file watcher walk, TLS parsing) and could begin streaming before the port
+	// even accepts connections — the resumed reply would then land in the DB with
+	// nothing rendering it live.
+	//
+	// Gated on the same switch as abnormal-end auto-continue
+	// (chat.auto_continue_enabled): resuming spends tokens without the user
+	// asking, so it must be an opt-in.
+	service.StartRestartResume()
 
 	// Start HTTP server using the pre-bound listener (blocking)
 	if scheme == schemeHTTPS {

@@ -8,6 +8,7 @@
          (path / refreshNonce change) can still revive the same element. -->
     <img
       v-if="kind === 'image'"
+      :key="mediaUrl"
       :src="mediaUrl"
       :alt="fileName"
       class="code-preview-media-img"

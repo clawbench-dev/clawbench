@@ -5,6 +5,10 @@ import { isDarkTheme } from './themeMeta'
 import { isShareMode } from '@/share/shareMode'
 import { armMermaidFigure } from '@/utils/mediaBlockFactory.ts'
 import { stampSvgFigure } from '@/utils/svgMediaFit.ts'
+// Global `t` rather than `useI18n()`: this module builds markup OUTSIDE any
+// component (a plain string assigned to innerHTML), so there is no setup
+// context to call it from — the same reason mediaBlockFactory.ts uses it.
+import { gt } from '@/composables/useLocale'
 
 // Import shared mermaid CSS (loading spinner, error, retry button styles)
 import '@/assets/mermaid.css'
@@ -116,6 +120,56 @@ function mermaidErrorHtml(errorMessage: string): string {
     return `<pre class="mermaid-error-pre">Mermaid Error: ${errorMessage}</pre><button class="mermaid-retry-btn" type="button" aria-label="Retry rendering diagram">Retry</button>`
 }
 
+/**
+ * Loading placeholder markup: a diagram-shaped skeleton, not a lone ring.
+ *
+ * Why a skeleton rather than the shared spinner: the placeholder stands in for
+ * a BLOCK of unknown shape, and a ring in the middle of an otherwise empty
+ * panel says "waiting" but nothing about what is coming — the same reason
+ * `PanelSkeleton` / `ChatSkeleton` replaced the centred ring everywhere else
+ * (design-guide §加载指示器).
+ *
+ * The shape is a FORK (one node, two children, one merge) rather than a stack
+ * of bars, because a stack reads as a paragraph skeleton. The fork is what
+ * makes the placeholder recognisable as a diagram at a glance.
+ *
+ * Deliberately NO ring alongside it: a spinner and a skeleton are two answers
+ * to the same question, and showing both reads as two things happening. The
+ * shimmer is the motion signal here.
+ *
+ * Every bar is FIXED, never randomized: the shimmer already says "loading", and
+ * a shifting layout reads as content arriving and then changing (the rule every
+ * other skeleton in the app follows). Fixed also keeps the markup
+ * byte-identical across renders, so a re-render cannot flicker the placeholder.
+ *
+ * Everything visible is `aria-hidden`; the single `role="status"` line carries
+ * the announcement, because otherwise a screen reader walking into the diagram
+ * position would hear nothing at all for the seconds the render takes.
+ */
+function mermaidLoadingHtml(): string {
+    const label = gt('media.diagramLoading')
+    // A node is a box with a label inside it — that is what makes the skeleton
+    // read as a DIAGRAM rather than as a row of grey blocks.
+    const node = (extra = '') =>
+        `<span class="mermaid-skeleton-node${extra}">`
+        + '<span class="mermaid-skeleton-label"></span>'
+        + '</span>'
+    return '<div class="mermaid-loading" role="status" aria-live="polite">'
+        + `<span class="mermaid-loading-sr">${escapeHtml(label)}</span>`
+        + '<div class="mermaid-skeleton" aria-hidden="true">'
+        // Root → fork → two children → merge → sink. The edges are CSS
+        // pseudo-elements on these elements (see mermaid.css); the markup only
+        // carries the structure.
+        + node(' mermaid-skeleton-node--root')
+        + '<span class="mermaid-skeleton-row">'
+        + node()
+        + node()
+        + '</span>'
+        + node(' mermaid-skeleton-node--sink')
+        + '</div>'
+        + '</div>'
+}
+
 /** Replace a mermaid container with a <pre class="mermaid"> for re-rendering */
 function retryMermaidBlock(container: HTMLElement): void {
     const source = container.dataset.mermaid
@@ -216,7 +270,7 @@ export async function renderMermaidInElement(
         if (srcLine) container.setAttribute('data-source-line', srcLine)
         const srcEnd = (block as HTMLElement).getAttribute('data-source-end')
         if (srcEnd) container.setAttribute('data-source-end', srcEnd)
-        container.innerHTML = '<div class="mermaid-loading"><span class="li-spinner mermaid-spinner"></span></div>'
+        container.innerHTML = mermaidLoadingHtml()
         ;(block as Element).replaceWith(container)
         containers.push({ container, source })
     })

@@ -2381,6 +2381,10 @@ export default {
     // be loaded, instead of a silent broken-image glyph or an empty pane. Every
     // media surface renders the shared MediaLoadError.vue.
     loadFailed: 'Media failed to load',
+    // Announced while a Mermaid diagram renders. The visible placeholder is
+    // purely decorative (skeleton nodes), so this is the only semantic content
+    // — without it a screen reader hears nothing for those seconds.
+    diagramLoading: 'Rendering diagram',
   },
   upload: {
     failed: 'Upload failed: {error}',

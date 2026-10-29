@@ -1553,6 +1553,16 @@ export async function exportMarkdownToHtml(options: ExportOptions): Promise<Expo
             img.removeAttribute('data-attach-src')
         }
 
+        // The pending-media placeholder is driven by the ABSENCE of
+        // `data-media-settled` (see media-block.css), which the app stamps from a
+        // live `load` event. An exported document has no such listener, so every
+        // image would keep the placeholder forever and the export would look
+        // empty. Images are already inlined as data URIs by this point, so mark
+        // them resolved unconditionally.
+        for (const img of Array.from(contentEl.querySelectorAll('img'))) {
+            img.setAttribute('data-media-settled', '1')
+        }
+
         // Restore external links to real anchors.
         //
         // In the app they are <span data-href> so a long-press on Android selects
