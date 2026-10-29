@@ -51,11 +51,12 @@ func (r *launchRecorder) count() int {
 	return len(r.calls)
 }
 
-// at returns the i-th recorded launch.
-func (r *launchRecorder) at(i int) LaunchConfig {
+// first returns the earliest recorded launch. Every current test resumes exactly
+// one session, so a general index would be an unused knob.
+func (r *launchRecorder) first() LaunchConfig {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.calls[i]
+	return r.calls[0]
 }
 
 // stubRestartLaunch replaces the single-chat launch seam and records the configs.
@@ -146,13 +147,13 @@ func TestResumeInterruptedSession_SingleChat(t *testing.T) {
 	if launched.count() != 1 {
 		t.Fatalf("expected exactly one launched turn, got %d", launched.count())
 	}
-	if launched.at(0).SessionID != sid {
-		t.Fatalf("launched for the wrong session: got %q want %q", launched.at(0).SessionID, sid)
+	if launched.first().SessionID != sid {
+		t.Fatalf("launched for the wrong session: got %q want %q", launched.first().SessionID, sid)
 	}
-	if launched.at(0).Message != RestartResumePrompt() {
-		t.Fatalf("launched with the wrong prompt: got %q want %q", launched.at(0).Message, RestartResumePrompt())
+	if launched.first().Message != RestartResumePrompt() {
+		t.Fatalf("launched with the wrong prompt: got %q want %q", launched.first().Message, RestartResumePrompt())
 	}
-	if launched.at(0).RunCtx == nil {
+	if launched.first().RunCtx == nil {
 		t.Fatal("the launched turn must carry the claim's context, or a cancel cannot reach it")
 	}
 
@@ -338,8 +339,8 @@ func TestStartRestartResume_ResumesWhenEnabled(t *testing.T) {
 	}
 
 	waitForCount(t, 1, func() int { return launched.count() })
-	if launched.at(0).SessionID != sid {
-		t.Fatalf("resumed the wrong session: got %q want %q", launched.at(0).SessionID, sid)
+	if launched.first().SessionID != sid {
+		t.Fatalf("resumed the wrong session: got %q want %q", launched.first().SessionID, sid)
 	}
 }
 
