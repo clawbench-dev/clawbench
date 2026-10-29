@@ -87,6 +87,7 @@
         <SettingsItem
           v-for="item in card.items"
           :key="item.key + (item.key === 'forge.enabled' ? '-' + configRenderEpoch : '')"
+          :setting-key="item.key"
           :label="getItemLabel(item)"
           :description="item.descriptionKey ? t(item.descriptionKey) : ''"
           :type="item.type"

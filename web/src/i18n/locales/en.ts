@@ -3270,7 +3270,7 @@ export default {
       desktopNotificationDesc: 'Show a system notification when the window is minimized or in the background — session completions, task completions, approvals and repository events (independent of Push Mode)',
       desktopSystemSection: 'Desktop & System',
       floatingStatusWindow: 'Floating Status Window',
-      floatingStatusWindowDesc: 'Show a floating status capsule on screen when the app is in background (requires overlay permission)',
+      floatingStatusWindowDesc: 'Show a session status capsule while the app is in the background. Android shows a floating bubble (requires overlay permission); desktop shows an always-on-top capsule with a tray icon',
       liveUpdate: 'Live Updates',
       liveUpdateDesc: 'Show the session status as an ongoing chip on the lock screen and in the status bar (Android 16+). Requires the system "Live Updates" notification permission',
       mobileNotifySection: 'Mobile Notifications',

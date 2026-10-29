@@ -3266,7 +3266,7 @@ export default {
       desktopNotificationDesc: '窗口最小化或不在前台时，用系统通知提醒会话完成、任务完成、需要审批和仓库事件（不受「推送模式」影响）',
       desktopSystemSection: '桌面与系统',
       floatingStatusWindow: '桌面悬浮状态窗',
-      floatingStatusWindowDesc: '主界面在后台时，桌面显示会话运行状态胶囊（需系统悬浮窗权限）',
+      floatingStatusWindowDesc: '主界面在后台时显示会话运行状态胶囊。Android 以悬浮球显示（需系统悬浮窗权限），桌面端显示为置顶胶囊与托盘图标',
       liveUpdate: '灵动岛',
       liveUpdateDesc: '在锁屏和状态栏持续展示会话状态，Android 16+ 生效。需要开启系统的「实时更新」通知权限',
       mobileNotifySection: '移动端通知',

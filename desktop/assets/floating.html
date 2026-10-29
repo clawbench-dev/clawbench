@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <!-- The capsule is a fixed, self-contained document: no remote content, no forms,
@@ -121,13 +121,13 @@
     <div id="logo"><i></i></div>
     <div id="lines">
       <div class="row primary" id="row-primary">
-        <span class="seg" id="seg-running"><span class="dot running"></span><span id="lbl-running">执行中</span> <span class="n" id="n-running">0</span></span>
-        <span class="seg" id="seg-pending"><span class="dot pending"></span><span id="lbl-pending">待审批</span> <span class="n" id="n-pending">0</span></span>
-        <span class="seg" id="seg-unread"><span class="dot unread"></span><span id="lbl-unread">未读</span> <span class="n" id="n-unread">0</span></span>
-        <span id="idle">空闲</span>
+        <span class="seg" id="seg-running"><span class="dot running"></span><span id="lbl-running">Running</span> <span class="n" id="n-running">0</span></span>
+        <span class="seg" id="seg-pending"><span class="dot pending"></span><span id="lbl-pending">Pending</span> <span class="n" id="n-pending">0</span></span>
+        <span class="seg" id="seg-unread"><span class="dot unread"></span><span id="lbl-unread">Unread</span> <span class="n" id="n-unread">0</span></span>
+        <span id="idle">Idle</span>
       </div>
     </div>
-    <button id="close" title="隐藏悬浮窗" aria-label="hide">×</button>
+    <button id="close" title="" aria-label="hide">×</button>
   </div>
 </div>
 <script>
@@ -169,6 +169,14 @@
     if (l.idle) els.idle.textContent = l.idle;
     document.documentElement.lang = state.lang === 'en' ? 'en' : 'zh';
     if (l.hint) els.pill.title = l.hint;
+    // The close button is a 16px disc with no text, so its accessible name IS
+    // the tooltip — both must come from the locale table. They used to be a
+    // hardcoded Chinese literal in the markup, which an English user saw on
+    // hover (the markup is not scanned by the main-process i18n guard).
+    if (l.closeLabel) {
+      els.close.title = l.closeLabel;
+      els.close.setAttribute('aria-label', l.closeLabel);
+    }
 
     var idle = !n.running && !n.pending && !n.unread;
     els.running.hidden = idle || n.running === 0;

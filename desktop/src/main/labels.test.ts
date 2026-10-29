@@ -15,6 +15,7 @@ import {
   resolveNativeLanguage,
   versionGateLabels,
   certificateLabels,
+  floatingCapsuleLabels,
 } from './labels'
 
 describe('normalizeNativeLanguage', () => {
@@ -78,6 +79,46 @@ describe('versionGateLabels', () => {
     const l = versionGateLabels('en')
     for (const v of Object.values(l)) {
       expect(v).not.toMatch(/[\u4e00-\u9fff]/)
+    }
+  })
+})
+
+describe('floatingCapsuleLabels', () => {
+  it('returns Chinese wording for zh locales', () => {
+    const l = floatingCapsuleLabels('zh-CN')
+    expect(l.running).toBe('执行中')
+    expect(l.pending).toBe('待审批')
+    expect(l.unread).toBe('未读')
+    expect(l.idle).toBe('空闲')
+  })
+
+  it('returns English wording for non-Chinese locales', () => {
+    const l = floatingCapsuleLabels('en')
+    expect(l.running).toBe('Running')
+    expect(l.pending).toBe('Pending')
+    expect(l.unread).toBe('Unread')
+    expect(l.idle).toBe('Idle')
+  })
+
+  it('has no hardcoded Chinese left in the English table', () => {
+    // The capsule's close button renders `closeLabel` as its only accessible
+    // name, so a Chinese value here reaches an English user on hover.
+    const l = floatingCapsuleLabels('en')
+    for (const [key, v] of Object.entries(l)) {
+      expect(v, `floatingCapsuleLabels('en').${key} must be English`).not.toMatch(/[\u4e00-\u9fff]/)
+    }
+  })
+
+  it('carries every slot the capsule renders', () => {
+    // A missing key would render `undefined` into the DOM (the document assigns
+    // textContent directly), so pin the full set rather than a sample.
+    const l = floatingCapsuleLabels('en')
+    for (const key of [
+      'running', 'pending', 'unread', 'idle',
+      'openMain', 'hideMain', 'showFloating', 'hideFloating',
+      'disableFloating', 'resetPosition', 'hide', 'quit', 'hint', 'closeLabel',
+    ] as const) {
+      expect(l[key], `floatingCapsuleLabels is missing ${key}`).toBeTruthy()
     }
   })
 })

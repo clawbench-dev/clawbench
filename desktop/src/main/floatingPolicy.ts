@@ -73,8 +73,14 @@ export const OVERVIEW_PATH = '/api/ai/sessions/overview'
  *
  * `serverUrl` is what the main window navigated to, so it may carry a path
  * prefix (a server behind a reverse proxy). The API is rooted at the origin
- * PLUS that prefix, which is why the path is kept and only a trailing slash is
+ * PLUS that prefix, so the whole path is kept and only a trailing slash is
  * dropped — resolving against the origin alone would 404 on a prefixed install.
+ *
+ * The prefix is the FULL pathname, not its parent directory: `new URL()`'s
+ * `pathname` on a navigation URL is a directory, not a filename, so stripping a
+ * trailing segment (the usual "dirname" move) would turn `/a/b` into `/a` and
+ * 404. Today `buildServerUrl` only ever produces `scheme://host:port`, but a
+ * reverse-proxied install is exactly the case this exists for.
  */
 export function overviewUrl(serverUrl: string | undefined | null): string | null {
   if (!serverUrl || !/^https?:\/\//i.test(serverUrl)) return null
@@ -84,8 +90,8 @@ export function overviewUrl(serverUrl: string | undefined | null): string | null
   } catch {
     return null
   }
-  const base = url.pathname.endsWith('/') ? url.pathname : `${url.pathname.replace(/\/[^/]*$/, '/')}`
-  return `${url.protocol}//${url.host}${base.replace(/\/$/, '')}${OVERVIEW_PATH}`
+  const base = url.pathname.replace(/\/+$/, '')
+  return `${url.protocol}//${url.host}${base}${OVERVIEW_PATH}`
 }
 
 /** Every session object across every project group; null-safe on any payload. */

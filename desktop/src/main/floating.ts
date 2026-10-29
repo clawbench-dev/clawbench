@@ -21,10 +21,11 @@ import {
   releaseLooksLost,
   resolveColors,
   sanitizeColors,
+  sanitizeStats,
   statsChanged,
   trayTooltip,
 } from './floatingPolicy'
-import type { FloatingColors, FloatingStats, Rect, ResolvedColors } from './floatingPolicy'
+import type { FloatingStats, Rect, ResolvedColors } from './floatingPolicy'
 
 /**
  * The always-on-top status capsule — the desktop counterpart of the Android
@@ -49,7 +50,12 @@ import type { FloatingColors, FloatingStats, Rect, ResolvedColors } from './floa
 
 const TAG = 'Floating'
 
-/** Baseline refresh interval while the capsule is up. */
+/**
+ * Baseline refresh interval.
+ *
+ * Runs while anything shows the counters — the capsule OR the tray icon — so a
+ * hidden capsule still keeps its tooltip current.
+ */
 const POLL_MS = 15_000
 /** How long to wait after an event before re-polling (coalesces a burst). */
 const ACTIVITY_DEBOUNCE_MS = 1_200
@@ -57,12 +63,20 @@ const ACTIVITY_DEBOUNCE_MS = 1_200
 const REQUEST_TIMEOUT_MS = 10_000
 /** Cursor poll while dragging (~60Hz). */
 const DRAG_TICK_MS = 16
-/** Press/release under this travel is a click (see `floatingPolicy.CLICK_SLOP_PX`). */
+/** A drag this long is treated as abandoned (release never arrived). */
 const DRAG_MAX_MS = 15_000
 /** A press whose release was lost is resolved after this much cursor stillness. */
 const DRAG_STILL_MS = 2_000
 /** Persist debounce: a drag fires `moved` continuously. */
 const SAVE_DEBOUNCE_MS = 400
+/**
+ * How long `initFloating` waits for the main window's `show` before building
+ * the capsule anyway.
+ *
+ * Only a fail-safe: the normal path is the `show` event. It must NOT resurrect
+ * a capsule the user has since dismissed — see `startupIntentRevoked`.
+ */
+const STARTUP_SHOW_FALLBACK_MS = 4_000
 
 /** Capsule window, or null when hidden. */
 let win: BrowserWindow | null = null
@@ -70,8 +84,17 @@ let stats: FloatingStats = { running: 0, pending: 0, unread: 0 }
 let colors: ResolvedColors = resolveColors(null)
 /** Set once the capsule document has installed its `floating:state` listener. */
 let pageReady = false
-/** Whether a state push is waiting for the document to become ready. */
-let dirty = false
+/**
+ * Set when the user has explicitly hidden the capsule (or turned the feature
+ * off) since the last time it was shown.
+ *
+ * Guards the startup fail-safe: `initFloating` schedules a delayed
+ * `showCapsule()` in case the main window's `show` never arrives, and that
+ * timer used to run unconditionally. A user who dismissed the capsule from the
+ * tray within those few seconds got it back, with the tray already destroyed
+ * and nothing on screen explaining why.
+ */
+let startupIntentRevoked = false
 let saveTimer: NodeJS.Timeout | null = null
 let pollTimer: NodeJS.Timeout | null = null
 let activityTimer: NodeJS.Timeout | null = null
@@ -226,17 +249,24 @@ function logoUrl(): string {
   return ''
 }
 
+/**
+ * Push the current state into the capsule document, and keep the tray in step.
+ *
+ * When the document has not announced readiness yet the send is simply skipped:
+ * the `floating:ready` handler calls this again, and `did-finish-load` covers
+ * the cached-document case. No queue is needed, because every field here is a
+ * full snapshot rather than a delta.
+ *
+ * The tray is refreshed even with no window: it is the surface that outlives
+ * the capsule, so its tooltip has to track the counters on its own.
+ */
 function pushState(): void {
-  if (!isAlive()) return
-  if (!pageReady) {
-    dirty = true
-    return
-  }
-  dirty = false
-  try {
-    win!.webContents.send('floating:state', statePayload())
-  } catch {
-    /* destroyed mid-send */
+  if (isAlive() && pageReady) {
+    try {
+      win!.webContents.send('floating:state', statePayload())
+    } catch {
+      /* destroyed mid-send */
+    }
   }
   syncTray()
 }
@@ -307,6 +337,10 @@ function fetchOverview(url: string, cookie: string | undefined): Promise<unknown
  * blanks itself because the laptop just lost its VPN would be worse than one
  * showing slightly stale counts, which is also how the Android controller
  * behaves between refreshes.
+ *
+ * Runs whether or not the capsule window is up: the tray icon outlives it, and
+ * its tooltip shows the same three counters, so a hidden capsule must not stop
+ * the numbers moving (see `wantsPolling`).
  */
 export async function refreshFloatingStats(reason = 'poll'): Promise<void> {
   const url = overviewUrl(getStoreSafe().serverUrl)
@@ -315,8 +349,8 @@ export async function refreshFloatingStats(reason = 'poll'): Promise<void> {
   try {
     const cookie = await getCookieHeaderForUrl(url)
     const overview = await fetchOverview(url, cookie)
-    // A newer request (or a hidden capsule) superseded this one.
-    if (seq !== requestSeq || !isAlive() || overview === null) return
+    // A newer request superseded this one.
+    if (seq !== requestSeq || overview === null) return
     const next = computeStats(overview)
     if (!statsChanged(next, stats)) return
     stats = next
@@ -336,18 +370,33 @@ export async function refreshFloatingStats(reason = 'poll'): Promise<void> {
  * Something happened that is likely to change the counters.
  *
  * Android refreshes on its own WebSocket events; the desktop shell has no native
- * event channel (the page owns the socket), so the notification path is what
- * stands in for it — the page calls `native:notify` exactly when a session
- * starts, waits for approval, finishes or goes unread. Debounced, because a
- * finishing batch fires one event per session.
+ * event channel (the page owns the socket), so the web app reports its own
+ * terminal events here. Debounced, because a finishing batch fires one event per
+ * session.
+ *
+ * Deliberately NOT hung off `native:notify`: that call is gated by the
+ * "desktop notifications" setting and by page focus (see
+ * `useNotification.showBrowserNotification`), so a user who turned notifications
+ * off — or who was looking at the window — would leave the capsule on the 15s
+ * poll alone. The counters are a different concern from the popup.
  */
 export function noteFloatingActivity(): void {
-  if (!isAlive()) return
+  if (!wantsPolling()) return
   if (activityTimer) clearTimeout(activityTimer)
   activityTimer = setTimeout(() => {
     activityTimer = null
     void refreshFloatingStats('activity')
   }, ACTIVITY_DEBOUNCE_MS)
+}
+
+/**
+ * Whether anything on screen still shows the counters.
+ *
+ * True while the capsule is visible OR a tray icon exists. Only when both are
+ * gone does polling stop — that is the state where nothing would repaint.
+ */
+function wantsPolling(): boolean {
+  return isFloatingAlive() || !!tray
 }
 
 function startPolling(): void {
@@ -356,7 +405,14 @@ function startPolling(): void {
   void refreshFloatingStats('open')
 }
 
-function stopPolling(): void {
+/**
+ * Stop polling only if nothing is left to update.
+ *
+ * Called on capsule teardown, which is NOT the same as "the feature is off":
+ * the tray usually survives, and its tooltip is the only remaining surface.
+ */
+function stopPollingIfIdle(): void {
+  if (wantsPolling()) return
   if (pollTimer) clearInterval(pollTimer)
   pollTimer = null
   if (activityTimer) clearTimeout(activityTimer)
@@ -421,9 +477,9 @@ function createWindow(): BrowserWindow | null {
 
 function destroyWindow(): void {
   clearDrag()
-  stopPolling()
   if (!isAlive()) {
     pageReady = false
+    stopPollingIfIdle()
     return
   }
   persistBounds()
@@ -435,9 +491,12 @@ function destroyWindow(): void {
   } catch {
     /* already gone */
   }
+  // After the teardown, so the tray (if it survives) is what decides whether
+  // the counters still need a source.
+  stopPollingIfIdle()
 }
 
-/** Show or hide the capsule, persisting the preference. */
+/** The tray icon for the capsule's feature. */
 function trayImage(): Electron.NativeImage {
   try {
     const img = nativeImage.createFromPath(path.join(process.resourcesPath, 'logo.png'))
@@ -456,7 +515,9 @@ function trayMenu(): Menu {
   return Menu.buildFromTemplate([
     { label: capsuleOn ? t.hideFloating : t.showFloating, click: () => toggleCapsule() },
     { label: t.openMain, enabled: !mainOnScreen, click: () => openMainWindow() },
-    { label: t.hideMain, enabled: mainOnScreen, click: () => main!.hide() },
+    // `enabled` is evaluated when the menu is BUILT, but the click can land
+    // seconds later, after the window is gone. `hideMainWindow` re-checks.
+    { label: t.hideMain, enabled: mainOnScreen, click: () => hideMainWindow() },
     { type: 'separator' },
     { label: t.resetPosition, click: () => resetCapsulePosition() },
     { type: 'separator' },
@@ -519,6 +580,9 @@ export function hasFloatingTray(): boolean {
 
 /** Show the capsule window without touching the feature flag. */
 function showCapsule(): void {
+  // An explicit show clears the "the user dismissed this" marker, so a later
+  // startup fail-safe cannot mistake a deliberate show for a stale one.
+  startupIntentRevoked = false
   const main = getMainWindow()
   const mainWasVisible = !!main && !main.isDestroyed() && main.isVisible()
   const w = createWindow()
@@ -540,6 +604,9 @@ function showCapsule(): void {
 
 /** Hide the capsule window; the tray remains and is the way back. */
 function hideCapsule(): void {
+  // Remember that this was the user's call, not a transient state. The startup
+  // fail-safe in `initFloating` consults this before resurrecting the capsule.
+  startupIntentRevoked = true
   destroyWindow()
   syncTray()
 }
@@ -562,6 +629,10 @@ export function applyFloatingEnabled(enabled: boolean): void {
   } else {
     // Turning the FEATURE off removes the tray too, so nothing would be left to
     // click: make sure the main window is on screen first.
+    //
+    // `startupIntentRevoked` is set before the teardown so the startup
+    // fail-safe cannot re-show a capsule the user just turned off.
+    startupIntentRevoked = true
     destroyTray()
     const w = getMainWindow()
     if (!w || w.isDestroyed()) {
@@ -573,6 +644,27 @@ export function applyFloatingEnabled(enabled: boolean): void {
     hideCapsule()
   }
   record('I', TAG, `capsule feature ${on ? 'on' : 'off'}`)
+  // The web app owns the settings row; tell it what actually happened so a
+  // switch flipped from the tray menu does not leave the UI out of date.
+  notifyEnabledChanged(on)
+}
+
+/**
+ * Tell the renderer that the feature flag changed outside its own settings row.
+ *
+ * The tray and the capsule's own context menu can both turn the feature off,
+ * which the web app has no way of observing (it only writes). Pushing the
+ * authoritative value back keeps the settings switch from claiming the capsule
+ * is on when the tray just removed it.
+ */
+function notifyEnabledChanged(enabled: boolean): void {
+  const w = getMainWindow()
+  if (!w || w.isDestroyed()) return
+  try {
+    w.webContents.send('clawbench-floating-enabled-changed', enabled)
+  } catch {
+    /* renderer gone */
+  }
 }
 
 /**
@@ -597,14 +689,15 @@ export function updateFloatingColors(raw: unknown): void {
   pushState()
 }
 
-/** Counters supplied by the page. Only used by tests and the dev hook. */
+/**
+ * Counters supplied by the page. Only used by tests and the dev hook.
+ *
+ * Routed through `sanitizeStats` so the dev hook cannot display a value the
+ * polled path would have rejected (this used to clamp on its own, without the
+ * `MAX_COUNT` ceiling).
+ */
 export function setFloatingStatsOverride(raw: unknown): void {
-  const src = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
-  const next = {
-    running: Math.max(0, Math.floor(Number(src.running) || 0)),
-    pending: Math.max(0, Math.floor(Number(src.pending) || 0)),
-    unread: Math.max(0, Math.floor(Number(src.unread) || 0)),
-  }
+  const next = sanitizeStats(raw)
   if (!statsChanged(next, stats)) return
   stats = next
   pushState()
@@ -736,6 +829,19 @@ function resetCapsulePosition(): void {
   }
 }
 
+/**
+ * Hide the main window, if it is still there.
+ *
+ * The menus compute `enabled` when they are BUILT, but a click can land seconds
+ * later — after the user closed the window some other way. `main!.hide()` would
+ * then throw on a destroyed window.
+ */
+function hideMainWindow(): void {
+  const w = getMainWindow()
+  if (!w || w.isDestroyed()) return
+  w.hide()
+}
+
 function popupMenu(): void {
   if (!isAlive()) return
   const t = labels()
@@ -746,7 +852,7 @@ function popupMenu(): void {
     // Hiding (not minimizing) is what the request asks for: the window leaves
     // the screen AND Alt-Tab, and the capsule is the way back — which is exactly
     // why hiding the capsule below refuses to strand a hidden window.
-    { label: t.hideMain, enabled: mainOnScreen, click: () => main!.hide() },
+    { label: t.hideMain, enabled: mainOnScreen, click: () => hideMainWindow() },
     { label: t.resetPosition, click: () => resetCapsulePosition() },
     { type: 'separator' },
     { label: t.hide, click: () => hideCapsule() },
@@ -765,31 +871,51 @@ export function registerFloatingIpc(): void {
   // Dev/test hook: lets a page (or the console) drive the capsule without a
   // server. The poll is the production source of these numbers.
   ipcMain.on('native:floating-stats', (_e, raw) => setFloatingStatsOverride(raw))
+  // "Session state probably changed" — the web app reports its own terminal WS
+  // events here.
+  //
+  // A dedicated channel rather than a side effect of `native:notify`: that call
+  // is gated by the desktopNotification setting and by page focus, so a user
+  // with notifications off (or who was looking at the window) never produced
+  // one, leaving the capsule on the 15s poll alone. The counters and the popup
+  // are separate concerns.
+  ipcMain.on('native:floating-activity', () => noteFloatingActivity())
+  // Answers "is the FEATURE on", which is what the settings row renders. The
+  // capsule's visibility is a separate question: a user who hid the capsule
+  // from the tray still has the feature on, and the tray is their way back.
   ipcMain.on('native:floating-is-enabled', (e) => {
-    e.returnValue = isFloatingAlive()
+    e.returnValue = isEnabled()
   })
 
   // ── from the capsule itself (whitelisted in preload/floating.ts) ──
+  //
+  // Every one of these is sender-checked. The capsule shares an IPC namespace
+  // with the main window, so without the check any renderer that can reach
+  // `ipcRenderer` could quit the app (`floating:quit`) or hide the capsule.
+  // Today the main window's preload exposes no raw send, but that is a property
+  // of the preload, not of these handlers.
+  const fromCapsule = (e: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): boolean =>
+    isAlive() && e.sender === win!.webContents
+
   ipcMain.on('floating:ready', (e) => {
-    if (isAlive() && e.sender === win!.webContents) {
-      pageReady = true
-      pushState()
-    }
+    if (!fromCapsule(e)) return
+    pageReady = true
+    pushState()
   })
-  ipcMain.on('floating:activate', () => openMainWindow())
-  ipcMain.on('floating:context', () => popupMenu())
-  ipcMain.on('floating:hide', () => hideCapsule())
-  ipcMain.on('floating:quit', () => app.quit())
+  ipcMain.on('floating:activate', (e) => { if (fromCapsule(e)) openMainWindow() })
+  ipcMain.on('floating:context', (e) => { if (fromCapsule(e)) popupMenu() })
+  ipcMain.on('floating:hide', (e) => { if (fromCapsule(e)) hideCapsule() })
+  ipcMain.on('floating:quit', (e) => { if (fromCapsule(e)) app.quit() })
   ipcMain.on('floating:drag-start', (e, x, y) => {
-    if (isAlive() && e.sender === win!.webContents) startDrag(Number(x), Number(y))
+    if (fromCapsule(e)) startDrag(Number(x), Number(y))
   })
   ipcMain.on('floating:drag-end', (e) => {
-    if (isAlive() && e.sender === win!.webContents) endDrag()
+    if (fromCapsule(e)) endDrag()
   })
   // The capsule knows its natural size (font, language, counter widths); the
   // main process only clamps it back onto a display.
-  ipcMain.handle('floating:resize', (_e, width, height) => {
-    if (!isAlive()) return false
+  ipcMain.handle('floating:resize', (e, width, height) => {
+    if (!fromCapsule(e)) return false
     const w = Math.max(120, Math.min(520, Math.round(Number(width) || DEFAULT_WIDTH)))
     const h = Math.max(40, Math.min(200, Math.round(Number(height) || DEFAULT_HEIGHT)))
     const b = win!.getBounds()
@@ -820,10 +946,17 @@ export function initFloating(): void {
     if (!main || main.isDestroyed() || main.isVisible()) {
       showCapsule()
     } else {
-      main.once('show', () => showCapsule())
+      main.once('show', () => {
+        if (startupIntentRevoked) return
+        showCapsule()
+      })
       setTimeout(() => {
+        // The fail-safe must not resurrect a capsule the user dismissed while
+        // this timer was pending (tray "hide" / "turn off" both land here), nor
+        // one whose feature flag has since been turned off.
+        if (startupIntentRevoked || !isEnabled()) return
         if (!isFloatingAlive()) showCapsule()
-      }, 4000)
+      }, STARTUP_SHOW_FALLBACK_MS)
     }
   }
   // A monitor unplugged or a resolution change can strand the capsule off-screen.

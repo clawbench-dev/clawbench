@@ -928,6 +928,7 @@ jobs:
             'payload.json',
             'resources/app.asar',
             'resources/login.html',
+            'resources/floating.html',
             'resources/logo.png',
             'resources/app.asar.unpacked/node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node',
             'resources/app.asar.unpacked/node_modules/cpu-features/build/Release/cpufeatures.node',
@@ -1303,6 +1304,7 @@ jobs:
               payload.json \
               resources/app.asar \
               resources/login.html \
+              resources/floating.html \
               resources/logo.png \
               resources/app.asar.unpacked/node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node \
               resources/app.asar.unpacked/node_modules/cpu-features/build/Release/cpufeatures.node \

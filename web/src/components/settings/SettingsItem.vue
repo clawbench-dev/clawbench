@@ -1,6 +1,6 @@
 <template>
   <div v-if="type === 'header'" class="settings-item__header">{{ label }}</div>
-  <div v-else class="settings-item" :class="{ 'settings-item--disabled': disabled, 'settings-item--no-divider': noDivider, 'settings-item--warn': summaryModelStatus === 'unconfigured' }" @click="handleClick">
+  <div v-else class="settings-item" :data-settings-key="settingKey" :class="{ 'settings-item--disabled': disabled, 'settings-item--no-divider': noDivider, 'settings-item--warn': summaryModelStatus === 'unconfigured' }" @click="handleClick">
     <div class="settings-item__left">
       <div class="settings-item__text">
         <span class="settings-item__label">{{ label }}</span>
@@ -370,6 +370,15 @@ export type OptionPreview = ColorPreview | TerminalPreview
 
 interface Props {
   label: string
+  /**
+   * The config key this row edits, mirrored onto the root element as
+   * `data-settings-key`.
+   *
+   * Tests need a stable hook: rows are rendered in declaration order and their
+   * classes are shared, so a positional selector breaks the moment a row is
+   * added or reordered (and silently selects the wrong one rather than failing).
+   */
+  settingKey?: string
   description?: string
   /** Caveat about WHEN an edit takes effect (e.g. "may not apply mid-session").
    *  Always visible in the row, unlike `warning` which only shows inside the

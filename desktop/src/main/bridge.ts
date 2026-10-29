@@ -29,7 +29,7 @@ import { resetCertificateTrust } from './certificate'
 import { applyZoomFactor } from './zoom'
 import { classifyUrl } from './urlPolicy'
 import { shouldUseFramelessWindow } from './windowChrome'
-import { noteFloatingActivity, registerFloatingIpc, updateFloatingColors } from './floating'
+import { registerFloatingIpc, updateFloatingColors } from './floating'
 
 export function registerBridge(): void {
   initStore()
@@ -210,10 +210,6 @@ export function registerBridge(): void {
   ipcMain.handle('native:reload-app', () => clearCacheAndReload('cache'))
   ipcMain.handle('native:notify', (_e, title: string, body: string, nav?: unknown) => {
     showTerminalNotification(title, body, nav as NotificationNav | undefined)
-    // The capsule has no WebSocket of its own (the page owns the socket), so a
-    // notification is the shell's only signal that session state just changed —
-    // the desktop stand-in for Android's event-driven overview refresh.
-    noteFloatingActivity()
     return Promise.resolve()
   })
   // Dismiss a notification still in the OS tray once its subject is read.

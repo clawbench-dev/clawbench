@@ -45,6 +45,15 @@ ipcRenderer.on('clawbench-port-rebound', (_e, detail: unknown) => {
   window.dispatchEvent(new CustomEvent('clawbench-port-rebound', { detail }))
 })
 
+// The floating capsule's feature flag changed outside the settings row — the
+// tray menu and the capsule's own context menu can both turn it off. Forwarded
+// as a CustomEvent (the renderer listens to the window, not to IPC) so
+// `useSettingsConfig` can write the authoritative value back into localConfig;
+// without it the settings switch keeps claiming the capsule is on.
+ipcRenderer.on('clawbench-floating-enabled-changed', (_e, detail: unknown) => {
+  window.dispatchEvent(new CustomEvent('clawbench-floating-enabled-changed', { detail }))
+})
+
 contextBridge.exposeInMainWorld('ClawBenchNative', {
   // sync
   isNativeApp: () => true,
@@ -162,11 +171,14 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   // Fire-and-forget: the capsule is display-only, and the page must never await a
   // window the user may have hidden.
   //
-  // Note there is NO stats setter in the production path: the capsule polls
-  // /api/ai/sessions/overview and computes the counters itself, exactly like the
-  // Android controller, so the web UI has nothing to keep in sync.
-  setFloatingEnabled: (enabled: boolean) => { ipcRenderer.send('native:floating-enabled', !!enabled) },
-  isFloatingEnabled: () => {
+  // `setFloatingWindowEnabled` is the name the web app already calls for the
+  // Android bubble (useSettingsConfig.ts's `floatingStatusWindow` side effect),
+  // so it is exposed under that name here too. Without it the settings row is a
+  // switch that does nothing on desktop — the exact "dead switch" the
+  // `androidOnly` flag was introduced to prevent, except in reverse.
+  setFloatingWindowEnabled: (enabled: boolean) => { ipcRenderer.send('native:floating-enabled', !!enabled) },
+  /** Whether the FEATURE is on (not whether the capsule is currently visible). */
+  isFloatingWindowEnabled: () => {
     try {
       return ipcRenderer.sendSync('native:floating-is-enabled') === true
     } catch {
@@ -176,6 +188,15 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   // Palette override for the capsule alone, for hosts that theme it separately
   // from the app-wide setTheme() call.
   setFloatingTheme: (colors: unknown) => { ipcRenderer.send('native:floating-theme', colors) },
+  /**
+   * Report that session state probably changed (a WS terminal event landed).
+   *
+   * Deliberately separate from `nativeNotify`: that call is gated by the
+   * desktopNotification setting and by page focus, so routing the capsule's
+   * refresh through it meant a user with notifications off never got an
+   * event-driven update.
+   */
+  notifyFloatingActivity: () => { ipcRenderer.send('native:floating-activity') },
   // Dev/diagnostic hook: drives the capsule without a server. The poll owns these
   // numbers in normal use, and a poll response replaces whatever is set here.
   setFloatingStats: (stats: unknown) => { ipcRenderer.send('native:floating-stats', stats) },

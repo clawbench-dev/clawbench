@@ -683,16 +683,31 @@ describe('settingsFieldMap', () => {
     }
   })
 
-  it('desktop/system notification items are Android-only, not merely app-only', () => {
-    // `appOnly` is filtered as `!isAppMode`, and BOTH native hosts report
-    // isAppMode === true — so an appOnly row also renders in the Electron
-    // desktop shell, as two switches whose Android bridge methods do not exist
-    // there. These rows must use `androidOnly` instead.
+  it('the floating-window row is app-only (both hosts implement it), the Live Updates chip is Android-only', () => {
+    // These two rows live in the same card but are NOT the same platform:
+    //
+    // - 桌面悬浮状态窗 is implemented by BOTH hosts. Android draws a bubble over
+    //   the launcher; the Electron shell draws an always-on-top capsule plus a
+    //   tray icon (`desktop/src/main/floating.ts`). Marking it `androidOnly` hid
+    //   the only switch that can turn the desktop feature on, and the tray's
+    //   own "turn off" then had no way back.
+    // - 灵动岛 is genuinely Android-only: `setLiveUpdateEnabled` /
+    //   `canPostPromotedNotifications` exist only on the Android bridge and the
+    //   copy names Android 16 permissions. `appOnly` is `!isAppMode`, which the
+    //   Electron shell also satisfies, so that row would be a dead switch there.
     const items = categoryItems['notification'].filter(e => e.type === 'item').map(e => e.spec)
     const desktop = items.filter(i => i.sectionHeader === 'settings.items.desktopSystemSection')
     expect(desktop.length).toBeGreaterThan(0)
-    expect(desktop.every(i => i.androidOnly === true)).toBe(true)
-    expect(desktop.every(i => i.appOnly !== true)).toBe(true)
+
+    const floating = desktop.find(i => i.key === 'floatingStatusWindow')
+    expect(floating, 'floatingStatusWindow must be in the desktop/system section').toBeDefined()
+    expect(floating!.appOnly, 'the floating window must render in the Electron shell').toBe(true)
+    expect(floating!.androidOnly, 'the floating window is not Android-only').toBeFalsy()
+
+    const liveUpdate = desktop.find(i => i.key === 'liveUpdate')
+    expect(liveUpdate, 'liveUpdate must be in the desktop/system section').toBeDefined()
+    expect(liveUpdate!.androidOnly, 'Live Updates is Android-only').toBe(true)
+    expect(liveUpdate!.appOnly).toBeFalsy()
   })
 
   it('desktopNotification is a local switch that is NOT app-only', () => {

@@ -2,9 +2,12 @@
  * Shared window-geometry primitives.
  *
  * Pure functions over plain rects and work areas (DIPs), no Electron imports, so
- * both the main window's restore logic (`windowBoundsPolicy.ts`) and the floating
- * capsule (`floatingPolicy.ts`) can clamp against the same rules without either
- * one owning the other's vocabulary.
+ * the floating capsule's decision layer (`floatingPolicy.ts`) can clamp against
+ * them without pulling in the shell.
+ *
+ * The main window keeps its own restore rules in `windowGeometry.ts`: those are
+ * about "is a saved rect still reachable" (`MIN_VISIBLE_PX`, maximize handling),
+ * which is a different question from "pull this rect back onto a display".
  */
 
 export interface Size { width: number; height: number }
@@ -15,10 +18,6 @@ export interface Rect { x: number; y: number; width: number; height: number }
 
 /** A display work area, in DIPs. */
 export interface WorkArea { x: number; y: number; width: number; height: number }
-
-/** Below this a restored window is nonsense (a corrupt or hand-edited config). */
-export const MIN_USABLE_WIDTH = 200
-export const MIN_USABLE_HEIGHT = 150
 
 /** The bounding box of every work area — the region windows may live in. */
 export function unionOf(areas: WorkArea[]): WorkArea | null {
@@ -72,10 +71,4 @@ export function cornerBounds(area: WorkArea, size: Size, margin: number): Rect {
     width: size.width,
     height: size.height,
   }
-}
-
-/** Whether a stored rect is large enough to be a real window rather than garbage. */
-export function isUsableSize(size: Size): boolean {
-  return Number.isFinite(size.width) && Number.isFinite(size.height)
-    && size.width >= MIN_USABLE_WIDTH && size.height >= MIN_USABLE_HEIGHT
 }

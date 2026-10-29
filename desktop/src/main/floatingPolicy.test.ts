@@ -141,6 +141,18 @@ describe('overviewUrl', () => {
     expect(overviewUrl('https://example.com/clawbench/')).toBe('https://example.com/clawbench/api/ai/sessions/overview')
   })
 
+  it('keeps a multi-segment prefix whether or not it has a trailing slash', () => {
+    // `pathname` on a navigation URL is a directory, not a filename, so the
+    // "dirname" move (strip the last segment) is wrong here: it turned
+    // `/a/b` into `/a` and 404'd. Both spellings of the same prefix must agree.
+    expect(overviewUrl('https://example.com/a/b')).toBe('https://example.com/a/b/api/ai/sessions/overview')
+    expect(overviewUrl('https://example.com/a/b/')).toBe('https://example.com/a/b/api/ai/sessions/overview')
+  })
+
+  it('drops repeated trailing slashes rather than emitting a double slash', () => {
+    expect(overviewUrl('https://example.com/clawbench//')).toBe('https://example.com/clawbench/api/ai/sessions/overview')
+  })
+
   it('returns null for anything that is not a remote server', () => {
     // The first-run login page is a local file: polling it would be a pointless
     // request whose failure the user could not explain.
