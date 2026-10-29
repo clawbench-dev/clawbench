@@ -332,7 +332,7 @@ import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useToast } from '@/composables/useToast'
-import { useSessionIdentity, reconcileRunningSessions } from '@/composables/useSessionIdentity.ts'
+import { useSessionIdentity, reconcileRunningSessions, renameSessionById } from '@/composables/useSessionIdentity.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
@@ -885,13 +885,14 @@ async function renameSessionFromMenu(sessionId) {
     }
   )
   if (newTitle === null || newTitle.trim() === '' || newTitle.trim() === current) return
-  try {
-    await apiPatch(`/api/ai/session/update?session_id=${encodeURIComponent(sessionId)}`, { title: newTitle.trim() })
-    session.title = newTitle.trim()
-    store.state.sessionListVersion++
-  } catch (err) {
-    appLog.e('SessionList', 'Failed to rename session:', err)
-  }
+  // Shared commit path: it also syncs the OPEN session's header title when the
+  // row being renamed is the one on screen. Patching here directly left the
+  // header stale until the session was reopened.
+  const ok = await renameSessionById(sessionId, newTitle)
+  if (!ok) return
+  // The list keeps its own optimistic copy so the row updates without waiting
+  // for the reload the version bump triggers.
+  session.title = newTitle.trim()
 }
 
 // Archive goes through archiveSession so the confirmation dialog is preserved.

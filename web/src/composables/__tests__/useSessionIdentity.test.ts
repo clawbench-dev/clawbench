@@ -77,7 +77,7 @@ vi.mock('@/utils/chatSessionUtils', () => ({
     parseMessages: vi.fn().mockReturnValue([]),
 }))
 
-import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, applyCruiseAutoApproveDefault, getSessionId, registerSessionDrawerRef, registerOpenSessionTabOverride, reconcileRunningSessions, reconcileModelSelection, renameSession } from '@/composables/useSessionIdentity'
+import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, applyCruiseAutoApproveDefault, getSessionId, registerSessionDrawerRef, registerOpenSessionTabOverride, reconcileRunningSessions, reconcileModelSelection, renameSession, renameSessionById } from '@/composables/useSessionIdentity'
 import { recordRecentSession } from '@/composables/useRecentSession'
 import { store } from '@/stores/app'
 import { useChatContext } from '@/composables/useChatContext'
@@ -2055,6 +2055,95 @@ describe('useSessionIdentity', () => {
             const result = await renameSession('New Title')
 
             expect(result).toBe(false)
+            expect(mockFetch).not.toHaveBeenCalled()
+
+            vi.unstubAllGlobals()
+        })
+    })
+
+    // ── renameSessionById ──
+    //
+    // The session list's ⋮ menu renames an ARBITRARY row, which may be the
+    // session currently open. The chat header renders `currentSessionTitle` and
+    // has no other source, so the shared commit must write it whenever the
+    // target IS the open session — that is exactly what the list's old
+    // private PATCH forgot, leaving the header stale until a reopen.
+    describe('renameSessionById', () => {
+        it('renames a session that is not open without touching the header title', async () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'open-session'
+            identity.currentSessionTitle.value = 'Open Title'
+
+            const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+            vi.stubGlobal('fetch', mockFetch)
+
+            const result = await renameSessionById('other-session', 'Other Title')
+
+            expect(result).toBe(true)
+            const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+            expect(body).toEqual({ sessionId: 'other-session', title: 'Other Title' })
+            expect(identity.currentSessionTitle.value).toBe('Open Title')
+
+            vi.unstubAllGlobals()
+        })
+
+        it('updates the header title when the renamed session is the open one', async () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'open-session'
+            identity.currentSessionTitle.value = 'Old Title'
+
+            const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+            vi.stubGlobal('fetch', mockFetch)
+
+            const result = await renameSessionById('open-session', '  New Title  ')
+
+            expect(result).toBe(true)
+            // Trimmed before it is sent AND before it is shown, so the header
+            // cannot disagree with what the server stored.
+            expect(JSON.parse(mockFetch.mock.calls[0][1].body).title).toBe('New Title')
+            expect(identity.currentSessionTitle.value).toBe('New Title')
+
+            vi.unstubAllGlobals()
+        })
+
+        it('bumps the list version for a non-open session too', async () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'open-session'
+
+            const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+            vi.stubGlobal('fetch', mockFetch)
+
+            const before = store.state.sessionListVersion
+            await renameSessionById('other-session', 'Other Title')
+
+            expect(store.state.sessionListVersion).toBe(before + 1)
+
+            vi.unstubAllGlobals()
+        })
+
+        it('leaves every piece of state alone when the request fails', async () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'open-session'
+            identity.currentSessionTitle.value = 'Old Title'
+
+            const mockFetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+            vi.stubGlobal('fetch', mockFetch)
+
+            const before = store.state.sessionListVersion
+            const result = await renameSessionById('open-session', 'New Title')
+
+            expect(result).toBe(false)
+            expect(identity.currentSessionTitle.value).toBe('Old Title')
+            expect(store.state.sessionListVersion).toBe(before)
+
+            vi.unstubAllGlobals()
+        })
+
+        it('does not call the server for a blank title', async () => {
+            const mockFetch = vi.fn()
+            vi.stubGlobal('fetch', mockFetch)
+
+            expect(await renameSessionById('open-session', '   ')).toBe(false)
             expect(mockFetch).not.toHaveBeenCalled()
 
             vi.unstubAllGlobals()
