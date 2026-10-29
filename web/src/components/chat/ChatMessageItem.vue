@@ -1140,10 +1140,14 @@ const copyPayload = quotableText
    the changed region normally; containment alone already prevents the
    cross-row bleeding the layer promotion was originally added for.
 
-   Scoped to [data-app-mode] (native hosts) so desktop browsers, which do
-   not have this compositor bug, keep normal paint behaviour.
+   Scoped to [data-webview-mode], which is set on the Android WebView ONLY.
+   `isAppMode` is true for the Electron desktop shell too, and keying this on it
+   put every row inside a paint-containment chunk on a desktop engine that has
+   no such compositor bug — the desktop-shell ghost (a later thinking block's
+   line drawn at the top of the message, until the DOM was rebuilt). See
+   WEBVIEW_MODE_ATTR in composables/useAppMode.ts.
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-:root[data-app-mode] .chat-message {
+:root[data-webview-mode] .chat-message {
     /* ⚠️ CONTAINMENT CLIPS INJECTED FIXED OVERLAYS. This rule is only safe
        because of the escape hatch below it — do NOT read it as "this row holds
        nothing that overflows". It does: `useCodeBlockHeader.ts` injects a
@@ -1183,7 +1187,7 @@ const copyPayload = quotableText
    rows uncomposited (the ghost fix above) for the ~99.9% of the time no menu
    is open, while the containing block's origin is identical in both states —
    verified in Chromium — so the menu does not jump when this rule flips. */
-:root[data-app-mode] .chat-message:has(.table-block-copy-menu.is-open) {
+:root[data-webview-mode] .chat-message:has(.table-block-copy-menu.is-open) {
     will-change: transform;
     contain: style;
 }

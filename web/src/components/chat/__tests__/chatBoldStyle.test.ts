@@ -21,14 +21,14 @@ describe('chat bold style (Android WebView vs browser parity)', () => {
     )
   })
 
-  it('applies a thin uniform -webkit-text-stroke only under data-app-mode', () => {
-    expect(markdownCss).toContain('[data-app-mode] .chat-message.assistant strong')
+  it('applies a thin uniform -webkit-text-stroke only under data-webview-mode', () => {
+    expect(markdownCss).toContain('[data-webview-mode] .chat-message.assistant strong')
     expect(markdownCss).toMatch(
-      /\[data-app-mode\][\s\S]*?\.chat-message\.assistant strong,[\s\S]*?-webkit-text-stroke:\s*0\.12px currentColor;/,
+      /\[data-webview-mode\][\s\S]*?\.chat-message\.assistant strong,[\s\S]*?-webkit-text-stroke:\s*0\.12px currentColor;/,
     )
     // User-message bold uses a slightly lighter stroke.
     expect(markdownCss).toMatch(
-      /\[data-app-mode\] \.chat-message\.user strong,[\s\S]*?-webkit-text-stroke:\s*0\.1px currentColor;/,
+      /\[data-webview-mode\] \.chat-message\.user strong,[\s\S]*?-webkit-text-stroke:\s*0\.1px currentColor;/,
     )
   })
 

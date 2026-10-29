@@ -2531,12 +2531,16 @@ defineExpose({
    `contain: paint` additionally bounds the panel's painting to its own box,
    so nothing inside can bleed into the dock/composer area.
 
-   Scoped to [data-app-mode]: desktop browsers do not have the compositor bug,
-   and a permanent layer would cost subpixel text antialiasing there.
+   Scoped to [data-webview-mode], which is set on the Android WebView ONLY
+   (`isAppMode` also covers the Electron desktop shell — see WEBVIEW_MODE_ATTR
+   in composables/useAppMode.ts). Desktop engines have no such compositor bug,
+   and a permanent layer there costs subpixel text antialiasing while turning
+   the whole scroller into one giant composited layer whose paint chunks can be
+   reused at the wrong offset.
 
    Guarded by web/src/components/chat/__tests__/chatCompositingBoundary.css.test.ts
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-:root[data-app-mode] .chat-panel-content {
+:root[data-webview-mode] .chat-panel-content {
   will-change: transform;
   contain: paint;
 }

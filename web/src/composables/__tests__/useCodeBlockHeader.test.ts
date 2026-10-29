@@ -769,7 +769,7 @@ describe('table copy menu positioning', () => {
       'utf8',
     )
     const escape = itemSource.match(
-      /:root\[data-app-mode\]\s+\.chat-message:has\(\.table-block-copy-menu\.is-open\)\s*\{([^}]*)\}/,
+      /:root\[data-webview-mode\]\s+\.chat-message:has\(\.table-block-copy-menu\.is-open\)\s*\{([^}]*)\}/,
     )
     expect(
       escape,

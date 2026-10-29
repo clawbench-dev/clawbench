@@ -7,7 +7,7 @@
  * Mobile Chrome has a real/native bold cut, so weight alone is enough.
  * Android WebView (esp. CJK at chat sizes) often synthesizes bold by fattening
  * outlines, which can look lighter/softer than the browser. Compensate only in
- * [data-app-mode] with a thin uniform -webkit-text-stroke (hard outline, no
+ * [data-webview-mode] with a thin uniform -webkit-text-stroke (hard outline, no
  * glow) so weight matches browser darkness. Uniform stroke thickens both
  * horizontal and vertical strokes, avoiding the anisotropy of x-only shadows. */
 .markdown-body strong,
@@ -29,17 +29,17 @@
 /* WebView bold compensation — uniform outline thickens glyphs crisply.
  * Avoid blurred text-shadow (0 0 Npx) which looks soft/fuzzy on GPU-composited
  * layers, and avoid x-only offsets which leave horizontal strokes unchanged. */
-[data-app-mode] .markdown-body strong,
-[data-app-mode] .markdown-body b,
-[data-app-mode] .chat-message.assistant strong,
-[data-app-mode] .chat-message.assistant b,
-[data-app-mode] .table-row-value strong,
-[data-app-mode] .table-row-value b {
+[data-webview-mode] .markdown-body strong,
+[data-webview-mode] .markdown-body b,
+[data-webview-mode] .chat-message.assistant strong,
+[data-webview-mode] .chat-message.assistant b,
+[data-webview-mode] .table-row-value strong,
+[data-webview-mode] .table-row-value b {
     -webkit-text-stroke: 0.12px currentColor;
 }
 
-[data-app-mode] .chat-message.user strong,
-[data-app-mode] .chat-message.user b {
+[data-webview-mode] .chat-message.user strong,
+[data-webview-mode] .chat-message.user b {
     -webkit-text-stroke: 0.1px currentColor;
 }
 

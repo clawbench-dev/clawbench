@@ -665,7 +665,7 @@ if raw_im.size != EXPECT:
    `page.context().storageState({ path })`，新 context 传 `storageState` 载入。
    否则每个 context 都要重登，慢且易失败。
 3. **App 模式 stub 用 `ctx.addInitScript`**。注入 `window.ClawBenchNative` 后
-   `useAppMode` 会置 `<html data-app-mode>`、渲染 appOnly 卡片。
+   `useAppMode` 会置 `<html data-webview-mode>`、渲染 appOnly 卡片。
    **context 用完即 `close()`，天然无泄漏**——这比 v1 的 `page.addInitScript` + `dispose()`
    干净（v1 曾因忘记 dispose 污染后续所有 web 截图）。
 
@@ -796,7 +796,7 @@ if os.path.getsize(out) > 300*1024 and uniq < 60000:   # UI 截图
 
 ### 判定机制
 
-- `useAppMode.ts:13-27`：`isNativeApp()` 为真且是顶层 frame 时，`isAppMode = true` 并给 `<html>` 加 `data-app-mode` 属性。
+- `useAppMode.ts`：`isNativeApp()` 为真、是顶层 frame、**且不是 Electron 桌面壳**（`!isDesktopApp()`）时，`isAppMode = true` 并给 `<html>` 加 `data-webview-mode` 属性。**桌面壳拿不到这个属性**——它挂的全是 Android WebView 的补偿（`will-change`/`contain: paint` 合成层、`-webkit-text-stroke` 粗体），在桌面 Chromium 上会让聊天行错位重绘并让文字过粗。属性原名 `data-app-mode`，因名字被读作「任何 app 外壳」而改名。
 - `usePlatformDetect.ts:55`：`isPC = !isAppMode && !AndroidUA && !iOSUA && !iPadOSUA` → **App 模式与手机浏览器都是 `!isPC`**，但能力不同。
 
 ### stub 注入法（已实测可用）
@@ -817,7 +817,7 @@ const stub = await page.addInitScript({ content: `
 `});
 ```
 
-实测：`data-app-mode` 属性出现，**appOnly 设置卡片渲染出来**（「桌面悬浮状态窗」「灵动岛」可见）。
+实测：`data-webview-mode` 属性出现，**appOnly 设置卡片渲染出来**（「桌面悬浮状态窗」「灵动岛」可见）。
 
 > **必须 dispose！** `addInitScript` 注册在 **context** 上、跨导航持久生效。不销毁会让**后续所有 web 模式截图被污染成 App 模式**（实测踩过：m-02 一度 `appMode:true`）。`addInitScript` 返回 `Disposable`：
 > ```js

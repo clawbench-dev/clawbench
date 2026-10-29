@@ -42,7 +42,7 @@ describe('chat compositing boundary (Android WebView GPU ghost)', () => {
   }
 
   it('establishes the single boundary on the stable-size panel', () => {
-    const rule = decls(/:root\[data-app-mode\]\s+\.chat-panel-content\s*\{([^}]*)\}/, panelSource)
+    const rule = decls(/:root\[data-webview-mode\]\s+\.chat-panel-content\s*\{([^}]*)\}/, panelSource)
     // The panel's height is the pane's height: it does NOT change when a reply
     // finishes, so its layer is never resized on the ghost-triggering path.
     expect(rule).toMatch(/will-change:\s*transform/)
@@ -81,14 +81,14 @@ describe('chat compositing boundary (Android WebView GPU ghost)', () => {
         // The single boundary itself: exactly one declaration, in the
         // app-mode panel rule asserted above.
         const panelDecl = (
-          src.match(/:root\[data-app-mode\]\s+\.chat-panel-content\s*\{([^}]*)\}/)?.[1] ?? ''
+          src.match(/:root\[data-webview-mode\]\s+\.chat-panel-content\s*\{([^}]*)\}/)?.[1] ?? ''
         ).match(/will-change/g)?.length ?? 0
         if (count !== panelDecl) offenders.push(`${file} (unexpected will-change)`)
       } else if (file === 'ChatMessageItem.vue') {
         // Only the :has(.is-open) escape rule may carry it.
         const escapeDecl =
           src
-            .match(/:root\[data-app-mode\]\s+\.chat-message:has\(\.table-block-copy-menu\.is-open\)\s*\{([^}]*)\}/)?.[1]
+            .match(/:root\[data-webview-mode\]\s+\.chat-message:has\(\.table-block-copy-menu\.is-open\)\s*\{([^}]*)\}/)?.[1]
             ?.match(/will-change/g)?.length ?? 0
         if (count !== escapeDecl) offenders.push(`${file} (unexpected will-change)`)
       } else {
@@ -127,7 +127,7 @@ describe('chat compositing boundary (Android WebView GPU ghost)', () => {
   it('keeps the row itself uncomposited but clipped', () => {
     // Belt-and-braces against a regression of the exact rule that produced the
     // 4px squashed meta bar: the row must never be promoted, only clipped.
-    const rule = decls(/:root\[data-app-mode\]\s+\.chat-message\s*\{([^}]*)\}/, itemSource)
+    const rule = decls(/:root\[data-webview-mode\]\s+\.chat-message\s*\{([^}]*)\}/, itemSource)
     expect(rule).toMatch(/contain:\s*paint/)
     expect(rule).not.toMatch(/will-change/)
     expect(rule).not.toMatch(/transform\s*:/)

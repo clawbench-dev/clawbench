@@ -44,8 +44,11 @@ test.describe('chat compositing boundary', () => {
     })
     expect(web.panelWillChange, 'web must not pay a permanent panel layer').toBe('auto')
 
-    // Native host (Android WebView / Electron): the boundary applies.
-    await page.evaluate(() => document.documentElement.setAttribute('data-app-mode', ''))
+    // Android WebView: the boundary applies. Set explicitly rather than by
+    // stubbing the bridge, because the attribute is the whole contract — and
+    // the Electron desktop shell deliberately does NOT get it (see the
+    // useAppMode tests), so this is the Android-only branch.
+    await page.evaluate(() => document.documentElement.setAttribute('data-webview-mode', ''))
 
     const native = await page.evaluate(() => {
       const panel = document.querySelector('.chat-panel-content') as HTMLElement
