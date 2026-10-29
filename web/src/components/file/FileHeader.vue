@@ -737,8 +737,18 @@ onBeforeUnmount(() => {
 }
 .overlay-close-btn {
     background: #b91c1c;
-    border-radius: 0;
+    /* Just a hint of rounding — a larger radius on a filled block reads as a
+       floating chip rather than a corner affordance. */
+    border-radius: var(--radius-xs);
     color: #fff;
+    /* The bar's 1px bottom border sits inside its border-box, so flex centring
+       happens in a 35px content box and every child lands 0.5px above the bar's
+       real middle. Bare 14px glyphs hide that; a 26px filled block does not — it
+       reads as "sitting high" next to the icons. Nudge the block, not the shared
+       bar geometry (the border is a literal 1px at every UI scale, so this
+       offset does not need --dp). */
+    position: relative;
+    top: 0.5px;
 }
 @media (hover: hover) {
     .overlay-close-btn:hover {
