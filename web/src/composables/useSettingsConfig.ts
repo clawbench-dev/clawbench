@@ -18,6 +18,30 @@ const LOCAL_PREFIX = 'clawbench-settings-'
 // loop (patchConfig re-reads the whole config).
 let serverLanguageSynced = false
 
+/**
+ * Listen for the native host changing the floating-window flag on its own.
+ *
+ * The desktop tray menu and the capsule's context menu can both turn the
+ * feature off; the web app only ever writes. Without this the settings switch
+ * keeps showing "on" after the tray turned it off, and the next `loadConfig`
+ * would push `true` straight back — resurrecting a capsule the user just
+ * dismissed.
+ *
+ * Registered once, at module scope, because the event is dispatched on
+ * `window` and the composable can be instantiated more than once.
+ */
+let floatingEnabledListenerReady = false
+function ensureFloatingEnabledListener() {
+  if (floatingEnabledListenerReady) return
+  floatingEnabledListenerReady = true
+  window.addEventListener('clawbench-floating-enabled-changed', ((e: CustomEvent) => {
+    const enabled = e.detail
+    if (typeof enabled !== 'boolean') return
+    if (localConfig.floatingStatusWindow === enabled) return
+    setLocalConfig('floatingStatusWindow', enabled)
+  }) as EventListener)
+}
+
 /** One-time migration: copy legacy localStorage keys to new prefixed keys. */
 function migrateLegacyKeys() {
   const migrations: Record<string, { key: string; format: 'raw' | 'json' }> = {
@@ -551,6 +575,7 @@ const serverDefaults: Record<string, unknown> = {
   'chat.fork_context_budget': 100000,
   'chat.auto_continue_enabled': false,
   'chat.auto_continue_max_retries': 3,
+  'chat.restart_resume_window_minutes': 60,
   'chat.auto_rename_enabled': true,
   'chat.user_nickname': 'User',
   'chat.group_max_speeches': 100,
@@ -785,6 +810,10 @@ export function syncServerLimits(data: Record<string, unknown>): void {
 }
 
 export function useSettingsConfig() {
+  // The tray can turn the feature off behind the page's back — listen before
+  // anything else so the settings row converges from the first render.
+  ensureFloatingEnabledListener()
+
   /** Sync push_mode from server config to Android native push state. */
   function syncPushModeToNative() {
     try {
@@ -793,10 +822,31 @@ export function useSettingsConfig() {
     } catch { /* not in app mode */ }
   }
 
-  /** Sync the local floating-status-window preference to Android native. */
+  /**
+   * Reconcile the local floating-status-window preference with the native host.
+   *
+   * The host is the source of truth, not this switch: the desktop tray menu and
+   * the capsule's own context menu can both turn the feature off, and the web
+   * app has no other way to learn about it. Without the read-back the settings
+   * row keeps claiming "on" while nothing is on screen.
+   *
+   * Ordering matters. Pushing unconditionally would be wrong in one specific
+   * case: the feature is on but the user hid the capsule from the tray, so the
+   * host reports `true` and a push of `true` would resurrect it. So an equal
+   * value is left alone — only a genuine disagreement is reconciled, and there
+   * the host wins.
+   */
   function syncFloatingWindowToNative() {
+    const native = getNative()
     try {
-      getNative()?.setFloatingWindowEnabled?.(!!localConfig.floatingStatusWindow)
+      const actual = native?.isFloatingWindowEnabled?.()
+      const wanted = !!localConfig.floatingStatusWindow
+      if (typeof actual === 'boolean') {
+        if (actual !== wanted) setLocalConfig('floatingStatusWindow', actual)
+        return
+      }
+      // Host without the read accessor (older build): push, as before.
+      native?.setFloatingWindowEnabled?.(wanted)
     } catch { /* not in app mode */ }
   }
 

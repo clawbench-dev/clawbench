@@ -223,6 +223,13 @@ export function patchImagesForPath(path: string, version: number): number {
     if (src) img.setAttribute('src', withVersionParam(src, version))
     const full = img.getAttribute('data-full-src')
     if (full) img.setAttribute('data-full-src', withVersionParam(full, version))
+    // A new URL means the bytes are in flight again, so drop the load stamp:
+    // `media-block.css` keys the pending placeholder on its ABSENCE, and this
+    // rewrite is the one path that swaps a src WITHOUT re-creating the element
+    // (a Vue re-render hands over a fresh one; an in-place patch does not).
+    // Without this the figure keeps showing the old frame's pixels until the
+    // new file arrives, with nothing indicating that anything is loading.
+    img.removeAttribute('data-media-settled')
     patched++
   }
   return patched

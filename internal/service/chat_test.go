@@ -1822,6 +1822,13 @@ func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
 		store.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
+	// A streaming row is only live while a turn is in flight; the runner registry
+	// is the authority (see TestGetLiveRunStates_IgnoresOrphanStreamingRow).
+	if _, created := service.TryClaimSessionRun(sid); !created {
+		t.Fatal("setup: expected to win the claim")
+	}
+	t.Cleanup(func() { service.SetSessionRunning(sid, false, true) })
+
 	msgID, qID, qContent, speaker := service.GetLiveRunState(sid)
 	require.NotZero(t, msgID, "the streaming row must be reported")
 	require.NotZero(t, qID, "the question must be found by id order")
@@ -1830,7 +1837,9 @@ func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
 	assert.Less(t, qID, msgID, "the question must precede the reply it anchors")
 
 	// An idle session reports nothing: emitting a stream_start for it would open
-	// a phantom placeholder on the client.
+	// a phantom placeholder on the client. Release the runner too — otherwise
+	// this only exercises the "no runner" guard rather than "no streaming row".
+	service.SetSessionRunning(sid, false, true)
 	_, err = store.UnsafeDBForTest().Exec(
 		"UPDATE chat_history SET streaming = 0 WHERE session_id = ?", sid)
 	require.NoError(t, err)
@@ -1855,6 +1864,13 @@ func TestGetLiveRunState_CarriesGroupSpeaker(t *testing.T) {
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, agent_id) VALUES (?, 'codebuddy', ?, 'assistant', '', 1, 'member-row-7')",
 		store.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
+
+	// A live stream requires an actual runner: GetLiveRunStates drops rows
+	// without one (see TestGetLiveRunStates_IgnoresOrphanStreamingRow).
+	if _, created := service.TryClaimSessionRun(sid); !created {
+		t.Fatal("setup: expected to win the claim")
+	}
+	t.Cleanup(func() { service.SetSessionRunning(sid, false, true) })
 
 	_, _, _, speaker := service.GetLiveRunState(sid)
 	assert.Equal(t, "member-row-7", speaker, "the streaming row's speaker must be reported")
@@ -1884,6 +1900,14 @@ func TestGetLiveRunStates_ReturnsAllConcurrentStreams(t *testing.T) {
 		pid, sid)
 	require.NoError(t, err)
 
+	// A live stream is only "live" if a turn is actually in flight: the runner
+	// registry is the authority, and GetLiveRunStates drops rows without one (an
+	// orphan streaming row otherwise renders a permanent "working" bubble).
+	if _, created := service.TryClaimSessionRun(sid); !created {
+		t.Fatal("setup: expected to win the claim")
+	}
+	t.Cleanup(func() { service.SetSessionRunning(sid, false, true) })
+
 	states := service.GetLiveRunStates(sid)
 	require.Len(t, states, 2, "both concurrent streams must be reported")
 	// Newest first.
@@ -1894,6 +1918,46 @@ func TestGetLiveRunStates_ReturnsAllConcurrentStreams(t *testing.T) {
 		assert.Equal(t, "q", st.QuestionContent, "each stream anchors to the shared question")
 		assert.NotZero(t, st.QuestionID)
 	}
+}
+
+// TestGetLiveRunStates_IgnoresOrphanStreamingRow pins the fix for "the session
+// shows as running but nothing is executing".
+//
+// A streaming=1 row outlives its turn in several ways (crash, graceful restart
+// before InitDB rewrites it, a finalize that fails to rewrite the placeholder).
+// The runner registry is the authority on whether a turn is in flight; a row
+// without one must NOT be reported as live, or the client renders a bubble that
+// says "working" forever.
+func TestGetLiveRunStates_IgnoresOrphanStreamingRow(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "codebuddy", "Orphan")
+	pid := store.ProjectIDForTest(t, "/project")
+
+	_, err := store.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (?, 'codebuddy', ?, 'user', 'q', 0)",
+		pid, sid)
+	require.NoError(t, err)
+	_, err = store.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (?, 'codebuddy', ?, 'assistant', '', 1)",
+		pid, sid)
+	require.NoError(t, err)
+
+	// No runner registered: the row is an orphan.
+	service.SetSessionRunning(sid, false, true)
+	states := service.GetLiveRunStates(sid)
+	assert.Empty(t, states,
+		"a streaming row with no runner must not be reported as a live turn")
+
+	// Registering a runner makes the SAME row live again — the check must gate on
+	// the runner, not blanket-ignore streaming rows.
+	if _, created := service.TryClaimSessionRun(sid); !created {
+		t.Fatal("setup: expected to win the claim")
+	}
+	t.Cleanup(func() { service.SetSessionRunning(sid, false, true) })
+
+	states = service.GetLiveRunStates(sid)
+	require.Len(t, states, 1, "a live turn must still be reported")
+	assert.Equal(t, "q", states[0].QuestionContent)
 }
 
 // TestUnread_MarkReadAfterCompletionClearsBadge is the counterpart: once the

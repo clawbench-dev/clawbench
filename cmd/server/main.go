@@ -679,6 +679,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.ChatForkContextBudget = cfg.Chat.ForkContextBudget
 	model.ChatAutoContinueEnabled = cfg.Chat.AutoContinueEnabled
 	model.ChatAutoContinueMaxRetries = cfg.Chat.AutoContinueMaxRetries
+	model.ChatRestartResumeWindowMinutes = cfg.Chat.RestartResumeWindowMinutes
 	model.ChatAutoRenameEnabled = cfg.Chat.AutoRenameEnabled
 	model.ChatUserNickname = cfg.Chat.UserNickname
 	model.ChatGroupMaxSpeeches = cfg.Chat.GroupMaxSpeeches
@@ -1257,6 +1258,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}()
 
 	// Initialize file watcher for auto-refresh (non-critical — continue on failure)
+	// Idle live-share rooms are in-memory and have no other cleanup path: a
+	// publisher that vanished without a clean socket close would otherwise hold
+	// one of the maxLiveRooms slots forever.
+	handler.StartLiveShareReaper()
+
 	if err := service.InitFileWatcher(); err != nil {
 		slog.Warn(
 			"file watcher not available, auto-refresh disabled",
@@ -1591,6 +1597,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		if service.GlobalScheduler != nil {
 			service.GlobalScheduler.CancelAllRunning()
 		}
+		// Record the shutdown BEFORE cancelling: CancelAllSessions only reaches
+		// the runners that exist right now, so a worker that claims a session
+		// afterwards would run while the DB is closing (leaving a fresh
+		// streaming=1 row and a duplicate resume on the next boot). Background
+		// workers that can start new work check this flag.
+		service.MarkShuttingDown()
 		service.CancelAllSessions()
 
 		// 2. Force a final flush of every actively streaming session BEFORE
@@ -1636,6 +1648,26 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		slog.Info("shutdown drain complete")
 		close(shutdownComplete)
 	}()
+
+	// Resume the sessions the previous process exit interrupted. InitDB already
+	// recorded them (a streaming=1 row at startup is an exact "died mid-turn"
+	// signal) and rewrote those rows to "cancelled + restart warning"; this
+	// starts one follow-up turn per session asking the AI to re-evaluate and
+	// continue, so a long task survives a restart without the user pressing
+	// "continue" by hand.
+	//
+	// Deliberately started HERE, not next to the other workers: the point of its
+	// delay is to give clients time to reconnect and re-subscribe, which is only
+	// meaningful once the listener is bound. Starting it earlier would count the
+	// delay against the rest of the startup tail (DingTalk/Feishu handshakes, the
+	// file watcher walk, TLS parsing) and could begin streaming before the port
+	// even accepts connections — the resumed reply would then land in the DB with
+	// nothing rendering it live.
+	//
+	// Gated on the same switch as abnormal-end auto-continue
+	// (chat.auto_continue_enabled): resuming spends tokens without the user
+	// asking, so it must be an opt-in.
+	service.StartRestartResume()
 
 	// Start HTTP server using the pre-bound listener (blocking)
 	if scheme == schemeHTTPS {

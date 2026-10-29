@@ -5071,10 +5071,11 @@ onUnmounted(() => {
    ChatPanelContent.vue): a promoted element that changes size is exactly what
    this WebView mis-draws as a stretched stale texture. The dock's height does
    change when badges/labels appear, so promoting it reintroduces the class of
-   ghost instead of fixing it. Scoped to [data-app-mode]: desktop browsers do
-   not have the compositor bug.
+   ghost instead of fixing it. Scoped to [data-webview-mode], which is set on
+   the Android WebView ONLY — the Electron desktop shell reports isAppMode too,
+   but has no such compositor bug (see WEBVIEW_MODE_ATTR in useAppMode.ts).
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-:root[data-app-mode] .bottom-dock-wrapper {
+:root[data-webview-mode] .bottom-dock-wrapper {
     contain: paint;
 }
 

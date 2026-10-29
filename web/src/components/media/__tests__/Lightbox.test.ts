@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import Lightbox from '@/components/media/Lightbox.vue'
 import { bumpMediaVersion, resetMediaWatch, setMediaProjectRoot } from '@/composables/useMediaWatch.ts'
+import { downloadBlob, downloadFileByPath } from '@/utils/download.ts'
 
 // ── Mocks ──
 
@@ -94,6 +95,8 @@ describe('Lightbox', () => {
     mockSelectFile.mockClear()
     mockRegisterBackHandler.mockClear()
     mockUnregister.mockClear()
+    vi.mocked(downloadBlob).mockClear()
+    vi.mocked(downloadFileByPath).mockClear()
     mockStoreState.currentDir = '/project'
     mockStoreState.currentFile = { path: '/project/image.png', name: 'image.png' }
     _dirEntries = [
@@ -179,7 +182,7 @@ describe('Lightbox', () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
 
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       // scale starts at 1, fitScale starts at 1
@@ -195,7 +198,7 @@ describe('Lightbox', () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
 
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       expect(vm.scale).toBe(1)
@@ -212,7 +215,7 @@ describe('Lightbox', () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
 
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       vm.fitScale = 0.5
@@ -227,7 +230,7 @@ describe('Lightbox', () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
 
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       vm.fitScale = 0.5
@@ -545,7 +548,7 @@ describe('Lightbox', () => {
   it('shows lightbox when open is called', async () => {
     const wrapper = mountLightbox()
     const vm = wrapper.vm as any
-    vm.open('http://localhost/test.png')
+    vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
     await nextTick()
     // Check via the reactive state, not DOM (Teleport makes DOM assertions unreliable)
     expect(vm.lightboxVisible).toBe(true)
@@ -557,7 +560,7 @@ describe('Lightbox', () => {
     it('registers back handler when opened', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       expect(mockRegisterBackHandler).toHaveBeenCalledWith(
@@ -571,7 +574,7 @@ describe('Lightbox', () => {
     it('back handler goBack closes the lightbox', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       const handler = mockRegisterBackHandler.mock.calls[0][0]
@@ -583,7 +586,7 @@ describe('Lightbox', () => {
     it('unregisters back handler when closed', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       expect(mockRegisterBackHandler).toHaveBeenCalled()
@@ -601,7 +604,7 @@ describe('Lightbox', () => {
     it('shows navigation when multiple image siblings exist', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       expect(vm.showNav).toBe(true)
@@ -612,7 +615,7 @@ describe('Lightbox', () => {
       _dirEntries = [{ name: 'image.png', type: 'file' }]
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       expect(vm.showNav).toBe(false)
@@ -621,7 +624,7 @@ describe('Lightbox', () => {
     it('navigateNext advances to next image and calls selectFile', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       vm.navigateNext()
@@ -633,7 +636,7 @@ describe('Lightbox', () => {
     it('navigatePrev goes to previous image', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       vm.navigatePrev()
@@ -645,7 +648,7 @@ describe('Lightbox', () => {
       _dirEntries = [{ name: 'image.png', type: 'file' }]
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       const prevUrl = vm.currentUrl
@@ -660,7 +663,7 @@ describe('Lightbox', () => {
     it('includes width/height/maxWidth/maxHeight when dimensionsReady and no svg', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       vm.dimensionsReady = true
@@ -678,7 +681,7 @@ describe('Lightbox', () => {
     it('does not include explicit dimensions when not ready', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       vm.dimensionsReady = false
@@ -706,7 +709,7 @@ describe('Lightbox', () => {
     it('closes lightbox when clicking on contentRef', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       vm.handleContentClick({ target: vm.contentRef })
@@ -716,7 +719,7 @@ describe('Lightbox', () => {
     it('does not close when clicking on image itself', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       // Simulate clicking on the image element (not contentRef or loading spinner)
@@ -783,7 +786,7 @@ describe('Lightbox', () => {
     it('swipe left triggers navigateNext', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       vm.fitScale = 1
@@ -802,7 +805,7 @@ describe('Lightbox', () => {
     it('swipe right triggers navigatePrev', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       vm.fitScale = 1
@@ -820,7 +823,7 @@ describe('Lightbox', () => {
     it('no swipe when hasMoved is true', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/?target=%2Fproject%2Fimage.png')
       await nextTick()
 
       vm.fitScale = 1
@@ -846,17 +849,51 @@ describe('Lightbox', () => {
       await nextTick()
 
       vm.handleDownload()
-      // downloadBlob should have been called (imported from mock)
+      expect(downloadBlob).toHaveBeenCalledTimes(1)
+      expect(downloadBlob).toHaveBeenCalledWith('<svg></svg>', 'diagram.svg', 'image/svg+xml')
+      expect(downloadFileByPath).not.toHaveBeenCalled()
     })
 
-    it('downloads file by path when filePath is set', async () => {
+    it('downloads the image on screen, not the file viewer’s current file', async () => {
+      // Regression: an image opened from a chat message carries no explicit
+      // path, so the lightbox fell back to store.state.currentFile and Download
+      // saved that unrelated file.
+      mockStoreState.currentFile = { path: '/project/unrelated.png', name: 'unrelated.png' }
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      vm.open('http://localhost/test.png')
+      vm.open('/api/fs/raw/assets/logo.png')
       await nextTick()
 
-      vm.currentFilePath = '/project/image.png'
       vm.handleDownload()
+
+      expect(downloadFileByPath).toHaveBeenCalledTimes(1)
+      expect(downloadFileByPath).toHaveBeenCalledWith('assets/logo.png', 'logo.png')
+      expect(downloadFileByPath).not.toHaveBeenCalledWith('/project/unrelated.png', expect.anything())
+    })
+
+    it('resolves the ?target= absolute form', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+      vm.open('/api/fs/raw/?target=%2Ftmp%2Fout%2Fchart.png')
+      await nextTick()
+
+      vm.handleDownload()
+
+      expect(downloadFileByPath).toHaveBeenCalledWith('/tmp/out/chart.png', 'chart.png')
+    })
+
+    it('resolves a markdown-gallery item that carries only a URL', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+      vm.openMdImages([
+        { src: '/api/fs/raw/docs/a.png', name: 'a.png' },
+        { src: '/api/fs/raw/docs/b.png', name: 'b.png' },
+      ], 1)
+      await nextTick()
+
+      vm.handleDownload()
+
+      expect(downloadFileByPath).toHaveBeenCalledWith('docs/b.png', 'b.png')
     })
 
     it('does nothing when no url and no svg', async () => {
@@ -868,7 +905,8 @@ describe('Lightbox', () => {
       vm.currentFilePath = ''
 
       vm.handleDownload()
-      // Should not throw
+      expect(downloadFileByPath).not.toHaveBeenCalled()
+      expect(downloadBlob).not.toHaveBeenCalled()
     })
   })
 
@@ -891,16 +929,31 @@ describe('Lightbox', () => {
       expect(vm.currentFileName).toBe('logo.png')
     })
 
-    it('falls back to the store current file when no path is given', async () => {
-      mockStoreState.currentFile = { path: '/project/image.png', name: 'image.png' }
+    // Opening an image that is NOT the file viewer's current file must never
+    // borrow its identity. `store.state.currentFile` used to be the fallback,
+    // which made Download save that unrelated file.
+    it('derives the path from the URL instead of the store current file', async () => {
+      mockStoreState.currentFile = { path: '/project/unrelated.png', name: 'unrelated.png' }
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
 
-      vm.open('/api/fs/raw/project/image.png')
+      vm.open('/api/fs/raw/assets/logo.png')
       await nextTick()
 
-      expect(vm.currentFilePath).toBe('/project/image.png')
-      expect(vm.currentFileName).toBe('image.png')
+      expect(vm.currentFilePath).toBe('assets/logo.png')
+      expect(vm.currentFileName).toBe('logo.png')
+    })
+
+    it('never borrows the store current file when the URL has no local path', async () => {
+      mockStoreState.currentFile = { path: '/project/unrelated.png', name: 'unrelated.png' }
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      vm.open('https://example.com/remote.png')
+      await nextTick()
+
+      expect(vm.currentFilePath).toBe('')
+      expect(vm.currentFileName).toBe('remote.png')
     })
 
     it('builds sibling navigation from the explicit path', async () => {
@@ -1187,6 +1240,47 @@ describe('Lightbox', () => {
       const result = vm.collectMdImages(container, container.querySelectorAll('img')[0], null)
       expect(result.list).toHaveLength(1)
       expect(result.list[0].src).toBeTruthy()
+
+      document.body.removeChild(container)
+    })
+
+    it('skips a mermaid div that is still showing the loading glyph', async () => {
+      // The loading placeholder is itself an `<svg>` (the picture glyph — see
+      // assets/mermaid.css), so a naive `querySelector('svg')` would collect it
+      // and the lightbox would open the LOADER instead of the diagram.
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML =
+        '<img src="a.png" alt="A">'
+        + '<div class="mermaid"><div class="mermaid-loading" role="status">'
+        + '<svg class="mermaid-loading-icon" viewBox="0 0 24 24"></svg></div></div>'
+      document.body.appendChild(container)
+
+      const result = vm.collectMdImages(container, container.querySelectorAll('img')[0], null)
+      expect(result.list, 'the loader glyph must not become a lightbox entry').toHaveLength(1)
+      expect(result.list[0].src).toBeTruthy()
+
+      document.body.removeChild(container)
+    })
+
+    it('collects the artwork once the placeholder has been replaced', async () => {
+      // The counterpart: excluding the loader must not also exclude the real
+      // diagram, or the lightbox would simply never open a rendered one.
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML =
+        '<img src="a.png" alt="A">'
+        + '<div class="mermaid"><svg viewBox="0 0 100 50"><rect></rect></svg></div>'
+      document.body.appendChild(container)
+
+      const mermaidDiv = container.querySelector('.mermaid')
+      const result = vm.collectMdImages(container, container.querySelectorAll('img')[0], mermaidDiv)
+      expect(result.list).toHaveLength(2)
+      expect(result.list[1].svg).toContain('<rect')
 
       document.body.removeChild(container)
     })

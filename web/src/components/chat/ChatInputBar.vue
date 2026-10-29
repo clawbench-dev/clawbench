@@ -176,7 +176,7 @@
         @file-open="(entry) => emit('file-tag-click', entry)"
       />
       <!-- Teleported quick-send menu -->
-      <PopupMenu v-model:show="showQuickMenu" :target-element="sendBtnRef" :max-width="260" :max-height="280" :menu-items-count="quickSendItems.length + 1">
+      <PopupMenu v-model:show="showQuickMenu" :target-element="sendBtnRef" :max-width="260" :max-height="440" :menu-items-count="quickSendItems.length + 1">
         <div class="quick-send-title">{{ t('chat.quickSend.title') }}</div>
         <button v-for="item in quickSendItems" :key="item.id"
           class="quick-send-item"
@@ -3308,15 +3308,10 @@ defineExpose({
 
 <!-- Unscoped styles for teleported menu content (PopupMenu uses Teleport to body, scoped styles won't reach it) -->
 <style>
-/* Quick-send menu content styles */
-.quick-send-title {
-  padding: var(--space-3) calc(14 * var(--dp)) var(--space-1);
-  font-size: var(--font-size-xs);
-  color: var(--text-muted, #999);
-  font-weight: var(--font-weight-medium);
-  letter-spacing: calc(0.3 * var(--dp));
-}
-
+/* Quick-send menu content styles.
+   `.quick-send-title` (the pinned header) is shared with the terminal's
+   quick-command popup, so it lives in css/components.css — see the note there.
+   Only the chat-specific rows stay here. */
 .quick-send-item {
   display: flex;
   align-items: center;

@@ -1701,19 +1701,15 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// The read connection pool was opened by store.Open before schema creation,
 	// so readers throughout InitDB use store.ReadDB() uniformly.
 	if isServerStartup {
-		rows, err := store.ReadDB().Query("SELECT id, content FROM chat_history WHERE streaming = 1")
+		rows, err := store.ReadDB().Query("SELECT id, COALESCE(session_id, ''), content FROM chat_history WHERE streaming = 1")
 		if err != nil {
 			return fmt.Errorf("failed to query orphaned streaming messages: %w", err)
 		}
 		defer func() { _ = rows.Close() }()
-		type orphanMsg struct {
-			id      int64
-			content string
-		}
 		var orphans []orphanMsg
 		for rows.Next() {
 			var m orphanMsg
-			if err := rows.Scan(&m.id, &m.content); err != nil {
+			if err := rows.Scan(&m.id, &m.sessionID, &m.content); err != nil {
 				return fmt.Errorf("failed to scan orphaned streaming message: %w", err)
 			}
 			orphans = append(orphans, m)
@@ -1749,6 +1745,57 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 		if len(orphans) > 0 {
 			slog.Info("cleaned up orphaned streaming messages", slog.Int("count", len(orphans)))
+		}
+
+		// Record which sessions the restart interrupted, so the resume worker
+		// (StartRestartResume) can pick them up once the server is listening.
+		//
+		// TWO signals, because there are two ways a turn can be cut short:
+		//
+		//  1. streaming=1 at startup — the previous process DIED mid-turn. Exact:
+		//     a clean shutdown finalizes every active stream, and a user cancel
+		//     finalizes with streaming=0, so nothing else can leave one behind.
+		//  2. The session's LAST assistant row carries a restart warning block
+		//     ("Server restarted, AI response interrupted"). That is what a
+		//     GRACEFUL shutdown writes: the executor finalizes the row before the
+		//     process exits, so streaming is already 0 by the time the next
+		//     process starts. Without this signal a normal restart — the most
+		//     common way a turn is interrupted in practice — was never resumed,
+		//     while only hard kills (kill -9 / OOM) were.
+		//
+		// Signal 2 is checked on the session's LAST assistant row only, and only
+		// when no later row exists: a restart warning from three turns ago must
+		// not resurrect a conversation the user has since continued. The user
+		// continuing the conversation IS the "resume" — asking the AI to
+		// re-evaluate on top of that would duplicate the work.
+		//
+		// The set is drained (once) by the worker, so a session is resumed at
+		// most once per process start.
+		// Archived sessions are excluded from the RESUME set but NOT from the
+		// finalize above: their orphan row must still be rewritten to
+		// streaming=0, or the client keeps rendering a "working" bubble for a
+		// session the user put away. Only the resume decision is skipped.
+		archived := archivedSessionSet(orphans)
+		seenInterrupted := make(map[string]bool, len(orphans))
+		interrupted := make([]string, 0, len(orphans))
+		for _, m := range orphans {
+			if m.sessionID == "" || seenInterrupted[m.sessionID] || archived[m.sessionID] {
+				continue
+			}
+			seenInterrupted[m.sessionID] = true
+			interrupted = append(interrupted, m.sessionID)
+		}
+		for _, sessionID := range sessionsEndingOnRestartWarning() {
+			if sessionID == "" || seenInterrupted[sessionID] {
+				continue
+			}
+			seenInterrupted[sessionID] = true
+			interrupted = append(interrupted, sessionID)
+		}
+		recordInterruptedSessions(interrupted)
+		if len(interrupted) > 0 {
+			slog.Info("restart resume: sessions interrupted by the restart",
+				slog.Int("count", len(interrupted)))
 		}
 	}
 
@@ -3616,6 +3663,130 @@ func GetKeyConfig(typeFilter string) ([]KeyConfigItem, error) {
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+// orphanMsg is a chat_history row left mid-stream by a process that died.
+type orphanMsg struct {
+	id        int64
+	sessionID string
+	content   string
+}
+
+// archivedSessionSet returns the subset of the given session ids that are
+// archived (or no longer exist at all).
+//
+// Used by the startup scan to keep archived sessions out of the RESUME set while
+// still finalizing their orphan rows. A missing session row counts as "do not
+// resume" — there is nothing to resume into.
+func archivedSessionSet(msgs []orphanMsg) map[string]bool {
+	out := make(map[string]bool, len(msgs))
+	if len(msgs) == 0 {
+		return out
+	}
+	for _, m := range msgs {
+		if m.sessionID == "" {
+			continue
+		}
+		var archived int
+		// A lookup failure leaves the session resumable: the per-session check in
+		// ResumeInterruptedSession re-verifies archived state before claiming, so
+		// a transient read error here cannot cause a wrong resume.
+		if err := store.ReadDB().QueryRow(
+			"SELECT archived FROM chat_sessions WHERE id = ?", m.sessionID,
+		).Scan(&archived); err == nil && archived == 1 {
+			out[m.sessionID] = true
+		}
+	}
+	return out
+}
+
+// sessionsEndingOnRestartWarning returns the sessions whose LAST assistant row is
+// a turn the previous process interrupted with a restart warning.
+//
+// This is the GRACEFUL-shutdown counterpart of the streaming=1 signal: a clean
+// restart finalizes every active row before exiting, so streaming is already 0
+// when the next process starts and the orphan scan alone sees nothing. The
+// executor still appends a `type=warning, reason=restart` block, which is what
+// this looks for.
+//
+// Scope is deliberately "the session's LAST assistant row" (the JOIN below). A
+// restart warning from an earlier turn must not resurrect a conversation the
+// user has since continued — continuing IS resuming, and adding another turn on
+// top would redo work. Once the user sends anything after the warning, a newer
+// assistant row exists and this query no longer matches the session.
+//
+// The warning block is matched on its JSON shape rather than by parsing every
+// row: the reason field is written by exactly one place
+// (session_executor.go's buildResult) and never appears in user text as
+// `"reason":"restart"` — the frontend escapes it.
+//
+// The age window is essential, not cosmetic, but its job is to express the
+// INTENT — "pick up what the restart just interrupted" — not to keep the result
+// set small. A restart warning stays in the database forever, so without a bound
+// a session the user walked away from days ago looks exactly like one the
+// restart just cut off. The real gate against resuming stale work is
+// "the session is still active" (archived sessions are filtered below), and the
+// window is the second, independent bound: an un-archived old session must not
+// be revived just because its last turn once ended on a restart.
+//
+// The value is user-configurable (chat.restart_resume_window_minutes) because
+// how long "just interrupted" lasts is a preference, not a fact. 0 means no age
+// bound.
+//
+// Archived sessions are excluded HERE rather than only in the per-session check
+// in ResumeInterruptedSession, so the recorded count reflects what will actually
+// be resumed — otherwise the startup log claims N sessions while the worker
+// silently skips most of them, which reads like a bug during incident triage.
+func sessionsEndingOnRestartWarning() []string {
+	windowMinutes := model.ChatRestartResumeWindowMinutes
+	// A negative value is unrepresentable (PATCH rejects it); treat it as the
+	// default rather than letting it invert the comparison.
+	if windowMinutes < 0 {
+		windowMinutes = model.DefaultRestartResumeWindowMinutes
+	}
+
+	query := `
+		SELECT h.session_id
+		  FROM chat_history h
+		  JOIN (
+		        SELECT session_id, MAX(id) AS last_id
+		          FROM chat_history
+		         WHERE role = 'assistant'
+		         GROUP BY session_id
+		       ) last ON last.session_id = h.session_id AND last.last_id = h.id
+		  JOIN chat_sessions s ON s.id = h.session_id AND s.archived = 0
+		 WHERE h.content LIKE '%"reason":"restart"%'
+		   AND h.session_id IS NOT NULL
+		   AND h.session_id <> ''`
+	args := []any{}
+	if windowMinutes > 0 {
+		query += " AND h.created_at > datetime('now', ?)"
+		args = append(args, fmt.Sprintf("-%d minutes", windowMinutes))
+	}
+	rows, err := store.ReadDB().Query(query, args...)
+	if err != nil {
+		// A failed scan must not abort startup: the streaming=1 signal above is
+		// already recorded, and this is the secondary path.
+		slog.Warn("restart resume: could not scan restart warnings",
+			slog.String("err", err.Error()))
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []string
+	for rows.Next() {
+		var sessionID string
+		if err := rows.Scan(&sessionID); err != nil {
+			continue
+		}
+		out = append(out, sessionID)
+	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("restart resume: restart-warning scan was partial",
+			slog.String("err", err.Error()))
+		return nil
+	}
+	return out
 }
 
 // ReplaceKeyConfig replaces all items of the given type with the provided key IDs.

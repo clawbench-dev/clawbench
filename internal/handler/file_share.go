@@ -50,6 +50,10 @@ const shareSessionSegment = "session"
 // file share or a conversation share (see serveShareMeta). Shared by both kinds.
 const shareMetaSegment = "meta"
 
+// shareSignalSegment is the URL path segment carrying the live-share viewer
+// signaling socket (/api/share/{token}/signal).
+const shareSignalSegment = "signal"
+
 // shareKindFile and shareKindSession are the `kind` values the share meta
 // endpoint reports, telling the share SPA which renderer to use. Kept distinct
 // from entryTypeFile, which classifies a directory-search entry rather than a
@@ -57,6 +61,9 @@ const shareMetaSegment = "meta"
 const (
 	shareKindFile    = "file"
 	shareKindSession = "session"
+	// shareKindLive is a live screen/audio share. Its token resolves from the
+	// in-memory registry rather than a database row (see serveShareMeta).
+	shareKindLive = "live"
 )
 
 // shareResponse is the payload for share management endpoints.
@@ -459,6 +466,15 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 	token, rest, ok := parseSharePublicPath(r.URL.Path)
 	if !ok || token == "" {
 		http.NotFound(w, r)
+		return
+	}
+
+	// Live-share signaling shares this subtree (the token is the credential,
+	// so the viewer socket must live under the same public prefix). Dispatched
+	// first: a live token has no file_shares row, so the lookup below would
+	// reject every signaling request.
+	if rest == shareSignalSegment {
+		LiveShareSignalWS(w, r)
 		return
 	}
 

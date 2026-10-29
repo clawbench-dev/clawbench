@@ -274,6 +274,22 @@
       </div>
     </PopupMenu>
 
+    <!-- Live screen share. Sits between the theme picker and the server
+         button. Desktop shell only: it needs Electron's capture APIs, and
+         system audio is Windows-only. The button stays visible while
+         publishing so the user can reopen the dialog after closing it. -->
+    <button
+      v-if="canLiveShare"
+      class="theme-quick-toggle live-share-toggle"
+      :class="{ 'live-share-toggle--active': liveShareState !== 'idle' }"
+      :title="liveShareState === 'idle' ? t('liveShare.button') : t('liveShare.live')"
+      :aria-label="liveShareState === 'idle' ? t('liveShare.button') : t('liveShare.live')"
+      data-action="live-share"
+      @click="openLiveShare"
+    >
+      <MonitorUp :size="18" />
+    </button>
+
     <!-- Server button: merged gauge + status dot. Icon color reflects connection status -->
     <button ref="serverBtnRef" class="server-toggle" :class="[statusDotClass, { 'pressure-alert': isUnderPressure && showMetricIcon }]" @click="toggleResourcesMenu" :title="t('systemResources.title')">
       <Server v-if="!isUnderPressure || !showMetricIcon" :size="18" />
@@ -292,6 +308,11 @@
       @close="serverSwitchOpen = false"
       @logout="handleLogout"
     />
+
+    <!-- Publisher dialog for the live screen share. Mounted here (not inside
+         the button) so the share survives the dialog being closed: the session
+         lives in useLiveShare's module state, and the button shows a live dot. -->
+    <LiveShareDialog v-if="canLiveShare" :open="liveShareDialogOpen" @close="liveShareDialogOpen = false" />
 
     <!-- App-drawn window controls (frameless desktop shell, Windows/Linux).
          Present only when the window has no native frame, so the two can never
@@ -345,7 +366,7 @@
 </template>
 
 <script setup lang="ts">
-import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Minus } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Minus, MonitorUp } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -356,6 +377,8 @@ import { store } from '@/stores/app.ts'
 import { setPendingManageNavigation } from '@/composables/useCommitNavigation.ts'
 import { setPendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import LiveShareDialog from '@/components/live/LiveShareDialog.vue'
+import { useLiveShare } from '@/composables/useLiveShare'
 import SystemResourcesPanel from '@/components/common/SystemResourcesPanel.vue'
 import ServerSwitchDialog from '@/components/common/ServerSwitchDialog.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
@@ -387,6 +410,20 @@ import type { Ref } from 'vue'
 const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
 const { isAppMode, isDesktopApp } = useAppMode()
+
+// Live share needs Electron's desktopCapturer / setDisplayMediaRequestHandler,
+// so it is gated on the desktop shell. The browser could technically call
+// getDisplayMedia, but the picker and the system-audio switch are desktop-only,
+// and offering a half-working entry point is worse than hiding it.
+const canLiveShare = computed(() => isDesktopApp.value)
+
+const liveShare = useLiveShare()
+const liveShareState = liveShare.state
+const liveShareDialogOpen = ref(false)
+
+function openLiveShare(): void {
+  liveShareDialogOpen.value = true
+}
 const {
   hasCustomControls,
   isMaximized: isWindowMaximized,
@@ -1223,6 +1260,40 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     height: calc(22 * var(--dp));
     border-radius: 50%;
     flex-shrink: 0;
+}
+
+/*
+ * Geometry comes from .theme-quick-toggle, but the margin does NOT: that class
+ * carries `margin-left: auto` to push the right-hand cluster against the edge,
+ * which would strand this button in the middle of the header now that it sits
+ * between the theme picker and the server button.
+ *
+ * -8dp is the gap the server button already uses to tuck up against its
+ * neighbour, so the theme → share → server rhythm matches the old
+ * theme → server rhythm instead of inventing a third spacing.
+ *
+ * The selector is doubled because .theme-quick-toggle sets `margin-left: auto`
+ * at the same specificity but LATER in this file — a bare .live-share-toggle
+ * rule would lose to it.
+ */
+.theme-quick-toggle.live-share-toggle {
+    margin-left: calc(-8 * var(--dp));
+    position: relative;
+}
+
+/* A live share keeps running after the dialog closes, so the button has to say
+   so. The dot is a pseudo-element rather than a nested span to avoid adding
+   markup to a flex-centred button. */
+.live-share-toggle--active::after {
+    content: '';
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-red, #cf222e);
+    box-shadow: 0 0 0 2px var(--bg-primary, #fff);
 }
 
 @media (hover: hover) {

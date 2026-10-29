@@ -106,3 +106,48 @@ describe('rename generate options are shared, not duplicated', () => {
     }
   })
 })
+
+// The COMMIT half must be shared too, not just the generate button.
+//
+// The list used to PATCH on its own and update only its own row. Renaming the
+// session that was already open therefore left the chat header (which renders
+// `currentSessionTitle` and nothing else) showing the old title until the
+// session was reopened — while renaming from the header worked, because that
+// path went through the composable. Both are the same action on the same
+// session, so the persistence + state convergence lives in one place now.
+describe('rename commit path is shared, not duplicated', () => {
+  function webFile(relPath: string): string {
+    for (const base of [process.cwd(), resolve(process.cwd(), 'web'), resolve(process.cwd(), '../web')]) {
+      try {
+        return readFileSync(resolve(base, relPath), 'utf8')
+      } catch {
+        // try the next candidate root
+      }
+    }
+    throw new Error(`${relPath} not found from cwd: ${process.cwd()}`)
+  }
+
+  it('the session list commits through the shared helper', () => {
+    const src = webFile('src/components/session/SessionList.vue')
+    expect(src).toContain('renameSessionById')
+    // A title PATCH of its own is what drifted; pinning still uses apiPatch and
+    // is fine, so this looks for the title payload specifically.
+    expect(src).not.toMatch(/apiPatch\([^)]*session\/update[^)]*\{\s*title:/)
+  })
+
+  it('the chat header commits through the same composable entry point', () => {
+    const src = webFile('src/App.vue')
+    expect(src).toContain('sessionIdentity.renameSession(')
+  })
+
+  it('the shared helper is what writes the open session title', () => {
+    const src = webFile('src/composables/useSessionIdentity.ts')
+    const start = src.indexOf('export async function renameSessionById')
+    expect(start, 'renameSessionById must exist').toBeGreaterThan(-1)
+    const body = src.slice(start, src.indexOf('\n}\n', start))
+    // The header has no other source for the title, so a successful rename of
+    // the OPEN session must write it here.
+    expect(body).toContain('currentSessionTitle.value = trimmed')
+    expect(body).toContain('sessionListVersion++')
+  })
+})

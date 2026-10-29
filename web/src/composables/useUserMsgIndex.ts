@@ -57,6 +57,11 @@ export function useUserMsgIndex(options: {
   /** Fetch (or reuse a cached) list of messages for the current session. */
   async function ensureIndexLoaded(): Promise<void> {
     if (userMsgIndexList.value.length > 0) return
+    await fetchIndex()
+  }
+
+  /** Fetch the index unconditionally, replacing whatever is cached. */
+  async function fetchIndex(): Promise<void> {
     if (!options.getCurrentSessionId()) return
     loadingIndex.value = true
     try {
@@ -72,6 +77,35 @@ export function useUserMsgIndex(options: {
     } finally {
       loadingIndex.value = false
     }
+  }
+
+  /**
+   * Reload the index when the conversation has grown past it.
+   *
+   * The index is a point-in-time snapshot from the API, which was fine while
+   * its only consumer was a drawer that fetched on open. The always-visible
+   * rail would otherwise keep showing the list as it looked when the session
+   * was opened — new turns would never appear on it. `lastMessageId` is the
+   * newest message the chat list currently holds; a mismatch means at least one
+   * message has landed since the fetch.
+   *
+   * Skipped while a turn is still streaming: the newest row would be an
+   * unfinished reply, and the index excludes in-flight rows by construction.
+   */
+  async function refreshIndexIfStale(lastMessageId: number | string | null | undefined): Promise<void> {
+    if (lastMessageId == null || lastMessageId === '') return
+    const list = userMsgIndexList.value
+    if (list.length === 0) {
+      await ensureIndexLoaded()
+      return
+    }
+    const lastIndexed = list[list.length - 1]?.id
+    if (String(lastIndexed) === String(lastMessageId)) return
+    // Refresh IN PLACE. Clearing first would empty the array for one render,
+    // and the always-visible rail unmounts on an empty list — losing its scroll
+    // position, so the newly added tail row lands off-screen and the reader never
+    // sees it. The fetch is atomic: the old list stays until the new one arrives.
+    await fetchIndex()
   }
 
   async function toggleUserMsgIndex() {
@@ -234,6 +268,16 @@ export function useUserMsgIndex(options: {
     loadingIndex,
     formatIndexLabel,
     hasBtw,
+    /**
+     * Load the index without opening the drawer.
+     *
+     * The chat-area navigation rail renders the SAME index permanently, so it
+     * needs the rows before (and regardless of whether) the drawer is ever
+     * opened. Idempotent: `ensureIndexLoaded` returns immediately once the list
+     * is populated, so calling it on every session change costs nothing.
+     */
+    ensureIndexLoaded,
+    refreshIndexIfStale,
     toggleUserMsgIndex,
     closeUserMsgIndex,
     jumpToUserMessage,

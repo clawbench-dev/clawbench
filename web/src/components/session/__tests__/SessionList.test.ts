@@ -26,7 +26,7 @@ vi.mock('@/composables/useSettingsConfig', async (importOriginal) => {
   }
 })
 
-const { mockGetAgentBackend, mockGetAgentName, mockGetAgentModel, mockDialogHolder, mockReconcileRunningSessions, mockRemoveEventHandler, mockEventHolder, mockStore, mockCrossState, mockDraggable, mockToastShow, mockGenerateSessionTitle } = await vi.hoisted(async () => {
+const { mockGetAgentBackend, mockGetAgentName, mockGetAgentModel, mockDialogHolder, mockReconcileRunningSessions, mockRemoveEventHandler, mockEventHolder, mockStore, mockCrossState, mockDraggable, mockToastShow, mockGenerateSessionTitle, mockRenameSessionById } = await vi.hoisted(async () => {
   // The real store exposes a reactive() state, so tests that mutate
   // state.projectRoot (or sessionListVersion) must trigger the component's
   // watchers. A plain object would silently not, making such a test vacuous.
@@ -69,6 +69,9 @@ const { mockGetAgentBackend, mockGetAgentName, mockGetAgentModel, mockDialogHold
     mockDraggable: { emit: null as null | ((event: string, ...args: any[]) => void), props: null as null | Record<string, unknown> },
     mockToastShow: vi.fn(),
     mockGenerateSessionTitle: vi.fn(),
+    // Stands in for the shared commit path (real one lives in
+    // useSessionIdentity). Defaults to success; tests override per case.
+    mockRenameSessionById: vi.fn(async () => true),
   }
 })
 
@@ -132,6 +135,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   useSessionIdentity: () => ({ runningSessionsVersion: { value: 0 } }),
   reconcileRunningSessions: mockReconcileRunningSessions,
   generateSessionTitle: mockGenerateSessionTitle,
+  renameSessionById: mockRenameSessionById,
 }))
 vi.mock('@/composables/useCrossProjectSessions', async () => {
   // Real refs, not plain {value} boxes: Vue only auto-unwraps actual refs in
@@ -199,6 +203,7 @@ describe('SessionList', () => {
     mockDialogHolder.confirm = vi.fn().mockResolvedValue(true)
     mockDialogHolder.prompt = vi.fn().mockResolvedValue(null)
     mockDialogHolder.lastOptions = null
+    mockRenameSessionById.mockResolvedValue(true)
     mockEventHolder.handler = null
     mockStore.state.sessionListVersion = 0
     mockStore.state.projectRoot = '/proj/current'
@@ -1182,9 +1187,9 @@ describe('SessionList', () => {
       await wrapper.vm.renameSessionFromMenu('f1')
       await flushPromises()
 
-      const patchCall = mockFetch.mock.calls.find(c => String(c[0]).startsWith('/api/ai/session/update'))
-      expect(patchCall).toBeTruthy()
-      expect(String(patchCall![0])).toContain(`session_id=${encodeURIComponent('f1')}`)
+      // The shared commit path is what persists it, and it must receive the
+      // member's own id (the row that owns the menu), not the anchor's.
+      expect(mockRenameSessionById).toHaveBeenCalledWith('f1', 'Renamed fork')
     })
 
     it('persists the flattened order so a group travels with its anchor', async () => {
@@ -1840,14 +1845,45 @@ describe('SessionList', () => {
       await wrapper.vm.renameSessionFromMenu(wrapper.vm.contextMenu.sessionId)
       await flushPromises()
 
-      // The API call must carry s2 (not s1) via the session_id query.
-      const patchCall = mockFetch.mock.calls.find(c => (c[0] as string).startsWith('/api/ai/session/update'))
-      expect(patchCall).toBeTruthy()
-      expect(patchCall![0]).toContain(`session_id=${encodeURIComponent('s2')}`)
-      const body = JSON.parse(patchCall![1].body)
-      expect(body.title).toBe('Renamed B')
+      // The API call must carry s2 (not s1) — now via the shared commit path.
+      expect(mockRenameSessionById).toHaveBeenCalledTimes(1)
+      expect(mockRenameSessionById).toHaveBeenCalledWith('s2', 'Renamed B')
       // Only s2's title updated locally.
       expect(wrapper.vm.sessions.find((s: any) => s.id === 's2').title).toBe('Renamed B')
+      expect(wrapper.vm.sessions.find((s: any) => s.id === 's1').title).toBe('Session 1')
+    })
+
+    // The list used to PATCH on its own and update only its own row, so
+    // renaming the session that was already open left the chat header showing
+    // the old title until it was reopened. The commit path is shared now, and
+    // the header reads it — this pins the delegation (the sync itself is
+    // covered in useSessionIdentity.test.ts).
+    it('rename from the menu goes through the shared commit path', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      mockDialogHolder.prompt = vi.fn().mockResolvedValue('Shared path')
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      await wrapper.vm.renameSessionFromMenu('s1')
+      await flushPromises()
+
+      expect(mockRenameSessionById).toHaveBeenCalledWith('s1', 'Shared path')
+      // …and the list does NOT keep a second PATCH of its own.
+      expect(mockFetch.mock.calls.some(c => (c[0] as string).startsWith('/api/ai/session/update'))).toBe(false)
+    })
+
+    it('rename from the menu leaves the row untouched when the commit fails', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      mockDialogHolder.prompt = vi.fn().mockResolvedValue('Will fail')
+      mockRenameSessionById.mockResolvedValueOnce(false)
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      await wrapper.vm.renameSessionFromMenu('s1')
+      await flushPromises()
+
       expect(wrapper.vm.sessions.find((s: any) => s.id === 's1').title).toBe('Session 1')
     })
 

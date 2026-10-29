@@ -586,3 +586,203 @@ func TestGetLocalIPs_SkipsLinkLocalMulticast(t *testing.T) {
 		t.Errorf("GetLocalIPs() = %v, want [10.0.0.1] (multicast skipped)", ips)
 	}
 }
+
+// --- GetLocalAddresses ---
+
+// stubIfaces replaces the interface enumeration for one test.
+func stubIfaces(t *testing.T, ifaces []net.Interface, addrs map[string][]net.Addr) {
+	t.Helper()
+	origI, origA := netInterfaces, ifaceAddrs
+	t.Cleanup(func() { netInterfaces = origI; ifaceAddrs = origA })
+	netInterfaces = func() ([]net.Interface, error) { return ifaces, nil }
+	ifaceAddrs = func(iface *net.Interface) ([]net.Addr, error) {
+		return addrs[iface.Name], nil
+	}
+}
+
+func ipNet(cidr string) net.Addr {
+	ip, n, err := net.ParseCIDR(cidr)
+	if err != nil {
+		panic(err)
+	}
+	n.IP = ip
+	return n
+}
+
+func TestGetLocalAddresses_LabelsVirtualAdapters(t *testing.T) {
+	stubIfaces(t, []net.Interface{
+		{Name: "wlp1s0", Flags: net.FlagUp},
+		{Name: "docker0", Flags: net.FlagUp},
+	}, map[string][]net.Addr{
+		"wlp1s0":  {ipNet("192.168.100.104/24")},
+		"docker0": {ipNet("172.17.0.1/16")},
+	})
+
+	got := GetLocalAddresses()
+	if len(got) != 2 {
+		t.Fatalf("want 2 addresses, got %d: %v", len(got), got)
+	}
+	// The Docker bridge must still be LISTED (the user needs to see why an
+	// address does not work), but labeled so the UI can de-emphasize it.
+	byIP := map[string]LocalAddress{}
+	for _, a := range got {
+		byIP[a.IP] = a
+	}
+	if k := byIP["192.168.100.104"].Kind; k != KindLAN {
+		t.Fatalf("wlp1s0 kind = %v, want lan", k)
+	}
+	if k := byIP["172.17.0.1"].Kind; k != KindVirtual {
+		t.Fatalf("docker0 kind = %v, want virtual", k)
+	}
+	if got[0].IP != "192.168.100.104" {
+		t.Fatalf("LAN must sort before virtual, got %v first", got[0].IP)
+	}
+}
+
+func TestGetLocalAddresses_KeepsInterfaceName(t *testing.T) {
+	stubIfaces(t, []net.Interface{
+		{Name: "enx0826ae3967ba", Flags: net.FlagUp},
+	}, map[string][]net.Addr{
+		"enx0826ae3967ba": {ipNet("192.168.100.142/24")},
+	})
+
+	got := GetLocalAddresses()
+	if len(got) != 1 {
+		t.Fatalf("want 1 address, got %d", len(got))
+	}
+	// The interface name is what makes a labeled list useful ("which one is
+	// my Wi-Fi?"), so it must survive.
+	if got[0].Interface != "enx0826ae3967ba" {
+		t.Fatalf("interface = %q, want the OS name", got[0].Interface)
+	}
+}
+
+func TestGetLocalAddresses_SkipsLoopbackAndLinkLocal(t *testing.T) {
+	stubIfaces(t, []net.Interface{
+		{Name: "lo", Flags: net.FlagUp | net.FlagLoopback},
+		{Name: "eth0", Flags: net.FlagUp},
+		{Name: "eth1", Flags: 0}, // down
+	}, map[string][]net.Addr{
+		"lo":   {ipNet("127.0.0.1/8")},
+		"eth0": {ipNet("169.254.1.1/16"), ipNet("192.168.1.5/24")},
+		"eth1": {ipNet("10.0.0.9/24")},
+	})
+
+	got := GetLocalAddresses()
+	if len(got) != 1 || got[0].IP != "192.168.1.5" {
+		t.Fatalf("want only 192.168.1.5, got %v", got)
+	}
+}
+
+func TestGetLocalAddresses_DeduplicatesSameIP(t *testing.T) {
+	stubIfaces(t, []net.Interface{
+		{Name: "eth0", Flags: net.FlagUp},
+		{Name: "eth1", Flags: net.FlagUp},
+	}, map[string][]net.Addr{
+		"eth0": {ipNet("192.168.1.5/24")},
+		"eth1": {ipNet("192.168.1.5/24")},
+	})
+
+	if got := GetLocalAddresses(); len(got) != 1 {
+		t.Fatalf("a duplicate address must appear once, got %v", got)
+	}
+}
+
+func TestGetLocalAddresses_IPv4BeforeIPv6(t *testing.T) {
+	stubIfaces(t, []net.Interface{
+		{Name: "eth0", Flags: net.FlagUp},
+	}, map[string][]net.Addr{
+		"eth0": {ipNet("2001:db8::1/64"), ipNet("192.168.1.5/24")},
+	})
+
+	got := GetLocalAddresses()
+	if len(got) != 2 {
+		t.Fatalf("want 2 addresses, got %v", got)
+	}
+	// IPv4 first: it is what most colleagues can use.
+	if got[0].IP != "192.168.1.5" {
+		t.Fatalf("IPv4 must come first, got %v", got[0].IP)
+	}
+}
+
+func TestGetLocalAddresses_InterfaceError(t *testing.T) {
+	origI := netInterfaces
+	t.Cleanup(func() { netInterfaces = origI })
+	netInterfaces = func() ([]net.Interface, error) { return nil, errors.New("boom") }
+
+	if got := GetLocalAddresses(); got != nil {
+		t.Fatalf("want nil on interface error, got %v", got)
+	}
+}
+
+func TestClassifyIface_CaseInsensitive(t *testing.T) {
+	// Windows names its adapters "vEthernet (WSL)", so matching must ignore case.
+	cases := map[string]bool{
+		"vEthernet (WSL)": true,
+		"docker0":         true,
+		"utun3":           true,
+		"wlp1s0":          false,
+		"enx0826ae3967ba": false,
+		"eth0":            false,
+	}
+	for name, want := range cases {
+		if got := isVirtualIface(name); got != want {
+			t.Fatalf("isVirtualIface(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestGetLocalAddresses_CollapsesTemporaryIPv6PerPrefix(t *testing.T) {
+	// Measured on a real dual-stack laptop: one interface carried a stable IPv6
+	// plus several rotating privacy addresses in the same /64. Shipping all of
+	// them would bury the usable addresses and every link would be dead on
+	// arrival (privacy addresses rotate every few hours).
+	stubIfaces(t, []net.Interface{
+		{Name: "wlp1s0", Flags: net.FlagUp},
+	}, map[string][]net.Addr{
+		"wlp1s0": {
+			ipNet("192.168.100.104/24"),
+			ipNet("240e:391:cd2:390::879/64"),                // stable
+			ipNet("240e:391:cd2:390:a26:aeff:fe39:67ba/64"),  // EUI-64 derived
+			ipNet("240e:391:cd2:390:2093:4a60:858b:ef01/64"), // privacy
+			ipNet("240e:391:cd2:390:360c:e0f4:1745:e992/64"), // privacy
+		},
+	})
+
+	got := GetLocalAddresses()
+
+	// One IPv4 + exactly one IPv6 for the /64.
+	if len(got) != 2 {
+		t.Fatalf("want 2 addresses (1 v4 + 1 v6), got %d: %v", len(got), got)
+	}
+	var v6 int
+	for _, a := range got {
+		if a.IP == "192.168.100.104" {
+			continue
+		}
+		if a.IP != "240e:391:cd2:390::879" {
+			t.Fatalf("the stable address must be the one kept, got %q", a.IP)
+		}
+		v6++
+	}
+	if v6 != 1 {
+		t.Fatalf("want exactly 1 IPv6, got %d", v6)
+	}
+}
+
+func TestGetLocalAddresses_KeepsIPv6FromDifferentInterfaces(t *testing.T) {
+	// Two NICs on the same /64 are distinct reachable addresses; collapsing is
+	// per-interface, not global.
+	stubIfaces(t, []net.Interface{
+		{Name: "eth0", Flags: net.FlagUp},
+		{Name: "eth1", Flags: net.FlagUp},
+	}, map[string][]net.Addr{
+		"eth0": {ipNet("2001:db8::1/64")},
+		"eth1": {ipNet("2001:db8::2/64")},
+	})
+
+	got := GetLocalAddresses()
+	if len(got) != 2 {
+		t.Fatalf("want 2 addresses, got %d: %v", len(got), got)
+	}
+}

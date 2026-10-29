@@ -50,6 +50,12 @@ const DefaultLanguage = "zh"
 // turn is auto-resumed by default (chat.auto_continue_max_retries).
 const DefaultAutoContinueMaxRetries = 3
 
+// DefaultRestartResumeWindowMinutes bounds how old an interrupted turn may be
+// and still be auto-resumed after a restart (chat.restart_resume_window_minutes).
+// One hour: long enough to cover any real restart, short enough that a session
+// the user walked away from days ago is not resurrected.
+const DefaultRestartResumeWindowMinutes = 60
+
 // AutoContinueUnlimited is the sentinel meaning "no user-configured retry
 // limit". The service layer still applies an internal ceiling so a
 // deterministic failure cannot spin forever.
@@ -113,6 +119,15 @@ type Config struct {
 		// turn. -1 means unlimited (still capped internally), 0 disables the
 		// retries without turning the feature off. (default: 3)
 		AutoContinueMaxRetries int `yaml:"auto_continue_max_retries"`
+		// RestartResumeWindowMinutes bounds how old an interrupted turn may be
+		// and still be auto-resumed after a restart (default: 60).
+		//
+		// A restart warning stays in the database forever, so without a bound
+		// every abandoned session would look like "interrupted a moment ago" and
+		// be resumed on the next boot. The window expresses the actual intent —
+		// "pick up what the restart just interrupted" — rather than a cleanup
+		// policy. 0 disables the age check (resume regardless of age).
+		RestartResumeWindowMinutes int `yaml:"restart_resume_window_minutes"`
 		// AutoRenameEnabled replaces a session's local title with an AI summary
 		// of its user messages, at the same moment the local title is written
 		// (first message, or first message after a fork/continue). Falls back to
@@ -525,6 +540,10 @@ var (
 	// abnormal-termination auto-resume. Read by internal/service at turn end.
 	ChatAutoContinueEnabled    bool
 	ChatAutoContinueMaxRetries int
+	// ChatRestartResumeWindowMinutes bounds the age of an interrupted turn that
+	// the restart-resume worker will pick up (0 = no age bound). Read by
+	// internal/service at startup.
+	ChatRestartResumeWindowMinutes int
 	// ChatAutoRenameEnabled switches on the AI summary rename of a session at
 	// the moment its local title is written. Read by internal/service.
 	ChatAutoRenameEnabled bool

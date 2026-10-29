@@ -151,14 +151,44 @@ describe('usage meter capsule carries an icon and a word', () => {
     expect(src).toMatch(/from 'lucide-vue-next'/)
     expect(src).toContain('<Gauge')
     expect(src).toContain('class="usage-label"')
-    expect(src).toContain("t('usageMeter.label')")
+    expect(src).toContain('t(metricLabelKey)')
   })
 
-  it('both locales define the short label', () => {
+  it('the capsule word follows the configured metric, not a fixed "Usage"', () => {
+    // A $20 budget and a 20-token budget used to be labelled identically, so
+    // the word said nothing the number did not. Both surfaces that put a word
+    // in front of the number must derive it from `status.metric`.
+    for (const file of ['UsageMeterPopover.vue', 'SystemResourcesPanel.vue']) {
+      const src = stripComments(readWebFile(`src/components/common/${file}`))
+      expect(src, `${file} must derive its label from the metric`)
+        .toContain('usageMeterMetricLabelKey(')
+      expect(src).not.toContain("t('usageMeter.label')")
+    }
+  })
+
+  it('both locales define a label and a title for every metric', () => {
     for (const loc of ['zh', 'en']) {
       const src = readWebFile(`src/i18n/locales/${loc}.ts`)
-      expect(src).toMatch(/usageMeter:\s*\{[\s\S]*?\blabel:\s*'[^']+'/)
+      for (const key of [
+        'label',
+        'title',
+        'metricTokens',
+        'metricCredit',
+        'metricCost',
+        'titleTokens',
+        'titleCredit',
+        'titleCost',
+      ]) {
+        expect(src, `${loc} missing usageMeter.${key}`)
+          .toMatch(new RegExp(`\\b${key}:\\s*'[^']+'`))
+      }
     }
+  })
+
+  it('the popover heading follows the metric instead of a fixed "Usage"', () => {
+    const src = stripComments(readWebFile('src/components/common/UsageMeterPopover.vue'))
+    expect(src).toContain('t(titleKey)')
+    expect(src).not.toContain("t('usageMeter.title')")
   })
 })
 

@@ -25,33 +25,24 @@
         </div>
 
         <!-- Link bar (only once a link exists) -->
+        <!-- Link bar (only once a link exists). The address list replaces the
+             old single input so a colleague on another subnet can pick an
+             address that reaches them. -->
         <div v-if="linkUrl" class="share-dialog-link-bar">
-          <div class="share-dialog-link-input-wrap">
-            <input
-              ref="linkInputRef"
-              class="share-dialog-link-input"
-              type="text"
-              :value="linkUrl"
-              readonly
-              spellcheck="false"
-              @focus="$event.target.select()"
-            />
-            <CopyButton
-              :text="linkUrl"
-              title-key="sessionShare.copyTip"
-              class="share-dialog-link-btn"
-            />
-            <button
-              class="share-dialog-link-btn"
-              :title="t('sessionShare.regenerateTip')"
-              :aria-label="t('sessionShare.regenerateTip')"
-              :disabled="creating"
-              @click="regenerateLink"
-            >
-              <LoadingIndicator v-if="creating" size="sm" inline class="share-dialog-spin" />
-              <RefreshCw v-else :size="14" />
-            </button>
-          </div>
+          <ShareAddressList :links="shareLinks">
+            <template #trailing>
+              <button
+                class="share-dialog-link-btn"
+                :title="t('sessionShare.regenerateTip')"
+                :aria-label="t('sessionShare.regenerateTip')"
+                :disabled="creating"
+                @click="regenerateLink"
+              >
+                <LoadingIndicator v-if="creating" size="sm" inline class="share-dialog-spin" />
+                <RefreshCw v-else :size="14" />
+              </button>
+            </template>
+          </ShareAddressList>
         </div>
 
         <!-- Creation error: shown regardless of whether a link already exists,
@@ -175,7 +166,8 @@ import { useSessionShare } from '@/composables/useSessionShare'
 // Shared notice + link-bar chrome. Imported (not global) so only the two share
 // dialogs load it; see the file header for why it cannot be scoped.
 import '@/assets/share-dialog.css'
-import CopyButton from '@/components/common/CopyButton.vue'
+import ShareAddressList from '@/components/common/ShareAddressList.vue'
+import { buildShareLinks } from '@/composables/useShareLinks'
 
 const TAG = 'SessionShareDialog'
 
@@ -199,13 +191,14 @@ const creating = ref(false)
 const loadError = ref('')
 const errorMsg = ref('')
 const linkUrl = ref('')
+/** Every address this share can be opened on; linkUrl is the primary. */
+const shareLinks = ref([])
 const messages = ref([])
 const selectedIds = ref(new Set())
 // Ids frozen into the existing share link, or null when unknown (no link, or a
 // server that does not report them yet). Only a KNOWN frozen selection turns
 // the list read-only — guessing one would misreport what the link carries.
 const sharedIds = ref(null)
-const linkInputRef = ref(null)
 
 // Speaker identities shipped with the status response, so each row shows the
 // real agent icon (group members included) instead of a generic Bot. The dialog
@@ -277,8 +270,14 @@ function toggleAll() {
   selectedIds.value = new Set(messages.value.filter(isSelectable).map((m) => m.id))
 }
 
-function toAbsoluteUrl(path) {
-  return window.location.origin + path
+/**
+ * Resolve every address for a share path. `window.location.origin` only knows
+ * the ONE address this browser used; on a multi-homed machine a colleague may
+ * be on another subnet and unable to open it.
+ */
+async function setLinksForPath(path) {
+  shareLinks.value = await buildShareLinks(path)
+  linkUrl.value = shareLinks.value[0]?.url ?? ''
 }
 
 async function loadStatus() {
@@ -302,7 +301,7 @@ async function loadStatus() {
     // A server that predates this field sends nothing; keep the list editable
     // rather than claiming the link carries zero messages.
     sharedIds.value = Array.isArray(data.selectedIds) ? new Set(data.selectedIds) : null
-    if (data.path) linkUrl.value = toAbsoluteUrl(data.path)
+    if (data.path) await setLinksForPath(data.path)
     // Reconcile this session's badge with the server, which is authoritative.
     if (data.path) markShared(props.sessionId)
     else markUnshared(props.sessionId)
@@ -335,7 +334,7 @@ async function createLink() {
       throw new Error(err.error || resp.statusText)
     }
     const data = await resp.json()
-    linkUrl.value = toAbsoluteUrl(data.path)
+    await setLinksForPath(data.path)
     // Freeze what was just sent: the list switches to read-only and highlights
     // exactly the ids the new link carries.
     sharedIds.value = new Set(ids)

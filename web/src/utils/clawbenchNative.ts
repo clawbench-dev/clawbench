@@ -42,8 +42,37 @@ export interface ClawBenchNative {
   showServerDialog(): void
   openSession(sessionId: string): void
   setNativePushEnabled(enabled: boolean): void
-  /** Enable/disable the floating session status window (Android; no-op on desktop). */
+  /**
+   * Enable/disable the floating session status window.
+   *
+   * Both native hosts implement it: Android shows the bubble over the launcher,
+   * the Electron shell shows an always-on-top capsule plus a tray icon. The
+   * settings row therefore must NOT be `androidOnly` — see
+   * `settingsFieldMap.ts`'s `floatingStatusWindow`.
+   */
   setFloatingWindowEnabled(enabled: boolean): void
+  /**
+   * Whether the floating status window feature is ON.
+   *
+   * Optional because it is only needed to reconcile a switch that was flipped
+   * from outside the settings page (the desktop tray menu can turn the feature
+   * off). Absent ⇒ the caller keeps whatever it had.
+   *
+   * Distinct from "the capsule is visible": a user who hid the capsule still has
+   * the feature on, and the tray is the way back.
+   */
+  isFloatingWindowEnabled?(): boolean
+  /**
+   * Tell the desktop shell that session state probably changed, so it can
+   * refresh the floating capsule's counters before the next poll tick.
+   *
+   * Optional (Android drives its own refresh from the WebSocket, and older
+   * desktop builds have no such channel). Must NOT be folded into
+   * `nativeNotify`: that is gated by the desktop-notification setting and by
+   * page focus, and the capsule's counters are a different concern from the
+   * popup.
+   */
+  notifyFloatingActivity?(): void
   /** Enable/disable the Android 16 Live Updates status chip (Android; no-op on desktop). */
   setLiveUpdateEnabled(enabled: boolean): void
   /** Whether the system can currently promote Live Updates for this app (Android; false on desktop). */
@@ -89,6 +118,31 @@ export interface ClawBenchNative {
   setOemAutoStartPrompted(): void
   openOemAutoStartSettings(): boolean
   openOemBatterySettings(): boolean
+
+  /**
+   * Desktop only: list the screens/windows that can be captured, for the live
+   * share source picker. Returns a JSON array of `{ id, name, kind, thumbnail }`.
+   * Android and the browser do not implement it — callers must treat absence as
+   * "screen sharing unavailable".
+   */
+  listCaptureSources?(): Promise<string>
+  /**
+   * Desktop only: declare which source the NEXT getDisplayMedia call should
+   * capture, and whether to include system audio. One-shot: the main process
+   * clears it as soon as it is consumed, so a later getDisplayMedia from any
+   * page cannot silently capture the screen.
+   */
+  setPendingCaptureSource?(sourceId: string, systemAudio: boolean): Promise<void>
+  /**
+   * Desktop only: whether the host can capture system (loopback) audio at all.
+   * Windows only today; macOS/Linux return a reason instead.
+   */
+  getAudioCaptureSupport?(): Promise<string>
+  /**
+   * Desktop only: keep the renderer unthrottled while publishing. Without it a
+   * minimized window throttles the encoder and the stream stalls.
+   */
+  setPublishingActive?(active: boolean): Promise<void>
 
   // Async reads (main-process / native state)
   getAppVersion(): Promise<string>

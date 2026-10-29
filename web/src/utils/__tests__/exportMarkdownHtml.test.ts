@@ -421,6 +421,21 @@ describe('exportMarkdownToHtml', () => {
     expect(result.skippedImages).toBe(1)
   })
 
+  it('marks every image loaded so the pending placeholder cannot survive', async () => {
+    // In the app the pending shimmer ends when `load` fires and
+    // localMediaFallback stamps `data-media-settled`. A static export has no
+    // listener, so without this stamp every image would keep the placeholder
+    // forever and the exported document would look empty.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: { 'images/photo.png': { mime: 'image/png', data: 'AAAA' } } }),
+    })
+    const result = await exportMarkdownToHtml(opts({ content: '![p](images/photo.png)' }))
+    expect(result.html).toContain('data-media-settled')
+    // The stamp is on the <img> itself, not on some wrapper.
+    expect(result.html).toMatch(/<img[^>]*data-media-settled/)
+  })
+
   it('chunks more than 50 images instead of failing the whole batch', async () => {
     // The endpoint rejects >50 paths with 400 TooManyPaths. Un-chunked, that one
     // 400 made EVERY local image keep its /api/fs/raw src (broken in the

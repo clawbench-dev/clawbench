@@ -29,13 +29,13 @@ describe('terminal toolbar bold style (Android WebView vs browser parity)', () =
     expect(vue).toMatch(/\.toolbar-btn\.shortcut\s*\{[\s\S]*?font-weight:\s*800;/)
   })
 
-  it('applies a thin uniform -webkit-text-stroke only under data-app-mode', () => {
+  it('applies a thin uniform -webkit-text-stroke only under data-webview-mode', () => {
     expect(vue).toMatch(
-      /\[data-app-mode\] \.toolbar-btn\s*\{[\s\S]*?-webkit-text-stroke:\s*0\.12px currentColor;/,
+      /\[data-webview-mode\] \.toolbar-btn\s*\{[\s\S]*?-webkit-text-stroke:\s*0\.12px currentColor;/,
     )
     // Shortcut keys use a slightly lighter stroke (smaller font).
     expect(vue).toMatch(
-      /\[data-app-mode\] \.toolbar-btn\.shortcut\s*\{[\s\S]*?-webkit-text-stroke:\s*0\.1px currentColor;/,
+      /\[data-webview-mode\] \.toolbar-btn\.shortcut\s*\{[\s\S]*?-webkit-text-stroke:\s*0\.1px currentColor;/,
     )
   })
 

@@ -87,3 +87,46 @@ describe('desktop main-process CJK guard', () => {
     }
   })
 })
+
+/**
+ * Guard: the capsule document must carry no user-visible CJK.
+ *
+ * The scan above only walks `.ts` files under `desktop/src`, so
+ * `desktop/assets/*.html` was a blind spot — exactly where the capsule's markup
+ * lives. Its labels now arrive over IPC from `main/labels.ts` (see
+ * `floatingCapsuleLabels`), so a literal here is either a dead default or,
+ * worse, the string an English user sees whenever the first state push is late.
+ *
+ * `login.html` is deliberately NOT covered: it is a self-contained document
+ * with its own in-file `I18N` table (the main process cannot reach it before
+ * the page loads), so CJK there is the zh column, not a leak.
+ */
+describe('capsule document CJK guard', () => {
+  const assetsRoot = resolve(srcRoot(), '..', 'assets')
+
+  it('floating.html has no hardcoded CJK', () => {
+    const file = join(assetsRoot, 'floating.html')
+    const src = stripComments(readFileSync(file, 'utf8'))
+    const offending = src
+      .split('\n')
+      .map((line, i) => [i + 1, line] as const)
+      .filter(([, line]) => CJK.test(line))
+      .map(([n, line]) => `  ${n}: ${line.trim()}`)
+    expect(
+      offending,
+      `CJK found in desktop/assets/floating.html:\n${offending.join('\n')}\n\n` +
+        'The capsule resolves its strings from main/labels.ts (floatingCapsuleLabels) ' +
+        'and receives them over IPC — put the text there instead.',
+    ).toEqual([])
+  })
+
+  it('floating.html still receives every label it renders', () => {
+    // The guard above is satisfiable by deleting the text entirely, which would
+    // leave the capsule rendering blanks. Pin that the four counter words plus
+    // the body hint are actually applied from the pushed state.
+    const src = readFileSync(join(assetsRoot, 'floating.html'), 'utf8')
+    for (const field of ['running', 'pending', 'unread', 'idle', 'hint']) {
+      expect(src, `floating.html must apply labels.${field}`).toContain(`l.${field}`)
+    }
+  })
+})

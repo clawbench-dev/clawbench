@@ -320,8 +320,10 @@ const i18n = createI18n({
           aboutServerVersion: '服务器版本',
           aboutServerVersionDesc: '服务器版本',
           aboutBrandSlogan: '多端一体的 AI 工作台',
-          aboutHomepage: '官网',
+          aboutHomepage: '项目主页',
           aboutHomepageDesc: '在浏览器中打开项目主页',
+          aboutGithub: 'GitHub 主页',
+          aboutGithubDesc: '在浏览器中打开 GitHub 仓库',
           aboutFeedback: '问题反馈',
           aboutFeedbackDesc: '前往 GitHub 提交问题或建议',
           aboutAppVersion: 'APP版本',
@@ -707,6 +709,12 @@ describe('SettingsCategory', () => {
         const wrapper = mountCategory('appearance')
         await wrapper.vm.$nextTick()
         const wallpaper = wrapper.findAllComponents({ name: 'WallpaperSetting' })[0]
+        // `SettingsCategory` renders the appearance pane through an async
+        // sub-panel, so the gallery mounts a tick later than the category
+        // itself. Awaiting only one `$nextTick()` made this pass or fail
+        // depending on what else the worker had queued (observed as a 5s
+        // timeout in the full run, green when the file ran alone).
+        await flushPromises()
         expect(wallpaper.find('img.wallpaper-gallery__thumb').exists()).toBe(true)
       } finally {
         localConfig.wallpaperMode = 'wave'
@@ -812,21 +820,22 @@ describe('SettingsCategory', () => {
       expect(mountCategory('chat').findComponent({ name: 'SettingsAboutBrand' }).exists()).toBe(false)
     })
 
-    it('renders the homepage and feedback entries in their own card', () => {
+    it('renders the homepage, GitHub and feedback entries in their own card', () => {
       const wrapper = mountCategory('about')
       const labels = wrapper.findAllComponents({ name: 'SettingsItem' })
         .map(i => i.props().label)
-      expect(labels).toContain('官网')
+      expect(labels).toContain('项目主页')
+      expect(labels).toContain('GitHub 主页')
       expect(labels).toContain('问题反馈')
 
       const card = wrapper.findAllComponents({ name: 'SettingsCard' })
         .find(c => c.props().title === '项目')
       expect(card, 'the project links need their own card, not the actions card').toBeTruthy()
       const cardLabels = card!.findAllComponents({ name: 'SettingsItem' }).map(i => i.props().label)
-      expect(cardLabels).toEqual(['官网', '问题反馈'])
+      expect(cardLabels).toEqual(['项目主页', 'GitHub 主页', '问题反馈'])
     })
 
-    it('opens the project homepage in the browser on click', async () => {
+    it('opens the project homepage (not the repository) on click', async () => {
       const wrapper = mountCategory('about')
       const vm = wrapper.vm as any
       vm.$.setupState.handleClick({ key: 'openProjectHomepage' })
@@ -836,7 +845,20 @@ describe('SettingsCategory', () => {
       // while it is still attached (it is removed after 1s).
       const anchors = document.body.querySelectorAll('a[href]')
       const hrefs = Array.from(anchors).map(a => a.getAttribute('href'))
+      expect(hrefs).toContain('https://clawbench.pages.dev')
+      anchors.forEach(a => a.remove())
+    })
+
+    it('opens the GitHub repository (not the homepage) on click', async () => {
+      const wrapper = mountCategory('about')
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleClick({ key: 'openProjectGithub' })
+      await nextTick()
+
+      const anchors = Array.from(document.body.querySelectorAll('a[href]'))
+      const hrefs = anchors.map(a => a.getAttribute('href'))
       expect(hrefs).toContain('https://github.com/xulongzhe/clawbench')
+      expect(hrefs).not.toContain('https://clawbench.pages.dev')
       anchors.forEach(a => a.remove())
     })
 
@@ -1319,20 +1341,31 @@ describe('SettingsCategory', () => {
       expect(titles).toEqual(['应用内通知', '桌面端通知', '桌面与系统'])
     })
 
-    it('drops the 桌面与系统 card in the Electron desktop shell', () => {
-      // The two rows in that card (桌面悬浮状态窗 / 灵动岛) are Android-only:
-      // their bridge methods exist only on Android and their copy names
-      // Android-only permissions. `appOnly` is implemented as "isAppMode",
-      // which is ALSO true in Electron, so the card used to render there as two
-      // switches that silently did nothing. The rows are now `androidOnly`.
+    it('keeps the floating-window row in the Electron desktop shell, drops the Android-only chip', () => {
+      // The two rows in that card are NOT the same platform.
+      //
+      // 桌面悬浮状态窗 is implemented by BOTH hosts — Android draws a bubble over
+      // the launcher, the Electron shell draws an always-on-top capsule plus a
+      // tray icon (`desktop/src/main/floating.ts`). Marking it `androidOnly`
+      // left the desktop feature with no way to switch it on at all, and the
+      // tray's own "turn off" then had no way back.
+      //
+      // 灵动岛 is genuinely Android-only: `setLiveUpdateEnabled` /
+      // `canPostPromotedNotifications` exist only on the Android bridge and the
+      // copy names Android 16 permissions.
       mockIsAppMode.value = true
       mockIsDesktopApp.value = true
       const wrapper = mountCategory('notification')
       const titles = wrapper.findAllComponents({ name: 'SettingsCard' })
         .map(c => c.props().title)
 
-      expect(titles).not.toContain('桌面与系统')
-      expect(titles).toEqual(['应用内通知', '桌面端通知'])
+      expect(titles).toContain('桌面与系统')
+      // The card survives, but only the floating-window switch is in it.
+      expect(titles).toEqual(['应用内通知', '桌面端通知', '桌面与系统'])
+      const rowLabels = wrapper.findAll('[data-settings-key]')
+        .map(el => el.attributes('data-settings-key'))
+      expect(rowLabels).toContain('floatingStatusWindow')
+      expect(rowLabels).not.toContain('liveUpdate')
     })
 
     it('drops the 桌面与系统 card entirely in browser mode (app-only rows)', () => {
@@ -1340,8 +1373,10 @@ describe('SettingsCategory', () => {
       const titles = wrapper.findAllComponents({ name: 'SettingsCard' })
         .map(c => c.props().title)
 
-      // Both desktop/system rows are appOnly, so the card must not render as an
-      // empty headed card in browser mode. The desktop-notification card stays.
+      // The card is gated on `appOnly`, and both rows inside it are app-only or
+      // stricter, so it must not render as an empty headed card in browser mode
+      // (where there is no native host to show anything). The
+      // desktop-notification card stays.
       expect(titles).not.toContain('桌面与系统')
       expect(titles).toEqual(['应用内通知', '桌面端通知'])
     })

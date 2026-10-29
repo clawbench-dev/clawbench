@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-panel-content">
+  <div class="chat-panel-content" ref="panelEl">
     <!-- Long-action feedback. Absolute at the panel's top edge so it is visible
          regardless of scroll position or viewport width — the button that was
          clicked may be scrolled out of the horizontally-scrollable action bar.
@@ -159,6 +159,24 @@
       @toggle-group-parallel="$emit('toggle-group-parallel', $event)"
     />
 
+    <!-- Conversation index as an always-visible numbered rail.
+         Mounted HERE rather than inside ChatMessageList: it has to run the full
+         height of the pane (not just the message scroller) so the axis still
+         reads as one continuous thing. The rows come from the message list's own
+         composable, so it can never disagree with the index drawer. -->
+    <ChatMessageRail
+      v-if="messageListRef"
+      :messages="messageListRef.userMsgIndexList"
+      :active-id="messageListRef.railActiveId"
+      :resolve-speaker="messageListRef.getRailSpeakerResolver()"
+      :has-btw="messageListRef.getBtwAnchorLookup()"
+      :get-scroller="messageListRef.getMessagesEl"
+      :bottom-inset="railBottomInset"
+      :generating="railGenerating"
+      @select="handleRailSelect"
+      @select-pending="handleRailSelectPending"
+    />
+
   </div>
 
   <!-- Quote detail drawer — a SINGLETON, opened for whichever quote card was
@@ -273,6 +291,7 @@ import QuoteDetailDrawer from './QuoteDetailDrawer.vue'
 import BtwAnswerDrawer from './BtwAnswerDrawer.vue'
 import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
+import ChatMessageRail from './ChatMessageRail.vue'
 import QueuedMessageBar from './QueuedMessageBar.vue'
 import PlanPanel from './PlanPanel.vue'
 import TeamPanel from './TeamPanel.vue'
@@ -1215,7 +1234,7 @@ watch(
     if (data === null || !toolDetailIsOpen.value) return
     const { formatToolInput } = render
     const hasInput = data.input && Object.keys(data.input).length > 0
-    toolDetailData.value.outputHtml = data.output ? formatToolOutput(data.output, data.name) : toolDetailData.value.outputHtml
+    toolDetailData.value.outputHtml = data.output ? formatToolOutput(data.output, data.name, { annotate: !!data.done }) : toolDetailData.value.outputHtml
     toolDetailData.value.status = data.status || ''
     toolDetailData.value.done = !!data.done
     toolDetailData.value.inputHtml = hasInput ? formatToolInput(data.input, data.name, { done: data.done, status: data.status, output: data.output }) : toolDetailData.value.inputHtml
@@ -1467,6 +1486,68 @@ function handleSwitchTransport(transport) {
 function handleOpenUserMsgIndex() {
   messageListRef.value?.toggleUserMsgIndex()
 }
+
+/**
+ * How much of the panel's foot the rail must leave free, in px.
+ *
+ * The axis, its hover card and its scroll range all stop here. They have to be
+ * one box: the numbers are the card's left column, so a number outside the card
+ * would be an orphan with no row beside it. Stopping above the composer also
+ * keeps the card off the input box.
+ *
+ * Measured through a ref a ResizeObserver refreshes: the composer block grows
+ * with attachments, the queued-message banner and the plan card, and a stale
+ * value would let the card cover the input.
+ */
+const panelEl = ref(null)
+const railBottomInset = ref(0)
+let composerObserver = null
+
+function syncRailBottomInset() {
+  const panel = panelEl.value
+  const el = inputBarRef.value?.$el
+  if (!panel || !el) return
+  const inset = Math.max(0, panel.getBoundingClientRect().bottom - el.getBoundingClientRect().top)
+  if (Math.abs(inset - railBottomInset.value) > 0.5) railBottomInset.value = inset
+}
+
+function observeComposer() {
+  composerObserver?.disconnect()
+  composerObserver = null
+  syncRailBottomInset()
+  if (typeof ResizeObserver === 'undefined') return
+  composerObserver = new ResizeObserver(() => syncRailBottomInset())
+  const panel = panelEl.value
+  const el = inputBarRef.value?.$el
+  if (panel) composerObserver.observe(panel)
+  if (el) composerObserver.observe(el)
+}
+
+function handleRailSelect(msg) {
+  messageListRef.value?.jumpToUserMessage(msg)
+}
+
+/**
+ * The pending node has no index row, so `select` cannot carry it: the host
+ * answers "show me the reply being written" instead. This is the ONLY consumer
+ * of `scrollToGenerating` — without the binding the click emitted into nothing
+ * and the node looked dead.
+ */
+function handleRailSelectPending() {
+  messageListRef.value?.scrollToGenerating()
+}
+
+/**
+ * Whether THIS session has a turn in flight.
+ *
+ * The index only contains finalized messages, so the rail needs this separately
+ * to show a pending node — otherwise it looks complete while a reply is still
+ * being written. Keyed on the current session only: another session running in
+ * the background must not put a spinner on this thread's axis.
+ */
+const railGenerating = computed(() =>
+  identity.runningSessions.value.has(identity.currentSessionId.value),
+)
 
 /**
  * Open the conversation-share dialog for the current session. The id is
@@ -2440,6 +2521,7 @@ onMounted(() => {
     document.addEventListener('keydown', handleJumpUnread)
     document.addEventListener('keydown', handleOpenSessionList)
     document.addEventListener('keydown', handleDeleteKey)
+    nextTick(() => observeComposer())
 })
 
 // Cleanup preview URLs on unmount
@@ -2462,6 +2544,8 @@ onUnmounted(() => {
     document.removeEventListener('keydown', handleDeleteKey)
     session.removeForegroundReadListener()
     notification.closeAll()
+    composerObserver?.disconnect()
+    composerObserver = null
 })
 
 // Forward ChatMessageList's savePositionNow so App.vue can save the current
@@ -2531,12 +2615,16 @@ defineExpose({
    `contain: paint` additionally bounds the panel's painting to its own box,
    so nothing inside can bleed into the dock/composer area.
 
-   Scoped to [data-app-mode]: desktop browsers do not have the compositor bug,
-   and a permanent layer would cost subpixel text antialiasing there.
+   Scoped to [data-webview-mode], which is set on the Android WebView ONLY
+   (`isAppMode` also covers the Electron desktop shell — see WEBVIEW_MODE_ATTR
+   in composables/useAppMode.ts). Desktop engines have no such compositor bug,
+   and a permanent layer there costs subpixel text antialiasing while turning
+   the whole scroller into one giant composited layer whose paint chunks can be
+   reused at the wrong offset.
 
    Guarded by web/src/components/chat/__tests__/chatCompositingBoundary.css.test.ts
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-:root[data-app-mode] .chat-panel-content {
+:root[data-webview-mode] .chat-panel-content {
   will-change: transform;
   contain: paint;
 }

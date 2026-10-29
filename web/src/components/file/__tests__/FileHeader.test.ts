@@ -1029,3 +1029,29 @@ describe('FileHeader — project-external badge', () => {
     expect(name![1]).toMatch(/text-overflow:\s*ellipsis/)
   })
 })
+
+describe('FileHeader — overlay close button', () => {
+  // jsdom does not apply SFC <style>, so both geometry facts are asserted
+  // against the source. They are deliberately separate: a filled block with a
+  // square corner reads as a UI slab rather than a button, and an un-nudged
+  // block sits 0.5px above the bar's true middle (the bar's 1px bottom border
+  // is inside its border-box, so flex centring happens in a 35px content box).
+  // Bare 14px glyphs hide that half-pixel; a 26px red block does not.
+  const src = readFileSync(resolve(__dirname, '../../../components/file/FileHeader.vue'), 'utf8')
+
+  it('uses the smallest radius token rather than square corners', () => {
+    const rule = src.match(/\.overlay-close-btn\s*\{([^}]*)\}/)
+    expect(rule, '.overlay-close-btn rule must exist').not.toBeNull()
+    expect(rule![1]).toMatch(/border-radius:\s*var\(--radius-xs\)/)
+    expect(rule![1]).not.toMatch(/border-radius:\s*0\b/)
+  })
+
+  it('nudges the block back onto the bar centre', () => {
+    const rule = src.match(/\.overlay-close-btn\s*\{([^}]*)\}/)
+    expect(rule, '.overlay-close-btn rule must exist').not.toBeNull()
+    // 0.5px is half of the bar's literal 1px border — not a --dp-derived value,
+    // because the border stays 1px at every UI scale.
+    expect(rule![1]).toMatch(/position:\s*relative/)
+    expect(rule![1]).toMatch(/top:\s*0\.5px/)
+  })
+})

@@ -5,6 +5,10 @@ import { isDarkTheme } from './themeMeta'
 import { isShareMode } from '@/share/shareMode'
 import { armMermaidFigure } from '@/utils/mediaBlockFactory.ts'
 import { stampSvgFigure } from '@/utils/svgMediaFit.ts'
+// Global `t` rather than `useI18n()`: this module builds markup OUTSIDE any
+// component (a plain string assigned to innerHTML), so there is no setup
+// context to call it from — the same reason mediaBlockFactory.ts uses it.
+import { gt } from '@/composables/useLocale'
 
 // Import shared mermaid CSS (loading spinner, error, retry button styles)
 import '@/assets/mermaid.css'
@@ -116,6 +120,57 @@ function mermaidErrorHtml(errorMessage: string): string {
     return `<pre class="mermaid-error-pre">Mermaid Error: ${errorMessage}</pre><button class="mermaid-retry-btn" type="button" aria-label="Retry rendering diagram">Retry</button>`
 }
 
+/**
+ * Loading placeholder markup: the standard picture glyph, breathing.
+ *
+ * Why not a hand-drawn skeleton: a diagram's real shape is unknowable before it
+ * renders, so any invented node layout is a guess — and a guessed layout drawn
+ * out of bars reads as a chart-ish blob rather than as a diagram.
+ *
+ * Why the plain picture glyph rather than a diagram-specific one: the
+ * placeholder marks a MEDIA BLOCK that has not arrived yet, which is exactly
+ * what an image icon means. A `network` glyph over-specified the content (it
+ * promised a node graph, which a sequence diagram or a pie chart is not), and
+ * every extra stroke is a claim the placeholder cannot keep.
+ *
+ * The glyph is drawn INLINE rather than imported: this markup is built as a
+ * string for `innerHTML`, and several test files mock `lucide-vue-next` with a
+ * narrow set of names — a new import would be `undefined` there and crash the
+ * render. The path data below is copied verbatim from `lucide-vue-next`'s
+ * `image.js` (ISC), so it matches the component pixel for pixel.
+ *
+ * The glyph sits ON a shimmering tile rather than pulsing on its own: a sweep
+ * needs SURFACE to be seen, and a 1.5px outline gives it almost none — the
+ * earlier opacity pulse on the bare glyph measured as a no-op at 56dp (the
+ * stroke is too thin for a brightness change to register). The tile is the same
+ * `.skeleton-block` language the rest of the app uses, and the glyph is what
+ * keeps it specific to media rather than a generic grey square.
+ *
+ * Deliberately NO spinner: one mark, one motion. The sweep is the motion
+ * signal; a ring beside it would say the same thing twice.
+ *
+ * Everything visible is `aria-hidden`; the single `role="status"` line carries
+ * the announcement, because otherwise a screen reader walking into the diagram
+ * position would hear nothing at all for the seconds the render takes.
+ */
+const DIAGRAM_LOADING_ICON = '<svg class="mermaid-loading-icon" viewBox="0 0 24 24"'
+    + ' fill="none" stroke="currentColor" stroke-width="1.5"'
+    + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>'
+    + '<circle cx="9" cy="9" r="2"></circle>'
+    + '<path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>'
+    + '</svg>'
+
+function mermaidLoadingHtml(): string {
+    const label = gt('media.diagramLoading')
+    return '<div class="mermaid-loading" role="status" aria-live="polite">'
+        + `<span class="mermaid-loading-sr">${escapeHtml(label)}</span>`
+        + '<span class="mermaid-loading-tile" aria-hidden="true">'
+        + DIAGRAM_LOADING_ICON
+        + '</span>'
+        + '</div>'
+}
+
 /** Replace a mermaid container with a <pre class="mermaid"> for re-rendering */
 function retryMermaidBlock(container: HTMLElement): void {
     const source = container.dataset.mermaid
@@ -216,7 +271,7 @@ export async function renderMermaidInElement(
         if (srcLine) container.setAttribute('data-source-line', srcLine)
         const srcEnd = (block as HTMLElement).getAttribute('data-source-end')
         if (srcEnd) container.setAttribute('data-source-end', srcEnd)
-        container.innerHTML = '<div class="mermaid-loading"><span class="li-spinner mermaid-spinner"></span></div>'
+        container.innerHTML = mermaidLoadingHtml()
         ;(block as Element).replaceWith(container)
         containers.push({ container, source })
     })

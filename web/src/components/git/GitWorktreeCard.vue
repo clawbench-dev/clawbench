@@ -115,7 +115,7 @@ function handleDelete() {
   font-weight: var(--font-weight-bold);
 }
 
-[data-app-mode] .git-worktree-row.current .wt-row-name {
+[data-webview-mode] .git-worktree-row.current .wt-row-name {
   text-shadow: 0 0 1px currentColor;
 }
 

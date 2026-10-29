@@ -169,7 +169,7 @@ describe('ShareLinkDialog', () => {
       const wrapper = mountDialog()
       await flushPromises()
       await nextTick()
-      const input = wrapper.find('input.share-dialog-link-input')
+      const input = wrapper.find('[data-share-primary]')
       expect((input.element as HTMLInputElement).value).toBe('https://host.example/share/tok1')
       // The link row wraps only the input; the row container is one column.
       expect(wrapper.find('.share-dialog-link-bar').exists()).toBe(true)
@@ -179,7 +179,7 @@ describe('ShareLinkDialog', () => {
       const wrapper = mountDialog()
       await flushPromises()
       await nextTick()
-      const copyBtn = wrapper.find('.share-dialog-link-btn[title="Copy tip"]')
+      const copyBtn = wrapper.find('.copy-btn')
       const regenBtn = wrapper.find('.share-dialog-link-btn[title="Regenerate tip"]')
       expect(copyBtn.exists()).toBe(true)
       expect(regenBtn.exists()).toBe(true)
@@ -227,7 +227,7 @@ describe('ShareLinkDialog', () => {
     await flushPromises()
     await nextTick()
 
-    await wrapper.find('.share-dialog-link-btn[title="Copy tip"]').trigger('click')
+    await wrapper.find('.copy-btn').trigger('click')
     expect(mockCopyText).toHaveBeenCalledWith('https://host.example/share/tok1')
   })
 
@@ -241,7 +241,7 @@ describe('ShareLinkDialog', () => {
     await flushPromises()
     await nextTick()
 
-    const input = wrapper.find('input.share-dialog-link-input')
+    const input = wrapper.find('[data-share-primary]')
     expect((input.element as HTMLInputElement).value).toBe('https://host.example/share/newtok')
     // POST body carries the file path.
     const postCall = fetchMock.mock.calls.find((c: unknown[]) => c[1]?.method === 'POST')
@@ -264,7 +264,7 @@ describe('ShareLinkDialog', () => {
     const delCall = fetchMock.mock.calls.find((c: unknown[]) => c[1]?.method === 'DELETE')
     expect(delCall).toBeTruthy()
     // Back to the generate state.
-    expect(wrapper.find('input.share-dialog-link-input').exists()).toBe(false)
+    expect(wrapper.find('[data-share-primary]').exists()).toBe(false)
     expect(wrapper.text()).toContain('Generate link')
   })
 
@@ -279,7 +279,7 @@ describe('ShareLinkDialog', () => {
 
     const delCall = fetchMock.mock.calls.find((c: unknown[]) => c[1]?.method === 'DELETE')
     expect(delCall).toBeUndefined()
-    expect(wrapper.find('input.share-dialog-link-input').exists()).toBe(true)
+    expect(wrapper.find('[data-share-primary]').exists()).toBe(true)
   })
 
   it('regenerates the link only after confirmation', async () => {
@@ -294,7 +294,7 @@ describe('ShareLinkDialog', () => {
     // Cancelled — no POST issued and the old link stays.
     const postCall = fetchMock.mock.calls.find((c: unknown[]) => c[1]?.method === 'POST')
     expect(postCall).toBeUndefined()
-    expect((wrapper.find('input.share-dialog-link-input').element as HTMLInputElement).value).toBe('https://host.example/share/tok1')
+    expect((wrapper.find('[data-share-primary]').element as HTMLInputElement).value).toBe('https://host.example/share/tok1')
   })
 
   it('regenerates the link when confirmation is accepted', async () => {
@@ -310,6 +310,6 @@ describe('ShareLinkDialog', () => {
 
     const postCall = fetchMock.mock.calls.find((c: unknown[]) => c[1]?.method === 'POST')
     expect(postCall).toBeTruthy()
-    expect((wrapper.find('input.share-dialog-link-input').element as HTMLInputElement).value).toBe('https://host.example/share/newtok')
+    expect((wrapper.find('[data-share-primary]').element as HTMLInputElement).value).toBe('https://host.example/share/newtok')
   })
 })

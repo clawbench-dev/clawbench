@@ -31,6 +31,9 @@ TTSSpeakerSaysPrefix: "{{.Name}}说："
 BackendCreateFailed: "创建 AI Backend 失败: {{.Error}}"
 StreamStartFailed: "启动流式输出失败: {{.Error}}"
 MethodNotAllowed: 方法不允许
+TokenRequired: 缺少 token
+LiveShareAlreadyPublishing: 已有发布端在共享这个房间
+LiveShareTooManyRooms: 同时进行的屏幕共享数量已达上限
 InvalidRequestBody: 请求体无效
 NotADirectory: 不是目录
 NotAFile: 不是文件
@@ -228,6 +231,13 @@ RAGResetFailed: 索引重建失败
 RAGSegmenterUnavailable: "已拒绝重建：分词器不可用。此时重建会把已正确分词的文本替换为未切分文本，导致中文搜索失效 — 请重启服务后重试。"
 RAGRebuildAccepted: 重建已在后台启动
 AutoContinue: 继续
+# 服务重启后恢复被打断会话时唯一落库的一行（role='system' 提示）。这句是
+# 给用户看的：说明发生了什么、系统做了什么；它**不是**发给智能体的指令
+# （指令是 RestartResumePrompt，只注入不落库）。
+RestartResume: '会话已因服务重启而中断，现已恢复，并已通知智能体继续执行。'
+# 注入恢复轮次的指令。命令式、对模型说、**永不落库也永不展示给用户**
+# （与上面的 RestartResume 不同）。
+RestartResumeInstruction: '本会话因服务重启而中断，任务尚未完成。请重新评估当前状态，从中断处继续。'
 ACPSessionRecoveredNew: ACP 会话无法恢复，已开启新会话（原有对话上下文已丢失）。
 ACPAuthRequired: '智能体尚未登录。请在终端执行一次 `{{.Command}}`，然后重试。'
 ACPAuthRequiredGeneric: '智能体尚未登录：请先在终端用它的 CLI 登录一次，然后重试。'

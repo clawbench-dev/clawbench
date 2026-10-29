@@ -799,6 +799,39 @@ func InterruptSessionTurnIfCurrent(sessionID string, expectedTurnID uint64) bool
 // each executor's buildResult reads GetAndClearCancelReason and persists the
 // interrupted message with a restart warning block, which is what produces the
 // frontend's "服务重启，AI 响应中断" banner.
+// shuttingDown is set once the graceful-shutdown path has begun.
+//
+// Background workers that can START new work (the restart-resume worker) must
+// check it: CancelAllSessions only cancels the runners that exist at that
+// moment, so anything claimed AFTERWARDS is invisible to the drain and would run
+// while the DB is being closed — leaving a fresh streaming=1 row behind and
+// making the next startup resume the same session again.
+//
+// A dedicated flag rather than store.DBReady(): Close keeps the handle non-nil
+// for the rest of the process, so DBReady() cannot answer "are we shutting
+// down".
+var shuttingDown atomic.Bool
+
+// MarkShuttingDown records that graceful shutdown has begun. Called by main
+// BEFORE CancelAllSessions so no worker can start new work during the drain.
+func MarkShuttingDown() {
+	shuttingDown.Store(true)
+}
+
+// IsShuttingDown reports whether the process has begun graceful shutdown.
+func IsShuttingDown() bool {
+	return shuttingDown.Load()
+}
+
+// ResetShuttingDownForTest clears the flag and returns the previous value.
+//
+// The flag is process-wide and one-way, so a test that sets it would otherwise
+// poison every later test in the package. Test-only, mirrors the other
+// *ForTest helpers in this package.
+func ResetShuttingDownForTest() bool {
+	return shuttingDown.Swap(false)
+}
+
 func CancelAllSessions() {
 	for _, r := range allRunners() {
 		sessionCancelReasons.Store(r.sessionID, cancelReasonRestart)

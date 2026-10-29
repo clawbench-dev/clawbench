@@ -6,16 +6,21 @@ import { resolve, join } from 'node:path'
  * Guards for the shared loading ring.
  *
  * The ring (.li-spinner) is declared ONCE in css/components.css, not in
- * LoadingIndicator's <style scoped> block, because three of its callers cannot
+ * LoadingIndicator's <style scoped> block, because some of its callers cannot
  * render a Vue component:
  *
  *   - chat tool-call body     → injected as an HTML string (v-html)
- *   - mermaid diagram loading → injected via innerHTML from a util
  *   - localhost open button   → used to paint from a ::after pseudo-element
  *
  * Injected DOM carries no `data-v-*` attribute, so a scoped rule silently
  * misses it (design-guide red line 1). These tests pin both halves of the
  * arrangement: the ring lives globally, and no call site grows its own copy.
+ *
+ * The Mermaid diagram placeholder USED to be on this list. It is now a
+ * diagram-shaped skeleton instead: a ring in an empty box says "waiting" but
+ * nothing about what is coming, which is the same reasoning that replaced the
+ * centred ring with a skeleton in every dock panel and in the message area.
+ * Its contract lives in `mermaidSkeleton.test.ts`.
  */
 
 async function source(relPath: string): Promise<string> {
@@ -129,8 +134,9 @@ describe('shared loading ring', () => {
     // Injected sites put the class in the generated HTML string.
     const tool = await source('@/composables/useToolDetailDrawer.ts')
     expect(tool, 'tool-call loading must inject the shared ring').toMatch(/tool-call-loading"><span class="li-spinner"/)
-    const mermaid = await source('@/utils/mermaid.ts')
-    expect(mermaid, 'mermaid loading must inject the shared ring').toContain('class="li-spinner mermaid-spinner"')
+    // Mermaid is NOT on this list: its loading placeholder is a diagram-shaped
+    // skeleton, not a ring (a ring in an empty box says "waiting" but nothing
+    // about what is coming — see mermaid.css and mermaidSkeleton.test.ts).
     const localhost = await source('@/composables/useLocalhostAnnotation.ts')
     expect(localhost, 'the localhost button must carry the shared ring').toContain('li-spinner chat-url-open-btn-spinner')
   })
@@ -141,7 +147,6 @@ describe('shared loading ring', () => {
     const sites = [
       ['@/assets/code-link-preview.css', 'code-preview-spinner'],
       ['@/assets/code-link-preview.css', 'code-preview-expand-spinner'],
-      ['@/assets/mermaid.css', 'mermaid-spinner'],
       ['@/assets/annotation-buttons.css', 'chat-url-open-btn-spinner'],
     ] as const
     for (const [file, cls] of sites) {
@@ -173,7 +178,6 @@ describe('shared loading ring', () => {
     const overrides = [
       ['@/assets/code-link-preview.css', 'code-preview-spinner', '.code-preview-status'],
       ['@/assets/code-link-preview.css', 'code-preview-expand-spinner', '.code-preview-expand-loading'],
-      ['@/assets/mermaid.css', 'mermaid-spinner', '.mermaid'],
       ['@/assets/annotation-buttons.css', 'chat-url-open-btn-spinner', '.chat-url-open-btn'],
     ] as const
     for (const [file, cls, ancestor] of overrides) {
@@ -228,7 +232,6 @@ describe('shared loading ring', () => {
     // 0.6s. Unifying the shape must not silently retime them, so each keeps its
     // own --li-duration.
     const spedUp = [
-      ['@/assets/mermaid.css', 'mermaid-spinner'],
       ['@/assets/annotation-buttons.css', 'chat-url-open-btn-spinner'],
     ] as const
     for (const [file, cls] of spedUp) {

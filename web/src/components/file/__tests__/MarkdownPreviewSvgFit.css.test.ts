@@ -201,16 +201,14 @@ describe('svg media layout (media-block.css contract)', () => {
   })
 
   it('lifts the chat thumbnail cap while zoomed', () => {
-    // A bubble caps media at 200px. Left unscoped, that cap survives activation
-    // and the "zoom" happens inside a 200px box — the diagram stays tiny however
-    // far it is zoomed (reported: 聊天界面点击聚焦后没有全宽).
+    // Historical: a bubble used to cap media at 200px and every cap had to be
+    // rest-only so activation could span the bubble. Chat no longer has any cap
+    // (see the next test), so the invariant is simply that no chat rule caps a
+    // size at all — including none that would survive activation.
     const chatRules = css.match(/^\s*\.chat-message[^{]*\{[^}]*\}/gm) || []
-    expect(chatRules.length).toBeGreaterThan(0)
     for (const rule of chatRules) {
-      if (!new RegExp(`max-(width|height):\\s*${len(200)}`).test(rule)) continue
-      // Every size cap must be rest-only.
-      expect(rule, `chat cap must be scoped to :not(.is-zooming):\n${rule}`)
-        .toContain(':not(.is-zooming)')
+      expect(rule, `no chat rule may cap a media size:\n${rule}`)
+        .not.toMatch(new RegExp(`max-(width|height):\\s*${len(200)}`))
     }
   })
 
@@ -270,82 +268,56 @@ describe('svg media layout (media-block.css contract)', () => {
     expect(toolbar![1]).toContain('border-radius: 0')
   })
 
-  it('keeps the chat bubble thumbnail cap for photos and inline SVGs', () => {
-    // A bubble is a conversation, not a document: a pasted screenshot belongs in
-    // a thumbnail. The cap must stay for images and bare inline SVGs so a change
-    // to the figure rules cannot blow the bubble out.
-    // The cap is rest-only (`:not(.is-zooming)`) so activation can span the
-    // bubble; the selectors below therefore include the pseudo-class.
-    expect(css).toMatch(
-      new RegExp(`\\.chat-message \\.image-block-wrapper:not\\(\\.is-zooming\\)[^{]*\\{[\\s\\S]*?max-width:\\s*${len(200)}`),
-    )
-    expect(css).toMatch(
-      new RegExp(`\\.chat-message \\.image-block-wrapper:not\\(\\.is-zooming\\) \\.lightbox-svg-wrap svg\\.lightbox-svg\\s*\\{[\\s\\S]*?max-width:\\s*${len(200)}`),
-    )
-  })
-
-  it('does NOT thumbnail a chat Mermaid diagram', () => {
-    // #570: a chat diagram is the answer, and capping it at 200px rendered it
-    // as an unreadable banner — worse than the file preview, because the reader
-    // came to the message FOR the diagram. It must get the same resting sizing
-    // and click-to-zoom as the file preview instead.
+  it('sizes chat media exactly like a document — no thumbnail cap', () => {
+    // Chat used to thumbnail photos and bare inline SVGs at 200x184dp while
+    // letting Mermaid through uncapped (#570). Two size policies for the same
+    // artwork meant the same image rendered differently in a message and in a
+    // .md file, and each new media type had to be carved out again.
     //
-    // Every chat rule that sets a size cap must therefore be scoped to the
-    // photo / inline-svg media shapes and must never mention `.mermaid`. A
-    // blanket `.chat-message .image-block-wrapper:not(.is-zooming)` selector
-    // (the shape this file used to ship) would re-cap diagrams silently.
+    // The policy is now single: every surface gets the figure's resting sizing
+    // and click-to-zoom. This asserts the cap is GONE — the old rules used
+    // `max-width: … !important`, so they cannot be merely overridden.
     const declarations = css.replace(/\/\*[\s\S]*?\*\//g, '')
     const chatCaps = [...declarations.matchAll(/\.chat-message[^{}]*\{[^{}]*\}/g)]
       .map(m => m[0])
       .filter(rule => new RegExp(`max-(width|height):\\s*(?:calc\\([^)]*\\)|\\d+px)`).test(rule))
-    expect(chatCaps.length).toBeGreaterThan(0)
+    expect(chatCaps, `no chat rule may cap a media size:\n${chatCaps.join('\n')}`).toEqual([])
+  })
+
+  it('does NOT thumbnail a chat Mermaid diagram', () => {
+    // #570: a chat diagram is the answer, and capping it at 200px rendered it
+    // as an unreadable banner. Mermaid was the one media type carved out of the
+    // chat cap; the cap is now gone for every type, so this is implied by the
+    // previous test — it stays as the named regression for #570.
+    const declarations = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    const chatCaps = [...declarations.matchAll(/\.chat-message[^{}]*\{[^{}]*\}/g)]
+      .map(m => m[0])
+      .filter(rule => new RegExp(`max-(width|height):\\s*(?:calc\\([^)]*\\)|\\d+px)`).test(rule))
     for (const rule of chatCaps) {
       expect(rule, `chat size caps must not target a diagram:\n${rule}`).not.toMatch(/mermaid/)
-      // Nor may they fall back to the bare wrapper (which every media shape
-      // matches, diagrams included) — each must NAME a media cell.
-      const selectors = rule.split('{')[0]
-      expect(selectors, `chat cap must name a media shape, not the bare figure:\n${rule}`)
-        .toMatch(/\.lightbox-(img|svg)-wrap/)
     }
   })
 
   it('the chat photo cap outranks the generic :has() rule', () => {
-    // Regression: the generic inline-zoom block sets
+    // Historical: the generic inline-zoom block sets
     //   `.image-block-wrapper:has(> .lightbox-img-wrap > img) { max-width: 100% }`
-    // which is 0-2-1, while a plain `.chat-message .image-block-wrapper` cap is
-    // only 0-2-0 — the generic rule won and every capped figure grew to the
-    // full column (measured 540px in a 600px bubble). A mere "the chat rule
-    // exists" assertion cannot catch that, so this pins the chat selectors to
-    // the SAME `:has()` shape.
-    //
-    // Comments are stripped first: the file's own doc comments quote the old
-    // `.chat-message .image-block-wrapper { max-width: 200px }` shape, and a
-    // naive match found that instead of the real rule.
+    // (0-2-1), so the old chat cap had to match the same `:has()` shape to win.
+    // The cap is deleted; what must NOT come back is a chat rule that tries to
+    // outrank the generic sizing with a bare wrapper selector.
     const declarations = css.replace(/\/\*[\s\S]*?\*\//g, '')
-    const chatCap = declarations.match(
-      new RegExp(`\\.chat-message \\.image-block-wrapper:not\\(\\.is-zooming\\)[^{]*\\{[^}]*max-width:\\s*${len(200)}`),
-    )
-    expect(chatCap, 'chat cap rule must exist').toBeTruthy()
-    const selectors = chatCap![0].split('{')[0]
-    expect(selectors, 'chat cap must include the img :has() variant').toMatch(
-      /\.chat-message \.image-block-wrapper:not\(\.is-zooming\):has\(> \.lightbox-img-wrap > img\)/,
-    )
-    expect(selectors, 'chat cap must include the inline-svg :has() variant').toMatch(
-      /\.chat-message \.image-block-wrapper:not\(\.is-zooming\):has\(> \.lightbox-svg-wrap > svg\.lightbox-svg\)/,
+    expect(declarations).not.toMatch(
+      new RegExp(`\\.chat-message \\.image-block-wrapper[^{]*\\{[^}]*max-width:\\s*${len(200)}`),
     )
   })
 
   it('the chat media cap overrides the generic ratio width', () => {
-    // The generic rule clears max-width with `!important` (to beat mermaid's
-    // inline `max-width: Npx`), so a non-important chat cap would simply lose
-    // and the svg would still be as wide as the ratio allows.
-    const rule = css.match(
-      /\.chat-message \.image-block-wrapper:not\(\.is-zooming\):has\(> \.lightbox-svg-wrap > svg\.lightbox-svg\) > \.lightbox-svg-wrap > svg\.lightbox-svg\s*\{([\s\S]*?)\}/,
-    )
-    expect(rule, 'chat media cap rule must exist').toBeTruthy()
-    const body = rule![1].replace(/\/\*[\s\S]*?\*\//g, '')
-    expect(body, 'must be !important to beat the generic max-width: none').toMatch(
-      new RegExp(`max-width:\\s*${len(200)}\\s*!important`),
+    // Historical: the generic rule clears max-width with `!important` (to beat
+    // mermaid's inline `max-width: Npx`), so a non-important chat cap would have
+    // lost. With the cap deleted, the inverse must hold: chat must NOT declare a
+    // competing `!important` width cap anywhere.
+    const declarations = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(declarations).not.toMatch(
+      new RegExp(`\\.chat-message[^{}]*\\{[^}]*max-width:\\s*${len(200)}\\s*!important`),
     )
   })
 })

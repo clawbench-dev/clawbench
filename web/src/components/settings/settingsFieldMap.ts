@@ -290,6 +290,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.aiSummaryRef', descriptionKey: 'settings.items.aiSummaryRefDesc', key: 'navigateAiSummary', type: 'action', source: 'local', navigateTo: 'aiSummary', disableUnless: { key: 'chat.recommend_enabled', value: true }, showSummaryModelStatus: true, sectionHeader: 'settings.items.recommendSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatAutoContinueEnabled', descriptionKey: 'settings.items.chatAutoContinueEnabledDesc', key: 'chat.auto_continue_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.autoContinueSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatAutoContinueMaxRetries', descriptionKey: 'settings.items.chatAutoContinueMaxRetriesDesc', key: 'chat.auto_continue_max_retries', type: 'number', source: 'server', min: -1, disableUnless: { key: 'chat.auto_continue_enabled', value: true }, sectionHeader: 'settings.items.autoContinueSectionHeader' } },
+    { type: 'item', spec: { labelKey: 'settings.items.chatRestartResumeWindow', descriptionKey: 'settings.items.chatRestartResumeWindowDesc', key: 'chat.restart_resume_window_minutes', type: 'number', source: 'server', min: 0, disableUnless: { key: 'chat.auto_continue_enabled', value: true }, sectionHeader: 'settings.items.autoContinueSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatAutoRenameEnabled', descriptionKey: 'settings.items.chatAutoRenameEnabledDesc', key: 'chat.auto_rename_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.autoRenameSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.aiSummaryRef', descriptionKey: 'settings.items.aiSummaryRefDesc', key: 'navigateAiSummaryForRename', type: 'action', source: 'local', navigateTo: 'aiSummary', disableUnless: { key: 'chat.auto_rename_enabled', value: true }, showSummaryModelStatus: true, sectionHeader: 'settings.items.autoRenameSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionEnabled', descriptionKey: 'settings.items.archiveRetentionEnabledDesc', key: 'session.archive_retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
@@ -404,13 +405,20 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // switch matters most. It gates the Notification API path and is independent
     // of the server-side push_mode (that one selects the mobile/IM channel).
     { type: 'item', spec: { labelKey: 'settings.items.desktopNotification', descriptionKey: 'settings.items.desktopNotificationDesc', key: 'desktopNotification', type: 'switch', source: 'local', sectionHeader: 'settings.items.desktopNotifySection' } },
-    // Out-of-app desktop/system surfaces. `androidOnly` (NOT `appOnly`): the
-    // floating status window and the Live Updates chip are Android features —
-    // `setFloatingWindowEnabled` / `setLiveUpdateEnabled` / `canPostPromoted-
-    // Notifications` exist only on the Android bridge, and the copy names
-    // Android-only permissions. `appOnly` is `!isAppMode`, which the Electron
-    // shell also satisfies, so these rendered there as dead switches.
-    { type: 'item', spec: { labelKey: 'settings.items.floatingStatusWindow', descriptionKey: 'settings.items.floatingStatusWindowDesc', key: 'floatingStatusWindow', type: 'switch', source: 'local', androidOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
+    // Out-of-app desktop/system surfaces.
+    //
+    // The Live Updates chip is `androidOnly` (NOT `appOnly`): `setLiveUpdateEnabled`
+    // / `canPostPromotedNotifications` exist only on the Android bridge, and the
+    // copy names Android-only permissions. `appOnly` is `!isAppMode`, which the
+    // Electron shell also satisfies, so it rendered there as a dead switch.
+    //
+    // The floating status window is `appOnly` for the same reason but the
+    // opposite conclusion: BOTH hosts implement it — Android draws the bubble
+    // over the launcher, the Electron shell draws an always-on-top capsule plus
+    // a tray icon (`desktop/src/main/floating.ts`). Marking it `androidOnly`
+    // left the desktop feature with no way to be switched on at all, and the
+    // tray's "turn off" then had no way back.
+    { type: 'item', spec: { labelKey: 'settings.items.floatingStatusWindow', descriptionKey: 'settings.items.floatingStatusWindowDesc', key: 'floatingStatusWindow', type: 'switch', source: 'local', appOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.liveUpdate', descriptionKey: 'settings.items.liveUpdateDesc', key: 'liveUpdate', type: 'switch', source: 'local', androidOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
     { type: 'panel', config: {
       panelId: 'push',
@@ -526,10 +534,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   about: [
     { type: 'item', spec: { labelKey: 'settings.items.aboutServerVersion', descriptionKey: 'settings.items.aboutServerVersionDesc', key: 'serverVersion', type: 'info', source: 'server', sectionHeader: 'settings.items.aboutVersionSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.aboutAppVersion', descriptionKey: 'settings.items.aboutAppVersionDesc', key: 'appVersion', type: 'info', source: 'local', sectionHeader: 'settings.items.aboutVersionSection' } },
-    // Project identity links — open the GitHub repository / issue tracker in the
+    // Project identity links — open the project site / GitHub repository in the
     // system browser. Rendered as their own section so they are not buried among
     // the maintenance actions below.
     { type: 'item', spec: { labelKey: 'settings.items.aboutHomepage', descriptionKey: 'settings.items.aboutHomepageDesc', key: 'openProjectHomepage', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutProjectSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.aboutGithub', descriptionKey: 'settings.items.aboutGithubDesc', key: 'openProjectGithub', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutProjectSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.aboutFeedback', descriptionKey: 'settings.items.aboutFeedbackDesc', key: 'openProjectFeedback', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutProjectSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.addToHomeScreen', descriptionKey: 'settings.items.addToHomeScreenDesc', key: 'addToHomeScreen', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
     // NOT appOnly: that flag means "Android app only" and would hide this row

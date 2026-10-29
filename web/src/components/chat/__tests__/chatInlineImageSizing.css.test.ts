@@ -24,6 +24,10 @@ import { readWebFile } from '@/testUtils/readWebFile'
  * stays (now un-collapsible). `height` must be `auto` so the img element hugs
  * the picture. jsdom has no layout engine, so these are source-contract checks
  * (the same pattern markdownFirstBlockMargin / chatVhtmlStyleScope use).
+ *
+ * Chat no longer thumbnails anything (the 200x184dp cap is gone — chat sizes
+ * media exactly like a document), but this rule still owns the `height: auto` /
+ * `contain` / margin-cancel contract, so it is still the thing under test.
  */
 
 /** Strip comments — the files document the very selectors they define. */
@@ -120,7 +124,16 @@ describe('chat inline image sizing (markdown-common.css + media-block.css)', () 
   })
 
   it('keeps a height cap so a tall image cannot run away', () => {
-    // A cap in any unit (a design-px calc counts); the point is that one exists.\n    expect(chatImgRule().decls).toMatch(/max-height\s*:\s*(?:\d|calc\()/)
+    // A cap in any unit (a design-px calc counts); the point is that one exists.
+    // Chat now shares the document budget (60dvh) instead of its own 200dp
+    // thumbnail cap — see media-block.css.
+    expect(chatImgRule().decls).toMatch(/max-height\s*:\s*(?:\d|calc\()/)
+  })
+
+  it('uses the same 60dvh budget as a document image', () => {
+    // The single sizing policy: chat no longer has its own cap, so the rule must
+    // not shrink to a chat-specific design-px value either.
+    expect(chatImgRule().decls).toContain('max-height: 60dvh')
   })
 
   it('cancels the 4px band with a selector that actually outranks the chat rule', () => {

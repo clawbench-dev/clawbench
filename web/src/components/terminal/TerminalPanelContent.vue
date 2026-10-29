@@ -196,7 +196,7 @@
     </template>
 
     <!-- Quick commands popup -->
-    <PopupMenu v-model:show="showCommands" :target-element="isTouchPrimary ? cmdBtnRef : cmdBtnTopRef" :max-width="260" :max-height="280" :menu-items-count="visibleCommands.length + 1">
+    <PopupMenu v-model:show="showCommands" :target-element="isTouchPrimary ? cmdBtnRef : cmdBtnTopRef" :max-width="260" :max-height="440" :menu-items-count="visibleCommands.length + 1">
       <div class="quick-send-title">{{ t('terminal.quickCommands') }}</div>
       <button v-for="cmd in visibleCommands" :key="cmd.id" class="quick-send-item" @click="executeCommand(cmd)">
         <span class="qs-label">{{ cmd.label }}</span>
@@ -2047,12 +2047,12 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 /* WebView bold compensation — same mechanism as chat markdown bold
  * (markdown-common.css): font-weight alone renders lighter/softer in Android
  * WebView (bold synthesized by fattening outlines), so thicken glyphs with a
- * thin uniform -webkit-text-stroke under [data-app-mode] only. Applies to all
+ * thin uniform -webkit-text-stroke under [data-webview-mode] only. Applies to all
  * virtual keys and symbol buttons; shift-tab labels inherit it from .toolbar-btn. */
-[data-app-mode] .toolbar-btn {
+[data-webview-mode] .toolbar-btn {
   -webkit-text-stroke: 0.12px currentColor;
 }
-[data-app-mode] .toolbar-btn.shortcut {
+[data-webview-mode] .toolbar-btn.shortcut {
   -webkit-text-stroke: 0.1px currentColor;
 }
 </style>

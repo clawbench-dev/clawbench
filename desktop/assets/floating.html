@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- The capsule is a fixed, self-contained document: no remote content, no forms,
+     no navigation. `file:` is allowed only for the app icon shipped next to
+     login.html; counters arrive over IPC, never over the network. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' file: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>ClawBench</title>
+<style>
+  :root {
+    --bg: rgba(24, 26, 31, 0.92);
+    --text: #f2f4f8;
+    --muted: #9aa3b2;
+    --accent: #4c8dff;
+    /* Status colors are fixed semantic colors on both platforms — they do NOT
+       follow the theme, so a running session reads the same on any of the 20+
+       themes. See docs/plans/2026-08-28-android-floating-panel.md. */
+    --running: #35c05e;
+    --pending: #f2b415;
+    --unread: #3d8bfd;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: transparent; overflow: hidden;
+    user-select: none; -webkit-user-select: none; cursor: default;
+  }
+  body { font-family: system-ui, "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif; }
+
+  /* A transparent window is rectangular to the compositor: the padding ring is
+     dead space, so keep it small and let the pill own the hit area. */
+  #hit { width: 100%; height: 100%; padding: 4px; display: flex; align-items: center; }
+
+  #pill {
+    /* Intrinsic height, not 100%: a box stretched to the window would be
+       measured as the window (the width case below) and the capsule would grow into
+       a disc whenever the window is left taller than the content. */
+    height: auto;
+    padding-top: 5px; padding-bottom: 5px;
+    /* fit-content, not the default block width: the page reports its natural
+       size so the window can hug the capsule, and a box stretched to the window
+       would measure the window instead — the capsule could then grow but never
+       shrink back after the counters drop to zero. */
+    width: fit-content; max-width: 100%;
+    display: flex; align-items: center; gap: 7px;
+    /* Asymmetric on purpose. Do NOT "fix" this back to symmetric.
+
+       The two ends hold different KINDS of thing, and a filled shape tolerates
+       a tighter edge than a glyph does. On the left sits a 26px solid disc
+       whose own outline is the visual boundary, so 6px reads as flush. On the
+       right sits text, where the same gap makes the last glyph look pinned to
+       the capsule wall — the eye measures to the glyph's ink, not to the
+       element box.
+
+       The end radius is NOT the reason: at 36px tall the 18px curve insets
+       only 1.6px at the text's top and bottom edges, so geometry cannot
+       account for the difference. It is optical weight.
+
+       Verified by measuring the DOM in all three states (counters / idle only /
+       all three): the icon keeps a 6px gap and the text a 15px gap regardless
+       of how wide the content gets. */
+    padding-left: 6px; padding-right: 15px;
+    border-radius: 999px;
+    background: var(--bg);
+    color: var(--text);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, .38), 0 0 0 1px rgba(255, 255, 255, .07) inset;
+    /* Deliberately NOT `-webkit-app-region: drag`: that hands the surface to the
+       OS as a title bar, so right-click opens the Windows system menu instead of
+       ours and no DOM click reaches the page. Dragging is driven from the main
+       process instead (see main/floating.ts). */
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  body.hover #pill { transform: translateY(-1px); box-shadow: 0 9px 26px rgba(0,0,0,.46), 0 0 0 1px rgba(255,255,255,.12) inset; }
+  /* Awaiting approval is the one state worth flagging on the frame itself: a
+     blocked session is otherwise indistinguishable from a running one at a
+     glance from across the desk. */
+  body.needs-me #pill { box-shadow: 0 6px 22px rgba(0, 0, 0, .38), 0 0 0 1px var(--pending); }
+
+  #logo {
+    flex: 0 0 auto;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: color-mix(in srgb, var(--text) 88%, transparent);
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  #logo img { width: 100%; height: 100%; object-fit: contain; }
+  #logo i { width: 11px; height: 11px; border-radius: 3px; background: #14161b; display: block; }
+
+  #lines { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .row { display: flex; align-items: center; gap: 5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .row.primary { font-size: 13px; font-weight: 650; line-height: 1.15; }
+  .row.secondary { font-size: 12px; font-weight: 500; color: var(--muted); line-height: 1.15; }
+  .seg { display: inline-flex; align-items: center; gap: 4px; }
+  /* A zero counter is hidden rather than shown greyed: the capsule's whole job
+     is "is there something to look at", and three zeros is noise. Matches the
+     Android capsule ("为 0 的计数不显示"). */
+  .seg[hidden] { display: none; }
+  .dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; }
+  .dot.running { background: var(--running); }
+  .dot.pending { background: var(--pending); }
+  .dot.unread { background: var(--unread); }
+  .n { color: var(--text); font-weight: 650; }
+  .sep { opacity: .45; padding: 0 1px; }
+  .sep[hidden] { display: none; }
+  #idle { color: var(--muted); font-size: 13px; font-weight: 500; }
+  #idle[hidden] { display: none; }
+  .row[hidden] { display: none; }
+
+  /* Running breathes and pending pulses: both mean "come back soon", and a
+     static dot out of the corner of the eye is easy to miss. */
+  body.busy .dot.running { animation: breathe 2s ease-in-out infinite; }
+  body.needs-me .dot.pending { animation: pulse 1.5s ease-in-out infinite; }
+  @keyframes breathe {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(53, 192, 94, .45); }
+    50% { box-shadow: 0 0 0 4px rgba(53, 192, 94, 0); }
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(242, 180, 21, .55); }
+    50% { box-shadow: 0 0 0 5px rgba(242, 180, 21, 0); }
+  }
+</style>
+</head>
+<body>
+<div id="hit">
+  <div id="pill">
+    <div id="logo"><i></i></div>
+    <div id="lines">
+      <div class="row primary" id="row-primary">
+        <span class="seg" id="seg-running"><span class="dot running"></span><span id="lbl-running">Running</span> <span class="n" id="n-running">0</span></span>
+        <span class="seg" id="seg-pending"><span class="dot pending"></span><span id="lbl-pending">Pending</span> <span class="n" id="n-pending">0</span></span>
+        <span class="seg" id="seg-unread"><span class="dot unread"></span><span id="lbl-unread">Unread</span> <span class="n" id="n-unread">0</span></span>
+        <span id="idle">Idle</span>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var host = window.FloatingHost || {};
+  var $ = function (id) { return document.getElementById(id); };
+  var els = {
+    pill: $('pill'), hit: $('hit'), logo: $('logo'),
+    running: $('seg-running'), pending: $('seg-pending'), unread: $('seg-unread'),
+    nRunning: $('n-running'), nPending: $('n-pending'), nUnread: $('n-unread'),
+    lRunning: $('lbl-running'), lPending: $('lbl-pending'), lUnread: $('lbl-unread'),
+    idle: $('idle')
+  };
+
+  function hexToRgba(color, alpha) {
+    if (typeof color !== 'string') return null;
+    var m = /^#([0-9a-f]{3,8})$/i.exec(color.trim());
+    if (!m) return null;
+    var h = m[1];
+    if (h.length === 3 || h.length === 4) h = h.split('').map(function (x) { return x + x; }).join('');
+    return 'rgba(' + parseInt(h.slice(0, 2), 16) + ',' + parseInt(h.slice(2, 4), 16) +
+           ',' + parseInt(h.slice(4, 6), 16) + ',' + alpha + ')';
+  }
+
+  function apply(state) {
+    if (!state) return;
+    var s = state.stats || {};
+    var l = state.labels || {};
+    var c = state.colors || {};
+    var n = { running: s.running | 0, pending: s.pending | 0, unread: s.unread | 0 };
+
+    els.nRunning.textContent = n.running;
+    els.nPending.textContent = n.pending;
+    els.nUnread.textContent = n.unread;
+    if (l.running) els.lRunning.textContent = l.running;
+    if (l.pending) els.lPending.textContent = l.pending;
+    if (l.unread) els.lUnread.textContent = l.unread;
+    if (l.idle) els.idle.textContent = l.idle;
+    document.documentElement.lang = state.lang === 'en' ? 'en' : 'zh';
+    if (l.hint) els.pill.title = l.hint;
+
+    var idle = !n.running && !n.pending && !n.unread;
+    els.running.hidden = idle || n.running === 0;
+    els.pending.hidden = n.pending === 0;
+    els.unread.hidden = n.unread === 0;
+    els.idle.hidden = !idle;
+    document.body.classList.toggle('needs-me', n.pending > 0);
+    document.body.classList.toggle('busy', n.running > 0);
+
+    var root = document.documentElement.style;
+    if (c.text) root.setProperty('--text', c.text);
+    if (c.textSecondary) root.setProperty('--muted', c.textSecondary);
+    if (c.accent) root.setProperty('--accent', c.accent);
+    // The Android bubble uses a solid theme background; a capsule floating over
+    // the desktop needs translucency or its hard edge reads as a sticker.
+    root.setProperty('--bg', (c.bg && hexToRgba(c.bg, 0.93)) || 'rgba(24, 26, 31, 0.92)');
+
+    if (state.logoUrl && !els.logo.dataset.set) {
+      els.logo.dataset.set = '1';
+      var img = document.createElement('img');
+      img.src = state.logoUrl;
+      img.alt = '';
+      img.onerror = function () { delete els.logo.dataset.set; img.remove(); };
+      els.logo.appendChild(img);
+    }
+    measure();
+  }
+
+  /** Tell the main process our natural size so the window hugs the capsule. */
+  function measure() {
+    var w = Math.ceil(els.pill.scrollWidth + 8);
+    var h = Math.ceil(els.pill.scrollHeight + 8);
+    var key = w + 'x' + h;
+    if (key === measure.last) return;
+    measure.last = key;
+    if (typeof host.resize === 'function') host.resize(w, h);
+  }
+
+  if (typeof host.onState === 'function') {
+    host.onState(apply);
+    // Listeners are installed: replay anything the main process queued during load.
+    if (typeof host.ready === 'function') host.ready();
+  }
+  els.pill.addEventListener('mouseenter', function () { document.body.classList.add('hover'); });
+  els.pill.addEventListener('mouseleave', function () { document.body.classList.remove('hover'); });
+
+  // Dragging: the page reports only where the grab happened. The main process
+  // follows the OS cursor and decides on release whether this was a drag or a
+  // click — it is the only side that can tell "the window moved" from "the mouse
+  // moved", and a click must open the app rather than do nothing.
+  //
+  // Pointer capture matters: the capsule is small, so the cursor leaves it almost
+  // immediately and without capture the release can land on another window and
+  // never reach this document — leaving the capsule glued to the cursor. The main
+  // process has a stillness backstop for the same case.
+  var dragging = false;
+  function endGesture() {
+    if (!dragging) return;
+    dragging = false;
+    if (typeof host.dragEnd === 'function') host.dragEnd();
+  }
+  els.pill.addEventListener('pointerdown', function (e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    dragging = true;
+    try { els.pill.setPointerCapture(e.pointerId); } catch (err) { /* unsupported */ }
+    if (typeof host.dragStart === 'function') host.dragStart(e.clientX, e.clientY);
+  });
+  els.pill.addEventListener('pointerup', endGesture);
+  els.pill.addEventListener('pointercancel', endGesture);
+  els.pill.addEventListener('lostpointercapture', endGesture);
+  window.addEventListener('mouseup', endGesture);
+  window.addEventListener('blur', endGesture);
+  els.pill.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    if (typeof host.context === 'function') host.context();
+  });
+  measure();
+})();
+</script>
+</body>
+</html>

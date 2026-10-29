@@ -113,6 +113,7 @@
               <span class="lightbox-img-wrap">
                 <img
                   class="share-image-img lightbox-img"
+                  :key="shareImageUrl"
                   :src="shareImageUrl"
                   :alt="file.name"
                   draggable="false"

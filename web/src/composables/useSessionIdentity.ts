@@ -607,31 +607,52 @@ export function toggleCruise(enabled: boolean) {
   }
 }
 
-/** Rename the current session title and persist to server. */
-export async function renameSession(title: string): Promise<boolean> {
-  const sid = currentSessionId.value
-  if (!sid) return false
+/**
+ * Rename ANY session and converge every view that shows its title.
+ *
+ * Both rename entry points are the same action on possibly different targets:
+ * the chat header always acts on the session on screen, the session list's ⋮
+ * menu on whichever row the user picked. Neither may own a private copy of the
+ * commit — the list used to PATCH on its own and update only its own row, so
+ * renaming the session that was ALREADY OPEN left the chat header (which
+ * renders `currentSessionTitle`) showing the old title until it was reopened.
+ *
+ * Two state writes are unconditional parts of a successful rename:
+ *   - `currentSessionTitle`, when the target IS the open session (the header
+ *     has no other source), and
+ *   - `sessionListVersion`, because the endpoint writes the title but emits no
+ *     WS `session_update`, so a mounted list would otherwise keep the stale
+ *     row until something else refreshed it.
+ *
+ * Returns false when there is nothing to rename or the request failed.
+ */
+export async function renameSessionById(sessionId: string, title: string): Promise<boolean> {
+  const trimmed = title.trim()
+  if (!sessionId || !trimmed) return false
   try {
     const resp = await fetch('/api/ai/session/update', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: sid, title }),
+      body: JSON.stringify({ sessionId, title: trimmed }),
     })
     if (!resp.ok) {
       appLog.e(TAG, 'Failed to rename session:', resp.status)
       return false
     }
-    currentSessionTitle.value = title
-    // The rename endpoint writes the title but does not emit a WS
-    // session_update, so a mounted session list (drawer/sidebar) would keep
-    // showing the stale title. Bump the list version to trigger its reload
-    // watcher — same signal loadSessionsOnce uses for non-WS refreshes.
+    if (sessionId === currentSessionId.value) currentSessionTitle.value = trimmed
     store.state.sessionListVersion++
     return true
   } catch (err) {
     appLog.e(TAG, 'Failed to rename session:', err)
     return false
   }
+}
+
+/** Rename the current session title and persist to server. */
+export async function renameSession(title: string): Promise<boolean> {
+  const sid = currentSessionId.value
+  if (!sid) return false
+  return renameSessionById(sid, title)
 }
 
 /** Ask the server to summarize the session's user messages into a title. */
@@ -1253,6 +1274,7 @@ export function useSessionIdentity() {
     toggleAutoApprove,
     toggleCruise,
     renameSession,
+    renameSessionById,
     generateSessionTitle,
     // SelectState instances (for unified access)
     modeState,

@@ -120,7 +120,7 @@ describe('mermaid', () => {
             expect(zoomDuringRender.length).toBeGreaterThan(0)
             expect(zoomDuringRender.every(z => z === '')).toBe(true)
             expect(html.style.zoom).toBe('1.25')
-            expect(el.querySelector('div.mermaid svg')).not.toBeNull()
+            expect(el.querySelector('div.mermaid svg:not(.mermaid-loading-icon)')).not.toBeNull()
         })
 
         it('should set data-rendered attribute and replace block with rendered SVG', async () => {
@@ -177,7 +177,7 @@ describe('mermaid', () => {
             expect(stamped[0].hasSvg, 'stamp must run AFTER the svg is injected').toBe(true)
         })
 
-        it('should show loading spinner before rendering completes', async () => {
+        it('should show the loading placeholder before rendering completes', async () => {
             // Use a delayed render to observe the loading state
             let resolveRender: (v: { svg: string }) => void
             mockRender.mockReturnValue(new Promise<{ svg: string }>(r => { resolveRender = r }))
@@ -190,18 +190,22 @@ describe('mermaid', () => {
 
             const renderPromise = renderMermaidInElement(el)
 
-            // While rendering, the block should be replaced with a loading spinner
+            // While rendering, the block should be replaced with a placeholder
             const loadingDiv = el.querySelector('div.mermaid')
             expect(loadingDiv).not.toBeNull()
             expect(loadingDiv?.querySelector('.mermaid-loading')).not.toBeNull()
-            expect(loadingDiv?.querySelector('.mermaid-spinner')).not.toBeNull()
+            // The picture glyph on a shimmering tile: the placeholder has to say
+            // WHAT is coming, and the tile is what carries the motion (a sweep on
+            // a 1.5px outline is invisible — see mermaidLoadingPlaceholder.test).
+            expect(loadingDiv?.querySelector('.mermaid-loading-icon')).not.toBeNull()
+            expect(loadingDiv?.querySelector('.mermaid-loading-tile')).not.toBeNull()
             expect(loadingDiv?.dataset.mermaid).toBe('graph TD; A-->B')
 
             // Complete the render
             resolveRender!({ svg: '<svg>done</svg>' })
             await renderPromise
 
-            // After rendering, the spinner should be gone and SVG should be present
+            // After rendering, the placeholder should be gone and the SVG present
             const rendered = el.querySelector('div.mermaid')
             expect(rendered?.querySelector('.mermaid-loading')).toBeNull()
             expect(rendered?.innerHTML).toContain('<svg>done</svg>')
@@ -513,7 +517,7 @@ describe('mermaid', () => {
             )
         })
 
-        it('should show loading spinner before import/init failure', async () => {
+        it('should show the loading placeholder before import/init failure', async () => {
             const { getMermaid } = await import('../lazyMermaid.ts')
             // First call fails, second call succeeds
             vi.mocked(getMermaid).mockRejectedValueOnce(new Error('Chunk load error'))
@@ -526,14 +530,14 @@ describe('mermaid', () => {
 
             const renderPromise = renderMermaidInElement(el)
 
-            // While loading, the block should show a loading spinner
+            // While loading, the block should show the placeholder
             const loadingDiv = el.querySelector('div.mermaid')
             expect(loadingDiv).not.toBeNull()
             expect(loadingDiv?.querySelector('.mermaid-loading')).not.toBeNull()
 
             await renderPromise
 
-            // After failure, the spinner should be gone and error shown
+            // After failure, the placeholder should be gone and the error shown
             const errorDiv = el.querySelector('div.mermaid')
             expect(errorDiv?.querySelector('.mermaid-loading')).toBeNull()
             expect(errorDiv?.innerHTML).toContain('Mermaid Error')
@@ -567,7 +571,7 @@ describe('mermaid', () => {
 
             // Allow async rendering to complete
             await vi.waitFor(() => {
-                const svgEl = el.querySelector('div.mermaid svg')
+                const svgEl = el.querySelector('div.mermaid svg:not(.mermaid-loading-icon)')
                 expect(svgEl).not.toBeNull()
             }, { timeout: 3000 })
 
@@ -636,7 +640,7 @@ describe('mermaid', () => {
 
             // Allow async rendering to complete
             await vi.waitFor(() => {
-                const svgEl = el.querySelector('div.mermaid svg')
+                const svgEl = el.querySelector('div.mermaid svg:not(.mermaid-loading-icon)')
                 expect(svgEl).not.toBeNull()
             }, { timeout: 3000 })
 
@@ -673,7 +677,7 @@ describe('mermaid', () => {
             retryBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
 
             await vi.waitFor(() => {
-                const svgEl = el.querySelector('div.mermaid svg')
+                const svgEl = el.querySelector('div.mermaid svg:not(.mermaid-loading-icon)')
                 expect(svgEl).not.toBeNull()
             }, { timeout: 3000 })
 

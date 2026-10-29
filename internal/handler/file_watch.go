@@ -239,16 +239,7 @@ func FileWatchWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns: []string{
-			"http://" + r.Host,
-			"https://" + r.Host,
-			"http://localhost:*",
-			"https://localhost:*",
-			"http://127.0.0.1:*",
-			"https://127.0.0.1:*",
-		},
-	})
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: wsOriginPatterns(r)})
 	if err != nil {
 		slog.Error("file watch ws: accept failed", slog.String("error", err.Error()))
 		return

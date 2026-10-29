@@ -136,6 +136,7 @@ exempt_files = {
     "internal/ai/acp_pool.go",              # ACP connection pool: manages long-lived subprocesses
     "internal/ai/acp_client.go",            # ACP client: JSON-RPC over stdio, requires real subprocess
     "internal/ai/acp_conn_lifecycle.go",    # ACP connection lifecycle: spawn/resume/watch require real ACP subprocess
+    "internal/ai/acp_state_probe.go",       # ACP state probe: ensureAliveWithSession/GetAndClearNewSessionResp/sendDeleteSession all need a real agent subprocess (the probe's whole point is asking the agent); the pure helpers (probeCommandWindow, waitForProbeCommands) are covered in acp_state_probe_test.go
     "internal/ai/acp_conn_prompt.go",       # ACP Prompt: sends JSON-RPC to subprocess, requires real connection
     "internal/ai/acp_events.go",            # ACP event mapping: 17+ event type branches, each trivial but structurally complex
     "internal/ai/agent_capability.go",      # ACP agent capability: persistAsync/saveToDB/LoadFromDB require real DB

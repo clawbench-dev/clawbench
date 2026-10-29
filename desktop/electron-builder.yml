@@ -7,6 +7,18 @@ directories:
 extraResources:
   - from: assets/login.html
     to: login.html
+  # The floating status capsule's document. main/floating.ts loads it from
+  # process.resourcesPath (same placement as login.html), because `tsc` only
+  # emits JS — an .html under src/ would never reach dist/.
+  #
+  # NOTE: this file is NOT in SHELL_IDENTITY_FILES, so its own bytes do not
+  # affect the shell fingerprint — but editing THIS yml does (it is hashed
+  # verbatim). Adding the entry therefore invalidates every older payload once,
+  # and each existing user pays one full download. Inlining the capsule HTML into
+  # floating.ts would avoid that at the cost of readability; if that trade is
+  # ever taken, remember it is the yml edit being avoided, not the html.
+  - from: assets/floating.html
+    to: floating.html
   # The first-run login page renders <img src="logo.png"> next to login.html, so
   # the logo must ship as a sibling resource. Without it the image is broken and
   # the browser falls back to the alt text, which the decorative ring then
@@ -35,6 +47,14 @@ win:
 mac:
   target: dir
   icon: build/icon.icns
+  # TCC usage descriptions. Without these macOS kills the app the moment it asks
+  # for the microphone or the screen — and it does so WITHOUT showing a prompt,
+  # which makes the failure look like "capture silently does nothing".
+  # Screen sharing itself is Windows-only (system audio is loopback-only there),
+  # but the microphone prompt is still reachable through voice input.
+  extendInfo:
+    NSMicrophoneUsageDescription: ClawBench uses the microphone for voice input and live audio sharing.
+    NSScreenCaptureUsageDescription: ClawBench captures your screen when you start a live share.
 linux:
   target: dir
   icon: build/icon.png

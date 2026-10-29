@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { useAgents, resetAgents, updateACPModelList, applyResolvedModelList, restoreOriginalModels, restoreACPModelView, resetModelViewForTransport, applyRefreshedModelList, populateACPStateFromCache, registerIdentityUpdaters, invalidateACPStateCache } from '@/composables/useAgents'
+import { useAgents, resetAgents, updateACPModelList, applyResolvedModelList, restoreOriginalModels, restoreACPModelView, resetModelViewForTransport, applyRefreshedModelList, applyRefreshedACPState, populateACPStateFromCache, registerIdentityUpdaters, invalidateACPStateCache } from '@/composables/useAgents'
 
 // ── Controllable useGlobalEvents fake ──
 // useAgents wires an onEvent handler so the async model discovery broadcast
@@ -1205,6 +1205,94 @@ describe('useAgents', () => {
       await populateACPStateFromCache('claude')
 
       expect(mockUpdateUsageState).not.toHaveBeenCalled()
+    })
+  })
+
+  // --- applyRefreshedACPState ---
+
+  describe('applyRefreshedACPState', () => {
+    beforeEach(() => {
+      mockUpdateAvailableModes.mockReset()
+      mockUpdateAvailableThinkingEfforts.mockReset()
+      mockUpdateCommandState.mockReset()
+      _currentAgentId.value = ''
+    })
+
+    const refreshed = {
+      commands: [{ name: '/review', description: 'Review' }],
+      modeState: { currentModeId: 'plan', availableModes: [{ id: 'plan', name: 'Plan' }] },
+      thinkingEffortState: { currentId: 'high', availableLevels: [{ id: 'high', name: 'High' }] },
+    }
+
+    it('pushes modes, thinking levels and commands for the current agent', () => {
+      resetAgents()
+      registerMocks()
+      _currentAgentId.value = 'claude'
+
+      applyRefreshedACPState('claude', refreshed)
+
+      expect(mockUpdateAvailableModes).toHaveBeenCalledWith(refreshed.modeState.availableModes)
+      expect(mockUpdateAvailableThinkingEfforts).toHaveBeenCalledWith(refreshed.thinkingEffortState.availableLevels)
+      expect(mockUpdateCommandState).toHaveBeenCalledWith(refreshed.commands)
+    })
+
+    // The identity refs are global singletons: applying another agent's lists
+    // would relabel the open session's chips.
+    it('does not touch the global chips when the agent is not the current one', () => {
+      resetAgents()
+      registerMocks()
+      _currentAgentId.value = 'claude'
+
+      applyRefreshedACPState('gpt', refreshed)
+
+      expect(mockUpdateAvailableModes).not.toHaveBeenCalled()
+      expect(mockUpdateAvailableThinkingEfforts).not.toHaveBeenCalled()
+      expect(mockUpdateCommandState).not.toHaveBeenCalled()
+    })
+
+    // The cache must follow, or a later transport switch / new session would
+    // restore the pre-refresh lists.
+    it('updates the ACP state cache so a later populate sees the refresh', async () => {
+      resetAgents()
+      registerMocks()
+      mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: {} })
+      await loadAgents()
+      _currentAgentId.value = 'claude'
+      mockUpdateAvailableModes.mockReset()
+
+      applyRefreshedACPState('claude', refreshed)
+      await populateACPStateFromCache('claude')
+
+      expect(mockUpdateAvailableModes).toHaveBeenCalledWith(refreshed.modeState.availableModes)
+    })
+
+    it('ignores an absent state (a CLI refresh carries none)', () => {
+      resetAgents()
+      registerMocks()
+      _currentAgentId.value = 'claude'
+
+      applyRefreshedACPState('claude', undefined)
+
+      expect(mockUpdateAvailableModes).not.toHaveBeenCalled()
+      expect(mockUpdateCommandState).not.toHaveBeenCalled()
+    })
+
+    // An empty list means "the agent did not report one" — keep what the UI has
+    // rather than blanking a working picker.
+    it('skips empty lists instead of blanking the pickers', () => {
+      resetAgents()
+      registerMocks()
+      _currentAgentId.value = 'claude'
+
+      applyRefreshedACPState('claude', {
+        commands: [],
+        modeState: { currentModeId: '', availableModes: [] },
+        thinkingEffortState: { currentId: '', availableLevels: [] },
+      })
+
+      expect(mockUpdateAvailableModes).not.toHaveBeenCalled()
+      expect(mockUpdateAvailableThinkingEfforts).not.toHaveBeenCalled()
+      expect(mockUpdateCommandState).not.toHaveBeenCalled()
     })
   })
 

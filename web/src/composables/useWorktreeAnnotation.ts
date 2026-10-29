@@ -3,6 +3,7 @@ import { gt } from '@/composables/useLocale'
 import { resolveFilePath, registerWorktreeCacheClearter } from '@/composables/useFilePathAnnotation.ts'
 import { isShareMode } from '@/share/shareMode'
 import { EXTERNAL_LINK_CLASS } from '@/utils/externalLinkNode.ts'
+import { isAnnotationSkipped } from '@/utils/annotationScope.ts'
 
 // Register the clearWorktreeCache function to break circular dependency.
 // useFilePathAnnotation calls this instead of importing clearWorktreeCache directly.
@@ -182,6 +183,12 @@ export function annotateWorktreePathsIn(
 
     // ── Step 1: <a href> tags matching a worktree path ──
     for (const a of doc.querySelectorAll('a[href]')) {
+        if (isAnnotationSkipped(a)) continue
+        // Idempotency: the tool-detail pass re-runs this over HTML a markdown
+        // renderer already annotated. The anchor itself carries no marker (the
+        // button is a sibling), so the button's presence is the signal — same
+        // approach the localhost annotator uses for its open button.
+        if (a.nextElementSibling?.classList.contains('chat-worktree-btn')) continue
         const href = a.getAttribute('href') || ''
         const match = findWorktreeMatch(href, searchEntries)
         if (!match) continue
@@ -202,6 +209,7 @@ export function annotateWorktreePathsIn(
     // but the stale span's text node would be inside it — this is acceptable
     // because on re-render the full pipeline replaces the HTML from scratch).
     for (const el of doc.querySelectorAll('code')) {
+        if (isAnnotationSkipped(el)) continue
         if (el.classList.contains('chat-commit-hash') || el.classList.contains('chat-commit-hash-pending')) continue
         if (el.classList.contains('chat-worktree-path')) continue
         const stripped = (el.textContent || '').trim()
@@ -223,6 +231,7 @@ export function annotateWorktreePathsIn(
         acceptNode(node: Text) {
             const parent = node.parentElement
             if (!parent) return NodeFilter.FILTER_REJECT
+            if (isAnnotationSkipped(parent)) return NodeFilter.FILTER_REJECT
             if (parent.tagName === 'A' || parent.closest('a')) return NodeFilter.FILTER_REJECT
             // External links are <span class="md-external-link">, not <a> (see
             // externalLinkNode.ts). The pipeline runs this step BEFORE the URL

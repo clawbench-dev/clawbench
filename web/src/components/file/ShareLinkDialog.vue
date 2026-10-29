@@ -33,32 +33,23 @@
 
       <!-- Link bar -->
       <div v-if="linkUrl" class="share-dialog-link-bar">
-        <div class="share-dialog-link-input-wrap">
-          <input
-            ref="linkInputRef"
-            class="share-dialog-link-input"
-            type="text"
-            :value="linkUrl"
-            readonly
-            spellcheck="false"
-            @focus="$event.target.select()"
-          />
-          <CopyButton
-            :text="linkUrl"
-            title-key="shareDialog.copyTip"
-            class="share-dialog-link-btn"
-          />
-          <button
-            class="share-dialog-link-btn"
-            :title="t('shareDialog.regenerateTip')"
-            :aria-label="t('shareDialog.regenerateTip')"
-            :disabled="creating"
-            @click="regenerateLink"
-          >
-            <LoadingIndicator v-if="creating" size="sm" inline class="share-dialog-spin" />
-            <RefreshCw v-else :size="14" />
-          </button>
-        </div>
+        <!-- Every address the server is reachable on, primary first. A machine
+             with Wi-Fi + Ethernet + Docker needs this: the address this browser
+             used is not necessarily one a colleague can reach. -->
+        <ShareAddressList :links="shareLinks">
+          <template #trailing>
+            <button
+              class="share-dialog-link-btn"
+              :title="t('shareDialog.regenerateTip')"
+              :aria-label="t('shareDialog.regenerateTip')"
+              :disabled="creating"
+              @click="regenerateLink"
+            >
+              <LoadingIndicator v-if="creating" size="sm" inline class="share-dialog-spin" />
+              <RefreshCw v-else :size="14" />
+            </button>
+          </template>
+        </ShareAddressList>
         <div v-if="errorMsg" class="share-dialog-error">{{ errorMsg }}</div>
       </div>
     </div>
@@ -110,7 +101,8 @@ import { openExternalUrl } from '@/utils/externalLink'
 // Shared notice + link-bar chrome. Imported (not global) so only the two share
 // dialogs load it; see the file header for why it cannot be scoped.
 import '@/assets/share-dialog.css'
-import CopyButton from '@/components/common/CopyButton.vue'
+import ShareAddressList from '@/components/common/ShareAddressList.vue'
+import { buildShareLinks } from '@/composables/useShareLinks'
 
 const props = defineProps({
   open: Boolean,
@@ -126,11 +118,18 @@ const busy = ref(false)
 const creating = ref(false)
 const errorMsg = ref('')
 const linkUrl = ref('')
-const linkInputRef = ref(null)
+/** Every address this share can be opened on; linkUrl is the primary. */
+const shareLinks = ref([])
 
 // Build the absolute link from the server-returned path.
-function toAbsoluteUrl(path) {
-  return window.location.origin + path
+/**
+ * Resolve every address for a share path. `window.location.origin` only knows
+ * the ONE address this browser used; on a multi-homed machine a colleague may
+ * be on another subnet and unable to open it.
+ */
+async function setLinksForPath(path) {
+  shareLinks.value = await buildShareLinks(path)
+  linkUrl.value = shareLinks.value[0]?.url ?? ''
 }
 
 watch(() => props.open, async (isOpen) => {
@@ -147,7 +146,7 @@ async function loadStatus() {
     if (!resp.ok) throw new Error(resp.statusText)
     const data = await resp.json()
     if (data.path) {
-      linkUrl.value = toAbsoluteUrl(data.path)
+      await setLinksForPath(data.path)
       markShared(props.file.path)
     } else {
       markUnshared(props.file.path)
@@ -173,7 +172,7 @@ async function createLink() {
       throw new Error(err.error || resp.statusText)
     }
     const data = await resp.json()
-    linkUrl.value = toAbsoluteUrl(data.path)
+    await setLinksForPath(data.path)
     markShared(props.file.path)
     // Auto-copy the freshly created link — the common next step is pasting it
     // somewhere. Silent on purpose: the link is already visible in the field

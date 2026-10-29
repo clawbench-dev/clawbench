@@ -1324,3 +1324,33 @@
 .app-menu-column > :not(.app-menu-scroll) {
     flex-shrink: 0;
 }
+
+/* ── Quick-send / quick-command popup (chat + terminal) ─────────────────────
+   Two hosts share these classes: the chat composer's quick-send menu
+   (ChatInputBar.vue) and the terminal's quick-command menu
+   (TerminalPanelContent.vue). Both are PopupMenu surfaces whose ROOT is the
+   scrollport (PopupMenu writes an inline overflow-y), so the title pins itself
+   with `position: sticky` and the rows scroll underneath.
+
+   The pinned band's background MUST be opaque and equal to the popup surface
+   (PopupMenu paints --bg-secondary): a transparent one lets the scrolling rows
+   show through. `z-index` is needed because `.quick-send-item` is
+   `position: relative` for its trailing inject button and would otherwise paint
+   over the band.
+
+   Declared GLOBALLY here rather than in ChatInputBar.vue's unscoped block for
+   the same reason as the app-menu rules above: the terminal menu only picked
+   them up because the chat panel happened to mount first. jsdom has no CSS
+   engine, so this contract is pinned by quickSendMenuStickyTitle.css.test.ts. */
+.quick-send-title {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-secondary, #fff);
+    border-bottom: 1px solid var(--border-color, #e5e5e5);
+    padding: var(--space-3) calc(14 * var(--dp)) var(--space-2);
+    font-size: var(--font-size-xs);
+    color: var(--text-muted, #999);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: calc(0.3 * var(--dp));
+}

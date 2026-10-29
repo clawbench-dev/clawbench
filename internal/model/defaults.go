@@ -221,6 +221,12 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if p, ok := presence["chat.auto_continue_max_retries"]; !ok || !p {
 		cfg.Chat.AutoContinueMaxRetries = DefaultAutoContinueMaxRetries
 	}
+	// RestartResumeWindowMinutes: 0 is MEANINGFUL ("no age bound"), so this cannot
+	// use a `<= 0 → default` rewrite — that would silently turn "resume
+	// regardless of age" into an hour. Only an omitted field takes the default.
+	if p, ok := presence["chat.restart_resume_window_minutes"]; !ok || !p {
+		cfg.Chat.RestartResumeWindowMinutes = DefaultRestartResumeWindowMinutes
+	}
 	// Negative values other than the -1 sentinel are unrepresentable (PATCH
 	// rejects them too); clamp to 0 so a hand-edited yaml cannot produce a
 	// value that would be read as "unlimited" by accident.

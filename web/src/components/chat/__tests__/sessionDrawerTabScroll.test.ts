@@ -46,6 +46,7 @@ vi.mock('@/composables/useAgents', () => ({
     getAgent: () => ({ name: 'Claude', preferredModel: '', preferredThinkingEffort: '', preferredMode: '' }),
     updateAgentField: vi.fn(),
     canRefreshModels: () => false,
+    canRefreshAgentState: () => false,
     supportsACP: () => true,
     supportsCLI: () => true,
     getAgentTransport: () => 'acp-stdio',
@@ -53,6 +54,7 @@ vi.mock('@/composables/useAgents', () => ({
   restoreOriginalModels: vi.fn(),
   resetModelViewForTransport: vi.fn(),
   applyRefreshedModelList: vi.fn(),
+  applyRefreshedACPState: vi.fn(),
   populateACPStateFromCache: vi.fn().mockResolvedValue(undefined),
   invalidateACPStateCache: vi.fn(),
 }))
