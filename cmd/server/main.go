@@ -214,6 +214,23 @@ func (dingtalkSessionMessenger) SendMessageToSession(sessionID, message string, 
 	return service.SendMessageToSessionFromDingTalk(sessionID, message, files)
 }
 
+func (dingtalkSessionMessenger) LastAssistantReply(sessionID string) (string, bool, error) {
+	text, ok := service.GetLastAssistantReply(sessionID)
+	return text, ok, nil
+}
+
+func (dingtalkSessionMessenger) StopAndClearSession(sessionID string) (bool, int, error) {
+	return service.StopAndClearSession(sessionID)
+}
+
+func (dingtalkSessionMessenger) ListProjects() ([]common.ProjectRef, error) {
+	return listProjectsForPush()
+}
+
+func (dingtalkSessionMessenger) CreateSessionInProject(projectPath string) (string, string, error) {
+	return service.CreatePushSession(projectPath)
+}
+
 // feishuDBAdapter bridges the feishu package's DB interface to service package
 // functions, avoiding import cycles between service → feishu → service.
 type feishuDBAdapter struct{}
@@ -324,6 +341,42 @@ func (feishuSessionMessenger) GetSessionInfo(sessionID string) (common.SessionIn
 
 func (feishuSessionMessenger) SendMessageToSession(sessionID, message string, files []model.FileEntry) error {
 	return service.SendMessageToSessionFromFeishu(sessionID, message, files)
+}
+
+func (feishuSessionMessenger) LastAssistantReply(sessionID string) (string, bool, error) {
+	text, ok := service.GetLastAssistantReply(sessionID)
+	return text, ok, nil
+}
+
+func (feishuSessionMessenger) StopAndClearSession(sessionID string) (bool, int, error) {
+	return service.StopAndClearSession(sessionID)
+}
+
+func (feishuSessionMessenger) ListProjects() ([]common.ProjectRef, error) {
+	return listProjectsForPush()
+}
+
+func (feishuSessionMessenger) CreateSessionInProject(projectPath string) (string, string, error) {
+	return service.CreatePushSession(projectPath)
+}
+
+// listProjectsForPush adapts the service-level project list to the push
+// package's type. Shared by both IM backends so their /new lists cannot drift.
+func listProjectsForPush() ([]common.ProjectRef, error) {
+	refs, err := service.ListProjectsForPush()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]common.ProjectRef, len(refs))
+	for i, r := range refs {
+		out[i] = common.ProjectRef{
+			Index:        r.Index,
+			Path:         r.Path,
+			Exists:       r.Exists,
+			SessionCount: r.SessionCount,
+		}
+	}
+	return out, nil
 }
 
 // multiHandler sends log records to multiple handlers

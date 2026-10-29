@@ -247,6 +247,20 @@ type mockSessionMessenger struct {
 	running  map[string]bool
 	sendErr  error
 	SendFn   func(sid, msg string, files []model.FileEntry) error
+
+	// Capabilities for /show, /stop and /new.
+	lastReply       string
+	lastReplyOK     bool
+	lastReplyErr    error
+	wasRunning      bool
+	cleared         int
+	stopFn          func() (bool, int, error)
+	projects        []common.ProjectRef
+	projectsErr     error
+	newSessionID    string
+	newSessionTitle string
+	createErr       error
+	createFn        func(path string) (string, string, error)
 }
 
 func (m *mockSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]common.SessionInfo, error) {
@@ -1363,4 +1377,66 @@ func TestOnMessageReceive_UnsupportedTypeRepliesInsteadOfEmptySend(t *testing.T)
 	if !strings.Contains(box.get(), "暂不支持") {
 		t.Errorf("reply should explain the unsupported type, got %q", box.get())
 	}
+}
+
+// ---- capabilities added for /show /stop /new ----
+
+func (m *mockSessionMessenger) LastAssistantReply(string) (string, bool, error) {
+	if m.lastReplyErr != nil {
+		return "", false, m.lastReplyErr
+	}
+	return m.lastReply, m.lastReplyOK, nil
+}
+
+func (m *mockSessionMessenger) StopAndClearSession(string) (bool, int, error) {
+	if m.stopFn != nil {
+		return m.stopFn()
+	}
+	return m.wasRunning, m.cleared, nil
+}
+
+func (m *mockSessionMessenger) ListProjects() ([]common.ProjectRef, error) {
+	if m.projectsErr != nil {
+		return nil, m.projectsErr
+	}
+	return m.projects, nil
+}
+
+func (m *mockSessionMessenger) CreateSessionInProject(path string) (string, string, error) {
+	if m.createFn != nil {
+		return m.createFn(path)
+	}
+	return m.newSessionID, m.newSessionTitle, m.createErr
+}
+
+func (m *mockSessionMessengerListError) LastAssistantReply(string) (string, bool, error) {
+	return "", false, nil
+}
+
+func (m *mockSessionMessengerListError) StopAndClearSession(string) (bool, int, error) {
+	return false, 0, nil
+}
+
+func (m *mockSessionMessengerListError) ListProjects() ([]common.ProjectRef, error) {
+	return nil, nil
+}
+
+func (m *mockSessionMessengerListError) CreateSessionInProject(string) (string, string, error) {
+	return "", "", nil
+}
+
+func (m *mockResolveThenFail) LastAssistantReply(string) (string, bool, error) {
+	return "", false, nil
+}
+
+func (m *mockResolveThenFail) StopAndClearSession(string) (bool, int, error) {
+	return false, 0, nil
+}
+
+func (m *mockResolveThenFail) ListProjects() ([]common.ProjectRef, error) {
+	return nil, nil
+}
+
+func (m *mockResolveThenFail) CreateSessionInProject(string) (string, string, error) {
+	return "", "", nil
 }
