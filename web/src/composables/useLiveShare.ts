@@ -12,6 +12,7 @@
 import { ref } from 'vue'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
+import { buildShareLinks, type ShareLink } from '@/composables/useShareLinks'
 import { LiveMixer } from './useLiveMixer'
 
 const TAG = 'LiveShare'
@@ -38,6 +39,8 @@ export interface CaptureSource {
 const state = ref<LiveShareState>('idle')
 const token = ref('')
 const shareUrl = ref('')
+/** Every address this share can be opened on; shareUrl is the primary. */
+const shareLinks = ref<ShareLink[]>([])
 const title = ref('')
 const viewers = ref<LiveViewerInfo[]>([])
 const talkEnabled = ref(false)
@@ -179,7 +182,11 @@ export function useLiveShare() {
         return false
       }
       token.value = data.token
-      shareUrl.value = window.location.origin + (data.path ?? `/share/${data.token}`)
+      // Build from the server's address list, not window.location.origin: the
+      // browser only knows the one address it used, which may not be reachable
+      // from a colleague's subnet.
+      shareLinks.value = await buildShareLinks(data.path ?? `/share/${data.token}`)
+      shareUrl.value = shareLinks.value[0]?.url ?? window.location.origin + `/share/${data.token}`
       title.value = opts.shareTitle ?? ''
 
       // 2. Declare the capture source before asking for the stream.
@@ -423,6 +430,7 @@ export function useLiveShare() {
     state.value = 'idle'
     token.value = ''
     shareUrl.value = ''
+    shareLinks.value = []
     viewers.value = []
     talkEnabled.value = false
 
@@ -441,6 +449,7 @@ export function useLiveShare() {
     state,
     token,
     shareUrl,
+    shareLinks,
     title,
     viewers,
     talkEnabled,

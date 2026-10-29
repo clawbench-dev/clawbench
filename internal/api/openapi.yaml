@@ -673,6 +673,50 @@ paths:
                   version:
                     type: string
 
+  /api/server/addresses:
+    get:
+      tags: [Config]
+      summary: 本机可访问地址列表
+      description: |
+        返回服务端所有可被客户端访问的地址，每条带 OS 接口名与类型
+        （`lan` / `virtual` / `public`）。
+
+        分享弹窗用它拼链接，而不是 `window.location.origin`——后者只知道浏览器
+        恰好用的那**一个**地址。一台机器同时有 Wi-Fi、有线网卡和 Docker 网桥时，
+        同事可能不在同一网段，拿到的链接打不开。
+
+        **不过滤任何地址**：虚拟网卡也会返回，只是标了类型，因为静默丢弃会让
+        用户无法解释「为什么这个地址别人打不开」。
+
+        `port` 取自请求的 Host，因此端口转发或多端口监听时也是对的。
+      operationId: serverAddresses
+      responses:
+        "200":
+          description: 地址列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  port:
+                    type: string
+                    description: 服务端端口（取自请求 Host）
+                  addresses:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ip:
+                          type: string
+                          description: 裸地址，如 192.168.1.7
+                        interface:
+                          type: string
+                          description: OS 接口名，如 wlp1s0；未知时为空
+                        kind:
+                          type: string
+                          enum: [lan, virtual, public, other]
+                          description: 地址类型，供 UI 标注与排序
+
   /api/config/restart:
     post:
       tags: [Config]

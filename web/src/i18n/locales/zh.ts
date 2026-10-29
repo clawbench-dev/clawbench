@@ -3777,6 +3777,14 @@ export default {
     talkMuted: '麦克风关',
     talkTalking: '正在说话',
   },
+  shareAddress: {
+    copy: '复制链接',
+    showAll: '查看全部 {count} 个地址',
+    hideAll: '收起地址列表',
+    kindVirtual: '虚拟网卡',
+    kindPublic: '公网',
+    kindCurrent: '当前地址',
+  },
   shareDialog: {
     title: '分享链接',
     noFile: '当前没有打开的文件',

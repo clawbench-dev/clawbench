@@ -66,17 +66,10 @@
 
       <!-- Publishing: link + audience + speech controls. -->
       <template v-else>
-        <div class="live-dialog-link">
-          <input
-            class="live-dialog-link-input"
-            type="text"
-            :value="share.shareUrl.value"
-            readonly
-            spellcheck="false"
-            @focus="($event.target as HTMLInputElement).select()"
-          />
-          <CopyButton :text="share.shareUrl.value" title-key="liveShare.copyLink" />
-        </div>
+        <!-- Every address the server is reachable on, primary first. A machine
+             with Wi-Fi + Ethernet + Docker needs this: the address this browser
+             used is not necessarily one a colleague can reach. -->
+        <ShareAddressList :links="share.shareLinks.value" />
         <div class="live-dialog-hint">{{ t('liveShare.linkHint') }}</div>
 
         <div class="live-dialog-section">
@@ -156,7 +149,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import CopyButton from '@/components/common/CopyButton.vue'
+import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import { useToast } from '@/composables/useToast'
 import {
   getAudioCaptureSupport,

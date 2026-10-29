@@ -3781,6 +3781,14 @@ export default {
     talkMuted: 'Muted',
     talkTalking: 'Speaking',
   },
+  shareAddress: {
+    copy: 'Copy link',
+    showAll: 'Show all {count} addresses',
+    hideAll: 'Hide addresses',
+    kindVirtual: 'Virtual',
+    kindPublic: 'Public',
+    kindCurrent: 'Current',
+  },
   shareDialog: {
     title: 'Share link',
     noFile: 'No file is currently open',
