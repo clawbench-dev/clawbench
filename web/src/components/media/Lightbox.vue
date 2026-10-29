@@ -740,6 +740,23 @@ function handleTouchEnd(_e) {
     pinchStartDist.value = 0
 }
 
+/**
+ * The RENDERED artwork of a `.mermaid` container, or null while it is still
+ * loading.
+ *
+ * NOT `querySelector('svg')`: the loading placeholder is itself an `<svg>`
+ * (the picture glyph — see assets/mermaid.css), so the naive query would
+ * collect the placeholder and open the loader glyph in the lightbox instead of
+ * the diagram. The artwork is the only svg that is not the placeholder, and it
+ * carries mermaid's own sizing attributes.
+ */
+function mermaidArtwork(container) {
+    const svg = container.querySelector('svg')
+    if (!svg) return null
+    if (svg.classList.contains('mermaid-loading-icon')) return null
+    return svg
+}
+
 function deriveMermaidName(mermaidNode) {
     // Walk back through previous siblings looking for a heading
     let prev = mermaidNode.previousElementSibling
@@ -782,7 +799,7 @@ function collectMdImages(container, clickedImg, clickedMermaid, clickedSvg) {
             list.push({ src, name })
             if (current === clickedImg) startIdx = list.length - 1
         } else if (current.classList.contains('mermaid')) {
-            const svg = current.querySelector('svg')
+            const svg = mermaidArtwork(current)
             if (!svg) continue
             const name = deriveMermaidName(current)
             list.push({ src: '', name, svg: svg.outerHTML })
@@ -864,7 +881,7 @@ function handleLightboxClick(e) {
       || (wrap?.querySelector('.mermaid') ?? null)
     if (mermaidDiv) {
         e.preventDefault()
-        const svg = mermaidDiv.querySelector('svg')
+        const svg = mermaidArtwork(mermaidDiv)
         if (svg) {
             const mdContainer = mermaidDiv.closest('.markdown-body, .chat-message')
             if (mdContainer) {

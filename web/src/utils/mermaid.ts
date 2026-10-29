@@ -121,52 +121,53 @@ function mermaidErrorHtml(errorMessage: string): string {
 }
 
 /**
- * Loading placeholder markup: a diagram-shaped skeleton, not a lone ring.
+ * Loading placeholder markup: the standard picture glyph, breathing.
  *
- * Why a skeleton rather than the shared spinner: the placeholder stands in for
- * a BLOCK of unknown shape, and a ring in the middle of an otherwise empty
- * panel says "waiting" but nothing about what is coming — the same reason
- * `PanelSkeleton` / `ChatSkeleton` replaced the centred ring everywhere else
- * (design-guide §加载指示器).
+ * Why not a hand-drawn skeleton: a diagram's real shape is unknowable before it
+ * renders, so any invented node layout is a guess — and a guessed layout drawn
+ * out of bars reads as a chart-ish blob rather than as a diagram.
  *
- * The shape is a FORK (one node, two children, one merge) rather than a stack
- * of bars, because a stack reads as a paragraph skeleton. The fork is what
- * makes the placeholder recognisable as a diagram at a glance.
+ * Why the plain picture glyph rather than a diagram-specific one: the
+ * placeholder marks a MEDIA BLOCK that has not arrived yet, which is exactly
+ * what an image icon means. A `network` glyph over-specified the content (it
+ * promised a node graph, which a sequence diagram or a pie chart is not), and
+ * every extra stroke is a claim the placeholder cannot keep.
  *
- * Deliberately NO ring alongside it: a spinner and a skeleton are two answers
- * to the same question, and showing both reads as two things happening. The
- * shimmer is the motion signal here.
+ * The glyph is drawn INLINE rather than imported: this markup is built as a
+ * string for `innerHTML`, and several test files mock `lucide-vue-next` with a
+ * narrow set of names — a new import would be `undefined` there and crash the
+ * render. The path data below is copied verbatim from `lucide-vue-next`'s
+ * `image.js` (ISC), so it matches the component pixel for pixel.
  *
- * Every bar is FIXED, never randomized: the shimmer already says "loading", and
- * a shifting layout reads as content arriving and then changing (the rule every
- * other skeleton in the app follows). Fixed also keeps the markup
- * byte-identical across renders, so a re-render cannot flicker the placeholder.
+ * The glyph sits ON a shimmering tile rather than pulsing on its own: a sweep
+ * needs SURFACE to be seen, and a 1.5px outline gives it almost none — the
+ * earlier opacity pulse on the bare glyph measured as a no-op at 56dp (the
+ * stroke is too thin for a brightness change to register). The tile is the same
+ * `.skeleton-block` language the rest of the app uses, and the glyph is what
+ * keeps it specific to media rather than a generic grey square.
+ *
+ * Deliberately NO spinner: one mark, one motion. The sweep is the motion
+ * signal; a ring beside it would say the same thing twice.
  *
  * Everything visible is `aria-hidden`; the single `role="status"` line carries
  * the announcement, because otherwise a screen reader walking into the diagram
  * position would hear nothing at all for the seconds the render takes.
  */
+const DIAGRAM_LOADING_ICON = '<svg class="mermaid-loading-icon" viewBox="0 0 24 24"'
+    + ' fill="none" stroke="currentColor" stroke-width="1.5"'
+    + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>'
+    + '<circle cx="9" cy="9" r="2"></circle>'
+    + '<path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>'
+    + '</svg>'
+
 function mermaidLoadingHtml(): string {
     const label = gt('media.diagramLoading')
-    // A node is a box with a label inside it — that is what makes the skeleton
-    // read as a DIAGRAM rather than as a row of grey blocks.
-    const node = (extra = '') =>
-        `<span class="mermaid-skeleton-node${extra}">`
-        + '<span class="mermaid-skeleton-label"></span>'
-        + '</span>'
     return '<div class="mermaid-loading" role="status" aria-live="polite">'
         + `<span class="mermaid-loading-sr">${escapeHtml(label)}</span>`
-        + '<div class="mermaid-skeleton" aria-hidden="true">'
-        // Root → fork → two children → merge → sink. The edges are CSS
-        // pseudo-elements on these elements (see mermaid.css); the markup only
-        // carries the structure.
-        + node(' mermaid-skeleton-node--root')
-        + '<span class="mermaid-skeleton-row">'
-        + node()
-        + node()
+        + '<span class="mermaid-loading-tile" aria-hidden="true">'
+        + DIAGRAM_LOADING_ICON
         + '</span>'
-        + node(' mermaid-skeleton-node--sink')
-        + '</div>'
         + '</div>'
 }
 

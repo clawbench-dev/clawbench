@@ -1,22 +1,32 @@
-/* ── Mermaid diagram: loading skeleton, error, retry button ── */
+/* ── Mermaid diagram: loading placeholder, error, retry button ── */
 
 /* ─── Loading placeholder ──────────────────────────────────────────────────
-   A diagram-shaped skeleton rather than a lone ring in an empty box.
+   The standard picture glyph, sitting on a shimmering tile.
 
-   The ring said "waiting" but nothing about WHAT is coming. A diagram has a
-   recognisable vocabulary — boxes and the edges between them — so the
-   placeholder can preview the shape. This is the same decision that replaced
-   the centred ring with a skeleton in every dock panel (`PanelSkeleton`) and in
-   the message area (`ChatSkeleton`); mermaid was the last hold-out.
+   Why an icon and not a hand-drawn skeleton: a diagram's real shape is
+   unknowable before it renders, so any invented node layout is a guess — and a
+   guessed layout built out of grey bars reads as a chart-ish blob rather than
+   as a diagram.
 
-   The shape is a FORK (one node, two children, one merge), not a stack of
-   bars: a stack reads as a paragraph skeleton, and the whole point is that the
-   reader recognises a diagram before it arrives.
+   Why the PLAIN picture glyph: the placeholder stands for a media block that
+   has not arrived yet, which is exactly what an image icon means. A
+   diagram-specific glyph (e.g. `network`) over-specifies — it promises a node
+   graph, and a sequence diagram or a pie chart is not one.
 
-   The shimmer reuses the app's single skeleton language — `skeleton-shimmer`
+   Why the glyph sits ON a tile instead of animating on its own: a shimmer needs
+   SURFACE. Pulsing the bare glyph was measured as a no-op at 56dp — the stroke
+   is ~1.5px, so a 0.5→1 opacity change on that little ink is invisible at
+   reading distance, and the block looked frozen while the user waited. The tile
+   gives the sweep somewhere to travel, which is the same reason every other
+   skeleton in the app is a filled block.
+
+   The tile reuses the app's single skeleton language — `skeleton-shimmer`
    keyframes and `--skeleton-fill` / `--skeleton-sheen`, both defined in
    css/components.css and CONSUMED here. Declaring them on this element would
    silently defeat any ancestor override (documented on `.skeleton-block`).
+
+   Deliberately NO spinner: one mark, one motion. The sweep is the motion
+   signal; a ring beside it would say the same thing twice.
 
    Declared globally, not scoped: the markup is injected via `innerHTML` from
    utils/mermaid.ts, so it carries no `data-v-*` attribute (design-guide red
@@ -25,14 +35,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Tall enough to read as a diagram, not as a caption bar. A real flowchart
-     occupies far more, but reserving its full height would push the rest of
-     the message down and then yank it back when a small diagram lands. */
-  min-height: calc(150 * var(--dp));
-  padding: calc(20 * var(--dp)) calc(24 * var(--dp));
+  /* Enough height to read as a media block rather than a caption bar, but not
+     a real diagram's height — reserving that would push the rest of the message
+     down and then yank it back when a small diagram lands. */
+  min-height: calc(120 * var(--dp));
+  padding: calc(20 * var(--dp));
 }
 
-/* Visually hidden, still announced: every visible bar is aria-hidden, so
+/* Visually hidden, still announced: every visible part is aria-hidden, so
    without this the placeholder would be silent to a screen reader. */
 .mermaid .mermaid-loading-sr {
   position: absolute;
@@ -46,26 +56,21 @@
   border: 0;
 }
 
-.mermaid .mermaid-skeleton {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: min(calc(320 * var(--dp)), 100%);
-  /* One gap length shared by the vertical stubs and the row margins, so the
-     edges meet the nodes exactly instead of leaving a hairline gap. */
-  --mm-link: calc(14 * var(--dp));
-}
+/* The tile: the surface the sweep travels across, and the thing that makes the
+   placeholder read as "a media block is coming".
 
-/* One "node": a box that CONTAINS a label bar. The label is what makes this
-   read as a diagram rather than as a row of grey blocks — a real node has text
-   in it, and an empty box reads as an abstract divider. */
-.mermaid .mermaid-skeleton-node {
-  position: relative;
+   200x120 rather than a small square: the sweep is a horizontal gradient, so a
+   narrow tile gives it almost no travel and it degrades into a soft glow (a
+   96x96 tile measured exactly that way — indistinguishable from a pulse). This
+   is the smallest size where the band visibly MOVES across the surface while
+   the glyph still holds the eye. */
+.mermaid .mermaid-loading-tile {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: calc(30 * var(--dp));
-  border-radius: var(--radius-sm);
+  width: calc(200 * var(--dp));
+  height: calc(120 * var(--dp));
+  border-radius: var(--radius-md);
   background-color: var(--skeleton-fill, var(--bg-tertiary, #e9ecef));
   background-image: linear-gradient(
     90deg,
@@ -79,111 +84,20 @@
   animation: skeleton-shimmer 1.4s ease-in-out infinite;
 }
 
-/* The label bar inside a node. Fixed percentage, so it scales with the node and
-   the placeholder stays byte-identical across renders. */
-.mermaid .mermaid-skeleton-label {
-  display: block;
-  width: 62%;
-  height: calc(8 * var(--dp));
-  border-radius: calc(4 * var(--dp));
-  background: color-mix(in srgb, var(--text-muted) 26%, transparent);
+/* The glyph on the tile. Muted so it reads as a watermark on the skeleton, not
+   as content competing with the sweep; `currentColor` keeps it on the theme's
+   muted ink in all 36 themes. */
+.mermaid .mermaid-loading-icon {
+  width: calc(52 * var(--dp));
+  height: calc(52 * var(--dp));
+  color: var(--text-muted, #999);
+  opacity: 0.55;
 }
 
-/* Root and sink are the single-node rows; the two children share a row. */
-.mermaid .mermaid-skeleton-node--root,
-.mermaid .mermaid-skeleton-node--sink {
-  width: calc(150 * var(--dp));
-  max-width: 55%;
-}
-.mermaid .mermaid-skeleton-row {
-  position: relative;
-  display: flex;
-  justify-content: center;
-  gap: 8%;
-  width: 100%;
-  /* The stubs are exactly half this long, so the fork's horizontal lands on the
-     gap's midline and both halves meet it without a seam. */
-  margin: var(--mm-link) 0;
-}
-
-.mermaid .mermaid-skeleton-row > .mermaid-skeleton-node {
-  width: 38%;
-}
-
-/* ── The edges ──
-   A fork is drawn as a proper bracket, not as a line lying on the node edges:
-   the horizontal runs on the MIDLINE of the gap between rows, and each side
-   contributes a half-gap vertical that meets it. That is what makes the branch
-   read as entering the box rather than as a border touching it.
-
-   Two earlier attempts are worth not repeating: two half-width "arms" with
-   border-left / border-right put BOTH verticals in the middle of the row and
-   rendered as a T; a horizontal on the row's own edge looked like it stopped at
-   the node's border instead of connecting into it. */
-.mermaid .mermaid-skeleton-row::before,
-.mermaid .mermaid-skeleton-row::after {
-  content: '';
-  position: absolute;
-  left: 27%;
-  right: 27%;
-  height: 1px;
-  background: var(--text-muted);
-  opacity: 0.5;
-}
-
-/* Midline of the gap above the row (the root's stub meets it) and below it. */
-.mermaid .mermaid-skeleton-row::before {
-  top: calc(var(--mm-link) / -2);
-}
-
-.mermaid .mermaid-skeleton-row::after {
-  bottom: calc(var(--mm-link) / -2);
-}
-
-/* Root's vertical: from its bottom edge down to the midline. */
-.mermaid .mermaid-skeleton-node--root::after,
-.mermaid .mermaid-skeleton-node--sink::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  width: 1px;
-  height: calc(var(--mm-link) / 2);
-  background: var(--text-muted);
-  opacity: 0.5;
-}
-
-.mermaid .mermaid-skeleton-node--root::after {
-  top: 100%;
-}
-
-.mermaid .mermaid-skeleton-node--sink::before {
-  bottom: 100%;
-}
-
-/* Each child's vertical: from the midline down to its own top edge. */
-.mermaid .mermaid-skeleton-row > .mermaid-skeleton-node::before,
-.mermaid .mermaid-skeleton-row > .mermaid-skeleton-node::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  width: 1px;
-  height: calc(var(--mm-link) / 2);
-  background: var(--text-muted);
-  opacity: 0.5;
-}
-
-.mermaid .mermaid-skeleton-row > .mermaid-skeleton-node::before {
-  bottom: 100%;
-}
-
-.mermaid .mermaid-skeleton-row > .mermaid-skeleton-node::after {
-  top: 100%;
-}
-
-/* The shimmer is decoration and stops; the placeholder itself still says
-   "loading" (same split as `.skeleton-block`). */
+/* The shimmer is decoration and stops; the tile itself still says "loading"
+   (same split as `.skeleton-block`). */
 @media (prefers-reduced-motion: reduce) {
-  .mermaid .mermaid-skeleton-node {
+  .mermaid .mermaid-loading-tile {
     animation: none;
   }
 }

@@ -422,12 +422,16 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - **颜色**：`--li-color`（转动的弧）/ `--li-track-color`（静止底环），都回退主题 token。原 SVG 是 `stroke="currentColor"` 的站点用 `--li-color: currentColor` 承接，外观零变化。
 - **速度**：默认 `--li-duration: 0.8s`；从旧实现迁移来的站点（tool-call / url-btn）保留各自的 `0.6s`，**统一形状不等于统一节奏**。
 - 覆盖类规则**必须带祖先部分**（如 `.chat-url-open-btn .chat-url-open-btn-spinner`）：`.li-spinner` 是单类 (0,1,0)，写成单类会与之打平，胜负取决于打包 chunk 顺序 → 尺寸会随构建**静默回退 28px**。
-- **环只用于「等待一个点状结果」，不用于「等待一块内容」**：当占位的对象是一个**有形状的块**（面板、消息区、图表）时用骨架屏——环只说「在等」，不说「要来的长什么样」，还会让容器塌成一个字形。这条已经落地在 `PanelSkeleton`（dock 面板）、`ChatSkeleton`（消息区）和 Mermaid 的加载占位（`mermaidSkeleton.test.ts`）；Mermaid 是最后一个从环迁走的。
-  - **Mermaid 的占位是一个「分叉流程图」骨架**：根节点 → 分叉成两个子节点 → 汇合到一个出口节点，每个节点里有一条标签条。**不能做成几条横杠的堆叠**——那读作段落骨架，而不是图。
-  - **几何必须共用同一组百分比**：子节点 `width: 38%` + `gap: 8%` ⇒ 两个中心恰在 27% / 73%，连接线的 `left/right: 27%` 由这两个数推出。第一版用 `calc(dp)` 宽度 + `max-width` 夹取，夹取把真实中心挪到 26.9% 而线还画在 25%，分叉**肉眼可见地没接上节点**。
-  - **竖线归节点所有、长度为半个间隙**（`calc(var(--mm-link) / 2)`），横线落在间隙中线上，两边才严丝合缝。用两条半宽 `border-left/right` 的「臂」会把**两根竖线都放在行中央**，渲染成 T 形；把横线画在行自身边缘则被节点盖住、看起来像浮在旁边。
-  - **不要同时出现环和骨架**：两者回答同一个问题，并列读作「两件事在发生」。
-  - 可见条全部 `aria-hidden`，唯一的 `role="status"` 承载 `media.diagramLoading`（否则读屏用户在这几秒里听到空白）。微光响应 `prefers-reduced-motion`（与骨架原语一致）。
+- **环只用于「等待一个点状结果」，不用于「等待一块内容」**：占位对象是一个**有形状的块**（面板、消息区）时用骨架屏——环只说「在等」，不说「要来的长什么样」，还会让容器塌成一个字形。这条已落地在 `PanelSkeleton`（dock 面板）与 `ChatSkeleton`（消息区）。
+  - **Mermaid 的加载占位用现成图标，不要手绘骨架**：图表的真实形状在渲染前是未知的，任何自造的节点布局都是猜测——而用灰条画出来的猜测只会读作「一坨图表格的东西」。
+    - **用最普通的图片图标（Lucide `image`），不要用图表专用的**：占位代表的是「一个媒体块还没到」，图片图标正是这个意思。图表专用图标（如 `network`）会**过度指定内容**——它承诺的是一张节点图，而时序图、饼图都不是。笔画越少，占位许下却兑现不了的承诺越少。
+    - 图标以**内联 `<svg>`** 写进 `mermaid.ts` 的字符串（该标记是 `innerHTML` 注入的，且多个测试对 `lucide-vue-next` 做了窄 mock，新 import 会是 `undefined`）。因此路径数据是从 `lucide-vue-next` 的 `image.js` **逐字复制**的，`mermaidLoadingPlaceholder.test.ts` 双向钉住（lucide 改了就失败）。
+    - **动效要作用在「面」上，不是「线」上**：给裸图标做透明度脉冲**实测等于没动**——笔画只有 ~1.5px，0.5→1 的亮度变化在这点墨上肉眼看不见，用户会觉得卡住了。改成**图标坐在一块骨架 tile 上**，扫光由 tile 承载（复用 `skeleton-shimmer` 与 `--skeleton-fill` / `--skeleton-sheen`，**只消费不声明**）。这与全站其他骨架屏是同一个理由：骨架的动效来自填充块的面积。
+    - **tile 必须是横向的，否则扫光退化成呼吸**：渐变是 90deg，tile 太窄就没有行程。实测 **96×96 的方 tile 与脉冲无法区分**；**200×120 + 52dp 图标**是「带子明显在移动」且图标仍能压住视线的最小尺寸（测试钉住宽高比 ≥1.4 且宽 ≥160dp）。
+    - **图标本身不参与动画**，它是 tile 上的水印（`--text-muted` + 低透明度）；`prefers-reduced-motion` 下停 **tile** 的动画（停图标是空操作，会假绿）。
+    - **不要同时出现环和图标**：两者回答同一个问题，并列读作「两件事在发生」。
+    - 图标 `aria-hidden`，唯一的 `role="status"` 承载 `media.diagramLoading`（否则读屏用户在这几秒里听到空白）。
+  - ⚠️ **占位图标是 `<svg>`，会让所有「这个 mermaid 渲染完了吗」的判据误判**：`Lightbox.vue` 的 `collectMdImages` / 点击处理原来用 `querySelector('svg')`，会把加载图标当成成品打开。已抽 `mermaidArtwork()` 排除 `.mermaid-loading-icon`。**新增任何「容器里有没有 svg」的判据时都要先问这一句**。（导出侧不受影响：`exportMarkdownHtml` 会 `await` 渲染，占位态到不了那里。）
 
 ---
 

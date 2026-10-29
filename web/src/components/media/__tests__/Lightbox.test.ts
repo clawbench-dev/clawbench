@@ -1244,6 +1244,47 @@ describe('Lightbox', () => {
       document.body.removeChild(container)
     })
 
+    it('skips a mermaid div that is still showing the loading glyph', async () => {
+      // The loading placeholder is itself an `<svg>` (the picture glyph — see
+      // assets/mermaid.css), so a naive `querySelector('svg')` would collect it
+      // and the lightbox would open the LOADER instead of the diagram.
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML =
+        '<img src="a.png" alt="A">'
+        + '<div class="mermaid"><div class="mermaid-loading" role="status">'
+        + '<svg class="mermaid-loading-icon" viewBox="0 0 24 24"></svg></div></div>'
+      document.body.appendChild(container)
+
+      const result = vm.collectMdImages(container, container.querySelectorAll('img')[0], null)
+      expect(result.list, 'the loader glyph must not become a lightbox entry').toHaveLength(1)
+      expect(result.list[0].src).toBeTruthy()
+
+      document.body.removeChild(container)
+    })
+
+    it('collects the artwork once the placeholder has been replaced', async () => {
+      // The counterpart: excluding the loader must not also exclude the real
+      // diagram, or the lightbox would simply never open a rendered one.
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML =
+        '<img src="a.png" alt="A">'
+        + '<div class="mermaid"><svg viewBox="0 0 100 50"><rect></rect></svg></div>'
+      document.body.appendChild(container)
+
+      const mermaidDiv = container.querySelector('.mermaid')
+      const result = vm.collectMdImages(container, container.querySelectorAll('img')[0], mermaidDiv)
+      expect(result.list).toHaveLength(2)
+      expect(result.list[1].svg).toContain('<rect')
+
+      document.body.removeChild(container)
+    })
+
     // Regression: an <img> whose src cannot be resolved (no src / no
     // data-full-src) used to `continue` without advancing the TreeWalker,
     // re-visiting the same node forever at 100% CPU and hanging the worker.
