@@ -114,7 +114,7 @@ function hasInlineInput(block) {
 // per-diff .tool-file-header (path + open button) emitted by the shared
 // Edit/Write renderers is redundant and stripped.
 function stripFileHeader(html) {
-  return html ? html.replace(/<div class="tool-file-header">.*?<\/div>/gs, '') : html
+  return html ? html.replace(/<div class="tool-file-header"[^>]*>.*?<\/div>/gs, '') : html
 }
 
 function renderDiff(input, name, done, status, output) {

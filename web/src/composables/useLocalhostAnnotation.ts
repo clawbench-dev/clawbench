@@ -7,6 +7,7 @@ import { gt } from '@/composables/useLocale'
 import { portForwardUnavailable } from '@/utils/portForwardUtils.ts'
 import { appLog } from '@/utils/appLog'
 import { createExternalLinkNode, EXTERNAL_LINK_CLASS, LOCALHOST_LINK_ATTR } from '@/utils/externalLinkNode.ts'
+import { isAnnotationSkipped } from '@/utils/annotationScope.ts'
 
 /**
  * Localhost URL annotation composable.
@@ -148,6 +149,7 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
     // what opens the URL through the SSH/h2 tunnel instead of the system
     // browser, where `localhost` on the device points at nothing.
     for (const el of Array.from(doc.querySelectorAll(`a[href], .${EXTERNAL_LINK_CLASS}`))) {
+        if (isAnnotationSkipped(el)) continue
         const href = el.getAttribute(el.tagName === 'A' ? 'href' : 'data-href') || ''
         const parsed = parseLocalhostUrl(href)
         if (!parsed) continue
@@ -172,6 +174,7 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
     // Unlike file paths, localhost URLs in backticks are meant to be clickable.
     // Wrap the <code> in <a> and append the icon button.
     for (const code of doc.querySelectorAll('code')) {
+        if (isAnnotationSkipped(code)) continue
         // Already wrapped by step 1 (or by a previous pass): wrapping again
         // nests two spans and adds a second open button.
         if (code.closest(`.${EXTERNAL_LINK_CLASS}`)) continue
@@ -195,6 +198,7 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
         acceptNode(node: Text) {
             const parent = node.parentElement
             if (!parent) return NodeFilter.FILTER_REJECT
+            if (isAnnotationSkipped(parent)) return NodeFilter.FILTER_REJECT
             // Skip text inside <a> tags (handled in step 1, and step 2's wrappers)
             if (parent.tagName === 'A' || parent.closest('a')) return NodeFilter.FILTER_REJECT
             // Skip text inside a link we ALREADY converted (steps 1 and 2). The

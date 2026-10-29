@@ -132,7 +132,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       subagentType: block.display_name || (block.input as Record<string, unknown>)?.subagent_type as string || '',
       summary: block.summary || toolCallSummary(block),
       inputHtml: hasInput ? formatToolInput(block.input!, block.name || '', { done: block.done, status: block.status, output: block.output, askKey: askKeyForToolBlock(block) }) : '',
-      outputHtml: hasOutput ? formatToolOutput(block.output as string, block.name || '') : '',
+      outputHtml: hasOutput ? formatToolOutput(block.output as string, block.name || '', { annotate: !!block.done }) : '',
       status: block.status || '',
       done: !!block.done,
       duration: block.duration_ms || 0,
@@ -187,6 +187,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
           toolDetailData.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
         }
         if (shared.output) {
+          // Share snapshots carry a finished tool, so annotate unconditionally.
           toolDetailData.value.outputHtml = formatToolOutput(shared.output, block.name || '')
         }
         if (shared.done !== undefined) toolDetailData.value.done = !!shared.done
@@ -229,7 +230,10 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
         toolDetailData.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
       }
       if (data.output) {
-        toolDetailData.value.outputHtml = formatToolOutput(data.output, block.name || data.name || '')
+        // This fetch also runs while the tool is still streaming (the drawer's
+        // 3 s poll), so annotation follows the same done-gate as the live path.
+        const finished = data.done !== undefined ? !!data.done : !!block.done
+        toolDetailData.value.outputHtml = formatToolOutput(data.output, block.name || data.name || '', { annotate: finished })
       }
       // Verify file path and commit hash annotations after DOM update
       _verifyAnnotations()
