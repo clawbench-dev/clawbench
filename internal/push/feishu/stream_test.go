@@ -1440,3 +1440,171 @@ func (m *mockResolveThenFail) ListProjects() ([]common.ProjectRef, error) {
 func (m *mockResolveThenFail) CreateSessionInProject(string) (string, string, error) {
 	return "", "", nil
 }
+
+// ============================================================================
+// /show /stop /new tests
+// ============================================================================
+
+// feishuCommandEnv installs a sticky-target mock DB and a caller-provided
+// messenger, then returns the manager plus a reply capture box.
+func feishuCommandEnv(t *testing.T, sticky string, m *mockSessionMessenger) (*Manager, *replyBox) {
+	t.Helper()
+	origDB := db
+	t.Cleanup(func() { db = origDB })
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return sticky, nil },
+	}
+
+	origSM := sessionMessenger
+	t.Cleanup(func() { sessionMessenger = origSM })
+	sessionMessenger = m
+
+	box := replyCapture(t)
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+	return mgr, box
+}
+
+func TestOnMessageReceive_ShowLastReply(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions:    stickySessions,
+		lastReply:   "the full answer",
+		lastReplyOK: true,
+	}
+	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
+	if !strings.Contains(box.get(), "the full answer") {
+		t.Errorf("expected the last reply in the response, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_ShowEmptyReply(t *testing.T) {
+	m := &mockSessionMessenger{sessions: stickySessions, lastReplyOK: false}
+	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
+	if !strings.Contains(box.get(), "还没有已完成的回复") {
+		t.Errorf("expected the empty-reply hint, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_ShowExplicitTarget(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions:    stickySessions,
+		lastReply:   "other answer",
+		lastReplyOK: true,
+	}
+	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show deadbeef"))
+	if !strings.Contains(box.get(), "other answer") {
+		t.Errorf("expected the targeted session's reply, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_StopRunningSession(t *testing.T) {
+	m := &mockSessionMessenger{sessions: stickySessions, wasRunning: true, cleared: 3}
+	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/stop"))
+	out := box.get()
+	if !strings.Contains(out, "已停止") {
+		t.Errorf("expected stop confirmation, got %q", out)
+	}
+	if !strings.Contains(out, "3") {
+		t.Errorf("expected the cleared count, got %q", out)
+	}
+}
+
+func TestOnMessageReceive_StopIdleSession(t *testing.T) {
+	m := &mockSessionMessenger{sessions: stickySessions, wasRunning: false, cleared: 0}
+	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/stop"))
+	if !strings.Contains(box.get(), "未在运行") {
+		t.Errorf("expected the idle wording, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_NewListsProjects(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions: stickySessions,
+		projects: []common.ProjectRef{
+			{Index: 1, Path: "/proj/alpha", Exists: true},
+			{Index: 2, Path: "/proj/beta", Exists: true},
+		},
+	}
+	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new"))
+	out := box.get()
+	if !strings.Contains(out, "/proj/alpha") || !strings.Contains(out, "/proj/beta") {
+		t.Errorf("expected both projects, got %q", out)
+	}
+}
+
+func TestOnMessageReceive_NewCreatesSessionAndMovesSticky(t *testing.T) {
+	var createdIn string
+	m := &mockSessionMessenger{
+		sessions: stickySessions,
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+		createFn: func(path string) (string, string, error) {
+			createdIn = path
+			return "f1e2d3c4-0000-0000-0000-000000000000", "新会话 1", nil
+		},
+	}
+	mgr, setCalls := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", stickySessions)
+	sessionMessenger = m
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+	box := replyCapture(t)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new 1"))
+	if createdIn != "/proj/alpha" {
+		t.Errorf("created in %q, want /proj/alpha", createdIn)
+	}
+	calls := setCalls.snapshot()
+	if len(calls) != 1 || calls[0] != "f1e2d3c4-0000-0000-0000-000000000000" {
+		t.Errorf("sticky writes = %v, want one write of the new session", calls)
+	}
+	if !strings.Contains(box.get(), "@f1e2d3c4") {
+		t.Errorf("expected the new short id in the reply, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_NewOutOfRange(t *testing.T) {
+	var called bool
+	m := &mockSessionMessenger{
+		sessions: stickySessions,
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+		createFn: func(string) (string, string, error) { called = true; return "", "", nil },
+	}
+	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new 9"))
+	if called {
+		t.Error("must not create a session for an out-of-range index")
+	}
+	if !strings.Contains(box.get(), "超出范围") {
+		t.Errorf("expected out-of-range error, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_NewMissingDirWarns(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions: stickySessions,
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/gone", Exists: false}},
+		createFn: func(string) (string, string, error) {
+			return "f1e2d3c4-0000-0000-0000-000000000000", "新会话 1", nil
+		},
+	}
+	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new 1"))
+	if !strings.Contains(box.get(), "目录已不存在") {
+		t.Errorf("expected a missing-directory warning, got %q", box.get())
+	}
+}
