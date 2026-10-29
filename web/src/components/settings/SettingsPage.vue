@@ -154,6 +154,12 @@ function labelForCategory(cat: string): string {
     const agent = getAgent(agentId)
     return agent ? agent.name : t('settings.items.agentDetailTitle')
   }
+  // Agent-scoped sub-page (agentSessions:<id>): a fixed label, not the agent
+  // name — the name is already the previous crumb, so repeating it would read
+  // 设置 › Claude › Claude.
+  if (cat.startsWith('agentSessions:')) {
+    return t('settings.items.agentSessionsTitle')
+  }
   // For sub-page routes (colon-separated, except agents), use data-driven title lookup
   if (isSubPageRoute(cat)) {
     const titleKey = getSubPageTitleKey(cat)
@@ -179,6 +185,11 @@ function labelForCategory(cat: string): string {
  * level in between is missing.
  */
 function routeChain(categoryId: string): string[] {
+  // A sub-page of an agent needs THREE levels: 设置 › 智能体 › <名字> › 会话.
+  // Its id carries the agent id, so the middle level is `agents:<id>`.
+  if (categoryId.startsWith('agentSessions:')) {
+    return ['agents', 'agents:' + categoryId.slice('agentSessions:'.length), categoryId]
+  }
   const sep = categoryId.indexOf(':')
   return sep > 0 ? [categoryId.slice(0, sep), categoryId] : [categoryId]
 }

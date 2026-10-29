@@ -11,6 +11,18 @@
     @deleted="$emit('deleted', 'agents')"
     @back="$emit('back', 'agents')"
     @navigate-replace="(id: string) => $emit('navigateReplace', id)"
+    @open-sessions="(id: string) => $emit('navigate', `agentSessions:${id}`)"
+  />
+  <!-- "Conversations using this agent" (agentSessions:<id>). A dedicated route
+       rather than a card on the detail page: the list is paged and spans
+       projects, so it needs its own scroll surface. Like project:<id> it has no
+       back button — the breadcrumb crumb is the way back. The prefix is NOT
+       `agents:` on purpose: that prefix is parsed as `agents:<id>` everywhere
+       (slice(7)), so a third segment would be read as part of the agent id. -->
+  <SettingsAgentSessions
+    v-else-if="categoryId.startsWith('agentSessions:')"
+    :key="categoryId"
+    :agent-id="categoryId.slice('agentSessions:'.length)"
   />
   <!-- Project detail route (project:<id>): a read-only stats page, not a
        batch-save panel, so it gets its own component rather than going through
@@ -153,6 +165,7 @@ import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import UpgradeDialog from './UpgradeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
+import SettingsAgentSessions from './SettingsAgentSessions.vue'
 import IosInstallDrawer from '@/components/common/IosInstallDrawer.vue'
 import { useSettingsConfig, getEffectiveUIScale, autoFitUIScale } from '@/composables/useSettingsConfig'
 import { useAgents } from '@/composables/useAgents'

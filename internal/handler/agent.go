@@ -73,6 +73,13 @@ func ServeAgentSubRoutes(w http.ResponseWriter, r *http.Request) {
 		ServeACPSessions(w, r)
 		return
 	}
+	// Forwarded regardless of method so a wrong one answers 405 instead of
+	// claiming the route does not exist (same rationale as the self-test pair
+	// below).
+	if strings.HasSuffix(path, "/sessions") {
+		ServeAgentSessions(w, r)
+		return
+	}
 	if strings.HasSuffix(path, "/rescan") && r.Method == http.MethodPost {
 		serveAgentsRescan(w, r)
 		return

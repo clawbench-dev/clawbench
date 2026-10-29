@@ -32,8 +32,9 @@ func InitInMemoryDB() (*sql.DB, error) {
 		return nil, err
 	}
 
-	// Minimal tables for GetAgentUsage. Only the columns its COUNT queries
-	// filter on are needed (agent_id / session_type / archived).
+	// Minimal tables for the agent usage / session-listing queries. Only the
+	// columns those queries read are needed; defaults mirror production so a
+	// test cannot pass on a shape the real schema does not have.
 	if _, err := db.ExecContext(context.Background(), `
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
@@ -41,10 +42,13 @@ func InitInMemoryDB() (*sql.DB, error) {
 			backend TEXT NOT NULL DEFAULT '',
 			title TEXT NOT NULL DEFAULT '',
 			agent_id TEXT DEFAULT '',
+			agent_name TEXT NOT NULL DEFAULT '',
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			group_id TEXT DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0,
-			disabled INTEGER NOT NULL DEFAULT 0
+			disabled INTEGER NOT NULL DEFAULT 0,
+			context_state TEXT DEFAULT '',
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
