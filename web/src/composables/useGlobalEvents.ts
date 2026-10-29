@@ -213,6 +213,22 @@ function dismissNativeNotification(taskId: string | undefined, sessionId: string
     }
 }
 
+/**
+ * Tell the desktop shell that the session counters may have moved.
+ *
+ * The floating capsule is drawn by the main process, which has no WebSocket of
+ * its own, so this is its only event-driven signal between poll ticks. Optional
+ * on the bridge: Android drives its own refresh and older desktop builds have no
+ * such channel, so an absent method is a no-op rather than an error.
+ */
+function notifyFloatingActivity() {
+    try {
+        getNative()?.notifyFloatingActivity?.()
+    } catch {
+        // Non-critical
+    }
+}
+
 const { isAppMode, isDesktopApp } = useAppMode()
 
 const reconnect = useReconnect({
@@ -463,6 +479,16 @@ function connect() {
                 // permission_pending). Replayed events are caught-up history
                 // and never notify.
                 showEventBrowserNotification(msg.event!, msg.data, true)
+
+                // The desktop floating capsule keeps its own copy of the session
+                // counters (it polls /api/ai/sessions/overview from the main
+                // process, with no WebSocket of its own). Tell it when something
+                // here could have changed them, so it does not wait out its 15s
+                // poll. Reported on the same conditions as the notification
+                // above, but through a SEPARATE bridge call: showBrowserNotification
+                // is gated by the desktop-notification setting and by page focus,
+                // and the capsule must track the counters either way.
+                if (!msg.replayed) notifyFloatingActivity()
 
                 // Update last seen event cursor for offline recovery
                 // Only update for terminal-state events that are persisted server-side

@@ -7,6 +7,18 @@ directories:
 extraResources:
   - from: assets/login.html
     to: login.html
+  # The floating status capsule's document. main/floating.ts loads it from
+  # process.resourcesPath (same placement as login.html), because `tsc` only
+  # emits JS — an .html under src/ would never reach dist/.
+  #
+  # NOTE: this file is NOT in SHELL_IDENTITY_FILES, so its own bytes do not
+  # affect the shell fingerprint — but editing THIS yml does (it is hashed
+  # verbatim). Adding the entry therefore invalidates every older payload once,
+  # and each existing user pays one full download. Inlining the capsule HTML into
+  # floating.ts would avoid that at the cost of readability; if that trade is
+  # ever taken, remember it is the yml edit being avoided, not the html.
+  - from: assets/floating.html
+    to: floating.html
   # The first-run login page renders <img src="logo.png"> next to login.html, so
   # the logo must ship as a sibling resource. Without it the image is broken and
   # the browser falls back to the alt text, which the decorative ring then

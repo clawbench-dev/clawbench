@@ -293,10 +293,24 @@ describe('SystemResourcesPanel', () => {
     const rows = wrapper.findAll('.resource-row')
     const last = rows[rows.length - 1]
     expect(last.classes()).toContain('usage-row')
-    expect(last.text()).toContain('usageMeter.label')
+    // The word names the counted quantity (the mock rule counts cost), not the
+    // generic feature name.
+    expect(last.text()).toContain('usageMeter.metricCost')
+    expect(last.text()).not.toContain('usageMeter.label')
     // Compact: one decimal at most, no trailing ".0" (space is the point).
     expect(last.text()).toContain('$9.5')
     expect(last.text()).toContain('$20')
+  })
+
+  it('relabels the row when the rule counts tokens instead of cost', () => {
+    // Without this the word could be hard-coded and every metric would still
+    // read the same — which is exactly the bug (a $20 budget and a 20-token
+    // budget labelled identically).
+    mockMeterStatus.value = { ...mockMeterStatus.value, metric: 'tokens' }
+    const wrapper = mountPanel()
+
+    expect(wrapper.find('.usage-row').text()).toContain('usageMeter.metricTokens')
+    expect(wrapper.find('.usage-row').text()).not.toContain('usageMeter.metricCost')
   })
 
   it('hides the usage meter on wide screens where the header capsule shows it', () => {

@@ -729,7 +729,7 @@ import {
 } from './composables/useProjectPanel.ts'
 import { openPendingSessionWhenReady, armPendingOpenSession, clearPendingOpenSession } from './composables/usePendingSessionOpen.ts'
 import { markSessionRead } from '@/utils/sessionRead.ts'
-import { markLandedSessionRead } from '@/utils/landedSessionRead.ts'
+import { registerChatPanelVisibility, markVisibleSessionRead } from '@/composables/sessionReadGate.ts'
 import { setLayoutProjectRoot } from './utils/panelState'
 import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
@@ -970,13 +970,8 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   // (360241f44) — its unread badge would stay lit until the user switched away
   // and back. Skipped for the two pending navigations: a task jump never shows
   // the chat, and a session jump marks read itself in Phase 7 WITH project_path.
-  if (!pendingTaskNav) {
-    void markLandedSessionRead({
-      sessionId: sessionIdentity.currentSessionId.value,
-      pendingSessionId,
-      isWideScreen: isWideScreen.value,
-      chatCollapsed: chatCollapsed.value,
-      activeTab: activeTab.value,
+  if (!pendingTaskNav && !pendingSessionId) {
+    void markVisibleSessionRead(sessionIdentity.currentSessionId.value, {
       onMarked: () => { loadSessionsOnce() },
     }).catch(() => {})
   }
@@ -1098,6 +1093,76 @@ watch(currentPanelTab, (tab) => {
   if (isPanelSwitchInFlight()) return
   saveProjectPanel(store.state.projectRoot, tab)
 })
+
+/**
+ * Hand the chat-panel visibility predicate to `sessionReadGate`.
+ *
+ * The gate owns the ONE rule for inferred mark-as-read (completion, cancel,
+ * resume, reconnect, turn boundary, landing) and cannot compute visibility
+ * itself: that needs the narrow-layout `activeTab` (a ref owned here) plus the
+ * wide-screen collapse state. Registered UNCONDITIONALLY during setup — the
+ * gate fails open when nothing is registered, so a conditional registration
+ * would silently restore the bug it exists to prevent.
+ *
+ * Read live on every call (not a snapshot), so a stale closure can never decide
+ * visibility for a layout the user has since left.
+ */
+registerChatPanelVisibility(() =>
+  isChatPanelVisible({
+    isWideScreen: isWideScreen.value,
+    chatCollapsed: chatCollapsed.value,
+    activeTab: activeTab.value,
+  }),
+)
+
+/**
+ * "The chat panel just became visible showing the current session" ⇒ mark it
+ * read. The counterpart of the gate above, and the reason the gate is safe.
+ *
+ * Every gated read answers "was the panel on screen WHEN this event happened?".
+ * That deliberately leaves a badge lit when the answer was no — but the user
+ * may then reveal the panel themselves (switch to the chat tab, expand the
+ * collapsed column, open the session list and pick the row). Without this
+ * watcher none of those paths mark read:
+ *   - `switchTab('chat')` only reloads the session list;
+ *   - ChatPanelContent's `watch(props.active)` only calls `loadHistory`;
+ *   - clicking the ALREADY-current row early-returns in handleSessionSelect.
+ * The badge would then stay lit while the user is staring at the reply — the
+ * exact symptom the gate was introduced to prevent, just from the other side.
+ *
+ * Both dependencies matter: the panel can become visible because the tab/column
+ * changed, and it can start showing a DIFFERENT session while already visible
+ * (the list click path, where the panel never toggles). Watching the composite
+ * key covers both with one trigger.
+ *
+ * `switchSession` also marks read on its own, so a list click issues the read
+ * twice. That is deliberate and harmless: UpdateLastRead is idempotent
+ * (`MAX(now, newest completed_at)`), and dropping this watcher to avoid the
+ * duplicate would leave the tab-switch and column-expand paths uncovered.
+ */
+watch(
+  () => [
+    isChatPanelVisible({
+      isWideScreen: isWideScreen.value,
+      chatCollapsed: chatCollapsed.value,
+      activeTab: activeTab.value,
+    }),
+    sessionIdentity.currentSessionId.value,
+  ] as const,
+  ([visible, sid]) => {
+    if (!visible || !sid) return
+    // Deferred one tick: this fires mid-transition (the session was just set,
+    // the panel is mounting), and issuing the read before the panel's own
+    // loadHistory has settled would race the list refresh against a list
+    // response that still carries the old unread count.
+    nextTick(() => {
+      void markVisibleSessionRead(sid, {
+        onMarked: () => { loadSessionsOnce() },
+      }).catch(() => {})
+    })
+  },
+  { flush: 'post' },
+)
 
 /**
  * Tell the panel-state registry which project is current, so per-project
@@ -2702,14 +2767,10 @@ async function initializeApp() {
 
   // Cold start lands on a session the same way a project switch does: identity
   // comes from initSessionFromAPI and the panel's first loadHistory fetches the
-  // conversation, so nothing marks it read (see markLandedSessionRead). The
-  // panel visibility gate is evaluated against the layout that was just
-  // restored, so a start that lands on the file manager leaves the badge alone.
-  void markLandedSessionRead({
-    sessionId: sessionIdentity.currentSessionId.value,
-    isWideScreen: isWideScreen.value,
-    chatCollapsed: chatCollapsed.value,
-    activeTab: activeTab.value,
+  // conversation, so nothing marks it read (see sessionReadGate). The gate is
+  // evaluated against the layout that was just restored, so a start that lands
+  // on the file manager leaves the badge alone.
+  void markVisibleSessionRead(sessionIdentity.currentSessionId.value, {
     onMarked: () => { loadSessionsOnce() },
   }).catch(() => {})
 
@@ -5010,10 +5071,11 @@ onUnmounted(() => {
    ChatPanelContent.vue): a promoted element that changes size is exactly what
    this WebView mis-draws as a stretched stale texture. The dock's height does
    change when badges/labels appear, so promoting it reintroduces the class of
-   ghost instead of fixing it. Scoped to [data-app-mode]: desktop browsers do
-   not have the compositor bug.
+   ghost instead of fixing it. Scoped to [data-webview-mode], which is set on
+   the Android WebView ONLY — the Electron desktop shell reports isAppMode too,
+   but has no such compositor bug (see WEBVIEW_MODE_ATTR in useAppMode.ts).
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-:root[data-app-mode] .bottom-dock-wrapper {
+:root[data-webview-mode] .bottom-dock-wrapper {
     contain: paint;
 }
 

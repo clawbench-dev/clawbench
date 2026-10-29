@@ -7,7 +7,7 @@
  * Mobile Chrome has a real/native bold cut, so weight alone is enough.
  * Android WebView (esp. CJK at chat sizes) often synthesizes bold by fattening
  * outlines, which can look lighter/softer than the browser. Compensate only in
- * [data-app-mode] with a thin uniform -webkit-text-stroke (hard outline, no
+ * [data-webview-mode] with a thin uniform -webkit-text-stroke (hard outline, no
  * glow) so weight matches browser darkness. Uniform stroke thickens both
  * horizontal and vertical strokes, avoiding the anisotropy of x-only shadows. */
 .markdown-body strong,
@@ -29,17 +29,17 @@
 /* WebView bold compensation — uniform outline thickens glyphs crisply.
  * Avoid blurred text-shadow (0 0 Npx) which looks soft/fuzzy on GPU-composited
  * layers, and avoid x-only offsets which leave horizontal strokes unchanged. */
-[data-app-mode] .markdown-body strong,
-[data-app-mode] .markdown-body b,
-[data-app-mode] .chat-message.assistant strong,
-[data-app-mode] .chat-message.assistant b,
-[data-app-mode] .table-row-value strong,
-[data-app-mode] .table-row-value b {
+[data-webview-mode] .markdown-body strong,
+[data-webview-mode] .markdown-body b,
+[data-webview-mode] .chat-message.assistant strong,
+[data-webview-mode] .chat-message.assistant b,
+[data-webview-mode] .table-row-value strong,
+[data-webview-mode] .table-row-value b {
     -webkit-text-stroke: 0.12px currentColor;
 }
 
-[data-app-mode] .chat-message.user strong,
-[data-app-mode] .chat-message.user b {
+[data-webview-mode] .chat-message.user strong,
+[data-webview-mode] .chat-message.user b {
     -webkit-text-stroke: 0.1px currentColor;
 }
 
@@ -504,18 +504,21 @@
     object-fit: contain;
 }
 
-/* Chat inline image — shrink to the thumbnail cap, but never crop or band.
-   `height: auto` (not a fixed px) is load-bearing: with a fixed height,
-   `object-fit: contain` letterboxes the picture INSIDE that box, which shows up
-   as a band above/below the picture — the very artifact this rule used to
-   produce with `cover` (crop) plus `margin`. Sizing the element to the picture
-   lets the figure hug it exactly, so no band can form. */
+/* Chat inline image — same sizing as a document image (see the note in
+   media-block.css: chat no longer has a thumbnail policy). Only the vertical
+   margin is kept here; the figure's margin cancel in media-block.css zeroes it
+   inside a block figure.
+
+   `height: auto` is load-bearing: with a fixed height, `object-fit: contain`
+   letterboxes the picture INSIDE that box, which shows up as a band above and
+   below the picture. Sizing the element to the picture lets the figure hug it
+   exactly, so no band can form. */
 .chat-message.assistant img.chat-img,
 .chat-message.user img.chat-img {
-    max-height: calc(200 * var(--dp));
     height: auto;
     width: auto;
     max-width: 100%;
+    max-height: 60dvh;
     object-fit: contain;
     margin: var(--space-2) 0;
 }

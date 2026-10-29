@@ -8,6 +8,22 @@
     <template #header>
       <Cpu :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ agentName }}</span>
+      <!-- Refresh-all lives in the header, not on the model tab: it refreshes
+           EVERY list this sheet shows (models, thinking levels, modes, slash
+           commands), so putting it next to the model search would claim it only
+           touches models. Shown for any agent that can refresh at all — an ACP
+           agent refreshes by asking the agent itself (models/modes/efforts/
+           commands in one probe), a CLI agent by re-running discovery. -->
+      <span class="bs-header-actions">
+        <RefreshButton
+          v-if="canRefresh"
+          class="refresh-btn"
+          :loading="refreshing"
+          :disabled="refreshing"
+          :title="t('chat.sessionSetting.refresh')"
+          @click.stop="handleRefresh"
+        />
+      </span>
     </template>
 
     <!-- Horizontally scrollable tab strip. Five tabs no longer fit a phone
@@ -45,7 +61,8 @@
 
     <!-- Model tab -->
     <div v-if="activeTab === 'model'" class="model-tab-content">
-      <!-- Search + Refresh row -->
+      <!-- Search row (the refresh button lives in the sheet header, because it
+           refreshes every list, not just this one) -->
       <div class="model-search-row">
         <input
           class="model-search-input"
@@ -53,7 +70,6 @@
           :placeholder="t('chat.sessionSetting.searchPlaceholder')"
           v-model="searchQuery"
         />
-        <RefreshButton v-if="canRefresh" class="refresh-btn" :loading="refreshing" :disabled="refreshing" :title="t('chat.sessionSetting.refresh')" @click="handleRefresh" />
       </div>
       <!-- Model list -->
       <div class="model-list">
@@ -265,7 +281,7 @@ import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
 import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 import { appLog } from '@/utils/appLog'
 import { compactGroupMember } from '@/composables/useGroupChat'
-import { useAgents, restoreOriginalModels, resetModelViewForTransport, applyRefreshedModelList, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
+import { useAgents, restoreOriginalModels, resetModelViewForTransport, applyRefreshedModelList, applyRefreshedACPState, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useSessionIdentity, clearModeState, clearCommandState, clearThinkingEffortState } from '@/composables/useSessionIdentity'
@@ -294,9 +310,17 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'switch-model', 'switch-thinking-effort', 'switch-mode', 'switch-transport', 'changed'])
 
+/**
+ * Client-side budget for one refresh. It covers the agent process starting, the
+ * session handshake (which starts MCP servers) and the window in which the agent
+ * pushes its command list — far beyond the 10s default, which would abort a
+ * probe that is still working and show a failure for a healthy agent.
+ */
+const REFRESH_TIMEOUT_MS = 180_000
+
 const { t } = useI18n()
 const toast = useToast()
-const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, canRefreshModels, supportsACP, supportsCLI, getAgentTransport } = useAgents()
+const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, canRefreshAgentState, supportsACP, supportsCLI, getAgentTransport } = useAgents()
 const identity = useSessionIdentity()
 const { currentModelId, currentThinkingEffort, currentModeId, currentTransport, availableThinkingEfforts, availableModes, autoApprove, toggleAutoApprove, cruise, toggleCruise } = identity
 
@@ -496,7 +520,7 @@ const thinkingLevels = computed(() => {
   // CLI mode: agent BackendSpec static levels
   return getAgentThinkingEffortLevels(props.agentId || '').map(id => ({ id, name: id }))
 })
-const canRefresh = computed(() => canRefreshModels(props.agentId || ''))
+const canRefresh = computed(() => canRefreshAgentState(props.agentId || ''))
 
 const isACP = computed(() => {
   // Prefer session-level transport, fallback to agent config. The targeted
@@ -776,20 +800,40 @@ async function applyTransportSwitch(transport) {
   }
 }
 
-// --- Refresh ---
+// --- Refresh (all lists, from the header) ---
 
+/**
+ * Refresh EVERYTHING this sheet lists: models, thinking levels, modes and slash
+ * commands.
+ *
+ * For an ACP agent the backend asks the agent itself (one throwaway session that
+ * it deletes afterwards), so the response also carries the mode/effort/command
+ * lists — `acpState` — and those must be applied too, not just the models.
+ * For a CLI agent only the model list can change, and `acpState` is absent.
+ *
+ * The request can take several seconds (process start + the agent's delayed
+ * command push), so the timeout is raised well above the 10s default; otherwise
+ * the client would abort a probe that is still working and report a failure.
+ */
 async function handleRefresh() {
   if (refreshing.value) return
   refreshing.value = true
   try {
-    const data = await apiPost(`/api/agents/${props.agentId}/refresh-models`, {})
-    if (data?.models) {
+    const data = await apiPost(`/api/agents/${props.agentId}/refresh-models`, {}, { timeoutMs: REFRESH_TIMEOUT_MS })
+    // Apply even an empty list: the backend resolves it against the agent's own
+    // report, and "the agent offers nothing" is a real answer (a model the user
+    // picked may have been removed). The old `if (data?.models)` guard silently
+    // ignored that case.
+    if (data && Array.isArray(data.models)) {
       // The backend answers with the resolved list plus the pure CLI list (same
       // shape as GET /api/agents), so the ACP view is not downgraded to the raw
       // CLI list and the CLI baseline is rebased for a later transport switch.
       applyRefreshedModelList(props.agentId, data.models, data.cliModels)
-      toast.show(t('chat.sessionSetting.refreshSuccess'), { icon: 'success', type: 'success', duration: 2000 })
     }
+    if (data?.acpState) {
+      applyRefreshedACPState(props.agentId, data.acpState)
+    }
+    toast.show(t('chat.sessionSetting.refreshSuccess'), { icon: 'success', type: 'success', duration: 2000 })
   } catch (err) {
     const msgKey = err?.msgKey
     if (msgKey === 'CLINotFound') {
@@ -1104,16 +1148,29 @@ defineExpose({
   color: var(--text-muted, #999);
 }
 
+/* Header action cluster. `margin-left: auto` pushes it to the right edge, which
+   is the shared header language for icon actions (see MessageClustersDrawer).
+   The header reserves room for the close button on wide screens, so this never
+   collides with it. */
+.bs-header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Sized as a header icon button (24dp), not as the 30dp pill it used to be next
+   to the model search box: in the header it sits among 24dp affordances. */
 .refresh-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: calc(30 * var(--dp));
-  height: calc(30 * var(--dp));
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
   border: none;
-  border-radius: var(--radius-sm);
-  background: var(--bg-tertiary, #f0f0f0);
-  color: var(--text-muted, #999);
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--accent-color, #0066cc);
   cursor: pointer;
   flex-shrink: 0;
   transition: background var(--duration-base), color var(--duration-base);
@@ -1121,8 +1178,7 @@ defineExpose({
 
 @media (hover: hover) {
   .refresh-btn:hover:not(:disabled) {
-    background: var(--accent-color, #0066cc);
-    color: #fff;
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   }
 }
 

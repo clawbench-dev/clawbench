@@ -143,12 +143,22 @@ useFeatureBackHandler(
  * detail route (`agents:<id>`), and a data-driven sub-page (`tts:tts_engine`).
  */
 function labelForCategory(cat: string): string {
-  // For agent detail pages (agents:{id}), show the agent name as title
+  // For agent detail pages (agents:{id}), show the agent name as title. The
+  // fallback must NOT be the parent's label: it would render
+  // 设置 › 智能体 › 智能体, and the name is also unknown while the list is
+  // still loading (or when the agent was deleted). Mirrors project:<id>, whose
+  // crumb reads 项目详情 under 项目.
   if (cat.startsWith('agents:')) {
     const { getAgent } = useAgents()
     const agentId = cat.slice(7)
     const agent = getAgent(agentId)
-    return agent ? agent.name : t('settings.categories.agents')
+    return agent ? agent.name : t('settings.items.agentDetailTitle')
+  }
+  // Agent-scoped sub-page (agentSessions:<id>): a fixed label, not the agent
+  // name — the name is already the previous crumb, so repeating it would read
+  // 设置 › Claude › Claude.
+  if (cat.startsWith('agentSessions:')) {
+    return t('settings.items.agentSessionsTitle')
   }
   // For sub-page routes (colon-separated, except agents), use data-driven title lookup
   if (isSubPageRoute(cat)) {
@@ -161,6 +171,27 @@ function labelForCategory(cat: string): string {
     return t('settings.items.projectDetailTitle')
   }
   return t(`settings.categories.${cat}`)
+}
+
+/**
+ * Every nav-stack entry needed to REACH `categoryId` from the settings index,
+ * outermost first: a detail route contributes its parent list as well
+ * (`agents:abc` → ['agents', 'agents:abc']), a top-level category just
+ * itself.
+ *
+ * A detail page is a child of its list — that is how the in-tab path builds
+ * the stack (index → list → detail). A deep-link must build the same shape,
+ * otherwise the breadcrumb jumps straight from 设置 to the entity name and the
+ * level in between is missing.
+ */
+function routeChain(categoryId: string): string[] {
+  // A sub-page of an agent needs THREE levels: 设置 › 智能体 › <名字> › 会话.
+  // Its id carries the agent id, so the middle level is `agents:<id>`.
+  if (categoryId.startsWith('agentSessions:')) {
+    return ['agents', 'agents:' + categoryId.slice('agentSessions:'.length), categoryId]
+  }
+  const sep = categoryId.indexOf(':')
+  return sep > 0 ? [categoryId.slice(0, sep), categoryId] : [categoryId]
 }
 
 /**
@@ -190,9 +221,11 @@ const serverVersion = computed(() => serverConfig.value?.version ?? '')
 // A deep-link is a fresh navigation to that category, NOT a descent from
 // whatever happened to be open: the trail is replaced (truncate to the root,
 // then push) so the breadcrumb reads 设置 › 关于 rather than
-// 设置 › 外观 › 关于. The request is consumed up front so a rejected deep-link
-// (user cancels the unsaved-changes confirm) is dropped instead of lingering
-// for the next activation.
+// 设置 › 外观 › 关于. A detail route also pushes its parent list (see
+// routeChain) so 设置 › 智能体 › <名称> keeps the intermediate level that the
+// in-tab path would have created. The request is consumed up front so a
+// rejected deep-link (user cancels the unsaved-changes confirm) is dropped
+// instead of lingering for the next activation.
 async function openPendingDeepLink() {
   const categoryId = consumePendingSettingsCategory()
   if (!categoryId) return
@@ -200,7 +233,7 @@ async function openPendingDeepLink() {
   // Leaving a category with unsaved panel edits must confirm first (same as back).
   if (!(await confirmDiscardIfDirty())) return
   truncateNav(0)
-  pushNav(categoryId)
+  for (const step of routeChain(categoryId)) pushNav(step)
 }
 
 // Case: the settings tab was ALREADY active when the deep-link fired and

@@ -29,6 +29,23 @@
             {{ t('settings.items.agentAvatarChange') }}
           </button>
         </div>
+        <!-- Drill-down row: a dedicated type (like `avatar`) because the generic
+             SettingsItem has no clickable row that also shows a value — `action`
+             renders no right-hand text and `info` swallows clicks. -->
+        <button
+          v-else-if="item.type === 'nav'"
+          class="settings-agent-detail__nav-row"
+          @click="emit('openSessions', agentId)"
+        >
+          <span class="settings-agent-detail__nav-text">
+            <span class="settings-agent-detail__nav-label">{{ item.label }}</span>
+            <span v-if="item.description" class="settings-agent-detail__nav-desc">{{ item.description }}</span>
+          </span>
+          <span class="settings-agent-detail__nav-value">
+            {{ item.value }}
+            <ChevronRight :size="14" class="settings-agent-detail__nav-chevron" />
+          </span>
+        </button>
         <SettingsItem
           v-else
           :label="item.label"
@@ -167,7 +184,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { Activity, ArrowLeft, Ban, Copy, Play, Trash2, UserX, Zap } from 'lucide-vue-next'
+import { Activity, ArrowLeft, Ban, ChevronRight, Copy, Play, Trash2, UserX, Zap } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import AgentMCPSection from './AgentMCPSection.vue'
@@ -197,6 +214,12 @@ const emit = defineEmits<{
    * the current stack entry (a push would grow the breadcrumb).
    */
   navigateReplace: [categoryId: string]
+  /**
+   * Open the "conversations using this agent" sub-page. A NAVIGATION, not a
+   * data load: the list is paged and cross-project, so it lives on its own page
+   * rather than inside a card.
+   */
+  openSessions: [agentId: string]
 }>()
 
 const { t } = useI18n()
@@ -267,7 +290,7 @@ interface AgentItem {
   description?: string
   /** Caveat about when an edit takes effect (see SettingsItem's `note`). */
   note?: string
-  type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea' | 'avatar'
+  type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea' | 'avatar' | 'nav'
   options?: { label: string; value: unknown }[]
   warning?: string
   value?: unknown
@@ -440,11 +463,14 @@ const items = computed<AgentItem[]>(() => {
 
   // Usage counts: interactive sessions (archived included) and tasks bound to
   // this agent. Both are derived server-side and gate the delete button.
+  //
+  // The session row is a DRILL-DOWN: the number alone cannot answer "which
+  // conversations?", and the answer spans projects, so it opens a paged page.
   result.push({
     key: 'session_count',
     label: t('settings.items.agentSessionCountLabel'),
     description: t('settings.items.agentSessionCountDesc'),
-    type: 'info',
+    type: 'nav',
     value: t('settings.items.agentSessionCount', { count: a.sessionCount ?? 0 }),
   })
 
@@ -765,6 +791,76 @@ async function handleDelete() {
   right: 0;
   height: 0.5px;
   background: var(--border-color);
+}
+
+/* Drill-down row ("conversations using this agent").
+   A real <button> (it navigates), so the UA button look has to be reset
+   completely — background, border, font, text-align, padding. It mirrors the
+   avatar row's geometry so it sits flush with the other card rows. */
+.settings-agent-detail__nav-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  width: 100%;
+  padding: var(--space-4) var(--space-7);
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+}
+
+.settings-agent-detail__nav-row::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: calc(16 * var(--dp));
+  right: 0;
+  height: 0.5px;
+  background: var(--border-color);
+}
+
+.settings-agent-detail__nav-row:active {
+  background: var(--bg-tertiary);
+}
+
+.settings-agent-detail__nav-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.settings-agent-detail__nav-label {
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+}
+
+.settings-agent-detail__nav-desc {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.settings-agent-detail__nav-value {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-md);
+  color: var(--text-secondary);
+  max-width: calc(200 * var(--dp));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-agent-detail__nav-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
 }
 
 .settings-agent-detail__avatar-btn {

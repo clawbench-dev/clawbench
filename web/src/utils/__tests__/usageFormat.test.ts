@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatCompactCount, formatUsageMeterValue } from '@/utils/usageFormat'
+import { formatCompactCount, formatUsageMeterValue, usageMeterMetricLabelKey, usageMeterTitleKey } from '@/utils/usageFormat'
 
 describe('formatCompactCount', () => {
   it('keeps small counts verbatim', () => {
@@ -60,5 +60,39 @@ describe('formatUsageMeterValue', () => {
       expect(formatUsageMeterValue('credit', 12.345, { compact: true })).toBe('12.3')
       expect(formatUsageMeterValue('credit', 5_000_000, { compact: true })).toBe('5.0M')
     })
+  })
+})
+
+describe('usageMeterMetricLabelKey', () => {
+  it('names each metric distinctly', () => {
+    // The capsule's word must identify WHAT is counted: a $20 budget and a
+    // 20-token budget were previously labelled identically.
+    const keys = ['tokens', 'credit', 'cost'].map(m =>
+      usageMeterMetricLabelKey(m as 'tokens' | 'credit' | 'cost'),
+    )
+    expect(keys).toEqual(['usageMeter.metricTokens', 'usageMeter.metricCredit', 'usageMeter.metricCost'])
+    expect(new Set(keys).size).toBe(3)
+  })
+
+  it('falls back to the generic feature label when the metric is unknown', () => {
+    // A disabled rule carries no metric; the label must still resolve to a
+    // string rather than rendering an empty capsule word.
+    expect(usageMeterMetricLabelKey(undefined)).toBe('usageMeter.label')
+  })
+})
+
+describe('usageMeterTitleKey', () => {
+  it('appends the feature noun to each metric', () => {
+    // The popover heading must say which quantity the whole panel is about: a
+    // fixed "Usage" left a $ budget and a token budget indistinguishable.
+    const keys = ['tokens', 'credit', 'cost'].map(m =>
+      usageMeterTitleKey(m as 'tokens' | 'credit' | 'cost'),
+    )
+    expect(keys).toEqual(['usageMeter.titleTokens', 'usageMeter.titleCredit', 'usageMeter.titleCost'])
+    expect(new Set(keys).size).toBe(3)
+  })
+
+  it('falls back to the plain feature title when the metric is unknown', () => {
+    expect(usageMeterTitleKey(undefined)).toBe('usageMeter.title')
   })
 })

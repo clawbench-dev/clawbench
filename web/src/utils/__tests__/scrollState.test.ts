@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isUserScrolling, shouldPin, isUserAwayFromBottom, SCROLL_STOP_MS, RESUME_FOLLOW_PX, NEAR_BOTTOM_PX, type ScrollStateInput } from '../scrollState'
+import { isUserScrolling, shouldPin, isUserAwayFromBottom, shouldLoadOlderHistory, SCROLL_STOP_MS, RESUME_FOLLOW_PX, NEAR_BOTTOM_PX, LOAD_MORE_AHEAD_PX, type ScrollStateInput } from '../scrollState'
 
 function baseInput(overrides: Partial<ScrollStateInput> = {}): ScrollStateInput {
   return {
@@ -87,9 +87,46 @@ describe('shouldPin', () => {
   })
 })
 
+describe('shouldLoadOlderHistory', () => {
+  it('does not fire while the reader is far from the top', () => {
+    // A casual swipe in the middle of the history must not fetch a page.
+    expect(shouldLoadOlderHistory(5000, 800)).toBe(false)
+    expect(shouldLoadOlderHistory(1000, 800)).toBe(false)
+  })
+
+  it('fires before the user reaches the very top (prefetch band)', () => {
+    // The whole point of the change: at scrollTop=0 the user already hit the
+    // edge and the stall is visible. Firing at a few hundred px above hides the
+    // round trip behind the remaining scroll. clientHeight stays below the
+    // fixed band here so the band is exactly LOAD_MORE_AHEAD_PX.
+    expect(shouldLoadOlderHistory(0, 300)).toBe(true)
+    expect(shouldLoadOlderHistory(300, 300)).toBe(true)
+    expect(shouldLoadOlderHistory(LOAD_MORE_AHEAD_PX, 300)).toBe(true)
+    expect(shouldLoadOlderHistory(LOAD_MORE_AHEAD_PX + 1, 300)).toBe(false)
+  })
+
+  it('grows the band to one viewport height on tall panes', () => {
+    // 400px is barely a third of a desktop chat pane; a fixed band would still
+    // fire too late there.
+    expect(shouldLoadOlderHistory(900, 1000)).toBe(true)
+    expect(shouldLoadOlderHistory(1001, 1000)).toBe(false)
+  })
+
+  it('never shrinks below the fixed band on short panes', () => {
+    expect(shouldLoadOlderHistory(399, 200)).toBe(true)
+    expect(shouldLoadOlderHistory(401, 200)).toBe(false)
+  })
+})
+
 describe('constants', () => {
   it('keeps the resume band tighter than the near-bottom band', () => {
     expect(RESUME_FOLLOW_PX).toBeLessThan(NEAR_BOTTOM_PX)
+  })
+
+  it('keeps the load-more prefetch band wider than the near-bottom band', () => {
+    // Prefetching history is cheap and invisible; being late is what the user
+    // notices. The band must stay generous enough to cover a fling.
+    expect(LOAD_MORE_AHEAD_PX).toBeGreaterThan(NEAR_BOTTOM_PX)
   })
 
   it('uses a short wheel-decay window', () => {

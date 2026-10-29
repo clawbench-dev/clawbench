@@ -196,9 +196,23 @@ export default {
   // 用量（usage meter）。周期 + 指标 + 额度，按时间比例算出「应花」，
   // 实际超出时提醒一次，用尽再提醒一次。
   usageMeter: {
+    // Feature name, and the heading used when the rule's metric is unknown.
     title: '用量',
+    // Popover heading per metric. The panel's whole subject is one measured
+    // quantity, and a bare "用量" left it ambiguous between a $ budget and a
+    // token budget.
+    titleTokens: 'Token 用量',
+    titleCredit: 'Credit 用量',
+    titleCost: '费用用量',
     // Short form used inside the header capsule (next to the gauge icon).
+    // Only for a rule whose metric is unknown; with a rule the capsule names
+    // the quantity it counts (see metric* below).
     label: '用量',
+    // Capsule label per metric: the word must say WHAT the number counts, or
+    // "$20" and "20 tokens" read the same.
+    metricTokens: 'Token',
+    metricCredit: 'Credit',
+    metricCost: '费用',
     capsuleTitle: '查看本周期用量',
     // Placeholder entry when no rule is configured. Names the feature AND the
     // action, so a user who has never opened the settings page knows both that
@@ -759,9 +773,9 @@ export default {
     },
     sessionSetting: {
       searchPlaceholder: '搜索模型...',
-      refresh: '刷新模型',
-      refreshSuccess: '模型列表已刷新',
-      refreshFailed: '刷新模型失败',
+      refresh: '刷新模型、思考等级、模式与斜杠命令',
+      refreshSuccess: '已刷新模型、思考等级、模式与斜杠命令',
+      refreshFailed: '刷新失败',
       discoveryFailed: '模型发现未返回结果，请检查 CLI 安装方式',
       discoveryFailedWithDetail: '模型发现未返回结果：{detail}',
       cliNotFound: 'CLI 工具未找到，请先安装',
@@ -1035,6 +1049,8 @@ export default {
       conversationIndexRoleAssistant: '助手',
       conversationIndexRoleSystem: '系统',
       conversationIndexNoText: '（本轮无文字回复）',
+      messageRailLabel: '消息导航',
+      messageRailGenerating: '正在输出',
     },
     pending: {
       uploadedAttachment: '上传附件',
@@ -2364,6 +2380,9 @@ export default {
     // 媒体文件（图片 / 视频 / 音频）加载失败时就地展示，替代无提示的裂图或空白
     // 窗格。所有媒体界面共用 MediaLoadError.vue（issue #501 后续统一）。
     loadFailed: '媒体加载失败',
+    // Mermaid 图表的加载占位读屏文案。可见部分是纯装饰（骨架节点），所以
+    // 唯一的语义由这一条承载——否则读屏用户在这几秒里听到的是空白。
+    diagramLoading: '正在绘制图表',
   },
   upload: {
     failed: '上传失败: {error}',
@@ -2792,6 +2811,26 @@ export default {
       agentSessionCountLabel: '会话数',
       agentSessionCountDesc: '使用该智能体的会话（含群聊与归档）',
       agentSessionCount: '{count} 个会话',
+      agentSessionsTitle: '使用该智能体的会话',
+      agentSessionsSummary: '共 {count} 个会话（含群聊与归档，跨全部项目）',
+      agentSessionsLoading: '加载中…',
+      agentSessionsLoadingMore: '加载更多…',
+      agentSessionsLoadFailed: '会话列表加载失败',
+      agentSessionsLoadMoreFailed: '加载更多失败',
+      agentSessionsRetry: '重试',
+      agentSessionsEmpty: '该智能体还没有任何会话',
+      agentSessionsEnd: '没有更多了',
+      agentSessionsUntitled: '未命名会话',
+      agentSessionsMissing: '会话已不存在',
+      agentSessionsArchived: '已归档',
+      agentSessionsRoleChat: '单聊',
+      agentSessionsRoleHost: '主持人',
+      agentSessionsRoleHostNamed: '主持人 · {name}',
+      agentSessionsRoleMember: '群成员',
+      agentSessionsRoleMemberNamed: '群成员 · {name}',
+      agentSessionsResume: '恢复会话',
+      agentSessionsResumeConfirm: '「{title}」已归档，需要先恢复才能打开。现在恢复吗？',
+      agentSessionsResumeFailed: '恢复会话失败',
       agentTaskCountLabel: '任务数',
       agentTaskCountDesc: '使用该智能体的定时任务',
       agentTaskCount: '{count} 个任务',
@@ -2870,6 +2909,10 @@ export default {
       agentNotFound: '智能体不存在或已被移除',
       agentNotFoundHint: '它可能已被删除，或在重新扫描后不再可用。返回列表查看当前可用的智能体。',
       agentBackToList: '返回智能体列表',
+      // Breadcrumb label for the agent detail level while its name is unknown
+      // (list not fetched yet, or the agent was deleted). Using the parent's
+      // label instead would read 设置 › 智能体 › 智能体.
+      agentDetailTitle: '智能体详情',
       chatInitialMessages: '初始消息数',
       chatInitialMessagesDesc: '首次加载聊天时获取的历史消息数量',
       chatPageSize: '每页消息数',
@@ -3057,7 +3100,7 @@ export default {
       chatRecommendContextMessagesDesc: '生成推荐时参考的最近消息条数（用户与助手消息均计入），帮助 AI 理解你的意图（0 为不参考）',
       autoContinueSectionHeader: '会话恢复',
       chatAutoContinueEnabled: '异常终止自动继续',
-      chatAutoContinueEnabledDesc: '会话因进程崩溃、AI 无输出或后端报错而意外中断时，自动发送「继续」并接着跑，不论当时是否已产出部分内容。手动终止（含打断重发）的会话永不续接',
+      chatAutoContinueEnabledDesc: '会话因进程崩溃、AI 无输出或后端报错而意外中断时，自动发送「继续」并接着跑，不论当时是否已产出部分内容。服务重启导致的中断也会在启动后自动恢复。手动终止（含打断重发）的会话永不续接',
       chatAutoContinueMaxRetries: '最大重试次数',
       chatAutoContinueMaxRetriesDesc: '每个用户消息允许自动续接的次数。-1 表示不限（服务端仍有硬上限保护），0 表示不重试',
       autoRenameSectionHeader: '自动命名',
@@ -3262,7 +3305,7 @@ export default {
       desktopNotificationDesc: '窗口最小化或不在前台时，用系统通知提醒会话完成、任务完成、需要审批和仓库事件（不受「推送模式」影响）',
       desktopSystemSection: '桌面与系统',
       floatingStatusWindow: '桌面悬浮状态窗',
-      floatingStatusWindowDesc: '主界面在后台时，桌面显示会话运行状态胶囊（需系统悬浮窗权限）',
+      floatingStatusWindowDesc: '主界面在后台时显示会话运行状态胶囊。Android 以悬浮球显示（需系统悬浮窗权限），桌面端显示为置顶胶囊与托盘图标',
       liveUpdate: '灵动岛',
       liveUpdateDesc: '在锁屏和状态栏持续展示会话状态，Android 16+ 生效。需要开启系统的「实时更新」通知权限',
       mobileNotifySection: '移动端通知',
@@ -3312,8 +3355,10 @@ export default {
       aboutBrandSlogan: '多端一体的 AI 工作台',
       aboutServerVersion: '服务端版本',
       aboutServerVersionDesc: '当前运行的服务端版本号',
-      aboutHomepage: '官网',
+      aboutHomepage: '项目主页',
       aboutHomepageDesc: '在浏览器中打开项目主页',
+      aboutGithub: 'GitHub 主页',
+      aboutGithubDesc: '在浏览器中打开 GitHub 仓库',
       aboutFeedback: '问题反馈',
       aboutFeedbackDesc: '前往 GitHub 提交问题或建议',
       aboutAppVersion: 'App版本',

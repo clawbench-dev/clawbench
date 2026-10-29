@@ -32,7 +32,7 @@ describe('bottom dock paint clip (Android WebView GPU ghost)', () => {
   }
 
   it('clips the dock descendants without promoting a layer', () => {
-    const rule = declsIn(/:root\[data-app-mode\]\s+\.bottom-dock-wrapper\s*\{([^}]*)\}/)
+    const rule = declsIn(/:root\[data-webview-mode\]\s+\.bottom-dock-wrapper\s*\{([^}]*)\}/)
     expect(rule).toMatch(/contain:\s*paint/)
     // Promotion is the ghost source, not the fix — it must stay out.
     expect(rule).not.toMatch(/will-change:\s*transform/)

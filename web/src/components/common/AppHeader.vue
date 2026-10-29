@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-  <header class="header" :class="{ 'header--frameless': hasCustomControls }">
+  <header class="header" :class="{ 'header--frameless': hasCustomControls, 'header--has-meter': showUsageMeter }">
     <button
       class="header-logo-btn"
       type="button"
@@ -77,7 +77,7 @@
          settings page. Gating on `enabled` would hide the only hint that the
          feature exists. -->
     <UsageMeterPopover
-      v-if="isWideScreen && usageMeter.hasData.value"
+      v-if="showUsageMeter"
       :status="usageMeter.status.value"
       :state="usageMeter.meterState.value"
       :fill-percent="usageMeter.fillPercent.value"
@@ -434,6 +434,12 @@ const { resources, startBackgroundPolling, stopBackgroundPolling } = useSystemRe
 const usageMeter = useUsageMeter()
 const switchTab = inject<(tab: string) => void>('switchTab')
 const { isWideScreen, leftTab, activePane } = useWideScreenLayout()
+// Single source for "is the capsule in the header" — the template gate and the
+// `header--has-meter` class (which moves the auto margin onto the capsule, see
+// the style block) must never disagree: a class without the element leaves the
+// theme button unpushed, and an element without the class leaves the capsule
+// stranded next to the project badge.
+const showUsageMeter = computed(() => isWideScreen.value && usageMeter.hasData.value)
 const activeTab = inject<Ref<string>>('activeTab', ref('chat'))
 const shortcutContext = computed<ShortcutContext>(() =>
   resolveShortcutContext({
@@ -1579,12 +1585,21 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     align-items: center;
     justify-content: center;
     color: var(--accent-color);
-    /* Pushes the theme button (and everything after it) to the right edge. The
-       usage capsule sits just before it, so it inherits that alignment too.
-       Keeping the auto margin HERE rather than on the capsule matters when the
-       capsule is absent (rule disabled): the theme button must still be pushed
-       right. Two auto margins would split the slack and strand the capsule. */
+    /* Pushes the theme button (and everything after it) to the right edge.
+       This is the FALLBACK: it must stay for the case where no capsule is
+       rendered at all (narrow screens, or before the first fetch lands), or the
+       whole right-hand cluster would drift left. When the capsule IS present it
+       takes the auto margin instead and this one is cancelled — two would split
+       the slack and strand the capsule in the middle. */
     margin-left: auto;
+}
+
+/* The capsule owns the push while it exists. `margin-left: 0` rather than
+   `auto` on the theme button: with only one auto margin the slack all lands on
+   the capsule, which is what puts the capsule itself against the right edge
+   instead of leaving it wherever the flow dropped it. */
+.header--has-meter .theme-quick-toggle {
+    margin-left: 0;
 }
 
 @media (hover: hover) {
@@ -1619,10 +1634,22 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 }
 
 /* Usage capsule sits in the right-hand control cluster, just left of the theme
-   button. It deliberately has NO auto margin of its own: the theme button owns
-   it (see below), and a second auto margin would split the slack and leave the
-   capsule stranded mid-header. */
+   button. It owns the `margin-left: auto` that pushes the cluster right, and the
+   theme button drops its own while the capsule is present (see
+   `.header--has-meter` below). Two auto margins would split the slack and strand
+   the capsule mid-header.
+
+   Why the capsule and not the theme button: the capsule is the FIRST element of
+   the cluster, so only an auto margin on it survives the ticker disappearing.
+   `.header-tips` is `flex: 1` — while it renders it eats all the slack and drags
+   the capsule right by itself, which is why putting the auto margin on the theme
+   button looked correct on a PC. But the ticker is gated on
+   `!isAppMode || isDesktopApp`, so on a tablet / Android WebView (wide enough
+   for `isWideScreen`, no physical keyboard) it is absent, nothing eats the
+   slack, and the theme button's own auto margin then flew to the right edge
+   alone — leaving the capsule back beside the project badge. */
 .usage-meter-slot {
+    margin-left: auto;
     margin-right: var(--space-2);
 }
 

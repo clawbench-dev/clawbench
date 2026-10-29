@@ -78,6 +78,10 @@ export function listFiles(root, base = root, out = []) {
 export const REQUIRED = [
   'resources/app.asar',
   'resources/login.html',
+  // The capsule document. Same class of failure as login.html: the main process
+  // loads it from `process.resourcesPath`, and a payload without it installs
+  // cleanly and only breaks when the user turns the capsule on.
+  'resources/floating.html',
   'resources/logo.png',
   'resources/app.asar.unpacked/node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node',
   'resources/app.asar.unpacked/node_modules/cpu-features/build/Release/cpufeatures.node',

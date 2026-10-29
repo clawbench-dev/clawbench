@@ -30,6 +30,7 @@
 
 import { annotateOneExternalLink } from '@/composables/useExternalLinkAnnotation'
 import { createExternalLinkNode, EXTERNAL_LINK_CLASS, shouldRenderAsText } from '@/utils/externalLinkNode.ts'
+import { isAnnotationSkipped } from '@/utils/annotationScope.ts'
 
 /**
  * TLDs accepted as the domain suffix. A fixed list rather than `[a-z]{2,}`:
@@ -94,6 +95,7 @@ export function annotateBareUrlsIn(doc: Document): boolean {
         acceptNode(node: Text) {
             const parent = node.parentElement
             if (!parent) return NodeFilter.FILTER_REJECT
+            if (isAnnotationSkipped(parent)) return NodeFilter.FILTER_REJECT
             if (parent.closest('a')) return NodeFilter.FILTER_REJECT
             // Also skip a link we already produced: the span is not an <a>, so
             // without this a second pass would re-linkify the URL inside it and

@@ -90,7 +90,7 @@ func TestBuildBtwContext_IncludesStreamingReplyMarkedPartial(t *testing.T) {
 
 	out := BuildBtwContext("sess-btw-live")
 	assert.Contains(t, out, "我先把参数收敛成结构体", "the in-flight reply is the subject of the question")
-	assert.Contains(t, out, forkStreamingSuffix, "a partial reply must be labelled as such")
+	assert.Contains(t, out, forkStreamingSuffix, "a partial reply must be labeled as such")
 }
 
 // The finalized-only view is what every other caller keeps: a fork/rewind point

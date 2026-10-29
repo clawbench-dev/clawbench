@@ -23,6 +23,8 @@ import { getSessionId } from '@/composables/useSessionIdentity.ts'
 import { teamMemberColorVar } from './teamMemberColor.ts'
 import { COPY_ICON_SVG, copyWithFlash } from '@/utils/copyButton.ts'
 import { getAskState, patchAskState } from '@/utils/askQuestionState.ts'
+import { annotateToolHtml } from '@/utils/annotateToolHtml.ts'
+import { ANNOTATION_SKIP_ATTR } from '@/utils/annotationScope.ts'
 
 // ────────────────────────────────────────────────────────────
 // Shared SVG icons for tool content headers
@@ -120,7 +122,7 @@ function renderEditDiff(input: ToolInput): string {
   const lang = detectLang(filePath)
 
   // Build header
-  let header = '<div class="tool-file-header">'
+  let header = `<div class="tool-file-header" ${ANNOTATION_SKIP_ATTR}>`
   header += `<span class="tool-file-path">${escapeHtml(displayPath)}</span>`
   if (resolvedPath) {
     header += fileOpenButtonHtml(resolvedPath)
@@ -130,8 +132,9 @@ function renderEditDiff(input: ToolInput): string {
   }
   header += '</div>'
 
-  // Build diff body (scroll wrapper + inner content)
-  let body = '<div class="edit-diff-scroll"><div class="edit-diff-body">'
+  // Build diff body (scroll wrapper + inner content). Diff lines are file
+  // content, not references — annotating them would chip the code itself.
+  let body = `<div class="edit-diff-scroll" ${ANNOTATION_SKIP_ATTR}><div class="edit-diff-body">`
 
   // Old lines (red)
   if (oldStr) {
@@ -221,7 +224,7 @@ function filePathHeader(input: ToolInput, extraBadge = '', lineStart?: number, l
   const displayPath = resolvedPath || filePath.replace(/^\.\//, '')
   const lineSuffix = lineStart ? `:${lineStart}${lineEnd ? `-${lineEnd}` : ''}` : ''
 
-  let html = '<div class="tool-file-header">'
+  let html = `<div class="tool-file-header" ${ANNOTATION_SKIP_ATTR}>`
   html += `<span class="tool-file-path">${escapeHtml(displayPath + lineSuffix)}</span>`
   if (resolvedPath) {
     html += fileOpenButtonHtml(resolvedPath, lineStart, lineEnd)
@@ -257,8 +260,9 @@ function renderReadPreview(input: ToolInput): string {
     html += toolContentHeaderHtml('.file-preview-body')
   }
 
-  // Content preview body
-  html += '<div class="file-preview-body">'
+  // Content preview body. This is the file's own SOURCE, not a reference to
+  // it: annotating inside it would turn the code being read into chips.
+  html += `<div class="file-preview-body" ${ANNOTATION_SKIP_ATTR}>`
   if (content) {
     const lines = content.split('\n')
     for (const line of lines) {
@@ -283,7 +287,8 @@ function renderWritePreview(input: ToolInput): string {
   html += filePathHeader(input, `<span class="file-write-badge">${gt('tool.write.badge')}</span>`)
   html += toolContentHeaderHtml('.file-write-body')
 
-  html += '<div class="file-write-body">'
+  // Same reasoning as the Read preview: this is file content, not references.
+  html += `<div class="file-write-body" ${ANNOTATION_SKIP_ATTR}>`
   const content = str(input.content)
   if (content) {
     const lines = content.split('\n')
@@ -419,7 +424,10 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
     }
 
     if (options.length > 0) {
-      html += '<div class="ask-question-options">'
+      // Option labels are the VALUE the user is choosing, not references: a
+      // chip inside one would swallow the click that selects the option (the
+      // card handler routes every click in an option to selection).
+      html += `<div class="ask-question-options" ${ANNOTATION_SKIP_ATTR}>`
       for (let oi = 0; oi < options.length; oi++) {
         const opt = options[oi]
         const label = typeof opt === 'string' ? opt : (opt.label || '')
@@ -506,7 +514,7 @@ function renderGrepSearch(input: ToolInput): string {
     const homeDir = store.state.homeDir || ''
     const resolvedPath = resolveFilePath(path, projectRoot, homeDir)
     const displayPath = resolvedPath || path.replace(/^\.\//, '')
-    html += '<div class="grep-path-row">'
+    html += `<div class="grep-path-row" ${ANNOTATION_SKIP_ATTR}>`
     html += `<span class="grep-label">${escapeHtml(gt('tool.grep.path'))}</span>`
     html += `<span class="grep-path-text">${escapeHtml(displayPath)}</span>`
     if (resolvedPath) {
@@ -558,7 +566,7 @@ function renderGlobPattern(input: ToolInput): string {
     const homeDir = store.state.homeDir || ''
     const resolvedPath = resolveFilePath(path, projectRoot, homeDir)
     const displayPath = resolvedPath || path.replace(/^\.\//, '')
-    html += '<div class="glob-path-row">'
+    html += `<div class="glob-path-row" ${ANNOTATION_SKIP_ATTR}>`
     html += `<span class="glob-label">${escapeHtml(gt('tool.glob.path'))}</span>`
     html += `<span class="glob-path-text">${escapeHtml(displayPath)}</span>`
     if (resolvedPath) {
@@ -736,11 +744,14 @@ function renderCodexAgentActivity(input: ToolInput, activity: string): string {
   }
   html += '</div>'
 
+  // The agent path is an opaque sub-agent identifier, not a file on disk, and
+  // the thread id is a UUID — its hex segments look like abbreviated SHAs to
+  // the commit annotator, which split one UUID into two pending chips.
   if (path) {
-    html += `<div class="codex-agent-path"><span class="codex-agent-path-label">agent</span><code>${escapeHtml(path)}</code></div>`
+    html += `<div class="codex-agent-path" ${ANNOTATION_SKIP_ATTR}><span class="codex-agent-path-label">agent</span><code>${escapeHtml(path)}</code></div>`
   }
   if (threadId) {
-    html += `<div class="codex-agent-thread"><span class="codex-agent-path-label">thread</span><code>${escapeHtml(threadId)}</code></div>`
+    html += `<div class="codex-agent-thread" ${ANNOTATION_SKIP_ATTR}><span class="codex-agent-path-label">thread</span><code>${escapeHtml(threadId)}</code></div>`
   }
 
   html += '</div>'
@@ -768,8 +779,10 @@ function renderWaitCall(input: ToolInput): string {
   if (hasAgents) {
     html += '<div class="wait-call-agents">waiting for sub-agent</div>'
   }
+  // Same as the codex lifecycle frames: a thread id is a UUID, and its hex
+  // segments would otherwise be split into abbreviated-commit chips.
   if (sender) {
-    html += `<div class="wait-call-sender"><span class="codex-agent-path-label">thread</span><code>${escapeHtml(sender)}</code></div>`
+    html += `<div class="wait-call-sender" ${ANNOTATION_SKIP_ATTR}><span class="codex-agent-path-label">thread</span><code>${escapeHtml(sender)}</code></div>`
   }
   html += '</div>'
   return html
@@ -918,7 +931,8 @@ function renderLSView(input: ToolInput): string {
   const path = str(input.path) || str(input.dir_path)
 
   let html = '<div class="ls-dir-view">'
-  html += '<div class="ls-dir-header">'
+  // The header already renders the directory as its own open-button pair.
+  html += `<div class="ls-dir-header" ${ANNOTATION_SKIP_ATTR}>`
   html += `<span class="ls-dir-icon">📂</span>`
 
   if (path) {
@@ -1317,7 +1331,7 @@ function renderLSP(input: ToolInput): string {
     const homeDir = store.state.homeDir || ''
     const resolvedPath = resolveFilePath(filePath, projectRoot, homeDir)
     const displayPath = resolvedPath || filePath.replace(/^\.\//, '')
-    html += `<span class="lsp-file-path">${escapeHtml(displayPath)}</span>`
+    html += `<span class="lsp-file-path" ${ANNOTATION_SKIP_ATTR}>${escapeHtml(displayPath)}</span>`
     if (resolvedPath) {
       html += fileOpenButtonHtml(resolvedPath)
     }
@@ -1364,7 +1378,7 @@ function renderNotebookEdit(input: ToolInput): string {
   const lang = detectLang(filePath)
 
   let html = '<div class="edit-diff-view tool-content-wrap word-wrap">'
-  html += '<div class="tool-file-header">'
+  html += `<div class="tool-file-header" ${ANNOTATION_SKIP_ATTR}>`
   html += `<span class="tool-file-path">${escapeHtml(displayPath)}</span>`
   if (resolvedPath) {
     html += fileOpenButtonHtml(resolvedPath)
@@ -1535,13 +1549,14 @@ export function formatToolInput(input: unknown, toolName?: string, blockCtx?: To
   // Clear pending input annotations from any previous render
   _pendingInputPaths = []
   _pendingInputSHAs = []
-  if (toolName) {
-    const renderer = TOOL_RENDERERS[toolName.toLowerCase()]
-    if (renderer && input && typeof input === 'object') {
-      return renderer(input as ToolInput, blockCtx)
-    }
+  let html: string
+  const renderer = toolName ? TOOL_RENDERERS[toolName.toLowerCase()] : undefined
+  if (renderer && input && typeof input === 'object') {
+    html = renderer(input as ToolInput, blockCtx)
+  } else {
+    html = renderJsonFallback(input)
   }
-  return renderJsonFallback(input)
+  return annotateAndCollect(html, 'input')
 }
 
 // ── Tool result output formatting ──
@@ -1617,6 +1632,29 @@ let _pendingInputPaths: string[] = []
 let _pendingInputSHAs: string[] = []
 let _pendingOutputPaths: string[] = []
 let _pendingOutputSHAs: string[] = []
+
+/**
+ * Run the shared annotation pass over a renderer's HTML and accumulate what it
+ * found for the caller's later verification.
+ *
+ * Every renderer builds its own markup, and several of them (Bash commands,
+ * Grep results, `ls` listings, the JSON fallback) contain paths, ports and
+ * commit ids that used to render as dead text. Doing it here — once, at the
+ * two public entry points — means a new tool renderer inherits the behaviour
+ * without remembering to wire it up.
+ */
+function annotateAndCollect(html: string, scope: 'input' | 'output'): string {
+  if (!html) return html
+  const { html: annotated, detectedPaths, detectedSHAs } = annotateToolHtml(html)
+  if (scope === 'input') {
+    _pendingInputPaths.push(...detectedPaths)
+    _pendingInputSHAs.push(...detectedSHAs)
+  } else {
+    _pendingOutputPaths.push(...detectedPaths)
+    _pendingOutputSHAs.push(...detectedSHAs)
+  }
+  return annotated
+}
 
 /**
  * After tool input/output HTML is inserted into the DOM, call this to verify
@@ -1701,21 +1739,29 @@ function renderSmartOutput(output: string): string {
  * Renders output text with appropriate styling based on tool type.
  * Uses the tool output renderer registry for type-specific formatting.
  * Falls back to smart output (JSON pretty-print or plain text) for unregistered tools.
+ *
+ * `annotate` opts into the reference-annotation pass. It defaults to TRUE, and
+ * callers rendering a STILL-RUNNING tool must pass false: output grows token by
+ * token, the host re-renders on every update, and the pass costs time
+ * proportional to the text — five full-document walks (one per annotator) plus
+ * a parse and a re-serialize, on a fragment that can reach the backend's 50 KB
+ * output cap. Annotating a half-written output also produces chips for paths
+ * the model has not finished writing.
+ *
+ * The default is `true` rather than `false` so a forgotten call site
+ * over-annotates rather than silently losing the feature; every streaming call
+ * site is pinned by a test.
  */
-export function formatToolOutput(output: string, toolName?: string): string {
+export function formatToolOutput(output: string, toolName?: string, { annotate = true }: { annotate?: boolean } = {}): string {
   if (!output) return ''
   // Clear pending output annotations from any previous render
   _pendingOutputPaths = []
   _pendingOutputSHAs = []
   // Check for a registered output renderer
-  if (toolName) {
-    const renderer = TOOL_OUTPUT_RENDERERS[toolName.toLowerCase()]
-    if (renderer) {
-      return renderer(output)
-    }
-  }
+  const renderer = toolName ? TOOL_OUTPUT_RENDERERS[toolName.toLowerCase()] : undefined
   // Fallback: smart output (detect JSON vs plain text)
-  return renderSmartOutput(output)
+  const html = renderer ? renderer(output) : renderSmartOutput(output)
+  return annotate ? annotateAndCollect(html, 'output') : html
 }
 
 // ── Tool output registrations ──

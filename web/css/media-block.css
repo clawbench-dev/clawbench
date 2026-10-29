@@ -481,47 +481,139 @@
     position: relative;
 }
 
-/* ─── Chat message: thumbnail cap for PHOTOS, full size for DIAGRAMS ──────
-   A bubble is a conversation, not a document: a pasted screenshot or an inline
-   SVG the model drew belongs in a 200px thumbnail the reader clicks to inspect.
-   A rendered Mermaid diagram is different — it is the ANSWER, with dense labels
-   that must be legible while scrolling (#570: chat diagrams rendered as an
-   unreadable banner). Mermaid is therefore deliberately NOT in these lists: it
-   gets the same resting sizing and click-to-zoom as the file preview (hug the
-   artwork, height budget, expand to the bubble when active).
+/* ─── Chat messages size media EXACTLY like a document ────────────────────
+   There is deliberately NO chat-specific size rule here.
 
-   These rules must mirror the inline-zoom block's `:has()` selectors INCLUDING
-   the pseudo-class. `:has()` contributes its ARGUMENT's specificity, so the
-   generic `.image-block-wrapper:has(> .lightbox-img-wrap > img)` is 0-2-1 while
-   a plain `.chat-message .image-block-wrapper` is only 0-2-0 — the generic
-   rule's `max-width: 100%` won, and every capped figure grew to the whole
-   column (measured 540px in a 600px bubble; the cap below never applied).
-   Prefixing the same `:has()` selectors restores the 0-3-1 vs 0-2-1 order. */
-/* The cap applies ONLY while the figure is at rest. Once the reader clicks it,
-   the figure becomes the zoom viewport and must span the bubble — otherwise the
-   "zoom" happens inside a 200px box and the image stays tiny no matter how far
-   it is zoomed (reported: 聊天界面点击聚焦后没有全宽). */
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-img-wrap > img),
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg) {
-    max-width: calc(200 * var(--dp));
+   A chat bubble used to cap photos and bare inline SVGs at 200×184dp ("a
+   conversation is not a document — a screenshot belongs in a thumbnail"), with
+   Mermaid carved out because a capped diagram was unreadable (#570). Two size
+   policies for the same artwork meant the same image looked different depending
+   on whether you opened it in a message or in a .md file, and the carve-out had
+   to be re-derived every time a media type was added.
+
+   The policy is now single: every surface — chat, file preview, share SPA, HTML
+   export — gets the resting sizing and click-to-zoom defined by the inline-zoom
+   block above (`fit-content` frame, 60dvh height budget, media sized by its own
+   aspect ratio). Media that is small stays small; media taller than the budget
+   is clamped; clicking gives the full-column viewport.
+
+   The `max-width` caps were `!important` (to beat the generic rule's
+   `max-width: none !important`), so they cannot be "left in place but
+   overridden" — they are deleted. A guard test asserts no chat rule reintroduces
+   a size cap. */
+
+/* ─── Pending content media: shimmer placeholder ──────────────────────────
+   A content image has three visual states, and the markup can only express one
+   of them on its own:
+
+     pending  — no attribute yet: nothing has arrived. An `<img>` whose
+                intrinsic size is unknown lays out at 0x0, so a slow image made
+                the whole figure collapse to a bare 1px frame and then POP into
+                place when it landed. Thumbnails make that the common case, not
+                the exception: `/api/fs/thumb` rasterises the source on demand,
+                so the first paint of a large PNG is a real round trip.
+     settled  — `data-media-settled` (stamped by localMediaFallback.ts once the
+                wait is over, whether it ended in a load or in a failure).
+     missing  — `data-media-missing` + `.local-media-hidden` + the shared
+                placeholder card (see the block further down).
+
+   The stylesheet therefore owns the pending look, keyed on the ABSENCE of the
+   settled stamp: `load` / `error` are DOM events, so no render pipeline could
+   express them as a class. localMediaFallback stamps EVERY `<img>` in the
+   document; the scope below is what narrows it back down to content media, so
+   the list of surfaces lives here and nowhere else.
+
+   The shimmer reuses the app's single skeleton language — the same
+   `skeleton-shimmer` keyframes and the same `--skeleton-fill` / `--skeleton-sheen`
+   variables as `.skeleton-block` (css/components.css) — so a theme that retunes
+   the skeleton retunes this too. They are CONSUMED, never declared here: a
+   declaration on this element would silently defeat an ancestor override (that
+   mistake is documented on `.skeleton-block`).
+
+   `min-width` / `min-height` rather than `width` / `height`: the figure's
+   resting rules set `width: auto` at 0-4-1 and would win. `min-*` is a
+   different property, so there is no fight — but note that `min-width`
+   outranks `max-width: 100%` on its own axis, so the value must stay below the
+   narrowest reading column. 160dp is comfortably inside it (a 320px phone
+   leaves ~272px of column after the bubble's padding) and the figure's
+   `overflow: hidden` clips any residual rather than breaking the layout.
+
+   Inside a FIGURE the value must be a fixed length, not `min(…, 100%)`: the
+   cell is sized by the image, so a percentage would reintroduce the
+   figure↔media cycle that squashes replaced elements to 300px. The pane
+   surfaces below are exempt — their container has a definite width from flex,
+   so `min(…, 100%)` is what keeps a narrow split pane from overflowing.
+
+   The 200ms reveal is load-bearing: a local image usually arrives in a few
+   milliseconds, and a placeholder that flashes for a single frame is worse
+   than none. Until the delay elapses the box is transparent but still
+   reserves its size, so the layout settles once.
+
+   Three surfaces, because the attribute is stamped document-wide and the
+   FIGURES are not the only place content media renders: the full-screen image
+   viewer and the code-link preview card show one image in a pane of its own.
+   The file manager's thumbnails and the attachment chips are deliberately
+   absent — they are 40dp icons with their own failure fallback, where a
+   shimmer would be noise rather than reassurance. */
+.image-block-wrapper .lightbox-img-wrap > img.lightbox-img:not([data-media-settled]):not([data-media-missing]) {
+    min-width: calc(160 * var(--dp));
+    min-height: calc(110 * var(--dp));
+    background-color: var(--skeleton-fill, var(--bg-tertiary, #e9ecef));
+    background-image: linear-gradient(
+        90deg,
+        transparent 0%,
+        var(--skeleton-sheen, color-mix(in srgb, var(--bg-primary, #fff) 60%, transparent)) 50%,
+        transparent 100%
+    );
+    background-repeat: no-repeat;
+    background-size: 200% 100%;
+    background-position: 150% 0;
+    /* `backwards` (not a plain `opacity: 0`) is what hides the box for the
+       first 200ms — see the keyframes note below. */
+    animation:
+        media-pending-reveal 0s linear 200ms backwards,
+        skeleton-shimmer 1.4s ease-in-out infinite;
 }
 
-/* The media itself is clamped to a PIXEL cap, not a percentage. The generic
-   rule sizes SVG media with `width: calc(60dvh * var(--svg-ar, 1))` and clears
-   `max-width` with `!important`, so the cap has to be `!important` too (both
-   declarations are important; the more specific selector wins). A percentage
-   would reintroduce the svg↔cell dependency cycle the generic rule documents. */
-/* Same rest-only scoping: while zoomed the media's size belongs to
-   `inlineZoom`, and an `!important` cap here would pin it to 200px. */
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-img-wrap > img) > .lightbox-img-wrap > img,
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap > svg.lightbox-svg {
-    max-width: calc(200 * var(--dp)) !important;
-    max-height: calc(184 * var(--dp));
+.image-preview-body > img.image-preview-img:not([data-media-settled]):not([data-media-missing]),
+.code-preview-media > img.code-preview-media-img:not([data-media-settled]):not([data-media-missing]) {
+    min-width: min(calc(160 * var(--dp)), 100%);
+    min-height: min(calc(110 * var(--dp)), 100%);
+    background-color: var(--skeleton-fill, var(--bg-tertiary, #e9ecef));
+    background-image: linear-gradient(
+        90deg,
+        transparent 0%,
+        var(--skeleton-sheen, color-mix(in srgb, var(--bg-primary, #fff) 60%, transparent)) 50%,
+        transparent 100%
+    );
+    background-repeat: no-repeat;
+    background-size: 200% 100%;
+    background-position: 150% 0;
+    animation:
+        media-pending-reveal 0s linear 200ms backwards,
+        skeleton-shimmer 1.4s ease-in-out infinite;
 }
 
-.chat-message .image-block-wrapper:not(.is-zooming) .lightbox-svg-wrap svg.lightbox-svg {
-    max-width: calc(200 * var(--dp));
-    max-height: calc(200 * var(--dp));
+/* The reveal is a 0s step at t=200ms, `from` transparent → `to` opaque, and the
+   animation carries the hiding instead of a base `opacity: 0` on purpose: the
+   HTML export re-serializes rules but only a few named keyframes, so a base
+   `opacity: 0` would make every exported image invisible if the rule travelled
+   without its keyframes. This way a missing keyframes block degrades to
+   "visible, no shimmer". */
+@keyframes media-pending-reveal {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Same split as the skeleton primitive: the shimmer is decoration and stops,
+   the reveal is not motion (a 0s step) and must stay — dropping it would leave
+   the box transparent for the whole wait. */
+@media (prefers-reduced-motion: reduce) {
+    .image-block-wrapper .lightbox-img-wrap > img.lightbox-img:not([data-media-settled]):not([data-media-missing]),
+    .image-preview-body > img.image-preview-img:not([data-media-settled]):not([data-media-missing]),
+    .code-preview-media > img.code-preview-media-img:not([data-media-settled]):not([data-media-missing]) {
+        animation: media-pending-reveal 0s linear 200ms backwards;
+    }
 }
 
 /* ─── Missing media: labelled placeholder ────────────────────────────────

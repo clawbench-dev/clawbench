@@ -232,6 +232,14 @@ RAGResetFailed: Index rebuild failed
 RAGSegmenterUnavailable: "Rebuild refused: the text segmenter is unavailable. Rebuilding now would replace correctly segmented text with unsplit text and break Chinese search — restart the service and try again."
 RAGRebuildAccepted: Rebuild started in the background
 AutoContinue: Continue
+# The ONLY persisted row (a role='system' notice) when the server resumes a
+# session whose turn it interrupted. This text is shown TO THE USER, so it says
+# what happened and what the system did about it — it is NOT the prompt the agent
+# receives (that one is RestartResumePrompt, injected and never stored).
+RestartResume: 'Session restored after a service restart — the agent has been asked to continue the interrupted task.'
+# The instruction injected into the resumed turn. Imperative, addressed to the
+# model, NEVER persisted or shown to the user (unlike RestartResume above).
+RestartResumeInstruction: 'This session was interrupted by a service restart. The task is not finished — re-evaluate the current state and continue where it stopped.'
 ACPSessionRecoveredNew: ACP session could not be restored; started a new session (the previous conversation context was lost).
 ACPAuthRequired: 'The agent is not signed in. Run `{{.Command}}` in a terminal once, then retry.'
 ACPAuthRequiredGeneric: 'The agent is not signed in; sign in with its CLI in a terminal once, then retry.'

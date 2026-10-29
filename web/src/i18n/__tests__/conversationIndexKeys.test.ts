@@ -18,6 +18,8 @@ describe('i18n conversation-index keys completeness', () => {
     'conversationIndexRoleUser',
     'conversationIndexRoleAssistant',
     'conversationIndexNoText',
+    'messageRailLabel',
+    'messageRailGenerating',
   ]
 
   it('en and zh have all conversation-index keys', () => {

@@ -820,3 +820,186 @@ func TestServeGroupMembersList_OtherProjectIsForbidden(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, w.Code, "another project must not read this roster")
 	assert.Contains(t, []int{http.StatusForbidden, http.StatusNotFound}, w.Code, w.Body.String())
 }
+
+// ─── PATCH /api/group/members: the error branches ───────────────────────────
+//
+// Each of these maps one service-level guard onto a status the frontend can act
+// on. They are pinned at the handler layer because the mapping (409 + a specific
+// message key) is what the UI branches on — the service tests already prove the
+// guards fire, but nothing there would catch a handler that answered 500.
+
+// Disabling the last member who can speak must be a 409 with its own key, not
+// the host key: the two have different remedies (add a member vs. you cannot
+// mute the host at all).
+func TestServeGroupMembers_RefuseLastSpeakerDisable(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// A free group so the host guard cannot mask the last-member guard.
+	groupID, _, err := service.CreateGroupWithMembers(env.ProjectDir, "自由群", "", []service.GroupMemberSpec{
+		{AgentID: "codebuddy", Backend: "codebuddy", DisplayName: "A"},
+		{AgentID: "claude", Backend: "claude", DisplayName: "B"},
+	})
+	require.NoError(t, err)
+
+	members, err := service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	require.Len(t, members, 2)
+
+	// Mute one, then the other: the second must be refused.
+	req := newRequest(t, http.MethodPatch, "/api/group/members", map[string]any{"groupId": groupID, "memberId": members[0].ID, "disabled": true})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	req = newRequest(t, http.MethodPatch, "/api/group/members", map[string]any{"groupId": groupID, "memberId": members[1].ID, "disabled": true})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "CannotDisableLastMember")
+}
+
+// Re-enabling past the cap is a 409 GroupMemberLimitReached. The cap counts
+// speaking members only, so this needs a full roster with one member parked and
+// a newcomer in the freed slot.
+func TestServeGroupMembers_ReEnableOverCap(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origAgents := model.Agents
+	agents := map[string]*model.Agent{}
+	specs := make([]service.GroupMemberSpec, 0, service.MaxGroupMembers)
+	for i := range service.MaxGroupMembers {
+		id := "agent-" + string(rune('a'+i))
+		agents[id] = &model.Agent{ID: id, Name: id, Backend: "claude"}
+		specs = append(specs, service.GroupMemberSpec{AgentID: id, Backend: "claude", DisplayName: id})
+	}
+	agents["newcomer"] = &model.Agent{ID: "newcomer", Name: "newcomer", Backend: "claude"}
+	model.Agents = agents
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	groupID, _, err := service.CreateGroupWithMembers(env.ProjectDir, "满员群", "", specs)
+	require.NoError(t, err)
+
+	members, err := service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	require.Len(t, members, service.MaxGroupMembers)
+	parkedID := members[0].ID
+
+	// Park one member, then fill the freed slot through the handler so the cap
+	// is genuinely reached again.
+	req := newRequest(t, http.MethodPatch, "/api/group/members", map[string]any{"groupId": groupID, "memberId": parkedID, "disabled": true})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	req = newRequest(t, http.MethodPost, "/api/group/members", map[string]any{"groupId": groupID, "agentIds": []string{"newcomer"}})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	// Now un-parking would put one member too many on the mic.
+	req = newRequest(t, http.MethodPatch, "/api/group/members", map[string]any{"groupId": groupID, "memberId": parkedID, "disabled": false})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "GroupMemberLimitReached")
+}
+
+// A PATCH without `disabled` is malformed, NOT "disabled: false". An older or
+// buggy client that forgets the field must not silently put a parked member back
+// on the roster.
+func TestServeGroupMembers_PatchWithoutDisabledIsRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+	memberID, err := service.AddGroupMember(env.ProjectDir, groupID, "claude", "claude", "Claude")
+	require.NoError(t, err)
+
+	// Park it first, so a mistaken "enable" would be observable.
+	require.NoError(t, service.SetGroupMemberDisabled(groupID, memberID, true))
+
+	req := newRequest(t, http.MethodPatch, "/api/group/members", map[string]any{"groupId": groupID, "memberId": memberID})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	members, err := service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	for _, m := range members {
+		if m.ID == memberID {
+			assert.True(t, m.Disabled, "a rejected PATCH must not enable the member")
+		}
+	}
+}
+
+// DELETE was removed when "离场" became a reversible "禁用": the route must now
+// answer 405 rather than falling through to a nil handler.
+func TestServeGroupMembers_DeleteIsGone(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{"groupId": groupID, "memberId": "whatever"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code, w.Body.String())
+}
+
+// A DB failure while listing must surface as 500, not an empty roster: the UI
+// reads an empty list as "this group has no members" and would offer to add
+// everyone again.
+func TestServeGroupMembersList_DBErrorIs500(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	defer swapClosedReadDB(t, store.UnsafeDBForTest())()
+
+	req := newRequest(t, http.MethodGet, "/api/group/members?groupId="+groupID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+}
+
+// A PATCH whose UPDATE fails must be a 500 rather than a silent success — the
+// client would otherwise show the member as muted while it keeps speaking.
+func TestServeGroupMembers_DisableDBErrorIs500(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+	memberID, err := service.AddGroupMember(env.ProjectDir, groupID, "claude", "claude", "Claude")
+	require.NoError(t, err)
+
+	// Reads stay healthy (the guards run first), writes fail.
+	defer swapClosedWriteDB(t, store.UnsafeDBForTest())()
+
+	req := newRequest(t, http.MethodPatch, "/api/group/members", map[string]any{"groupId": groupID, "memberId": memberID, "disabled": true})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+}
+
+// An add whose INSERT fails must be a 500, not an empty memberIds list.
+func TestServeGroupMembers_AddDBErrorIs500(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	defer swapClosedWriteDB(t, store.UnsafeDBForTest())()
+
+	req := newRequest(t, http.MethodPost, "/api/group/members", map[string]any{"groupId": groupID, "agentIds": []string{"claude"}})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+}

@@ -3,6 +3,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"log/slog"
@@ -71,6 +72,13 @@ func ServeAgentSubRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasSuffix(path, "/acp-sessions") && r.Method == http.MethodGet {
 		ServeACPSessions(w, r)
+		return
+	}
+	// Forwarded regardless of method so a wrong one answers 405 instead of
+	// claiming the route does not exist (same rationale as the self-test pair
+	// below).
+	if strings.HasSuffix(path, "/sessions") {
+		ServeAgentSessions(w, r)
 		return
 	}
 	if strings.HasSuffix(path, "/rescan") && r.Method == http.MethodPost {
@@ -1202,16 +1210,30 @@ func containsPromptOverride(prompt string) bool {
 	return false
 }
 
-// ServeAgentRefreshModels handles POST /api/agents/{id}/refresh-models — triggers model re-discovery
-// for the specified agent and returns the updated model list. The discovered CLI list replaces the
-// agent's stored model list (both in memory and in the database).
+// ServeAgentRefreshModels handles POST /api/agents/{id}/refresh-models — triggers a
+// re-discovery of everything the agent offers (models, thinking levels, modes and
+// slash commands) and returns the updated model list.
 //
-// The response carries the same pair GET /api/agents reports: `models` is the list resolved against
-// the cached ACP models (ACP membership wins) and `cliModels` is the pure CLI list. Returning the raw
-// CLI list as `models` made a refresh silently replace an ACP-authoritative list with models the
-// running agent cannot actually execute.
+// Two strategies, chosen by transport:
 //
-// Refresh strategy: CLI model discovery via BackendSpec (e.g., pi --list-models)
+//   - ACP (`Transport == "acp-stdio"` and an acp_command): ask the AGENT. It is
+//     the only authority for its own model list, thinking levels, modes and
+//     commands — those arrive in its session/new response and in the
+//     available_commands_update it pushes right after. The probe creates a
+//     throwaway session and deletes it again (see ai.ProbeACPState).
+//   - CLI: run the backend's model discovery (e.g. `pi --list-models`).
+//
+// The ACP branch deliberately does NOT fall back to CLI discovery when the probe
+// fails: the CLI list is a guess for an agent running over ACP (ACP has no
+// client-side default-model concept), and reporting it as runnable is exactly the
+// bug the empty-list gate below exists to prevent. A failed probe is reported as
+// a failure.
+//
+// The response carries the same pair GET /api/agents reports: `models` is the list
+// resolved against the ACP models (ACP membership wins) and `cliModels` is the
+// pure CLI list. Returning the raw CLI list as `models` made a refresh silently
+// replace an ACP-authoritative list with models the running agent cannot actually
+// execute.
 func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -1228,13 +1250,27 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	configMutex.Lock()
-	defer configMutex.Unlock()
-
 	agent := model.GetAgent(agentID)
+	configMutex.Unlock()
 	if agent == nil {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
 		return
 	}
+
+	// Snapshot the agent: the probe runs a real process (seconds), and the
+	// shared pointer may be replaced by a concurrent refresh/reload meanwhile.
+	snapshot := *agent
+
+	// ACP: probe the agent itself. Held outside configMutex on purpose — the
+	// probe spawns a process and waits on RPCs; holding the config lock for that
+	// would stall every /api/agents read for the duration.
+	if agentUsesACP(&snapshot) {
+		refreshViaACPProbe(w, r, &snapshot)
+		return
+	}
+
+	configMutex.Lock()
+	defer configMutex.Unlock()
 
 	var models []model.AgentModel
 	canDiscover := model.HasModelSource(agent.Backend)
@@ -1299,6 +1335,117 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 		"cliModels": models,
 	})
 }
+
+// agentUsesACP reports whether a refresh should ask the agent over ACP.
+//
+// The stored `transport` is resolved the same way every other consumer resolves
+// it (an empty value means "ACP when the agent has an acp_command"), so an agent
+// whose transport was never written — a freshly discovered one — is not
+// misclassified as CLI.
+func agentUsesACP(a *model.Agent) bool {
+	if a == nil || !a.SupportsACP() {
+		return false
+	}
+	if a.Transport != "" {
+		return a.Transport == "acp-stdio"
+	}
+	return true
+}
+
+// refreshViaACPProbe answers POST /api/agents/{id}/refresh-models for an ACP
+// agent by asking the agent itself, then deleting the throwaway session.
+//
+// Writes the response in every path.
+func refreshViaACPProbe(w http.ResponseWriter, r *http.Request, agent *model.Agent) {
+	// The probe's session/new needs a real cwd, and the agent's own answers
+	// (models available in this project, slash commands from project skills) can
+	// depend on it. Same source every other agent-scoped endpoint uses.
+	projectPath := middleware.GetProjectFromCookie(r)
+	if projectPath == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NoProjectSelected")
+		return
+	}
+
+	// The probe spawns an agent process and waits for its command push, which is
+	// far longer than the 10s default client budget. The request context is the
+	// right cancellation source (closing the drawer aborts the probe and its
+	// process).
+	ctx, cancel := context.WithTimeout(r.Context(), acpProbeTimeout)
+	defer cancel()
+
+	start := time.Now()
+	res, err := ai.RunACPStateProbe(ctx, agent, projectPath)
+	if err != nil {
+		slog.Warn("acp state probe failed", "agent", agent.ID, "backend", agent.Backend, "error", err, "elapsed", time.Since(start))
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "ModelDiscoveryFailed", map[string]any{"detail": err.Error()})
+		return
+	}
+
+	// The probe already wrote the ACP lists (models/modes/efforts/commands) into
+	// the capability registry, which persists them on its own. The agent row is
+	// deliberately left alone: `agents.models` holds the CLI-discovered list, and
+	// overwriting it with the ACP list would make a later transport switch show
+	// ACP models in the CLI view (and the next refresh treat them as
+	// CLI-discovered). Resolution happens per read, exactly like GET /api/agents.
+	current := model.GetAgent(agent.ID)
+	if current == nil {
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
+		return
+	}
+	cliModels := current.Models
+
+	// Resolve the same way GET /api/agents does: the CLI list supplies order and
+	// names, the agent's own list is authoritative for membership. When the agent
+	// reported nothing the answer is EMPTY, never the CLI skeleton — the client
+	// writes `models` straight onto an acp-stdio agent, so a fallback would
+	// present models the agent cannot run. ResolveModels cannot express that on
+	// its own (with no ACP list it echoes the CLI list back).
+	var resolved []model.AgentModel
+	if len(res.Models) > 0 {
+		resolved = model.ResolveModels(cliModels, res.Models, res.CurrentModelID)
+	}
+	if resolved == nil {
+		resolved = []model.AgentModel{}
+	}
+
+	// Mode/thinking/command lists ride along so the client does not need a second
+	// round trip. Built from the probe's result rather than read back from the
+	// registry: the result is what the agent just said, and the registry may also
+	// hold merged values (pre-scanned plugin commands) that the probe did not
+	// produce.
+	state := map[string]any{"commands": res.Commands}
+	if len(res.Modes) > 0 {
+		state["modeState"] = map[string]any{
+			"currentModeId":  res.CurrentModeID,
+			"availableModes": res.Modes,
+		}
+	}
+	if len(res.Efforts) > 0 {
+		state["thinkingEffortState"] = map[string]any{
+			"currentId":       res.CurrentEffortID,
+			"availableLevels": res.Efforts,
+		}
+	}
+
+	slog.Info("acp state probe refresh done",
+		"agent", agent.ID,
+		"models", len(resolved),
+		"commands", len(res.Commands),
+		"session_deleted", res.SessionDeleted,
+		"elapsed", time.Since(start))
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"models":    resolved,
+		"cliModels": cliModels,
+		"acpState":  state,
+	})
+}
+
+// acpProbeTimeout bounds one refresh probe. It has to cover process start,
+// session/new (which starts MCP servers) and the command settle window
+// (codebuddyPluginLoadDelay for CodeBuddy), so it is well above the per-RPC
+// deadlines; the per-RPC timeouts still fire first and surface a real reason.
+const acpProbeTimeout = 150 * time.Second
 
 // resolveRefreshedModels turns a freshly discovered CLI list into the list the
 // refresh endpoint should report.

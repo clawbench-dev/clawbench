@@ -2,6 +2,7 @@ import { escapeHtml } from '@/utils/html.ts'
 import { gt } from '@/composables/useLocale'
 import { isShareMode } from '@/share/shareMode'
 import { EXTERNAL_LINK_CLASS } from '@/utils/externalLinkNode.ts'
+import { isAnnotationSkipped } from '@/utils/annotationScope.ts'
 
 /**
  * SVG icon markup for the commit-open button (git-commit icon).
@@ -135,6 +136,13 @@ export function annotateCommitHashesIn(doc: Document): string[] {
     // Mixed content is handled by Step 2's text-node walker, which now
     // also enters <code> elements.
     for (const code of doc.querySelectorAll('code')) {
+        // Regions the caller already annotated or that are not references
+        // (tool file headers, ask option labels, file content bodies).
+        if (isAnnotationSkipped(code)) continue
+        // Idempotency: the tool-detail pass re-runs this over HTML a markdown
+        // renderer already annotated. Re-adding the pending class to a verified
+        // hash would leave the element in both states at once.
+        if (code.classList.contains('chat-commit-hash') || code.classList.contains('chat-commit-hash-pending')) continue
         // Skip <code> already annotated as file path
         if (code.classList.contains('chat-file-path')) continue
         const stripped = (code.textContent || '').trim()
@@ -150,14 +158,19 @@ export function annotateCommitHashesIn(doc: Document): string[] {
         acceptNode(node: Text) {
             const parent = node.parentElement
             if (!parent) return NodeFilter.FILTER_REJECT
+            if (isAnnotationSkipped(parent)) return NodeFilter.FILTER_REJECT
             // Skip text inside <a> tags
             if (parent.tagName === 'A' || parent.closest('a')) return NodeFilter.FILTER_REJECT
             // External links are <span class="md-external-link">, not <a> (see
             // externalLinkNode.ts) — a hash-looking segment inside a URL must
             // not become a commit chip on top of the link.
             if (parent.closest('.' + EXTERNAL_LINK_CLASS)) return NodeFilter.FILTER_REJECT
-            // Skip <code> elements already annotated by step 1
+            // Skip <code>/<span> elements already annotated by step 1, and the
+            // VERIFIED form too: its text node lives inside the span, so without
+            // the second test a re-run would nest a fresh pending span inside a
+            // working chip and the hash would render twice.
             if (parent.classList.contains('chat-commit-hash-pending')) return NodeFilter.FILTER_REJECT
+            if (parent.classList.contains('chat-commit-hash')) return NodeFilter.FILTER_REJECT
             // Skip already-annotated spans
             if (parent.classList.contains('chat-file-path')) return NodeFilter.FILTER_REJECT
             return NodeFilter.FILTER_ACCEPT

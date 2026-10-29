@@ -640,25 +640,46 @@ describe('SettingsAgentDetail', () => {
 
   // ─── Usage counts (Information section) ──────────────────────────────
   describe('usage counts', () => {
-    // SettingsItem is stubbed, so the count strings ride on the stub's
-    // model-value prop rather than rendered text.
+    // SettingsItem is stubbed, so the TASK count rides on the stub's model-value
+    // prop. The SESSION count is a drill-down row now (a dedicated `nav` type,
+    // not a SettingsItem), so it is read from its rendered value.
     function countValues(wrapper: ReturnType<typeof mountDetail>): string[] {
       return wrapper.findAllComponents({ name: 'SettingsItem' })
         .map(s => s.props('modelValue') as string)
     }
+    function sessionRowText(wrapper: ReturnType<typeof mountDetail>): string {
+      return wrapper.find('.settings-agent-detail__nav-value').text()
+    }
 
     it('renders session and task counts from the agent record', () => {
       const wrapper = mountDetail({ sessionCount: 4, taskCount: 2 })
-      const values = countValues(wrapper)
-      expect(values).toContain('4 sessions')
-      expect(values).toContain('2 tasks')
+      expect(sessionRowText(wrapper)).toContain('4 sessions')
+      expect(countValues(wrapper)).toContain('2 tasks')
     })
 
     it('renders zero counts when the fields are absent', () => {
       const wrapper = mountDetail()
-      const values = countValues(wrapper)
-      expect(values).toContain('0 sessions')
-      expect(values).toContain('0 tasks')
+      expect(sessionRowText(wrapper)).toContain('0 sessions')
+      expect(countValues(wrapper)).toContain('0 tasks')
+    })
+
+    // The row exists so the number can be interrogated: a count with no way to
+    // see WHICH conversations is exactly what the issue reported.
+    it('emits openSessions with the agent id when the session row is clicked', async () => {
+      const wrapper = mountDetail({ sessionCount: 4 })
+      await wrapper.find('.settings-agent-detail__nav-row').trigger('click')
+      expect(wrapper.emitted('openSessions')).toBeTruthy()
+      expect(wrapper.emitted('openSessions')![0]).toEqual(['test-agent'])
+    })
+
+    // The task count is NOT drillable: tasks have their own page and the issue
+    // asked only about conversations. Guards against the row being made
+    // clickable by accident when the session row was introduced.
+    it('leaves the task count as a plain info row', () => {
+      const wrapper = mountDetail({ taskCount: 2 })
+      const taskItem = wrapper.findAllComponents({ name: 'SettingsItem' })
+        .find(s => s.props('label') === 'Tasks')
+      expect(taskItem?.props('type')).toBe('info')
     })
   })
 

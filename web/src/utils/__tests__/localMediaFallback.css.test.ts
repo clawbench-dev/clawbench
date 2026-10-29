@@ -130,6 +130,92 @@ function winnerFor(targetClass: string, prop: string, opts: { exclude?: RegExp }
   return best
 }
 
+describe('pending media placeholder (media-block.css contract)', () => {
+  /**
+   * A content image has three visual states and the markup can only express
+   * one. `pending` is keyed on the ABSENCE of `data-media-settled`, which
+   * localMediaFallback stamps from a live `load` event — so this contract lives
+   * entirely in the stylesheet and can only be pinned at the source level.
+   *
+   * jsdom has no cascade and never fires a real resource load, so a behavioural
+   * test would assert nothing.
+   */
+
+  /**
+   * Rules that paint the pending placeholder. Filtered on `background-color`
+   * rather than on the selector alone: the reduced-motion block repeats the
+   * same selectors with only an `animation` declaration, and `rulesOf` cannot
+   * tell nesting apart — including it here would assert the paint contract
+   * against a rule that does not paint.
+   */
+  const pendingRules = () =>
+    rulesOf(css).filter(
+      (r) => /:not\(\[data-media-settled\]\)/.test(r.selector) && /background-color/.test(r.decls),
+    )
+
+  it('hides the pending box behind an animation, not a base opacity', () => {
+    // A base `opacity: 0` would be serialized into the HTML export while the
+    // keyframes are (mostly) not — every exported image would be invisible.
+    // `backwards` fill on a 0s delayed keyframe hides it just as well and
+    // degrades to "visible" when the keyframes are missing.
+    const rules = pendingRules()
+    expect(rules.length, 'a pending-media rule must exist').toBeGreaterThan(0)
+    for (const r of rules) {
+      expect(r.decls, `base opacity on ${r.selector}`).not.toMatch(/(?:^|;)\s*opacity\s*:/)
+      expect(r.decls, `reveal must use backwards fill on ${r.selector}`).toMatch(/backwards/)
+    }
+  })
+
+  it('excludes both the loaded and the missing state', () => {
+    // Excluding only `loaded` would paint the shimmer under the failure card.
+    for (const r of pendingRules()) {
+      expect(r.selector, 'pending must also exclude the missing state').toMatch(/:not\(\[data-media-missing\]\)/)
+    }
+  })
+
+  it('reuses the skeleton variables instead of declaring them', () => {
+    // Same rule as `.skeleton-block`: declaring `--skeleton-fill` here would
+    // make every ancestor override a silent no-op (the PDF preview bug).
+    for (const r of pendingRules()) {
+      expect(r.decls).not.toMatch(/--skeleton-(fill|sheen)\s*:/)
+      expect(r.decls).toMatch(/var\(--skeleton-fill/)
+    }
+  })
+
+  it('keeps the shimmer stoppable but the reveal alive under reduced motion', () => {
+    const block = /@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/.exec(css)
+    expect(block, 'a reduced-motion block must exist').not.toBeNull()
+    expect(block![1]).toContain('media-pending-reveal')
+    // The shimmer must be dropped there — it is decoration.
+    expect(block![1]).not.toContain('skeleton-shimmer')
+  })
+
+  it('sizes the figure cell with a fixed length, never a percentage', () => {
+    // The figure is shrink-to-fit around the image, so a percentage min-width
+    // reintroduces the figure↔media cycle that squashes replaced elements to
+    // the 300px default.
+    const figure = rulesOf(css).filter(
+      (r) =>
+        /\.image-block-wrapper\b/.test(r.selector)
+        && /:not\(\[data-media-settled\]\)/.test(r.selector)
+        && /min-width/.test(r.decls),
+    )
+    expect(figure.length, 'the figure rule must exist').toBeGreaterThan(0)
+    for (const r of figure) {
+      expect(r.decls).toMatch(/min-width:\s*calc\(/)
+      expect(r.decls, 'no percentage in the figure cell').not.toMatch(/min-width:[^;]*%/)
+    }
+  })
+
+  it('covers the two single-image panes as well', () => {
+    // Content media is not only rendered in figures: the full-screen viewer and
+    // the code-link preview card each show one image in a pane of its own.
+    const selectors = pendingRules().map((r) => r.selector).join('\n')
+    expect(selectors).toContain('.image-preview-img')
+    expect(selectors).toContain('.code-preview-media-img')
+  })
+})
+
 describe('failed media draws exactly ONE frame (media-block.css contract)', () => {
   /**
    * A failed image in chat / share keeps the figure wrapper and gets the

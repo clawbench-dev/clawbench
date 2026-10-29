@@ -14,6 +14,7 @@ import { gt } from '@/composables/useLocale'
 import { isShareMode } from '@/share/shareMode'
 import { clearCommitHashCache } from '@/composables/useCommitHashAnnotation.ts'
 import { EXTERNAL_LINK_CLASS } from '@/utils/externalLinkNode.ts'
+import { isAnnotationSkipped } from '@/utils/annotationScope.ts'
 import type { NavigationSurface } from '@/composables/useNavigationContext'
 // NOTE: do NOT import clearWorktreeCache from useWorktreeAnnotation here —
 // that creates a circular dependency (useFilePathAnnotation ↔ useWorktreeAnnotation).
@@ -765,6 +766,14 @@ export function annotateFilePathsIn(
 
     // ── Step 1: <a> tags with local-file hrefs ──
     for (const a of doc.querySelectorAll('a[href]')) {
+        // Regions the caller already annotated (tool file headers, ask-card
+        // option labels, file content bodies) must not be rewritten: a second
+        // chip inside them nests and appends a second open button.
+        if (isAnnotationSkipped(a)) continue
+        // Idempotency: the tool-detail path re-runs this pass over HTML that a
+        // markdown renderer already annotated (Agent prompts, sub-agent output).
+        // Without this guard every such pass appended another open button.
+        if (a.classList.contains('chat-file-path')) continue
         const rawHref = a.getAttribute('href')!
         const href = tryDecodeUri(rawHref)
         // Skip non-file targets. The scheme test is `isOpaqueSchemePath` rather
@@ -799,6 +808,9 @@ export function annotateFilePathsIn(
 
     // ── Step 2: <code> tags whose content is purely a file path ──
     for (const code of doc.querySelectorAll('code')) {
+        if (isAnnotationSkipped(code)) continue
+        // Idempotency — see the matching guard in Step 1.
+        if (code.classList.contains('chat-file-path')) continue
         if (code.closest('a')) continue
         if (code.classList.contains('chat-worktree-path')) continue
         // Already linkified by the URL annotator (which runs first). A <code>
@@ -860,6 +872,7 @@ export function annotateFilePathsIn(
         acceptNode(node: Text) {
             const parent = node.parentElement
             if (!parent) return NodeFilter.FILTER_REJECT
+            if (isAnnotationSkipped(parent)) return NodeFilter.FILTER_REJECT
             if (parent.tagName === 'A' || parent.closest('a')) return NodeFilter.FILTER_REJECT
             // External links are <span class="md-external-link">, not <a> (see
             // externalLinkNode.ts — an <a> breaks Android's long-press menu).

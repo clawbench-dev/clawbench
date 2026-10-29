@@ -109,7 +109,7 @@ function handleClick() {
   font-weight: var(--font-weight-bold);
 }
 
-[data-app-mode] .git-branch-row.current .branch-name {
+[data-webview-mode] .git-branch-row.current .branch-name {
   text-shadow: 0 0 1px currentColor;
 }
 

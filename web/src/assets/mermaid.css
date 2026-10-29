@@ -1,19 +1,105 @@
-/* ── Mermaid diagram: loading spinner, error, retry button ── */
+/* ── Mermaid diagram: loading placeholder, error, retry button ── */
 
-/* Loading spinner — shown while mermaid chunk is loading and rendering */
+/* ─── Loading placeholder ──────────────────────────────────────────────────
+   The standard picture glyph, sitting on a shimmering tile.
+
+   Why an icon and not a hand-drawn skeleton: a diagram's real shape is
+   unknowable before it renders, so any invented node layout is a guess — and a
+   guessed layout built out of grey bars reads as a chart-ish blob rather than
+   as a diagram.
+
+   Why the PLAIN picture glyph: the placeholder stands for a media block that
+   has not arrived yet, which is exactly what an image icon means. A
+   diagram-specific glyph (e.g. `network`) over-specifies — it promises a node
+   graph, and a sequence diagram or a pie chart is not one.
+
+   Why the glyph sits ON a tile instead of animating on its own: a shimmer needs
+   SURFACE. Pulsing the bare glyph was measured as a no-op at 56dp — the stroke
+   is ~1.5px, so a 0.5→1 opacity change on that little ink is invisible at
+   reading distance, and the block looked frozen while the user waited. The tile
+   gives the sweep somewhere to travel, which is the same reason every other
+   skeleton in the app is a filled block.
+
+   The tile reuses the app's single skeleton language — `skeleton-shimmer`
+   keyframes and `--skeleton-fill` / `--skeleton-sheen`, both defined in
+   css/components.css and CONSUMED here. Declaring them on this element would
+   silently defeat any ancestor override (documented on `.skeleton-block`).
+
+   Deliberately NO spinner: one mark, one motion. The sweep is the motion
+   signal; a ring beside it would say the same thing twice.
+
+   Declared globally, not scoped: the markup is injected via `innerHTML` from
+   utils/mermaid.ts, so it carries no `data-v-*` attribute (design-guide red
+   line 1). */
 .mermaid .mermaid-loading {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: calc(24 * var(--dp));
+  /* Enough height to read as a media block rather than a caption bar, but not
+     a real diagram's height — reserving that would push the rest of the message
+     down and then yank it back when a small diagram lands. */
+  min-height: calc(120 * var(--dp));
+  padding: calc(20 * var(--dp));
 }
-/* Shape/rotation come from the shared global .li-spinner (css/components.css);
-   only the size is overridden. Declared globally (not scoped) because the
-   loading markup is injected via innerHTML from a util. */
-.mermaid .mermaid-spinner {
-  --li-size: calc(20 * var(--dp));
-  /* Kept from the pre-unification implementation, which spun at 0.6s. */
-  --li-duration: 0.6s;
+
+/* Visually hidden, still announced: every visible part is aria-hidden, so
+   without this the placeholder would be silent to a screen reader. */
+.mermaid .mermaid-loading-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The tile: the surface the sweep travels across, and the thing that makes the
+   placeholder read as "a media block is coming".
+
+   200x120 rather than a small square: the sweep is a horizontal gradient, so a
+   narrow tile gives it almost no travel and it degrades into a soft glow (a
+   96x96 tile measured exactly that way — indistinguishable from a pulse). This
+   is the smallest size where the band visibly MOVES across the surface while
+   the glyph still holds the eye. */
+.mermaid .mermaid-loading-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(200 * var(--dp));
+  height: calc(120 * var(--dp));
+  border-radius: var(--radius-md);
+  background-color: var(--skeleton-fill, var(--bg-tertiary, #e9ecef));
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--skeleton-sheen, color-mix(in srgb, var(--bg-primary, #fff) 60%, transparent)) 50%,
+    transparent 100%
+  );
+  background-repeat: no-repeat;
+  background-size: 200% 100%;
+  background-position: 150% 0;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+/* The glyph on the tile. Muted so it reads as a watermark on the skeleton, not
+   as content competing with the sweep; `currentColor` keeps it on the theme's
+   muted ink in all 36 themes. */
+.mermaid .mermaid-loading-icon {
+  width: calc(52 * var(--dp));
+  height: calc(52 * var(--dp));
+  color: var(--text-muted, #999);
+  opacity: 0.55;
+}
+
+/* The shimmer is decoration and stops; the tile itself still says "loading"
+   (same split as `.skeleton-block`). */
+@media (prefers-reduced-motion: reduce) {
+  .mermaid .mermaid-loading-tile {
+    animation: none;
+  }
 }
 
 /* Error pre — replaces inline styles for consistency */

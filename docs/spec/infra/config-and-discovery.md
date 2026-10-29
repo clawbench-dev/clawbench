@@ -93,9 +93,16 @@ flowchart TD
   - `GET /api/agents` → `agents[].models` / `agents[].cliModels`，以及 `acpStates[].modelListState.{resolvedModels,cliModels}`
   - `GET /api/ai/chat` → `modelListState.{models,resolvedModels,cliModels}`（新建会话从不与 ACP 通信，其模型列表只能来自这里，由 agent 级能力注册表解析；CLI 会话不返回该字段）
   - WS `model_list_update` → 同一组字段
-  - `POST /api/agents/{id}/refresh-models` → `{ models, cliModels }`（`models` 为与已缓存 ACP 列表合并后的结果；无 ACP 的 agent 直接返回发现结果）
+  - `POST /api/agents/{id}/refresh-models` → `{ models, cliModels, acpState? }`（`models` 为与已缓存 ACP 列表合并后的结果；无 ACP 的 agent 直接返回发现结果。ACP agent 见下条「刷新按传输分策略」）
 
   四者形状必须一致：此前 `/api/ai/chat` 只返回原始 ACP 列表，任何只消费 `models` 的客户端都会丢掉全部 CLI 模型。当 agent 没有 CLI 列表可合并时，`resolvedModels` 为空但 `models` 仍返回——整条列表丢失比未合并且更糟。`refresh-models` 曾只返回原始 CLI 发现结果，于是在 ACP 传输下点一次刷新就会把「agent 实际能跑的模型」替换成 CLI 骨架（含运行时不支持的条目）。
+- **刷新按传输分策略（`refresh-models`）**：
+  - **ACP**（`agentUsesACP`：`transport == "acp-stdio"`；`transport` 为空时按「有 `acp_command` 即 ACP」解析）：**直接问 agent 本身**——`ai.ProbeACPState` 建一个**临时** ACP 会话（连接不入池，避免污染 `GetCurrentModelIDByAgentID` 与正在跑的会话），从 `session/new` 响应取模型/模式/思考等级，再等 `available_commands_update` 稳定后取斜杠命令，写回 `AgentCapabilityRegistry`（用 merge 式 `Update*` 而非 `ForceUpdate`：后者整结构替换，会把命令清空），最后 `session/delete` 删除临时会话。
+  - **`session/delete` 不查能力位**（`sendDeleteSession`）：CodeBuddy 实现了该方法却不广告 `sessionCapabilities`，按能力跳过会每次刷新泄漏一个孤儿会话。永久删除路径 `deleteACPSession` 仍保留能力位门控。
+  - **探测失败不回落到 CLI 发现**：ACP 下的 CLI 列表只是猜测，回落会把不可运行的模型当成可运行。失败返回 500 `ModelDiscoveryFailed`（`detail.detail` 带原因）；无项目 Cookie 时 400 `NoProjectSelected`（`session/new` 要求绝对 cwd）。
+  - **命令等待窗口**：CodeBuddy 的插件/skill 命令要等 PluginManager 加载完（`codebuddyPluginLoadDelay` ≈ 4s）才推，窗口短了只会拿到内置命令；其他后端 1.5s / 400ms 静默。空结果表示「agent 没推」→ 保留已有列表，不清空 `/` 菜单。
+  - **CLI**：重跑后端模型发现并落库（原行为）。
+  - 响应 `acpState`（仅 ACP 分支）含 `{ commands, modeState?, thinkingEffortState? }`，只带**可用列表**与 agent 自报的 current id，不带用户选择。前端 `applyRefreshedACPState` 把它推进 mode/思考/命令三处（仅当 agent 是当前会话的 agent，否则会改错会话的 chip）。
 - **ACP 模型持久化**：ACP 上报的模型列表写入 `agents.acp_available_models`，因此重启后仍然可见。此前它只存在于内存，导致同一 agent 的模型列表在重启前后跳变（首个 ACP 会话前是 CLI 列表，之后是 ACP 列表）
 - **后台模型刷新**：模型探测在启动后台执行（`model.StartModelDiscoveryAsync`，`internal/model/refresh.go`）。完成后服务端广播 WS 事件 `agents_updated`，前端 `useAgents` 收到后强制重拉 `GET /api/agents`。手动刷新仍走 `POST /api/agents/rescan`（失效缓存、重跑完整发现）或单个 agent 的 `POST /api/agents/{id}/refresh-models`（只重探该 agent 的模型）
 - **用户配置优先**：用户手动定义的模型列表不会被自动发现覆盖（`models_auto_detected = 0` 且列表非空即受保护）；自动管理的 agent 保持其自动管理状态，该标记不是单向闩锁

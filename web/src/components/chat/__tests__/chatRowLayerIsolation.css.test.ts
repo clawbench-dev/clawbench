@@ -18,7 +18,7 @@ import { describe, expect, it } from 'vitest'
  *
  * `contain: paint` is the isolation mechanism: it bounds each row's paint to
  * its own box, so cross-row bleeding is impossible without making the row a
- * layer. It must stay under [data-app-mode]: desktop browsers do not have this
+ * layer. It must stay under [data-webview-mode]: desktop browsers do not have this
  * compositor bug, and paint containment changes the containing block for
  * injected fixed overlays.
  *
@@ -32,8 +32,8 @@ describe('chat row paint containment, no layer promotion (Android WebView GPU gh
   )
 
   function appModeChatMessageRule(): string {
-    const m = itemSource.match(/:root\[data-app-mode\]\s+\.chat-message\s*\{([^}]*)\}/)
-    expect(m, ':root[data-app-mode] .chat-message rule must exist').not.toBeNull()
+    const m = itemSource.match(/:root\[data-webview-mode\]\s+\.chat-message\s*\{([^}]*)\}/)
+    expect(m, ':root[data-webview-mode] .chat-message rule must exist').not.toBeNull()
     // Strip comments BEFORE matching. The rule's own doc block names
     // `contain: paint` in prose, so a naive /contain:\s*paint/ over the raw
     // body passes even when the declaration has been changed to `contain:
@@ -81,7 +81,7 @@ describe('chat row paint containment, no layer promotion (Android WebView GPU gh
     /** Declarations of the `:has()` escape rule, comments stripped. */
     function escapeRule(): string {
       const m = itemSource.match(
-        /:root\[data-app-mode\]\s+\.chat-message:has\(\.table-block-copy-menu\.is-open\)\s*\{([^}]*)\}/,
+        /:root\[data-webview-mode\]\s+\.chat-message:has\(\.table-block-copy-menu\.is-open\)\s*\{([^}]*)\}/,
       )
       expect(
         m,
@@ -112,7 +112,7 @@ describe('chat row paint containment, no layer promotion (Android WebView GPU gh
       // `.msg-card`) does nothing at all.
       expect(escapeRule().length).toBeGreaterThan(0)
       expect(itemSource).toMatch(
-        /:root\[data-app-mode\]\s+\.chat-message:has\(\.table-block-copy-menu\.is-open\)/,
+        /:root\[data-webview-mode\]\s+\.chat-message:has\(\.table-block-copy-menu\.is-open\)/,
       )
     })
 
@@ -135,7 +135,7 @@ describe('chat row paint containment, no layer promotion (Android WebView GPU gh
      */
     it('conditions the escape on .is-open, not just on the menu existing', () => {
       const sel = itemSource.match(
-        /(:root\[data-app-mode\]\s+\.chat-message:has\([^)]*\))\s*\{/,
+        /(:root\[data-webview-mode\]\s+\.chat-message:has\([^)]*\))\s*\{/,
       )
       expect(sel, 'the :has() escape rule must exist').not.toBeNull()
       const selector = sel![1]
@@ -165,14 +165,14 @@ describe('chat row paint containment, no layer promotion (Android WebView GPU gh
      */
     it('matches only while a menu is open, and stops matching once it closes', () => {
       const sel = itemSource.match(
-        /(:root\[data-app-mode\]\s+\.chat-message:has\([^)]*\))\s*\{/,
+        /(:root\[data-webview-mode\]\s+\.chat-message:has\([^)]*\))\s*\{/,
       )
       expect(sel).not.toBeNull()
-      // Strip the `:root[data-app-mode]` scope so a detached fixture row can be
-      // tested: jsdom's documentElement is not marked data-app-mode, and the
+      // Strip the `:root[data-webview-mode]` scope so a detached fixture row can be
+      // tested: jsdom's documentElement is not marked data-webview-mode, and the
       // scope is asserted separately above.
       const scoped = sel![1]
-      const unscoped = scoped.replace(/^:root\[data-app-mode\]\s*/, '')
+      const unscoped = scoped.replace(/^:root\[data-webview-mode\]\s*/, '')
 
       const row = document.createElement('div')
       row.className = 'chat-message'
@@ -220,8 +220,8 @@ describe('chat row paint containment, no layer promotion (Android WebView GPU gh
       // Must read the RAW rule body: `appModeChatMessageRule()` strips
       // comments, so asserting against it would be a tautology (prose can
       // never match once the prose is gone).
-      const m = itemSource.match(/:root\[data-app-mode\]\s+\.chat-message\s*\{([\s\S]*?)\n\}/)
-      expect(m, ':root[data-app-mode] .chat-message rule must exist').not.toBeNull()
+      const m = itemSource.match(/:root\[data-webview-mode\]\s+\.chat-message\s*\{([\s\S]*?)\n\}/)
+      expect(m, ':root[data-webview-mode] .chat-message rule must exist').not.toBeNull()
       const rawBody = m![1]
       expect(rawBody).not.toMatch(/only two `?position:\s*relative/)
       expect(rawBody).not.toMatch(/no absolutely\/fixed positioned descendants/)
@@ -232,7 +232,7 @@ describe('chat row paint containment, no layer promotion (Android WebView GPU gh
 
     it('names the module that injects the overlay', () => {
       // The rule must point at the real owner so the next reader can find it.
-      const m = itemSource.match(/:root\[data-app-mode\]\s+\.chat-message\s*\{([\s\S]*?)\n\}/)
+      const m = itemSource.match(/:root\[data-webview-mode\]\s+\.chat-message\s*\{([\s\S]*?)\n\}/)
       expect(m).not.toBeNull()
       expect(m![1]).toContain('useCodeBlockHeader')
       expect(m![1]).toContain('table-block-copy-menu')

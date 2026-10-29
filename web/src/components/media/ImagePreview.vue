@@ -5,8 +5,13 @@
     ref="containerRef">
     <div class="image-preview-body">
       <!-- Draggable (wide-screen) onto the chat column to attach the existing
-           file — same internal payload the file manager uses, no re-upload. -->
-      <img :src="mediaUrl" :alt="file.name" class="image-preview-img lightbox-img"
+           file — same internal payload the file manager uses, no re-upload.
+           `:key` is load-bearing: the pending-media placeholder is keyed on the
+           absence of `data-media-settled`, which localMediaFallback stamps on the
+           element once its bytes arrive. Reusing the element across a `src`
+           change (navigating to a sibling image) would keep the stamp and leave
+           the placeholder permanently suppressed for the new image. -->
+      <img :key="mediaUrl" :src="mediaUrl" :alt="file.name" class="image-preview-img lightbox-img"
         :draggable="isWideScreen"
         @dragstart="onImageDragStart"
         @dragend="onImageDragEnd" />

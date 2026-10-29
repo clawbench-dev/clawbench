@@ -131,3 +131,77 @@ export function certificateLabels(locale: string): CertificateLabels {
     cancel: 'Cancel connection',
   }
 }
+
+export interface FloatingCapsuleLabels {
+  /**
+   * Counter words. The number is rendered as a separate node (unlike Android's
+   * `%1$d` strings) because the capsule bolds it independently.
+   */
+  running: string
+  pending: string
+  unread: string
+  /** Shown when all three counters are zero. */
+  idle: string
+  openMain: string
+  hideMain: string
+  showFloating: string
+  disableFloating: string
+  resetPosition: string
+  hide: string
+  hideFloating: string
+  quit: string
+  /** Tooltip on the capsule body — the desktop stand-in for a long-press hint. */
+  hint: string
+  /**
+   * Accessible name for the capsule's close button.
+   *
+   * Separate from `hideFloating`: the menu item is a sentence ("Hide floating
+   * window") while this is a control label on a 16px disc, and screen readers
+   * announce it without any surrounding context.
+   */
+  closeLabel: string
+}
+
+/**
+ * Resolve the floating status capsule's strings from a raw locale string.
+ *
+ * The three counter words follow Android's `floating_stat_running` /
+ * `floating_stat_pending` / `floating_stat_unread` (Running / Pending / Unread,
+ * 执行中 / 待审批 / 未读) so both platforms label the same thing the same way.
+ */
+export function floatingCapsuleLabels(locale: string): FloatingCapsuleLabels {
+  if (normalizeNativeLanguage(locale) === 'zh') {
+    return {
+      running: '执行中',
+      pending: '待审批',
+      unread: '未读',
+      idle: '空闲',
+      openMain: '打开主界面',
+      hideMain: '隐藏主界面',
+      showFloating: '显示悬浮窗',
+      hideFloating: '隐藏悬浮窗',
+      disableFloating: '关闭悬浮窗功能',
+      resetPosition: '重置位置',
+      hide: '隐藏悬浮窗',
+      quit: '退出 ClawBench',
+      hint: '点击显示/隐藏主界面，右键更多操作',
+      closeLabel: '隐藏悬浮窗',
+    }
+  }
+  return {
+    running: 'Running',
+    pending: 'Pending',
+    unread: 'Unread',
+    idle: 'Idle',
+    openMain: 'Open main window',
+    hideMain: 'Hide main window',
+    showFloating: 'Show floating window',
+    hideFloating: 'Hide floating window',
+    disableFloating: 'Turn off floating window',
+    resetPosition: 'Reset position',
+    hide: 'Hide floating window',
+    quit: 'Quit ClawBench',
+    hint: 'Click to show or hide the window, right-click for more',
+    closeLabel: 'Hide floating window',
+  }
+}

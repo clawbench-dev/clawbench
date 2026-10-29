@@ -1701,19 +1701,20 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// The read connection pool was opened by store.Open before schema creation,
 	// so readers throughout InitDB use store.ReadDB() uniformly.
 	if isServerStartup {
-		rows, err := store.ReadDB().Query("SELECT id, content FROM chat_history WHERE streaming = 1")
+		rows, err := store.ReadDB().Query("SELECT id, COALESCE(session_id, ''), content FROM chat_history WHERE streaming = 1")
 		if err != nil {
 			return fmt.Errorf("failed to query orphaned streaming messages: %w", err)
 		}
 		defer func() { _ = rows.Close() }()
 		type orphanMsg struct {
-			id      int64
-			content string
+			id        int64
+			sessionID string
+			content   string
 		}
 		var orphans []orphanMsg
 		for rows.Next() {
 			var m orphanMsg
-			if err := rows.Scan(&m.id, &m.content); err != nil {
+			if err := rows.Scan(&m.id, &m.sessionID, &m.content); err != nil {
 				return fmt.Errorf("failed to scan orphaned streaming message: %w", err)
 			}
 			orphans = append(orphans, m)
@@ -1749,6 +1750,33 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 		if len(orphans) > 0 {
 			slog.Info("cleaned up orphaned streaming messages", slog.Int("count", len(orphans)))
+		}
+
+		// Record which sessions the restart interrupted, so the resume worker
+		// (StartRestartResume) can pick them up once the server is listening.
+		//
+		// A streaming=1 row at startup is an EXACT signal for "the previous
+		// process died mid-turn": nothing else can leave one behind (a clean
+		// shutdown finalizes every active stream, and a user cancel finalizes
+		// with streaming=0). That is why no extra status column or resume flag
+		// is needed — and why the worker cannot mistake an idle session for an
+		// interrupted one.
+		//
+		// The set is drained (once) by the worker, so a session is resumed at
+		// most once per process start.
+		seenInterrupted := make(map[string]bool, len(orphans))
+		interrupted := make([]string, 0, len(orphans))
+		for _, m := range orphans {
+			if m.sessionID == "" || seenInterrupted[m.sessionID] {
+				continue
+			}
+			seenInterrupted[m.sessionID] = true
+			interrupted = append(interrupted, m.sessionID)
+		}
+		recordInterruptedSessions(interrupted)
+		if len(interrupted) > 0 {
+			slog.Info("restart resume: sessions interrupted by the restart",
+				slog.Int("count", len(interrupted)))
 		}
 	}
 

@@ -75,6 +75,31 @@ export const NEAR_BOTTOM_PX = 200
 export const RESUME_FOLLOW_PX = 50
 
 /**
+ * Minimum distance from the top (px) at which older history starts loading.
+ *
+ * Loading exactly AT the top means the user always reaches the edge, sees the
+ * list stop, waits for the request, and then gets prepended content — the page
+ * feels like it "hangs" at the top. Prefetching a bit early hides the round
+ * trip behind the scroll: by the time the reader arrives, the older messages
+ * are already in the DOM.
+ */
+export const LOAD_MORE_AHEAD_PX = 400
+
+/**
+ * Whether the viewport is close enough to the top that older history should be
+ * fetched now. The band is at least LOAD_MORE_AHEAD_PX, and grows to one
+ * viewport height on tall panes — a fixed 400px is barely a third of a desktop
+ * chat pane, so the prefetch would still finish after the user got there.
+ *
+ * Deliberately a pure function: the two call sites (manual scroll and the
+ * programmatic scroll-to-top) must use the same rule, and the decision is
+ * otherwise untestable without faking a whole layout.
+ */
+export function shouldLoadOlderHistory(scrollTop: number, clientHeight: number): boolean {
+  return scrollTop <= Math.max(LOAD_MORE_AHEAD_PX, clientHeight)
+}
+
+/**
  * Whether the viewport at the given distance from the bottom counts as
  * "the user has left the bottom". Sampled on user input only — see the module
  * docblock for why content-driven scroll events must not call this.

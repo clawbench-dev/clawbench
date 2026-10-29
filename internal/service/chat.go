@@ -2645,6 +2645,11 @@ type SessionInfo struct {
 	Transport   string
 	AutoApprove bool
 	ProjectPath string // populated by GetSessionFullInfo only
+	// SessionType is the raw chat_sessions.session_type ('chat' / 'group' /
+	// 'scheduled' / 'group_member'), COALESCEd to '' when NULL. Carried on the
+	// same snapshot as the rest so a caller that must branch on it does not need
+	// a second query — and cannot see a different row between the two reads.
+	SessionType string
 }
 
 // ContextState holds persisted session context info (mode, thinking effort, usage)
@@ -3139,7 +3144,7 @@ func GetSessionFullInfoAny(sessionID string) *SessionInfo {
 
 func sessionFullInfo(sessionID string, includeArchived bool) *SessionInfo {
 	info := &SessionInfo{}
-	query := `SELECT s.backend, COALESCE(p.path, ''), s.title, s.agent_id, s.model, COALESCE(s.transport, ''), s.auto_approve
+	query := `SELECT s.backend, COALESCE(p.path, ''), s.title, s.agent_id, s.model, COALESCE(s.transport, ''), s.auto_approve, COALESCE(s.session_type, '')
 		   FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
 		  WHERE s.id = ?`
@@ -3147,7 +3152,7 @@ func sessionFullInfo(sessionID string, includeArchived bool) *SessionInfo {
 		query += " AND s.archived = 0"
 	}
 	err := store.ReadDB().QueryRow(query, sessionID).
-		Scan(&info.Backend, &info.ProjectPath, &info.Title, &info.AgentID, &info.Model, &info.Transport, &info.AutoApprove)
+		Scan(&info.Backend, &info.ProjectPath, &info.Title, &info.AgentID, &info.Model, &info.Transport, &info.AutoApprove, &info.SessionType)
 	if err != nil {
 		return nil
 	}
@@ -3504,6 +3509,21 @@ func GetLiveRunState(sessionID string) (messageID int64, questionID int64, quest
 // streaming row), so each recovered bubble is anchored to the right question.
 func GetLiveRunStates(sessionID string) []ws.LiveStreamState {
 	states := queryLiveStreamRows(sessionID)
+
+	// A streaming=1 row is NOT proof that a turn is running: the row survives a
+	// crash, a graceful restart (until InitDB rewrites it), and any path that
+	// finalizes the runner without rewriting its placeholder. Reporting those as
+	// live makes the client render a bubble that says "working" forever — the
+	// reported "session shows running but nothing is executing". The runner
+	// registry is the authority on "is a turn actually in flight", so drop rows
+	// whose session has no runner.
+	//
+	// A group turn registers its runner under the GROUP id (RunGroupTurnDrain
+	// registers there, not per member row), so one check on the session id
+	// covers every concurrent member stream on that timeline.
+	if len(states) > 0 && !IsSessionRunning(sessionID) {
+		return nil
+	}
 
 	// Resolve each stream's question independently (id order is the conversation
 	// order — see GetLiveRunState). Done AFTER the row cursor is closed: the read

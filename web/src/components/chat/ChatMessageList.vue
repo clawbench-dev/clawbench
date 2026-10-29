@@ -127,6 +127,7 @@
         :forkingMessageId="forkingMessageId"
         :resolveSpeaker="resolveSpeaker"
         :resolveSpeakerByName="resolveSpeakerByName"
+        :sessionSpeaker="sessionSpeaker"
         :hostMemberId="hostMemberId"
         :isGroupSession="isGroupSession"
         :userNickname="userNickname"
@@ -248,7 +249,7 @@ import { anchorCount, anchorPending, anchorKeyPending, messageAnchorKey } from '
 import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
-import { isUserScrolling, shouldPin, isUserAwayFromBottom, SCROLL_STOP_MS, NEAR_BOTTOM_PX, RESUME_FOLLOW_PX } from '@/utils/scrollState'
+import { isUserScrolling, shouldPin, isUserAwayFromBottom, shouldLoadOlderHistory, SCROLL_STOP_MS, NEAR_BOTTOM_PX, RESUME_FOLLOW_PX } from '@/utils/scrollState'
 import { saveChatScrollPosition, clearChatScrollPosition, getChatScrollPosition, hasChatScrollPosition } from '@/utils/chatScrollMemory'
 import { runningSessions } from '@/composables/useSessionIdentity'
 import { appLog } from '@/utils/appLog'
@@ -310,6 +311,14 @@ const props = defineProps({
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'open-btw', 'open-agent-config'])
 
 const messagesRef = ref(null)
+
+/** Stable accessor for consumers that only need the scroll container element
+ *  (the message rail measures its gutter and forwards leftover wheel delta).
+ *  A method reference rather than an inline arrow so a parent re-render cannot
+ *  look like a prop change. */
+function getMessagesEl() {
+  return messagesRef.value
+}
 
 /**
  * The scrollbar's layout cost, mirrored onto `--chat-scrollbar-lane`.
@@ -653,6 +662,21 @@ watch(() => props.loadingMore, (loading) => {
 watch(() => props.hasMore, (hasMore) => {
   if (hasMore) loadMorePending = false
 })
+// Prefetch older history as soon as the viewport enters the top band (see
+// shouldLoadOlderHistory). Called from both scroll paths — manual and the
+// programmatic scroll-to-top — so they can never disagree about when history
+// loads. The pending flag keeps a band that stays occupied across many scroll
+// events from firing overlapping requests.
+function maybeLoadOlder() {
+  if (loadMorePending) return
+  if (!props.hasMore || props.loadingMore) return
+  const el = messagesRef.value
+  if (!el) return
+  if (!shouldLoadOlderHistory(el.scrollTop, el.clientHeight)) return
+  loadMorePending = true
+  emit('load-more')
+}
+
 // Track whether the user is at the bottom of the chat.
 // When the user scrolls back to the bottom during streaming, auto-scroll resumes.
 // Kept as a ref for external consumers (useUserMsgIndex.setAtBottom,
@@ -782,16 +806,12 @@ function handleScroll() {
       scrolledDown.value = false
       clearTimeout(scrollDownTimer)
     }
-    // A programmatic jump to the top (FAB scroll-to-top) reaches scrollTop=0
-    // just like a manual scroll — load older history the same way. This check
-    // must run BEFORE the programmatic return below, otherwise the top-FAB
-    // scroll never triggers load-more (only a subsequent manual scroll does).
-    if (loadMorePending) return
-    if (!props.hasMore || props.loadingMore) return
-    if (el.scrollTop < 50) {
-      loadMorePending = true
-      emit('load-more')
-    }
+    // A programmatic jump to the top (FAB scroll-to-top) enters the prefetch
+    // band just like a manual scroll — load older history the same way. This
+    // check must run BEFORE the programmatic return below, otherwise the
+    // top-FAB scroll never triggers load-more (only a subsequent manual scroll
+    // does).
+    maybeLoadOlder()
     return
   }
 
@@ -804,6 +824,18 @@ function handleScroll() {
     scrolledDown.value = false
     clearTimeout(scrollDownTimer)
   }
+
+  // Prefetch band, not "pinned to the top": waiting until scrollTop hits 0 means
+  // every trip to the top ends in a visible stall (request round trip, then the
+  // list jumps as content is prepended). Firing while the top edge is still
+  // ~one viewport away lands the older page before the reader gets there.
+  //
+  // Runs BEFORE the scroll-delta gate below: that gate exists to keep finger
+  // tremor from popping the FAB, but a slow drag emits many sub-threshold
+  // deltas — gating the prefetch on it would mean history only starts loading
+  // after the reader has already stopped at the top, which is the stall this
+  // band exists to remove.
+  maybeLoadOlder()
 
   // Determine scroll direction. lastScrollTop was already updated at the top
   // of handleScroll (before any branch), so `prevScrollTop` is the previous
@@ -830,16 +862,6 @@ function handleScroll() {
     scrolledDown.value = true
     clearTimeout(scrollDownTimer)
     scrollDownTimer = setTimeout(() => { scrolledDown.value = false }, SCROLL_BUTTON_HIDE_DELAY)
-  }
-
-  if (loadMorePending) return
-  if (!props.hasMore || props.loadingMore) return
-  // Load-more fires only when truly pinned to the top (< 50px), tighter than
-  // NEAR_TOP_THRESHOLD (FAB hide) — near the top the user is still reading,
-  // fetching history must not trigger on a casual swipe.
-  if (el.scrollTop < 50) {
-    loadMorePending = true
-    emit('load-more')
   }
 }
 
@@ -1008,6 +1030,10 @@ onMounted(() => {
   document.addEventListener('mouseup', onDocumentMouseUp)
   observeContentGrowth()
   observeScrollbarLane()
+  // The navigation rail renders the conversation index permanently, so it has
+  // to be loaded even if nobody ever opens the drawer. Idempotent, and skipped
+  // when there is no session yet (the session watcher loads it on switch).
+  void ensureIndexLoaded()
 })
 onBeforeUnmount(() => {
   // Teardown without a session switch (e.g. the whole panel unmounts) still
@@ -1251,6 +1277,8 @@ const {
   loadingIndex,
   toggleUserMsgIndex,
   closeUserMsgIndex,
+  ensureIndexLoaded,
+  refreshIndexIfStale,
   jumpToUserMessage,
   jumpToAdjacentMessage,
   scrollToMessage: scrollToMessageUserMsg,
@@ -1279,6 +1307,33 @@ const {
 })
 
 /**
+ * Keep the rail's index in step with the conversation.
+ *
+ * The index is a snapshot from the API. That was invisible while its only
+ * consumer was a drawer that re-fetched on open; the always-visible rail would
+ * otherwise freeze at whatever the session looked like when it was opened.
+ *
+ * Keyed on the TAIL message's id (not the array length): loading older history
+ * prepends to the head, so length grows without any new message. Fires only
+ * once the tail has stopped streaming, because the index excludes in-flight
+ * rows by construction — refreshing mid-turn would store a snapshot that is
+ * already missing the turn being written.
+ */
+watch(
+  () => {
+    const list = props.messages
+    const tail = list && list.length > 0 ? list[list.length - 1] : null
+    return `${tail?.id ?? ''}|${tail?.streaming ? 1 : 0}`
+  },
+  (key) => {
+    const [id, streaming] = key.split('|')
+    if (!id || streaming === '1') return
+    void refreshIndexIfStale(id)
+  },
+  { immediate: true },
+)
+
+/**
  * Resolve the conversation-index row's speaker identity so the drawer shows the
  * real agent icon instead of a generic Bot.
  *
@@ -1296,6 +1351,23 @@ function resolveIndexSpeaker(agentId) {
   if (!a || !a.backend) return null
   return { name: a.name, backend: a.backend, avatar: a.avatar }
 }
+
+/**
+ * Speaker identity for the per-message header in a 1:1 session.
+ *
+ * Group sessions resolve a speaker per message (msg.agentId → member row), so
+ * they pass nothing here; a 1:1 session has exactly ONE possible speaker, so
+ * the message header renders the session's own agent through the very same
+ * `msg-speaker` block. `agentId` is the REAL agent id (not a member row id), so
+ * the avatar keeps opening the agent's config page, as it does in a group.
+ * Same gate as resolveIndexSpeaker above, so the message index and the bubbles
+ * can never name different speakers.
+ */
+const sessionSpeaker = computed(() => {
+  const a = props.currentAgent
+  if (!a || !a.backend) return null
+  return { name: a.name, backend: a.backend, avatar: a.avatar, agentName: '', agentId: a.id || '' }
+})
 
 // Nearest user message to viewport center — used for activeId highlight in index
 const scrollTick = ref(0)
@@ -1373,6 +1445,20 @@ const nearestIndexMsgId = computed(() => {
   if (!userMsgIndexDrawer.effectiveOpen.value) return null
   // The index lists both roles now, so the highlight tracks the nearest message
   // of any role rather than only the nearest user message.
+  const idx = nearestMessageIndex()
+  return idx === null ? null : (props.messages[idx]?.id ?? null)
+})
+
+/**
+ * Active id for the always-visible rail.
+ *
+ * Same measurement as `nearestIndexMsgId` but WITHOUT the drawer gate: the rail
+ * is on screen whenever the pane has a gutter, so it must track the reading
+ * position unconditionally. The two are separate computeds on purpose — sharing
+ * one would force the drawer's per-frame walk to run whenever the rail is
+ * visible, which is the exact cost that gate was added to avoid.
+ */
+const nearestRailMsgId = computed(() => {
   const idx = nearestMessageIndex()
   return idx === null ? null : (props.messages[idx]?.id ?? null)
 })
@@ -1506,6 +1592,9 @@ watch(() => props.currentSessionId, (newSid, oldSid) => {
   userMsgIndexDrawer.close()
   codeLinkPreview.close()
   userMsgIndexList.value = []
+  // The rail renders this same list permanently, so it must be reloaded for the
+  // incoming session rather than waiting for someone to open the drawer.
+  void ensureIndexLoaded()
   // Reset "all loaded" hint and load-more tracking on session switch
   showAllLoaded.value = false
   hadRecentLoadMore = false
@@ -1717,6 +1806,23 @@ defineExpose({
   closeUserMsgIndex,
   toggleUserMsgIndex,
   closeCodePreview: () => codeLinkPreview.close(),
+  // ── Navigation rail data ──
+  // The rail lives in the PANEL, not here, because it must span the panel's
+  // full height (down past the message scroller to the input island). These
+  // accessors let the panel render it from the very same index rows, so the
+  // rail and the conversation-index drawer can never disagree.
+  userMsgIndexList,
+  // A computed, not a getter: the panel renders this, so it must be a tracked
+  // dependency. A plain function would freeze at whatever the id was when the
+  // panel last rendered for an unrelated reason.
+  railActiveId: nearestRailMsgId,
+  getRailSpeakerResolver: () => resolveIndexSpeaker,
+  getBtwAnchorLookup: () => hasBtwAnchor,
+  getMessagesEl,
+  // The rail's pending slot has no index row to jump to, so the host answers
+  // "show me the reply that is being written" with the one control that already
+  // means that: scroll to the bottom, where the streaming bubble lives.
+  scrollToGenerating: () => scrollToBottomSmooth(),
 })
 </script>
 

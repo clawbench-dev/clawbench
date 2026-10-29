@@ -504,8 +504,15 @@ describe('ChatMessageList — programmatic scroll-to-top triggers load-more', ()
     expect(source).toContain('function scrollToTop()')
     // The programmatic-scroll branch must run the load-more check BEFORE its
     // return, not after (the manual-scroll path).
-    expect(source).toMatch(/if \(programmaticScrolling\) \{[\s\S]*?emit\('load-more'\)[\s\S]*?return\n  \}/)
-    expect(source).toContain("emit('load-more')")
+    expect(source).toMatch(/if \(programmaticScrolling\) \{[\s\S]*?maybeLoadOlder\(\)[\s\S]*?return\n  \}/)
+    // Both scroll paths share one decision point, so the prefetch band cannot
+    // drift between them. The template's "more older messages" pill and the
+    // defineEmits declaration also mention the event, hence scoping the count
+    // to the script body's two call sites.
+    const handler = source.slice(source.indexOf('function handleScroll()'), source.indexOf('// Touch tracking:'))
+    expect(handler.match(/maybeLoadOlder\(\)/g)).toHaveLength(2)
+    expect(handler).not.toContain("emit('load-more')")
+    expect(source.match(/function maybeLoadOlder\(\)[\s\S]*?emit\('load-more'\)/g)).toHaveLength(1)
   })
 })
 

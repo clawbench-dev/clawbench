@@ -466,24 +466,29 @@ describe('the landing session is marked read', () => {
   // remounted panel's first loadHistory fetches the conversation, so no
   // switchSession runs and the session the user is now looking at keeps its
   // unread dot until they switch away and back.
+  //
+  // The read itself goes through sessionReadGate (which also owns the
+  // visibility/foreground rule for the completion, cancel, resume and reconnect
+  // paths); these assertions pin the WIRING, which is what App.vue owns.
   const body = functionBody(code, 'hotSwitchProject')
 
   it('marks the landed session read after the project switch settles', () => {
-    const callAt = body.indexOf('markLandedSessionRead({')
+    const callAt = body.indexOf('markVisibleSessionRead(')
     expect(callAt, 'hotSwitchProject never marks the landed session read').toBeGreaterThan(-1)
-    // Must run after the panel restore: the visibility gate has to see the
-    // panel the user actually landed on, not the pre-switch one.
+    // Must run after the panel restore: the gate reads the layout the user
+    // actually landed on, not the pre-switch one.
     expect(callAt).toBeGreaterThan(body.indexOf('applyProjectPanel('))
-    // The cross-project target marks its own read in Phase 7 WITH project_path;
-    // passing the id here would fire a second, 403-ing POST without it.
-    const call = body.slice(callAt, body.indexOf('})', callAt))
-    expect(call, 'the cross-project target is not excluded').toContain('pendingSessionId')
   })
 
-  it('does not mark read for a task jump (the chat is never shown)', () => {
-    const callAt = body.indexOf('markLandedSessionRead({')
-    const guardAt = body.lastIndexOf('if (!pendingTaskNav)', callAt)
-    expect(guardAt, 'a task navigation would mark a session read sight unseen').toBeGreaterThan(-1)
+  it('skips both pending navigations, which own their own read', () => {
+    // A cross-project target marks read in Phase 7 WITH project_path (the
+    // backend needs it to prove ownership); marking it here too would fire a
+    // second, 403-ing POST without it. A task jump never shows the chat at all.
+    const callAt = body.indexOf('markVisibleSessionRead(')
+    const guardAt = body.lastIndexOf('if (!pendingTaskNav', callAt)
+    expect(guardAt, 'the landing read is not guarded').toBeGreaterThan(-1)
+    expect(body.slice(guardAt, callAt), 'the cross-project target is not excluded')
+      .toContain('pendingSessionId')
   })
 
   it('marks the cold-start landing too', () => {
@@ -491,9 +496,54 @@ describe('the landing session is marked read', () => {
     // old side effect; without this a reload leaves the remembered session
     // unread despite it being the first thing on screen.
     const initBody = functionBody(code, 'initializeApp')
-    const callAt = initBody.indexOf('markLandedSessionRead({')
+    const callAt = initBody.indexOf('markVisibleSessionRead(')
     expect(callAt, 'cold start never marks the landing session read').toBeGreaterThan(-1)
     expect(callAt).toBeGreaterThan(initBody.indexOf('applyProjectPanel('))
+  })
+})
+
+describe('the chat-panel visibility gate is registered and kept live', () => {
+  // The gate is what stops an INFERRED read (completion, resume, landing,
+  // reconnect) from clearing a badge while the user is on another panel. It
+  // cannot compute visibility itself — that needs App.vue's activeTab — so the
+  // predicate is registered here.
+  it('registers the predicate unconditionally at setup', () => {
+    // The gate fails OPEN when nothing is registered (so an unregistered host
+    // keeps its old read calls). A conditional registration would therefore
+    // look exactly like the bug this feature fixes: no gate, no error.
+    const at = code.indexOf('registerChatPanelVisibility(')
+    expect(at, 'the visibility predicate is never registered').toBeGreaterThan(-1)
+    // The predicate is an inline arrow whose WHOLE body is the shared helper —
+    // asserting only "contains isChatPanelVisible" let a `true || …` mutant
+    // through, i.e. a registered predicate that always reports "visible" and
+    // therefore gates nothing.
+    const open = code.indexOf('(', at)
+    const call = code.slice(open, code.indexOf('\n)', open))
+    expect(call, 'the predicate does not delegate to the shared helper')
+      .toMatch(/^\(\(\s*\)\s*=>\s*isChatPanelVisible\(\{/)
+    // Refs must be unwrapped: `isWideScreen` used bare is a constant-true ref
+    // object, which would make every panel look visible.
+    expect(call).toMatch(/isWideScreen:\s*isWideScreen\.value/)
+    expect(call).toMatch(/chatCollapsed:\s*chatCollapsed\.value/)
+    expect(call).toMatch(/activeTab:\s*activeTab\.value/)
+  })
+
+  it('re-marks read when the panel becomes visible, so a gated badge cannot stick', () => {
+    // The gate answers "was the panel on screen when the event happened?".
+    // When the answer was no, the user can still reveal the panel themselves —
+    // and none of those paths mark read on their own (switchTab only reloads
+    // the list, ChatPanelContent only reloads history, and clicking the
+    // already-current row early-returns). Without this watcher the badge would
+    // stay lit while the user stares at the reply.
+    const at = code.indexOf('([visible, sid])')
+    expect(at, 'no watcher re-marks read when the panel becomes visible').toBeGreaterThan(-1)
+    const region = code.slice(Math.max(0, at - 500), at + 500)
+    expect(region).toContain('markVisibleSessionRead(')
+    // Both inputs must feed the trigger: the panel can become visible because
+    // the tab/column changed, OR it can start showing another session while
+    // already visible (the list-click path).
+    expect(region).toMatch(/isChatPanelVisible\(\{/)
+    expect(region).toMatch(/sessionIdentity\.currentSessionId\.value/)
   })
 })
 

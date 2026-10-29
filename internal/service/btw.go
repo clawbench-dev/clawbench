@@ -219,7 +219,8 @@ func persistBtwQuestion(sessionID, projectPath string, anchorID int64, question,
 // ListBtwQuestions returns a session's /btw records in chronological order,
 // oldest first. The chat list groups them by anchor to render its markers.
 func ListBtwQuestions(sessionID string) ([]BtwQuestion, error) {
-	rows, err := store.ReadDB().QueryContext(context.Background(),
+	rows, err := store.ReadDB().QueryContext(
+		context.Background(),
 		`SELECT b.id, b.session_id, COALESCE(p.path, ''), b.anchor_message_id, b.question, b.answer, b.model, b.error, b.created_at
 		   FROM btw_questions b
 		   LEFT JOIN projects p ON p.id = b.project_id
