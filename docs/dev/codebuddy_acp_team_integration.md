@@ -487,11 +487,14 @@ slim 块没有 `input`，`sessionId` 也可能不再可解析 ⇒ prompt 静默�
 `sendSessionUpdateWithRetries` 重试最多 3 次 —— 一次「超时后才落地」的发送因此被重发，
 同一 update 对象（同一 `_meta`）到达 2–3 次。实测 multiplicity 恰为 2 与 3。
 
-修法：`internal/ai/acp_dup_chunk.go` 在帧级按
-`sessionId + sessionUpdate + messageId + timestamp + member + text` 去重（与 CodeBuddy 内部
-`chunkPublicationKey` 同构），**`messageId` 与 `timestamp` 缺一不去重**（上游同款规则：
-只凭文本会把模型合法重复的同一个 token 也丢掉）。集合每回合 `Prompt` 起点清空，上限
-`maxDupChunkKeys` 溢出时清空（只会放行旧重复，不会丢新内容）。**仅对 codebuddy 生效**。
+修法：`internal/ai/acp_dup_chunk.go` 在帧级去重。身份键照搬 CodeBuddy 内部的
+`chunkPublicationKey`：`sessionId + sessionUpdate + messageId + timestamp +
+conversationRequestId??requestId + parentToolCallId + text`，**`messageId` 与 `timestamp`
+缺一不去重**。但**判据是「紧邻」而不是上游的 5 秒窗口**：真重试是同步重发同一对象，
+必然紧挨着；合法重复一定隔着别的帧（真实帧实测：相邻同文本 0/81，非相邻 55 对）。
+时间窗会误删——生产一周内 179 组只丢了 1 次，而真重试必然连续丢 2–3 次。
+状态只有 `lastChunkKey` 一个字段，每回合 `Prompt` 起点清空。**仅对 codebuddy 生效**。
+详见 `docs/dev/acp_dup_chunk_port.md`。
 
 ---
 

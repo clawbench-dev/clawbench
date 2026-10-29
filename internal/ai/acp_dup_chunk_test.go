@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
@@ -13,22 +12,10 @@ import (
 	"clawbench/internal/model"
 )
 
-// pinChunkClock replaces the dedup clock with a controllable one, returning an
-// advance function. Tests must not sleep: the window is a semantic boundary.
-func pinChunkClock(t *testing.T) func(time.Duration) {
-	t.Helper()
-	base := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
-	now := base
-	prev := chunkDedupNow
-	chunkDedupNow = func() time.Time { return now }
-	t.Cleanup(func() { chunkDedupNow = prev })
-	return func(d time.Duration) { now = now.Add(d) }
-}
-
 // codeBuddyChunk builds an agent_message_chunk with the _meta a real CodeBuddy
-// frame carries (verified on the wire 2026-10-29). `ts` is the message-level
-// publication timestamp; upstream's key uses it verbatim, so two frames of the
-// same message differ here even when their text is identical.
+// frame carries (verified on the wire 2026-10-29). `ts` is stamped per frame at
+// send time, so two frames of one message normally differ here; a retry reuses
+// the whole object and therefore repeats it.
 func codeBuddyChunk(text, ts string) acp.SessionUpdate {
 	mid := "01a185c9-eefe-7d43-b6e4-5aa20799273e"
 	return acp.SessionUpdate{
@@ -45,11 +32,28 @@ func codeBuddyChunk(text, ts string) acp.SessionUpdate {
 	}
 }
 
+// drainContentText concatenates every content/thinking payload the mapper
+// emitted, so a test can assert on the assembled text exactly as the executor's
+// accumulator would.
+func drainContentText(t *testing.T, ch chan StreamEvent) string {
+	t.Helper()
+	var out string
+	for {
+		select {
+		case ev := <-ch:
+			if ev.Type == "content" || ev.Type == "thinking" {
+				out += ev.Content
+			}
+		default:
+			return out
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
-// chunkIdentity — the ported key
+// chunkIdentity
 // ---------------------------------------------------------------------------
 
-// Both halves are required, exactly like upstream's `if (ts && msgId)`.
 func TestChunkIdentity_RequiresTimestampAndMessageID(t *testing.T) {
 	base := map[string]any{
 		metaKeyCodeBuddyMessageID: "m1",
@@ -89,8 +93,7 @@ func TestChunkIdentity_PrefersTopLevelMessageID(t *testing.T) {
 	assert.NotEqual(t, withTop, withoutTop, "the top-level messageId must win")
 }
 
-// The key prefers conversationRequestId and falls back to requestId, matching
-// upstream's `conversationRequestId ?? requestId`.
+// The key prefers conversationRequestId and falls back to requestId.
 func TestChunkIdentity_RequestIDPrecedence(t *testing.T) {
 	withConv := chunkIdentity("sid", "agent_message_chunk", "", map[string]any{
 		metaKeyCodeBuddyMessageID:             "m1",
@@ -139,133 +142,107 @@ func TestChunkIdentity_DistinguishesEveryComponent(t *testing.T) {
 	}
 }
 
-// Non-volatile variants get no key at all — upstream's isVolatileSessionUpdate.
-func TestChunkIdentity_NonVolatileVariantHasNoKey(t *testing.T) {
+// The key must be unambiguous: the old implementation joined fields with \x00,
+// which a text containing a NUL byte could forge. JSON escaping cannot.
+func TestChunkIdentity_IsInjective(t *testing.T) {
 	meta := map[string]any{
 		metaKeyCodeBuddyMessageID: "m1",
 		metaKeyCodeBuddyTimestamp: "t1",
 	}
-	for _, variant := range []string{"tool_call", "tool_call_update", "plan", "session_info_update", ""} {
-		assert.Empty(t, chunkIdentity("sid", variant, "", meta, "hi"),
-			"%q is not volatile and must not be de-duplicated", variant)
+	// Old scheme: "a\x00b" and "a" + "\x00b" collide. JSON must not.
+	a := chunkIdentity("sid", "agent_message_chunk", "", meta, "a\x00b")
+	b := chunkIdentity("sid", "agent_message_chunk", "", meta, "a\"b")
+	assert.NotEqual(t, a, b)
+}
+
+// ---------------------------------------------------------------------------
+// isDuplicateChunk — adjacency, not elapsed time
+// ---------------------------------------------------------------------------
+
+func TestIsDuplicateChunk_DropsOnlyTheImmediatelyRepeatedChunk(t *testing.T) {
+	conn := &ACPConn{}
+
+	assert.False(t, conn.isDuplicateChunk("k1"), "first delivery passes")
+	assert.True(t, conn.isDuplicateChunk("k1"), "an immediate repeat is a retry")
+	assert.True(t, conn.isDuplicateChunk("k1"), "and so is a third copy")
+}
+
+// THE regression. A retry is adjacent; a legitimate repeat is not.
+//
+// CodeBuddy streams character by character, so a delimiter row arrives as
+// `'|' ' ---' ' |' ' ---' ' |'`. The two `' ---'` frames are identical but are
+// separated by `' |'`, so they are both content. A time-window guard (5 s, as
+// upstream uses on its publish bus) deleted the second one; that is exactly the
+// production defect — 6436 chunks dropped over one week, median gap between
+// drops 11.7 s, leaving 16 assistant messages with a `|---|---|` missing and the
+// whole table rendering as a paragraph.
+func TestIsDuplicateChunk_NonAdjacentRepeatIsContent(t *testing.T) {
+	conn := &ACPConn{}
+
+	assert.False(t, conn.isDuplicateChunk("delim"), "first ' ---'")
+	assert.False(t, conn.isDuplicateChunk("pipe"), "intervening ' |'")
+	assert.False(t, conn.isDuplicateChunk("delim"),
+		"the second ' ---' is separated by output, so it is content — a 5 s window would delete it here")
+}
+
+// A repeat that happens long after its twin is still content. This is the case
+// a time window gets wrong at any size, and the reason the window was removed.
+func TestIsDuplicateChunk_RepeatMuchLaterIsContent(t *testing.T) {
+	conn := &ACPConn{}
+
+	assert.False(t, conn.isDuplicateChunk("row"))
+	// Hundreds of frames later, the same delimiter row appears again.
+	for i := range 200 {
+		assert.False(t, conn.isDuplicateChunk("filler"+string(rune('a'+i%26))+string(rune('a'+i/26))))
 	}
-}
-
-// ---------------------------------------------------------------------------
-// isDuplicateChunk — the ported window
-// ---------------------------------------------------------------------------
-
-func TestIsDuplicateChunk_DropsRepeatInsideWindow(t *testing.T) {
-	pinChunkClock(t)
-	conn := &ACPConn{}
-	id := "key"
-
-	assert.False(t, conn.isDuplicateChunk(id), "first delivery must pass")
-	assert.True(t, conn.isDuplicateChunk(id), "repeat inside the window must be dropped")
-	assert.True(t, conn.isDuplicateChunk(id), "a third copy is still a duplicate")
-
-	// A different key is unaffected — the guard must not latch.
-	assert.False(t, conn.isDuplicateChunk("other"))
-}
-
-// Upstream compares `now - seenAt < eQ` against a timestamp it only writes on
-// acceptance, so a suppressed duplicate does not slide the window.
-func TestIsDuplicateChunk_WindowMeasuredFromAcceptedDelivery(t *testing.T) {
-	advance := pinChunkClock(t)
-	conn := &ACPConn{}
-	id := "key"
-
-	require.False(t, conn.isDuplicateChunk(id))
-
-	advance(chunkDedupWindow - time.Millisecond)
-	assert.True(t, conn.isDuplicateChunk(id), "inside the window: duplicate")
-
-	advance(2 * time.Millisecond)
-	assert.False(t, conn.isDuplicateChunk(id),
-		"past the window measured from acceptance, the same key is content again")
+	assert.False(t, conn.isDuplicateChunk("row"), "a distant repeat is content")
 }
 
 func TestIsDuplicateChunk_EmptyIdentityNeverDrops(t *testing.T) {
-	pinChunkClock(t)
 	conn := &ACPConn{}
+	// Frames without the identity pair cannot be de-duplicated; dropping them
+	// would lose content.
 	assert.False(t, conn.isDuplicateChunk(""))
 	assert.False(t, conn.isDuplicateChunk(""))
 }
 
 func TestIsDuplicateChunk_NilConnNeverDrops(t *testing.T) {
-	pinChunkClock(t)
 	var conn *ACPConn
 	assert.False(t, conn.isDuplicateChunk("anything"))
 }
 
-func TestResetChunkDedup_AllowsTheSameChunkNextTurn(t *testing.T) {
-	pinChunkClock(t)
+func TestResetChunkDedup_ForgetsThePreviousFrame(t *testing.T) {
 	conn := &ACPConn{}
-	require.False(t, conn.isDuplicateChunk("key"))
-	require.True(t, conn.isDuplicateChunk("key"))
+	require.False(t, conn.isDuplicateChunk("k1"))
 
 	conn.resetChunkDedup()
-	assert.False(t, conn.isDuplicateChunk("key"), "a new turn must accept the same identity")
+	// Without the reset, the first chunk of the next turn could be mistaken for
+	// a retry of the last chunk of the previous turn.
+	assert.False(t, conn.isDuplicateChunk("k1"), "a new turn starts with no previous frame")
 }
 
-// Overflow prunes expired entries rather than discarding live ones.
-func TestIsDuplicateChunk_OverflowPrunesExpired(t *testing.T) {
-	advance := pinChunkClock(t)
+// A dropped retry must not become the new "previous": three copies of one frame
+// collapse to one, and the frame after them is still compared against the
+// accepted one.
+func TestIsDuplicateChunk_RetryDoesNotReplacePrevious(t *testing.T) {
 	conn := &ACPConn{}
 
-	for i := range maxChunkDedupEntries {
-		require.False(t, conn.isDuplicateChunk("k"+string(rune(i%1000))+string(rune(i/1000))))
-	}
-	advance(chunkDedupWindow)
-
-	fresh := "fresh"
-	require.False(t, conn.isDuplicateChunk(fresh))
-	assert.True(t, conn.isDuplicateChunk(fresh),
-		"pruning must keep the entry recorded for the fresh chunk")
+	require.False(t, conn.isDuplicateChunk("a"))
+	require.True(t, conn.isDuplicateChunk("a"))
+	require.True(t, conn.isDuplicateChunk("a"))
+	assert.False(t, conn.isDuplicateChunk("b"), "a new frame after the retries is content")
+	assert.True(t, conn.isDuplicateChunk("b"), "and its own retry is still dropped")
 }
 
 // ---------------------------------------------------------------------------
 // end-to-end: the real mapping path
 // ---------------------------------------------------------------------------
 
-// drainContentText concatenates every content/thinking payload the mapper
-// emitted, so a test can assert on the assembled text exactly as the executor's
-// accumulator would.
-func drainContentText(t *testing.T, ch chan StreamEvent) string {
-	t.Helper()
-	var out string
-	for {
-		select {
-		case ev := <-ch:
-			if ev.Type == "content" || ev.Type == "thinking" {
-				out += ev.Content
-			}
-		default:
-			return out
-		}
-	}
-}
-
-// THE regression. CodeBuddy streams model output character by character, so a
-// single table's delimiter row arrives as frames whose text repeats constantly:
-//
-//	'|'  ' ---'  ' |'  ' ---'  ' |'  '\n'
-//
-// Each frame carries its own `timestamp`, so upstream's key differs for every
-// one of them and none is dropped. A key that ignored `timestamp` (or that used
-// a coarser identity) deleted the repeats — measured 2026-10-29: 16 assistant
-// messages each lost exactly one `|---|---|`, which left a delimiter row two
-// cells short of its header, and marked then rejected the whole table.
-//
-// Verified against real wire data: 82 frames of a two-table reply produce zero
-// duplicate keys under this scheme, while ' |' repeats 21 times with 21
-// distinct timestamps.
-func TestMapACPSessionUpdate_TableDelimiterRowsSurvive(t *testing.T) {
-	pinChunkClock(t)
+// A delimiter row is six frames; none may be lost.
+func TestMapACPSessionUpdate_TableDelimiterRowSurvives(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "codebuddy", Backend: "codebuddy"}, "sid")
 	ch := make(chan StreamEvent, 512)
 
-	// Real frame sequence for one delimiter row, each with a distinct timestamp.
 	frames := []struct{ text, ts string }{
 		{"|", "2026-10-29T03:52:47.940Z"},
 		{" ---", "2026-10-29T03:52:47.950Z"},
@@ -286,10 +263,8 @@ func TestMapACPSessionUpdate_TableDelimiterRowsSurvive(t *testing.T) {
 		"every frame of the delimiter row must reach the client")
 }
 
-// Three tables in one message: two share the same two-column delimiter row and
-// the six-column one contains it as a prefix. All must survive.
+// Three tables in one message; two share the same two-column delimiter row.
 func TestMapACPSessionUpdate_MultipleTablesKeepTheirDelimiterRows(t *testing.T) {
-	pinChunkClock(t)
 	conn := newACPConn(&model.Agent{ID: "codebuddy", Backend: "codebuddy"}, "sid")
 	ch := make(chan StreamEvent, 512)
 
@@ -302,9 +277,7 @@ func TestMapACPSessionUpdate_MultipleTablesKeepTheirDelimiterRows(t *testing.T) 
 		"| EP04 | 同一份素材 |\n",
 	}
 	for i, text := range chunks {
-		// Distinct timestamp per frame, as on the wire.
-		mapACPSessionUpdate(codeBuddyChunk(text, "2026-10-29T03:52:47."+padTS(i)+"Z"),
-			ch, context.Background(), conn, nil)
+		mapACPSessionUpdate(codeBuddyChunk(text, tsFor(i)), ch, context.Background(), conn, nil)
 	}
 
 	got := drainContentText(t, ch)
@@ -323,19 +296,30 @@ func TestMapACPSessionUpdate_MultipleTablesKeepTheirDelimiterRows(t *testing.T) 
 	assert.Equal(t, 1, sixCol, "the six-column delimiter row must survive")
 }
 
-func padTS(i int) string {
-	s := "000" + string(rune('0'+i%10))
-	return s[len(s)-3:]
+// tsFor produces a distinct timestamp per index. It must not wrap: a repeated
+// timestamp combined with repeated text would be indistinguishable from a
+// retry, i.e. the helper would reproduce the bug under test.
+func tsFor(i int) string {
+	return "2026-10-29T03:52:47." + strings.Repeat("0", 3-len(itoa(i))) + itoa(i) + "Z"
 }
 
-// The guard still has to do its original job: a retry re-sends the SAME frame
-// (identical timestamp), so it is dropped.
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var b []byte
+	for i > 0 {
+		b = append([]byte{byte('0' + i%10)}, b...)
+		i /= 10
+	}
+	return string(b)
+}
+
+// The guard still has to do its original job: a retry re-sends the SAME frame.
 func TestMapACPSessionUpdate_ImmediateRetryIsDropped(t *testing.T) {
-	pinChunkClock(t)
 	conn := newACPConn(&model.Agent{ID: "codebuddy", Backend: "codebuddy"}, "sid")
 	ch := make(chan StreamEvent, 64)
 
-	// The team bridge retries up to 3 times with the same update object.
 	for range 3 {
 		mapACPSessionUpdate(codeBuddyChunk("已经完成。\n", "2026-10-29T03:52:47.908Z"),
 			ch, context.Background(), conn, nil)
@@ -345,24 +329,44 @@ func TestMapACPSessionUpdate_ImmediateRetryIsDropped(t *testing.T) {
 		"a retry of the same frame must not duplicate the text")
 }
 
-// Thinking chunks take the same path.
+// A frame identical to an earlier one, but with output in between, must survive
+// end to end. This is the production shape of the content loss.
+func TestMapACPSessionUpdate_SameTextLaterInMessageIsKept(t *testing.T) {
+	conn := newACPConn(&model.Agent{ID: "codebuddy", Backend: "codebuddy"}, "sid")
+	ch := make(chan StreamEvent, 512)
+
+	// Two tables separated by a paragraph, both using the same delimiter row.
+	chunks := []string{
+		"| A | B |\n", "|---|---|\n", "| 1 | 2 |\n\n",
+		"中间一段说明文字。\n\n",
+		"| C | D |\n", "|---|---|\n", "| 3 | 4 |\n",
+	}
+	for i, text := range chunks {
+		mapACPSessionUpdate(codeBuddyChunk(text, tsFor(i)), ch, context.Background(), conn, nil)
+	}
+
+	got := drainContentText(t, ch)
+	assert.Equal(t, strings.Join(chunks, ""), got)
+	assert.Equal(t, 2, strings.Count(got, "|---|---|"), "both delimiter rows must survive")
+}
+
 func TestMapACPSessionUpdate_ThoughtChunkRetryIsDropped(t *testing.T) {
-	pinChunkClock(t)
 	conn := newACPConn(&model.Agent{ID: "codebuddy", Backend: "codebuddy"}, "sid")
 	ch := make(chan StreamEvent, 64)
 
 	mid := "m1"
-	for range 2 {
-		mapACPSessionUpdate(acp.SessionUpdate{
-			AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{
-				Meta: map[string]any{
-					metaKeyCodeBuddyMessageID: mid,
-					metaKeyCodeBuddyTimestamp: "t1",
-				},
-				MessageId: &mid,
-				Content:   acp.TextBlock("嗯"),
+	frame := acp.SessionUpdate{
+		AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{
+			Meta: map[string]any{
+				metaKeyCodeBuddyMessageID: mid,
+				metaKeyCodeBuddyTimestamp: "t1",
 			},
-		}, ch, context.Background(), conn, nil)
+			MessageId: &mid,
+			Content:   acp.TextBlock("嗯"),
+		},
+	}
+	for range 2 {
+		mapACPSessionUpdate(frame, ch, context.Background(), conn, nil)
 	}
 
 	assert.Equal(t, "嗯", drainContentText(t, ch))
@@ -371,7 +375,6 @@ func TestMapACPSessionUpdate_ThoughtChunkRetryIsDropped(t *testing.T) {
 // The guard is CodeBuddy-only: another agent repeating identical text must reach
 // the client intact.
 func TestMapACPSessionUpdate_DedupDoesNotApplyToOtherBackends(t *testing.T) {
-	pinChunkClock(t)
 	conn := newACPConn(&model.Agent{ID: "claude", Backend: "claude"}, "sid")
 	ch := make(chan StreamEvent, 64)
 
@@ -383,10 +386,8 @@ func TestMapACPSessionUpdate_DedupDoesNotApplyToOtherBackends(t *testing.T) {
 	assert.Equal(t, "哈哈哈", drainContentText(t, ch))
 }
 
-// A frame without the identity pair is never dropped: dropping content we
-// cannot identify is worse than the duplication.
+// A frame without the identity pair is never dropped.
 func TestMapACPSessionUpdate_KeepsChunksWithoutIdentity(t *testing.T) {
-	pinChunkClock(t)
 	conn := newACPConn(&model.Agent{ID: "codebuddy", Backend: "codebuddy"}, "sid")
 	ch := make(chan StreamEvent, 64)
 
@@ -406,4 +407,118 @@ func TestChunkDedupEnabled_OnlyCodeBuddy(t *testing.T) {
 	for _, backend := range []string{"claude", "codex", "kimi", "opencode", "hermes", "cursor", "pi", ""} {
 		assert.False(t, chunkDedupEnabled(backend), "%s must not be de-duplicated", backend)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// real wire replay
+// ---------------------------------------------------------------------------
+
+// TestMapACPSessionUpdate_RealWireSequenceIsLossless replays the EXACT frame
+// sequence captured from a real `codebuddy --acp` session (2026-10-29, 82
+// agent_message_chunk frames of a two-table reply) and asserts every byte
+// arrives.
+//
+// This is the test that can catch the actual production defect. The reply is
+// character-streamed: it contains frames with identical text separated by a
+// single frame (two ' ---' with one ' |' between them) and frames stamped in the
+// SAME millisecond. Hand-written fixtures with strictly increasing timestamps
+// cannot reproduce that shape, which is why they passed against the buggy build.
+func TestMapACPSessionUpdate_RealWireSequenceIsLossless(t *testing.T) {
+	conn := newACPConn(&model.Agent{ID: "codebuddy", Backend: "codebuddy"}, "sid")
+	ch := make(chan StreamEvent, 1024)
+
+	frames := []struct{ text, ts string }{
+		{"|", "2026-10-29T03:52:47.908Z"},
+		{" ", "2026-10-29T03:52:47.909Z"},
+		{"项目", "2026-10-29T03:52:47.910Z"},
+		{" |", "2026-10-29T03:52:47.920Z"},
+		{" ", "2026-10-29T03:52:47.921Z"},
+		{"说明", "2026-10-29T03:52:47.922Z"},
+		{" |\n", "2026-10-29T03:52:47.939Z"},
+		{"|", "2026-10-29T03:52:47.940Z"},
+		{" ---", "2026-10-29T03:52:47.950Z"},
+		{" |", "2026-10-29T03:52:47.951Z"},
+		{" ---", "2026-10-29T03:52:47.952Z"},
+		{" |\n", "2026-10-29T03:52:47.952Z"},
+		{"|", "2026-10-29T03:52:47.953Z"},
+		{" ", "2026-10-29T03:52:47.953Z"},
+		{"列", "2026-10-29T03:52:47.965Z"},
+		{"一", "2026-10-29T03:52:47.980Z"},
+		{" |", "2026-10-29T03:52:47.981Z"},
+		{" ", "2026-10-29T03:52:47.982Z"},
+		{"内容", "2026-10-29T03:52:47.982Z"},
+		{" |\n", "2026-10-29T03:52:47.995Z"},
+		{"|", "2026-10-29T03:52:47.996Z"},
+		{" ", "2026-10-29T03:52:47.997Z"},
+		{"列", "2026-10-29T03:52:47.997Z"},
+		{"二", "2026-10-29T03:52:47.998Z"},
+		{" |", "2026-10-29T03:52:48.017Z"},
+		{" ", "2026-10-29T03:52:48.021Z"},
+		{"内容", "2026-10-29T03:52:48.023Z"},
+		{" |\n\n", "2026-10-29T03:52:48.024Z"},
+		{"|", "2026-10-29T03:52:48.025Z"},
+		{" A", "2026-10-29T03:52:48.026Z"},
+		{" |", "2026-10-29T03:52:48.042Z"},
+		{" B", "2026-10-29T03:52:48.045Z"},
+		{" |", "2026-10-29T03:52:48.046Z"},
+		{" C", "2026-10-29T03:52:48.048Z"},
+		{" |", "2026-10-29T03:52:48.050Z"},
+		{" D", "2026-10-29T03:52:48.051Z"},
+		{" |", "2026-10-29T03:52:48.058Z"},
+		{" E", "2026-10-29T03:52:48.061Z"},
+		{" |\n", "2026-10-29T03:52:48.063Z"},
+		{"|", "2026-10-29T03:52:48.065Z"},
+		{" ---", "2026-10-29T03:52:48.071Z"},
+		{" |", "2026-10-29T03:52:48.072Z"},
+		{" ---", "2026-10-29T03:52:48.074Z"},
+		{" |", "2026-10-29T03:52:48.074Z"},
+		{" ---", "2026-10-29T03:52:48.075Z"},
+		{" |", "2026-10-29T03:52:48.076Z"},
+		{" ---", "2026-10-29T03:52:48.116Z"},
+		{" |", "2026-10-29T03:52:48.117Z"},
+		{" ---", "2026-10-29T03:52:48.118Z"},
+		{" |\n", "2026-10-29T03:52:48.119Z"},
+		{"|", "2026-10-29T03:52:48.121Z"},
+		{" ", "2026-10-29T03:52:48.123Z"},
+		{"1", "2026-10-29T03:52:48.124Z"},
+		{" |", "2026-10-29T03:52:48.125Z"},
+		{" ", "2026-10-29T03:52:48.127Z"},
+		{"2", "2026-10-29T03:52:48.128Z"},
+		{" |", "2026-10-29T03:52:48.129Z"},
+		{" ", "2026-10-29T03:52:48.131Z"},
+		{"3", "2026-10-29T03:52:48.133Z"},
+		{" |", "2026-10-29T03:52:48.135Z"},
+		{" ", "2026-10-29T03:52:48.137Z"},
+		{"4", "2026-10-29T03:52:48.138Z"},
+		{" |", "2026-10-29T03:52:48.140Z"},
+		{" ", "2026-10-29T03:52:48.142Z"},
+		{"5", "2026-10-29T03:52:48.144Z"},
+		{" |\n", "2026-10-29T03:52:48.146Z"},
+		{"|", "2026-10-29T03:52:48.149Z"},
+		{" ", "2026-10-29T03:52:48.150Z"},
+		{"6", "2026-10-29T03:52:48.152Z"},
+		{" |", "2026-10-29T03:52:48.154Z"},
+		{" ", "2026-10-29T03:52:48.155Z"},
+		{"7", "2026-10-29T03:52:48.156Z"},
+		{" |", "2026-10-29T03:52:48.157Z"},
+		{" ", "2026-10-29T03:52:48.159Z"},
+		{"8", "2026-10-29T03:52:48.160Z"},
+		{" |", "2026-10-29T03:52:48.162Z"},
+		{" ", "2026-10-29T03:52:48.164Z"},
+		{"9", "2026-10-29T03:52:48.166Z"},
+		{" |", "2026-10-29T03:52:48.167Z"},
+		{" ", "2026-10-29T03:52:48.170Z"},
+		{"10", "2026-10-29T03:52:48.171Z"},
+		{" |", "2026-10-29T03:52:48.182Z"},
+	}
+	for _, f := range frames {
+		mapACPSessionUpdate(codeBuddyChunk(f.text, f.ts), ch, context.Background(), conn, nil)
+	}
+
+	var want string
+	for _, f := range frames {
+		want += f.text
+	}
+	assert.Equal(t, want, drainContentText(t, ch),
+		"every captured frame must reach the client byte for byte")
 }

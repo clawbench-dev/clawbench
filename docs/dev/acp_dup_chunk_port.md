@@ -1,88 +1,113 @@
-# CodeBuddy chunk 去重：照搬上游权威实现（2026-10-29）
+# CodeBuddy chunk 去重：按「紧邻」判重（2026-10-29）
 
 ## 结论
 
-ClawBench 对 CodeBuddy 的模型输出帧做去重，**原样移植上游的 `chunkPublicationKey`
-与其消费逻辑**。只对 `codebuddy` 生效；其他后端没有这个问题，不走这条路径。
+ClawBench 对 CodeBuddy 的模型输出帧做去重，判据是**紧邻**：一个 chunk 与
+**上一帧被接受的 chunk** 完全相同才算重试。不用时间窗。
 
-## 之前的两次错误
+只对 `codebuddy` 生效；其他后端没有这个问题，不走这条路径。
 
-### 错误一：键抄错了
+## 三次迭代的错误
 
-ClawBench 旧实现（2026-10-22 引入）的键是：
+### 第一版（`0abbe8b0e`，2026-10-22）：键抄错
 
 ```
 sessionId + variant + messageId + timestamp + memberEvent + text
 ```
 
-上游（`dist/codebuddy.js`）的键是：
+上游 `chunkPublicationKey` 的第 5 个元素是 `conversationRequestId ?? requestId`、
+第 6 个是 `parentToolCallId`，且 `messageId` 优先取顶层字段。这一版都不对。
 
-```js
-JSON.stringify([sessionId, sessionUpdate, messageId, timestamp,
-                _meta["codebuddy.ai/conversationRequestId"] ?? _meta["codebuddy.ai/requestId"],
-                _meta["codebuddy.ai/parentToolCallId"],
-                extractTextContent(content)])
+### 第二版（`482e8763e`）：以为「键抄对」就能修好
+
+照搬了上游键，但**保留了 5 秒窗口**。这个改动对实际缺陷无效，因为第一版和
+第二版的键**都包含 `timestamp`**——两次实现都不是因为「丢了 timestamp」而出错。
+
+### 第三版（本提交）：判据错了
+
+时间窗本身就是错的。理由见下。
+
+## 为什么时间窗是错的
+
+CodeBuddy 逐字符推送模型输出。一个 `|---|---|` 分隔行到达时是：
+
+```
+'|'  ' ---'  ' |'  ' ---'  ' |'  '\n'
 ```
 
-第 5 个元素是 **requestId**（旧实现错用 memberEvent），第 6 个是 **parentToolCallId**
-（旧实现完全没有）。更关键的是 `messageId` 上游优先取**顶层** `update.messageId`，
-旧实现只看 `_meta`。
+一条消息里 `' |'` 重复 21 次、`' '` 16 次、`' ---'` 7 次。任何「相同文本再次出现
+就算重复」的规则都会删真实内容。
 
-### 错误二：误以为上游 ACP 路径没有去重
+### 生产数据
 
-我曾据此完全删掉去重（提交 `3533f953a`）。判断依据是：`chunkPublicationKey` 只在
-`publishSessionUpdateToBus` 里被调用，而普通 ACP 客户端走 `sendToConnection`。
-这个观察本身没错，但结论错了——**上游的去重方案是对的，应该移植，而不是放弃**。
+统计 2026-10-22..10-29 的 `dropping duplicate` 日志（6436 次）：
 
-## 真实帧验证
+| 指标 | 值 |
+|---|---|
+| 同 (session, messageId) 组内相邻丢弃总数 | 116 |
+| 其中间隔 < 5 秒 | **106（91%）** |
+| 丢弃 1 次的组 | **179** |
+| 丢弃 2+ 次的组 | 62 |
 
-探针抓取 `codebuddy --acp` 的 82 个 `agent_message_chunk`（prompt 要求输出两张表）：
+**关键判据：179 组只丢了 1 次。** 真重试是
+`sendSessionUpdateWithRetries` 连续重发（最多 3 次），必然连续丢 2-3 次。
+只丢 1 次意味着：这是一个孤立帧，它与窗口内某个更早的帧文本相同，于是被误删。
 
-- 按上游键分组：**0 个重复**
-- 同一 text 出现多次的情况：`' |'` 21 次、`' '` 16 次、`'|'` 8 次、`' ---'` 7 次
-- 但这些重复帧的 `timestamp` **各不相同**（21 次 `' |'` 对应 21 个不同 timestamp）
+## 为什么「紧邻」是对的
 
-所以上游键能正确区分「重试」与「合法的重复片段」：
+真重试是同步重发**同一个 update 对象**（`sendSessionUpdateBounded` 超时后，
+`em.tail` 上重跑），所以它一定是**紧挨着的下一帧**。
 
-| 情形 | timestamp | 键 | 结果 |
-|---|---|---|---|
-| 重试（同一 update 再发一次） | 相同 | 相同 | 丢弃 |
-| 逐字符流式中的重复片段 | 不同 | 不同 | 保留 |
+合法重复一定隔着别的输出。
 
-旧实现丢掉了 timestamp 的区分力（或者说，误以为 message 级 timestamp 是常量），
-所以把合法重复也删了。
+真实帧实测（2026-10-29，82 帧两表回复）：
+
+| 指标 | 值 |
+|---|---|
+| 相邻帧同文本 | **0 / 81** |
+| 非相邻帧同文本 | 55 对 |
+
+所以：**相邻同文本 = 重试，非相邻同文本 = 内容。** 这是唯一能分开两者的判据，
+时间做不到。
 
 ## 实现
 
-`internal/ai/acp_dup_chunk.go` 逐元素移植：
-
 ```go
-func chunkIdentity(sessionID, variant, topLevelMessageID string, meta map[string]any, text string) string {
-    if !volatileSessionUpdate(variant) { return "" }
-    ts := metaString(meta[metaKeyCodeBuddyTimestamp])
-    msgID := topLevelMessageID
-    if msgID == "" { msgID = metaString(meta[metaKeyCodeBuddyMessageID]) }
-    if ts == "" || msgID == "" { return "" }
-    requestID := metaString(meta[metaKeyCodeBuddyConversationRequestID])
-    if requestID == "" { requestID = metaString(meta[metaKeyCodeBuddyRequestID]) }
-    parentID := metaString(meta[metaKeyCodeBuddyParentToolCallID])
-    parts, _ := json.Marshal([]string{sessionID, variant, msgID, ts, requestID, parentID, text})
-    return string(parts)
+func (c *ACPConn) isDuplicateChunk(identity string) bool {
+	if c == nil || identity == "" {
+		return false
+	}
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if identity == c.lastChunkKey {
+		return true
+	}
+	c.lastChunkKey = identity
+	return false
 }
 ```
 
-窗口与容量也照搬：
+状态只有一个字段 `lastChunkKey`（上一帧被接受的 identity）。被丢弃的重试**不替换**
+它，所以三份连续拷贝塌成一份。
 
-- `chunkDedupWindow = 5 * time.Second`（上游 `eQ = 5e3`）
-- 窗口从**被接受**的投递起算，被丢弃的重复不刷新（上游只在 accept 时写 map）
-- 满 `8192` 条时先剪掉过期项，而非整体清空（上游 `eS.size > 8192` 分支）
+`chunkIdentity` 仍照搬上游的元素列表：
 
-三条不变量：
+```
+sessionId + variant + messageId + timestamp + requestId + parentToolCallId + text
+```
 
-1. `timestamp` 与 `messageId` **缺一不可**（上游 `if (ts && msgId)`）
-2. 只有 volatile 变体参与（`agent_message_chunk` / `agent_thought_chunk` /
-   `user_message_chunk`）
-3. `messageId` 优先取顶层字段
+`timestamp` 保留在键里是必要的：真重试复用同一个对象，timestamp 相同；正常的新帧
+timestamp 不同。但它不再用于「多久算重复」——那由邻接决定。
+
+`messageId` 顶层优先、`requestId` 取 `conversationRequestId ?? requestId`，与上游一致。
+
+## 与上游的关系
+
+上游 `chunkPublicationKey` 配的是 5 秒窗口，用在它的 **WebUI 发布总线**
+（`publishSessionUpdateToBus`）上，那里 chunk 已合并。ClawBench 消费的是 ACP
+wire，粒度是字符级，所以上游的窗口策略不能直接套用。
+
+元素列表照搬，判据换成邻接。
 
 ## 生效范围
 
@@ -104,30 +129,23 @@ func chunkIdentity(sessionID, variant, topLevelMessageID string, meta map[string
 
 **键构造**
 - `RequiresTimestampAndMessageID` — 缺一不可
-- `PrefersTopLevelMessageID` — 顶层优先于 `_meta`
-- `RequestIDPrecedence` — conversationRequestId 优先于 requestId
+- `PrefersTopLevelMessageID` / `RequestIDPrecedence` — 与上游 `??` 链一致
 - `DistinguishesEveryComponent` — 7 个元素各自参与
-- `NonVolatileVariantHasNoKey` — tool_call / plan 等不参与
+- `IsInjective` — JSON 编码不会因 NUL 字节伪造键
 
-**窗口**
-- `DropsRepeatInsideWindow` / `WindowMeasuredFromAcceptedDelivery` /
-  `EmptyIdentityNeverDrops` / `NilConnNeverDrops` / `ResetChunkDedup_*` /
-  `OverflowPrunesExpired`
+**判重**
+- `DropsOnlyTheImmediatelyRepeatedChunk` — 连续 3 份只留 1 份
+- `NonAdjacentRepeatIsContent` — **核心回归**：两个 `' ---'` 中间隔一帧，都要保留
+- `RepeatMuchLaterIsContent` — 隔 200 帧的重复是内容
+- `RetryDoesNotReplacePrevious` — 被丢的重试不成为新的「上一帧」
+- `EmptyIdentityNeverDrops` / `NilConnNeverDrops` / `ResetChunkDedup_*`
 
-**端到端（真实映射路径）**
-- `TableDelimiterRowsSurvive` — 按真实帧序列（`'|' ' ---' ' |' ' ---' ' |'`，
-  各带独立 timestamp）投递，断言整行到达
-- `MultipleTablesKeepTheirDelimiterRows` — 三张表，按整行精确计数
-- `ImmediateRetryIsDropped` — 同帧重发 3 次只留 1 份
-- `ThoughtChunkRetryIsDropped` / `DedupDoesNotApplyToOtherBackends` /
+**端到端**
+- `RealWireSequenceIsLossless` — **回放真实抓取的 82 帧**，逐字节断言
+- `TableDelimiterRowSurvives` / `MultipleTablesKeepTheirDelimiterRows` /
+  `SameTextLaterInMessageIsKept` / `ImmediateRetryIsDropped` /
+  `ThoughtChunkRetryIsDropped` / `DedupDoesNotApplyToOtherBackends` /
   `KeepsChunksWithoutIdentity`
-
-**变异验证（双向）**
-
-| 变异 | 结果 |
-|---|---|
-| 从键里去掉 `timestamp`（复现生产 bug） | 3 个测试转红，含两个表格回归 |
-| 去掉时间窗 | `WindowMeasuredFromAcceptedDelivery` 转红 |
 
 ## 遗留
 

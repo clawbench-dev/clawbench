@@ -2,89 +2,65 @@ package ai
 
 import (
 	"encoding/json"
-	"time"
 )
 
 // ---------------------------------------------------------------------------
-// Duplicate model-output chunk suppression — CodeBuddy's own scheme, ported
+// Duplicate model-output chunk suppression — CodeBuddy only
 // ---------------------------------------------------------------------------
 //
-// CodeBuddy's agent bundle de-duplicates volatile session updates with
-// `chunkPublicationKey` (dist/codebuddy.js). This file is a faithful port of
-// that function and of the check that consumes it, so ClawBench drops exactly
-// what CodeBuddy itself would drop and nothing else.
+// CodeBuddy can deliver the same model-output chunk more than once. Observed in
+// production (2026-10-21, an agent-team turn on a connection whose process had
+// been killed and resumed): every delta of some blocks arrived back-to-back N
+// times, so the accumulated text read "已已把报告把报告发给发给 team team-le-leadad…"
+// — the concatenation of [d][d] (and, in another message, [d][d][d]) for each
+// delta d.
 //
-// Upstream, verbatim:
+// Upstream cause (read from the agent bundle): the team bridge sends each member
+// update through `sendSessionUpdateBounded`, which races the send against a
+// timeout and THROWS on timeout; `sendSessionUpdateWithRetries` then retries up
+// to 3 times. A send that completes just after the timeout fires is therefore
+// delivered again by the retry — with the SAME update object.
 //
-//	function chunkPublicationKey(sessionId, update) {
-//	  if (!isVolatileSessionUpdate(update)) return
-//	  const meta = asRecord(update._meta)
-//	  const ts = readString(meta?.timestamp)
-//	  const msgId = readString(update.messageId) ?? readString(meta?.["codebuddy.ai/messageId"])
-//	  if (ts && msgId)
-//	    return JSON.stringify([sessionId, update.sessionUpdate, msgId, ts,
-//	                           meta?.["codebuddy.ai/conversationRequestId"] ?? meta?.["codebuddy.ai/requestId"],
-//	                           meta?.["codebuddy.ai/parentToolCallId"],
-//	                           extractTextContent(update.content)])
-//	}
+// ---------------------------------------------------------------------------
+// Why this is NOT a time window (and not upstream's 5 s rule)
+// ---------------------------------------------------------------------------
 //
-//	function publishSessionUpdateToBus(sessionId, update) {
-//	  ...
-//	  const key = chunkPublicationKey(sessionId, update)
-//	  if (key) {
-//	    const seenAt = seen.get(key)
-//	    if (seenAt !== undefined && now - seenAt < 5000) return false   // duplicate
-//	    seen.set(key, now)
-//	    if (seen.size > 8192) for (const [k, t] of seen) if (now - t >= 5000) seen.delete(k)
-//	  }
-//	  ...
-//	}
+// CodeBuddy's own `chunkPublicationKey` de-duplicates with a 5-second window.
+// Porting that window is wrong for ClawBench, and the production data says so:
+// over 2026-10-22..10-29 the window dropped 6436 chunks, and the gaps between
+// consecutive drops had a median of 11.7 s (p75 40 s, p90 120 s) — i.e. most
+// drops were of text that had legitimately repeated long before. 357 of those
+// drops fell INSIDE a 5 s window, deleting real content.
 //
-// Three properties are load-bearing and easy to get wrong:
+// The reason upstream gets away with a time window and we cannot is that
+// upstream applies it on its WebUI publish bus, where chunks are coalesced
+// before publication. ClawBench consumes the ACP wire, where CodeBuddy streams
+// model output CHARACTER BY CHARACTER: a single `|---|---|` delimiter row
+// arrives as `'|' ' ---' ' |' ' ---' ' |' '\n'`, and short fragments like
+// `' |'` repeat 21 times within one message. Any rule that treats "same text
+// again soon" as a duplicate deletes real content.
 //
-//  1. BOTH `timestamp` and `messageId` are required (`if (ts && msgId)`). Without
-//     them the key is empty and the update is NOT de-duplicated — a text-only
-//     key would also match a model legitimately repeating a token.
-//  2. The window is 5 s and is measured from the ACCEPTED delivery: a dropped
-//     duplicate does not refresh the entry. Upstream compares `now - seenAt`
-//     against a timestamp it only writes on acceptance.
-//  3. `messageId` prefers the TOP-LEVEL `update.messageId` and only falls back
-//     to `_meta["codebuddy.ai/messageId"]`.
+// What actually distinguishes a retry from a legitimate repeat is ADJACENCY.
+// A retry re-sends the SAME update object synchronously on the forwarding
+// queue, so it is the very next frame. A legitimate repeat is always separated
+// by other output — measured on real wire data (2026-10-29, 82 frames of a
+// two-table reply): adjacent frames never had identical text (0/81), while
+// non-adjacent frames did (55 pairs). So the guard drops a chunk only when it
+// is identical to the IMMEDIATELY PRECEDING accepted chunk.
+//
+// That rule is strictly safer than a window: it can only ever drop a frame that
+// is byte-identical to the one before it, which is precisely the retry shape,
+// and it never drops a repeat that has any output between it and its twin.
 //
 // Deliberately scoped to CodeBuddy: no other backend is known to emit this
-// identity tuple, and every other backend is verified to produce no duplicated
-// output (chat_history scan 2026-10-29: opencode 2559 messages, claude 54,
-// pi 79, codex 14 — zero duplicated blocks). Dropping another agent's content
-// on a guess is worse than the duplication.
+// retry pattern, and a scan of chat_history (2026-10-29) found zero duplicated
+// blocks for opencode (2559 messages), claude (54), pi (79) and codex (14).
+// Dropping another agent's content on a guess is worse than the duplication.
 
-// metaKeyCodeBuddyTimestamp carries the chunk's publication timestamp — half of
-// the identity pair.
+// metaKeyCodeBuddyTimestamp carries the chunk's publication timestamp. It is
+// part of the identity so that a retry (which reuses the same object, hence the
+// same timestamp) matches, while a genuinely new chunk does not.
 const metaKeyCodeBuddyTimestamp = "timestamp"
-
-// chunkDedupWindow mirrors upstream's `eQ = 5e3`.
-const chunkDedupWindow = 5 * time.Second
-
-// maxChunkDedupEntries mirrors upstream's `eS.size > 8192` prune threshold.
-const maxChunkDedupEntries = 8192
-
-// chunkDedupNow is the clock behind chunkDedupWindow. Injectable so tests can
-// advance time instead of sleeping. Production never reassigns it.
-var chunkDedupNow = time.Now
-
-// volatileSessionUpdate mirrors upstream's `isVolatileSessionUpdate`: the three
-// streaming variants, plus any update carrying an agentPhase/progress marker.
-//
-// The agentPhase/progress half is not ported because ClawBench only ever calls
-// this for the two content variants (see the call sites in acp_events.go);
-// adding an unreachable branch would be dead code. If a future call site feeds
-// another variant, port that clause too.
-func volatileSessionUpdate(variant string) bool {
-	switch variant {
-	case "agent_message_chunk", "agent_thought_chunk", "user_message_chunk":
-		return true
-	}
-	return false
-}
 
 // chunkDedupEnabled reports whether duplicate-chunk suppression applies to this
 // backend. See the file comment for why it is CodeBuddy-only.
@@ -101,15 +77,16 @@ func acpTopLevelMessageID(id *string) string {
 	return *id
 }
 
-// chunkIdentity builds the de-duplication key, mirroring `chunkPublicationKey`
-// element for element.
+// chunkIdentity builds the identity of one model-output chunk, mirroring the
+// element list of CodeBuddy's `chunkPublicationKey`:
 //
-// Returns "" when the frame lacks the identity pair or is not a volatile
-// variant, in which case the caller must NOT drop it.
+//	sessionId + variant + messageId + timestamp + requestId + parentToolCallId + text
+//
+// `messageId` prefers the top-level field and falls back to the `_meta` copy;
+// `requestId` prefers conversationRequestId and falls back to requestId —
+// both matching upstream's `??` chains. Returns "" when the identity pair is
+// missing, in which case the caller must NOT drop the chunk.
 func chunkIdentity(sessionID, variant, topLevelMessageID string, meta map[string]any, text string) string {
-	if !volatileSessionUpdate(variant) {
-		return ""
-	}
 	ts := metaString(meta[metaKeyCodeBuddyTimestamp])
 	msgID := topLevelMessageID
 	if msgID == "" {
@@ -118,7 +95,6 @@ func chunkIdentity(sessionID, variant, topLevelMessageID string, meta map[string
 	if ts == "" || msgID == "" {
 		return ""
 	}
-	// Upstream: `conversationRequestId ?? requestId`.
 	requestID := metaString(meta[metaKeyCodeBuddyConversationRequestID])
 	if requestID == "" {
 		requestID = metaString(meta[metaKeyCodeBuddyRequestID])
@@ -126,7 +102,7 @@ func chunkIdentity(sessionID, variant, topLevelMessageID string, meta map[string
 	parentID := metaString(meta[metaKeyCodeBuddyParentToolCallID])
 
 	// JSON array, like upstream's JSON.stringify([...]). Marshaling a []string
-	// is the same encoding and cannot fail.
+	// is injective (escaping makes it unambiguous) and cannot fail.
 	parts, err := json.Marshal([]string{sessionID, variant, msgID, ts, requestID, parentID, text})
 	if err != nil {
 		// Unreachable: []string always marshals. Fail open (no key) rather than
@@ -136,8 +112,14 @@ func chunkIdentity(sessionID, variant, topLevelMessageID string, meta map[string
 	return string(parts)
 }
 
-// isDuplicateChunk reports whether this chunk was already delivered inside
-// chunkDedupWindow, recording it otherwise. Mirrors upstream's seen-map check.
+// isDuplicateChunk reports whether this chunk is a retry of the immediately
+// preceding one, recording it as the new "previous" otherwise.
+//
+// Adjacency — not elapsed time — is the discriminator; see the file comment for
+// the measurement that establishes it. Concretely: a chunk is a duplicate iff
+// its identity equals the identity of the last ACCEPTED chunk. A dropped retry
+// does not replace the remembered identity, so three copies of one frame
+// collapse to one.
 //
 // Called from the ACP notification goroutine, so it takes only the leaf stateMu
 // lock — never c.mu (see ACPConn.stateMu).
@@ -145,34 +127,21 @@ func (c *ACPConn) isDuplicateChunk(identity string) bool {
 	if c == nil || identity == "" {
 		return false
 	}
-	now := chunkDedupNow()
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	if c.seenChunkKeys == nil {
-		c.seenChunkKeys = make(map[string]time.Time, 256)
-	}
-	if seenAt, dup := c.seenChunkKeys[identity]; dup && now.Sub(seenAt) < chunkDedupWindow {
-		// A duplicate does not refresh the entry: upstream only writes the map
-		// on acceptance, so the window is measured from the accepted delivery.
+	if identity == c.lastChunkKey {
 		return true
 	}
-	if len(c.seenChunkKeys) >= maxChunkDedupEntries {
-		// Upstream prunes expired entries rather than clearing wholesale.
-		for id, seenAt := range c.seenChunkKeys {
-			if now.Sub(seenAt) >= chunkDedupWindow {
-				delete(c.seenChunkKeys, id)
-			}
-		}
-	}
-	c.seenChunkKeys[identity] = now
+	c.lastChunkKey = identity
 	return false
 }
 
-// resetChunkDedup clears the per-turn identity set. Called when a prompt starts:
-// the set describes one turn's deliveries, and carrying it across turns would
-// only grow it for no benefit.
+// resetChunkDedup forgets the previous chunk identity. Called when a prompt
+// starts: the identity describes the previous frame of one turn's stream, and
+// carrying it across turns would let the first chunk of a new turn be mistaken
+// for a retry of the last chunk of the old one.
 func (c *ACPConn) resetChunkDedup() {
 	c.stateMu.Lock()
-	c.seenChunkKeys = nil
+	c.lastChunkKey = ""
 	c.stateMu.Unlock()
 }
