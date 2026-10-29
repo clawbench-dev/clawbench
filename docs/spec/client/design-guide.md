@@ -40,7 +40,7 @@
 | `code-block.css` / `code-block-header.css` | 代码块行结构与头部栏 |
 | `content.css` | `.markdown-body` 阅读列、标题、表格、mermaid、KaTeX |
 | `media-block.css` | 统一媒体图（`.image-block-wrapper`）+ 浮动工具栏 |
-| `components.css` | **跨组件共享的全局类**（`.count-badge`、`.drilldown-*`、`.context-menu`、引用附件卡、**app-menu 弹层容器** `.app-menu-title`/`.app-menu-scroll`/`.app-menu-column`/`.menu-divider`/`.theme-picker`） |
+| `components.css` | **跨组件共享的全局类**（`.count-badge`、`.drilldown-*`、`.context-menu`、引用附件卡、**app-menu 弹层容器** `.app-menu-title`/`.app-menu-scroll`/`.app-menu-column`/`.menu-divider`/`.theme-picker`、**快捷发送/快捷指令弹层的固定标题** `.quick-send-title`） |
 | `diff-rows.css` | 四种 diff 界面共用的行语言 |
 | `share-chrome.css` | 分享 SPA 专用（由 `web/src/share/main.ts` 引入，不在 index.html） |
 
@@ -380,6 +380,7 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 
 - **`.context-menu`**（`components.css:188`）：`position:fixed`、`--z-context-menu`、`--radius-md`、`--shadow-md`、`min-width:140px`。
 - **`PopupMenu.vue`**：`Teleport to="body"` + `<Transition name="menu-fade">`，定位走 `@/utils/popupMenuPosition`。
+- **弹层里的固定标题用 `position: sticky`，且底色必须等于弹层表面**：`PopupMenu` 的根节点自己就是滚动容器（内联 `overflow-y: auto`），所以第一个子元素可以 `sticky; top: 0` 钉在顶部。三个必守：①`background` 必须是**不透明**且等于 `--bg-secondary`（PopupMenu 的底色）——透明或 `color-mix` 会让滚动中的行从标题下面透出来；②要 `z-index: 1`，因为菜单行常是 `position: relative`（快捷发送行的尾部注入按钮需要），否则行会盖住标题；③这类共享弹层样式放 `css/components.css`，不要放在某一个组件的非 scoped 块里——`.quick-send-title` 原先在 `ChatInputBar.vue` 的全局块，终端快捷指令弹层只是「因为聊天面板先挂载过」才拿到样式，正是上文「弹层容器样式在 `css/components.css`，不在 `AppHeader.vue` 的全局块里」那条陷阱的同型复发。当前实例：`.app-menu-title`（appSurface 列）与 `.quick-send-title`（快捷发送 / 快捷指令），守卫见 `components/chat/__tests__/quickSendMenuStickyTitle.css.test.ts`。
 - **`position: fixed` 不等于「视口就是包含块」——定位必须实测包含块**：全站浮层（PopupMenu 及其十余个消费方、表格复制菜单）都用 `fixed` 以免被祖先的 `overflow: hidden` 裁剪，但这笔便利换来一个错误假设。本仓有**两处**会打破它：`.chat-message` 在 App 模式下带 `contain: paint`（Android WebView 的 GPU 重影修复），而 paint containment **会为 fixed 后代建立包含块**并裁剪它——表格复制菜单打开时因此把 `contain` 降级为 `style` 并临时补 `will-change: transform` 顶上（实测：按 `top: rect.bottom + 4` 写入的菜单低了 60px，误差随祖先自身的偏移增大）；以及页面可能仍带着 CSS `zoom`——当前构建的界面缩放走根字号、坐标空间不变，但用户样式表、浏览器扩展、或升级前遗留的旧标签页都可能留下 zoom。两者都无法从 `getBoundingClientRect()` 单独看出来，因此统一由 `utils/fixedPosition.ts` 的 `measureFixedContainingBlock` **测量**：先写一个已知偏移、观察元素实际落在哪，再解出原点与缩放比（探针量程 100px，大到取整误差压不掉比例、小到同步布局期间不出屏）。**它解得的是缩放比而不是假定 1**，正因如此上面两种来源都不需要单独分支。`popupMenuPosition` 在调用方传入 `containingBlock` 时把每个坐标都经它换算，未传时退回「视口即包含块 + zoom 换算」的旧路径。**测量本身有三个坑**：①**必须用克隆**探测，不能挪动真实菜单（否则用户会看到菜单先跳到角落再回来）；②克隆必须**清空 `className` 与 transition**——菜单被 `<Transition>` 包裹，`*-enter-active` 声明的 `transform` 让元素自己成为 fixed 后代的包含块，克隆继承同一组类时量到的是菜单自身的 380×59 而不是视口（实测 `bottom: -596.6px`）；③盒子尚未布局（0×0）时测出的包含块是垃圾值，直接返回 `null` 让调用方回退。**最后一道兜底必须判双向**：算完若把菜单放到视口外就丢弃重算纯 zoom 版本——只拒绝「bottom 为负」（菜单掉到下方）会漏掉相反方向（实测群聊 `@` 菜单落在 `top: -542` / `bottom: 962`，视口只有 720），因此要求 `top`/`bottom`/`left`/`right` **全部**落在 `[0, 视口尺寸]` 内。**单一实现**：`fixedPosition.ts` 是唯一来源，导出文档（`buildCodeBlockJs` 的表格菜单）手工镜像同一套逻辑——重复实现正是两个浮层漂移的原因
 - 弹窗外壳用 `ModalDialog.vue`（宽屏）/ `BottomSheet.vue`（窄屏），样式在 `modal-card.css` / `BottomSheet.vue` 的 keyframes 里。
 - **宽度只有两档，都写在 token 里、不给调用方留口子**：`css/variables.css` 定义 `--modal-width-narrow`（520）与 `--modal-width-wide`（960），`ModalDialog` / `BottomSheet` 各有一个 `size="narrow" | "wide"`（默认 `narrow`），渲染成修饰类 `.modal-dialog--narrow/--wide`、`.bs-panel--narrow/--wide`，`modal-card.css` 把修饰类映射到这两个 token。调用方**选档位，不选数字**：没有 `maxWidth` prop，也**不允许**在组件里覆盖 `--modal-max-width`（`assets/__tests__/modalWidth.css.test.ts` 全仓扫描拒绝）。历史包袱两笔：曾经每处调用传 380/420/480/520/560/720 六种值再统一乘一个 1.3 的魔法系数；后来又变成「弹窗 900 + 抽屉 624 + 四个抽屉在非 scoped 样式块里各自覆盖 900/960」——同一屏两种规则，`.tool-detail-sheet` / `.session-search-sheet` / `.team-member-sheet` / `.content-search-sheet` 这些覆盖已全部删除，改传 `size="wide"`。
@@ -644,6 +645,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `__tests__/fontDrivenScaling.test.ts` | 根字号是唯一缩放入口（`--dp` 唯一声明、html 不得用 `--font-size-*`）、全仓无 `zoom`、Electron 不再走 `setZoomFactor`、token 都走 `--dp`、发丝线不被缩放、lucide 属性选择器齐备、宽屏断点用有效宽度且监听缩放事件、**全仓 `<style>`（含 `src/assets/*.css`）无裸 `font-size: Npx` / `letter-spacing: Npx`**、`designToCss` 唯一实现且被各阈值比较点消费 |
 | `components/common/__tests__/countBadge.css.test.ts` | 角标几何全局唯一、scoped 未重加圆角 |
 | `components/common/__tests__/wrapCheck.css.test.ts` | 菜单「该项当前是开的」勾选 `.wrap-check` 全局唯一、两个菜单共用同一 class |
+| `components/chat/__tests__/quickSendMenuStickyTitle.css.test.ts` | 快捷发送 / 快捷指令弹层标题 `.quick-send-title` 在 `components.css` 全局声明（sticky + 不透明 `--bg-secondary` + `z-index`），两个宿主不得各自重声明，且两个菜单的 `:max-height` 一致且 ≥400 |
 | `components/common/__tests__/modalFooterBtn.theme.css.test.ts` | `.fbtn` 深色主题前景提亮 |
 | `assets/__tests__/modalWidth.css.test.ts` | **宽度只有两档**：`--modal-width-narrow/wide` 各一份且窄 < 宽、`modal-card.css` 只把修饰类映射到 token、全仓组件**不得**自设 `--modal-max-width` 或给弹窗外壳写裸 `max-width` 数字 |
 | `components/common/__tests__/wallpaperSurfaceTransparency.css.test.ts` | 壁纸开启后各表面透明度不叠乘 |
