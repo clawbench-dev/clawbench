@@ -4615,11 +4615,50 @@ paths:
       tags: [Agents]
       summary: agent 子资源
       description: |
-        GET 子路径：`/api/agents/{id}/acp-sessions`。
+        GET 子路径：`/api/agents/{id}/acp-sessions`、`/api/agents/{id}/sessions`。
         （`/api/agents/{id}/refresh-models` 与 `/api/agents/rescan` 只接受 POST。）
+
+        **`/api/agents/{id}/sessions`** 列出使用了该 agent 的会话：单聊、它作为
+        成员的群、以及它作为**主持人**的群。作用域与设置页展示的「会话数」完全
+        一致——**跨全部项目**、**含已归档的单聊**、**不含已离开（archived）的群
+        成员行**——否则页头的数字与下面的行数会互相矛盾。`total` 与
+        `AgentUsageCounts.Sessions` 同源同长。
+
+        每条目对应一个**引用行**而非一个会话：同一个 agent 在同一个群里加了两份
+        （两个独立实例）会产生两条条目，因为「会话数」数的就是成员行。
+
+        `sessionId` 是**打开目标**：单聊是它自己，群成员/主持人是**群时间线行**
+        （成员行是隐藏行、没有消息，不可直接打开）。`role` 为
+        `chat`/`host`/`member`；`memberName` 是该实例在群内的显示名（单聊为空）。
+        主持人是通过群行 `context_state.host_member_id` 判定的，**不是**群行的
+        `agent_id`——free 模式下群行的 `agent_id` 是「第一个成员」，用它判定会把
+        普通成员误报成主持人。
+
+        **游标分页**：`limit` 默认 50、上限 200；把上一页的 `nextCursor` /
+        `nextCursorId` 原样回传为 `cursor` / `cursor_id`（含空格的时间戳须 URL
+        编码）。排序为 `updated_at DESC, entry_id DESC`——同一群的多条成员条目
+        共享群的 `updated_at`，`entry_id` 负责决胜，否则会跨页重复或漏行。
       operationId: agentSubGet
       parameters:
         - $ref: "#/components/parameters/Id"
+        - name: limit
+          in: query
+          required: false
+          description: 仅 `/sessions` 使用。每页条数，默认 50，上限 200。
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          required: false
+          description: 仅 `/sessions` 使用。上一页的 `nextCursor`（`2006-01-02 15:04:05`）。
+          schema:
+            type: string
+        - name: cursor_id
+          in: query
+          required: false
+          description: 仅 `/sessions` 使用。上一页的 `nextCursorId`。
+          schema:
+            type: string
       responses:
         "200":
           description: 子资源内容
