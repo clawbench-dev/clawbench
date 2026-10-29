@@ -171,13 +171,30 @@ var addResumeNotice = AddSystemMessage
 // assert the "clear the client's spinner" half of the failure paths.
 var emitTerminalWSOnly = EmitSessionEventWSOnly
 
-// RestartResumePrompt returns the localized instruction sent to a session whose
-// turn the restart interrupted. Rendered from a background goroutine with no
-// HTTP request in scope, so it reads the persisted UI language (same reasoning
-// as AutoContinuePrompt) and is persisted in that language — switching UI
-// language later does not retroactively translate history.
-func RestartResumePrompt() string {
+// RestartResumeNotice returns the localized system row written to the timeline.
+//
+// This text is FOR THE USER: it says the session was restored and that the agent
+// has been asked to continue. It is NOT what the agent is told — that is
+// RestartResumePrompt, which is injected into the turn and never persisted. The
+// two used to be the same string, which leaked the instruction's "please
+// re-evaluate the current state and continue" wording into a user-facing notice.
+//
+// Rendered from a background goroutine with no HTTP request in scope, so it
+// reads the persisted UI language (same reasoning as AutoContinuePrompt) and is
+// stored in that language — switching UI language later does not retroactively
+// translate history.
+func RestartResumeNotice() string {
 	return i18n.T(i18n.LocalizerForLocale(model.Language), "RestartResume")
+}
+
+// RestartResumePrompt returns the localized instruction handed to the agent.
+//
+// Deliberately a separate key from RestartResumeNotice: this is prompt text the
+// model reads ("the task was interrupted, re-evaluate the current state and
+// continue"), so it is imperative and never shown to the user. It is injected
+// into the turn only — no chat_history row carries it.
+func RestartResumePrompt() string {
+	return i18n.T(i18n.LocalizerForLocale(model.Language), "RestartResumeInstruction")
 }
 
 // ResumeInterruptedSession writes the recovery notice and starts one turn asking
@@ -228,8 +245,12 @@ func ResumeInterruptedSession(sessionID string) error {
 		return nil
 	}
 
-	// Resolved before the claim: it is a pure lookup, and doing it first keeps the
-	// claim window free of anything that could fail.
+	// Resolved before the claim: both are pure lookups, and doing them first keeps
+	// the claim window free of anything that could fail.
+	//
+	// Two DIFFERENT strings: the timeline row is written for the user, the turn is
+	// given the imperative instruction for the model.
+	notice := RestartResumeNotice()
 	prompt := RestartResumePrompt()
 
 	// Claim before writing anything: a user who re-opened the session and
@@ -242,10 +263,11 @@ func ResumeInterruptedSession(sessionID string) error {
 		return nil
 	}
 
-	// The single persisted row: a centered system notice that the session was
-	// recovered. For a group it is also what reaches the members (system rows
-	// are injected as "[系统] ..."), so it carries the instruction verbatim.
-	msgID, err := addResumeNotice(info.ProjectPath, sessionID, prompt)
+	// The single persisted row: a centered system notice FOR THE USER ("the
+	// session was restored, the agent has been asked to continue"). It is NOT the
+	// instruction the model reads — that one is passed as the turn's prompt and
+	// never stored, so the user never sees prompt wording.
+	msgID, err := addResumeNotice(info.ProjectPath, sessionID, notice)
 	if err != nil {
 		// Release the claim AND announce the terminal state: tryClaimSessionRun
 		// already broadcast "running", so dropping the runner silently would leave
@@ -256,7 +278,7 @@ func ResumeInterruptedSession(sessionID string) error {
 		emitTerminalWSOnly(sessionID, statusCompleted, false)
 		return err
 	}
-	emitGroupSystemMessage(sessionID, msgID, prompt)
+	emitGroupSystemMessage(sessionID, msgID, notice)
 
 	if isGroup {
 		// Group chats resume through the orchestrator, never as a host-only
@@ -264,6 +286,10 @@ func ResumeInterruptedSession(sessionID string) error {
 		// routes and the members speak. firstMsgID is passed as 0 because no user
 		// message was materialized for this turn — the orchestrator does not use
 		// it (see RunGroupTurnDrain).
+		//
+		// The INSTRUCTION reaches the members through the turn text, not through
+		// the persisted notice: the notice is user-facing prose and would tell the
+		// host to "restore the session", not what to do next.
 		go func() {
 			defer FinishSessionRun(sessionID)
 			runGroupDrainLoopFn(runCtx, sessionID, info.ProjectPath, 0, prompt, nil)

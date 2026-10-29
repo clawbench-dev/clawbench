@@ -166,8 +166,11 @@ func TestResumeInterruptedSession_SingleChat(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected exactly one system row, got %d: %+v", len(rows), rows)
 	}
-	if rows[0] != RestartResumePrompt() {
-		t.Fatalf("system row must carry the recovery notice: got %q", rows[0])
+	if rows[0] != RestartResumeNotice() {
+		t.Fatalf("system row must carry the USER-facing recovery notice: got %q", rows[0])
+	}
+	if rows[0] == RestartResumePrompt() {
+		t.Fatal("the system row must NOT carry the agent instruction — that wording is for the model only")
 	}
 
 	// The claim must be held for the running turn (the launcher is stubbed, so
@@ -282,7 +285,10 @@ func TestResumeInterruptedSession_GroupUsesOrchestrator(t *testing.T) {
 		t.Fatalf("expected the group drain to be driven once, got %d", len(*prompts))
 	}
 	if (*prompts)[0] != RestartResumePrompt() {
-		t.Fatalf("group drain must receive the resume prompt: got %q", (*prompts)[0])
+		t.Fatalf("group drain must receive the AGENT instruction: got %q", (*prompts)[0])
+	}
+	if (*prompts)[0] == RestartResumeNotice() {
+		t.Fatal("the group drain must not receive the user-facing notice as its prompt")
 	}
 
 	// AddGroupMember already wrote a "joined the discussion" row, so the resume
@@ -291,8 +297,19 @@ func TestResumeInterruptedSession_GroupUsesOrchestrator(t *testing.T) {
 	if len(rows) == 0 {
 		t.Fatal("the recovery notice was not persisted to the group timeline")
 	}
-	if last := rows[len(rows)-1]; last != RestartResumePrompt() {
+	if last := rows[len(rows)-1]; last != RestartResumeNotice() {
 		t.Fatalf("the newest system row must be the recovery notice: got %q (all: %+v)", last, rows)
+	}
+
+	// Wait for the drain goroutine to RELEASE the claim before returning: it
+	// still touches the store (notification/push) after the seam returns, so
+	// letting it outlive the test races the DB teardown (-race catches it).
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && IsSessionRunning(groupID) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if IsSessionRunning(groupID) {
+		t.Fatal("the group drain did not finish within the timeout")
 	}
 }
 
@@ -605,7 +622,7 @@ func TestResumeInterruptedSession_GroupPromptReachesSpeaker(t *testing.T) {
 	// AddGroupMember, so asserting on "[系统]" alone (or on the notice text alone)
 	// passes even when the notice is written as a fake user/assistant bubble. The
 	// two must appear TOGETHER.
-	want := "[系统] " + RestartResumePrompt()
+	want := "[系统] " + RestartResumeNotice()
 	for _, tc := range []struct {
 		who    string
 		prompt string
@@ -872,23 +889,48 @@ func TestRestartResumePrompt_IsLocalized(t *testing.T) {
 	t.Cleanup(func() { model.Language = prev })
 
 	model.Language = "zh"
-	zh := RestartResumePrompt()
-	if zh == "RestartResume" {
-		t.Fatal("zh translation missing (raw message id returned)")
+	zhNotice, zhPrompt := RestartResumeNotice(), RestartResumePrompt()
+	if zhNotice == "RestartResume" {
+		t.Fatal("zh notice missing (raw message id returned)")
 	}
-	if !strings.Contains(zh, "重启") {
-		t.Fatalf("zh prompt should mention the restart: %q", zh)
+	if zhPrompt == "RestartResumeInstruction" {
+		t.Fatal("zh instruction missing (raw message id returned)")
+	}
+	if !strings.Contains(zhNotice, "重启") || !strings.Contains(zhPrompt, "重启") {
+		t.Fatalf("both zh strings should mention the restart: notice=%q prompt=%q", zhNotice, zhPrompt)
 	}
 
 	model.Language = "en"
-	en := RestartResumePrompt()
-	if en == "RestartResume" {
-		t.Fatal("en translation missing (raw message id returned)")
+	enNotice, enPrompt := RestartResumeNotice(), RestartResumePrompt()
+	if enNotice == "RestartResume" {
+		t.Fatal("en notice missing (raw message id returned)")
 	}
-	if !strings.Contains(strings.ToLower(en), "restart") {
-		t.Fatalf("en prompt should mention the restart: %q", en)
+	if enPrompt == "RestartResumeInstruction" {
+		t.Fatal("en instruction missing (raw message id returned)")
 	}
-	if en == zh {
-		t.Fatalf("the two locales must differ: both %q", en)
+	if !strings.Contains(strings.ToLower(enNotice), "restart") ||
+		!strings.Contains(strings.ToLower(enPrompt), "restart") {
+		t.Fatalf("both en strings should mention the restart: notice=%q prompt=%q", enNotice, enPrompt)
+	}
+	if enNotice == zhNotice || enPrompt == zhPrompt {
+		t.Fatal("each locale pair must differ")
+	}
+
+	// The two ROLES must be different text in the same language: a user-facing
+	// notice ("the agent has been asked to continue") is not an instruction
+	// ("re-evaluate the current state and continue"). Sharing one string is
+	// exactly the bug this split fixes.
+	if enNotice == enPrompt {
+		t.Fatalf("notice and instruction must differ, both %q", enNotice)
+	}
+	if zhNotice == zhPrompt {
+		t.Fatalf("notice and instruction must differ, both %q", zhNotice)
+	}
+	// The instruction is imperative; the notice is descriptive about the agent.
+	if !strings.Contains(enPrompt, "re-evaluate") {
+		t.Fatalf("the instruction should tell the model to re-evaluate: %q", enPrompt)
+	}
+	if !strings.Contains(enNotice, "agent") {
+		t.Fatalf("the notice should tell the user the agent was notified: %q", enNotice)
 	}
 }

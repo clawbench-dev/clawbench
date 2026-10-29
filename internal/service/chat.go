@@ -3510,6 +3510,21 @@ func GetLiveRunState(sessionID string) (messageID int64, questionID int64, quest
 func GetLiveRunStates(sessionID string) []ws.LiveStreamState {
 	states := queryLiveStreamRows(sessionID)
 
+	// A streaming=1 row is NOT proof that a turn is running: the row survives a
+	// crash, a graceful restart (until InitDB rewrites it), and any path that
+	// finalizes the runner without rewriting its placeholder. Reporting those as
+	// live makes the client render a bubble that says "working" forever — the
+	// reported "session shows running but nothing is executing". The runner
+	// registry is the authority on "is a turn actually in flight", so drop rows
+	// whose session has no runner.
+	//
+	// A group turn registers its runner under the GROUP id (RunGroupTurnDrain
+	// registers there, not per member row), so one check on the session id
+	// covers every concurrent member stream on that timeline.
+	if len(states) > 0 && !IsSessionRunning(sessionID) {
+		return nil
+	}
+
 	// Resolve each stream's question independently (id order is the conversation
 	// order — see GetLiveRunState). Done AFTER the row cursor is closed: the read
 	// pool is small (2 connections), and issuing a second query while a cursor is

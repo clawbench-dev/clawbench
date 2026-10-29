@@ -154,7 +154,10 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"AutoContinue",
 		// Restart-resume is the same no-request class: rendered from the resume
 		// worker, then persisted, so a one-sided add ships a raw message id.
+		// The instruction is a SEPARATE key (user-facing notice vs model prompt);
+		// both must exist in both languages or one role silently gets a raw id.
 		"RestartResume",
+		"RestartResumeInstruction",
 		"InvalidAgentAvatar",
 		"AgentInUse",
 		"AgentDisabled",
