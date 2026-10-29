@@ -146,11 +146,11 @@ const currentFileName = computed(() => {
     if (navMode.value === 'md' && mdImages.value.length > 0) {
         return mdImages.value[mdCurrentIndex.value]?.name || ''
     }
-    if (!currentFilePath.value) {
-        if (currentSvg.value) return 'diagram.svg'
-        return ''
-    }
-    return baseName(currentFilePath.value)
+    if (currentFilePath.value) return baseName(currentFilePath.value)
+    if (currentSvg.value) return 'diagram.svg'
+    // No file identity (external URL / data: URI): still show and save under the
+    // URL's own basename rather than an empty name.
+    return currentUrl.value ? extractImageName(currentUrl.value) : ''
 })
 
 // Computed style for transform
@@ -377,6 +377,23 @@ function normalizeUrl(url) {
 }
 
 /**
+ * Local file path of the media the lightbox is SHOWING, derived from its URL.
+ *
+ * Download must save the image the user is looking at, so the path comes from
+ * the URL itself — never from `store.state.currentFile`. That store field is
+ * whatever the FILE VIEWER happens to have open, which is unrelated to an image
+ * opened from a chat message: falling back to it made Download save that other
+ * file (and the toolbar show its name). The file viewer's own entry point works
+ * without the fallback because its URL is built from the same path.
+ *
+ * Returns '' for sources with no local-file semantics (external URLs, data:
+ * URIs, share tokens, wallpaper endpoints) — those download by URL instead.
+ */
+function localPathFromUrl(url) {
+    return mediaPathFromUrl(url) || ''
+}
+
+/**
  * The URL actually handed to the <img>. Folds in the shared media version so a
  * background rewrite of the file being viewed refreshes the lightbox too —
  * without it, navigating back to the image (or any re-render) would restore the
@@ -465,10 +482,13 @@ function open(url, svg = '', filePath = '') {
     mdImages.value = []
     mdCurrentIndex.value = -1
 
-    // Build navigation from the explicit path, falling back to the store's
-    // current file (the file-viewer path, where the file IS open).
-    const navPath = filePath || store.state.currentFile?.path || ''
-    if (!svg && navPath) {
+    // Build navigation from the explicit path, falling back to the path encoded
+    // in the URL itself. NEVER from store.state.currentFile: that is whatever the
+    // file viewer has open, which for an image opened from a chat message is an
+    // unrelated file — the filename and the Download action both used to target
+    // it instead of the image on screen.
+    const navPath = svg ? '' : (filePath || localPathFromUrl(url))
+    if (navPath) {
         currentFilePath.value = navPath
         buildSiblingList(navPath)
     } else {
@@ -565,17 +585,12 @@ function handleDownload() {
     }
     if (!currentUrl.value) return
 
-    // Resolve the relative file path for downloadFileByPath / buildLocalFileUrl
-    let filePath = currentFilePath.value
-    if (!filePath) {
-        try {
-            const url = new URL(currentUrl.value, window.location.origin)
-            const prefix = '/api/fs/raw/'
-            if (url.pathname.startsWith(prefix)) {
-                filePath = decodeURIComponent(url.pathname.slice(prefix.length))
-            }
-        } catch { /* ignore */ }
-    }
+    // Resolve the file path of the image ON SCREEN. `currentFilePath` covers the
+    // explicit-path and directory-navigation flows; markdown-gallery items carry
+    // only a URL, so fall back to the path encoded in it (covers /api/fs/raw/,
+    // the ?target= form, and the thumbnail endpoint — the old prefix-only parse
+    // silently missed the latter two and downloaded by URL instead).
+    const filePath = currentFilePath.value || localPathFromUrl(currentUrl.value)
 
     if (filePath) {
         downloadFileByPath(filePath, currentFileName.value)
