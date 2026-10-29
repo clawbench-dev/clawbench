@@ -526,10 +526,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   about: [
     { type: 'item', spec: { labelKey: 'settings.items.aboutServerVersion', descriptionKey: 'settings.items.aboutServerVersionDesc', key: 'serverVersion', type: 'info', source: 'server', sectionHeader: 'settings.items.aboutVersionSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.aboutAppVersion', descriptionKey: 'settings.items.aboutAppVersionDesc', key: 'appVersion', type: 'info', source: 'local', sectionHeader: 'settings.items.aboutVersionSection' } },
-    // Project identity links — open the GitHub repository / issue tracker in the
+    // Project identity links — open the project site / GitHub repository in the
     // system browser. Rendered as their own section so they are not buried among
     // the maintenance actions below.
     { type: 'item', spec: { labelKey: 'settings.items.aboutHomepage', descriptionKey: 'settings.items.aboutHomepageDesc', key: 'openProjectHomepage', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutProjectSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.aboutGithub', descriptionKey: 'settings.items.aboutGithubDesc', key: 'openProjectGithub', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutProjectSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.aboutFeedback', descriptionKey: 'settings.items.aboutFeedbackDesc', key: 'openProjectFeedback', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutProjectSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.addToHomeScreen', descriptionKey: 'settings.items.addToHomeScreenDesc', key: 'addToHomeScreen', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
     // NOT appOnly: that flag means "Android app only" and would hide this row

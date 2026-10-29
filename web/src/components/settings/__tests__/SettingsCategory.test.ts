@@ -320,8 +320,10 @@ const i18n = createI18n({
           aboutServerVersion: '服务器版本',
           aboutServerVersionDesc: '服务器版本',
           aboutBrandSlogan: '多端一体的 AI 工作台',
-          aboutHomepage: '官网',
+          aboutHomepage: '项目主页',
           aboutHomepageDesc: '在浏览器中打开项目主页',
+          aboutGithub: 'GitHub 主页',
+          aboutGithubDesc: '在浏览器中打开 GitHub 仓库',
           aboutFeedback: '问题反馈',
           aboutFeedbackDesc: '前往 GitHub 提交问题或建议',
           aboutAppVersion: 'APP版本',
@@ -812,21 +814,22 @@ describe('SettingsCategory', () => {
       expect(mountCategory('chat').findComponent({ name: 'SettingsAboutBrand' }).exists()).toBe(false)
     })
 
-    it('renders the homepage and feedback entries in their own card', () => {
+    it('renders the homepage, GitHub and feedback entries in their own card', () => {
       const wrapper = mountCategory('about')
       const labels = wrapper.findAllComponents({ name: 'SettingsItem' })
         .map(i => i.props().label)
-      expect(labels).toContain('官网')
+      expect(labels).toContain('项目主页')
+      expect(labels).toContain('GitHub 主页')
       expect(labels).toContain('问题反馈')
 
       const card = wrapper.findAllComponents({ name: 'SettingsCard' })
         .find(c => c.props().title === '项目')
       expect(card, 'the project links need their own card, not the actions card').toBeTruthy()
       const cardLabels = card!.findAllComponents({ name: 'SettingsItem' }).map(i => i.props().label)
-      expect(cardLabels).toEqual(['官网', '问题反馈'])
+      expect(cardLabels).toEqual(['项目主页', 'GitHub 主页', '问题反馈'])
     })
 
-    it('opens the project homepage in the browser on click', async () => {
+    it('opens the project homepage (not the repository) on click', async () => {
       const wrapper = mountCategory('about')
       const vm = wrapper.vm as any
       vm.$.setupState.handleClick({ key: 'openProjectHomepage' })
@@ -836,7 +839,20 @@ describe('SettingsCategory', () => {
       // while it is still attached (it is removed after 1s).
       const anchors = document.body.querySelectorAll('a[href]')
       const hrefs = Array.from(anchors).map(a => a.getAttribute('href'))
+      expect(hrefs).toContain('https://clawbench.pages.dev')
+      anchors.forEach(a => a.remove())
+    })
+
+    it('opens the GitHub repository (not the homepage) on click', async () => {
+      const wrapper = mountCategory('about')
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleClick({ key: 'openProjectGithub' })
+      await nextTick()
+
+      const anchors = Array.from(document.body.querySelectorAll('a[href]'))
+      const hrefs = anchors.map(a => a.getAttribute('href'))
       expect(hrefs).toContain('https://github.com/xulongzhe/clawbench')
+      expect(hrefs).not.toContain('https://clawbench.pages.dev')
       anchors.forEach(a => a.remove())
     })
 

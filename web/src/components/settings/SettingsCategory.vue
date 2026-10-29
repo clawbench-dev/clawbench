@@ -165,7 +165,7 @@ import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useDesktopDownload } from '@/composables/useDesktopDownload'
 import { downloadByUrl } from '@/utils/download'
 import { openExternalUrl } from '@/utils/externalLink'
-import { PROJECT_FEEDBACK_URL, PROJECT_HOMEPAGE_URL } from '@/utils/projectLinks'
+import { PROJECT_FEEDBACK_URL, PROJECT_GITHUB_URL, PROJECT_HOMEPAGE_URL } from '@/utils/projectLinks'
 import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
 import { isSummaryModelConfigured } from '@/utils/aiSummaryModel'
 import { THEMES } from '@/utils/themeMeta'
@@ -604,6 +604,9 @@ function handleClick(item: ItemSpec) {
   }
   if (item.key === 'openProjectHomepage') {
     openExternalUrl(PROJECT_HOMEPAGE_URL)
+  }
+  if (item.key === 'openProjectGithub') {
+    openExternalUrl(PROJECT_GITHUB_URL)
   }
   if (item.key === 'openProjectFeedback') {
     openExternalUrl(PROJECT_FEEDBACK_URL)
