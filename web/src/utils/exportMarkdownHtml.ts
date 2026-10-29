@@ -223,7 +223,10 @@ async function inlineImages(container: HTMLElement): Promise<{ skipped: number; 
 function handleFailedMermaid(container: HTMLElement): void {
     const mermaidBlocks = container.querySelectorAll('pre.mermaid, div.mermaid, code.mermaid')
     for (const block of Array.from(mermaidBlocks)) {
-        // If it contains an SVG, Mermaid rendered successfully
+        // If it contains an SVG, Mermaid rendered successfully. (The loading
+        // placeholder is an `<svg>` too, but it cannot reach here: the export
+        // awaits `renderMermaidInElement`, so by this point every block is
+        // either finished artwork or an error container.)
         if (block.querySelector('svg')) continue
 
         // Already an error container with data-mermaid-error — replace with
