@@ -329,7 +329,7 @@ func (m *Manager) downloadFailureText(out downloadOutcome) string {
 		return common.T("PushFileTooLarge", map[string]any{"MaxMB": common.AttachmentMaxBytes() / (1024 * 1024)})
 	}
 	if out.failed > 1 {
-		return common.T("PushFilesDownloadFailed", map[string]any{"Count": out.failed})
+		return common.T("PushFilesDownloadFailed", map[string]any{common.TemplateCount: out.failed})
 	}
 	return common.T("PushFileDownloadFailed")
 }
@@ -338,12 +338,12 @@ func (m *Manager) downloadFailureText(out downloadOutcome) string {
 // truncation so the user knows the message was not delivered in full.
 func (m *Manager) attachmentSentText(sessionID, sessionTitle string, sent int, out downloadOutcome) string {
 	var sb strings.Builder
-	sb.WriteString(common.T("PushSentToSessionPlain", map[string]any{"Label": common.FormatSessionLabel(sessionID, sessionTitle)}))
+	sb.WriteString(common.T("PushSentToSessionPlain", map[string]any{common.TemplateLabel: common.FormatSessionLabel(sessionID, sessionTitle)}))
 	if sent > 1 {
-		sb.WriteString(common.T("PushFilesCount", map[string]any{"Count": sent}))
+		sb.WriteString(common.T("PushFilesCount", map[string]any{common.TemplateCount: sent}))
 	}
 	if out.failed > 0 {
-		fmt.Fprintf(&sb, "\n\n%s", common.T("PushPartialDownloadFailed", map[string]any{"Count": out.failed}))
+		fmt.Fprintf(&sb, "\n\n%s", common.T("PushPartialDownloadFailed", map[string]any{common.TemplateCount: out.failed}))
 	}
 	if out.truncated {
 		fmt.Fprintf(&sb, "\n\n%s", common.T("PushAttachmentsTruncated", map[string]any{
@@ -390,7 +390,7 @@ func (m *Manager) deliverToSession(ctx context.Context, openID string, route com
 
 	slog.Info("feishu: message sent to session", "session_id", sessionID, "msg", route.Message)
 	_ = m.SendPostMessage(ctx, openID, common.T("PushMessageSent"),
-		common.T("PushSentToSessionPlain", map[string]any{"Label": sessionLabel}))
+		common.T("PushSentToSessionPlain", map[string]any{common.TemplateLabel: sessionLabel}))
 }
 
 // lastSessionID reads the user's sticky target, treating any failure as "none
@@ -445,7 +445,7 @@ func (m *Manager) handleShowLastReply(ctx context.Context, openID, arg string) {
 		return
 	}
 
-	body := common.T("PushShowSessionLabel", map[string]any{"Label": label}) + "\n\n"
+	body := common.T("PushShowSessionLabel", map[string]any{common.TemplateLabel: label}) + "\n\n"
 	if !ok {
 		body += common.T("PushShowEmpty")
 	} else {
@@ -484,8 +484,8 @@ func (m *Manager) handleStopSession(ctx context.Context, openID, arg string) {
 		key = "PushStoppedRunning"
 	}
 	body := common.T(key, map[string]any{
-		"Label": common.FormatSessionLabel(sessionID, title),
-		"Count": cleared,
+		common.TemplateLabel: common.FormatSessionLabel(sessionID, title),
+		common.TemplateCount: cleared,
 	})
 	_ = m.SendPostMessage(ctx, openID, common.T("PushStoppedTitle"), body)
 }
@@ -527,8 +527,8 @@ func (m *Manager) handleNewSession(ctx context.Context, openID, arg string) {
 	m.rememberSession(openID, sessionID)
 
 	body := common.T("PushNewCreated", map[string]any{
-		"Label": common.FormatSessionLabel(sessionID, title),
-		"ID":    common.ShortSessionID(sessionID),
+		common.TemplateLabel: common.FormatSessionLabel(sessionID, title),
+		common.TemplateID:    common.ShortSessionID(sessionID),
 	})
 	if !ref.Exists {
 		body += "\n\n" + common.T("PushNewProjectMissingDir")

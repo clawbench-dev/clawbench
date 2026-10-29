@@ -20,3 +20,15 @@ import (
 func T(messageID string, templateData ...map[string]any) string {
 	return i18n.T(i18n.LocalizerForLocale(model.Language), messageID, templateData...)
 }
+
+// Template placeholders shared by several push strings. Kept as constants
+// because a typo in one of these silently renders "{{.Count}}" into the chat,
+// and because both backends use the same names across many call sites.
+const (
+	// TemplateCount is the message count placeholder (queued/files).
+	TemplateCount = "Count"
+	// TemplateLabel is the session label placeholder.
+	TemplateLabel = "Label"
+	// TemplateID is the short session id placeholder.
+	TemplateID = "ID"
+)

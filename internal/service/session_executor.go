@@ -82,6 +82,9 @@ const (
 	// of only after a reload (decisions #40/#43). Distinct from user_message:
 	// the frontend renders it as a centered row, not a user bubble.
 	eventTypeSystemMessage = "system_message"
+	// eventTypeQueueCancel removes pending queue bubbles on every subscriber
+	// after the queue was cleared (user cancel, stop command, abort drain).
+	eventTypeQueueCancel = "queue_cancel"
 	// eventTypeToolUse is the stream event type for tool calls.
 	eventTypeToolUse = "tool_use"
 	// eventTypeToolResult is the stream event type for tool results.

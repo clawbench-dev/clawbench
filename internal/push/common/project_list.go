@@ -51,7 +51,7 @@ func SelectProject(refs []ProjectRef, arg string) (string, ProjectRef, error) {
 			}
 		}
 		return "", ProjectRef{}, fmt.Errorf("%s",
-			T("PushNewProjectOutOfRange", map[string]any{"Count": len(refs)}))
+			T("PushNewProjectOutOfRange", map[string]any{TemplateCount: len(refs)}))
 	}
 
 	for _, r := range refs {

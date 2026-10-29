@@ -1445,15 +1445,19 @@ func (m *mockResolveThenFail) CreateSessionInProject(string) (string, string, er
 // /show /stop /new tests
 // ============================================================================
 
+// commandStickySession is the sticky target every /show /stop /new test starts
+// from, so the bare-command cases resolve to a known session.
+const commandStickySession = "abc12345-1111-1111-1111-111111111111"
+
 // feishuCommandEnv installs a sticky-target mock DB and a caller-provided
 // messenger, then returns the manager plus a reply capture box.
-func feishuCommandEnv(t *testing.T, sticky string, m *mockSessionMessenger) (*Manager, *replyBox) {
+func feishuCommandEnv(t *testing.T, m *mockSessionMessenger) (*Manager, *replyBox) {
 	t.Helper()
 	origDB := db
 	t.Cleanup(func() { db = origDB })
 	db = &mockDBWithCallback{
 		upsertFn:  func(_, _, _, _ string) error { return nil },
-		getLastFn: func(string) (string, error) { return sticky, nil },
+		getLastFn: func(string) (string, error) { return commandStickySession, nil },
 	}
 
 	origSM := sessionMessenger
@@ -1473,7 +1477,7 @@ func TestOnMessageReceive_ShowLastReply(t *testing.T) {
 		lastReply:   "the full answer",
 		lastReplyOK: true,
 	}
-	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+	mgr, box := feishuCommandEnv(t, m)
 
 	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
 	if !strings.Contains(box.get(), "the full answer") {
@@ -1483,7 +1487,7 @@ func TestOnMessageReceive_ShowLastReply(t *testing.T) {
 
 func TestOnMessageReceive_ShowEmptyReply(t *testing.T) {
 	m := &mockSessionMessenger{sessions: stickySessions, lastReplyOK: false}
-	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+	mgr, box := feishuCommandEnv(t, m)
 
 	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
 	if !strings.Contains(box.get(), "还没有已完成的回复") {
@@ -1497,7 +1501,7 @@ func TestOnMessageReceive_ShowExplicitTarget(t *testing.T) {
 		lastReply:   "other answer",
 		lastReplyOK: true,
 	}
-	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+	mgr, box := feishuCommandEnv(t, m)
 
 	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show deadbeef"))
 	if !strings.Contains(box.get(), "other answer") {
@@ -1507,7 +1511,7 @@ func TestOnMessageReceive_ShowExplicitTarget(t *testing.T) {
 
 func TestOnMessageReceive_StopRunningSession(t *testing.T) {
 	m := &mockSessionMessenger{sessions: stickySessions, wasRunning: true, cleared: 3}
-	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+	mgr, box := feishuCommandEnv(t, m)
 
 	_ = mgr.onMessageReceive(context.TODO(), textEvent("/stop"))
 	out := box.get()
@@ -1521,7 +1525,7 @@ func TestOnMessageReceive_StopRunningSession(t *testing.T) {
 
 func TestOnMessageReceive_StopIdleSession(t *testing.T) {
 	m := &mockSessionMessenger{sessions: stickySessions, wasRunning: false, cleared: 0}
-	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+	mgr, box := feishuCommandEnv(t, m)
 
 	_ = mgr.onMessageReceive(context.TODO(), textEvent("/stop"))
 	if !strings.Contains(box.get(), "未在运行") {
@@ -1537,7 +1541,7 @@ func TestOnMessageReceive_NewListsProjects(t *testing.T) {
 			{Index: 2, Path: "/proj/beta", Exists: true},
 		},
 	}
-	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+	mgr, box := feishuCommandEnv(t, m)
 
 	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new"))
 	out := box.get()
@@ -1582,7 +1586,7 @@ func TestOnMessageReceive_NewOutOfRange(t *testing.T) {
 		projects: []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
 		createFn: func(string) (string, string, error) { called = true; return "", "", nil },
 	}
-	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+	mgr, box := feishuCommandEnv(t, m)
 
 	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new 9"))
 	if called {
@@ -1601,7 +1605,7 @@ func TestOnMessageReceive_NewMissingDirWarns(t *testing.T) {
 			return "f1e2d3c4-0000-0000-0000-000000000000", "新会话 1", nil
 		},
 	}
-	mgr, box := feishuCommandEnv(t, "abc12345-1111-1111-1111-111111111111", m)
+	mgr, box := feishuCommandEnv(t, m)
 
 	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new 1"))
 	if !strings.Contains(box.get(), "目录已不存在") {

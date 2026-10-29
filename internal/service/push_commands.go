@@ -80,7 +80,7 @@ func StopAndClearSession(sessionID string) (wasRunning bool, cleared int, err er
 	// Emit even when queueIDs is empty: a cross-device _remote bubble must not
 	// linger (the frontend treats an empty array as a no-op).
 	ws.EmitToSession(sessionID, ai.StreamEvent{
-		Type: "queue_cancel",
+		Type: eventTypeQueueCancel,
 		QueueEvent: &ai.QueueEventData{
 			SessionID: sessionID,
 			QueueIDs:  queueIDs,
@@ -175,7 +175,7 @@ func CreatePushSession(projectPath string) (sessionID, title string, err error) 
 	}
 
 	baseTitle := i18nT("NewSession")
-	if n, err := NextSessionNumber(projectPath, baseTitle); err == nil {
+	if n, numErr := NextSessionNumber(projectPath, baseTitle); numErr == nil {
 		title = i18nT("NewSessionN", map[string]any{"N": n})
 	} else {
 		title = baseTitle
