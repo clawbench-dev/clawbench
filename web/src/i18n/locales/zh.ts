@@ -773,9 +773,9 @@ export default {
     },
     sessionSetting: {
       searchPlaceholder: '搜索模型...',
-      refresh: '刷新模型',
-      refreshSuccess: '模型列表已刷新',
-      refreshFailed: '刷新模型失败',
+      refresh: '刷新模型、思考等级、模式与斜杠命令',
+      refreshSuccess: '已刷新模型、思考等级、模式与斜杠命令',
+      refreshFailed: '刷新失败',
       discoveryFailed: '模型发现未返回结果，请检查 CLI 安装方式',
       discoveryFailedWithDetail: '模型发现未返回结果：{detail}',
       cliNotFound: 'CLI 工具未找到，请先安装',

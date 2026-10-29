@@ -2624,16 +2624,43 @@ func (c *ACPConn) deleteACPSession() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_, err := conn.UnstableDeleteSession(ctx, acp.UnstableDeleteSessionRequest{
-		SessionId: acp.SessionId(acpSID),
-	})
-	if err != nil {
+	if err := c.sendDeleteSession(ctx); err != nil {
 		slog.Warn("acp: session/delete failed (best-effort, ignored)",
 			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "error", err)
 		return
 	}
 	slog.Info("acp: session/delete succeeded",
 		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
+}
+
+// sendDeleteSession issues session/delete for this connection's current ACP
+// session, WITHOUT consulting the advertised capability.
+//
+// The capability gate lives in deleteACPSession (the permanent-delete path,
+// where a refusal is expected and uninteresting). The state probe needs the
+// unconditional form: CodeBuddy implements session/delete but advertises no
+// sessionCapabilities at all, so gating there would leak one orphan session per
+// refresh (see docs/dev/codebuddy_acp_extensions.md).
+//
+// Returns an error when the connection cannot serve the call or the agent
+// refused it; callers treat that as best-effort.
+func (c *ACPConn) sendDeleteSession(ctx context.Context) error {
+	c.mu.Lock()
+	conn := c.conn
+	acpSID := c.acpSID
+	alive := c.alive && c.isAliveLocked()
+	c.mu.Unlock()
+
+	if conn == nil || acpSID == "" || !alive {
+		return fmt.Errorf("acp: connection not usable for session/delete (alive=%v, sid=%q)", alive, acpSID)
+	}
+	_, err := conn.UnstableDeleteSession(ctx, acp.UnstableDeleteSessionRequest{
+		SessionId: acp.SessionId(acpSID),
+	})
+	if err != nil {
+		return fmt.Errorf("acp: session/delete: %w", err)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

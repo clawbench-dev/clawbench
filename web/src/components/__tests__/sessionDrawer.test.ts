@@ -49,6 +49,7 @@ vi.mock('@/composables/useAgents', () => ({
   restoreACPModelView: vi.fn(),
   resetModelViewForTransport: vi.fn(),
   applyRefreshedModelList: vi.fn(),
+  applyRefreshedACPState: vi.fn(),
   populateACPStateCache: vi.fn().mockResolvedValue(undefined),
   invalidateACPStateCache: vi.fn(),
 }))
@@ -128,6 +129,13 @@ const mockAgents = {
   canRefreshModels: vi.fn((agentId: string) => {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     return !!a?.canRefreshModels
+  }),
+  canRefreshAgentState: vi.fn((agentId: string) => {
+    // Mirrors the backend split: transport decides which source can refresh.
+    const a = mockAgents.agents.value.find(a => a.id === agentId)
+    if (!a) return false
+    const transport = a.transport || (a.acpCommand ? 'acp-stdio' : 'cli')
+    return transport === 'acp-stdio' ? !!a.acpCommand : !!a.canRefreshModels
   }),
   supportsACP: vi.fn((agentId: string) => {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
@@ -293,7 +301,9 @@ describe('SessionDrawer', () => {
     await new Promise(r => setTimeout(r, 10))
     await nextTick()
 
-    expect(apiPost).toHaveBeenCalledWith('/api/agents/claude/refresh-models', {})
+    // A refresh probe can take several seconds (process start + the agent's
+    // delayed command push), so the request raises the client timeout.
+    expect(apiPost).toHaveBeenCalledWith('/api/agents/claude/refresh-models', {}, { timeoutMs: 180000 })
     expect(applyRefreshedModelList).toHaveBeenCalledWith('claude', newModels, cliModels)
     expect(mockToastShow).toHaveBeenCalledWith('chat.sessionSetting.refreshSuccess', expect.any(Object))
   })

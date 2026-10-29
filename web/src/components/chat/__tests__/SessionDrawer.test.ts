@@ -10,8 +10,9 @@ import { readWebFile } from '@/testUtils/readWebFile'
 
 // Shared mock for the named applyRefreshedModelList export — used by both the
 // vi.mock factory and the assertions below (the component imports it directly).
-const { mockApplyRefreshedModelList } = vi.hoisted(() => ({
+const { mockApplyRefreshedModelList, mockApplyRefreshedACPState } = vi.hoisted(() => ({
   mockApplyRefreshedModelList: vi.fn(),
+  mockApplyRefreshedACPState: vi.fn(),
 }))
 
 // Mock BottomSheet to render slot content inline (skip Teleport).
@@ -23,7 +24,10 @@ vi.mock('@/components/common/BottomSheet.vue', () => ({
     template: `
       <div class="bottom-sheet-overlay">
         <div class="bottom-sheet">
-          <div class="bs-header"><slot name="header" /></div>
+          <!-- Mirrors the real narrow-mode BottomSheet: tapping the header
+               closes the sheet. Without this the "header button must not
+               bubble" test would pass no matter what the button does. -->
+          <div class="bs-header" @click="$emit('close')"><slot name="header" /></div>
           <div class="bs-body"><slot /></div>
           <div class="bs-footer"><slot name="footer" /></div>
         </div>
@@ -50,6 +54,7 @@ vi.mock('@/composables/useAgents', () => ({
   populateACPStateFromCache: vi.fn().mockResolvedValue(undefined),
   invalidateACPStateCache: vi.fn(),
   applyRefreshedModelList: mockApplyRefreshedModelList,
+  applyRefreshedACPState: mockApplyRefreshedACPState,
 }))
 vi.mock('@/composables/useSessionIdentity', () => ({
   useSessionIdentity: vi.fn(),
@@ -137,6 +142,13 @@ const mockAgents = {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     return !!a?.canRefreshModels
   }),
+  canRefreshAgentState: vi.fn((agentId: string) => {
+    // Mirrors the backend split: transport decides which source can refresh.
+    const a = mockAgents.agents.value.find(a => a.id === agentId)
+    if (!a) return false
+    const transport = a.transport || (a.acpCommand ? 'acp-stdio' : 'cli')
+    return transport === 'acp-stdio' ? !!a.acpCommand : !!a.canRefreshModels
+  }),
   supportsACP: vi.fn((agentId: string) => {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     return !!a?.acpCommand
@@ -189,6 +201,13 @@ describe('SessionDrawer', () => {
     vi.mocked(apiPost).mockResolvedValue({ models: [] })
     mockApiGet.mockReset()
     mockApiPatch.mockReset().mockResolvedValue({ ok: true })
+    // The refresh assertions are "was it called with X", so a call from a
+    // previous test would make the negative case pass for the wrong reason.
+    mockApplyRefreshedModelList.mockClear()
+    mockApplyRefreshedACPState.mockClear()
+    // Tests that push temporary agents clean up in their own `finally`; this is
+    // a belt-and-braces reset so a thrown assertion cannot leak one forward.
+    mockAgents.agents.value = mockAgents.agents.value.filter(a => !a.id.startsWith('tmp-'))
     mockCompactMember.mockReset().mockResolvedValue({ used: 1000, size: 200000 })
     vi.mocked(patchAgentPref).mockResolvedValue(undefined)
   })
@@ -474,8 +493,113 @@ describe('SessionDrawer', () => {
     const wrapper = mountDrawer()
     await wrapper.vm.handleRefresh()
 
-    expect(apiPost).toHaveBeenCalledWith('/api/agents/claude/refresh-models', {})
+    expect(apiPost).toHaveBeenCalledWith('/api/agents/claude/refresh-models', {}, { timeoutMs: 180000 })
     expect(mockApplyRefreshedModelList).toHaveBeenCalledWith('claude', newModels, cliModels)
+  })
+
+  // The refresh lives in the sheet header because it refreshes EVERY list, not
+  // just the model tab's. Two things must hold: it is in the header, and it is
+  // no longer next to the model search (which claimed otherwise).
+  it('puts the refresh button in the header, not the model search row', () => {
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.bs-header .refresh-btn').exists()).toBe(true)
+    expect(wrapper.find('.model-search-row .refresh-btn').exists()).toBe(false)
+  })
+
+  // The narrow-screen header is itself a close affordance, so a header button
+  // must not let its click bubble — otherwise refreshing would dismiss the
+  // sheet mid-request.
+  it('does not close the sheet when the header refresh is clicked', async () => {
+    vi.mocked(apiPost).mockResolvedValue({ models: [] })
+    const wrapper = mountDrawer()
+
+    await wrapper.find('.bs-header .refresh-btn').trigger('click')
+
+    expect(wrapper.emitted('close')).toBeFalsy()
+  })
+
+  it('shows the refresh button for an ACP agent with no CLI model source', () => {
+    mockAgents.agents.value.push({
+      id: 'tmp-acp-only',
+      name: 'ACP Only',
+      backend: 'acp-only',
+      models: [],
+      thinkingEffortLevels: [],
+      preferredModel: '',
+      preferredThinkingEffort: '',
+      canRefreshModels: false,
+      acpCommand: 'acp-only --acp',
+      transport: 'acp-stdio',
+    } as any)
+    try {
+      const wrapper = mountDrawer({ agentId: 'tmp-acp-only' })
+      expect(wrapper.find('.refresh-btn').exists()).toBe(true)
+    } finally {
+      mockAgents.agents.value = mockAgents.agents.value.filter(a => a.id !== 'tmp-acp-only')
+    }
+  })
+
+  // A dual-transport agent currently on CLI refreshes through discovery, so it
+  // must stay hidden when it has no model source (the backend would answer
+  // ModelDiscoveryNotSupported).
+  it('hides the refresh button for a CLI agent without a model source', () => {
+    mockAgents.agents.value.push({
+      id: 'tmp-cli-no-source',
+      name: 'CLI No Source',
+      backend: 'cli-no-source',
+      models: [],
+      thinkingEffortLevels: [],
+      preferredModel: '',
+      preferredThinkingEffort: '',
+      canRefreshModels: false,
+      acpCommand: 'cli-no-source --acp',
+      transport: 'cli',
+    } as any)
+    try {
+      const wrapper = mountDrawer({ agentId: 'tmp-cli-no-source' })
+      expect(wrapper.find('.refresh-btn').exists()).toBe(false)
+    } finally {
+      mockAgents.agents.value = mockAgents.agents.value.filter(a => a.id !== 'tmp-cli-no-source')
+    }
+  })
+
+  // An ACP refresh also returns the mode / thinking-level / slash-command lists
+  // the agent currently offers. Dropping them would leave the other tabs and the
+  // `/` menu showing the pre-refresh state until the next turn.
+  it('applies the ACP state half of the refresh response', async () => {
+    const acpState = {
+      commands: [{ name: '/review', description: 'Review' }],
+      modeState: { currentModeId: 'plan', availableModes: [{ id: 'plan', name: 'Plan' }] },
+      thinkingEffortState: { currentId: 'high', availableLevels: [{ id: 'high', name: 'High' }] },
+    }
+    vi.mocked(apiPost).mockResolvedValue({ models: [], cliModels: [], acpState })
+
+    const wrapper = mountDrawer()
+    await wrapper.vm.handleRefresh()
+
+    expect(mockApplyRefreshedACPState).toHaveBeenCalledWith('claude', acpState)
+  })
+
+  it('does not touch ACP state when the response has none (CLI agent)', async () => {
+    vi.mocked(apiPost).mockResolvedValue({ models: [{ id: 'm', name: 'M', default: true }], cliModels: [] })
+    mockApplyRefreshedACPState.mockClear()
+
+    const wrapper = mountDrawer()
+    await wrapper.vm.handleRefresh()
+
+    expect(mockApplyRefreshedACPState).not.toHaveBeenCalled()
+  })
+
+  // "The agent offers nothing" is a real answer (a picked model may have been
+  // removed). The old truthiness guard silently ignored the empty list.
+  it('applies an empty model list instead of ignoring the response', async () => {
+    vi.mocked(apiPost).mockResolvedValue({ models: [], cliModels: [] })
+    mockApplyRefreshedModelList.mockClear()
+
+    const wrapper = mountDrawer()
+    await wrapper.vm.handleRefresh()
+
+    expect(mockApplyRefreshedModelList).toHaveBeenCalledWith('claude', [], [])
   })
 
   it('handleRefresh shows error toast on CLINotFound', async () => {

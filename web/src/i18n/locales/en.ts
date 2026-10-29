@@ -769,9 +769,9 @@ export default {
     },
     sessionSetting: {
       searchPlaceholder: 'Search models...',
-      refresh: 'Refresh models',
-      refreshSuccess: 'Models refreshed',
-      refreshFailed: 'Failed to refresh models',
+      refresh: 'Refresh models, thinking levels, modes and slash commands',
+      refreshSuccess: 'Models, thinking levels, modes and slash commands refreshed',
+      refreshFailed: 'Failed to refresh agent state',
       discoveryFailed: 'Model discovery returned no results. Check your CLI installation.',
       discoveryFailedWithDetail: 'Model discovery returned no results: {detail}',
       cliNotFound: 'CLI tool not found, please install it first',

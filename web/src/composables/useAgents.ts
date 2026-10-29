@@ -663,6 +663,26 @@ function canRefreshModels(agentId: string): boolean {
 }
 
 /**
+ * Whether a manual "refresh all" can produce anything for this agent.
+ *
+ * Mirrors the backend's strategy split exactly (see agentUsesACP in
+ * internal/handler/agent.go): the transport decides. An ACP agent is asked
+ * directly — its models/modes/thinking levels/slash commands come from its own
+ * session handshake, so an ACP-only backend with no CLI model source
+ * (canRefreshModels === false) is still perfectly refreshable. A CLI agent
+ * re-runs backend discovery, so it needs a model source.
+ *
+ * Gating on canRefreshModels alone hid the button exactly where refreshing
+ * matters most; gating on "has an acp_command" alone would show it for a
+ * dual-transport agent currently on CLI, which would then answer
+ * ModelDiscoveryNotSupported.
+ */
+function canRefreshAgentState(agentId: string): boolean {
+    if (getAgentTransport(agentId) === 'acp-stdio') return supportsACP(agentId)
+    return canRefreshModels(agentId)
+}
+
+/**
  * Check if an agent supports ACP transport (has acpCommand set).
  * ACP-only backends (e.g. grok) support ACP but not CLI.
  */
@@ -717,10 +737,42 @@ export function invalidateACPStateCache(agentId: string): void {
 }
 
 /**
- * Handle acp_state_update WS event from backend prefetch.
- * Updates the cache and, if the event is for the current agent,
- * immediately refreshes the UI (mode/thinking/command chips).
+ * Apply the ACP half of a manual "refresh all" (see applyRefreshedModelList).
+ *
+ * An ACP refresh asks the AGENT, so it returns not just models but also the mode
+ * and thinking-level lists and the slash commands it currently offers. Those must
+ * land in the same places a live `mode_update` / `thinking_effort_update` /
+ * `commands_update` event would put them, otherwise the drawer's other tabs and
+ * the `/` menu keep showing the pre-refresh lists until the next turn.
+ *
+ * Only AVAILABLE lists are touched — never the current selection. The current
+ * mode/effort/model belong to the user (or the DB), and a refresh must not move
+ * the chip the way an agent-reported default would.
+ *
+ * Applies to the CURRENT agent only: the identity refs are global singletons, so
+ * pushing another agent's lists into them would relabel the open session's chips.
  */
+export function applyRefreshedACPState(agentId: string, state: unknown): void {
+    const st = state as AcpState | undefined
+    if (!st || !agentId) return
+    // Keep the cache in step so populateACPStateFromCache (transport switch, new
+    // session) sees the refreshed lists instead of the stale snapshot.
+    const cached = acpStatesCache[agentId]
+    acpStatesCache[agentId] = { ...(cached || {}), ...(st as Record<string, unknown>) }
+
+    if (_currentAgentId?.value !== agentId) return
+
+    if (st.modeState?.availableModes && st.modeState.availableModes.length > 0) {
+        _updateAvailableModes?.(st.modeState.availableModes)
+    }
+    if (st.thinkingEffortState?.availableLevels && st.thinkingEffortState.availableLevels.length > 0) {
+        _updateAvailableThinkingEfforts?.(st.thinkingEffortState.availableLevels)
+    }
+    if (Array.isArray(st.commands) && st.commands.length > 0) {
+        _updateCommandState?.(st.commands)
+    }
+}
+
 /**
  * Populate ACP state (mode, thinking, commands, model list) for the given
  * agent from the cached acpStates. Used by createSession after clearing
@@ -864,6 +916,7 @@ export function useAgents() {
         updateAgentField,
         setDefaultAgent,
         canRefreshModels,
+        canRefreshAgentState,
         agentCanResume,
         supportsACP,
         supportsCLI,
@@ -876,6 +929,7 @@ export function useAgents() {
         restoreACPModelView,
         resetModelViewForTransport,
         applyRefreshedModelList,
+        applyRefreshedACPState,
         populateACPStateFromCache,
         duplicateAgent,
         createAcpAgent,

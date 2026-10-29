@@ -4666,14 +4666,29 @@ paths:
       tags: [Agents]
       summary: agent 子操作
       description: |
-        `/api/agents/{id}/refresh-models`：重新执行该 agent 的 CLI 模型发现并落库，
-        返回 `{ models, cliModels }`——与 GET /api/agents 同一形状。`models` 是发现结果
-        与已缓存的 ACP 模型列表合并后的列表（ACP 对成员资格有权威性），`cliModels` 是
-        未经合并的纯 CLI 列表，供客户端在切换到 CLI 传输时直接渲染。
+        `/api/agents/{id}/refresh-models`：刷新该 agent 对外提供的**全部**能力列表，
+        按传输方式选策略：
 
-        与 GET /api/agents 一致：当 agent 的 `transport` 为 `acp-stdio` 且其 ACP 运行时
-        尚未上报模型时，`models` 返回**空数组**（发现结果仍照常落库，`cliModels` 照常
-        返回）——否则手动刷新一次就会把 CLI 猜测列表写回 ACP 视图。
+        - **ACP**（`transport == "acp-stdio"` 且有 `acp_command`；`transport` 为空时
+          按有 `acp_command` 即 ACP 解析）：**直接问 agent 本身**。临时创建一个会话，
+          从 `session/new` 响应与随后推送的 `available_commands_update` 采集模型、
+          思考等级、模式与斜杠命令，写回能力缓存，然后调用 `session/delete` 删除该
+          临时会话（**不检查** agent 是否广告 delete 能力：CodeBuddy 实现了该方法却
+          不广告 `sessionCapabilities`，按能力跳过会每次刷新泄漏一个孤儿会话）。
+          探测失败即失败，**不回落到 CLI 发现**——ACP 下的 CLI 列表只是猜测。
+        - **CLI**：重跑该后端的模型发现并落库。
+
+        两者都返回 `{ models, cliModels, acpState? }`——与 GET /api/agents 同一形状。
+        `models` 是发现/探测结果与 ACP 模型列表合并后的列表（ACP 对成员资格有权威性），
+        `cliModels` 是未经合并的纯 CLI 列表，供客户端在切换到 CLI 传输时直接渲染。
+        `acpState` 仅 ACP 分支返回，含 `{ commands, modeState?, thinkingEffortState? }`
+        （只含**可用列表**，不含当前选择）。
+
+        ACP 分支在 agent 未上报任何模型时 `models` 返回**空数组**（不回退 CLI 列表），
+        与 GET /api/agents 一致：客户端会把 `models` 直接写到 acp-stdio 的 agent 上。
+        探测需要当前项目作为工作目录（`session/new` 要求绝对 cwd），无项目 Cookie 时
+        返回 400 `NoProjectSelected`；探测失败返回 500 `ModelDiscoveryFailed`，
+        `detail.detail` 携带原因。
 
         `/api/agents/rescan`：重跑 agent 刷新流水线（探测 CLI → 发现模型 → 落库 →
         重载内存），返回与 GET /api/agents 相同形状、同样按当前项目过滤的
