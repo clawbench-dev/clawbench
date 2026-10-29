@@ -1044,6 +1044,7 @@ export default {
       conversationIndexRoleAssistant: 'Assistant',
       conversationIndexRoleSystem: 'System',
       conversationIndexNoText: '(no text in this turn)',
+      messageRailLabel: 'Message navigation',
     },
     pending: {
       uploadedAttachment: 'Upload',

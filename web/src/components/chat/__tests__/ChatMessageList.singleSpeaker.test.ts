@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, ref } from 'vue'
 
 // ── Single-chat speaker header wiring ──
 // ChatMessageItem renders the header from a `sessionSpeaker` identity, and it
@@ -67,6 +67,10 @@ vi.mock('@/composables/useDoubleClickCopy.ts', () => ({ useDoubleClickCopy: () =
 vi.mock('@/composables/useDialog', () => ({ useDialog: () => ({ confirm: vi.fn() }) }))
 vi.mock('@/composables/useUserMsgIndex.ts', () => ({
   useUserMsgIndex: () => ({
+    // The chat-area rail renders this list permanently, so it must be an array
+    // even when the test never opens the index.
+    // A real ref, not a bare { value }: the rail reads it as a prop array.
+    userMsgIndexList: ref([]),
     drawer: { effectiveOpen: { value: false }, isOpen: { value: false }, open: vi.fn(), close: vi.fn() },
     effectiveOpen: { value: false },
     isOpen: { value: false },
@@ -78,6 +82,10 @@ vi.mock('@/composables/useUserMsgIndex.ts', () => ({
     closeIndex: vi.fn(),
     jumpToUserMessage: vi.fn(),
     loadingTarget: { value: null },
+    loadingIndex: { value: false },
+    ensureIndexLoaded: vi.fn(),
+    refreshIndexIfStale: vi.fn(),
+    hasBtw: () => false,
     remainingCount: { value: 0 },
   }),
 }))

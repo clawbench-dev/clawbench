@@ -16,17 +16,19 @@
       'msg-item-active': navActive,
       'msg-item--assistant': msg.role === 'assistant',
       'msg-item--system': msg.role === 'system',
+      'msg-item--node': variant === 'node',
+      'msg-item--body': variant === 'body',
     }"
     :aria-current="active || undefined"
-    tabindex="0"
+    :tabindex="variant === 'row' ? 0 : -1"
     role="button"
     @click="$emit('select', msg)"
     @keydown.enter="$emit('select', msg)"
   >
-    <span class="msg-node">
+    <span v-if="variant !== 'body'" class="msg-node">
       <span class="msg-index">{{ index }}</span>
     </span>
-    <div class="msg-body">
+    <div v-if="variant !== 'node'" class="msg-body">
       <span
         class="msg-role-tag"
         :class="roleClass"
@@ -116,6 +118,20 @@ const props = withDefaults(defineProps<{
    * component stays presentational — it never imports a group composable.
    */
   resolveSpeaker?: ((agentId: string) => SpeakerIdentity | null) | null
+  /**
+   * Which part of the row to render.
+   *
+   * `row` (default) is the full index row. The two partial variants exist for
+   * the chat-area navigation rail, which paints the SAME node (and the SAME row
+   * surface) in two separate layers:
+   *   - `node` → only the timeline node. The rail stacks these at its own
+   *     spacing and draws the connector itself, because the connector must run
+   *     through a scrollable column rather than between adjacent DOM rows.
+   *   - `body` → only the preview text, used as the hover card's row.
+   * Splitting them keeps ONE definition of the node and row styling, so the
+   * rail can never drift from the conversation index it mirrors.
+   */
+  variant?: 'row' | 'node' | 'body'
 }>(), {
   active: false,
   navActive: false,
@@ -123,6 +139,7 @@ const props = withDefaults(defineProps<{
   showTime: true,
   hasBtw: false,
   resolveSpeaker: null,
+  variant: 'row',
 })
 
 defineEmits<{ select: [msg: IndexMsg] }>()
@@ -255,6 +272,72 @@ const speaker = computed<SpeakerIdentity | null>(() => {
 .msg-item-active {
   --rail-punch: color-mix(in srgb, var(--text-primary) 7%, var(--msg-row-bg, var(--bg-secondary)));
   background: var(--rail-punch);
+}
+
+/* ── Partial variants for the chat-area navigation rail ──
+   The rail paints the node and the preview in two separate layers (the node
+   column has to scroll independently of the hover card), so each variant drops
+   the half it does not own. Everything that defines their LOOK — node size,
+   border, number type, row surface, active/lit states — stays in the rules
+   above and below, unchanged. */
+
+/* Node only: the rail positions it absolutely and draws the connector itself,
+   so the row box must contribute no surface, padding or line of its own. */
+.msg-item--node {
+  padding: 0;
+  gap: 0;
+  border-radius: 0;
+}
+
+.msg-item--node::before {
+  display: none;
+}
+
+/* The node layer never paints a row surface — not on hover, not when active.
+   Only the node itself changes, which is what the index shows when its rows sit
+   on the host's own background. */
+.msg-item--node,
+.msg-item--node:hover,
+.msg-item--node.active {
+  background: none;
+  box-shadow: none;
+}
+
+.msg-item--node:hover {
+  --rail-punch: var(--msg-row-bg, var(--bg-secondary));
+}
+
+/* Preview only: no node in this layer, so the row keeps the index row's
+   horizontal rhythm but fills the host's row height instead of adding the
+   index's vertical padding on top of it. `--msg-row-pad-end` is the host's room
+   for the node column it paints over this row. */
+.msg-item--body {
+  padding: 0 var(--msg-row-pad-end, var(--space-4)) 0 var(--space-6);
+}
+
+.msg-item--body::before {
+  display: none;
+}
+
+/* Pointer-lit row. The rail owns the pointer and it can be over either layer,
+   so hover cannot come from `:hover` on the element itself — the host sets this
+   class on the preview row AND the node nearest the pointer. */
+.msg-item--body.msg-item--lit {
+  --rail-punch: color-mix(in srgb, var(--text-primary) 5%, var(--msg-row-bg, var(--bg-secondary)));
+  background: var(--rail-punch);
+}
+
+.msg-item--node.msg-item--lit .msg-node {
+  background: color-mix(in srgb, var(--accent-color) 16%, var(--msg-row-bg, var(--bg-secondary)));
+  border-color: color-mix(in srgb, var(--accent-color) 34%, transparent);
+}
+
+/* Active (the message in view) wins over lit: the solid accent node plus the
+   accent-tinted row with its 3px start bar, exactly as the index drawer draws
+   it. Declared after the partial-variant overrides so it still applies. */
+.msg-item.active .msg-node {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
 }
 
 /* ── Timeline node (number badge) ── */

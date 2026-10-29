@@ -1049,6 +1049,7 @@ export default {
       conversationIndexRoleAssistant: '助手',
       conversationIndexRoleSystem: '系统',
       conversationIndexNoText: '（本轮无文字回复）',
+      messageRailLabel: '消息导航',
     },
     pending: {
       uploadedAttachment: '上传附件',

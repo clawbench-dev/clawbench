@@ -89,7 +89,7 @@ vi.mock('@/composables/useDoubleClickCopy.ts', () => ({
 vi.mock('@/composables/useDialog', () => ({ useDialog: () => ({ confirm: vi.fn() }) }))
 vi.mock('@/composables/useUserMsgIndex.ts', () => ({
   useUserMsgIndex: () => ({
-    userMsgIndexList: { value: [] },
+    userMsgIndexList: ref([]),
     drawer: { effectiveOpen: { value: false }, isOpen: { value: false }, open: vi.fn(), close: vi.fn() },
     loadingTarget: { value: null },
     loadingIndex: { value: false },
@@ -98,7 +98,9 @@ vi.mock('@/composables/useUserMsgIndex.ts', () => ({
     jumpToUserMessage: vi.fn(),
     jumpToAdjacentMessage: vi.fn(),
     scrollToMessage: vi.fn(),
-    hasBtw: { value: false },
+    ensureIndexLoaded: vi.fn(),
+    refreshIndexIfStale: vi.fn(),
+    hasBtw: () => false,
   }),
 }))
 vi.mock('@/composables/useTableRowExpand.ts', () => ({

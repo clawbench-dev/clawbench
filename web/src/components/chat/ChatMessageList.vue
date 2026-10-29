@@ -312,6 +312,14 @@ const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'f
 
 const messagesRef = ref(null)
 
+/** Stable accessor for consumers that only need the scroll container element
+ *  (the message rail measures its gutter and forwards leftover wheel delta).
+ *  A method reference rather than an inline arrow so a parent re-render cannot
+ *  look like a prop change. */
+function getMessagesEl() {
+  return messagesRef.value
+}
+
 /**
  * The scrollbar's layout cost, mirrored onto `--chat-scrollbar-lane`.
  *
@@ -1022,6 +1030,10 @@ onMounted(() => {
   document.addEventListener('mouseup', onDocumentMouseUp)
   observeContentGrowth()
   observeScrollbarLane()
+  // The navigation rail renders the conversation index permanently, so it has
+  // to be loaded even if nobody ever opens the drawer. Idempotent, and skipped
+  // when there is no session yet (the session watcher loads it on switch).
+  void ensureIndexLoaded()
 })
 onBeforeUnmount(() => {
   // Teardown without a session switch (e.g. the whole panel unmounts) still
@@ -1265,6 +1277,8 @@ const {
   loadingIndex,
   toggleUserMsgIndex,
   closeUserMsgIndex,
+  ensureIndexLoaded,
+  refreshIndexIfStale,
   jumpToUserMessage,
   jumpToAdjacentMessage,
   scrollToMessage: scrollToMessageUserMsg,
@@ -1291,6 +1305,33 @@ const {
     if (!val) userLeftBottom = true
   },
 })
+
+/**
+ * Keep the rail's index in step with the conversation.
+ *
+ * The index is a snapshot from the API. That was invisible while its only
+ * consumer was a drawer that re-fetched on open; the always-visible rail would
+ * otherwise freeze at whatever the session looked like when it was opened.
+ *
+ * Keyed on the TAIL message's id (not the array length): loading older history
+ * prepends to the head, so length grows without any new message. Fires only
+ * once the tail has stopped streaming, because the index excludes in-flight
+ * rows by construction — refreshing mid-turn would store a snapshot that is
+ * already missing the turn being written.
+ */
+watch(
+  () => {
+    const list = props.messages
+    const tail = list && list.length > 0 ? list[list.length - 1] : null
+    return `${tail?.id ?? ''}|${tail?.streaming ? 1 : 0}`
+  },
+  (key) => {
+    const [id, streaming] = key.split('|')
+    if (!id || streaming === '1') return
+    void refreshIndexIfStale(id)
+  },
+  { immediate: true },
+)
 
 /**
  * Resolve the conversation-index row's speaker identity so the drawer shows the
@@ -1404,6 +1445,20 @@ const nearestIndexMsgId = computed(() => {
   if (!userMsgIndexDrawer.effectiveOpen.value) return null
   // The index lists both roles now, so the highlight tracks the nearest message
   // of any role rather than only the nearest user message.
+  const idx = nearestMessageIndex()
+  return idx === null ? null : (props.messages[idx]?.id ?? null)
+})
+
+/**
+ * Active id for the always-visible rail.
+ *
+ * Same measurement as `nearestIndexMsgId` but WITHOUT the drawer gate: the rail
+ * is on screen whenever the pane has a gutter, so it must track the reading
+ * position unconditionally. The two are separate computeds on purpose — sharing
+ * one would force the drawer's per-frame walk to run whenever the rail is
+ * visible, which is the exact cost that gate was added to avoid.
+ */
+const nearestRailMsgId = computed(() => {
   const idx = nearestMessageIndex()
   return idx === null ? null : (props.messages[idx]?.id ?? null)
 })
@@ -1537,6 +1592,9 @@ watch(() => props.currentSessionId, (newSid, oldSid) => {
   userMsgIndexDrawer.close()
   codeLinkPreview.close()
   userMsgIndexList.value = []
+  // The rail renders this same list permanently, so it must be reloaded for the
+  // incoming session rather than waiting for someone to open the drawer.
+  void ensureIndexLoaded()
   // Reset "all loaded" hint and load-more tracking on session switch
   showAllLoaded.value = false
   hadRecentLoadMore = false
@@ -1748,6 +1806,19 @@ defineExpose({
   closeUserMsgIndex,
   toggleUserMsgIndex,
   closeCodePreview: () => codeLinkPreview.close(),
+  // ── Navigation rail data ──
+  // The rail lives in the PANEL, not here, because it must span the panel's
+  // full height (down past the message scroller to the input island). These
+  // accessors let the panel render it from the very same index rows, so the
+  // rail and the conversation-index drawer can never disagree.
+  userMsgIndexList,
+  // A computed, not a getter: the panel renders this, so it must be a tracked
+  // dependency. A plain function would freeze at whatever the id was when the
+  // panel last rendered for an unrelated reason.
+  railActiveId: nearestRailMsgId,
+  getRailSpeakerResolver: () => resolveIndexSpeaker,
+  getBtwAnchorLookup: () => hasBtwAnchor,
+  getMessagesEl,
 })
 </script>
 

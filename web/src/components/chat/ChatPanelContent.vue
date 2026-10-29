@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-panel-content">
+  <div class="chat-panel-content" ref="panelEl">
     <!-- Long-action feedback. Absolute at the panel's top edge so it is visible
          regardless of scroll position or viewport width — the button that was
          clicked may be scrolled out of the horizontally-scrollable action bar.
@@ -159,6 +159,22 @@
       @toggle-group-parallel="$emit('toggle-group-parallel', $event)"
     />
 
+    <!-- Conversation index as an always-visible numbered rail.
+         Mounted HERE rather than inside ChatMessageList: it has to run the full
+         height of the pane (not just the message scroller) so the axis still
+         reads as one continuous thing. The rows come from the message list's own
+         composable, so it can never disagree with the index drawer. -->
+    <ChatMessageRail
+      v-if="messageListRef"
+      :messages="messageListRef.userMsgIndexList"
+      :active-id="messageListRef.railActiveId"
+      :resolve-speaker="messageListRef.getRailSpeakerResolver()"
+      :has-btw="messageListRef.getBtwAnchorLookup()"
+      :get-scroller="messageListRef.getMessagesEl"
+      :bottom-inset="railBottomInset"
+      @select="handleRailSelect"
+    />
+
   </div>
 
   <!-- Quote detail drawer — a SINGLETON, opened for whichever quote card was
@@ -273,6 +289,7 @@ import QuoteDetailDrawer from './QuoteDetailDrawer.vue'
 import BtwAnswerDrawer from './BtwAnswerDrawer.vue'
 import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
+import ChatMessageRail from './ChatMessageRail.vue'
 import QueuedMessageBar from './QueuedMessageBar.vue'
 import PlanPanel from './PlanPanel.vue'
 import TeamPanel from './TeamPanel.vue'
@@ -1469,6 +1486,46 @@ function handleOpenUserMsgIndex() {
 }
 
 /**
+ * How much of the panel's foot the rail must leave free, in px.
+ *
+ * The axis, its hover card and its scroll range all stop here. They have to be
+ * one box: the numbers are the card's left column, so a number outside the card
+ * would be an orphan with no row beside it. Stopping above the composer also
+ * keeps the card off the input box.
+ *
+ * Measured through a ref a ResizeObserver refreshes: the composer block grows
+ * with attachments, the queued-message banner and the plan card, and a stale
+ * value would let the card cover the input.
+ */
+const panelEl = ref(null)
+const railBottomInset = ref(0)
+let composerObserver = null
+
+function syncRailBottomInset() {
+  const panel = panelEl.value
+  const el = inputBarRef.value?.$el
+  if (!panel || !el) return
+  const inset = Math.max(0, panel.getBoundingClientRect().bottom - el.getBoundingClientRect().top)
+  if (Math.abs(inset - railBottomInset.value) > 0.5) railBottomInset.value = inset
+}
+
+function observeComposer() {
+  composerObserver?.disconnect()
+  composerObserver = null
+  syncRailBottomInset()
+  if (typeof ResizeObserver === 'undefined') return
+  composerObserver = new ResizeObserver(() => syncRailBottomInset())
+  const panel = panelEl.value
+  const el = inputBarRef.value?.$el
+  if (panel) composerObserver.observe(panel)
+  if (el) composerObserver.observe(el)
+}
+
+function handleRailSelect(msg) {
+  messageListRef.value?.jumpToUserMessage(msg)
+}
+
+/**
  * Open the conversation-share dialog for the current session. The id is
  * snapshotted into a ref so the dialog keeps its target if the user switches
  * sessions while it is open (the dialog loads its data on open, not per render).
@@ -2440,6 +2497,7 @@ onMounted(() => {
     document.addEventListener('keydown', handleJumpUnread)
     document.addEventListener('keydown', handleOpenSessionList)
     document.addEventListener('keydown', handleDeleteKey)
+    nextTick(() => observeComposer())
 })
 
 // Cleanup preview URLs on unmount
@@ -2462,6 +2520,8 @@ onUnmounted(() => {
     document.removeEventListener('keydown', handleDeleteKey)
     session.removeForegroundReadListener()
     notification.closeAll()
+    composerObserver?.disconnect()
+    composerObserver = null
 })
 
 // Forward ChatMessageList's savePositionNow so App.vue can save the current
