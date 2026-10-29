@@ -134,8 +134,13 @@ test.describe('File Manager', () => {
 
     // No link yet → the primary action creates one and fills the link bar.
     await dialog.locator('.modal-footer .fbtn-primary').click()
-    const linkInput = dialog.locator('.share-dialog-link-input')
-    await expect(linkInput).toBeVisible({ timeout: 10000 })
+    // The link bar is now ShareAddressList: one primary address plus an
+    // expandable list of every address the server is reachable on. The input
+    // class changed with it (`.share-dialog-link-input` → `.share-addr-input`),
+    // and `data-share-primary` is the stable hook for "the link the user would
+    // send". Address resolution is an extra round trip, so allow for it.
+    const linkInput = dialog.locator('[data-share-primary]')
+    await expect(linkInput).toBeVisible({ timeout: 15000 })
     await expect(linkInput).toHaveValue(/\/share\/[0-9a-f]+$/)
 
     // Revoke so the spec leaves no live public link behind (the DB is shared by

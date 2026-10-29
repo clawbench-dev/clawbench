@@ -1794,6 +1794,14 @@ watch(() => props.messages, (newMsgs, oldMsgs) => {
   // prepend) while the user is NOT at the bottom — keep the first visible
   // message in place instead of letting the browser's scrollTop clamping jump.
   if (!oldMsgs || oldMsgs.length === 0) return
+  // A programmatic scroll already owns the viewport, and compensating for the
+  // prepend would FIGHT it: writing scrollTop cancels the in-flight smooth
+  // animation. The concrete symptom was "scroll to top" stopping back where it
+  // started — the top-band prefetch prepends a page while the animation runs,
+  // and the anchor correction then pushes scrollTop down by exactly that page.
+  // Nothing to preserve here either: the animation is heading for a known
+  // offset, not trying to hold a message still.
+  if (programmaticScrolling) return
   if (el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX) return // at bottom → let scrollToBottom pin
   el.__prevScrollHeight = el.scrollHeight
   el.__prevScrollTop = el.scrollTop

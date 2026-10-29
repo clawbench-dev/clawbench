@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { defineComponent, h, nextTick, ref } from 'vue'
+import { SCROLL_STOP_MS } from '@/utils/scrollState'
 
 /**
  * Behaviour tests for the session-switch scroll memory (issue #576).
@@ -580,5 +581,98 @@ describe('ChatMessageList — older history prefetches before the top edge', () 
     await scrollTo(wrapper, geo, 100)
     expect(wrapper.emitted('load-more')).toHaveLength(2)
     wrapper.unmount()
+  })
+})
+
+describe('ChatMessageList — prepend does not fight a programmatic scroll', () => {
+  /**
+   * The bug this pins: the top-band prefetch fires while "scroll to top" is
+   * still animating, the older page is prepended, and the anchor correction
+   * writes scrollTop — which CANCELS the smooth scroll. The viewport then stops
+   * one page-height above the top, i.e. exactly where it started.
+   *
+   * `programmaticScrolling` is module-private, so it is armed the only way a
+   * real user arms it: by clicking the scroll-to-top button.
+   */
+  async function armProgrammaticScroll(wrapper: ReturnType<typeof mountList>, geo: Geometry) {
+    geo.scrollTop = 900
+    containerOf(wrapper).dispatchEvent(new Event('scroll'))
+    await nextTick()
+    await wrapper.get('.scroll-fab-round').trigger('click')
+    await nextTick()
+  }
+
+  it('still compensates when the user is scrolling by hand', async () => {
+    // The mirror case: no programmatic scroll, so a prepend MUST hold the first
+    // visible message in place or the reader is thrown down a page.
+    //
+    // jsdom does not grow scrollHeight when content is prepended, so growth is
+    // modelled by a flag flipped on the tick AFTER the watcher sampled the old
+    // height — the same ordering the real DOM has (watcher pre-flush, layout
+    // grows, compensation in nextTick).
+    const wrapper = mountList({ messages: msgs(1, 2, 3, 4), hasMore: true })
+    const el = containerOf(wrapper)
+    const geo = fakeGeometry(el, { scrollHeight: 3000, clientHeight: 500, scrollTop: 1200 })
+    let grown = false
+    Object.defineProperty(el, 'scrollHeight', {
+      configurable: true,
+      get: () => (grown ? 4000 : 3000),
+    })
+
+    const update = wrapper.setProps({ messages: msgs(0, 1, 2, 3, 4) })
+    await nextTick()
+    grown = true
+    await update
+    await nextTick()
+    await nextTick()
+
+    expect(geo.scrollTop, 'a manual reader keeps their place across the prepend').toBe(2200)
+    wrapper.unmount()
+  })
+
+  it('does not compensate scrollTop for a prepend during a smooth scroll', async () => {
+    // The regression this pins: the top-band prefetch fires while "scroll to
+    // top" is still animating, the older page is prepended, and the anchor
+    // correction writes scrollTop — which CANCELS the smooth scroll. The
+    // viewport then stops one page-height below the top, i.e. exactly where it
+    // started (the e2e failure read 1910 where the test expected < 1815).
+    //
+    // `programmaticScrolling` is module-private, so it is armed the only way a
+    // real user arms it: by clicking the scroll-to-top button.
+    const wrapper = mountList({ messages: msgs(1, 2, 3, 4), hasMore: true })
+    const el = containerOf(wrapper)
+    const geo = fakeGeometry(el, { scrollHeight: 3000, clientHeight: 500, scrollTop: 2500 })
+
+    geo.scrollTop = 900
+    el.dispatchEvent(new Event('scroll'))
+    await nextTick()
+    await wrapper.get('.scroll-fab-round').trigger('click')
+    await nextTick()
+    const afterClick = geo.scrollTop
+
+    // The older page lands mid-animation: the list grows, scrollTop untouched.
+    let grown = false
+    Object.defineProperty(el, 'scrollHeight', {
+      configurable: true,
+      get: () => (grown ? 4000 : 3000),
+    })
+    const update = wrapper.setProps({ messages: msgs(0, 1, 2, 3, 4) })
+    await nextTick()
+    grown = true
+    await update
+    await nextTick()
+    await nextTick()
+
+    // The compensation would have added the prepended height (1000px) here,
+    // which is what stopped the animation short.
+    expect(geo.scrollTop, 'the smooth scroll must keep ownership of scrollTop').toBe(afterClick)
+    wrapper.unmount()
+
+    // `programmaticScrolling` is module state whose only production release is
+    // onScrollStopped (SCROLL_STOP_MS after the last scroll event). Waiting it
+    // out keeps this file from leaving the flag armed for anything appended
+    // after it; the alternative (a test-only reset exported from the SFC) puts
+    // test surface into production code for no other reason.
+    await new Promise((r) => setTimeout(r, SCROLL_STOP_MS + 100))
   })
 })
