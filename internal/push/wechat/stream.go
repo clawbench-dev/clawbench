@@ -378,7 +378,9 @@ func (m *Manager) handleNewSession(ctx context.Context, userID, token, arg strin
 	}
 
 	if strings.TrimSpace(arg) == "" {
-		_ = m.SendText(ctx, userID, stripMarkdownForWeChat(common.RenderProjectList(projects)), token)
+		// The budget is applied BEFORE stripping Markdown, which only shortens the
+		// text — so the stripped result is guaranteed to stay under the ceiling.
+		_ = m.SendText(ctx, userID, stripMarkdownForWeChat(common.RenderProjectList(projects, wechatPreviewMaxRunes)), token)
 		return
 	}
 

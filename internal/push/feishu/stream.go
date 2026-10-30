@@ -527,7 +527,7 @@ func (m *Manager) handleNewSession(ctx context.Context, openID, arg string) {
 	}
 
 	if strings.TrimSpace(arg) == "" {
-		_ = m.SendPostMessage(ctx, openID, common.T("PushNewTitle"), common.RenderProjectList(projects))
+		_ = m.SendPostMessage(ctx, openID, common.T("PushNewTitle"), common.RenderProjectList(projects, feishuPreviewMaxRunes))
 		return
 	}
 

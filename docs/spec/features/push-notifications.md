@@ -203,6 +203,8 @@ sequenceDiagram
 
 **`/new` 的序号必须稳定**：`ListProjectsForPush` 按路径排序（**不是** `ListAllProjects` 的「最近活跃优先」）。后者会被「创建会话」本身刷新，导致同一条 `/new 2` 在使用后指向另一个项目。
 
+**`/new` 的列表按渠道上限截断**：`RenderProjectList(refs, maxRunes)` 在超出单条消息上限时**整条丢弃尾部项目**（不切断行——半截路径带悬空反引号不可用），并追加「仅显示前 N 个（共 M 个），其余用完整路径」的提示。列表仍可操作：`/new <完整路径>` 不依赖列表。上限由各 backend 传入（钉钉/飞书 4000、微信 2000）；微信在**剥离 Markdown 之前**套预算，剥离只会更短，故最终必在限内。
+
 **`/new` 建完要广播**：`CreatePushSession` 成功后调 `BroadcastSessionTitleUpdate`。这是唯一没有「发起方 Web 客户端」的建会话入口——UI 走 HTTP，列表靠自己的响应刷新；IM 建出来的会话若不广播，已打开的网页要等到第一轮结束的 `session_update` 才看到那一行。复用标题事件是因为它的载荷（会话 id + 标题 + 项目路径）正好是列表需要的信息，且语义本就是「客户端没主动发起的变更」。
 
 **粘性目标**存在 `dingtalk_subscribers.last_session_id` / `feishu_subscribers.last_session_id`（`pragma_table_info` 守卫的增量迁移）。空值是正常状态——首次使用、或数据库来自该列存在之前——此时必须回退到提示，而不是替用户猜一个会话。

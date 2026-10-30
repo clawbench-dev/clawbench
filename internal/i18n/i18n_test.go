@@ -233,6 +233,7 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"PushNewCreated",
 		"PushNewListIntro",
 		"PushNewListUsage",
+		"PushNewListTruncated",
 		"PushNewNoProjects",
 		"PushNewProjectNotFound",
 		"PushNewProjectOutOfRange",
@@ -400,6 +401,7 @@ func TestPushTemplatesKeepPlaceholders(t *testing.T) {
 		"PushStoppedIdle":           {"Label": "L", "Count": 0},
 		"PushNewCreated":            {"Project": "/p", "ID": "abc"},
 		"PushNewProjectOutOfRange":  {"Count": 3},
+		"PushNewListTruncated":      {"Count": 2, "Total": 9},
 		"PushCommandWithAttachment": {"Command": "/new"},
 		"PushInvalidSessionID":      {"ID": "abc"},
 	}

@@ -31,6 +31,8 @@ const (
 	TemplateLabel = "Label"
 	// TemplateID is the short session id placeholder.
 	TemplateID = "ID"
+	// TemplateTotal is the "out of how many" placeholder (truncated lists).
+	TemplateTotal = "Total"
 	// TemplateProject is the project path/label placeholder.
 	TemplateProject = "Project"
 	// TemplateCommand is the slash-command word placeholder.

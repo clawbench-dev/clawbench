@@ -515,7 +515,7 @@ func (m *Manager) handleNewSession(ctx context.Context, data *chatbot.BotCallbac
 
 	if strings.TrimSpace(arg) == "" {
 		_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
-			[]byte(common.T("PushNewTitle")), []byte(common.RenderProjectList(projects)))
+			[]byte(common.T("PushNewTitle")), []byte(common.RenderProjectList(projects, dingtalkPreviewMaxRunes)))
 		return
 	}
 

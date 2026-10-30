@@ -231,6 +231,7 @@ PushNewTitle: New session
 PushNewCreated: 'Created a session in **{{.Project}}** (`{{.ID}}`). Send `@{{.ID}} <message>` or just type to continue.'
 PushNewListIntro: 'Send **/new <index>** or **/new <full path>** to create a session in a project:'
 PushNewListUsage: 'Usage: /new 1'
+PushNewListTruncated: 'Showing the first {{.Count}} of {{.Total}} projects. For the rest, use the full path: /new /full/path'
 PushNewNoProjects: (no projects)
 PushNewProjectNotFound: 'Project not found (full path or list index only). Send /new to see the project list.'
 PushNewProjectOutOfRange: 'Project index out of range ({{.Count}} projects). Send /new to see the list.'

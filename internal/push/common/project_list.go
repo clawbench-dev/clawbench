@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // RenderProjectList renders the /new project list. Shared by all three push
@@ -11,7 +12,30 @@ import (
 //
 // A missing directory is flagged inline: the session can still be created, but
 // the user should know the agent may fail to run there.
-func RenderProjectList(refs []ProjectRef) string {
+//
+// maxRunes is the channel's single-message ceiling (<=0 means no limit). When
+// the list does not fit, entries are dropped whole from the tail rather than
+// cut mid-line — a half path with a dangling backtick is unusable — and a note
+// says how many were shown. The list stays actionable because /new also accepts
+// a full path, so a project that fell off can still be selected.
+func RenderProjectList(refs []ProjectRef, maxRunes int) string {
+	out := renderProjectList(refs, 0)
+	if maxRunes <= 0 || utf8.RuneCountInString(out) <= maxRunes {
+		return out
+	}
+	for n := len(refs) - 1; n >= 0; n-- {
+		if candidate := renderProjectList(refs[:n], len(refs)); utf8.RuneCountInString(candidate) <= maxRunes {
+			return candidate
+		}
+	}
+	// Not even the header fits the budget. Send something the platform accepts
+	// instead of a message it will reject outright.
+	return string([]rune(out)[:maxRunes]) + "…"
+}
+
+// renderProjectList renders refs. total > len(refs) means the list was cut, and
+// the trailing note says so.
+func renderProjectList(refs []ProjectRef, total int) string {
 	var sb strings.Builder
 	sb.WriteString("### " + T("PushNewTitle") + "\n" + T("PushNewListIntro") + "\n\n")
 	if len(refs) == 0 {
@@ -25,6 +49,12 @@ func RenderProjectList(refs []ProjectRef) string {
 		fmt.Fprintf(&sb, "%d. `%s`%s\n", r.Index, r.Path, mark)
 	}
 	sb.WriteString("\n" + T("PushNewListUsage"))
+	if total > len(refs) {
+		sb.WriteString("\n\n" + T("PushNewListTruncated", map[string]any{
+			TemplateCount: len(refs),
+			TemplateTotal: total,
+		}))
+	}
 	return sb.String()
 }
 
