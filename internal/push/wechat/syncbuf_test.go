@@ -3,6 +3,7 @@ package wechat
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"clawbench/internal/model"
@@ -38,6 +39,9 @@ func TestSyncBuf_MissingIsEmpty(t *testing.T) {
 }
 
 func TestSyncBuf_Permissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no POSIX permission bits: a writable file always reports 0666")
+	}
 	withTempDataDir(t)
 	require.NoError(t, saveSyncBuf("bot-1", "cursor"))
 

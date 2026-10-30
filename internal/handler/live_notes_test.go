@@ -525,7 +525,10 @@ func TestServeLiveShareNotesMinutes_GeneratesInBackground(t *testing.T) {
 	withSummaryModel(t, srv.URL)
 
 	project := t.TempDir()
-	room, err := liveRegistry.Create(project, "会议")
+	// The room is keyed by the NORMALIZED project path (the handler normalizes
+	// the cookie value); on macOS t.TempDir() is a symlink under /var, so the
+	// raw value would never match and every request would 404.
+	room, err := liveRegistry.Create(projPath(project), "会议")
 	require.NoError(t, err)
 	pid, err := store.ProjectIDForPath(project)
 	require.NoError(t, err)

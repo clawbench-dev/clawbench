@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,9 +45,13 @@ func TestGenerateSelfSignedCert_CoversIPsInSAN(t *testing.T) {
 	assert.True(t, cert.NotAfter.After(cert.NotBefore))
 	assert.Contains(t, cert.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
 
-	info, err := os.Stat(certs.KeyFile)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "the private key must not be world-readable")
+	if runtime.GOOS != "windows" {
+		// Windows has no POSIX permission bits: a writable file always reports
+		// 0666, so this assertion only means something on unix.
+		info, err := os.Stat(certs.KeyFile)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "the private key must not be world-readable")
+	}
 }
 
 func TestGenerateSelfSignedCert_RejectsEmptyInputs(t *testing.T) {

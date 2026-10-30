@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -68,9 +69,12 @@ func TestServeTLSGenerate_WritesSelfSignedAndRequiresRestart(t *testing.T) {
 
 	_, err := os.Stat(filepath.Join(dir, "cert.pem"))
 	require.NoError(t, err)
-	info, err := os.Stat(filepath.Join(dir, "key.pem"))
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		// Windows has no POSIX permission bits (a writable file reports 0666).
+		info, err := os.Stat(filepath.Join(dir, "key.pem"))
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
 }
 
 func TestServeTLSGenerate_AddsExtraHosts(t *testing.T) {
