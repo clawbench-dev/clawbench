@@ -1886,7 +1886,8 @@ func TestQueueUpdate_InvalidBodyIs400(t *testing.T) {
 	assertStatus(t, w, http.StatusBadRequest)
 }
 
-// TestQueueUpdate_MissingSessionIDIs400.
+// TestQueueUpdate_MissingSessionIDIs400: the queue is addressed by session, so
+// without one there is nothing to update.
 func TestQueueUpdate_MissingSessionIDIs400(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
