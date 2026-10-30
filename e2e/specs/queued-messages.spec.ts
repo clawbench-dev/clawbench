@@ -178,4 +178,57 @@ test.describe('Queued messages ordering', () => {
     expect(rReply2).toBeGreaterThan(r2)
     expect(r3).toBeGreaterThan(rReply2)
   })
+
+  // ── Editing a queued message ──
+  // The point of in-place editing: the text changes and the message keeps its
+  // queue POSITION. A "recall to input + resend" would move it to the end, which
+  // for a message that has waited many minutes is exactly the cost the user was
+  // trying to avoid.
+  test('editing a queued message keeps its place in the queue', async ({ page }) => {
+    const run = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    const running = `qedit-run-${run}`
+    const queuedA = `qedit-a-${run}`
+    const queuedB = `qedit-b-${run}`
+    const revisedB = `qedit-rev-${run}`
+
+    // Message 1 starts the turn; 2 and 3 queue behind it. (Two messages would
+    // leave only ONE queued entry, which cannot show a preserved position.)
+    await chat.sendMessage(running)
+    await chat.sendMessage(queuedA)
+    await chat.sendMessage(queuedB)
+
+    // Expand the queue panel; both queued entries must be listed.
+    await expect(page.locator('.queued-bar')).toBeVisible({ timeout: 15000 })
+    await page.locator('.queued-bar-header').click()
+    const rows = page.locator('.queued-bar-item')
+    await expect(rows).toHaveCount(2, { timeout: 15000 })
+
+    // Edit the SECOND queued entry (the one that is third in line overall).
+    const target = rows.filter({ hasText: queuedB })
+    await expect(target).toHaveCount(1)
+    await target.locator('[data-action="queue-edit"]').click()
+
+    // The dialog is primed with the entry's current text.
+    const dialogInput = page.locator('.dlg-textarea')
+    await expect(dialogInput).toBeVisible({ timeout: 5000 })
+    await expect(dialogInput).toHaveValue(queuedB)
+
+    await dialogInput.fill(revisedB)
+    await page.locator('.dlg-ok').click()
+
+    // THE ASSERTION THAT MATTERS: the edited entry keeps its index. If the save
+    // had re-queued it, it would now be last and queuedA would have moved up.
+    await expect(page.locator('.queued-bar-item').nth(1)).toContainText(revisedB, { timeout: 10000 })
+    await expect(page.locator('.queued-bar-item')).toHaveCount(2)
+    await expect(page.locator('.queued-bar-item').nth(0)).toContainText(queuedA)
+
+    // Let the queue drain, then reload: the edited text must be what the
+    // backend stored (proves the edit was persisted, not a local-only change).
+    await expect(page.locator('.queued-bar')).toHaveCount(0, { timeout: 90000 })
+    await expect(page.locator('.chat-message.user').filter({ hasText: revisedB })).toHaveCount(1, { timeout: 30000 })
+    await reloadPage(page)
+    await expect(page.locator('.chat-textarea')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('.chat-message.user').filter({ hasText: revisedB })).toHaveCount(1, { timeout: 30000 })
+    await expect(page.locator('.chat-message.user').filter({ hasText: queuedB })).toHaveCount(0)
+  })
 })

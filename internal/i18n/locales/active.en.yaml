@@ -22,6 +22,8 @@ ShareSessionInvalidSelection: Some selected messages cannot be shared (they may 
 QueueIdRequired: queueId required
 QueueInjectStranded: Insert failed and the message could not be re-queued — please resend it
 QueueMergeFailed: Failed to merge queued messages
+QueueUpdateFailed: Failed to edit the queued message
+QueueAlreadyDrained: This message has already been sent and can no longer be edited
 EnqueueFailed: Failed to send the message, please retry
 NewSession: New Session
 NewSessionN: New Session {{.N}}

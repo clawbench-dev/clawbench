@@ -1070,6 +1070,13 @@ export default {
       collapse: 'Collapse',
       remove: 'Remove this queued message',
       attachment: 'Attachment',
+      edit: 'Edit',
+      editHint: 'Edit the text of this queued message',
+      editTitle: 'Edit queued message',
+      editPrompt: 'The edit keeps its place in the queue — it will not be re-queued',
+      editPlaceholder: 'New content. Ctrl+Enter to save',
+      editFailed: 'Edit failed — the queued message is unchanged',
+      alreadySent: 'This message has already been sent and can no longer be edited',
       // Bubble annotation for a mid-turn injection that MERGED into the running
       // reply (claude/codex — no split boundary). Without it the bubble sits
       // after the still-streaming reply with nothing following it, which reads

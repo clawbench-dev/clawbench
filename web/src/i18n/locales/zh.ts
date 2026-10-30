@@ -1075,6 +1075,13 @@ export default {
       collapse: '收起',
       remove: '删除这条排队消息',
       attachment: '附件',
+      edit: '编辑',
+      editHint: '修改这条排队消息的正文',
+      editTitle: '编辑排队消息',
+      editPrompt: '修改后仍在原来的队列位置，不会重新排队',
+      editPlaceholder: '输入新的内容，Ctrl+Enter 保存',
+      editFailed: '修改失败，排队消息未改变',
+      alreadySent: '这条消息已经发出，无法再修改',
       // Bubble annotation for a mid-turn injection that MERGED into the running
       // reply (claude/codex — no split boundary). Without it the bubble sits
       // after the still-streaming reply with nothing following it, which reads

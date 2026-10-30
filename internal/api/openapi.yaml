@@ -2550,6 +2550,62 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+    patch:
+      tags: [Queue]
+      summary: 修改排队消息正文
+      description: |
+        就地改写一条**仍在排队**的消息的正文，不改变它的队列位置（`id` 顺序即队列顺序）。
+
+        之所以是「就地修改」而不是「撤回输入框再重发」：排队消息可能等待十几分钟，
+        撤回重发会把它排到队尾，用户等待的时间白费。本端点只写 `content`，
+        队列 id、创建时间、附件全部保持不变。
+
+        **只支持正文**。附件不在本端点可编辑范围内——改写 `files` 需要与入队路径
+        相同的身份去重与路径校验，而 UI 也不提供该入口。
+
+        若该消息已被 drain 取走（或已被取消），返回 **409 `QueueAlreadyDrained`**：
+        消息已经以**旧正文**发出，必须让调用方能区分「已保存」与「太晚了」。
+        正文与附件同时为空会被拒绝（400 `MessageOrFilesRequired`），因为这样的条目
+        出队后是一个空回合。
+      operationId: queueUpdate
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [queueId]
+              properties:
+                queueId:
+                  type: string
+                  description: 要修改的排队消息 id（`GET /api/ai/queue` 返回的 `queueId`）。
+                message:
+                  type: string
+                  description: 新正文。会去除首尾空白；留空仅在保留附件时允许。
+      responses:
+        "200":
+          description: |
+            修改成功。响应体为 `{"ok": true, "queue": <更新后的排队消息>}`，
+            并会向该会话广播 `queue_added`（客户端按 `queueId` upsert，
+            因此其他设备与发起设备都会收敛到新正文）。
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          description: 该消息已不在队列中（已被 drain 取走或已取消），无法修改。`msgKey` 为 `QueueAlreadyDrained`。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       tags: [Queue]
       summary: 删除排队消息
