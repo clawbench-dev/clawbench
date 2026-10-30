@@ -25,6 +25,7 @@
           v-for="m in orderedMembers"
           :key="m.id"
           class="gm-row"
+          :data-member-id="m.id"
           :class="{ 'is-disabled': m.disabled }"
         >
           <!-- The row's main region is a BUTTON (opens the member's context
@@ -84,6 +85,23 @@
               </template>
               <span v-else class="gm-usage-pct">—</span>
             </span>
+          </button>
+          <!-- Make-host action (更换主持人). Rendered on EVERY row in host mode —
+               including the host's own (inert) — so the trailing column keeps the
+               same width across rows, exactly like the disable toggle. A free
+               group has no host at all, so the control disappears there instead
+               of offering a promotion the server would refuse. -->
+          <button
+            v-if="mode !== 'free'"
+            class="gm-host-toggle"
+            :class="{ 'gm-host-toggle--inert': !canMakeHost(m) }"
+            :disabled="!canMakeHost(m)"
+            :title="makeHostTitle(m)"
+            :aria-label="makeHostTitle(m)"
+            :data-action="canMakeHost(m) ? 'make-host' : undefined"
+            @click="canMakeHost(m) ? makeHost(m) : undefined"
+          >
+            <Crown :size="14" />
           </button>
           <!-- Disable toggle. Every row has one, including the host: a disabled one
                keeps the trailing column aligned across rows (a missing button
@@ -219,7 +237,7 @@ import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import SessionDrawer from '@/components/chat/SessionDrawer.vue'
 import { getAgentAvatar, useAgents } from '@/composables/useAgents'
-import { addGroupMembers, generateMemberAvatars, setGroupMemberDisabled, setGroupParallelDefault, setGroupCruise, type GroupMemberInfo } from '@/composables/useGroupChat'
+import { addGroupMembers, generateMemberAvatars, setGroupHost, setGroupMemberDisabled, setGroupParallelDefault, setGroupCruise, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { toggleAutoApprove, applyCruiseAutoApproveDefault } from '@/composables/useSessionIdentity'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { usagePct as usagePctOf, usageColor as usageColorOf } from '@/utils/usageDisplay'
@@ -379,6 +397,30 @@ function toggleTitle(m: GroupMemberInfo): string {
   if (m.isHost) return t('group.hostCannotDisable')
   if (!m.disabled && isLastSpeaker(m)) return t('group.lastSpeakerCannotDisable')
   return m.disabled ? t('group.enable') : t('group.disable')
+}
+
+/** Whether this row may become the host. The server refuses the same two cases
+ *  (already host / disabled), so the button explains itself instead of the click
+ *  coming back as a 400/409. */
+function canMakeHost(m: GroupMemberInfo): boolean {
+  return !m.isHost && !m.disabled
+}
+
+function makeHostTitle(m: GroupMemberInfo): string {
+  if (m.isHost) return t('group.alreadyHost')
+  if (m.disabled) return t('group.hostDisabledCannotSet')
+  return t('group.makeHost')
+}
+
+/** makeHost promotes the member (更换主持人). The host is a server-side POINTER,
+ *  so the roster's isHost flags are the only local state that changes — refresh
+ *  them from the server rather than patching the array (a failed PATCH then
+ *  simply leaves the old host in place). */
+async function makeHost(m: GroupMemberInfo) {
+  try {
+    await setGroupHost(props.groupId, m.id)
+    emit('changed')
+  } catch { /* ignore: the roster still reflects the server's host */ }
 }
 
 async function onAgentsPicked(ids: string | string[]) {
@@ -721,9 +763,31 @@ defineExpose({ open: openSheet })
   border-radius: var(--radius-sm);
   transition: background var(--duration-base), color var(--duration-base);
 }
+/* Make-host control: same footprint and hover treatment as the disable toggle so
+   the trailing column reads as one action cluster. It uses the SAME crown glyph
+   as the host pill, which is what makes "crown = host" legible without a label. */
+.gm-host-toggle {
+  flex-shrink: 0;
+  width: calc(26 * var(--dp));
+  height: calc(26 * var(--dp));
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-base), color var(--duration-base);
+}
 @media (hover: hover) {
   .gm-disable-toggle:hover {
     color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  }
+  .gm-host-toggle:hover {
+    color: var(--accent-color, #0066cc);
     background: color-mix(in srgb, var(--text-primary) 8%, transparent);
   }
 }
@@ -740,7 +804,18 @@ defineExpose({ open: openSheet })
   cursor: not-allowed;
 }
 
-.gm-disable-toggle:focus-visible {
+/* The host row's own crown, and a disabled member's, are inert for the same
+   reason: the slot must exist so the column does not jump. */
+.gm-host-toggle--inert,
+.gm-host-toggle--inert:hover {
+  color: var(--text-muted);
+  background: none;
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+.gm-disable-toggle:focus-visible,
+.gm-host-toggle:focus-visible {
   outline: 2px solid var(--accent-color, #0066cc);
   outline-offset: 1px;
 }

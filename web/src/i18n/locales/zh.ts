@@ -1334,6 +1334,10 @@ export default {
     title: '群聊',
     host: '主持人',
     hostCannotDisable: '主持人是群的唯一调度者，不能禁用',
+    makeHost: '设为主持人',
+    alreadyHost: '当前主持人',
+    hostDisabledCannotSet: '该成员已禁用，请先启用再设为主持人',
+    hostChangeFailed: '更换主持人失败',
     lastSpeakerCannotDisable: '最后一位可发言的成员不能禁用——否则群里就没有人能接话了',
     realAgent: '真实智能体',
     // The reserved human participant name ("User") shown to the reader.

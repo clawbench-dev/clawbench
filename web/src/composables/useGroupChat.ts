@@ -174,6 +174,24 @@ export async function setGroupMemberDisabled(groupId: string, memberId: string, 
   if (!resp.ok) throw new Error(`request failed: ${resp.status}`)
 }
 
+/** setGroupHost makes another member the group's host (更换主持人).
+ *
+ *  The host is a pointer on the group row, not a property of the member: every
+ *  member keeps its own row, ACP connection and context, so nothing is
+ *  reconnected and no history is touched. Takes effect from the NEXT turn; a
+ *  turn already running finishes under the old host. */
+export async function setGroupHost(groupId: string, memberId: string): Promise<void> {
+  const resp = await fetch('/api/group/host', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ groupId, memberId }),
+  })
+  // Consume the body for the same reason as setGroupMemberDisabled: an unread
+  // response stream keeps the request "in flight" and stalls networkidle waits.
+  await resp.body?.cancel().catch(() => {})
+  if (!resp.ok) throw new Error(`request failed: ${resp.status}`)
+}
+
 /** setGroupParallelDefault updates the free-mode "并发执行" switch: when on, the
  *  user's @-mentions run concurrently. The member-speech cap is global
  *  (chat.group_max_speeches). */

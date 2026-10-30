@@ -6,6 +6,9 @@ SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old s
 SessionIdRequired: session_id required
 CannotDisableHost: The host is the group's only scheduler and cannot be disabled
 CannotDisableLastMember: The last member who can speak cannot be disabled — the group would have nobody left to answer
+GroupNotHostMode: This group is in free-chat mode and has no host to change
+HostNotMember: Only a member of this group can be made the host
+HostDisabled: That member is disabled — enable it before making it the host
 GroupMemberLimitReached: A group can have at most {{.MaxCount}} members
 ForkContextInjectedChat: The history of "{{.Title}}" was injected into this session as background
 ForkContextInjectedGroup: The history of "{{.Title}}" was injected into this group as background; each member receives it on their first turn
@@ -288,6 +291,7 @@ CruiseMaxRounds: "Auto-cruise: reached the confirmation-round limit"
 GroupMemberJoined: '{{.Name}} joined the discussion'
 GroupMemberDisabled: '{{.Name}} was disabled'
 GroupMemberEnabled: '{{.Name}} was enabled'
+GroupHostChanged: '{{.Name}} is now the host'
 GroupMemberCompactionStarted: '{{.Name}} is compacting its context…'
 GroupMemberCompactionDone: '{{.Name}} compacted its context ({{.Before}} → {{.After}})'
 GroupMemberCompactionFailed: '{{.Name}} failed to compact its context'

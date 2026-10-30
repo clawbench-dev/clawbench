@@ -6710,8 +6710,9 @@ paths:
         期间 `seen_cursor` 不推进，所以它的下一轮会把整段积压注入上下文。
 
         主持人模式（`mode="host"`）下主持人**不可禁用**（`409`）——它是群唯一的
-        调度器，禁用后群无法再起回合。**最后一位可发言的成员也不可禁用**（`409`）：
-        群里没人能接话，之后一个回合都跑不起来。（v1 不提供更换主持人的入口；如需换人请另建群。）
+        调度器，禁用后群无法再起回合。需要换人请用 `PATCH /api/group/host`。
+        **最后一位可发言的成员也不可禁用**（`409`）：
+        群里没人能接话，之后一个回合都跑不起来。
         自由模式（`mode="free"`）无主持人，任何成员都可禁用。
 
         `disabled` 必填：缺字段是非法请求（`400`），而不是「设为 false」——否则漏传
@@ -6742,6 +6743,48 @@ paths:
             - 目标是最后一位可发言成员（`msgKey=CannotDisableLastMember`）——
               群里没人能接话，之后一个回合都跑不起来；
             - 启用会让可发言成员超过上限（`msgKey=GroupMemberLimitReached`）。
+
+  /api/group/host:
+    patch:
+      tags: [Group]
+      summary: 更换主持人
+      description: |
+        把群内另一个成员设为主持人（`更换主持人`）。主持人只是群行上的一个**指针**
+        （`context_state.host_member_id`）：每位成员都有自己的会话行、自己的 ACP
+        连接与上下文窗口，角色提示词每回合重建，因此换人**不需要重连、不动历史**，
+        从**下一回合**起生效。已经在跑的那一轮仍由原主持人收尾（回合开始时已快照）。
+
+        拒绝的情况（不会静默忽略）：
+        - 自由模式（`mode="free"`）的群没有主持人 → `409 GroupNotHostMode`；
+        - 目标不是**本群**的成员 → `400 HostNotMember`；
+        - 目标已禁用 → `409 HostDisabled`（禁用的成员不参与调度，不能当路由器）。
+
+        重复把当前主持人再设一次是幂等的：不写系统行。成功时会在群时间线追加一行
+        系统消息（`{{Name}} 成为了主持人`），让所有成员在注入上下文里知道现在的
+        主持人是谁——模型自己的历史里仍留着旧角色。
+      operationId: groupHostChange
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groupId, memberId]
+              properties:
+                groupId: {type: string}
+                memberId:
+                  type: string
+                  description: 新主持人的**成员行 id**（`GET /api/group/members` 的 `id`，不是智能体 id）
+      responses:
+        "200":
+          description: 更换成功（或已经是主持人，幂等）
+        "400":
+          description: 缺少 groupId / memberId，或目标不是本群成员（`msgKey=HostNotMember`）
+        "409":
+          description: |
+            拒绝更换：
+            - 群是自由模式，没有主持人（`msgKey=GroupNotHostMode`）；
+            - 目标成员已禁用（`msgKey=HostDisabled`）。
 
   /api/group/member-avatars:
     post:

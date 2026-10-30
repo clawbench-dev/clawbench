@@ -11,12 +11,14 @@ vi.mock('vue-i18n', () => ({
 
 const mockAdd = vi.fn().mockResolvedValue(undefined)
 const mockSetDisabled = vi.fn().mockResolvedValue(undefined)
+const mockSetHost = vi.fn().mockResolvedValue(undefined)
 const mockSetParallel = vi.fn().mockResolvedValue(undefined)
 const mockSetCruise = vi.fn().mockResolvedValue(undefined)
 const mockGenerateAvatars = vi.fn().mockResolvedValue(undefined)
 vi.mock('@/composables/useGroupChat', () => ({
   addGroupMembers: (...a: any[]) => mockAdd(...a),
   setGroupMemberDisabled: (...a: any[]) => mockSetDisabled(...a),
+  setGroupHost: (...a: any[]) => mockSetHost(...a),
   setGroupParallelDefault: (...a: any[]) => mockSetParallel(...a),
   setGroupCruise: (...a: any[]) => mockSetCruise(...a),
   generateMemberAvatars: (...a: any[]) => mockGenerateAvatars(...a),
@@ -183,6 +185,55 @@ describe('GroupSettingsSheet', () => {
     expect(btn.attributes('title')).toBe('group.hostCannotDisable')
     await btn.trigger('click')
     expect(mockSetDisabled).not.toHaveBeenCalled()
+  })
+
+  // ── 更换主持人 (issue #608) ──
+
+  // Every host-mode row keeps the crown slot (the host's and a disabled member's
+  // are inert) so the trailing column does not shift — the same rule the disable
+  // toggle follows.
+  it('offers make-host on enabled non-host rows only, keeping the column aligned', () => {
+    const w = mountSheet(MEMBERS)
+    const rows = w.findAll('.gm-row')
+    expect(rows).toHaveLength(3)
+
+    const hostRow = rows.find(r => r.text().includes('Host'))!
+    const aliceRow = rows.find(r => r.text().includes('Alice'))!
+    const goneRow = rows.find(r => r.text().includes('Gone'))!
+
+    const hostBtn = hostRow.find('.gm-host-toggle')
+    expect(hostBtn.attributes('disabled')).toBeDefined()
+    expect(hostBtn.classes()).toContain('gm-host-toggle--inert')
+    expect(hostBtn.attributes('title')).toBe('group.alreadyHost')
+    expect(hostBtn.attributes('data-action')).toBeUndefined()
+
+    const goneBtn = goneRow.find('.gm-host-toggle')
+    expect(goneBtn.attributes('disabled')).toBeDefined()
+    expect(goneBtn.attributes('title')).toBe('group.hostDisabledCannotSet')
+
+    const aliceBtn = aliceRow.find('.gm-host-toggle')
+    expect(aliceBtn.attributes('disabled')).toBeUndefined()
+    expect(aliceBtn.attributes('title')).toBe('group.makeHost')
+    expect(aliceBtn.attributes('data-action')).toBe('make-host')
+    // Same glyph as the host pill, so "crown = host" needs no label.
+    expect(aliceBtn.find('svg').classes()).toContain('lucide-crown')
+  })
+
+  it('promotes the member and refreshes the roster from the server', async () => {
+    const w = mountSheet(MEMBERS)
+    const aliceRow = w.findAll('.gm-row').find(r => r.text().includes('Alice'))!
+    await aliceRow.find('.gm-host-toggle').trigger('click')
+    expect(mockSetHost).toHaveBeenCalledWith('g1', 'm2')
+    // The roster is server-authoritative: the isHost flags must be re-fetched
+    // rather than patched locally (a failed PATCH then leaves the old host).
+    expect(w.emitted('changed')).toBeTruthy()
+  })
+
+  // A free group has no host, so the action is not offered at all — the server
+  // would answer 409.
+  it('hides the make-host action in free mode', () => {
+    const w = mountSheet(MEMBERS, { mode: 'free' })
+    expect(w.findAll('.gm-host-toggle')).toHaveLength(0)
   })
 
   // The last member still able to speak cannot be turned off: the group would

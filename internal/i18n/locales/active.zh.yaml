@@ -6,6 +6,9 @@ SessionLimitReached: 已达会话数量上限（{{.MaxCount}}），请先归档�
 SessionIdRequired: session_id 为必填项
 CannotDisableHost: 主持人是群的唯一调度者，不能禁用
 CannotDisableLastMember: 最后一位可发言的成员不能禁用——否则群里就没有人能接话了
+GroupNotHostMode: 该群是自由聊天模式，没有主持人可换
+HostNotMember: 只能把本群的成员设为主持人
+HostDisabled: 该成员已禁用，请先启用再设为主持人
 GroupMemberLimitReached: 一个群最多 {{.MaxCount}} 个成员
 ForkContextInjectedChat: 「{{.Title}}」的历史消息已作为背景注入当前会话
 ForkContextInjectedGroup: 「{{.Title}}」的历史消息已作为背景注入本群，每位成员首次发言时都会收到
@@ -284,6 +287,7 @@ CruiseMaxRounds: '自动巡航：已达确认轮数上限'
 GroupMemberJoined: '{{.Name}}加入了讨论'
 GroupMemberDisabled: '{{.Name}} 已禁用'
 GroupMemberEnabled: '{{.Name}} 已启用'
+GroupHostChanged: '{{.Name}} 成为了主持人'
 GroupMemberCompactionStarted: '{{.Name}} 正在压缩上下文…'
 GroupMemberCompactionDone: '{{.Name}} 已压缩上下文（{{.Before}} → {{.After}}）'
 GroupMemberCompactionFailed: '{{.Name}} 的上下文压缩失败'

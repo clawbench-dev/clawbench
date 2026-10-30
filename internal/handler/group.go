@@ -161,6 +161,56 @@ func writeGroupCreateError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
+// ServeGroupHost changes the group's host (更换主持人).
+//
+//	PATCH /api/group/host {groupId, memberId} -> {ok}
+//
+// The host is a POINTER on the group row, not a property of the member: every
+// member keeps its own session row, ACP connection and context, and the role
+// prompts are rebuilt per turn, so the swap applies from the next turn with no
+// reconnect. A turn already running keeps the host it started with.
+//
+// Refused (never silently ignored): a free group has no host at all, a member
+// of another group cannot be promoted, and a disabled member cannot route.
+func ServeGroupHost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		GroupID  string `json:"groupId"`
+		MemberID string `json:"memberId"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.GroupID == "" || req.MemberID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+		return
+	}
+	if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
+		return
+	}
+	if err := service.ChangeGroupHost(projectPath, req.GroupID, req.MemberID); err != nil {
+		switch {
+		case errors.Is(err, service.ErrGroupNotHostMode):
+			writeLocalizedErrorf(w, r, http.StatusConflict, "GroupNotHostMode")
+		case errors.Is(err, service.ErrHostNotMember):
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "HostNotMember")
+		case errors.Is(err, service.ErrHostDisabled):
+			writeLocalizedErrorf(w, r, http.StatusConflict, "HostDisabled")
+		default:
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // ServeGroupMembers lists, adds, or (un)disables group members.
 //
 //	GET   /api/group/members?groupId=                          -> {ok, members:[...]}

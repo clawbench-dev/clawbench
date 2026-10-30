@@ -215,7 +215,7 @@ func usagePercentLabel(usage *ai.UsageState) string {
 // row: the text is persisted and injected, so a key would reach members as an
 // unreadable identifier.
 func writeCompactionSystemMessage(projectPath, groupID, memberName, agentID, messageID string, extra map[string]any) {
-	data := map[string]any{"Name": memberName + memberSpecialtySuffix(agentID)}
+	data := map[string]any{i18nNameKey: memberName + memberSpecialtySuffix(agentID)}
 	for k, v := range extra {
 		data[k] = v
 	}
