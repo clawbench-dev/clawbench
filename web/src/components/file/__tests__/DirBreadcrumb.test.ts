@@ -600,4 +600,47 @@ describe('DirBreadcrumb — copy path', () => {
     await btn.trigger('click')
     expect(btn.classes()).not.toContain('is-copied')
   })
+
+  // ── Mouse wheel → horizontal scroll ──
+  // Both consumers (the file manager and ProjectDialog's directory picker) hide
+  // the scrollbar, and the browser only maps a wheel to the nearest VERTICALLY
+  // scrollable ancestor — so on a plain mouse the tail of a long path is
+  // unreachable. The strip must claim the wheel while it can still move.
+
+  function setScrollGeometry(el: HTMLElement, initial: number, scrollWidth: number, clientWidth: number) {
+    let scrollLeft = initial
+    Object.defineProperty(el, 'scrollLeft', {
+      configurable: true,
+      get: () => scrollLeft,
+      set: (v: number) => { scrollLeft = v },
+    })
+    Object.defineProperty(el, 'scrollWidth', { configurable: true, value: scrollWidth })
+    Object.defineProperty(el, 'clientWidth', { configurable: true, value: clientWidth })
+    return () => scrollLeft
+  }
+
+  it('turns a vertical wheel into horizontal scroll while the strip can move', () => {
+    const wrapper = mountPicker({ path: '/home/user/docs' })
+    const el = wrapper.find('.dir-breadcrumb').element as HTMLElement
+    const readScrollLeft = setScrollGeometry(el, 0, 900, 300)
+
+    const event = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true })
+    el.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(readScrollLeft()).toBe(120)
+  })
+
+  it('lets the page keep the wheel once the strip is at its end', () => {
+    const wrapper = mountPicker({ path: '/home/user/docs' })
+    const el = wrapper.find('.dir-breadcrumb').element as HTMLElement
+    // maxScrollLeft = 900 - 300 = 600, i.e. already flush right.
+    const readScrollLeft = setScrollGeometry(el, 600, 900, 300)
+
+    const event = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true })
+    el.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(readScrollLeft()).toBe(600)
+  })
 })

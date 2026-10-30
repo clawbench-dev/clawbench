@@ -1,5 +1,5 @@
 <template>
-  <nav class="settings-breadcrumb" data-horizontal-scroll="true" :aria-label="t('nav.settings')">
+  <nav class="settings-breadcrumb" data-horizontal-scroll="true" :aria-label="t('nav.settings')" @wheel="onHorizontalWheel">
     <template v-for="(crumb, i) in crumbs" :key="crumb.depth">
       <span v-if="i > 0" class="crumb-sep">›</span>
       <span
@@ -20,6 +20,7 @@
 <script setup lang="ts">
 import { Settings } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 
 export interface BreadcrumbCrumb {
   /** Stack depth this crumb targets; 0 = the settings index. */

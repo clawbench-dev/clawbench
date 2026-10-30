@@ -1,5 +1,10 @@
 <template>
-  <div v-if="showBreadcrumb" class="dir-breadcrumb" data-horizontal-scroll="true">
+  <div
+    v-if="showBreadcrumb"
+    class="dir-breadcrumb"
+    data-horizontal-scroll="true"
+    @wheel="onHorizontalWheel"
+  >
     <!-- Filesystem root, shown ONLY while browsing project-external. The Home
          crumb below always means "project root", so an external browse needs a
          separate way back up to "/" — otherwise the only exit from /var/log
@@ -56,6 +61,7 @@ import { store } from '@/stores/app.ts'
 import { setAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag.ts'
 import CopyButton from '@/components/common/CopyButton.vue'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
+import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 
 const props = defineProps({
   path: { type: String, default: '' },

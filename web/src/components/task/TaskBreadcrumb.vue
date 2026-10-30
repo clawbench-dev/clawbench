@@ -1,5 +1,5 @@
 <template>
-  <div class="task-breadcrumb" data-horizontal-scroll="true">
+  <div class="task-breadcrumb" data-horizontal-scroll="true" @wheel="onHorizontalWheel">
     <!-- Root crumb: 任务列表. The glyph is the section's own dock icon, so the
          panel header reads as the same section the dock button stands for
          (same rule as the git history and forge headers). -->
@@ -45,6 +45,7 @@ import { Clock } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
 import { store } from '@/stores/app'
+import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 
 const { t } = useI18n()
 const { currentView, selectedTaskId, execDetailOpen, formViewOpen, formMode, navigateToList, navigateToTaskSettings } = useTaskTab()
