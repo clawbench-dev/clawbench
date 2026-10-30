@@ -194,22 +194,39 @@ describe('ChatMessageRail — inset from the pane', () => {
     return parseFloat(m![1])
   }
 
-  it('insets the card from the top by the same amount as from the left', async () => {
+  it('insets the axis from the left and centres it vertically in the band', async () => {
     // Both a short list (card shorter than the track) and one that overflows.
-    // The short one is the case that used to CENTRE the card, which made the top
-    // gap depend on the row count while the left gap stayed fixed — flush at the
-    // top on one row count, a third of a row on the next.
+    // The short one is the case that must CENTRE: four numbers hanging off the
+    // top of a tall pane leave the rest of the axis empty, which reads as a
+    // list that failed to load. Equal free space above and below is the whole
+    // assertion — a flush-top implementation gives 0 above and half a pane below.
+    const track = 300
     for (const count of [3, 40]) {
-      const w = mountWithTrack(count)
+      const w = mountWithTrack(count, {}, track)
       await w.vm.refresh()
       const card = w.find('.msg-rail-card').attributes('style') || ''
-      expect(px(card, 'top'), `count=${count}`).toBeCloseTo(px(card, 'left'), 5)
+      const top = px(card, 'top')
+      const height = px(card, 'height')
+      const inset = px(card, 'left')
+      expect(top, `count=${count}`).toBeGreaterThanOrEqual(inset - 0.001)
+      expect(top - inset, `count=${count}`).toBeCloseTo(track - (top + height), 5)
 
       // The axis is the card's box exactly: same top, same left, same height.
       const rail = w.find('.msg-rail').attributes('style') || ''
-      expect(px(rail, 'top'), `count=${count}`).toBeCloseTo(px(card, 'top'), 5)
-      expect(px(rail, 'left'), `count=${count}`).toBeCloseTo(px(card, 'left'), 5)
+      expect(px(rail, 'top'), `count=${count}`).toBeCloseTo(top, 5)
+      expect(px(rail, 'left'), `count=${count}`).toBeCloseTo(inset, 5)
+      expect(px(rail, 'height'), `count=${count}`).toBeCloseTo(height, 5)
     }
+  })
+
+  it('centres a short index instead of pinning it to the top edge', async () => {
+    // Two rows in a 300px track: the card is far shorter than the band, so the
+    // centring term must actually move it — `>= inset` alone would pass for a
+    // flush-top card.
+    const w = mountWithTrack(2)
+    await w.vm.refresh()
+    const card = w.find('.msg-rail-card').attributes('style') || ''
+    expect(px(card, 'top')).toBeGreaterThan(px(card, 'left') + 20)
   })
 
   it('leaves room for that inset at the foot of the card, not just at its top', async () => {
