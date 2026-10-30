@@ -506,7 +506,7 @@ import { thinkingRenderSource } from '@/utils/chatStreamUtils.ts'
 import { isThinkingUserAwayFromBottom } from '@/utils/thinkingScroll'
 import { verifyFilePaths, invalidateNegativePathCache } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
-import { tableWrapVersion } from '@/utils/tableWrapPref.ts'
+import { blockWrapVersion } from '@/utils/blockWrapPref.ts'
 // Footer pill buttons (.fbtn) — the PermissionApproval card buttons share this
 // language, so the styles must be present wherever the chat surfaces render.
 import '@/assets/modal-footer-btn.css'
@@ -563,7 +563,7 @@ function i18nGlobalLocale(): string {
  * on the input and the DOM would keep the previous project's annotations.
  */
 const cacheScope = computed(() =>
-  `${store.state.projectRoot}\u0000${i18nGlobalLocale()}\u0000${tableWrapVersion.value}`,
+  `${store.state.projectRoot}\u0000${i18nGlobalLocale()}\u0000${blockWrapVersion.value}`,
 )
 
 // Auto-expand tools (AskUserQuestion, PermissionApproval) need input to render inline.

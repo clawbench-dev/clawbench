@@ -4,8 +4,8 @@ import { placeFixedAt } from '@/utils/fixedPosition.ts'
 import { gt } from '@/composables/useLocale'
 import { ATTACH_BADGE_SVG } from '@/utils/attachSvg'
 import { isShareMode } from '@/share/shareMode'
-import { openTableLandscape } from '@/composables/useTableLandscape.ts'
-import { getDefaultTableWrap } from '@/utils/tableWrapPref.ts'
+import { openBlockLandscape } from '@/composables/useBlockLandscape.ts'
+import { getDefaultBlockWrap } from '@/utils/blockWrapPref.ts'
 
 // ── SVG icons (inline, same pattern as FILE_OPEN_ICON_SVG) ──────────────────
 // The copy/check glyphs are shared with every other hand-built copy button and
@@ -13,6 +13,15 @@ import { getDefaultTableWrap } from '@/utils/tableWrapPref.ts'
 // re-declare them here; a second copy is how they drift apart.
 
 const WRAP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-3"/><path d="M18 15l-3 3 3 3"/><path d="M3 18h7"/></svg>'
+
+/**
+ * Material Symbols `screen_rotation` — a phone caught mid-turn with two
+ * rotation arrows. This is the canonical glyph for the gesture, and the only
+ * filled icon in the header; it is deliberately the one shape that cannot be
+ * mistaken for the copy / wrap glyphs beside it at 14px.
+ */
+const BLOCK_LANDSCAPE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16.48 2.52c3.27 1.55 5.61 4.72 5.97 8.48h1.5C23.44 4.84 18.25 0 12 0l-.66.03 3.81 3.81 1.33-1.32zM10.23 1.75c-.59-.59-1.54-.59-2.12 0L1.75 8.11c-.59.59-.59 1.54 0 2.12l12.02 12.02c.59.59 1.54.59 2.12 0l6.36-6.36c.59-.59.59-1.54 0-2.12L10.23 1.75zm4.6 19.44L2.81 9.17l6.36-6.36 12.02 12.02-6.36 6.36zm-7.31.29C4.25 19.94 1.91 16.76 1.55 13H.05C.56 19.16 5.71 24 12 24l.66-.03-3.81-3.81-1.33 1.32z"/></svg>'
+
 
 /** Build the "attach to chat" header button (paperclip). Skipped entirely in
  *  share mode (a public share has no chat to attach to); in chat the button is
@@ -77,9 +86,12 @@ export function annotateCodeBlockHeadersIn(doc: Document): void {
             }
         }
 
-        // Build wrapper div (default: word-wrap on)
+        // Build wrapper div. The starting wrap mode is the user's default
+        // (设置 → 外观 → 显示), shared with Markdown tables; the per-block toggle
+        // still overrides it.
+        const wrapDefault = getDefaultBlockWrap()
         const wrapper = doc.createElement('div')
-        wrapper.className = 'code-block-wrapper word-wrap'
+        wrapper.className = `code-block-wrapper${wrapDefault ? ' word-wrap' : ''}`
 
         // Build header div
         const header = doc.createElement('div')
@@ -109,15 +121,26 @@ export function annotateCodeBlockHeadersIn(doc: Document): void {
         const attachBtn = makeAttachButton(doc, 'code-block-attach-btn', 'chat.attach.attachCodeToChat')
         if (attachBtn) actions.appendChild(attachBtn)
 
-        // Wrap toggle button (default: wrap on, so button shows "wrapOn" state)
+        // Wrap toggle button, starting in the state the default gave it.
         const wrapBtn = doc.createElement('button')
-        wrapBtn.className = 'code-block-wrap-btn is-wrapped'
+        wrapBtn.className = `code-block-wrap-btn${wrapDefault ? ' is-wrapped' : ''}`
         wrapBtn.setAttribute('data-action', 'wrap')
-        wrapBtn.setAttribute('title', gt('codeBlock.wrapOn'))
-        wrapBtn.setAttribute('aria-label', gt('codeBlock.wrapOn'))
+        wrapBtn.setAttribute('title', gt(wrapDefault ? 'codeBlock.wrapOn' : 'codeBlock.wrapOff'))
+        wrapBtn.setAttribute('aria-label', gt(wrapDefault ? 'codeBlock.wrapOn' : 'codeBlock.wrapOff'))
         wrapBtn.setAttribute('type', 'button')
         wrapBtn.innerHTML = WRAP_ICON_SVG
         actions.appendChild(wrapBtn)
+
+        // Landscape (full-screen) view — touch/narrow only; the CSS hides it on
+        // a desktop where the block is already readable in place.
+        const landscapeBtn = doc.createElement('button')
+        landscapeBtn.className = 'code-block-landscape-btn'
+        landscapeBtn.setAttribute('data-action', 'landscape')
+        landscapeBtn.setAttribute('title', gt('codeBlock.landscape'))
+        landscapeBtn.setAttribute('aria-label', gt('codeBlock.landscape'))
+        landscapeBtn.setAttribute('type', 'button')
+        landscapeBtn.innerHTML = BLOCK_LANDSCAPE_ICON_SVG
+        actions.appendChild(landscapeBtn)
 
         header.appendChild(actions)
 
@@ -138,7 +161,7 @@ export function annotateCodeBlockHeadersIn(doc: Document): void {
  */
 export function handleCodeBlockClick(event: MouseEvent): boolean {
     const target = event.target as HTMLElement
-    const btn = target.closest<HTMLElement>('.code-block-copy-btn, .code-block-wrap-btn')
+    const btn = target.closest<HTMLElement>('.code-block-copy-btn, .code-block-wrap-btn, .code-block-landscape-btn')
     if (!btn) return false
 
     event.preventDefault()
@@ -161,6 +184,8 @@ export function handleCodeBlockClick(event: MouseEvent): boolean {
         // Shared path: guards re-entry, copies, and swaps the glyph for a check
         // (see utils/copyButton.ts).
         copyWithFlash(btn, text)
+    } else if (action === 'landscape') {
+        openBlockLandscape(wrapper, btn)
     } else if (action === 'wrap') {
         wrapper.classList.toggle('word-wrap')
         btn.classList.toggle('is-wrapped')
@@ -178,13 +203,6 @@ const TABLE_CHEVRON_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="cur
 
 const TABLE_WRAP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-3"/><path d="M18 15l-3 3 3 3"/><path d="M3 18h7"/></svg>'
 
-/**
- * Material Symbols `screen_rotation` — a phone caught mid-turn with two
- * rotation arrows. This is the canonical glyph for the gesture, and the only
- * filled icon in the header; it is deliberately the one shape that cannot be
- * mistaken for the copy / wrap glyphs beside it at 14px.
- */
-const TABLE_LANDSCAPE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16.48 2.52c3.27 1.55 5.61 4.72 5.97 8.48h1.5C23.44 4.84 18.25 0 12 0l-.66.03 3.81 3.81 1.33-1.32zM10.23 1.75c-.59-.59-1.54-.59-2.12 0L1.75 8.11c-.59.59-.59 1.54 0 2.12l12.02 12.02c.59.59 1.54.59 2.12 0l6.36-6.36c.59-.59.59-1.54 0-2.12L10.23 1.75zm4.6 19.44L2.81 9.17l6.36-6.36 12.02 12.02-6.36 6.36zm-7.31.29C4.25 19.94 1.91 16.76 1.55 13H.05C.56 19.16 5.71 24 12 24l.66-.03-3.81-3.81-1.33 1.32z"/></svg>'
 
 /**
  * Annotate table blocks in an HTML string with header bars containing
@@ -216,7 +234,7 @@ export function annotateTableBlockHeadersIn(doc: Document): void {
 
         // Build wrapper div. The starting wrap mode is the user's default
         // (设置 → 外观 → 显示); the per-table toggle still overrides it.
-        const wrapDefault = getDefaultTableWrap()
+        const wrapDefault = getDefaultBlockWrap()
         const wrapper = doc.createElement('div')
         wrapper.className = `table-block-wrapper ${wrapDefault ? 'word-wrap' : 'no-wrap'}`
 
@@ -294,7 +312,7 @@ export function annotateTableBlockHeadersIn(doc: Document): void {
         landscapeBtn.setAttribute('title', gt('tableBlock.landscape'))
         landscapeBtn.setAttribute('aria-label', gt('tableBlock.landscape'))
         landscapeBtn.setAttribute('type', 'button')
-        landscapeBtn.innerHTML = TABLE_LANDSCAPE_ICON_SVG
+        landscapeBtn.innerHTML = BLOCK_LANDSCAPE_ICON_SVG
         actions.appendChild(landscapeBtn)
 
         header.appendChild(actions)
@@ -562,7 +580,7 @@ export function handleTableBlockClick(event: MouseEvent): boolean {
         // The overlay is a separate layer, so an open copy menu would be left
         // floating behind it with nothing to anchor to.
         closeAllTableBlockMenus()
-        openTableLandscape(wrapper, btn)
+        openBlockLandscape(wrapper, btn)
         return true
     }
 
@@ -633,7 +651,7 @@ export function positionTableMenu(trigger: HTMLElement, menu: HTMLElement): void
     // A landscape overlay rotates its panel, which makes that panel the
     // containing block for this fixed menu — viewport offsets would be read as
     // panel-local ones. See positionTableMenuInRotatedPanel.
-    const overlay = menu.closest<HTMLElement>('.table-landscape')
+    const overlay = menu.closest<HTMLElement>('.block-landscape')
     if (overlay?.classList.contains('is-rotated')) {
         const panel = overlay.firstElementChild as HTMLElement | null
         if (panel) {
@@ -736,7 +754,7 @@ function onTableMenuViewportChange(): void {
     // horizontal axis, so the vertical test below would never fire and the menu
     // would hang in place after its trigger scrolled away. Compare against the
     // panel's box instead, on both axes.
-    const overlay = menu.closest<HTMLElement>('.table-landscape')
+    const overlay = menu.closest<HTMLElement>('.block-landscape')
     if (overlay?.classList.contains('is-rotated')) {
         const panelRect = overlay.firstElementChild?.getBoundingClientRect()
         if (panelRect && (

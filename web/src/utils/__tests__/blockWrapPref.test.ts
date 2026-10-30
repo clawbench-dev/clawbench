@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  _resetTableWrapPref,
-  applyTableWrapToRenderedTables,
-  getDefaultTableWrap,
-  setDefaultTableWrap,
-  tableWrapVersion,
-  TABLE_WRAP_STORAGE_KEY,
-} from '@/utils/tableWrapPref.ts'
+  _resetBlockWrapPref,
+  applyBlockWrapToRenderedBlocks,
+  getDefaultBlockWrap,
+  setDefaultBlockWrap,
+  blockWrapVersion,
+  BLOCK_WRAP_STORAGE_KEY,
+} from '@/utils/blockWrapPref.ts'
 
 vi.mock('@/composables/useLocale', () => ({
   gt: (key: string) => key,
@@ -14,13 +14,13 @@ vi.mock('@/composables/useLocale', () => ({
 
 beforeEach(() => {
   localStorage.clear()
-  _resetTableWrapPref()
+  _resetBlockWrapPref()
   document.body.innerHTML = ''
 })
 
 afterEach(() => {
   localStorage.clear()
-  _resetTableWrapPref()
+  _resetBlockWrapPref()
   document.body.innerHTML = ''
 })
 
@@ -33,40 +33,40 @@ function buildTable(wrapClass: string, withButton = true): HTMLElement {
   return wrapper
 }
 
-describe('getDefaultTableWrap', () => {
+describe('getDefaultBlockWrap', () => {
   it('defaults to wrapping when nothing is stored', () => {
-    expect(getDefaultTableWrap()).toBe(true)
+    expect(getDefaultBlockWrap()).toBe(true)
   })
 
   it('reads a stored false', () => {
-    localStorage.setItem(TABLE_WRAP_STORAGE_KEY, 'false')
-    expect(getDefaultTableWrap()).toBe(false)
+    localStorage.setItem(BLOCK_WRAP_STORAGE_KEY, 'false')
+    expect(getDefaultBlockWrap()).toBe(false)
   })
 
   it('reads a stored true', () => {
-    localStorage.setItem(TABLE_WRAP_STORAGE_KEY, 'true')
-    expect(getDefaultTableWrap()).toBe(true)
+    localStorage.setItem(BLOCK_WRAP_STORAGE_KEY, 'true')
+    expect(getDefaultBlockWrap()).toBe(true)
   })
 
   it('memoises the value for the session', () => {
-    expect(getDefaultTableWrap()).toBe(true)
-    localStorage.setItem(TABLE_WRAP_STORAGE_KEY, 'false')
+    expect(getDefaultBlockWrap()).toBe(true)
+    localStorage.setItem(BLOCK_WRAP_STORAGE_KEY, 'false')
     // The stored change is picked up on the next session, not mid-session —
-    // the settings writer updates the memo through setDefaultTableWrap.
-    expect(getDefaultTableWrap()).toBe(true)
+    // the settings writer updates the memo through setDefaultBlockWrap.
+    expect(getDefaultBlockWrap()).toBe(true)
   })
 })
 
-describe('setDefaultTableWrap', () => {
+describe('setDefaultBlockWrap', () => {
   it('persists the value and updates the memo', () => {
-    setDefaultTableWrap(false)
-    expect(localStorage.getItem(TABLE_WRAP_STORAGE_KEY)).toBe('false')
-    expect(getDefaultTableWrap()).toBe(false)
+    setDefaultBlockWrap(false)
+    expect(localStorage.getItem(BLOCK_WRAP_STORAGE_KEY)).toBe('false')
+    expect(getDefaultBlockWrap()).toBe(false)
   })
 
   it('re-applies the mode to tables already in the document', () => {
     const wrapper = buildTable('word-wrap')
-    setDefaultTableWrap(false)
+    setDefaultBlockWrap(false)
 
     expect(wrapper.classList.contains('no-wrap')).toBe(true)
     expect(wrapper.classList.contains('word-wrap')).toBe(false)
@@ -74,7 +74,7 @@ describe('setDefaultTableWrap', () => {
     expect(btn.classList.contains('is-wrapped')).toBe(false)
     expect(btn.getAttribute('title')).toBe('tableBlock.wrapOff')
 
-    setDefaultTableWrap(true)
+    setDefaultBlockWrap(true)
     expect(wrapper.classList.contains('word-wrap')).toBe(true)
     expect(btn.classList.contains('is-wrapped')).toBe(true)
     expect(btn.getAttribute('title')).toBe('tableBlock.wrapOn')
@@ -82,25 +82,41 @@ describe('setDefaultTableWrap', () => {
 
   it('leaves a wrapper without a toggle button in the right state', () => {
     const wrapper = buildTable('word-wrap', false)
-    applyTableWrapToRenderedTables(false)
+    applyBlockWrapToRenderedBlocks(false)
     expect(wrapper.classList.contains('no-wrap')).toBe(true)
   })
 
   it('bumps the render-cache version only when the value actually changes', () => {
-    const start = tableWrapVersion.value
-    setDefaultTableWrap(false)
-    expect(tableWrapVersion.value).toBe(start + 1)
+    const start = blockWrapVersion.value
+    setDefaultBlockWrap(false)
+    expect(blockWrapVersion.value).toBe(start + 1)
     // Re-setting the same value must not invalidate every cached block.
-    setDefaultTableWrap(false)
-    expect(tableWrapVersion.value).toBe(start + 1)
+    setDefaultBlockWrap(false)
+    expect(blockWrapVersion.value).toBe(start + 1)
   })
 
-  it('ignores non-table wrappers', () => {
+  it('re-applies the mode to code blocks too, without inventing a no-wrap class', () => {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'code-block-wrapper word-wrap'
+    wrapper.innerHTML = '<div class="code-block-header"><button class="code-block-wrap-btn is-wrapped" data-action="wrap"></button></div><pre><code>x</code></pre>'
+    document.body.appendChild(wrapper)
+
+    setDefaultBlockWrap(false)
+
+    expect(wrapper.classList.contains('word-wrap')).toBe(false)
+    // Code blocks have no `.no-wrap` rule; the class must not appear.
+    expect(wrapper.classList.contains('no-wrap')).toBe(false)
+    const btn = wrapper.querySelector<HTMLElement>('.code-block-wrap-btn')!
+    expect(btn.classList.contains('is-wrapped')).toBe(false)
+    expect(btn.getAttribute('title')).toBe('codeBlock.wrapOff')
+  })
+
+  it('ignores wrappers that are neither tables nor code blocks', () => {
     const other = document.createElement('div')
-    other.className = 'code-block-wrapper word-wrap'
+    other.className = 'diff-block-wrapper word-wrap'
     document.body.appendChild(other)
 
-    applyTableWrapToRenderedTables(false)
+    applyBlockWrapToRenderedBlocks(false)
     expect(other.classList.contains('word-wrap')).toBe(true)
   })
 })

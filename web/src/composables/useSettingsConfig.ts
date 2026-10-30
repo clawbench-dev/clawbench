@@ -9,7 +9,7 @@ import { applyFontConfig } from '@/utils/fontConfig'
 import { normalizeDisplayMode } from '@/utils/chatSessionUtils'
 import { resolveUIScale, computeAutoUIScale, currentScreenShortEdge, applyUIScale, readAppliedUIScale } from '@/utils/uiScale'
 import { setLayoutScopeMode } from '@/utils/panelState'
-import { setDefaultTableWrap } from '@/utils/tableWrapPref'
+import { setDefaultBlockWrap } from '@/utils/blockWrapPref'
 import { applyServerLimits } from '@/stores/app.ts'
 
 const LOCAL_PREFIX = 'clawbench-settings-'
@@ -176,7 +176,7 @@ const legacyKeys: Record<string, {
     key: '',
     format: 'raw',
     sideEffect(value) {
-      setDefaultTableWrap(value === true)
+      setDefaultBlockWrap(value === true)
     },
   },
   terminalFontSize: {

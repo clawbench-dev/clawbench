@@ -38,6 +38,8 @@ export default {
   codeBlock: {
     wrapOn: 'Word wrap on',
     wrapOff: 'Word wrap off',
+    landscape: 'Landscape view',
+    landscapeClose: 'Close landscape view',
   },
   diffBlock: {
     wrapOn: 'Word wrap on',
@@ -2777,8 +2779,8 @@ export default {
       layoutMemoryDesc: 'Whether split ratios, collapsed panels, and the session list / TOC widths are shared globally or remembered per project',
       layoutMemoryGlobal: 'Global',
       layoutMemoryProject: 'Per project',
-      tableWrapDefault: 'Word wrap tables by default',
-      tableWrapDefaultDesc: 'Whether Markdown tables wrap by default. When off, tables scroll horizontally instead. The wrap button on each table still overrides this',
+      tableWrapDefault: 'Word wrap tables and code blocks by default',
+      tableWrapDefaultDesc: 'Whether Markdown tables and code blocks wrap by default. When off they scroll horizontally instead. The wrap button on each block still overrides this',
       autoSpeech: 'Auto Speech',
       autoSpeechDesc: 'Automatically read aloud AI responses',
       preventScreenLock: 'No Screen Lock During Output',

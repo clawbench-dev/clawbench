@@ -405,7 +405,7 @@
       </main>
 
       <Lightbox ref="lightboxRef" />
-      <TableLandscape />
+      <BlockLandscape />
 
       <ProjectDialog
         :open="projectDialogOpen"
@@ -620,7 +620,7 @@ import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
 import InertPathPicker from './components/file/InertPathPicker.vue'
 import Lightbox from './components/media/Lightbox.vue'
-import TableLandscape from './components/common/TableLandscape.vue'
+import BlockLandscape from './components/common/BlockLandscape.vue'
 import ChatPanelContent from './components/chat/ChatPanelContent.vue'
 import FileManagerContent from './components/file/FileManagerContent.vue'
 import FileIcon from './components/common/FileIcon.vue'

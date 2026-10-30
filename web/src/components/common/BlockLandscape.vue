@@ -3,16 +3,16 @@
     <div
       v-if="state"
       ref="overlayRef"
-      class="table-landscape"
+      class="block-landscape"
       :class="{ 'is-rotated': rotated }"
       role="dialog"
       aria-modal="true"
       :aria-label="t('tableBlock.landscape')"
     >
-      <div class="table-landscape-panel">
+      <div class="block-landscape-panel">
         <div
           ref="bodyEl"
-          class="table-landscape-scroll markdown-body"
+          class="block-landscape-scroll markdown-body"
           @mousedown="onTableMouseDown"
           @touchstart.passive="onTableTouchStart"
           @click="onOverlayClick"
@@ -39,13 +39,13 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import TableRowModal from '@/components/common/TableRowModal.vue'
-import { handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
+import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import {
-  closeTableLandscape,
-  shouldRotateTableLandscape,
-  tableLandscapeState as state,
-} from '@/composables/useTableLandscape.ts'
+  closeBlockLandscape,
+  shouldRotateBlockLandscape,
+  blockLandscapeState as state,
+} from '@/composables/useBlockLandscape.ts'
 import { gt } from '@/composables/useLocale'
 import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
@@ -82,7 +82,7 @@ const bodyEl = ref<HTMLElement | null>(null)
 // without flip-flopping while the address bar animates.
 const viewport = ref({ width: window.innerWidth, height: window.innerHeight })
 
-const rotated = computed(() => shouldRotateTableLandscape({
+const rotated = computed(() => shouldRotateBlockLandscape({
   isTouchPrimary: isTouchPrimary.value,
   width: viewport.value.width,
   height: viewport.value.height,
@@ -101,8 +101,12 @@ function renderedWrapper(): HTMLElement | null {
 }
 
 /**
- * The wrap toggle edits the clone only. Carry the choice back to the live table
+ * The wrap toggle edits the clone only. Carry the choice back to the live block
  * (and its own toggle button) so closing the overlay does not silently undo it.
+ *
+ * Tables express the mode with a class pair (`word-wrap` / `no-wrap`); code
+ * blocks only have `word-wrap`, so they must not be given a `no-wrap` class
+ * that no rule consumes.
  */
 function syncWrapStateToSource(): void {
   const current = state.value
@@ -110,13 +114,15 @@ function syncWrapStateToSource(): void {
   if (!current || !rendered) return
 
   const wrapped = rendered.classList.contains('word-wrap')
+  const isCode = current.source.classList.contains('code-block-wrapper')
   current.source.classList.toggle('word-wrap', wrapped)
-  current.source.classList.toggle('no-wrap', !wrapped)
+  if (!isCode) current.source.classList.toggle('no-wrap', !wrapped)
 
-  const btn = current.source.querySelector('.table-block-wrap-btn')
+  const btn = current.source.querySelector<HTMLElement>('.table-block-wrap-btn, .code-block-wrap-btn')
   if (!btn) return
   btn.classList.toggle('is-wrapped', wrapped)
-  const label = gt(wrapped ? 'tableBlock.wrapOn' : 'tableBlock.wrapOff')
+  const ns = isCode ? 'codeBlock' : 'tableBlock'
+  const label = gt(wrapped ? `${ns}.wrapOn` : `${ns}.wrapOff`)
   btn.setAttribute('title', label)
   btn.setAttribute('aria-label', label)
 }
@@ -124,7 +130,7 @@ function syncWrapStateToSource(): void {
 function close(): void {
   closeTableRowModal()
   syncWrapStateToSource()
-  closeTableLandscape()
+  closeBlockLandscape()
 }
 
 // ── Click routing ───────────────────────────────────────────────────────────
@@ -247,8 +253,9 @@ function onOverlayClick(event: MouseEvent): void {
     return
   }
 
-  // Copy menu / copy format / wrap toggle — the same delegated handler the
+  // Copy / copy format / wrap toggle — the same delegated handlers the
   // containers call, so nothing about those controls is reimplemented here.
+  if (handleCodeBlockClick(event)) return
   if (handleTableBlockClick(event)) return
 
   // Row viewer (touch only, same as everywhere else).
@@ -333,7 +340,7 @@ watch(state, async (next) => {
     document.addEventListener('keydown', onDocumentKeydown, true)
     document.addEventListener('click', onDocumentClickCapture, true)
     unregisterBack = registerBackHandler({
-      id: 'table-landscape',
+      id: 'block-landscape',
       canGoBack: () => state.value !== null,
       goBack: close,
       priority: PRIORITY_OVERLAY,

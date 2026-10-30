@@ -54,9 +54,10 @@
     gap: var(--space-1);
 }
 
-/* ─── Header buttons: copy + wrap toggle ─── */
+/* ─── Header buttons: copy + wrap toggle + landscape view ─── */
 .code-block-copy-btn,
 .code-block-wrap-btn,
+.code-block-landscape-btn,
 .code-block-attach-btn {
     display: inline-flex;
     align-items: center;
@@ -77,6 +78,7 @@
 
 .code-block-copy-btn:hover,
 .code-block-wrap-btn:hover,
+.code-block-landscape-btn:hover,
 .code-block-attach-btn:hover {
     opacity: 1;
     color: var(--text-secondary);
@@ -84,7 +86,8 @@
 }
 
 .code-block-copy-btn:active,
-.code-block-wrap-btn:active {
+.code-block-wrap-btn:active,
+.code-block-landscape-btn:active {
     background: var(--border-color);
 }
 
@@ -381,14 +384,16 @@
    ========================================================================== */
 
 /* ─── Toolbar button: touch / narrow only ───
-   On a mouse+keyboard desktop the table is already readable in place, so the
+   On a mouse+keyboard desktop the block is already readable in place, so the
    extra button only crowds the header. */
-.table-block-landscape-btn {
+.table-block-landscape-btn,
+.code-block-landscape-btn {
     display: none;
 }
 
 @media (pointer: coarse), (max-width: 900px) {
-    .table-block-landscape-btn {
+    .table-block-landscape-btn,
+    .code-block-landscape-btn {
         display: inline-flex;
     }
 }
@@ -400,7 +405,7 @@
 
    `dvh` (with a `vh` fallback) rather than `vh`: the mobile address bar
    collapsing changes the usable height, and a `vh`-sized layer is clipped. */
-.table-landscape {
+.block-landscape {
     position: fixed;
     top: 0;
     left: 0;
@@ -415,7 +420,7 @@
 
 /* The rotating unit. The header turns with the table, which is what puts it at
    the top of what the user sees once the phone is held sideways. */
-.table-landscape-panel {
+.block-landscape-panel {
     position: absolute;
     top: 0;
     left: 0;
@@ -424,7 +429,7 @@
     min-height: 0;
 }
 
-.table-landscape.is-rotated .table-landscape-panel {
+.block-landscape.is-rotated .block-landscape-panel {
     top: 50%;
     left: 50%;
     /* Swapped on purpose: a 100dvh × 100dvw box rotated 90° exactly covers a
@@ -440,7 +445,7 @@
 /* Carries `.markdown-body` so the table keeps its normal borders/padding, and
    overrides the column cap + the hidden horizontal overflow that container
    imposes. */
-.table-landscape-scroll.markdown-body {
+.block-landscape-scroll.markdown-body {
     width: 100%;
     height: 100%;
     max-width: none;
@@ -454,18 +459,20 @@
 
 /* The wrapper already carries its own width/max-width; only the outer margin is
    the overlay's business. */
-.table-landscape-scroll > .table-block-wrapper {
+.block-landscape-scroll > .table-block-wrapper,
+.block-landscape-scroll > .code-block-wrapper {
     margin: 0 auto;
 }
 
 /* Inside the overlay this slot IS the close button, so it must stay visible even
    if the viewport grew past the breakpoint after the overlay opened. */
-.table-landscape .table-block-landscape-btn {
+.block-landscape .table-block-landscape-btn,
+.block-landscape .code-block-landscape-btn {
     display: inline-flex;
 }
 
 /* The paperclip attaches the markdown FILE to chat. The clone has no file
    identity (no `data-file-path` ancestor), so it would be an inert button. */
-.table-landscape .table-block-header .table-block-attach-btn {
+.block-landscape .table-block-header .table-block-attach-btn {
     display: none;
 }

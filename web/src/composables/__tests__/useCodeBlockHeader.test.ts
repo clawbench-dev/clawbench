@@ -2,8 +2,8 @@ import { describe, expect, it, vi, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { annotateCodeBlockHeaders, annotateTableBlockHeaders, handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus, positionTableMenu, positionTableMenuInRotatedPanel } from '@/composables/useCodeBlockHeader.ts'
-import { closeTableLandscape, tableLandscapeState } from '@/composables/useTableLandscape.ts'
-import { _resetTableWrapPref, setDefaultTableWrap } from '@/utils/tableWrapPref.ts'
+import { closeBlockLandscape, blockLandscapeState } from '@/composables/useBlockLandscape.ts'
+import { _resetBlockWrapPref, setDefaultBlockWrap } from '@/utils/blockWrapPref.ts'
 // Source of the menu's positioning rule — jsdom cannot reproduce overflow
 // clipping, so the escape-from-clip-chain assertion has to read the CSS.
 import tableHeaderCss from '../../../css/code-block-header.css?raw'
@@ -35,8 +35,8 @@ afterEach(() => {
   }
   pendingTimers.length = 0
   copyText.mockClear()
-  closeTableLandscape()
-  _resetTableWrapPref()
+  closeBlockLandscape()
+  _resetBlockWrapPref()
   localStorage.removeItem('clawbench-settings-tableWrap')
 })
 
@@ -56,6 +56,28 @@ describe('annotateCodeBlockHeaders', () => {
     expect(result).toContain('go')
     // Default: word-wrap on
     expect(result).toContain('word-wrap')
+  })
+
+  it('adds a landscape-view button to code blocks', () => {
+    const result = annotateCodeBlockHeaders('<pre><code>code</code></pre>')
+    expect(result).toContain('code-block-landscape-btn')
+    expect(result).toContain('data-action="landscape"')
+    expect(result).toContain('codeBlock.landscape')
+  })
+
+  it('starts a code block in the wrap mode the user configured as default', () => {
+    const html = '<pre><code>code</code></pre>'
+
+    expect(annotateCodeBlockHeaders(html)).toContain('code-block-wrapper word-wrap')
+
+    setDefaultBlockWrap(false)
+    const unwrapped = annotateCodeBlockHeaders(html)
+    expect(unwrapped).toContain('class="code-block-wrapper"')
+    expect(unwrapped).not.toContain('word-wrap')
+    // Code blocks have no `.no-wrap` rule — the class must not be invented.
+    expect(unwrapped).not.toContain('no-wrap')
+    expect(unwrapped).toContain('codeBlock.wrapOff')
+    expect(unwrapped).not.toContain('is-wrapped')
   })
 
   it('adds copy and wrap buttons', () => {
@@ -241,7 +263,7 @@ describe('annotateTableBlockHeaders', () => {
     // Default (nothing configured) keeps the historical behaviour: wrapping on.
     expect(annotateTableBlockHeaders(html)).toContain('table-block-wrapper word-wrap')
 
-    setDefaultTableWrap(false)
+    setDefaultBlockWrap(false)
     const unwrapped = annotateTableBlockHeaders(html)
     expect(unwrapped).toContain('table-block-wrapper no-wrap')
     expect(unwrapped).not.toContain('word-wrap')
@@ -255,8 +277,6 @@ describe('annotateTableBlockHeaders', () => {
     const result = annotateTableBlockHeaders(html)
     expect(result).toContain('table-block-landscape-btn')
     expect(result).toContain('data-action="landscape"')
-    // Never on code blocks — a code block is already horizontally scrollable.
-    expect(annotateCodeBlockHeaders('<pre><code>x</code></pre>')).not.toContain('landscape')
   })
 
   it('builds a copy dropdown menu with Markdown/HTML/TSV items', () => {
@@ -978,7 +998,7 @@ describe('handleTableBlockClick — landscape view', () => {
     const { wrapper, btn } = buildBlock('no-wrap')
     expect(handleTableBlockClick(click(btn))).toBe(true)
 
-    const state = tableLandscapeState.value
+    const state = blockLandscapeState.value
     expect(state).not.toBeNull()
     expect(state!.html).toContain('<table')
     expect(state!.html).toContain('cell')
@@ -995,8 +1015,8 @@ describe('handleTableBlockClick — landscape view', () => {
   it('keeps the row-viewer hooks so rows stay tappable in the overlay', () => {
     const { wrapper, btn } = buildBlock()
     handleTableBlockClick(click(btn))
-    expect(tableLandscapeState.value!.html).toContain('data-row-idx')
-    expect(tableLandscapeState.value!.html).toContain('data-table-idx')
+    expect(blockLandscapeState.value!.html).toContain('data-row-idx')
+    expect(blockLandscapeState.value!.html).toContain('data-table-idx')
     wrapper.remove()
   })
 
@@ -1010,7 +1030,7 @@ describe('handleTableBlockClick — landscape view', () => {
     document.body.appendChild(wrapper)
 
     handleTableBlockClick(click(btn))
-    expect(tableLandscapeState.value).toBeNull()
+    expect(blockLandscapeState.value).toBeNull()
     wrapper.remove()
   })
 })

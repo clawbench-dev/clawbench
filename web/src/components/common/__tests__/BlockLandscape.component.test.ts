@@ -31,8 +31,8 @@ vi.mock('@/composables/usePlatformDetect.ts', () => ({
   usePlatformDetect: () => ({ isTouchPrimary: touchPrimary }),
 }))
 
-import TableLandscape from '@/components/common/TableLandscape.vue'
-import { closeTableLandscape, openTableLandscape, tableLandscapeState } from '@/composables/useTableLandscape.ts'
+import BlockLandscape from '@/components/common/BlockLandscape.vue'
+import { closeBlockLandscape, openBlockLandscape, blockLandscapeState } from '@/composables/useBlockLandscape.ts'
 
 function buildSourceBlock(body = '<tbody><tr data-row-idx="0"><td>only cell</td></tr></tbody>'): HTMLElement {
   const wrapper = document.createElement('div')
@@ -58,6 +58,23 @@ function buildSourceBlock(body = '<tbody><tr data-row-idx="0"><td>only cell</td>
   return wrapper
 }
 
+function buildCodeSourceBlock(): HTMLElement {
+  const wrapper = document.createElement('div')
+  wrapper.className = 'code-block-wrapper word-wrap'
+  wrapper.innerHTML = `
+    <div class="code-block-header">
+      <span class="code-block-lang">go</span>
+      <span class="code-block-header-actions">
+        <button class="code-block-copy-btn" data-action="copy"></button>
+        <button class="code-block-wrap-btn is-wrapped" data-action="wrap"></button>
+        <button class="code-block-landscape-btn" data-action="landscape"></button>
+      </span>
+    </div>
+    <pre><code class="language-go">fmt.Println("hi")</code></pre>`
+  document.body.appendChild(wrapper)
+  return wrapper
+}
+
 function setViewport(width: number, height: number): void {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
   Object.defineProperty(window, 'innerHeight', { configurable: true, value: height })
@@ -76,12 +93,12 @@ globalThis.setTimeout = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
 }) as typeof setTimeout
 
 async function mountOverlay() {
-  mounted = mount(TableLandscape, { attachTo: document.body })
+  mounted = mount(BlockLandscape, { attachTo: document.body })
   await flushPromises()
 }
 
 function overlayEl(): HTMLElement {
-  return document.querySelector<HTMLElement>('.table-landscape')!
+  return document.querySelector<HTMLElement>('.block-landscape')!
 }
 
 beforeEach(() => {
@@ -93,7 +110,7 @@ afterEach(() => {
   // Order matters: resetting the state lets the still-mounted instance tear
   // down, then the instance itself goes. A leaked mount would keep reacting to
   // the module-level state in the NEXT test.
-  closeTableLandscape()
+  closeBlockLandscape()
   mounted?.unmount()
   mounted = null
   document.body.innerHTML = ''
@@ -103,15 +120,15 @@ afterEach(() => {
   pendingTimers.length = 0
 })
 
-describe('TableLandscape', () => {
+describe('BlockLandscape', () => {
   it('renders nothing until a table is opened', async () => {
     await mountOverlay()
-    expect(document.querySelector('.table-landscape')).toBeNull()
+    expect(document.querySelector('.block-landscape')).toBeNull()
   })
 
   it('shows the table with its own header, locks body scroll and focuses close', async () => {
     await mountOverlay()
-    openTableLandscape(buildSourceBlock())
+    openBlockLandscape(buildSourceBlock())
     await flushPromises()
     await nextTick()
 
@@ -128,7 +145,7 @@ describe('TableLandscape', () => {
 
   it('reuses the copy control: copying inside the overlay reads the cloned table', async () => {
     await mountOverlay()
-    openTableLandscape(buildSourceBlock())
+    openBlockLandscape(buildSourceBlock())
     await flushPromises()
 
     overlayEl().querySelector<HTMLElement>('[data-action="open-copy-menu"]')!.click()
@@ -142,7 +159,7 @@ describe('TableLandscape', () => {
   it('carries a wrap toggle made inside the overlay back to the live table', async () => {
     await mountOverlay()
     const source = buildSourceBlock()
-    openTableLandscape(source)
+    openBlockLandscape(source)
     await flushPromises()
 
     overlayEl().querySelector<HTMLElement>('[data-action="wrap"]')!.click()
@@ -161,7 +178,7 @@ describe('TableLandscape', () => {
   it('opens the row viewer above the overlay when a row is tapped', async () => {
     touchPrimary.value = true
     await mountOverlay()
-    openTableLandscape(buildSourceBlock(
+    openBlockLandscape(buildSourceBlock(
       '<thead><tr><th>Name</th></tr></thead><tbody><tr data-row-idx="0"><td>alpha</td></tr></tbody>',
     ))
     await flushPromises()
@@ -176,7 +193,7 @@ describe('TableLandscape', () => {
     expect(modal).not.toBeNull()
     expect(modal!.textContent).toContain('alpha')
     // Still inside the overlay session — the table did not close.
-    expect(tableLandscapeState.value).not.toBeNull()
+    expect(blockLandscapeState.value).not.toBeNull()
 
   })
 
@@ -189,16 +206,44 @@ describe('TableLandscape', () => {
     const onSourceClick = vi.fn()
     sourcePath.addEventListener('click', onSourceClick)
 
-    openTableLandscape(source)
+    openBlockLandscape(source)
     await flushPromises()
 
     overlayEl().querySelector<HTMLElement>('.chat-file-path')!.click()
     await flushPromises()
 
-    expect(tableLandscapeState.value).toBeNull()
+    expect(blockLandscapeState.value).toBeNull()
     expect(onSourceClick).toHaveBeenCalledTimes(1)
     expect(onSourceClick.mock.calls[0][0].target).toBe(sourcePath)
 
+  })
+
+  it('serves a code block with the same controls and syncs its wrap toggle back', async () => {
+    await mountOverlay()
+    const source = buildCodeSourceBlock()
+    openBlockLandscape(source)
+    await flushPromises()
+
+    const overlay = overlayEl()
+    expect(overlay.textContent).toContain('fmt.Println')
+    // Its own header travels with the clone — no second toolbar.
+    expect(overlay.querySelector('.code-block-header')).not.toBeNull()
+
+    overlay.querySelector<HTMLElement>('[data-action="copy"]')!.click()
+    expect(mockCopyText).toHaveBeenCalledTimes(1)
+    expect(mockCopyText.mock.calls[0][0]).toContain('fmt.Println')
+
+    overlay.querySelector<HTMLElement>('[data-action="wrap"]')!.click()
+    await flushPromises()
+    expect(overlay.querySelector('.code-block-wrapper')!.classList.contains('word-wrap')).toBe(false)
+
+    overlay.querySelector<HTMLElement>('[data-action="landscape-close"]')!.click()
+    await flushPromises()
+
+    expect(source.classList.contains('word-wrap')).toBe(false)
+    // Code blocks have no `.no-wrap` rule — that class must not leak onto them.
+    expect(source.classList.contains('no-wrap')).toBe(false)
+    expect(source.querySelector('.code-block-wrap-btn')!.getAttribute('title')).toBe('codeBlock.wrapOff')
   })
 
   it('cancels the original click so a relative <a href> cannot navigate the SPA', async () => {
@@ -208,7 +253,7 @@ describe('TableLandscape', () => {
     const onSourceClick = vi.fn((e: Event) => e.preventDefault())
     link.addEventListener('click', onSourceClick)
 
-    openTableLandscape(source)
+    openBlockLandscape(source)
     await flushPromises()
 
     const event = new MouseEvent('click', { bubbles: true, cancelable: true })
@@ -219,7 +264,7 @@ describe('TableLandscape', () => {
     // browser follow the href and blow the SPA away.
     expect(event.defaultPrevented).toBe(true)
     expect(onSourceClick).toHaveBeenCalledTimes(1)
-    expect(tableLandscapeState.value).toBeNull()
+    expect(blockLandscapeState.value).toBeNull()
   })
 
   it('leaves the overlay for an external link without replaying it', async () => {
@@ -244,7 +289,7 @@ describe('TableLandscape', () => {
     const onSourceClick = vi.fn()
     span.addEventListener('click', onSourceClick)
 
-    openTableLandscape(source)
+    openBlockLandscape(source)
     await flushPromises()
 
     overlayEl().querySelector('.md-external-link')!
@@ -252,7 +297,7 @@ describe('TableLandscape', () => {
     await flushPromises()
 
     expect(claimed).toHaveBeenCalledTimes(1)
-    expect(tableLandscapeState.value).toBeNull()
+    expect(blockLandscapeState.value).toBeNull()
     // Replaying would fire the confirm dialog a second time.
     expect(onSourceClick).not.toHaveBeenCalled()
 
@@ -261,14 +306,14 @@ describe('TableLandscape', () => {
 
   it('closes on Escape and releases the scroll lock', async () => {
     await mountOverlay()
-    openTableLandscape(buildSourceBlock())
+    openBlockLandscape(buildSourceBlock())
     await flushPromises()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await flushPromises()
 
-    expect(tableLandscapeState.value).toBeNull()
-    expect(document.querySelector('.table-landscape')).toBeNull()
+    expect(blockLandscapeState.value).toBeNull()
+    expect(document.querySelector('.block-landscape')).toBeNull()
     expect(document.body.style.overflow).toBe('')
 
   })
@@ -278,33 +323,33 @@ describe('TableLandscape', () => {
     const trigger = document.createElement('button')
     trigger.className = 'table-block-landscape-btn'
     document.body.appendChild(trigger)
-    openTableLandscape(buildSourceBlock(), trigger)
+    openBlockLandscape(buildSourceBlock(), trigger)
     await flushPromises()
     await nextTick()
 
     overlayEl().querySelector<HTMLElement>('[data-action="landscape-close"]')!.click()
     await flushPromises()
 
-    expect(tableLandscapeState.value).toBeNull()
+    expect(blockLandscapeState.value).toBeNull()
     expect(document.activeElement).toBe(trigger)
 
   })
 
   it('closes when the blank area around the table is tapped', async () => {
     await mountOverlay()
-    openTableLandscape(buildSourceBlock())
+    openBlockLandscape(buildSourceBlock())
     await flushPromises()
 
-    const scroll = document.querySelector<HTMLElement>('.table-landscape-scroll')!
+    const scroll = document.querySelector<HTMLElement>('.block-landscape-scroll')!
     scroll.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
 
-    expect(tableLandscapeState.value).toBeNull()
+    expect(blockLandscapeState.value).toBeNull()
   })
 
   it('traps Tab inside the overlay', async () => {
     await mountOverlay()
-    openTableLandscape(buildSourceBlock())
+    openBlockLandscape(buildSourceBlock())
     await flushPromises()
     await nextTick()
 
@@ -324,7 +369,7 @@ describe('TableLandscape', () => {
     touchPrimary.value = true
     setViewport(390, 844)
     await mountOverlay()
-    openTableLandscape(buildSourceBlock())
+    openBlockLandscape(buildSourceBlock())
     await flushPromises()
 
     expect(overlayEl().classList.contains('is-rotated')).toBe(true)
@@ -333,7 +378,7 @@ describe('TableLandscape', () => {
   it('keeps the table upright in a narrow desktop window', async () => {
     setViewport(400, 900)
     await mountOverlay()
-    openTableLandscape(buildSourceBlock())
+    openBlockLandscape(buildSourceBlock())
     await flushPromises()
 
     expect(overlayEl().classList.contains('is-rotated')).toBe(false)
@@ -341,15 +386,15 @@ describe('TableLandscape', () => {
 
   it('closes on unmount so the layer cannot survive a route change', async () => {
     await mountOverlay()
-    openTableLandscape(buildSourceBlock())
+    openBlockLandscape(buildSourceBlock())
     await flushPromises()
 
     mounted!.unmount()
     mounted = null
     await flushPromises()
 
-    expect(tableLandscapeState.value).toBeNull()
-    expect(document.querySelector('.table-landscape')).toBeNull()
+    expect(blockLandscapeState.value).toBeNull()
+    expect(document.querySelector('.block-landscape')).toBeNull()
     expect(document.body.style.overflow).toBe('')
   })
 })
