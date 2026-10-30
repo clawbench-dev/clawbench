@@ -2493,6 +2493,34 @@ func hasFlag(flag string) bool {
 	return false
 }
 
+// certDirForCLI resolves the certificate directory for the one-shot
+// `--gen-cert` command.
+//
+// It cannot use model.ConfigInstance: the flag is dispatched before the server
+// loads its config (that load generates an admin password and touches the data
+// directory, both wrong for a command that only writes two files), so the
+// instance still holds the zero value. Reading the same config file the server
+// reads keeps the two paths pointing at the SAME directory — otherwise a user
+// with a custom tls.cert_dir gets a "已生成" message for a directory the server
+// never looks at.
+func certDirForCLI() string {
+	path := platform.FindConfigPath(model.DataDir)
+	if data, err := os.ReadFile(path); err == nil {
+		var cfg struct {
+			TLS struct {
+				CertDir string `yaml:"cert_dir"`
+			} `yaml:"tls"`
+		}
+		if yaml.Unmarshal(data, &cfg) == nil && strings.TrimSpace(cfg.TLS.CertDir) != "" {
+			return cfg.TLS.CertDir
+		}
+	}
+	if dir := model.ConfigInstance.TLS.CertDir; dir != "" {
+		return dir
+	}
+	return model.DefaultTLSCertDir()
+}
+
 // runGenerateCert writes a self-signed certificate for this machine and prints
 // what it covers. Returns the process exit code.
 //
@@ -2500,10 +2528,7 @@ func hasFlag(flag string) bool {
 // certificate without IP entries is rejected with a name mismatch even after the
 // user accepts the self-signed warning.
 func runGenerateCert() int {
-	dir := model.ConfigInstance.TLS.CertDir
-	if dir == "" {
-		dir = model.DefaultTLSCertDir()
-	}
+	dir := certDirForCLI()
 	ips, dnsNames := model.LocalTLSSANs()
 
 	// Extra addresses: --host 10.0.0.5,192.168.1.7 (useful when the machine has

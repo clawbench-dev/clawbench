@@ -94,3 +94,21 @@ func TestGenerateSelfSignedCert_CreateDirFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "create cert dir")
 }
+
+// WriteFile only applies its mode when it CREATES the file, so regenerating a
+// certificate over a world-readable key must tighten it explicitly.
+func TestGenerateSelfSignedCert_TightensExistingKeyPermissions(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "key.pem")
+	require.NoError(t, os.WriteFile(keyPath, []byte("old"), 0o644))
+
+	_, err := GenerateSelfSignedCert(dir, []net.IP{net.ParseIP("127.0.0.1")}, nil)
+	require.NoError(t, err)
+
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no POSIX permission bits")
+	}
+	info, err := os.Stat(keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "an existing key must be tightened to 0600")
+}
