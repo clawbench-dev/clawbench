@@ -1952,3 +1952,38 @@ func queuedText(t *testing.T, sessionID string) string {
 	require.Len(t, msgs, 1)
 	return msgs[0].Text
 }
+
+// TestQueueUpdate_MissingProjectCookieIs403: the project scope is mandatory —
+// without it the handler must not touch any project's queue.
+func TestQueueUpdate_MissingProjectCookieIs403(t *testing.T) {
+	req := newRequest(t, http.MethodPatch, "/api/ai/queue?session_id=s", map[string]any{
+		"queueId": "q-1", "message": "x",
+	})
+	w := callHandler(QueueHandler, req)
+
+	assertStatus(t, w, http.StatusForbidden)
+}
+
+// TestQueueUpdate_ReadFailureIs500: a broken database is an outage, not a
+// decline. It must not be reported as 409 (which would tell the user their
+// message had already been sent).
+func TestQueueUpdate_ReadFailureIs500(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-update-broken-db"
+	createQueueSession(t, env, sessionID)
+
+	// Drop the queue table AFTER the session exists, so ownership still resolves
+	// but the update's own reads fail.
+	_, err := store.UnsafeDBForTest().Exec("DROP TABLE queued_messages")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/queue?session_id="+sessionID, map[string]any{
+		"queueId": "q-1", "message": "text",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertStatus(t, w, http.StatusInternalServerError)
+}

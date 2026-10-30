@@ -5,6 +5,7 @@ import (
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/store"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -179,4 +180,34 @@ func TestUpdateQueuedMessageContent_UnaddressableIsDeclined(t *testing.T) {
 	assert.False(t, ok)
 
 	assert.Equal(t, []string{"keep me"}, queuedTexts(t, sid))
+}
+
+// TestUpdateQueuedMessageContent_ReadFailureIsError: a broken read is a real
+// error, not a decline. The two must stay distinguishable — a decline means the
+// message is gone (the caller tells the user "too late"), an error means the
+// server is broken (the caller retries or reports a failure).
+func TestUpdateQueuedMessageContent_ReadFailureIsError(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue Update Broken Read")
+
+	// Drop the table so the SELECT fails with a real error (not ErrNoRows).
+	_, err := store.UnsafeDBForTest().Exec("DROP TABLE queued_messages")
+	require.NoError(t, err)
+
+	_, ok, err := service.UpdateQueuedMessageContent(sid, "q-1", "text")
+	require.Error(t, err, "a missing table must surface as an error")
+	assert.False(t, ok)
+}
+
+// TestGetQueuedMessage_ReadFailureIsError mirrors the above for the pre-read.
+func TestGetQueuedMessage_ReadFailureIsError(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue Get Broken Read")
+
+	_, err := store.UnsafeDBForTest().Exec("DROP TABLE queued_messages")
+	require.NoError(t, err)
+
+	_, found, err := service.GetQueuedMessage(sid, "q-1")
+	require.Error(t, err)
+	assert.False(t, found)
 }
