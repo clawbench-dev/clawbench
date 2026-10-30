@@ -33,12 +33,14 @@ export interface ClawBenchNative {
    * pretending the click landed.
    */
   remoteControl?(ev: {
-    kind: 'move' | 'down' | 'up' | 'wheel' | 'key'
+    kind: 'move' | 'down' | 'up' | 'wheel' | 'key' | 'text'
     x?: number
     y?: number
     button?: number
     key?: string
     delta?: number
+    text?: string
+    modifiers?: string[]
   }): Promise<{ ok: boolean; supported: boolean } | boolean> | void
   /** Whether this client can inject input at all. */
   remoteControlSupported?(): Promise<boolean> | boolean

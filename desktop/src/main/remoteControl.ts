@@ -1,130 +1,145 @@
 /**
- * Remote control: inject pointer events into this machine.
+ * Remote control: apply a viewer's pointer/keyboard events to this machine.
  *
- * WHY A SEPARATE MODULE
- * ---------------------
- * Input injection needs a native module. Making it a hard dependency would put
- * a compiled binary into every desktop build (and break any environment that
- * cannot build it), for a feature most sessions never use. So it is optional:
- * the module is loaded on first use, and when it is missing the IPC answers
- * `false` — the UI then says "this client cannot inject input" instead of
- * silently swallowing clicks.
+ * WHY A CHILD PROCESS AND NOT A NATIVE MODULE
+ * -------------------------------------------
+ * Electron cannot move the OS pointer — `sendInputEvent` only reaches our own
+ * windows. The usual answer is a native npm module (robotjs / nut.js), which
+ * means a compiled dependency in every desktop build and something the user has
+ * to trust. Instead the app ships a tiny Go helper (`input-helper.exe`, pure
+ * syscall, no CGO) and spawns it only while someone actually holds control.
  *
- * To enable it: `cd desktop && npm i @nut-tree/nut-js`.
+ * The helper speaks newline-delimited JSON: one request line in, one
+ * `{ok,error}` line out. A long-lived process matters — spawning one per mouse
+ * move would cap the pointer at a few updates per second.
  *
- * SCOPE
- * -----
- * Pointer move / button / wheel only. Typing is deliberately not injected: it
- * is the highest-risk part (a stray keystroke can run anything on the host) and
- * it needs keyboard layout handling that this module has no business guessing.
+ * SECURITY
+ * --------
+ * This is the most dangerous code in the app: whoever holds control can drive
+ * the host's mouse and keyboard. The renderer only calls it after the publisher
+ * granted control to that specific viewer, and `revoke` clears the grant on the
+ * main side too (see bridge.ts), so a stale renderer cannot keep driving.
  */
-import { ipcMain, screen } from 'electron'
-
-type NutModule = {
-  mouse: {
-    setPosition(p: { x: number; y: number }): Promise<void>
-    pressButton(b: unknown): Promise<void>
-    releaseButton(b: unknown): Promise<void>
-    scrollUp(n: number): Promise<void>
-    scrollDown(n: number): Promise<void>
-  }
-  Button: { LEFT: unknown }
-}
+import { app } from 'electron'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
 
 export interface RemoteControlEvent {
-  kind: 'move' | 'down' | 'up' | 'wheel' | 'key'
+  kind: 'move' | 'down' | 'up' | 'wheel' | 'key' | 'text'
   x?: number
   y?: number
   button?: number
-  key?: string
   delta?: number
+  key?: string
+  modifiers?: string[]
+  text?: string
 }
 
-let nut: NutModule | null | undefined
-let loadError = ''
+let child: ChildProcessWithoutNullStreams | null = null
+/** Replies arrive in request order, so a FIFO is enough to correlate them. */
+let pending: Array<(ok: boolean) => void> = []
+let buffer = ''
 
-/**
- * Loads the optional module once.
- *
- * `eval('require')` keeps TypeScript from resolving a package that may not be
- * installed — a static import would fail the build for everyone who does not
- * want the feature.
- */
-function loadNut(): NutModule | null {
-  if (nut !== undefined) return nut
-  try {
-    const req = eval('require') as NodeRequire
-    nut = req('@nut-tree/nut-js') as NutModule
-    return nut
-  } catch (e) {
-    loadError = String(e)
-    nut = null
-    return null
-  }
+/** Where the helper lives, packaged and in development. */
+function helperPath(): string {
+  const name = process.platform === 'win32' ? 'input-helper.exe' : 'input-helper'
+  return app.isPackaged
+    ? path.join(process.resourcesPath, name)
+    : path.join(app.getAppPath(), 'assets', name)
 }
 
-/** Whether input injection is available on this install. */
+/** Whether this install can inject input at all. */
 export function remoteControlSupported(): boolean {
-  return loadNut() !== null
+  // Only Windows has an injector; the helper is still built elsewhere so the
+  // build stays uniform, but it refuses every event there.
+  if (process.platform !== 'win32') return false
+  return fs.existsSync(helperPath())
+}
+
+function ensureHelper(): ChildProcessWithoutNullStreams | null {
+  if (child) return child
+  const exe = helperPath()
+  if (!fs.existsSync(exe)) return null
+
+  const proc = spawn(exe, [], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+  proc.stdout.setEncoding('utf8')
+  proc.stdout.on('data', (chunk: string) => {
+    buffer += chunk
+    let nl = buffer.indexOf('\n')
+    while (nl >= 0) {
+      const line = buffer.slice(0, nl)
+      buffer = buffer.slice(nl + 1)
+      const resolve = pending.shift()
+      if (resolve) {
+        try {
+          const res = JSON.parse(line) as { ok?: boolean }
+          resolve(res.ok === true)
+        } catch {
+          resolve(false)
+        }
+      }
+      nl = buffer.indexOf('\n')
+    }
+  })
+  proc.on('exit', () => {
+    // Drain waiters: an event sent to a dead helper must not leave a promise
+    // hanging forever.
+    const waiters = pending
+    pending = []
+    for (const w of waiters) w(false)
+    child = null
+    buffer = ''
+  })
+  // A write after the process died would throw EPIPE; the exit handler covers
+  // the bookkeeping, this just keeps the error out of the console.
+  proc.stdin.on('error', () => undefined)
+  proc.stderr.resume()
+
+  child = proc
+  return child
+}
+
+/** Stops the helper. Called when the app quits. */
+export function stopRemoteControlHelper(): void {
+  if (!child) return
+  try {
+    child.stdin.end()
+    child.kill()
+  } catch {
+    /* already gone */
+  }
+  child = null
 }
 
 /**
  * Applies one event.
  *
- * Coordinates arrive normalised to the shared picture (0..1) and are mapped
- * onto the primary display. A multi-monitor capture of a secondary screen would
- * need that screen's bounds, which the capture path does not report yet — a
- * known limitation, not a silent one: the pointer lands on the primary screen.
+ * Returns false when the helper is missing or rejected the event (typically
+ * UIPI: the focused window runs elevated and we do not).
  */
 export async function applyRemoteControlEvent(ev: RemoteControlEvent): Promise<boolean> {
-  const mod = loadNut()
-  if (!mod) {
-    if (loadError) {
-      // Logged once per process by the caller; keep this cheap.
-      loadError = ''
+  const proc = ensureHelper()
+  if (!proc) return false
+  const line = JSON.stringify(ev)
+  return new Promise<boolean>((resolve) => {
+    pending.push(resolve)
+    try {
+      proc.stdin.write(line + '\n')
+    } catch {
+      pending.pop()
+      resolve(false)
     }
-    return false
-  }
-  const { width, height } = screen.getPrimaryDisplay().bounds
-  const px = Math.round((ev.x ?? 0) * width)
-  const py = Math.round((ev.y ?? 0) * height)
-
-  try {
-    switch (ev.kind) {
-      case 'move':
-        await mod.mouse.setPosition({ x: px, y: py })
-        return true
-      case 'down':
-        await mod.mouse.setPosition({ x: px, y: py })
-        await mod.mouse.pressButton(mod.Button.LEFT)
-        return true
-      case 'up':
-        await mod.mouse.releaseButton(mod.Button.LEFT)
-        return true
-      case 'wheel':
-        if ((ev.delta ?? 0) > 0) await mod.mouse.scrollDown(1)
-        else await mod.mouse.scrollUp(1)
-        return true
-      case 'key':
-        // Deliberately unsupported; see the header.
-        return false
-      default:
-        return false
-    }
-  } catch {
-    return false
-  }
+  })
 }
-
 
 /**
  * Registers the IPC the renderer calls while it holds remote control.
  *
- * The handler is always registered; `supported` in the answer tells the UI
- * whether anything actually happened, so a missing module surfaces as a clear
- * "not available" instead of a dead button.
+ * Always registered: the answer carries `supported`, so a missing helper shows
+ * up as a clear "not available" instead of a dead button.
  */
-export function registerRemoteControlHandlers(): void {
+export function registerRemoteControlHandlers(ipcMain: Electron.IpcMain): void {
   ipcMain.handle('native:remote-control', async (_e, ev: RemoteControlEvent) => {
     if (!remoteControlSupported()) return { ok: false, supported: false }
     const ok = await applyRemoteControlEvent(ev)

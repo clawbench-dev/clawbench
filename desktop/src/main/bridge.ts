@@ -4,6 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs'
 import { getStore, initStore } from './store'
+import { registerRemoteControlHandlers } from './remoteControl'
 import {
   getPassword, savePassword, savePasswordFor, getPasswordFor, removePasswordFor,
   migratePasswords, getServersForRenderer, saveServerName,
@@ -33,6 +34,9 @@ import { registerFloatingIpc, updateFloatingColors } from './floating'
 
 export function registerBridge(): void {
   initStore()
+  // Remote control IPC lives with the bridge because it is the same surface:
+  // one `native:*` handler set registered once at startup.
+  registerRemoteControlHandlers(ipcMain)
   // Absorb credentials written by older builds into the per-URL map before any
   // handler can read them. Idempotent.
   migratePasswords()

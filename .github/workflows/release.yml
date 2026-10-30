@@ -693,6 +693,10 @@ jobs:
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
       - name: Set desktop version from tag
         # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
         # app.getVersion() reads it, and the updater compares that against the
@@ -789,6 +793,10 @@ jobs:
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
       - name: Set desktop version from tag
         # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
         # app.getVersion() reads it, and the updater compares that against the
@@ -858,6 +866,10 @@ jobs:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
 
       - name: Set desktop version from tag
         # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
@@ -992,6 +1004,10 @@ jobs:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
 
       - name: Set desktop version from tag
         # desktop/package.json keeps a placeholder version (0.1.0) in the repo.

@@ -6,7 +6,9 @@
   "main": "dist/main/index.js",
   "private": true,
   "scripts": {
+    "prebuild": "node scripts/build-input-helper.mjs",
     "build": "tsc -p tsconfig.json && electron-builder --dir",
+    "prebuild:install": "node scripts/build-input-helper.mjs",
     "build:install": "tsc -p tsconfig.json && electron-builder",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run"

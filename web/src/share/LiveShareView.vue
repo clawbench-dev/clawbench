@@ -433,6 +433,53 @@ function sendControlEvent(ev: PointerEvent | WheelEvent, kind: 'move' | 'down' |
   })
 }
 
+/** Browser key names → the names the helper understands. */
+const KEY_MAP: Record<string, string> = {
+  Enter: 'enter',
+  Backspace: 'backspace',
+  Tab: 'tab',
+  Escape: 'esc',
+  Delete: 'delete',
+  Home: 'home',
+  End: 'end',
+  PageUp: 'pageup',
+  PageDown: 'pagedown',
+  ArrowLeft: 'left',
+  ArrowRight: 'right',
+  ArrowUp: 'up',
+  ArrowDown: 'down',
+  ' ': 'space',
+}
+
+function onControlKey(ev: KeyboardEvent): void {
+  if (controlState.value !== 'granted') return
+  // Escape is the local escape hatch: it must never be forwarded, or a viewer
+  // could not stop controlling without reaching for the mouse.
+  if (ev.key === 'Escape' && !ev.ctrlKey && !ev.altKey) {
+    controlState.value = 'none'
+    ev.preventDefault()
+    return
+  }
+  const mods: string[] = []
+  if (ev.ctrlKey) mods.push('ctrl')
+  if (ev.shiftKey) mods.push('shift')
+  if (ev.altKey) mods.push('alt')
+  if (ev.metaKey) mods.push('meta')
+
+  // A single printable character without ctrl/meta is typed literally: that is
+  // what makes non-ASCII input (Chinese, emoji) work without a key-code table.
+  if (ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey) {
+    viewer?.sendControl({ t: 'ctrl-ev', kind: 'text', text: ev.key })
+    ev.preventDefault()
+    return
+  }
+
+  const named = KEY_MAP[ev.key] ?? (/^F\d{1,2}$/.test(ev.key) ? ev.key.toLowerCase() : '')
+  if (!named) return
+  viewer?.sendControl({ t: 'ctrl-ev', kind: 'key', key: named, modifiers: mods })
+  ev.preventDefault()
+}
+
 function onStageDown(ev: PointerEvent): void {
   if (controlState.value === 'granted') {
     sendControlEvent(ev, 'down')
@@ -873,6 +920,11 @@ async function toggleFullscreen(): Promise<void> {
 
 // A hidden tab can lose the media pipeline; re-attaching on return is cheaper
 // than tearing the connection down and renegotiating.
+watch(controlState, (next) => {
+  if (next === 'granted') window.addEventListener('keydown', onControlKey)
+  else window.removeEventListener('keydown', onControlKey)
+})
+
 watch(state, (s) => {
   if (s !== 'playing') talking.value = false
   if (s === 'playing') {
@@ -918,6 +970,7 @@ onBeforeUnmount(() => {
   if (statsTimer) clearInterval(statsTimer)
   statsTimer = null
   document.removeEventListener('visibilitychange', onVisibility)
+  window.removeEventListener('keydown', onControlKey)
   window.removeEventListener('resize', syncInkRect)
   board.dispose()
   document.removeEventListener('fullscreenchange', syncFullscreen)

@@ -27,6 +27,11 @@ extraResources:
     to: logo.png
   - from: assets/url-utils.js
     to: url-utils.js
+  # Remote-control helper (Go, pure syscall). Built by scripts/build-input-helper.mjs
+  # before every package; present in all platforms' builds so the config stays
+  # uniform, but only Windows actually injects input.
+  - from: assets/input-helper.exe
+    to: input-helper.exe
 files:
   - dist/
   - package.json

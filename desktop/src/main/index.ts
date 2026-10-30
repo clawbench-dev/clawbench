@@ -1,7 +1,7 @@
 import { app, Menu, session } from 'electron'
 import { initStore, getStore } from './store'
 import { installDisplayMediaHandler, registerCaptureHandlers } from './capture'
-import { registerRemoteControlHandlers } from './remoteControl'
+import { registerRemoteControlHandlers, stopRemoteControlHelper } from './remoteControl'
 import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
 import { registerCertificateHandler } from './certificate'
@@ -140,7 +140,6 @@ app.whenReady().then(() => {
   installDisplayMediaHandler()
   // Source listing / declaration / throttling IPC.
   registerCaptureHandlers(() => getMainWindow()?.webContents ?? null)
-  registerRemoteControlHandlers()
 
   // Asked for the MAIN window, not for a window count: the floating capsule and
   // its tray are windows too, so "no windows" would never be true while they are
@@ -163,4 +162,10 @@ app.on('window-all-closed', () => {
 // flush races the exit; the renderer relay has the same property. Worth doing
 // because the entries most likely still buffered are the ones around whatever
 // caused the quit.
-app.on('before-quit', () => { flushFloatingBounds(); void flushOnShutdown() })
+app.on('before-quit', () => {
+  flushFloatingBounds()
+  // The input helper is a child process; leaving it behind would keep a process
+  // that can drive the desktop alive after the app is gone.
+  stopRemoteControlHelper()
+  void flushOnShutdown()
+})

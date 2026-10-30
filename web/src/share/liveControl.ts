@@ -32,12 +32,16 @@ export type ControlMessage =
   | { t: 'ctrl-grant'; viewerId: string; granted: boolean }
   | {
       t: 'ctrl-ev'
-      kind: 'move' | 'down' | 'up' | 'wheel' | 'key'
+      kind: 'move' | 'down' | 'up' | 'wheel' | 'key' | 'text'
       x?: number
       y?: number
       button?: number
       key?: string
       delta?: number
+      /** Literal characters to type (kind=text). */
+      text?: string
+      /** Held during the event: ctrl / shift / alt / meta. */
+      modifiers?: string[]
       from?: string
     }
 
@@ -143,7 +147,14 @@ export function parseControlMessage(raw: string): ControlMessage | null {
       }
     case 'ctrl-ev': {
       const kind = m.kind
-      if (kind !== 'move' && kind !== 'down' && kind !== 'up' && kind !== 'wheel' && kind !== 'key') {
+      if (
+        kind !== 'move' &&
+        kind !== 'down' &&
+        kind !== 'up' &&
+        kind !== 'wheel' &&
+        kind !== 'key' &&
+        kind !== 'text'
+      ) {
         return null
       }
       return {
@@ -154,6 +165,10 @@ export function parseControlMessage(raw: string): ControlMessage | null {
         button: typeof m.button === 'number' ? m.button : undefined,
         key: typeof m.key === 'string' ? m.key.slice(0, 32) : undefined,
         delta: typeof m.delta === 'number' ? Math.max(-1000, Math.min(1000, m.delta)) : undefined,
+        text: typeof m.text === 'string' ? m.text.slice(0, 32) : undefined,
+        modifiers: Array.isArray(m.modifiers)
+          ? m.modifiers.filter((x): x is string => typeof x === 'string').slice(0, 4)
+          : undefined,
       }
     }
     default:

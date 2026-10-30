@@ -93,12 +93,14 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   // Remote control (desktop only; false when the input-injection module is not
   // installed — the renderer shows "not available" rather than a dead button).
   remoteControl: (ev: {
-    kind: 'move' | 'down' | 'up' | 'wheel' | 'key'
+    kind: 'move' | 'down' | 'up' | 'wheel' | 'key' | 'text'
     x?: number
     y?: number
     button?: number
     key?: string
     delta?: number
+    text?: string
+    modifiers?: string[]
   }) => ipcRenderer.invoke('native:remote-control', ev) as Promise<{ ok: boolean; supported: boolean }>,
   remoteControlSupported: () => ipcRenderer.invoke('native:remote-control-supported') as Promise<boolean>,
   setPublishingActive: (active: boolean) =>
