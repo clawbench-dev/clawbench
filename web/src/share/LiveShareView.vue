@@ -460,6 +460,11 @@ function onControlKey(ev: KeyboardEvent): void {
     ev.preventDefault()
     return
   }
+  // While an IME is composing (pinyin → 汉字), every keydown is a latin letter
+  // of the composition. Forwarding those would type "nihao" instead of "你好";
+  // the composed text is sent on compositionend instead.
+  if (ev.isComposing) return
+
   const mods: string[] = []
   if (ev.ctrlKey) mods.push('ctrl')
   if (ev.shiftKey) mods.push('shift')
@@ -478,6 +483,14 @@ function onControlKey(ev: KeyboardEvent): void {
   if (!named) return
   viewer?.sendControl({ t: 'ctrl-ev', kind: 'key', key: named, modifiers: mods })
   ev.preventDefault()
+}
+
+/** IME result: send the composed text as one literal string. */
+function onControlComposition(ev: CompositionEvent): void {
+  if (controlState.value !== 'granted') return
+  const text = ev.data
+  if (!text) return
+  viewer?.sendControl({ t: 'ctrl-ev', kind: 'text', text })
 }
 
 function onStageDown(ev: PointerEvent): void {
@@ -921,8 +934,14 @@ async function toggleFullscreen(): Promise<void> {
 // A hidden tab can lose the media pipeline; re-attaching on return is cheaper
 // than tearing the connection down and renegotiating.
 watch(controlState, (next) => {
-  if (next === 'granted') window.addEventListener('keydown', onControlKey)
-  else window.removeEventListener('keydown', onControlKey)
+  if (next === 'granted') {
+    window.addEventListener('keydown', onControlKey)
+    window.addEventListener('compositionend', onControlComposition)
+  } else {
+    window.removeEventListener('keydown', onControlKey)
+  window.removeEventListener('compositionend', onControlComposition)
+    window.removeEventListener('compositionend', onControlComposition)
+  }
 })
 
 watch(state, (s) => {
@@ -971,6 +990,7 @@ onBeforeUnmount(() => {
   statsTimer = null
   document.removeEventListener('visibilitychange', onVisibility)
   window.removeEventListener('keydown', onControlKey)
+  window.removeEventListener('compositionend', onControlComposition)
   window.removeEventListener('resize', syncInkRect)
   board.dispose()
   document.removeEventListener('fullscreenchange', syncFullscreen)
