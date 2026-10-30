@@ -967,3 +967,180 @@ func TestLiveShareReap_KeepsRoomWithPublisher(t *testing.T) {
 	assert.Empty(t, dead)
 	assert.Equal(t, 1, liveShareRoomCountForTest())
 }
+
+// ── Audience screen sharing over the real sockets ───────────────────────────
+
+func TestLiveWS_ScreenStartDeniedWhenSwitchIsOff(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+	_ = readViewerMsg(t, view) // joined
+	_ = readPublisherMsg(t, pub)
+
+	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlScreenStart})
+
+	denied := readViewerMsg(t, view)
+	assert.Equal(t, liveshare.MsgScreenDenied, denied.Type)
+	assert.Equal(t, liveshare.ReasonDisabled, denied.Reason)
+}
+
+func TestLiveWS_ScreenStartBroadcastsWhoIsSharing(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	view1 := dialWS(t, srv, "/api/share/"+token+"/signal")
+	joined1 := readViewerMsg(t, view1)
+	_ = readPublisherMsg(t, pub)
+
+	// The publisher opens the switch; both sides learn about it.
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetScreenEnabled, Enabled: true})
+	enabled := readViewerMsg(t, view1)
+	assert.Equal(t, liveshare.MsgScreenState, enabled.Type)
+	assert.True(t, enabled.ScreenEnabled)
+	assert.False(t, enabled.Sharing)
+	assert.Equal(t, liveshare.MsgScreenState, readPublisherMsg(t, pub).Type)
+
+	writeJSONFrame(t, view1, liveshare.ViewerControl{Type: liveshare.CtrlScreenStart})
+
+	state := readViewerMsg(t, view1)
+	assert.Equal(t, liveshare.MsgScreenState, state.Type)
+	assert.True(t, state.Sharing)
+	assert.Equal(t, joined1.ViewerID, state.ViewerID)
+
+	// The publisher gets the same frame, with the id it needs to label the
+	// preview and to revoke that one viewer.
+	pubState := readPublisherMsg(t, pub)
+	assert.Equal(t, liveshare.MsgScreenState, pubState.Type)
+	assert.Equal(t, joined1.ViewerID, pubState.ViewerID)
+	assert.True(t, pubState.Sharing)
+}
+
+func TestLiveWS_SecondSharerIsRefused(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	view1 := dialWS(t, srv, "/api/share/"+token+"/signal")
+	_ = readViewerMsg(t, view1)
+	_ = readPublisherMsg(t, pub)
+	view2 := dialWS(t, srv, "/api/share/"+token+"/signal")
+	_ = readViewerMsg(t, view2)
+	_ = readPublisherMsg(t, pub)
+
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetScreenEnabled, Enabled: true})
+	_ = readViewerMsg(t, view1)
+	_ = readViewerMsg(t, view2)
+	_ = readPublisherMsg(t, pub)
+
+	writeJSONFrame(t, view1, liveshare.ViewerControl{Type: liveshare.CtrlScreenStart})
+	_ = readViewerMsg(t, view1)
+	_ = readViewerMsg(t, view2)
+	_ = readPublisherMsg(t, pub)
+
+	writeJSONFrame(t, view2, liveshare.ViewerControl{Type: liveshare.CtrlScreenStart})
+
+	denied := readViewerMsg(t, view2)
+	assert.Equal(t, liveshare.MsgScreenDenied, denied.Type)
+	assert.Equal(t, liveshare.ReasonBusy, denied.Reason)
+}
+
+func TestLiveWS_RevokeStopsOneSharerAndDisablingStopsTheRoom(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+	joined := readViewerMsg(t, view)
+	_ = readPublisherMsg(t, pub)
+
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetScreenEnabled, Enabled: true})
+	_ = readViewerMsg(t, view)
+	_ = readPublisherMsg(t, pub)
+	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlScreenStart})
+	_ = readViewerMsg(t, view)
+	_ = readPublisherMsg(t, pub)
+
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlScreenRevoke, ViewerID: joined.ViewerID})
+
+	denied := readViewerMsg(t, view)
+	assert.Equal(t, liveshare.MsgScreenDenied, denied.Type)
+	assert.Equal(t, liveshare.ReasonRevoked, denied.Reason)
+	state := readViewerMsg(t, view)
+	assert.False(t, state.Sharing)
+}
+
+// Switching audience screen sharing off must also stop the current sharer and
+// tell it why — its browser is still capturing.
+func TestApplySetScreenEnabled_StopsCurrentSharer(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
+	require.NoError(t, err)
+	viewer, err := room.AddViewer("a", &recordingSink{})
+	require.NoError(t, err)
+	pub := &recordingSink{}
+	room.SetPublisher(pub)
+	room.SetScreenEnabled(true)
+	require.NoError(t, room.ClaimScreen(viewer.ID))
+
+	applySetScreenEnabled(room, false)
+
+	assert.False(t, room.ScreenEnabled())
+	assert.Empty(t, room.ScreenSharer())
+	msg, ok := pub.last().(liveshare.PublisherMessage)
+	require.True(t, ok, "the publisher must learn the share stopped")
+	assert.Equal(t, liveshare.MsgScreenState, msg.Type)
+}
+
+// Revoking a viewer that is not sharing is a no-op: a stop frame racing a
+// disconnect must not fail.
+func TestApplyScreenRevoke_NotSharingIsNoop(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
+	require.NoError(t, err)
+	viewer, err := room.AddViewer("a", &recordingSink{})
+	require.NoError(t, err)
+	room.SetPublisher(&recordingSink{})
+	room.SetScreenEnabled(true)
+
+	require.NotPanics(t, func() { applyScreenRevoke(room, viewer.ID) })
+	assert.Empty(t, room.ScreenSharer())
+}
+
+func TestApplyScreenRevoke_TellsTheFormerSharer(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
+	require.NoError(t, err)
+	sink := &recordingSink{}
+	viewer, err := room.AddViewer("a", sink)
+	require.NoError(t, err)
+	room.SetPublisher(&recordingSink{})
+	room.SetScreenEnabled(true)
+	require.NoError(t, room.ClaimScreen(viewer.ID))
+
+	applyScreenRevoke(room, viewer.ID)
+
+	assert.Empty(t, room.ScreenSharer())
+	var denied bool
+	for _, m := range sink.all() {
+		if msg, ok := m.(liveshare.ViewerMessage); ok &&
+			msg.Type == liveshare.MsgScreenDenied && msg.Reason == liveshare.ReasonRevoked {
+			denied = true
+		}
+	}
+	assert.True(t, denied, "the former sharer must be told its share was revoked")
+}
+
+// A CtrlScreenStop frame from the sharer clears the state and broadcasts it.
+func TestHandleViewerControl_ScreenStopClearsSharer(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
+	require.NoError(t, err)
+	viewer, err := room.AddViewer("a", &recordingSink{})
+	require.NoError(t, err)
+	pub := &recordingSink{}
+	room.SetPublisher(pub)
+	room.SetScreenEnabled(true)
+	require.NoError(t, room.ClaimScreen(viewer.ID))
+
+	handleViewerControl(room, viewer, liveshare.ViewerControl{Type: liveshare.CtrlScreenStop})
+
+	assert.Empty(t, room.ScreenSharer())
+	msg, ok := pub.last().(liveshare.PublisherMessage)
+	require.True(t, ok)
+	assert.Equal(t, liveshare.MsgScreenState, msg.Type)
+}

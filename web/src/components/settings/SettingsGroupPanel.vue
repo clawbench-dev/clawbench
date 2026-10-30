@@ -49,6 +49,14 @@
       </div>
     </div>
 
+    <!-- WeChat QR login. Rendered only while push_mode is wechat, directly
+         below the mode selector, because the scan IS the configuration for that
+         channel — there are no credentials to type. All of its state (session
+         id, QR payload, connection status) lives inside the component, never in
+         localValues: a panel field would be diffed and PATCHed back to the
+         server, which must not receive any of it. -->
+    <WeChatLoginPanel v-if="isWeChatPushMode" />
+
     <!-- Tunnel transport picker, shared by both native hosts. A dedicated row
          rather than a commonFields entry: the truth source is the host's own
          store (Electron store / Android SharedPreferences), so it must not flow
@@ -251,6 +259,7 @@ import { formatFileSize } from '@/utils/fileType'
 import '@/assets/modal-footer-btn.css'
 import { SORTED_THEME_IDS, buildTerminalThemePreviews, formatThemeName, loadThemesModule } from '@/utils/terminalThemes'
 import type { TerminalPreview } from './SettingsItem.vue'
+import WeChatLoginPanel from './WeChatLoginPanel.vue'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'SettingsPanel'
@@ -717,6 +726,10 @@ const transportPickerVisible = computed(() =>
   && transportLoaded.value
   && !transportUnsupported.value
 )
+
+// The WeChat QR login block replaces the credential fields for that channel:
+// its "configuration" is a scan, not a value to type.
+const isWeChatPushMode = computed(() => localValues.push_mode === 'wechat')
 
 onMounted(async () => {
   if ((!isAndroidApp.value && !isDesktopShell.value) || props.config.panelId !== 'portForward') return

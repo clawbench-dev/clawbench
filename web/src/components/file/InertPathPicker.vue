@@ -219,6 +219,8 @@ watch(
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  /* 10dp mirrors `.ip-item`'s inset (the row is full-bleed, its content is not). */
+  --panel-skeleton-inset: calc(10 * var(--dp));
   padding: var(--space-4) 0;
 }
 

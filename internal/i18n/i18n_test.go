@@ -152,6 +152,9 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		// Auto-continue is rendered from a background goroutine (no request),
 		// so it is the one key most likely to be added on only one side.
 		"AutoContinue",
+		// The auto-continue system notice is the same no-request class: it is
+		// persisted from the resume hook, so a one-sided add ships a raw id.
+		"AutoContinueNotice",
 		// Restart-resume is the same no-request class: rendered from the resume
 		// worker, then persisted, so a one-sided add ships a raw message id.
 		// The instruction is a SEPARATE key (user-facing notice vs model prompt);
@@ -178,11 +181,15 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"GroupMemberJoined",
 		"GroupMemberDisabled",
 		"GroupMemberEnabled",
+		"GroupHostChanged",
 		// Handler-side 409 for the disable toggle. Rendered from a request, but a
 		// one-sided add (only one locale) would silently fall back to a raw key
 		// in the other language, so it is pinned like the rest.
 		"CannotDisableHost",
 		"CannotDisableLastMember",
+		"GroupNotHostMode",
+		"HostNotMember",
+		"HostDisabled",
 		"GroupMemberUnknown",
 		"GroupMemberListSeparator",
 		"GroupSpecialtySuffix",
@@ -223,6 +230,28 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"UsageMeterMetricInvalid",
 		"UsageMeterMetricNotString",
 		"UsageMeterCycleModeInvalid",
+		"PushShowTitle",
+		"PushShowEmpty",
+		"PushShowSessionLabel",
+		"PushStoppedTitle",
+		"PushStoppedRunning",
+		"PushStoppedIdle",
+		"PushNewTitle",
+		"PushNewCreated",
+		"PushNewListIntro",
+		"PushNewListUsage",
+		"PushNewListTruncated",
+		"PushNewNoProjects",
+		"PushNewProjectNotFound",
+		"PushNewProjectOutOfRange",
+		"PushNewProjectMissingDir",
+		"PushNewNoAgent",
+		"PushNewListFailed",
+		"PushNewCreateFailed",
+		"PushStopFailed",
+		"PushCommandWithAttachment",
+		"PushInvalidSessionID",
+		"PushShowRunning",
 	}
 
 	for _, key := range keys {
@@ -332,6 +361,10 @@ func TestLocalizerForLocale_PushNotificationKeys(t *testing.T) {
 		"PushSubscribedNoAvailableDingtalk", "PushSubscribedNoAvailableFeishu",
 		"PushSubscribedListFailedDingtalk", "PushSubscribedListFailedFeishu",
 		"PushSubscribedNoSessionsDingtalk", "PushSubscribedNoSessionsFeishu",
+		"PushSessionListIntroWechat",
+		"PushSubscribedNoAvailableWechat", "PushSubscribedListFailedWechat",
+		"PushSubscribedNoSessionsWechat", "PushWeChatNotLoggedIn",
+		"PushQuoteLabel", "PushQuoteMedia",
 		"PushMultipleRunningSessions", "PushMultipleSessions",
 		"PushSessionNotFound", "PushRecentSessionUnavailable",
 	}
@@ -369,7 +402,15 @@ func TestPushTemplatesKeepPlaceholders(t *testing.T) {
 		// Reached from the ACP connection-error path (background goroutine, no
 		// request to fall back on). A missing placeholder here would ship
 		// "Run `` in a terminal" to the user, so it is pinned with the rest.
-		"ACPAuthRequired": {"Command": "cmdc login"},
+		"ACPAuthRequired":           {"Command": "cmdc login"},
+		"PushShowSessionLabel":      {"Label": "L"},
+		"PushStoppedRunning":        {"Label": "L", "Count": 2},
+		"PushStoppedIdle":           {"Label": "L", "Count": 0},
+		"PushNewCreated":            {"Project": "/p", "ID": "abc"},
+		"PushNewProjectOutOfRange":  {"Count": 3},
+		"PushNewListTruncated":      {"Count": 2, "Total": 9},
+		"PushCommandWithAttachment": {"Command": "/new"},
+		"PushInvalidSessionID":      {"ID": "abc"},
 	}
 	for key, data := range withData {
 		for _, loc := range []string{"en", "zh"} {

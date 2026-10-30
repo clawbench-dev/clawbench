@@ -123,7 +123,9 @@ describe('useConversationTarget', () => {
     mockIdentity.currentSessionTitle.value = ''
     mockIdentity.currentAgentId.value = ''
     mockIdentity.enqueueToSession.mockResolvedValue(true)
-    mockIdentity.createSessionInBackground.mockResolvedValue('s-new')
+    mockIdentity.createSessionInBackground.mockResolvedValue({
+      id: 's-new', title: '新会话 2', agentId: 'a-default',
+    })
     mockOpenSession.mockReset()
     setOpenSessionHandler(mockOpenSession)
     clearChosenTarget()
@@ -171,10 +173,41 @@ describe('useConversationTarget', () => {
       })
     })
 
-    it('leaves the choice untouched for `create` (nothing to preview yet)', async () => {
+    it('creates the session and records it when `create` is picked', async () => {
+      // This row used to be a silent no-op ("nothing to preview yet"): the
+      // sheet closed and the bar still named the previous destination, which
+      // read as a dead button. The session now exists before the bar has to
+      // name it, so the row does what it says.
       chooseTarget()
       await confirmTarget({ kind: 'create' })
+
+      expect(mockIdentity.createSessionInBackground).toHaveBeenCalled()
+      expect(useChosenTarget().value).toEqual({
+        id: 's-new', title: '新会话 2', agentId: 'a-default',
+      })
+      // Still only a destination: nothing is sent, the bar keeps composing.
+      expect(mockIdentity.enqueueToSession).not.toHaveBeenCalled()
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
+    })
+
+    it('leaves the choice untouched when creation fails (already toasted)', async () => {
+      mockIdentity.createSessionInBackground.mockResolvedValue({ id: '', title: '', agentId: '' })
+      chooseTarget()
+      await confirmTarget({ kind: 'create' })
+
       expect(useChosenTarget().value).toBeNull()
+      expect(mockToastShow).toHaveBeenCalledWith('chat.session.createFailed', expect.anything())
+    })
+
+    it('refuses to create past the session limit in `choose` mode too', async () => {
+      mockState.sessionMaxCount = 5
+      mockState.sessionCount = 5
+      chooseTarget()
+      await confirmTarget({ kind: 'create' })
+
+      expect(mockIdentity.createSessionInBackground).not.toHaveBeenCalled()
+      expect(useChosenTarget().value).toBeNull()
+      expect(mockToastShow).toHaveBeenCalledWith('chat.session.sessionLimitReached', expect.anything())
     })
 
     it('a chosen target wins over the active session on delivery', async () => {
@@ -477,7 +510,7 @@ describe('useConversationTarget', () => {
     })
 
     it('bails out when creation fails', async () => {
-      mockIdentity.createSessionInBackground.mockResolvedValue('')
+      mockIdentity.createSessionInBackground.mockResolvedValue({ id: '', title: '', agentId: '' })
       const ok = await dispatchToTarget({ kind: 'create' }, request())
 
       expect(ok).toBe(false)

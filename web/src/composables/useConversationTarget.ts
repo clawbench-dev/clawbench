@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
+import type { CreatedSession } from '@/composables/useSessionIdentity.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
@@ -289,24 +290,28 @@ function newQueueId(): string {
  * `session` is already concrete. `create` makes a session with the default
  * agent — deliberately no agent choice, since the user is picking a destination
  * for an already-composed message, not configuring a conversation — and
- * refreshes the session list so the new row appears. Returns '' when creation
- * failed (already toasted).
+ * refreshes the session list so the new row appears. Returns an empty id when
+ * creation failed (already toasted).
+ *
+ * A `session` target carries no metadata (the caller already has the picker's
+ * copy); a created one carries the server-assigned title/agent, which is what
+ * lets the `choose` path describe it before the list refetches.
  */
-async function resolveTargetId(target: SessionTarget): Promise<string> {
+async function resolveTargetId(target: SessionTarget): Promise<CreatedSession> {
   const identity = useSessionIdentity()
-  if (target.kind === 'session') return target.id
+  if (target.kind === 'session') return { id: target.id, title: '', agentId: '' }
 
   const maxCount = store.state.sessionMaxCount
   if (maxCount > 0 && store.state.sessionCount >= maxCount) {
     useToast().show(gt('chat.session.sessionLimitReached'), { icon: 'warning', type: 'error' })
-    return ''
+    return { id: '', title: '', agentId: '' }
   }
-  const id = await identity.createSessionInBackground()
-  if (!id) {
+  const created = await identity.createSessionInBackground()
+  if (!created.id) {
     useToast().show(gt('chat.session.createFailed', { status: '' }), { icon: 'warning', type: 'error' })
-    return ''
+    return { id: '', title: '', agentId: '' }
   }
-  return id
+  return created
 }
 
 /**
@@ -338,7 +343,8 @@ export async function dispatchToTarget(target: SessionTarget, request: PendingRe
   const identity = useSessionIdentity()
   const chatContext = useChatContext()
 
-  const sessionId = await resolveTargetId(target)
+  const resolved = await resolveTargetId(target)
+  const sessionId = resolved.id
   if (!sessionId) return false
 
   const isCurrent = sessionId === identity.currentSessionId.value
@@ -412,10 +418,6 @@ export async function confirmTarget(target: SessionTarget, opts: { openAfter?: b
   if (pickerIntent.value === 'choose') {
     pickerOpen.value = false
     pickerIntent.value = 'deliver'
-    // `create` cannot be previewed in the bar (it has no id/title until it
-    // exists), so the row is a no-op there rather than a lie. The bar's own
-    // empty-state row opens the picker where "create" IS meaningful — via the
-    // normal delivery path, which creates and then sends.
     if (target.kind === 'session') {
       const identity = useSessionIdentity()
       const meta = metaFor(target.id)
@@ -428,7 +430,17 @@ export async function confirmTarget(target: SessionTarget, opts: { openAfter?: b
           ? identity.currentAgentId.value
           : meta.agentId,
       })
+      return
     }
+    // `create`: the destination must EXIST to be shown in the bar, so the row
+    // creates the session here and records it. Deferring creation to send time
+    // (the earlier behaviour) left the bar with nothing it could name, which
+    // made the row look broken — it closed the sheet and did nothing visible.
+    // The empty session this can leave behind if the user abandons the bar is
+    // the same one the "+ new session" button makes, and is just as removable.
+    const created = await resolveTargetId(target)
+    if (!created.id) return
+    setChosenTarget({ id: created.id, title: created.title, agentId: created.agentId })
     return
   }
 

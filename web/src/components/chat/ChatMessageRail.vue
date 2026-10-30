@@ -256,7 +256,22 @@ const cardHeight = computed(() => {
   const rows = Math.max(1, Math.floor(usable / gap.value))
   return CARD_BORDER * 2 + listPad() * 2 + rows * gap.value
 })
-const cardTop = computed(() => trackTop.value + railInset())
+/**
+ * The card's top edge: the fixed inset, plus half of whatever the band has left
+ * over once the card has taken its share.
+ *
+ * The leftover term is what centres the axis VERTICALLY. A short conversation
+ * would otherwise pin its numbers to the top of a tall pane and leave the rest
+ * of the axis empty, which reads as a list that failed to load rather than as
+ * "this conversation is short". When the index fills the band the leftover is
+ * under half a row, so the term becomes a rounding nudge rather than a move.
+ *
+ * `max(0, …)` because the leftover can go negative for one frame: `cardHeight`
+ * is derived from `gap`, which `measure()` may enlarge after the first paint.
+ */
+const cardTop = computed(() =>
+  trackTop.value + railInset() + Math.max(0, (band.value - cardHeight.value) / 2),
+)
 
 /**
  * Whether rows exist beyond each end of the visible track.
@@ -270,9 +285,9 @@ const moreAbove = computed(() => maxOffset.value > 0 && offset.value > 1)
 const moreBelow = computed(() => maxOffset.value > 0 && offset.value < maxOffset.value - 1)
 
 const cardStyle = computed(() => ({
-  // `top` and `left` are the same number on purpose: the card is inset from the
-  // pane, and an asymmetric gap reads as a mistake. Both live here so there is
-  // one place to change.
+  // `top` is the inset plus the centring leftover, `left` is the inset alone —
+  // both are derived from the same `railInset` so the two edges can never drift
+  // apart in the way they would if the stylesheet owned one of them.
   top: `${cardTop.value}px`,
   left: `${railInset()}px`,
   width: `${designToCss(CARD_WIDTH_DP)}px`,
@@ -334,14 +349,15 @@ function rowTop(k: number) {
 }
 
 /**
- * The card's inset from the pane's top edge — the SAME number as its `left`.
+ * The card's minimum inset from the pane's top and start edges.
  *
- * It used to centre the card when the list was shorter than the track, which
- * made the top gap depend on the row count: a list that happened to fill the
- * band left a gap of `(band − cardHeight)/2`, anywhere from 0 to half a row,
- * while the left gap stayed fixed at 12. Flush at the top with 12 on the left
- * reads as a mistake, and for short conversations the axis floated in the middle
- * of the pane. Both are gone: the card now hangs from a fixed inset.
+ * `left` is exactly this. `top` is this PLUS half the band's leftover (see
+ * `cardTop`), so a short index is centred in the pane instead of hanging from
+ * the top edge; the two agree whenever the index fills the band.
+ *
+ * The inset is a FLOOR, not the top edge itself: centring must never push the
+ * card above it, or the axis would touch the pane's border on tall panes with a
+ * full index.
  */
 function railInset() {
   return designToCss(RAIL_INSET_DP)

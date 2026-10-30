@@ -34,6 +34,14 @@ interface ServerMessage {
   candidate?: RTCIceCandidateInit
   iceServers?: RTCIceServer[]
   talkEnabled?: boolean
+  /** Whether the publisher is running AI 听记 for this share. */
+  notesEnabled?: boolean
+  /** Room-level switch for audience screen sharing. */
+  screenEnabled?: boolean
+  /** Viewer id currently sharing a screen ('' when nobody is). */
+  screenSharer?: string
+  /** Whether this frame is a screen-state update. */
+  sharing?: boolean
   reason?: string
   message?: string
 }
@@ -45,6 +53,16 @@ export interface LiveViewerCallbacks {
   onTitle?: (title: string) => void
   /** Whether the room allows audience speech. Drives the "hold to talk" UI. */
   onTalkEnabled?: (enabled: boolean) => void
+  /** Whether the publisher is running AI 听记 (shows the transcript panel). */
+  onNotesEnabled?: (enabled: boolean) => void
+  /** The room-level screen-sharing switch changed. */
+  onScreenEnabled?: (enabled: boolean) => void
+  /** Who is sharing a screen ('' = nobody). */
+  onScreenSharer?: (viewerId: string) => void
+  /** The screen a member is sharing, forwarded by the publisher. */
+  onMemberScreenStream?: (stream: MediaStream | null) => void
+  /** The room refused our screen share (switch off, or someone else is sharing). */
+  onScreenDenied?: (reason: string) => void
   /** The publisher muted us, or the room switch was turned off. */
   onTalkRevoked?: (reason: string) => void
 }
@@ -77,10 +95,36 @@ export class LiveViewer {
   /** The audio transceiver reserved for our own speech (sendrecv, track=null). */
   private talkTx: RTCRtpTransceiver | null = null
   private micTrack: MediaStreamTrack | null = null
+  /**
+   * Video m-line we SEND our screen on (and receive the host's picture).
+   *
+   * Reserved at join time as sendrecv with no track, exactly like the
+   * microphone: starting or stopping a share then only needs replaceTrack,
+   * which does not renegotiate. Adding a track mid-call would require a second
+   * offer and a stable-negotiation dance for a feature that is used rarely.
+   */
+  private screenTx: RTCRtpTransceiver | null = null
+  /** Video m-line carrying ANOTHER viewer's screen, forwarded by the host. */
+  private relayRxTx: RTCRtpTransceiver | null = null
 
   private _state: LiveViewerState = 'idle'
   private _talkEnabled = false
   private _talking = false
+  private _notesEnabled = false
+  private _screenEnabled = false
+  private _screenSharer = ''
+  /** Our own screen track while we are sharing (null when we are not). */
+  private screenTrack: MediaStreamTrack | null = null
+  /**
+   * The video track on the relay m-line.
+   *
+   * Like the microphone line, this m-line is negotiated at join time and its
+   * receiver exists immediately with a MUTED track — so `ontrack` fires even
+   * when nobody is sharing. Only the server's screen-state decides whether it
+   * is worth showing.
+   */
+  private relayTrack: MediaStreamTrack | null = null
+  private memberScreenStream: MediaStream | null = null
   private _closed = false
 
   constructor(opts: LiveViewerOptions) {
@@ -98,6 +142,26 @@ export class LiveViewer {
 
   get talking(): boolean {
     return this._talking
+  }
+
+  /** Whether this share is transcribing (AI 听记). */
+  get notesEnabled(): boolean {
+    return this._notesEnabled
+  }
+
+  /** Whether the room allows audience screen sharing. */
+  get screenEnabled(): boolean {
+    return this._screenEnabled
+  }
+
+  /** Viewer id currently sharing a screen ('' = nobody). */
+  get screenSharer(): string {
+    return this._screenSharer
+  }
+
+  /** Whether we are the one sharing. */
+  get isSharingScreen(): boolean {
+    return this.screenTrack !== null
   }
 
   /** Open the socket and start negotiating. Safe to call once. */
@@ -190,6 +254,21 @@ export class LiveViewer {
         this.cb.onTalkEnabled?.(false)
         this.cb.onTalkRevoked?.(msg.reason ?? 'disabled')
         break
+      case 'screen-state':
+        this._screenEnabled = Boolean(msg.screenEnabled)
+        this._screenSharer = msg.screenSharer ?? msg.viewerId ?? ''
+        this.cb.onScreenEnabled?.(this._screenEnabled)
+        this.cb.onScreenSharer?.(this._screenSharer)
+        if (this._screenSharer) this.emitMemberScreen()
+        else this.cb.onMemberScreenStream?.(null)
+        break
+      case 'screen-denied':
+        // The room refused: either the switch is off or somebody else got
+        // there first. Release the local capture immediately — leaving it live
+        // would keep the browser's "sharing" indicator on with nothing sent.
+        this.abortLocalScreenShare()
+        this.cb.onScreenDenied?.(msg.reason ?? 'disabled')
+        break
       case 'error':
         appLog.w(TAG, 'server rejected a control frame', msg.message)
         break
@@ -201,6 +280,12 @@ export class LiveViewer {
   private onJoined(msg: ServerMessage): void {
     this._talkEnabled = Boolean(msg.talkEnabled)
     this.cb.onTalkEnabled?.(this._talkEnabled)
+    this._notesEnabled = Boolean(msg.notesEnabled)
+    this.cb.onNotesEnabled?.(this._notesEnabled)
+    this._screenEnabled = Boolean(msg.screenEnabled)
+    this._screenSharer = msg.screenSharer ?? ''
+    this.cb.onScreenEnabled?.(this._screenEnabled)
+    this.cb.onScreenSharer?.(this._screenSharer)
     if (msg.title) this.cb.onTitle?.(msg.title)
 
     const pcFactory =
@@ -210,11 +295,26 @@ export class LiveViewer {
     this.pc = pc
 
     pc.ontrack = (ev) => {
+      // Two video m-lines arrive here: the host's picture (with the mixed
+      // audio, one stream) and — only while somebody is presenting — another
+      // viewer's screen forwarded by the host. They are told apart by the
+      // transceiver, not by kind.
+      const stream = ev.streams[0] ?? new MediaStream([ev.track])
+      if (ev.transceiver === this.relayRxTx) {
+        this.relayTrack = ev.track
+        ev.track.addEventListener('ended', () => {
+          this.memberScreenStream = null
+          this.cb.onMemberScreenStream?.(null)
+        })
+        // Muted until somebody presents; surfacing it now would black out the
+        // host's picture the moment a viewer joins.
+        if (this._screenSharer) this.emitMemberScreen()
+        return
+      }
       // The publisher sends video plus one mixed audio track. Wrap whatever
       // arrives into a single stream so the <video> element has one srcObject.
-      const stream = ev.streams[0] ?? new MediaStream([ev.track])
       this.cb.onStream?.(stream)
-      this.setState('playing')
+      if (ev.track.kind === 'video') this.setState('playing')
     }
     pc.onicecandidate = (ev) => {
       if (ev.candidate) this.send({ type: 'ice', candidate: ev.candidate.toJSON() })
@@ -236,8 +336,11 @@ export class LiveViewer {
     // transceiver later would require a second offer.
     this.talkTx = pc.addTransceiver('audio', { direction: 'sendrecv' })
 
-    // Ask for video + the publisher's mixed audio.
-    pc.addTransceiver('video', { direction: 'recvonly' })
+    // m-line order is a contract with the publisher (it adds the same three in
+    // the same order): 1 audio, 2 video (host picture down + our screen up),
+    // 3 video (a forwarded member screen, down only).
+    this.screenTx = pc.addTransceiver('video', { direction: 'sendrecv' })
+    this.relayRxTx = pc.addTransceiver('video', { direction: 'recvonly' })
 
     void this.sendOffer()
   }
@@ -317,6 +420,88 @@ export class LiveViewer {
     this.send({ type: 'talk-end' })
   }
 
+  /**
+   * Start sharing this browser's screen.
+   *
+   * The browser shows its own picker; we only receive the chosen track. A
+   * failure (no permission, insecure origin, unsupported browser) is reported
+   * as `false` rather than thrown — the caller renders a hint, not an error
+   * page.
+   */
+  async startScreenShare(): Promise<boolean> {
+    if (!this.screenTx || this.screenTrack) return false
+    const gdm = navigator.mediaDevices?.getDisplayMedia
+    if (!gdm) return false
+    try {
+      const stream = await gdm.call(navigator.mediaDevices, {
+        video: { frameRate: 15 },
+        // No audio: the audio m-line already carries our microphone, and a
+        // second audio track would need another transceiver (another
+        // renegotiation) for a marginal gain.
+        audio: false,
+      })
+      const track = stream.getVideoTracks()[0]
+      if (!track) return false
+      this.screenTrack = track
+      await this.screenTx.sender.replaceTrack(track)
+      // The browser's own "stop sharing" bar ends the track without telling us
+      // through a socket, so it has to be handled here.
+      track.addEventListener('ended', () => {
+        void this.stopScreenShare()
+      })
+      this.send({ type: 'screen-start' })
+      return true
+    } catch (e) {
+      appLog.w(TAG, 'screen capture unavailable', e)
+      this.screenTrack = null
+      return false
+    }
+  }
+
+  /** Stop sharing and tell the room. */
+  async stopScreenShare(): Promise<void> {
+    if (!this.screenTrack) return
+    this.releaseScreenTrack()
+    await this.detachScreen()
+    this.send({ type: 'screen-stop' })
+  }
+
+  /** Drop the local capture without reporting it (the room already refused). */
+  private abortLocalScreenShare(): void {
+    this.releaseScreenTrack()
+    void this.detachScreen()
+  }
+
+  private releaseScreenTrack(): void {
+    const track = this.screenTrack
+    this.screenTrack = null
+    try {
+      track?.stop()
+    } catch {
+      /* already stopped */
+    }
+  }
+
+  /** Surface the relayed track once the room says somebody is presenting. */
+  private emitMemberScreen(): void {
+    if (!this.relayTrack) return
+    if (
+      !this.memberScreenStream ||
+      this.memberScreenStream.getVideoTracks()[0] !== this.relayTrack
+    ) {
+      this.memberScreenStream = new MediaStream([this.relayTrack])
+    }
+    this.cb.onMemberScreenStream?.(this.memberScreenStream)
+  }
+
+  private async detachScreen(): Promise<void> {
+    try {
+      await this.screenTx?.sender.replaceTrack(null)
+    } catch (e) {
+      appLog.d(TAG, 'screen replaceTrack(null) failed', e)
+    }
+  }
+
   /** Detach the microphone track without reporting it (used on mute). */
   private async detachMic(): Promise<void> {
     try {
@@ -351,6 +536,9 @@ export class LiveViewer {
 
   private teardown(): void {
     void this.stopTalking()
+    this.releaseScreenTrack()
+    this.relayTrack = null
+    this.memberScreenStream = null
     if (this.micTrack) {
       this.micTrack.stop()
       this.micTrack = null

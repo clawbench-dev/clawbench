@@ -2,9 +2,12 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -1002,4 +1005,149 @@ func TestServeGroupMembers_AddDBErrorIs500(t *testing.T) {
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandlerWithAuth(ServeGroupMembers, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+}
+
+// ── 更换主持人 (issue #608) ──────────────────────────────────────────────
+
+// The endpoint must actually MOVE the host: the roster's isHost flag is what the
+// sheet renders (host pill, "cannot disable" guard, "set as host" action), so
+// asserting the DB pointer alone would let a handler that returns 200 while
+// doing nothing pass.
+func TestServeGroupHost_ChangesHost(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+	memberID, err := service.AddGroupMember(env.ProjectDir, groupID, "claude", "claude", "A")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/group/host", map[string]any{"groupId": groupID, "memberId": memberID})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupHost, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, memberID, service.GetGroupHostMember(groupID))
+
+	// The roster is the surface the UI reads: exactly one isHost, on the new host.
+	req = newRequest(t, http.MethodGet, "/api/group/members?groupId="+groupID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var listed struct {
+		Members []struct {
+			ID     string `json:"id"`
+			IsHost bool   `json:"isHost"`
+		} `json:"members"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &listed))
+	hosts := 0
+	for _, m := range listed.Members {
+		if m.IsHost {
+			hosts++
+			assert.Equal(t, memberID, m.ID)
+		}
+	}
+	assert.Equal(t, 1, hosts, "exactly one member must be the host")
+}
+
+// Every refusal must be a distinct, actionable status: 400 for a malformed or
+// foreign target, 409 for a state that cannot host.
+func TestServeGroupHost_Refusals(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+	memberID, err := service.AddGroupMember(env.ProjectDir, groupID, "claude", "claude", "A")
+	require.NoError(t, err)
+
+	// Missing fields.
+	req := newRequest(t, http.MethodPatch, "/api/group/host", map[string]any{"groupId": groupID})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupHost, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	// Unknown member id.
+	req = newRequest(t, http.MethodPatch, "/api/group/host", map[string]any{"groupId": groupID, "memberId": "nope"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupHost, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "HostNotMember")
+
+	// Disabled member: enable first.
+	require.NoError(t, service.SetGroupMemberDisabled(groupID, memberID, true))
+	req = newRequest(t, http.MethodPatch, "/api/group/host", map[string]any{"groupId": groupID, "memberId": memberID})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupHost, req)
+	assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "HostDisabled")
+
+	// Wrong method.
+	req = newRequest(t, http.MethodGet, "/api/group/host?groupId="+groupID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupHost, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code, w.Body.String())
+}
+
+// A free group has no host, so the endpoint must say so instead of converting
+// the group's routing model behind the user's back.
+func TestServeGroupHost_RefusesFreeGroup(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroupWithMembers(env.ProjectDir, "自由群", "", []service.GroupMemberSpec{
+		{AgentID: "codebuddy", Backend: "codebuddy"},
+		{AgentID: "claude", Backend: "claude"},
+	})
+	require.NoError(t, err)
+	members, err := service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	require.Len(t, members, 2)
+
+	req := newRequest(t, http.MethodPatch, "/api/group/host", map[string]any{"groupId": groupID, "memberId": members[0].ID})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupHost, req)
+	assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "GroupNotHostMode")
+	assert.Empty(t, service.GetGroupHostMember(groupID))
+}
+
+// The host-change endpoint must refuse malformed input before touching the
+// database, and must not let one project promote a member of another's group.
+func TestServeGroupHost_ValidatesRequest(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Wrong method.
+	w := httptest.NewRecorder()
+	ServeGroupHost(w, newRequest(t, http.MethodPost, "/api/group/host", map[string]any{}))
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+
+	// No project cookie.
+	w = httptest.NewRecorder()
+	ServeGroupHost(w, newRequest(t, http.MethodPatch, "/api/group/host", map[string]any{"groupId": "1", "memberId": "2"}))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	// Malformed body.
+	req := newRequest(t, http.MethodPatch, "/api/group/host", nil)
+	req.Body = io.NopCloser(strings.NewReader("{oops"))
+	req.ContentLength = int64(len("{oops"))
+	req = withProjectCookie(req, env.ProjectDir)
+	w = httptest.NewRecorder()
+	ServeGroupHost(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// Missing ids.
+	w = httptest.NewRecorder()
+	ServeGroupHost(w, withProjectCookie(
+		newRequest(t, http.MethodPatch, "/api/group/host", map[string]any{"groupId": "", "memberId": "2"}),
+		env.ProjectDir))
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// A group that does not exist in this project.
+	w = httptest.NewRecorder()
+	ServeGroupHost(w, withProjectCookie(
+		newRequest(t, http.MethodPatch, "/api/group/host", map[string]any{"groupId": "999999", "memberId": "2"}),
+		env.ProjectDir))
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }

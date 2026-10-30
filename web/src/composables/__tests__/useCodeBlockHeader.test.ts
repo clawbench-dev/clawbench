@@ -1,7 +1,9 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { annotateCodeBlockHeaders, annotateTableBlockHeaders, handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus, positionTableMenu } from '@/composables/useCodeBlockHeader.ts'
+import { annotateCodeBlockHeaders, annotateTableBlockHeaders, handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus, positionTableMenu, positionTableMenuInRotatedPanel } from '@/composables/useCodeBlockHeader.ts'
+import { closeBlockLandscape, blockLandscapeState } from '@/composables/useBlockLandscape.ts'
+import { _resetBlockWrapPref, setDefaultBlockWrap } from '@/utils/blockWrapPref.ts'
 // Source of the menu's positioning rule — jsdom cannot reproduce overflow
 // clipping, so the escape-from-clip-chain assertion has to read the CSS.
 import tableHeaderCss from '../../../css/code-block-header.css?raw'
@@ -33,6 +35,9 @@ afterEach(() => {
   }
   pendingTimers.length = 0
   copyText.mockClear()
+  closeBlockLandscape()
+  _resetBlockWrapPref()
+  localStorage.removeItem('clawbench-settings-tableWrap')
 })
 
 describe('annotateCodeBlockHeaders', () => {
@@ -51,6 +56,28 @@ describe('annotateCodeBlockHeaders', () => {
     expect(result).toContain('go')
     // Default: word-wrap on
     expect(result).toContain('word-wrap')
+  })
+
+  it('adds a landscape-view button to code blocks', () => {
+    const result = annotateCodeBlockHeaders('<pre><code>code</code></pre>')
+    expect(result).toContain('code-block-landscape-btn')
+    expect(result).toContain('data-action="landscape"')
+    expect(result).toContain('codeBlock.landscape')
+  })
+
+  it('starts a code block in the wrap mode the user configured as default', () => {
+    const html = '<pre><code>code</code></pre>'
+
+    expect(annotateCodeBlockHeaders(html)).toContain('code-block-wrapper word-wrap')
+
+    setDefaultBlockWrap(false)
+    const unwrapped = annotateCodeBlockHeaders(html)
+    expect(unwrapped).toContain('class="code-block-wrapper"')
+    expect(unwrapped).not.toContain('word-wrap')
+    // Code blocks have no `.no-wrap` rule — the class must not be invented.
+    expect(unwrapped).not.toContain('no-wrap')
+    expect(unwrapped).toContain('codeBlock.wrapOff')
+    expect(unwrapped).not.toContain('is-wrapped')
   })
 
   it('adds copy and wrap buttons', () => {
@@ -228,6 +255,28 @@ describe('annotateTableBlockHeaders', () => {
     const result = annotateTableBlockHeaders(html)
     expect(result).toContain('table-block-attach-btn')
     expect(result).toContain('data-action="attach"')
+  })
+
+  it('starts a table in the wrap mode the user configured as default', () => {
+    const html = '<div class="table-wrap"><table><tr><td>data</td></tr></table></div>'
+
+    // Default (nothing configured) keeps the historical behaviour: wrapping on.
+    expect(annotateTableBlockHeaders(html)).toContain('table-block-wrapper word-wrap')
+
+    setDefaultBlockWrap(false)
+    const unwrapped = annotateTableBlockHeaders(html)
+    expect(unwrapped).toContain('table-block-wrapper no-wrap')
+    expect(unwrapped).not.toContain('word-wrap')
+    // The toggle button must start in the matching (unwrapped) state.
+    expect(unwrapped).toContain('class="table-block-wrap-btn"')
+    expect(unwrapped).toContain('tableBlock.wrapOff')
+  })
+
+  it('adds a landscape-view button to the table header actions', () => {
+    const html = '<div class="table-wrap"><table><tr><td>data</td></tr></table></div>'
+    const result = annotateTableBlockHeaders(html)
+    expect(result).toContain('table-block-landscape-btn')
+    expect(result).toContain('data-action="landscape"')
   })
 
   it('builds a copy dropdown menu with Markdown/HTML/TSV items', () => {
@@ -921,5 +970,121 @@ describe('table copy menu positioning', () => {
       expect(menu.classList.contains('is-open'), 'wrap toggle must clear the class too').toBe(false)
       wrapper.remove()
     })
+  })
+})
+
+describe('handleTableBlockClick — landscape view', () => {
+  function click(target: HTMLElement): MouseEvent {
+    return { target, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as MouseEvent
+  }
+
+  function buildBlock(wrapClass = 'word-wrap') {
+    const wrapper = document.createElement('div')
+    wrapper.className = `table-block-wrapper ${wrapClass}`
+    wrapper.innerHTML = `
+      <div class="table-block-header">
+        <span class="table-block-header-actions">
+          <button class="table-block-wrap-btn is-wrapped" data-action="wrap"></button>
+          <button class="table-block-landscape-btn" data-action="landscape"></button>
+        </span>
+      </div>
+      <div class="table-wrap"><table data-table-idx="0"><tbody><tr data-row-idx="1"><td>cell</td></tr></tbody></table></div>`
+    document.body.appendChild(wrapper)
+    const btn = wrapper.querySelector<HTMLElement>('.table-block-landscape-btn')!
+    return { wrapper, btn }
+  }
+
+  it('opens the overlay with the whole block, header included', () => {
+    const { wrapper, btn } = buildBlock('no-wrap')
+    expect(handleTableBlockClick(click(btn))).toBe(true)
+
+    const state = blockLandscapeState.value
+    expect(state).not.toBeNull()
+    expect(state!.html).toContain('<table')
+    expect(state!.html).toContain('cell')
+    // Header controls travel with the clone — they are the overlay's controls.
+    expect(state!.html).toContain('table-block-header')
+    expect(state!.html).toContain('table-block-wrap-btn')
+    // The per-table wrap mode is part of the cloned wrapper class list.
+    expect(state!.html).toContain('table-block-wrapper no-wrap')
+    expect(state!.source).toBe(wrapper)
+    expect(state!.trigger).toBe(btn)
+    wrapper.remove()
+  })
+
+  it('keeps the row-viewer hooks so rows stay tappable in the overlay', () => {
+    const { wrapper, btn } = buildBlock()
+    handleTableBlockClick(click(btn))
+    expect(blockLandscapeState.value!.html).toContain('data-row-idx')
+    expect(blockLandscapeState.value!.html).toContain('data-table-idx')
+    wrapper.remove()
+  })
+
+  it('does nothing when the block has no table', () => {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'table-block-wrapper'
+    const btn = document.createElement('button')
+    btn.className = 'table-block-landscape-btn'
+    btn.setAttribute('data-action', 'landscape')
+    wrapper.appendChild(btn)
+    document.body.appendChild(wrapper)
+
+    handleTableBlockClick(click(btn))
+    expect(blockLandscapeState.value).toBeNull()
+    wrapper.remove()
+  })
+})
+
+describe('positionTableMenuInRotatedPanel', () => {
+  function stubRect(el: HTMLElement, rect: { left: number, top: number, right: number, bottom: number }) {
+    el.getBoundingClientRect = () => ({
+      ...rect,
+      x: rect.left, y: rect.top, width: rect.right - rect.left, height: rect.bottom - rect.top,
+      toJSON: () => ({}),
+    }) as DOMRect
+  }
+  function stubSize(el: HTMLElement, width: number, height: number) {
+    Object.defineProperty(el, 'offsetWidth', { configurable: true, value: width })
+    Object.defineProperty(el, 'offsetHeight', { configurable: true, value: height })
+  }
+
+  it('maps the trigger into panel-local space before placing the menu', () => {
+    // A 400×800 viewport showing an 800×400 panel rotated 90°: the panel's
+    // local (x, y) maps to viewport (right - y, top + x).
+    const panel = document.createElement('div')
+    stubRect(panel, { left: 0, top: 0, right: 400, bottom: 800 })
+    stubSize(panel, 800, 400)
+
+    const trigger = document.createElement('button')
+    stubRect(trigger, { left: 340, top: 700, right: 380, bottom: 720 })
+
+    const menu = document.createElement('div')
+    stubSize(menu, 140, 100)
+
+    positionTableMenuInRotatedPanel(trigger, menu, panel)
+
+    // local: right = 720, top = 400-380 = 20, bottom = 400-340 = 60
+    // left = 720 - 140 = 580 (fits inside 800 - 140 - 8 = 652)
+    // top  = 60 + 4 = 64 (fits inside 400 - 100 - 8 = 292)
+    expect(menu.style.left).toBe('580px')
+    expect(menu.style.top).toBe('64px')
+  })
+
+  it('flips above the trigger when there is no room below in local space', () => {
+    const panel = document.createElement('div')
+    stubRect(panel, { left: 0, top: 0, right: 400, bottom: 800 })
+    stubSize(panel, 800, 400)
+
+    // Local bottom edge at 380 → a 100px menu would overflow the 400px side.
+    const trigger = document.createElement('button')
+    stubRect(trigger, { left: 20, top: 700, right: 60, bottom: 720 })
+    const menu = document.createElement('div')
+    stubSize(menu, 140, 100)
+
+    positionTableMenuInRotatedPanel(trigger, menu, panel)
+
+    // local: right = 720, top = 400-60 = 340, bottom = 400-20 = 380
+    // 380 + 4 + 100 > 392 → flip above: 340 - 4 - 100 = 236
+    expect(menu.style.top).toBe('236px')
   })
 })

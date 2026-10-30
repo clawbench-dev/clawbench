@@ -1519,3 +1519,20 @@ func TestApplyDefaults_ForgeEnabledPresence(t *testing.T) {
 		t.Error("Forge.Enabled should default to true when the forge section is absent")
 	}
 }
+
+// TestApplyDefaults_WeChatDoesNotDerivePushMode pins the deliberate omission
+// from the PushMode derivation chain: a leftover bot_token must never silently
+// select the WeChat channel. The scan writes push_mode itself, and a token can
+// outlive the session it belonged to (logout clears the token, but a crash
+// between the two writes would otherwise re-enable a dead channel).
+func TestApplyDefaults_WeChatDoesNotDerivePushMode(t *testing.T) {
+	cfg := &Config{}
+	cfg.WeChat.BotToken = "leftover-token"
+	cfg.WeChat.BotID = "bot"
+
+	ApplyDefaults(cfg, map[string]bool{"wechat": true, "wechat.bot_token": true})
+
+	if cfg.PushMode != "native" {
+		t.Errorf("expected push_mode=native, got %q", cfg.PushMode)
+	}
+}

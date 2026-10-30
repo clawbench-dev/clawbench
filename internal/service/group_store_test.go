@@ -1338,6 +1338,200 @@ func TestSystemEvent_InjectedIntoMemberContext(t *testing.T) {
 	}
 }
 
+// ── 更换主持人 (issue #608) ──────────────────────────────────────────────
+
+// Changing the host must move ALL THREE things together: the pointer the
+// orchestrator reads, the group row's mirrored identity (backend/agent_id, which
+// the session list falls back to), and the timeline line every member sees.
+// Testing only the pointer would pass while the roster icon still named the old
+// host — that drift is exactly what the mirrored columns exist to prevent.
+func TestChangeGroupHost_SwapsPointerIdentityAndTimeline(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, oldHostID, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	memberID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	before := len(systemMessages(t, groupID))
+
+	if err := ChangeGroupHost(project, groupID, memberID); err != nil {
+		t.Fatalf("ChangeGroupHost: %v", err)
+	}
+	if got := GetGroupHostMember(groupID); got != memberID {
+		t.Fatalf("host pointer = %q, want %q", got, memberID)
+	}
+	if oldHostID == memberID {
+		t.Fatal("fixture broken: old host and new host are the same member")
+	}
+
+	// The group row mirrors the host, so the swap must carry the identity over.
+	var backend, agentID string
+	if err := store.ReadDB().QueryRow(
+		"SELECT backend, agent_id FROM chat_sessions WHERE id = ?", groupID,
+	).Scan(&backend, &agentID); err != nil {
+		t.Fatalf("read group row: %v", err)
+	}
+	if backend != "claude" || agentID != "agent-a" {
+		t.Fatalf("group row identity = (%q,%q), want (claude,agent-a)", backend, agentID)
+	}
+
+	sysMsgs := systemMessages(t, groupID)
+	if len(sysMsgs) != before+1 {
+		t.Fatalf("expected one host-change system row: before=%d after=%d", before, len(sysMsgs))
+	}
+	last := sysMsgs[len(sysMsgs)-1].Content
+	if !strings.Contains(last, "A") || !strings.Contains(last, "主持人") {
+		t.Fatalf("host-change event must name the new host: %q", last)
+	}
+}
+
+// Naming the CURRENT host is a no-op: no write, and crucially no second
+// timeline line (every line counts toward each member's cursor and is injected
+// into its next turn).
+func TestChangeGroupHost_IsIdempotent(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	before := len(systemMessages(t, groupID))
+
+	if err := ChangeGroupHost(project, groupID, hostID); err != nil {
+		t.Fatalf("ChangeGroupHost(current host): %v", err)
+	}
+	if after := len(systemMessages(t, groupID)); after != before {
+		t.Fatalf("re-asserting the current host wrote %d extra system rows", after-before)
+	}
+}
+
+// A free group has no host; promoting one would silently change its routing
+// model (and its 密送 rules), so the call is refused rather than guessed.
+func TestChangeGroupHost_RefusesFreeGroup(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroupWithMembers(project, "自由群", "", []GroupMemberSpec{
+		{AgentID: "agent-a", Backend: "claude"},
+		{AgentID: "agent-b", Backend: "claude"},
+	})
+	if err != nil {
+		t.Fatalf("CreateGroupWithMembers: %v", err)
+	}
+	members, err := ListGroupMembers(groupID)
+	if err != nil || len(members) != 2 {
+		t.Fatalf("ListGroupMembers: %v (%d)", err, len(members))
+	}
+	if err := ChangeGroupHost(project, groupID, members[0].ID); !errors.Is(err, ErrGroupNotHostMode) {
+		t.Fatalf("ChangeGroupHost on free group = %v, want ErrGroupNotHostMode", err)
+	}
+	if got := GetGroupHostMember(groupID); got != "" {
+		t.Fatalf("free group must still have no host, got %q", got)
+	}
+}
+
+// A member of ANOTHER group (or an unknown id) cannot be promoted: the pointer
+// would name a row the orchestrator's roster does not contain.
+func TestChangeGroupHost_RefusesForeignMember(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	otherGroup, _, err := CreateGroup(project, "另一个群", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup(other): %v", err)
+	}
+	foreignID, err := AddGroupMember(project, otherGroup, "claude", "agent-b", "B")
+	if err != nil {
+		t.Fatalf("AddGroupMember(other): %v", err)
+	}
+
+	for _, id := range []string{foreignID, "no-such-member"} {
+		if err := ChangeGroupHost(project, groupID, id); !errors.Is(err, ErrHostNotMember) {
+			t.Fatalf("ChangeGroupHost(%q) = %v, want ErrHostNotMember", id, err)
+		}
+	}
+}
+
+// A disabled member is off the schedule, so it must not become the router.
+func TestChangeGroupHost_RefusesDisabledMember(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	memberID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	if err := SetGroupMemberDisabled(groupID, memberID, true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
+	}
+
+	if err := ChangeGroupHost(project, groupID, memberID); !errors.Is(err, ErrHostDisabled) {
+		t.Fatalf("ChangeGroupHost(disabled) = %v, want ErrHostDisabled", err)
+	}
+	if got := GetGroupHostMember(groupID); got != hostID {
+		t.Fatalf("host must not change on a refused call: got %q want %q", got, hostID)
+	}
+}
+
+// The disable guard reads the pointer LIVE, so after a swap the OLD host becomes
+// an ordinary member (disable-able) and the NEW one inherits the guard. Pinning
+// this catches a guard that cached the host at creation.
+func TestChangeGroupHost_MovesTheDisableGuard(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, oldHostID, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	memberID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	if err := ChangeGroupHost(project, groupID, memberID); err != nil {
+		t.Fatalf("ChangeGroupHost: %v", err)
+	}
+
+	if err := SetGroupMemberDisabled(groupID, memberID, true); !errors.Is(err, ErrCannotDisableHost) {
+		t.Fatalf("new host must not be disable-able: %v", err)
+	}
+	if err := SetGroupMemberDisabled(groupID, oldHostID, true); err != nil {
+		t.Fatalf("old host must become an ordinary member: %v", err)
+	}
+}
+
 // systemMessages returns the group timeline's role='system' rows in id order.
 func systemMessages(t *testing.T, groupID string) []model.ChatMessage {
 	t.Helper()
@@ -2313,4 +2507,11 @@ func TestPendingBccStoresSenderAttribution(t *testing.T) {
 	if got[1].SenderRole != bccRoleUser || got[1].SenderName != "" {
 		t.Fatalf("user attribution lost: %+v", got[1])
 	}
+}
+
+// Empty ids are a programming error, not "the group has no host": refusing them
+// keeps a blank pointer from being written.
+func TestChangeGroupHost_RejectsEmptyIDs(t *testing.T) {
+	assert.ErrorIs(t, ChangeGroupHost("/proj/a", "", "m1"), ErrHostNotMember)
+	assert.ErrorIs(t, ChangeGroupHost("/proj/a", "g1", ""), ErrHostNotMember)
 }

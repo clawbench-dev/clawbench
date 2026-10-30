@@ -797,6 +797,8 @@ async function handleRetryTunnel() {
 }
 
 .proxy-skeleton {
+  /* 14dp is `.proxy-port-item`'s inset. */
+  --panel-skeleton-inset: calc(14 * var(--dp));
   padding: var(--space-2) 0;
 }
 
@@ -1038,6 +1040,10 @@ async function handleRetryTunnel() {
 .port-scan-loading--skeleton {
   align-items: stretch;
   justify-content: flex-start;
+  /* The modifier's `padding` replaces the base rule's horizontal 12dp, so the
+     inset is restated here: `.port-scan-results` (2dp) + `.port-scan-item`
+     (12dp), the two levels the real rows sit behind. */
+  --panel-skeleton-inset: calc(14 * var(--dp));
   padding: var(--space-2) 0;
 }
 

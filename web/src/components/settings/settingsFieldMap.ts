@@ -251,6 +251,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.layoutMemoryGlobal', value: 'global' },
       { labelKey: 'settings.items.layoutMemoryProject', value: 'project' },
     ]}},
+    // Starting wrap mode for every Markdown table (chat, file preview, task
+    // detail, row viewer). A display preference, so it lives next to the other
+    // per-device display tweaks rather than under a content category.
+    { type: 'item', spec: { labelKey: 'settings.items.tableWrapDefault', descriptionKey: 'settings.items.tableWrapDefaultDesc', key: 'tableWrap', type: 'switch', source: 'local', sectionHeader: 'settings.items.appearanceDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.fontMono', descriptionKey: 'settings.items.fontMonoDesc', key: 'fontMono', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildFontFamilyOptions(true) }},
     { type: 'item', spec: { labelKey: 'settings.items.fontMonoFallback', descriptionKey: 'settings.items.fontMonoFallbackDesc', key: 'fontMonoFallback', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildMonoFallbackOptions() }},
     { type: 'item', spec: { labelKey: 'settings.items.fontUi', descriptionKey: 'settings.items.fontUiDesc', key: 'fontUi', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildFontFamilyOptions(false) }},
@@ -345,7 +349,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.reconfigureServer', descriptionKey: 'settings.items.reconfigureServerDesc', key: 'reconfigureServer', type: 'action', source: 'local', appOnly: true, sectionHeader: 'settings.items.debugSection' } },
   ],
   security: [
-    { type: 'item', spec: { labelKey: 'settings.items.tlsCertDir', descriptionKey: 'settings.items.tlsCertDirDesc', key: 'tls.cert_dir', type: 'text', source: 'server', needsRestart: true, sectionHeader: 'settings.items.securitySection' } },
+    // HTTPS certificate: its own card, opened by a placeholder item that the
+    // dedicated component fills (TlsCertPanel). The directory row stays below
+    // the panel in the same card, because it is the one thing the panel needs
+    // from the generic form.
+    { type: 'item', spec: { labelKey: 'settings.items.tlsSection', descriptionKey: 'settings.items.tlsPanelDesc', key: 'tlsCert', type: 'info', source: 'server', sectionHeader: 'settings.items.tlsSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.tlsCertDir', descriptionKey: 'settings.items.tlsCertDirDesc', key: 'tls.cert_dir', type: 'text', source: 'server', needsRestart: true, sectionHeader: 'settings.items.tlsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.changePassword', descriptionKey: 'settings.items.changePasswordDesc', key: 'changePassword', type: 'action', source: 'local', sectionHeader: 'settings.items.securitySection' } },
   ],
   skills: [
@@ -433,6 +442,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
           { labelKey: 'settings.items.pushModeNative', value: 'native' },
           { labelKey: 'settings.items.pushModeDingtalk', value: 'dingtalk' },
           { labelKey: 'settings.items.pushModeFeishu', value: 'feishu' },
+          // WeChat has no editable credentials: selecting it renders the QR
+          // login block instead (see WeChatLoginPanel), so it has no
+          // optionSubFields entry and is excluded from requiredFields.
+          { labelKey: 'settings.items.pushModeWechat', value: 'wechat' },
           { labelKey: 'settings.items.pushModeDisabled', value: 'disabled' },
         ],
         defaultValue: 'native',

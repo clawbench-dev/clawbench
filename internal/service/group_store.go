@@ -24,6 +24,10 @@ import (
 const (
 	// groupSessionType is the session_type of a group timeline row.
 	groupSessionType = store.SessionTypeGroup
+	// i18nNameKey is the placeholder every group system-message i18n key takes
+	// ({{.Name}}): the member's display name. Shared so the literal is not
+	// repeated at each call site.
+	i18nNameKey = "Name"
 	// groupMemberSessionType is the session_type of a hidden member row.
 	groupMemberSessionType = store.SessionTypeGroupMember
 	// defaultGroupMaxSpeeches is the member-to-member speech cap when the
@@ -611,7 +615,7 @@ func insertGroupMemberRowsTx(groupID string, projectID int64, specs []GroupMembe
 func writeMemberSystemEvent(projectPath, groupID, agentID, displayName, messageID string) {
 	writeGroupSystemMessage(projectPath, groupID,
 		i18n.T(i18n.LocalizerForLocale(model.Language), messageID,
-			map[string]any{"Name": displayName + memberSpecialtySuffix(agentID)}))
+			map[string]any{i18nNameKey: displayName + memberSpecialtySuffix(agentID)}))
 }
 
 // WriteGroupSystemNotice appends an arbitrary role='system' row to a group
@@ -1136,6 +1140,20 @@ var ErrGroupMemberLimit = errors.New("group member limit reached")
 // created with fewer than two members (design §13.1 #F10).
 var ErrFreeGroupNeedsTwoMembers = errors.New("free group needs at least two members")
 
+// ErrGroupNotHostMode is returned when a caller tries to change the host of a
+// group that has none (free mode). Promoting a member there would silently
+// convert the group's routing model, so it is refused instead.
+var ErrGroupNotHostMode = errors.New("group is not in host mode")
+
+// ErrHostNotMember is returned when the requested host is not an (enabled)
+// member row of THIS group.
+var ErrHostNotMember = errors.New("host must be a member of the group")
+
+// ErrHostDisabled is returned when the requested host is disabled. A disabled
+// member is off the schedule, so it would become a router that never takes a
+// turn — enable it first, then make it host.
+var ErrHostDisabled = errors.New("host must not be disabled")
+
 // MaxGroupMembers caps a group's SPEAKING members (decision #78). Exported so
 // the handler can report the limit to the user. The count is INSTANCES, not
 // unique agents: the same agent may be added several times, and each instance is
@@ -1284,7 +1302,7 @@ func writeDisabledSystemEvent(groupID, memberID string, disabled bool) {
 	if !disabled {
 		key = "GroupMemberEnabled"
 	}
-	text := i18n.T(i18n.LocalizerForLocale(model.Language), key, map[string]any{"Name": name})
+	text := i18n.T(i18n.LocalizerForLocale(model.Language), key, map[string]any{i18nNameKey: name})
 	msgID, err := AddSystemMessage(GetSessionProjectPathAnyPath(groupID), groupID, text)
 	if err != nil {
 		slog.Warn("group: writing disable system event failed", "group", groupID, "disabled", disabled, "err", err)
@@ -1374,15 +1392,122 @@ func SetGroupAutoApprove(groupID string, enabled bool) error {
 	return firstErr
 }
 
-// SetGroupHostMember records which member is the host (stored in the group
-// row's context_state JSON).
-func SetGroupHostMember(groupID, memberID string) error {
-	val, err := json.Marshal(memberID)
+// ChangeGroupHost makes memberID the group's host (更换主持人).
+//
+// The host is only a POINTER on the group row (`context_state.host_member_id`):
+// every member keeps its own session row, its own ACP connection and its own
+// context window, and the role-specific system prompt is rebuilt on EVERY turn
+// (BuildHostSystemPrompt / BuildMemberSystemPrompt). Swapping the pointer
+// therefore takes effect on the NEXT turn without reconnecting anything or
+// touching history. A turn already in flight keeps the host it captured in
+// prepareTurn, so it finishes under the old host — the swap is safe mid-turn.
+//
+// Three things must move TOGETHER, which is why this is not a bare
+// PatchContextStateMerge call:
+//   - the host pointer (the only thing the orchestrator reads);
+//   - the group row's backend/agent_id, which mirror the host (the session
+//     list's icon/name fall back to them — "a group's agentId is its host");
+//   - a timeline system line, so every member's injected context says who is
+//     in charge now (a model's own history still has it in the old role).
+//
+// Idempotent: naming the current host is a no-op and writes NO system line
+// (mirrors SetGroupMemberDisabled's "re-asserting the current state" rule).
+func ChangeGroupHost(projectPath, groupID, memberID string) error {
+	changed, name, err := changeGroupHostTx(groupID, memberID)
 	if err != nil {
 		return err
 	}
-	PatchContextStateMerge(groupID, map[string]string{"host_member_id": string(val)})
+	if !changed {
+		return nil
+	}
+	// Best-effort, AFTER the lock is released (AddSystemMessage takes the write
+	// lock itself, and it is non-reentrant): failing to record the event must
+	// not undo the swap.
+	writeGroupSystemMessage(projectPath, groupID,
+		i18n.T(i18n.LocalizerForLocale(model.Language), "GroupHostChanged", map[string]any{i18nNameKey: name}))
 	return nil
+}
+
+// changeGroupHostTx validates and applies the swap in ONE transaction, taking
+// and releasing the write lock itself so the caller can run the best-effort
+// system message afterwards without deadlocking.
+//
+// changed=false means "already the host" (idempotent no-op). name is the new
+// host's display name, used for the timeline line.
+func changeGroupHostTx(groupID, memberID string) (changed bool, name string, err error) {
+	if groupID == "" || memberID == "" {
+		return false, "", ErrHostNotMember
+	}
+	tx, err := store.WriteBegin()
+	if err != nil {
+		return false, "", err
+	}
+	defer store.WriteUnlock()
+	defer func() { _ = tx.Rollback() }()
+
+	// Read through the TRANSACTION, not store.ReadDB(): with a single shared
+	// connection (the handler test fixture) a read on the shared handle while
+	// this write transaction is open deadlocks.
+	var sessionType, mode, currentHost string
+	if qerr := tx.QueryRowContext(
+		context.Background(),
+		"SELECT COALESCE(session_type, ''), COALESCE(json_extract(context_state, '$.group_mode'), ''), "+
+			"COALESCE(json_extract(context_state, '$.host_member_id'), '') "+
+			"FROM chat_sessions WHERE id = ?",
+		groupID,
+	).Scan(&sessionType, &mode, &currentHost); qerr != nil {
+		return false, "", qerr
+	}
+	// A free group has no host at all — promoting one would silently flip the
+	// mode's routing model (and its 密送 rules), so it is refused rather than
+	// guessed.
+	if sessionType != groupSessionType || mode == GroupModeFree {
+		return false, "", ErrGroupNotHostMode
+	}
+	if memberID == currentHost {
+		return false, "", nil
+	}
+
+	// The target must be a member OF THIS GROUP and must be able to speak: a
+	// disabled member would become a router that never takes a turn.
+	var memberGroup, memberAgentID, memberBackend, memberName string
+	var disabled int
+	if qerr := tx.QueryRowContext(
+		context.Background(),
+		"SELECT COALESCE(group_id, ''), COALESCE(agent_id, ''), COALESCE(backend, ''), "+
+			"COALESCE(agent_name, ''), COALESCE(disabled, 0) "+
+			"FROM chat_sessions WHERE id = ? AND session_type = ?",
+		memberID, groupMemberSessionType,
+	).Scan(&memberGroup, &memberAgentID, &memberBackend, &memberName, &disabled); qerr != nil {
+		return false, "", ErrHostNotMember
+	}
+	if memberGroup != groupID {
+		return false, "", ErrHostNotMember
+	}
+	if disabled != 0 {
+		return false, "", ErrHostDisabled
+	}
+
+	hostJSON, jerr := json.Marshal(memberID)
+	if jerr != nil {
+		return false, "", jerr
+	}
+	// One statement so the pointer and the mirrored identity cannot half-apply.
+	// The CASE mirrors PatchContextStateMerge: json_set needs a valid object.
+	if _, uerr := tx.ExecContext(
+		context.Background(),
+		"UPDATE chat_sessions SET "+
+			"context_state = json_set(CASE WHEN context_state = '' OR context_state IS NULL THEN '{}' ELSE context_state END, '$.host_member_id', json(?)), "+
+			"backend = ?, agent_id = ?, updated_at = CURRENT_TIMESTAMP "+
+			"WHERE id = ? AND session_type = ?",
+		string(hostJSON), memberBackend, memberAgentID, groupID, groupSessionType,
+	); uerr != nil {
+		return false, "", uerr
+	}
+	if cerr := tx.Commit(); cerr != nil {
+		return false, "", cerr
+	}
+	return true, memberName, nil
 }
 
 // GetGroupMaxSpeeches returns the configured cap on how many times the agents

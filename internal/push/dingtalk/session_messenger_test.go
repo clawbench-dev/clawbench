@@ -280,6 +280,20 @@ type mockSessionMessenger struct {
 	sendErr         error
 	listErr         error
 	SendMessageFn   func(sid, msg string, files []model.FileEntry) error
+
+	// Capabilities for /show, /stop and /new.
+	lastReply       string
+	lastReplyOK     bool
+	lastReplyErr    error
+	wasRunning      bool
+	cleared         int
+	stopFn          func(sessionID string) (bool, int, error)
+	projects        []common.ProjectRef
+	projectsErr     error
+	newSessionID    string
+	newSessionTitle string
+	createErr       error
+	createFn        func(path string) (string, string, error)
 }
 
 func (m *mockSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]common.SessionInfo, error) {
@@ -328,4 +342,50 @@ func (m *mockSessionMessenger) GetSessionInfo(sessionID string) (common.SessionI
 		}
 	}
 	return common.SessionInfo{}, fmt.Errorf("session %s not found", sessionID)
+}
+
+// ---- capabilities added for /show /stop /new ----
+
+func (m *mockSessionMessengerWithErr) LastAssistantReply(string) (string, bool, error) {
+	return "", false, nil
+}
+
+func (m *mockSessionMessengerWithErr) StopAndClearSession(string) (bool, int, error) {
+	return false, 0, nil
+}
+
+func (m *mockSessionMessengerWithErr) ListProjects() ([]common.ProjectRef, error) {
+	return nil, nil
+}
+
+func (m *mockSessionMessengerWithErr) CreateSessionInProject(string) (string, string, error) {
+	return "", "", nil
+}
+
+func (m *mockSessionMessenger) LastAssistantReply(sessionID string) (string, bool, error) {
+	if m.lastReplyErr != nil {
+		return "", false, m.lastReplyErr
+	}
+	return m.lastReply, m.lastReplyOK, nil
+}
+
+func (m *mockSessionMessenger) StopAndClearSession(sessionID string) (bool, int, error) {
+	if m.stopFn != nil {
+		return m.stopFn(sessionID)
+	}
+	return m.wasRunning, m.cleared, nil
+}
+
+func (m *mockSessionMessenger) ListProjects() ([]common.ProjectRef, error) {
+	if m.projectsErr != nil {
+		return nil, m.projectsErr
+	}
+	return m.projects, nil
+}
+
+func (m *mockSessionMessenger) CreateSessionInProject(path string) (string, string, error) {
+	if m.createFn != nil {
+		return m.createFn(path)
+	}
+	return m.newSessionID, m.newSessionTitle, m.createErr
 }

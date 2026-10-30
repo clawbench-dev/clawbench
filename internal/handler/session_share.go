@@ -452,6 +452,9 @@ type shareMetaResponse struct {
 	Kind         string `json:"kind"` // shareKindFile | shareKindSession | shareKindLive
 	Title        string `json:"title,omitempty"`
 	MessageCount int    `json:"messageCount,omitempty"`
+	// NotesEnabled is live-share only: whether the publisher is running AI 听记.
+	// The share page uses it to decide whether to offer the transcript panel.
+	NotesEnabled bool `json:"notesEnabled,omitempty"`
 }
 
 // serveShareMeta reports whether a token is a file share or a session share.
@@ -469,8 +472,9 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 	// value. Live also wins on freshness — the room is the current truth.
 	if room := liveRegistry.Get(token); room != nil {
 		writeJSON(w, http.StatusOK, shareMetaResponse{
-			Kind:  shareKindLive,
-			Title: room.Title(),
+			Kind:         shareKindLive,
+			Title:        room.Title(),
+			NotesEnabled: room.NotesEnabled(),
 		})
 		return
 	}

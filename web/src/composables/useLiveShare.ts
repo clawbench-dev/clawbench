@@ -9,11 +9,12 @@
  * Protocol: see internal/liveshare/signal.go. The publisher answers one offer
  * per viewer and forwards ICE both ways; it never parses SDP.
  */
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { buildShareLinks, type ShareLink } from '@/composables/useShareLinks'
 import { LiveMixer } from './useLiveMixer'
+import { useLiveNotes } from './useLiveNotes'
 
 const TAG = 'LiveShare'
 
@@ -44,11 +45,28 @@ const shareLinks = ref<ShareLink[]>([])
 const title = ref('')
 const viewers = ref<LiveViewerInfo[]>([])
 const talkEnabled = ref(false)
+/** Room-level switch: may viewers share their screen? */
+const screenEnabled = ref(false)
+/** Viewer id currently sharing a screen ('' = nobody). */
+const screenSharer = ref('')
+/** The screen a viewer is sharing, as received from that viewer's PC. */
+const remoteScreenStream = shallowRef<MediaStream | null>(null)
 const error = ref('')
 
 interface PublisherPeer {
   pc: RTCPeerConnection
   viewerId: string
+  /** m-line that carries another viewer's screen to this peer (null before setup). */
+  relayTx: RTCRtpTransceiver | null
+  /**
+   * The video track this viewer's m-line carries.
+   *
+   * It exists from the moment the m-line is negotiated — muted, because nobody
+   * is sending yet. `ontrack` alone therefore does NOT mean "this viewer is
+   * sharing"; only the server's screen-state does. The track is kept here so
+   * the state change has something to relay.
+   */
+  screenTrack: MediaStreamTrack | null
 }
 
 let ws: WebSocket | null = null
@@ -66,6 +84,8 @@ let displayStream: MediaStream | null = null
 let micStream: MediaStream | null = null
 /** The mixed track sent to viewers (video + mixed audio). */
 let outVideoTrack: MediaStreamTrack | null = null
+/** The track a viewer is sharing, relayed to every other viewer. */
+let remoteScreenTrack: MediaStreamTrack | null = null
 const peers = new Map<string, PublisherPeer>()
 
 function resetSession(): void {
@@ -89,6 +109,9 @@ function resetSession(): void {
   displayStream = null
   micStream = null
   outVideoTrack = null
+  remoteScreenTrack = null
+  remoteScreenStream.value = null
+  screenSharer.value = ''
   if (ws) {
     try {
       ws.close()
@@ -157,6 +180,10 @@ export function useLiveShare() {
     systemAudio: boolean
     microphone: boolean
     shareTitle?: string
+    /** Enable AI 听记 (transcription + minutes) for this share. */
+    notes?: boolean
+    /** Localised speaker label for a channel ("system" / "mic" / "viewer:<id>"). */
+    notesLabel?: (channel: string) => string
   }): Promise<boolean> {
     if (state.value !== 'idle') return false
     error.value = ''
@@ -168,7 +195,7 @@ export function useLiveShare() {
       const resp = await fetch('/api/live-share', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: opts.shareTitle ?? '' }),
+        body: JSON.stringify({ title: opts.shareTitle ?? '', notes: Boolean(opts.notes) }),
       })
       if (!resp.ok) {
         fail(`create room failed: ${resp.status}`)
@@ -235,6 +262,21 @@ export function useLiveShare() {
       audioCtx = new AudioContext({ sampleRate: 48000 })
       await audioCtx.resume()
       mixer = new LiveMixer(audioCtx, displayStream, micStream)
+
+      // AI 听记 records the same sources, but one channel at a time: the mix
+      // sent to viewers is per-viewer and excludes that viewer, so it cannot be
+      // used to transcribe the meeting. Started before the socket so the first
+      // viewer's audio is never missed.
+      if (opts.notes) {
+        useLiveNotes().start({
+          token: token.value,
+          ctx: audioCtx,
+          systemStream: displayStream,
+          micStream,
+          title: title.value,
+          label: opts.notesLabel,
+        })
+      }
 
       // 5. Open the publisher socket.
       await openSocket()
@@ -309,6 +351,20 @@ export function useLiveShare() {
         // approval queue to track.
         updateViewer(viewerId, { talk: msg.talking ? 'talking' : 'muted' })
         break
+      case 'screen-state':
+        screenEnabled.value = Boolean(msg.screenEnabled)
+        screenSharer.value = viewerId
+        if (!msg.sharing) {
+          clearRemoteScreen()
+          break
+        }
+        // The track usually exists already (negotiated at join); if not, the
+        // ontrack handler picks it up once it arrives.
+        {
+          const peer = peers.get(viewerId)
+          if (peer?.screenTrack) onRemoteScreen(viewerId, peer.screenTrack)
+        }
+        break
       default:
         appLog.d(TAG, 'unhandled publisher frame', type)
     }
@@ -319,7 +375,7 @@ export function useLiveShare() {
     if (!viewerId || peers.has(viewerId)) return
 
     const pc = new RTCPeerConnection({ iceServers: [] })
-    peers.set(viewerId, { pc, viewerId })
+    peers.set(viewerId, { pc, viewerId, relayTx: null, screenTrack: null })
     viewers.value = [...viewers.value, { id: viewerId, name: '', talk: 'muted' }]
 
     // One destination per viewer, carrying system audio + mic + the OTHER
@@ -329,25 +385,44 @@ export function useLiveShare() {
     // per received stream, so two streams means the second assignment replaces
     // the first and the viewer gets either video or audio, never both.
     const outgoing = new MediaStream()
-    if (outVideoTrack) {
-      outgoing.addTrack(outVideoTrack)
-      pc.addTrack(outVideoTrack, outgoing)
-    }
-    if (mixed) {
-      outgoing.addTrack(mixed)
-      pc.addTrack(mixed, outgoing)
-    }
+    if (outVideoTrack) outgoing.addTrack(outVideoTrack)
+    if (mixed) outgoing.addTrack(mixed)
 
-    // No extra audio transceiver here: `addTrack(mixed)` above already created a
-    // sendrecv audio transceiver, which is the slot the viewer's microphone
-    // arrives on. Adding a second one would leave an empty m-line that a later
-    // offer could bind to instead of the mixed track.
+    // THREE m-lines, in this exact order (a contract with liveViewer.ts):
+    //   1 audio  — our mix down, the viewer's microphone up
+    //   2 video  — our picture down, the viewer's shared screen up
+    //   3 video  — another viewer's screen, relayed down
+    // They are reserved up front so starting/stopping a share only needs
+    // replaceTrack. Adding an m-line mid-call would force a renegotiation on a
+    // connection that is already carrying the meeting.
+    if (mixed) pc.addTransceiver(mixed, { direction: 'sendrecv', streams: [outgoing] })
+    else pc.addTransceiver('audio', { direction: 'sendrecv' })
+    if (outVideoTrack) pc.addTransceiver(outVideoTrack, { direction: 'sendrecv', streams: [outgoing] })
+    else pc.addTransceiver('video', { direction: 'sendrecv' })
+    const relayTx = pc.addTransceiver('video', { direction: 'sendonly' })
+    if (remoteScreenTrack) void relayTx.sender.replaceTrack(remoteScreenTrack).catch(() => undefined)
+    const peer = peers.get(viewerId)
+    if (peer) peer.relayTx = relayTx
 
     pc.ontrack = (ev) => {
-      if (ev.track.kind !== 'audio') return
+      if (ev.track.kind === 'video') {
+        // The only video this side receives is this viewer's shared screen.
+        // It arrives (muted) at negotiation time, so remember it but wait for
+        // the server to say that this viewer is actually sharing.
+        const p = peers.get(viewerId)
+        if (p) p.screenTrack = ev.track
+        ev.track.addEventListener('ended', () => {
+          if (screenSharer.value === viewerId) clearRemoteScreen()
+        })
+        if (screenSharer.value === viewerId) onRemoteScreen(viewerId, ev.track)
+        return
+      }
       const stream = ev.streams[0] ?? new MediaStream([ev.track])
       // Route it to everyone EXCEPT this viewer.
       mixer?.attachRemote(viewerId, stream)
+      // …and transcribe it on its own channel, so the line is attributed to
+      // this viewer rather than merged into the system audio.
+      useLiveNotes().addViewer(viewerId, stream)
     }
     pc.onicecandidate = (ev) => {
       if (ev.candidate) {
@@ -395,11 +470,55 @@ export function useLiveShare() {
       peers.delete(viewerId)
     }
     mixer?.removeViewer(viewerId)
+    useLiveNotes().removeViewer(viewerId)
+    if (screenSharer.value === viewerId) clearRemoteScreen()
     viewers.value = viewers.value.filter((v) => v.id !== viewerId)
   }
 
   function updateViewer(viewerId: string, patch: Partial<LiveViewerInfo>): void {
     viewers.value = viewers.value.map((v) => (v.id === viewerId ? { ...v, ...patch } : v))
+  }
+
+  /**
+   * A viewer's screen arrived.
+   *
+   * Relayed to every OTHER viewer with replaceTrack on the third m-line: no
+   * renegotiation, and the sharer never gets its own picture back (it would
+   * show up as an echo of their own screen, one network hop behind).
+   */
+  function onRemoteScreen(viewerId: string, track: MediaStreamTrack): void {
+    remoteScreenTrack = track
+    remoteScreenStream.value = new MediaStream([track])
+    screenSharer.value = viewerId
+    track.addEventListener('ended', () => {
+      if (remoteScreenTrack === track) clearRemoteScreen()
+    })
+    for (const [id, peer] of peers) {
+      if (id === viewerId) continue
+      void peer.relayTx?.sender.replaceTrack(track).catch((e) => {
+        appLog.w(TAG, 'relay replaceTrack failed', id, e)
+      })
+    }
+  }
+
+  /** Drop the relayed screen and detach it from every viewer. */
+  function clearRemoteScreen(): void {
+    remoteScreenTrack = null
+    remoteScreenStream.value = null
+    for (const peer of peers.values()) {
+      void peer.relayTx?.sender.replaceTrack(null).catch(() => undefined)
+    }
+  }
+
+  /** Enable/disable audience screen sharing for the whole room. */
+  function setScreenEnabled(on: boolean): void {
+    screenEnabled.value = on
+    send({ type: 'set-screen-enabled', enabled: on })
+  }
+
+  /** Stop one viewer's screen share without disabling the switch. */
+  function revokeScreen(viewerId: string): void {
+    send({ type: 'screen-revoke', viewerId })
   }
 
   /** Enable/disable audience speech for the whole room. */
@@ -425,6 +544,13 @@ export function useLiveShare() {
     // Capture ownership before resetSession() clears it.
     const mayDelete = ownsRoom
 
+    // Stop the notes recorders and wait for their last blobs BEFORE the audio
+    // context is closed: MediaRecorder produces the final chunk in `onstop`,
+    // so closing first would silently drop the last few seconds of the meeting.
+    const notes = useLiveNotes()
+    const hadNotes = notes.phase.value !== 'idle'
+    if (hadNotes) await notes.stopCapture()
+
     send({ type: 'end' })
     resetSession()
     state.value = 'idle'
@@ -433,6 +559,13 @@ export function useLiveShare() {
     shareLinks.value = []
     viewers.value = []
     talkEnabled.value = false
+    screenEnabled.value = false
+    screenSharer.value = ''
+    remoteScreenStream.value = null
+
+    // Uploads and minutes generation continue in the background; the dialog
+    // watches the notes state, not this promise.
+    if (hadNotes) void notes.finishUploads()
 
     if (tok && mayDelete) {
       try {
@@ -453,18 +586,24 @@ export function useLiveShare() {
     title,
     viewers,
     talkEnabled,
+    screenEnabled,
+    screenSharer,
+    remoteScreenStream,
     error,
     start,
     stop,
     setTalkEnabled,
     revokeTalk,
     muteAll,
+    setScreenEnabled,
+    revokeScreen,
   }
 }
 
 /** Test seam: drop all module state without touching the network. */
 export function _resetLiveShareForTest(): void {
   resetSession()
+  useLiveNotes().reset()
   state.value = 'idle'
   token.value = ''
   shareUrl.value = ''

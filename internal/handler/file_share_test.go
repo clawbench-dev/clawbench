@@ -1178,8 +1178,17 @@ func TestSharePublic_DocServesDocumentWithRealBasePath(t *testing.T) {
 	// Without it the browser downloads the file instead of rendering it.
 	assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
 	// ...and the sandbox CSP is what makes that safe (see serveShareDocFile).
-	assert.Contains(t, w.Header().Get("Content-Security-Policy"), "sandbox")
-	assert.NotContains(t, w.Header().Get("Content-Security-Policy"), "allow-same-origin")
+	csp := w.Header().Get("Content-Security-Policy")
+	assert.Contains(t, csp, "sandbox")
+	// Popups must be allowed, and allowed to ESCAPE the sandbox: the iframe
+	// attribute alone cannot do it (the flags are the intersection), and without
+	// the escape the new tab inherits the sandbox, where the target page's own
+	// JS dies in an opaque origin. Asserted as one prefix so "allow-popups"
+	// cannot be satisfied by the "-to-escape-sandbox" suffix alone.
+	assert.Contains(t, csp, "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox;")
+	// Still no origin for the document itself — that pair would let it drop its
+	// own sandbox and read the reader's session.
+	assert.NotContains(t, csp, "allow-same-origin")
 	assert.Equal(t, "no-referrer", w.Header().Get("Referrer-Policy"))
 	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
 }

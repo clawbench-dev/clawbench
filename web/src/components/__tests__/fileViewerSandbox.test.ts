@@ -108,4 +108,18 @@ describe('FileViewer iframe sandbox (ISS-021, decision reversed)', () => {
     expect(fnBody![0]).toContain('isAbsolutePath(path)')
     expect(fnBody![0]).toMatch(/isAbsolutePath\(path\)\)\s*return ''/)
   })
+
+  it('takes over outbound-link clicks on load (no allow-popups)', () => {
+    // Withholding `allow-popups` (above) makes every `target="_blank"` link in
+    // the previewed document a dead tap. The viewer must therefore install the
+    // link handler on each load — the behaviour of the handler itself is
+    // covered in utils/__tests__/htmlPreview.test.ts, and the quick-preview
+    // wiring in HtmlPreviewBody.test.ts.
+    const loadHandler = source.match(/function onHtmlPreviewLoad\(\)[\s\S]*?\n\}/)
+    expect(loadHandler, 'onHtmlPreviewLoad not found').not.toBeNull()
+    expect(loadHandler![0]).toContain('installPreviewLinkHandler(htmlPreviewRef.value)')
+    // Disposed first: a reload is a new document, and the previous listener
+    // must not stack on top of the new one.
+    expect(loadHandler![0]).toMatch(/disposeHtmlLinkHandler\?\.\(\)[\s\S]*installPreviewLinkHandler/)
+  })
 })

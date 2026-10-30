@@ -60,6 +60,10 @@
           v-if="card.title === t('settings.items.wallpaperSection')"
           :description="t('settings.items.wallpaperDesc')"
         />
+        <!-- HTTPS certificate: status + one-click self-signed generation. The
+             generator also exists as `clawbench --gen-cert`, but the people who
+             need HTTPS are exactly the ones who never open a terminal. -->
+        <TlsCertPanel v-if="card.title === t('settings.items.tlsSection')" />
         <!-- Forge credentials: write-only tokens, so a dedicated row manages
              per-host tokens and never renders a stored value. -->
         <ForgeCredentialsRow
@@ -156,6 +160,7 @@ import SettingsAboutBrand from './SettingsAboutBrand.vue'
 import WallpaperSetting from './WallpaperSetting.vue'
 import ForgeCredentialsRow from './ForgeCredentialsRow.vue'
 import SkillsSetting from './SkillsSetting.vue'
+import TlsCertPanel from './TlsCertPanel.vue'
 import MCPSetting from './MCPSetting.vue'
 import SkillsDirsSetting from './SkillsDirsSetting.vue'
 import SkillsReposSetting from './SkillsReposSetting.vue'
@@ -369,7 +374,7 @@ const cards = computed<RenderCard[]>(() => {
         //   - panelOpacity   → rendered inside WallpaperSetting
         //   - skillsCard     → supplies the description, rendered by SkillsSetting
         //   - skillsDiscovered → rendered by SkillsDiscoveredSetting
-        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers'])
+        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers', 'tlsCert'])
         if (!PLACEHOLDER_ITEMS.has(entry.spec.key)) {
           cur.items.push(entry.spec)
         }

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -62,11 +62,14 @@ function fakeResponse(opts: {
   statusCode?: number
   /** Gate the body on this promise so a test can cancel mid-stream. */
   release?: Promise<void>
+  /** Error the body after the chunks, mimicking a dropped connection. */
+  failAfter?: Error
 }) {
   const chunks = opts.chunks ?? [Buffer.alloc(0)]
   async function* body() {
     if (opts.release) await opts.release
     for (const c of chunks) yield c
+    if (opts.failAfter) throw opts.failAfter
   }
   const res = Readable.from(body()) as Readable & {
     statusCode: number
@@ -235,5 +238,81 @@ describe('desktop download progress', () => {
 
     release()
     await p.catch(() => {})
+  })
+
+  it('announces the download before the save dialog resolves', async () => {
+    // The renderer hides a bar that saw no event for 3s. Choosing a destination
+    // folder routinely takes longer than that, so an event has to exist while
+    // the dialog is still open — otherwise the bar dies mid-dialog and every
+    // later byte count is dropped as stale ("no progress at all").
+    let resolveDialog!: (r: { canceled: boolean; filePath: string }) => void
+    vi.mocked(dialog.showSaveDialog).mockReturnValue(
+      new Promise((r) => { resolveDialog = r }) as ReturnType<typeof dialog.showSaveDialog>
+    )
+    fakeResponse({ contentLength: 5, chunks: [Buffer.from('hello')] })
+
+    const p = downloadFileByPath('data/out.bin', 'out.bin', 31)
+
+    await vi.waitFor(() => {
+      const announced = sentEvents.some(e => (e.payload as { id: number }).id === 31)
+      expect(announced).toBe(true)
+    })
+
+    resolveDialog({ canceled: false, filePath: dest })
+    await p
+    expect(readFileSync(dest, 'utf8')).toBe('hello')
+  })
+
+  it('supersedes an in-flight transfer to the same destination', async () => {
+    // Retrying a download that looked stuck used to start a second transfer to
+    // the same path: two write streams truncate the file and then write at
+    // independent offsets, so the result was interleaved garbage.
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((r) => { releaseFirst = r })
+    const { req: firstReq } = fakeResponse({
+      contentLength: 4, chunks: [Buffer.from('AAAA')], release: firstGate,
+    })
+
+    const first = downloadFileByPath('data/a.bin', 'a.bin', 41)
+    await vi.waitFor(() => expect(httpGetImpl).toHaveBeenCalled())
+
+    fakeResponse({ contentLength: 4, chunks: [Buffer.from('BBBB')] })
+    await downloadFileByPath('data/a.bin', 'a.bin', 42)
+
+    expect(firstReq.destroy).toHaveBeenCalled()
+    // Only the second attempt's bytes are on disk, intact.
+    expect(readFileSync(dest, 'utf8')).toBe('BBBB')
+
+    releaseFirst()
+    await first.catch(() => {})
+  })
+
+  it('removes the partial file when the connection drops mid-transfer', async () => {
+    // `pipe` forwards data but not errors. Without handling them the promise
+    // never settled and a truncated file stayed on disk looking complete.
+    fakeResponse({
+      contentLength: 10,
+      chunks: [Buffer.from('abc')],
+      failAfter: new Error('ECONNRESET'),
+    })
+
+    await expect(downloadFileByPath('data/out.bin', 'out.bin', 51)).rejects.toThrow('ECONNRESET')
+
+    expect(existsSync(dest)).toBe(false)
+    const last = sentEvents.at(-1)!.payload as { done: boolean; error: boolean; cancelled: boolean }
+    expect(last.done).toBe(true)
+    expect(last.error).toBe(true)
+    expect(last.cancelled).toBe(false)
+  })
+
+  it('leaves an existing destination file alone when the request fails', async () => {
+    // Nothing was written, so cleanup must not unlink what the user already had
+    // there (the save dialog offered to overwrite it, and that never happened).
+    writeFileSync(dest, 'keep')
+    fakeResponse({ statusCode: 404 })
+
+    await expect(downloadFileByPath('missing.bin', 'missing.bin', 61)).rejects.toThrow('HTTP 404')
+
+    expect(readFileSync(dest, 'utf8')).toBe('keep')
   })
 })

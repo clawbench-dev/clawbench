@@ -179,7 +179,7 @@
       </div>
 
       <div class="session-search-content">
-        <PanelSkeleton v-if="searchState.loading" variant="list" :rows="8" :meta="true" :label="t('sessionSearch.searching')" />
+        <PanelSkeleton v-if="searchState.loading" class="session-search-skeleton" variant="list" :rows="8" :meta="true" :label="t('sessionSearch.searching')" />
         <div v-else-if="searchState.error" class="session-search-error">{{ searchState.error }}</div>
         <div v-else-if="searchState.results.length === 0" class="session-search-empty">{{ t('sessionSearch.noResults') }}</div>
         <div v-else class="session-search-results" ref="resultsRef">
@@ -226,8 +226,17 @@
         <span class="detail-meta-time">{{ formatRelativeTime(selectedSession.created_at) }}</span>
       </div>
 
-      <!-- Chunk list (scrollable via .bs-body) -->
-      <PanelSkeleton v-if="lazyLoading" variant="text" :rows="10" :label="t('sessionSearch.loadingPreview')" />
+      <!-- Chunk list (scrollable via .bs-body). The placeholder previews a chunk
+           row, so it sits on the row's own inset — the skeleton primitive has
+           no horizontal padding of its own and `.detail-page` has none either,
+           which would run the lines flush to both edges. -->
+      <PanelSkeleton
+        v-if="lazyLoading"
+        class="detail-skeleton"
+        variant="text"
+        :rows="10"
+        :label="t('sessionSearch.loadingPreview')"
+      />
       <div v-else-if="detailChunks.length === 0" class="detail-empty">{{ t('sessionSearch.noPreview') }}</div>
       <div v-for="chunk in detailChunks" :key="chunk.chunk_id" class="detail-chunk">
         <div class="detail-chunk-head">
@@ -967,6 +976,12 @@ defineExpose({ focusSearchInput })
   flex-direction: column;
 }
 
+/* Rows are inset 14dp (see `.session-search-item`); the skeleton has to land on
+   the same edge or the results jump sideways when they arrive. */
+.session-search-skeleton {
+  --panel-skeleton-inset: calc(14 * var(--dp));
+}
+
 .session-search-empty {
   padding: calc(24 * var(--dp));
   text-align: center;
@@ -1302,6 +1317,13 @@ defineExpose({ focusSearchInput })
 .detail-chunk {
   padding: var(--space-5) calc(14 * var(--dp));
   border-bottom: 1px solid var(--border-color, rgba(0, 0, 0, 0.04));
+}
+
+/* The loading placeholder previews a chunk row, so it takes the same horizontal
+   inset. Keep in sync with `.detail-chunk` below. */
+.detail-skeleton {
+  --panel-skeleton-inset: calc(14 * var(--dp));
+  padding: var(--space-2) 0;
 }
 
 .detail-empty {

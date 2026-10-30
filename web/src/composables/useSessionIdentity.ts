@@ -13,6 +13,20 @@ import type { ForkTarget } from '@/composables/useChatSession.ts'
 
 const TAG = 'SessionIdentity'
 
+/**
+ * A session created without switching to it: its id plus the title/agent the
+ * server assigned. Callers that render it immediately (the quote bar's
+ * destination row) need both, since the session list has not refetched yet.
+ */
+export interface CreatedSession {
+  id: string
+  title: string
+  agentId: string
+}
+
+/** Failure value of {@link CreatedSession} — an empty id means "nothing made". */
+const EMPTY_CREATED_SESSION: CreatedSession = { id: '', title: '', agentId: '' }
+
 // ───────────────────────────────────────────────────────────
 // Module-level singleton state — shared across the whole app.
 // Session identity is globally needed (App.vue, QuoteQuestionBar,
@@ -1054,9 +1068,13 @@ export function useSessionIdentity() {
    * is exactly that — the backend resolves the default agent when no agentId is
    * given — so this deliberately does not touch identity or the message list.
    *
-   * Returns the new session id, or '' on failure.
+   * Returns the new session's id plus the title/agent the server assigned, or an
+   * all-empty record on failure. The metadata travels with the create response
+   * on purpose: a caller that shows the new session BEFORE the list refresh
+   * (the quote bar's "发送到" row) would otherwise have to invent a name and
+   * lose the agent icon.
    */
-  async function createSessionInBackground(): Promise<string> {
+  async function createSessionInBackground(): Promise<CreatedSession> {
     try {
       const resp = await fetch('/api/ai/sessions', {
         method: 'POST',
@@ -1066,16 +1084,20 @@ export function useSessionIdentity() {
       const data = await resp.json()
       if (!resp.ok || !data.ok || !data.sessionId) {
         appLog.w(TAG, `createSessionInBackground failed: ${resp.status}`)
-        return ''
+        return EMPTY_CREATED_SESSION
       }
       // The session list (sidebar/drawer) is otherwise unaware of the new row.
       // Bumping the shared version is the same signal a tag edit uses.
       store.state.sessionListVersion++
       if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
-      return data.sessionId as string
+      return {
+        id: data.sessionId as string,
+        title: typeof data.title === 'string' ? data.title : '',
+        agentId: typeof data.agentId === 'string' ? data.agentId : '',
+      }
     } catch (err) {
       appLog.e(TAG, 'createSessionInBackground failed:', err)
-      return ''
+      return EMPTY_CREATED_SESSION
     }
   }
 

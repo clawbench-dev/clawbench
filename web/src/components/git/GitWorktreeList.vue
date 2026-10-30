@@ -127,6 +127,8 @@ function toggleCollapse() {
 }
 
 .section-skeleton {
+  /* 12dp is the row card's inset (GitWorktreeCard). */
+  --panel-skeleton-inset: calc(12 * var(--dp));
   padding: var(--space-2) 0;
 }
 

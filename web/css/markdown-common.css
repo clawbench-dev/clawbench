@@ -203,12 +203,14 @@
 }
 
 .chat-message.user .code-block-copy-btn,
-.chat-message.user .code-block-wrap-btn {
+.chat-message.user .code-block-wrap-btn,
+.chat-message.user .code-block-landscape-btn {
     color: rgba(255, 255, 255, 0.7);
 }
 
 .chat-message.user .code-block-copy-btn:hover,
-.chat-message.user .code-block-wrap-btn:hover {
+.chat-message.user .code-block-wrap-btn:hover,
+.chat-message.user .code-block-landscape-btn:hover {
     color: #ffffff;
     background: rgba(255, 255, 255, 0.1);
 }
@@ -300,18 +302,21 @@
 }
 
 .chat-message.user .table-block-copy-btn,
-.chat-message.user .table-block-wrap-btn {
+.chat-message.user .table-block-wrap-btn,
+.chat-message.user .table-block-landscape-btn {
     color: rgba(255, 255, 255, 0.7);
 }
 
 .chat-message.user .table-block-copy-btn:hover,
-.chat-message.user .table-block-wrap-btn:hover {
+.chat-message.user .table-block-wrap-btn:hover,
+.chat-message.user .table-block-landscape-btn:hover {
     color: #ffffff;
     background: rgba(255, 255, 255, 0.1);
 }
 
 .chat-message.user .table-block-copy-btn:active,
-.chat-message.user .table-block-wrap-btn:active {
+.chat-message.user .table-block-wrap-btn:active,
+.chat-message.user .table-block-landscape-btn:active {
     background: rgba(255, 255, 255, 0.15);
 }
 
@@ -326,6 +331,14 @@
 .chat-message.user .table-block-copy-btn[aria-expanded="true"] {
     color: #ffffff;
     background: rgba(255, 255, 255, 0.1);
+}
+
+/* The row viewer is already a focused single-row view, and it paints ABOVE the
+   landscape overlay — offering "landscape" there would open a layer behind the
+   dialog the user is looking at. */
+.table-row-value .table-block-landscape-btn,
+.table-row-value .code-block-landscape-btn {
+    display: none;
 }
 
 .chat-message.user .table-block-copy-menu {

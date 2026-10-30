@@ -50,4 +50,13 @@ describe('quote bar → App.vue target plumbing', () => {
     expect(app).toMatch(/function onQuoteBarAdd\([^)]*opts\?[^)]*\)/)
     expect(app).toMatch(/function onQuoteBarSend\([^)]*opts\?[^)]*\)/)
   })
+
+  it('tells the session picker which intent it is serving', () => {
+    // `mode` is what drops the "add and open" arrow in the quote bar's
+    // `choose` flow (nothing is delivered there, so the arrow would duplicate
+    // the row). The dialog defaults to `deliver`, so losing this binding is
+    // silent: the arrow simply reappears and every picker test still passes.
+    expect(app).toMatch(/<SessionPickerDialog[\s\S]*?:mode="pickerIntent"/)
+    expect(app).toMatch(/const pickerIntent = usePickerIntent\(\)/)
+  })
 })

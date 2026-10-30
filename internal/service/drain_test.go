@@ -1156,7 +1156,6 @@ func TestDrainLoop_AutoContinue_DisabledCrashStillTerminates(t *testing.T) {
 			Ctx:         context.Background(),
 			SessionID:   sessionID,
 			ProjectPath: "/test",
-			BackendName: "codebuddy",
 			RunTurn:     func(prompt string) DrainResult { return DrainResult{} },
 		}),
 		MarkDoneAndSendFinal: func(event ai.StreamEvent) { finalEvent = event },

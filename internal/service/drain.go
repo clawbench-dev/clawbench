@@ -143,7 +143,7 @@ func abortDrain(cfg DrainConfig, cause error) {
 	_ = ClearQueuedMessages(cfg.SessionID)
 	if len(queueIDs) > 0 {
 		emitDrainEvent(cfg.SessionID, ai.StreamEvent{
-			Type: "queue_cancel",
+			Type: eventTypeQueueCancel,
 			QueueEvent: &ai.QueueEventData{
 				SessionID: cfg.SessionID,
 				QueueIDs:  queueIDs,
@@ -174,7 +174,7 @@ func clearQueueAndEmitCancel(cfg DrainConfig) {
 	// Emit queue_cancel so frontend can immediately remove pending messages
 	if len(queueIDs) > 0 {
 		emitDrainEvent(cfg.SessionID, ai.StreamEvent{
-			Type: "queue_cancel",
+			Type: eventTypeQueueCancel,
 			QueueEvent: &ai.QueueEventData{
 				SessionID: cfg.SessionID,
 				QueueIDs:  queueIDs,

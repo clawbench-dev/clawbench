@@ -1270,13 +1270,20 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
  *
  * -8dp is the gap the server button already uses to tuck up against its
  * neighbour, so the theme → share → server rhythm matches the old
- * theme → server rhythm instead of inventing a third spacing.
+ * theme → server rhythm instead of inventing a third spacing. Both neighbours
+ * must therefore end up with the SAME margin: an asymmetric pair shows up as
+ * one visibly wider gap (measured 61px vs 50px centre-to-centre on a 543px
+ * header, i.e. the full 8dp).
  *
- * The selector is doubled because .theme-quick-toggle sets `margin-left: auto`
- * at the same specificity but LATER in this file — a bare .live-share-toggle
- * rule would lose to it.
+ * The `.header` prefix is load-bearing, not decoration. `.header--has-meter
+ * .theme-quick-toggle` is (0,2,0) and sits LATER in this file, and the share
+ * button carries `.theme-quick-toggle` too — so it matched that rule and
+ * silently took `margin-left: 0` instead of -8dp whenever the usage capsule was
+ * on screen. Doubling the class alone (also (0,2,0)) is not enough; the extra
+ * ancestor takes this rule to (0,3,0) so it wins by specificity rather than by
+ * source order. headerClusterSpacing.test.ts pins that.
  */
-.theme-quick-toggle.live-share-toggle {
+.header .theme-quick-toggle.live-share-toggle {
     margin-left: calc(-8 * var(--dp));
     position: relative;
 }

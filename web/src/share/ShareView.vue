@@ -154,17 +154,24 @@
 
                The URL is path-addressed (/doc/ + the file's own directory), so
                the browser derives the base for free. That endpoint serves
-               text/html under a `sandbox allow-scripts` CSP, which keeps the
+               text/html under a `sandbox allow-scripts …` CSP, which keeps the
                document in an OPAQUE ORIGIN — no cookies, no authenticated API,
                no parent DOM. `allow-scripts` mirrors the iframe sandbox below:
                a shared document legitimately runs its own JS, but nothing that
                needs an origin. Do NOT add `allow-same-origin` here: that pair
-               would let the document remove its own sandbox. -->
+               would let the document remove its own sandbox.
+
+               `allow-popups allow-popups-to-escape-sandbox` (in BOTH places —
+               the flags are the intersection) are what make an outbound link
+               clickable: without them a `target="_blank"` click is discarded
+               silently, and with only `allow-popups` the new tab inherits the
+               sandbox and the target page's own JS dies in an opaque origin.
+               The popup runs at the TARGET's origin, never this one. -->
           <iframe
             v-else-if="isHtml && canRenderInline && viewMode === 'rendered'"
             class="share-html-iframe"
             :src="htmlPreviewSrc"
-            sandbox="allow-scripts"
+            sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
           />
 
           <!-- Raw source view for markdown/html/openapi after the view toggle,

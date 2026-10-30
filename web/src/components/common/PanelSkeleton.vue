@@ -101,6 +101,23 @@ const textRows = computed(() =>
 </script>
 
 <style scoped>
+/* ── Per-surface inset (`--panel-skeleton-inset`) ──
+   The one thing every caller has to get right is the HORIZONTAL inset: the
+   placeholder must sit exactly where the real rows' text sits, or the panel
+   jumps sideways the moment the data lands. There is no single correct number —
+   row padding ranges from 0 (full-bleed rows) to 18dp (a card row inside a
+   padded list) — so it is a variable with the most common value as its
+   fallback, and each surface overrides it next to the rule that declares the
+   real row it mirrors:
+
+     .projects-skeleton { --panel-skeleton-inset: calc(16 * var(--dp)); }
+
+   The variable is read on the three shape rules below (not on the root), so a
+   caller may set it on the skeleton itself or on any ancestor. Defaults:
+   rows 8dp (the modal row padding), tiles 8dp (matches .file-grid's gutter),
+   paragraph bodies 0 (those are dropped into a container that already pads —
+   `.forge-detail-body`, the dialogs, the share pages). */
+
 /* `width: 100%` is load-bearing, not cosmetic. The root is placed inside the
    panels' legacy loading wrappers, which are `display: flex` with the DEFAULT
    row direction: as a flex item this element then sizes to its content, and
@@ -137,7 +154,7 @@ const textRows = computed(() =>
   align-items: center;
   gap: var(--space-4);
   min-height: calc(44 * var(--dp));
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--panel-skeleton-inset, var(--space-4));
   min-width: 0;
 }
 
@@ -176,7 +193,7 @@ const textRows = computed(() =>
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(calc(90 * var(--dp)), 1fr));
   gap: var(--space-4);
-  padding: var(--space-4);
+  padding: var(--space-4) var(--panel-skeleton-inset, var(--space-4));
   align-content: start;
 }
 
@@ -204,7 +221,7 @@ const textRows = computed(() =>
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  padding: var(--space-4) 0;
+  padding: var(--space-4) var(--panel-skeleton-inset, 0);
   min-width: 0;
 }
 </style>

@@ -5,7 +5,7 @@ RAG：同一数据库文件，独立连接池
 
 > 项目身份统一为整数 `project_id`（`projects` 表），所有项目作用域表存 id 而非路径——改名/移动目录只需一条 UPDATE。`project_id=0` 是保留哨兵（全局标签、无法归属的分享），故不声明外键。
 >
-> 本文档按**全新安装**跑完 `service.InitDB()` 后的实际 schema 描述（`sqlite_master` + `pragma_table_info` 实测），共 **36 张表**（含迁移台账 `schema_migrations`）。RAG 的三张表由 `internal/rag` 独立连接池创建，单列于文末。
+> 本文档按**全新安装**跑完 `service.InitDB()` 后的实际 schema 描述（`sqlite_master` + `pragma_table_info` 实测），共 **39 张表**（含迁移台账 `schema_migrations`）。RAG 的三张表由 `internal/rag` 独立连接池创建，单列于文末。
 >
 > 升级路径上的列由 `database.go` 的 `ALTER TABLE ... ADD COLUMN` 补齐（102 条），最终形状与本文件一致；但 `CREATE TABLE IF NOT EXISTS` 对已存在的表是空操作，**所以老库不会自动获得新列，只能靠 ALTER**。改 schema 时必须两条路一起改。
 
@@ -394,6 +394,37 @@ UNIQUE：`(session_id, tag_id)`
 
 标题、后端、消息数**不在表里**：管理列表从 `chat_sessions` JOIN 实时取，消息数由 `len(message_ids)` 算出，因此改名会同步反映。
 
+### live_notes_segments（直播共享 AI 听记的分段转写）
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | 插入顺序（也是增量游标；说话顺序看 `started_at`） |
+| token | TEXT | NOT NULL | — | 分享 token（房间唯一标识；房间在内存里，故无外键） |
+| project_id | INTEGER | NOT NULL | 0 | 发布端项目，用于鉴权（房间已销毁时） |
+| channel | TEXT | NOT NULL | — | `system` / `mic` / `viewer:<id>`——**信道即说话人** |
+| speaker | TEXT | NOT NULL | `''` | 发布端写入的展示标签（已本地化，也用于喂给纪要模型） |
+| started_at | INTEGER | NOT NULL | 0 | 该段音频起点（Unix 毫秒，发布端单一时钟，跨信道可比） |
+| duration_ms | INTEGER | NOT NULL | 0 | 段长 |
+| text | TEXT | NOT NULL | — | 转写文本（静音段不落库） |
+
+索引：`idx_live_note_segments_token(token, started_at)`。保留 7 天，由房间回收器每小时清理。
+
+### live_notes（直播共享的会议纪要）
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| token | TEXT | PRIMARY KEY | — | 分享 token |
+| project_id | INTEGER | NOT NULL | 0 | 发布端项目 |
+| title | TEXT | NOT NULL | `''` | 会议标题 |
+| status | TEXT | NOT NULL | `idle` | `idle` / `generating` / `ready` / `failed` |
+| minutes | TEXT | NOT NULL | `''` | 生成的 Markdown 纪要 |
+| error | TEXT | NOT NULL | `''` | 失败原因（仅 `failed`） |
+| file_path | TEXT | NOT NULL | `''` | 纪要 Markdown 在项目内的落盘路径（`<项目>/.clawbench/notes/…`）；项目不可用时为空 |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | |
+| updated_at | DATETIME | | CURRENT_TIMESTAMP | 保留期判定依据 |
+
+索引：`idx_live_notes_updated(updated_at)`。
+
 ### project_forges（项目↔代码托管绑定）
 
 | 列名 | 类型 | 约束 | 默认值 | 说明 |
@@ -548,6 +579,23 @@ IM 机器人推送的暂存队列（**不是**通知中心的数据源，两者�
 | last_session_id | TEXT | NOT NULL | `''` | 最近一次对话绑定的 ClawBench 会话 |
 
 索引：`idx_feishu_user UNIQUE(user_id)`
+
+### wechat_subscribers（个人微信订阅者）
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
+| user_id | TEXT | NOT NULL UNIQUE | — | 微信用户 ID（`from_user_id`） |
+| conversation_id | TEXT | NOT NULL | `''` | 会话 ID |
+| user_name | TEXT | NOT NULL | `''` | 用户名 |
+| source | TEXT | NOT NULL | `'stream'` | 订阅来源；微信只有 `stream`（主动推送必须带 `context_token`，静态名单是死字段） |
+| context_token | TEXT | NOT NULL | `''` | 用户最近一条入站消息带回的回复令牌；主动推送必填 |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
+| last_session_id | TEXT | NOT NULL | `''` | 最近一次对话绑定的 ClawBench 会话 |
+
+索引：`idx_wechat_user UNIQUE(user_id)`
+
+`context_token` 落库而不是只留在内存里：iLink SDK 的令牌缓存是进程内 `sync.Map`，重启即空，只靠它会让每次重启后的推送静默失效，直到每个用户恰好再发一条消息。
 
 ### group_pending_bcc（群密送待投递）
 
@@ -1115,6 +1163,17 @@ erDiagram
         TEXT chat_id
         TEXT user_name
         TEXT source
+        DATETIME created_at
+        TEXT last_session_id
+    }
+
+    wechat_subscribers {
+        INTEGER id PK
+        TEXT user_id
+        TEXT conversation_id
+        TEXT user_name
+        TEXT source
+        TEXT context_token
         DATETIME created_at
         TEXT last_session_id
     }

@@ -9,6 +9,7 @@ import { applyFontConfig } from '@/utils/fontConfig'
 import { normalizeDisplayMode } from '@/utils/chatSessionUtils'
 import { resolveUIScale, computeAutoUIScale, currentScreenShortEdge, applyUIScale, readAppliedUIScale } from '@/utils/uiScale'
 import { setLayoutScopeMode } from '@/utils/panelState'
+import { setDefaultBlockWrap } from '@/utils/blockWrapPref'
 import { applyServerLimits } from '@/stores/app.ts'
 
 const LOCAL_PREFIX = 'clawbench-settings-'
@@ -166,6 +167,16 @@ const legacyKeys: Record<string, {
     format: 'raw',
     sideEffect(value) {
       setLayoutScopeMode(value === 'project' ? 'project' : 'global')
+    },
+  },
+  tableWrap: {
+    // No legacy key: this setting is new. The side effect re-applies the mode to
+    // tables already on screen — static block caching means a re-render is not
+    // guaranteed, so without it the switch would look like it did nothing.
+    key: '',
+    format: 'raw',
+    sideEffect(value) {
+      setDefaultBlockWrap(value === true)
     },
   },
   terminalFontSize: {
@@ -410,6 +421,9 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   autoSpeech: false,
   showHidden: false,
   wordWrap: true,
+  // Markdown tables start wrapped unless the user turned the default off
+  // (设置 → 外观 → 显示). Per-table toggles still override it.
+  tableWrap: true,
   lineNumbers: false,
   stickyScroll: true,
   fileView: 'list',

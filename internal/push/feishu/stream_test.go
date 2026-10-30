@@ -247,6 +247,20 @@ type mockSessionMessenger struct {
 	running  map[string]bool
 	sendErr  error
 	SendFn   func(sid, msg string, files []model.FileEntry) error
+
+	// Capabilities for /show, /stop and /new.
+	lastReply       string
+	lastReplyOK     bool
+	lastReplyErr    error
+	wasRunning      bool
+	cleared         int
+	stopFn          func() (bool, int, error)
+	projects        []common.ProjectRef
+	projectsErr     error
+	newSessionID    string
+	newSessionTitle string
+	createErr       error
+	createFn        func(path string) (string, string, error)
 }
 
 func (m *mockSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]common.SessionInfo, error) {
@@ -1362,5 +1376,490 @@ func TestOnMessageReceive_UnsupportedTypeRepliesInsteadOfEmptySend(t *testing.T)
 	}
 	if !strings.Contains(box.get(), "暂不支持") {
 		t.Errorf("reply should explain the unsupported type, got %q", box.get())
+	}
+}
+
+// ---- capabilities added for /show /stop /new ----
+
+func (m *mockSessionMessenger) LastAssistantReply(string) (string, bool, error) {
+	if m.lastReplyErr != nil {
+		return "", false, m.lastReplyErr
+	}
+	return m.lastReply, m.lastReplyOK, nil
+}
+
+func (m *mockSessionMessenger) StopAndClearSession(string) (bool, int, error) {
+	if m.stopFn != nil {
+		return m.stopFn()
+	}
+	return m.wasRunning, m.cleared, nil
+}
+
+func (m *mockSessionMessenger) ListProjects() ([]common.ProjectRef, error) {
+	if m.projectsErr != nil {
+		return nil, m.projectsErr
+	}
+	return m.projects, nil
+}
+
+func (m *mockSessionMessenger) CreateSessionInProject(path string) (string, string, error) {
+	if m.createFn != nil {
+		return m.createFn(path)
+	}
+	return m.newSessionID, m.newSessionTitle, m.createErr
+}
+
+func (m *mockSessionMessengerListError) LastAssistantReply(string) (string, bool, error) {
+	return "", false, nil
+}
+
+func (m *mockSessionMessengerListError) StopAndClearSession(string) (bool, int, error) {
+	return false, 0, nil
+}
+
+func (m *mockSessionMessengerListError) ListProjects() ([]common.ProjectRef, error) {
+	return nil, nil
+}
+
+func (m *mockSessionMessengerListError) CreateSessionInProject(string) (string, string, error) {
+	return "", "", nil
+}
+
+func (m *mockResolveThenFail) LastAssistantReply(string) (string, bool, error) {
+	return "", false, nil
+}
+
+func (m *mockResolveThenFail) StopAndClearSession(string) (bool, int, error) {
+	return false, 0, nil
+}
+
+func (m *mockResolveThenFail) ListProjects() ([]common.ProjectRef, error) {
+	return nil, nil
+}
+
+func (m *mockResolveThenFail) CreateSessionInProject(string) (string, string, error) {
+	return "", "", nil
+}
+
+// ============================================================================
+// /show /stop /new tests
+// ============================================================================
+
+// commandStickySession is the sticky target every /show /stop /new test starts
+// from, so the bare-command cases resolve to a known session.
+const commandStickySession = "abc12345-1111-1111-1111-111111111111"
+
+// feishuCommandEnv installs a sticky-target mock DB and a caller-provided
+// messenger, then returns the manager plus a reply capture box.
+func feishuCommandEnv(t *testing.T, m *mockSessionMessenger) (*Manager, *replyBox) {
+	t.Helper()
+	origDB := db
+	t.Cleanup(func() { db = origDB })
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return commandStickySession, nil },
+	}
+
+	origSM := sessionMessenger
+	t.Cleanup(func() { sessionMessenger = origSM })
+	sessionMessenger = m
+
+	box := replyCapture(t)
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+	return mgr, box
+}
+
+func TestOnMessageReceive_ShowLastReply(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions:    stickySessions,
+		lastReply:   "the full answer",
+		lastReplyOK: true,
+	}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
+	if !strings.Contains(box.get(), "the full answer") {
+		t.Errorf("expected the last reply in the response, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_ShowEmptyReply(t *testing.T) {
+	m := &mockSessionMessenger{sessions: stickySessions, lastReplyOK: false}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
+	if !strings.Contains(box.get(), "还没有已完成的回复") {
+		t.Errorf("expected the empty-reply hint, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_ShowExplicitTarget(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions:    stickySessions,
+		lastReply:   "other answer",
+		lastReplyOK: true,
+	}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show deadbeef"))
+	if !strings.Contains(box.get(), "other answer") {
+		t.Errorf("expected the targeted session's reply, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_StopRunningSession(t *testing.T) {
+	m := &mockSessionMessenger{sessions: stickySessions, wasRunning: true, cleared: 3}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/stop"))
+	out := box.get()
+	if !strings.Contains(out, "已停止") {
+		t.Errorf("expected stop confirmation, got %q", out)
+	}
+	if !strings.Contains(out, "3") {
+		t.Errorf("expected the cleared count, got %q", out)
+	}
+}
+
+func TestOnMessageReceive_StopIdleSession(t *testing.T) {
+	m := &mockSessionMessenger{sessions: stickySessions, wasRunning: false, cleared: 0}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/stop"))
+	if !strings.Contains(box.get(), "未在运行") {
+		t.Errorf("expected the idle wording, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_NewListsProjects(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions: stickySessions,
+		projects: []common.ProjectRef{
+			{Index: 1, Path: "/proj/alpha", Exists: true},
+			{Index: 2, Path: "/proj/beta", Exists: true},
+		},
+	}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new"))
+	out := box.get()
+	if !strings.Contains(out, "/proj/alpha") || !strings.Contains(out, "/proj/beta") {
+		t.Errorf("expected both projects, got %q", out)
+	}
+}
+
+func TestOnMessageReceive_NewCreatesSessionAndMovesSticky(t *testing.T) {
+	var createdIn string
+	m := &mockSessionMessenger{
+		sessions: stickySessions,
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+		createFn: func(path string) (string, string, error) {
+			createdIn = path
+			return "f1e2d3c4-0000-0000-0000-000000000000", "新会话 1", nil
+		},
+	}
+	mgr, setCalls := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", stickySessions)
+	sessionMessenger = m
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+	box := replyCapture(t)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new 1"))
+	if createdIn != "/proj/alpha" {
+		t.Errorf("created in %q, want /proj/alpha", createdIn)
+	}
+	calls := setCalls.snapshot()
+	if len(calls) != 1 || calls[0] != "f1e2d3c4-0000-0000-0000-000000000000" {
+		t.Errorf("sticky writes = %v, want one write of the new session", calls)
+	}
+	if !strings.Contains(box.get(), "@f1e2d3c4") {
+		t.Errorf("expected the new short id in the reply, got %q", box.get())
+	}
+	// The reply must name the PROJECT, not the session title.
+	if !strings.Contains(box.get(), "/proj/alpha") {
+		t.Errorf("expected the project path in the reply, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_NewOutOfRange(t *testing.T) {
+	var called bool
+	m := &mockSessionMessenger{
+		sessions: stickySessions,
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+		createFn: func(string) (string, string, error) { called = true; return "", "", nil },
+	}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new 9"))
+	if called {
+		t.Error("must not create a session for an out-of-range index")
+	}
+	if !strings.Contains(box.get(), "超出范围") {
+		t.Errorf("expected out-of-range error, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_NewMissingDirWarns(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions: stickySessions,
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/gone", Exists: false}},
+		createFn: func(string) (string, string, error) {
+			return "f1e2d3c4-0000-0000-0000-000000000000", "新会话 1", nil
+		},
+	}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new 1"))
+	if !strings.Contains(box.get(), "目录已不存在") {
+		t.Errorf("expected a missing-directory warning, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_ShowNoMessenger(t *testing.T) {
+	mgr, box := feishuCommandEnv(t, &mockSessionMessenger{sessions: stickySessions})
+	// A sticky target is required to reach the handler; without one the command
+	// degrades to the no-target hint before the messenger is consulted.
+	origSM := sessionMessenger
+	sessionMessenger = nil
+	t.Cleanup(func() { sessionMessenger = origSM })
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
+	if !strings.Contains(box.get(), "会话服务不可用") {
+		t.Errorf("expected the service-unavailable reply, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_ShowResolveFails(t *testing.T) {
+	mgr, box := feishuCommandEnv(t, &mockSessionMessenger{sessions: stickySessions})
+	origDB := db
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "", nil },
+	}
+	t.Cleanup(func() { db = origDB })
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
+	if !strings.Contains(box.get(), "尚未选择会话") {
+		t.Errorf("expected the no-target hint, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_ShowReplyReadFails(t *testing.T) {
+	m := &mockSessionMessenger{sessions: stickySessions, lastReplyErr: fmt.Errorf("boom")}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
+	if !strings.Contains(box.get(), "会话不可用") {
+		t.Errorf("expected the session-unavailable reply, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_StopNoMessenger(t *testing.T) {
+	mgr, box := feishuCommandEnv(t, &mockSessionMessenger{sessions: stickySessions})
+	origSM := sessionMessenger
+	sessionMessenger = nil
+	t.Cleanup(func() { sessionMessenger = origSM })
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/stop"))
+	if !strings.Contains(box.get(), "会话服务不可用") {
+		t.Errorf("expected the service-unavailable reply, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_StopResolveFails(t *testing.T) {
+	mgr, box := feishuCommandEnv(t, &mockSessionMessenger{sessions: stickySessions})
+	origDB := db
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "", nil },
+	}
+	t.Cleanup(func() { db = origDB })
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/stop"))
+	if !strings.Contains(box.get(), "尚未选择会话") {
+		t.Errorf("expected the no-target hint, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_StopFails(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions: stickySessions,
+		stopFn:   func() (bool, int, error) { return false, 0, fmt.Errorf("boom") },
+	}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/stop"))
+	if !strings.Contains(box.get(), "boom") {
+		t.Errorf("expected the underlying error, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_NewNoMessenger(t *testing.T) {
+	mgr, box := feishuCommandEnv(t, &mockSessionMessenger{sessions: stickySessions})
+	origSM := sessionMessenger
+	sessionMessenger = nil
+	t.Cleanup(func() { sessionMessenger = origSM })
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new"))
+	if !strings.Contains(box.get(), "会话服务不可用") {
+		t.Errorf("expected the service-unavailable reply, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_NewListProjectsFails(t *testing.T) {
+	m := &mockSessionMessenger{sessions: stickySessions, projectsErr: fmt.Errorf("boom")}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new"))
+	// Must be the /new-specific copy, not the subscribe copy ("已订阅…").
+	if !strings.Contains(box.get(), "获取项目列表失败") {
+		t.Errorf("expected the project-list-failure reply, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_NewProjectNotFound(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions: stickySessions,
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+	}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new /nope"))
+	if !strings.Contains(box.get(), "未找到该项目") {
+		t.Errorf("expected the project-not-found error, got %q", box.get())
+	}
+}
+
+func TestOnMessageReceive_NewCreateFails(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions:  stickySessions,
+		projects:  []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+		createErr: fmt.Errorf("boom"),
+	}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/new 1"))
+	if !strings.Contains(box.get(), "boom") {
+		t.Errorf("expected the create error, got %q", box.get())
+	}
+}
+
+// ============================================================================
+// Commands must not be swallowed by the attachment path
+// ============================================================================
+
+// postCommandEnv wires a post-message media environment whose reply is captured,
+// so a test can assert both what reached a session and what the bot answered.
+func postCommandEnv(t *testing.T, sticky string) (*Manager, *replyBox, chan string) {
+	t.Helper()
+	mediaTestServer(t, "image-bytes")
+	reply := replyCapture(t)
+	project := t.TempDir()
+	sessions := []common.SessionInfo{
+		{ID: "abc12345-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: project},
+	}
+	mgr, _ := stickyTestEnv(t, sticky, sessions)
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sent := make(chan string, 2)
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(sid, msg string, _ []model.FileEntry) error {
+		sent <- msg
+		return nil
+	}
+	return mgr, reply, sent
+}
+
+// A slash command sent together with an image used to fall through the media
+// path: it is not RouteToSession, so ResolveTarget resolved the sticky session
+// and SendMessageToSession received Route.Message — which is empty for a
+// command. The command word vanished and the session got a bare attachment.
+func TestOnMessageReceive_CommandWithAttachmentIsRefused(t *testing.T) {
+	for _, text := range []string{"/new", "/stop", "/show", "/new 1"} {
+		t.Run(text, func(t *testing.T) {
+			mgr, reply, sent := postCommandEnv(t, "abc12345-1111-1111-1111-111111111111")
+
+			event := postEvent(`{"zh_cn":{"title":"","content":[[{"tag":"text","text":"` + text +
+				`"}],[{"tag":"img","image_key":"img_1"}]]}}`)
+
+			if err := mgr.onMessageReceive(context.TODO(), event); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			select {
+			case got := <-sent:
+				t.Fatalf("command %q must not be delivered to a session (msg=%q)", text, got)
+			case <-time.After(300 * time.Millisecond):
+			}
+
+			body := waitForReplyText(t, reply)
+			command := strings.Fields(text)[0]
+			if !strings.Contains(body, command) {
+				t.Errorf("reply should name %q, got %q", command, body)
+			}
+			if !strings.Contains(body, "不能和附件一起发送") {
+				t.Errorf("reply should explain the refusal, got %q", body)
+			}
+		})
+	}
+}
+
+// Ordinary text plus an image must still be delivered.
+func TestOnMessageReceive_TextWithAttachmentStillDelivered(t *testing.T) {
+	mgr, reply, sent := postCommandEnv(t, "abc12345-1111-1111-1111-111111111111")
+
+	event := postEvent(`{"zh_cn":{"title":"","content":[[{"tag":"text","text":"看看这张图"}],[{"tag":"img","image_key":"img_1"}]]}}`)
+	if err := mgr.onMessageReceive(context.TODO(), event); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case got := <-sent:
+		if got != "看看这张图" {
+			t.Errorf("message = %q, want the post text", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("text + image must still be delivered")
+	}
+	waitForReplyText(t, reply)
+}
+
+// A /show issued while a turn is still generating must SAY that the text below
+// belongs to the previous turn. The streaming row is deliberately excluded, so
+// without the note the user reads an old answer as the reply to the question
+// they just asked.
+func TestOnMessageReceive_ShowWhileRunningSaysPreviousTurn(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions:    stickySessions,
+		lastReply:   "the previous answer",
+		lastReplyOK: true,
+		running:     map[string]bool{commandStickySession: true},
+	}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
+	out := box.get()
+	if !strings.Contains(out, "上一条") {
+		t.Errorf("expected the previous-turn note, got %q", out)
+	}
+	if !strings.Contains(out, "the previous answer") {
+		t.Errorf("expected the previous answer to still be shown, got %q", out)
+	}
+}
+
+// The note must NOT appear when the session is idle.
+func TestOnMessageReceive_ShowWhileIdleHasNoNote(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions:    stickySessions,
+		lastReply:   "the answer",
+		lastReplyOK: true,
+	}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
+	if strings.Contains(box.get(), "上一条") {
+		t.Errorf("idle session must not carry the running note, got %q", box.get())
 	}
 }

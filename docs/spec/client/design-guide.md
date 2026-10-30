@@ -461,7 +461,13 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
   - **必须铺满容器并左对齐**：`.git-history-loading` / `.forge-loading` / `.task-loading` 等旧容器是 `display:flex` 的**默认横向**容器且 `align-items:center`，直接把骨架塞进去会缩成中间一条窄柱。做法是加 `--skeleton` 修饰类（`align-items:stretch; justify-content:flex-start`），或给骨架一个自带宽度的类。
     - **宽度必须由骨架自己声明（`width:100%`），不能只靠修饰类**：`align-items:stretch` 作用在横向容器的**交叉轴（高度）**上，给不了宽度；而骨架内部所有行宽都是百分比，父宽为 0 时全部归零 —— 实测流水线详情整块量到 **0px**（面板一片空白、看着像没接骨架屏），列表也只剩 leading/meta 的固定宽度（96px / 541px 容器）。守卫 `PanelSkeleton.test.ts` 直接钉源码里的 `width: 100%`（jsdom 不做布局，测不了几何）。
   - **只替换首屏，不替换三种「有内容在场」的加载**：①已有数据的刷新遮罩（文件管理器切目录时的 `dirLoading && displayEntries.length > 0`，旧行必须留在原地）②「加载更多」页脚 ③按钮内联 spinner / 进行中动作（如消息索引的 `jumping`）。这三类继续用 `LoadingIndicator`。
-  - 守卫：`PanelSkeleton.test.ts`（形状 / a11y / 固定宽度）与 `panelSkeletonUsage.test.ts`（清单内的每个面板都必须渲染骨架；除白名单外的面板级 `LoadingIndicator` 一律失败；`.skeleton-block` 必须留在全局表且组件内不得重述）。
+  - **横向内边距必须落在真实行上（`--panel-skeleton-inset`）**：骨架的横向缩进只有一处是对的——**真实行文本的 x**。它不是常量（行内边距从 0 到 18dp 都有：全宽行 0、卡片行要叠上列表容器），所以原语把它做成变量，三个形状各自读它并保留今天的值作为兜底：`list` 8dp、`grid` 8dp、`text` 0（`text` 的调用方本来就落在有 padding 的容器里）。每个面板在自己的规则里覆盖，并在注释里点名它对齐的是哪一行：
+    ```css
+    .projects-skeleton { --panel-skeleton-inset: calc(16 * var(--dp)); } /* = .projects-row */
+    ```
+    **两个已经踩过的坑**：①`text` 变体默认 0 且容器也没有 padding 时（`.forge-detail`、会话搜索下钻的 `.detail-page`），灰条会左右通到边，数据一到整页横向跳 —— 这类必须显式给值；②**不要在外层容器再加一遍**：`.session-list-skeleton` 曾经在骨架自带的 8dp 之上又加 12dp，比真实标题多缩进 8dp，数据到位时内容向左跳。真实行内边距与骨架内边距**是同一个数**，不是相加。
+    守卫 `panelSkeletonInsetCalibration.test.ts` 逐个面板**从真实行规则反解**期望值（行侧是推导出来的，不是照抄数字），改行不改骨架会红；另有一组「默认 8dp」清单，行一旦变宽就提示补标定。
+  - 守卫：`PanelSkeleton.test.ts`（形状 / a11y / 固定宽度 / 内边距变量）与 `panelSkeletonUsage.test.ts`（清单内的每个面板都必须渲染骨架；除白名单外的面板级 `LoadingIndicator` 一律失败；`.skeleton-block` 必须留在全局表且组件内不得重述）。
   - **深色背景上的骨架**：原语的两个颜色是变量 `--skeleton-fill` / `--skeleton-sheen`，`.skeleton-block` **只消费不声明**（写成 `var(--skeleton-fill, <主题兜底>)`）。因此覆盖必须写在骨架的**任意祖先**上，且能生效——变量在声明它的元素上解析，若原语自己声明了这两个变量，调用方写在祖先上的覆盖会静默失效（PDF 预览踩过：深色主题下实测仍是 `--bg-tertiary`）。覆盖时**不要**在调用处重述 `background-image`（那会把微光定义复制一份，两边必然漂移）。目前只有 `PdfPreview.vue` 需要这样做；灯箱用的是自己的 `.lb-loading-spinner`，与骨架原语无关。
 - **内容图片的三态占位（等待中 / 已结算 / 加载失败）**：`media-block.css` 的 `pending` 区块 + `localMediaFallback.ts`。一张内容图在样式表里必须能区分三种状态，而标记本身只能表达一种：
   - **pending**——`data-media-settled` 与 `data-media-missing` **都不存在**。`<img>` 在拿到字节前固有尺寸是 0×0，于是整个 `.image-block-wrapper` 先塌成一根 1px 边框、图片到了再「弹」出来。缩略图让这成了常态而非例外：`/api/fs/thumb` 是**按需栅格化**，一张大 PNG 的首次绘制是真实的往返。占位复用 `.skeleton-block` 的同一套语言（`skeleton-shimmer` keyframes + `--skeleton-fill` / `--skeleton-sheen`，**只消费不声明**，理由同上一条）。

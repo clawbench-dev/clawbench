@@ -194,6 +194,12 @@ func (m *Manager) handleIncomingText(ctx context.Context, openID, text, bodyText
 	switch route.Kind {
 	case common.RouteListSessions:
 		m.handleSessionList(ctx, openID)
+	case common.RouteShowLastReply:
+		m.handleShowLastReply(ctx, openID, route.Arg)
+	case common.RouteStopSession:
+		m.handleStopSession(ctx, openID, route.Arg)
+	case common.RouteNewSession:
+		m.handleNewSession(ctx, openID, route.Arg)
 	case common.RouteNoTarget:
 		m.replyNoTarget(ctx, openID)
 	case common.RouteToSession:
@@ -213,8 +219,18 @@ func (m *Manager) handleIncomingWithMedia(ctx context.Context, openID, text, bod
 
 	// Route on the title-less text so a leading "@{shortID}" still matches.
 	route := common.ClassifyIncoming(bodyText, sticky)
-	if route.Kind == common.RouteListSessions {
-		m.handleSessionList(ctx, openID)
+	// A slash command is not addressed to a session, and Route.Message is empty
+	// for one — falling through would post an empty message carrying the
+	// attachments and silently drop the command word. Refuse instead of guessing
+	// which half the user wanted.
+	//
+	// This must come BEFORE the "/ls" branch: /ls is a command too, and answering
+	// it while discarding the attachment loses the user's file with no warning.
+	if route.Kind.IsCommand() {
+		slog.Info("feishu: command cannot carry attachments",
+			"open_id", openID, "command", route.Kind.CommandWord(), "media", len(media))
+		_ = m.SendPostMessage(ctx, openID, common.T("PushErrorTitle"),
+			common.CommandWithAttachmentText(route.Kind.CommandWord()))
 		return
 	}
 	if route.Kind == common.RouteNoTarget {
@@ -323,7 +339,7 @@ func (m *Manager) downloadFailureText(out downloadOutcome) string {
 		return common.T("PushFileTooLarge", map[string]any{"MaxMB": common.AttachmentMaxBytes() / (1024 * 1024)})
 	}
 	if out.failed > 1 {
-		return common.T("PushFilesDownloadFailed", map[string]any{"Count": out.failed})
+		return common.T("PushFilesDownloadFailed", map[string]any{common.TemplateCount: out.failed})
 	}
 	return common.T("PushFileDownloadFailed")
 }
@@ -332,12 +348,12 @@ func (m *Manager) downloadFailureText(out downloadOutcome) string {
 // truncation so the user knows the message was not delivered in full.
 func (m *Manager) attachmentSentText(sessionID, sessionTitle string, sent int, out downloadOutcome) string {
 	var sb strings.Builder
-	sb.WriteString(common.T("PushSentToSessionPlain", map[string]any{"Label": common.FormatSessionLabel(sessionID, sessionTitle)}))
+	sb.WriteString(common.T("PushSentToSessionPlain", map[string]any{common.TemplateLabel: common.FormatSessionLabel(sessionID, sessionTitle)}))
 	if sent > 1 {
-		sb.WriteString(common.T("PushFilesCount", map[string]any{"Count": sent}))
+		sb.WriteString(common.T("PushFilesCount", map[string]any{common.TemplateCount: sent}))
 	}
 	if out.failed > 0 {
-		fmt.Fprintf(&sb, "\n\n%s", common.T("PushPartialDownloadFailed", map[string]any{"Count": out.failed}))
+		fmt.Fprintf(&sb, "\n\n%s", common.T("PushPartialDownloadFailed", map[string]any{common.TemplateCount: out.failed}))
 	}
 	if out.truncated {
 		fmt.Fprintf(&sb, "\n\n%s", common.T("PushAttachmentsTruncated", map[string]any{
@@ -384,7 +400,7 @@ func (m *Manager) deliverToSession(ctx context.Context, openID string, route com
 
 	slog.Info("feishu: message sent to session", "session_id", sessionID, "msg", route.Message)
 	_ = m.SendPostMessage(ctx, openID, common.T("PushMessageSent"),
-		common.T("PushSentToSessionPlain", map[string]any{"Label": sessionLabel}))
+		common.T("PushSentToSessionPlain", map[string]any{common.TemplateLabel: sessionLabel}))
 }
 
 // lastSessionID reads the user's sticky target, treating any failure as "none
@@ -410,6 +426,134 @@ func (m *Manager) rememberSession(openID, sessionID string) {
 	if err := db.SetLastSessionID(openID, sessionID); err != nil {
 		slog.Warn("feishu: record last session id failed", "error", err, "open_id", openID)
 	}
+}
+
+// handleShowLastReply resends the target session's last finalized AI reply.
+//
+// The target is the command's argument or the sticky session; when neither
+// exists the user gets the same "/ls" hint as any other untargeted message. A
+// session with no finished reply gets an explicit hint rather than an empty
+// message.
+func (m *Manager) handleShowLastReply(ctx context.Context, openID, arg string) {
+	if sessionMessenger == nil {
+		_ = m.SendPostMessage(ctx, openID, common.T("PushErrorTitle"), common.T("PushSessionServiceUnavailable"))
+		return
+	}
+
+	sessionID, title, err := common.ResolveCommandTarget(sessionMessenger, arg, m.lastSessionID(openID))
+	if err != nil {
+		slog.Warn("feishu: show target resolve failed", "error", err, "arg", arg)
+		_ = m.SendPostMessage(ctx, openID, common.T("PushErrorTitle"), err.Error())
+		return
+	}
+
+	label := common.FormatSessionLabel(sessionID, title)
+	// Sample the running state BEFORE the read so the note and the text describe
+	// the same moment: a turn that finishes in between would otherwise be
+	// labeled "still running" while the text already includes it.
+	running := sessionMessenger.IsSessionRunning(sessionID)
+	text, ok, err := sessionMessenger.LastAssistantReply(sessionID)
+	if err != nil {
+		slog.Warn("feishu: read last reply failed", "error", err, "session_id", sessionID)
+		_ = m.SendPostMessage(ctx, openID, common.T("PushErrorTitle"), common.T("PushSessionUnavailable"))
+		return
+	}
+
+	body := common.T("PushShowSessionLabel", map[string]any{common.TemplateLabel: label}) + "\n\n"
+	if ok && running {
+		// The streaming row is deliberately excluded, so the text below belongs
+		// to the PREVIOUS turn. Without this note the user reads it as the answer
+		// to the question they just asked.
+		body += common.T("PushShowRunning") + "\n\n"
+	}
+	if !ok {
+		body += common.T("PushShowEmpty")
+	} else {
+		body += truncateForFeishu(text)
+	}
+	_ = m.SendPostMessage(ctx, openID, common.T("PushShowTitle"), body)
+}
+
+// handleStopSession stops the target session and drops its queue.
+//
+// The reply distinguishes "was running" from "already idle": a silent success
+// on an idle session looks identical to a failed cancel, and the cleared count
+// is the only evidence the queue was touched.
+func (m *Manager) handleStopSession(ctx context.Context, openID, arg string) {
+	if sessionMessenger == nil {
+		_ = m.SendPostMessage(ctx, openID, common.T("PushErrorTitle"), common.T("PushSessionServiceUnavailable"))
+		return
+	}
+
+	sessionID, title, err := common.ResolveCommandTarget(sessionMessenger, arg, m.lastSessionID(openID))
+	if err != nil {
+		slog.Warn("feishu: stop target resolve failed", "error", err, "arg", arg)
+		_ = m.SendPostMessage(ctx, openID, common.T("PushErrorTitle"), err.Error())
+		return
+	}
+
+	wasRunning, cleared, err := sessionMessenger.StopAndClearSession(sessionID)
+	if err != nil {
+		slog.Warn("feishu: stop session failed", "error", err, "session_id", sessionID)
+		_ = m.SendPostMessage(ctx, openID, common.T("PushErrorTitle"), err.Error())
+		return
+	}
+
+	key := "PushStoppedIdle"
+	if wasRunning {
+		key = "PushStoppedRunning"
+	}
+	body := common.T(key, map[string]any{
+		common.TemplateLabel: common.FormatSessionLabel(sessionID, title),
+		common.TemplateCount: cleared,
+	})
+	_ = m.SendPostMessage(ctx, openID, common.T("PushStoppedTitle"), body)
+}
+
+// handleNewSession renders the project list for a bare "/new", or creates an
+// empty session in the selected project and makes it the sticky target.
+func (m *Manager) handleNewSession(ctx context.Context, openID, arg string) {
+	if sessionMessenger == nil {
+		_ = m.SendPostMessage(ctx, openID, common.T("PushErrorTitle"), common.T("PushSessionServiceUnavailable"))
+		return
+	}
+
+	projects, err := sessionMessenger.ListProjects()
+	if err != nil {
+		slog.Warn("feishu: list projects failed", "error", err)
+		_ = m.SendPostMessage(ctx, openID, common.T("PushErrorTitle"), common.T("PushNewListFailed"))
+		return
+	}
+
+	if strings.TrimSpace(arg) == "" {
+		_ = m.SendPostMessage(ctx, openID, common.T("PushNewTitle"), common.RenderProjectList(projects, feishuPreviewMaxRunes))
+		return
+	}
+
+	path, ref, err := common.SelectProject(projects, arg)
+	if err != nil {
+		slog.Warn("feishu: project selector failed", "error", err, "arg", arg)
+		_ = m.SendPostMessage(ctx, openID, common.T("PushErrorTitle"), err.Error())
+		return
+	}
+
+	sessionID, _, err := sessionMessenger.CreateSessionInProject(path)
+	if err != nil {
+		slog.Warn("feishu: create session failed", "error", err, "path", path)
+		_ = m.SendPostMessage(ctx, openID, common.T("PushErrorTitle"), err.Error())
+		return
+	}
+	// Only a successful create moves the sticky target, mirroring deliverToSession.
+	m.rememberSession(openID, sessionID)
+
+	body := common.T("PushNewCreated", map[string]any{
+		common.TemplateProject: path,
+		common.TemplateID:      common.ShortSessionID(sessionID),
+	})
+	if !ref.Exists {
+		body += "\n\n" + common.T("PushNewProjectMissingDir")
+	}
+	_ = m.SendPostMessage(ctx, openID, common.T("PushNewTitle"), body)
 }
 
 // replyNoTarget tells the user how to pick a session.

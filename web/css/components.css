@@ -378,6 +378,19 @@
     padding: var(--space-4) 0;
 }
 
+/* The drill-down skeleton previews the body's paragraph lines, so it has to sit
+   on the SAME inset as the loaded body. `--skeleton` above zeroes the
+   horizontal padding (the list views want the placeholder to span the panel,
+   and their rows carry the padding), and PanelSkeleton's text variant defaults
+   to no inset either — so on the issue/PR/pipeline detail pages the lines ran
+   flush to both edges while the real content is inset by
+   `.forge-detail-body`'s padding, and the page visibly shifted sideways the
+   moment the item arrived. Scoped to `.forge-detail` on purpose: the list views'
+   rows already pad themselves, and adding a second inset there would double it. */
+.forge-detail > .forge-loading--skeleton {
+    --panel-skeleton-inset: calc(14 * var(--dp));
+}
+
 /* ── Error card ── */
 .forge-error-card {
     margin: var(--space-6);

@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildHtmlPreviewSrc,
+  installPreviewLinkHandler,
   installPreviewScrollbar,
   installPreviewSearchStyles,
   readHostScrollbarPalette,
@@ -277,5 +278,135 @@ describe('watchPreviewTheme', () => {
       document.documentElement.style.removeProperty('--scrollbar-thumb')
       iframe.remove()
     }
+  })
+})
+
+/**
+ * installPreviewLinkHandler takes over outbound-link clicks.
+ *
+ * The sandbox has no `allow-popups`, so without this a previewed page's
+ * `target="_blank"` links are dead taps — the reported symptom ("GitHub 按钮
+ * 点了没反应"). These tests pin the boundary as well: only cross-origin http(s)
+ * activations are taken over; everything else keeps the frame's own behaviour.
+ */
+describe('installPreviewLinkHandler', () => {
+  afterEach(() => {
+    delete (window as unknown as { ClawBenchNative?: unknown }).ClawBenchNative
+    document.body.innerHTML = ''
+  })
+
+  /** An iframe whose document holds `html`, plus a click dispatcher. */
+  function makeIframe(html: string): { iframe: HTMLIFrameElement; doc: Document } {
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    const doc = iframe.contentDocument!
+    doc.body.innerHTML = html
+    return { iframe, doc }
+  }
+
+  /**
+   * Dispatch a left click at `el`.
+   *
+   * Same-origin cases are dispatched on a CHILD of the anchor: jsdom runs the
+   * anchor's own activation behaviour (navigation) for a click dispatched ON
+   * the anchor, which it does not implement and would log. The handler resolves
+   * the anchor through `closest`, so the descendant path is the same code.
+   */
+  function clickOn(el: Element): MouseEvent {
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+    el.dispatchEvent(event)
+    return event
+  }
+
+  it('opens an external link through the app bridge instead of letting the sandbox swallow it', () => {
+    const open = vi.fn()
+    ;(window as unknown as { ClawBenchNative: unknown }).ClawBenchNative = { openExternalUrl: open }
+    const { iframe, doc } = makeIframe(
+      '<a href="https://github.com/clawbench-dev/clawbench" target="_blank"><span id="label">GitHub</span></a>',
+    )
+    installPreviewLinkHandler(iframe)
+
+    // Dispatched on the anchor itself: this is the activation the sandbox drops.
+    const event = clickOn(doc.querySelector('a')!)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(open).toHaveBeenCalledWith('https://github.com/clawbench-dev/clawbench')
+  })
+
+  it('resolves a click on a child of the link to that link', () => {
+    const open = vi.fn()
+    const { iframe, doc } = makeIframe(
+      '<a href="https://example.com/x"><span id="label">label</span></a>',
+    )
+    installPreviewLinkHandler(iframe, open)
+
+    clickOn(doc.getElementById('label')!)
+
+    expect(open).toHaveBeenCalledWith('https://example.com/x')
+  })
+
+  it('leaves same-origin links to the frame', () => {
+    // A previewed page's own neighbours are served from this same origin; the
+    // frame can navigate to them, and handing them to the OS browser would open
+    // a second copy of the app to show a local file.
+    const open = vi.fn()
+    const { iframe, doc } = makeIframe(
+      `<a href="${window.location.origin}/api/fs/raw/public/other.html"><span id="label">next</span></a>`,
+    )
+    installPreviewLinkHandler(iframe, open)
+
+    const event = clickOn(doc.getElementById('label')!)
+
+    expect(open).not.toHaveBeenCalled()
+    expect(event.defaultPrevented).toBe(false)
+  })
+
+  it('leaves in-page anchors alone', () => {
+    const open = vi.fn()
+    const { iframe, doc } = makeIframe('<a href="#features"><span id="label">features</span></a>')
+    installPreviewLinkHandler(iframe, open)
+
+    const event = clickOn(doc.getElementById('label')!)
+
+    expect(open).not.toHaveBeenCalled()
+    expect(event.defaultPrevented).toBe(false)
+  })
+
+  it('leaves non-http schemes alone', () => {
+    // The native bridge's scheme allow-list rejects these; swallowing them here
+    // would turn "nothing happens" into "nothing can ever happen".
+    const open = vi.fn()
+    const { iframe, doc } = makeIframe('<a href="mailto:hi@example.com"><span id="label">mail</span></a>')
+    installPreviewLinkHandler(iframe, open)
+
+    const event = clickOn(doc.getElementById('label')!)
+
+    expect(open).not.toHaveBeenCalled()
+    expect(event.defaultPrevented).toBe(false)
+  })
+
+  it('does not take over a click that the page already handled', () => {
+    const open = vi.fn()
+    const { iframe, doc } = makeIframe('<a href="https://example.com/x">x</a>')
+    installPreviewLinkHandler(iframe, open)
+    const anchor = doc.querySelector('a')!
+    anchor.addEventListener('click', (e) => e.preventDefault())
+
+    clickOn(anchor)
+
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('stops taking over clicks once disposed', () => {
+    const open = vi.fn()
+    const { iframe, doc } = makeIframe('<a href="https://example.com/x">x</a>')
+    const dispose = installPreviewLinkHandler(iframe, open)
+    dispose()
+
+    const event = clickOn(doc.querySelector('a')!)
+
+    expect(open).not.toHaveBeenCalled()
+    expect(event.defaultPrevented).toBe(false)
   })
 })

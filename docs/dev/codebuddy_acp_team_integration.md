@@ -456,9 +456,7 @@ slim 块没有 `input`，`sessionId` 也可能不再可解析 ⇒ prompt 静默�
   `acp_conn_lifecycle.go`（replay 开始重置）、`internal/handler/session_sync.go`
   （`waitForReplaySettled` 优先用 end 标记）。
 - 中断/重连兜底（§5.1）：`web/src/components/chat/ContentBlocks.vue`
-  （`needsMemberFallback`/`memberGroupNameForAnchor`/`memberFallbackBlocks`）、
-  `internal/ai/acp_dup_chunk.go`（帧级重复内容去重）+ `acp_events.go` 两处接入 +
-  `acp_conn_prompt.go` 每回合清空。
+  （`needsMemberFallback`/`memberGroupNameForAnchor`/`memberFallbackBlocks`）。
 
 **回归红线**：改动不得影响非团队会话 —— `session_info_update` 分支对无 `teamUpdate`
 的更新（title/updatedAt）必须保持原有行为（已由 `TestMapACPSessionUpdate_SessionInfoNoTeamNoEvent`
@@ -487,13 +485,11 @@ slim 块没有 `input`，`sessionId` 也可能不再可解析 ⇒ prompt 静默�
 `sendSessionUpdateWithRetries` 重试最多 3 次 —— 一次「超时后才落地」的发送因此被重发，
 同一 update 对象（同一 `_meta`）到达 2–3 次。实测 multiplicity 恰为 2 与 3。
 
-修法：`internal/ai/acp_dup_chunk.go` 在帧级去重。身份键照搬 CodeBuddy 内部的
-`chunkPublicationKey`：`sessionId + sessionUpdate + messageId + timestamp +
-conversationRequestId??requestId + parentToolCallId + text`，**`messageId` 与 `timestamp`
-缺一不去重**。但**判据是「紧邻」而不是上游的 5 秒窗口**：真重试是同步重发同一对象，
-必然紧挨着；合法重复一定隔着别的帧（真实帧实测：相邻同文本 0/81，非相邻 55 对）。
-时间窗会误删——生产一周内 179 组只丢了 1 次，而真重试必然连续丢 2–3 次。
-状态只有 `lastChunkKey` 一个字段，每回合 `Prompt` 起点清空。**仅对 codebuddy 生效**。
+**已放弃在客户端修**（2026-10-30 移除 `acp_dup_chunk.go`）：三代实现（内容键 + 时间窗 →
+照搬上游键 + 时间窗 → 紧邻判据）都误删真实内容，因为序列化后的 wire 上「重试」与
+「模型确实又输出了一遍相同文本」字节完全一致（同 `messageId`、同 `_meta.timestamp`、同
+`text`）。上游能用 `WeakMap` 按对象身份判重，是因为它在自己进程内、且规则挂在合并后的
+WebUI 发布总线上；这两个前提 ACP 客户端都没有。现在 wire 层一律透传，
 详见 `docs/dev/acp_dup_chunk_port.md`。
 
 ---

@@ -300,6 +300,9 @@ onMounted(refresh)
   align-items: stretch;
   justify-content: flex-start;
   gap: 0;
+  /* The wrapper already sits inside `.task-list-body` (8dp); 10dp more lands
+     the placeholder on `.task-item`'s text edge. */
+  --panel-skeleton-inset: calc(10 * var(--dp));
 }
 
 .empty-icon {

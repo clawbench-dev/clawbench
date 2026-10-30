@@ -54,6 +54,7 @@ import (
 	"clawbench/internal/push/common"
 	"clawbench/internal/push/dingtalk"
 	"clawbench/internal/push/feishu"
+	"clawbench/internal/push/wechat"
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
 	"clawbench/internal/skill"
@@ -97,6 +98,8 @@ func (forgeNotifierAdapter) PushForgeEvent(event service.ForgeEvent, item forge.
 		return dingtalk.PushForgeEvent(title, body)
 	case feishu.IsStarted():
 		return feishu.PushForgeEvent(title, body)
+	case wechat.IsStarted():
+		return wechat.PushForgeEvent(title, body)
 	default:
 		return false
 	}
@@ -214,6 +217,22 @@ func (dingtalkSessionMessenger) SendMessageToSession(sessionID, message string, 
 	return service.SendMessageToSessionFromDingTalk(sessionID, message, files)
 }
 
+func (dingtalkSessionMessenger) LastAssistantReply(sessionID string) (string, bool, error) {
+	return service.GetLastAssistantReply(sessionID)
+}
+
+func (dingtalkSessionMessenger) StopAndClearSession(sessionID string) (bool, int, error) {
+	return service.StopAndClearSession(sessionID)
+}
+
+func (dingtalkSessionMessenger) ListProjects() ([]common.ProjectRef, error) {
+	return listProjectsForPush()
+}
+
+func (dingtalkSessionMessenger) CreateSessionInProject(projectPath string) (string, string, error) {
+	return service.CreatePushSession(projectPath)
+}
+
 // feishuDBAdapter bridges the feishu package's DB interface to service package
 // functions, avoiding import cycles between service → feishu → service.
 type feishuDBAdapter struct{}
@@ -324,6 +343,235 @@ func (feishuSessionMessenger) GetSessionInfo(sessionID string) (common.SessionIn
 
 func (feishuSessionMessenger) SendMessageToSession(sessionID, message string, files []model.FileEntry) error {
 	return service.SendMessageToSessionFromFeishu(sessionID, message, files)
+}
+
+func (feishuSessionMessenger) LastAssistantReply(sessionID string) (string, bool, error) {
+	return service.GetLastAssistantReply(sessionID)
+}
+
+func (feishuSessionMessenger) StopAndClearSession(sessionID string) (bool, int, error) {
+	return service.StopAndClearSession(sessionID)
+}
+
+func (feishuSessionMessenger) ListProjects() ([]common.ProjectRef, error) {
+	return listProjectsForPush()
+}
+
+func (feishuSessionMessenger) CreateSessionInProject(projectPath string) (string, string, error) {
+	return service.CreatePushSession(projectPath)
+}
+
+// listProjectsForPush adapts the service-level project list to the push
+// package's type. Shared by both IM backends so their /new lists cannot drift.
+func listProjectsForPush() ([]common.ProjectRef, error) {
+	refs, err := service.ListProjectsForPush()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]common.ProjectRef, len(refs))
+	for i, r := range refs {
+		out[i] = common.ProjectRef{
+			Index:  r.Index,
+			Path:   r.Path,
+			Exists: r.Exists,
+		}
+	}
+	return out, nil
+}
+
+// wechatDBAdapter bridges the wechat package's DB interface to service package
+// functions, avoiding import cycles between service → wechat → service.
+type wechatDBAdapter struct{}
+
+// MergeConfigSubscribers is a no-op: WeChat has no static subscriber list. A
+// push needs a context_token, which only an inbound message can mint, so a
+// config-provided user list would be a dead field (see model.WeChatConfig).
+func (wechatDBAdapter) MergeConfigSubscribers([]string) {}
+
+func (wechatDBAdapter) GetSubscribers() ([]common.SubscriberInfo, error) {
+	subs, err := service.GetWeChatSubscribers()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]common.SubscriberInfo, len(subs))
+	for i, s := range subs {
+		result[i] = common.SubscriberInfo{
+			UserID:       s.UserID,
+			UserName:     s.UserName,
+			Source:       s.Source,
+			ContextToken: s.ContextToken,
+		}
+	}
+	return result, nil
+}
+
+func (wechatDBAdapter) UpsertSubscriber(userID, conversationID, userName, source string) error {
+	return service.UpsertWeChatSubscriber(userID, conversationID, userName, source)
+}
+
+func (wechatDBAdapter) DeleteSubscriber(userID string) error {
+	return service.DeleteWeChatSubscriber(userID)
+}
+
+func (wechatDBAdapter) GetLastSessionID(userID string) (string, error) {
+	return service.GetWeChatLastSessionID(userID)
+}
+
+func (wechatDBAdapter) SetLastSessionID(userID, sessionID string) error {
+	return service.SetWeChatLastSessionID(userID, sessionID)
+}
+
+// SetContextToken persists the reply token from an inbound message. This is the
+// WeChat-only write on top of common.PushDB; without it every restart would
+// disable outbound push until each user messaged the bot again.
+func (wechatDBAdapter) SetContextToken(userID, token string) error {
+	return service.SetWeChatContextToken(userID, token)
+}
+
+// wechatSessionMessenger bridges the wechat package's SessionMessenger interface
+// to service package functions, avoiding import cycles.
+type wechatSessionMessenger struct{}
+
+func (wechatSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]common.SessionInfo, error) {
+	var sessions []service.DingTalkSessionInfo
+	var err error
+	if runningOnly {
+		sessions, err = service.FindRunningSessionsByPrefix(prefix)
+	} else {
+		sessions, err = service.FindSessionsByPrefix(prefix)
+	}
+	if err != nil {
+		return nil, err
+	}
+	result := make([]common.SessionInfo, len(sessions))
+	for i, s := range sessions {
+		result[i] = common.SessionInfo{
+			ID:          s.ID,
+			Title:       s.Title,
+			ProjectPath: s.ProjectPath,
+			Backend:     s.Backend,
+			AgentID:     s.AgentID,
+			Model:       s.Model,
+		}
+	}
+	return result, nil
+}
+
+func (wechatSessionMessenger) ListRecentSessions(limit int) ([]common.SessionInfo, error) {
+	sessions, err := service.ListRecentSessions(limit)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]common.SessionInfo, len(sessions))
+	for i, s := range sessions {
+		result[i] = common.SessionInfo{
+			ID:          s.ID,
+			Title:       s.Title,
+			ProjectPath: s.ProjectPath,
+			Backend:     s.Backend,
+			AgentID:     s.AgentID,
+			Model:       s.Model,
+		}
+	}
+	return result, nil
+}
+
+func (wechatSessionMessenger) IsSessionRunning(sessionID string) bool {
+	return service.IsSessionRunning(sessionID)
+}
+
+func (wechatSessionMessenger) GetSessionInfo(sessionID string) (common.SessionInfo, error) {
+	info, err := service.GetSessionInfoForPush(sessionID)
+	if err != nil {
+		return common.SessionInfo{}, err
+	}
+	return common.SessionInfo{
+		ID:          info.ID,
+		Title:       info.Title,
+		ProjectPath: info.ProjectPath,
+		Backend:     info.Backend,
+		AgentID:     info.AgentID,
+		Model:       info.Model,
+	}, nil
+}
+
+func (wechatSessionMessenger) SendMessageToSession(sessionID, message string, files []model.FileEntry) error {
+	return service.SendMessageToSessionFromWeChat(sessionID, message, files)
+}
+
+func (wechatSessionMessenger) LastAssistantReply(sessionID string) (string, bool, error) {
+	return service.GetLastAssistantReply(sessionID)
+}
+
+func (wechatSessionMessenger) StopAndClearSession(sessionID string) (bool, int, error) {
+	return service.StopAndClearSession(sessionID)
+}
+
+func (wechatSessionMessenger) ListProjects() ([]common.ProjectRef, error) {
+	return listProjectsForPush()
+}
+
+func (wechatSessionMessenger) CreateSessionInProject(projectPath string) (string, string, error) {
+	return service.CreatePushSession(projectPath)
+}
+
+// wechatLoginAdapter adapts wechat.LoginService to the handler's view types,
+// keeping internal/handler free of any internal/push import.
+type wechatLoginAdapter struct {
+	svc *wechat.LoginService
+}
+
+func (a wechatLoginAdapter) Start(ctx context.Context) handler.WeChatLoginView {
+	return toWeChatLoginView(a.svc.Start(ctx))
+}
+
+func (a wechatLoginAdapter) Poll(id string) (handler.WeChatLoginView, bool) {
+	snap, ok := a.svc.Poll(id)
+	if !ok {
+		return handler.WeChatLoginView{}, false
+	}
+	return toWeChatLoginView(snap), true
+}
+
+func (a wechatLoginAdapter) Cancel(id string) { a.svc.Cancel(id) }
+
+func toWeChatLoginView(s wechat.LoginSnapshot) handler.WeChatLoginView {
+	return handler.WeChatLoginView{
+		LoginID:    s.ID,
+		State:      string(s.State),
+		QRURL:      s.QRURL,
+		QRSeq:      s.QRSeq,
+		Refresh:    s.Refresh,
+		RefreshMax: s.RefreshMax,
+		BotID:      s.BotID,
+		Message:    s.Message,
+		Error:      s.Error,
+		ExpiresAt:  s.ExpiresAt.UnixMilli(),
+	}
+}
+
+// persistWeChatLogin adapts the push package's result type to the handler's.
+func persistWeChatLogin(r wechat.LoginResult) error {
+	return handler.PersistWeChatLogin(handler.WeChatCredentials{
+		BotToken: r.BotToken,
+		BotID:    r.BotID,
+		BaseURL:  r.BaseURL,
+		UserID:   r.UserID,
+	})
+}
+
+// wechatConnState exposes the live manager state to the settings panel.
+//
+// Without this the panel can only see `has_token`, so a `-14` expiry (token still
+// stored, channel dead) would keep rendering a green "connected" card while no
+// notification ever arrives.
+func wechatConnState() handler.WeChatConnState {
+	mgr := wechat.GetManager()
+	if mgr == nil {
+		return handler.WeChatConnState{State: "stopped"}
+	}
+	st := mgr.Status()
+	return handler.WeChatConnState{State: st.State, LastError: st.LastError}
 }
 
 // multiHandler sends log records to multiple handlers
@@ -499,6 +747,8 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		fmt.Println("Server options:")
 		fmt.Println("  --port PORT       Server port (overrides config file, default: 20000)")
 		fmt.Println("  --data-dir DIR    Runtime data directory (default: ~/.clawbench)")
+		fmt.Println("  --gen-cert        Generate a self-signed HTTPS certificate and exit")
+		fmt.Println("                    (add --host IP[,IP] for addresses to cover)")
 		fmt.Println("  --version         Print version and exit")
 		os.Exit(0)
 	}
@@ -554,6 +804,13 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			os.Exit(1)
 		}
 		model.DataDir = filepath.Join(homeDir, ".clawbench")
+	}
+
+	// --gen-cert: write a self-signed certificate covering this machine's
+	// addresses and exit. Dispatched after the data directory is resolved
+	// because the default cert directory lives inside it.
+	if hasFlag("--gen-cert") {
+		os.Exit(runGenerateCert())
 	}
 
 	// Warn about legacy BinDir layout if detected
@@ -1257,6 +1514,41 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		}
 	}()
 
+	// Initialize WeChat push (personal WeChat via the iLink Bot protocol).
+	// Credentials come from a QR scan, not from config.yaml typed by hand, so the
+	// login service is registered unconditionally: a user can log in at any time
+	// and the resulting credentials take effect through hot-reload.
+	wechat.RegisterDBAdapter(&wechatDBAdapter{})
+	wechat.RegisterSessionMessenger(&wechatSessionMessenger{})
+	wechatLogin := wechat.NewLoginService(wechat.LoginServiceOptions{
+		Persist: persistWeChatLogin,
+		Reload:  handler.TriggerReconfigure,
+	})
+	handler.SetWeChatLoginService(wechatLoginAdapter{svc: wechatLogin})
+	handler.SetWeChatStatusProvider(wechatConnState)
+	handler.SetWeChatLogoutHook(func(botID string) {
+		if err := wechat.ClearSyncBuf(botID); err != nil {
+			slog.Warn("wechat: clear sync buf on logout failed", slog.String("err", err.Error()))
+		}
+	})
+	if cfg.PushMode == pushModeWeChat && cfg.WeChat.BotToken != "" {
+		wechatMgr := wechat.NewManager(&cfg.WeChat)
+		wechat.SetManager(wechatMgr)
+		if err := wechatMgr.Start(); err != nil {
+			slog.Warn("WeChat push failed to start", slog.String("err", err.Error()))
+		} else {
+			slog.Info("WeChat push enabled")
+		}
+	} else if cfg.PushMode == pushModeWeChat {
+		slog.Info("WeChat push selected but not logged in; scan the QR code in settings")
+	}
+	defer func() {
+		wechatLogin.CancelAll()
+		if mgr := wechat.GetManager(); mgr != nil {
+			mgr.Stop()
+		}
+	}()
+
 	// Initialize file watcher for auto-refresh (non-critical — continue on failure)
 	// Idle live-share rooms are in-memory and have no other cleanup path: a
 	// publisher that vanished without a clean socket close would otherwise hold
@@ -1293,6 +1585,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	ws.InitManager()
 	dingtalk.RegisterClientChecker(ws.GetManager())
 	feishu.RegisterClientChecker(ws.GetManager())
+	wechat.RegisterClientChecker(ws.GetManager())
 
 	// 模型发现放到后台：探测会 fork 各家 CLI（antigravity 未登录时挂满超时），
 	// 串行约 18s。这里必须晚于 ws.InitManager，否则广播时 Manager 还没建好。
@@ -1739,6 +2032,7 @@ func hotReloadReconfigure(port int) {
 	// --- DingTalk: reconfigure or toggle enabled ---
 	hotReloadDingTalk(cfg)
 	hotReloadFeishu(cfg)
+	hotReloadWeChat(cfg)
 }
 
 // hotReloadDingTalk reconfigures or toggles the DingTalk push subsystem on hot-reload.
@@ -1828,6 +2122,86 @@ func hotReloadFeishu(cfg model.Config) {
 		}
 	}
 }
+
+// hotReloadWeChat reconfigures or toggles the WeChat push subsystem on hot-reload.
+//
+// Differs from the DingTalk/Feishu versions in one place: selecting the channel
+// without credentials is a normal state (not logged in yet), not an error. It
+// must NOT start a manager with an empty token, and it must surface a warning so
+// the user knows to scan.
+func hotReloadWeChat(cfg model.Config) {
+	mgr := wechat.GetManager()
+
+	if cfg.PushMode == pushModeWeChat && cfg.WeChat.BotToken != "" {
+		if mgr != nil {
+			result := mgr.Reconfigure(&cfg.WeChat)
+			// A manager that is not running (e.g. it retired after a -14 expiry)
+			// must be rebuilt even when the credentials are unchanged: nothing
+			// else would ever bring it back, because the in-place branch assumes
+			// a live monitor.
+			if result.NeedsRestart || !mgr.IsStarted() {
+				mgr.Stop()
+				wechat.SetManager(nil)
+				newMgr := wechat.NewManager(&cfg.WeChat)
+				if err := newMgr.Start(); err != nil {
+					slog.Warn("hot-reload: WeChat restart failed", slog.String("err", err.Error()))
+					handler.AddHotReloadWarning(fmt.Sprintf("WeChat: %s", err.Error()))
+				} else {
+					wechat.SetManager(newMgr)
+					slog.Info("hot-reload: WeChat restarted")
+				}
+			} else {
+				slog.Info("hot-reload: WeChat reconfigured (in-place update)")
+			}
+		} else {
+			newMgr := wechat.NewManager(&cfg.WeChat)
+			if err := newMgr.Start(); err != nil {
+				slog.Warn("hot-reload: WeChat failed to start", slog.String("err", err.Error()))
+				handler.AddHotReloadWarning(fmt.Sprintf("WeChat: %s", err.Error()))
+			} else {
+				wechat.SetManager(newMgr)
+				slog.Info("hot-reload: WeChat enabled")
+			}
+		}
+		wechatNotLoggedInWarned = false
+		return
+	}
+
+	if cfg.PushMode == pushModeWeChat {
+		// Selected but not logged in: stop any stale manager and tell the user
+		// to scan, rather than silently doing nothing.
+		if mgr != nil {
+			mgr.Stop()
+			wechat.SetManager(nil)
+		}
+		// Warn once per transition into this state. This function also runs from
+		// TriggerReconfigure (login/logout), and warnings are only drained by the
+		// next config PATCH — re-adding it on every reconfigure would surface a
+		// "not logged in" toast on every unrelated settings save.
+		if !wechatNotLoggedInWarned {
+			handler.AddHotReloadWarning(common.T("PushWeChatNotLoggedIn"))
+			wechatNotLoggedInWarned = true
+		}
+		slog.Info("hot-reload: WeChat selected but not logged in")
+		return
+	}
+
+	if mgr != nil {
+		mgr.Stop()
+		wechat.SetManager(nil)
+		slog.Info("hot-reload: WeChat disabled")
+	}
+	wechatNotLoggedInWarned = false
+}
+
+// wechatNotLoggedInWarned de-duplicates the "selected but not logged in"
+// hot-reload warning. hotReloadWeChat also runs from TriggerReconfigure (on
+// login/logout), and warnings are only drained by the next config PATCH, so
+// re-adding it on every reconfigure would show the toast on unrelated saves.
+var wechatNotLoggedInWarned bool
+
+// pushModeWeChat is the push_mode value that selects the WeChat channel.
+const pushModeWeChat = "wechat"
 
 // newTTSProvider creates a SpeechProvider from TTS config.
 func newTTSProvider(cfg model.Config) speech.SpeechProvider {
@@ -2107,4 +2481,61 @@ func hotReloadTerminal(cfg model.Config, port int) {
 // newSTTProvider builds the STT provider from config.
 func newSTTProvider(cfg model.Config) stt.STTProvider {
 	return stt.NewVLLMProvider(cfg.STT.BaseURL, cfg.STT.Model, cfg.STT.APIKey, cfg.STT.Language)
+}
+
+// hasFlag reports whether argv contains flag (without consuming a value).
+func hasFlag(flag string) bool {
+	for _, arg := range os.Args[1:] {
+		if arg == flag {
+			return true
+		}
+	}
+	return false
+}
+
+// runGenerateCert writes a self-signed certificate for this machine and prints
+// what it covers. Returns the process exit code.
+//
+// The SAN list is the point of this command: browsers ignore Common Name, so a
+// certificate without IP entries is rejected with a name mismatch even after the
+// user accepts the self-signed warning.
+func runGenerateCert() int {
+	dir := model.ConfigInstance.TLS.CertDir
+	if dir == "" {
+		dir = model.DefaultTLSCertDir()
+	}
+	ips, dnsNames := model.LocalTLSSANs()
+
+	// Extra addresses: --host 10.0.0.5,192.168.1.7 (useful when the machine has
+	// an address that is not currently assigned, e.g. a fixed office IP).
+	for i, arg := range os.Args[1:] {
+		if arg != "--host" || i+2 > len(os.Args)-1 {
+			continue
+		}
+		for _, raw := range strings.Split(os.Args[i+2], ",") {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				continue
+			}
+			if ip := net.ParseIP(raw); ip != nil {
+				ips = append(ips, ip)
+			} else {
+				dnsNames = append(dnsNames, raw)
+			}
+		}
+	}
+
+	certs, err := model.GenerateSelfSignedCert(dir, ips, dnsNames)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	fmt.Println("已生成自签名证书：")
+	fmt.Println("  证书:", certs.CertFile)
+	fmt.Println("  私钥:", certs.KeyFile)
+	fmt.Println("  覆盖:", model.DescribeTLSSANs(ips, dnsNames))
+	fmt.Println()
+	fmt.Println("重启 ClawBench 后生效。浏览器首次访问会提示证书不受信任，")
+	fmt.Println("点「高级」→「继续前往」即可；之后该地址就是安全上下文。")
+	return 0
 }

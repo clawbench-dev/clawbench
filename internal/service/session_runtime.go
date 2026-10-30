@@ -22,6 +22,7 @@ import (
 	"clawbench/internal/model"
 	"clawbench/internal/push/dingtalk"
 	"clawbench/internal/push/feishu"
+	"clawbench/internal/push/wechat"
 	"clawbench/internal/summarize"
 	"clawbench/internal/ws"
 )
@@ -186,6 +187,8 @@ func pushSessionEvent(sessionID, status string, msg ws.ServerMessage, data *ws.S
 		_ = DeletePendingEvent(msg.ID)
 	} else if feishu.IsStarted() && feishu.PushSessionEvent(sessionID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath, data.ToolName, data.ToolInput) {
 		_ = DeletePendingEvent(msg.ID)
+	} else if wechat.IsStarted() && wechat.PushSessionEvent(sessionID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath, data.ToolName, data.ToolInput) {
+		_ = DeletePendingEvent(msg.ID)
 	}
 }
 
@@ -305,6 +308,8 @@ func pushSessionTerminal(sessionID, status string) {
 		if dingtalk.IsStarted() && dingtalk.PushSessionEvent(sessionID, status, title, responsePreviewRaw, projectPath, "", "") {
 			_ = DeletePendingEvent(msg.ID)
 		} else if feishu.IsStarted() && feishu.PushSessionEvent(sessionID, status, title, responsePreviewRaw, projectPath, "", "") {
+			_ = DeletePendingEvent(msg.ID)
+		} else if wechat.IsStarted() && wechat.PushSessionEvent(sessionID, status, title, responsePreviewRaw, projectPath, "", "") {
 			_ = DeletePendingEvent(msg.ID)
 		}
 	}
@@ -905,7 +910,7 @@ func CancelSession(sessionID string) bool {
 		_ = ClearQueuedMessages(sessionID)
 		if len(queueIDs) > 0 {
 			ws.EmitToSession(sessionID, ai.StreamEvent{
-				Type: "queue_cancel",
+				Type: eventTypeQueueCancel,
 				QueueEvent: &ai.QueueEventData{
 					SessionID: sessionID,
 					QueueIDs:  queueIDs,

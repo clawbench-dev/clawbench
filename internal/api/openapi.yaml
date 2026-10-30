@@ -169,6 +169,173 @@ paths:
         "429":
           description: 尝试过于频繁
 
+  /api/config/tls:
+    get:
+      tags: [Config]
+      summary: HTTPS 证书状态
+      description: |
+        返回磁盘上证书的启用状态、路径、覆盖的地址与到期时间，供设置面板渲染。
+        `active` 表示磁盘上有可用的证书（**下次启动**生效）；`serving` 表示当前这个
+        请求本身是走 TLS 的。`httpsUrl` 由当前请求推导，用于「用 HTTPS 重新打开」。
+      operationId: configTLSStatus
+      responses:
+        "200":
+          description: 证书状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TLSStatus"
+
+  /api/config/tls/self-signed:
+    post:
+      tags: [Config]
+      summary: 生成自签名证书
+      description: |
+        生成覆盖本机全部 IPv4 + `localhost` + `::1` 的自签名证书（浏览器只认 SAN，
+        不认 CN），写入证书目录。生成后需要重启服务端才生效（监听器在启动时创建）。
+
+        请求体可选：`hosts` 追加当前没配在网卡上的地址或域名；`force` 用于覆盖
+        **非自签名**的既有证书——那种证书来自 CA，重新生成会丢掉它，所以默认拒绝。
+      operationId: configTLSGenerateSelfSigned
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hosts:
+                  type: array
+                  items:
+                    type: string
+                force:
+                  type: boolean
+      responses:
+        "200":
+          description: "已生成（`restartRequired: true`）"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TLSStatus"
+        "409":
+          description: 既有证书不是自签名证书，且未带 `force`
+        "500":
+          $ref: "#/components/responses/Error"
+
+  # ── WeChat push (personal WeChat via iLink Bot) ───────────────────────────
+  /api/push/wechat/login:
+    post:
+      tags: [Config]
+      summary: 开始微信扫码登录
+      operationId: wechatLoginStart
+      description: |
+        启动一次个人微信（iLink Bot）扫码登录。服务端在后台 goroutine 中执行完整
+        登录流程（SDK 内部超时 8 分钟、最多刷新 3 次二维码），本端点立即返回会话
+        快照；前端按 `login_id` 轮询状态。
+
+        登录进行中重复调用返回**同一个**会话（幂等），避免页面刷新把 goroutine
+        丢成孤儿。
+
+        登录成功后凭据落盘到 `config.yaml` 的 `wechat.*`，并由热重载启动推送
+        连接。`bot_token` 只写不读，`GET /api/config` 仅回报 `has_token`。
+      responses:
+        "202":
+          description: 登录会话快照
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeChatLogin"
+        "503":
+          description: 登录服务不可用
+        "401":
+          $ref: "#/components/responses/Error"
+    get:
+      tags: [Config]
+      summary: 轮询微信扫码状态
+      operationId: wechatLoginPoll
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: |
+            当前快照。`state` 取值 `pending` / `scanned` / `connected` /
+            `expired` / `failed` / `cancelled`；`qr_seq` 每次刷新二维码递增，
+            前端据此重绘。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeChatLogin"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: 未知或已被回收的登录会话（客户端应重新发起）
+        "401":
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Config]
+      summary: 取消微信扫码登录
+      operationId: wechatLoginCancel
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: 已取消（幂等，未知 id 同样返回 204）
+        "401":
+          $ref: "#/components/responses/Error"
+
+  /api/push/wechat/status:
+    get:
+      tags: [Config]
+      summary: 微信推送连接状态
+      operationId: wechatStatus
+      description: |
+        令牌只写不读，因此连接状态由此端点回报，而非 `GET /api/config`。
+
+        `state` 是**实时**连接状态，与 `has_token` 正交：微信可能在不删除令牌的
+        情况下结束会话（`errcode -14`），此时 `has_token` 仍为真但 `state` 为
+        `expired`，前端必须据此提示重新扫码，而不是继续显示「已连接」。
+      responses:
+        "200":
+          description: 当前登录与连接状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  push_mode: { type: string }
+                  has_token: { type: boolean }
+                  bot_id: { type: string }
+                  user_id: { type: string }
+                  base_url: { type: string }
+                  state:
+                    type: string
+                    enum: [stopped, running, expired]
+                  last_error:
+                    type: string
+                    description: 最近一次连接错误的原文（例如 -14 会话过期）
+
+  /api/push/wechat/logout:
+    post:
+      tags: [Config]
+      summary: 退出微信登录
+      operationId: wechatLogout
+      description: |
+        清除 `wechat.*` 凭据与所有 `context_token`，并停止推送连接。订阅者行
+        保留——它们的粘性会话目标属于用户偏好，同一 bot 重新登录后仍然有效。
+      responses:
+        "204":
+          description: 已退出
+        "401":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+
   # ── System ────────────────────────────────────────────────────────────────
   /api/system/resources:
     get:
@@ -3607,8 +3774,12 @@ paths:
       tags: [LiveShare]
       summary: 发布端信令 WebSocket（升级）
       description: |
-        WebSocket 端点，承载发布端的 SDP/ICE 转发与发言授权控制帧。OpenAPI 不建模
-        升级握手。发布端断开即视为共享结束，房间随之销毁。
+        WebSocket 端点，承载发布端的 SDP/ICE 转发、发言授权与成员屏幕共享控制帧。
+        OpenAPI 不建模升级握手。发布端断开即视为共享结束，房间随之销毁。
+
+        屏幕共享控制帧：`set-screen-enabled {enabled}`（房间开关，关闭会连带停掉正在
+        共享的人）与 `screen-revoke {viewerId}`（只停某个人）。服务端以
+        `screen-state {viewerId, sharing, screenEnabled}` 广播给发布端与全部观众。
       operationId: liveSharePublishWS
       parameters:
         - name: token
@@ -3623,6 +3794,129 @@ paths:
           description: token 不存在或不属于当前项目
         "409":
           description: 已有发布端在共享
+
+  /api/live-share/notes:
+    get:
+      tags: [LiveShare]
+      summary: 读取 AI 听记时间线
+      description: |
+        发布端读取本次共享的转写结果与纪要状态。`since` 是增量游标（上一批最大的
+        `id`）：转写完成顺序与说话顺序不同，晚到的分段可能带更早的 `startedAt`，
+        客户端拿到后按 `startedAt` 重排即可。
+
+        房间结束后仍可读：转写行按 token 持久化（保留 7 天），鉴权只校验项目归属。
+      operationId: liveShareNotes
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: 分段与纪要
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  title:
+                    type: string
+                  segments:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LiveNoteSegment"
+                  minutes:
+                    $ref: "#/components/schemas/LiveNoteMinutes"
+        "404":
+          description: token 不存在或不属于当前项目
+
+  /api/live-share/notes/segment:
+    post:
+      tags: [LiveShare]
+      summary: 上传一段音频并转写
+      description: |
+        发布端按**信道**分别上传：`system`（系统声音）、`mic`（发布端麦克风）、
+        `viewer:<id>`（某个观众的麦克风）。服务端用配置的 STT provider 同步转写后落库，
+        返回文本供发布端即时显示字幕。
+
+        信道分离是说话人标注的来源：发布端物理上持有每个参与者独立的音轨，
+        不需要说话人分离模型。静音段（转写结果为空）返回 `id: 0`，不落库。
+      operationId: liveShareNoteSegment
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [token, channel, file]
+              properties:
+                token:
+                  type: string
+                channel:
+                  type: string
+                  description: "`system` | `mic` | `viewer:<id>`"
+                speaker:
+                  type: string
+                  description: 展示用说话人标签（发布端已本地化）
+                startedAt:
+                  type: integer
+                  format: int64
+                  description: 该段音频的起始时间（Unix 毫秒，发布端时钟）
+                durationMs:
+                  type: integer
+                  format: int64
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: "转写结果（`id: 0` 表示静音，未落库）"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
+        "502":
+          description: STT 转写失败（该段留空，不影响共享）
+
+  /api/live-share/notes/minutes:
+    post:
+      tags: [LiveShare]
+      summary: 生成会议纪要
+      description: |
+        异步生成：立即返回 `status: generating`，调用方轮询
+        `GET /api/live-share/notes` 取结果。已生成或生成中时幂等返回当前状态，
+        传 `regenerate: true` 才重新生成。转写为空时返回 `status: idle`。
+      operationId: liveShareNotesMinutes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                title:
+                  type: string
+                regenerate:
+                  type: boolean
+      responses:
+        "200":
+          description: 当前纪要状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveNoteMinutes"
+        "404":
+          description: token 不存在或不属于当前项目
 
   # ── Share ─────────────────────────────────────────────────────────────────
   /api/share:
@@ -3871,6 +4165,15 @@ paths:
         会话分享走另外两个子路径：`{token}/meta`（返回 `kind` 为 `file` 或
         `session`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回**实时装配**的
         会话 JSON）。两者同样免鉴权、token 不存在一律 404。
+
+        **直播共享**另有 `{token}/signal`（信令 WebSocket）与 `{token}/notes`
+        （AI 听记时间线 + 纪要状态，`?since=` 增量）。`{token}/notes` 只在房间存活期间
+        可读：共享结束后房间销毁，token 立即失效，不会留下可长期读取的转写。
+
+        `{token}/signal` 的观众控制帧含 `talk-start` / `talk-end`（麦克风）与
+        `screen-start` / `screen-stop`（共享自己的屏幕，需房间开关已打开且当前无人共享）。
+        服务端以 `screen-state` 广播谁在共享；被拒时回 `screen-denied`（`disabled` / `busy` /
+        `revoked`）。屏幕采集要求安全上下文（HTTPS），HTTP 页面里浏览器不提供该 API。
 
         会话 JSON 另附身份信息供分享页渲染真实智能体图标：`sessionAgent`（会话级智能体，
         单聊用）、`speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`
@@ -6460,8 +6763,9 @@ paths:
         期间 `seen_cursor` 不推进，所以它的下一轮会把整段积压注入上下文。
 
         主持人模式（`mode="host"`）下主持人**不可禁用**（`409`）——它是群唯一的
-        调度器，禁用后群无法再起回合。**最后一位可发言的成员也不可禁用**（`409`）：
-        群里没人能接话，之后一个回合都跑不起来。（v1 不提供更换主持人的入口；如需换人请另建群。）
+        调度器，禁用后群无法再起回合。需要换人请用 `PATCH /api/group/host`。
+        **最后一位可发言的成员也不可禁用**（`409`）：
+        群里没人能接话，之后一个回合都跑不起来。
         自由模式（`mode="free"`）无主持人，任何成员都可禁用。
 
         `disabled` 必填：缺字段是非法请求（`400`），而不是「设为 false」——否则漏传
@@ -6492,6 +6796,48 @@ paths:
             - 目标是最后一位可发言成员（`msgKey=CannotDisableLastMember`）——
               群里没人能接话，之后一个回合都跑不起来；
             - 启用会让可发言成员超过上限（`msgKey=GroupMemberLimitReached`）。
+
+  /api/group/host:
+    patch:
+      tags: [Group]
+      summary: 更换主持人
+      description: |
+        把群内另一个成员设为主持人（`更换主持人`）。主持人只是群行上的一个**指针**
+        （`context_state.host_member_id`）：每位成员都有自己的会话行、自己的 ACP
+        连接与上下文窗口，角色提示词每回合重建，因此换人**不需要重连、不动历史**，
+        从**下一回合**起生效。已经在跑的那一轮仍由原主持人收尾（回合开始时已快照）。
+
+        拒绝的情况（不会静默忽略）：
+        - 自由模式（`mode="free"`）的群没有主持人 → `409 GroupNotHostMode`；
+        - 目标不是**本群**的成员 → `400 HostNotMember`；
+        - 目标已禁用 → `409 HostDisabled`（禁用的成员不参与调度，不能当路由器）。
+
+        重复把当前主持人再设一次是幂等的：不写系统行。成功时会在群时间线追加一行
+        系统消息（`{{Name}} 成为了主持人`），让所有成员在注入上下文里知道现在的
+        主持人是谁——模型自己的历史里仍留着旧角色。
+      operationId: groupHostChange
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groupId, memberId]
+              properties:
+                groupId: {type: string}
+                memberId:
+                  type: string
+                  description: 新主持人的**成员行 id**（`GET /api/group/members` 的 `id`，不是智能体 id）
+      responses:
+        "200":
+          description: 更换成功（或已经是主持人，幂等）
+        "400":
+          description: 缺少 groupId / memberId，或目标不是本群成员（`msgKey=HostNotMember`）
+        "409":
+          description: |
+            拒绝更换：
+            - 群是自由模式，没有主持人（`msgKey=GroupNotHostMode`）；
+            - 目标成员已禁用（`msgKey=HostDisabled`）。
 
   /api/group/member-avatars:
     post:
@@ -6682,6 +7028,73 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
+    TLSStatus:
+      type: object
+      description: |
+        HTTPS 证书状态。`active` = 磁盘上有可用证书（重启后生效）；`serving` = 当前请求
+        是否走 TLS；`selfSigned` = 证书自签（浏览器会提示不受信任，接受一次即可）。
+      properties:
+        active: { type: boolean }
+        serving: { type: boolean }
+        selfSigned: { type: boolean }
+        certFile: { type: string }
+        keyFile: { type: string }
+        certDir: { type: string }
+        hosts:
+          type: array
+          items: { type: string }
+        notAfter: { type: string }
+        httpsUrl: { type: string }
+        restartRequired: { type: boolean }
+      required: [active, serving, certDir]
+
+    LiveNoteSegment:
+      type: object
+      description: |
+        AI 听记的一段转写。`channel` 是音频信道（`system` / `mic` / `viewer:<id>`），
+        `speaker` 是发布端写入的展示标签。按 `startedAt` 重排即为对话时间线。
+      properties:
+        id: { type: integer, format: int64 }
+        channel: { type: string }
+        speaker: { type: string }
+        startedAt: { type: integer, format: int64, description: Unix 毫秒 }
+        durationMs: { type: integer, format: int64 }
+        text: { type: string }
+      required: [id, channel, startedAt, text]
+
+    LiveNoteMinutes:
+      type: object
+      description: |
+        会议纪要。`status` 为 `idle`（尚未生成）/ `generating` / `ready` / `failed`；
+        `markdown` 仅在 `ready` 时有值，`error` 仅在 `failed` 时有值。
+      properties:
+        status: { type: string }
+        markdown: { type: string }
+        error: { type: string }
+      required: [status]
+
+    WeChatLogin:
+      type: object
+      description: |
+        微信扫码登录会话快照。`qr_url` 是待编码成二维码的字符串（通常是一个
+        `liteapp.weixin.qq.com` 链接），由前端渲染成二维码供微信扫描。
+        `state` 为 `pending` / `scanned` / `connected` / `expired` / `failed` /
+        `cancelled`；`qr_seq` 每次刷新二维码递增。
+      properties:
+        login_id: { type: string }
+        state: { type: string }
+        qr_url: { type: string }
+        qr_seq: { type: integer }
+        refresh: { type: integer }
+        refresh_max: { type: integer }
+        bot_id: { type: string }
+        message: { type: string }
+        error: { type: string }
+        expires_at:
+          type: integer
+          description: Unix 毫秒时间戳
+      required: [login_id, state]
+
     ErrorResponse:
       type: object
       description: 统一错误体。

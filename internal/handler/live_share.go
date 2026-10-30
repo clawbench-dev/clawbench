@@ -22,6 +22,7 @@ import (
 
 	"clawbench/internal/liveshare"
 	"clawbench/internal/model"
+	"clawbench/internal/service"
 
 	"github.com/coder/websocket"
 )
@@ -102,27 +103,31 @@ func ServeLiveShareManage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// liveShareTitle derives the share page title from the request, falling back to
-// a neutral label. The title is author-supplied text that ends up on a public
+// liveShareCreateBody derives the share title and the AI 听记 flag from the
+// create request. The title is author-supplied text that ends up on a public
 // page, so it is only ever rendered as text (never as HTML) by the SPA.
-func liveShareTitle(r *http.Request, projectPath string) string {
+func liveShareCreateBody(r *http.Request, projectPath string) (title string, notes bool) {
 	var body struct {
 		Title string `json:"title"`
+		Notes bool   `json:"notes"`
 	}
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
-	if body.Title != "" {
-		return truncateRunes(body.Title, 80)
+	title = body.Title
+	if title != "" {
+		title = truncateRunes(title, 80)
+	} else if base := lastPathSegment(projectPath); base != "" {
+		title = base
+	} else {
+		title = "ClawBench"
 	}
-	if base := lastPathSegment(projectPath); base != "" {
-		return base
-	}
-	return "ClawBench"
+	return title, body.Notes
 }
 
 func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath string) {
-	room, err := liveRegistry.Create(projectPath, liveShareTitle(r, projectPath))
+	title, notes := liveShareCreateBody(r, projectPath)
+	room, err := liveRegistry.Create(projectPath, title)
 	if err != nil {
 		if errors.Is(err, liveshare.ErrTooManyRooms) {
 			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "LiveShareTooManyRooms")
@@ -132,6 +137,10 @@ func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath st
 		model.WriteError(w, model.Internal(err))
 		return
 	}
+	// Set on every create, not just the first: the room is idempotent per
+	// project, so a retry (or a second device) may be the one that knows
+	// whether 听记 is on.
+	room.SetNotesEnabled(notes)
 
 	writeJSON(w, http.StatusOK, liveShareManageResponse{
 		Token: room.Token(),
@@ -326,6 +335,14 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 		}
 		return false
 
+	case liveshare.CtrlSetScreenEnabled:
+		applySetScreenEnabled(room, ctl.Enabled)
+		return false
+
+	case liveshare.CtrlScreenRevoke:
+		applyScreenRevoke(room, ctl.ViewerID)
+		return false
+
 	default:
 		_ = sink.Send(liveshare.PublisherMessage{Type: liveshare.MsgError, Name: "unknown control type: " + ctl.Type})
 		return false
@@ -378,11 +395,17 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer func() {
+		wasSharing := room.ScreenSharer() == viewer.ID
 		room.RemoveViewer(viewer.ID)
 		room.SendToPublisher(liveshare.PublisherMessage{
 			Type:     liveshare.MsgViewerLeave,
 			ViewerID: viewer.ID,
 		})
+		// RemoveViewer already cleared the slot; everyone else still has to be
+		// told, or they keep showing a screen that no longer exists.
+		if wasSharing {
+			broadcastScreenState(room)
+		}
 	}()
 
 	// Re-check after attaching: the publisher may have detached between the
@@ -399,11 +422,14 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 		ViewerID: viewer.ID,
 	})
 	if err := sink.Send(liveshare.ViewerMessage{
-		Type:        liveshare.MsgJoined,
-		ViewerID:    viewer.ID,
-		Title:       room.Title(),
-		ICEServers:  []any{}, // reserved for a future TURN; see signal.go
-		TalkEnabled: room.TalkEnabled(),
+		Type:          liveshare.MsgJoined,
+		ViewerID:      viewer.ID,
+		Title:         room.Title(),
+		ICEServers:    []any{}, // reserved for a future TURN; see signal.go
+		TalkEnabled:   room.TalkEnabled(),
+		NotesEnabled:  room.NotesEnabled(),
+		ScreenEnabled: room.ScreenEnabled(),
+		ScreenSharer:  room.ScreenSharer(),
 	}); err != nil {
 		return
 	}
@@ -463,7 +489,78 @@ func handleViewerControl(room *liveshare.Room, viewer *liveshare.Viewer, ctl liv
 			return
 		}
 		notifyTalkState(room, viewer.ID, false)
+
+	case liveshare.CtrlScreenStart:
+		if err := room.ClaimScreen(viewer.ID); err != nil {
+			reason := liveshare.ReasonDisabled
+			if errors.Is(err, liveshare.ErrScreenBusy) {
+				reason = liveshare.ReasonBusy
+			}
+			// Denied loudly: the viewer is already capturing locally, so it has
+			// to know to stop and release the camera/microphone indicator.
+			room.SendToViewer(viewer.ID, liveshare.ViewerMessage{
+				Type:   liveshare.MsgScreenDenied,
+				Reason: reason,
+			})
+			return
+		}
+		broadcastScreenState(room)
+
+	case liveshare.CtrlScreenStop:
+		if room.ReleaseScreen(viewer.ID) {
+			broadcastScreenState(room)
+		}
 	}
+}
+
+// applySetScreenEnabled flips the room switch and stops the current sharer.
+//
+// Split out of the control switch purely to keep that function's cyclomatic
+// complexity within the linter's budget; the behavior is the switch case.
+func applySetScreenEnabled(room *liveshare.Room, enabled bool) {
+	stopped := room.SetScreenEnabled(enabled)
+	if stopped != "" {
+		// The former sharer needs an explicit denial: its browser is still
+		// capturing, and nothing else will tell it to stop.
+		room.SendToViewer(stopped, liveshare.ViewerMessage{
+			Type:   liveshare.MsgScreenDenied,
+			Reason: liveshare.ReasonDisabled,
+		})
+	}
+	broadcastScreenState(room)
+}
+
+// applyScreenRevoke stops one viewer's share without touching the switch.
+func applyScreenRevoke(room *liveshare.Room, viewerID string) {
+	if !room.ReleaseScreen(viewerID) {
+		return
+	}
+	room.SendToViewer(viewerID, liveshare.ViewerMessage{
+		Type:   liveshare.MsgScreenDenied,
+		Reason: liveshare.ReasonRevoked,
+	})
+	broadcastScreenState(room)
+}
+
+// broadcastScreenState tells the publisher and every viewer who is sharing.
+//
+// One frame for both sides: the publisher renders a preview and the viewers
+// switch their main picture, and both must agree on WHO — a viewer that keeps
+// showing a stale sharer is indistinguishable from a frozen stream.
+func broadcastScreenState(room *liveshare.Room) {
+	sharer := room.ScreenSharer()
+	room.BroadcastToViewers(liveshare.ViewerMessage{
+		Type:          liveshare.MsgScreenState,
+		ViewerID:      sharer,
+		Sharing:       sharer != "",
+		ScreenEnabled: room.ScreenEnabled(),
+	}, "")
+	room.SendToPublisher(liveshare.PublisherMessage{
+		Type:          liveshare.MsgScreenState,
+		ViewerID:      sharer,
+		Sharing:       sharer != "",
+		ScreenEnabled: room.ScreenEnabled(),
+	})
 }
 
 // notifyTalkState tells the publisher that a viewer started or stopped speaking.
@@ -537,6 +634,14 @@ func liveShareRoomCountForTest() int {
 // irrelevant to the outcome but keeps the scan cheap.
 const liveReapInterval = time.Minute
 
+// liveNotesCleanupInterval is how often expired transcripts are swept. Notes are
+// kept for liveNotesRetention after their last update; an hourly sweep is
+// plenty for a 7-day retention window.
+const (
+	liveNotesCleanupInterval = time.Hour
+	liveNotesRetention       = 7 * 24 * time.Hour
+)
+
 // StartLiveShareReaper drops rooms that have had no viewers past the idle
 // timeout. Without it a room whose publisher vanished without a clean close
 // would occupy one of the maxLiveRooms slots forever.
@@ -547,6 +652,9 @@ func StartLiveShareReaper() func() {
 	go func() {
 		t := time.NewTicker(liveReapInterval)
 		defer t.Stop()
+		// Notes retention runs on its own, much slower cadence: the scan is a
+		// table sweep and nothing about it is time-critical.
+		lastNotesCleanup := time.Now()
 		for {
 			select {
 			case <-stop:
@@ -561,6 +669,15 @@ func StartLiveShareReaper() func() {
 					}, "")
 					room.SetPublisher(nil)
 					slog.Info("liveshare: reaped idle room", "token", room.Token())
+				}
+				if now.Sub(lastNotesCleanup) >= liveNotesCleanupInterval {
+					lastNotesCleanup = now
+					removed, err := service.CleanupLiveNotes(context.Background(), now.Add(-liveNotesRetention))
+					if err != nil {
+						slog.Warn("liveshare: notes cleanup failed", "err", err)
+					} else if removed > 0 {
+						slog.Info("liveshare: cleaned up expired notes", "shares", removed)
+					}
 				}
 			}
 		}

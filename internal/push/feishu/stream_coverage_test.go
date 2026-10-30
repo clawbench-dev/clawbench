@@ -3,6 +3,9 @@ package feishu
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -119,28 +122,53 @@ func TestParsePost_MultiRowJoinsWithNewline(t *testing.T) {
 // handleIncomingWithMedia routing branches
 // ---------------------------------------------------------------------------
 
-// A media message whose text is "/ls" must list sessions instead of downloading
-// the attachment into a session.
-func TestHandleIncomingWithMedia_ListSessionsShortCircuits(t *testing.T) {
-	mediaTestServer(t, "image-bytes")
-	mgr, _ := stickyTestEnv(t, "abc12345-1111-1111-1111-111111111111", stickySessions)
+// "/ls" is a command too. Answering it while discarding the attachment loses the
+// user's file with no warning, so the command/attachment refusal must be checked
+// BEFORE the list branch — and before any download.
+func TestHandleIncomingWithMedia_ListSessionsWithAttachmentIsRefused(t *testing.T) {
+	var replyBody []byte
+	mux := http.NewServeMux()
+	// The send endpoint is an exact match; the resource endpoint is a subtree.
+	// Registering both lets the test see the reply AND fail if a download starts.
+	mux.HandleFunc("/open-apis/im/v1/messages", func(w http.ResponseWriter, r *http.Request) {
+		replyBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0}`))
+	})
+	mux.HandleFunc("/open-apis/im/v1/messages/", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("a refused command must not download the attachment")
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	origBase, origURL := feishuOpenBaseURL, feishuMessageURL
+	feishuOpenBaseURL = srv.URL
+	feishuMessageURL = srv.URL + "/open-apis/im/v1/messages?receive_id_type=open_id"
+	t.Cleanup(func() { feishuOpenBaseURL, feishuMessageURL = origBase, origURL })
+
+	mgr, _ := stickyTestEnv(t, "", stickySessions)
 	mgr.cachedToken = "test-tenant-token"
 	mgr.cachedExp = time.Now().Add(2 * time.Hour)
 
-	sent := make(chan string, 1)
-	sessionMessenger.(*mockSessionMessenger).SendFn = func(_ string, msg string, _ []model.FileEntry) error {
-		sent <- msg
+	var sentTo string
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(sid, _ string, _ []model.FileEntry) error {
+		sentTo = sid
 		return nil
 	}
 
-	// "/ls" routes to the session list, so the media is never downloaded/sent.
 	mgr.handleIncomingWithMedia(context.Background(), "ou_user1", "/ls", "/ls",
 		[]mediaRef{{key: "img_1", resType: msgTypeImage, filename: "image.png"}}, "om_msg_1")
 
-	select {
-	case msg := <-sent:
-		t.Fatalf("a /ls media message must not send to a session, got %q", msg)
-	case <-time.After(300 * time.Millisecond):
+	if sentTo != "" {
+		t.Errorf("a refused command must not reach a session, got %q", sentTo)
+	}
+	got := string(replyBody)
+	if !strings.Contains(got, common.CommandWithAttachmentText(common.SessionListCommand)) {
+		t.Errorf("expected the command/attachment refusal, got %s", got)
+	}
+	if strings.Contains(got, common.T("PushSessionListIntro")) {
+		t.Errorf("the list must not be answered when the attachment is refused, got %s", got)
 	}
 }
 

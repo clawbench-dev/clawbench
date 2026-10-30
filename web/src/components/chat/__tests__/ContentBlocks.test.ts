@@ -3399,10 +3399,14 @@ describe('text-mode ask card after the side table is cleared', () => {
 
   it('still renders the card when the HTML comes from a warm static cache', async () => {
     const { StaticBlockCache } = await import('@/utils/streamPerf.ts')
+    const { blockWrapVersion } = await import('@/utils/blockWrapPref.ts')
     const cache = markRaw(new StaticBlockCache())
     // Warm the cache exactly as the previous render did: same msgId, same
-    // index, same text, same scope.
-    cache.set('msg-1', 0, TAG_TEXT, '<p>前言</p>', false, `${store.state.projectRoot}\u0000en`)
+    // index, same text, same scope. The scope is the component's
+    // `cacheScope` — project root, locale AND the wrap-preference version
+    // (a toggle changes the wrapper classes, so it must invalidate the entry).
+    cache.set('msg-1', 0, TAG_TEXT, '<p>前言</p>', false,
+      `${store.state.projectRoot}\u0000en\u0000${blockWrapVersion.value}`)
 
     mountBlocks({
       blocks: [{ type: 'text', text: TAG_TEXT }],

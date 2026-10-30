@@ -54,6 +54,21 @@ const i18n = createI18n({
           statusLive: '直播中',
           fullscreen: '全屏',
           exitFullscreen: '退出全屏',
+          notes: '听记',
+          notesTitle: 'AI 听记',
+          notesWaiting: '等待转写…',
+          shareScreen: '共享屏幕',
+          stopSharing: '停止共享',
+          shareScreenHint: '把你的屏幕共享给所有人',
+          stopSharingHint: '停止共享你的屏幕',
+          youAreSharing: '你正在共享屏幕',
+          viewingSharer: '成员 {id} 正在共享屏幕',
+          backToHost: '看主持人',
+          viewShared: '看共享',
+          shareFailed: '无法开始共享',
+          screenBusy: '已有成员在共享屏幕',
+          screenDisabled: '主持人未开启屏幕共享',
+          screenNeedsHttps: '需要 HTTPS',
         },
       },
     },
@@ -252,6 +267,42 @@ describe('LiveShareView control dock', () => {
     await flushPromises()
 
     expect(w.find('[data-action="enable-sound"]').exists()).toBe(false)
+
+    w.unmount()
+  })
+
+  it('offers the transcript only when the publisher enabled AI 听记', async () => {
+    const w = mountView()
+    await flushPromises()
+
+    // A share without 听记 must not show a button that opens an empty panel.
+    expect(w.find('[data-action="notes"]').exists()).toBe(false)
+
+    lastViewer?.opts?.callbacks?.onNotesEnabled?.(true)
+    await flushPromises()
+    expect(w.find('[data-action="notes"]').exists()).toBe(true)
+
+    // Turning it off (or the share ending) removes the button again.
+    lastViewer?.opts?.callbacks?.onNotesEnabled?.(false)
+    await flushPromises()
+    expect(w.find('[data-action="notes"]').exists()).toBe(false)
+
+    w.unmount()
+  })
+
+  it('offers screen sharing only when the host allows it, disabled over http', async () => {
+    const w = mountView()
+    await flushPromises()
+    expect(w.find('[data-action="screen-share"]').exists()).toBe(false)
+
+    lastViewer?.opts?.callbacks?.onScreenEnabled?.(true)
+    await flushPromises()
+    const btn = w.find('[data-action="screen-share"]')
+    expect(btn.exists()).toBe(true)
+    // jsdom is not a secure context and has no mediaDevices: exactly the
+    // situation of an http:// LAN page. The button must explain, not vanish.
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.attributes('title')).toContain('HTTPS')
 
     w.unmount()
   })

@@ -1771,3 +1771,67 @@ func TestGroupOrchestrator_ImageOnlyUserMessageReachesHostPrompt(t *testing.T) {
 		t.Fatalf("an image-only user message must reach the host prompt: %q", hostPrompt)
 	}
 }
+
+// After 更换主持人, the NEXT turn must be driven by the new host — including its
+// host prompt — while the old host becomes an ordinary participant. The pointer
+// is read per turn, so this also pins "no cached host on the orchestrator".
+func TestGroupOrchestrator_NewHostDrivesNextTurn(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-host-swap"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, oldHostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	newHostID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	thirdID, err := AddGroupMember(project, groupID, "claude", "agent-b", "B")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	if err := ChangeGroupHost(project, groupID, newHostID); err != nil {
+		t.Fatalf("ChangeGroupHost: %v", err)
+	}
+
+	// Only the NEW host's output may route: the old host and B speak iff A's
+	// mention tag is parsed, which happens only on the host turn. The old host
+	// is addressed explicitly so its prompt can be inspected — it must now carry
+	// the MEMBER prompt (it may no longer route).
+	script := map[string][]string{
+		newHostID: {
+			`<clawbench-mention targets="Host,B">请分别补充</clawbench-mention>`,
+			`<clawbench-group-end/> 结论已定。`,
+		},
+		oldHostID: {`（原主持人以成员身份发言）`},
+		thirdID:   {`B 的补充`},
+	}
+	base, order := newScriptedRunner(t, groupID, project, script)
+	promptsByMember := map[string][]string{}
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		promptsByMember[turn.MemberRowID] = append(promptsByMember[turn.MemberRowID], turn.Prompt)
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "继续讨论", nil)
+
+	if len(*order) == 0 || (*order)[0] != newHostID {
+		t.Fatalf("first speaker = %v, want the NEW host %q (order=%v)", *order, newHostID, *order)
+	}
+	if p := promptsByMember[newHostID]; len(p) == 0 || !strings.Contains(p[0], "[群聊主持人]") {
+		t.Fatalf("new host did not receive the host prompt: %q", p)
+	}
+	// The old host must actually have spoken (otherwise this assertion is vacuous).
+	if p := promptsByMember[oldHostID]; len(p) == 0 {
+		t.Fatalf("old host never spoke; the routing fixture is broken (order=%v)", *order)
+	} else if strings.Contains(p[0], "[群聊主持人]") || !strings.Contains(p[0], "[群聊成员]") {
+		t.Fatalf("old host must now receive the MEMBER prompt: %q", p[0])
+	}
+	if !containsString(*order, thirdID) {
+		t.Fatalf("new host's mention must dispatch B: order=%v", *order)
+	}
+}

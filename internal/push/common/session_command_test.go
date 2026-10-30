@@ -195,6 +195,14 @@ func TestResolveTarget(t *testing.T) {
 type mockMessenger struct {
 	sessions []SessionInfo
 	running  map[string]bool
+
+	lastReply       string
+	lastReplyOK     bool
+	wasRunning      bool
+	cleared         int
+	projects        []ProjectRef
+	newSessionID    string
+	newSessionTitle string
 }
 
 func (m *mockMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]SessionInfo, error) {
@@ -229,3 +237,296 @@ func (m *mockMessenger) GetSessionInfo(sessionID string) (SessionInfo, error) {
 }
 
 func (m *mockMessenger) SendMessageToSession(string, string, []model.FileEntry) error { return nil }
+
+func TestClassifyIncoming_NewCommands(t *testing.T) {
+	tests := []struct {
+		name      string
+		text      string
+		sticky    string
+		wantKind  RouteKind
+		wantArg   string
+		wantShort string
+		wantMsg   string
+	}{
+		{
+			name: "show without arg", text: "/show", sticky: "s1",
+			wantKind: RouteShowLastReply,
+		},
+		{
+			name: "show with id", text: "/show a1b2c3d4", sticky: "s1",
+			wantKind: RouteShowLastReply, wantArg: "a1b2c3d4",
+		},
+		{
+			name: "show with padded id", text: "  /show   a1b2c3d4  ", sticky: "",
+			wantKind: RouteShowLastReply, wantArg: "a1b2c3d4",
+		},
+		{
+			name: "stop without arg", text: "/stop", sticky: "s1",
+			wantKind: RouteStopSession,
+		},
+		{
+			name: "stop with id", text: "/stop a1b2c3d4", sticky: "",
+			wantKind: RouteStopSession, wantArg: "a1b2c3d4",
+		},
+		{
+			name: "new without arg lists projects", text: "/new", sticky: "s1",
+			wantKind: RouteNewSession, wantArg: "",
+		},
+		{
+			name: "new with index", text: "/new 2", sticky: "s1",
+			wantKind: RouteNewSession, wantArg: "2",
+		},
+		{
+			// A path may contain spaces; the arg must be the whole remainder,
+			// not the first whitespace-delimited token.
+			name: "new with path containing spaces", text: "/new /home/u/my project", sticky: "",
+			wantKind: RouteNewSession, wantArg: "/home/u/my project",
+		},
+		{
+			// "@id" wins over any command word: this is the escape hatch that
+			// sends the literal text "/new" to a session.
+			name: "explicit target beats command", text: "@a1b2c3d4 /new", sticky: "",
+			wantKind: RouteToSession, wantShort: "a1b2c3d4", wantMsg: "/new",
+		},
+		{
+			// A command word embedded mid-sentence is ordinary text.
+			name: "command word embedded is plain text", text: "please /stop it", sticky: "s1",
+			wantKind: RouteToSession, wantMsg: "please /stop it",
+		},
+		{
+			// Commands are lowercase only.
+			name: "uppercase is not a command", text: "/SHOW", sticky: "s1",
+			wantKind: RouteToSession, wantMsg: "/SHOW",
+		},
+		{
+			// Unknown slash commands fall through to the session, so a user can
+			// still type them to the AI.
+			name: "unknown slash command goes to session", text: "/help me", sticky: "s1",
+			wantKind: RouteToSession, wantMsg: "/help me",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ClassifyIncoming(tt.text, tt.sticky)
+			if got.Kind != tt.wantKind {
+				t.Fatalf("Kind = %v, want %v", got.Kind, tt.wantKind)
+			}
+			if got.Arg != tt.wantArg {
+				t.Errorf("Arg = %q, want %q", got.Arg, tt.wantArg)
+			}
+			if got.ShortID != tt.wantShort {
+				t.Errorf("ShortID = %q, want %q", got.ShortID, tt.wantShort)
+			}
+			if got.Message != tt.wantMsg {
+				t.Errorf("Message = %q, want %q", got.Message, tt.wantMsg)
+			}
+		})
+	}
+}
+
+func (m *mockMessenger) LastAssistantReply(string) (string, bool, error) {
+	return m.lastReply, m.lastReplyOK, nil
+}
+
+func (m *mockMessenger) StopAndClearSession(string) (bool, int, error) {
+	return m.wasRunning, m.cleared, nil
+}
+
+func (m *mockMessenger) ListProjects() ([]ProjectRef, error) {
+	return m.projects, nil
+}
+
+func (m *mockMessenger) CreateSessionInProject(string) (string, string, error) {
+	return m.newSessionID, m.newSessionTitle, nil
+}
+
+func TestResolveCommandTarget(t *testing.T) {
+	m := &mockMessenger{
+		sessions: []SessionInfo{
+			{ID: "a1b2c3d4-1111", Title: "T1"},
+			{ID: "b2c3d4e5-2222", Title: "T2"},
+		},
+		running: map[string]bool{"b2c3d4e5-2222": true},
+	}
+
+	// No arg → the sticky session, read back for its title.
+	id, title, err := ResolveCommandTarget(m, "", "a1b2c3d4-1111")
+	if err != nil || id != "a1b2c3d4-1111" || title != "T1" {
+		t.Fatalf("sticky resolve = %q %q %v", id, title, err)
+	}
+
+	// Explicit prefix wins over the sticky target.
+	id, title, err = ResolveCommandTarget(m, "b2c3d4e5", "a1b2c3d4-1111")
+	if err != nil || id != "b2c3d4e5-2222" || title != "T2" {
+		t.Fatalf("prefix resolve = %q %q %v", id, title, err)
+	}
+
+	// No arg and no sticky target is an error, not a silent empty session.
+	if _, _, err := ResolveCommandTarget(m, "", ""); err == nil {
+		t.Fatal("expected error when neither arg nor sticky target is set")
+	}
+
+	// Unknown prefix propagates the not-found error.
+	if _, _, err := ResolveCommandTarget(m, "ffffffff", "a1b2c3d4-1111"); err == nil {
+		t.Fatal("expected error for unknown prefix")
+	}
+}
+
+func TestClassifyIncoming_ShowStopWithoutTargetOrSticky(t *testing.T) {
+	// No argument and no sticky target: the user has nothing to act on, so the
+	// command must degrade to the standard no-target hint instead of surfacing
+	// an internal "no target session" error.
+	for _, cmd := range []string{"/show", "/stop"} {
+		got := ClassifyIncoming(cmd, "")
+		if got.Kind != RouteNoTarget {
+			t.Errorf("%s with no sticky = %v, want RouteNoTarget", cmd, got.Kind)
+		}
+	}
+
+	// An explicit argument still routes even without a sticky target.
+	if got := ClassifyIncoming("/show a1b2c3d4", ""); got.Kind != RouteShowLastReply {
+		t.Errorf("/show with id = %v, want RouteShowLastReply", got.Kind)
+	}
+	if got := ClassifyIncoming("/stop a1b2c3d4", ""); got.Kind != RouteStopSession {
+		t.Errorf("/stop with id = %v, want RouteStopSession", got.Kind)
+	}
+}
+
+func TestRouteKind_IsCommandAndWord(t *testing.T) {
+	// The attachment paths rely on IsCommand to keep a command out of the
+	// "deliver Route.Message" flow; a kind that reports false here would be sent
+	// to a session as an empty (or literal) message and never run.
+	commands := map[RouteKind]string{
+		RouteListSessions:  SessionListCommand,
+		RouteShowLastReply: SessionShowCommand,
+		RouteStopSession:   SessionStopCommand,
+		RouteNewSession:    SessionNewCommand,
+	}
+	for kind, word := range commands {
+		if !kind.IsCommand() {
+			t.Errorf("kind %d must report IsCommand", int(kind))
+		}
+		if got := kind.CommandWord(); got != word {
+			t.Errorf("kind %d CommandWord = %q, want %q", int(kind), got, word)
+		}
+	}
+
+	// Text delivery and the no-target hint are NOT commands: the media path must
+	// keep delivering them.
+	for _, kind := range []RouteKind{RouteToSession, RouteNoTarget} {
+		if kind.IsCommand() {
+			t.Errorf("kind %d must not report IsCommand", int(kind))
+		}
+		if got := kind.CommandWord(); got != "" {
+			t.Errorf("kind %d CommandWord = %q, want empty", int(kind), got)
+		}
+	}
+
+	// The mapping must cover every kind, so adding a new command cannot silently
+	// leave IsCommand false. Enumerate the constants: RouteNoTarget is the last.
+	for k := RouteToSession; k <= RouteNoTarget; k++ {
+		word := k.CommandWord()
+		if word == "" && k.IsCommand() {
+			t.Errorf("kind %d reports IsCommand but has no word", int(k))
+		}
+		if word != "" && !k.IsCommand() {
+			t.Errorf("kind %d has word %q but is not a command", int(k), word)
+		}
+	}
+}
+
+// A /show or /stop argument must obey the same 8+ hex prefix shape the "@"
+// form requires. These commands can reveal a session's text and stop a running
+// turn, so a one-character argument must not silently match whichever session
+// happens to start with it — and a "%"/"_" must never reach the LIKE query as a
+// wildcard.
+func TestResolveCommandTarget_RejectsMalformedPrefix(t *testing.T) {
+	m := &mockMessenger{
+		// Every prefix matches, which is what a real LIKE 'a%' would do for "a".
+		sessions: []SessionInfo{{ID: "a1b2c3d4-1111", Title: "T1"}},
+	}
+
+	for _, arg := range []string{"a", "%", "_", "%%", "abc", "a1b2c3", "../../x", "'; DROP TABLE--"} {
+		id, _, err := ResolveCommandTarget(m, arg, "a1b2c3d4-1111")
+		if err == nil {
+			t.Errorf("arg %q must be refused, got session %q", arg, id)
+			continue
+		}
+		if !strings.Contains(err.Error(), arg) {
+			t.Errorf("arg %q: error should name the bad argument, got %v", arg, err)
+		}
+	}
+
+	// A well-formed prefix (8+ hex) still resolves.
+	id, title, err := ResolveCommandTarget(m, "a1b2c3d4", "other")
+	if err != nil || id != "a1b2c3d4-1111" || title != "T1" {
+		t.Fatalf("valid prefix = %q %q %v", id, title, err)
+	}
+}
+
+// A full session id must still work: the resolver matches by prefix, so the
+// longest possible prefix is a valid argument. Rejecting it would remove a
+// capability the "@{shortID}" form has.
+func TestResolveCommandTarget_AcceptsFullSessionID(t *testing.T) {
+	const full = "a1b2c3d4-1111-2222-3333-444455556666"
+	m := &mockMessenger{sessions: []SessionInfo{{ID: full, Title: "T"}}}
+
+	id, _, err := ResolveCommandTarget(m, full, "")
+	if err != nil || id != full {
+		t.Fatalf("full id = %q %v", id, err)
+	}
+
+	// Partial ids with the canonical dash layout also work.
+	for _, arg := range []string{"a1b2c3d4", "a1b2c3d4-1111"} {
+		if _, _, err := ResolveCommandTarget(m, arg, ""); err != nil {
+			t.Errorf("prefix %q should resolve: %v", arg, err)
+		}
+	}
+}
+
+// WeChat appends a quoted message after a blank line (see wechat.parseInbound),
+// so a command sent as a reply to a push arrives as "/show\n\n[引用: …]". The
+// argument must stay empty: taking the whole remainder would hand the quote to
+// the session-id validator, which rejects it and answers "invalid id" to a user
+// who only pressed reply.
+func TestClassifyIncoming_CommandIgnoresTrailingQuotedBlock(t *testing.T) {
+	cases := []struct {
+		text string
+		kind RouteKind
+		arg  string
+	}{
+		{"/show\n\n[引用: 会话完成 | done]", RouteShowLastReply, ""},
+		{"/show abcdef12\n\n[引用: 会话完成]", RouteShowLastReply, "abcdef12"},
+		{"/stop\n\n[引用: x]", RouteStopSession, ""},
+		{"/new\n\n[引用: x]", RouteNewSession, ""},
+		// A path may contain spaces but never a newline, so the first line is
+		// the whole argument.
+		{"/new /srv/my project\n\n[引用: x]", RouteNewSession, "/srv/my project"},
+	}
+	for _, tc := range cases {
+		// A sticky target is the normal state when replying to a push; without
+		// one, /show and /stop correctly answer "pick a session" instead.
+		route := ClassifyIncoming(tc.text, "abcdef1234567890")
+		if route.Kind != tc.kind {
+			t.Errorf("%q: kind = %v, want %v", tc.text, route.Kind, tc.kind)
+			continue
+		}
+		if route.Arg != tc.arg {
+			t.Errorf("%q: arg = %q, want %q", tc.text, route.Arg, tc.arg)
+		}
+	}
+}
+
+// A plain message keeps its full text, newlines and quoted block included: only
+// the command argument is line-scoped.
+func TestClassifyIncoming_MessageKeepsTrailingBlock(t *testing.T) {
+	const text = "继续\n\n[引用: 上一条]"
+	route := ClassifyIncoming(text, "abcdef12")
+	if route.Kind != RouteToSession {
+		t.Fatalf("kind = %v, want RouteToSession", route.Kind)
+	}
+	if route.Message != text {
+		t.Errorf("message = %q, want the whole text %q", route.Message, text)
+	}
+}

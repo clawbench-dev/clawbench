@@ -312,7 +312,7 @@ import { useFileEditor } from '@/composables/useFileEditor.ts'
 import { useTocDockPreference } from '@/composables/useTocDockPreference.ts'
 import { exportMarkdownToHtml, imageIssueReasonKey } from '@/utils/exportMarkdownHtml.ts'
 import { downloadBlob, downloadFileByPath } from '@/utils/download.ts'
-import { buildHtmlPreviewSrc, installPreviewScrollbar, installPreviewSearchStyles, watchPreviewTheme } from '@/utils/htmlPreview.ts'
+import { buildHtmlPreviewSrc, installPreviewLinkHandler, installPreviewScrollbar, installPreviewSearchStyles, watchPreviewTheme } from '@/utils/htmlPreview.ts'
 import { attachIframeSelectionQuoteBridge, installIframeSearchShortcut, resolveIframeWindow } from '@/utils/iframeSelectionQuote.ts'
 import { makeIframeQuoteShowHandler, useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useToast } from '@/composables/useToast.ts'
@@ -382,6 +382,8 @@ let htmlQuoteBridgePath = ''
 let disposeHtmlSearchShortcut = null
 /** Repaints the injected sheets when the app theme changes. */
 let disposeHtmlThemeWatcher = null
+/** Takes over outbound-link clicks the sandbox would otherwise swallow. */
+let disposeHtmlLinkHandler = null
 
 // HTML preview loads the document through /api/fs/raw/ rather than inlining it
 // via srcdoc, so the browser resolves the document's own relative references
@@ -407,6 +409,10 @@ function onHtmlPreviewLoad() {
     installPreviewSearchStyles(htmlPreviewRef.value)
     disposeHtmlThemeWatcher?.()
     disposeHtmlThemeWatcher = watchPreviewTheme(() => htmlPreviewRef.value)
+    // The sandbox has no `allow-popups`, so a previewed page's `target="_blank"`
+    // links are dead taps; hand them to the system browser instead.
+    disposeHtmlLinkHandler?.()
+    disposeHtmlLinkHandler = installPreviewLinkHandler(htmlPreviewRef.value)
     void attachHtmlQuoteBridge()
     attachHtmlSearchShortcut()
 }
@@ -842,6 +848,8 @@ onBeforeUnmount(() => {
     disposeHtmlSearchShortcut = null
     disposeHtmlThemeWatcher?.()
     disposeHtmlThemeWatcher = null
+    disposeHtmlLinkHandler?.()
+    disposeHtmlLinkHandler = null
 })
 
 // Save/restore scroll position when switching files. The watcher keeps the
@@ -1097,13 +1105,21 @@ defineExpose({
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: calc(40 * var(--dp));
+    /* Vertical only: the horizontal inset belongs to the skeleton, so it can
+       match the markdown column it stands in for. */
+    padding: calc(40 * var(--dp)) 0;
 }
 
 /* The placeholder owns its own width: the wrapper centres, but a text skeleton
-   squeezed to its content would not line up with the real paragraph. */
+   squeezed to its content would not line up with the real paragraph. It also
+   takes the markdown reading column's measure and inset (`.markdown-body`:
+   900dp cap, 10dp padding) — at the wrapper's old 40dp the first line sat 30dp
+   right of where the preview text lands. */
 .file-viewer-skeleton {
     width: 100%;
+    max-width: min(calc(900 * var(--dp)), 100%);
+    margin: 0 auto;
+    --panel-skeleton-inset: calc(10 * var(--dp));
 }
 
 

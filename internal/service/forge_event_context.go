@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"clawbench/internal/forge"
-	"clawbench/internal/i18n"
-	"clawbench/internal/model"
 )
 
 // eventContextText localizes one forge event-context string.
@@ -18,7 +16,7 @@ import (
 // (web/src/utils/forgeEventContextVars.ts) so the preview and the actually
 // injected prompt can no longer disagree.
 func eventContextText(messageID string) string {
-	return i18n.T(i18n.LocalizerForLocale(model.Language), messageID)
+	return backgroundText(messageID)
 }
 
 // eventContextLabel resolves a variable's display label from its i18n key.

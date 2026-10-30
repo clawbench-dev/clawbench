@@ -163,6 +163,10 @@ test.describe('Shared HTML document', () => {
       // which would let the document remove its own sandbox.
       const sandbox = await frame.getAttribute('sandbox')
       expect(sandbox).toContain('allow-scripts')
+      // Popups must be granted AND allowed to escape the sandbox, or the
+      // document's own `target="_blank"` links do nothing (attribute and CSP
+      // flags are intersected, so the server side must grant them too).
+      expect(sandbox).toContain('allow-popups-to-escape-sandbox')
       expect(sandbox).not.toContain('allow-same-origin')
     } finally {
       await anon.close()

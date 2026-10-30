@@ -135,10 +135,25 @@ func AutoContinueAttemptsAllowed(attempt, maxRetries int) bool {
 // This runs in a background goroutine with no HTTP request in scope, so it
 // cannot use the per-request localizer. It reads the language the frontend
 // persists to the server (model.Language) instead; without that sync the value
-// would stay at its default and a user running the UI in English would get a
-// Chinese "继续" persisted into their history.
+// would stay at its default and a user running the UI in English would send a
+// Chinese "继续" to the agent.
 func AutoContinuePrompt() string {
 	return i18n.T(i18n.LocalizerForLocale(model.Language), "AutoContinue")
+}
+
+// AutoContinueNotice returns the localized system row written to the timeline.
+//
+// It is FOR THE USER: it says the agent stopped unexpectedly and the system
+// resumed it. The prompt the agent receives is AutoContinuePrompt and is never
+// persisted — the same split restart_resume.go makes between RestartResume and
+// RestartResumeInstruction, and for the same reason (prompt wording must not
+// leak into a user-facing notice).
+//
+// Same background-goroutine constraint as AutoContinuePrompt: it reads the
+// persisted UI language, and the row is stored in that language (switching
+// languages later does not retroactively translate history).
+func AutoContinueNotice() string {
+	return i18n.T(i18n.LocalizerForLocale(model.Language), "AutoContinueNotice")
 }
 
 // emitTurnFinalize tells the session's subscribers that ONE producer turn has
@@ -176,7 +191,6 @@ type AutoContinueRunnerConfig struct {
 
 	SessionID   string
 	ProjectPath string
-	BackendName string
 
 	// RunTurn executes exactly one resume turn and returns its outcome. The
 	// caller supplies it because the interactive handler and the queue/push
@@ -247,8 +261,8 @@ func NewAutoContinueRunner(cfg AutoContinueRunnerConfig) func(attempt int, prev 
 		}
 
 		prompt := AutoContinuePrompt()
-		if _, err := PrepareAutoContinueMessage(cfg.SessionID, cfg.ProjectPath, cfg.BackendName); err != nil {
-			slog.Error("auto-continue: failed to persist continue message",
+		if _, err := PrepareAutoContinueNotice(cfg.SessionID, cfg.ProjectPath); err != nil {
+			slog.Error("auto-continue: failed to persist continue notice",
 				slog.String("session", cfg.SessionID),
 				slog.String("err", err.Error()))
 			return prev, false
@@ -257,32 +271,26 @@ func NewAutoContinueRunner(cfg AutoContinueRunnerConfig) func(attempt int, prev 
 	}
 }
 
-// PrepareAutoContinueMessage persists the "continue" message as a REAL user
-// message and announces it to every subscriber.
+// PrepareAutoContinueNotice persists the resume notice as a role='system'
+// timeline row and announces it to every subscriber.
 //
-// It writes directly to chat_history (AddChatMessage) rather than enqueueing: a
-// queued message is announced with queue_added/queue_drain, and the frontend
-// would show it in the queue panel instead of inline. A real user row is exactly
-// what a user typing "继续" produces, so the bubble is inline, survives a
-// reload, and participates in normal history.
+// It used to write a REAL user row carrying the localized "continue" prompt.
+// That put a bubble in the transcript the user never typed, and the text was
+// misleading: the agent's turn prompt is passed separately and never read back
+// from history, so the bubble was purely decorative. The restart-resume worker
+// already established the right shape — ONE centered system row saying what
+// happened, with the instruction kept out of history — and this mirrors it
+// (AddSystemMessage + system_message) so both recovery paths look identical to
+// the user.
 //
 // Ordering: the row is written BEFORE the resume turn starts, so its id precedes
 // the assistant placeholder it produces — the plain id sort is already correct.
-//
-// SenderClientID is deliberately omitted so every connected client renders the
-// bubble; a client-id would make the originating device skip its own echo.
-func PrepareAutoContinueMessage(sessionID, projectPath, backendName string) (int64, error) {
-	msgID, err := AddChatMessage(projectPath, backendName, sessionID, roleUser,
-		AutoContinuePrompt(), nil, false, "")
+func PrepareAutoContinueNotice(sessionID, projectPath string) (int64, error) {
+	notice := AutoContinueNotice()
+	msgID, err := AddSystemMessage(projectPath, sessionID, notice)
 	if err != nil {
 		return 0, err
 	}
-	ws.EmitToSession(sessionID, ai.StreamEvent{
-		Type: eventTypeUserMessage,
-		UserMessage: &ai.UserMessageData{
-			MessageID: msgID,
-			Content:   AutoContinuePrompt(),
-		},
-	})
+	emitGroupSystemMessage(sessionID, msgID, notice)
 	return msgID, nil
 }

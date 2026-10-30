@@ -283,6 +283,35 @@ describe('forge drill-down chrome is declared globally', () => {
 })
 
 /**
+ * Regression guard: the drill-down skeleton must sit on the body's inset.
+ *
+ * `.forge-loading--skeleton` zeroes its horizontal padding (the list views want
+ * the placeholder to span the panel — their rows carry the padding), and
+ * PanelSkeleton's text variant adds none of its own. On the issue/PR/pipeline
+ * detail pages that made the placeholder run flush to both edges while the
+ * loaded body is inset by `.forge-detail-body`'s padding, so the page shifted
+ * sideways the moment the item arrived.
+ *
+ * jsdom does not do layout and does not apply the global stylesheets, so this
+ * has to be a source guard. It derives the expected inset FROM the body rule
+ * rather than repeating `14` — the two must stay equal, whatever the number is.
+ */
+describe('forge detail skeleton inset', () => {
+  const components = read('css/components.css')
+
+  it('insets the drill-down skeleton by the body padding', () => {
+    const body = components.match(/\.forge-detail-body\s*\{([\s\S]*?)\}/)
+    expect(body, '.forge-detail-body rule must exist').not.toBeNull()
+    const padding = body![1].match(/(?:^|[\s;])padding:\s*([^;]+);/)?.[1].trim()
+    expect(padding, '.forge-detail-body must declare a uniform padding').toBe('14px')
+
+    const rule = components.match(/\.forge-detail\s*>\s*\.forge-loading--skeleton\s*\{([\s\S]*?)\}/)
+    expect(rule, 'the drill-down skeleton needs its own inset rule').not.toBeNull()
+    expect(rule![1]).toContain(`--panel-skeleton-inset: ${padding}`)
+  })
+})
+
+/**
  * Regression guard: forge tab labels must ellipsise, not wrap.
  *
  * The tab bar is a fixed 34px strip (`.forge-tabs { height: 34px }`), so a label

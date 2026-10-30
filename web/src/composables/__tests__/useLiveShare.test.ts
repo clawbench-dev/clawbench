@@ -92,8 +92,15 @@ class FakePC {
     this.addedStreams.push(stream)
   }
   addedStreams: unknown[] = []
-  addTransceiver(kind: string, init?: { direction: string }) {
+  addTransceiver(kindOrTrack: string | FakeTrack, init?: { direction?: string; streams?: unknown[] }) {
     const tx = new FakeTransceiver(init?.direction ?? 'sendrecv')
+    if (typeof kindOrTrack !== 'string') {
+      // addTransceiver(track, {streams}) is what the publisher uses for the
+      // audio and video m-lines; record it the same way addTrack did.
+      this.tracks.push(kindOrTrack)
+      tx.sender.track = kindOrTrack
+      for (const st of init?.streams ?? []) this.addedStreams.push(st)
+    }
     this.transceivers.push(tx)
     return tx
   }
@@ -322,18 +329,20 @@ describe('viewers', () => {
     await vi.waitFor(() => expect(FakePC.instances).toHaveLength(1))
 
     const pc = FakePC.instances[0]
-    // One video track (the screen) and one mixed audio track for this viewer.
-    expect(pc.tracks.map((t) => t.kind)).toEqual(['video', 'audio'])
+    // m-line order is a contract with the viewer: audio, then video, then the
+    // relay m-line. The audio track comes first because it is the viewer's
+    // microphone slot.
+    expect(pc.tracks.map((t) => t.kind)).toEqual(['audio', 'video'])
     // CRITICAL: both tracks must belong to the SAME MediaStream. The viewer
     // assigns `srcObject` per received stream, so two streams would mean the
     // second assignment replaces the first — the viewer would get either video
     // or audio, never both.
     expect(pc.addedStreams).toHaveLength(2)
     expect(pc.addedStreams[0]).toBe(pc.addedStreams[1])
-    // No extra transceiver: `addTrack(mixed)` already created the sendrecv
-    // audio slot the viewer's microphone arrives on. A second, empty m-line
-    // would be a hazard if a later offer bound to it instead.
-    expect(pc.transceivers).toHaveLength(0)
+    // Three m-lines: audio (mic up), video (our picture down / their screen
+    // up), video (relayed member screen down). All reserved up front so that
+    // sharing never renegotiates.
+    expect(pc.transceivers.map((t) => t.direction)).toEqual(['sendrecv', 'sendrecv', 'sendonly'])
     expect(share.viewers.value).toHaveLength(1)
   })
 
@@ -552,5 +561,70 @@ describe('getAudioCaptureSupport', () => {
 
     expect(await getAudioCaptureSupport()).toBe(false)
     spy.mockRestore()
+  })
+})
+
+describe('audience screen relay', () => {
+  it('forwards a viewer screen to everyone else and never back to the sharer', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v2' })
+    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(2))
+
+    const [pc1, pc2] = FakePC.instances
+    const screen = new FakeTrack('video', 'screen-1')
+    // The server says WHO is sharing; `ontrack` alone is not enough (the video
+    // m-line exists, muted, from the moment the viewer joins).
+    lastWS().emit({ type: 'screen-state', screenEnabled: true, viewerId: 'v1', sharing: true })
+    pc1.ontrack?.({ track: screen, streams: [] })
+
+    // The sharer must never receive its own screen: that would be an echo of
+    // its own desktop one network hop late.
+    expect(pc1.transceivers[2].sender.replaceTrack).not.toHaveBeenCalled()
+    expect(pc2.transceivers[2].sender.replaceTrack).toHaveBeenCalledWith(screen)
+    expect(share.remoteScreenStream.value?.getTracks()).toEqual([screen])
+    expect(share.screenSharer.value).toBe('v1')
+  })
+
+  it('detaches the relayed screen from every viewer when the share ends', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v2' })
+    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(2))
+
+    const [pc1, pc2] = FakePC.instances
+    lastWS().emit({ type: 'screen-state', screenEnabled: true, viewerId: 'v1', sharing: true })
+    pc1.ontrack?.({ track: new FakeTrack('video', 'screen-2'), streams: [] })
+
+    lastWS().emit({ type: 'screen-state', screenEnabled: true, viewerId: '', sharing: false })
+
+    expect(pc2.transceivers[2].sender.replaceTrack).toHaveBeenLastCalledWith(null)
+    expect(share.remoteScreenStream.value).toBeNull()
+    expect(share.screenSharer.value).toBe('')
+  })
+
+  it('relays to a viewer that joins after the share started', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(1))
+    const screen = new FakeTrack('video', 'screen-1')
+    lastWS().emit({ type: 'screen-state', screenEnabled: true, viewerId: 'v1', sharing: true })
+    FakePC.instances[0].ontrack?.({ track: screen, streams: [] })
+
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v2' })
+    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(2))
+
+    // The late joiner gets the already-running screen attached at join time.
+    expect(FakePC.instances[1].transceivers[2].sender.replaceTrack).toHaveBeenCalledWith(screen)
+    expect(share.remoteScreenStream.value?.getTracks()).toEqual([screen])
+  })
+
+  it('relays the room switch to the server', async () => {
+    const { share } = await startSharing()
+    share.setScreenEnabled(true)
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'set-screen-enabled', enabled: true })
+
+    share.revokeScreen('v1')
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'screen-revoke', viewerId: 'v1' })
   })
 })

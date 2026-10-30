@@ -16,6 +16,36 @@
 </head>
 <body>
 
+<!-- 图标精灵图：下载卡与安装方式页签共用，避免同一段 path 抄好几遍。
+     零尺寸 + 绝对定位是隐藏 <use> 源的标准做法——display:none 会让部分
+     浏览器里的 <use> 引用失效。
+     Apple / Linux / Android / npm / Docker 取自 Simple Icons（CC0 1.0）；
+     Microsoft 的图标已从该集合移除，Windows 的四方格与「安装包」的下载
+     箭头为手绘（前者是品牌标，后者要与前几个实心标同重量）。 -->
+<svg class="dl-sprite" aria-hidden="true" width="0" height="0">
+  <symbol id="i-win" viewBox="0 0 24 24">
+    <path d="M3 5.9 10.6 4.9v6.5H3zM11.9 4.7 21 3.4v8H11.9zM3 12.6h7.6v6.5L3 18.1zM11.9 12.6H21v8l-9.1-1.3z"/>
+  </symbol>
+  <symbol id="i-mac" viewBox="0 0 24 24">
+    <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/>
+  </symbol>
+  <symbol id="i-linux" viewBox="0 0 24 24">
+    <path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z"/>
+  </symbol>
+  <symbol id="i-npm" viewBox="0 0 24 24">
+    <path d="M1.763 0C.786 0 0 .786 0 1.763v20.474C0 23.214.786 24 1.763 24h20.474c.977 0 1.763-.786 1.763-1.763V1.763C24 .786 23.214 0 22.237 0zM5.13 5.323l13.837.019-.009 13.836h-3.464l.01-10.382h-3.456L12.04 19.17H5.113z"/>
+  </symbol>
+  <symbol id="i-docker" viewBox="0 0 24 24">
+    <path d="M13.983 11.078h2.119a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.119a.185.185 0 00-.185.185v1.888c0 .102.083.185.185.185m-2.954-5.43h2.118a.186.186 0 00.186-.186V3.574a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m0 2.716h2.118a.187.187 0 00.186-.186V6.29a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.887c0 .102.082.185.185.186m-2.93 0h2.12a.186.186 0 00.184-.186V6.29a.185.185 0 00-.185-.185H8.1a.185.185 0 00-.185.185v1.887c0 .102.083.185.185.186m-2.964 0h2.119a.186.186 0 00.185-.186V6.29a.185.185 0 00-.185-.185H5.136a.186.186 0 00-.186.185v1.887c0 .102.084.185.186.186m5.893 2.715h2.118a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m-2.93 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.083.185.185.185m-2.964 0h2.119a.185.185 0 00.185-.185V9.006a.185.185 0 00-.184-.186h-2.12a.186.186 0 00-.186.186v1.887c0 .102.084.185.186.185m-2.92 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.082.185.185.185M23.763 9.89c-.065-.051-.672-.51-1.954-.51-.338.001-.676.03-1.01.087-.248-1.7-1.653-2.53-1.716-2.566l-.344-.199-.226.327c-.284.438-.49.922-.612 1.43-.23.97-.09 1.882.403 2.661-.595.332-1.55.413-1.744.42H.751a.751.751 0 00-.75.748 11.376 11.376 0 00.692 4.062c.545 1.428 1.355 2.48 2.41 3.124 1.18.723 3.1 1.137 5.275 1.137.983.003 1.963-.086 2.93-.266a12.248 12.248 0 003.823-1.389c.98-.567 1.86-1.288 2.61-2.136 1.252-1.418 1.998-2.997 2.553-4.4h.221c1.372 0 2.215-.549 2.68-1.009.309-.293.55-.65.707-1.046l.098-.288Z"/>
+  </symbol>
+  <symbol id="i-pkg" viewBox="0 0 24 24">
+    <path d="M11 3.2h2v7.4h3.3L12 15.6 7.7 10.6H11zM4 17.2h16v2a1.8 1.8 0 0 1-1.8 1.8H5.8A1.8 1.8 0 0 1 4 19.2z"/>
+  </symbol>
+  <symbol id="i-android" viewBox="0 0 24 24">
+    <path d="M18.4395 5.5586c-.675 1.1664-1.352 2.3318-2.0274 3.498-.0366-.0155-.0742-.0286-.1113-.043-1.8249-.6957-3.484-.8-4.42-.787-1.8551.0185-3.3544.4643-4.2597.8203-.084-.1494-1.7526-3.021-2.0215-3.4864a1.1451 1.1451 0 0 0-.1406-.1914c-.3312-.364-.9054-.4859-1.379-.203-.475.282-.7136.9361-.3886 1.5019 1.9466 3.3696-.0966-.2158 1.9473 3.3593.0172.031-.4946.2642-1.3926 1.0177C2.8987 12.176.452 14.772 0 18.9902h24c-.119-1.1108-.3686-2.099-.7461-3.0683-.7438-1.9118-1.8435-3.2928-2.7402-4.1836a12.1048 12.1048 0 0 0-2.1309-1.6875c.6594-1.122 1.312-2.2559 1.9649-3.3848.2077-.3615.1886-.7956-.0079-1.1191a1.1001 1.1001 0 0 0-.8515-.5332c-.5225-.0536-.9392.3128-1.0488.5449zm-.0391 8.461c.3944.5926.324 1.3306-.1563 1.6503-.4799.3197-1.188.0985-1.582-.4941-.3944-.5927-.324-1.3307.1563-1.6504.4727-.315 1.1812-.1086 1.582.4941zM7.207 13.5273c.4803.3197.5506 1.0577.1563 1.6504-.394.5926-1.1038.8138-1.584.4941-.48-.3197-.5503-1.0577-.1563-1.6504.4008-.6021 1.1087-.8106 1.584-.4941z"/>
+  </symbol>
+</svg>
+
 <!-- 环境光：整页固定的暖色光晕，不参与滚动 -->
 <div class="ambient" aria-hidden="true">
   <div class="ambient-glow"></div>
@@ -270,7 +300,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
         </div>
         <h3 data-i18n="plat.desktop.t">桌面</h3>
-        <p data-i18n="plat.desktop.d">Electron 客户端复用同一套界面，补齐系统通知、原生右键菜单、SSH 端口映射与应用内自升级。</p>
+        <p data-i18n="plat.desktop.d">Electron 客户端复用同一套界面，补齐系统通知、原生右键菜单、SSH 端口映射、屏幕共享与应用内自升级。</p>
         <p class="plat-meta" data-i18n="plat.desktop.m">Windows · macOS · Linux</p>
       </article>
     </div>
@@ -332,7 +362,7 @@
         <p class="lede" data-i18n="desk.lede">
           文件树、文档、对话、终端可以同屏并排，分栏比例随手拖。窗口最小化后通知照常送达——因为事件走的是 WebSocket，而不是页面里的 Notification。
         </p>
-        <a class="link-arrow" href="#deploy">
+        <a class="link-arrow" href="#step-client">
           <span data-i18n="desk.link">下载桌面客户端</span>
           <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
         </a>
@@ -371,6 +401,19 @@
     </div>
 
     <div class="feat-grid">
+      <article class="feat feat-wide reveal">
+        <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M12 7.8v5.4m0 0 2.3-2.3M12 13.2 9.7 10.9"/><path d="M8 21h8"/></svg></div>
+        <div class="feat-wide-body">
+          <h3 data-i18n="feat.live.t">实时共享与会议</h3>
+          <p data-i18n="feat.live.d">同一局域网内把屏幕共享出去，链接一发，对方用浏览器就能看，不用登录；主持人放开麦序后观众可自行发言，AI 听记实时转写并按说话人分信道，结束后直接生成会议纪要。</p>
+        </div>
+        <ul class="feat-tags">
+          <li data-i18n="feat.live.tag1">屏幕共享</li>
+          <li data-i18n="feat.live.tag2">语音发言</li>
+          <li data-i18n="feat.live.tag3">AI 听记</li>
+        </ul>
+      </article>
+
       <article class="feat reveal">
         <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.2A8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4z"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01"/></svg></div>
         <h3 data-i18n="feat.chat.t">AI 对话</h3>
@@ -434,7 +477,7 @@
       <article class="feat reveal">
         <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></div>
         <h3 data-i18n="feat.notify.t">通知与推送</h3>
-        <p data-i18n="feat.notify.d">通知中心汇总会话、任务与仓库事件；同时支持钉钉、飞书机器人，在 IM 里查看会话并回消息。</p>
+        <p data-i18n="feat.notify.d">通知中心汇总会话、任务与仓库事件；钉钉、飞书机器人之外，个人微信扫码就能接入，在 IM 里查看会话并回消息。</p>
       </article>
 
       <article class="feat reveal">
@@ -449,71 +492,181 @@
   <section class="section" id="deploy">
     <div class="section-head reveal">
       <p class="kicker" data-i18n="dep.kicker">部署</p>
-      <h2 data-i18n-html="dep.title">一条命令，<br>六十秒跑起来。</h2>
+      <h2 data-i18n-html="dep.title">先服务端，<br>再客户端。</h2>
       <p class="lede" data-i18n="dep.lede">
-        不需要 Node 运行时，不需要额外的数据库服务。首次启动会生成随机密码并打印到控制台。
+        两步：先把服务端跑起来，再用桌面、手机或浏览器连上去。
       </p>
     </div>
 
     <div class="deploy-wrap reveal">
-      <div class="tabs" role="tablist" aria-label="安装方式" data-i18n-label="dep.aria">
-        <button class="tab is-active" role="tab" aria-selected="true" data-tab="npm" type="button">npm</button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="docker" type="button">Docker</button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="binary" type="button" data-i18n="dep.tab.binary">安装包</button>
-      </div>
+      <div class="step" id="step-server">
+        <span class="step-no">1</span>
+        <h3 class="step-title" data-i18n="step.server.t">装服务端</h3>
+        <p class="step-desc" data-i18n="step.server.d">三选一，跑起来就行。首次启动会生成随机密码并打印到控制台。</p>
 
-      <div class="code-panels">
-        <div class="code-panel is-active" data-panel="npm">
-          <div class="code-head"><span class="code-dots"><i></i><i></i><i></i></span><span class="code-title">bash</span></div>
-          <pre><code><span class="c-cmt" data-i18n="code.npm.cmt"># 国内用户建议先走镜像，秒下</span>
-npm config set registry https://registry.npmmirror.com/
-npm install -g @xulongzhe/clawbench
-clawbench</code></pre>
-          <button class="copy-btn" type="button" data-copy="npm config set registry https://registry.npmmirror.com/
-npm install -g @xulongzhe/clawbench
-clawbench">
-            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"/></svg>
-            <span data-i18n="dep.copy">复制</span>
+        <div class="tabs" role="tablist" aria-label="安装方式" data-i18n-label="dep.aria">
+          <button class="tab is-active" role="tab" aria-selected="true" data-tab="npm" type="button">
+            <svg width="14" height="14" fill="currentColor" aria-hidden="true"><use href="#i-npm"/></svg>
+            <span>npm</span>
+          </button>
+          <button class="tab" role="tab" aria-selected="false" data-tab="docker" type="button">
+            <svg width="14" height="14" fill="currentColor" aria-hidden="true"><use href="#i-docker"/></svg>
+            <span>Docker</span>
+          </button>
+          <button class="tab" role="tab" aria-selected="false" data-tab="binary" type="button">
+            <svg width="14" height="14" fill="currentColor" aria-hidden="true"><use href="#i-pkg"/></svg>
+            <span data-i18n="dep.tab.binary">安装包</span>
           </button>
         </div>
 
-        <div class="code-panel" data-panel="docker" hidden>
-          <div class="code-head"><span class="code-dots"><i></i><i></i><i></i></span><span class="code-title">docker</span></div>
-          <pre><code>docker pull ghcr.io/clawbench-dev/clawbench:latest
+        <div class="code-panels">
+          <div class="code-panel is-active" data-panel="npm">
+            <div class="code-head"><span class="code-dots"><i></i><i></i><i></i></span><span class="code-title">bash</span></div>
+            <pre><code><span class="zh-only"><span class="c-cmt" data-i18n="code.npm.mirror"># 国内用户建议先走镜像，秒下</span>
+npm config set registry https://registry.npmmirror.com/
+</span><span class="c-cmt" data-i18n="code.npm.cmt"># 免全局安装，直接跑最新版</span>
+npx @xulongzhe/clawbench</code></pre>
+            <button class="copy-btn" type="button" data-copy="npm config set registry https://registry.npmmirror.com/
+npx @xulongzhe/clawbench" data-copy-zh="npm config set registry https://registry.npmmirror.com/
+npx @xulongzhe/clawbench" data-copy-en="npx @xulongzhe/clawbench">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"/></svg>
+              <span data-i18n="dep.copy">复制</span>
+            </button>
+          </div>
+
+          <div class="code-panel" data-panel="docker" hidden>
+            <div class="code-head"><span class="code-dots"><i></i><i></i><i></i></span><span class="code-title">docker</span></div>
+            <pre><code>docker pull ghcr.io/clawbench-dev/clawbench:latest
 docker run -d --restart unless-stopped \
   -p 20000:20000 \
   -v clawbench-data:/data \
   ghcr.io/clawbench-dev/clawbench:latest</code></pre>
-          <button class="copy-btn" type="button" data-copy="docker pull ghcr.io/clawbench-dev/clawbench:latest
+            <button class="copy-btn" type="button" data-copy="docker pull ghcr.io/clawbench-dev/clawbench:latest
 docker run -d --restart unless-stopped -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawbench:latest">
-            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"/></svg>
-            <span data-i18n="dep.copy">复制</span>
-          </button>
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"/></svg>
+              <span data-i18n="dep.copy">复制</span>
+            </button>
+          </div>
+
+          <div class="dl-panel" data-panel="binary" hidden>
+            <p class="dl-block-note" data-i18n-html="dl.serverNote">
+              单文件、自带前端，解压后运行 <code>./clawbench</code> 即可。Android 那一份是在 Termux 里跑的 arm64 版本。
+            </p>
+            <div class="dl-grid">
+              <div class="dl-card">
+                <div class="dl-card-head">
+                  <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-win"/></svg>
+                  <span class="dl-name">Windows</span>
+                  <span class="dl-meta">.zip</span>
+                </div>
+                <div class="dl-links">
+                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-windows-amd64">x64</a>
+                </div>
+              </div>
+              <div class="dl-card">
+                <div class="dl-card-head">
+                  <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-mac"/></svg>
+                  <span class="dl-name">macOS</span>
+                  <span class="dl-meta">.zip</span>
+                </div>
+                <div class="dl-links">
+                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-darwin-arm64">Apple Silicon</a>
+                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-darwin-amd64">Intel</a>
+                </div>
+              </div>
+              <div class="dl-card">
+                <div class="dl-card-head">
+                  <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-linux"/></svg>
+                  <span class="dl-name">Linux</span>
+                  <span class="dl-meta">.zip</span>
+                </div>
+                <div class="dl-links">
+                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-linux-amd64">x64</a>
+                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-linux-arm64">ARM64</a>
+                </div>
+              </div>
+              <div class="dl-card">
+                <div class="dl-card-head">
+                  <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-android"/></svg>
+                  <span class="dl-name">Android · Termux</span>
+                  <span class="dl-meta">.zip</span>
+                </div>
+                <div class="dl-links">
+                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-android-arm64">arm64</a>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div class="code-panel" data-panel="binary" hidden>
-          <div class="code-head"><span class="code-dots"><i></i><i></i><i></i></span><span class="code-title">bash</span></div>
-          <pre><code><span class="c-cmt" data-i18n="code.bin.cmt"># 从 Releases 下载对应平台的压缩包，解压即用</span>
-TAG=$(curl -sI https://github.com/clawbench-dev/clawbench/releases/latest \
-  | grep -i '^location:' | sed 's|.*/tag/||' | tr -d '\r\n')
-wget "https://github.com/clawbench-dev/clawbench/releases/download/${TAG}/clawbench-linux-amd64-${TAG}.zip"
-unzip "clawbench-linux-amd64-${TAG}.zip" && cd clawbench && ./clawbench</code></pre>
-          <button class="copy-btn" type="button" data-copy="TAG=$(curl -sI https://github.com/clawbench-dev/clawbench/releases/latest | grep -i '^location:' | sed 's|.*/tag/||' | tr -d '\r\n')
-wget &quot;https://github.com/clawbench-dev/clawbench/releases/download/${TAG}/clawbench-linux-amd64-${TAG}.zip&quot;
-unzip &quot;clawbench-linux-amd64-${TAG}.zip&quot; &amp;&amp; cd clawbench &amp;&amp; ./clawbench">
-            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"/></svg>
-            <span data-i18n="dep.copy">复制</span>
-          </button>
-        </div>
+        <p class="step-note" data-i18n-html="step.server.note">启动后终端会打印访问地址和随机密码，记下来——下一步要用。</p>
+
+        <a class="step-next" href="#step-client">
+          <span data-i18n="step.next">下一步：连上客户端</span>
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M4 9l4 4 4-4"/></svg>
+        </a>
       </div>
 
-      <p class="deploy-note" data-i18n-html="dep.note">
-        部署完成后，用手机 App 或任意浏览器访问 <code>http://服务器IP:20000</code> 即可开始使用。
-      </p>
+      <div class="step" id="step-client">
+        <span class="step-no">2</span>
+        <h3 class="step-title" data-i18n="step.client.t">连客户端</h3>
+        <p class="step-desc" data-i18n="step.client.d">桌面端或手机装上客户端，打开后填上一步的地址和密码。</p>
 
-      <div class="arch">
-        <img class="arch-zh" src="img/architecture.zh.svg" alt="ClawBench 部署架构：浏览器 / 手机 App / 桌面客户端通过 HTTP 与 WebSocket 连接单一 Go 服务端，服务端调用本机 AI CLI 与 SQLite。" width="720" height="410" loading="lazy">
-        <img class="arch-en" src="img/architecture.en.svg" alt="ClawBench deployment architecture" width="720" height="410" loading="lazy" hidden>
+        <div class="dl-grid">
+          <div class="dl-card">
+            <div class="dl-card-head">
+              <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-win"/></svg>
+              <span class="dl-name">Windows</span>
+              <span class="dl-meta">.zip</span>
+            </div>
+            <div class="dl-links">
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-windows-x64">x64</a>
+            </div>
+          </div>
+          <div class="dl-card">
+            <div class="dl-card-head">
+              <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-mac"/></svg>
+              <span class="dl-name">macOS</span>
+              <span class="dl-meta">.zip</span>
+            </div>
+            <div class="dl-links">
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-darwin-arm64">Apple Silicon</a>
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-darwin-x64">Intel</a>
+            </div>
+          </div>
+          <div class="dl-card">
+            <div class="dl-card-head">
+              <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-linux"/></svg>
+              <span class="dl-name">Linux</span>
+              <span class="dl-meta">.zip</span>
+            </div>
+            <div class="dl-links">
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-linux-x64">x64</a>
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-linux-arm64">ARM64</a>
+            </div>
+          </div>
+          <div class="dl-card">
+            <div class="dl-card-head">
+              <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-android"/></svg>
+              <span class="dl-name">Android</span>
+              <span class="dl-meta">.apk</span>
+            </div>
+            <div class="dl-links">
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-android" data-ext="apk">arm64</a>
+            </div>
+          </div>
+        </div>
+
+        <p class="step-note" data-i18n-html="step.client.note">不想装客户端？用任意浏览器打开同一个地址（<code>http://服务器IP:20000</code>），界面和客户端完全一致。</p>
+
+        <p class="dl-foot" data-i18n-html="dl.foot">
+          需要旧版本或想看变更记录？<a href="https://github.com/clawbench-dev/clawbench/releases" target="_blank" rel="noopener">查看全部发布</a>。
+        </p>
+
+            <div class="arch">
+              <img class="arch-zh" src="img/architecture.zh.svg" alt="ClawBench 部署架构：浏览器 / 手机 App / 桌面客户端通过 HTTP 与 WebSocket 连接单一 Go 服务端，服务端调用本机 AI CLI 与 SQLite。" width="720" height="410" loading="lazy">
+              <img class="arch-en" src="img/architecture.en.svg" alt="ClawBench deployment architecture" width="720" height="410" loading="lazy" hidden>
+            </div>
       </div>
     </div>
   </section>

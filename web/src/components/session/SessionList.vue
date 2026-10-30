@@ -1266,8 +1266,13 @@ onUnmounted(() => {
 
 /* First-load placeholder: rows line up with the real .session-row geometry
    (44px min height) instead of a centred spinner in an empty pane. */
+/* `.session-item` is inset 12dp on the left (and the trailing cell 8dp on the
+   right). The primitive's own 8dp row padding is REPLACED by that number, not
+   added to it: the wrapper used to carry 12dp on top of the row's 8dp, which
+   put the placeholder 8dp further right than the real titles. */
 .session-list-skeleton {
-  padding: var(--space-2) var(--space-3);
+  --panel-skeleton-inset: calc(12 * var(--dp));
+  padding: var(--space-2) 0;
 }
 
 .session-item {

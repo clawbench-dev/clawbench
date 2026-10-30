@@ -32,6 +32,10 @@ var (
 	ErrViewerExists = errors.New("liveshare: viewer already present")
 	// ErrTalkNotAllowed means the room has not enabled audience speech.
 	ErrTalkNotAllowed = errors.New("liveshare: talking is not enabled for this room")
+	// ErrScreenNotAllowed means the room has not enabled audience screen sharing.
+	ErrScreenNotAllowed = errors.New("liveshare: screen sharing is not enabled for this room")
+	// ErrScreenBusy means another viewer is already sharing a screen.
+	ErrScreenBusy = errors.New("liveshare: another viewer is already sharing")
 )
 
 // Defaults chosen so a room cannot outlive the publisher's intent. The idle
@@ -108,6 +112,21 @@ type Room struct {
 	// talkEnabled is the room-level switch. Per-viewer grants are on Viewer.
 	talkEnabled bool
 
+	// screenEnabled is the room-level switch for audience screen sharing;
+	// screenSharer is the viewer currently sharing ("" when nobody is).
+	//
+	// One sharer at a time is a bandwidth rule, not a UX one: the publisher
+	// forwards every shared screen to every other viewer, so N sharers cost N ×
+	// N streams of upstream. One at a time keeps it at one per viewer.
+	screenEnabled bool
+	screenSharer  string
+
+	// notesEnabled tells viewers whether the publisher is running AI 听记.
+	// Purely informational: the transcript itself never passes through the room
+	// (it is uploaded over HTTP), but a viewer must not show a "听记" control for
+	// a share that has none.
+	notesEnabled bool
+
 	maxViewers  int
 	idleTimeout time.Duration
 	lastActive  time.Time
@@ -132,6 +151,95 @@ func (r *Room) TalkEnabled() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.talkEnabled
+}
+
+// ScreenEnabled reports whether audience screen sharing is allowed.
+func (r *Room) ScreenEnabled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.screenEnabled
+}
+
+// ScreenSharer returns the id of the viewer currently sharing, or "".
+func (r *Room) ScreenSharer() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.screenSharer
+}
+
+// SetScreenEnabled flips the room-level screen-sharing switch and returns the
+// viewer that was stopped by turning it off ("" when nobody was sharing).
+//
+// Turning it off must stop the current sharer: leaving a screen live after the
+// publisher switched the feature off is the same betrayal as leaving a
+// microphone live.
+func (r *Room) SetScreenEnabled(on bool) (stopped string) {
+	r.mu.Lock()
+	r.screenEnabled = on
+	if !on {
+		stopped = r.screenSharer
+		r.screenSharer = ""
+	}
+	r.mu.Unlock()
+	r.touch()
+	return stopped
+}
+
+// ClaimScreen makes viewerID the room's screen sharer.
+//
+// Errors are returned rather than swallowed: a viewer that starts capturing
+// while the switch is off (or while somebody else is sharing) has to learn why
+// its screen went nowhere.
+func (r *Room) ClaimScreen(viewerID string) error {
+	// No defer: touch() takes r.mu itself, so every path has to unlock first.
+	r.mu.Lock()
+	if !r.screenEnabled {
+		r.mu.Unlock()
+		return ErrScreenNotAllowed
+	}
+	if r.screenSharer != "" && r.screenSharer != viewerID {
+		r.mu.Unlock()
+		return ErrScreenBusy
+	}
+	if _, ok := r.viewers[viewerID]; !ok {
+		r.mu.Unlock()
+		return ErrRoomNotFound
+	}
+	r.screenSharer = viewerID
+	r.mu.Unlock()
+	r.touch()
+	return nil
+}
+
+// ReleaseScreen clears viewerID's share, reporting whether it was the current
+// sharer. Releasing an id that is not sharing is a no-op so that a stop frame
+// racing a disconnect cannot fail.
+func (r *Room) ReleaseScreen(viewerID string) bool {
+	r.mu.Lock()
+	if r.screenSharer == "" || r.screenSharer != viewerID {
+		r.mu.Unlock()
+		return false
+	}
+	r.screenSharer = ""
+	r.mu.Unlock()
+	r.touch()
+	return true
+}
+
+// NotesEnabled reports whether the publisher is running AI 听记 for this room.
+func (r *Room) NotesEnabled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.notesEnabled
+}
+
+// SetNotesEnabled flips the AI 听记 flag. Set from the create call, before the
+// publisher socket attaches; viewers learn it from their `joined` frame.
+func (r *Room) SetNotesEnabled(on bool) {
+	r.mu.Lock()
+	r.notesEnabled = on
+	r.mu.Unlock()
+	r.touch()
 }
 
 // SetTalkEnabled flips the room-level speech switch. Turning it off also mutes
@@ -250,6 +358,11 @@ func (r *Room) AddViewer(name string, sink Sink) (*Viewer, error) {
 func (r *Room) RemoveViewer(id string) {
 	r.mu.Lock()
 	delete(r.viewers, id)
+	// A viewer that closes its tab mid-share must not leave the room "busy"
+	// forever — nobody else could ever start sharing again.
+	if r.screenSharer == id {
+		r.screenSharer = ""
+	}
 	r.mu.Unlock()
 	r.touch()
 }

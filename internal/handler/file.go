@@ -81,10 +81,10 @@ var mimeTypes = map[string]string{
 //     it serves already runs inside a sandboxed iframe the user opened
 //     deliberately (see FileViewer.vue).
 //   - `serveShareDocFile` (the public /doc/ endpoint), which grants them ONLY
-//     together with a `sandbox allow-scripts` CSP — no `allow-same-origin`, so
-//     the document stays in an opaque origin and the same cookie/API reach is
-//     impossible. See shareDocSandboxCSP; do not serve text/html from any other
-//     public endpoint.
+//     together with a `sandbox` CSP — no `allow-same-origin`, so the document
+//     stays in an opaque origin and the same cookie/API reach is impossible.
+//     See shareDocSandboxCSP; do not serve text/html from any other public
+//     endpoint.
 //
 // Without these entries the fallback is application/octet-stream: stylesheets
 // are silently dropped, ES modules are refused, and the document itself is not

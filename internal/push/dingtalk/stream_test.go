@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -1577,5 +1578,618 @@ func TestOnChatBotMessage_RichTextPartialDownloadSendsRest(t *testing.T) {
 	waitForReply(t, reply)
 	if !strings.Contains(string(*reply), "下载失败") {
 		t.Errorf("reply should name the failure, got %s", string(*reply))
+	}
+}
+
+// ============================================================================
+// /show /stop /new tests
+// ============================================================================
+
+// pushCommandEnv installs a mock DB + messenger and returns a manager plus a
+// server capturing the reply body. The sticky target is "a1b2c3d4-1111".
+func pushCommandEnv(t *testing.T, m *mockSessionMessenger) (*Manager, *[]byte) {
+	t.Helper()
+	origDB, origMsg := db, sessionMessenger
+	t.Cleanup(func() { db, sessionMessenger = origDB, origMsg })
+
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "a1b2c3d4-1111", nil },
+	}
+	if m.allSessions == nil {
+		m.allSessions = []common.SessionInfo{{ID: "a1b2c3d4-1111", Title: "Sticky"}}
+	}
+	sessionMessenger = m
+
+	body := new([]byte)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("CLAWBENCH_TEST_WEBHOOK", server.URL)
+	return &Manager{}, body
+}
+
+func pushCommandData(t *testing.T, text string) *chatbot.BotCallbackDataModel {
+	t.Helper()
+	return &chatbot.BotCallbackDataModel{
+		ConversationType: "1",
+		SenderStaffId:    "staff123",
+		SenderNick:       "TestUser",
+		ConversationId:   "conv1",
+		SessionWebhook:   os.Getenv("CLAWBENCH_TEST_WEBHOOK"),
+		Text:             chatbot.BotCallbackDataTextModel{Content: text},
+	}
+}
+
+func TestOnChatBotMessage_ShowLastReply(t *testing.T) {
+	m := &mockSessionMessenger{lastReply: "the full answer", lastReplyOK: true}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/show")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "the full answer") {
+		t.Errorf("expected the last reply in the response, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_ShowEmptyReply(t *testing.T) {
+	m := &mockSessionMessenger{lastReplyOK: false}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/show")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "还没有已完成的回复") {
+		t.Errorf("expected the empty-reply hint, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_ShowExplicitTarget(t *testing.T) {
+	m := &mockSessionMessenger{
+		allSessions: []common.SessionInfo{
+			{ID: "a1b2c3d4-1111", Title: "Sticky"},
+			{ID: "b2c3d4e5-2222", Title: "Other"},
+		},
+		lastReply: "other answer", lastReplyOK: true,
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/show b2c3d4e5")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "other answer") {
+		t.Errorf("expected the other session's reply, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_StopRunningSession(t *testing.T) {
+	m := &mockSessionMessenger{wasRunning: true, cleared: 2}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/stop")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := string(*body)
+	if !strings.Contains(out, "已停止") {
+		t.Errorf("expected stop confirmation, got %s", out)
+	}
+	if !strings.Contains(out, "2") {
+		t.Errorf("expected cleared count in the reply, got %s", out)
+	}
+}
+
+func TestOnChatBotMessage_StopIdleSession(t *testing.T) {
+	m := &mockSessionMessenger{wasRunning: false, cleared: 0}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/stop")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// An idle stop must not claim it stopped a running turn.
+	if !strings.Contains(string(*body), "未在运行") {
+		t.Errorf("expected the idle wording, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_NewListsProjects(t *testing.T) {
+	m := &mockSessionMessenger{
+		projects: []common.ProjectRef{
+			{Index: 1, Path: "/proj/alpha", Exists: true},
+			{Index: 2, Path: "/proj/beta", Exists: true},
+		},
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/new")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := string(*body)
+	if !strings.Contains(out, "/proj/alpha") || !strings.Contains(out, "/proj/beta") {
+		t.Errorf("expected both projects in the list, got %s", out)
+	}
+	if !strings.Contains(out, "1.") || !strings.Contains(out, "2.") {
+		t.Errorf("expected 1-based indices, got %s", out)
+	}
+}
+
+func TestOnChatBotMessage_NewCreatesSessionAndMovesSticky(t *testing.T) {
+	var createdIn string
+	var stickySet string
+	m := &mockSessionMessenger{
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+		createFn: func(path string) (string, string, error) {
+			createdIn = path
+			return "f1e2d3c4-0000-0000-0000-000000000000", "新会话 1", nil
+		},
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	origDB := db
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "a1b2c3d4-1111", nil },
+		setLastFn: func(_, sid string) error { stickySet = sid; return nil },
+	}
+	t.Cleanup(func() { db = origDB })
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/new 1")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if createdIn != "/proj/alpha" {
+		t.Errorf("created in %q, want /proj/alpha", createdIn)
+	}
+	if stickySet != "f1e2d3c4-0000-0000-0000-000000000000" {
+		t.Errorf("sticky target = %q, want the new session", stickySet)
+	}
+	if !strings.Contains(string(*body), "@f1e2d3c4") {
+		t.Errorf("expected the new short id in the reply, got %s", *body)
+	}
+	// The reply must name the PROJECT the session landed in, not the session's
+	// own title — otherwise the user cannot tell which project was chosen (and
+	// cannot notice a shifted /new index).
+	if !strings.Contains(string(*body), "/proj/alpha") {
+		t.Errorf("expected the project path in the reply, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_NewOutOfRange(t *testing.T) {
+	var called bool
+	m := &mockSessionMessenger{
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+		createFn: func(string) (string, string, error) { called = true; return "", "", nil },
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/new 9")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if called {
+		t.Error("must not create a session for an out-of-range index")
+	}
+	if !strings.Contains(string(*body), "超出范围") {
+		t.Errorf("expected out-of-range error, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_NewMissingDirWarns(t *testing.T) {
+	m := &mockSessionMessenger{
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/gone", Exists: false}},
+		createFn: func(string) (string, string, error) {
+			return "f1e2d3c4-0000-0000-0000-000000000000", "新会话 1", nil
+		},
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/new 1")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "目录已不存在") {
+		t.Errorf("expected a missing-directory warning, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_ShowNoMessenger(t *testing.T) {
+	origDB, origMsg := db, sessionMessenger
+	t.Cleanup(func() { db, sessionMessenger = origDB, origMsg })
+	// A sticky target is required to reach the handler at all: without one the
+	// command degrades to the no-target hint before the messenger is consulted.
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "a1b2c3d4-1111", nil },
+	}
+	sessionMessenger = nil
+
+	body := new([]byte)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	mgr := &Manager{}
+	data := &chatbot.BotCallbackDataModel{
+		ConversationType: "1", SenderStaffId: "s1", ConversationId: "c1",
+		SessionWebhook: server.URL,
+		Text:           chatbot.BotCallbackDataTextModel{Content: "/show"},
+	}
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "会话服务不可用") {
+		t.Errorf("expected the service-unavailable reply, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_ShowResolveFails(t *testing.T) {
+	m := &mockSessionMessenger{}
+	mgr, body := pushCommandEnv(t, m)
+
+	// No arg and no sticky target → the resolver errors out.
+	origDB := db
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "", nil },
+	}
+	t.Cleanup(func() { db = origDB })
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/show")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "尚未选择会话") {
+		t.Errorf("expected the no-target hint, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_ShowReplyReadFails(t *testing.T) {
+	m := &mockSessionMessenger{lastReplyErr: errTestFailure}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/show")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "会话不可用") {
+		t.Errorf("expected the session-unavailable reply, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_StopNoMessenger(t *testing.T) {
+	origDB, origMsg := db, sessionMessenger
+	t.Cleanup(func() { db, sessionMessenger = origDB, origMsg })
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "a1b2c3d4-1111", nil },
+	}
+	sessionMessenger = nil
+
+	body := new([]byte)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	mgr := &Manager{}
+	data := &chatbot.BotCallbackDataModel{
+		ConversationType: "1", SenderStaffId: "s1", ConversationId: "c1",
+		SessionWebhook: server.URL,
+		Text:           chatbot.BotCallbackDataTextModel{Content: "/stop"},
+	}
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "会话服务不可用") {
+		t.Errorf("expected the service-unavailable reply, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_StopResolveFails(t *testing.T) {
+	m := &mockSessionMessenger{}
+	mgr, body := pushCommandEnv(t, m)
+
+	origDB := db
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "", nil },
+	}
+	t.Cleanup(func() { db = origDB })
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/stop")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "尚未选择会话") {
+		t.Errorf("expected the no-target hint, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_StopFails(t *testing.T) {
+	m := &mockSessionMessenger{
+		stopFn: func(string) (bool, int, error) { return false, 0, errTestFailure },
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/stop")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "test failure") {
+		t.Errorf("expected the underlying error, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_NewNoMessenger(t *testing.T) {
+	origDB, origMsg := db, sessionMessenger
+	t.Cleanup(func() { db, sessionMessenger = origDB, origMsg })
+	db = &mockDBWithCallback{upsertFn: func(_, _, _, _ string) error { return nil }}
+	sessionMessenger = nil
+
+	body := new([]byte)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	mgr := &Manager{}
+	data := &chatbot.BotCallbackDataModel{
+		ConversationType: "1", SenderStaffId: "s1", ConversationId: "c1",
+		SessionWebhook: server.URL,
+		Text:           chatbot.BotCallbackDataTextModel{Content: "/new"},
+	}
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "会话服务不可用") {
+		t.Errorf("expected the service-unavailable reply, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_NewListProjectsFails(t *testing.T) {
+	m := &mockSessionMessenger{projectsErr: errTestFailure}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/new")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Must be the /new-specific copy, not the subscribe copy ("已订阅…").
+	if !strings.Contains(string(*body), "获取项目列表失败") {
+		t.Errorf("expected the project-list-failure reply, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_NewProjectNotFound(t *testing.T) {
+	m := &mockSessionMessenger{
+		projects: []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/new /nope")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "未找到该项目") {
+		t.Errorf("expected the project-not-found error, got %s", *body)
+	}
+}
+
+func TestOnChatBotMessage_NewCreateFails(t *testing.T) {
+	m := &mockSessionMessenger{
+		projects:  []common.ProjectRef{{Index: 1, Path: "/proj/alpha", Exists: true}},
+		createErr: errTestFailure,
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/new 1")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(*body), "test failure") {
+		t.Errorf("expected the create error, got %s", *body)
+	}
+}
+
+// ============================================================================
+// Commands must not be swallowed by the attachment path
+// ============================================================================
+
+// commandWithMediaReply runs one richText message carrying `text` plus an image
+// and returns (what reached a session, the raw reply body). The reply webhook is
+// a dedicated server because richTextEnv's captured buffer belongs to a
+// different one.
+func commandWithMediaReply(t *testing.T, text string) (sent *sentMessage, reply string) {
+	t.Helper()
+	mgr, _, sentCh, _ := richTextEnv(t)
+
+	var mu sync.Mutex
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		body = b
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	data := stickyData(server.URL, "")
+	data.Msgtype = "richText"
+	data.Text = chatbot.BotCallbackDataTextModel{Content: ""} // empty for richText
+	data.Content = map[string]any{"richText": []any{
+		map[string]any{"text": text},
+		map[string]any{"downloadCode": "code-1", "type": "picture"},
+	}}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case got := <-sentCh:
+		sent = &got
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	return sent, string(body)
+}
+
+// A slash command sent together with an image used to fall through the media
+// path: it is not RouteToSession, so ResolveTarget resolved the sticky session
+// and SendMessageToSession received Route.Message — which is empty for a
+// command. The command word vanished and the session got a bare attachment.
+func TestOnChatBotMessage_CommandWithAttachmentIsRefused(t *testing.T) {
+	for _, text := range []string{"/new", "/stop", "/show", "/new 1"} {
+		t.Run(text, func(t *testing.T) {
+			sent, reply := commandWithMediaReply(t, text)
+
+			if sent != nil {
+				t.Fatalf("command %q must not be delivered to session %q (msg=%q, files=%d)",
+					text, sent.sid, sent.msg, len(sent.files))
+			}
+			command := strings.Fields(text)[0]
+			if !strings.Contains(reply, command) {
+				t.Errorf("reply should name %q, got %s", command, reply)
+			}
+			if !strings.Contains(reply, "不能和附件一起发送") {
+				t.Errorf("reply should explain the refusal, got %s", reply)
+			}
+		})
+	}
+}
+
+// A first-time user (no sticky target) sending "/new" with an image must get the
+// command refusal, not the bare "no target session" resolver error.
+func TestOnChatBotMessage_CommandWithAttachmentNoSticky(t *testing.T) {
+	mgr, _, sentCh, _ := richTextEnv(t)
+	origDB := db
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "", nil },
+	}
+	t.Cleanup(func() { db = origDB })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+	var mu sync.Mutex
+	var body []byte
+	replyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		body = b
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(replyServer.Close)
+
+	data := stickyData(replyServer.URL, "")
+	data.Msgtype = "richText"
+	data.Text = chatbot.BotCallbackDataTextModel{Content: ""}
+	data.Content = map[string]any{"richText": []any{
+		map[string]any{"text": "/new"},
+		map[string]any{"downloadCode": "code-1", "type": "picture"},
+	}}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case got := <-sentCh:
+		t.Fatalf("nothing may be delivered, got session %q", got.sid)
+	case <-time.After(300 * time.Millisecond):
+	}
+	mu.Lock()
+	out := string(body)
+	mu.Unlock()
+	if strings.Contains(out, "no target session") {
+		t.Errorf("raw resolver error leaked: %s", out)
+	}
+	if !strings.Contains(out, "不能和附件一起发送") {
+		t.Errorf("expected the command refusal, got %s", out)
+	}
+}
+
+// The guard must not over-reach: ordinary text plus an image is still delivered.
+func TestOnChatBotMessage_TextWithAttachmentStillDelivered(t *testing.T) {
+	sent, reply := commandWithMediaReply(t, "看看这张图")
+	if sent == nil {
+		t.Fatalf("text + image must still be delivered (reply=%s)", reply)
+	}
+	if sent.msg != "看看这张图" {
+		t.Errorf("msg = %q, want the text", sent.msg)
+	}
+	if len(sent.files) != 1 {
+		t.Errorf("files = %d, want 1", len(sent.files))
+	}
+}
+
+// A /show issued while a turn is still generating must SAY that the text below
+// belongs to the previous turn. The streaming row is deliberately excluded, so
+// without the note the user reads an old answer as the reply to the question
+// they just asked.
+func TestOnChatBotMessage_ShowWhileRunningSaysPreviousTurn(t *testing.T) {
+	m := &mockSessionMessenger{
+		lastReply: "the previous answer", lastReplyOK: true,
+		// The sticky session has a live runner.
+		runningSessions: []common.SessionInfo{{ID: "a1b2c3d4-1111"}},
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/show")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := string(*body)
+	if !strings.Contains(out, "上一条") {
+		t.Errorf("expected the previous-turn note, got %s", out)
+	}
+	if !strings.Contains(out, "the previous answer") {
+		t.Errorf("expected the previous answer to still be shown, got %s", out)
+	}
+}
+
+// The note must NOT appear when the session is idle — it would be wrong and
+// would train users to ignore it.
+func TestOnChatBotMessage_ShowWhileIdleHasNoNote(t *testing.T) {
+	m := &mockSessionMessenger{lastReply: "the answer", lastReplyOK: true}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/show")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(string(*body), "上一条") {
+		t.Errorf("idle session must not carry the running note, got %s", *body)
+	}
+}
+
+// "/ls" is a command too. Answering it while discarding the attachment loses the
+// user's file with no warning, so the command/attachment refusal must be checked
+// BEFORE the list branch.
+func TestHandleIncomingWithMedia_ListSessionsWithAttachmentIsRefused(t *testing.T) {
+	mgr, reply, _ := stickyTestEnv(t, "", stickySessions)
+
+	var sentTo string
+	sessionMessenger.(*mockSessionMessenger).SendMessageFn = func(sid, _ string, _ []model.FileEntry) error {
+		sentTo = sid
+		return nil
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*reply, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	mgr.handleIncomingWithMedia(context.Background(), stickyData(server.URL, "/ls"), "staff123", "/ls",
+		[]mediaRef{{code: "code1", filename: "a.png"}})
+
+	if sentTo != "" {
+		t.Errorf("a refused command must not reach a session, got %q", sentTo)
+	}
+	got := string(*reply)
+	if !strings.Contains(got, common.CommandWithAttachmentText(common.SessionListCommand)) {
+		t.Errorf("expected the command/attachment refusal, got %s", got)
+	}
+	if strings.Contains(got, common.T("PushSessionListIntro")) {
+		t.Errorf("the list must not be answered when the attachment is refused, got %s", got)
 	}
 }

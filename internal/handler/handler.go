@@ -562,6 +562,14 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/config/test", ServeConfigTest)
 	register("/api/config/restart", ServeConfigRestart)
 	register("/api/config/password", ServeConfigPassword)
+	// HTTPS certificate: status + one-click self-signed generation. Both are
+	// authenticated: writing a private key is not something an anonymous caller
+	// may trigger, and the paths leak the server's data directory.
+	register("/api/config/tls", ServeTLSStatus)
+	register("/api/config/tls/self-signed", ServeTLSGenerateSelfSigned)
+	register("/api/push/wechat/login", ServeWeChatLogin)
+	register("/api/push/wechat/status", ServeWeChatStatus)
+	register("/api/push/wechat/logout", ServeWeChatLogout)
 	register("/api/fonts/list", ServeFontsList)
 	register("/api/fonts/file", ServeFontFile)
 	register("/api/theme/local/upload", ServeThemeLocalUpload)
@@ -607,6 +615,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// AI group chat (design docs/plans/2026-10-04-ai-group-chat-design.md).
 	register("/api/group/create", ServeGroupCreate)
 	register("/api/group/members", ServeGroupMembers)
+	register("/api/group/host", ServeGroupHost)
 	register("/api/group/member-avatars", ServeGroupMemberAvatars)
 	register("/api/group/member-compact", ServeGroupMemberCompact)
 	register("/api/group/settings", ServeGroupSettings)
@@ -676,6 +685,11 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// the credential, exactly like the file/session share endpoints above.
 	register("/api/live-share", ServeLiveShareManage)
 	register("/api/live-share/publish/ws", LiveSharePublishWS)
+	// AI 听记: the publisher uploads one audio segment per channel, reads the
+	// merged timeline back, and asks for the minutes once the share ends.
+	register("/api/live-share/notes", ServeLiveShareNotes)
+	register("/api/live-share/notes/segment", ServeLiveShareNoteSegment)
+	register("/api/live-share/notes/minutes", ServeLiveShareNotesMinutes)
 	registerPublic("/api/share/", ServeSharePublic)
 	registerPublic("/share/", ServeSharePage)
 	register("/api/dir", ListDir)

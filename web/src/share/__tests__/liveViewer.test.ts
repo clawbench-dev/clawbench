@@ -93,8 +93,21 @@ class FakeWS {
   }
 }
 
-function makeTrack(kind = 'audio'): MediaStreamTrack {
-  return { kind, stop: vi.fn() } as unknown as MediaStreamTrack
+function makeTrack(kind = 'audio'): MediaStreamTrack & { fireEnded: () => void } {
+  const listeners = new Map<string, Array<() => void>>()
+  const track = {
+    kind,
+    stop: vi.fn(),
+    addEventListener: (type: string, cb: () => void) => {
+      const list = listeners.get(type) ?? []
+      list.push(cb)
+      listeners.set(type, list)
+    },
+    fireEnded: () => {
+      for (const cb of listeners.get('ended') ?? []) cb()
+    },
+  }
+  return track as unknown as MediaStreamTrack & { fireEnded: () => void }
 }
 
 function setup(overrides: Record<string, unknown> = {}) {
@@ -186,14 +199,19 @@ describe('LiveViewer connection', () => {
     expect(lastPC().config.iceServers).toEqual([{ urls: 'stun:example.org' }])
   })
 
-  it('reserves a sendrecv audio transceiver before the offer', () => {
+  it('reserves three m-lines in the agreed order', () => {
     const { viewer } = setup()
     joinRoom(viewer)
 
     const kinds = lastPC().transceivers.map((t) => t.direction)
-    // Audio must be sendrecv (so speech needs no renegotiation) and video recvonly.
-    expect(kinds).toEqual(['sendrecv', 'recvonly'])
+    // 1 audio (mic up / mix down), 2 video (host picture down / our screen up),
+    // 3 video (another viewer's screen down). The publisher adds the same three
+    // in the same order — this ordering IS the contract.
+    expect(kinds).toEqual(['sendrecv', 'sendrecv', 'recvonly'])
+    // Every sender starts empty: tracks are attached with replaceTrack, which
+    // does not renegotiate.
     expect(lastPC().transceivers[0].sender.track).toBeNull()
+    expect(lastPC().transceivers[1].sender.track).toBeNull()
   })
 
   it('reports playing when the remote track arrives', () => {
@@ -500,5 +518,153 @@ describe('LiveViewer cleanup', () => {
     viewer.connect()
 
     expect(FakeWS.instances).toHaveLength(1)
+  })
+})
+
+// ── Audience screen sharing ─────────────────────────────────────────────────
+
+function setupWithScreen() {
+  const screenStates: Array<{ enabled: boolean }> = []
+  const sharers: string[] = []
+  const memberStreams: Array<MediaStream | null> = []
+  const denied: string[] = []
+  const viewer = new LiveViewer({
+    token: 'tok123',
+    callbacks: {
+      onScreenEnabled: (v) => screenStates.push({ enabled: v }),
+      onScreenSharer: (id) => sharers.push(id),
+      onMemberScreenStream: (s) => memberStreams.push(s),
+      onScreenDenied: (r) => denied.push(r),
+    },
+    wsFactory: (url) => new FakeWS(url) as unknown as WebSocket,
+    pcFactory: (cfg) => new FakePC(cfg) as unknown as RTCPeerConnection,
+  })
+  return { viewer, screenStates, sharers, memberStreams, denied }
+}
+
+function installDisplayMedia(track: MediaStreamTrack) {
+  const getDisplayMedia = vi.fn(async () => ({ getVideoTracks: () => [track] }))
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: { getDisplayMedia },
+  })
+  return getDisplayMedia
+}
+
+describe('LiveViewer screen sharing', () => {
+  beforeEach(() => {
+    // jsdom's MediaStream rejects plain track objects; the viewer wraps the
+    // relayed track into one, so a minimal double is enough here.
+    vi.stubGlobal(
+      'MediaStream',
+      class {
+        constructor(public tracks: unknown[] = []) {}
+        getVideoTracks() {
+          return this.tracks
+        }
+        getAudioTracks() {
+          return []
+        }
+      },
+    )
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    // @ts-expect-error -- jsdom has no mediaDevices to restore.
+    delete navigator.mediaDevices
+  })
+
+  it('attaches the screen with replaceTrack, without renegotiating', async () => {
+    const track = makeTrack('video')
+    installDisplayMedia(track)
+    const { viewer } = setupWithScreen()
+    joinRoom(viewer)
+    await vi.waitFor(() => expect(viewer.state).toBe('negotiating'))
+    const offersBefore = lastPC().createOffer.mock.calls.length
+
+    const ok = await viewer.startScreenShare()
+
+    expect(ok).toBe(true)
+    expect(viewer.isSharingScreen).toBe(true)
+    // m-line 2 is the screen line; replacing the track must not renegotiate.
+    expect(lastPC().transceivers[1].sender.replaceTrack).toHaveBeenCalledWith(track)
+    expect(lastPC().createOffer.mock.calls.length).toBe(offersBefore)
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'screen-start' })
+  })
+
+  it('stops when the browser ends the track (its own "stop sharing" bar)', async () => {
+    const track = makeTrack('video')
+    installDisplayMedia(track)
+    const { viewer } = setupWithScreen()
+    joinRoom(viewer)
+    await viewer.startScreenShare()
+
+    track.fireEnded()
+    // The stop is reported after replaceTrack resolves, so wait for the frame
+    // rather than for the synchronous flag.
+    await vi.waitFor(() =>
+      expect(lastWS().sentJSON()).toContainEqual({ type: 'screen-stop' }),
+    )
+
+    expect(viewer.isSharingScreen).toBe(false)
+    expect(lastPC().transceivers[1].sender.replaceTrack).toHaveBeenLastCalledWith(null)
+  })
+
+  it('releases the local capture when the room denies the share', async () => {
+    const track = makeTrack('video')
+    installDisplayMedia(track)
+    const { viewer, denied } = setupWithScreen()
+    joinRoom(viewer)
+    await viewer.startScreenShare()
+
+    lastWS().emit({ type: 'screen-denied', reason: 'busy' })
+
+    expect(viewer.isSharingScreen).toBe(false)
+    expect(track.stop).toHaveBeenCalled()
+    expect(denied).toEqual(['busy'])
+  })
+
+  it('reports who is sharing and the room switch', () => {
+    const { viewer, screenStates, sharers } = setupWithScreen()
+    joinRoom(viewer)
+
+    lastWS().emit({ type: 'screen-state', screenEnabled: true, viewerId: 'v2', sharing: true })
+    expect(screenStates.at(-1)).toEqual({ enabled: true })
+    expect(sharers.at(-1)).toBe('v2')
+    expect(viewer.screenSharer).toBe('v2')
+
+    lastWS().emit({ type: 'screen-state', screenEnabled: true, viewerId: '', sharing: false })
+    expect(sharers.at(-1)).toBe('')
+  })
+
+  it('does not surface the relay line until the room says somebody is sharing', () => {
+    const { viewer, memberStreams } = setupWithScreen()
+    joinRoom(viewer)
+
+    // The relay m-line is negotiated at join and its receiver fires `ontrack`
+    // with a MUTED track. Treating that as "someone is sharing" would black out
+    // the host's picture for every viewer the moment they join.
+    lastPC().ontrack?.({
+      streams: [],
+      track: makeTrack('video'),
+      transceiver: lastPC().transceivers[2],
+    } as never)
+    expect(memberStreams).toHaveLength(0)
+
+    lastWS().emit({ type: 'screen-state', screenEnabled: true, viewerId: 'v2', sharing: true })
+    expect(memberStreams.at(-1)).not.toBeNull()
+
+    lastWS().emit({ type: 'screen-state', screenEnabled: true, viewerId: '', sharing: false })
+    expect(memberStreams.at(-1)).toBeNull()
+  })
+
+  it('reports false when the browser has no display-capture API', async () => {
+    const { viewer } = setupWithScreen()
+    joinRoom(viewer)
+
+    // jsdom has no mediaDevices at all — the same situation as an http:// page.
+    await expect(viewer.startScreenShare()).resolves.toBe(false)
+    expect(viewer.isSharingScreen).toBe(false)
   })
 })

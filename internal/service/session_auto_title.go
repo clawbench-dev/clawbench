@@ -224,6 +224,11 @@ func SetSessionTitleAutoIfNotCustom(sessionID, title string) (bool, error) {
 // changed outside the normal rename flow, so an open chat header and a mounted
 // session list pick it up. The rename endpoint itself relies on the client that
 // made the change; this event exists for changes the client did not initiate.
+//
+// Session CREATION from a channel with no web client of its own (the IM /new
+// command) reuses it: the payload is exactly "this session now has this title in
+// this project", which is what a session list needs to show the new row, and the
+// list refreshes on this event.
 func BroadcastSessionTitleUpdate(sessionID, title string) {
 	mgr := ws.GetManager()
 	if mgr == nil {

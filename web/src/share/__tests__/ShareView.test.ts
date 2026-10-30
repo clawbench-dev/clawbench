@@ -217,6 +217,15 @@ describe('ShareView — view toggle (rendered ⇄ source)', () => {
     expect(wrapper.find('iframe.share-html-iframe').exists()).toBe(true)
     expect(wrapper.find('.share-content').attributes('data-html-rendered')).toBeDefined()
 
+    // The document's own links must be clickable: without popups (and the
+    // escape, so the new tab is not sandboxed into an opaque origin) a
+    // `target="_blank"` click is discarded silently. `allow-same-origin` must
+    // stay absent — it would let the document remove its own sandbox.
+    const sandbox = wrapper.find('iframe.share-html-iframe').attributes('sandbox') || ''
+    expect(sandbox).toContain('allow-scripts')
+    expect(sandbox).toContain('allow-popups-to-escape-sandbox')
+    expect(sandbox).not.toContain('allow-same-origin')
+
     // Toggling to the raw source view drops the attribute — CodeMirror keeps
     // the generic wide-screen cap (no self-laying-out page).
     await wrapper.find('.share-view-toggle').trigger('click')

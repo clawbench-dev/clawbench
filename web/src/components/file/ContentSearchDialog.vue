@@ -694,14 +694,18 @@ defineExpose({
   flex-direction: column;
   align-items: center;
   gap: var(--space-5);
-  padding: calc(40 * var(--dp)) var(--space-6);
+  /* No horizontal padding: the skeleton carries the results' own inset, and the
+     stop button is centred by `align-items` regardless. */
+  padding: calc(40 * var(--dp)) 0;
 }
 
 /* The skeleton spans the result column and left-aligns like real hits; only the
-   stop button below stays centred. */
+   stop button below stays centred. 10dp is `.cs-file-head`'s inset — without it
+   the placeholder sat 10dp further left than the file headers it previews. */
 .cs-loading-skeleton {
   width: 100%;
   align-self: stretch;
+  --panel-skeleton-inset: calc(10 * var(--dp));
 }
 
 /* ── Grouped results ── */

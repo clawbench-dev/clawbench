@@ -381,6 +381,8 @@ defineExpose({
 }
 
 .history-skeleton {
+  /* 12dp is `.execution-row`'s inset. */
+  --panel-skeleton-inset: calc(12 * var(--dp));
   padding: var(--space-2) 0;
 }
 

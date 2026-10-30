@@ -279,6 +279,42 @@ func TestEnsureConsumer_SkipsUnknownSession(t *testing.T) {
 	assert.Empty(t, *calls)
 }
 
+// TestEnsureConsumer_RefusesDuringShutdown pins the shutdown gate.
+//
+// MarkShuttingDown runs at shutdown step 1, while StopQueueReaper is a deferred
+// call that runs LAST — so the reaper keeps ticking in between. A claim made in
+// that window is invisible to CancelAllSessions (already run) and would stream
+// while the DB is closing, leaving a streaming=1 row the next startup resumes
+// again.
+func TestEnsureConsumer_RefusesDuringShutdown(t *testing.T) {
+	db := setupReaperTestDB(t)
+	cleanup := store.SetDBForTest(db, db)
+	defer cleanup()
+	cleanupAllSessionState()
+	t.Cleanup(cleanupAllSessionState)
+
+	ResetShuttingDownForTest()
+	t.Cleanup(func() { ResetShuttingDownForTest() })
+
+	calls := stubConsumer(t)
+	insertReaperSession(t, db, "sess-shutdown", 0)
+	insertQueuedRow(t, db, "sess-shutdown", "q-shutdown", time.Minute)
+
+	MarkShuttingDown()
+	assert.False(t, EnsureConsumer("sess-shutdown"),
+		"EnsureConsumer must refuse to start work during shutdown")
+	assert.Empty(t, *calls, "no execution may be launched during shutdown")
+	// The row must still be queued for the next process to reap.
+	assert.Equal(t, 1, queuedCountInDB(t, db, "sess-shutdown"),
+		"the queued row must survive shutdown")
+
+	// After the flag is cleared (a fresh process), the SAME call succeeds —
+	// proving the gate is the shutdown flag and not a blanket refusal.
+	ResetShuttingDownForTest()
+	assert.True(t, EnsureConsumer("sess-shutdown"), "after shutdown the consumer must start again")
+	assert.Len(t, *calls, 1)
+}
+
 // TestQueueReaper_StopIsIdempotent guards the worker lifecycle wiring.
 func TestQueueReaper_StopIsIdempotent(t *testing.T) {
 	w := &QueueReaper{

@@ -54,6 +54,11 @@ const shareMetaSegment = "meta"
 // signaling socket (/api/share/{token}/signal).
 const shareSignalSegment = "signal"
 
+// shareNotesSegment is the URL path segment carrying the live-share AI 听记
+// timeline (/api/share/{token}/notes). Public like the signaling socket: the
+// token is the credential.
+const shareNotesSegment = "notes"
+
 // shareKindFile and shareKindSession are the `kind` values the share meta
 // endpoint reports, telling the share SPA which renderer to use. Kept distinct
 // from entryTypeFile, which classifies a directory-search entry rather than a
@@ -477,6 +482,12 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 		LiveShareSignalWS(w, r)
 		return
 	}
+	// AI 听记 timeline for a live share. Same subtree for the same reason: a
+	// live token has no file_shares row.
+	if rest == shareNotesSegment {
+		ServeShareLiveNotes(w, r, token)
+		return
+	}
 
 	// Conversation-share subpaths are resolved BEFORE the file-share lookup:
 	// a session token has no file_shares row, so looking that up first would
@@ -811,7 +822,7 @@ func serveShareDocFile(w http.ResponseWriter, r *http.Request, absPath string) {
 }
 
 // shareDocSandboxCSP keeps a shared document in an opaque origin while letting
-// it run its own scripts.
+// it run its own scripts and follow its own links.
 //
 // `sandbox allow-scripts` (no `allow-same-origin`) is the load-bearing part: the
 // document gets a unique opaque origin, so it cannot read the reader's cookies,
@@ -820,7 +831,23 @@ func serveShareDocFile(w http.ResponseWriter, r *http.Request, absPath string) {
 // are deliberately permissive about `https:`/`data:` because a shared document
 // legitimately embeds third-party images, and restrictive about framing and
 // plugins.
-const shareDocSandboxCSP = "sandbox allow-scripts; " +
+//
+// `allow-popups allow-popups-to-escape-sandbox` are what make an outbound link
+// clickable. Every real document writes its links as `target="_blank"`, and a
+// sandboxed frame without `allow-popups` discards that activation silently — the
+// link simply does nothing (the app's own preview hit the same wall and had to
+// intercept clicks; see utils/htmlPreview.ts). The pair is needed together: with
+// only `allow-popups` the new tab INHERITS the sandbox flags, so the target page
+// runs in an opaque origin where `document.cookie` throws and its own JS dies —
+// the reader gets a blank-looking tab. `allow-popups-to-escape-sandbox` gives the
+// popup the target site's real origin, i.e. exactly what a normal link click
+// does.
+//
+// What that grants the document: the ability to open a window, which the browser
+// still gates on a user gesture, and only for the URL the reader clicked. It
+// does NOT grant the document an origin — it stays opaque, and the popup carries
+// the target site's origin, never this one.
+const shareDocSandboxCSP = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; " +
 	"default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: http:; " +
 	"frame-ancestors 'self'; object-src 'none'"
 
