@@ -601,6 +601,10 @@ main {
 }
 
 /* 英文标题词更长、字母间距不能像中文那样压得那么紧，否则会粘连 */
+.lang-en .zh-only {
+  display: none;
+}
+
 .lang-en .hero-title {
   font-size: clamp(34px, 7.4vw, 68px);
   letter-spacing: -0.035em;
@@ -1076,6 +1080,136 @@ main {
   letter-spacing: 0.02em;
 }
 
+/* ── 下载 ───────────────────────────────────────────────────── */
+/* 平台名（Windows / macOS / Linux / Android）与架构标注两种语言下完全
+   相同，所以刻意不带 data-i18n —— 只有分组标题和说明文字需要翻译。 */
+.dl-block + .dl-block {
+  margin-top: 34px;
+}
+
+.dl-block-title {
+  margin-bottom: 14px;
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dl-block-note {
+  max-width: 620px;
+  margin: -4px 0 16px;
+  color: var(--fg-muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.dl-block-note code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(251, 241, 199, 0.07);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.dl-grid {
+  display: grid;
+  gap: 10px;
+}
+
+/* 一张卡 = 一个平台，卡内每个架构一枚可点的胶囊。这样 macOS 的
+   Apple Silicon / Intel 不会被拆成两张几乎一样的卡片。 */
+.dl-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--fg);
+  transition: border-color 0.25s, background 0.25s;
+}
+
+.dl-card:hover {
+  border-color: rgba(254, 128, 25, 0.22);
+  background: var(--bg-card-hover);
+}
+
+.dl-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dl-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dl-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--fg-dim);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: border-color 0.25s, background 0.25s, color 0.25s;
+}
+
+.dl-chip:hover {
+  border-color: rgba(254, 128, 25, 0.45);
+  background: rgba(254, 128, 25, 0.08);
+  color: var(--fg);
+}
+
+.dl-icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+}
+
+/* 图标源：零尺寸而不是 display:none —— 后者会让 <use> 在部分浏览器里失效 */
+.dl-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.dl-name {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.dl-meta {
+  margin-left: auto;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.dl-foot {
+  margin-top: 26px;
+  color: var(--fg-muted);
+  font-size: 13.5px;
+}
+
+.dl-foot a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 /* ── 分栏（手机 / 桌面）─────────────────────────────────────── */
 .split {
   display: flex;
@@ -1413,6 +1547,46 @@ main {
   line-height: 1.7;
 }
 
+/* 整行宽卡：新能力单独占一行，避免 3 列网格里最后一行只剩一张卡 */
+.feat-wide {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 28px;
+  grid-column: 1 / -1;
+}
+
+.feat-wide .feat-icon {
+  flex: none;
+}
+
+.feat-wide-body {
+  flex: 1 1 380px;
+  min-width: 0;
+}
+
+.feat-wide h3 {
+  margin-top: 0;
+}
+
+.feat-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.feat-tags li {
+  padding: 4px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 /* ── 部署 ───────────────────────────────────────────────────── */
 .deploy-wrap {
   max-width: 820px;
@@ -1458,7 +1632,8 @@ main {
   overflow: hidden;
 }
 
-.code-panel[hidden] {
+/* 页签面板由 data-panel 标记，代码框只是其中一种内容 */
+[data-panel][hidden] {
   display: none;
 }
 
@@ -1497,7 +1672,7 @@ main {
   -webkit-overflow-scrolling: touch;
 }
 
-.code-panel code {
+.code-panel pre code {
   display: block;
   color: var(--fg-dim);
   font-family: var(--font-mono);
@@ -1858,6 +2033,10 @@ main {
     grid-column: span 2;
   }
 
+  .dl-panel .dl-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .feat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2055,6 +2234,7 @@ main {
   .section h2 {
     font-size: 48px;
   }
+
 
   .stage {
     max-width: 660px;

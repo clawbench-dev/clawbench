@@ -1,0 +1,66 @@
+name: Deploy Landing (GitHub Pages)
+
+# The landing page (`web/landing/`) has two hosts:
+#   * Cloudflare Pages — primary, see deploy-landing.yml
+#   * GitHub Pages    — project site, https://clawbench-dev.github.io/clawbench/
+#
+# This workflow only handles the second one. It uploads the directory as a
+# prebuilt artifact, so Jekyll never runs and `_headers` (a Cloudflare-only
+# convention) is left out instead of being published as a stray file.
+#
+# Repository setting required once: Settings → Pages → Source = GitHub Actions.
+# Without it the deploy job fails with "Get Pages site failed".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/landing/**'
+      - '.github/workflows/deploy-landing-pages.yml'
+  workflow_dispatch:
+
+concurrency:
+  # The site is a single artifact; two concurrent deploys would race on which
+  # one goes live. A newer push supersedes an in-flight run.
+  group: deploy-landing-pages
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Stage site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same staging as the Cloudflare workflow, minus `_headers`: GitHub Pages
+      # has no header syntax and would serve it at /_headers. The test file is
+      # excluded for the same reason it is there — it would be published.
+      - name: Stage site
+        run: |
+          mkdir -p dist
+          cp -r web/landing/css web/landing/img web/landing/js \
+                web/landing/index.html dist/
+          rm -f dist/*.test.ts
+          # Jekyll is skipped for artifact deploys, but the marker keeps the
+          # site intact if the Pages source is ever switched to a branch.
+          touch dist/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

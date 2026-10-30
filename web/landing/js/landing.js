@@ -15,6 +15,7 @@
 
     'nav.platforms': 'Platforms',
     'nav.features': 'Features',
+    'nav.download': 'Download',
     'nav.deploy': 'Deploy',
     'nav.gallery': 'Screenshots',
     'nav.faq': 'FAQ',
@@ -60,7 +61,7 @@
     'plat.tablet.m': 'Responsive columns · draggable split',
     'plat.desktop.t': 'Desktop',
     'plat.desktop.d':
-      'The Electron shell reuses the same UI and adds native notifications, context menus, SSH port forwarding and in-app self-upgrade.',
+      'The Electron shell reuses the same UI and adds native notifications, context menus, SSH port forwarding, screen sharing and in-app self-upgrade.',
     'plat.desktop.m': 'Windows · macOS · Linux',
 
     'mob.kicker': 'Phone · Android app or any browser',
@@ -91,6 +92,14 @@
     'desk.zoomHint': 'Click to enlarge',
     'zoom.dialog': 'Screenshot preview',
     'zoom.close': 'Close',
+
+    // 平台名与架构标注在两种语言下相同，故不带 data-i18n；这里只翻标题与说明。
+    'dl.client': 'Clients',
+    'dl.server': 'Server binaries',
+    'dl.serverNote':
+      'One file with the frontend built in — unzip and run <code>./clawbench</code>. The Android build is the arm64 variant for Termux.',
+    'dl.foot':
+      'Need an older version or the changelog? <a href="https://github.com/clawbench-dev/clawbench/releases" target="_blank" rel="noopener">Browse all releases</a>.',
 
     'feat.kicker': 'Features',
     'feat.title': 'Not a chat box.<br>A whole workflow.',
@@ -128,7 +137,13 @@
       'Forward and reverse port mapping, transparent to every protocol (HTTP / WS / SSE / gRPC) — reach localhost at home from your phone.',
     'feat.notify.t': 'Notifications and push',
     'feat.notify.d':
-      'A notification center collects session, task and repository events; DingTalk and Feishu bots let you read and reply from IM.',
+      'A notification center collects session, task and repository events; DingTalk and Feishu bots plus a WeChat bot you link by scanning a QR code all let you read and reply from IM.',
+    'feat.live.t': 'Live screen share and meetings',
+    'feat.live.d':
+      'Share a screen on the local network — one link, no login, opens in any browser. Let the audience unmute to talk, while AI notes transcribe live, keep speakers on separate channels, and turn into minutes when the share ends.',
+    'feat.live.tag1': 'Screen share',
+    'feat.live.tag2': 'Voice',
+    'feat.live.tag3': 'AI notes',
     'feat.theme.t': 'Themes and wallpapers',
     'feat.theme.d':
       '36 named themes, system-following switch and a circular reveal transition; local gallery, daily Bing and animated wallpapers.',
@@ -139,8 +154,8 @@
       'No Node runtime, no separate database service. The first launch prints a randomly generated password to the console.',
     'dep.tab.binary': 'Binary',
     'dep.copy': 'Copy',
-    'code.npm.cmt': '# Mirror first if you are in mainland China — much faster',
-    'code.bin.cmt': '# Grab the archive for your platform from Releases and unzip it',
+    'code.npm.mirror': '# Mirror first if you are in mainland China — much faster',
+    'code.npm.cmt': '# No global install — runs the latest version',
     'dep.note':
       'Once it is running, open <code>http://your-server-ip:20000</code> from the app or any browser.',
 
@@ -292,6 +307,12 @@
 
     // 英文标题更长，字号略收一档，避免在窄屏挤出四行
     document.body.classList.toggle('lang-en', isEn);
+
+    // 换镜像源只对国内中文用户有意义，英文页里那两行被 .zh-only 隐藏，
+    // 复制的内容也要跟着少一行，否则粘贴出来仍是镜像命令。
+    document.querySelectorAll('[data-copy-zh]').forEach(function (b) {
+      b.dataset.copy = isEn ? b.dataset.copyEn : b.dataset.copyZh;
+    });
   }
 
   function setLang(lang, persist) {
@@ -318,6 +339,31 @@
   }
 
   setLang(detectLang(), false);
+
+  /* ── 下载直链 ─────────────────────────────────────────────────
+     资产名里带版本号（clawbench-desktop-linux-x64-v0.99.1.zip），所以
+     没有 /releases/latest/download/<name> 这种稳定地址——只能先问一次
+     最新 tag 再拼。HTML 里的 href 已经写成 Releases 页：取不到（离线、
+     被限流、API 改版）就原样保留，下载永远可用，只是多点一次。 */
+  var releaseLinks = Array.prototype.slice.call(document.querySelectorAll('a[data-asset]'));
+
+  function applyReleaseTag(tag) {
+    if (!tag) return;
+    releaseLinks.forEach(function (a) {
+      var ext = a.getAttribute('data-ext') || 'zip';
+      a.href = 'https://github.com/clawbench-dev/clawbench/releases/download/' +
+        encodeURIComponent(tag) + '/' + a.getAttribute('data-asset') + '-' + tag + '.' + ext;
+    });
+  }
+
+  if (releaseLinks.length && typeof fetch === 'function') {
+    fetch('https://api.github.com/repos/clawbench-dev/clawbench/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' }
+    })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (data) { applyReleaseTag(data && data.tag_name); })
+      .catch(function () { /* 保留 Releases 页链接 */ });
+  }
 
   /* ── 导航：滚动后加背景 ─────────────────────────────────────── */
   var nav = document.getElementById('nav');
@@ -381,11 +427,20 @@
         t.classList.toggle('is-active', on);
         t.setAttribute('aria-selected', String(on));
       });
-      document.querySelectorAll('.code-panel').forEach(function (p) {
+      document.querySelectorAll('[data-panel]').forEach(function (p) {
         var on = p.dataset.panel === name;
         p.classList.toggle('is-active', on);
         p.hidden = !on;
       });
+    });
+  });
+
+  // 指向部署区的入口（如「下载桌面客户端」）要直接落在安装包页签上，
+  // 否则用户看到的是 npm 命令，还得自己再点一次。
+  document.querySelectorAll('[data-open-tab]').forEach(function (link) {
+    link.addEventListener('click', function () {
+      var tab = document.querySelector('.tab[data-tab="' + link.getAttribute('data-open-tab') + '"]');
+      if (tab) tab.click();
     });
   });
 

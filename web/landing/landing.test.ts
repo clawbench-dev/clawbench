@@ -59,12 +59,19 @@ function webpSize(buf: Buffer): { width: number; height: number } {
 }
 
 /** Boots the page with the script executed, at the given navigator language. */
-function boot(language: string): JSDOM {
+function boot(language: string, fetchImpl?: unknown): JSDOM {
   const dom = new JSDOM(html, {
     url: 'https://clawbench.example/',
     runScripts: 'outside-only',
   })
   const { window } = dom
+
+  // jsdom has no fetch. The download buttons upgrade themselves to direct
+  // asset URLs from this call, so the tests that exercise that path inject a
+  // stub; every other test leaves it undefined and the page skips the upgrade.
+  if (fetchImpl) {
+    Object.defineProperty(window, 'fetch', { value: fetchImpl, configurable: true, writable: true })
+  }
 
   // jsdom implements neither of these, and the page uses both. Without the
   // stub the script throws on its first matchMedia call and every assertion
@@ -272,6 +279,201 @@ describe('landing page', () => {
     })
   })
 
+  describe('downloads', () => {
+    // The download cards carry the asset base name; the version is appended by
+    // the script. Asset names are therefore a contract with release.yml — a
+    // renamed artifact leaves a button that looks fine and 404s.
+    const releaseYml = readFileSync(
+      resolve(here, '../../.github/workflows/release.yml'),
+      'utf8',
+    )
+
+    function cards(doc: Document) {
+      return Array.from(doc.querySelectorAll('a[data-asset]')).map((el) => ({
+        base: el.getAttribute('data-asset') || '',
+        ext: el.getAttribute('data-ext') || 'zip',
+        href: el.getAttribute('href') || '',
+        arch: (el.textContent || '').trim(),
+        icon: (el.closest('.dl-card')?.querySelector('use')?.getAttribute('href') || '').replace(
+          /^#/,
+          '',
+        ),
+      }))
+    }
+
+    /** The platform is spelled into the artifact name; the glyph must follow it. */
+    function expectedIcon(base: string): string {
+      if (base.includes('windows')) return 'i-win'
+      if (base.includes('darwin')) return 'i-mac'
+      if (base.includes('linux')) return 'i-linux'
+      if (base.includes('android')) return 'i-android'
+      throw new Error(`artifact ${base} names no known platform`)
+    }
+
+    it('gives every card the icon of its platform', () => {
+      // Copy-pasting a card and forgetting to swap the <use> reference is
+      // invisible in review but ships a Windows glyph on the macOS row.
+      const dom = new JSDOM(html)
+      const doc = dom.window.document
+      const symbols = new Set(Array.from(doc.querySelectorAll('symbol')).map((el) => el.id))
+
+      for (const { base, icon } of cards(doc)) {
+        expect(symbols.has(icon), `${base} references a missing symbol "${icon}"`).toBe(true)
+        expect(icon, `${base} has the wrong platform icon`).toBe(expectedIcon(base))
+      }
+      dom.window.close()
+    })
+
+    it('keeps every architecture of one platform in the same card', () => {
+      // One card per platform: macOS is two chips (Apple Silicon / Intel), not
+      // two cards that look nearly identical.
+      const dom = new JSDOM(html)
+      const doc = dom.window.document
+      const layout = Array.from(doc.querySelectorAll('.dl-card')).map((card) => ({
+        platform: (card.querySelector('.dl-name')?.textContent || '').trim(),
+        arches: Array.from(card.querySelectorAll('a[data-asset]')).map((a) =>
+          (a.textContent || '').trim(),
+        ),
+      }))
+
+      expect(layout.length).toBe(8)
+      expect(layout.map((c) => `${c.platform}: ${c.arches.join('+')}`)).toEqual([
+        'Windows: x64',
+        'macOS: Apple Silicon+Intel',
+        'Linux: x64+ARM64',
+        'Android: arm64',
+        'Windows: x64',
+        'macOS: Apple Silicon+Intel',
+        'Linux: x64+ARM64',
+        'Android · Termux: arm64',
+      ])
+      dom.window.close()
+    })
+
+    it('keeps the packages behind the third deploy tab', () => {
+      // Downloads live inside 部署 → 安装包, after npm and Docker: the tab
+      // order is the install-path order, and the panel starts hidden so the
+      // first thing a visitor sees is still the one-line npm command.
+      const dom = boot('zh-CN')
+      const doc = dom.window.document
+      const labels = Array.from(doc.querySelectorAll('.tabs .tab')).map((t) => t.getAttribute('data-tab'))
+      expect(labels).toEqual(['npm', 'docker', 'binary'])
+
+      const panel = doc.querySelector('.dl-panel[data-panel="binary"]') as HTMLElement
+      expect(panel.hidden).toBe(true)
+      ;(doc.querySelector('.tab[data-tab="binary"]') as HTMLElement).click()
+      expect(panel.hidden).toBe(false)
+      expect((doc.querySelector('[data-panel="npm"]') as HTMLElement).hidden).toBe(true)
+      expect(panel.querySelectorAll('a[data-asset]').length).toBe(12)
+      dom.window.close()
+    })
+
+    it('jumps straight to the package tab from the desktop section', () => {
+      // The desktop block's "download the desktop app" link must land on the
+      // cards, not on the npm command.
+      const dom = boot('zh-CN')
+      const doc = dom.window.document
+      ;(doc.querySelector('[data-open-tab="binary"]') as HTMLElement).click()
+      expect((doc.querySelector('.tab[data-tab="binary"]') as HTMLElement).getAttribute('aria-selected')).toBe('true')
+      expect((doc.querySelector('.dl-panel[data-panel="binary"]') as HTMLElement).hidden).toBe(false)
+      dom.window.close()
+    })
+
+    it('runs the server through npx, with a comment on every command', () => {
+      const dom = boot('zh-CN')
+      const doc = dom.window.document
+      const panel = doc.querySelector('.code-panel[data-panel="npm"]')!
+      const code = panel.querySelector('code')!.textContent || ''
+
+      expect(code).toContain('npx @xulongzhe/clawbench')
+      expect(code).not.toContain('npm install -g')
+
+      const commands = code.split('\n').filter((l) => l.trim() && !l.trim().startsWith('#'))
+      expect(panel.querySelectorAll('.c-cmt').length).toBe(commands.length)
+      dom.window.close()
+    })
+
+    it('keeps the mirror line out of the English page and its copy payload', () => {
+      // The npm mirror only matters to users in mainland China; an English
+      // visitor should neither see it nor paste it.
+      const zh = boot('zh-CN')
+      const zhPanel = zh.window.document.querySelector('.code-panel[data-panel="npm"]')!
+      expect(zhPanel.querySelector('.zh-only')).toBeTruthy()
+      expect(zhPanel.querySelector('.copy-btn')!.getAttribute('data-copy')).toContain(
+        'npm config set registry',
+      )
+
+      const en = boot('en-US')
+      const enPanel = en.window.document.querySelector('.code-panel[data-panel="npm"]')!
+      expect(enPanel.querySelector('.copy-btn')!.getAttribute('data-copy')).toBe(
+        'npx @xulongzhe/clawbench',
+      )
+      // jsdom does not resolve the cascade, so the hiding rule needs its own guard
+      expect(css).toMatch(/\.lang-en\s+\.zh-only\s*\{[^}]*display:\s*none/)
+
+      zh.window.close()
+      en.window.close()
+    })
+
+    it('offers exactly the artifacts release.yml publishes', () => {
+      const dom = new JSDOM(html)
+      const assets = cards(dom.window.document)
+      expect(assets.length).toBe(12)
+      expect(new Set(assets.map((a) => a.base)).size).toBe(assets.length)
+
+      for (const { base, ext } of assets) {
+        // PowerShell jobs interpolate `$env:RELEASE_TAG`, bash ones
+        // `${RELEASE_TAG}` — both are the same published filename.
+        const published = new RegExp(
+          `${base}-(?:\\$\\{RELEASE_TAG\\}|\\$env:RELEASE_TAG)\\.${ext}`,
+        )
+        expect(releaseYml, `${base}.${ext} is not uploaded by release.yml`).toMatch(published)
+      }
+      dom.window.close()
+    })
+
+    it('points at the Releases page until the version is known', () => {
+      const dom = boot('zh-CN')
+      const hrefs = cards(dom.window.document).map((a) => a.href)
+      expect(hrefs).toEqual(
+        Array(hrefs.length).fill('https://github.com/clawbench-dev/clawbench/releases/latest'),
+      )
+      dom.window.close()
+    })
+
+    it('rewrites every button to a direct download once the tag arrives', async () => {
+      const dom = boot('zh-CN', () =>
+        Promise.resolve({ ok: true, json: () => Promise.resolve({ tag_name: 'v9.9.9' }) }),
+      )
+      await new Promise((r) => setTimeout(r, 0))
+
+      const hrefs = cards(dom.window.document).map((a) => a.href)
+      const prefix = 'https://github.com/clawbench-dev/clawbench/releases/download/v9.9.9/'
+      expect(hrefs).toContain(`${prefix}clawbench-desktop-linux-x64-v9.9.9.zip`)
+      expect(hrefs).toContain(`${prefix}clawbench-android-v9.9.9.apk`)
+      expect(hrefs.filter((h) => !h.startsWith(prefix))).toEqual([])
+      dom.window.close()
+    })
+
+    it('keeps the Releases page when the lookup fails', async () => {
+      // Offline, rate-limited (60 req/h per IP) and a non-2xx answer are all
+      // the same outcome for the visitor: the fallback link must survive.
+      const failing = [
+        () => Promise.reject(new Error('offline')),
+        () => Promise.resolve({ ok: false, json: () => Promise.resolve(null) }),
+        () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
+      ]
+
+      for (const impl of failing) {
+        const dom = boot('zh-CN', impl)
+        await new Promise((r) => setTimeout(r, 0))
+        const hrefs = cards(dom.window.document).map((a) => a.href)
+        expect(hrefs.every((h) => h.endsWith('/releases/latest'))).toBe(true)
+        dom.window.close()
+      }
+    })
+  })
+
   describe('markup contracts', () => {
     it('inlines every agent logo instead of linking an <img>', () => {
       // `currentColor` inside an <img>-loaded SVG resolves against the image's
@@ -354,6 +556,31 @@ describe('landing page', () => {
       expect(logos.length).toBe(19)
       const kept = logos.filter((svg) => svg.getAttribute('fill-rule') === 'evenodd')
       expect(kept.length).toBeGreaterThanOrEqual(15)
+      dom.window.close()
+    })
+
+    it('lists every IM backend the product supports', () => {
+      // WeChat arrived after DingTalk and Feishu; a card that still names only
+      // two makes the page claim less than the product does.
+      const dom = boot('zh-CN')
+      const doc = dom.window.document
+      const card = Array.from(doc.querySelectorAll('.feat')).find((el) =>
+        el.querySelector('[data-i18n="feat.notify.d"]'),
+      )!
+      const text = card.textContent || ''
+      for (const im of ['钉钉', '飞书', '微信']) expect(text, im).toContain(im)
+      dom.window.close()
+    })
+
+    it('gives live screen share its own full-width card', () => {
+      const dom = boot('zh-CN')
+      const doc = dom.window.document
+      const card = doc.querySelector('.feat-wide')
+      expect(card).toBeTruthy()
+      expect(card!.querySelectorAll('.feat-tags li').length).toBe(3)
+      // 13 cards in a 3-column grid would leave a lone card on the last row;
+      // the wide card is what keeps every row full.
+      expect(css).toMatch(/\.feat-wide\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/)
       dom.window.close()
     })
 

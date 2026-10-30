@@ -113,7 +113,7 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 
 `web/src/share/` 是分享链接的独立只读 SPA（文件分享=类型分派渲染 + TOC + 下载；会话分享=快照对话 + 目录导航 + 导出 JSON），由 vite 多入口构建为 `share.html`，服务端在 `/share/{token}` 无鉴权公开（token 即凭证）。
 
-`web/landing/` 是**项目主页**（单页营销站，纯静态 HTML/CSS/JS + 中英双语切换），同样**不进根 Vite 构建**，也不由 `build.sh` 产出——它由 `.github/workflows/deploy-landing.yml` 在推送 `main` 时用 wrangler 直传 Cloudflare Pages（`_headers` 声明安全头与缓存策略：`/img/*` 一年 immutable，因此**图片只换新文件名、不原地改**；`index.html` 不缓存）。**不用 Cloudflare 的 Git 集成**：其构建器克隆后会无条件跑 `git submodule update --init --recursive`，而本仓库根没有 `.gitmodules`，任何 gitlink 都会让它在构建开始前就失败。`web/landing/landing.test.ts` 覆盖翻译残留、图片 404、灯箱与画廊循环——改页面后跑 `npx vitest run web/landing/landing.test.ts`。
+`web/landing/` 是**项目主页**（单页营销站，纯静态 HTML/CSS/JS + 中英双语切换），同样**不进根 Vite 构建**，也不由 `build.sh` 产出——它由 `.github/workflows/deploy-landing.yml` 在推送 `main` 时用 wrangler 直传 Cloudflare Pages（`_headers` 声明安全头与缓存策略：`/img/*` 一年 immutable，因此**图片只换新文件名、不原地改**；`index.html` 不缓存）。**不用 Cloudflare 的 Git 集成**：其构建器克隆后会无条件跑 `git submodule update --init --recursive`，而本仓库根没有 `.gitmodules`，任何 gitlink 都会让它在构建开始前就失败。同一目录另由 `.github/workflows/deploy-landing-pages.yml` 发布到 GitHub Pages 项目页（`https://clawbench-dev.github.io/clawbench/`）：上传预构建产物，因此**不带 `_headers`**（Pages 无此语法，会被当成普通文件下发）并补 `.nojekyll`；仓库需一次性把 Settings → Pages 的 Source 设为 GitHub Actions，否则 deploy job 报 "Get Pages site failed"。页面里的下载按钮写死 `href` 为 Releases 页，脚本再按 `api.github.com/.../releases/latest` 的 `tag_name` 改写成直链——资产名带版本号，不存在 `/releases/latest/download/<name>` 这种稳定地址，取不到 tag 时保留回落链接。`web/landing/landing.test.ts` 覆盖翻译残留、图片 404、灯箱与画廊循环、下载资产名与 `release.yml` 的一致性——改页面后跑 `npx vitest run web/landing/landing.test.ts`。
 
 ### 桌面端（Electron）
 
