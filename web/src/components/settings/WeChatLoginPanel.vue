@@ -473,7 +473,10 @@ onBeforeUnmount(() => {
   color: var(--color-red);
   font-size: var(--font-size-md);
   line-height: var(--line-height-normal);
-  word-break: break-word;
+  /* overflow-wrap (not the deprecated word-break: break-word) so a long error
+     string — an iLink API message, for instance — wraps instead of overflowing
+     the card. */
+  overflow-wrap: anywhere;
 }
 /* The spinner sits inside a neutral pill; without this its arc takes the accent
    colour instead of the pill's text colour (same reason as the other settings
