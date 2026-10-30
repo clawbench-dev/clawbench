@@ -247,15 +247,16 @@ func TestProcessClawbenchCommand_AgentDocumentsVerifyStep(t *testing.T) {
 }
 
 // TestProcessClawbenchCommand_AgentDocumentsDeleteGuard pins the destructive-op
-// guardrails: deletion is refused while the agent is in use, the default agent
-// is protected, and the AI must confirm before deleting.
+// guardrails: deletion hands the conversations to the default agent, a live turn
+// blocks it, the default agent is protected, and the AI must confirm first.
 func TestProcessClawbenchCommand_AgentDocumentsDeleteGuard(t *testing.T) {
 	withServerPort(t, 20000)
 
 	result, err := processClawbenchCommand("/cb-agent delete myagent", "/project", "sess-1")
 	require.NoError(t, err)
 
-	assert.Contains(t, result, "AgentInUse", "the in-use guard must be stated")
+	assert.Contains(t, result, "AgentHasRunningSessions", "the live-turn guard must be stated")
+	assert.Contains(t, result, "handed to the DEFAULT agent", "the takeover semantics must be stated")
 	assert.Contains(t, result, "CannotDeleteDefaultAgent", "the default-agent protection must be stated")
 	assert.Contains(t, result, "CannotDisableDefaultAgent", "the disable protection must be stated")
 	assert.Contains(t, result, "NEVER delete without explicit user confirmation",
@@ -289,7 +290,7 @@ func TestAgentTemplateMsgKeysAreEmitted(t *testing.T) {
 	keys := []string{
 		"AgentNameTaken",
 		"AgentNameReserved",
-		"AgentInUse",
+		"AgentHasRunningSessions",
 		"CannotDeleteDefaultAgent",
 		"CannotDisableDefaultAgent",
 		"CannotScopeDefaultAgent",

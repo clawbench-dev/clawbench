@@ -130,9 +130,14 @@ func GenerateSelfSignedCert(dir string, ips []net.IP, dnsNames []string) (TLSCer
 	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
 		return TLSCerts{}, fmt.Errorf("tls: write cert: %w", err)
 	}
-	// 0600: the private key is the only secret here.
+	// 0600: the private key is the only secret here. WriteFile only applies the
+	// mode when it CREATES the file, so a key left behind by an older run (or by
+	// another tool) keeps its wider permissions unless we chmod explicitly.
 	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
 		return TLSCerts{}, fmt.Errorf("tls: write key: %w", err)
+	}
+	if err := os.Chmod(keyPath, 0o600); err != nil {
+		return TLSCerts{}, fmt.Errorf("tls: restrict key: %w", err)
 	}
 	return TLSCerts{CertFile: certPath, KeyFile: keyPath}, nil
 }

@@ -125,6 +125,20 @@ describe('useCrossProjectSessions', () => {
     expect(s.agentAvatar).toBe('<svg>x</svg>')
   })
 
+  // Regression: toSession rebuilds each row field-by-field, so a field added to
+  // the server payload is invisible in this pane until it is mapped here. The
+  // takeover badge did exactly that — it showed in the project pane only.
+  it('maps the takeover marker so the badge also renders in this pane', async () => {
+    mockFetch.mockResolvedValue(overviewPayload([
+      { name: '/proj/b', sessions: [session('b1', '2026-01-01', {
+        backend: 'codebuddy', agentId: 'cb', agentTakeoverFrom: 'Claude',
+      })] },
+    ]))
+    await refresh()
+    const s = useCrossProjectSessions().groups.value[0].sessions[0]
+    expect(s.agentTakeoverFrom).toBe('Claude')
+  })
+
   it('leaves the agent identity undefined when the server omits it', async () => {
     mockFetch.mockResolvedValue(overviewPayload([
       { name: '/proj/b', sessions: [session('b1', '2026-01-01', { backend: 'codebuddy', agentId: 'cb' })] },

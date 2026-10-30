@@ -1016,3 +1016,45 @@ describe('ChatPanelContent — concurrency switch plumbing', () => {
     expect(await source()).not.toContain('setGroupParallelDefault')
   })
 })
+
+// ── Queued message edit ──
+// The edit must SAVE IN PLACE. A "recall to input + resend" would put the
+// message back at the END of the queue, costing the user exactly the wait the
+// edit was meant to avoid.
+describe('ChatPanelContent — queued message edit', () => {
+  async function sourceRegion(start: string, end: string) {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    return source.slice(source.indexOf(start), source.indexOf(end))
+  }
+
+  it('saves through editQueuedMessage instead of recalling and resending', async () => {
+    const region = await sourceRegion('async function handleEditPending(queueId)', '/** Merge every queued message')
+    expect(region).toMatch(/manager\.editQueuedMessage\(/)
+    // Recall-and-resend is the rejected design: it would re-queue the message.
+    expect(region).not.toMatch(/recallQueuedMessage|prefillInput|sendMessage\(/)
+  })
+
+  it('primes the dialog with the current text and allows newlines', async () => {
+    const region = await sourceRegion('async function handleEditPending(queueId)', '/** Merge every queued message')
+    expect(region).toMatch(/getQueue\(sessionId\)/)
+    expect(region).toMatch(/value:\s*entry\.text/)
+    // Without this the prompt's Enter-to-submit made a multi-line edit impossible.
+    expect(region).toMatch(/enterInsertsNewline:\s*true/)
+  })
+
+  it('skips the request when the text is unchanged or blanked', async () => {
+    const region = await sourceRegion('async function handleEditPending(queueId)', '/** Merge every queued message')
+    expect(region).toMatch(/trimmed === entry\.text\.trim\(\)/)
+    expect(region).toMatch(/if \(!trimmed/)
+  })
+
+  it('keeps a dedicated editBusy so other rows stay usable', async () => {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toMatch(/const editBusy = ref\(''\)/)
+    // Passing it separately (not OR-ed into `busy`) is what keeps the other
+    // rows' insert buttons enabled during a save.
+    expect(source).toMatch(/:editBusy="editBusy"/)
+  })
+})

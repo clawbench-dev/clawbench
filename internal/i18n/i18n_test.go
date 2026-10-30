@@ -162,7 +162,12 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"RestartResume",
 		"RestartResumeInstruction",
 		"InvalidAgentAvatar",
-		"AgentInUse",
+		"AgentHasRunningSessions",
+		// Takeover notices are written from the delete handler (no request
+		// locale at that point — the row is persisted), so a one-sided add would
+		// ship a raw message id into the timeline.
+		"AgentTakeoverSessionNotice",
+		"AgentTakeoverGroupNotice",
 		"AgentDisabled",
 		"CannotDisableDefaultAgent",
 		"CannotDeleteDefaultAgent",

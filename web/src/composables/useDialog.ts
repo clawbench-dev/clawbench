@@ -30,6 +30,16 @@ interface DialogState {
    * a newline the caller would have to strip.
    */
   singleLine: boolean
+  /**
+   * Let Enter insert a newline in a prompt's textarea instead of confirming.
+   *
+   * Off by default because the prompt is used for one-line-ish values (a name,
+   * a line number, a short note) where Enter-to-submit is the expected
+   * behaviour. On for values that are genuinely multi-line — editing a queued
+   * message's text — where the default made a newline impossible to type.
+   * Ctrl/Cmd+Enter still confirms.
+   */
+  enterInsertsNewline: boolean
   resolve: ((v: string | boolean | null) => void) | null
 }
 
@@ -49,6 +59,7 @@ const state = ref<DialogState>({
   generateText: '',
   onGenerate: null,
   singleLine: false,
+  enterInsertsNewline: false,
   resolve: null,
 })
 
@@ -65,6 +76,7 @@ function open(type: DialogState['type'], message: string, opts: {
   generateText?: string
   onGenerate?: () => Promise<string | null>
   singleLine?: boolean
+  enterInsertsNewline?: boolean
 } = {}): Promise<string | boolean | null> {
   return new Promise(resolve => {
     // Resolve the previous dialog as cancelled before replacing it,
@@ -95,6 +107,7 @@ function open(type: DialogState['type'], message: string, opts: {
       generateText: opts.generateText || '',
       onGenerate: opts.onGenerate ?? null,
       singleLine: opts.singleLine ?? false,
+      enterInsertsNewline: opts.enterInsertsNewline ?? false,
       resolve,
     }
   })
@@ -104,7 +117,7 @@ function confirm(message: string, opts?: Parameters<typeof open>[2]): Promise<bo
   return open('confirm', message, opts) as Promise<boolean>
 }
 
-function prompt(message: string, opts?: { value?: string; placeholder?: string; title?: string; confirmText?: string; cancelText?: string; dangerous?: boolean; generateText?: string; onGenerate?: () => Promise<string | null>; singleLine?: boolean }): Promise<string | null> {
+function prompt(message: string, opts?: { value?: string; placeholder?: string; title?: string; confirmText?: string; cancelText?: string; dangerous?: boolean; generateText?: string; onGenerate?: () => Promise<string | null>; singleLine?: boolean; enterInsertsNewline?: boolean }): Promise<string | null> {
   return open('prompt', message, opts) as Promise<string | null>
 }
 

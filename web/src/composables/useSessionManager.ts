@@ -1,13 +1,13 @@
 import { type Ref } from 'vue'
 import { useSessionIdentity, runningSessions } from '@/composables/useSessionIdentity.ts'
-import { cancelChat } from '@/utils/api'
+import { apiPatch, cancelChat } from '@/utils/api'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { buildSendChannels, dedupeFiles, type FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 import { isSubagentToolName } from '@/utils/chatStreamUtils.ts'
 import { clearAskStatesByPrefix, askSessionPrefix } from '@/utils/askQuestionState.ts'
-import { addQueued, clearQueue, getQueue, removeQueued, removeQueuedMany } from '@/composables/useMessageQueue.ts'
+import { addQueued, clearQueue, getQueue, removeQueued, removeQueuedMany, updateQueuedText } from '@/composables/useMessageQueue.ts'
 import type { ForkTarget } from '@/composables/useChatSession.ts'
 
 /**
@@ -184,6 +184,47 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       removeQueued(sessionId, queueId)
     } catch {
       toast.show(gt('session.removeFailed'), { icon: 'warning', type: 'error' })
+    }
+  }
+
+  /**
+   * Edit the text of a still-queued message, in place.
+   *
+   * Deliberately NOT optimistic. The drain loop can claim the row at any
+   * moment; updating locally first would show the new text and then snap back
+   * (or, worse, never snap back) when the save turns out to be too late. A local
+   * round trip is a few milliseconds — waiting for the server keeps exactly one
+   * source of truth and removes a state machine.
+   *
+   * On success the local entry is updated directly (this device does not wait
+   * for its own broadcast). A 409 means the message is already a real turn sent
+   * with the OLD text: the entry is dropped locally so the panel does not keep a
+   * phantom, and the user is told why the edit did not apply.
+   */
+  async function editQueuedMessage(queueId: string, text: string): Promise<boolean> {
+    if (!queueId) return false
+    const sessionId = identity.currentSessionId.value
+    if (!sessionId) return false
+
+    try {
+      await apiPatch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`, {
+        queueId,
+        message: text,
+      })
+      updateQueuedText(sessionId, queueId, text)
+      return true
+    } catch (err) {
+      const status = (err as { status?: number })?.status
+      if (status === 409) {
+        // Already drained. The timeline is about to render it as a real message,
+        // so keeping the queue entry would be a phantom the user can never act
+        // on. Same reasoning as the delete path's 409 branch.
+        removeQueued(sessionId, queueId)
+        toast.show(gt('chat.pending.alreadySent'), { icon: 'warning', type: 'info' })
+        return false
+      }
+      toast.show(gt('chat.pending.editFailed'), { icon: 'warning', type: 'error' })
+      return false
     }
   }
 
@@ -527,6 +568,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     // Queue operations
     enqueueMessage,
     handleRemovePending,
+    editQueuedMessage,
     handlePendingAction,
     handleMergeQueue,
     // Unified session operations

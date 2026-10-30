@@ -362,6 +362,11 @@ type ChatSession struct {
 	// payload unchanged.
 	AgentName   string `json:"agentName,omitempty"`
 	AgentAvatar string `json:"agentAvatar,omitempty"`
+	// AgentTakeoverFrom is the display name of the agent this session was taken
+	// over FROM when that agent was deleted (empty = never taken over). The
+	// client renders it as a badge; the server ALSO branches on it when deciding
+	// whether the next turn may resume a native session (see BuildChatRequest).
+	AgentTakeoverFrom string `json:"agentTakeoverFrom,omitempty"`
 	// Tags is populated by the session list / overview endpoints (batch-loaded,
 	// not stored on the session row itself). Always omitted when empty so the
 	// payload for untagged sessions is unchanged.

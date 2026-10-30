@@ -2550,6 +2550,62 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+    patch:
+      tags: [Queue]
+      summary: 修改排队消息正文
+      description: |
+        就地改写一条**仍在排队**的消息的正文，不改变它的队列位置（`id` 顺序即队列顺序）。
+
+        之所以是「就地修改」而不是「撤回输入框再重发」：排队消息可能等待十几分钟，
+        撤回重发会把它排到队尾，用户等待的时间白费。本端点只写 `content`，
+        队列 id、创建时间、附件全部保持不变。
+
+        **只支持正文**。附件不在本端点可编辑范围内——改写 `files` 需要与入队路径
+        相同的身份去重与路径校验，而 UI 也不提供该入口。
+
+        若该消息已被 drain 取走（或已被取消），返回 **409 `QueueAlreadyDrained`**：
+        消息已经以**旧正文**发出，必须让调用方能区分「已保存」与「太晚了」。
+        正文与附件同时为空会被拒绝（400 `MessageOrFilesRequired`），因为这样的条目
+        出队后是一个空回合。
+      operationId: queueUpdate
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [queueId]
+              properties:
+                queueId:
+                  type: string
+                  description: 要修改的排队消息 id（`GET /api/ai/queue` 返回的 `queueId`）。
+                message:
+                  type: string
+                  description: 新正文。会去除首尾空白；留空仅在保留附件时允许。
+      responses:
+        "200":
+          description: |
+            修改成功。响应体为 `{"ok": true, "queue": <更新后的排队消息>}`，
+            并会向该会话广播 `queue_added`（客户端按 `queueId` upsert，
+            因此其他设备与发起设备都会收敛到新正文）。
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          description: 该消息已不在队列中（已被 drain 取走或已取消），无法修改。`msgKey` 为 `QueueAlreadyDrained`。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       tags: [Queue]
       summary: 删除排队消息
@@ -5039,20 +5095,32 @@ paths:
           description: 名称已被其它 agent 占用（`AgentNameTaken`），或等于群聊用户昵称（`AgentNameReserved`）
     delete:
       tags: [Agents]
-      summary: 删除 agent
+      summary: 删除 agent（会话由默认智能体接管）
       description: |
-        删除一个 agent。**仅当该 agent 不再被使用时才允许删除**：只要还存在该 agent
-        参与的会话（1:1 聊天 `chat`，含归档；或它作为活跃成员的群聊
-        `group_member`）、定时任务，就返回 `409` + `msgKey=AgentInUse`，并在
-        `detail` 中给出 `{SessionCount, TaskCount, MembershipCount}`
-        （`MembershipCount` 是 `SessionCount` 的子集）。默认智能体不可删除
+        删除一个 agent。**不再因为「还有会话/任务/群成员」而拒绝**（issue #606）：
+        它名下的会话、群成员关系与定时任务在**同一个事务**里转交给**默认智能体**，
+        响应中的 `sessions` / `tasks` / `groups` 是实际转交的数量。
+
+        转交会重写每个会话行的执行身份：`agent_id` 与 `backend` 换成默认智能体的，
+        `model` / `transport` 清空（旧值只对旧后端有效），
+        `external_session_id` 清空（原生会话属于已删除的进程），
+        `context_state` 里的 `mode` / `thinkingEffort` / `usage` 一并清掉（旧 agent
+        的能力集与上下文窗口）。会话行本身与 `chat_history` **一条都不删**：历史照常
+        可读，只是下一轮会以「全新原生会话 + 历史作为背景注入」的方式继续
+        （`agent_takeover_from` 记录旧 agent 的显示名，同时充当该分支的开关）。
+
+        群行（`session_type='group'`）的 `agent_id` / `backend` 按新成员行重算
+        （主持人模式取主持人、自由模式取第一个成员），否则群会继续指向已删除的 agent。
+
+        唯一的拒绝是**有会话正在运行**：`409` + `msgKey=AgentHasRunningSessions`
+        （包括它作为发言成员的群回合）。默认智能体不可删除
         （`CannotDeleteDefaultAgent`）。
       operationId: agentsDelete
       responses:
         "200":
-          description: 结果
+          description: 删除结果（`deleted`、`sessions`、`tasks`、`groups`、`replacementAgentId`、`replacementName`）
         "409":
-          description: 该 agent 仍在使用中（`AgentInUse`）
+          description: 该 agent 有会话正在运行（`AgentHasRunningSessions`）
 
   /api/agents/{id}:
     get:

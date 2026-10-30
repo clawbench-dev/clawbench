@@ -2,9 +2,12 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -1107,4 +1110,44 @@ func TestServeGroupHost_RefusesFreeGroup(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
 	assert.Contains(t, w.Body.String(), "GroupNotHostMode")
 	assert.Empty(t, service.GetGroupHostMember(groupID))
+}
+
+// The host-change endpoint must refuse malformed input before touching the
+// database, and must not let one project promote a member of another's group.
+func TestServeGroupHost_ValidatesRequest(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Wrong method.
+	w := httptest.NewRecorder()
+	ServeGroupHost(w, newRequest(t, http.MethodPost, "/api/group/host", map[string]any{}))
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+
+	// No project cookie.
+	w = httptest.NewRecorder()
+	ServeGroupHost(w, newRequest(t, http.MethodPatch, "/api/group/host", map[string]any{"groupId": "1", "memberId": "2"}))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	// Malformed body.
+	req := newRequest(t, http.MethodPatch, "/api/group/host", nil)
+	req.Body = io.NopCloser(strings.NewReader("{oops"))
+	req.ContentLength = int64(len("{oops"))
+	req = withProjectCookie(req, env.ProjectDir)
+	w = httptest.NewRecorder()
+	ServeGroupHost(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// Missing ids.
+	w = httptest.NewRecorder()
+	ServeGroupHost(w, withProjectCookie(
+		newRequest(t, http.MethodPatch, "/api/group/host", map[string]any{"groupId": "", "memberId": "2"}),
+		env.ProjectDir))
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// A group that does not exist in this project.
+	w = httptest.NewRecorder()
+	ServeGroupHost(w, withProjectCookie(
+		newRequest(t, http.MethodPatch, "/api/group/host", map[string]any{"groupId": "999999", "memberId": "2"}),
+		env.ProjectDir))
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }

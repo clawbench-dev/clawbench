@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
@@ -17,6 +18,7 @@ import (
 // QueueHandler handles pending message queue operations.
 // POST   /api/ai/queue?session_id=xxx  — enqueue a message (unified send endpoint)
 // GET    /api/ai/queue?session_id=xxx  — get current queued messages
+// PATCH  /api/ai/queue?session_id=xxx  — edit a queued message's text in place
 // DELETE /api/ai/queue?session_id=xxx[&queueId=xxx] — cancel a queued message or clear all
 //
 // The "insert into the running turn" action lives on its own route
@@ -28,6 +30,8 @@ func QueueHandler(w http.ResponseWriter, r *http.Request) {
 		handleQueueEnqueue(w, r)
 	case http.MethodGet:
 		handleQueueGet(w, r)
+	case http.MethodPatch:
+		handleQueueUpdate(w, r)
 	case http.MethodDelete:
 		handleQueueDelete(w, r)
 	default:
@@ -515,6 +519,109 @@ func handleQueueGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"queue": msgs,
 	})
+}
+
+// handleQueueUpdate rewrites the TEXT of a still-queued message in place.
+//
+// PATCH /api/ai/queue?session_id=xxx
+// Body: {"queueId": "...", "message": "..."}
+//
+// In-place editing (rather than "recall into the input box and resend") is the
+// point: a queued message can wait many minutes, and re-queuing would send the
+// edited copy to the BACK of the queue, costing the user exactly the wait they
+// were trying to avoid. The row's DB id — which is the queue order — is never
+// touched.
+//
+// Only the text is editable. Attachments would need the same identity dedupe
+// and path re-validation the enqueue path performs, and the UI does not offer
+// it; sending `files` here would silently accept an unvalidated path.
+func handleQueueUpdate(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SessionIdRequired")
+		return
+	}
+
+	if !requireSessionOwnership(w, r, sessionID, projectPath) {
+		return
+	}
+
+	var req struct {
+		QueueID string `json:"queueId"`
+		Message string `json:"message"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+		return
+	}
+
+	queueID := strings.TrimSpace(req.QueueID)
+	if queueID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "QueueIdRequired")
+		return
+	}
+
+	// Trimmed: a whitespace-only body is not a message. Empty is still allowed
+	// when the entry keeps attachments — that combination is sendable.
+	content := strings.TrimSpace(req.Message)
+
+	// Read first to reject an edit that would leave nothing to send. This is a
+	// plain read, not part of the write: attachments cannot change between here
+	// and the update (no endpoint edits them), and if the row is claimed in
+	// between, the update below reports not-found and the caller gets the 409 —
+	// so the pre-check cannot produce a wrong verdict, only a stale-but-harmless
+	// one. Doing it this way avoids an "update then roll back" that would need to
+	// remember the previous text.
+	if content == "" {
+		current, found, gErr := service.GetQueuedMessage(sessionID, queueID)
+		if gErr != nil {
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "QueueUpdateFailed")
+			return
+		}
+		if found && len(current.Files) == 0 {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "MessageOrFilesRequired")
+			return
+		}
+	}
+
+	updated, found, err := service.UpdateQueuedMessageContent(sessionID, queueID, content)
+	if err != nil {
+		slog.Error("queue: update failed",
+			slog.String("session", sessionID),
+			slog.String("queue_id", queueID),
+			slog.String("error", err.Error()))
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "QueueUpdateFailed")
+		return
+	}
+	if !found {
+		// The drain loop claimed the row: the message is already a real turn with
+		// the OLD text. Deliberately NOT a 200 — the caller must be able to tell
+		// "saved" from "too late" with a single status check.
+		writeLocalizedErrorf(w, r, http.StatusConflict, "QueueAlreadyDrained")
+		return
+	}
+
+	// queue_added is an UPSERT on the client (addQueued replaces by queueId), so
+	// the same event the enqueue path emits converges every device — including
+	// the editing one, which does not update optimistically. No SenderClientID:
+	// the editor must receive its own echo, otherwise its panel would keep
+	// showing the old text until the next reload.
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type: "queue_added",
+		QueueAdded: &ai.QueueAddedData{
+			QueueID: updated.QueueID,
+			Text:    updated.Text,
+			Files:   updated.Files,
+		},
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "queue": updated})
 }
 
 func handleQueueDelete(w http.ResponseWriter, r *http.Request) {

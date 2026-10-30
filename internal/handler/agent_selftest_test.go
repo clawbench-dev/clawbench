@@ -450,18 +450,24 @@ func TestServeAgentSelfTestDeep_Guards(t *testing.T) {
 }
 
 // A deep run that cannot even create its throwaway session must fail cleanly:
-// the error is reported in the response and nothing is left behind. The
-// session-creation failure is forced by pointing the project at a path the
-// registry cannot resolve.
+// the error is reported in the response and nothing is left behind.
+//
+// The failure is forced by removing the table the INSERT targets. An earlier
+// version passed an unregistered project path and claimed the registry could not
+// resolve it — but store.ProjectIDForPath REGISTERS unknown paths on demand, so
+// that never failed; the test only went green because the shared fixture was
+// missing columns the INSERT names. Once the fixture matched production it
+// started creating a session and this test caught it.
 func TestRunDeepSelfTest_ReportsSessionCreationFailure(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
 	agent := model.GetAgent("claude")
 	require.NotNil(t, agent)
 
-	// A project path outside any registered root: CreateSession cannot resolve
-	// it to a project id.
-	res, err := runDeepSelfTest(context.Background(), agent, "/definitely/not/a/registered/project")
+	_, err := store.UnsafeDBForTest().Exec("DROP TABLE chat_sessions")
+	require.NoError(t, err)
+
+	res, err := runDeepSelfTest(context.Background(), agent, "/proj")
 	require.Error(t, err)
 	assert.Empty(t, res.Reply)
 	assert.Empty(t, res.SessionID, "no session may be reported when none was created")

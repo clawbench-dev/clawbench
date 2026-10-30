@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,9 +45,13 @@ func TestGenerateSelfSignedCert_CoversIPsInSAN(t *testing.T) {
 	assert.True(t, cert.NotAfter.After(cert.NotBefore))
 	assert.Contains(t, cert.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
 
-	info, err := os.Stat(certs.KeyFile)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "the private key must not be world-readable")
+	if runtime.GOOS != "windows" {
+		// Windows has no POSIX permission bits: a writable file always reports
+		// 0666, so this assertion only means something on unix.
+		info, err := os.Stat(certs.KeyFile)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "the private key must not be world-readable")
+	}
 }
 
 func TestGenerateSelfSignedCert_RejectsEmptyInputs(t *testing.T) {
@@ -67,4 +72,43 @@ func TestLocalTLSSANs_AlwaysCoversLoopback(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "loopback must always be covered")
+}
+
+func TestDescribeTLSSANs_SortsAndJoinsEverything(t *testing.T) {
+	got := DescribeTLSSANs(
+		[]net.IP{net.ParseIP("10.0.0.5"), net.ParseIP("127.0.0.1")},
+		[]string{"localhost", "clawbench.local"},
+	)
+	assert.Equal(t, "10.0.0.5, 127.0.0.1, clawbench.local, localhost", got)
+
+	assert.Empty(t, DescribeTLSSANs(nil, nil))
+}
+
+// An unwritable target must be reported, not silently skipped: the caller shows
+// the reason to the user.
+func TestGenerateSelfSignedCert_CreateDirFailure(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
+
+	_, err := GenerateSelfSignedCert(filepath.Join(blocker, "tls"), []net.IP{net.ParseIP("127.0.0.1")}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create cert dir")
+}
+
+// WriteFile only applies its mode when it CREATES the file, so regenerating a
+// certificate over a world-readable key must tighten it explicitly.
+func TestGenerateSelfSignedCert_TightensExistingKeyPermissions(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "key.pem")
+	require.NoError(t, os.WriteFile(keyPath, []byte("old"), 0o644))
+
+	_, err := GenerateSelfSignedCert(dir, []net.IP{net.ParseIP("127.0.0.1")}, nil)
+	require.NoError(t, err)
+
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no POSIX permission bits")
+	}
+	info, err := os.Stat(keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "an existing key must be tightened to 0600")
 }

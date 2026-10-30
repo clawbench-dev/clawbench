@@ -71,6 +71,17 @@
             {{ t('chat.pending.insert') }}
           </button>
           <button
+            class="queued-bar-action"
+            data-action="queue-edit"
+            type="button"
+            :disabled="busy === msg.queueId || editBusy === msg.queueId"
+            :title="t('chat.pending.editHint')"
+            @click="$emit('edit', msg.queueId)"
+          >
+            <Pencil :size="11" />
+            {{ t('chat.pending.edit') }}
+          </button>
+          <button
             class="queued-bar-remove"
             type="button"
             :disabled="busy === msg.queueId"
@@ -103,7 +114,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, Zap, Square, Merge } from 'lucide-vue-next'
+import { ChevronDown, Zap, Square, Merge, Pencil } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 
 const props = defineProps({
@@ -115,9 +126,17 @@ const props = defineProps({
   busy: { type: String, default: '' },
   /** Whether the merge request is in flight. */
   mergeBusy: { type: Boolean, default: false },
+  /**
+   * queueId of the row whose edit save is in flight.
+   *
+   * Separate from `busy` (the insert/interrupt action) because a single string
+   * can only name one row: sharing it would leave the edited row's neighbours
+   * enabled while a save is running, or disable them for an unrelated action.
+   */
+  editBusy: { type: String, default: '' },
 })
 
-defineEmits(['remove', 'action', 'merge'])
+defineEmits(['remove', 'action', 'merge', 'edit'])
 
 const { t } = useI18n()
 const expanded = ref(false)

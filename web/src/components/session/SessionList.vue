@@ -112,6 +112,15 @@
                       <GroupMemberStack :members="row.session.groupMembers || []" />
                     </span>
                     <span v-else class="session-item-agent"><AgentIcon :backend="sessionAgentBackend(row.session)" :name="sessionAgentName(row.session)" :avatar="sessionAgentAvatar(row.session)" size="sm" /> {{ sessionAgentName(row.session) }}</span>
+                    <!-- Taken-over session (its agent was deleted and the default
+                         agent inherited it). Groups are excluded on purpose: a
+                         group row only changes HOST, it does not change hands as
+                         a conversation. -->
+                    <span
+                      v-if="row.session.sessionType !== 'group' && row.session.agentTakeoverFrom"
+                      class="session-item-takeover"
+                      :title="t('session.takeoverBadgeTip', { name: row.session.agentTakeoverFrom })"
+                    >{{ t('session.takeoverBadge') }}</span>
                     <!-- Group mode: an independent tag with its own glyph, so it
                          reads as metadata about the group rather than a suffix
                          of the member stack. Omitted when the mode is unknowable
@@ -226,6 +235,13 @@
                       <GroupMemberStack :members="session.groupMembers || []" />
                     </span>
                     <span v-else class="session-item-agent"><AgentIcon :backend="sessionAgentBackend(session)" :name="sessionAgentName(session)" :avatar="sessionAgentAvatar(session)" size="sm" /> {{ sessionAgentName(session) }}</span>
+                    <!-- Same badge as the project pane; groups excluded for the
+                         same reason (a group changes host, not hands). -->
+                    <span
+                      v-if="session.sessionType !== 'group' && session.agentTakeoverFrom"
+                      class="session-item-takeover"
+                      :title="t('session.takeoverBadgeTip', { name: session.agentTakeoverFrom })"
+                    >{{ t('session.takeoverBadge') }}</span>
                     <!-- Group mode tag: same independent tag as the project pane. -->
                     <span v-if="session.sessionType === 'group' && groupModeLabel(session)" class="session-item-group-mode">
                       <component :is="groupModeIcon(session)" :size="10" />
@@ -1764,6 +1780,21 @@ onUnmounted(() => {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "已接管" — the session's agent was deleted and the default agent inherited
+   it. Tinted with the accent (not a fixed colour) so it reads as a state badge
+   in all 36 themes; `flex-shrink: 0` keeps the two-character label from being
+   squeezed to an ellipsis next to a long agent name. */
+.session-item-takeover {
+  font-size: var(--font-size-2xs);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-xs);
+  font-weight: var(--font-weight-medium);
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+  color: var(--text-secondary, #495057);
   white-space: nowrap;
 }
 

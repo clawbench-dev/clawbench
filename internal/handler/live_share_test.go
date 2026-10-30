@@ -1063,3 +1063,136 @@ func TestLiveWS_RevokeStopsOneSharerAndDisablingStopsTheRoom(t *testing.T) {
 	state := readViewerMsg(t, view)
 	assert.False(t, state.Sharing)
 }
+
+// Switching audience screen sharing off must also stop the current sharer and
+// tell it why — its browser is still capturing.
+func TestApplySetScreenEnabled_StopsCurrentSharer(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
+	require.NoError(t, err)
+	viewer, err := room.AddViewer("a", &recordingSink{})
+	require.NoError(t, err)
+	pub := &recordingSink{}
+	room.SetPublisher(pub)
+	room.SetScreenEnabled(true)
+	require.NoError(t, room.ClaimScreen(viewer.ID))
+
+	applySetScreenEnabled(room, false)
+
+	assert.False(t, room.ScreenEnabled())
+	assert.Empty(t, room.ScreenSharer())
+	msg, ok := pub.last().(liveshare.PublisherMessage)
+	require.True(t, ok, "the publisher must learn the share stopped")
+	assert.Equal(t, liveshare.MsgScreenState, msg.Type)
+}
+
+// Revoking a viewer that is not sharing is a no-op: a stop frame racing a
+// disconnect must not fail.
+func TestApplyScreenRevoke_NotSharingIsNoop(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
+	require.NoError(t, err)
+	viewer, err := room.AddViewer("a", &recordingSink{})
+	require.NoError(t, err)
+	room.SetPublisher(&recordingSink{})
+	room.SetScreenEnabled(true)
+
+	require.NotPanics(t, func() { applyScreenRevoke(room, viewer.ID) })
+	assert.Empty(t, room.ScreenSharer())
+}
+
+func TestApplyScreenRevoke_TellsTheFormerSharer(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
+	require.NoError(t, err)
+	sink := &recordingSink{}
+	viewer, err := room.AddViewer("a", sink)
+	require.NoError(t, err)
+	room.SetPublisher(&recordingSink{})
+	room.SetScreenEnabled(true)
+	require.NoError(t, room.ClaimScreen(viewer.ID))
+
+	applyScreenRevoke(room, viewer.ID)
+
+	assert.Empty(t, room.ScreenSharer())
+	var denied bool
+	for _, m := range sink.all() {
+		if msg, ok := m.(liveshare.ViewerMessage); ok &&
+			msg.Type == liveshare.MsgScreenDenied && msg.Reason == liveshare.ReasonRevoked {
+			denied = true
+		}
+	}
+	assert.True(t, denied, "the former sharer must be told its share was revoked")
+}
+
+// A CtrlScreenStop frame from the sharer clears the state and broadcasts it.
+func TestHandleViewerControl_ScreenStopClearsSharer(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
+	require.NoError(t, err)
+	viewer, err := room.AddViewer("a", &recordingSink{})
+	require.NoError(t, err)
+	pub := &recordingSink{}
+	room.SetPublisher(pub)
+	room.SetScreenEnabled(true)
+	require.NoError(t, room.ClaimScreen(viewer.ID))
+
+	handleViewerControl(room, viewer, liveshare.ViewerControl{Type: liveshare.CtrlScreenStop})
+
+	assert.Empty(t, room.ScreenSharer())
+	msg, ok := pub.last().(liveshare.PublisherMessage)
+	require.True(t, ok)
+	assert.Equal(t, liveshare.MsgScreenState, msg.Type)
+}
+
+// A room whose publisher vanished (crash, app restart) is a leftover: reusing
+// its token would make the next meeting inherit the previous transcript.
+func TestCreateLiveShareRoom_RotatesStaleToken(t *testing.T) {
+	resetLiveRegistry(t)
+	prev := liveShareReuseGrace
+	// Negative, not zero: time.Since can be exactly 0 on a coarse clock
+	// (Windows ~15 ms), and "0 <= 0" would keep the stale token.
+	liveShareReuseGrace = -time.Second
+	t.Cleanup(func() { liveShareReuseGrace = prev })
+
+	project := projPath("/proj/a")
+	first, err := createLiveShareRoom(project, "会议")
+	require.NoError(t, err)
+
+	second, err := createLiveShareRoom(project, "会议")
+	require.NoError(t, err)
+	assert.NotEqual(t, first.Token(), second.Token(), "a leftover room must not hand its token to the next meeting")
+	assert.Nil(t, liveRegistry.Get(first.Token()), "the stale room is gone")
+}
+
+// While a publisher is attached (or about to attach) the room is live and the
+// token must stay stable — a second device or a retry must join the same share.
+func TestCreateLiveShareRoom_KeepsTokenWhileLive(t *testing.T) {
+	resetLiveRegistry(t)
+	prev := liveShareReuseGrace
+	liveShareReuseGrace = 0
+	t.Cleanup(func() { liveShareReuseGrace = prev })
+
+	project := projPath("/proj/a")
+	first, err := createLiveShareRoom(project, "会议")
+	require.NoError(t, err)
+	first.SetPublisher(&recordingSink{})
+
+	second, err := createLiveShareRoom(project, "会议")
+	require.NoError(t, err)
+	assert.Equal(t, first.Token(), second.Token())
+}
+
+// The normal sequence is "create, then attach the socket a moment later": the
+// grace period must keep that from rotating the token out from under itself.
+func TestCreateLiveShareRoom_KeepsTokenWithinGrace(t *testing.T) {
+	resetLiveRegistry(t)
+
+	project := projPath("/proj/a")
+	first, err := createLiveShareRoom(project, "会议")
+	require.NoError(t, err)
+
+	second, err := createLiveShareRoom(project, "会议")
+	require.NoError(t, err)
+	assert.Equal(t, first.Token(), second.Token())
+}

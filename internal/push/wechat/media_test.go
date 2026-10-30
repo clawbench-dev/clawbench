@@ -3,10 +3,12 @@ package wechat
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -212,4 +214,237 @@ func TestDownloadAll_ExactlyAtCapIsNotTruncated(t *testing.T) {
 	_, out := mgr.downloadAll(context.Background(), refs, t.TempDir())
 	assert.False(t, out.truncated, "exactly at the cap must not be reported as truncated")
 	assert.Equal(t, n, out.failed, "every attachment must be attempted")
+}
+
+// ── handleIncomingWithMedia ────────────────────────────────────────────────
+
+// withSessionMessenger installs a fake messenger for one test.
+func withSessionMessenger(t *testing.T, m common.SessionMessenger) {
+	t.Helper()
+	prev := sessionMessenger
+	RegisterSessionMessenger(m)
+	t.Cleanup(func() { RegisterSessionMessenger(prev) })
+}
+
+// A slash command that arrives with an attachment must be answered, not
+// silently swallowed: the command never routes to a session, so forwarding the
+// attachment would drop the command word.
+func TestHandleIncomingWithMedia_CommandCannotCarryAttachment(t *testing.T) {
+	defer setupPushMode("wechat")()
+	startedManager(t)
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+
+	mgr.handleIncomingWithMedia(context.Background(), "u1", "ctx-1", "/new", []mediaRef{{kind: "image"}})
+
+	texts := pushedTexts(*bodies)
+	if len(texts) != 1 {
+		t.Fatalf("want one reply, got %d", len(texts))
+	}
+	if !strings.Contains(texts[0], "new") {
+		t.Fatalf("the reply must name the command, got %q", texts[0])
+	}
+}
+
+// With no sticky session and no explicit target there is nowhere to put the
+// files, so the user gets the "/ls" hint instead of a silent drop.
+func TestHandleIncomingWithMedia_NoTargetHints(t *testing.T) {
+	defer setupPushMode("wechat")()
+	startedManager(t)
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+
+	mgr.handleIncomingWithMedia(context.Background(), "u1", "ctx-1", "看看这个", []mediaRef{{kind: "image"}})
+
+	if len(*bodies) != 1 {
+		t.Fatalf("want one reply, got %d", len(*bodies))
+	}
+}
+
+func TestHandleIncomingWithMedia_NoMessengerExplains(t *testing.T) {
+	defer setupPushMode("wechat")()
+	startedManager(t)
+	withSessionMessenger(t, nil)
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+
+	mgr.handleIncomingWithMedia(context.Background(), "u1", "ctx-1", "看看这个", []mediaRef{{kind: "image"}})
+
+	if len(*bodies) != 1 {
+		t.Fatalf("want one reply, got %d", len(*bodies))
+	}
+}
+
+// The sticky session may be gone (deleted, archived): say so instead of
+// downloading into a path that no longer exists.
+func TestHandleIncomingWithMedia_ResolveFailureExplains(t *testing.T) {
+	defer setupPushMode("wechat")()
+	startedManager(t)
+	db.(*mockDB).lastSessionID = "deadbeef"
+	withSessionMessenger(t, &mockSessionMessenger{})
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+
+	mgr.handleIncomingWithMedia(context.Background(), "u1", "ctx-1", "看看这个", []mediaRef{{kind: "image"}})
+
+	if len(*bodies) != 1 {
+		t.Fatalf("want one reply, got %d", len(*bodies))
+	}
+}
+
+// An oversized attachment is rejected before it is buffered; the user must be
+// told the reason (the configured cap), not just "failed".
+func TestHandleIncomingWithMedia_AllDownloadsFailedExplains(t *testing.T) {
+	defer setupPushMode("wechat")()
+	startedManager(t)
+	db.(*mockDB).lastSessionID = "abcdef12"
+	withSessionMessenger(t, &mockSessionMessenger{sessions: []common.SessionInfo{{ID: "abcdef12", Title: "T", ProjectPath: t.TempDir()}}})
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+
+	ref := mediaRef{kind: "image", declaredSize: common.AttachmentMaxBytes() + 1}
+	mgr.handleIncomingWithMedia(context.Background(), "u1", "ctx-1", "看看这个", []mediaRef{ref})
+
+	texts := pushedTexts(*bodies)
+	if len(texts) != 1 {
+		t.Fatalf("want one reply, got %d", len(texts))
+	}
+	if !strings.Contains(texts[0], common.T("PushFileTooLarge", map[string]any{
+		"MaxMB": common.AttachmentMaxBytes() / (1024 * 1024),
+	})) {
+		t.Fatalf("the size-limit reason must be shown, got %q", texts[0])
+	}
+}
+
+func TestHandleIncomingWithMedia_SendFailureExplains(t *testing.T) {
+	defer setupPushMode("wechat")()
+	startedManager(t)
+	db.(*mockDB).lastSessionID = "abcdef12"
+	project := t.TempDir()
+	withSessionMessenger(t, &mockSessionMessenger{
+		sessions: []common.SessionInfo{{ID: "abcdef12", Title: "T", ProjectPath: project}},
+		sendErr:  errors.New("session busy"),
+	})
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+
+	srv, aesKey := cdnServer(t, []byte("PNGDATA"))
+	ref := mediaRef{
+		kind:     "image",
+		filename: "image.png",
+		item: ilink.MessageItem{
+			Type:      ilink.ItemImage,
+			ImageItem: &ilink.ImageItem{Media: &ilink.CDNMedia{FullURL: srv.URL, AESKey: aesKey, EncryptType: 1}},
+		},
+	}
+
+	mgr.handleIncomingWithMedia(context.Background(), "u1", "ctx-1", "看看这个", []mediaRef{ref})
+
+	texts := pushedTexts(*bodies)
+	if len(texts) != 1 || !strings.Contains(texts[0], "session busy") {
+		t.Fatalf("the send error must be surfaced, got %v", texts)
+	}
+}
+
+// The happy path: text and attachment reach the session as one turn, and only
+// then does the sticky target move.
+func TestHandleIncomingWithMedia_SendsFilesAndText(t *testing.T) {
+	defer setupPushMode("wechat")()
+	startedManager(t)
+	db.(*mockDB).lastSessionID = "abcdef12"
+	project := t.TempDir()
+	messenger := &mockSessionMessenger{
+		sessions: []common.SessionInfo{{ID: "abcdef12", Title: "T", ProjectPath: project}},
+	}
+	withSessionMessenger(t, messenger)
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+
+	srv, aesKey := cdnServer(t, []byte("PNGDATA"))
+	ref := mediaRef{
+		kind:     "image",
+		filename: "image.png",
+		item: ilink.MessageItem{
+			Type:      ilink.ItemImage,
+			ImageItem: &ilink.ImageItem{Media: &ilink.CDNMedia{FullURL: srv.URL, AESKey: aesKey, EncryptType: 1}},
+		},
+	}
+
+	mgr.handleIncomingWithMedia(context.Background(), "u1", "ctx-1", "看看这个", []mediaRef{ref})
+
+	if messenger.sentSessionID != "abcdef12" {
+		t.Fatalf("sent to %q, want the sticky session", messenger.sentSessionID)
+	}
+	if messenger.sentMessage != "看看这个" {
+		t.Fatalf("message = %q, want the user's text", messenger.sentMessage)
+	}
+	if len(messenger.sentFiles) != 1 {
+		t.Fatalf("want one file, got %d", len(messenger.sentFiles))
+	}
+	if texts := pushedTexts(*bodies); len(texts) != 1 {
+		t.Fatalf("want one confirmation, got %v", texts)
+	}
+}
+
+// ── reply wording ──────────────────────────────────────────────────────────
+
+func TestDownloadFailureText_NamesTheReason(t *testing.T) {
+	mgr := NewManager(&model.WeChatConfig{BotToken: "tok"})
+
+	if got := mgr.downloadFailureText(downloadOutcome{tooLarge: true}); !strings.Contains(got, common.T("PushFileTooLarge", map[string]any{
+		"MaxMB": common.AttachmentMaxBytes() / (1024 * 1024),
+	})) {
+		t.Fatalf("size limit must be named, got %q", got)
+	}
+	if got := mgr.downloadFailureText(downloadOutcome{failed: 2}); !strings.Contains(got, common.T("PushFilesDownloadFailed", map[string]any{"Count": 2})) {
+		t.Fatalf("the count must be named, got %q", got)
+	}
+	if got := mgr.downloadFailureText(downloadOutcome{failed: 1}); got != common.T("PushFileDownloadFailed") {
+		t.Fatalf("a single failure uses the singular wording, got %q", got)
+	}
+}
+
+func TestAttachmentSentText_NotesPartialFailuresAndTruncation(t *testing.T) {
+	mgr := NewManager(&model.WeChatConfig{BotToken: "tok"})
+
+	got := mgr.attachmentSentText("abcdef1234567890", "会话", 3, downloadOutcome{failed: 1, truncated: true})
+	if !strings.Contains(got, common.T("PushFilesCount", map[string]any{"Count": 3})) {
+		t.Fatalf("the file count must be shown, got %q", got)
+	}
+	if !strings.Contains(got, common.T("PushPartialDownloadFailed", map[string]any{"Count": 1})) {
+		t.Fatalf("partial failure must be shown, got %q", got)
+	}
+	if !strings.Contains(got, common.T("PushAttachmentsTruncated", map[string]any{
+		"Max": common.AttachmentMaxFiles(), "Sent": 3,
+	})) {
+		t.Fatalf("truncation must be shown, got %q", got)
+	}
+
+	// A single file with no problems gets no extra lines.
+	if got := mgr.attachmentSentText("abcdef1234567890", "会话", 1, downloadOutcome{}); strings.Contains(got, "\n\n") {
+		t.Fatalf("a clean send needs no extra lines, got %q", got)
+	}
+}
+
+func TestMediaOf_PicksTheDescriptorPerKind(t *testing.T) {
+	img := &ilink.CDNMedia{FullURL: "img"}
+	file := &ilink.CDNMedia{FullURL: "file"}
+	video := &ilink.CDNMedia{FullURL: "video"}
+
+	if got := mediaOf(ilink.MessageItem{Type: ilink.ItemImage, ImageItem: &ilink.ImageItem{Media: img}}); got != img {
+		t.Fatal("image descriptor must be returned")
+	}
+	if got := mediaOf(ilink.MessageItem{Type: ilink.ItemFile, FileItem: &ilink.FileItem{Media: file}}); got != file {
+		t.Fatal("file descriptor must be returned")
+	}
+	if got := mediaOf(ilink.MessageItem{Type: ilink.ItemVideo, VideoItem: &ilink.VideoItem{Media: video}}); got != video {
+		t.Fatal("video descriptor must be returned")
+	}
+	// A malformed item (right type, missing payload) must not panic.
+	if got := mediaOf(ilink.MessageItem{Type: ilink.ItemImage}); got != nil {
+		t.Fatal("a missing payload yields no descriptor")
+	}
+	if got := mediaOf(ilink.MessageItem{Type: ilink.ItemText}); got != nil {
+		t.Fatal("a text item carries no media")
+	}
 }

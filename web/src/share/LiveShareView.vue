@@ -754,36 +754,7 @@ onBeforeUnmount(() => {
     display: none;
   }
 
-  /* Brand inside the dock. Sized to the dock's inner height so the pill keeps a
-   single visual rhythm; the dot reuses the status colour. */
-.live-dock-brand {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 var(--space-2, 4px) 0 var(--space-3, 6px);
-  flex-shrink: 0;
-}
-
-.live-dock-logo {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  display: block;
-}
-
-.live-dock-dot {
-  position: absolute;
-  right: 1px;
-  bottom: 0;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--color-success, #3fb950);
-  box-shadow: 0 0 0 2px var(--bg-secondary, #161b22);
-}
-
-.live-dock-btn {
+  .live-dock-btn {
     padding: var(--space-2, 4px) var(--space-3, 6px);
   }
 }

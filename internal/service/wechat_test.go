@@ -147,3 +147,44 @@ func TestWeChatSubscribers_NoManualSource(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, subs)
 }
+
+// Every subscriber helper must degrade to a no-op before the database is
+// initialized: the push manager starts with the server and may receive a
+// message before InitDB has run.
+func TestWeChatSubscribers_NoDatabaseIsANoOp(t *testing.T) {
+	cleanup := store.SetDBForTest(nil, nil)
+	defer cleanup()
+
+	subs, err := service.GetWeChatSubscribers()
+	require.NoError(t, err)
+	assert.Nil(t, subs)
+
+	assert.NoError(t, service.UpsertWeChatSubscriber("u1", "c1", "name", "stream"))
+	assert.NoError(t, service.DeleteWeChatSubscriber("u1"))
+
+	sid, err := service.GetWeChatLastSessionID("u1")
+	require.NoError(t, err)
+	assert.Empty(t, sid)
+	assert.NoError(t, service.SetWeChatLastSessionID("u1", "s1"))
+	assert.NoError(t, service.SetWeChatContextToken("u1", "t1"))
+	assert.NoError(t, service.ClearWeChatContextTokens())
+}
+
+// A failing database must surface the error rather than reporting "no
+// subscribers", which would silently stop all pushes.
+func TestWeChatSubscribers_PropagateDatabaseErrors(t *testing.T) {
+	db := setupTestDBForWeChat(t)
+	require.NoError(t, db.Close())
+
+	_, err := service.GetWeChatSubscribers()
+	require.Error(t, err)
+
+	assert.Error(t, service.UpsertWeChatSubscriber("u1", "c1", "name", "stream"))
+	assert.Error(t, service.DeleteWeChatSubscriber("u1"))
+
+	_, err = service.GetWeChatLastSessionID("u1")
+	require.Error(t, err)
+	assert.Error(t, service.SetWeChatLastSessionID("u1", "s1"))
+	assert.Error(t, service.SetWeChatContextToken("u1", "t1"))
+	assert.Error(t, service.ClearWeChatContextTokens())
+}

@@ -1458,14 +1458,14 @@ const unreadCountSubquery = `CASE
 // the backend filter and ORDER BY. Package-level so the query-plan test can
 // EXPLAIN the query production actually runs — asserting on unreadCountSubquery
 // alone would miss a caller that switched back to the grouped-join form.
-const sessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at,
+const sessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at, s.agent_takeover_from,
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
 		WHERE s.project_id = ? AND s.archived = 0 AND s.session_type IN (` + store.VisibleSessionTypeInClause + `)`
 
 // overviewSessionsQuery is GetOverviewSessions' full query. Package-level for
 // the same reason as sessionsQueryBase.
-const overviewSessionsQuery = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.created_at, s.updated_at, s.last_read_at, COALESCE(p.path, ''),
+const overviewSessionsQuery = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.created_at, s.updated_at, s.last_read_at, COALESCE(p.path, ''), s.agent_takeover_from,
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
 		LEFT JOIN projects p ON p.id = s.project_id
@@ -1475,7 +1475,7 @@ const overviewSessionsQuery = `SELECT s.id, s.title, s.backend, s.agent_id, s.ag
 // pagedSessionsQueryBase is the prefix of GetSessionsPaged' query, up to (not
 // including) the backend/tag/cursor filters and ORDER BY/LIMIT. Package-level
 // for the same reason as sessionsQueryBase.
-const pagedSessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at,
+const pagedSessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at, s.agent_takeover_from,
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
 		WHERE s.project_id = ? AND s.archived = 0 AND s.session_type IN (` + store.VisibleSessionTypeInClause + `)`
@@ -1514,7 +1514,7 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 		var s model.ChatSession
 		var lastRead sql.NullTime
 		var sourceSessionID sql.NullString
-		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.SortOrder, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.SortOrder, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.AgentTakeoverFrom, &s.UnreadCount); err != nil {
 			return nil, err
 		}
 		if lastRead.Valid {
@@ -1547,7 +1547,7 @@ func GetOverviewSessions() ([]model.ChatSession, error) {
 		var s model.ChatSession
 		var lastRead sql.NullTime
 		var sourceSessionID sql.NullString
-		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.ProjectPath, &s.UnreadCount); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.ProjectPath, &s.AgentTakeoverFrom, &s.UnreadCount); err != nil {
 			return nil, err
 		}
 		if lastRead.Valid {
@@ -1662,7 +1662,7 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 		var s model.ChatSession
 		var lastRead sql.NullTime
 		var sourceSessionID sql.NullString
-		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.SortOrder, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.SortOrder, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.AgentTakeoverFrom, &s.UnreadCount); err != nil {
 			return nil, false, err
 		}
 		if lastRead.Valid {
@@ -3599,6 +3599,24 @@ func UpdateExternalSessionID(sessionID, externalID string) error {
 // ACP connection pool's GetOrCreateConn pre-population logic.
 func ClearExternalSessionID(sessionID string) {
 	_, _ = store.WriteExec("UPDATE chat_sessions SET external_session_id = '' WHERE id = ?", sessionID)
+}
+
+// GetAgentTakeoverFrom returns the display name of the agent this session was
+// taken over FROM when that agent was deleted (empty = never taken over).
+//
+// Read by BuildChatRequest: together with an empty external_session_id it means
+// "the replacement agent has not established its own native session yet", so the
+// turn must start a FRESH one instead of resuming (see the takeover branch
+// there). Deliberately a small dedicated read rather than a field on the session
+// row — the value is only needed on the rare turn that has no external id.
+func GetAgentTakeoverFrom(sessionID string) string {
+	var name string
+	if err := store.ReadDB().QueryRow(
+		"SELECT COALESCE(agent_takeover_from, '') FROM chat_sessions WHERE id = ?", sessionID,
+	).Scan(&name); err != nil {
+		return ""
+	}
+	return name
 }
 
 // MarkSessionCompacted flags a session whose context was just compacted by the

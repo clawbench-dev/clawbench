@@ -15,6 +15,7 @@ const mockSetHost = vi.fn().mockResolvedValue(undefined)
 const mockSetParallel = vi.fn().mockResolvedValue(undefined)
 const mockSetCruise = vi.fn().mockResolvedValue(undefined)
 const mockGenerateAvatars = vi.fn().mockResolvedValue(undefined)
+const mockToastShow = vi.fn()
 vi.mock('@/composables/useGroupChat', () => ({
   addGroupMembers: (...a: any[]) => mockAdd(...a),
   setGroupMemberDisabled: (...a: any[]) => mockSetDisabled(...a),
@@ -22,6 +23,10 @@ vi.mock('@/composables/useGroupChat', () => ({
   setGroupParallelDefault: (...a: any[]) => mockSetParallel(...a),
   setGroupCruise: (...a: any[]) => mockSetCruise(...a),
   generateMemberAvatars: (...a: any[]) => mockGenerateAvatars(...a),
+}))
+
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ show: (...a: any[]) => mockToastShow(...a) }),
 }))
 
 // The group sheet's auto-approve switch delegates to the shared session toggle
@@ -217,6 +222,19 @@ describe('GroupSettingsSheet', () => {
     expect(aliceBtn.attributes('data-action')).toBe('make-host')
     // Same glyph as the host pill, so "crown = host" needs no label.
     expect(aliceBtn.find('svg').classes()).toContain('lucide-crown')
+  })
+
+  // A failed PATCH must not look like a dead button: the roster still shows the
+  // old host, so without a message the user just taps the crown again.
+  it('surfaces a failed host change instead of doing nothing visible', async () => {
+    mockSetHost.mockRejectedValueOnce(new Error('409 conflict'))
+    const w = mountSheet(MEMBERS)
+    const aliceRow = w.findAll('.gm-row').find(r => r.text().includes('Alice'))!
+    await aliceRow.find('.gm-host-toggle').trigger('click')
+    await flushPromises()
+
+    expect(mockToastShow).toHaveBeenCalledWith('group.hostChangeFailed')
+    expect(w.emitted('changed')).toBeFalsy()
   })
 
   it('promotes the member and refreshes the roster from the server', async () => {

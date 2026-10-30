@@ -576,3 +576,121 @@ func TestScreenShare_ReleaseAndDisconnect(t *testing.T) {
 		t.Fatalf("claim after the sharer left: %v", err)
 	}
 }
+
+func TestRoom_ScreenSwitchGettersAndSetters(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/proj/a", "A")
+
+	if room.ScreenEnabled() {
+		t.Fatal("screen sharing must start disabled")
+	}
+	room.SetScreenEnabled(true)
+	if !room.ScreenEnabled() {
+		t.Fatal("SetScreenEnabled(true) must be observable")
+	}
+}
+
+// Turning the switch off must report the viewer that was sharing so the caller
+// can send it an explicit denial — the browser keeps capturing otherwise.
+func TestRoom_SetScreenEnabledOffStopsSharer(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/proj/a", "A")
+	v, err := room.AddViewer("", &fakeSink{})
+	if err != nil {
+		t.Fatalf("AddViewer: %v", err)
+	}
+	room.SetScreenEnabled(true)
+	if err := room.ClaimScreen(v.ID); err != nil {
+		t.Fatalf("ClaimScreen: %v", err)
+	}
+	if room.ScreenSharer() != v.ID {
+		t.Fatalf("want sharer %q, got %q", v.ID, room.ScreenSharer())
+	}
+
+	if stopped := room.SetScreenEnabled(false); stopped != v.ID {
+		t.Fatalf("want stopped=%q, got %q", v.ID, stopped)
+	}
+	if room.ScreenSharer() != "" {
+		t.Fatalf("sharer must be cleared, got %q", room.ScreenSharer())
+	}
+	if stopped := room.SetScreenEnabled(false); stopped != "" {
+		t.Fatalf("nothing to stop, got %q", stopped)
+	}
+}
+
+// A viewer that is not in the room cannot claim the screen: it would never
+// receive the stream and nobody could revoke it.
+func TestRoom_ClaimScreenRejectsUnknownViewer(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/proj/a", "A")
+	room.SetScreenEnabled(true)
+
+	if err := room.ClaimScreen("ghost"); !errors.Is(err, ErrRoomNotFound) {
+		t.Fatalf("want ErrRoomNotFound, got %v", err)
+	}
+	if room.ScreenSharer() != "" {
+		t.Fatal("a rejected claim must not set the sharer")
+	}
+}
+
+func TestRoom_ReleaseScreenUnknownSharerIsNoop(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/proj/a", "A")
+	if room.ReleaseScreen("ghost") {
+		t.Fatal("releasing a non-sharer must report false")
+	}
+}
+
+func TestRoom_NotesSwitch(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/proj/a", "A")
+
+	if room.NotesEnabled() {
+		t.Fatal("notes must start disabled")
+	}
+	room.SetNotesEnabled(true)
+	if !room.NotesEnabled() {
+		t.Fatal("SetNotesEnabled(true) must be observable")
+	}
+	room.SetNotesEnabled(false)
+	if room.NotesEnabled() {
+		t.Fatal("SetNotesEnabled(false) must be observable")
+	}
+}
+
+// HasPublisher is what tells a stale room (publisher crashed, idle reaper has
+// not run yet) from a live one; a reservation counts, because the publisher is
+// already on its way.
+func TestRoom_HasPublisherAndCreatedAt(t *testing.T) {
+	g := newTestRegistry(t)
+	room, err := g.Create("/proj/a", "A")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if room.HasPublisher() {
+		t.Fatal("a fresh room has no publisher")
+	}
+	if room.CreatedAt().IsZero() {
+		t.Fatal("CreatedAt must be stamped at creation")
+	}
+
+	if !room.ReservePublisher() {
+		t.Fatal("ReservePublisher must succeed on an idle room")
+	}
+	if !room.HasPublisher() {
+		t.Fatal("a reservation counts as a publisher on its way")
+	}
+	room.ReleaseReservation()
+	if room.HasPublisher() {
+		t.Fatal("a released reservation is not a publisher")
+	}
+
+	room.SetPublisher(&fakeSink{})
+	if !room.HasPublisher() {
+		t.Fatal("an attached publisher must be reported")
+	}
+	room.SetPublisher(nil)
+	if room.HasPublisher() {
+		t.Fatal("a detached publisher must be reported as gone")
+	}
+}

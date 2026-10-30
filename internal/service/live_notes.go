@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"clawbench/internal/model"
@@ -118,14 +119,16 @@ func AppendLiveNoteSegment(ctx context.Context, token string, projectID int64, s
 	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
-	if _, execErr := tx.ExecContext(ctx,
+	if _, execErr := tx.ExecContext(
+		ctx,
 		`INSERT INTO live_notes (token, project_id, status) VALUES (?, ?, ?)
-		 ON CONFLICT(token) DO NOTHING`,
+		 ON CONFLICT(token) DO UPDATE SET updated_at = CURRENT_TIMESTAMP`,
 		token, projectID, LiveNotesStatusIdle,
 	); execErr != nil {
 		return 0, fmt.Errorf("live notes: ensure row: %w", execErr)
 	}
-	res, execErr := tx.ExecContext(ctx,
+	res, execErr := tx.ExecContext(
+		ctx,
 		`INSERT INTO live_notes_segments (token, project_id, channel, speaker, started_at, duration_ms, text)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		token, projectID, seg.Channel, seg.Speaker, seg.StartedAt, seg.DurationMS, seg.Text,
@@ -227,7 +230,8 @@ func SetLiveNoteMinutes(token string, projectID int64, title, status, minutes, e
 // cutoff. Returns the number of shares removed.
 func CleanupLiveNotes(ctx context.Context, before time.Time) (int, error) {
 	var tokens []string
-	rows, err := store.ReadDB().QueryContext(ctx,
+	rows, err := store.ReadDB().QueryContext(
+		ctx,
 		`SELECT token FROM live_notes WHERE updated_at < ?`, before.UTC().Format("2006-01-02 15:04:05"),
 	)
 	if err != nil {
@@ -254,18 +258,35 @@ func CleanupLiveNotes(ctx context.Context, before time.Time) (int, error) {
 	}
 	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
+	removed := 0
 	for _, t := range tokens {
+		// Re-check updated_at inside the write transaction: the share may have
+		// been refreshed (a late segment, a minutes request) between the SELECT
+		// above and this DELETE, and deleting then would destroy a live meeting.
+		res, execErr := tx.ExecContext(
+			ctx,
+			`DELETE FROM live_notes WHERE token = ? AND updated_at < ?`,
+			t, before.UTC().Format("2006-01-02 15:04:05"),
+		)
+		if execErr != nil {
+			return 0, fmt.Errorf("live notes: cleanup notes: %w", execErr)
+		}
+		affected, affErr := res.RowsAffected()
+		if affErr != nil {
+			return 0, fmt.Errorf("live notes: cleanup count: %w", affErr)
+		}
+		if affected == 0 {
+			continue // refreshed since the scan: keep the segments too
+		}
+		removed += int(affected)
 		if _, execErr := tx.ExecContext(ctx, `DELETE FROM live_notes_segments WHERE token = ?`, t); execErr != nil {
 			return 0, fmt.Errorf("live notes: cleanup segments: %w", execErr)
-		}
-		if _, execErr := tx.ExecContext(ctx, `DELETE FROM live_notes WHERE token = ?`, t); execErr != nil {
-			return 0, fmt.Errorf("live notes: cleanup notes: %w", execErr)
 		}
 	}
 	if commitErr := tx.Commit(); commitErr != nil {
 		return 0, fmt.Errorf("live notes: cleanup commit: %w", commitErr)
 	}
-	return len(tokens), nil
+	return removed, nil
 }
 
 // ── Timeline assembly ───────────────────────────────────────────────────────
@@ -300,13 +321,17 @@ func SortLiveNoteSegments(in []LiveNoteSegment) []LiveNoteSegment {
 // normalizeNoteText folds a transcript line for duplicate detection: case,
 // whitespace and punctuation are ignored so that the same sentence captured by
 // two microphones compares equal.
+//
+// Letters and digits of EVERY script are kept, not just Latin and CJK
+// ideographs: a Japanese line is mostly kana, a Korean one hangul, a Russian one
+// Cyrillic. Filtering those out would fold them all to "" and — because
+// DedupeLiveNoteSegments drops empty keys — silently delete every line of a
+// non-Chinese/non-English meeting, leaving the transcript (and therefore the
+// minutes) empty.
 func normalizeNoteText(s string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(s) {
-		switch {
-		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
-			continue
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r >= 0x4e00 && r <= 0x9fff:
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
 			b.WriteRune(r)
 		}
 	}
@@ -370,7 +395,16 @@ func BuildLiveNotesTranscript(segments []LiveNoteSegment) string {
 	if len(merged) == 0 {
 		return ""
 	}
-	base := merged[0].StartedAt
+	// The origin is the earliest POSITIVE timestamp, never 0. A segment whose
+	// startedAt is missing parses to 0 and sorts first; using it as the base
+	// would turn every real offset into "milliseconds since 1970" and put the
+	// line that actually happened last at the top of the transcript.
+	base := int64(0)
+	for _, s := range merged {
+		if s.StartedAt > 0 && (base == 0 || s.StartedAt < base) {
+			base = s.StartedAt
+		}
+	}
 	var b strings.Builder
 	for _, s := range merged {
 		speaker := strings.TrimSpace(s.Speaker)
@@ -378,6 +412,11 @@ func BuildLiveNotesTranscript(segments []LiveNoteSegment) string {
 			speaker = s.Channel
 		}
 		text := strings.Join(strings.Fields(s.Text), " ")
+		if s.StartedAt <= 0 || base == 0 {
+			// Unknown timing: say so rather than inventing an offset.
+			fmt.Fprintf(&b, "[--:--] %s：%s\n", speaker, text)
+			continue
+		}
 		offset := (s.StartedAt - base) / 1000
 		if offset < 0 {
 			offset = 0

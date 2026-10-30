@@ -34,7 +34,7 @@
             class="dlg-input dlg-textarea"
             :placeholder="dlg.state.value.placeholder"
             rows="3"
-            @keydown.enter.prevent="handleConfirm"
+            @keydown.enter="handleTextareaEnter"
             @beforeinput="onBeforeInput"
             @input="onInput"
           ></textarea>
@@ -149,6 +149,21 @@ function handleKeyEnter() {
   // Prompt type: let the input handle Enter itself
   if (dlg.state.value.type === 'prompt') return
   // Confirm/alert: Enter triggers confirm
+  handleConfirm()
+}
+
+/**
+ * Enter inside a prompt's textarea.
+ *
+ * Default is submit, which is what every existing caller expects. When the
+ * dialog opts into `enterInsertsNewline` (multi-line values: editing a queued
+ * message's text), a bare Enter is left alone so the textarea inserts a newline,
+ * and Ctrl/Cmd+Enter submits. Without this the default `prevent` made it
+ * impossible to type a second line in ANY prompt.
+ */
+function handleTextareaEnter(e: KeyboardEvent) {
+  if (dlg.state.value.enterInsertsNewline && !e.ctrlKey && !e.metaKey) return
+  e.preventDefault()
   handleConfirm()
 }
 

@@ -116,3 +116,17 @@ func TestTruncateForWeChat_StripsBeforeTruncating(t *testing.T) {
 	assert.Equal(t, body, truncateForWeChat(in),
 		"stripping must happen before the length check")
 }
+
+// With nothing to protect, the helper is exactly the plain stripper.
+func TestStripMarkdownKeeping_NoKeepIsPlainStrip(t *testing.T) {
+	text := "**bold** and `code`"
+	assert.Equal(t, stripMarkdownForWeChat(text), stripMarkdownKeeping(text))
+	assert.Equal(t, stripMarkdownForWeChat(text), stripMarkdownKeeping(text, ""))
+}
+
+// An unclosed fence still marks a code region: its body must survive even
+// though the block never terminates.
+func TestStripMarkdownForWeChat_UnclosedFenceKeepsBody(t *testing.T) {
+	got := stripMarkdownForWeChat("before\n```go\nfmt.Println(1)")
+	assert.Contains(t, got, "fmt.Println(1)")
+}

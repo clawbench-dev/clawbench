@@ -90,9 +90,11 @@
       :messages="queuedMessages"
       :midTurnSupported="midTurnSupported"
       :busy="pendingActionBusy"
+      :editBusy="editBusy"
       :mergeBusy="mergeBusy"
       @remove="handleRemovePending"
       @action="handlePendingAction"
+      @edit="handleEditPending"
       @merge="handleMergeQueue"
     />
 
@@ -305,7 +307,7 @@ import { useSessionIdentity, getSessionId, reconcileModelSelection } from '@/com
 import { useSessionManager } from '@/composables/useSessionManager.ts'
 import { createChatMessageStore } from '@/composables/useChatMessageStore.ts'
 import { useAcpSession } from '@/composables/useAcpSession'
-import { queuedMessages, setActiveQueueSession, addQueued, clearQueue, markSendCommitted } from '@/composables/useMessageQueue.ts'
+import { queuedMessages, setActiveQueueSession, addQueued, clearQueue, getQueue, markSendCommitted } from '@/composables/useMessageQueue.ts'
 
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast.ts'
@@ -404,6 +406,14 @@ const midTurnSupported = computed(() =>
 const pendingActionBusy = ref('')
 /** Whether the queue-wide merge request is in flight. */
 const mergeBusy = ref(false)
+/**
+ * queueId of the queued message whose EDIT save is in flight.
+ *
+ * Deliberately separate from pendingActionBusy/mergeBusy: the three act on
+ * different buttons, and sharing one ref would disable every other row's
+ * controls while one row is saving — a silent UI regression with no error.
+ */
+const editBusy = ref('')
 const messages = ref([])
 const messageStore = createChatMessageStore(messages)
 /** Rendered messages = persisted messages (pending messages already in messages.value with pending: true) */
@@ -2274,8 +2284,45 @@ async function handlePendingAction(queueId, mode) {
     }
 }
 
-/** Merge every queued message of this session into one (queue-wide action). */
-async function handleMergeQueue() {
+/**
+ * Edit a queued message's text in place.
+ *
+ * The dialog is primed with the current text and opts into Enter-inserts-newline:
+ * a queued message is often a multi-line requirement, and the prompt's default
+ * Enter-to-submit made a second line impossible to type.
+ *
+ * Saving does NOT resend: the row keeps its queue position, so a message that
+ * has been waiting fifteen minutes is still next in line after the edit.
+ */
+async function handleEditPending(queueId) {
+    if (!queueId || editBusy.value) return
+    const sessionId = identity.currentSessionId.value
+    const entry = getQueue(sessionId).find(m => m.queueId === queueId)
+    if (!entry) return
+
+    const next = await dialog.prompt(t('chat.pending.editPrompt'), {
+        title: t('chat.pending.editTitle'),
+        value: entry.text,
+        placeholder: t('chat.pending.editPlaceholder'),
+        confirmText: t('common.save'),
+        cancelText: t('common.cancel'),
+        enterInsertsNewline: true,
+    })
+    if (next === null) return
+    const trimmed = String(next).trim()
+    // An unchanged or emptied body is not an edit. Emptying an attachment-only
+    // message is rejected server-side too, so declining here is consistent.
+    if (!trimmed || trimmed === entry.text.trim()) return
+
+    editBusy.value = queueId
+    try {
+        await manager.editQueuedMessage(queueId, trimmed)
+    } finally {
+        editBusy.value = ''
+    }
+}
+
+/** Merge every queued message of this session into one (queue-wide action). */async function handleMergeQueue() {
     if (mergeBusy.value) return
     mergeBusy.value = true
     try {

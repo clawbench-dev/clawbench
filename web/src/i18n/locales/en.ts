@@ -1070,6 +1070,13 @@ export default {
       collapse: 'Collapse',
       remove: 'Remove this queued message',
       attachment: 'Attachment',
+      edit: 'Edit',
+      editHint: 'Edit the text of this queued message',
+      editTitle: 'Edit queued message',
+      editPrompt: 'The edit keeps its place in the queue — it will not be re-queued',
+      editPlaceholder: 'New content. Ctrl+Enter to save',
+      editFailed: 'Edit failed — the queued message is unchanged',
+      alreadySent: 'This message has already been sent and can no longer be edited',
       // Bubble annotation for a mid-turn injection that MERGED into the running
       // reply (claude/codex — no split boundary). Without it the bubble sits
       // after the still-streaming reply with nothing following it, which reads
@@ -1253,6 +1260,8 @@ export default {
     forkCount: '{n} fork(s)',
     forkGeneration: 'Gen {n}',
     forkGenerationTitle: 'Forked {n} generation(s) from the session above',
+    takeoverBadge: 'Taken over',
+    takeoverBadgeTip: 'Was served by "{name}", which has been deleted; the default agent now continues this session and the history was re-injected as background',
   },
   sessionTags: {
     title: 'Set tags',
@@ -2910,9 +2919,12 @@ export default {
       agentReorderFailed: 'Reorder failed',
       agentDragHandle: 'Drag to reorder',
       agentDelete: 'Delete',
-      agentDeleteConfirm: 'Delete agent "{name}"?',
+      // Deletion hands the agent's conversations to the default agent, so the
+      // confirm has to say so BEFORE the user commits.
+      agentDeleteTakeoverConfirm: 'Delete agent "{name}"?\nIts {sessions} session(s) and {tasks} task(s) will be handed to the default agent "{replacement}": the history is kept, but the earlier context is re-injected as background.',
       agentDeleteDefault: 'Cannot delete default agent',
-      agentDeleteBlocked: 'This agent is still in use ({sessions} sessions, {tasks} tasks); delete or leave them first',
+      agentDeleteRunning: 'This agent has a conversation running; stop it before deleting',
+      agentDeletedTakeover: 'Deleted "{name}"; {sessions} session(s) and {tasks} task(s) now belong to "{replacement}"',
       agentDeleted: 'Agent deleted',
       agentDeleteFailed: 'Delete failed',
       agentDisable: 'Disable',
@@ -3465,6 +3477,7 @@ export default {
       tlsStateSelfSigned: 'Enabled (self-signed)',
       tlsStateCA: 'Enabled (CA-issued)',
       tlsHosts: 'Covers',
+      tlsHostSeparator: ', ',
       tlsNotAfter: 'Expires',
       tlsExtraHosts: 'Extra addresses (optional)',
       tlsExtraHostsPlaceholder: 'e.g. 10.0.0.5, clawbench.local',
@@ -3479,6 +3492,7 @@ export default {
       tlsRestartNow: 'Restart now',
       tlsRestarting: 'Restarting…',
       tlsRestartFailed: 'Restart failed — restart the server manually.',
+      tlsRestartedNoHTTPS: 'Restarted. Reload this page to continue.',
       tlsOpenHint: 'Once it is back, open this address:',
       tlsServingHint: 'This page is already served over HTTPS.',
       tlsLoadFailed: 'Could not read the certificate status.',

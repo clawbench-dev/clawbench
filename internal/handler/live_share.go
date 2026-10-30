@@ -125,9 +125,14 @@ func liveShareCreateBody(r *http.Request, projectPath string) (title string, not
 	return title, body.Notes
 }
 
+// liveShareReuseGrace is how long a publisher-less room is still treated as
+// "about to be attached" rather than "left over from a previous meeting".
+// A variable (not a const) so tests can drive the stale path without sleeping.
+var liveShareReuseGrace = 10 * time.Second
+
 func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath string) {
 	title, notes := liveShareCreateBody(r, projectPath)
-	room, err := liveRegistry.Create(projectPath, title)
+	room, err := createLiveShareRoom(projectPath, title)
 	if err != nil {
 		if errors.Is(err, liveshare.ErrTooManyRooms) {
 			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "LiveShareTooManyRooms")
@@ -146,6 +151,34 @@ func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath st
 		Token: room.Token(),
 		Path:  "/share/" + room.Token(),
 	})
+}
+
+// createLiveShareRoom returns the project's room, starting a NEW one when the
+// existing room is a leftover.
+//
+// Rooms are idempotent per project, and a room outlives its publisher: after a
+// crash or an app restart it sits in the registry until the idle timeout (30
+// min). The token is the ONLY key for the AI 听记 rows, so handing the same token
+// back would make the new meeting's transcript start with the previous one's —
+// the captions would open pre-filled and the minutes would summarize both
+// meetings. Rotating the token keeps the old notes where they are (they age out
+// on their own) instead of deleting data.
+//
+// The grace period protects the normal sequence: POST creates the room, then the
+// publisher socket attaches a moment later. Without it a second create in that
+// window would rotate the token out from under the first.
+func createLiveShareRoom(projectPath, title string) (*liveshare.Room, error) {
+	room, err := liveRegistry.Create(projectPath, title)
+	if err != nil {
+		return nil, err
+	}
+	if room.HasPublisher() || time.Since(room.CreatedAt()) <= liveShareReuseGrace {
+		return room, nil
+	}
+	slog.Info("liveshare: rotating stale room token",
+		"token", room.Token(), "age", time.Since(room.CreatedAt()).String())
+	liveRegistry.Delete(room.Token())
+	return liveRegistry.Create(projectPath, title)
 }
 
 func serveLiveShareStatus(w http.ResponseWriter, projectPath string) {

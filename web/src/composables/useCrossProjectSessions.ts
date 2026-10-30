@@ -47,6 +47,12 @@ export interface CrossProjectSession {
   agentName?: string
   /** Custom avatar SVG for exactly those unresolvable agents (see agentName). */
   agentAvatar?: string
+  /**
+   * Display name of the agent this session was taken over FROM (its agent was
+   * deleted and the default agent inherited it). Empty/absent = never taken
+   * over; drives the "已接管" badge.
+   */
+  agentTakeoverFrom?: string
   model?: string
   /** 'group' for a group-chat session; drives the group row rendering. */
   sessionType?: string
@@ -115,6 +121,9 @@ function toSession(raw: Record<string, unknown>): CrossProjectSession {
     agentId: raw.agentId ? String(raw.agentId) : undefined,
     agentName: raw.agentName ? String(raw.agentName) : undefined,
     agentAvatar: raw.agentAvatar ? String(raw.agentAvatar) : undefined,
+    // Field-by-field mapping: anything the server adds must be listed here or it
+    // silently disappears in this pane (the badge did exactly that).
+    agentTakeoverFrom: raw.agentTakeoverFrom ? String(raw.agentTakeoverFrom) : undefined,
     model: raw.model ? String(raw.model) : undefined,
     sessionType: raw.sessionType ? String(raw.sessionType) : undefined,
     groupMembers: Array.isArray(raw.groupMembers)

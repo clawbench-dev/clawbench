@@ -9,6 +9,7 @@ import {
   beginQueueSnapshot,
   markSendCommitted,
   addQueued,
+  updateQueuedText,
   removeQueued,
   removeQueuedMany,
   clearQueue,
@@ -434,5 +435,61 @@ describe('queuedMessages / queuedCount follow setActiveQueueSession', () => {
     expect(queuedCount.value).toBe(2)
     removeQueued('s1', 'a')
     expect(queuedMessages.value.map((m) => m.queueId)).toEqual(['b'])
+  })
+})
+
+describe('updateQueuedText', () => {
+  it('rewrites the text of one entry and leaves the others untouched', () => {
+    addQueued('s1', { queueId: 'q1', text: 'first', files: [] })
+    addQueued('s1', { queueId: 'q2', text: 'second', files: [] })
+
+    updateQueuedText('s1', 'q2', 'second, revised')
+
+    const queue = getQueue('s1')
+    expect(queue).toHaveLength(2)
+    expect(queue[0].text).toBe('first')
+    expect(queue[1].text).toBe('second, revised')
+    expect(queue[1].queueId).toBe('q2')
+  })
+
+  it('publishes a NEW array so computed consumers re-render', () => {
+    // Same trap addQueued documents: mutating the stored array in place leaves
+    // the computed returning the same reference, so Vue never notifies.
+    addQueued('s1', { queueId: 'q1', text: 'old', files: [] })
+    const before = getQueue('s1')
+
+    updateQueuedText('s1', 'q1', 'new')
+
+    const after = getQueue('s1')
+    expect(after).not.toBe(before)
+    expect(after[0].text).toBe('new')
+  })
+
+  it('notifies a watching computed', async () => {
+    addQueued('s1', { queueId: 'q1', text: 'old', files: [] })
+    setActiveQueueSession('s1')
+    const seen: string[] = []
+    const stop = watchEffect(() => { seen.push(queuedMessages.value[0]?.text ?? '') })
+    await nextTick()
+
+    updateQueuedText('s1', 'q1', 'new')
+    await nextTick()
+    stop()
+
+    expect(seen[seen.length - 1]).toBe('new')
+  })
+
+  it('is a no-op for an unknown session or queue id', () => {
+    addQueued('s1', { queueId: 'q1', text: 'keep', files: [] })
+
+    updateQueuedText('s1', 'nope', 'ignored')
+    updateQueuedText('other', 'q1', 'ignored')
+
+    expect(getQueue('s1')[0].text).toBe('keep')
+    expect(getQueue('other')).toHaveLength(0)
+  })
+
+  it('is exported from useMessageQueue()', () => {
+    expect(typeof useMessageQueue().updateQueuedText).toBe('function')
   })
 })

@@ -54,6 +54,7 @@ function setDialogState(overrides: Partial<{
   generateText: string
   onGenerate: (() => Promise<string | null>) | null
   singleLine: boolean
+  enterInsertsNewline: boolean
   resolve: ((v: string | boolean | null) => void) | null
 }> = {}) {
   const { state } = useDialog()
@@ -70,6 +71,7 @@ function setDialogState(overrides: Partial<{
     generateText: '',
     onGenerate: null,
     singleLine: false,
+    enterInsertsNewline: false,
     resolve: vi.fn(),
     ...overrides,
   }
@@ -639,5 +641,53 @@ describe('DialogOverlay', () => {
     await nextTick()
 
     expect($('.dlg-ok')?.textContent).toBe('Confirm')
+  })
+
+  // ── enterInsertsNewline ──
+
+  it('prompt dialog: Enter confirms by default (unchanged behavior)', async () => {
+    const resolveFn = vi.fn()
+    setDialogState({ type: 'prompt', message: 'Note:', value: 'hello', resolve: resolveFn })
+
+    wrapper = mountDialog()
+    await nextTick()
+    await nextTick()
+
+    $('textarea.dlg-input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await nextTick()
+
+    expect(resolveFn).toHaveBeenCalledWith('hello')
+  })
+
+  it('prompt dialog: enterInsertsNewline lets Enter insert a newline instead of confirming', async () => {
+    const resolveFn = vi.fn()
+    setDialogState({ type: 'prompt', message: 'Edit:', value: 'line one', enterInsertsNewline: true, resolve: resolveFn })
+
+    wrapper = mountDialog()
+    await nextTick()
+    await nextTick()
+
+    const ev = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    $('textarea.dlg-input')!.dispatchEvent(ev)
+    await nextTick()
+
+    expect(ev.defaultPrevented).toBe(false)
+    expect(resolveFn).not.toHaveBeenCalled()
+  })
+
+  it('prompt dialog: enterInsertsNewline still confirms on Ctrl+Enter', async () => {
+    const resolveFn = vi.fn()
+    setDialogState({ type: 'prompt', message: 'Edit:', value: 'line one', enterInsertsNewline: true, resolve: resolveFn })
+
+    wrapper = mountDialog()
+    await nextTick()
+    await nextTick()
+
+    const ev = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true })
+    $('textarea.dlg-input')!.dispatchEvent(ev)
+    await nextTick()
+
+    expect(ev.defaultPrevented).toBe(true)
+    expect(resolveFn).toHaveBeenCalledWith('line one')
   })
 })

@@ -22,6 +22,8 @@ ShareSessionInvalidSelection: Some selected messages cannot be shared (they may 
 QueueIdRequired: queueId required
 QueueInjectStranded: Insert failed and the message could not be re-queued — please resend it
 QueueMergeFailed: Failed to merge queued messages
+QueueUpdateFailed: Failed to edit the queued message
+QueueAlreadyDrained: This message has already been sent and can no longer be edited
 EnqueueFailed: Failed to send the message, please retry
 NewSession: New Session
 NewSessionN: New Session {{.N}}
@@ -139,7 +141,7 @@ InvalidAgentAvatar: Invalid avatar image
 InvalidSystemPrompt: System prompt too long
 SystemPromptOverride: System prompt contains unsafe override instructions
 InvalidSortOrder: Invalid sort order
-AgentInUse: "This agent is still in use ({{.SessionCount}} sessions, {{.TaskCount}} tasks, {{.MembershipCount}} group memberships); delete them first"
+AgentHasRunningSessions: This agent has a conversation running; stop it before deleting
 AgentDisabled: This agent is disabled
 CannotDisableDefaultAgent: The default agent cannot be disabled
 CannotDeleteDefaultAgent: The default agent cannot be deleted
@@ -306,6 +308,10 @@ GroupMemberEnabled: '{{.Name}} was enabled'
 GroupHostChanged: '{{.Name}} is now the host'
 GroupMemberCompactionStarted: '{{.Name}} is compacting its context…'
 GroupMemberCompactionDone: '{{.Name}} compacted its context ({{.Before}} → {{.After}})'
+# Written after an agent is deleted: its conversations and group memberships are
+# handed to the default agent. Localized at write time, like the rows above.
+AgentTakeoverSessionNotice: 'Agent "{{.Old}}" was deleted. This conversation is now handled by "{{.New}}"; the earlier history was re-injected as background.'
+AgentTakeoverGroupNotice: 'The agent behind "{{.Member}}" was deleted; "{{.New}}" now drives it.'
 GroupMemberCompactionFailed: '{{.Name}} failed to compact its context'
 GroupMemberUnknown: Member
 GroupUnknownMention: '{{.Speaker}} @-mentioned a member who does not exist: {{.Names}} (ignored)'

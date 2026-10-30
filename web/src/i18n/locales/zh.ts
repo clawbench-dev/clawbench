@@ -1075,6 +1075,13 @@ export default {
       collapse: '收起',
       remove: '删除这条排队消息',
       attachment: '附件',
+      edit: '编辑',
+      editHint: '修改这条排队消息的正文',
+      editTitle: '编辑排队消息',
+      editPrompt: '修改后仍在原来的队列位置，不会重新排队',
+      editPlaceholder: '输入新的内容，Ctrl+Enter 保存',
+      editFailed: '修改失败，排队消息未改变',
+      alreadySent: '这条消息已经发出，无法再修改',
       // Bubble annotation for a mid-turn injection that MERGED into the running
       // reply (claude/codex — no split boundary). Without it the bubble sits
       // after the still-streaming reply with nothing following it, which reads
@@ -1258,6 +1265,8 @@ export default {
     forkCount: '{n} 个分叉',
     forkGeneration: '第 {n} 代',
     forkGenerationTitle: '自上一级会话分叉出的第 {n} 代',
+    takeoverBadge: '已接管',
+    takeoverBadgeTip: '原由「{name}」提供，该智能体已删除；本会话现由默认智能体继续，历史已作为背景重新注入',
   },
   sessionTags: {
     title: '设置标签',
@@ -2905,9 +2914,13 @@ export default {
       agentReorderFailed: '排序失败',
       agentDragHandle: '拖动排序',
       agentDelete: '删除',
-      agentDeleteConfirm: '确定要删除智能体「{name}」吗？',
+      // Deletion hands the agent's conversations to the default agent, so the
+      // confirm has to say so BEFORE the user commits — this is the only place
+      // the consequence is visible.
+      agentDeleteTakeoverConfirm: '确定要删除智能体「{name}」吗？\n它的 {sessions} 个会话、{tasks} 个任务将转交给默认智能体「{replacement}」继续：聊天记录全部保留，但此前的上下文会以背景形式重新注入。',
       agentDeleteDefault: '无法删除默认智能体',
-      agentDeleteBlocked: '该智能体仍在使用中（{sessions} 个会话、{tasks} 个任务），请先删除或退出群聊后再操作',
+      agentDeleteRunning: '该智能体有会话正在运行，请先停止后再删除',
+      agentDeletedTakeover: '已删除「{name}」，{sessions} 个会话、{tasks} 个任务已转交给「{replacement}」',
       agentDeleted: '智能体已删除',
       agentDeleteFailed: '删除失败',
       agentDisable: '禁用',
@@ -3460,6 +3473,7 @@ export default {
       tlsStateSelfSigned: '已启用（自签名）',
       tlsStateCA: '已启用（CA 签发）',
       tlsHosts: '覆盖地址',
+      tlsHostSeparator: '、',
       tlsNotAfter: '到期时间',
       tlsExtraHosts: '额外地址（可选）',
       tlsExtraHostsPlaceholder: '例如 10.0.0.5, clawbench.local',
@@ -3473,6 +3487,7 @@ export default {
       tlsRestartNow: '立即重启',
       tlsRestarting: '正在重启…',
       tlsRestartFailed: '重启失败，请手动重启服务端。',
+      tlsRestartedNoHTTPS: '已重启。请刷新页面继续。',
       tlsOpenHint: '重启完成后用这个地址打开：',
       tlsServingHint: '当前页面已经是 HTTPS。',
       tlsLoadFailed: '读取证书状态失败。',

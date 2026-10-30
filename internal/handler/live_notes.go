@@ -131,6 +131,21 @@ func ServeLiveShareNoteSegment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, liveNoteSegmentMaxBytes)
+	// Parse BEFORE reading any field: r.FormValue swallows the reader's error,
+	// so an oversized upload would look like "no token" and be answered with
+	// 404 — which the publisher reads as "this share is gone" and uses to drop
+	// its whole upload queue. 413 says "too big", which is retryable/skippable.
+	// The body is already capped by MaxBytesReader above, so this cannot grow
+	// without bound; gosec cannot see through the reader.
+	if err := r.ParseMultipartForm(liveNoteSegmentMaxBytes); err != nil { //nolint:gosec // bounded by MaxBytesReader
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeLocalizedErrorf(w, r, http.StatusRequestEntityTooLarge, "BadRequest")
+			return
+		}
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return
+	}
 
 	token := r.FormValue("token")
 	if !validShareToken(token) {
@@ -181,7 +196,7 @@ func ServeLiveShareNoteSegment(w http.ResponseWriter, r *http.Request) {
 		Channel:    channel,
 		Speaker:    truncateRunes(strings.TrimSpace(r.FormValue("speaker")), liveNoteSpeakerMaxRunes),
 		StartedAt:  parseLiveNoteMillis(r.FormValue("startedAt")),
-		DurationMS: clampInt64(parseLiveNoteMillis(r.FormValue("durationMs")), 0, liveNoteSegmentMaxDurationMS),
+		DurationMS: capInt64(parseLiveNoteMillis(r.FormValue("durationMs")), liveNoteSegmentMaxDurationMS),
 		Text:       truncateRunes(text, liveNoteTextMaxRunes),
 	}
 	id, err := service.AppendLiveNoteSegment(r.Context(), token, projectID, seg)
@@ -450,10 +465,9 @@ func parseLiveNoteMillis(raw string) int64 {
 	return v
 }
 
-func clampInt64(v, lo, hi int64) int64 {
-	if v < lo {
-		return lo
-	}
+// capInt64 bounds v from above. There is no lower bound because the only
+// caller feeds it parseLiveNoteMillis, which already rejects negative input.
+func capInt64(v, hi int64) int64 {
 	if v > hi {
 		return hi
 	}

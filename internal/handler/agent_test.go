@@ -1909,15 +1909,20 @@ func TestAgentDelete_DefaultAgent(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// ── Delete guard: refuse while the agent is still in use ──
+// ── Delete with takeover (issue #606) ──
+//
+// An agent may be deleted while it still owns conversations: they are handed to
+// the DEFAULT agent. Only a live turn blocks the deletion.
 
-func TestAgentDelete_BlockedBySessions(t *testing.T) {
+func TestAgentDelete_TakesOverSessions(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 	model.DefaultAgentID = "codebuddy"
 
 	_, err := store.UnsafeDBForTest().Exec(
-		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, archived)
-		 VALUES ('s1', 1, 'claude', 'chat', 'claude', 'chat', 0)`)
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type,
+		                            model, transport, external_session_id, context_state, archived)
+		 VALUES ('s1', 1, 'claude', 'chat', 'claude', 'chat',
+		         'claude-sonnet-4-6', 'cli', 'ext-1', '{"mode":"plan","usage":{"used":10}}', 0)`)
 	require.NoError(t, err)
 
 	body := map[string]any{"id": "claude"}
@@ -1925,15 +1930,38 @@ func TestAgentDelete_BlockedBySessions(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeAgents, req)
 
-	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, "AgentInUse", resp["msgKey"])
-	// Not deleted.
-	assert.Contains(t, model.Agents, "claude")
+	assert.EqualValues(t, 1, resp["sessions"])
+	assert.Equal(t, "codebuddy", resp["replacementAgentId"])
+
+	// The row is rebound, and every agent-specific piece of state is cleared:
+	// model/transport describe the OLD agent, external_session_id names a native
+	// session the replacement never saw, and mode/usage belong to the old
+	// capability set and context window.
+	var agentID, backend, agentSource, modelName, transport, extID, takeoverFrom, ctxState string
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
+		`SELECT agent_id, backend, agent_source, model, transport, external_session_id,
+		        agent_takeover_from, context_state
+		   FROM chat_sessions WHERE id = 's1'`,
+	).Scan(&agentID, &backend, &agentSource, &modelName, &transport, &extID, &takeoverFrom, &ctxState))
+	assert.Equal(t, "codebuddy", agentID)
+	assert.Equal(t, "codebuddy", backend)
+	assert.Equal(t, "default", agentSource)
+	assert.Empty(t, modelName)
+	assert.Empty(t, transport)
+	assert.Empty(t, extID)
+	// The DELETED agent's display name, not the replacement's: this is what the
+	// badge shows and what BuildChatRequest reads.
+	assert.Equal(t, "Claude", takeoverFrom)
+	assert.NotContains(t, ctxState, "mode")
+	assert.NotContains(t, ctxState, "usage")
+
+	assert.NotContains(t, model.Agents, "claude")
 }
 
-func TestAgentDelete_BlockedByTasks(t *testing.T) {
+func TestAgentDelete_TakesOverTasks(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 	model.DefaultAgentID = "codebuddy"
 
@@ -1947,18 +1975,33 @@ func TestAgentDelete_BlockedByTasks(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeAgents, req)
 
-	assert.Equal(t, http.StatusConflict, w.Code)
-	assert.Contains(t, model.Agents, "claude")
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.EqualValues(t, 1, resp["tasks"])
+
+	// A task left pointing at a deleted agent would fail on every run.
+	var taskAgent string
+	require.NoError(t, store.UnsafeDBForTest().
+		QueryRow("SELECT agent_id FROM scheduled_tasks WHERE name = 't'").Scan(&taskAgent))
+	assert.Equal(t, "codebuddy", taskAgent)
+	assert.NotContains(t, model.Agents, "claude")
 }
 
-func TestAgentDelete_BlockedByGroupMembership(t *testing.T) {
+func TestAgentDelete_TakesOverGroupMembership(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 	model.DefaultAgentID = "codebuddy"
 
-	// An active (archived=0) group-member row for this agent.
+	// Host-mode group whose host member is the agent being deleted. The group row
+	// mirrors the host's identity, so it must be re-derived after the takeover —
+	// otherwise the group keeps naming a deleted agent and loses its icon/name.
 	_, err := store.UnsafeDBForTest().Exec(
-		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, group_id, archived)
-		 VALUES ('m1', 1, 'claude', 'Claude', 'claude', 'group_member', 'g1', 0)`)
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, context_state, archived)
+		 VALUES ('g1', 1, 'claude', 'group', 'claude', 'group', '{"group_mode":"host","host_member_id":"m1"}', 0)`)
+	require.NoError(t, err)
+	_, err = store.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id, archived)
+		 VALUES ('m1', 1, 'claude', '', 'Claude', 'claude', 'group_member', 'g1', 0)`)
 	require.NoError(t, err)
 
 	body := map[string]any{"id": "claude"}
@@ -1966,14 +2009,59 @@ func TestAgentDelete_BlockedByGroupMembership(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeAgents, req)
 
-	assert.Equal(t, http.StatusConflict, w.Code)
-	assert.Contains(t, model.Agents, "claude")
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var memberAgent, memberName, groupAgent, groupBackend string
+	require.NoError(t, store.UnsafeDBForTest().
+		QueryRow("SELECT agent_id, agent_name FROM chat_sessions WHERE id = 'm1'").
+		Scan(&memberAgent, &memberName))
+	assert.Equal(t, "codebuddy", memberAgent)
+	// The instance keeps its name: renaming it would rewrite the group's
+	// attribution and could collide with an existing instance of the replacement.
+	assert.Equal(t, "Claude", memberName)
+
+	require.NoError(t, store.UnsafeDBForTest().
+		QueryRow("SELECT agent_id, backend FROM chat_sessions WHERE id = 'g1'").
+		Scan(&groupAgent, &groupBackend))
+	assert.Equal(t, "codebuddy", groupAgent)
+	assert.Equal(t, "codebuddy", groupBackend)
 }
 
-// A scheduled task's execution sessions must NOT count as "sessions" — deleting
-// the task only ARCHIVES them, so counting them would make the session count
-// impossible to clear. Only the task itself blocks deletion.
-func TestAgentDelete_ScheduledSessionsDoNotCountAsSessions(t *testing.T) {
+// A running turn is the ONE refusal: rewriting a live session's identity would
+// strand its executor on a half-swapped row.
+func TestAgentDelete_BlockedByRunningSession(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+	model.DefaultAgentID = "codebuddy"
+
+	_, err := store.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, archived)
+		 VALUES ('s1', 1, 'claude', 'chat', 'claude', 'chat', 0)`)
+	require.NoError(t, err)
+
+	service.SetSessionRunning("s1", true, true)
+	defer service.SetSessionRunning("s1", false, true)
+
+	body := map[string]any{"id": "claude"}
+	req := newRequest(t, http.MethodDelete, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "AgentHasRunningSessions", resp["msgKey"])
+	// Not deleted, and the row is untouched.
+	assert.Contains(t, model.Agents, "claude")
+	var agentID string
+	require.NoError(t, store.UnsafeDBForTest().
+		QueryRow("SELECT agent_id FROM chat_sessions WHERE id = 's1'").Scan(&agentID))
+	assert.Equal(t, "claude", agentID)
+}
+
+// Scheduled task execution sessions are conversations too: they move with the
+// rest (an archived one is invisible, but a dangling agent_id there would show
+// the wrong agent if the user ever opens it).
+func TestAgentDelete_TakesOverScheduledSessions(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 	model.DefaultAgentID = "codebuddy"
 
@@ -1987,13 +2075,18 @@ func TestAgentDelete_ScheduledSessionsDoNotCountAsSessions(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeAgents, req)
 
-	// No interactive session / task / membership → deletion succeeds.
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.NotContains(t, model.Agents, "claude")
+
+	var agentID string
+	require.NoError(t, store.UnsafeDBForTest().
+		QueryRow("SELECT agent_id FROM chat_sessions WHERE id = 'exec1'").Scan(&agentID))
+	assert.Equal(t, "codebuddy", agentID)
 }
 
-// An archived (left) group member row must not block deletion.
-func TestAgentDelete_ArchivedGroupMemberDoesNotBlock(t *testing.T) {
+// An archived (left) group member row no longer blocks anything; it is rebound
+// like every other row.
+func TestAgentDelete_ArchivedGroupMemberIsTakenOver(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 	model.DefaultAgentID = "codebuddy"
 
@@ -2008,6 +2101,11 @@ func TestAgentDelete_ArchivedGroupMemberDoesNotBlock(t *testing.T) {
 	w := callHandler(ServeAgents, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	var agentID string
+	require.NoError(t, store.UnsafeDBForTest().
+		QueryRow("SELECT agent_id FROM chat_sessions WHERE id = 'm1'").Scan(&agentID))
+	assert.Equal(t, "codebuddy", agentID)
 }
 
 // ── PATCH disabled ──

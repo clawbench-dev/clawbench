@@ -33,10 +33,10 @@
       <div v-else-if="login.message" class="wechat-login__hint">{{ login.message }}</div>
 
       <div class="wechat-login__actions">
-        <button class="fbtn" :disabled="busy" @click="cancelLogin">
+        <button type="button" class="fbtn" :disabled="busy" @click="cancelLogin">
           {{ t('settings.items.wechatCancel') }}
         </button>
-        <button v-if="isTerminal" class="fbtn fbtn-primary" :disabled="busy" @click="startLogin">
+        <button type="button" v-if="isTerminal" class="fbtn fbtn-primary" :disabled="busy" @click="startLogin">
           {{ t('settings.items.wechatRetry') }}
         </button>
       </div>
@@ -55,12 +55,12 @@
       <div v-if="lastError" class="wechat-login__error">{{ lastError }}</div>
       <div class="wechat-login__hint">{{ t('settings.items.wechatConnectionExpiredHint') }}</div>
       <div class="wechat-login__actions">
-        <button class="fbtn fbtn-primary" :disabled="busy" @click="startLogin">
+        <button type="button" class="fbtn fbtn-primary" :disabled="busy" @click="startLogin">
           <LoadingIndicator v-if="busy" size="sm" inline class="wechat-login__spin" />
           <QrCode v-else :size="13" />
           {{ t('settings.items.wechatRelogin') }}
         </button>
-        <button class="fbtn" :disabled="busy" @click="logout">
+        <button type="button" class="fbtn" :disabled="busy" @click="logout">
           {{ t('settings.items.wechatLogout') }}
         </button>
       </div>
@@ -77,12 +77,12 @@
       </div>
       <div v-if="botId" class="wechat-login__meta">{{ t('settings.items.wechatBotId') }}: {{ botId }}</div>
       <div class="wechat-login__actions">
-        <button class="fbtn" :disabled="busy" @click="logout">
+        <button type="button" class="fbtn" :disabled="busy" @click="logout">
           <LoadingIndicator v-if="busy" size="sm" inline class="wechat-login__spin" />
           <LogOut v-else :size="13" />
           {{ t('settings.items.wechatLogout') }}
         </button>
-        <button class="fbtn" :disabled="busy" @click="startLogin">
+        <button type="button" class="fbtn" :disabled="busy" @click="startLogin">
           {{ t('settings.items.wechatRelogin') }}
         </button>
       </div>
@@ -92,7 +92,7 @@
     <div v-else class="wechat-login__card">
       <div class="wechat-login__hint">{{ t('settings.items.wechatNotLoggedIn') }}</div>
       <div class="wechat-login__actions">
-        <button class="fbtn fbtn-primary" :disabled="busy" @click="startLogin">
+        <button type="button" class="fbtn fbtn-primary" :disabled="busy" @click="startLogin">
           <LoadingIndicator v-if="busy" size="sm" inline class="wechat-login__spin" />
           <QrCode v-else :size="13" />
           {{ t('settings.items.wechatScanLogin') }}
@@ -101,6 +101,9 @@
     </div>
 
     <div v-if="error" class="wechat-login__error">{{ error }}</div>
+    <div v-else-if="statusFailed" class="wechat-login__error">
+      {{ t('settings.items.wechatStatusFailed') }}
+    </div>
 
     <!-- Account risk: this is an unofficial protocol surface. Stated plainly
          once, without a confirmation dialog (it would fire on every visit). -->
@@ -155,6 +158,8 @@ const login = ref<LoginView | null>(null)
 const qrDataUrl = ref('')
 const busy = ref(false)
 const error = ref('')
+/** True when the status endpoint itself is unreachable (distinct from a login error). */
+const statusFailed = ref(false)
 
 /** Stops every loop and the in-flight request handling once the panel is gone. */
 let cancelled = false
@@ -235,9 +240,13 @@ async function loadStatus(): Promise<boolean> {
     status.value = await apiGet<StatusView>('/api/push/wechat/status', {
       timeoutMs: REQUEST_TIMEOUT_MS,
     })
+    statusFailed.value = false
     return true
   } catch (e) {
     appLog.w(TAG, 'status load failed', e)
+    // Silence here would render the "not logged in" card, which reads as
+    // "configure the bot" when the truth is "the server did not answer".
+    statusFailed.value = true
     return false
   }
 }

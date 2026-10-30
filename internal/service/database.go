@@ -1382,6 +1382,27 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add agent_takeover_from column — the DISPLAY NAME snapshot of the
+	// agent this session was taken over FROM when that agent was deleted (see
+	// DeleteAgentWithTakeover). It is not a display-only field: BuildChatRequest
+	// uses it (together with an empty external_session_id) to force a FRESH
+	// native session on the first turn after the swap. Without that, CLI backends
+	// whose resume fallback is "--continue" (deepseek/codewhale, pi) would attach
+	// the new agent to whatever session that CLI last ran in the working
+	// directory — an unrelated transcript, silently.
+	//
+	// Empty means "never taken over". It stays set after the new agent captures
+	// its own session id, so the same flag that drives the turn branch also
+	// drives the "已接管" badge; the ext id alone decides whether the rebuild is
+	// still pending.
+	var hasAgentTakeoverFrom int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='agent_takeover_from'").Scan(&hasAgentTakeoverFrom)
+	if hasAgentTakeoverFrom == 0 {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN agent_takeover_from TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add agent_takeover_from column: %w", err)
+		}
+	}
+
 	// Migrate: add compacted column — set when the agent compacts the session's
 	// context (auto or user-triggered /compact). Compaction rewrites the
 	// conversation into a summary, so the injected system prompt (tool rules,

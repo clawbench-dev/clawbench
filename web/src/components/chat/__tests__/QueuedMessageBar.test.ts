@@ -590,6 +590,63 @@ describe('QueuedMessageBar (merge footer)', () => {
   })
 })
 
+describe('QueuedMessageBar (per-row edit action)', () => {
+  beforeEach(() => resetQueuesForTest())
+
+  function mountBar(props: Record<string, unknown>) {
+    return mount(QueuedMessageBar, {
+      props: { messages: [], midTurnSupported: true, busy: '', ...props },
+      global: { plugins: [i18n] },
+    })
+  }
+
+  const two = [
+    { queueId: 'q1', text: 'first', files: [], createdAt: '' },
+    { queueId: 'q2', text: 'second', files: [], createdAt: '' },
+  ]
+
+  it('offers an edit button on every expanded row', async () => {
+    const wrapper = mountBar({ messages: two })
+    await wrapper.find('.queued-bar-header').trigger('click')
+    const rows = wrapper.findAll('.queued-bar-item')
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      expect(row.find('[data-action="queue-edit"]').exists()).toBe(true)
+    }
+  })
+
+  it('emits edit with the row queueId', async () => {
+    const wrapper = mountBar({ messages: two })
+    await wrapper.find('.queued-bar-header').trigger('click')
+    const rows = wrapper.findAll('.queued-bar-item')
+    await rows[1].find('[data-action="queue-edit"]').trigger('click')
+    expect(wrapper.emitted('edit')).toHaveLength(1)
+    expect(wrapper.emitted('edit')![0]).toEqual(['q2'])
+  })
+
+  it('is disabled while that row has a request in flight', async () => {
+    const wrapper = mountBar({ messages: two, busy: 'q2' })
+    await wrapper.find('.queued-bar-header').trigger('click')
+    const rows = wrapper.findAll('.queued-bar-item')
+    expect(rows[0].find('[data-action="queue-edit"]').attributes('disabled')).toBeUndefined()
+    expect(rows[1].find('[data-action="queue-edit"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('is NOT offered while collapsed', () => {
+    // The collapsed banner has exactly one action (the next message out). Adding
+    // a second control there would crowd the row and leave the target ambiguous.
+    const wrapper = mountBar({ messages: two })
+    expect(wrapper.find('[data-action="queue-edit"]').exists()).toBe(false)
+  })
+
+  it('keeps edit out of the collapsed banner but inside the per-row cluster', () => {
+    const src = readFileSync(resolve(__dirname, '../QueuedMessageBar.vue'), 'utf8')
+    const bannerClose = src.indexOf('</div>', src.indexOf('class="queued-bar-banner"'))
+    const editIdx = src.indexOf('data-action="queue-edit"')
+    expect(editIdx).toBeGreaterThan(bannerClose)
+  })
+})
+
 /**
  * Type scale contract. The queue card is a CONTENT card, so its primary text
  * must use the same scale as the execution-plan chip (.plan-chip__text,
