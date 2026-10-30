@@ -3878,6 +3878,8 @@ export default {
       copy: '复制纪要',
       download: '下载 .md',
       fileName: '会议纪要',
+      savedTo: '已保存到项目：',
+      copyPath: '复制路径',
     },
   },
   shareAddress: {

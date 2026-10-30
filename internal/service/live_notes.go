@@ -17,6 +17,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -60,6 +62,7 @@ CREATE TABLE IF NOT EXISTS live_notes (
 	status TEXT NOT NULL DEFAULT 'idle',
 	minutes TEXT NOT NULL DEFAULT '',
 	error TEXT NOT NULL DEFAULT '',
+	file_path TEXT NOT NULL DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -96,6 +99,9 @@ type LiveNote struct {
 	Status  string `json:"status"`
 	Minutes string `json:"minutes"`
 	Error   string `json:"error"`
+	// FilePath is the Markdown file the minutes were written to, inside the
+	// project. Empty when the project directory was unavailable.
+	FilePath string `json:"filePath"`
 }
 
 // AppendLiveNoteSegment stores one transcribed segment. It also makes sure the
@@ -172,8 +178,8 @@ func ListLiveNoteSegments(token string, sinceID int64) ([]LiveNoteSegment, error
 func GetLiveNote(token string) (LiveNote, bool, error) {
 	var n LiveNote
 	err := store.ReadDB().QueryRow(
-		`SELECT token, title, status, minutes, error FROM live_notes WHERE token = ?`, token,
-	).Scan(&n.Token, &n.Title, &n.Status, &n.Minutes, &n.Error)
+		`SELECT token, title, status, minutes, error, file_path FROM live_notes WHERE token = ?`, token,
+	).Scan(&n.Token, &n.Title, &n.Status, &n.Minutes, &n.Error, &n.FilePath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return LiveNote{}, false, nil
 	}
@@ -198,17 +204,18 @@ func LiveNoteProjectID(token string) (int64, bool, error) {
 }
 
 // SetLiveNoteMinutes records the minutes status/output for a share.
-func SetLiveNoteMinutes(token string, projectID int64, title, status, minutes, errMsg string) error {
+func SetLiveNoteMinutes(token string, projectID int64, title, status, minutes, errMsg, filePath string) error {
 	_, err := store.WriteExec(
-		`INSERT INTO live_notes (token, project_id, title, status, minutes, error, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		`INSERT INTO live_notes (token, project_id, title, status, minutes, error, file_path, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		 ON CONFLICT(token) DO UPDATE SET
 		   status = excluded.status,
 		   minutes = excluded.minutes,
 		   error = excluded.error,
+		   file_path = excluded.file_path,
 		   title = CASE WHEN excluded.title <> '' THEN excluded.title ELSE live_notes.title END,
 		   updated_at = CURRENT_TIMESTAMP`,
-		token, projectID, title, status, minutes, errMsg,
+		token, projectID, title, status, minutes, errMsg, filePath,
 	)
 	if err != nil {
 		return fmt.Errorf("live notes: set minutes: %w", err)
@@ -475,4 +482,93 @@ func splitRunes(s string, n int) []string {
 		runes = runes[cut:]
 	}
 	return out
+}
+
+// ── Markdown output ─────────────────────────────────────────────────────────
+
+// LiveNotesDir is where minutes are written inside a project.
+//
+// Dot-prefixed so it does not clutter the tree, and under `.clawbench/` because
+// that is already the convention for generated artifacts in this repo.
+const LiveNotesDir = ".clawbench/notes"
+
+// liveNotesNameMaxRunes bounds the title part of the file name. Long titles are
+// unwieldy in a file manager and can exceed the platform's path limit once the
+// directory is prepended.
+const liveNotesNameMaxRunes = 40
+
+// WriteLiveNotesFile saves one share's minutes as Markdown inside the project,
+// with the full transcript appended.
+//
+// The database row is a cache with a retention window; this file is the copy
+// the user owns — it survives cleanup, can be edited, and can be committed. The
+// appendix matters: it is the complete transcript, which is the part that must
+// never be lost.
+//
+// The name is derived from the meeting start, so regenerating the minutes of
+// the same share overwrites the same file instead of piling up copies.
+func WriteLiveNotesFile(projectPath, title, minutes string, segments []LiveNoteSegment, startedAt time.Time) (string, error) {
+	if strings.TrimSpace(projectPath) == "" {
+		return "", errors.New("live notes: no project path")
+	}
+	if strings.TrimSpace(minutes) == "" {
+		return "", ErrLiveNotesEmpty
+	}
+	dir := filepath.Join(projectPath, filepath.FromSlash(LiveNotesDir))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("live notes: create notes dir: %w", err)
+	}
+
+	name := startedAt.Format("2006-01-02-1504")
+	if slug := liveNotesFileSlug(title); slug != "" {
+		name += "-" + slug
+	}
+	path := filepath.Join(dir, name+".md")
+
+	var b strings.Builder
+	heading := startedAt.Format("2006-01-02 15:04")
+	if t := strings.TrimSpace(title); t != "" {
+		fmt.Fprintf(&b, "# %s · %s\n\n", t, heading)
+	} else {
+		fmt.Fprintf(&b, "# 会议纪要 · %s\n\n", heading)
+	}
+	b.WriteString(strings.TrimSpace(minutes))
+	b.WriteString("\n")
+
+	if transcript := BuildLiveNotesTranscript(segments); transcript != "" {
+		b.WriteString("\n---\n\n## 附：完整转写\n\n")
+		b.WriteString(transcript)
+		b.WriteString("\n")
+	}
+
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return "", fmt.Errorf("live notes: write minutes file: %w", err)
+	}
+	return path, nil
+}
+
+// liveNotesFileSlug turns a share title into a safe single path element.
+// Characters that are illegal on Windows are dropped rather than replaced, and
+// the result is capped so the directory + name stays well inside path limits.
+func liveNotesFileSlug(title string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(title) {
+		switch r {
+		case '/', '\\', ':', '*', '?', '"', '<', '>', '|', 0:
+			continue
+		case '\n', '\r', '\t':
+			b.WriteRune(' ')
+			continue
+		}
+		if r < 0x20 {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	slug := strings.Join(strings.Fields(b.String()), " ")
+	slug = strings.Trim(slug, ". ")
+	if utf8.RuneCountInString(slug) > liveNotesNameMaxRunes {
+		slug = string([]rune(slug)[:liveNotesNameMaxRunes])
+	}
+	return slug
 }

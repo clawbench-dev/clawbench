@@ -3883,6 +3883,8 @@ export default {
       copy: 'Copy minutes',
       download: 'Download .md',
       fileName: 'meeting-minutes',
+      savedTo: 'Saved to project:',
+      copyPath: 'Copy path',
     },
   },
   shareAddress: {

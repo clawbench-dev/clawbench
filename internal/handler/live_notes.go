@@ -66,6 +66,9 @@ type liveNotesMinutesPayload struct {
 	Status   string `json:"status"`
 	Markdown string `json:"markdown,omitempty"`
 	Error    string `json:"error,omitempty"`
+	// FilePath is publisher-only: the Markdown copy written inside the project.
+	// Never sent to viewers — a server path is not theirs to read.
+	FilePath string `json:"filePath,omitempty"`
 }
 
 // ServeLiveShareNotes handles GET /api/live-share/notes?token=&since=
@@ -108,6 +111,7 @@ func ServeLiveShareNotes(w http.ResponseWriter, r *http.Request) {
 			Status:   note.Status,
 			Markdown: note.Minutes,
 			Error:    note.Error,
+			FilePath: note.FilePath,
 		},
 	})
 }
@@ -237,7 +241,12 @@ func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 	// Idempotent unless explicitly asked to regenerate: a double-click on
 	// "生成纪要" must not queue two summarisation runs over the same transcript.
 	if !body.Regenerate && (note.Status == service.LiveNotesStatusGenerating || note.Status == service.LiveNotesStatusReady) {
-		writeJSON(w, http.StatusOK, liveNotesMinutesPayload{Status: note.Status, Markdown: note.Minutes, Error: note.Error})
+		writeJSON(w, http.StatusOK, liveNotesMinutesPayload{
+			Status:   note.Status,
+			Markdown: note.Minutes,
+			Error:    note.Error,
+			FilePath: note.FilePath,
+		})
 		return
 	}
 
@@ -253,33 +262,66 @@ func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	title := truncateRunes(strings.TrimSpace(body.Title), 80)
-	if err := service.SetLiveNoteMinutes(body.Token, projectID, title, service.LiveNotesStatusGenerating, "", ""); err != nil {
+	if err := service.SetLiveNoteMinutes(body.Token, projectID, title, service.LiveNotesStatusGenerating, "", "", ""); err != nil {
 		slog.Error("live notes: mark generating failed", "err", err)
 		model.WriteError(w, model.Internal(err))
 		return
 	}
-	go generateLiveNotesMinutes(body.Token, projectID, title, segments)
+	go generateLiveNotesMinutes(body.Token, projectID, projectPath, title, segments)
 
 	writeJSON(w, http.StatusOK, liveNotesMinutesPayload{Status: service.LiveNotesStatusGenerating})
 }
 
 // generateLiveNotesMinutes is the detached minutes job. It uses a background
 // context because the HTTP request that started it has already returned.
-func generateLiveNotesMinutes(token string, projectID int64, title string, segments []service.LiveNoteSegment) {
+//
+// The minutes are both stored (with the 7-day retention) and written into the
+// project as Markdown. The file is the durable copy: it survives cleanup, can be
+// edited, and the user can commit it.
+func generateLiveNotesMinutes(token string, projectID int64, projectPath, title string, segments []service.LiveNoteSegment) {
 	ctx, cancel := context.WithTimeout(context.Background(), liveNoteMinutesTimeout)
 	defer cancel()
 
 	minutes, err := service.GenerateLiveNotesMinutes(ctx, title, segments)
 	if err != nil {
 		slog.Warn("live notes: minutes generation failed", "err", err)
-		if serr := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusFailed, "", err.Error()); serr != nil {
+		if serr := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusFailed, "", err.Error(), ""); serr != nil {
 			slog.Error("live notes: persist minutes failure failed", "err", serr)
 		}
 		return
 	}
-	if err := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusReady, minutes, ""); err != nil {
+
+	// A failed write must not lose the minutes: they are still stored below, and
+	// the UI simply shows no file path.
+	filePath := ""
+	written, werr := service.WriteLiveNotesFile(projectPath, title, minutes, segments, liveNotesStartTime(segments))
+	if werr != nil {
+		slog.Warn("live notes: write minutes file failed", "err", werr)
+	} else {
+		filePath = written
+	}
+
+	if err := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusReady, minutes, "", filePath); err != nil {
 		slog.Error("live notes: persist minutes failed", "err", err)
 	}
+}
+
+// liveNotesStartTime is when the meeting started: the earliest segment's
+// timestamp. Used for the file name so regenerating overwrites the same file.
+func liveNotesStartTime(segments []service.LiveNoteSegment) time.Time {
+	var earliest int64
+	for _, s := range segments {
+		if s.StartedAt <= 0 {
+			continue
+		}
+		if earliest == 0 || s.StartedAt < earliest {
+			earliest = s.StartedAt
+		}
+	}
+	if earliest == 0 {
+		return time.Now()
+	}
+	return time.UnixMilli(earliest)
 }
 
 // ServeShareLiveNotes handles GET /api/share/{token}/notes (PUBLIC: the share
@@ -319,6 +361,8 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 			Status:   note.Status,
 			Markdown: note.Minutes,
 			Error:    note.Error,
+			// FilePath deliberately omitted: viewers get the text, not a path
+			// into the publisher's project.
 		},
 	})
 }

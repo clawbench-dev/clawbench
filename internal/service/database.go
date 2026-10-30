@@ -950,6 +950,22 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := store.WriteExec(LiveNotesDDL); err != nil {
 		return fmt.Errorf("failed to create live_notes tables: %w", err)
 	}
+	// Migrate: live_notes gained file_path (the Markdown copy written into the
+	// project). CREATE TABLE IF NOT EXISTS is a no-op on an existing table, so a
+	// database that ran the previous build only gets the column from here.
+	{
+		var hasFilePath int
+		_ = store.ReadDB().QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info('live_notes') WHERE name='file_path'",
+		).Scan(&hasFilePath)
+		if hasFilePath == 0 {
+			if _, err := store.WriteExec(
+				"ALTER TABLE live_notes ADD COLUMN file_path TEXT NOT NULL DEFAULT ''",
+			); err != nil {
+				return fmt.Errorf("failed to add live_notes.file_path column: %w", err)
+			}
+		}
+	}
 	// Migrate: session shares no longer freeze a JSON snapshot. The DDL above is
 	// a no-op on an existing database, so the probe has to run AFTER it — the
 	// table is guaranteed to exist by this point, and the rebuild below is the

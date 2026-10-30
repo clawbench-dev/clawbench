@@ -93,6 +93,18 @@
         ></div>
         <div v-else class="live-dialog-hint">{{ t('liveShare.notes.empty') }}</div>
 
+        <!-- Where the durable copy lives. The database row expires; this file
+             does not, and the user can edit or commit it. -->
+        <div v-if="notes.minutesFile.value" class="live-notes-file">
+          <span class="live-notes-file-label">{{ t('liveShare.notes.savedTo') }}</span>
+          <span class="live-notes-file-path" :title="notes.minutesFile.value">
+            {{ notes.minutesFile.value }}
+          </span>
+          <button class="live-btn live-btn--sm" type="button" @click="copyPath">
+            {{ t('liveShare.notes.copyPath') }}
+          </button>
+        </div>
+
         <!-- Never present a partial transcript as a complete meeting. -->
         <div v-if="notes.lost.value > 0" class="live-dialog-warn">
           {{ t('liveShare.notes.lostSegments', { n: notes.lost.value }) }}
@@ -394,6 +406,15 @@ async function copyMinutes(): Promise<void> {
     toast.show(t('common.copied'), { type: 'success', icon: 'copy' })
   } catch (e) {
     appLog.w('LiveShareDialog', 'copy minutes failed', e)
+  }
+}
+
+async function copyPath(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(notes.minutesFile.value)
+    toast.show(t('common.copied'), { type: 'success', icon: 'copy' })
+  } catch (e) {
+    appLog.w('LiveShareDialog', 'copy path failed', e)
   }
 }
 
@@ -741,6 +762,36 @@ watch(
 
 /* The report is the tallest thing this dialog ever shows; cap it and scroll
    rather than growing the card past the viewport. */
+/* The saved path is long and machine-generated: wrap it instead of widening the
+   dialog, and keep it in a monospace face so separators are readable. */
+.live-notes-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 6px);
+  min-width: 0;
+  padding: var(--space-3, 6px) var(--space-5, 10px);
+  border-radius: var(--radius-md, 6px);
+  background: var(--bg-tertiary, #f6f8fa);
+  font-size: var(--font-size-xs, 11px);
+}
+
+.live-notes-file-label {
+  flex: 0 0 auto;
+  color: var(--text-muted, #656d76);
+}
+
+.live-notes-file-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--text-primary, #1f2328);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
 .live-notes-minutes-body {
   max-height: calc(360 * var(--dp));
   overflow-y: auto;

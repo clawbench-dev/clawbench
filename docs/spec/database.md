@@ -419,6 +419,7 @@ UNIQUE：`(session_id, tag_id)`
 | status | TEXT | NOT NULL | `idle` | `idle` / `generating` / `ready` / `failed` |
 | minutes | TEXT | NOT NULL | `''` | 生成的 Markdown 纪要 |
 | error | TEXT | NOT NULL | `''` | 失败原因（仅 `failed`） |
+| file_path | TEXT | NOT NULL | `''` | 纪要 Markdown 在项目内的落盘路径（`<项目>/.clawbench/notes/…`）；项目不可用时为空 |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | |
 | updated_at | DATETIME | | CURRENT_TIMESTAMP | 保留期判定依据 |
 

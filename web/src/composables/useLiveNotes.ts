@@ -36,6 +36,8 @@ export { groupNoteSegments, mergeNoteSegments }
 const phase = ref<NotesPhase>('idle')
 const segments = ref<LiveNoteSegment[]>([])
 const minutes = ref('')
+/** Path of the Markdown copy written inside the project (empty until saved). */
+const minutesFile = ref('')
 const minutesPhase = ref<MinutesPhase>('idle')
 const error = ref('')
 /** Segments recorded but not yet transcribed (shown while finalizing). */
@@ -174,9 +176,15 @@ export function useLiveNotes() {
         body: JSON.stringify({ token: sessionToken, title: sessionTitle, regenerate }),
       })
       if (!resp.ok) throw new Error(`minutes request failed: ${resp.status}`)
-      const data = (await resp.json()) as { status?: MinutesPhase; markdown?: string; error?: string }
+      const data = (await resp.json()) as {
+        status?: MinutesPhase
+        markdown?: string
+        error?: string
+        filePath?: string
+      }
       if (data.status === 'ready' && data.markdown) {
         minutes.value = data.markdown
+        minutesFile.value = data.filePath ?? ''
         minutesPhase.value = 'ready'
         return
       }
@@ -211,7 +219,7 @@ export function useLiveNotes() {
         if (!resp.ok) throw new Error(`notes poll failed: ${resp.status}`)
         const data = (await resp.json()) as {
           segments?: LiveNoteSegment[]
-          minutes?: { status?: MinutesPhase; markdown?: string; error?: string }
+          minutes?: { status?: MinutesPhase; markdown?: string; error?: string; filePath?: string }
         }
         if (data.segments?.length) {
           segments.value = mergeNoteSegments(segments.value, data.segments)
@@ -220,6 +228,7 @@ export function useLiveNotes() {
         minutesPhase.value = st
         if (st === 'ready') {
           minutes.value = data.minutes?.markdown ?? ''
+          minutesFile.value = data.minutes?.filePath ?? ''
           return
         }
         if (st === 'failed') {
@@ -245,7 +254,7 @@ export function useLiveNotes() {
       if (!resp.ok) return
       const data = (await resp.json()) as {
         segments?: LiveNoteSegment[]
-        minutes?: { status?: MinutesPhase; markdown?: string; error?: string }
+        minutes?: { status?: MinutesPhase; markdown?: string; error?: string; filePath?: string }
       }
       if (data.segments?.length) {
         segments.value = mergeNoteSegments(segments.value, data.segments)
@@ -253,6 +262,7 @@ export function useLiveNotes() {
       if (data.minutes?.status) {
         minutesPhase.value = data.minutes.status
         minutes.value = data.minutes.markdown ?? minutes.value
+        minutesFile.value = data.minutes.filePath ?? minutesFile.value
       }
     } catch (e) {
       appLog.d(TAG, 'refresh failed', e)
@@ -283,6 +293,7 @@ export function useLiveNotes() {
     phase.value = 'idle'
     segments.value = []
     minutes.value = ''
+    minutesFile.value = ''
     minutesPhase.value = 'idle'
     error.value = ''
     pending.value = 0
@@ -294,6 +305,7 @@ export function useLiveNotes() {
     phase,
     segments,
     minutes,
+    minutesFile,
     minutesPhase,
     error,
     pending,

@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"database/sql"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -152,7 +154,7 @@ func TestLiveNote_ProjectScopedLookupAndMinutesUpsert(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, pid, gotPID)
 
-	require.NoError(t, SetLiveNoteMinutes("tok", pid, "标题", LiveNotesStatusGenerating, "", ""))
+	require.NoError(t, SetLiveNoteMinutes("tok", pid, "标题", LiveNotesStatusGenerating, "", "", ""))
 	note, ok, err := GetLiveNote("tok")
 	require.NoError(t, err)
 	require.True(t, ok)
@@ -160,12 +162,13 @@ func TestLiveNote_ProjectScopedLookupAndMinutesUpsert(t *testing.T) {
 	assert.Equal(t, "标题", note.Title)
 
 	// Ready overwrites the status and stores the markdown.
-	require.NoError(t, SetLiveNoteMinutes("tok", pid, "", LiveNotesStatusReady, "## 概要", ""))
+	require.NoError(t, SetLiveNoteMinutes("tok", pid, "", LiveNotesStatusReady, "## 概要", "", "/p/notes.md"))
 	note, _, err = GetLiveNote("tok")
 	require.NoError(t, err)
 	assert.Equal(t, LiveNotesStatusReady, note.Status)
 	assert.Equal(t, "## 概要", note.Minutes)
 	assert.Equal(t, "标题", note.Title, "an empty title must not clear the stored one")
+	assert.Equal(t, "/p/notes.md", note.FilePath)
 }
 
 func TestCleanupLiveNotes_RemovesSegmentsWithTheShare(t *testing.T) {
@@ -200,4 +203,58 @@ func TestSplitRunes_PrefersLineBoundary(t *testing.T) {
 
 func TestSplitRunes_ShortTextIsOneChunk(t *testing.T) {
 	assert.Equal(t, []string{"abc"}, splitRunes("abc", 100))
+}
+
+func TestWriteLiveNotesFile_WritesMinutesAndTranscript(t *testing.T) {
+	project := t.TempDir()
+	started := time.Date(2026, 10, 30, 14, 30, 0, 0, time.Local)
+	segments := []LiveNoteSegment{
+		seg(1, "system", "系统声音", started.UnixMilli(), "今天讨论发布计划"),
+		seg(2, "mic", "我", started.UnixMilli()+10_000, "先确认时间"),
+	}
+
+	path, err := WriteLiveNotesFile(project, "季度规划", "## 概要\n\n发布计划确认。", segments, started)
+	require.NoError(t, err)
+
+	assert.Equal(t, filepath.Join(project, ".clawbench", "notes", "2026-10-30-1430-季度规划.md"), path)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	text := string(body)
+
+	assert.Contains(t, text, "# 季度规划 · 2026-10-30 14:30")
+	assert.Contains(t, text, "## 概要")
+	assert.Contains(t, text, "## 附：完整转写", "the full transcript must be kept in the file")
+	assert.Contains(t, text, "[00:00] 系统声音：今天讨论发布计划")
+	assert.Contains(t, text, "[00:10] 我：先确认时间")
+}
+
+func TestWriteLiveNotesFile_SanitizesTitleAndOverwrites(t *testing.T) {
+	project := t.TempDir()
+	started := time.Date(2026, 10, 30, 9, 5, 0, 0, time.Local)
+	segs := []LiveNoteSegment{seg(1, "mic", "我", started.UnixMilli(), "内容")}
+
+	first, err := WriteLiveNotesFile(project, "a/b:c*d?e", "第一版", segs, started)
+	require.NoError(t, err)
+	assert.NotContains(t, filepath.Base(first), "/")
+	assert.NotContains(t, filepath.Base(first), ":")
+	assert.NotContains(t, filepath.Base(first), "*")
+	assert.Contains(t, filepath.Base(first), "abcde")
+
+	// Regenerating the same share overwrites instead of creating a second file.
+	second, err := WriteLiveNotesFile(project, "a/b:c*d?e", "第二版", segs, started)
+	require.NoError(t, err)
+	assert.Equal(t, first, second)
+
+	body, err := os.ReadFile(second)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "第二版")
+	assert.NotContains(t, string(body), "第一版")
+}
+
+func TestWriteLiveNotesFile_RequiresProjectAndMinutes(t *testing.T) {
+	_, err := WriteLiveNotesFile("", "t", "m", nil, time.Now())
+	assert.Error(t, err)
+
+	_, err = WriteLiveNotesFile(t.TempDir(), "t", "   ", nil, time.Now())
+	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
 }

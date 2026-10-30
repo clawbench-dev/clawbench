@@ -273,7 +273,7 @@ func TestServeLiveShareNotesMinutes_ReadyIsIdempotent(t *testing.T) {
 		Channel: "mic", StartedAt: 1, Text: "内容",
 	})
 	require.NoError(t, err)
-	require.NoError(t, service.SetLiveNoteMinutes(room.Token(), pid, "", service.LiveNotesStatusReady, "## 概要", ""))
+	require.NoError(t, service.SetLiveNoteMinutes(room.Token(), pid, "", service.LiveNotesStatusReady, "## 概要", "", ""))
 
 	w := httptest.NewRecorder()
 	ServeLiveShareNotesMinutes(w, liveReq(t, http.MethodPost, "/api/live-share/notes/minutes", project, map[string]any{"token": room.Token()}))

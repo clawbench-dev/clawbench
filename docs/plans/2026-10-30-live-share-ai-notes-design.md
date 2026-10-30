@@ -98,6 +98,7 @@ viewer:<id> ctx.createMediaStreamSource(remoteStream)    → dest → MediaRecor
 - `summarize.NewAISummarizer(model.ConfigInstance.AISummary)`，用 `AskAboutContext` 传自定义 system prompt（会议记录员），`PreserveMarkdown` 由 prompt 侧保证（不经过 TTS 管线，不会被剥格式）；
 - 转写 >6000 字时 **map-reduce**：分段提取要点 → 合并成纪要。整段塞进去要么超窗，要么被 provider 截断；
 - 异步执行（后台 goroutine + 5 分钟超时），`live_notes.status` 走 `idle → generating → ready|failed`，前端轮询；
+- 生成成功后写一份 Markdown 到 `<项目>/.clawbench/notes/<YYYY-MM-DD-HHmm>[-标题].md`（正文 + 完整转写附录）。数据库行有 7 天保留期，文件没有——它才是用户真正拥有的副本。文件名由会议开始时间决定，重新生成覆盖同一文件；
 - 幂等：`generating`/`ready` 时重复 POST 直接返回当前状态，双击不会跑两遍。
 
 ### 生命周期
