@@ -739,7 +739,6 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				Ctx:         ctx,
 				SessionID:   sessionID,
 				ProjectPath: projectPath,
-				BackendName: backendName,
 				RunTurn: func(prompt string) service.DrainResult {
 					retryChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false)
 					retryResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, retryChatReq, fileDir)

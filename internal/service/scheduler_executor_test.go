@@ -658,16 +658,27 @@ func TestScheduler_ExecuteTask_AutoContinuesCrashedTurn(t *testing.T) {
 		t.Errorf("execution rows = %d, want 1 (a retry must reuse the row)", execCount)
 	}
 
-	// The auto-sent continue must be a real user row in the transcript.
-	var continueCount int
+	// The resume must be announced as ONE role='system' row, mirroring the
+	// restart-resume worker. The prompt itself is never persisted, and no user
+	// bubble may be fabricated.
+	var noticeCount, userContinueCount int
+	if err := store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'system' AND content = ?",
+		sessionID, AutoContinueNotice(),
+	).Scan(&noticeCount); err != nil {
+		t.Fatalf("count continue notices: %v", err)
+	}
+	if noticeCount != 1 {
+		t.Errorf("continue notices = %d, want 1 persisted as a system message", noticeCount)
+	}
 	if err := store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'user' AND content = 'Continue'",
 		sessionID,
-	).Scan(&continueCount); err != nil {
-		t.Fatalf("count continue messages: %v", err)
+	).Scan(&userContinueCount); err != nil {
+		t.Fatalf("count user continue messages: %v", err)
 	}
-	if continueCount != 1 {
-		t.Errorf("continue messages = %d, want 1 persisted as a user message", continueCount)
+	if userContinueCount != 0 {
+		t.Errorf("user continue messages = %d, want 0 (the prompt must not be persisted)", userContinueCount)
 	}
 }
 

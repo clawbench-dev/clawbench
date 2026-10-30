@@ -107,7 +107,7 @@ flowchart TD
 - **硬删除而非归档**：与聊天会话不同，任务使用硬删除。任务定义是用户主动管理的配置项，删除意味着"我不再需要这个任务"
 - **调度器使用 robfig/cron**：标准库级调度器，可靠且久经考验。运行时执行记录存储在内存中，重启后从数据库恢复
 - **调度执行与聊天共用同一 turn 实现**：任务和交互式聊天共用同一套执行编排，通过 `RunConfig.Mode = ModeScheduled` 控制差异化行为（i18n 错误、是否 drain 事件通道等）。消除了 handler 和 scheduler 中的重复执行逻辑。调度侧需要自己持有取消/失败/崩溃分支，因此采用 start/finalize 两阶段 API 而非单入口
-- **异常终止的任务执行自动重试**：任务无人值守，一次因崩溃或后端报错而中断就永久失败代价很高，因此 scheduler 的 `executeTask` 是一个**重试循环**，而不是单次调用——执行行跨轮保持 `running`，重试经 `BuildChatRequest` 重建请求以 resume 同一上下文（不重建会话，保住已产出的上下文）。分类与续接消息构造复用 `internal/service/auto_continue.go`，与聊天路径同源；重试预算按用户消息独立计。手动取消（含「打断并重发」）永不重试，与聊天路径一致
+- **异常终止的任务执行自动重试**：任务无人值守，一次因崩溃或后端报错而中断就永久失败代价很高，因此 scheduler 的 `executeTask` 是一个**重试循环**，而不是单次调用——执行行跨轮保持 `running`，重试经 `BuildChatRequest` 重建请求以 resume 同一上下文（不重建会话，保住已产出的上下文）。分类与续接消息构造复用 `internal/service/auto_continue.go`，与聊天路径同源（续接只落一条 `role='system'` 提示，「继续」作为该轮 Prompt 注入、不落库）；重试预算按用户消息独立计。手动取消（含「打断并重发」）永不重试，与聊天路径一致
 - **AI 阶段取消：先盖章再发事件**：取消分支必须先把助手行 finalize（flush + 盖上 `cancelled:true` + `streaming=0`），再发 `task_update(cancelled)`。`task_update` 的响应预览与 `message_id` 是**从助手行回读**的，而预览查询只认 `streaming = 0` 的行——先发事件会让每次取消的通知/历史都拿到空预览与 0 消息 id，把一段被中断的回复描述得像正常结束。终态 `chat_stream cancelled` 仍在盖章**之前**发（它是前端关掉流式气泡的唯一信号，不能排在一次可能撞上 busy_timeout 的 DB 写之后）
 - **脚本阶段刻意不发 `running` 事件**：`running` 的 `task_update` 是**用户可见通知**（浏览器通知、钉钉/飞书的「任务已启动」），而本功能存在的意义正是消除「启动了却无结果」的噪音。因此脚本阶段只在运行态表里登记一个可取消的条目（合成 id，保留取消能力与执行历史可见性），不广播任何事件；该行通过 `GET /api/tasks/{id}` 的运行态返回给 UI 标注。跳过与取消由此天然静默，无需改动四条通知通道中的任何一条
 - **「运行中」只数 AI 阶段**：运行态条目带 `phase`（`script` | `ai`），`GetRunningCounts` 与列表接口的 `runningCount` 都只统计 `ai`。前端「运行中数量 1→0」的启发式是四条通知通道里唯一按计数判断的，脚本阶段不计入即可让它对跳过完全无感；而 `GetRunningExecutions` 返回全部阶段，执行历史因此仍能看到脚本行并可取消

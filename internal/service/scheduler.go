@@ -1308,8 +1308,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 				// task's terminal `done`. at.msgID is the placeholder row the
 				// finalize just wrote to (0 when the turn never opened one).
 				emitTurnFinalize(sessionID, at.msgID)
-				if _, err := PrepareAutoContinueMessage(sessionID, projectPath, backendName); err != nil {
-					slog.Error("task auto-continue: failed to persist continue message",
+				if _, err := PrepareAutoContinueNotice(sessionID, projectPath); err != nil {
+					slog.Error("task auto-continue: failed to persist continue notice",
 						slog.Int64("task_id", task.ID),
 						slog.String("session_id", sessionID),
 						slog.String("err", err.Error()))

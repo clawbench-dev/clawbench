@@ -263,6 +263,10 @@ RAGResetFailed: 索引重建失败
 RAGSegmenterUnavailable: "已拒绝重建：分词器不可用。此时重建会把已正确分词的文本替换为未切分文本，导致中文搜索失效 — 请重启服务后重试。"
 RAGRebuildAccepted: 重建已在后台启动
 AutoContinue: 继续
+# 异常终止自动续接时唯一落库的一行（role='system' 提示）。这句是给用户看的：
+# 说明发生了什么、系统做了什么；它**不是**发给智能体的指令（指令是
+# AutoContinue，只注入不落库）。
+AutoContinueNotice: '智能体执行异常中断，已自动续接。'
 # 服务重启后恢复被打断会话时唯一落库的一行（role='system' 提示）。这句是
 # 给用户看的：说明发生了什么、系统做了什么；它**不是**发给智能体的指令
 # （指令是 RestartResumePrompt，只注入不落库）。

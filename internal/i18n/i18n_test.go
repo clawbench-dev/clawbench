@@ -152,6 +152,9 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		// Auto-continue is rendered from a background goroutine (no request),
 		// so it is the one key most likely to be added on only one side.
 		"AutoContinue",
+		// The auto-continue system notice is the same no-request class: it is
+		// persisted from the resume hook, so a one-sided add ships a raw id.
+		"AutoContinueNotice",
 		// Restart-resume is the same no-request class: rendered from the resume
 		// worker, then persisted, so a one-sided add ships a raw message id.
 		// The instruction is a SEPARATE key (user-facing notice vs model prompt);

@@ -190,6 +190,24 @@ func TestAutoContinuePromptLocalized(t *testing.T) {
 	}
 }
 
+// The notice is the user-facing half and comes from its own key, so a
+// one-sided i18n add surfaces as the raw key in the transcript. Both languages
+// must resolve to a real translation.
+func TestAutoContinueNoticeLocalized(t *testing.T) {
+	original := model.Language
+	t.Cleanup(func() { model.Language = original })
+
+	for _, tc := range []struct{ lang, want string }{
+		{"zh", "智能体执行异常中断，已自动续接。"},
+		{"en", "The agent stopped unexpectedly — the session was resumed automatically."},
+	} {
+		model.Language = tc.lang
+		if got := AutoContinueNotice(); got != tc.want {
+			t.Errorf("AutoContinueNotice() with language %q = %q, want %q", tc.lang, got, tc.want)
+		}
+	}
+}
+
 // ── Runner factory ─────────────────────────────────────────────────────────
 //
 // The runner owns the gating and the cancel-aware delay shared by both
@@ -225,7 +243,6 @@ func TestAutoContinueRunner_Disabled(t *testing.T) {
 		Ctx:         context.Background(),
 		SessionID:   sessionID,
 		ProjectPath: "/test",
-		BackendName: "codebuddy",
 		RunTurn:     func(prompt string) DrainResult { called = true; return DrainResult{} },
 	})
 
@@ -252,7 +269,6 @@ func TestAutoContinueRunner_RespectsMaxRetries(t *testing.T) {
 		Ctx:         context.Background(),
 		SessionID:   sessionID,
 		ProjectPath: "/test",
-		BackendName: "codebuddy",
 		RunTurn: func(prompt string) DrainResult {
 			turns++
 			return DrainResult{AbnormalReason: abnormalEmpty}
@@ -295,7 +311,6 @@ func TestAutoContinueRunner_CancelledDuringDelay(t *testing.T) {
 		Ctx:         context.Background(),
 		SessionID:   sessionID,
 		ProjectPath: "/test",
-		BackendName: "codebuddy",
 		RunTurn:     func(prompt string) DrainResult { called = true; return DrainResult{} },
 	})
 
@@ -324,7 +339,6 @@ func TestAutoContinueRunner_AlreadyCancelledContext(t *testing.T) {
 		Ctx:         ctx,
 		SessionID:   sessionID,
 		ProjectPath: "/test",
-		BackendName: "codebuddy",
 		RunTurn:     func(prompt string) DrainResult { called = true; return DrainResult{} },
 	})
 
@@ -333,10 +347,11 @@ func TestAutoContinueRunner_AlreadyCancelledContext(t *testing.T) {
 	assert.False(t, called)
 }
 
-// The persisted message must be a real user row carrying the localized prompt.
-// It is written directly to chat_history (not queued), so the frontend renders
-// it inline exactly like a user typing the same text.
-func TestAutoContinueRunner_PersistsRealUserMessage(t *testing.T) {
+// The resume is announced with ONE role='system' row, mirroring the
+// restart-resume worker: the transcript must not gain a user bubble the user
+// never typed, and the agent's prompt must stay out of history. The prompt sent
+// to the turn is unchanged ("Continue").
+func TestAutoContinueRunner_PersistsSystemNotice(t *testing.T) {
 	setupDrainTest(t)
 	sessionID := "runner-persists"
 	setupDrainSession(t, sessionID)
@@ -351,12 +366,20 @@ func TestAutoContinueRunner_PersistsRealUserMessage(t *testing.T) {
 		model.ChatAutoContinueMaxRetries = prevMax
 	})
 
+	origEmit := emitGroupSystemMessage
+	var emittedIDs []int64
+	var emittedTexts []string
+	emitGroupSystemMessage = func(_ string, msgID int64, text string) {
+		emittedIDs = append(emittedIDs, msgID)
+		emittedTexts = append(emittedTexts, text)
+	}
+	t.Cleanup(func() { emitGroupSystemMessage = origEmit })
+
 	var gotPrompt string
 	runner := NewAutoContinueRunner(AutoContinueRunnerConfig{
 		Ctx:         context.Background(),
 		SessionID:   sessionID,
 		ProjectPath: "/test",
-		BackendName: "codebuddy",
 		RunTurn: func(prompt string) DrainResult {
 			gotPrompt = prompt
 			return DrainResult{}
@@ -364,7 +387,7 @@ func TestAutoContinueRunner_PersistsRealUserMessage(t *testing.T) {
 	})
 
 	require.True(t, mustRun(t, runner, 1))
-	assert.Equal(t, "Continue", gotPrompt)
+	assert.Equal(t, "Continue", gotPrompt, "the prompt sent to the agent must not change")
 
 	var role, content string
 	err := store.ReadDB().QueryRow(
@@ -372,12 +395,26 @@ func TestAutoContinueRunner_PersistsRealUserMessage(t *testing.T) {
 		sessionID,
 	).Scan(&role, &content)
 	require.NoError(t, err)
-	assert.Equal(t, "user", role, "the continue message must be a real user message")
-	assert.Equal(t, "Continue", content, "the persisted text must be the localized prompt")
+	assert.Equal(t, "system", role, "the resume must be a system row, not a user bubble")
+	assert.Equal(t, AutoContinueNotice(), content, "the row must carry the localized notice")
+
+	// No user row may exist: the old behavior wrote the prompt as one.
+	var userRows int
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'user'",
+		sessionID,
+	).Scan(&userRows))
+	assert.Equal(t, 0, userRows, "the auto-continue must not fabricate a user message")
+
+	// The row is broadcast as a system_message so every client renders it
+	// inline; a user_message broadcast would create the bubble we just removed.
+	require.Len(t, emittedIDs, 1)
+	assert.Positive(t, emittedIDs[0], "the broadcast must carry the persisted row id")
+	assert.Equal(t, []string{AutoContinueNotice()}, emittedTexts)
 
 	// It is a real chat_history row, NOT a queued one — a queued message would
 	// render in the queue panel instead of inline.
-	assert.Equal(t, 0, GetQueuedCount(sessionID), "the continue message must not be queued")
+	assert.Equal(t, 0, GetQueuedCount(sessionID), "the notice must not be queued")
 }
 
 // ── Per-turn finalize on resume ────────────────────────────────────────────
@@ -415,7 +452,6 @@ func TestAutoContinueRunner_EmitsPerTurnFinalizeBeforeResume(t *testing.T) {
 		Ctx:         context.Background(),
 		SessionID:   sessionID,
 		ProjectPath: "/test",
-		BackendName: "codebuddy",
 		RunTurn: func(prompt string) DrainResult {
 			// The finalize must already have been emitted when the resume runs.
 			finalizeSeenBeforeTurn = len(calls) == 1

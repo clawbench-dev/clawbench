@@ -264,6 +264,10 @@ RAGResetFailed: Index rebuild failed
 RAGSegmenterUnavailable: "Rebuild refused: the text segmenter is unavailable. Rebuilding now would replace correctly segmented text with unsplit text and break Chinese search — restart the service and try again."
 RAGRebuildAccepted: Rebuild started in the background
 AutoContinue: Continue
+# The ONLY persisted row (a role='system' notice) when a turn dies abnormally
+# and the system resumes it. Shown TO THE USER; it is NOT the prompt the agent
+# receives (that one is AutoContinue, injected and never stored).
+AutoContinueNotice: 'The agent stopped unexpectedly — the session was resumed automatically.'
 # The ONLY persisted row (a role='system' notice) when the server resumes a
 # session whose turn it interrupted. This text is shown TO THE USER, so it says
 # what happened and what the system did about it — it is NOT the prompt the agent

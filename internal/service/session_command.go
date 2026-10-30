@@ -366,7 +366,6 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 				Ctx:         ctx,
 				SessionID:   sessionID,
 				ProjectPath: cfg.ProjectPath,
-				BackendName: cfg.BackendName,
 				RunTurn: func(prompt string) DrainResult {
 					// Mutate the shared cfg for this attempt only; the drain loop
 					// overwrites Message/Files when it dequeues the next real user
