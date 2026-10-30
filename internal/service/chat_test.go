@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	transport TEXT DEFAULT '',
 	auto_approve INTEGER NOT NULL DEFAULT 0,
 	context_state TEXT DEFAULT '',
+	compacted INTEGER NOT NULL DEFAULT 0,
 	title_renamed INTEGER NOT NULL DEFAULT 0,
 	title_source TEXT NOT NULL DEFAULT '',
 	pinned INTEGER NOT NULL DEFAULT 0,

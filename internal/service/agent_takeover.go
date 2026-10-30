@@ -153,13 +153,17 @@ func anySessionOfAgentRunning(ctx context.Context, q rowQueryer, agentID string,
 // and command). Session creation does not take configMutex, so this window
 // cannot be closed here without serialising every new session behind it; it is
 // milliseconds wide and the failure is a clear error rather than silent damage.
-func DeleteAgentWithTakeover(agentID, oldName string, replacement *model.Agent) (AgentTakeoverResult, error) {
+func DeleteAgentWithTakeover(old *model.Agent, replacement *model.Agent) (AgentTakeoverResult, error) {
 	var res AgentTakeoverResult
+	if old == nil || old.ID == "" {
+		return res, fmt.Errorf("agent to delete is missing")
+	}
 	if replacement == nil || replacement.ID == "" {
 		return res, fmt.Errorf("takeover target agent is missing")
 	}
 
-	res, err := deleteAgentTakeoverTx(agentID, oldName, replacement)
+	reuseNative := canReuseNativeSession(old, replacement)
+	res, err := deleteAgentTakeoverTx(old, replacement, reuseNative)
 	if err != nil {
 		return res, err
 	}
@@ -167,14 +171,49 @@ func DeleteAgentWithTakeover(agentID, oldName string, replacement *model.Agent) 
 	// AFTER the commit and after the write lock is released: each notice takes
 	// the write lock itself. Best-effort — a failed notice must not report the
 	// deletion as failed, since the rows are already gone.
-	writeTakeoverNotices(res.notices, oldName, replacement.Name)
+	writeTakeoverNotices(res.notices, old.Name, replacement.Name, reuseNative)
 	res.notices = nil
 	return res, nil
 }
 
+// canReuseNativeSession reports whether the replacement can simply RESUME the
+// deleted agent's native session instead of rebuilding the context from
+// chat_history.
+//
+// The native session id only means something to the process that issued it, so
+// "same AI backend" is the necessary condition and the command/transport are the
+// sufficient ones:
+//
+//   - different backend        → different CLI/adapter, different session store.
+//   - same backend, CLI        → same binary, same store; the id is still valid.
+//   - same backend, ACP        → the session lives inside whatever process the
+//     ACP command starts, so two custom ACP agents that both call themselves
+//     "custom-acp" do NOT share it. The command must match as well.
+//   - different transport      → a CLI session id handed to an ACP adapter (or
+//     the reverse) is a namespace mismatch; the pool would fail the resume.
+//
+// Reusing keeps the conversation's real context (no 100k-char re-injection, no
+// loss of tool history). What it does NOT carry over is the agent's own system
+// prompt on backends that only inject it on a fresh session — the takeover sets
+// `compacted=1` so the next turn re-announces it once (see ShouldInjectSystemPrompt).
+func canReuseNativeSession(old, replacement *model.Agent) bool {
+	if old == nil || replacement == nil {
+		return false
+	}
+	if old.Backend == "" || old.Backend != replacement.Backend {
+		return false
+	}
+	if old.AcpCommand != replacement.AcpCommand {
+		return false
+	}
+	return old.Transport == replacement.Transport
+}
+
 // deleteAgentTakeoverTx performs the whole rewrite under one transaction and
 // returns the notices to write afterwards.
-func deleteAgentTakeoverTx(agentID, oldName string, replacement *model.Agent) (AgentTakeoverResult, error) {
+func deleteAgentTakeoverTx(old *model.Agent, replacement *model.Agent, reuseNative bool) (AgentTakeoverResult, error) {
+	agentID := old.ID
+	oldName := old.Name
 	var res AgentTakeoverResult
 
 	tx, err := store.WriteBegin()
@@ -228,6 +267,21 @@ func deleteAgentTakeoverTx(agentID, oldName string, replacement *model.Agent) (A
 	}
 	res.Sessions = sessionCount
 
+	// external_session_id is kept when the replacement speaks the SAME backend:
+	// the id still names a real session in that CLI/adapter, so the next turn can
+	// simply resume it — no context rebuild, no re-injection. Otherwise it is
+	// cleared and the turn path rebuilds from chat_history.
+	//
+	// compacted=1 is set ONLY on the reuse path: resuming skips the system prompt
+	// (ShouldInjectSystemPrompt is false on resume), so the replacement's own
+	// instructions would never reach the model on backends that only inject on a
+	// fresh session. The flag is consumed by exactly one turn.
+	//
+	// The `transport = ''` half of both CASEs reads the OLD row value (SQLite
+	// evaluates every SET expression against the pre-update row): a session with
+	// its own transport override may have established its native session in the
+	// OTHER mode (CLI id vs ACP id), which the replacement cannot resume. Only
+	// sessions that followed the agent's own transport are safe to keep.
 	_, err = tx.ExecContext(ctx, `
 		UPDATE chat_sessions SET
 			agent_id = ?,
@@ -235,14 +289,15 @@ func deleteAgentTakeoverTx(agentID, oldName string, replacement *model.Agent) (A
 			agent_source = 'default',
 			model = '',
 			transport = '',
-			external_session_id = '',
+			external_session_id = CASE WHEN ? AND transport = '' THEN external_session_id ELSE '' END,
+			compacted = CASE WHEN ? AND transport = '' THEN 1 ELSE compacted END,
 			agent_takeover_from = ?,
 			context_state = CASE
 				WHEN context_state IS NULL OR context_state = '' THEN '{}'
 				ELSE json_remove(context_state, '$.mode', '$.thinkingEffort', '$.usage')
 			END
 		WHERE agent_id = ?`,
-		replacement.ID, replacement.Backend, oldName, agentID,
+		replacement.ID, replacement.Backend, reuseNative, reuseNative, oldName, agentID,
 	)
 	if err != nil {
 		return res, fmt.Errorf("reassign sessions of agent %s: %w", agentID, err)
@@ -409,7 +464,7 @@ func recomputeGroupIdentityTx(ctx context.Context, tx *sql.Tx, groupID string) e
 
 // writeTakeoverNotices appends the "changed hands" rows to each affected
 // timeline. Best-effort by design: the deletion already committed.
-func writeTakeoverNotices(notices []takeoverNotice, oldName, newName string) {
+func writeTakeoverNotices(notices []takeoverNotice, oldName, newName string, reusedNative bool) {
 	if len(notices) == 0 {
 		return
 	}
@@ -426,7 +481,14 @@ func writeTakeoverNotices(notices []takeoverNotice, oldName, newName string) {
 			writeGroupSystemMessage(n.ProjectPath, n.SessionID, text)
 			continue
 		}
-		text := i18n.T(loc, "AgentTakeoverSessionNotice", map[string]any{
+		// Two wordings: a rebuilt context really was re-injected, a resumed one
+		// was not — telling the user otherwise would send them looking for a
+		// re-injection that never happened.
+		key := "AgentTakeoverSessionNotice"
+		if reusedNative {
+			key = "AgentTakeoverSessionNoticeResumed"
+		}
+		text := i18n.T(loc, key, map[string]any{
 			"Old": oldName,
 			"New": newName,
 		})

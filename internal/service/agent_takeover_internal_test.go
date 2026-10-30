@@ -3,6 +3,7 @@ package service
 import (
 	"testing"
 
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 
 	"github.com/stretchr/testify/assert"
@@ -87,4 +88,65 @@ func TestBuildChatRequest_ForcesFreshSessionAfterTakeover(t *testing.T) {
 	taken := BuildChatRequest("next", "taken", "/proj", "codebuddy", "codebuddy", "", "", "", "", "/proj", false)
 	assert.False(t, taken.Resume, "a taken-over session must not resume a native session")
 	assert.NotEmpty(t, taken.ForkContext)
+}
+
+// TestCanReuseNativeSession pins the predicate that decides whether a takeover
+// keeps the native session id. Each false case is a real failure mode:
+//   - different backend: the id belongs to another tool's storage;
+//   - custom ACP agents share the "custom-acp" backend but not the process, so
+//     the command must match too;
+//   - a CLI id handed to an ACP adapter (or the reverse) is a namespace
+//     mismatch — the pool would try to resume a session that never existed there.
+func TestCanReuseNativeSession(t *testing.T) {
+	base := &model.Agent{ID: "a", Backend: "codebuddy", Transport: "", AcpCommand: ""}
+
+	cases := []struct {
+		name string
+		old  *model.Agent
+		repl *model.Agent
+		want bool
+	}{
+		{
+			name: "same backend, both CLI",
+			old:  base,
+			repl: &model.Agent{ID: "b", Backend: "codebuddy"},
+			want: true,
+		},
+		{
+			name: "different backend",
+			old:  base,
+			repl: &model.Agent{ID: "b", Backend: "claude"},
+			want: false,
+		},
+		{
+			name: "same custom-acp backend but a different command",
+			old:  &model.Agent{ID: "a", Backend: "custom-acp", Transport: "acp-stdio", AcpCommand: "trae acp"},
+			repl: &model.Agent{ID: "b", Backend: "custom-acp", Transport: "acp-stdio", AcpCommand: "other acp"},
+			want: false,
+		},
+		{
+			name: "same backend and command, both ACP",
+			old:  &model.Agent{ID: "a", Backend: "custom-acp", Transport: "acp-stdio", AcpCommand: "trae acp"},
+			repl: &model.Agent{ID: "b", Backend: "custom-acp", Transport: "acp-stdio", AcpCommand: "trae acp"},
+			want: true,
+		},
+		{
+			name: "same backend, CLI vs ACP",
+			old:  base,
+			repl: &model.Agent{ID: "b", Backend: "codebuddy", Transport: "acp-stdio"},
+			want: false,
+		},
+		{
+			name: "empty backend never reuses",
+			old:  &model.Agent{ID: "a", Backend: ""},
+			repl: &model.Agent{ID: "b", Backend: ""},
+			want: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, canReuseNativeSession(tc.old, tc.repl))
+		})
+	}
 }

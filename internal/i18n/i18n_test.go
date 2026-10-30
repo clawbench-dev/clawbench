@@ -167,6 +167,7 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		// locale at that point — the row is persisted), so a one-sided add would
 		// ship a raw message id into the timeline.
 		"AgentTakeoverSessionNotice",
+		"AgentTakeoverSessionNoticeResumed",
 		"AgentTakeoverGroupNotice",
 		"AgentDisabled",
 		"CannotDisableDefaultAgent",

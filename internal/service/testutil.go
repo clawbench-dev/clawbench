@@ -53,6 +53,7 @@ func InitInMemoryDB() (*sql.DB, error) {
 			archived INTEGER NOT NULL DEFAULT 0,
 			disabled INTEGER NOT NULL DEFAULT 0,
 			context_state TEXT DEFAULT '',
+			compacted INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);

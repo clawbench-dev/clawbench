@@ -5103,7 +5103,9 @@ paths:
 
         转交会重写每个会话行的执行身份：`agent_id` 与 `backend` 换成默认智能体的，
         `model` / `transport` 清空（旧值只对旧后端有效），
-        `external_session_id` 清空（原生会话属于已删除的进程），
+        `external_session_id` **仅在后端不同时清空**——后端、ACP 命令与传输都一致时原生会话
+        仍然有效，直接沿用（并置 `compacted=1`，让新 agent 的系统提示在下一轮重播一次）；
+        带会话级 transport 覆盖的行与跨后端的行都清空，由下一轮重建，
         `context_state` 里的 `mode` / `thinkingEffort` / `usage` 一并清掉（旧 agent
         的能力集与上下文窗口）。会话行本身与 `chat_history` **一条都不删**：历史照常
         可读，只是下一轮会以「全新原生会话 + 历史作为背景注入」的方式继续

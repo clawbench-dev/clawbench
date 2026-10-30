@@ -593,7 +593,7 @@ func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := service.DeleteAgentWithTakeover(req.ID, agent.Name, replacement)
+	res, err := service.DeleteAgentWithTakeover(agent, replacement)
 	if err != nil {
 		if errors.Is(err, service.ErrAgentHasRunningSessions) {
 			writeLocalizedErrorf(w, r, http.StatusConflict, "AgentHasRunningSessions")
@@ -606,9 +606,10 @@ func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 
 	// Close the ACP connections AFTER the commit, never before: the transaction
 	// re-checks for a live turn and may still refuse, and closing first would kill
-	// the very turn that refusal is protecting. Every connection the taken-over
-	// sessions would otherwise reuse belongs to this agent, so closing here is
-	// also what makes their first post-takeover turn start a fresh native session
+	// the very turn that refusal is protecting. Closing is required either way —
+	// every connection is bound to the deleted agent (its process, its MCP
+	// servers), so the replacement must build its own; when the backend matches,
+	// that new connection resumes the stored acpSID instead of starting over
 	// (CloseConnsByAgentID matches on the conn's own agent snapshot, so it keeps
 	// working after the in-memory entry is gone).
 	if agent.SupportsACP() {

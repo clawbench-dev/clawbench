@@ -31,6 +31,12 @@ func takeoverReplacement() *model.Agent {
 	return &model.Agent{ID: "codebuddy", Name: "Test", Backend: "codebuddy"}
 }
 
+// takeoverSource is the agent being deleted: a DIFFERENT backend from
+// takeoverReplacement, so the native session cannot be reused.
+func takeoverSource() *model.Agent {
+	return &model.Agent{ID: "claude", Name: "Claude", Backend: "claude"}
+}
+
 // TestDeleteAgentWithTakeover_RebindsSessionState is the core contract: the row
 // keeps its history but loses every piece of state that described the OLD agent.
 func TestDeleteAgentWithTakeover_RebindsSessionState(t *testing.T) {
@@ -44,7 +50,7 @@ func TestDeleteAgentWithTakeover_RebindsSessionState(t *testing.T) {
 		        'ext-1', '{"mode":"plan","thinkingEffort":{"currentId":"high"},"usage":{"used":42},"keep":"me"}', 'chat', 0)`)
 	require.NoError(t, err)
 
-	res, err := service.DeleteAgentWithTakeover("claude", "Claude", takeoverReplacement())
+	res, err := service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
 	require.NoError(t, err)
 	assert.Equal(t, 1, res.Sessions)
 	assert.Equal(t, 0, res.Tasks)
@@ -116,7 +122,7 @@ func TestDeleteAgentWithTakeover_RecomputesGroupIdentity(t *testing.T) {
 		VALUES ('aaa-second', 1, 'claude', '', 'Other', 'other', 'group_member', 'g2')`)
 	require.NoError(t, err)
 
-	res, err := service.DeleteAgentWithTakeover("claude", "Claude", takeoverReplacement())
+	res, err := service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
 	require.NoError(t, err)
 	assert.Equal(t, 2, res.Groups)
 
@@ -144,7 +150,7 @@ func TestDeleteAgentWithTakeover_ReassignsTasks(t *testing.T) {
 		VALUES (1, 'daily', '0 8 * * *', 'claude', 'do it')`)
 	require.NoError(t, err)
 
-	res, err := service.DeleteAgentWithTakeover("claude", "Claude", takeoverReplacement())
+	res, err := service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
 	require.NoError(t, err)
 	assert.Equal(t, 1, res.Tasks)
 
@@ -166,7 +172,7 @@ func TestDeleteAgentWithTakeover_RefusesRunningSession(t *testing.T) {
 	service.SetSessionRunning("s1", true, true)
 	defer service.SetSessionRunning("s1", false, true)
 
-	_, err = service.DeleteAgentWithTakeover("claude", "Claude", takeoverReplacement())
+	_, err = service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
 	require.ErrorIs(t, err, service.ErrAgentHasRunningSessions)
 
 	// Nothing moved, and the agent row survives.
@@ -205,7 +211,7 @@ func TestDeleteAgentWithTakeover_WritesTimelineNotices(t *testing.T) {
 	model.Language = "zh"
 	t.Cleanup(func() { model.Language = prevLang })
 
-	_, err = service.DeleteAgentWithTakeover("claude", "Claude", takeoverReplacement())
+	_, err = service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
 	require.NoError(t, err)
 
 	// One row per timeline, both role='system' (rendered centered, never as a
@@ -245,7 +251,7 @@ func TestDeleteAgentWithTakeover_SkipsArchivedNotices(t *testing.T) {
 		VALUES ('s1', 1, 'claude', 'old', 'claude', 'chat', 1)`)
 	require.NoError(t, err)
 
-	_, err = service.DeleteAgentWithTakeover("claude", "Claude", takeoverReplacement())
+	_, err = service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
 	require.NoError(t, err)
 
 	var count int
@@ -255,4 +261,106 @@ func TestDeleteAgentWithTakeover_SkipsArchivedNotices(t *testing.T) {
 	var agentID string
 	require.NoError(t, db.QueryRow("SELECT agent_id FROM chat_sessions WHERE id = 's1'").Scan(&agentID))
 	assert.Equal(t, "codebuddy", agentID)
+}
+
+// TestDeleteAgentWithTakeover_ReusesNativeSessionForSameBackend covers the
+// "same AI backend" shortcut: the native session id still names a real session
+// in that CLI, so it is kept and the next turn resumes instead of rebuilding the
+// whole conversation from chat_history.
+func TestDeleteAgentWithTakeover_ReusesNativeSessionForSameBackend(t *testing.T) {
+	db := setupTakeoverDB(t)
+
+	_, err := db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type,
+		                           external_session_id, compacted)
+		VALUES ('s1', 1, 'codebuddy', 'chat', 'cb-old', 'chat', 'native-1', 0)`)
+	require.NoError(t, err)
+
+	prevLang := model.Language
+	model.Language = "zh"
+	t.Cleanup(func() { model.Language = prevLang })
+
+	old := &model.Agent{ID: "cb-old", Name: "Old Buddy", Backend: "codebuddy"}
+	replacement := &model.Agent{ID: "cb-new", Name: "New Buddy", Backend: "codebuddy"}
+
+	_, err = service.DeleteAgentWithTakeover(old, replacement)
+	require.NoError(t, err)
+
+	var agentID, extID, takeoverFrom string
+	var compacted int
+	require.NoError(t, db.QueryRow(
+		`SELECT agent_id, external_session_id, agent_takeover_from, compacted
+		   FROM chat_sessions WHERE id = 's1'`,
+	).Scan(&agentID, &extID, &takeoverFrom, &compacted))
+
+	assert.Equal(t, "cb-new", agentID)
+	// The id survives: it is still a valid session in the same CLI.
+	assert.Equal(t, "native-1", extID)
+	assert.Equal(t, "Old Buddy", takeoverFrom)
+	// A resume skips the system prompt, so the flag forces one re-announcement of
+	// the replacement's own instructions.
+	assert.Equal(t, 1, compacted)
+
+	// The notice must say the session was REUSED, not that the history was
+	// re-injected — otherwise the user goes looking for an injection that never
+	// happened.
+	var notice string
+	require.NoError(t, db.QueryRow(
+		`SELECT content FROM chat_history WHERE session_id = 's1' ORDER BY id DESC LIMIT 1`,
+	).Scan(&notice))
+	assert.Contains(t, notice, "沿用")
+	assert.NotContains(t, notice, "重新注入")
+}
+
+// A different backend must NOT keep the id: the session lives in the other
+// tool's storage and would fail (or silently attach to the wrong transcript).
+func TestDeleteAgentWithTakeover_ClearsNativeSessionAcrossBackends(t *testing.T) {
+	db := setupTakeoverDB(t)
+
+	_, err := db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type,
+		                           external_session_id, compacted)
+		VALUES ('s1', 1, 'claude', 'chat', 'claude', 'chat', 'native-1', 0)`)
+	require.NoError(t, err)
+
+	_, err = service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.NoError(t, err)
+
+	var extID string
+	var compacted int
+	require.NoError(t, db.QueryRow(
+		"SELECT external_session_id, compacted FROM chat_sessions WHERE id = 's1'",
+	).Scan(&extID, &compacted))
+	assert.Empty(t, extID, "a cross-backend takeover must rebuild from chat_history")
+	// The rebuild path sends the system prompt anyway (resume=false), so the flag
+	// must stay untouched — setting it would be a lie about a compaction.
+	assert.Zero(t, compacted)
+}
+
+// A session that carried its own transport override may have created its native
+// session in the OTHER mode (a CLI id from an ACP adapter, or the reverse), which
+// the replacement cannot resume. Those rows must be rebuilt even on the same
+// backend.
+func TestDeleteAgentWithTakeover_ClearsNativeSessionWithTransportOverride(t *testing.T) {
+	db := setupTakeoverDB(t)
+
+	_, err := db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type,
+		                           transport, external_session_id, compacted)
+		VALUES ('s1', 1, 'codebuddy', 'chat', 'cb-old', 'chat', 'acp-stdio', 'native-1', 0)`)
+	require.NoError(t, err)
+
+	old := &model.Agent{ID: "cb-old", Name: "Old Buddy", Backend: "codebuddy"}
+	replacement := &model.Agent{ID: "cb-new", Name: "New Buddy", Backend: "codebuddy"}
+	_, err = service.DeleteAgentWithTakeover(old, replacement)
+	require.NoError(t, err)
+
+	var extID, transport string
+	var compacted int
+	require.NoError(t, db.QueryRow(
+		"SELECT external_session_id, transport, compacted FROM chat_sessions WHERE id = 's1'",
+	).Scan(&extID, &transport, &compacted))
+	assert.Empty(t, extID)
+	assert.Empty(t, transport)
+	assert.Zero(t, compacted)
 }

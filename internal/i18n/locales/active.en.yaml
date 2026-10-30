@@ -303,6 +303,7 @@ GroupMemberCompactionDone: '{{.Name}} compacted its context ({{.Before}} → {{.
 # Written after an agent is deleted: its conversations and group memberships are
 # handed to the default agent. Localized at write time, like the rows above.
 AgentTakeoverSessionNotice: 'Agent "{{.Old}}" was deleted. This conversation is now handled by "{{.New}}"; the earlier history was re-injected as background.'
+AgentTakeoverSessionNoticeResumed: 'Agent "{{.Old}}" was deleted. This conversation is now handled by "{{.New}}"; the native session was reused.'
 AgentTakeoverGroupNotice: 'The agent behind "{{.Member}}" was deleted; "{{.New}}" now drives it.'
 GroupMemberCompactionFailed: '{{.Name}} failed to compact its context'
 GroupMemberUnknown: Member

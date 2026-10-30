@@ -299,6 +299,7 @@ GroupMemberCompactionDone: '{{.Name}} 已压缩上下文（{{.Before}} → {{.Af
 GroupMemberCompactionFailed: '{{.Name}} 的上下文压缩失败'
 # 智能体被删除后，它名下的会话/群成员转交给默认智能体。同样是「写入时」本地化。
 AgentTakeoverSessionNotice: '智能体「{{.Old}}」已删除，本会话由「{{.New}}」接管；此前的对话已作为背景重新注入。'
+AgentTakeoverSessionNoticeResumed: '智能体「{{.Old}}」已删除，本会话由「{{.New}}」接管；原生会话已沿用。'
 AgentTakeoverGroupNotice: '成员「{{.Member}}」的智能体已删除，现由「{{.New}}」驱动。'
 GroupMemberUnknown: 成员
 GroupUnknownMention: '{{.Speaker}} @ 了一个不存在的成员：{{.Names}}（已忽略）'

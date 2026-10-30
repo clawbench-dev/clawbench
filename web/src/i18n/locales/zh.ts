@@ -1266,7 +1266,7 @@ export default {
     forkGeneration: '第 {n} 代',
     forkGenerationTitle: '自上一级会话分叉出的第 {n} 代',
     takeoverBadge: '已接管',
-    takeoverBadgeTip: '原由「{name}」提供，该智能体已删除；本会话现由默认智能体继续，历史已作为背景重新注入',
+    takeoverBadgeTip: '原由「{name}」提供，该智能体已删除；本会话现由默认智能体继续',
   },
   sessionTags: {
     title: '设置标签',
@@ -2916,7 +2916,7 @@ export default {
       // Deletion hands the agent's conversations to the default agent, so the
       // confirm has to say so BEFORE the user commits — this is the only place
       // the consequence is visible.
-      agentDeleteTakeoverConfirm: '确定要删除智能体「{name}」吗？\n它的 {sessions} 个会话、{tasks} 个任务将转交给默认智能体「{replacement}」继续：聊天记录全部保留，但此前的上下文会以背景形式重新注入。',
+      agentDeleteTakeoverConfirm: '确定要删除智能体「{name}」吗？\n它的 {sessions} 个会话、{tasks} 个任务将转交给默认智能体「{replacement}」继续：聊天记录全部保留，同一后端的会话还会直接沿用原生上下文。',
       agentDeleteDefault: '无法删除默认智能体',
       agentDeleteRunning: '该智能体有会话正在运行，请先停止后再删除',
       agentDeletedTakeover: '已删除「{name}」，{sessions} 个会话、{tasks} 个任务已转交给「{replacement}」',
