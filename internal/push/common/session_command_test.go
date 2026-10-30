@@ -392,3 +392,95 @@ func TestClassifyIncoming_ShowStopWithoutTargetOrSticky(t *testing.T) {
 		t.Errorf("/stop with id = %v, want RouteStopSession", got.Kind)
 	}
 }
+
+func TestRouteKind_IsCommandAndWord(t *testing.T) {
+	// The attachment paths rely on IsCommand to keep a command out of the
+	// "deliver Route.Message" flow; a kind that reports false here would be sent
+	// to a session as an empty (or literal) message and never run.
+	commands := map[RouteKind]string{
+		RouteListSessions:  SessionListCommand,
+		RouteShowLastReply: SessionShowCommand,
+		RouteStopSession:   SessionStopCommand,
+		RouteNewSession:    SessionNewCommand,
+	}
+	for kind, word := range commands {
+		if !kind.IsCommand() {
+			t.Errorf("kind %d must report IsCommand", int(kind))
+		}
+		if got := kind.CommandWord(); got != word {
+			t.Errorf("kind %d CommandWord = %q, want %q", int(kind), got, word)
+		}
+	}
+
+	// Text delivery and the no-target hint are NOT commands: the media path must
+	// keep delivering them.
+	for _, kind := range []RouteKind{RouteToSession, RouteNoTarget} {
+		if kind.IsCommand() {
+			t.Errorf("kind %d must not report IsCommand", int(kind))
+		}
+		if got := kind.CommandWord(); got != "" {
+			t.Errorf("kind %d CommandWord = %q, want empty", int(kind), got)
+		}
+	}
+
+	// The mapping must cover every kind, so adding a new command cannot silently
+	// leave IsCommand false. Enumerate the constants: RouteNoTarget is the last.
+	for k := RouteToSession; k <= RouteNoTarget; k++ {
+		word := k.CommandWord()
+		if word == "" && k.IsCommand() {
+			t.Errorf("kind %d reports IsCommand but has no word", int(k))
+		}
+		if word != "" && !k.IsCommand() {
+			t.Errorf("kind %d has word %q but is not a command", int(k), word)
+		}
+	}
+}
+
+// A /show or /stop argument must obey the same 8+ hex prefix shape the "@"
+// form requires. These commands can reveal a session's text and stop a running
+// turn, so a one-character argument must not silently match whichever session
+// happens to start with it — and a "%"/"_" must never reach the LIKE query as a
+// wildcard.
+func TestResolveCommandTarget_RejectsMalformedPrefix(t *testing.T) {
+	m := &mockMessenger{
+		// Every prefix matches, which is what a real LIKE 'a%' would do for "a".
+		sessions: []SessionInfo{{ID: "a1b2c3d4-1111", Title: "T1"}},
+	}
+
+	for _, arg := range []string{"a", "%", "_", "%%", "abc", "a1b2c3", "../../x", "'; DROP TABLE--"} {
+		id, _, err := ResolveCommandTarget(m, arg, "a1b2c3d4-1111")
+		if err == nil {
+			t.Errorf("arg %q must be refused, got session %q", arg, id)
+			continue
+		}
+		if !strings.Contains(err.Error(), arg) {
+			t.Errorf("arg %q: error should name the bad argument, got %v", arg, err)
+		}
+	}
+
+	// A well-formed prefix (8+ hex) still resolves.
+	id, title, err := ResolveCommandTarget(m, "a1b2c3d4", "other")
+	if err != nil || id != "a1b2c3d4-1111" || title != "T1" {
+		t.Fatalf("valid prefix = %q %q %v", id, title, err)
+	}
+}
+
+// A full session id must still work: the resolver matches by prefix, so the
+// longest possible prefix is a valid argument. Rejecting it would remove a
+// capability the "@{shortID}" form has.
+func TestResolveCommandTarget_AcceptsFullSessionID(t *testing.T) {
+	const full = "a1b2c3d4-1111-2222-3333-444455556666"
+	m := &mockMessenger{sessions: []SessionInfo{{ID: full, Title: "T"}}}
+
+	id, _, err := ResolveCommandTarget(m, full, "")
+	if err != nil || id != full {
+		t.Fatalf("full id = %q %v", id, err)
+	}
+
+	// Partial ids with the canonical dash layout also work.
+	for _, arg := range []string{"a1b2c3d4", "a1b2c3d4-1111"} {
+		if _, _, err := ResolveCommandTarget(m, arg, ""); err != nil {
+			t.Errorf("prefix %q should resolve: %v", arg, err)
+		}
+	}
+}

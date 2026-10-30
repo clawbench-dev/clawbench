@@ -1986,3 +1986,177 @@ func TestOnChatBotMessage_NewCreateFails(t *testing.T) {
 		t.Errorf("expected the create error, got %s", *body)
 	}
 }
+
+// ============================================================================
+// Commands must not be swallowed by the attachment path
+// ============================================================================
+
+// commandWithMediaReply runs one richText message carrying `text` plus an image
+// and returns (what reached a session, the raw reply body). The reply webhook is
+// a dedicated server because richTextEnv's captured buffer belongs to a
+// different one.
+func commandWithMediaReply(t *testing.T, text string) (sent *sentMessage, reply string) {
+	t.Helper()
+	mgr, _, sentCh, _ := richTextEnv(t)
+
+	var mu sync.Mutex
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		body = b
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	data := stickyData(server.URL, "")
+	data.Msgtype = "richText"
+	data.Text = chatbot.BotCallbackDataTextModel{Content: ""} // empty for richText
+	data.Content = map[string]any{"richText": []any{
+		map[string]any{"text": text},
+		map[string]any{"downloadCode": "code-1", "type": "picture"},
+	}}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case got := <-sentCh:
+		sent = &got
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	return sent, string(body)
+}
+
+// A slash command sent together with an image used to fall through the media
+// path: it is not RouteToSession, so ResolveTarget resolved the sticky session
+// and SendMessageToSession received Route.Message — which is empty for a
+// command. The command word vanished and the session got a bare attachment.
+func TestOnChatBotMessage_CommandWithAttachmentIsRefused(t *testing.T) {
+	for _, text := range []string{"/new", "/stop", "/show", "/new 1"} {
+		t.Run(text, func(t *testing.T) {
+			sent, reply := commandWithMediaReply(t, text)
+
+			if sent != nil {
+				t.Fatalf("command %q must not be delivered to session %q (msg=%q, files=%d)",
+					text, sent.sid, sent.msg, len(sent.files))
+			}
+			command := strings.Fields(text)[0]
+			if !strings.Contains(reply, command) {
+				t.Errorf("reply should name %q, got %s", command, reply)
+			}
+			if !strings.Contains(reply, "不能和附件一起发送") {
+				t.Errorf("reply should explain the refusal, got %s", reply)
+			}
+		})
+	}
+}
+
+// A first-time user (no sticky target) sending "/new" with an image must get the
+// command refusal, not the bare "no target session" resolver error.
+func TestOnChatBotMessage_CommandWithAttachmentNoSticky(t *testing.T) {
+	mgr, _, sentCh, _ := richTextEnv(t)
+	origDB := db
+	db = &mockDBWithCallback{
+		upsertFn:  func(_, _, _, _ string) error { return nil },
+		getLastFn: func(string) (string, error) { return "", nil },
+	}
+	t.Cleanup(func() { db = origDB })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+	var mu sync.Mutex
+	var body []byte
+	replyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		body = b
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(replyServer.Close)
+
+	data := stickyData(replyServer.URL, "")
+	data.Msgtype = "richText"
+	data.Text = chatbot.BotCallbackDataTextModel{Content: ""}
+	data.Content = map[string]any{"richText": []any{
+		map[string]any{"text": "/new"},
+		map[string]any{"downloadCode": "code-1", "type": "picture"},
+	}}
+
+	if _, err := mgr.onChatBotMessage(context.Background(), data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case got := <-sentCh:
+		t.Fatalf("nothing may be delivered, got session %q", got.sid)
+	case <-time.After(300 * time.Millisecond):
+	}
+	mu.Lock()
+	out := string(body)
+	mu.Unlock()
+	if strings.Contains(out, "no target session") {
+		t.Errorf("raw resolver error leaked: %s", out)
+	}
+	if !strings.Contains(out, "不能和附件一起发送") {
+		t.Errorf("expected the command refusal, got %s", out)
+	}
+}
+
+// The guard must not over-reach: ordinary text plus an image is still delivered.
+func TestOnChatBotMessage_TextWithAttachmentStillDelivered(t *testing.T) {
+	sent, reply := commandWithMediaReply(t, "看看这张图")
+	if sent == nil {
+		t.Fatalf("text + image must still be delivered (reply=%s)", reply)
+	}
+	if sent.msg != "看看这张图" {
+		t.Errorf("msg = %q, want the text", sent.msg)
+	}
+	if len(sent.files) != 1 {
+		t.Errorf("files = %d, want 1", len(sent.files))
+	}
+}
+
+// A /show issued while a turn is still generating must SAY that the text below
+// belongs to the previous turn. The streaming row is deliberately excluded, so
+// without the note the user reads an old answer as the reply to the question
+// they just asked.
+func TestOnChatBotMessage_ShowWhileRunningSaysPreviousTurn(t *testing.T) {
+	m := &mockSessionMessenger{
+		lastReply: "the previous answer", lastReplyOK: true,
+		// The sticky session has a live runner.
+		runningSessions: []common.SessionInfo{{ID: "a1b2c3d4-1111"}},
+	}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/show")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := string(*body)
+	if !strings.Contains(out, "上一条") {
+		t.Errorf("expected the previous-turn note, got %s", out)
+	}
+	if !strings.Contains(out, "the previous answer") {
+		t.Errorf("expected the previous answer to still be shown, got %s", out)
+	}
+}
+
+// The note must NOT appear when the session is idle — it would be wrong and
+// would train users to ignore it.
+func TestOnChatBotMessage_ShowWhileIdleHasNoNote(t *testing.T) {
+	m := &mockSessionMessenger{lastReply: "the answer", lastReplyOK: true}
+	mgr, body := pushCommandEnv(t, m)
+
+	if _, err := mgr.onChatBotMessage(context.Background(), pushCommandData(t, "/show")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(string(*body), "上一条") {
+		t.Errorf("idle session must not carry the running note, got %s", *body)
+	}
+}

@@ -368,10 +368,9 @@ func listProjectsForPush() ([]common.ProjectRef, error) {
 	out := make([]common.ProjectRef, len(refs))
 	for i, r := range refs {
 		out[i] = common.ProjectRef{
-			Index:        r.Index,
-			Path:         r.Path,
-			Exists:       r.Exists,
-			SessionCount: r.SessionCount,
+			Index:  r.Index,
+			Path:   r.Path,
+			Exists: r.Exists,
 		}
 	}
 	return out, nil

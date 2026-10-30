@@ -13,6 +13,18 @@ import (
 // in full instead of being truncated at the first line break.
 var SessionCmdRe = regexp.MustCompile(`(?s)^@([0-9a-fA-F]{8,})(?:\s|$)(.*)`)
 
+// sessionPrefixRe is the same prefix shape without the "@" and the payload. The
+// /show and /stop arguments go through it so a command accepts exactly what the
+// "@{shortID}" form accepts — the docs promise an 8+ hex prefix, and these
+// commands can stop a turn or reveal its text, so a one-character argument must
+// not silently match whichever session happens to start with it.
+//
+// The optional trailing "-hex" groups keep a FULL session id working: the
+// resolver matches by prefix, so "a1b2c3d4-1111-…" is a valid (maximally
+// specific) prefix, and rejecting it would take away a capability the "@" form
+// and the pre-check code both had.
+var sessionPrefixRe = regexp.MustCompile(`^[0-9a-fA-F]{8,}(?:-[0-9a-fA-F]+)*$`)
+
 // ParseSessionCommand parses the "@{shortID} message" format from push messages.
 // Returns (shortID, message, true) if matched, or ("", "", false) if not.
 func ParseSessionCommand(text string) (string, string, bool) {
@@ -61,6 +73,36 @@ const (
 	// session yet. The caller must reply with the "/ls" hint.
 	RouteNoTarget
 )
+
+// IsCommand reports whether this kind is a slash command rather than text to
+// deliver to a session.
+//
+// A command keeps its word in Route.Arg, so Route.Message is empty. Any caller
+// that delivers Route.Message (in particular the attachment paths) must consult
+// this first: without it a command sent together with an image becomes an empty
+// message posted to a session — the command does not run and the text the user
+// typed is lost.
+func (k RouteKind) IsCommand() bool {
+	return k == RouteListSessions || k == RouteShowLastReply ||
+		k == RouteStopSession || k == RouteNewSession
+}
+
+// CommandWord returns the slash word that produced this kind, or "" when the
+// kind is not a command. Callers use it to name the command back to the user
+// without re-parsing the message.
+func (k RouteKind) CommandWord() string {
+	switch k {
+	case RouteListSessions:
+		return SessionListCommand
+	case RouteShowLastReply:
+		return SessionShowCommand
+	case RouteStopSession:
+		return SessionStopCommand
+	case RouteNewSession:
+		return SessionNewCommand
+	}
+	return ""
+}
 
 // Route is the outcome of classifying an inbound IM message.
 type Route struct {
@@ -202,12 +244,17 @@ func ResolveTarget(messenger SessionMessenger, route Route, stickySessionID stri
 
 // ResolveCommandTarget resolves the target of a /show or /stop command.
 //
-// An explicit prefix (the command's argument) resolves like "@{shortID}" does.
+// An explicit prefix (the command's argument) resolves like "@{shortID}" does —
+// including the 8+ hex shape check, so "/stop a" cannot match an arbitrary
+// session and "/stop %" cannot reach the LIKE query as a wildcard.
 // An empty argument means the sticky session, whose title is read back so the
 // reply can name it. Returns an error when there is no sticky target at all —
 // the caller turns that into the "/ls" hint rather than acting on a guess.
 func ResolveCommandTarget(messenger SessionMessenger, arg, stickySessionID string) (sessionID, title string, err error) {
 	if arg != "" {
+		if !sessionPrefixRe.MatchString(arg) {
+			return "", "", errors.New(T("PushInvalidSessionID", map[string]any{"ID": arg}))
+		}
 		return ResolveShortSessionID(messenger, arg)
 	}
 	return ResolveTarget(messenger, Route{Kind: RouteToSession}, stickySessionID)

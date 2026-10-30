@@ -1745,3 +1745,121 @@ func TestOnMessageReceive_NewCreateFails(t *testing.T) {
 		t.Errorf("expected the create error, got %q", box.get())
 	}
 }
+
+// ============================================================================
+// Commands must not be swallowed by the attachment path
+// ============================================================================
+
+// postCommandEnv wires a post-message media environment whose reply is captured,
+// so a test can assert both what reached a session and what the bot answered.
+func postCommandEnv(t *testing.T, sticky string) (*Manager, *replyBox, chan string) {
+	t.Helper()
+	mediaTestServer(t, "image-bytes")
+	reply := replyCapture(t)
+	project := t.TempDir()
+	sessions := []common.SessionInfo{
+		{ID: "abc12345-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: project},
+	}
+	mgr, _ := stickyTestEnv(t, sticky, sessions)
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+
+	sent := make(chan string, 2)
+	sessionMessenger.(*mockSessionMessenger).SendFn = func(sid, msg string, _ []model.FileEntry) error {
+		sent <- msg
+		return nil
+	}
+	return mgr, reply, sent
+}
+
+// A slash command sent together with an image used to fall through the media
+// path: it is not RouteToSession, so ResolveTarget resolved the sticky session
+// and SendMessageToSession received Route.Message — which is empty for a
+// command. The command word vanished and the session got a bare attachment.
+func TestOnMessageReceive_CommandWithAttachmentIsRefused(t *testing.T) {
+	for _, text := range []string{"/new", "/stop", "/show", "/new 1"} {
+		t.Run(text, func(t *testing.T) {
+			mgr, reply, sent := postCommandEnv(t, "abc12345-1111-1111-1111-111111111111")
+
+			event := postEvent(`{"zh_cn":{"title":"","content":[[{"tag":"text","text":"` + text +
+				`"}],[{"tag":"img","image_key":"img_1"}]]}}`)
+
+			if err := mgr.onMessageReceive(context.TODO(), event); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			select {
+			case got := <-sent:
+				t.Fatalf("command %q must not be delivered to a session (msg=%q)", text, got)
+			case <-time.After(300 * time.Millisecond):
+			}
+
+			body := waitForReplyText(t, reply)
+			command := strings.Fields(text)[0]
+			if !strings.Contains(body, command) {
+				t.Errorf("reply should name %q, got %q", command, body)
+			}
+			if !strings.Contains(body, "不能和附件一起发送") {
+				t.Errorf("reply should explain the refusal, got %q", body)
+			}
+		})
+	}
+}
+
+// Ordinary text plus an image must still be delivered.
+func TestOnMessageReceive_TextWithAttachmentStillDelivered(t *testing.T) {
+	mgr, reply, sent := postCommandEnv(t, "abc12345-1111-1111-1111-111111111111")
+
+	event := postEvent(`{"zh_cn":{"title":"","content":[[{"tag":"text","text":"看看这张图"}],[{"tag":"img","image_key":"img_1"}]]}}`)
+	if err := mgr.onMessageReceive(context.TODO(), event); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case got := <-sent:
+		if got != "看看这张图" {
+			t.Errorf("message = %q, want the post text", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("text + image must still be delivered")
+	}
+	waitForReplyText(t, reply)
+}
+
+// A /show issued while a turn is still generating must SAY that the text below
+// belongs to the previous turn. The streaming row is deliberately excluded, so
+// without the note the user reads an old answer as the reply to the question
+// they just asked.
+func TestOnMessageReceive_ShowWhileRunningSaysPreviousTurn(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions:    stickySessions,
+		lastReply:   "the previous answer",
+		lastReplyOK: true,
+		running:     map[string]bool{commandStickySession: true},
+	}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
+	out := box.get()
+	if !strings.Contains(out, "上一条") {
+		t.Errorf("expected the previous-turn note, got %q", out)
+	}
+	if !strings.Contains(out, "the previous answer") {
+		t.Errorf("expected the previous answer to still be shown, got %q", out)
+	}
+}
+
+// The note must NOT appear when the session is idle.
+func TestOnMessageReceive_ShowWhileIdleHasNoNote(t *testing.T) {
+	m := &mockSessionMessenger{
+		sessions:    stickySessions,
+		lastReply:   "the answer",
+		lastReplyOK: true,
+	}
+	mgr, box := feishuCommandEnv(t, m)
+
+	_ = mgr.onMessageReceive(context.TODO(), textEvent("/show"))
+	if strings.Contains(box.get(), "上一条") {
+		t.Errorf("idle session must not carry the running note, got %q", box.get())
+	}
+}

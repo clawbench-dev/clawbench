@@ -211,9 +211,11 @@ PushSubscribedNoSessionsFeishu: ClawBench notifications subscribed. No sessions.
 PushMultipleRunningSessions: 'Multiple running sessions matched; use a longer ID ({{.ID}}…)'
 PushMultipleSessions: 'Multiple sessions matched; use a longer ID ({{.ID}}…)'
 PushSessionNotFound: Session {{.ID}} not found
+PushInvalidSessionID: 'Invalid session ID (8+ hex characters required): {{.ID}}'
 PushRecentSessionUnavailable: 'The recent session is unavailable; pick again with /ls: {{.Error}}'
 PushShowTitle: Last reply
 PushShowEmpty: This session has no completed reply yet.
+PushShowRunning: 'A turn is still running; the reply below is the PREVIOUS completed one.'
 PushShowSessionLabel: 'Session **{{.Label}}**'
 PushStoppedTitle: Stopped
 PushStoppedRunning: Stopped session **{{.Label}}** and cleared {{.Count}} queued messages.
@@ -230,6 +232,7 @@ PushNewNoAgent: No agents available in this project.
 PushNewListFailed: Failed to list projects; please try again.
 PushNewCreateFailed: Failed to create the session; please try again.
 PushStopFailed: Failed to stop the session; please try again.
+PushCommandWithAttachment: 'The command `{{.Command}}` cannot be sent together with attachments. Send the command on its own first, then the files.'
 NotFound: Not found
 PermissionNotFound: No pending permission request found
 ACPSessionNotFound: ACP session no longer exists on the agent side

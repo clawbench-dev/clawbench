@@ -40,11 +40,13 @@ type SessionInfo struct {
 
 // ProjectRef is one row of the /new project list. Index is 1-based and is what
 // the user types back; Path is the canonical registered path.
+//
+// The list order is stable across a create (see service.ListProjectsForPush), so
+// an index a user read stays valid for their next command.
 type ProjectRef struct {
-	Index        int
-	Path         string
-	Exists       bool // directory still present on disk
-	SessionCount int
+	Index  int
+	Path   string
+	Exists bool // directory still present on disk
 }
 
 // SessionMessenger abstracts session operations needed by push backends.

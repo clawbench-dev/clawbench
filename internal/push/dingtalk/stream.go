@@ -184,6 +184,17 @@ func (m *Manager) handleIncomingWithMedia(ctx context.Context, data *chatbot.Bot
 		m.replyNoTarget(ctx, data)
 		return
 	}
+	// A slash command is not addressed to a session, and Route.Message is empty
+	// for one — falling through would post an empty message carrying the
+	// attachments and silently drop the command word. Refuse instead of guessing
+	// which half the user wanted.
+	if route.Kind.IsCommand() {
+		slog.Info("dingtalk: command cannot carry attachments",
+			"staff_id", staffID, "command", route.Kind.CommandWord(), "media", len(media))
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook,
+			[]byte(common.CommandWithAttachmentText(route.Kind.CommandWord())))
+		return
+	}
 
 	if sessionMessenger == nil {
 		slog.Warn("dingtalk: no session messenger for attachment")
@@ -419,6 +430,10 @@ func (m *Manager) handleShowLastReply(ctx context.Context, data *chatbot.BotCall
 	}
 
 	label := common.FormatSessionLabel(sessionID, title)
+	// Sample the running state BEFORE the read so the note and the text describe
+	// the same moment: a turn that finishes in between would otherwise be
+	// labeled "still running" while the text already includes it.
+	running := sessionMessenger.IsSessionRunning(sessionID)
 	text, ok, err := sessionMessenger.LastAssistantReply(sessionID)
 	if err != nil {
 		slog.Warn("dingtalk: read last reply failed", "error", err, "session_id", sessionID)
@@ -428,6 +443,12 @@ func (m *Manager) handleShowLastReply(ctx context.Context, data *chatbot.BotCall
 
 	body := "### " + common.T("PushShowTitle") + "\n" +
 		common.T("PushShowSessionLabel", map[string]any{common.TemplateLabel: label}) + "\n\n"
+	if ok && running {
+		// The streaming row is deliberately excluded, so the text below belongs
+		// to the PREVIOUS turn. Without this note the user reads it as the answer
+		// to the question they just asked.
+		body += common.T("PushShowRunning") + "\n\n"
+	}
 	if !ok {
 		body += common.T("PushShowEmpty")
 	} else {

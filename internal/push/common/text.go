@@ -33,4 +33,18 @@ const (
 	TemplateID = "ID"
 	// TemplateProject is the project path/label placeholder.
 	TemplateProject = "Project"
+	// TemplateCommand is the slash-command word placeholder.
+	TemplateCommand = "Command"
 )
+
+// CommandWithAttachmentText is the reply for a slash command that arrived
+// together with an attachment.
+//
+// Commands are not routed to a session, and the attachment path delivers
+// Route.Message (which a command leaves empty) — so silently continuing would
+// post an empty message and drop the command word. Both backends answer with
+// this instead: it names the command and tells the user to send the files
+// separately, which is the only way to get both.
+func CommandWithAttachmentText(command string) string {
+	return T("PushCommandWithAttachment", map[string]any{TemplateCommand: command})
+}

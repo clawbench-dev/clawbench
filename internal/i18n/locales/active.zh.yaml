@@ -210,9 +210,11 @@ PushSubscribedNoSessionsFeishu: ClawBench 通知已订阅。暂无会话。
 PushMultipleRunningSessions: 匹配到多个正在运行的会话，请使用更长的 ID（{{.ID}}…）
 PushMultipleSessions: 匹配到多个会话，请使用更长的 ID（{{.ID}}…）
 PushSessionNotFound: 未找到会话 {{.ID}}
+PushInvalidSessionID: '会话 ID 格式无效（需 8 位以上十六进制）：{{.ID}}'
 PushRecentSessionUnavailable: 最近会话不可用，请用 /ls 重新选择：{{.Error}}
 PushShowTitle: 最近回复
 PushShowEmpty: 该会话还没有已完成的回复。
+PushShowRunning: 当前回合仍在生成，以下为**上一条**已完成的回复。
 PushShowSessionLabel: 会话 **{{.Label}}**
 PushStoppedTitle: 已停止
 PushStoppedRunning: 已停止会话 **{{.Label}}**，清空 {{.Count}} 条排队消息。
@@ -229,6 +231,7 @@ PushNewNoAgent: 该项目下没有可用的智能体。
 PushNewListFailed: 获取项目列表失败，请稍后重试。
 PushNewCreateFailed: 创建会话失败，请稍后重试。
 PushStopFailed: 停止会话失败，请稍后重试。
+PushCommandWithAttachment: '命令 `{{.Command}}` 不能和附件一起发送。请先单独发送命令，再发送文件。'
 NotFound: 未找到
 PermissionNotFound: 未找到待审批的权限请求
 ACPSessionNotFound: 该会话在智能体端已不存在

@@ -241,6 +241,9 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"PushNewListFailed",
 		"PushNewCreateFailed",
 		"PushStopFailed",
+		"PushCommandWithAttachment",
+		"PushInvalidSessionID",
+		"PushShowRunning",
 	}
 
 	for _, key := range keys {
@@ -387,12 +390,14 @@ func TestPushTemplatesKeepPlaceholders(t *testing.T) {
 		// Reached from the ACP connection-error path (background goroutine, no
 		// request to fall back on). A missing placeholder here would ship
 		// "Run `` in a terminal" to the user, so it is pinned with the rest.
-		"ACPAuthRequired":          {"Command": "cmdc login"},
-		"PushShowSessionLabel":     {"Label": "L"},
-		"PushStoppedRunning":       {"Label": "L", "Count": 2},
-		"PushStoppedIdle":          {"Label": "L", "Count": 0},
-		"PushNewCreated":           {"Project": "/p", "ID": "abc"},
-		"PushNewProjectOutOfRange": {"Count": 3},
+		"ACPAuthRequired":           {"Command": "cmdc login"},
+		"PushShowSessionLabel":      {"Label": "L"},
+		"PushStoppedRunning":        {"Label": "L", "Count": 2},
+		"PushStoppedIdle":           {"Label": "L", "Count": 0},
+		"PushNewCreated":            {"Project": "/p", "ID": "abc"},
+		"PushNewProjectOutOfRange":  {"Count": 3},
+		"PushCommandWithAttachment": {"Command": "/new"},
+		"PushInvalidSessionID":      {"ID": "abc"},
 	}
 	for key, data := range withData {
 		for _, loc := range []string{"en", "zh"} {
