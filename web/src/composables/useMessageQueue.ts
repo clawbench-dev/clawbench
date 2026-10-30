@@ -235,8 +235,28 @@ export function addQueued(sessionId: string, wire: QueuedMessageWire): void {
   bump()
 }
 
-/** Remove one queued message by queueId (cancel, drain or inject). */
-export function removeQueued(sessionId: string, queueId: string): void {
+/**
+ * Replace the text of one queued entry (an edit saved server-side).
+ *
+ * Publishes a NEW array for the same reason addQueued does: `queuedMessages` is
+ * a computed returning the stored array, and Vue skips notifying when a computed
+ * produces the reference it produced before. Mutating the entry in place would
+ * update the data and never re-render.
+ *
+ * A no-op when the session or queue id is unknown — the entry may have been
+ * drained while the edit was in flight, and the drain already removed it.
+ */
+export function updateQueuedText(sessionId: string, queueId: string, text: string): void {
+  if (!sessionId || !queueId) return
+  const list = queues.get(sessionId)
+  if (!list) return
+  const idx = list.findIndex((m) => m.queueId === queueId)
+  if (idx === -1) return
+  queues.set(sessionId, list.map((m, i) => (i === idx ? { ...m, text } : m)))
+  bump()
+}
+
+/** Remove one queued message by queueId (cancel, drain or inject). */export function removeQueued(sessionId: string, queueId: string): void {
   if (!sessionId || !queueId) return
   const list = queues.get(sessionId)
   if (!list) return
@@ -309,6 +329,7 @@ export function useMessageQueue() {
     markSendCommitted,
     syncFromHistory,
     addQueued,
+    updateQueuedText,
     removeQueued,
     removeQueuedMany,
     clearQueue,

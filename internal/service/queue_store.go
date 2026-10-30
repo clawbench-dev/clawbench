@@ -389,6 +389,102 @@ func CancelQueuedMessage(sessionID, queueID string) error {
 	return err
 }
 
+// GetQueuedMessage returns one queued message by its queue id.
+//
+// found=false means the row is gone (drained, injected, or cancelled). Callers
+// use it to decide BEFORE writing whether an edit would leave the entry
+// unsendable, without having to read the row back out of an update.
+func GetQueuedMessage(sessionID, queueID string) (model.QueuedMessage, bool, error) {
+	if sessionID == "" || queueID == "" {
+		return model.QueuedMessage{}, false, nil
+	}
+	var row QueuedRow
+	var filesJSON sql.NullString
+	err := store.ReadDB().QueryRowContext(context.Background(),
+		`SELECT q.id, q.session_id, q.project_id, COALESCE(p.path, ''), q.backend, q.queue_id, q.content, q.files, q.created_at
+		   FROM queued_messages q
+		   LEFT JOIN projects p ON p.id = q.project_id
+		  WHERE q.session_id = ? AND q.queue_id = ?`,
+		sessionID, queueID,
+	).Scan(&row.ID, &row.SessionID, &row.ProjectID, &row.ProjectPath, &row.Backend, &row.QueueID, &row.Content, &filesJSON, &row.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.QueuedMessage{}, false, nil
+	}
+	if err != nil {
+		return model.QueuedMessage{}, false, err
+	}
+	if filesJSON.Valid && filesJSON.String != "" {
+		row.Files = unmarshalFilesJSON(filesJSON.String)
+	}
+	return row.ToModel(), true, nil
+}
+
+// UpdateQueuedMessageContent rewrites the text of a still-queued message,
+// addressed by (session_id, queue_id), and returns the updated row.
+//
+// ok=false means no row matched: the drain loop claimed it between the client
+// rendering the queue and the user saving. That MUST NOT be reported as success.
+// The message has already been sent with the OLD text, so answering "saved"
+// would leave the user believing an edit landed that never will.
+//
+// Only `content` is written. Attachments are deliberately untouched: the UI
+// edits text, and rewriting `files` would need the identity dedupe the enqueue
+// path applies (model.DedupeFileEntries) plus path re-validation, neither of
+// which belongs behind an "edit text" call.
+//
+// The SELECT and UPDATE run in one transaction under the global write mutex,
+// which is the same lock claimQueuedRowTx takes. Without it a claim could land
+// between the two statements: the SELECT would return the row, the UPDATE would
+// match nothing, and the caller would get a "success" carrying text that is not
+// in any row anywhere.
+func UpdateQueuedMessageContent(sessionID, queueID, content string) (model.QueuedMessage, bool, error) {
+	if sessionID == "" || queueID == "" {
+		return model.QueuedMessage{}, false, nil
+	}
+
+	tx, err := store.WriteBegin()
+	if err != nil {
+		return model.QueuedMessage{}, false, err
+	}
+	defer store.WriteUnlock()
+	defer func() { _ = tx.Rollback() }()
+
+	var row QueuedRow
+	var filesJSON sql.NullString
+	// Reuse the claim's projection so the returned row carries the same fields
+	// the queue API serves (project path, files, created_at) without a second
+	// read after the update.
+	qErr := tx.QueryRowContext(context.Background(),
+		`SELECT q.id, q.session_id, q.project_id, COALESCE(p.path, ''), q.backend, q.queue_id, q.content, q.files, q.created_at
+		   FROM queued_messages q
+		   LEFT JOIN projects p ON p.id = q.project_id
+		  WHERE q.session_id = ? AND q.queue_id = ?`,
+		sessionID, queueID,
+	).Scan(&row.ID, &row.SessionID, &row.ProjectID, &row.ProjectPath, &row.Backend, &row.QueueID, &row.Content, &filesJSON, &row.CreatedAt)
+	if errors.Is(qErr, sql.ErrNoRows) {
+		return model.QueuedMessage{}, false, nil
+	}
+	if qErr != nil {
+		return model.QueuedMessage{}, false, qErr
+	}
+	if filesJSON.Valid && filesJSON.String != "" {
+		row.Files = unmarshalFilesJSON(filesJSON.String)
+	}
+
+	if _, uErr := tx.ExecContext(context.Background(),
+		"UPDATE queued_messages SET content = ? WHERE id = ?", content, row.ID,
+	); uErr != nil {
+		return model.QueuedMessage{}, false, uErr
+	}
+
+	if cErr := tx.Commit(); cErr != nil {
+		return model.QueuedMessage{}, false, cErr
+	}
+
+	row.Content = content
+	return row.ToModel(), true, nil
+}
+
 // loadQueuedParts reads every queued message of a session in queue (DB-id)
 // order. The caller must already hold the write mutex/transaction so no drain
 // can claim a row between this read and the delete that follows the merge.

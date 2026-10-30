@@ -136,8 +136,11 @@ export async function apiPatch<T = unknown>(url: string, body: unknown, opts: Ap
         if (!resp.ok) {
             const err = new Error(data.error ? String(data.error) : resp.statusText)
             // Carry the server's machine-readable key/detail so callers can
-            // branch on them (same contract as apiPost/apiGet).
-            const typedErr = err as Error & { msgKey?: string; detail?: unknown }
+            // branch on them (same contract as apiPost/apiGet). `status` is part
+            // of that contract: apiPost/apiDelete set it, and without it a caller
+            // cannot tell a 409 decline from a 500 failure.
+            const typedErr = err as Error & { status?: number; msgKey?: string; detail?: unknown }
+            typedErr.status = resp.status
             if (data.msgKey) typedErr.msgKey = String(data.msgKey)
             if (data.detail) typedErr.detail = data.detail
             throw err

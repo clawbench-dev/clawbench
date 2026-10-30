@@ -22,8 +22,10 @@ vi.mock('@/composables/useSessionIdentity', () => ({
 }))
 
 const mockCancelChat = vi.fn()
+const mockApiPatch = vi.fn()
 vi.mock('@/utils/api', () => ({
     cancelChat: (...args: any[]) => mockCancelChat(...args),
+    apiPatch: (...args: any[]) => mockApiPatch(...args),
 }))
 
 const mockToastShow = vi.fn()
@@ -841,6 +843,70 @@ describe('useSessionManager', () => {
             )
 
             fetchSpy.mockRestore()
+        })
+    })
+
+    // ── editQueuedMessage ──
+
+    describe('editQueuedMessage', () => {
+        it('PATCHes the queue row with the new text and updates the local entry', async () => {
+            const opts = createMockOptions()
+            addQueued('session-1', { queueId: 'q-1', text: 'original', files: [] })
+            mockApiPatch.mockResolvedValue({ ok: true })
+            const mgr = useSessionManager(opts)
+
+            const ok = await mgr.editQueuedMessage('q-1', 'revised')
+
+            expect(ok).toBe(true)
+            expect(mockApiPatch).toHaveBeenCalledWith(
+                expect.stringContaining('/api/ai/queue?session_id=session-1'),
+                { queueId: 'q-1', message: 'revised' },
+            )
+            expect(getQueue('session-1')[0].text).toBe('revised')
+        })
+
+        it('leaves the local entry untouched when the server rejects the edit', async () => {
+            const opts = createMockOptions()
+            addQueued('session-1', { queueId: 'q-1', text: 'original', files: [] })
+            mockApiPatch.mockRejectedValue(new Error('boom'))
+            const mgr = useSessionManager(opts)
+
+            const ok = await mgr.editQueuedMessage('q-1', 'revised')
+
+            expect(ok).toBe(false)
+            expect(getQueue('session-1')[0].text).toBe('original',
+                'a failed save must not leave the panel showing text the server never stored')
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'chat.pending.editFailed',
+                expect.objectContaining({ type: 'error' }),
+            )
+        })
+
+        it('drops the entry locally when the message was already drained (409)', async () => {
+            const opts = createMockOptions()
+            addQueued('session-1', { queueId: 'q-1', text: 'original', files: [] })
+            const err = Object.assign(new Error('conflict'), { status: 409 })
+            mockApiPatch.mockRejectedValue(err)
+            const mgr = useSessionManager(opts)
+
+            const ok = await mgr.editQueuedMessage('q-1', 'revised')
+
+            expect(ok).toBe(false)
+            // The row is a real message now; keeping it in the panel would be a
+            // phantom the user can never act on.
+            expect(getQueue('session-1')).toHaveLength(0)
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'chat.pending.alreadySent',
+                expect.objectContaining({ type: 'info' }),
+            )
+        })
+
+        it('returns false without a request for an empty queue id', async () => {
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            expect(await mgr.editQueuedMessage('', 'text')).toBe(false)
+            expect(mockApiPatch).not.toHaveBeenCalled()
         })
     })
 
