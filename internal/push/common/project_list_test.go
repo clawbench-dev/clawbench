@@ -185,7 +185,7 @@ func TestRenderProjectList_ImpossibleBudgetStillFits(t *testing.T) {
 	refs := []ProjectRef{{Index: 1, Path: "/a", Exists: true}}
 	const limit = 20
 	out := RenderProjectList(refs, limit)
-	if n := len([]rune(out)); n > limit+1 { // +1 for the ellipsis
+	if n := len([]rune(out)); n > limit {
 		t.Fatalf("rendered %d runes for a %d budget: %q", n, limit, out)
 	}
 }

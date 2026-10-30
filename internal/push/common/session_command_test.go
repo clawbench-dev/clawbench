@@ -484,3 +484,49 @@ func TestResolveCommandTarget_AcceptsFullSessionID(t *testing.T) {
 		}
 	}
 }
+
+// WeChat appends a quoted message after a blank line (see wechat.parseInbound),
+// so a command sent as a reply to a push arrives as "/show\n\n[引用: …]". The
+// argument must stay empty: taking the whole remainder would hand the quote to
+// the session-id validator, which rejects it and answers "invalid id" to a user
+// who only pressed reply.
+func TestClassifyIncoming_CommandIgnoresTrailingQuotedBlock(t *testing.T) {
+	cases := []struct {
+		text string
+		kind RouteKind
+		arg  string
+	}{
+		{"/show\n\n[引用: 会话完成 | done]", RouteShowLastReply, ""},
+		{"/show abcdef12\n\n[引用: 会话完成]", RouteShowLastReply, "abcdef12"},
+		{"/stop\n\n[引用: x]", RouteStopSession, ""},
+		{"/new\n\n[引用: x]", RouteNewSession, ""},
+		// A path may contain spaces but never a newline, so the first line is
+		// the whole argument.
+		{"/new /srv/my project\n\n[引用: x]", RouteNewSession, "/srv/my project"},
+	}
+	for _, tc := range cases {
+		// A sticky target is the normal state when replying to a push; without
+		// one, /show and /stop correctly answer "pick a session" instead.
+		route := ClassifyIncoming(tc.text, "abcdef1234567890")
+		if route.Kind != tc.kind {
+			t.Errorf("%q: kind = %v, want %v", tc.text, route.Kind, tc.kind)
+			continue
+		}
+		if route.Arg != tc.arg {
+			t.Errorf("%q: arg = %q, want %q", tc.text, route.Arg, tc.arg)
+		}
+	}
+}
+
+// A plain message keeps its full text, newlines and quoted block included: only
+// the command argument is line-scoped.
+func TestClassifyIncoming_MessageKeepsTrailingBlock(t *testing.T) {
+	const text = "继续\n\n[引用: 上一条]"
+	route := ClassifyIncoming(text, "abcdef12")
+	if route.Kind != RouteToSession {
+		t.Fatalf("kind = %v, want RouteToSession", route.Kind)
+	}
+	if route.Message != text {
+		t.Errorf("message = %q, want the whole text %q", route.Message, text)
+	}
+}

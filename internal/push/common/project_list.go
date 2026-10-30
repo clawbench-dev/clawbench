@@ -23,14 +23,17 @@ func RenderProjectList(refs []ProjectRef, maxRunes int) string {
 	if maxRunes <= 0 || utf8.RuneCountInString(out) <= maxRunes {
 		return out
 	}
-	for n := len(refs) - 1; n >= 0; n-- {
+	// Stop at one entry: "no projects" plus "showing 0 of N" would contradict
+	// itself. If even a single entry does not fit, the budget is smaller than the
+	// header and the fallback below takes over.
+	for n := len(refs) - 1; n >= 1; n-- {
 		if candidate := renderProjectList(refs[:n], len(refs)); utf8.RuneCountInString(candidate) <= maxRunes {
 			return candidate
 		}
 	}
 	// Not even the header fits the budget. Send something the platform accepts
 	// instead of a message it will reject outright.
-	return string([]rune(out)[:maxRunes]) + "…"
+	return string([]rune(out)[:maxRunes-1]) + "…"
 }
 
 // renderProjectList renders refs. total > len(refs) means the list was cut, and

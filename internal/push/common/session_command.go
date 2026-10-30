@@ -166,6 +166,12 @@ func ClassifyIncoming(text, stickySessionID string) Route {
 // remaining argument, preserving the argument verbatim (a project path may
 // contain spaces). Returns ("", "") when the message is not a leading slash
 // word at all.
+//
+// The argument is the rest of the FIRST line only. A trailing block that is not
+// part of the command must not become the argument: WeChat appends a quoted
+// message after a blank line (see wechat.parseInbound), so "/show" sent as a
+// reply to a push would otherwise parse as "/show <the quote>" and be rejected
+// as a malformed session id.
 func splitCommand(trimmed string) (cmd, arg string) {
 	if !strings.HasPrefix(trimmed, "/") {
 		return "", ""
@@ -174,7 +180,11 @@ func splitCommand(trimmed string) (cmd, arg string) {
 	if idx < 0 {
 		return trimmed, ""
 	}
-	return trimmed[:idx], strings.TrimSpace(trimmed[idx+1:])
+	rest := trimmed[idx+1:]
+	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+		rest = rest[:nl]
+	}
+	return trimmed[:idx], strings.TrimSpace(rest)
 }
 
 // ResolveShortSessionID resolves an 8-char short session ID to a full session ID and title.

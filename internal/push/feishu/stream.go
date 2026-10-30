@@ -219,23 +219,22 @@ func (m *Manager) handleIncomingWithMedia(ctx context.Context, openID, text, bod
 
 	// Route on the title-less text so a leading "@{shortID}" still matches.
 	route := common.ClassifyIncoming(bodyText, sticky)
-	if route.Kind == common.RouteListSessions {
-		m.handleSessionList(ctx, openID)
-		return
-	}
-	if route.Kind == common.RouteNoTarget {
-		m.replyNoTarget(ctx, openID)
-		return
-	}
 	// A slash command is not addressed to a session, and Route.Message is empty
 	// for one — falling through would post an empty message carrying the
 	// attachments and silently drop the command word. Refuse instead of guessing
 	// which half the user wanted.
+	//
+	// This must come BEFORE the "/ls" branch: /ls is a command too, and answering
+	// it while discarding the attachment loses the user's file with no warning.
 	if route.Kind.IsCommand() {
 		slog.Info("feishu: command cannot carry attachments",
 			"open_id", openID, "command", route.Kind.CommandWord(), "media", len(media))
 		_ = m.SendPostMessage(ctx, openID, common.T("PushErrorTitle"),
 			common.CommandWithAttachmentText(route.Kind.CommandWord()))
+		return
+	}
+	if route.Kind == common.RouteNoTarget {
+		m.replyNoTarget(ctx, openID)
 		return
 	}
 	// The message that reaches the session keeps the title, so fall back to the

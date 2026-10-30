@@ -31,22 +31,20 @@ func (m *Manager) handleIncomingWithMedia(ctx context.Context, userID, token, te
 	sticky := m.lastSessionID(userID)
 	route := common.ClassifyIncoming(text, sticky)
 
-	switch route.Kind {
-	case common.RouteListSessions:
-		m.handleSessionList(ctx, userID, token)
-		return
-	case common.RouteNoTarget:
-		m.replyNoTarget(ctx, userID, token)
-		return
-	}
-
 	// A command never routes to a session (Route.Message is empty), so sending
 	// the attachments on would deliver them with no text — and silently drop the
 	// command word. Tell the user to split the request instead.
+	//
+	// This must come BEFORE the "/ls" branch: /ls is a command too, and answering
+	// it while discarding the attachment loses the user's file with no warning.
 	if route.Kind.IsCommand() {
 		slog.Info("wechat: command cannot carry attachments",
 			"user_id", userID, "command", route.Kind.CommandWord(), "media", len(media))
 		_ = m.SendText(ctx, userID, common.CommandWithAttachmentText(route.Kind.CommandWord()), token)
+		return
+	}
+	if route.Kind == common.RouteNoTarget {
+		m.replyNoTarget(ctx, userID, token)
 		return
 	}
 

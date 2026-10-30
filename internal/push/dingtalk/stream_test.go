@@ -2160,3 +2160,36 @@ func TestOnChatBotMessage_ShowWhileIdleHasNoNote(t *testing.T) {
 		t.Errorf("idle session must not carry the running note, got %s", *body)
 	}
 }
+
+// "/ls" is a command too. Answering it while discarding the attachment loses the
+// user's file with no warning, so the command/attachment refusal must be checked
+// BEFORE the list branch.
+func TestHandleIncomingWithMedia_ListSessionsWithAttachmentIsRefused(t *testing.T) {
+	mgr, reply, _ := stickyTestEnv(t, "", stickySessions)
+
+	var sentTo string
+	sessionMessenger.(*mockSessionMessenger).SendMessageFn = func(sid, _ string, _ []model.FileEntry) error {
+		sentTo = sid
+		return nil
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*reply, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	mgr.handleIncomingWithMedia(context.Background(), stickyData(server.URL, "/ls"), "staff123", "/ls",
+		[]mediaRef{{code: "code1", filename: "a.png"}})
+
+	if sentTo != "" {
+		t.Errorf("a refused command must not reach a session, got %q", sentTo)
+	}
+	got := string(*reply)
+	if !strings.Contains(got, common.CommandWithAttachmentText(common.SessionListCommand)) {
+		t.Errorf("expected the command/attachment refusal, got %s", got)
+	}
+	if strings.Contains(got, common.T("PushSessionListIntro")) {
+		t.Errorf("the list must not be answered when the attachment is refused, got %s", got)
+	}
+}

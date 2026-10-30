@@ -173,26 +173,23 @@ func (m *Manager) handleIncomingWithMedia(ctx context.Context, data *chatbot.Bot
 	replier := chatbot.NewChatbotReplier()
 	sticky := m.lastSessionID(staffID)
 
-	// ClassifyIncoming also handles "/ls" and the no-target hint, so a media
-	// message that is only "@{shortID}" or "/ls" behaves like its text twin.
 	route := common.ClassifyIncoming(text, sticky)
-	if route.Kind == common.RouteListSessions {
-		m.handleSessionList(ctx, data)
-		return
-	}
-	if route.Kind == common.RouteNoTarget {
-		m.replyNoTarget(ctx, data)
-		return
-	}
 	// A slash command is not addressed to a session, and Route.Message is empty
 	// for one — falling through would post an empty message carrying the
 	// attachments and silently drop the command word. Refuse instead of guessing
 	// which half the user wanted.
+	//
+	// This must come BEFORE the "/ls" branch: /ls is a command too, and answering
+	// it while discarding the attachment loses the user's file with no warning.
 	if route.Kind.IsCommand() {
 		slog.Info("dingtalk: command cannot carry attachments",
 			"staff_id", staffID, "command", route.Kind.CommandWord(), "media", len(media))
 		_ = replier.SimpleReplyText(ctx, data.SessionWebhook,
 			[]byte(common.CommandWithAttachmentText(route.Kind.CommandWord())))
+		return
+	}
+	if route.Kind == common.RouteNoTarget {
+		m.replyNoTarget(ctx, data)
 		return
 	}
 

@@ -547,3 +547,91 @@ func TestHandleIncomingWithMedia_CommandWithAttachmentIsRefused(t *testing.T) {
 	assert.Empty(t, messenger.sentSessionID, "nothing may be sent to a session")
 	assert.Empty(t, messenger.createPath, "the command must not run either")
 }
+
+// "/ls" is a command too: it must refuse the attachment rather than answer the
+// list and drop the user's file.
+func TestHandleIncomingWithMedia_ListSessionsWithAttachmentIsRefused(t *testing.T) {
+	messenger := &mockSessionMessenger{
+		sessions: []common.SessionInfo{{ID: "abcdef1234567890", Title: "T"}},
+	}
+	installMessenger(t, messenger)
+
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	mgr.handleIncomingWithMedia(context.Background(), "u1", "ctx", "/ls", []mediaRef{{kind: "image"}})
+
+	require.Len(t, *bodies, 1)
+	got := textOf((*bodies)[0])
+	assert.Equal(t, common.CommandWithAttachmentText(common.SessionListCommand), got)
+	assert.NotContains(t, got, common.T("PushSessionListIntroWechat"),
+		"the list must not be answered when the attachment is refused")
+}
+
+// /show exists to hand back the real answer, code included. The answer is
+// stripped once by truncateForWeChat (which protects fenced blocks); stripping
+// the composed body again would run the emphasis rules over code that is already
+// plain text and turn "def __init__" into "def init".
+func TestHandleShowLastReply_KeepsCodeVerbatim(t *testing.T) {
+	const answer = "```python\ndef __init__(self):\n    x = a ** 2\n    my_var = 1\n```"
+	messenger := &mockSessionMessenger{
+		sessions:    []common.SessionInfo{{ID: "abcdef1234567890", Title: "T"}},
+		lastReply:   answer,
+		lastReplyOK: true,
+	}
+	mock := installMessenger(t, messenger)
+	mock.lastSessionID = "abcdef1234567890"
+
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	mgr.handleIncomingText(context.Background(), "u1", "ctx", "/show")
+
+	require.Len(t, *bodies, 1)
+	got := textOf((*bodies)[0])
+	for _, want := range []string{"def __init__(self):", "x = a ** 2", "my_var = 1"} {
+		assert.Contains(t, got, want, "the code body must survive markdown stripping")
+	}
+}
+
+// The /new list tells the user to select a project by path. Stripping Markdown
+// deletes every "_", so "/srv/my_project" would arrive as "/srv/myproject" and
+// the path the user types back would be rejected.
+func TestHandleNewSession_ListKeepsPathVerbatim(t *testing.T) {
+	messenger := &mockSessionMessenger{
+		projects: []common.ProjectRef{{Index: 1, Path: "/srv/my_project", Exists: true}},
+	}
+	installMessenger(t, messenger)
+
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	mgr.handleIncomingText(context.Background(), "u1", "ctx", "/new")
+
+	require.Len(t, *bodies, 1)
+	got := textOf((*bodies)[0])
+	assert.Contains(t, got, "/srv/my_project")
+	assert.NotContains(t, got, "/srv/myproject", "the underscore is part of the path")
+}
+
+func TestHandleNewSession_CreatedReplyKeepsPathVerbatim(t *testing.T) {
+	messenger := &mockSessionMessenger{
+		projects:  []common.ProjectRef{{Index: 1, Path: "/srv/my_project", Exists: true}},
+		createdID: "new-session-id",
+	}
+	installMessenger(t, messenger)
+
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	mgr.handleIncomingText(context.Background(), "u1", "ctx", "/new 1")
+
+	require.Len(t, *bodies, 1)
+	got := textOf((*bodies)[0])
+	assert.Contains(t, got, "/srv/my_project")
+	assert.NotContains(t, got, "/srv/myproject")
+}

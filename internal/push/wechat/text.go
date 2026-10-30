@@ -3,6 +3,7 @@ package wechat
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -82,6 +83,40 @@ func stripMarkdownForWeChat(text string) string {
 		result = strings.ReplaceAll(result, fmt.Sprintf("\x00%d\x00", i), body)
 	}
 	return result
+}
+
+// stripMarkdownKeeping flattens Markdown while protecting spans that are data,
+// not markup.
+//
+// Paths and session titles are user data: reBoldItalic deletes EVERY "_" and
+// "*", so "/srv/my_project" would arrive as "/srv/myproject". That is not
+// cosmetic — the /new list tells the user to select a project by full path, and
+// the mangled path is then rejected as "project not found".
+//
+// Protected spans are swapped for -wrapped indices (a different sentinel
+// from the fenced-block placeholders, which are \x00-wrapped) and restored
+// afterwards. Longest span first, so a path that is a prefix of another one
+// cannot be rewritten twice.
+func stripMarkdownKeeping(text string, keep ...string) string {
+	ordered := make([]string, 0, len(keep))
+	for _, k := range keep {
+		if k != "" {
+			ordered = append(ordered, k)
+		}
+	}
+	if len(ordered) == 0 {
+		return stripMarkdownForWeChat(text)
+	}
+	sort.Slice(ordered, func(i, j int) bool { return len(ordered[i]) > len(ordered[j]) })
+
+	for i, k := range ordered {
+		text = strings.ReplaceAll(text, k, fmt.Sprintf("\x01%d\x01", i))
+	}
+	text = stripMarkdownForWeChat(text)
+	for i, k := range ordered {
+		text = strings.ReplaceAll(text, fmt.Sprintf("\x01%d\x01", i), k)
+	}
+	return text
 }
 
 // reFenceLine matches an opening or closing ``` fence line (with optional

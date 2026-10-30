@@ -310,20 +310,25 @@ func (m *Manager) handleShowLastReply(ctx context.Context, userID, token, arg st
 		return
 	}
 
+	// Strip each segment on its own: the answer already went through
+	// truncateForWeChat (which strips once, protecting fenced code). Stripping the
+	// composed body again would run the emphasis rules over code that is already
+	// plain text, turning "def __init__" into "def init".
 	var sb strings.Builder
-	sb.WriteString(common.T("PushShowSessionLabel", map[string]any{common.TemplateLabel: label}) + "\n\n")
+	sb.WriteString(stripMarkdownKeeping(
+		common.T("PushShowSessionLabel", map[string]any{common.TemplateLabel: label}), label) + "\n\n")
 	if ok && running {
 		// The streaming row is deliberately excluded, so the text below belongs
 		// to the PREVIOUS turn; without this note the user reads it as the answer
 		// to the question they just asked.
-		sb.WriteString(common.T("PushShowRunning") + "\n\n")
+		sb.WriteString(stripMarkdownForWeChat(common.T("PushShowRunning")) + "\n\n")
 	}
 	if !ok {
-		sb.WriteString(common.T("PushShowEmpty"))
+		sb.WriteString(stripMarkdownForWeChat(common.T("PushShowEmpty")))
 	} else {
 		sb.WriteString(truncateForWeChat(text))
 	}
-	_ = m.SendText(ctx, userID, stripMarkdownForWeChat(sb.String()), token)
+	_ = m.SendText(ctx, userID, sb.String(), token)
 }
 
 // handleStopSession stops the target session and drops its queue.
@@ -355,11 +360,12 @@ func (m *Manager) handleStopSession(ctx context.Context, userID, token, arg stri
 	if wasRunning {
 		key = "PushStoppedRunning"
 	}
+	label := common.FormatSessionLabel(sessionID, title)
 	body := common.T(key, map[string]any{
-		common.TemplateLabel: common.FormatSessionLabel(sessionID, title),
+		common.TemplateLabel: label,
 		common.TemplateCount: cleared,
 	})
-	_ = m.SendText(ctx, userID, stripMarkdownForWeChat(body), token)
+	_ = m.SendText(ctx, userID, stripMarkdownKeeping(body, label), token)
 }
 
 // handleNewSession renders the project list for a bare "/new", or creates an
@@ -379,8 +385,15 @@ func (m *Manager) handleNewSession(ctx context.Context, userID, token, arg strin
 
 	if strings.TrimSpace(arg) == "" {
 		// The budget is applied BEFORE stripping Markdown, which only shortens the
-		// text — so the stripped result is guaranteed to stay under the ceiling.
-		_ = m.SendText(ctx, userID, stripMarkdownForWeChat(common.RenderProjectList(projects, wechatPreviewMaxRunes)), token)
+		// text, so the stripped result stays under the ceiling. The paths are data:
+		// stripping would eat the underscores in "/srv/my_project", and the user is
+		// told to type a path back.
+		paths := make([]string, 0, len(projects))
+		for _, r := range projects {
+			paths = append(paths, r.Path)
+		}
+		_ = m.SendText(ctx, userID,
+			stripMarkdownKeeping(common.RenderProjectList(projects, wechatPreviewMaxRunes), paths...), token)
 		return
 	}
 
@@ -407,7 +420,7 @@ func (m *Manager) handleNewSession(ctx context.Context, userID, token, arg strin
 	if !ref.Exists {
 		body += "\n\n" + common.T("PushNewProjectMissingDir")
 	}
-	_ = m.SendText(ctx, userID, stripMarkdownForWeChat(body), token)
+	_ = m.SendText(ctx, userID, stripMarkdownKeeping(body, path), token)
 }
 
 // deliverToSession resolves the route's target, sends the message, then records
