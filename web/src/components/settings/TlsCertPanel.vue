@@ -23,7 +23,9 @@
 
       <div v-if="hosts.length" class="tls-panel__row">
         <span class="tls-panel__label">{{ t('settings.items.tlsHosts') }}</span>
-        <span class="tls-panel__value tls-panel__value--wrap">{{ hosts.join('、') }}</span>
+        <span class="tls-panel__value tls-panel__value--wrap">{{
+          hosts.join(t('settings.items.tlsHostSeparator'))
+        }}</span>
       </div>
 
       <div v-if="status.notAfter" class="tls-panel__row">
@@ -133,7 +135,8 @@ function formatDate(iso: string): string {
 
 function parseExtraHosts(): string[] {
   return extraHosts.value
-    .split(/[,，\s]+/)
+    // Accept the fullwidth comma too (\uFF0C): users type it on a Chinese IME.
+    .split(/[,\uFF0C\s]+/)
     .map((s) => s.trim())
     .filter(Boolean)
 }

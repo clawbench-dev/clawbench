@@ -3429,6 +3429,7 @@ export default {
       tlsStateSelfSigned: '已启用（自签名）',
       tlsStateCA: '已启用（CA 签发）',
       tlsHosts: '覆盖地址',
+      tlsHostSeparator: '、',
       tlsNotAfter: '到期时间',
       tlsExtraHosts: '额外地址（可选）',
       tlsExtraHostsPlaceholder: '例如 10.0.0.5, clawbench.local',

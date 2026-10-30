@@ -3434,6 +3434,7 @@ export default {
       tlsStateSelfSigned: 'Enabled (self-signed)',
       tlsStateCA: 'Enabled (CA-issued)',
       tlsHosts: 'Covers',
+      tlsHostSeparator: ', ',
       tlsNotAfter: 'Expires',
       tlsExtraHosts: 'Extra addresses (optional)',
       tlsExtraHostsPlaceholder: 'e.g. 10.0.0.5, clawbench.local',
