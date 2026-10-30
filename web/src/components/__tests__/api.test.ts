@@ -193,23 +193,23 @@ describe('apiDelete', () => {
       .rejects.toThrow('cannot_delete_current')
   })
 
-  // A 409 from DELETE /api/agents carries msgKey=AgentInUse + detail counts;
-  // the caller (agent deletion) branches on these, so they must survive the
-  // throw — a bare Error would silently degrade it to a generic failure toast.
+  // A 409 from DELETE /api/agents carries msgKey (e.g. AgentHasRunningSessions);
+  // the caller (agent deletion) branches on it, so it must survive the throw — a
+  // bare Error would silently degrade it to a generic failure toast.
   it('attaches msgKey and detail to the error on non-ok response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
       status: 409,
       statusText: 'Conflict',
       json: () => Promise.resolve({
-        error: 'agent in use',
-        msgKey: 'AgentInUse',
+        error: 'agent running',
+        msgKey: 'AgentHasRunningSessions',
         detail: { SessionCount: 3, TaskCount: 1, MembershipCount: 0 },
       }),
     })
 
     await expect(apiDelete('/api/agents', { body: { id: 'claude' } })).rejects.toMatchObject({
-      msgKey: 'AgentInUse',
+      msgKey: 'AgentHasRunningSessions',
       status: 409,
       detail: { SessionCount: 3, TaskCount: 1, MembershipCount: 0 },
     })

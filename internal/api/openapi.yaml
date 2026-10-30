@@ -5095,20 +5095,32 @@ paths:
           description: 名称已被其它 agent 占用（`AgentNameTaken`），或等于群聊用户昵称（`AgentNameReserved`）
     delete:
       tags: [Agents]
-      summary: 删除 agent
+      summary: 删除 agent（会话由默认智能体接管）
       description: |
-        删除一个 agent。**仅当该 agent 不再被使用时才允许删除**：只要还存在该 agent
-        参与的会话（1:1 聊天 `chat`，含归档；或它作为活跃成员的群聊
-        `group_member`）、定时任务，就返回 `409` + `msgKey=AgentInUse`，并在
-        `detail` 中给出 `{SessionCount, TaskCount, MembershipCount}`
-        （`MembershipCount` 是 `SessionCount` 的子集）。默认智能体不可删除
+        删除一个 agent。**不再因为「还有会话/任务/群成员」而拒绝**（issue #606）：
+        它名下的会话、群成员关系与定时任务在**同一个事务**里转交给**默认智能体**，
+        响应中的 `sessions` / `tasks` / `groups` 是实际转交的数量。
+
+        转交会重写每个会话行的执行身份：`agent_id` 与 `backend` 换成默认智能体的，
+        `model` / `transport` 清空（旧值只对旧后端有效），
+        `external_session_id` 清空（原生会话属于已删除的进程），
+        `context_state` 里的 `mode` / `thinkingEffort` / `usage` 一并清掉（旧 agent
+        的能力集与上下文窗口）。会话行本身与 `chat_history` **一条都不删**：历史照常
+        可读，只是下一轮会以「全新原生会话 + 历史作为背景注入」的方式继续
+        （`agent_takeover_from` 记录旧 agent 的显示名，同时充当该分支的开关）。
+
+        群行（`session_type='group'`）的 `agent_id` / `backend` 按新成员行重算
+        （主持人模式取主持人、自由模式取第一个成员），否则群会继续指向已删除的 agent。
+
+        唯一的拒绝是**有会话正在运行**：`409` + `msgKey=AgentHasRunningSessions`
+        （包括它作为发言成员的群回合）。默认智能体不可删除
         （`CannotDeleteDefaultAgent`）。
       operationId: agentsDelete
       responses:
         "200":
-          description: 结果
+          description: 删除结果（`deleted`、`sessions`、`tasks`、`groups`、`replacementAgentId`、`replacementName`）
         "409":
-          description: 该 agent 仍在使用中（`AgentInUse`）
+          description: 该 agent 有会话正在运行（`AgentHasRunningSessions`）
 
   /api/agents/{id}:
     get:

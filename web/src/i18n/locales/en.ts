@@ -1260,6 +1260,8 @@ export default {
     forkCount: '{n} fork(s)',
     forkGeneration: 'Gen {n}',
     forkGenerationTitle: 'Forked {n} generation(s) from the session above',
+    takeoverBadge: 'Taken over',
+    takeoverBadgeTip: 'Was served by "{name}", which has been deleted; the default agent now continues this session and the history was re-injected as background',
   },
   sessionTags: {
     title: 'Set tags',
@@ -2916,9 +2918,12 @@ export default {
       agentReorderFailed: 'Reorder failed',
       agentDragHandle: 'Drag to reorder',
       agentDelete: 'Delete',
-      agentDeleteConfirm: 'Delete agent "{name}"?',
+      // Deletion hands the agent's conversations to the default agent, so the
+      // confirm has to say so BEFORE the user commits.
+      agentDeleteTakeoverConfirm: 'Delete agent "{name}"?\nIts {sessions} session(s) and {tasks} task(s) will be handed to the default agent "{replacement}": the history is kept, but the earlier context is re-injected as background.',
       agentDeleteDefault: 'Cannot delete default agent',
-      agentDeleteBlocked: 'This agent is still in use ({sessions} sessions, {tasks} tasks); delete or leave them first',
+      agentDeleteRunning: 'This agent has a conversation running; stop it before deleting',
+      agentDeletedTakeover: 'Deleted "{name}"; {sessions} session(s) and {tasks} task(s) now belong to "{replacement}"',
       agentDeleted: 'Agent deleted',
       agentDeleteFailed: 'Delete failed',
       agentDisable: 'Disable',

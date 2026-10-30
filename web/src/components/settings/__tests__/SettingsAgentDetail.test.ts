@@ -67,9 +67,10 @@ vi.mock('vue-i18n', async (importOriginal) => {
         'settings.items.agentSelfTestDeepMeta': 'transport {transport} · stop {stopReason} · {ms}ms',
         'settings.saveFailed': 'Save failed',
         'settings.items.agentDelete': 'Delete',
-        'settings.items.agentDeleteConfirm': `Delete ${params?.name ?? ''}?`,
         'settings.items.agentDeleteDefault': 'Cannot delete default agent',
-        'settings.items.agentDeleteBlocked': `In use (${params?.sessions ?? 0} sessions, ${params?.tasks ?? 0} tasks)`,
+        'settings.items.agentDeleteRunning': 'This agent has a conversation running',
+        'settings.items.agentDeleteTakeoverConfirm': `Delete ${params?.name ?? ''}? hands ${params?.sessions ?? 0} sessions and ${params?.tasks ?? 0} tasks to ${params?.replacement ?? ''}`,
+        'settings.items.agentDeletedTakeover': `Deleted, handed ${params?.sessions ?? 0} sessions and ${params?.tasks ?? 0} tasks to ${params?.replacement ?? ''}`,
         'settings.items.agentDeleted': 'Deleted',
         'settings.items.agentDeleteFailed': 'Delete failed',
         'settings.items.agentDisable': 'Disable',
@@ -92,7 +93,6 @@ vi.mock('vue-i18n', async (importOriginal) => {
         return `${params.passed} passed, ${params.warned} warning(s), ${params.failed} failed`
       }
       if (key === 'settings.items.agentModelCount' && params) return `${params.count} models`
-      if (key === 'settings.items.agentDeleteConfirm' && params) return `Delete ${params.name}?`
       return map[key] ?? key
     },
   }),
@@ -529,54 +529,62 @@ describe('SettingsAgentDetail', () => {
       expect(mockToastShow).toHaveBeenCalledWith('Delete failed', expect.any(Object))
     })
 
-    it('blocks deletion locally when the agent still has sessions', async () => {
+    it('confirms with the takeover consequence instead of blocking locally', async () => {
       mockDefaultAgentId.value = 'other-agent'
-      const wrapper = mountDetail({ sessionCount: 3, taskCount: 0 })
-      await wrapper.find('.settings-agent-detail__delete-btn').trigger('click')
-      // No confirm dialog, no delete call — a toast explains why.
-      expect(mockDialogConfirm).not.toHaveBeenCalled()
-      expect(mockDeleteAgent).not.toHaveBeenCalled()
-      expect(mockToastShow).toHaveBeenCalledWith(
-        expect.stringContaining('In use'),
-        expect.any(Object),
+      mockDialogConfirm.mockResolvedValueOnce(false)
+      const wrapper = mountDetail({ sessionCount: 3, taskCount: 2 })
+      // mountDetail installs its own return value, so the default agent's
+      // identity must be resolvable AFTER the mount — handleDelete looks it up
+      // when the button is clicked.
+      mockGetAgent.mockImplementation((id: string) =>
+        id === 'other-agent' ? { ...baseAgent, id: 'other-agent', name: 'Fallback Agent' } : baseAgent,
       )
-    })
-
-    it('blocks deletion locally when the agent still has tasks', async () => {
-      mockDefaultAgentId.value = 'other-agent'
-      const wrapper = mountDetail({ sessionCount: 0, taskCount: 2 })
       await wrapper.find('.settings-agent-detail__delete-btn').trigger('click')
-      expect(mockDialogConfirm).not.toHaveBeenCalled()
+
+      // Owning conversations is no longer a blocker (issue #606): the dialog must
+      // open and spell out where they go.
+      expect(mockDialogConfirm).toHaveBeenCalled()
+      const text = String(mockDialogConfirm.mock.calls.at(-1)?.[0] ?? '')
+      expect(text).toContain('3')
+      expect(text).toContain('2')
+      expect(text).toContain('Fallback Agent')
       expect(mockDeleteAgent).not.toHaveBeenCalled()
     })
 
-    it('blocks deletion locally when the agent is only a group member', async () => {
-      mockDefaultAgentId.value = 'other-agent'
-      const wrapper = mountDetail({ sessionCount: 0, taskCount: 0, membershipCount: 1 })
-      await wrapper.find('.settings-agent-detail__delete-btn').trigger('click')
-      expect(mockDialogConfirm).not.toHaveBeenCalled()
-      expect(mockDeleteAgent).not.toHaveBeenCalled()
-      expect(mockToastShow).toHaveBeenCalledWith(
-        expect.stringContaining('In use'),
-        expect.any(Object),
-      )
-    })
-
-    it('surfaces the backend AgentInUse 409 with its authoritative counts', async () => {
+    it('reports the authoritative takeover counts in the success toast', async () => {
       mockDefaultAgentId.value = 'other-agent'
       mockDialogConfirm.mockResolvedValueOnce(true)
-      // Local counts are stale (0), so the dialog opens; the backend refuses.
-      mockDeleteAgent.mockRejectedValueOnce(
-        Object.assign(new Error('in use'), {
-          msgKey: 'AgentInUse',
-          detail: { SessionCount: 5, TaskCount: 1 },
-        }),
-      )
+      mockDeleteAgent.mockResolvedValueOnce({
+        deleted: 'test-agent',
+        sessions: 4,
+        tasks: 1,
+        groups: 1,
+        replacementAgentId: 'other-agent',
+        replacementName: 'Other',
+      })
       const wrapper = mountDetail({ sessionCount: 0, taskCount: 0 })
       await wrapper.find('.settings-agent-detail__delete-btn').trigger('click')
-      expect(mockDeleteAgent).toHaveBeenCalledWith('test-agent')
+
+      // The local counts are only a hint; the server's numbers are what the user
+      // sees after the fact.
       expect(mockToastShow).toHaveBeenCalledWith(
-        expect.stringContaining('5 sessions'),
+        expect.stringContaining('4 sessions'),
+        expect.any(Object),
+      )
+      expect(wrapper.emitted('deleted')).toBeTruthy()
+    })
+
+    it('surfaces the running-session 409', async () => {
+      mockDefaultAgentId.value = 'other-agent'
+      mockDialogConfirm.mockResolvedValueOnce(true)
+      mockDeleteAgent.mockRejectedValueOnce(
+        Object.assign(new Error('running'), { msgKey: 'AgentHasRunningSessions' }),
+      )
+      const wrapper = mountDetail({ sessionCount: 1, taskCount: 0 })
+      await wrapper.find('.settings-agent-detail__delete-btn').trigger('click')
+
+      expect(mockToastShow).toHaveBeenCalledWith(
+        'This agent has a conversation running',
         expect.any(Object),
       )
       // The generic failure toast must NOT also fire.

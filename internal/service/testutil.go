@@ -43,11 +43,17 @@ func InitInMemoryDB() (*sql.DB, error) {
 			title TEXT NOT NULL DEFAULT '',
 			agent_id TEXT DEFAULT '',
 			agent_name TEXT NOT NULL DEFAULT '',
+			agent_source TEXT NOT NULL DEFAULT 'default',
+			agent_takeover_from TEXT NOT NULL DEFAULT '',
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			group_id TEXT DEFAULT '',
+			model TEXT NOT NULL DEFAULT '',
+			transport TEXT NOT NULL DEFAULT '',
+			external_session_id TEXT NOT NULL DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0,
 			disabled INTEGER NOT NULL DEFAULT 0,
 			context_state TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -57,7 +63,8 @@ func InitInMemoryDB() (*sql.DB, error) {
 			cron_expr TEXT NOT NULL DEFAULT '',
 			agent_id TEXT NOT NULL DEFAULT '',
 			prompt TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT 'active'
+			status TEXT NOT NULL DEFAULT 'active',
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 	`); err != nil {
 		_ = db.Close()

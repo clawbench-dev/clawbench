@@ -40,19 +40,20 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 	pendingSet := ai.GetACPConnManager().GetPendingApprovalSessionIDs()
 
 	type overviewSession struct {
-		ID              string                     `json:"id"`
-		Title           string                     `json:"title"`
-		Backend         string                     `json:"backend"`
-		AgentID         string                     `json:"agentId"`
-		AgentName       string                     `json:"agentName,omitempty"`
-		AgentAvatar     string                     `json:"agentAvatar,omitempty"`
-		Model           string                     `json:"model"`
-		SessionType     string                     `json:"sessionType,omitempty"`
-		Running         bool                       `json:"running"`
-		PendingApproval bool                       `json:"pendingApproval"`
-		UnreadCount     int                        `json:"unreadCount"`
-		UpdatedAt       time.Time                  `json:"updatedAt"`
-		GroupMembers    []model.GroupMemberPreview `json:"groupMembers,omitempty"`
+		ID                string                     `json:"id"`
+		Title             string                     `json:"title"`
+		Backend           string                     `json:"backend"`
+		AgentID           string                     `json:"agentId"`
+		AgentName         string                     `json:"agentName,omitempty"`
+		AgentAvatar       string                     `json:"agentAvatar,omitempty"`
+		AgentTakeoverFrom string                     `json:"agentTakeoverFrom,omitempty"`
+		Model             string                     `json:"model"`
+		SessionType       string                     `json:"sessionType,omitempty"`
+		Running           bool                       `json:"running"`
+		PendingApproval   bool                       `json:"pendingApproval"`
+		UnreadCount       int                        `json:"unreadCount"`
+		UpdatedAt         time.Time                  `json:"updatedAt"`
+		GroupMembers      []model.GroupMemberPreview `json:"groupMembers,omitempty"`
 	}
 	type projectGroup struct {
 		Name     string            `json:"name"`
@@ -88,18 +89,19 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 			agentName, agentAvatar = agentDisplayIdentity(s.AgentID, callerProject)
 		}
 		g.Sessions = append(g.Sessions, overviewSession{
-			ID:              s.ID,
-			Title:           s.Title,
-			Backend:         s.Backend,
-			AgentID:         s.AgentID,
-			AgentName:       agentName,
-			AgentAvatar:     agentAvatar,
-			Model:           s.Model,
-			SessionType:     s.SessionType,
-			Running:         running,
-			PendingApproval: pending,
-			UnreadCount:     s.UnreadCount,
-			UpdatedAt:       s.UpdatedAt,
+			ID:                s.ID,
+			Title:             s.Title,
+			Backend:           s.Backend,
+			AgentID:           s.AgentID,
+			AgentName:         agentName,
+			AgentAvatar:       agentAvatar,
+			AgentTakeoverFrom: s.AgentTakeoverFrom,
+			Model:             s.Model,
+			SessionType:       s.SessionType,
+			Running:           running,
+			PendingApproval:   pending,
+			UnreadCount:       s.UnreadCount,
+			UpdatedAt:         s.UpdatedAt,
 		})
 		total++
 	}

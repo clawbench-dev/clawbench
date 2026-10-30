@@ -568,44 +568,73 @@ func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Refuse deletion while the agent is still in use: any interactive session,
-	// scheduled task, or active group membership blocks it. The user must clean
-	// those up first (that is the whole point of the guard — deleting the agent
-	// would otherwise strand its sessions/tasks on a dangling agent_id). Checked
-	// BEFORE closing ACP connections so a refused delete does not kill live
-	// connections.
-	usage, err := service.GetAgentUsage(req.ID)
-	if err != nil {
-		slog.Error("failed to check agent usage before delete", "agent", req.ID, "error", err)
+	// Deleting an agent is allowed even while it owns conversations: they are
+	// handed to the DEFAULT agent (issue #606). The only hard stop is a live
+	// turn — rewriting a running session's identity would strand its executor on
+	// a half-swapped row. Checked BEFORE closing ACP connections so a refused
+	// delete does not kill live connections.
+	replacement := model.GetAgent(model.GetDefaultAgentID())
+	if replacement == nil {
+		// Cannot happen in practice (the default is refused above only when the
+		// caller names it), but deleting without a takeover target would strand
+		// every session on a dangling agent_id.
+		slog.Error("failed to resolve default agent for takeover", "deleting", req.ID)
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
-	if usage.Total() > 0 {
-		writeLocalizedErrorf(w, r, http.StatusConflict, "AgentInUse", map[string]any{
-			"SessionCount":    usage.Sessions,
-			"TaskCount":       usage.Tasks,
-			"MembershipCount": usage.Memberships,
-		})
+	running, err := service.AgentHasRunningSessions(req.ID)
+	if err != nil {
+		slog.Error("failed to check running sessions before delete", "agent", req.ID, "error", err)
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	if running {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "AgentHasRunningSessions")
 		return
 	}
 
-	// Close ACP connections for this agent before deleting
-	if agent.SupportsACP() {
-		mgr := ai.GetACPConnManager()
-		mgr.CloseConnsByAgentID(req.ID)
-		slog.Info("closed ACP connections before agent delete", "agent", req.ID)
-	}
-
-	if err := service.DeleteAgent(req.ID); err != nil {
+	res, err := service.DeleteAgentWithTakeover(req.ID, agent.Name, replacement)
+	if err != nil {
+		if errors.Is(err, service.ErrAgentHasRunningSessions) {
+			writeLocalizedErrorf(w, r, http.StatusConflict, "AgentHasRunningSessions")
+			return
+		}
 		slog.Error("failed to delete agent", "agent", req.ID, "error", err)
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
 
+	// Close the ACP connections AFTER the commit, never before: the transaction
+	// re-checks for a live turn and may still refuse, and closing first would kill
+	// the very turn that refusal is protecting. Every connection the taken-over
+	// sessions would otherwise reuse belongs to this agent, so closing here is
+	// also what makes their first post-takeover turn start a fresh native session
+	// (CloseConnsByAgentID matches on the conn's own agent snapshot, so it keeps
+	// working after the in-memory entry is gone).
+	if agent.SupportsACP() {
+		mgr := ai.GetACPConnManager()
+		mgr.CloseConnsByAgentID(req.ID)
+		slog.Info("closed ACP connections after agent delete", "agent", req.ID)
+	}
+
 	// Remove from in-memory maps
 	model.DeleteAgent(req.ID)
 
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": req.ID})
+	slog.Info("agent deleted with takeover",
+		"agent", req.ID,
+		"replacement", replacement.ID,
+		"sessions", res.Sessions,
+		"tasks", res.Tasks,
+		"groups", res.Groups)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted":            req.ID,
+		"sessions":           res.Sessions,
+		"tasks":              res.Tasks,
+		"groups":             res.Groups,
+		"replacementAgentId": replacement.ID,
+		"replacementName":    replacement.Name,
+	})
 }
 
 // serveAgentsPatch handles PATCH /api/agents — updates an agent's configurable fields.

@@ -109,6 +109,22 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		resume = forkResume
 	}
 
+	// Takeover rebuild: this session belonged to a deleted agent and was handed
+	// to the one running now (see DeleteAgentWithTakeover). Its native session id
+	// was cleared, and the history is injected as background by the fork path
+	// above — but resume must ALSO be false, which that path only guarantees for
+	// ACP. Several CLI backends (deepseek/codewhale, pi) fall back to
+	// "--continue" when asked to resume without an id, which attaches the NEW
+	// agent to whatever session that CLI last ran in the working directory: an
+	// unrelated transcript, silently. A fresh session is the only safe answer.
+	//
+	// The condition is self-clearing: once the replacement replies, its own id is
+	// captured into external_session_id and this branch stops firing. The `resume`
+	// guard keeps the extra read off brand-new sessions, which are already fresh.
+	if resume && resolvedExtID == "" && GetAgentTakeoverFrom(sessionID) != "" {
+		resume = false
+	}
+
 	// Inject media handling rules only when the user message carries attachments.
 	// These rules are omitted for text-only messages to save tokens.
 	if hasAttachments {

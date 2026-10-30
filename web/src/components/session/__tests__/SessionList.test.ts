@@ -401,6 +401,29 @@ describe('SessionList', () => {
       wrapper.unmount()
     })
 
+    // A taken-over session (its agent was deleted and the default agent
+    // inherited it) carries a badge. Group rows do NOT: a group only changes
+    // host, it does not change hands as a conversation.
+    it('badges a taken-over session but never a group row', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [
+            { ...sessionsFixture().s1, agentTakeoverFrom: 'Claude' },
+            { ...groupSession, agentTakeoverFrom: 'Claude' },
+          ],
+          hasMore: false,
+        }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      expect(wrapper.find('[data-session-id="s1"] .session-item-takeover').exists()).toBe(true)
+      expect(wrapper.find('[data-session-id="g1"] .session-item-takeover').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
     it('caps the stack at four discs and summarises the rest as "+N" (same as the header)', async () => {
       const manyMembers = Array.from({ length: 6 }, (_, i) => ({
         id: `m${i}`, agentId: `a${i}`, name: `M${i}`, backend: 'cli',

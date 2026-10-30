@@ -117,6 +117,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			agent_avatar TEXT NOT NULL DEFAULT '',
 			agent_id TEXT DEFAULT '',
 			agent_source TEXT DEFAULT 'default',
+			agent_takeover_from TEXT NOT NULL DEFAULT '',
 			model TEXT DEFAULT '',
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			group_id TEXT DEFAULT '',

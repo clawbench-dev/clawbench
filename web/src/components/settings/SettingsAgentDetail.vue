@@ -721,43 +721,41 @@ async function handleDelete() {
     toast.show(t('settings.items.agentDeleteDefault'), { icon: 'warning', type: 'error', duration: 3000 })
     return
   }
-  // Block locally when the agent is still in use. `sessionCount` already
-  // includes group chats the agent is a member of, so sessions + tasks is the
-  // complete picture. The backend enforces the same rule authoritatively; this
-  // avoids a pointless confirm dialog. Counts come from GET /api/agents and may
-  // be stale, so the backend 409 below is still handled.
-  if ((a.sessionCount ?? 0) > 0 || (a.taskCount ?? 0) > 0 || (a.membershipCount ?? 0) > 0) {
-    toast.show(
-      t('settings.items.agentDeleteBlocked', {
-        sessions: a.sessionCount ?? 0,
-        tasks: a.taskCount ?? 0,
-      }),
-      { icon: 'warning', type: 'error', duration: 4000 },
-    )
-    return
-  }
+  // Deletion is always allowed (the only backend refusal is a live turn), so the
+  // confirm must carry the consequence instead of blocking locally: everything
+  // this agent owns is handed to the DEFAULT agent, history included. The counts
+  // are the locally cached ones (GET /api/agents); the response reports the
+  // authoritative numbers and those are what the toast uses.
+  const sessions = a.sessionCount ?? 0
+  const tasks = a.taskCount ?? 0
+  const replacement = getAgent(defaultAgentId.value)?.name || defaultAgentId.value
   const confirmed = await dialog.confirm(
-    t('settings.items.agentDeleteConfirm', { name: a.name }),
+    t('settings.items.agentDeleteTakeoverConfirm', { name: a.name, sessions, tasks, replacement }),
     { title: t('settings.items.agentDelete'), dangerous: true }
   )
   if (!confirmed) return
   try {
-    await deleteAgent(a.id)
-    toast.show(t('settings.items.agentDeleted'), { icon: 'success', type: 'success', duration: 3000 })
+    const res = await deleteAgent(a.id)
+    if ((res?.sessions ?? 0) > 0 || (res?.tasks ?? 0) > 0) {
+      toast.show(
+        t('settings.items.agentDeletedTakeover', {
+          name: a.name,
+          sessions: res.sessions,
+          tasks: res.tasks,
+          replacement: res.replacementName || replacement,
+        }),
+        { icon: 'success', type: 'success', duration: 4000 },
+      )
+    } else {
+      toast.show(t('settings.items.agentDeleted'), { icon: 'success', type: 'success', duration: 3000 })
+    }
     emit('deleted')
   } catch (err) {
-    // The backend is authoritative: a 409 AgentInUse means the local counts
-    // were stale (e.g. a session was created since the last load).
+    // The backend is authoritative: it re-checks for a live turn under the write
+    // lock, so a 409 here means a session started after the local snapshot.
     const msgKey = (err as { msgKey?: string } | null)?.msgKey
-    if (msgKey === 'AgentInUse') {
-      const detail = (err as { detail?: { SessionCount?: number; TaskCount?: number } } | null)?.detail
-      toast.show(
-        t('settings.items.agentDeleteBlocked', {
-          sessions: detail?.SessionCount ?? (a.sessionCount ?? 0),
-          tasks: detail?.TaskCount ?? (a.taskCount ?? 0),
-        }),
-        { icon: 'warning', type: 'error', duration: 4000 },
-      )
+    if (msgKey === 'AgentHasRunningSessions') {
+      toast.show(t('settings.items.agentDeleteRunning'), { icon: 'warning', type: 'error', duration: 4000 })
       return
     }
     toast.show(t('settings.items.agentDeleteFailed'), { icon: 'warning', type: 'error', duration: 3000 })
