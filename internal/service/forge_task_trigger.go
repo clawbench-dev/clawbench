@@ -13,14 +13,19 @@ import (
 	"clawbench/internal/model"
 )
 
+// debounceSweepThreshold is when the per-item debounce map is swept of entries
+// that can no longer suppress anything.
+const debounceSweepThreshold = 1024
+
 // ForgeTaskTrigger matches freshly derived forge events against event-triggered
 // tasks and fires them.
 //
 // It exists because the plain TriggerTask path drops events: taskRunning is a
 // load-or-store flag, so an event arriving while its task is already running is
 // discarded. Here, concurrent events are queued and drained once the task
-// finishes, so a burst is deferred rather than lost. A per-repo debounce merges
-// same-repo bursts, and a global kill-switch (config) stops all firing.
+// finishes, so a burst is deferred rather than lost. A per-repo, per-item
+// debounce merges bursts on the same item, and a global kill-switch (config)
+// stops all firing.
 type ForgeTaskTrigger struct {
 	cfgFn func() model.Config
 	// fire starts one execution of a task with the event attached. It returns
@@ -37,7 +42,7 @@ type ForgeTaskTrigger struct {
 	mu       sync.Mutex
 	queues   map[int64][]ForgeQueuedEvent // task ID -> pending events
 	running  map[int64]bool               // task ID -> currently draining
-	lastFire map[string]time.Time         // repo key+type -> last fire time (debounce)
+	lastFire map[string]time.Time         // repo+item+type -> last fire time (debounce)
 	identity map[string]identityEntry     // repo key -> resolved login + expiry
 
 	// debounceWindow collapses bursts on the same repo into one fire.
@@ -171,27 +176,41 @@ func (t *ForgeTaskTrigger) HandleChange(_ context.Context, repo ForgeRepoRef, it
 		return
 	}
 
-	// Per-repo, per-type debounce: a burst of the same event (e.g. five comments
-	// in a row) fires the task once, not five times. The event type is part of
-	// the key so a comment arriving right after a close is not swallowed, and
-	// the item kind is too so a new issue right after a new PR is not either.
+	// Per-repo, per-item, per-type debounce: a burst of the same event on ONE
+	// item (e.g. five comments in a row) fires the task once, not five times.
+	// The event type is part of the key so a comment arriving right after a
+	// close is not swallowed, the item kind is too so a new issue right after a
+	// new PR is not either, and the item number is because separate issues are
+	// separate events: three issues opened back to back must fire three times.
 	//
 	// Pipeline events are keyed by RUN ID instead. A repository can legitimately
 	// finish several runs within the debounce window (a matrix, a re-run, two
 	// branches), and those are separate events the user asked to hear about —
 	// collapsing them into one would silently drop every run but the first.
-	debounceKey := repo.Key() + "\x00" + forgeEventKindForItem(item.Type) + "\x00" + string(change.Type)
+	debounceKey := repo.Key() + "\x00" + forgeEventKindForItem(item.Type) + "\x00" +
+		strconv.Itoa(item.Number) + "\x00" + string(change.Type)
 	if change.Type == forge.EventPipeline {
 		debounceKey = repo.Key() + "\x00pipeline\x00" + strconv.FormatInt(change.PipelineRunID, 10)
 	}
+	now := t.now()
 	t.mu.Lock()
-	if last, ok := t.lastFire[debounceKey]; ok && t.now().Sub(last) < t.debounceWindow {
+	if last, ok := t.lastFire[debounceKey]; ok && now.Sub(last) < t.debounceWindow {
 		t.mu.Unlock()
 		slog.Debug("forge event task debounced",
 			slog.String("repo", repo.Key()), slog.String("event", string(change.Type)))
 		return
 	}
-	t.lastFire[debounceKey] = t.now()
+	// The key is per item, so the map grows with the number of distinct issues
+	// and PRs seen. Sweep entries that can no longer debounce anything once it
+	// gets large; each entry is only useful for one window.
+	if len(t.lastFire) >= debounceSweepThreshold {
+		for k, at := range t.lastFire {
+			if now.Sub(at) >= t.debounceWindow {
+				delete(t.lastFire, k)
+			}
+		}
+	}
+	t.lastFire[debounceKey] = now
 	t.mu.Unlock()
 
 	ev := ForgeQueuedEvent{repo: repo, item: item, change: change}

@@ -550,9 +550,12 @@ func TestForgeTaskTrigger_UnknownIdentityDoesNotSuppress(t *testing.T) {
 	require.Eventually(t, func() bool { return fired == 1 }, 2*time.Second, 10*time.Millisecond)
 }
 
+// TestForgeTaskTrigger_DebounceCollapsesBurst: a burst of the same event on the
+// SAME item (five comments in a row) is one event for the user's purposes.
 func TestForgeTaskTrigger_DebounceCollapsesBurst(t *testing.T) {
 	cfg := fullNotifyConfig()
 	bindProjectRepo(t, triggerRepo())
+	var mu sync.Mutex
 	var fired int
 
 	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
@@ -560,15 +563,57 @@ func TestForgeTaskTrigger_DebounceCollapsesBurst(t *testing.T) {
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
 		return []model.ScheduledTask{forgeTriggerTask(1, "commented")}, nil
 	})
-	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
+	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool {
+		mu.Lock()
+		fired++
+		mu.Unlock()
+		return true
+	})
 
-	for i := range 5 {
-		tr.HandleChange(context.Background(), triggerRepo(), triggerItem(i+1),
-			forge.Change{Type: forge.EventCommented, Number: i + 1})
+	for range 5 {
+		tr.HandleChange(context.Background(), triggerRepo(), triggerItem(7),
+			forge.Change{Type: forge.EventCommented, Number: 7})
 	}
 
 	time.Sleep(80 * time.Millisecond)
-	assert.Equal(t, 1, fired, "a burst on one repo must collapse to a single fire")
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 1, fired, "a burst of comments on one item must collapse to a single fire")
+}
+
+// TestForgeTaskTrigger_DebounceIsPerItem: separate issues are separate events.
+// Without the item number in the debounce key, opening three issues in one
+// polling round (which derives them microseconds apart) fired the task once and
+// silently dropped the other two.
+func TestForgeTaskTrigger_DebounceIsPerItem(t *testing.T) {
+	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
+	var mu sync.Mutex
+	var fired []int
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	tr.SetDebounceWindowForTest(time.Hour) // long, so only key separation can let the rest through
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "issue.opened")}, nil
+	})
+	tr.SetFireForTest(func(_ int64, _ service.ForgeQueuedEvent) bool {
+		mu.Lock()
+		fired = append(fired, 1)
+		mu.Unlock()
+		return true
+	})
+
+	for i := range 3 {
+		tr.HandleChange(context.Background(), triggerRepo(), triggerItem(i+1),
+			forge.Change{Type: forge.EventOpened, Number: i + 1, Actor: "alice"})
+	}
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(fired) == 3
+	}, 2*time.Second, 10*time.Millisecond,
+		"each issue is its own event; a second and third issue must not be debounced away")
 }
 
 func TestForgeTaskTrigger_QueueDropsNothingWhileRunning(t *testing.T) {
