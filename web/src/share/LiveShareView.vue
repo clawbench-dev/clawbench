@@ -199,6 +199,14 @@
       <LiveChatPanel :messages="chatMessages" @send="sendChat" />
     </div>
 
+    <!-- Who is speaking. The publisher measures every microphone (it is the
+         only place all of them meet) and broadcasts a level; without this chip
+         a viewer hears a voice with no idea whose it is. -->
+    <div v-if="speaking" class="live-speaker" data-role="speaker">
+      <span class="live-speaker__dot" />
+      {{ t('share.live.speaking', { name: speakerLabel }) }}
+    </div>
+
     <!-- Floating control dock. Absolutely positioned so it overlays the video
          instead of taking height from it, and always mounted: fullscreen is
          useful even when the publisher never allowed speech. -->
@@ -410,6 +418,34 @@ const stats = ref<LiveStats | null>(null)
 const zoom = ref({ scale: 1, x: 0, y: 0 })
 /** Remote control: none → requested → granted. */
 const controlState = ref<'none' | 'requested' | 'granted'>('none')
+/**
+ * Who is speaking right now, from the publisher's level broadcast.
+ *
+ * The viewer only receives the mix, so it cannot measure this itself — the
+ * level has to come over the control channel. A frame is followed by a
+ * timeout: if the publisher stops sending (track muted, tab hidden) the chip
+ * must not stay lit forever.
+ */
+const speaking = ref('')
+let speakerTimer: ReturnType<typeof setTimeout> | null = null
+
+function noteSpeaker(id: string, level: number): void {
+  if (level < 0.05) {
+    if (speaking.value === id) speaking.value = ''
+    return
+  }
+  speaking.value = id
+  if (speakerTimer) clearTimeout(speakerTimer)
+  speakerTimer = setTimeout(() => {
+    speaking.value = ''
+  }, 900)
+}
+
+const speakerLabel = computed(() =>
+  speaking.value === 'host'
+    ? t('share.live.host')
+    : t('share.live.viewerName', { id: speaking.value }),
+)
 
 const inkWrapStyle = computed(() => ({
   left: `${inkRect.value.left}px`,
@@ -626,6 +662,10 @@ function applyControl(msg: ControlMessage): void {
     if (msg.viewerId && msg.viewerId !== viewer?.viewerId) return
     controlState.value = msg.granted ? 'granted' : 'none'
     if (msg.granted) resetZoom()
+    return
+  }
+  if (msg.t === 'talk') {
+    noteSpeaker(msg.viewerId, msg.level)
     return
   }
   // Ink and laser are the only other frames a viewer receives today.
@@ -1478,6 +1518,43 @@ onBeforeUnmount(() => {
   font-size: 10px;
   line-height: 16px;
   text-align: center;
+}
+
+/* ── Speaking indicator ─────────────────────────────────────────────────── */
+
+.live-speaker {
+  position: absolute;
+  top: calc(var(--space-5, 10px) + env(safe-area-inset-top, 0px));
+  left: calc(var(--space-5, 10px) + env(safe-area-inset-left, 0px));
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 6px);
+  padding: var(--space-2, 4px) var(--space-4, 8px);
+  border-radius: var(--radius-full, 999px);
+  background: color-mix(in srgb, var(--bg-secondary, #161b22) 88%, transparent);
+  border: 1px solid var(--border-color, #30363d);
+  color: var(--text-primary, #e6edf3);
+  font-size: var(--font-size-xs, 11px);
+  z-index: 7;
+  white-space: nowrap;
+}
+
+.live-speaker__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-success, #3fb950);
+  animation: live-speaker-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes live-speaker-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 /* ── Member screen banner ───────────────────────────────────────────────── */

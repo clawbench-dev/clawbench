@@ -3908,6 +3908,8 @@ export default {
       screenBusy: '已有成员在共享屏幕',
       screenDisabled: '主持人未开启屏幕共享',
       screenNeedsHttps: '需要 HTTPS 才能共享屏幕（当前是 HTTP）',
+      speaking: '{name} 正在说话',
+      host: '主持人',
     },
   },
   liveShare: {

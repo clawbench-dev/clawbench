@@ -111,7 +111,33 @@ const captureKind = ref<'screen' | 'window'>('screen')
 let systemAudioWanted = false
 const peers = new Map<string, PublisherPeer>()
 
+/**
+ * Live microphone levels, 0..1, keyed by viewer id with `host` for ourselves.
+ *
+ * Measured on the publisher because that is where every audio track already
+ * lands: viewers only receive the mix, so they cannot tell who is speaking.
+ * The publisher broadcasts a `talk` frame when a level changes materially —
+ * the control channel is ordered and cheap, but it is not a place for a
+ * 60 Hz firehose.
+ */
+const levels = ref<Record<string, number>>({})
+let talkTimer: ReturnType<typeof setInterval> | null = null
+let lastSentLevel = new Map<string, number>()
+
+/** Level at which a channel counts as "speaking" (≈ -30 dBFS). */
+const SPEAKING_LEVEL = 0.05
+
+function stopTalkMetering(): void {
+  if (talkTimer !== null) {
+    clearInterval(talkTimer)
+    talkTimer = null
+  }
+  lastSentLevel = new Map()
+  levels.value = {}
+}
+
 function resetSession(): void {
+  stopTalkMetering()
   for (const p of peers.values()) {
     try {
       p.pc.close()
@@ -289,6 +315,7 @@ export function useLiveShare() {
       audioCtx = new AudioContext({ sampleRate: 48000 })
       await audioCtx.resume()
       mixer = new LiveMixer(audioCtx, displayStream, micStream)
+      startTalkMetering()
 
       // AI 听记 records the same sources, but one channel at a time: the mix
       // sent to viewers is per-viewer and excludes that viewer, so it cannot be
@@ -610,6 +637,35 @@ export function useLiveShare() {
     }
   }
 
+  /**
+   * Sample every microphone 5×/s and broadcast the ones that changed.
+   *
+   * Only meaningful levels are sent: a channel that is silent in both the
+   * previous and the current window is skipped, so an idle room produces no
+   * traffic at all.
+   */
+  function startTalkMetering(): void {
+    if (talkTimer !== null) return
+    talkTimer = setInterval(() => {
+      if (!mixer) return
+      const next: Record<string, number> = {}
+      const publish = (id: string, level: number): void => {
+        next[id] = level
+        const prev = lastSentLevel.get(id) ?? 0
+        const wasSpeaking = prev >= SPEAKING_LEVEL
+        const isSpeaking = level >= SPEAKING_LEVEL
+        // Crossing the threshold matters even for a small numeric change: it
+        // is what makes the "X is speaking" chip appear and disappear.
+        if (wasSpeaking === isSpeaking && Math.abs(level - prev) < 0.1) return
+        lastSentLevel.set(id, level)
+        sendControl({ t: 'talk', viewerId: id, level })
+      }
+      publish('host', mixer.selfLevel())
+      for (const v of viewers.value) publish(v.id, mixer.level(v.id))
+      levels.value = next
+    }, 200)
+  }
+
   /** Send one control frame to a single viewer (grants must not be broadcast). */
   function sendControlTo(viewerId: string, msg: ControlMessage): void {
     const peer = peers.get(viewerId)
@@ -775,6 +831,7 @@ export function useLiveShare() {
     sendControl,
     sendControlTo,
     onControl,
+    levels,
     switchSource,
     previewStream,
     captureKind,

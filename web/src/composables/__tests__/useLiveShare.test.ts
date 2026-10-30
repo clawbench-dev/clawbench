@@ -182,6 +182,19 @@ class FakeDest {
   disconnect() {}
 }
 
+/** Level the fake analyser reports; 0 = silence, 1 = full scale. */
+let fakeMicLevel = 0
+
+class FakeAnalyser {
+  fftSize = 256
+  connect() {}
+  disconnect() {}
+  getByteTimeDomainData(buf: Uint8Array) {
+    // A constant waveform whose RMS equals the requested level.
+    buf.fill(128 + Math.round(Math.min(fakeMicLevel, 0.9) * 128))
+  }
+}
+
 class FakeAudioCtx {
   state = 'running'
   dests: FakeDest[] = []
@@ -194,6 +207,9 @@ class FakeAudioCtx {
   }
   createMediaStreamSource() {
     return { connect: () => undefined, disconnect: () => undefined }
+  }
+  createAnalyser() {
+    return new FakeAnalyser()
   }
 }
 
@@ -227,6 +243,7 @@ function installGlobals() {
   vi.stubGlobal('WebSocket', FakeWS as unknown as typeof WebSocket)
   vi.stubGlobal('RTCPeerConnection', FakePC as unknown as typeof RTCPeerConnection)
   vi.stubGlobal('AudioContext', FakeAudioCtx as unknown as typeof AudioContext)
+  fakeMicLevel = 0
   // `new MediaStream([track])` runs on every viewer join; without this stub it
   // throws and silently aborts the rest of that handler (no ICE, no state hook).
   vi.stubGlobal('MediaStream', FakeMediaStream as unknown as typeof MediaStream)
@@ -739,5 +756,37 @@ describe('switchSource', () => {
     // Leaving the declaration armed would let the NEXT getDisplayMedia capture
     // that source without a picker.
     expect(bridge.setPendingCaptureSource).toHaveBeenLastCalledWith('', false)
+  })
+})
+
+
+describe('speaking indicator', () => {
+  it('broadcasts the publisher level when it crosses the speaking threshold', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    await vi.waitFor(() => expect(FakeDataChannel.instances).toHaveLength(1))
+    const dc = FakeDataChannel.instances[0]
+
+    fakeMicLevel = 0.6
+    await vi.waitFor(
+      () =>
+        expect(dc.sentJSON()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ t: 'talk', viewerId: 'host', level: expect.any(Number) }),
+          ]),
+        ),
+      { timeout: 2000 },
+    )
+    expect(share.levels.value.host).toBeGreaterThan(0.05)
+
+    // Falling silent is also a state change: the chip has to disappear.
+    fakeMicLevel = 0
+    await vi.waitFor(
+      () =>
+        expect(dc.sentJSON()).toEqual(
+          expect.arrayContaining([expect.objectContaining({ t: 'talk', viewerId: 'host', level: 0 })]),
+        ),
+      { timeout: 2000 },
+    )
   })
 })

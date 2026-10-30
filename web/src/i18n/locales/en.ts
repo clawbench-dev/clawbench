@@ -3914,6 +3914,8 @@ export default {
       screenBusy: 'Another viewer is already sharing',
       screenDisabled: 'The host has not enabled screen sharing',
       screenNeedsHttps: 'Screen sharing needs HTTPS (this page is plain HTTP)',
+      speaking: '{name} is speaking',
+      host: 'Host',
     },
   },
   liveShare: {

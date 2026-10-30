@@ -30,11 +30,37 @@ interface ViewerSlot {
   outTrack: MediaStreamTrack
 }
 
+/**
+ * RMS of one waveform window, 0..1.
+ *
+ * The bytes are unsigned 8-bit samples centred on 128 (Web Audio's
+ * `getByteTimeDomainData`), so the value is scaled back to [-1, 1] first.
+ * Exported so the arithmetic is testable without an AudioContext.
+ */
+export function rmsLevel(bytes: Uint8Array): number {
+  if (bytes.length === 0) return 0
+  let sum = 0
+  for (let i = 0; i < bytes.length; i++) {
+    const v = (bytes[i] - 128) / 128
+    sum += v * v
+  }
+  return Math.sqrt(sum / bytes.length)
+}
+
 export class LiveMixer {
   private readonly ctx: AudioContext
   private readonly systemSource: MediaStreamAudioSourceNode | null
   private readonly micSource: MediaStreamAudioSourceNode | null
   private readonly slots = new Map<string, ViewerSlot>()
+  /**
+   * Level meters, keyed by `v:<viewerId>` or `self`.
+   *
+   * One analyser per source, created lazily: an analyser only reads what flows
+   * through it, so it can be tapped off the same node that already feeds the
+   * mix without changing the audio.
+   */
+  private readonly analysers = new Map<string, AnalyserNode>()
+  private levelBuf = new Uint8Array(256)
 
   constructor(ctx: AudioContext, systemStream: MediaStream | null, micStream: MediaStream | null) {
     this.ctx = ctx
@@ -48,6 +74,37 @@ export class LiveMixer {
       micStream && micStream.getAudioTracks().length > 0
         ? ctx.createMediaStreamSource(micStream)
         : null
+    if (this.micSource) this.tap('self', this.micSource)
+  }
+
+  /** Tap a node for level metering; a context without analysers is fine. */
+  private tap(key: string, node: AudioNode): void {
+    if (this.analysers.has(key)) return
+    if (typeof this.ctx.createAnalyser !== 'function') return
+    const analyser = this.ctx.createAnalyser()
+    analyser.fftSize = 256
+    node.connect(analyser)
+    this.analysers.set(key, analyser)
+  }
+
+  /** Current microphone level (0..1) of one viewer, 0 when not speaking. */
+  level(viewerId: string): number {
+    return this.readLevel(`v:${viewerId}`)
+  }
+
+  /** Current microphone level (0..1) of the publisher. */
+  selfLevel(): number {
+    return this.readLevel('self')
+  }
+
+  private readLevel(key: string): number {
+    const analyser = this.analysers.get(key)
+    if (!analyser) return 0
+    if (this.levelBuf.length !== analyser.fftSize) {
+      this.levelBuf = new Uint8Array(analyser.fftSize)
+    }
+    analyser.getByteTimeDomainData(this.levelBuf)
+    return rmsLevel(this.levelBuf)
   }
 
   /** Number of viewers currently in the graph (for tests and diagnostics). */
@@ -105,6 +162,7 @@ export class LiveMixer {
     }
     const src = this.ctx.createMediaStreamSource(stream)
     slot.remoteSource = src
+    this.tap(`v:${viewerId}`, src)
     for (const [otherId, other] of this.slots) {
       if (otherId === viewerId) continue
       src.connect(other.dest)
@@ -118,6 +176,7 @@ export class LiveMixer {
 
   /** Stop routing a viewer's inbound audio to everyone else. */
   detachRemote(viewerId: string): void {
+    this.analysers.delete(`v:${viewerId}`)
     const slot = this.slots.get(viewerId)
     if (!slot?.remoteSource) return
     // disconnect() with no argument drops every edge, including the monitor

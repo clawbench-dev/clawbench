@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
+import { rmsLevel } from '../useLiveMixer'
 import { LiveMixer } from '../useLiveMixer'
 
 /**
@@ -289,5 +290,23 @@ describe('LiveMixer', () => {
     const mixer = new LiveMixer(ctx as unknown as AudioContext, null, null)
 
     expect(mixer.outTrackFor('nope')).toBeNull()
+  })
+})
+
+
+describe('rmsLevel', () => {
+  it('reads silence as zero and full scale as one', () => {
+    expect(rmsLevel(new Uint8Array(64).fill(128))).toBe(0)
+    // 255 maps to 127/128, not exactly 1: the window is centred on 128.
+    expect(rmsLevel(new Uint8Array(64).fill(255))).toBeCloseTo(127 / 128, 3)
+  })
+
+  it('is not fooled by a DC offset being louder than a quiet sine', () => {
+    // Half scale constant: RMS 0.5, which is above the speaking threshold.
+    expect(rmsLevel(new Uint8Array(64).fill(192))).toBeCloseTo(0.5, 2)
+  })
+
+  it('returns zero for an empty window instead of NaN', () => {
+    expect(rmsLevel(new Uint8Array(0))).toBe(0)
   })
 })
