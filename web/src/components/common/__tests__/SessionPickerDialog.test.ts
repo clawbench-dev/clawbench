@@ -400,6 +400,31 @@ describe('SessionPickerDialog', () => {
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 
+  // ── `choose` mode (the quote bar's "发送到" row) ──
+  // Nothing is delivered and nothing is opened there, so the "add and open"
+  // arrow would be a second way to do what the row already does.
+
+  it('offers no "add and open" arrow in choose mode', async () => {
+    const wrapper = mountPicker({ mode: 'choose' })
+    await flushPromises()
+
+    expect(wrapper.findAll('.sp-goto').length).toBe(0)
+    // The rows themselves stay fully usable.
+    await wrapper.findAll('.sp-row:not(.sp-row-create)')[1].trigger('click')
+    expect(wrapper.emitted('select')![0]).toEqual(['s-2'])
+  })
+
+  it('keeps the create row clickable in choose mode', async () => {
+    const wrapper = mountPicker({ mode: 'choose' })
+    await flushPromises()
+
+    const create = wrapper.find('.sp-row-create')
+    expect(create.exists()).toBe(true)
+    expect(create.find('.sp-goto').exists()).toBe(false)
+    await create.trigger('click')
+    expect(wrapper.emitted('create')).toBeTruthy()
+  })
+
   it('emits close when the sheet requests it', async () => {
     const wrapper = mountPicker()
     await flushPromises()

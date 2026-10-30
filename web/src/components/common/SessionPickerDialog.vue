@@ -47,8 +47,12 @@
           </span>
           <!-- The row click adds WITHOUT leaving this screen. This button is the
                other half of the pair: same delivery, then open that session.
-               Two explicit actions beat one action plus a mode to remember. -->
+               Two explicit actions beat one action plus a mode to remember.
+               Not offered in `choose` mode: there is no payload to add, and
+               opening the session would abandon the draft being composed, so
+               the arrow would be a second way to do what the row already does. -->
           <button
+            v-if="mode !== 'choose'"
             class="sp-goto"
             type="button"
             :title="t('quoteBar.addAndOpen')"
@@ -65,7 +69,8 @@
              Deliberately no agent choice: the user is picking a destination for
              an already-composed message, not configuring a conversation.
              Same pair as the session rows: the row adds without leaving, the
-             trailing button adds and opens the new session. -->
+             trailing button adds and opens the new session (deliver mode only —
+             see the session row above). -->
         <div
           class="sp-row sp-row-create"
           role="button"
@@ -77,6 +82,7 @@
           <Plus :size="15" />
           <span class="sp-title">{{ t('quoteBar.newSession') }}</span>
           <button
+            v-if="mode !== 'choose'"
             class="sp-goto"
             type="button"
             :title="t('quoteBar.createAndOpen')"
@@ -128,9 +134,18 @@ interface PickerSession {
   agentId?: string
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   open: boolean
-}>()
+  /**
+   * What a pick MEANS, and therefore which affordances make sense:
+   *  - `deliver` — a payload is waiting for a home. The row adds it, the
+   *    trailing arrow adds it and opens the session.
+   *  - `choose`  — the user is naming a destination for a message they are
+   *    still composing (the quote bar's "发送到" row). Nothing is added and
+   *    nothing is opened, so the trailing arrow is not offered at all.
+   */
+  mode?: 'deliver' | 'choose'
+}>(), { mode: 'deliver' })
 
 const emit = defineEmits<{
   /** Add to this session and stay where the user is. */

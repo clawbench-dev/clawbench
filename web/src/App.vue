@@ -457,6 +457,7 @@
            message can be quoted into a different conversation). -->
       <SessionPickerDialog
         :open="sessionPickerOpen"
+        :mode="pickerIntent"
         @select="confirmTarget({ kind: 'session', id: $event })"
         @select-and-open="confirmTarget({ kind: 'session', id: $event }, { openAfter: true })"
         @create="confirmTarget({ kind: 'create' })"
@@ -657,7 +658,7 @@ import TaskTab from '@/components/task/TaskTab.vue'
 import NotificationsPanelContent from '@/components/notifications/NotificationsPanelContent.vue'
 import StatsTabHost from '@/components/stats/StatsTabHost.vue'
 import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
-import { setOpenSessionHandler, usePendingTarget, confirmTarget, cancelTarget } from './composables/useConversationTarget.ts'
+import { setOpenSessionHandler, usePendingTarget, usePickerIntent, confirmTarget, cancelTarget } from './composables/useConversationTarget.ts'
 import SessionPickerDialog from './components/common/SessionPickerDialog.vue'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
@@ -2378,6 +2379,10 @@ setOpenSessionHandler((sessionId) => {
   handleSessionSelect(sessionId)
 })
 const { pickerOpen: sessionPickerOpen } = usePendingTarget()
+// `deliver` (a payload is waiting) vs `choose` (naming a destination for a
+// draft still being composed). The picker uses it to drop the "add and open"
+// arrow, which has no meaning when nothing is being delivered.
+const pickerIntent = usePickerIntent()
 const sessionDrawerRef = ref<InstanceType<typeof SessionDrawer> | null>(null)
 const sessionSidebarRef = ref<InstanceType<typeof SessionSidebar> | null>(null)
 const chatPanelContentRef = ref<InstanceType<typeof ChatPanelContent> | null>(null)
