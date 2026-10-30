@@ -994,9 +994,11 @@ func TestCreatePushSession_BroadcastsForOpenClients(t *testing.T) {
 		t.Errorf("title = %q, want %q", got.Title, title)
 	}
 	// The project path is what lets a client filter the new row into the right
-	// list without an extra lookup.
-	if got.ProjectPath != projectPath {
-		t.Errorf("project path = %q, want %q", got.ProjectPath, projectPath)
+	// list without an extra lookup. Compare against the NORMALIZED form: the
+	// server stores and broadcasts `model.NormalizeProjectPath(...)`, which on
+	// Windows turns "/tmp/push-broadcast" into `D:\tmp\push-broadcast`.
+	if want := model.NormalizeProjectPath(projectPath); got.ProjectPath != want {
+		t.Errorf("project path = %q, want %q", got.ProjectPath, want)
 	}
 }
 
