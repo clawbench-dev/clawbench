@@ -137,7 +137,7 @@ ClawBench 是面向手机 / 平板 / 桌面的多端 AI 工作台。本手册同
 
 各种通知渠道：应用内、系统通知、钉钉/飞书、离线补拉。
 
-**详解**：[钉钉机器人推送配置](DINGTALK_PUSH.md) · [飞书机器人推送配置](FEISHU_PUSH.md) · [通知中心](notification-center.md)
+**详解**：[钉钉机器人推送配置](DINGTALK_PUSH.md) · [飞书机器人推送配置](FEISHU_PUSH.md) · [微信推送配置](WECHAT_PUSH.md) · [通知中心](notification-center.md)
 
 ## 21. 常见问题
 
