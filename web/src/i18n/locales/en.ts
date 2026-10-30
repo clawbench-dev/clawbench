@@ -3449,6 +3449,7 @@ export default {
       tlsRestartNow: 'Restart now',
       tlsRestarting: 'Restarting…',
       tlsRestartFailed: 'Restart failed — restart the server manually.',
+      tlsRestartedNoHTTPS: 'Restarted. Reload this page to continue.',
       tlsOpenHint: 'Once it is back, open this address:',
       tlsServingHint: 'This page is already served over HTTPS.',
       tlsLoadFailed: 'Could not read the certificate status.',

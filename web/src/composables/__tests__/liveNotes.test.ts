@@ -191,9 +191,10 @@ describe('LiveNotesCapture', () => {
 
     await capture.stopAndFlush(1000)
     await capture.drainUploads(1000)
-    // The final tail is shorter than one metering window, so it is kept rather
-    // than judged — "unknown" must never mean "silent".
-    expect(uploads.every((u) => u.durationMs < 1_000)).toBe(true)
+    // The final tail never accumulated a metering sample, and "unknown" must
+    // never mean "silent", so it is uploaded rather than judged.
+    expect(uploads).toHaveLength(1)
+    expect(uploads[0].durationMs).toBeLessThan(1_000)
   })
 
   it('ignores channels with no audio track', () => {

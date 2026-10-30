@@ -48,6 +48,15 @@ const lost = ref(0)
 const truncated = ref(false)
 
 let capture: LiveNotesCapture | null = null
+/**
+ * Bumped by start() and reset(). Every async continuation captures it and
+ * bails out when it no longer matches, because the module-level state is
+ * shared: without this, a drain that finishes after the user closed the dialog
+ * and started ANOTHER meeting would write the finished meeting's phase,
+ * segments and minutes into the new one (captions freeze at "idle", and the new
+ * meeting gets a minutes request fired mid-recording).
+ */
+let sessionGen = 0
 let sessionToken = ''
 let sessionTitle = ''
 let pollTimer: ReturnType<typeof setTimeout> | null = null
@@ -137,23 +146,30 @@ export function useLiveNotes() {
   async function finishUploads(): Promise<void> {
     const cap = capture
     if (!cap) return
+    const gen = sessionGen
     capture = null
     phase.value = 'finalizing'
     // The backlog may legitimately be minutes long (the STT backend is slower
     // than real time during a burst), so wait for it rather than cutting the
     // meeting short. The UI shows the remaining count while this runs.
     const progress = setInterval(() => {
-      pending.value = cap.pending
+      if (gen === sessionGen) pending.value = cap.pending
     }, 500)
     try {
       pending.value = cap.pending
       const drained = await cap.drainUploads(FINISH_UPLOAD_TIMEOUT_MS)
+      if (gen !== sessionGen) return
       if (!drained) truncated.value = true
     } finally {
       clearInterval(progress)
-      pending.value = 0
-      phase.value = 'idle'
+      if (gen === sessionGen) {
+        pending.value = 0
+        phase.value = 'idle'
+      }
     }
+    // The dialog may have been closed and another meeting started while the
+    // backlog drained; its state is not ours to touch.
+    if (gen !== sessionGen) return
     if (segments.value.length > 0) await generateMinutes()
   }
 
@@ -166,6 +182,7 @@ export function useLiveNotes() {
   /** Requests minutes generation; resolves once the server accepted the job. */
   async function generateMinutes(regenerate = false): Promise<void> {
     if (!sessionToken) return
+    const gen = sessionGen
     stopPolling()
     minutesPhase.value = 'generating'
     error.value = ''
@@ -182,6 +199,7 @@ export function useLiveNotes() {
         error?: string
         filePath?: string
       }
+      if (gen !== sessionGen) return
       if (data.status === 'ready' && data.markdown) {
         minutes.value = data.markdown
         minutesFile.value = data.filePath ?? ''
@@ -196,6 +214,7 @@ export function useLiveNotes() {
       pollMinutes()
     } catch (e) {
       appLog.w(TAG, 'generate minutes failed', e)
+      if (gen !== sessionGen) return
       minutesPhase.value = 'failed'
       error.value = e instanceof Error ? e.message : String(e)
     }
@@ -205,6 +224,7 @@ export function useLiveNotes() {
   function pollMinutes(attempt = 0): void {
     stopPolling()
     if (!sessionToken) return
+    const gen = sessionGen
     if (attempt > 90) {
       minutesPhase.value = 'failed'
       error.value = 'minutes generation timed out'
@@ -221,6 +241,7 @@ export function useLiveNotes() {
           segments?: LiveNoteSegment[]
           minutes?: { status?: MinutesPhase; markdown?: string; error?: string; filePath?: string }
         }
+        if (gen !== sessionGen) return
         if (data.segments?.length) {
           segments.value = mergeNoteSegments(segments.value, data.segments)
         }
@@ -239,6 +260,7 @@ export function useLiveNotes() {
         pollMinutes(attempt + 1)
       } catch (e) {
         appLog.w(TAG, 'minutes poll failed', e)
+        if (gen !== sessionGen) return
         pollMinutes(attempt + 1)
       }
     }, 2000)
@@ -247,6 +269,7 @@ export function useLiveNotes() {
   /** Pulls anything the local state missed (dialog reopened mid-share). */
   async function refresh(): Promise<void> {
     if (!sessionToken) return
+    const gen = sessionGen
     try {
       const resp = await fetch(
         `/api/live-share/notes?token=${encodeURIComponent(sessionToken)}&since=${lastSegmentID()}`,
@@ -256,6 +279,7 @@ export function useLiveNotes() {
         segments?: LiveNoteSegment[]
         minutes?: { status?: MinutesPhase; markdown?: string; error?: string; filePath?: string }
       }
+      if (gen !== sessionGen) return
       if (data.segments?.length) {
         segments.value = mergeNoteSegments(segments.value, data.segments)
       }
@@ -286,6 +310,9 @@ export function useLiveNotes() {
   }
 
   function reset(): void {
+    // Invalidate every in-flight continuation before clearing the state they
+    // would otherwise write into.
+    sessionGen += 1
     stopPolling()
     capture = null
     sessionToken = ''

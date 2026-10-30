@@ -65,6 +65,7 @@
       </div>
 
       <div v-if="error" class="tls-panel__error">{{ error }}</div>
+      <div v-if="info" class="tls-panel__info">{{ info }}</div>
 
       <!-- The listener is created at startup, so a new certificate only takes
            effect after a restart. Saying so is not enough — offer the button. -->
@@ -122,6 +123,8 @@ const extraHosts = ref('')
 const busy = ref(false)
 const restarting = ref(false)
 const error = ref('')
+/** Non-error notice (e.g. "restarted, reload the page"). */
+const info = ref('')
 /** Set when the existing certificate came from a CA: overwriting needs force. */
 const needsForce = ref(false)
 
@@ -193,11 +196,18 @@ async function restart(): Promise<void> {
     // move to the https:// address (the browser will show the certificate
     // warning once).
     const target = status.value?.httpsUrl
-    if (target) {
-      setTimeout(() => {
-        window.location.replace(target)
-      }, 4000)
+    if (!target) {
+      // Nothing to navigate to (the server came back over plain HTTP): leaving
+      // the button stuck on "restarting" would be a dead end, so tell the user
+      // to reload instead.
+      restarting.value = false
+      info.value = t('settings.items.tlsRestartedNoHTTPS')
+      return
     }
+    setTimeout(() => {
+      restarting.value = false
+      window.location.replace(target)
+    }, 4000)
   } catch (e) {
     appLog.w('TlsPanel', 'restart failed', e)
     error.value = t('settings.items.tlsRestartFailed')
@@ -272,6 +282,11 @@ onMounted(load)
 
 .tls-panel__error {
   color: var(--color-red);
+  font-size: var(--font-size-sm);
+}
+
+.tls-panel__info {
+  color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }
 

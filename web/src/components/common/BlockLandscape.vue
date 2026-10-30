@@ -312,8 +312,17 @@ function onDocumentKeydown(event: KeyboardEvent): void {
   }
 }
 
+/** Body overflow as it was before the overlay opened; restored on close. */
+let previousBodyOverflow = ''
+/** Whether attach() ran, so a bare detach() (immediate watch, unmount) is a no-op. */
+let attached = false
+
 function detach(): void {
-  document.body.style.overflow = ''
+  if (!attached) return
+  attached = false
+  // Restore, do not clear: a drawer / modal opened before this overlay also
+  // locks body scroll, and wiping it would let the page scroll behind them.
+  document.body.style.overflow = previousBodyOverflow
   window.removeEventListener('resize', onViewportChange)
   window.visualViewport?.removeEventListener('resize', onViewportChange)
   document.removeEventListener('keydown', onDocumentKeydown, true)
@@ -334,6 +343,10 @@ function detach(): void {
 watch(state, async (next) => {
   if (next) {
     restoreFocusTo = next.trigger ?? (document.activeElement as HTMLElement | null)
+    if (!attached) {
+      attached = true
+      previousBodyOverflow = document.body.style.overflow
+    }
     document.body.style.overflow = 'hidden'
     window.addEventListener('resize', onViewportChange)
     window.visualViewport?.addEventListener('resize', onViewportChange)
