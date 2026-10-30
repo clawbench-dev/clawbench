@@ -1043,6 +1043,9 @@ jobs:
         # Without it electron-builder skips signing (ad-hoc) instead of failing.
         run: |
           cd desktop
+          # The remote-control helper is an extraResource for every platform's
+          # package; without it electron-builder is asked to copy a missing file.
+          node scripts/build-input-helper.mjs
           npx tsc -p tsconfig.json
           npx electron-builder --dir --arm64
           npx electron-builder --dir --x64

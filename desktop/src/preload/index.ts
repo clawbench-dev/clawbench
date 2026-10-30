@@ -103,6 +103,9 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
     modifiers?: string[]
   }) => ipcRenderer.invoke('native:remote-control', ev) as Promise<{ ok: boolean; supported: boolean }>,
   remoteControlSupported: () => ipcRenderer.invoke('native:remote-control-supported') as Promise<boolean>,
+  remoteControlGrant: (viewerId: string) =>
+    ipcRenderer.invoke('native:remote-control-grant', viewerId) as Promise<void>,
+  remoteControlRevoke: () => ipcRenderer.invoke('native:remote-control-revoke') as Promise<void>,
   setPublishingActive: (active: boolean) =>
     ipcRenderer.invoke('native:set-publishing-active', active) as Promise<void>,
   log: (level: string, tag: string, msg: string) => { ipcRenderer.send('native:log', level, tag, msg) },

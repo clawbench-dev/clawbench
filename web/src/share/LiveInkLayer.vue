@@ -45,7 +45,9 @@ function draw(): void {
 
   // Line width is expressed relative to an 800px-wide surface so a stroke looks
   // the same thickness whether it is drawn in a dialog or on a projector.
-  const scale = Math.max(1, w / (800 * (window.devicePixelRatio || 1)))
+  // `w` is already in DEVICE pixels, and lineWidth is too — dividing by dpr
+  // again would halve the stroke on a HiDPI screen.
+  const scale = Math.max(1, w / 800)
 
   for (const stroke of props.strokes) {
     if (stroke.points.length === 0) continue

@@ -3,6 +3,7 @@ import {
   contentRectOf,
   fromNormalized,
   parseControlMessage,
+  toInjectorEvent,
   toNormalized,
   undoStroke,
   type InkStroke,
@@ -38,6 +39,18 @@ describe('parseControlMessage', () => {
     const m = parseControlMessage(JSON.stringify({ t: 'chat', text: long }))
     expect(m).toMatchObject({ t: 'chat' })
     expect((m as { text: string }).text).toHaveLength(2000)
+  })
+
+  it('parses a control release', () => {
+    expect(parseControlMessage('{"t":"ctrl-release"}')).toEqual({ t: 'ctrl-release' })
+  })
+
+  it('drops a pointer event with no coordinates', () => {
+    // Missing coordinates would be injected at the host's (0,0).
+    expect(parseControlMessage('{"t":"ctrl-ev","kind":"move"}')).toBeNull()
+    expect(parseControlMessage('{"t":"ctrl-ev","kind":"down"}')).toBeNull()
+    // Wheel and text do not need them.
+    expect(parseControlMessage('{"t":"ctrl-ev","kind":"wheel","delta":120}')).not.toBeNull()
   })
 
   it('accepts only the known control-event kinds', () => {
@@ -119,5 +132,30 @@ describe('undoStroke', () => {
 
   it('is a no-op on an empty list', () => {
     expect(undoStroke([])).toEqual([])
+  })
+})
+
+describe('toInjectorEvent', () => {
+  it('strips the envelope fields the injector rejects', () => {
+    // The helper decodes strictly, so a frame that still carries `t`/`from`
+    // fails with "unknown field" — which is how the whole feature was dead.
+    const payload = toInjectorEvent({
+      t: 'ctrl-ev',
+      kind: 'move',
+      x: 0.5,
+      y: 0.5,
+      from: 'v1',
+    })
+    expect(payload).not.toBeNull()
+    expect(Object.keys(payload!).sort()).toEqual(
+      ['button', 'delta', 'key', 'kind', 'modifiers', 'text', 'x', 'y'].sort(),
+    )
+    expect(JSON.stringify(payload)).not.toContain('"t"')
+    expect(JSON.stringify(payload)).not.toContain('from')
+  })
+
+  it('returns null for frames that are not control events', () => {
+    expect(toInjectorEvent({ t: 'chat', id: '1', from: 'v', name: 'v', text: 'x', at: 0 })).toBeNull()
+    expect(toInjectorEvent({ t: 'ctrl-req' })).toBeNull()
   })
 })

@@ -66,13 +66,12 @@
       <div v-if="controlState !== 'none'" class="live-screen-banner live-control-banner" data-role="control-banner">
         <span>{{ controlState === 'granted' ? t('share.live.controlling') : t('share.live.controlPending') }}</span>
         <button
-          v-if="controlState === 'granted'"
           class="live-screen-banner-btn"
           type="button"
           data-action="control-release"
-          @click="controlState = 'none'"
+          @click="releaseControl"
         >
-          {{ t('share.live.controlRelease') }}
+          {{ controlState === 'granted' ? t('share.live.controlRelease') : t('share.live.controlCancel') }}
         </button>
       </div>
 
@@ -398,6 +397,18 @@ function syncInkRect(): void {
   )
 }
 
+/**
+ * Give control back.
+ *
+ * The local state alone is not enough: the publisher keeps its grant until it
+ * hears otherwise, and its gate is what actually protects the injector.
+ */
+function releaseControl(): void {
+  if (controlState.value === 'none') return
+  controlState.value = 'none'
+  viewer?.sendControl({ t: 'ctrl-release' })
+}
+
 function requestControl(): void {
   if (!viewer?.sendControl({ t: 'ctrl-req' })) return
   controlState.value = 'requested'
@@ -456,7 +467,7 @@ function onControlKey(ev: KeyboardEvent): void {
   // Escape is the local escape hatch: it must never be forwarded, or a viewer
   // could not stop controlling without reaching for the mouse.
   if (ev.key === 'Escape' && !ev.ctrlKey && !ev.altKey) {
-    controlState.value = 'none'
+    releaseControl()
     ev.preventDefault()
     return
   }
@@ -562,9 +573,12 @@ function applyControl(msg: ControlMessage): void {
     return
   }
   if (msg.t === 'ctrl-grant') {
-    // Only the granted viewer may send events; a revoked grant drops straight
-    // back to idle so the pointer stops moving immediately.
+    // The grant is addressed to ONE viewer. Without this check a broadcast
+    // grant would put every viewer into "controlling" — their keydown handler
+    // would then swallow typing in the chat box.
+    if (msg.viewerId && msg.viewerId !== viewer?.viewerId) return
     controlState.value = msg.granted ? 'granted' : 'none'
+    if (msg.granted) resetZoom()
     return
   }
   // Ink and laser are the only other frames a viewer receives today.
@@ -939,7 +953,6 @@ watch(controlState, (next) => {
     window.addEventListener('compositionend', onControlComposition)
   } else {
     window.removeEventListener('keydown', onControlKey)
-  window.removeEventListener('compositionend', onControlComposition)
     window.removeEventListener('compositionend', onControlComposition)
   }
 })
@@ -955,7 +968,10 @@ watch(state, (s) => {
 let statsTimer: ReturnType<typeof setInterval> | null = null
 
 function onVisibility(): void {
-  viewer?.sendControl({
+  // `viewer?.sendControl({ viewerId: viewer.viewerId })` would still evaluate
+  // the argument (and throw) when the viewer is null.
+  if (!viewer) return
+  viewer.sendControl({
     t: 'presence',
     viewerId: viewer.viewerId,
     visible: document.visibilityState === 'visible',

@@ -71,6 +71,26 @@ class FakeTransceiver {
   constructor(public direction: string) {}
 }
 
+class FakeDataChannel {
+  static instances: FakeDataChannel[] = []
+  readyState = 'open'
+  sent: string[] = []
+  onmessage: ((ev: { data: string }) => void) | null = null
+  constructor(public label: string) {
+    FakeDataChannel.instances.push(this)
+  }
+  send(data: string) {
+    this.sent.push(data)
+  }
+  /** Push a frame as if the remote peer sent it. */
+  emit(msg: unknown) {
+    this.onmessage?.({ data: JSON.stringify(msg) })
+  }
+  sentJSON(): Record<string, unknown>[] {
+    return this.sent.map((x) => JSON.parse(x) as Record<string, unknown>)
+  }
+}
+
 class FakePC {
   static instances: FakePC[] = []
   ontrack: ((ev: { track: FakeTrack; streams: FakeStream[] }) => void) | null = null
@@ -103,6 +123,9 @@ class FakePC {
     }
     this.transceivers.push(tx)
     return tx
+  }
+  createDataChannel(label: string) {
+    return new FakeDataChannel(label) as unknown as RTCDataChannel
   }
   createAnswer = vi.fn(async () => ({ type: 'answer', sdp: 'v=0-answer' }))
   setLocalDescription = vi.fn(async (d: unknown) => {
@@ -200,6 +223,7 @@ class FakeMediaStream {
 function installGlobals() {
   FakePC.instances = []
   FakeWS.instances = []
+  FakeDataChannel.instances = []
   vi.stubGlobal('WebSocket', FakeWS as unknown as typeof WebSocket)
   vi.stubGlobal('RTCPeerConnection', FakePC as unknown as typeof RTCPeerConnection)
   vi.stubGlobal('AudioContext', FakeAudioCtx as unknown as typeof AudioContext)
@@ -626,5 +650,94 @@ describe('audience screen relay', () => {
 
     share.revokeScreen('v1')
     expect(lastWS().sentJSON()).toContainEqual({ type: 'screen-revoke', viewerId: 'v1' })
+  })
+})
+
+describe('control channel', () => {
+  it('relays a viewer frame to the others, tagged with the real sender', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v2' })
+    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(2))
+
+    const [dc1, dc2] = FakeDataChannel.instances
+    const seen: unknown[] = []
+    share.onControl((m) => seen.push(m))
+
+    // A viewer cannot name itself: whatever `from` it sends is replaced.
+    dc1.emit({ t: 'chat', id: 'c1', from: 'v2', name: '主持人', text: 'hi', at: 1 })
+
+    expect(seen).toHaveLength(1)
+    expect((seen[0] as { from: string }).from).toBe('v1')
+    // The sharer does not get its own frame back.
+    expect(dc1.sentJSON()).toHaveLength(0)
+    expect(dc2.sentJSON()).toEqual([expect.objectContaining({ t: 'chat', from: 'v1' })])
+  })
+
+  it('drops frames a viewer is not allowed to send', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(1))
+    const dc = FakeDataChannel.instances[0]
+    const seen: unknown[] = []
+    share.onControl((m) => seen.push(m))
+
+    // `talk` is publisher→viewer only; a viewer must not be able to fake it.
+    dc.emit({ t: 'talk', viewerId: 'v1', level: 1 })
+    expect(seen).toHaveLength(0)
+  })
+
+  it('addresses a grant to one viewer instead of broadcasting it', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v2' })
+    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(2))
+    const [dc1, dc2] = FakeDataChannel.instances
+
+    share.sendControlTo('v1', { t: 'ctrl-grant', viewerId: 'v1', granted: true })
+
+    expect(dc1.sentJSON()).toEqual([{ t: 'ctrl-grant', viewerId: 'v1', granted: true }])
+    // Broadcasting would put every viewer into "controlling" and swallow their
+    // typing, so v2 must see nothing.
+    expect(dc2.sentJSON()).toHaveLength(0)
+  })
+})
+
+describe('switchSource', () => {
+  it('swaps the track on every peer and stops the old capture', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(1))
+
+    const oldTrack = displayStream.getVideoTracks()[0]
+    const nextTrack = new FakeTrack('video', 'screen-2')
+    const nextStream = new FakeMediaStream([nextTrack])
+    const gdm = (navigator as unknown as { mediaDevices: { getDisplayMedia: ReturnType<typeof vi.fn> } })
+      .mediaDevices.getDisplayMedia
+    gdm.mockResolvedValueOnce(nextStream)
+
+    const ok = await share.switchSource('window:2:0')
+
+    expect(ok).toBe(true)
+    expect(FakePC.instances[0].transceivers[1].sender.replaceTrack).toHaveBeenCalledWith(nextTrack)
+    expect(oldTrack.stopped).toBe(true)
+    expect(share.previewStream.value).toBe(nextStream)
+    // The new stream must become the session's stream, otherwise resetSession()
+    // never stops it and the capture indicator stays on after "end share".
+    expect(share.captureKind.value).toBe('window')
+  })
+
+  it('clears the one-shot capture declaration when the switch fails', async () => {
+    const { share } = await startSharing()
+    const gdm = (navigator as unknown as { mediaDevices: { getDisplayMedia: ReturnType<typeof vi.fn> } })
+      .mediaDevices.getDisplayMedia
+    gdm.mockRejectedValueOnce(new Error('cancelled'))
+
+    const ok = await share.switchSource('screen:0:0')
+
+    expect(ok).toBe(false)
+    // Leaving the declaration armed would let the NEXT getDisplayMedia capture
+    // that source without a picker.
+    expect(bridge.setPendingCaptureSource).toHaveBeenLastCalledWith('', false)
   })
 })

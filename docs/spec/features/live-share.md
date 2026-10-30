@@ -139,7 +139,7 @@ talking --set-talk-enabled(false)--> none  （房间开关关闭，连带静音�
 |---|---|
 | `laser` | 激光笔位置（2.5s 无更新自动隐藏） |
 | `ink` / `ink-undo` / `ink-clear` | 画面标注（自由笔迹） |
-| `chat` | 文字聊天（发布端保留最近若干条给后加入者） |
+| `chat` | 文字聊天（两端各自保留本次会话的消息；后加入的观众看不到之前的聊天） |
 | `presence` | 观众窗口是否可见（「离开」标记） |
 | `ctrl-req` / `ctrl-grant` / `ctrl-ev` | 远程控制的申请、授权与指针事件 |
 

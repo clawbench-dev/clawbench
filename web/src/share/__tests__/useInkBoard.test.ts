@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { LASER_IDLE_MS, useInkBoard } from '../useInkBoard'
+import { LASER_IDLE_MS, MAX_STROKES, useInkBoard } from '../useInkBoard'
 
 describe('useInkBoard', () => {
   afterEach(() => {
@@ -74,5 +74,18 @@ describe('useInkBoard', () => {
     const board = useInkBoard()
     expect(board.apply({ t: 'chat', id: '1', from: 'v', name: 'v', text: 'hi', at: 0 })).toBe(false)
     expect(board.strokes.value).toHaveLength(0)
+  })
+})
+
+describe('ink bounds', () => {
+  it('drops the oldest strokes instead of growing without bound', () => {
+    const board = useInkBoard()
+    for (let i = 0; i < MAX_STROKES + 5; i += 1) {
+      board.apply({ t: 'ink', phase: 'start', x: 0, y: 0, color: '#fff', width: 1 })
+      board.apply({ t: 'ink', phase: 'end', x: 0, y: 0, color: '#fff', width: 1 })
+    }
+    // A hostile peer must not be able to make every viewer redraw an unbounded
+    // list on every frame.
+    expect(board.strokes.value.length).toBe(MAX_STROKES)
   })
 })

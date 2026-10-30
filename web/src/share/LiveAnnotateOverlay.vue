@@ -148,8 +148,12 @@ function onDown(ev: PointerEvent): void {
 function onMove(ev: PointerEvent): void {
   const p = pointOf(ev)
   if (mode.value === 'laser') {
-    if (throttled()) emit('send', { t: 'laser', x: p.x, y: p.y, on: true })
-    board.laser.value = { x: p.x, y: p.y, on: true }
+    if (!throttled()) return
+    // Through the board so the idle timer applies here too; assigning the ref
+    // directly left a frozen dot on the publisher's own preview.
+    const msg = { t: 'laser' as const, x: p.x, y: p.y, on: true }
+    board.apply(msg)
+    emit('send', msg)
     return
   }
   if (!drawing) return
@@ -159,6 +163,13 @@ function onMove(ev: PointerEvent): void {
 }
 
 function onUp(): void {
+  if (mode.value === 'laser') {
+    // Tell the viewers to drop the pointer now instead of waiting for their
+    // 2.5s idle timeout.
+    board.hideLaser()
+    emit('send', { t: 'laser', x: 0, y: 0, on: false })
+    return
+  }
   if (!drawing) return
   drawing = false
   board.endStroke()
@@ -205,6 +216,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('resize', syncRect)
   window.removeEventListener('keydown', onKey)
+  // Closing the annotator must not leave a laser hanging on every viewer.
+  emit('send', { t: 'laser', x: 0, y: 0, on: false })
   board.dispose()
 })
 </script>

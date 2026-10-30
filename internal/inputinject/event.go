@@ -32,8 +32,9 @@ type Event struct {
 	Y float64 `json:"y"`
 	// Button is 0 left, 1 middle, 2 right.
 	Button int `json:"button"`
-	// Delta is the wheel delta in "lines"; positive scrolls down.
-	Delta int `json:"delta"`
+	// Delta is the browser's wheel deltaY (pixels in the common deltaMode 0);
+	// positive scrolls down, matching the DOM.
+	Delta float64 `json:"delta"`
 	// Key is a named key ("Enter", "Backspace", "a", "F5", …) for kind=key.
 	Key string `json:"key"`
 	// Modifiers are held for the duration of the event: ctrl/shift/alt/meta.

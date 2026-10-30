@@ -406,7 +406,7 @@ import { groupNoteSegments, useLiveNotes } from '@/composables/useLiveNotes'
 import { getNative } from '@/utils/clawbenchNative'
 import LiveAnnotateOverlay from '@/share/LiveAnnotateOverlay.vue'
 import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
-import type { ControlMessage } from '@/share/liveControl'
+import { toInjectorEvent, type ControlMessage } from '@/share/liveControl'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { appLog } from '@/utils/appLog'
 import '@/assets/modal-footer-btn.css'
@@ -475,7 +475,9 @@ function onControl(msg: ControlMessage): void {
       ...chatMessages.value,
       {
         id: msg.id,
-        name: msg.name || t('share.live.viewerName', { id: msg.from }),
+        // The wire `name` is untrusted (a viewer could label itself "主持人");
+        // derive the label from the relay-stamped id instead.
+        name: t('share.live.viewerName', { id: msg.from ?? '' }),
         text: msg.text,
         at: msg.at,
         self: false,
@@ -485,11 +487,22 @@ function onControl(msg: ControlMessage): void {
     return
   }
   if (msg.t === 'presence') {
-    presence.value = { ...presence.value, [msg.viewerId]: msg.visible }
+    // `from` is stamped by the relay; the wire `viewerId` is whatever the peer
+    // typed. Trusting it would let viewer A mark viewer B as away.
+    const id = msg.from ?? msg.viewerId
+    if (id) presence.value = { ...presence.value, [id]: msg.visible }
     return
   }
   if (msg.t === 'ctrl-req') {
     if (msg.from) controlRequests.value = new Set([...controlRequests.value, msg.from])
+    return
+  }
+  if (msg.t === 'ctrl-release') {
+    if (!msg.from) return
+    if (msg.from === controlledBy.value) revokeControl(msg.from)
+    // Also covers "requested but not answered yet": the request disappears
+    // instead of sitting there forever.
+    controlRequests.value = new Set([...controlRequests.value].filter((id) => id !== msg.from))
     return
   }
   if (msg.t === 'ctrl-ev') {
@@ -504,7 +517,9 @@ function onControl(msg: ControlMessage): void {
       }
       return
     }
-    void Promise.resolve(bridge.remoteControl(msg)).then((res) => {
+    const payload = toInjectorEvent(msg)
+    if (!payload) return
+    void Promise.resolve(bridge.remoteControl(payload)).then((res) => {
       // The bridge answers `{supported:false}` when the native input module is
       // not installed; say so once instead of swallowing every click.
       if (res && typeof res === 'object' && !res.supported && !controlUnsupportedWarned) {
@@ -516,15 +531,26 @@ function onControl(msg: ControlMessage): void {
 }
 
 function grantControl(viewerId: string): void {
+  // The pointer is mapped over the desktop, which is only correct when the
+  // picture IS the desktop. A window capture would put every click at the same
+  // fraction of the screen instead of inside the window.
+  if (share.captureKind.value === 'window') {
+    toast.show(t('liveShare.controlWindowUnsupported'), { type: 'error', icon: 'warning' })
+    return
+  }
   controlledBy.value = viewerId
   controlRequests.value = new Set([...controlRequests.value].filter((id) => id !== viewerId))
-  share.sendControl({ t: 'ctrl-grant', viewerId, granted: true })
+  // Addressed to that viewer only: a broadcast would put everyone into
+  // "controlling" and swallow their typing.
+  share.sendControlTo(viewerId, { t: 'ctrl-grant', viewerId, granted: true })
+  void getNative()?.remoteControlGrant?.(viewerId)
 }
 
 function revokeControl(viewerId: string): void {
   if (controlledBy.value === viewerId) controlledBy.value = ''
   controlRequests.value = new Set([...controlRequests.value].filter((id) => id !== viewerId))
-  share.sendControl({ t: 'ctrl-grant', viewerId, granted: false })
+  share.sendControlTo(viewerId, { t: 'ctrl-grant', viewerId, granted: false })
+  void getNative()?.remoteControlRevoke?.()
 }
 
 async function openSwitch(): Promise<void> {
@@ -542,6 +568,25 @@ async function applySwitch(sourceId: string): Promise<void> {
 }
 
 const hasTalkers = computed(() => share.viewers.value.some((v) => v.talk === 'talking'))
+
+/**
+ * Viewer ids restart at v1 for every share, so a grant from the previous share
+ * would otherwise authorise the first viewer of the NEXT one. Clearing on the
+ * transition out of `publishing` is what closes that hole.
+ */
+watch(
+  () => share.state.value,
+  (next) => {
+    if (next === 'publishing') return
+    controlledBy.value = ''
+    controlRequests.value = new Set()
+    presence.value = {}
+    chatMessages.value = []
+    unread.value = 0
+    annotating.value = false
+    void getNative()?.remoteControlRevoke?.()
+  },
+)
 /** Only the tail is rendered: a long meeting would otherwise rebuild thousands
  *  of nodes on every new line. The full transcript still reaches the minutes. */
 const noteBlocks = computed(() => groupNoteSegments(notes.segments.value).slice(-40))

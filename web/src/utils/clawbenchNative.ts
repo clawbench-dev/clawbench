@@ -44,6 +44,13 @@ export interface ClawBenchNative {
   }): Promise<{ ok: boolean; supported: boolean } | boolean> | void
   /** Whether this client can inject input at all. */
   remoteControlSupported?(): Promise<boolean> | boolean
+  /**
+   * Arms the injector for one viewer. The main process refuses events until a
+   * grant is active, so the renderer's check is not the only boundary.
+   */
+  remoteControlGrant?(viewerId: string): Promise<void> | void
+  /** Disarms it. Called on revoke and whenever the share ends. */
+  remoteControlRevoke?(): Promise<void> | void
   // Sync (preload / JS-interface local values)
   isNativeApp(): boolean
   /**

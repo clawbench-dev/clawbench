@@ -12,6 +12,15 @@ import { undoStroke } from './liveControl'
 /** Laser hides itself after this long without an update. */
 export const LASER_IDLE_MS = 2500
 
+/**
+ * Caps that keep a hostile peer from growing the canvas without bound.
+ *
+ * Every stroke is redrawn on each frame, so an unbounded list is both a memory
+ * and a CPU attack; the publisher also relays 1→N, which amplifies it.
+ */
+export const MAX_STROKES = 400
+export const MAX_POINTS_PER_STROKE = 4000
+
 export interface LaserState {
   x: number
   y: number
@@ -51,11 +60,15 @@ export function useInkBoard() {
 
   function beginStroke(point: { x: number; y: number }, color: string, width: number): void {
     active = { color, width, points: [point] }
-    strokes.value = [...strokes.value, active]
+    const next = [...strokes.value, active]
+    // Drop the oldest strokes rather than refusing new ones: a live
+    // presentation cares about the recent annotations.
+    strokes.value = next.length > MAX_STROKES ? next.slice(next.length - MAX_STROKES) : next
   }
 
   function extendStroke(point: { x: number; y: number }): void {
     if (!active) return
+    if (active.points.length >= MAX_POINTS_PER_STROKE) return
     active.points = [...active.points, point]
     // Replace the array so the renderer re-runs; the stroke object itself is
     // mutated in place because it is already in the list.

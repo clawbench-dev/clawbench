@@ -30,6 +30,15 @@ vi.mock('@/share/liveViewer', () => ({
     stopTalking(): Promise<void> {
       return Promise.resolve()
     }
+    // The component calls these on `playing`; without them the watcher throws
+    // and the failure is swallowed by Vue.
+    viewerId = 'v-test'
+    sendControl(): boolean {
+      return true
+    }
+    getStats() {
+      return Promise.resolve({ rttMs: null, lossPct: null, bitrateKbps: null, jitterMs: null })
+    }
   },
 }))
 let shareToken: string | null = 'tok'

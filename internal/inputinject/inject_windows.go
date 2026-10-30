@@ -25,20 +25,28 @@ const (
 	inputMouse    = 0
 	inputKeyboard = 1
 
-	mouseMove      = 0x0001
-	mouseLeftDown  = 0x0002
-	mouseLeftUp    = 0x0004
-	mouseRightDown = 0x0008
-	mouseRightUp   = 0x0010
-	mouseMidDown   = 0x0020
-	mouseMidUp     = 0x0040
-	mouseWheel     = 0x0800
-	mouseAbsolute  = 0x8000
+	mouseMove        = 0x0001
+	mouseLeftDown    = 0x0002
+	mouseLeftUp      = 0x0004
+	mouseRightDown   = 0x0008
+	mouseRightUp     = 0x0010
+	mouseMidDown     = 0x0020
+	mouseMidUp       = 0x0040
+	mouseWheel       = 0x0800
+	mouseAbsolute    = 0x8000
+	mouseVirtualDesk = 0x4000
 
 	keyUp      = 0x0002
 	keyUnicode = 0x0004
 
-	wheelDelta = 120
+	// One wheel notch as reported by Chromium's DOM_WHEEL (deltaMode 0).
+	domWheelNotch = 100.0
+	wheelDelta    = 120
+
+	smXVirtualScreen  = 76
+	smYVirtualScreen  = 77
+	smCxVirtualScreen = 78
+	smCyVirtualScreen = 79
 )
 
 // winInput mirrors INPUT: a DWORD type, padding, then a 32-byte union.
@@ -66,10 +74,20 @@ func keyInput(vk, scan uint16, flags uint32) winInput {
 	return in
 }
 
-func screenSize() (int32, int32) {
-	cx, _, _ := procGetSystemMetrics.Call(uintptr(0)) // SM_CXSCREEN
-	cy, _, _ := procGetSystemMetrics.Call(uintptr(1)) // SM_CYSCREEN
-	return int32(cx), int32(cy)
+func systemMetric(index uintptr) int32 {
+	v, _, _ := procGetSystemMetrics.Call(index)
+	return int32(v)
+}
+
+// virtualScreen reports the bounding box of ALL monitors.
+//
+// Absolute mouse coordinates cover the virtual desktop only when the event also
+// carries MOUSEEVENTF_VIRTUALDESK; without it every click lands on the primary
+// monitor, scaled — which silently misplaces every click when the shared screen
+// is a second display.
+func virtualScreen() (x, y, cx, cy int32) {
+	return systemMetric(smXVirtualScreen), systemMetric(smYVirtualScreen),
+		systemMetric(smCxVirtualScreen), systemMetric(smCyVirtualScreen)
 }
 
 func send(inputs []winInput) error {
@@ -113,12 +131,22 @@ func buttonFlags(button int, down bool) (uint32, bool) {
 func Apply(ev Event) error {
 	switch ev.Kind {
 	case "move", "down", "up":
-		cx, cy := screenSize()
-		// MOUSEEVENTF_ABSOLUTE addresses the primary screen in 0..65535 units,
-		// which is what the normalised coordinate is scaled into.
+		// The normalised coordinate describes the CAPTURED PICTURE. For a screen
+		// capture that picture is a monitor, so the fraction is mapped over the
+		// whole virtual desktop (all monitors) rather than the primary one.
+		// Window capture is refused by the UI, which is why no window offset is
+		// applied here.
+		vx, vy, vw, vh := virtualScreen()
+		if vw <= 0 || vh <= 0 {
+			return fmt.Errorf("no virtual screen")
+		}
+		// MOUSEEVENTF_ABSOLUTE uses 0..65535 across the virtual desktop; the
+		// origin offset is applied by VIRTUALDESK itself.
+		_ = vx
+		_ = vy
 		dx := int32(ev.X * 65535)
 		dy := int32(ev.Y * 65535)
-		flags := uint32(mouseMove | mouseAbsolute)
+		flags := uint32(mouseMove | mouseAbsolute | mouseVirtualDesk)
 		if ev.Kind == "down" || ev.Kind == "up" {
 			btn, ok := buttonFlags(ev.Button, ev.Kind == "down")
 			if !ok {
@@ -126,17 +154,32 @@ func Apply(ev Event) error {
 			}
 			flags |= btn
 		}
-		_ = cx
-		_ = cy
 		return send([]winInput{mouseInput(dx, dy, 0, flags)})
 
 	case "wheel":
-		delta := int32(ev.Delta)
-		if delta == 0 {
+		if ev.Delta == 0 {
 			return nil
 		}
-		amount := uint32(uint16(int16(delta * wheelDelta)))
-		return send([]winInput{mouseInput(0, 0, amount, mouseWheel)})
+		// Browser delta is in pixels (≈100 per notch), Windows wants notches of
+		// 120, and the sign is inverted: DOM positive = down, WM_MOUSEWHEEL
+		// positive = up.
+		notches := -ev.Delta / domWheelNotch
+		if notches > 10 {
+			notches = 10
+		} else if notches < -10 {
+			notches = -10
+		}
+		amount := int32(notches * wheelDelta)
+		if amount == 0 {
+			// A sub-notch delta still has to move something, otherwise a slow
+			// trackpad scroll does nothing at all.
+			if ev.Delta > 0 {
+				amount = -wheelDelta
+			} else {
+				amount = wheelDelta
+			}
+		}
+		return send([]winInput{mouseInput(0, 0, uint32(amount), mouseWheel)})
 
 	case "key":
 		vk, ok := VirtualKey(ev.Key)

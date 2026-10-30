@@ -36,6 +36,16 @@ export interface RemoteControlEvent {
   text?: string
 }
 
+/**
+ * The viewer currently allowed to drive this machine, '' when nobody is.
+ *
+ * Held in the MAIN process on purpose: the renderer's check is the first line of
+ * defence, not the only one. Anything that can run script in the window (a
+ * remote server's page, an XSS) can call the IPC, so the capability has to be
+ * armed here before an event is forwarded.
+ */
+let grantedViewer = ''
+
 let child: ChildProcessWithoutNullStreams | null = null
 /** Replies arrive in request order, so a FIFO is enough to correlate them. */
 let pending: Array<(ok: boolean) => void> = []
@@ -142,8 +152,20 @@ export async function applyRemoteControlEvent(ev: RemoteControlEvent): Promise<b
 export function registerRemoteControlHandlers(ipcMain: Electron.IpcMain): void {
   ipcMain.handle('native:remote-control', async (_e, ev: RemoteControlEvent) => {
     if (!remoteControlSupported()) return { ok: false, supported: false }
+    // No active grant: the share ended, control was revoked, or nothing ever
+    // granted it. Drop the event instead of moving the user's mouse.
+    if (!grantedViewer) return { ok: false, supported: true, reason: 'no-grant' }
     const ok = await applyRemoteControlEvent(ev)
     return { ok, supported: true }
   })
   ipcMain.handle('native:remote-control-supported', () => remoteControlSupported())
+  ipcMain.handle('native:remote-control-grant', (_e, viewerId: string) => {
+    grantedViewer = typeof viewerId === 'string' ? viewerId : ''
+  })
+  ipcMain.handle('native:remote-control-revoke', () => {
+    grantedViewer = ''
+    // Kill the helper too: a live process is a capability that outlives the
+    // grant, and restarting it costs one spawn.
+    stopRemoteControlHelper()
+  })
 }

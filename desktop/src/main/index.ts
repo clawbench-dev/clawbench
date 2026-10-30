@@ -1,7 +1,7 @@
 import { app, Menu, session } from 'electron'
 import { initStore, getStore } from './store'
 import { installDisplayMediaHandler, registerCaptureHandlers } from './capture'
-import { registerRemoteControlHandlers, stopRemoteControlHelper } from './remoteControl'
+import { stopRemoteControlHelper } from './remoteControl'
 import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
 import { registerCertificateHandler } from './certificate'

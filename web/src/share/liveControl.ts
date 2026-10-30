@@ -25,10 +25,12 @@ export type ControlMessage =
   | { t: 'ink-undo' }
   | { t: 'chat'; id: string; from: string; name: string; text: string; at: number }
   /** A viewer's window became visible/hidden. */
-  | { t: 'presence'; viewerId: string; visible: boolean }
+  | { t: 'presence'; viewerId: string; visible: boolean; from?: string }
   /** Audio level 0..1 for the speaking indicator (publisher → viewers). */
   | { t: 'talk'; viewerId: string; level: number }
   | { t: 'ctrl-req'; from?: string }
+  /** The viewer gave control back (its own release button or Escape). */
+  | { t: 'ctrl-release'; from?: string }
   | { t: 'ctrl-grant'; viewerId: string; granted: boolean }
   | {
       t: 'ctrl-ev'
@@ -54,6 +56,7 @@ export const VIEWER_MESSAGE_TYPES = new Set([
   'chat',
   'presence',
   'ctrl-req',
+  'ctrl-release',
   'ctrl-ev',
 ])
 
@@ -139,6 +142,8 @@ export function parseControlMessage(raw: string): ControlMessage | null {
       }
     case 'ctrl-req':
       return { t: 'ctrl-req' }
+    case 'ctrl-release':
+      return { t: 'ctrl-release' }
     case 'ctrl-grant':
       return {
         t: 'ctrl-grant',
@@ -156,6 +161,11 @@ export function parseControlMessage(raw: string): ControlMessage | null {
         kind !== 'text'
       ) {
         return null
+      }
+      // A pointer event without coordinates would be injected at (0,0) —
+      // the top-left corner of the host's screen. Drop it instead.
+      if (kind !== 'wheel' && kind !== 'key' && kind !== 'text') {
+        if (typeof m.x !== 'number' || typeof m.y !== 'number') return null
       }
       return {
         t: 'ctrl-ev',
@@ -249,4 +259,34 @@ export interface InkStroke {
 /** Drops the last stroke; returns a new array so Vue notices the change. */
 export function undoStroke(strokes: InkStroke[]): InkStroke[] {
   return strokes.length ? strokes.slice(0, -1) : strokes
+}
+
+/**
+ * Narrows a control frame to the fields the desktop injector accepts.
+ *
+ * The helper decodes strictly (unknown fields are an error), so passing the
+ * whole frame — which also carries `t` and `from` — makes every event fail. This
+ * whitelist is the single place that decides what reaches `SendInput`.
+ */
+export function toInjectorEvent(msg: ControlMessage): {
+  kind: 'move' | 'down' | 'up' | 'wheel' | 'key' | 'text'
+  x?: number
+  y?: number
+  button?: number
+  key?: string
+  delta?: number
+  text?: string
+  modifiers?: string[]
+} | null {
+  if (msg.t !== 'ctrl-ev') return null
+  return {
+    kind: msg.kind,
+    x: msg.x,
+    y: msg.y,
+    button: msg.button,
+    key: msg.key,
+    delta: msg.delta,
+    text: msg.text,
+    modifiers: msg.modifiers,
+  }
 }

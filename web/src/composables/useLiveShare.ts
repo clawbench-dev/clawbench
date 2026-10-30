@@ -99,6 +99,14 @@ let remoteScreenTrack: MediaStreamTrack | null = null
 const controlHandlers = new Set<(msg: ControlMessage) => void>()
 /** The captured screen, exposed so the publisher can annotate on it. */
 const previewStream = shallowRef<MediaStream | null>(null)
+/**
+ * Whether the current capture is a whole screen or a single window.
+ *
+ * Remote control needs this: the pointer is mapped over the desktop, which is
+ * only correct when the picture IS the desktop. A window capture would put
+ * every click at the same fraction of the screen instead of inside the window.
+ */
+const captureKind = ref<'screen' | 'window'>('screen')
 /** Whether system audio was requested, remembered for a mid-share source swap. */
 let systemAudioWanted = false
 const peers = new Map<string, PublisherPeer>()
@@ -126,7 +134,6 @@ function resetSession(): void {
   micStream = null
   outVideoTrack = null
   remoteScreenTrack = null
-  controlHandlers.clear()
   remoteScreenStream.value = null
   screenSharer.value = ''
   if (ws) {
@@ -244,6 +251,7 @@ export function useLiveShare() {
         return false
       }
       await bridge.setPendingCaptureSource(opts.sourceId, opts.systemAudio)
+      captureKind.value = opts.sourceId.startsWith('screen:') ? 'screen' : 'window'
 
       // 3. Capture. The host answers getDisplayMedia with the declared source.
       systemAudioWanted = opts.systemAudio
@@ -548,19 +556,33 @@ export function useLiveShare() {
         fail('no video track captured')
         return false
       }
+      captureKind.value = sourceId.startsWith('screen:') ? 'screen' : 'window'
+      const previousStream = displayStream
       const previous = outVideoTrack
       outVideoTrack = track
+      // The stream must be the one resetSession() stops later; keeping the
+      // original here would leave the new capture running after "end share"
+      // (the OS capture indicator stays on).
+      displayStream = next
+      previewStream.value = next
       for (const peer of peers.values()) {
         await peer.videoTx?.sender.replaceTrack(track)
       }
       previous?.stop()
-      previewStream.value = next
+      // Stop any leftover audio track from the old capture too.
+      for (const t of previousStream?.getTracks() ?? []) {
+        if (t !== previous) t.stop()
+      }
       track.addEventListener('ended', () => {
         void stop()
       })
       return true
     } catch (e) {
       appLog.w(TAG, 'switch source failed', e)
+      // The declaration is one-shot; leaving it armed would let the NEXT
+      // getDisplayMedia (e.g. a viewer starting a share) capture this source
+      // without a picker.
+      void bridge.setPendingCaptureSource('', false)
       fail('switch source failed')
       return false
     }
@@ -585,6 +607,17 @@ export function useLiveShare() {
           appLog.d(TAG, 'control send failed', peer.viewerId, e)
         }
       }
+    }
+  }
+
+  /** Send one control frame to a single viewer (grants must not be broadcast). */
+  function sendControlTo(viewerId: string, msg: ControlMessage): void {
+    const peer = peers.get(viewerId)
+    if (peer?.channel?.readyState !== 'open') return
+    try {
+      peer.channel.send(JSON.stringify(msg))
+    } catch (e) {
+      appLog.d(TAG, 'control send to viewer failed', viewerId, e)
     }
   }
 
@@ -740,15 +773,18 @@ export function useLiveShare() {
     setScreenEnabled,
     revokeScreen,
     sendControl,
+    sendControlTo,
     onControl,
     switchSource,
     previewStream,
+    captureKind,
   }
 }
 
 /** Test seam: drop all module state without touching the network. */
 export function _resetLiveShareForTest(): void {
   resetSession()
+  controlHandlers.clear()
   useLiveNotes().reset()
   state.value = 'idle'
   token.value = ''
