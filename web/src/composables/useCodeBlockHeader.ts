@@ -179,11 +179,13 @@ const TABLE_CHEVRON_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="cur
 const TABLE_WRAP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-3"/><path d="M18 15l-3 3 3 3"/><path d="M3 18h7"/></svg>'
 
 /**
- * Lucide `smartphone` (the installed v1.0.0 artwork — see utils/copyButton.ts
- * for why hand-built markup mirrors lucide paths), tilted 45° so it reads as a
- * phone mid-turn to landscape rather than a generic wide rectangle.
+ * A portrait phone inside a three-quarter rotation arc — the "auto-rotate"
+ * convention Android uses for the same gesture. Drawn with the same stroke
+ * weight / caps as the lucide glyphs beside it (see utils/copyButton.ts for why
+ * hand-built markup mirrors lucide paths), so it does not stand out as a
+ * different icon family.
  */
-const TABLE_LANDSCAPE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><g transform="rotate(45 12 12)"><rect width="10" height="16" x="7" y="4" rx="2" ry="2"/><path d="M12 17h.01"/></g></svg>'
+const TABLE_LANDSCAPE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="5.5" height="12.5" x="9.25" y="5.75" rx="1.6"/><path d="M16.4 4.3A9 9 0 1 0 16.4 19.7"/><path d="M14.2 1.9 16.7 4.3 14.3 6.7"/></svg>'
 
 /**
  * Annotate table blocks in an HTML string with header bars containing
