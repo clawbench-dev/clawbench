@@ -231,6 +231,20 @@ func EnsureConsumer(sessionID string) bool {
 	if sessionID == "" {
 		return false
 	}
+	// Never start new work during graceful shutdown. MarkShuttingDown runs at
+	// shutdown step 1 (before CancelAllSessions sweeps the runner registry),
+	// while StopQueueReaper is a deferred call and therefore runs LAST — so
+	// between those two points the reaper keeps ticking. A claim made in that
+	// window is invisible to CancelAllSessions (already run) and would stream
+	// while the DB is closing, leaving a streaming=1 row behind that the next
+	// startup resumes a second time.
+	//
+	// The queued rows are not lost: they stay in queued_messages and the next
+	// process reaps them on its first sweep. Same reasoning as the restart-resume
+	// worker's per-session check.
+	if IsShuttingDown() {
+		return false
+	}
 	if !store.DBReady() {
 		return false
 	}

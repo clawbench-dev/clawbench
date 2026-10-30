@@ -171,6 +171,22 @@ var addResumeNotice = AddSystemMessage
 // assert the "clear the client's spinner" half of the failure paths.
 var emitTerminalWSOnly = EmitSessionEventWSOnly
 
+// groupResumeDone, when non-nil, is called after the group-resume goroutine's
+// drain loop returns (test-only). It exists because that goroutine is started
+// with a bare `go` and has no join: waiting for the session claim to be released
+// is not enough, since RunDrainLoop's terminal path (push notification → store
+// read) runs AFTER the claim is released and would race a test tearing the DB
+// down. Production leaves this nil.
+var groupResumeDone func()
+
+// SetGroupResumeDoneForTest installs the post-goroutine hook and returns the
+// previous value, so a test can restore it.
+func SetGroupResumeDoneForTest(fn func()) func() {
+	prev := groupResumeDone
+	groupResumeDone = fn
+	return prev
+}
+
 // RestartResumeNotice returns the localized system row written to the timeline.
 //
 // This text is FOR THE USER: it says the session was restored and that the agent
@@ -292,6 +308,16 @@ func ResumeInterruptedSession(sessionID string) error {
 		// host to "restore the session", not what to do next.
 		go func() {
 			defer FinishSessionRun(sessionID)
+			// Signal AFTER the drain loop returns, so a test can wait for the
+			// goroutine's whole lifetime instead of guessing. The loop keeps
+			// touching the store after it releases the claim (terminal push →
+			// notification insert), and that tail is what races a test's DB
+			// teardown: the claim going away is NOT the goroutine going away.
+			defer func() {
+				if groupResumeDone != nil {
+					groupResumeDone()
+				}
+			}()
 			runGroupDrainLoopFn(runCtx, sessionID, info.ProjectPath, 0, prompt, nil)
 		}()
 		return nil

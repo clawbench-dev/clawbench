@@ -78,27 +78,33 @@ func stubRestartLaunch(t *testing.T) *launchRecorder {
 	return rec
 }
 
-// stubRestartGroupDrain replaces the group drain seam and records the prompts.
+// stubRestartGroupDrainHeld replaces the group drain seam and keeps the drain
+// goroutine ALIVE until the test releases it.
 //
-// The returned channel is closed by the first (and only expected) call: the
-// resume path drives the group drain from a goroutine, so without a handshake the
-// test could finish, tear the DB down and restore the seam while that goroutine
-// is still starting — it would then run the REAL orchestrator against a closed
-// database. Awaiting the signal makes the assertion order deterministic instead
-// of "usually fast enough".
-func stubRestartGroupDrain(t *testing.T) (*[]string, <-chan struct{}) {
+// A stub that returns immediately lets the goroutine continue into
+// RunGroupDrainLoop's terminal path (push notification → store read) after the
+// test has already torn the DB down — a real data race that -race reports
+// intermittently, depending on whether the teardown wins. Holding the seam open
+// makes the goroutine's lifetime explicit: the test inspects state while it is
+// blocked, then releases it and waits for the claim to be gone.
+func stubRestartGroupDrainHeld(t *testing.T) (prompts *[]string, reached <-chan struct{}) {
 	t.Helper()
-	var prompts []string
-	done := make(chan struct{}, 1)
+	var mu sync.Mutex
+	var got []string
+	hit := make(chan struct{}, 1)
+
 	orig := SetRunGroupDrainLoopForTest(func(_ context.Context, _ string, _ string, _ int64, text string, _ []model.FileEntry) {
-		prompts = append(prompts, text)
+		mu.Lock()
+		got = append(got, text)
+		mu.Unlock()
 		select {
-		case done <- struct{}{}:
+		case hit <- struct{}{}:
 		default:
 		}
 	})
 	t.Cleanup(func() { SetRunGroupDrainLoopForTest(orig) })
-	return &prompts, done
+
+	return &got, hit
 }
 
 // systemRowTexts returns the role='system' rows of a session, oldest first.
@@ -266,7 +272,11 @@ func TestResumeInterruptedSession_MissingSessionIsNotAnError(t *testing.T) {
 func TestResumeInterruptedSession_GroupUsesOrchestrator(t *testing.T) {
 	setupRestartResumeDB(t)
 	launched := stubRestartLaunch(t)
-	prompts, groupDone := stubRestartGroupDrain(t)
+	prompts, groupDone := stubRestartGroupDrainHeld(t)
+
+	drainDone := make(chan struct{})
+	prevDone := SetGroupResumeDoneForTest(func() { close(drainDone) })
+	t.Cleanup(func() { SetGroupResumeDoneForTest(prevDone) })
 
 	project := "/proj/resume-group"
 	groupID, _, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
@@ -310,15 +320,12 @@ func TestResumeInterruptedSession_GroupUsesOrchestrator(t *testing.T) {
 		t.Fatalf("the newest system row must be the recovery notice: got %q (all: %+v)", last, rows)
 	}
 
-	// Wait for the drain goroutine to RELEASE the claim before returning: it
-	// still touches the store (notification/push) after the seam returns, so
-	// letting it outlive the test races the DB teardown (-race catches it).
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && IsSessionRunning(groupID) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if IsSessionRunning(groupID) {
-		t.Fatal("the group drain did not finish within the timeout")
+	// Wait for the goroutine's whole lifetime, not just the claim: the terminal
+	// push runs after FinishSessionRun and would otherwise race the DB teardown.
+	select {
+	case <-drainDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the group drain goroutine did not finish within the timeout")
 	}
 }
 
@@ -593,6 +600,10 @@ func TestResumeInterruptedSession_GroupPromptReachesSpeaker(t *testing.T) {
 	restore := SetGroupDrainRunnerForTest(runner)
 	t.Cleanup(func() { SetGroupDrainRunnerForTest(restore) })
 
+	drainDone := make(chan struct{})
+	prevDone := SetGroupResumeDoneForTest(func() { close(drainDone) })
+	t.Cleanup(func() { SetGroupResumeDoneForTest(prevDone) })
+
 	if err := ResumeInterruptedSession(groupID); err != nil {
 		t.Fatalf("ResumeInterruptedSession: %v", err)
 	}
@@ -610,15 +621,14 @@ func TestResumeInterruptedSession_GroupPromptReachesSpeaker(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	// Wait for the drain goroutine to FINISH before touching the assertions: it
-	// holds the session claim until it exits, and letting it outlive the test
-	// would run the real orchestrator against a torn-down DB.
-	deadline = time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && IsSessionRunning(groupID) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if IsSessionRunning(groupID) {
-		t.Fatal("the group drain did not finish within the timeout")
+	// Wait for the drain goroutine to FINISH — its whole lifetime, not just the
+	// claim. Releasing the claim happens in a defer that runs BEFORE the terminal
+	// push, so polling IsSessionRunning left a window where the test returned and
+	// the goroutine still read the store.
+	select {
+	case <-drainDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the group drain goroutine did not finish within the timeout")
 	}
 
 	mu.Lock()
