@@ -46,6 +46,7 @@ flowchart TD
 - **i18n 本地化**：从 `X-Locale` header → `clawbench-locale` Cookie → `Accept-Language` header 优先级链解析语言偏好，错误响应使用用户语言显示。推送通知场景使用 `LocalizerForLocale()` 独立解析语言。详见[国际化](i18n.md)
 - **NoCache 响应头**：全局中间件为所有 API 响应设置 `Cache-Control: no-store`，确保浏览器刷新时总是获取最新数据，而非使用缓存的旧状态
 - **按路由认证**：`Auth` 不在全局 `Chain` 中；路由注册时明确决定是否包裹认证。健康检查、最小状态等公开接口可以保持可达，包含配置、项目或用户数据的 API 必须受保护
+- **WebSocket 端点共用一份 Origin 白名单**：所有 WS 握手都只接受「本服务器自己的 Host」与任意端口的 loopback（开发服务器经 localhost 代理、Android/桌面壳可能拨 127.0.0.1），跨站页面一律拒绝。这挡的不是 API 鉴权而是**跨站 WebSocket 劫持**——浏览器在 WS 握手时会自动带上同站 Cookie，若接受任意 Origin，第三方页面就能借用户身份打开这些长连接并收流。旁路通道（文件监听、语音识别、TTS 音频、屏幕共享信令）此前各写各的、有的根本不校验，现在统一走 `wsOriginPatterns`：漏一个端点，等于把主通道的这道门作废
 - **密码修改**：`POST /api/settings/password` 验证当前密码后写入新的 SHA-256 哈希，并即时更新内存中的认证状态——修改密码不需要重启服务。密码修改不再触发 API Key 加密轮换
 
 ### 设计要点

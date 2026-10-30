@@ -525,6 +525,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 | `internal/liveshare/talk.go` | 发言授权状态机 |
 | `internal/liveshare/signal.go` | 协议结构体（与前端镜像） |
 | `internal/handler/live_share.go` | HTTP/WS 绑定、鉴权切分、信令转发 |
+| `internal/handler/server_addresses.go` | `GET /api/server/addresses`：枚举本机可访问地址（三个分享入口共用） |
 | `internal/handler/live_notes.go` | 听记上传 / 读取 / 纪要端点、会议记录列表 / 单条 / 删除、聊天落库与读取、产物读取、STT 并发闸门 |
 | `internal/service/live_notes.go` | 会议记录生命周期（开始 / 收尾 / 列表 / 删除）、听记落库、时间线重排与去重、产物落盘、聊天归档、上下文校对、纪要生成 |
 | `web/src/composables/liveNotes.ts` | 分信道录音（纯逻辑，可单测） |
@@ -540,6 +541,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 | `web/src/share/liveNotesClient.ts` | 观众端听记轮询 |
 | `web/src/composables/useLiveShare.ts` | 发布端：房间、采集、每观众 PeerConnection；画面可随时开关（`startScreen`/`stopScreen`/`setCameraEnabled`，只 `replaceTrack`） |
 | `web/src/utils/screenCaptureSupport.ts` | 浏览器能否采集（`getDisplayMedia` 存在性）与是否非安全上下文，供 Dock 页签门槛与面板提示共用 |
+| `web/src/composables/useShareLinks.ts` | 分享链接的地址选择与主链接优先级（文件/会话/屏幕共用） |
 | `web/src/composables/useLiveMixer.ts` | 混音图（纯逻辑，可单测） |
 | `web/src/share/liveViewer.ts` | 观众端：信令（带称谓）+ 单个 PeerConnection；无画面时以音频轨为接通信号，画面随 `picture-state` 出现/消失 |
 | `web/src/share/LiveShareView.vue` | 观众端页面 |
