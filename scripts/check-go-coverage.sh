@@ -108,6 +108,7 @@ exempt_files = {
     "internal/service/agent_migration.go",   # new file: saveAgentTx DB error paths, YAML read errors
     "internal/service/agent_store.go",       # new file: SaveAgent/PatchAgent DB error paths, JSON marshal paths
     "internal/service/crypto.go",            # new file: EncryptAPIKey cipher.NewGCM path, SaveAgentAPIKey DB error
+    "internal/model/tls_generate.go",        # self-signed cert: the untested lines are stdlib/crypto failure returns (ecdsa.GenerateKey, rand.Int, x509.CreateCertificate, os.WriteFile) that need fault injection; the SAN assembly, DescribeTLSSANs and the happy path are covered
     "internal/service/database.go",          # InitDB: file system + PRAGMA + DDL; reorder: tx error paths
     "internal/service/projects_migrate.go",  # migrateProjectsToIDs: one-shot path→id schema conversion; the happy path is covered by the InitDB migration tests, but ~half the changed lines are tx/DDL error returns that need SQLite fault injection to reach
     "internal/service/testutil.go",          # new file: InitInMemoryDB sql.Open error path
