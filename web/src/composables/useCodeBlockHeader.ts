@@ -4,6 +4,7 @@ import { placeFixedAt } from '@/utils/fixedPosition.ts'
 import { gt } from '@/composables/useLocale'
 import { ATTACH_BADGE_SVG } from '@/utils/attachSvg'
 import { isShareMode } from '@/share/shareMode'
+import { openTableLandscape } from '@/composables/useTableLandscape.ts'
 
 // ── SVG icons (inline, same pattern as FILE_OPEN_ICON_SVG) ──────────────────
 // The copy/check glyphs are shared with every other hand-built copy button and
@@ -176,6 +177,9 @@ const TABLE_CHEVRON_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="cur
 
 const TABLE_WRAP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-3"/><path d="M18 15l-3 3 3 3"/><path d="M3 18h7"/></svg>'
 
+/** Landscape frame: a wide rectangle, i.e. what "view sideways" produces. */
+const TABLE_LANDSCAPE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 12h12"/></svg>'
+
 /**
  * Annotate table blocks in an HTML string with header bars containing
  * "Table" label, copy button, and word-wrap toggle.
@@ -273,6 +277,17 @@ export function annotateTableBlockHeadersIn(doc: Document): void {
         wrapBtn.setAttribute('type', 'button')
         wrapBtn.innerHTML = TABLE_WRAP_ICON_SVG
         actions.appendChild(wrapBtn)
+
+        // Landscape (full-screen) view — touch/narrow only; the CSS hides it on
+        // a desktop where the table is already readable in place.
+        const landscapeBtn = doc.createElement('button')
+        landscapeBtn.className = 'table-block-landscape-btn'
+        landscapeBtn.setAttribute('data-action', 'landscape')
+        landscapeBtn.setAttribute('title', gt('tableBlock.landscape'))
+        landscapeBtn.setAttribute('aria-label', gt('tableBlock.landscape'))
+        landscapeBtn.setAttribute('type', 'button')
+        landscapeBtn.innerHTML = TABLE_LANDSCAPE_ICON_SVG
+        actions.appendChild(landscapeBtn)
 
         header.appendChild(actions)
 
@@ -490,7 +505,7 @@ function escapeCellText(text: string): string {
  */
 export function handleTableBlockClick(event: MouseEvent): boolean {
     const target = event.target as HTMLElement
-    const btn = target.closest<HTMLElement>('.table-block-copy-btn, .table-block-wrap-btn, .table-block-copy-menu-item')
+    const btn = target.closest<HTMLElement>('.table-block-copy-btn, .table-block-wrap-btn, .table-block-landscape-btn, .table-block-copy-menu-item')
     if (!btn) return false
 
     event.preventDefault()
@@ -532,6 +547,14 @@ export function handleTableBlockClick(event: MouseEvent): boolean {
             const trigger = menu.previousElementSibling as HTMLElement | null
             setTableMenuOpen(trigger, menu, false)
         }
+        return true
+    }
+
+    if (action === 'landscape') {
+        // The overlay is a separate layer, so an open copy menu would be left
+        // floating behind it with nothing to anchor to.
+        closeAllTableBlockMenus()
+        openTableLandscape(wrapper, btn)
         return true
     }
 

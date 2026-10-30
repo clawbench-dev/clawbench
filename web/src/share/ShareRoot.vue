@@ -45,6 +45,11 @@
       :style="{ '--transfer-progress-top': 'calc(44px + var(--space-2, 4px))' }"
       @cancel="cancelDownload"
     />
+
+    <!-- Full-screen table view. The share SPA does not use App.vue, so it must
+         mount this host itself — `useTableLandscape()` is module-level state
+         with no renderer of its own. -->
+    <TableLandscape />
   </div>
 </template>
 
@@ -55,6 +60,7 @@ import { FileX2 } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import DownloadProgressBar from '@/components/common/DownloadProgressBar.vue'
 import DialogOverlay from '@/components/common/DialogOverlay.vue'
+import TableLandscape from '@/components/common/TableLandscape.vue'
 import ShareView from './ShareView.vue'
 import LiveShareView from './LiveShareView.vue'
 import SessionShareView from './SessionShareView.vue'

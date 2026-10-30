@@ -181,9 +181,10 @@
     gap: var(--space-1);
 }
 
-/* ─── Header buttons: copy + wrap toggle ─── */
+/* ─── Header buttons: copy + wrap toggle + landscape view ─── */
 .table-block-copy-btn,
 .table-block-wrap-btn,
+.table-block-landscape-btn,
 .table-block-attach-btn {
     display: inline-flex;
     align-items: center;
@@ -204,6 +205,7 @@
 
 .table-block-copy-btn:hover,
 .table-block-wrap-btn:hover,
+.table-block-landscape-btn:hover,
 .table-block-attach-btn:hover {
     opacity: 1;
     color: var(--text-secondary);
@@ -212,6 +214,7 @@
 
 .table-block-copy-btn:active,
 .table-block-wrap-btn:active,
+.table-block-landscape-btn:active,
 .table-block-attach-btn:active {
     background: var(--border-color);
 }
@@ -362,4 +365,162 @@
 .table-block-attach-btn svg {
     width: calc(14 * var(--dp));
     height: calc(14 * var(--dp));
+}
+
+/* ==========================================================================
+   Landscape (full-screen) table view
+
+   A phone shows a wide table as a column of one-character lines. This overlay
+   clones the table into a full-screen layer and, on a touch device held in
+   portrait, rotates the whole panel 90° so the table's long axis follows the
+   device's long axis.
+
+   Styles are GLOBAL (not scoped) because the table inside is injected with
+   v-html — scoped rules never match it. See design-guide 红线 1.
+   ========================================================================== */
+
+/* ─── Toolbar button: touch / narrow only ───
+   On a mouse+keyboard desktop the table is already readable in place, so the
+   extra button only crowds the header. */
+.table-block-landscape-btn {
+    display: none;
+}
+
+@media (pointer: coarse), (max-width: 900px) {
+    .table-block-landscape-btn {
+        display: inline-flex;
+    }
+}
+
+/* ─── Overlay ───
+   `dvh` (with a `vh` fallback) rather than `vh`: the mobile address bar
+   collapsing changes the usable height, and a `vh`-sized layer is clipped. */
+.table-landscape {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    z-index: var(--z-lightbox);
+    background: var(--bg-primary);
+    overflow: hidden;
+    overscroll-behavior: contain;
+}
+
+/* The rotating unit. Everything (toolbar included) turns together, so the
+   toolbar ends up at the top of what the user sees once the phone is held
+   sideways — no separate "safe area" arithmetic for the rotated layout. */
+.table-landscape-panel {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.table-landscape.is-rotated .table-landscape-panel {
+    top: 50%;
+    left: 50%;
+    /* Swapped on purpose: a 100dvh × 100dvw box rotated 90° exactly covers a
+       100dvw × 100dvh screen. */
+    width: 100vh;
+    width: 100dvh;
+    height: 100vw;
+    height: 100dvw;
+    transform: translate(-50%, -50%) rotate(90deg);
+    transform-origin: center center;
+}
+
+.table-landscape-toolbar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-2) var(--space-4);
+    padding-top: calc(var(--space-2) + var(--header-safe-area-top, 0px));
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.table-landscape-title {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    user-select: none;
+}
+
+.table-landscape-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: calc(32 * var(--dp));
+    height: calc(32 * var(--dp));
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-full);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+@media (hover: hover) {
+    .table-landscape-close:hover {
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+    }
+}
+
+.table-landscape-close:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
+/* ─── Scroll area ───
+   `overflow: auto` on a non-flex box: centring a too-wide child with
+   `justify-content: center` makes its left edge unreachable. */
+.table-landscape-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding: var(--space-5);
+}
+
+/* Reset the `.markdown-body` container metrics it inherits for the table look:
+   the overlay is full-bleed, so the 900dp column cap, the vertical scroller and
+   the hidden horizontal overflow would all fight the overlay. */
+.table-landscape-body.markdown-body {
+    margin: 0 auto;
+    padding: 0;
+    max-width: 100%;
+    min-height: 0;
+    overflow: visible;
+    flex: none;
+    background: transparent;
+}
+
+.table-landscape-body.word-wrap.markdown-body {
+    width: 100%;
+}
+
+.table-landscape-body.word-wrap th,
+.table-landscape-body.word-wrap td {
+    white-space: normal;
+    overflow-wrap: break-word;
+}
+
+.table-landscape-body.no-wrap.markdown-body {
+    width: max-content;
+}
+
+.table-landscape-body.no-wrap th,
+.table-landscape-body.no-wrap td {
+    white-space: nowrap;
+    word-break: normal;
+    overflow-wrap: normal;
 }

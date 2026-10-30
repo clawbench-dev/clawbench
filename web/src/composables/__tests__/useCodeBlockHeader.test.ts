@@ -2,6 +2,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { annotateCodeBlockHeaders, annotateTableBlockHeaders, handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus, positionTableMenu } from '@/composables/useCodeBlockHeader.ts'
+import { closeTableLandscape, tableLandscapeState } from '@/composables/useTableLandscape.ts'
 // Source of the menu's positioning rule — jsdom cannot reproduce overflow
 // clipping, so the escape-from-clip-chain assertion has to read the CSS.
 import tableHeaderCss from '../../../css/code-block-header.css?raw'
@@ -33,6 +34,7 @@ afterEach(() => {
   }
   pendingTimers.length = 0
   copyText.mockClear()
+  closeTableLandscape()
 })
 
 describe('annotateCodeBlockHeaders', () => {
@@ -228,6 +230,15 @@ describe('annotateTableBlockHeaders', () => {
     const result = annotateTableBlockHeaders(html)
     expect(result).toContain('table-block-attach-btn')
     expect(result).toContain('data-action="attach"')
+  })
+
+  it('adds a landscape-view button to the table header actions', () => {
+    const html = '<div class="table-wrap"><table><tr><td>data</td></tr></table></div>'
+    const result = annotateTableBlockHeaders(html)
+    expect(result).toContain('table-block-landscape-btn')
+    expect(result).toContain('data-action="landscape"')
+    // Never on code blocks — a code block is already horizontally scrollable.
+    expect(annotateCodeBlockHeaders('<pre><code>x</code></pre>')).not.toContain('landscape')
   })
 
   it('builds a copy dropdown menu with Markdown/HTML/TSV items', () => {
@@ -921,5 +932,65 @@ describe('table copy menu positioning', () => {
       expect(menu.classList.contains('is-open'), 'wrap toggle must clear the class too').toBe(false)
       wrapper.remove()
     })
+  })
+})
+
+describe('handleTableBlockClick — landscape view', () => {
+  function click(target: HTMLElement): MouseEvent {
+    return { target, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as MouseEvent
+  }
+
+  function buildBlock(wrapClass = 'word-wrap') {
+    const wrapper = document.createElement('div')
+    wrapper.className = `table-block-wrapper ${wrapClass}`
+    const btn = document.createElement('button')
+    btn.className = 'table-block-landscape-btn'
+    btn.setAttribute('data-action', 'landscape')
+    wrapper.appendChild(btn)
+
+    const holder = document.createElement('div')
+    holder.className = 'table-wrap'
+    holder.innerHTML = '<table data-table-idx="0"><tbody><tr data-row-idx="1"><td>cell</td></tr></tbody></table>'
+    wrapper.appendChild(holder)
+    document.body.appendChild(wrapper)
+    return { wrapper, btn }
+  }
+
+  it('opens the overlay with the table and keeps the block wrap mode', () => {
+    const { wrapper, btn } = buildBlock('no-wrap')
+    expect(handleTableBlockClick(click(btn))).toBe(true)
+
+    const state = tableLandscapeState.value
+    expect(state).not.toBeNull()
+    expect(state!.html).toContain('<table')
+    expect(state!.html).toContain('cell')
+    expect(state!.wrapClass).toBe('no-wrap')
+    expect(state!.trigger).toBe(btn)
+    wrapper.remove()
+  })
+
+  it('strips the row-viewer hooks from the cloned table', () => {
+    const { wrapper, btn } = buildBlock()
+    handleTableBlockClick(click(btn))
+    // The overlay is read-only: a cloned row must not look like a row target.
+    expect(tableLandscapeState.value!.html).not.toContain('data-row-idx')
+    expect(tableLandscapeState.value!.html).not.toContain('data-table-idx')
+    // The source block is untouched.
+    expect(wrapper.querySelector('tr')!.getAttribute('data-row-idx')).toBe('1')
+    wrapper.remove()
+  })
+
+  it('does nothing when the block has no table', () => {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'table-block-wrapper'
+    const btn = document.createElement('button')
+    btn.className = 'table-block-landscape-btn'
+    btn.setAttribute('data-action', 'landscape')
+    wrapper.appendChild(btn)
+    document.body.appendChild(wrapper)
+
+    handleTableBlockClick(click(btn))
+    expect(tableLandscapeState.value).toBeNull()
+    wrapper.remove()
   })
 })
