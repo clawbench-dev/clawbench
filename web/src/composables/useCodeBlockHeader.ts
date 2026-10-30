@@ -177,8 +177,12 @@ const TABLE_CHEVRON_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="cur
 
 const TABLE_WRAP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-3"/><path d="M18 15l-3 3 3 3"/><path d="M3 18h7"/></svg>'
 
-/** Landscape frame: a wide rectangle, i.e. what "view sideways" produces. */
-const TABLE_LANDSCAPE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 12h12"/></svg>'
+/**
+ * Lucide `smartphone` (the installed v1.0.0 artwork — see utils/copyButton.ts
+ * for why hand-built markup mirrors lucide paths), tilted 45° so it reads as a
+ * phone mid-turn to landscape rather than a generic wide rectangle.
+ */
+const TABLE_LANDSCAPE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><g transform="rotate(45 12 12)"><rect width="10" height="16" x="7" y="4" rx="2" ry="2"/><path d="M12 17h.01"/></g></svg>'
 
 /**
  * Annotate table blocks in an HTML string with header bars containing
