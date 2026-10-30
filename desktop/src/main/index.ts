@@ -1,6 +1,7 @@
 import { app, Menu, session } from 'electron'
 import { initStore, getStore } from './store'
 import { installDisplayMediaHandler, registerCaptureHandlers } from './capture'
+import { registerRemoteControlHandlers } from './remoteControl'
 import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
 import { registerCertificateHandler } from './certificate'
@@ -139,6 +140,7 @@ app.whenReady().then(() => {
   installDisplayMediaHandler()
   // Source listing / declaration / throttling IPC.
   registerCaptureHandlers(() => getMainWindow()?.webContents ?? null)
+  registerRemoteControlHandlers()
 
   // Asked for the MAIN window, not for a window count: the floating capsule and
   // its tray are windows too, so "no windows" would never be true while they are

@@ -25,6 +25,23 @@ export type AddForwardResult =
 
 /** Full bridge contract shared by Android and Electron. */
 export interface ClawBenchNative {
+  /**
+   * Injects one pointer/key event into the local desktop (remote control).
+   *
+   * Desktop only, and only when the input-injection module is installed: the
+   * main process answers `false` otherwise, which the UI reports instead of
+   * pretending the click landed.
+   */
+  remoteControl?(ev: {
+    kind: 'move' | 'down' | 'up' | 'wheel' | 'key'
+    x?: number
+    y?: number
+    button?: number
+    key?: string
+    delta?: number
+  }): Promise<{ ok: boolean; supported: boolean } | boolean> | void
+  /** Whether this client can inject input at all. */
+  remoteControlSupported?(): Promise<boolean> | boolean
   // Sync (preload / JS-interface local values)
   isNativeApp(): boolean
   /**

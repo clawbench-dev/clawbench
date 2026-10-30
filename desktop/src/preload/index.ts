@@ -90,6 +90,17 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   setPendingCaptureSource: (sourceId: string, systemAudio: boolean) =>
     ipcRenderer.invoke('native:set-pending-capture-source', sourceId, systemAudio) as Promise<void>,
   getAudioCaptureSupport: () => ipcRenderer.invoke('native:get-audio-capture-support') as Promise<string>,
+  // Remote control (desktop only; false when the input-injection module is not
+  // installed — the renderer shows "not available" rather than a dead button).
+  remoteControl: (ev: {
+    kind: 'move' | 'down' | 'up' | 'wheel' | 'key'
+    x?: number
+    y?: number
+    button?: number
+    key?: string
+    delta?: number
+  }) => ipcRenderer.invoke('native:remote-control', ev) as Promise<{ ok: boolean; supported: boolean }>,
+  remoteControlSupported: () => ipcRenderer.invoke('native:remote-control-supported') as Promise<boolean>,
   setPublishingActive: (active: boolean) =>
     ipcRenderer.invoke('native:set-publishing-active', active) as Promise<void>,
   log: (level: string, tag: string, msg: string) => { ipcRenderer.send('native:log', level, tag, msg) },

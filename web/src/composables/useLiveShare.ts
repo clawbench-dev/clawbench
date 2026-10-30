@@ -14,6 +14,11 @@ import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { buildShareLinks, type ShareLink } from '@/composables/useShareLinks'
 import { LiveMixer } from './useLiveMixer'
+import {
+  VIEWER_MESSAGE_TYPES,
+  parseControlMessage,
+  type ControlMessage,
+} from '@/share/liveControl'
 import { useLiveNotes } from './useLiveNotes'
 
 const TAG = 'LiveShare'
@@ -67,6 +72,10 @@ interface PublisherPeer {
    * the state change has something to relay.
    */
   screenTrack: MediaStreamTrack | null
+  /** Control bus: laser/ink/chat/presence/remote-control frames. */
+  channel: RTCDataChannel | null
+  /** The m-line carrying our picture; kept so a source switch can swap it. */
+  videoTx: RTCRtpTransceiver | null
 }
 
 let ws: WebSocket | null = null
@@ -86,6 +95,12 @@ let micStream: MediaStream | null = null
 let outVideoTrack: MediaStreamTrack | null = null
 /** The track a viewer is sharing, relayed to every other viewer. */
 let remoteScreenTrack: MediaStreamTrack | null = null
+/** UI subscribers for control frames coming from viewers. */
+const controlHandlers = new Set<(msg: ControlMessage) => void>()
+/** The captured screen, exposed so the publisher can annotate on it. */
+const previewStream = shallowRef<MediaStream | null>(null)
+/** Whether system audio was requested, remembered for a mid-share source swap. */
+let systemAudioWanted = false
 const peers = new Map<string, PublisherPeer>()
 
 function resetSession(): void {
@@ -107,9 +122,11 @@ function resetSession(): void {
     s?.getTracks().forEach((t) => t.stop())
   }
   displayStream = null
+  previewStream.value = null
   micStream = null
   outVideoTrack = null
   remoteScreenTrack = null
+  controlHandlers.clear()
   remoteScreenStream.value = null
   screenSharer.value = ''
   if (ws) {
@@ -229,10 +246,12 @@ export function useLiveShare() {
       await bridge.setPendingCaptureSource(opts.sourceId, opts.systemAudio)
 
       // 3. Capture. The host answers getDisplayMedia with the declared source.
+      systemAudioWanted = opts.systemAudio
       displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
         audio: opts.systemAudio,
       })
+      previewStream.value = displayStream
       outVideoTrack = displayStream.getVideoTracks()[0] ?? null
       if (!outVideoTrack) {
         fail('no video track captured')
@@ -375,7 +394,14 @@ export function useLiveShare() {
     if (!viewerId || peers.has(viewerId)) return
 
     const pc = new RTCPeerConnection({ iceServers: [] })
-    peers.set(viewerId, { pc, viewerId, relayTx: null, screenTrack: null })
+    peers.set(viewerId, {
+      pc,
+      viewerId,
+      relayTx: null,
+      screenTrack: null,
+      channel: null,
+      videoTx: null,
+    })
     viewers.value = [...viewers.value, { id: viewerId, name: '', talk: 'muted' }]
 
     // One destination per viewer, carrying system audio + mic + the OTHER
@@ -397,12 +423,28 @@ export function useLiveShare() {
     // connection that is already carrying the meeting.
     if (mixed) pc.addTransceiver(mixed, { direction: 'sendrecv', streams: [outgoing] })
     else pc.addTransceiver('audio', { direction: 'sendrecv' })
-    if (outVideoTrack) pc.addTransceiver(outVideoTrack, { direction: 'sendrecv', streams: [outgoing] })
-    else pc.addTransceiver('video', { direction: 'sendrecv' })
+    const videoTx = outVideoTrack
+      ? pc.addTransceiver(outVideoTrack, { direction: 'sendrecv', streams: [outgoing] })
+      : pc.addTransceiver('video', { direction: 'sendrecv' })
+    {
+      const p = peers.get(viewerId)
+      if (p) p.videoTx = videoTx
+    }
     const relayTx = pc.addTransceiver('video', { direction: 'sendonly' })
     if (remoteScreenTrack) void relayTx.sender.replaceTrack(remoteScreenTrack).catch(() => undefined)
     const peer = peers.get(viewerId)
     if (peer) peer.relayTx = relayTx
+
+    // Control bus. Created by the publisher so every viewer gets one at the
+    // same time as the media; the viewer just listens for `ondatachannel`.
+    try {
+      const channel = pc.createDataChannel('cb-live', { ordered: true })
+      channel.onmessage = (ev) => onViewerControl(viewerId, ev.data)
+      const p = peers.get(viewerId)
+      if (p) p.channel = channel
+    } catch (e) {
+      appLog.w(TAG, 'createDataChannel failed', viewerId, e)
+    }
 
     pc.ontrack = (ev) => {
       if (ev.track.kind === 'video') {
@@ -477,6 +519,106 @@ export function useLiveShare() {
 
   function updateViewer(viewerId: string, patch: Partial<LiveViewerInfo>): void {
     viewers.value = viewers.value.map((v) => (v.id === viewerId ? { ...v, ...patch } : v))
+  }
+
+  /**
+   * Swap the shared window/screen without ending the session.
+   *
+   * Only the video track changes: the audio graph, the viewers' connections and
+   * the room all stay up. `replaceTrack` is what makes this invisible — adding
+   * a new track would force a renegotiation on every peer.
+   */
+  async function switchSource(sourceId: string): Promise<boolean> {
+    if (state.value !== 'publishing') return false
+    const bridge = getNative()
+    if (!bridge?.setPendingCaptureSource) {
+      fail('screen capture is unavailable on this host')
+      return false
+    }
+    try {
+      await bridge.setPendingCaptureSource(sourceId, systemAudioWanted)
+      const next = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        // Audio stays with the original capture: switching the picture must not
+        // silently change what the meeting hears.
+        audio: false,
+      })
+      const track = next.getVideoTracks()[0]
+      if (!track) {
+        fail('no video track captured')
+        return false
+      }
+      const previous = outVideoTrack
+      outVideoTrack = track
+      for (const peer of peers.values()) {
+        await peer.videoTx?.sender.replaceTrack(track)
+      }
+      previous?.stop()
+      previewStream.value = next
+      track.addEventListener('ended', () => {
+        void stop()
+      })
+      return true
+    } catch (e) {
+      appLog.w(TAG, 'switch source failed', e)
+      fail('switch source failed')
+      return false
+    }
+  }
+
+  // ── Control bus ──────────────────────────────────────────────────────────
+
+  /**
+   * Broadcast one control frame to every viewer.
+   *
+   * The publisher is also a participant, so the caller applies it locally; this
+   * only fans it out. Frames are JSON and small (a laser update is ~40 bytes),
+   * so they go straight onto the channel without batching.
+   */
+  function sendControl(msg: ControlMessage): void {
+    const data = JSON.stringify(msg)
+    for (const peer of peers.values()) {
+      if (peer.channel?.readyState === 'open') {
+        try {
+          peer.channel.send(data)
+        } catch (e) {
+          appLog.d(TAG, 'control send failed', peer.viewerId, e)
+        }
+      }
+    }
+  }
+
+  /**
+   * A viewer sent something.
+   *
+   * Tagged with the sender (viewers cannot be trusted to name themselves) and
+   * relayed to everyone else, so a viewer's laser is visible to the other
+   * viewers without a server round trip. The publisher applies it through the
+   * same `onControl` hook the UI already listens on.
+   */
+  function onViewerControl(viewerId: string, raw: unknown): void {
+    const msg = parseControlMessage(String(raw))
+    if (!msg) return
+    if (!VIEWER_MESSAGE_TYPES.has(msg.t)) return
+    const tagged = { ...msg, from: viewerId } as ControlMessage
+    controlHandlers.forEach((cb) => cb(tagged))
+    const data = JSON.stringify(tagged)
+    for (const [id, peer] of peers) {
+      if (id === viewerId) continue
+      if (peer.channel?.readyState === 'open') {
+        try {
+          peer.channel.send(data)
+        } catch {
+          /* peer went away mid-send */
+        }
+      }
+    }
+  }
+
+  /** Subscribe to control frames from viewers (UI hook). */
+  function onControl(cb: (msg: ControlMessage) => void): () => void {
+    controlHandlers.add(cb)
+    return () => controlHandlers.delete(cb)
   }
 
   /**
@@ -597,6 +739,10 @@ export function useLiveShare() {
     muteAll,
     setScreenEnabled,
     revokeScreen,
+    sendControl,
+    onControl,
+    switchSource,
+    previewStream,
   }
 }
 

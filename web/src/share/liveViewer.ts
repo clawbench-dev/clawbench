@@ -13,8 +13,17 @@
  * TURN relay later needs no change here.
  */
 import { appLog } from '@/utils/appLog'
+import { parseControlMessage, type ControlMessage } from './liveControl'
 
 const TAG = 'LiveViewer'
+
+/** One health reading, as shown by the quality badge. */
+export interface LiveStats {
+  rttMs: number | null
+  lossPct: number | null
+  bitrateKbps: number | null
+  jitterMs: number | null
+}
 
 export type LiveViewerState =
   | 'idle'
@@ -63,6 +72,8 @@ export interface LiveViewerCallbacks {
   onMemberScreenStream?: (stream: MediaStream | null) => void
   /** The room refused our screen share (switch off, or someone else is sharing). */
   onScreenDenied?: (reason: string) => void
+  /** A control frame arrived (laser, ink, chat, presence, remote control). */
+  onControl?: (msg: ControlMessage) => void
   /** The publisher muted us, or the room switch was turned off. */
   onTalkRevoked?: (reason: string) => void
 }
@@ -113,6 +124,7 @@ export class LiveViewer {
   private _notesEnabled = false
   private _screenEnabled = false
   private _screenSharer = ''
+  private _viewerId = ''
   /** Our own screen track while we are sharing (null when we are not). */
   private screenTrack: MediaStreamTrack | null = null
   /**
@@ -125,6 +137,10 @@ export class LiveViewer {
    */
   private relayTrack: MediaStreamTrack | null = null
   private memberScreenStream: MediaStream | null = null
+  /** Control bus opened by the publisher. */
+  private dc: RTCDataChannel | null = null
+  /** Previous byte counter, for turning cumulative bytes into a bitrate. */
+  private lastStats: { at: number; bytes: number } | null = null
   private _closed = false
 
   constructor(opts: LiveViewerOptions) {
@@ -147,6 +163,11 @@ export class LiveViewer {
   /** Whether this share is transcribing (AI 听记). */
   get notesEnabled(): boolean {
     return this._notesEnabled
+  }
+
+  /** Our own viewer id, assigned by the server on `joined`. */
+  get viewerId(): string {
+    return this._viewerId
   }
 
   /** Whether the room allows audience screen sharing. */
@@ -280,6 +301,7 @@ export class LiveViewer {
   private onJoined(msg: ServerMessage): void {
     this._talkEnabled = Boolean(msg.talkEnabled)
     this.cb.onTalkEnabled?.(this._talkEnabled)
+    this._viewerId = msg.viewerId ?? ''
     this._notesEnabled = Boolean(msg.notesEnabled)
     this.cb.onNotesEnabled?.(this._notesEnabled)
     this._screenEnabled = Boolean(msg.screenEnabled)
@@ -293,6 +315,15 @@ export class LiveViewer {
       ((config: RTCConfiguration) => new RTCPeerConnection(config))
     const pc = pcFactory({ iceServers: msg.iceServers ?? [] })
     this.pc = pc
+
+    pc.ondatachannel = (ev) => {
+      // The publisher creates the channel; this side only listens.
+      this.dc = ev.channel
+      this.dc.onmessage = (e) => {
+        const msg = parseControlMessage(String(e.data))
+        if (msg) this.cb.onControl?.(msg)
+      }
+    }
 
     pc.ontrack = (ev) => {
       // Two video m-lines arrive here: the host's picture (with the mixed
@@ -465,6 +496,65 @@ export class LiveViewer {
     }
   }
 
+  /**
+   * One reading of the connection's health.
+   *
+   * Bitrate needs two samples, so the first call returns null for it and the
+   * second one is meaningful — callers poll, they do not call this once.
+   */
+  async getStats(): Promise<LiveStats> {
+    const pc = this.pc
+    if (!pc) return { rttMs: null, lossPct: null, bitrateKbps: null, jitterMs: null }
+    try {
+      const report = await pc.getStats()
+      let rttMs: number | null = null
+      let lossPct: number | null = null
+      let jitterMs: number | null = null
+      let bytes = 0
+      let lost = 0
+      let received = 0
+
+      report.forEach((s: Record<string, unknown>) => {
+        if (s.type === 'candidate-pair' && s.state === 'succeeded') {
+          const rtt = s.currentRoundTripTime
+          if (typeof rtt === 'number') rttMs = Math.round(rtt * 1000)
+        }
+        if (s.type === 'inbound-rtp' && s.kind === 'video') {
+          if (typeof s.bytesReceived === 'number') bytes = s.bytesReceived
+          if (typeof s.jitter === 'number') jitterMs = Math.round(s.jitter * 1000)
+          if (typeof s.packetsLost === 'number') lost = s.packetsLost
+          if (typeof s.packetsReceived === 'number') received = s.packetsReceived
+        }
+      })
+
+      if (received + lost > 0) lossPct = Math.round((lost / (received + lost)) * 1000) / 10
+
+      const now = Date.now()
+      let bitrateKbps: number | null = null
+      if (this.lastStats && now > this.lastStats.at && bytes > this.lastStats.bytes) {
+        const seconds = (now - this.lastStats.at) / 1000
+        bitrateKbps = Math.round(((bytes - this.lastStats.bytes) * 8) / seconds / 1000)
+      }
+      this.lastStats = { at: now, bytes }
+      return { rttMs, lossPct, bitrateKbps, jitterMs }
+    } catch (e) {
+      appLog.d(TAG, 'getStats failed', e)
+      return { rttMs: null, lossPct: null, bitrateKbps: null, jitterMs: null }
+    }
+  }
+
+  /** Send one control frame (laser, ink, chat, remote-control event). */
+  sendControl(msg: ControlMessage): boolean {
+    if (this.dc?.readyState !== 'open') return false
+    try {
+      this.dc.send(JSON.stringify(msg))
+      return true
+    } catch (e) {
+      appLog.d(TAG, 'control send failed', e)
+      return false
+    }
+  }
+
   /** Stop sharing and tell the room. */
   async stopScreenShare(): Promise<void> {
     if (!this.screenTrack) return
@@ -544,6 +634,8 @@ export class LiveViewer {
   private teardown(): void {
     void this.stopTalking()
     this.releaseScreenTrack()
+    this.dc = null
+    this.lastStats = null
     this.relayTrack = null
     this.memberScreenStream = null
     if (this.micTrack) {

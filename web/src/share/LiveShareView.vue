@@ -1,29 +1,80 @@
 <template>
   <div ref="rootRef" class="live-share-view">
-    <div class="live-stage">
-      <!-- The <video> is always mounted so `srcObject` survives a re-render.
-           It is hidden while there is nothing to show, which keeps the error
-           and waiting states from rendering a black rectangle. -->
-      <video
-        ref="videoRef"
-        class="live-video"
-        :class="{ 'live-video--hidden': state !== 'playing' || viewMode === 'member' }"
-        autoplay
-        playsinline
-        muted
-      />
+    <div
+      ref="stageRef"
+      class="live-stage"
+      :class="{ 'live-stage--zoomed': zoom.scale > 1 }"
+      @wheel.prevent="onStageWheel"
+      @pointerdown="onStageDown"
+      @pointermove="onStageMove"
+      @pointerup="onStageUp"
+      @pointercancel="onStageUp"
+      @dblclick="resetZoom"
+    >
+      <!-- Zoom/pan transform wraps the picture AND the ink layer, so an
+           annotation stays glued to the pixel it was drawn on. -->
+      <div class="live-zoom" :style="zoomStyle">
+        <!-- The <video> is always mounted so `srcObject` survives a re-render.
+             It is hidden while there is nothing to show, which keeps the error
+             and waiting states from rendering a black rectangle. -->
+        <video
+          ref="videoRef"
+          class="live-video"
+          :class="{ 'live-video--hidden': state !== 'playing' || viewMode === 'member' }"
+          autoplay
+          playsinline
+          muted
+          @loadedmetadata="syncInkRect"
+        />
 
-      <!-- A member's screen, forwarded by the host. Its own element rather than
-           swapping srcObject: switching back to the host must not depend on
-           re-attaching a stream that is still live. -->
-      <video
-        v-show="viewMode === 'member'"
-        ref="memberVideoRef"
-        class="live-video"
-        autoplay
-        playsinline
-        muted
-      />
+        <!-- A member's screen, forwarded by the host. Its own element rather than
+             swapping srcObject: switching back to the host must not depend on
+             re-attaching a stream that is still live. -->
+        <video
+          v-show="viewMode === 'member'"
+          ref="memberVideoRef"
+          class="live-video"
+          autoplay
+          playsinline
+          muted
+          @loadedmetadata="syncInkRect"
+        />
+
+        <!-- Ink covers exactly the picture, not the letterbox: a stroke drawn
+             at 0.5/0.5 must land in the middle of the CONTENT on every screen. -->
+        <div class="live-ink-wrap" :style="inkWrapStyle">
+          <LiveInkLayer :strokes="board.strokes.value" :laser="board.laser.value" />
+        </div>
+      </div>
+
+      <!-- Connection health. Only shown once there is a reading, and it never
+           covers the picture: a corner chip is enough to answer "is it me or
+           them" when the video stutters. -->
+      <div
+        v-if="stats && state === 'playing'"
+        class="live-quality"
+        :class="`live-quality--${quality.level}`"
+        :title="quality.detail"
+        data-role="quality"
+      >
+        <span class="live-quality__dot" />
+        {{ quality.label }}
+      </div>
+
+      <!-- Remote control state. Loud on purpose: while it is on, this viewer's
+           pointer is moving someone else's mouse. -->
+      <div v-if="controlState !== 'none'" class="live-screen-banner live-control-banner" data-role="control-banner">
+        <span>{{ controlState === 'granted' ? t('share.live.controlling') : t('share.live.controlPending') }}</span>
+        <button
+          v-if="controlState === 'granted'"
+          class="live-screen-banner-btn"
+          type="button"
+          data-action="control-release"
+          @click="controlState = 'none'"
+        >
+          {{ t('share.live.controlRelease') }}
+        </button>
+      </div>
 
       <!-- Who is presenting. Without it a viewer cannot tell whose screen this
            is, and "why did the picture change" becomes a support question. -->
@@ -85,6 +136,24 @@
       </div>
     </div>
 
+    <!-- Chat. Same overlay slot as the notes panel; only one is open at a time
+         so they never fight over the picture. -->
+    <div v-if="chatOpen" class="live-chat-panel" data-panel="chat">
+      <div class="live-notes-head">
+        <span class="live-notes-title">{{ t('share.live.chatTitle') }}</span>
+        <button
+          class="live-notes-close"
+          type="button"
+          :aria-label="t('common.close')"
+          data-action="chat-close"
+          @click="chatOpen = false"
+        >
+          <X :size="16" />
+        </button>
+      </div>
+      <LiveChatPanel :messages="chatMessages" @send="sendChat" />
+    </div>
+
     <!-- Floating control dock. Absolutely positioned so it overlays the video
          instead of taking height from it, and always mounted: fullscreen is
          useful even when the publisher never allowed speech. -->
@@ -140,6 +209,19 @@
            capture: hiding it entirely leaves a member wondering why the button
            their colleague sees is missing. Disabled + a title explains it. -->
       <button
+        v-if="controlState === 'none'"
+        class="live-dock-btn"
+        type="button"
+        :aria-label="t('share.live.requestControl')"
+        :title="t('share.live.requestControlHint')"
+        data-action="request-control"
+        @click="requestControl"
+      >
+        <MousePointer2 :size="16" />
+        <span class="live-dock-label">{{ t('share.live.requestControl') }}</span>
+      </button>
+
+      <button
         v-if="screenEnabled"
         class="live-dock-btn"
         :class="{ 'live-dock-btn--live': sharingScreen }"
@@ -163,6 +245,21 @@
         <span class="live-dock-label">
           {{ sharingScreen ? t('share.live.stopSharing') : t('share.live.shareScreen') }}
         </span>
+      </button>
+
+      <button
+        class="live-dock-btn"
+        :class="{ 'live-dock-btn--live': chatOpen }"
+        type="button"
+        :aria-pressed="chatOpen"
+        :aria-label="t('share.live.chatTitle')"
+        :title="t('share.live.chatTitle')"
+        data-action="chat"
+        @click="toggleChat"
+      >
+        <MessageSquare :size="16" />
+        <span class="live-dock-label">{{ t('share.live.chat') }}</span>
+        <span v-if="unread > 0" class="live-dock-badge">{{ unread > 9 ? '9+' : unread }}</span>
       </button>
 
       <button
@@ -212,7 +309,9 @@ import { useI18n } from 'vue-i18n'
 import {
   FileText,
   Maximize,
+  MessageSquare,
   Mic,
+  MousePointer2,
   MicOff,
   Minimize,
   ScreenShare,
@@ -222,7 +321,11 @@ import {
   X,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { LiveViewer, type LiveViewerState } from './liveViewer'
+import { LiveViewer, type LiveStats, type LiveViewerState } from './liveViewer'
+import LiveInkLayer from './LiveInkLayer.vue'
+import LiveChatPanel, { type ChatMessage } from './LiveChatPanel.vue'
+import { useInkBoard } from './useInkBoard'
+import { contentRectOf, toNormalized, type ContentRect, type ControlMessage } from './liveControl'
 import { ShareNotesPoller } from './liveNotesClient'
 import { getShareToken } from './shareMode'
 import { groupNoteSegments, type LiveNoteSegment } from '@/composables/liveNotes'
@@ -249,6 +352,224 @@ const notesEnabled = ref(false)
 /** Collapsed by default: the panel overlays the picture. */
 const notesOpen = ref(false)
 const notesSegments = ref<LiveNoteSegment[]>([])
+
+// ── Control channel: ink, chat, quality, presence ───────────────────────────
+const board = useInkBoard()
+const stageRef = ref<HTMLElement | null>(null)
+const inkRect = ref<ContentRect>({ left: 0, top: 0, width: 0, height: 0 })
+const chatMessages = ref<ChatMessage[]>([])
+const chatOpen = ref(false)
+const unread = ref(0)
+const stats = ref<LiveStats | null>(null)
+const zoom = ref({ scale: 1, x: 0, y: 0 })
+/** Remote control: none → requested → granted. */
+const controlState = ref<'none' | 'requested' | 'granted'>('none')
+
+const inkWrapStyle = computed(() => ({
+  left: `${inkRect.value.left}px`,
+  top: `${inkRect.value.top}px`,
+  width: `${inkRect.value.width}px`,
+  height: `${inkRect.value.height}px`,
+}))
+
+const zoomStyle = computed(() => ({
+  transform: `translate(${zoom.value.x}px, ${zoom.value.y}px) scale(${zoom.value.scale})`,
+}))
+
+/**
+ * The picture's real rectangle inside the stage (letterbox excluded).
+ *
+ * The ink canvas is positioned to THIS rect, not to the stage: otherwise a
+ * stroke drawn at the top of the picture lands in the black bar on a screen
+ * whose aspect ratio differs.
+ */
+function syncInkRect(): void {
+  const stage = stageRef.value
+  const video = viewMode.value === 'member' ? memberVideoRef.value : videoRef.value
+  if (!stage) return
+  inkRect.value = contentRectOf(
+    {
+      clientWidth: stage.clientWidth,
+      clientHeight: stage.clientHeight,
+      videoWidth: video?.videoWidth ?? 0,
+      videoHeight: video?.videoHeight ?? 0,
+    },
+    { left: 0, top: 0 },
+  )
+}
+
+function requestControl(): void {
+  if (!viewer?.sendControl({ t: 'ctrl-req' })) return
+  controlState.value = 'requested'
+}
+
+/**
+ * Forwards a pointer event while we hold control.
+ *
+ * Coordinates are normalised to the picture, exactly like ink: the host's
+ * screen has a different size, so a client pixel would land somewhere else.
+ */
+function sendControlEvent(ev: PointerEvent | WheelEvent, kind: 'move' | 'down' | 'up' | 'wheel'): void {
+  if (controlState.value !== 'granted') return
+  const stage = stageRef.value
+  if (!stage) return
+  const rect = contentRectOf(
+    {
+      clientWidth: stage.clientWidth,
+      clientHeight: stage.clientHeight,
+      videoWidth: videoRef.value?.videoWidth ?? 0,
+      videoHeight: videoRef.value?.videoHeight ?? 0,
+    },
+    { left: 0, top: 0 },
+  )
+  const p = toNormalized(ev.clientX, ev.clientY, rect)
+  viewer?.sendControl({
+    t: 'ctrl-ev',
+    kind,
+    x: p.x,
+    y: p.y,
+    button: kind === 'wheel' ? undefined : (ev as PointerEvent).button,
+    delta: kind === 'wheel' ? (ev as WheelEvent).deltaY : undefined,
+  })
+}
+
+function onStageDown(ev: PointerEvent): void {
+  if (controlState.value === 'granted') {
+    sendControlEvent(ev, 'down')
+    return
+  }
+  onPanStart(ev)
+}
+
+function onStageMove(ev: PointerEvent): void {
+  if (controlState.value === 'granted') {
+    sendControlEvent(ev, 'move')
+    return
+  }
+  onPanMove(ev)
+}
+
+function onStageUp(ev: PointerEvent): void {
+  if (controlState.value === 'granted') {
+    sendControlEvent(ev, 'up')
+    return
+  }
+  onPanEnd()
+}
+
+function onStageWheel(ev: WheelEvent): void {
+  if (controlState.value === 'granted') {
+    sendControlEvent(ev, 'wheel')
+    return
+  }
+  onWheel(ev)
+}
+
+function toggleChat(): void {
+  chatOpen.value = !chatOpen.value
+  if (chatOpen.value) {
+    unread.value = 0
+    closeNotes()
+  }
+}
+
+function sendChat(text: string): void {
+  const msg: ControlMessage = {
+    t: 'chat',
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    from: viewer?.viewerId ?? '',
+    name: t('share.live.viewerName', { id: viewer?.viewerId ?? '?' }),
+    text,
+    at: Date.now(),
+  }
+  if (!viewer?.sendControl(msg)) return
+  chatMessages.value = [...chatMessages.value, { ...msg, self: true }]
+}
+
+function applyControl(msg: ControlMessage): void {
+  if (msg.t === 'chat') {
+    chatMessages.value = [
+      ...chatMessages.value,
+      {
+        id: msg.id,
+        name: msg.name || t('share.live.viewerName', { id: msg.from }),
+        text: msg.text,
+        at: msg.at,
+        self: msg.from === viewer?.viewerId,
+      },
+    ]
+    if (!chatOpen.value) unread.value += 1
+    return
+  }
+  if (msg.t === 'ctrl-grant') {
+    // Only the granted viewer may send events; a revoked grant drops straight
+    // back to idle so the pointer stops moving immediately.
+    controlState.value = msg.granted ? 'granted' : 'none'
+    return
+  }
+  // Ink and laser are the only other frames a viewer receives today.
+  board.apply(msg)
+}
+
+const quality = computed(() => {
+  const st = stats.value
+  if (!st) return { level: 'good', label: '', detail: '' }
+  const loss = st.lossPct ?? 0
+  const rtt = st.rttMs ?? 0
+  const level = loss >= 8 || rtt >= 400 ? 'poor' : loss >= 2 || rtt >= 200 ? 'fair' : 'good'
+  const label =
+    level === 'good'
+      ? t('share.live.qualityGood')
+      : level === 'fair'
+        ? t('share.live.qualityFair')
+        : t('share.live.qualityPoor')
+  const detail = [
+    st.rttMs !== null ? `RTT ${st.rttMs}ms` : '',
+    st.lossPct !== null ? `${st.lossPct}% loss` : '',
+    st.bitrateKbps !== null ? `${st.bitrateKbps}kbps` : '',
+    st.jitterMs !== null ? `jitter ${st.jitterMs}ms` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  return { level, label, detail }
+})
+
+// ── Zoom / pan ──────────────────────────────────────────────────────────────
+
+const ZOOM_MIN = 1
+const ZOOM_MAX = 6
+
+function onWheel(ev: WheelEvent): void {
+  if (state.value !== 'playing') return
+  const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom.value.scale * Math.exp(-ev.deltaY * 0.0015)))
+  if (next === zoom.value.scale) return
+  zoom.value = next <= ZOOM_MIN ? { scale: 1, x: 0, y: 0 } : { ...zoom.value, scale: next }
+}
+
+let panFrom: { x: number; y: number; ox: number; oy: number } | null = null
+
+function onPanStart(ev: PointerEvent): void {
+  if (zoom.value.scale <= 1) return
+  panFrom = { x: ev.clientX, y: ev.clientY, ox: zoom.value.x, oy: zoom.value.y }
+  ;(ev.currentTarget as HTMLElement).setPointerCapture?.(ev.pointerId)
+}
+
+function onPanMove(ev: PointerEvent): void {
+  if (!panFrom) return
+  zoom.value = {
+    ...zoom.value,
+    x: panFrom.ox + (ev.clientX - panFrom.x),
+    y: panFrom.oy + (ev.clientY - panFrom.y),
+  }
+}
+
+function onPanEnd(): void {
+  panFrom = null
+}
+
+function resetZoom(): void {
+  zoom.value = { scale: 1, x: 0, y: 0 }
+}
 
 // ── Member screen share (viewer side) ───────────────────────────────────────
 const memberVideoRef = ref<HTMLVideoElement | null>(null)
@@ -472,6 +793,7 @@ function start(): void {
         viewMode.value = stream && !sharingScreen.value ? 'member' : 'host'
         attachMember(stream)
       },
+      onControl: applyControl,
       onScreenDenied: (reason) => {
         sharingScreen.value = false
         screenError.value =
@@ -553,7 +875,31 @@ async function toggleFullscreen(): Promise<void> {
 // than tearing the connection down and renegotiating.
 watch(state, (s) => {
   if (s !== 'playing') talking.value = false
+  if (s === 'playing') {
+    startStatsPolling()
+    onVisibility()
+  }
 })
+
+let statsTimer: ReturnType<typeof setInterval> | null = null
+
+function onVisibility(): void {
+  viewer?.sendControl({
+    t: 'presence',
+    viewerId: viewer.viewerId,
+    visible: document.visibilityState === 'visible',
+  })
+}
+
+function startStatsPolling(): void {
+  if (statsTimer) return
+  statsTimer = setInterval(() => {
+    if (!viewer || state.value !== 'playing') return
+    void viewer.getStats().then((next) => {
+      stats.value = next
+    })
+  }, 3000)
+}
 
 // The tab used to be the only "header" left once the bar was removed, so keep
 // the share title there instead of a generic "ClawBench Share".
@@ -564,9 +910,16 @@ watch(title, (v) => {
 onMounted(() => {
   start()
   document.addEventListener('fullscreenchange', syncFullscreen)
+  document.addEventListener('visibilitychange', onVisibility)
+  window.addEventListener('resize', syncInkRect)
 })
 
 onBeforeUnmount(() => {
+  if (statsTimer) clearInterval(statsTimer)
+  statsTimer = null
+  document.removeEventListener('visibilitychange', onVisibility)
+  window.removeEventListener('resize', syncInkRect)
+  board.dispose()
   document.removeEventListener('fullscreenchange', syncFullscreen)
   attachMember(null)
   closeNotes()
@@ -757,6 +1110,100 @@ onBeforeUnmount(() => {
   .live-dock-btn {
     padding: var(--space-2, 4px) var(--space-3, 6px);
   }
+}
+
+/* ── Zoom container + ink ───────────────────────────────────────────────── */
+
+/*
+ * The transform lives on ONE wrapper around both videos and the ink canvas.
+ * Transforming them separately would let a pan move the picture but not the
+ * strokes, and every annotation would drift by the pan offset.
+ */
+.live-zoom {
+  position: absolute;
+  inset: 0;
+  transform-origin: center center;
+  will-change: transform;
+}
+
+.live-stage--zoomed {
+  cursor: grab;
+  touch-action: none;
+}
+
+.live-ink-wrap {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* ── Connection quality chip ────────────────────────────────────────────── */
+
+.live-quality {
+  position: absolute;
+  top: calc(var(--space-5, 10px) + env(safe-area-inset-top, 0px));
+  left: calc(var(--space-5, 10px) + env(safe-area-inset-left, 0px));
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2, 4px);
+  padding: var(--space-1, 2px) var(--space-4, 8px);
+  border-radius: var(--radius-full, 999px);
+  background: color-mix(in srgb, var(--bg-secondary, #161b22) 82%, transparent);
+  border: 1px solid var(--border-color, #30363d);
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-secondary, #8b949e);
+  z-index: 7;
+}
+
+.live-quality__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-success, #3fb950);
+}
+
+.live-quality--fair .live-quality__dot {
+  background: var(--color-orange, #d18616);
+}
+
+.live-quality--poor .live-quality__dot {
+  background: var(--color-red, #cf222e);
+}
+
+.live-control-banner {
+  top: auto;
+  bottom: calc(var(--space-6, 12px) + env(safe-area-inset-bottom, 0px) + calc(52 * var(--dp)));
+  border-color: color-mix(in srgb, var(--color-red, #cf222e) 55%, transparent);
+  color: var(--color-red, #cf222e);
+}
+
+/* ── Chat panel ─────────────────────────────────────────────────────────── */
+
+.live-chat-panel {
+  position: absolute;
+  right: calc(var(--space-6, 12px) + env(safe-area-inset-right, 0px));
+  bottom: calc(var(--space-6, 12px) + env(safe-area-inset-bottom, 0px) + calc(52 * var(--dp)));
+  display: flex;
+  flex-direction: column;
+  width: min(calc(340 * var(--dp)), calc(100vw - 2 * var(--space-6, 12px)));
+  height: min(50vh, calc(360 * var(--dp)));
+  border-radius: var(--radius-lg, 10px);
+  background: color-mix(in srgb, var(--bg-secondary, #161b22) 94%, transparent);
+  border: 1px solid var(--border-color, #30363d);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  z-index: 6;
+  overflow: hidden;
+}
+
+/* Unread counter on the dock button. */
+.live-dock-badge {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-full, 999px);
+  background: var(--color-red, #cf222e);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
 }
 
 /* ── Member screen banner ───────────────────────────────────────────────── */

@@ -31,6 +31,15 @@ vi.mock('@/share/liveViewer', () => ({
     stopTalking(): Promise<void> {
       return Promise.resolve()
     }
+    // Control channel + stats: the real viewer has these, and the component
+    // now touches them on `playing`.
+    viewerId = 'v-test'
+    sendControl(): boolean {
+      return true
+    }
+    getStats() {
+      return Promise.resolve({ rttMs: null, lossPct: null, bitrateKbps: null, jitterMs: null })
+    }
   },
 }))
 vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok' }))

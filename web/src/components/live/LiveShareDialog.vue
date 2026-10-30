@@ -122,6 +122,48 @@
         <ShareAddressList :links="share.shareLinks.value" />
         <div class="live-dialog-hint">{{ t('liveShare.linkHint') }}</div>
 
+        <!-- Tools that only make sense while publishing: annotate the shared
+             screen, chat, or swap which window is being shared. -->
+        <div class="live-dialog-section">{{ t('liveShare.toolsSection') }}</div>
+        <div class="live-tools">
+          <button class="live-btn" type="button" data-action="annotate" @click="annotating = true">
+            {{ t('liveShare.annotate') }}
+          </button>
+          <button
+            class="live-btn"
+            :class="{ 'live-btn--on': chatOpen }"
+            type="button"
+            data-action="chat"
+            @click="toggleChat"
+          >
+            {{ t('liveShare.chat') }}
+            <span v-if="unread > 0" class="live-tools__badge">{{ unread > 9 ? '9+' : unread }}</span>
+          </button>
+          <button class="live-btn" type="button" data-action="switch-source" @click="openSwitch">
+            {{ t('liveShare.switchSource') }}
+          </button>
+        </div>
+
+        <!-- Source picker for a mid-share swap. Hidden until asked for: the
+             dialog is already dense, and switching is rare. -->
+        <div v-if="switching" class="live-source-grid live-source-grid--compact">
+          <button
+            v-for="src in captureSources"
+            :key="src.id"
+            class="live-source"
+            :class="{ 'live-source--selected': src.id === selectedSourceId }"
+            type="button"
+            :disabled="switchingBusy"
+            @click="applySwitch(src.id)"
+          >
+            {{ src.name }}
+          </button>
+        </div>
+
+        <div v-if="chatOpen" class="live-chat-inline">
+          <LiveChatPanel :messages="chatMessages" @send="sendChat" />
+        </div>
+
         <div class="live-dialog-section">
           {{ t('liveShare.audienceCount', { count: share.viewers.value.length }) }}
         </div>
@@ -131,12 +173,36 @@
         <ul v-else class="live-viewer-list">
           <li v-for="v in share.viewers.value" :key="v.id" class="live-viewer">
             <span class="live-viewer-id">{{ v.id }}</span>
+            <span
+              v-if="presence[v.id] === false"
+              class="live-viewer-away"
+              :title="t('liveShare.viewerAway')"
+            >
+              {{ t('liveShare.viewerAway') }}
+            </span>
             <span class="live-viewer-talk" :class="`live-viewer-talk--${v.talk}`">
               {{ talkLabel(v.talk) }}
             </span>
             <!-- Only speaking viewers need an action: there is no approval
                  queue, so the publisher's controls are "mute this one" and
                  "mute everyone" (below). -->
+            <template v-if="controlRequests.has(v.id)">
+              <button class="live-btn live-btn--sm" type="button" data-action="control-allow" @click="grantControl(v.id)">
+                {{ t('liveShare.controlAllow') }}
+              </button>
+              <button class="live-btn live-btn--sm live-btn--danger" type="button" data-action="control-deny" @click="revokeControl(v.id)">
+                {{ t('liveShare.controlDeny') }}
+              </button>
+            </template>
+            <button
+              v-else-if="controlledBy === v.id"
+              class="live-btn live-btn--sm live-btn--danger"
+              type="button"
+              data-action="control-stop"
+              @click="revokeControl(v.id)"
+            >
+              {{ t('liveShare.controlStop') }}
+            </button>
             <button
               v-if="v.talk === 'talking'"
               class="live-btn live-btn--sm"
@@ -229,6 +295,13 @@
         <div v-if="share.error.value" class="live-dialog-error">{{ share.error.value }}</div>
       </template>
 
+      <LiveAnnotateOverlay
+        v-if="annotating && share.previewStream.value"
+        :stream="share.previewStream.value"
+        @close="annotating = false"
+        @send="share.sendControl"
+      />
+
       <!-- Fullscreen viewer for the member's screen. Rendered inside the dialog
            root but fixed to the viewport, so it is not clipped by the card. -->
       <div
@@ -316,7 +389,7 @@
  * dialog while publishing does NOT stop the share — the header button shows the
  * live indicator so the user can come back to it.
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from '@/components/common/ModalDialog.vue'
@@ -330,6 +403,10 @@ import {
   type CaptureSource,
 } from '@/composables/useLiveShare'
 import { groupNoteSegments, useLiveNotes } from '@/composables/useLiveNotes'
+import { getNative } from '@/utils/clawbenchNative'
+import LiveAnnotateOverlay from '@/share/LiveAnnotateOverlay.vue'
+import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
+import type { ControlMessage } from '@/share/liveControl'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { appLog } from '@/utils/appLog'
 import '@/assets/modal-footer-btn.css'
@@ -357,6 +434,112 @@ const notesListRef = ref<HTMLElement | null>(null)
 const remoteScreenRef = ref<HTMLVideoElement | null>(null)
 const fullscreenVideoRef = ref<HTMLVideoElement | null>(null)
 const screenFullscreen = ref(false)
+
+// ── Tools: annotation, chat, source switch, presence ────────────────────────
+const annotating = ref(false)
+const chatOpen = ref(false)
+const unread = ref(0)
+const chatMessages = ref<ChatMessage[]>([])
+const switching = ref(false)
+const switchingBusy = ref(false)
+/** viewerId → currently visible. Absent means "no report yet". */
+const presence = ref<Record<string, boolean>>({})
+/** Viewer currently allowed to drive the pointer, '' when nobody is. */
+const controlledBy = ref('')
+/** Viewers that asked for control and are waiting for an answer. */
+const controlRequests = ref<Set<string>>(new Set())
+let controlUnsupportedWarned = false
+let unsubscribeControl: (() => void) | null = null
+
+function toggleChat(): void {
+  chatOpen.value = !chatOpen.value
+  if (chatOpen.value) unread.value = 0
+}
+
+function sendChat(text: string): void {
+  const msg: ControlMessage = {
+    t: 'chat',
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    from: 'host',
+    name: t('liveShare.hostName'),
+    text,
+    at: Date.now(),
+  }
+  share.sendControl(msg)
+  chatMessages.value = [...chatMessages.value, { ...msg, self: true }]
+}
+
+function onControl(msg: ControlMessage): void {
+  if (msg.t === 'chat') {
+    chatMessages.value = [
+      ...chatMessages.value,
+      {
+        id: msg.id,
+        name: msg.name || t('share.live.viewerName', { id: msg.from }),
+        text: msg.text,
+        at: msg.at,
+        self: false,
+      },
+    ]
+    if (!chatOpen.value) unread.value += 1
+    return
+  }
+  if (msg.t === 'presence') {
+    presence.value = { ...presence.value, [msg.viewerId]: msg.visible }
+    return
+  }
+  if (msg.t === 'ctrl-req') {
+    if (msg.from) controlRequests.value = new Set([...controlRequests.value, msg.from])
+    return
+  }
+  if (msg.t === 'ctrl-ev') {
+    // Only the viewer we granted may move the pointer; anything else is a stale
+    // grant or a peer that never asked.
+    if (!controlledBy.value || msg.from !== controlledBy.value) return
+    const bridge = getNative()
+    if (!bridge?.remoteControl) {
+      if (!controlUnsupportedWarned) {
+        controlUnsupportedWarned = true
+        toast.show(t('liveShare.controlUnsupported'), { type: 'error', icon: 'warning' })
+      }
+      return
+    }
+    void Promise.resolve(bridge.remoteControl(msg)).then((res) => {
+      // The bridge answers `{supported:false}` when the native input module is
+      // not installed; say so once instead of swallowing every click.
+      if (res && typeof res === 'object' && !res.supported && !controlUnsupportedWarned) {
+        controlUnsupportedWarned = true
+        toast.show(t('liveShare.controlUnsupported'), { type: 'error', icon: 'warning' })
+      }
+    })
+  }
+}
+
+function grantControl(viewerId: string): void {
+  controlledBy.value = viewerId
+  controlRequests.value = new Set([...controlRequests.value].filter((id) => id !== viewerId))
+  share.sendControl({ t: 'ctrl-grant', viewerId, granted: true })
+}
+
+function revokeControl(viewerId: string): void {
+  if (controlledBy.value === viewerId) controlledBy.value = ''
+  controlRequests.value = new Set([...controlRequests.value].filter((id) => id !== viewerId))
+  share.sendControl({ t: 'ctrl-grant', viewerId, granted: false })
+}
+
+async function openSwitch(): Promise<void> {
+  switching.value = !switching.value
+  if (switching.value && captureSources.value.length === 0) await loadSources()
+}
+
+async function applySwitch(sourceId: string): Promise<void> {
+  switchingBusy.value = true
+  selectedSourceId.value = sourceId
+  const ok = await share.switchSource(sourceId)
+  switchingBusy.value = false
+  if (!ok) toast.show(t('liveShare.switchSourceFailed'), { type: 'error', icon: 'warning' })
+  else switching.value = false
+}
 
 const hasTalkers = computed(() => share.viewers.value.some((v) => v.talk === 'talking'))
 /** Only the tail is rendered: a long meeting would otherwise rebuild thousands
@@ -467,6 +650,16 @@ function closeScreenFullscreen(): void {
  * play it, and re-binding on every change keeps them in sync without moving a
  * single element around the DOM.
  */
+// The control channel exists for the lifetime of the share, not of the dialog:
+// subscribe once so chat keeps arriving while the dialog is closed.
+onMounted(() => {
+  unsubscribeControl = share.onControl(onControl)
+})
+onBeforeUnmount(() => {
+  unsubscribeControl?.()
+  unsubscribeControl = null
+})
+
 watch(
   () => share.remoteScreenStream.value,
   async (stream) => {
@@ -850,6 +1043,51 @@ watch(
   min-width: 0;
   color: var(--text-primary, #1f2328);
   overflow-wrap: anywhere;
+}
+
+/* ── Tool row ───────────────────────────────────────────────────────────── */
+
+.live-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3, 6px);
+}
+
+.live-btn--on {
+  border-color: color-mix(in srgb, var(--accent-color, #4a90d9) 55%, transparent);
+  color: var(--accent-color, #4a90d9);
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
+}
+
+.live-tools__badge {
+  min-width: 14px;
+  padding: 0 3px;
+  margin-left: 4px;
+  border-radius: var(--radius-full, 999px);
+  background: var(--color-red, #cf222e);
+  color: #fff;
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+}
+
+.live-viewer-away {
+  color: var(--text-muted, #656d76);
+  font-size: var(--font-size-xs, 11px);
+}
+
+/* Inline chat inside the dialog: fixed height so the card does not grow with
+   the conversation. */
+.live-chat-inline {
+  height: calc(220 * var(--dp));
+  border: 1px solid var(--border-color, #d0d7de);
+  border-radius: var(--radius-md, 6px);
+  overflow: hidden;
+}
+
+.live-source-grid--compact {
+  max-height: calc(140 * var(--dp));
+  overflow-y: auto;
 }
 
 /* ── Member screen preview ──────────────────────────────────────────────── */

@@ -1,0 +1,123 @@
+import { describe, expect, it } from 'vitest'
+import {
+  contentRectOf,
+  fromNormalized,
+  parseControlMessage,
+  toNormalized,
+  undoStroke,
+  type InkStroke,
+} from '../liveControl'
+
+describe('parseControlMessage', () => {
+  it('rejects malformed frames instead of throwing', () => {
+    expect(parseControlMessage('')).toBeNull()
+    expect(parseControlMessage('not json')).toBeNull()
+    expect(parseControlMessage('null')).toBeNull()
+    expect(parseControlMessage('{"t":"nope"}')).toBeNull()
+    // A laser without coordinates would paint at (0,0) — worse than dropping.
+    expect(parseControlMessage('{"t":"laser","x":0.5}')).toBeNull()
+  })
+
+  it('clamps coordinates into the content rect', () => {
+    const m = parseControlMessage('{"t":"laser","x":1.4,"y":-0.2,"on":true}')
+    expect(m).toEqual({ t: 'laser', x: 1, y: 0, on: true, from: undefined })
+  })
+
+  it('defaults an ink phase to move and sanitises colour and width', () => {
+    const m = parseControlMessage('{"t":"ink","x":0.2,"y":0.3,"color":"javascript:alert(1)","width":99}')
+    expect(m).toMatchObject({ t: 'ink', phase: 'move', color: '#ff3b30', width: 24 })
+  })
+
+  it('drops empty chat lines', () => {
+    expect(parseControlMessage('{"t":"chat","text":"   "}')).toBeNull()
+    expect(parseControlMessage('{"t":"chat","text":"hi"}')).toMatchObject({ t: 'chat', text: 'hi' })
+  })
+
+  it('truncates an over-long chat line instead of rejecting it', () => {
+    const long = 'a'.repeat(5000)
+    const m = parseControlMessage(JSON.stringify({ t: 'chat', text: long }))
+    expect(m).toMatchObject({ t: 'chat' })
+    expect((m as { text: string }).text).toHaveLength(2000)
+  })
+
+  it('accepts only the known control-event kinds', () => {
+    expect(parseControlMessage('{"t":"ctrl-ev","kind":"teleport"}')).toBeNull()
+    expect(parseControlMessage('{"t":"ctrl-ev","kind":"move","x":0.5,"y":0.5}')).toMatchObject({
+      kind: 'move',
+    })
+  })
+
+  it('parses the grant frame both ways', () => {
+    expect(parseControlMessage('{"t":"ctrl-grant","viewerId":"v1","granted":true}')).toEqual({
+      t: 'ctrl-grant',
+      viewerId: 'v1',
+      granted: true,
+    })
+    expect(parseControlMessage('{"t":"ctrl-grant","viewerId":"v1"}')).toMatchObject({ granted: false })
+  })
+})
+
+describe('coordinate mapping', () => {
+  it('accounts for the letterbox of a 16:9 picture in a 4:3 element', () => {
+    // 800x600 element showing a 1920x1080 picture: scale = min(0.416, 0.555)
+    const rect = contentRectOf(
+      { clientWidth: 800, clientHeight: 600, videoWidth: 1920, videoHeight: 1080 },
+      { left: 100, top: 50 },
+    )
+    expect(rect.width).toBeCloseTo(800)
+    expect(rect.height).toBeCloseTo(450)
+    // 75px of black bar above and below.
+    expect(rect.top).toBeCloseTo(125)
+    expect(rect.left).toBeCloseTo(100)
+  })
+
+  it('round-trips a point through normalisation', () => {
+    const rect = contentRectOf(
+      { clientWidth: 800, clientHeight: 600, videoWidth: 1920, videoHeight: 1080 },
+      { left: 100, top: 50 },
+    )
+    const n = toNormalized(500, 350, rect)
+    const back = fromNormalized(n.x, n.y, rect)
+    expect(back.clientX).toBeCloseTo(500)
+    expect(back.clientY).toBeCloseTo(350)
+  })
+
+  it('maps the same normalised point to different pixels on different screens', () => {
+    const desktop = contentRectOf(
+      { clientWidth: 1920, clientHeight: 1080, videoWidth: 1920, videoHeight: 1080 },
+      { left: 0, top: 0 },
+    )
+    const phone = contentRectOf(
+      { clientWidth: 390, clientHeight: 844, videoWidth: 1920, videoHeight: 1080 },
+      { left: 0, top: 0 },
+    )
+    const a = fromNormalized(0.3, 0.7, desktop)
+    const b = fromNormalized(0.3, 0.7, phone)
+    // Same place in the picture, wildly different pixels — this is exactly why
+    // the wire format carries 0..1 and not client coordinates.
+    expect(a.clientX).toBeCloseTo(576)
+    expect(b.clientX).toBeCloseTo(117)
+    expect(a.clientY).not.toBeCloseTo(b.clientY)
+  })
+
+  it('treats an element with no picture yet as the whole box', () => {
+    const rect = contentRectOf({ clientWidth: 400, clientHeight: 300 }, { left: 10, top: 20 })
+    expect(rect).toEqual({ left: 10, top: 20, width: 400, height: 300 })
+  })
+})
+
+describe('undoStroke', () => {
+  it('drops the last stroke and leaves the array untouched', () => {
+    const strokes: InkStroke[] = [
+      { color: '#fff', width: 2, points: [{ x: 0, y: 0 }] },
+      { color: '#fff', width: 2, points: [{ x: 1, y: 1 }] },
+    ]
+    const next = undoStroke(strokes)
+    expect(next).toHaveLength(1)
+    expect(strokes).toHaveLength(2)
+  })
+
+  it('is a no-op on an empty list', () => {
+    expect(undoStroke([])).toEqual([])
+  })
+})
