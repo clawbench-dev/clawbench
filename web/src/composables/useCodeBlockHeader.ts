@@ -179,13 +179,12 @@ const TABLE_CHEVRON_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="cur
 const TABLE_WRAP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-3"/><path d="M18 15l-3 3 3 3"/><path d="M3 18h7"/></svg>'
 
 /**
- * A portrait phone inside a three-quarter rotation arc — the "auto-rotate"
- * convention Android uses for the same gesture. Drawn with the same stroke
- * weight / caps as the lucide glyphs beside it (see utils/copyButton.ts for why
- * hand-built markup mirrors lucide paths), so it does not stand out as a
- * different icon family.
+ * Material Symbols `screen_rotation` — a phone caught mid-turn with two
+ * rotation arrows. This is the canonical glyph for the gesture, and the only
+ * filled icon in the header; it is deliberately the one shape that cannot be
+ * mistaken for the copy / wrap glyphs beside it at 14px.
  */
-const TABLE_LANDSCAPE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="5.5" height="12.5" x="9.25" y="5.75" rx="1.6"/><path d="M16.4 4.3A9 9 0 1 0 16.4 19.7"/><path d="M14.2 1.9 16.7 4.3 14.3 6.7"/></svg>'
+const TABLE_LANDSCAPE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16.48 2.52c3.27 1.55 5.61 4.72 5.97 8.48h1.5C23.44 4.84 18.25 0 12 0l-.66.03 3.81 3.81 1.33-1.32zM10.23 1.75c-.59-.59-1.54-.59-2.12 0L1.75 8.11c-.59.59-.59 1.54 0 2.12l12.02 12.02c.59.59 1.54.59 2.12 0l6.36-6.36c.59-.59.59-1.54 0-2.12L10.23 1.75zm4.6 19.44L2.81 9.17l6.36-6.36 12.02 12.02-6.36 6.36zm-7.31.29C4.25 19.94 1.91 16.76 1.55 13H.05C.56 19.16 5.71 24 12 24l.66-.03-3.81-3.81-1.33 1.32z"/></svg>'
 
 /**
  * Annotate table blocks in an HTML string with header bars containing
