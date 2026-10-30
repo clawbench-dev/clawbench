@@ -115,10 +115,13 @@ func (m *Manager) downloadAll(ctx context.Context, media []mediaRef, projectPath
 
 	maxBytes := common.AttachmentMaxBytes()
 	for _, ref := range media {
-		// Reject on the declared size before buffering. DownloadMedia returns
-		// the whole payload as []byte, so the disk cap alone does not bound
-		// memory — this pre-check is the only thing standing between a huge
-		// attachment and a huge allocation.
+		// Reject on the declared size before buffering: DownloadMedia returns the
+		// whole payload as []byte, so the disk cap alone does not bound memory.
+		//
+		// The declared size comes from the message payload and is a HINT, not a
+		// guarantee — it is absent (0) on some items and a sender could understate
+		// it. The SDK exposes no streaming download, so a lie is only caught after
+		// the allocation (the len(data) check in downloadOne).
 		if ref.declaredSize > maxBytes {
 			slog.Warn("wechat: attachment rejected on declared size",
 				"kind", ref.kind, "declared", ref.declaredSize, "max", maxBytes)

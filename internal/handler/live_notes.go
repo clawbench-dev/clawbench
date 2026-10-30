@@ -131,6 +131,21 @@ func ServeLiveShareNoteSegment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, liveNoteSegmentMaxBytes)
+	// Parse BEFORE reading any field: r.FormValue swallows the reader's error,
+	// so an oversized upload would look like "no token" and be answered with
+	// 404 — which the publisher reads as "this share is gone" and uses to drop
+	// its whole upload queue. 413 says "too big", which is retryable/skippable.
+	// The body is already capped by MaxBytesReader above, so this cannot grow
+	// without bound; gosec cannot see through the reader.
+	if err := r.ParseMultipartForm(liveNoteSegmentMaxBytes); err != nil { //nolint:gosec // bounded by MaxBytesReader
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeLocalizedErrorf(w, r, http.StatusRequestEntityTooLarge, "BadRequest")
+			return
+		}
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return
+	}
 
 	token := r.FormValue("token")
 	if !validShareToken(token) {

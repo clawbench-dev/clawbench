@@ -772,3 +772,37 @@ func TestServeShareLiveNotes_DatabaseFailureIsServerError(t *testing.T) {
 	ServeShareLiveNotes(w, httptest.NewRequest(http.MethodGet, "/api/share/x/notes", http.NoBody), room.Token())
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
+
+// An oversized upload must say "too big" (413), not "this share is gone" (404):
+// the publisher drops its whole upload queue on 404.
+func TestServeLiveShareNoteSegment_OversizedUploadIs413(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := projPath("/proj/a")
+	room, err := liveRegistry.Create(project, "会议")
+	require.NoError(t, err)
+
+	big := bytes.Repeat([]byte("x"), liveNoteSegmentMaxBytes+4096)
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteSegment(w, notesUpload(t, project, map[string]string{
+		"token": room.Token(), "channel": "mic",
+	}, big))
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+}
+
+// A body that is not valid multipart at all is a client bug (400), not an
+// oversized upload (413) and certainly not "share not found" (404).
+func TestServeLiveShareNoteSegment_MalformedMultipartIs400(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/live-share/notes/segment", strings.NewReader("not multipart at all"))
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=zzz")
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: url.QueryEscape(projPath("/proj/a"))})
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteSegment(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
