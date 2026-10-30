@@ -193,6 +193,14 @@ describe('landing page', () => {
       }
     })
 
+    it('keeps the zoom sheen inside the phone frame corners', () => {
+      // .shot-zoom::after paints a square overlay with border-radius: inherit,
+      // but the button itself has no radius — so the sheen stuck out past the
+      // phone's rounded corners. It has to match .showcase-shell's radius.
+      expect(css).toMatch(/\.phone-zoom::after\s*\{[^}]*border-radius:\s*34px/)
+      expect(css).toMatch(/\.showcase-shell\s*\{[^}]*border-radius:\s*34px/)
+    })
+
     it('forces [hidden] to win over the author-level img rule', () => {
       // jsdom does not resolve the cascade, so the test above passes even
       // without this rule — it only checks the attribute. In a browser the

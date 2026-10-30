@@ -1285,6 +1285,13 @@ main {
   max-width: 300px;
 }
 
+/* .shot-zoom::after 的高光用 border-radius: inherit，而按钮本身没有圆角，
+   于是这块方形高光盖在圆角机身上，四个角露出直角。这里对齐机身半径。
+   不能改成 overflow: hidden —— 会把机身的橙色辉光一起裁掉。 */
+.phone-zoom::after {
+  border-radius: 34px;
+}
+
 .showcase-shell {
   position: relative;
   display: block;
