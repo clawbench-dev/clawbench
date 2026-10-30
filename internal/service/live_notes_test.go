@@ -48,10 +48,13 @@ func seg(id int64, channel, speaker string, at int64, text string) LiveNoteSegme
 // a different order than they were spoken, and reading must put them back in
 // speaking order with each line attributed to its own channel.
 func TestBuildLiveNotesTranscript_ReordersChannelsByTime(t *testing.T) {
+	// Real timestamps (epoch millis), not 0: 0 means "unknown" and would be
+	// rendered as [--:--] instead of an offset.
+	base := int64(1_700_000_000_000)
 	segments := []LiveNoteSegment{
-		seg(3, "viewer:v2", "观众 2", 20_000, "我同意"),
-		seg(1, "system", "系统声音", 0, "今天讨论发布计划"),
-		seg(2, "mic", "我", 10_000, "先确认一下时间"),
+		seg(3, "viewer:v2", "观众 2", base+20_000, "我同意"),
+		seg(1, "system", "系统声音", base, "今天讨论发布计划"),
+		seg(2, "mic", "我", base+10_000, "先确认一下时间"),
 	}
 
 	got := BuildLiveNotesTranscript(segments)
@@ -525,4 +528,96 @@ func TestLiveNotesFileSlug_DropsUnsafeRunesAndCapsLength(t *testing.T) {
 
 	long := strings.Repeat("会", liveNotesNameMaxRunes+20)
 	assert.Equal(t, liveNotesNameMaxRunes, len([]rune(liveNotesFileSlug(long))))
+}
+
+// A meeting held in Japanese/Korean/Russian must survive dedupe: those scripts
+// are neither Latin nor CJK ideographs, and dropping them would silently delete
+// every line and leave the minutes empty.
+func TestDedupeLiveNoteSegments_KeepsNonLatinScripts(t *testing.T) {
+	sorted := SortLiveNoteSegments([]LiveNoteSegment{
+		seg(1, "mic", "我", 10_000, "そうですね"),
+		seg(2, "viewer:v1", "A", 12_000, "네 알겠습니다"),
+		seg(3, "viewer:v2", "B", 14_000, "да, согласен"),
+		seg(4, "system", "C", 16_000, "sí, de acuerdo"),
+	})
+
+	got := DedupeLiveNoteSegments(sorted)
+	require.Len(t, got, 4, "every script must survive: %v", got)
+	assert.NotEmpty(t, BuildLiveNotesTranscript(sorted))
+}
+
+// An echo in a non-Latin script is still an echo.
+func TestDedupeLiveNoteSegments_DropsNonLatinEcho(t *testing.T) {
+	sorted := SortLiveNoteSegments([]LiveNoteSegment{
+		seg(1, "mic", "我", 10_000, "そうですね"),
+		seg(2, "system", "系统声音", 12_000, "そうですね！"),
+	})
+	assert.Len(t, DedupeLiveNoteSegments(sorted), 1)
+}
+
+func TestNormalizeNoteText_KeepsEveryScript(t *testing.T) {
+	assert.Equal(t, "そうですね", normalizeNoteText("そうですね。"))
+	assert.Equal(t, "네알겠습니다", normalizeNoteText("네, 알겠습니다"))
+	assert.Equal(t, "дасогласен", normalizeNoteText("да, согласен"))
+	assert.Equal(t, "café", normalizeNoteText("Café"))
+}
+
+// A segment with no timestamp must not become the timeline origin: it is
+// rendered as [--:--] and the offsets still start from the earliest real one.
+func TestBuildLiveNotesTranscript_UnknownTimestampDoesNotShiftTheTimeline(t *testing.T) {
+	base := int64(1_700_000_000_000)
+	got := BuildLiveNotesTranscript([]LiveNoteSegment{
+		seg(1, "mic", "我", 0, "时间未知的一句"),
+		seg(2, "mic", "我", base, "第一句"),
+		seg(3, "system", "系统", base+65_000, "第二句"),
+	})
+
+	assert.Equal(t,
+		"[--:--] 我：时间未知的一句\n"+
+			"[00:00] 我：第一句\n"+
+			"[01:05] 系统：第二句",
+		got)
+}
+
+// Appending a segment is activity: retention must count from the LAST segment,
+// not from the meeting's start.
+func TestAppendLiveNoteSegment_RefreshesUpdatedAt(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	_, err = AppendLiveNoteSegment(context.Background(), "tok", pid, seg(0, "mic", "我", 1, "第一句"))
+	require.NoError(t, err)
+
+	// Backdate the row as if the meeting had started an hour ago.
+	_, err = store.WriteExec(`UPDATE live_notes SET updated_at = '2000-01-01 00:00:00' WHERE token = ?`, "tok")
+	require.NoError(t, err)
+
+	_, err = AppendLiveNoteSegment(context.Background(), "tok", pid, seg(0, "mic", "我", 2, "第二句"))
+	require.NoError(t, err)
+
+	var updated string
+	require.NoError(t, db.QueryRow(`SELECT updated_at FROM live_notes WHERE token = ?`, "tok").Scan(&updated))
+	assert.NotEqual(t, "2000-01-01 00:00:00", updated, "a new segment must refresh updated_at")
+}
+
+// A share refreshed between the cleanup scan and the delete must survive.
+func TestCleanupLiveNotes_SkipsShareRefreshedAfterTheScan(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	_, err = AppendLiveNoteSegment(context.Background(), "tok", pid, seg(0, "mic", "我", 1, "内容"))
+	require.NoError(t, err)
+
+	// The row looks old to the caller, but its updated_at is "now", i.e. it was
+	// refreshed after the SELECT the caller would have done.
+	removed, err := CleanupLiveNotes(context.Background(), time.Now().Add(-time.Hour))
+	require.NoError(t, err)
+	assert.Zero(t, removed)
+	rows, err := ListLiveNoteSegments("tok", 0)
+	require.NoError(t, err)
+	assert.Len(t, rows, 1)
 }
