@@ -979,15 +979,10 @@ main {
   color: var(--fg);
 }
 
-/* logo 平时走 currentColor（单色品牌标在深底上比彩色版干净，
-   也不会出现某个 logo 比别的亮一截）。
+/* 有彩色版的品牌直接显示彩色标；没有的走 currentColor。
    亮度单独给一档：跟着 --fg-muted 会太暗 —— 18px 的实心形状在
    深色底上需要比 13px 的文字更高的对比才看得出轮廓。
-
-   悬停切到原始彩色版：两层叠在同一格，靠 opacity 交叉淡入，
-   单色版和彩色版尺寸一致，切换时不会有位移。没有彩色版的品牌
-   （Cursor / Pi / OpenCode / Grok / Hermes / MiMo / VeCLI /
-   Command Code）只保留单色层，悬停时轻微提亮即可。 */
+   两层叠在同一格、尺寸一致，所以单色层是彩色层的兜底，不会错位。 */
 .strip-logo {
   flex-shrink: 0;
   width: 18px;
@@ -1001,18 +996,14 @@ main {
   position: relative;
 }
 
-/* 彩色层压在单色层之上，默认完全透明 */
+/* 彩色层压在单色层之上，常驻显示。
+   没有彩色版的品牌（Cursor / Pi / OpenCode / Grok / Hermes / MiMo /
+   VeCLI / Command Code）只保留单色层 —— 它们本身就是单色标。 */
 .strip-logo-color {
   position: absolute;
   left: 0;
   top: 50%;
   transform: translateY(-50%);
-  opacity: 0;
-  transition: opacity 0.22s;
-}
-
-.strip-list li:hover .strip-logo-color {
-  opacity: 1;
 }
 
 .strip-list li:hover .strip-logo-mono {

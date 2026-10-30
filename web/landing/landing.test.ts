@@ -548,9 +548,10 @@ describe('landing page', () => {
       dom.window.close()
     })
 
-    it('pairs every hover colour layer with a mono layer', () => {
-      // The two layers are stacked; a colour layer without its mono base
-      // would leave a hole in the row until the pointer arrives.
+    it('pairs every colour layer with a mono layer', () => {
+      // Both layers sit in the same box: the mono one is the fallback under
+      // the colour mark and the only mark for brands that have no colour
+      // version at all.
       const dom = new JSDOM(html)
       const doc = dom.window.document
       const items = Array.from(doc.querySelectorAll('.strip-list li'))
