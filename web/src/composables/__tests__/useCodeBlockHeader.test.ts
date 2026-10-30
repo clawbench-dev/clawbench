@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { annotateCodeBlockHeaders, annotateTableBlockHeaders, handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus, positionTableMenu } from '@/composables/useCodeBlockHeader.ts'
 import { closeTableLandscape, tableLandscapeState } from '@/composables/useTableLandscape.ts'
+import { _resetTableWrapPref, setDefaultTableWrap } from '@/utils/tableWrapPref.ts'
 // Source of the menu's positioning rule — jsdom cannot reproduce overflow
 // clipping, so the escape-from-clip-chain assertion has to read the CSS.
 import tableHeaderCss from '../../../css/code-block-header.css?raw'
@@ -35,6 +36,8 @@ afterEach(() => {
   pendingTimers.length = 0
   copyText.mockClear()
   closeTableLandscape()
+  _resetTableWrapPref()
+  localStorage.removeItem('clawbench-settings-tableWrap')
 })
 
 describe('annotateCodeBlockHeaders', () => {
@@ -230,6 +233,21 @@ describe('annotateTableBlockHeaders', () => {
     const result = annotateTableBlockHeaders(html)
     expect(result).toContain('table-block-attach-btn')
     expect(result).toContain('data-action="attach"')
+  })
+
+  it('starts a table in the wrap mode the user configured as default', () => {
+    const html = '<div class="table-wrap"><table><tr><td>data</td></tr></table></div>'
+
+    // Default (nothing configured) keeps the historical behaviour: wrapping on.
+    expect(annotateTableBlockHeaders(html)).toContain('table-block-wrapper word-wrap')
+
+    setDefaultTableWrap(false)
+    const unwrapped = annotateTableBlockHeaders(html)
+    expect(unwrapped).toContain('table-block-wrapper no-wrap')
+    expect(unwrapped).not.toContain('word-wrap')
+    // The toggle button must start in the matching (unwrapped) state.
+    expect(unwrapped).toContain('class="table-block-wrap-btn"')
+    expect(unwrapped).toContain('tableBlock.wrapOff')
   })
 
   it('adds a landscape-view button to the table header actions', () => {

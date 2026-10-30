@@ -2768,6 +2768,8 @@ export default {
       layoutMemoryDesc: '左右分栏比例、各面板折叠状态、会话列表与目录栏宽度等布局，是全局共用还是每个项目各记一份',
       layoutMemoryGlobal: '全局',
       layoutMemoryProject: '按项目',
+      tableWrapDefault: '表格默认自动换行',
+      tableWrapDefaultDesc: 'Markdown 表格默认是否自动换行；关闭后默认横向滚动。每张表右上角的换行按钮仍可单独切换',
       autoSpeech: '自动语音',
       autoSpeechDesc: 'AI 回复完成后自动朗读',
       preventScreenLock: '输出期间不锁屏',

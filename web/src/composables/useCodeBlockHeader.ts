@@ -5,6 +5,7 @@ import { gt } from '@/composables/useLocale'
 import { ATTACH_BADGE_SVG } from '@/utils/attachSvg'
 import { isShareMode } from '@/share/shareMode'
 import { openTableLandscape } from '@/composables/useTableLandscape.ts'
+import { getDefaultTableWrap } from '@/utils/tableWrapPref.ts'
 
 // ── SVG icons (inline, same pattern as FILE_OPEN_ICON_SVG) ──────────────────
 // The copy/check glyphs are shared with every other hand-built copy button and
@@ -212,9 +213,11 @@ export function annotateTableBlockHeadersIn(doc: Document): void {
         // Skip if already wrapped (idempotent guard)
         if (tableWrap.parentElement?.classList.contains('table-block-wrapper')) continue
 
-        // Build wrapper div (default: word-wrap on)
+        // Build wrapper div. The starting wrap mode is the user's default
+        // (设置 → 外观 → 显示); the per-table toggle still overrides it.
+        const wrapDefault = getDefaultTableWrap()
         const wrapper = doc.createElement('div')
-        wrapper.className = 'table-block-wrapper word-wrap'
+        wrapper.className = `table-block-wrapper ${wrapDefault ? 'word-wrap' : 'no-wrap'}`
 
         // Build header div
         const header = doc.createElement('div')
@@ -272,12 +275,12 @@ export function annotateTableBlockHeadersIn(doc: Document): void {
         const attachBtn = makeAttachButton(doc, 'table-block-attach-btn', 'chat.attach.attachTableToChat')
         if (attachBtn) actions.appendChild(attachBtn)
 
-        // Wrap toggle button (default: wrap on, so button shows "wrapOn" state)
+        // Wrap toggle button, starting in the state the default gave it.
         const wrapBtn = doc.createElement('button')
-        wrapBtn.className = 'table-block-wrap-btn is-wrapped'
+        wrapBtn.className = `table-block-wrap-btn${wrapDefault ? ' is-wrapped' : ''}`
         wrapBtn.setAttribute('data-action', 'wrap')
-        wrapBtn.setAttribute('title', gt('tableBlock.wrapOn'))
-        wrapBtn.setAttribute('aria-label', gt('tableBlock.wrapOn'))
+        wrapBtn.setAttribute('title', gt(wrapDefault ? 'tableBlock.wrapOn' : 'tableBlock.wrapOff'))
+        wrapBtn.setAttribute('aria-label', gt(wrapDefault ? 'tableBlock.wrapOn' : 'tableBlock.wrapOff'))
         wrapBtn.setAttribute('type', 'button')
         wrapBtn.innerHTML = TABLE_WRAP_ICON_SVG
         actions.appendChild(wrapBtn)

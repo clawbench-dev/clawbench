@@ -2773,6 +2773,8 @@ export default {
       layoutMemoryDesc: 'Whether split ratios, collapsed panels, and the session list / TOC widths are shared globally or remembered per project',
       layoutMemoryGlobal: 'Global',
       layoutMemoryProject: 'Per project',
+      tableWrapDefault: 'Word wrap tables by default',
+      tableWrapDefaultDesc: 'Whether Markdown tables wrap by default. When off, tables scroll horizontally instead. The wrap button on each table still overrides this',
       autoSpeech: 'Auto Speech',
       autoSpeechDesc: 'Automatically read aloud AI responses',
       preventScreenLock: 'No Screen Lock During Output',

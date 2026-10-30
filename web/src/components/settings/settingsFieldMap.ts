@@ -251,6 +251,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.layoutMemoryGlobal', value: 'global' },
       { labelKey: 'settings.items.layoutMemoryProject', value: 'project' },
     ]}},
+    // Starting wrap mode for every Markdown table (chat, file preview, task
+    // detail, row viewer). A display preference, so it lives next to the other
+    // per-device display tweaks rather than under a content category.
+    { type: 'item', spec: { labelKey: 'settings.items.tableWrapDefault', descriptionKey: 'settings.items.tableWrapDefaultDesc', key: 'tableWrap', type: 'switch', source: 'local', sectionHeader: 'settings.items.appearanceDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.fontMono', descriptionKey: 'settings.items.fontMonoDesc', key: 'fontMono', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildFontFamilyOptions(true) }},
     { type: 'item', spec: { labelKey: 'settings.items.fontMonoFallback', descriptionKey: 'settings.items.fontMonoFallbackDesc', key: 'fontMonoFallback', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildMonoFallbackOptions() }},
     { type: 'item', spec: { labelKey: 'settings.items.fontUi', descriptionKey: 'settings.items.fontUiDesc', key: 'fontUi', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildFontFamilyOptions(false) }},
