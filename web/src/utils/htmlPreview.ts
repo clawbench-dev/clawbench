@@ -22,6 +22,7 @@
 
 import { isAbsolutePath } from '@/utils/path'
 import { buildLocalFileUrl } from '@/utils/download'
+import { openExternalUrl } from '@/utils/externalLink'
 // The app's own bar (css/scrollbar.css), injected into the preview document so
 // its scrollbars follow the same logic as the app. `?raw` because the preview is
 // a separate document that cannot link the app's stylesheets.
@@ -287,4 +288,111 @@ function installPreviewStyle(
   if (first) doc.head.insertBefore(style, doc.head.firstChild)
   else doc.head.appendChild(style)
   return true
+}
+
+/**
+ * Route the previewed document's EXTERNAL links to the system browser.
+ *
+ * Without this, clicking a link in a rendered HTML preview does nothing at all:
+ * the iframe sandbox is `allow-scripts allow-same-origin` and deliberately does
+ * NOT grant `allow-popups` (see fileViewerSandbox.test.ts), so `target="_blank"`
+ * — which is how essentially every page writes an outbound link — is silently
+ * discarded. On Android the situation is worse than in a desktop browser:
+ * WebView never calls `setSupportMultipleWindows`, so even with `allow-popups`
+ * a popup would be swallowed. The click has to be taken over by us.
+ *
+ * `openExternalUrl` is the app's existing single entry point for "open this
+ * outside the app" (settings About, share links); it knows the three hosts
+ * (Android bridge → system browser, Electron bridge → shell, plain browser →
+ * anchor). Called from a parent-realm listener, so it acts on the app document.
+ *
+ * Only cross-origin http(s) activations are taken over:
+ *   - Same-origin links keep the default behaviour. They point at the previewed
+ *     document's own neighbours (`/api/fs/raw/<dir>/other.html`), which the
+ *     frame can navigate to itself — handing those to the OS browser would open
+ *     a second copy of the app to show a local file.
+ *   - In-page (`#…`) and non-http schemes are left alone. `mailto:`/`tel:` are
+ *     rejected by the native bridge's scheme allow-list anyway, and swallowing
+ *     them here would turn "nothing happens" into "nothing can ever happen".
+ *
+ * A script that calls `window.open()` itself is out of scope: the sandbox
+ * blocks it, and shimming `window.open` in the previewed document would be a
+ * different (and much larger) contract.
+ *
+ * Returns a disposer. Re-run it on every `load` — a reload is a NEW document,
+ * so the previous listener died with the old one (same pattern as the scrollbar
+ * and search-style hooks above).
+ */
+export function installPreviewLinkHandler(
+  iframe: HTMLIFrameElement | null,
+  open: (url: string) => void = openExternalUrl,
+): () => void {
+  let doc: Document | null
+  try {
+    doc = iframe?.contentDocument ?? null
+  } catch {
+    // Cross-origin (sandbox lost allow-same-origin) — nothing we can do.
+    return () => {}
+  }
+  if (!doc) return () => {}
+  // Captured so the closures below keep the narrowed type (a `let` re-widens
+  // inside a callback).
+  const frameDoc = doc
+
+  const onClick = (event: MouseEvent) => {
+    if (event.defaultPrevented) return
+    // Middle/right clicks never activate a link; `auxclick` covers those and is
+    // not handled here (the sandbox blocks them regardless of what we do).
+    if (event.button !== 0) return
+    const url = externalLinkUrl(event.target, frameDoc)
+    if (!url) return
+    event.preventDefault()
+    open(url)
+  }
+
+  // Bubble phase, deliberately: the previewed document's own handlers run
+  // first, so a page that handles its own link (an SPA router, a modal) keeps
+  // control — `preventDefault`/`stopPropagation` there means "I've got this"
+  // and the handler below stays out of the way. Activation behaviour runs only
+  // after dispatch, so preventing the default here still cancels the
+  // navigation.
+  frameDoc.addEventListener('click', onClick)
+  return () => frameDoc.removeEventListener('click', onClick)
+}
+
+/**
+ * The URL an activation should be opened externally with, or null when the
+ * frame's own default handling is correct.
+ *
+ * `target` is the event target, which in a real browser belongs to the frame's
+ * realm — so this deliberately duck-types `closest` instead of using
+ * `instanceof Element`, which would be false for a same-origin-but-other-realm
+ * element in jsdom.
+ */
+function externalLinkUrl(target: EventTarget | null, doc: Document): string | null {
+  const el = target as (Element & { closest?: unknown }) | null
+  if (!el || typeof el.closest !== 'function') return null
+  const anchor = el.closest('a[href]') as HTMLAnchorElement | null
+  if (!anchor) return null
+
+  const href = anchor.getAttribute('href')?.trim()
+  // `#…` is an in-page jump; an empty href is the current document.
+  if (!href || href.startsWith('#')) return null
+
+  let url: URL
+  try {
+    // Resolve against the DOCUMENT's base, not the app's: a previewed page may
+    // set its own <base>, and that is what its own links mean.
+    url = new URL(href, doc.baseURI)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+  // "External" is measured against the APP's origin, not the frame document's:
+  // the previewed document is served by this same server (`/api/fs/raw/…`), and
+  // the srcdoc branch inherits the app's origin — while `doc.location.origin`
+  // can read `null` for an opaque/about:blank document and would then classify
+  // every same-origin link as external.
+  if (url.origin === window.location.origin) return null
+  return url.href
 }

@@ -178,6 +178,37 @@ describe('HtmlPreviewBody — in-document hooks', () => {
     // And the chord is no longer claimed.
     expect(event.defaultPrevented).toBe(false)
   })
+
+  it('hands outbound link clicks to the system browser', async () => {
+    // The sandbox has no `allow-popups`, so a previewed page's `target="_blank"`
+    // link is a dead tap unless the component takes the activation over. This
+    // is the wiring test: the helper's own boundary rules live in
+    // utils/__tests__/htmlPreview.test.ts.
+    const open = vi.fn()
+    ;(window as unknown as { ClawBenchNative: unknown }).ClawBenchNative = { openExternalUrl: open }
+    const wrapper = mountBody()
+    const iframe = wrapper.find('iframe.html-preview-iframe').element as HTMLIFrameElement
+    const doc = iframe.contentDocument!
+    // jsdom starts the frame's document empty; write one in, as a real load does.
+    doc.open()
+    doc.write(
+      '<html><body><a href="https://github.com/clawbench-dev/clawbench" target="_blank">GitHub</a></body></html>',
+    )
+    doc.close()
+    iframe.dispatchEvent(new Event('load'))
+    await wrapper.vm.$nextTick()
+
+    const event = new (doc.defaultView!.MouseEvent)('click', {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+    })
+    doc.querySelector('a')!.dispatchEvent(event)
+
+    expect(open).toHaveBeenCalledWith('https://github.com/clawbench-dev/clawbench')
+    expect(event.defaultPrevented).toBe(true)
+    delete (window as unknown as { ClawBenchNative?: unknown }).ClawBenchNative
+  })
 })
 
 /**

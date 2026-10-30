@@ -35,7 +35,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { installPreviewScrollbar, installPreviewSearchStyles, watchPreviewTheme } from '@/utils/htmlPreview.ts'
+import { installPreviewLinkHandler, installPreviewScrollbar, installPreviewSearchStyles, watchPreviewTheme } from '@/utils/htmlPreview.ts'
 import {
   attachIframeSelectionQuoteBridge,
   installIframeSearchShortcut,
@@ -278,14 +278,17 @@ async function getQuoteQuestion(): Promise<QuoteBar> {
 let disposeSearchShortcut: (() => void) | null = null
 let disposeQuoteBridge: (() => void) | null = null
 let disposeThemeWatcher: (() => void) | null = null
+/** Takes over outbound-link clicks the sandbox would otherwise swallow. */
+let disposeLinkHandler: (() => void) | null = null
 
 /**
  * Give the previewed document the app's scrollbar bar, the search-match
- * highlight styles, and the two in-document hooks that cannot live on the host:
- * the Ctrl+F shortcut and the selection→quote bridge.
+ * highlight styles, and the three in-document hooks that cannot live on the
+ * host: the Ctrl+F shortcut, the selection→quote bridge, and outbound-link
+ * handoff to the system browser.
  *
  * Runs on every load — including the srcdoc fallback and reloads. A reload is a
- * NEW document, so both hooks must be re-attached unconditionally: the previous
+ * NEW document, so all hooks must be re-attached unconditionally: the previous
  * listeners died with the old document. (`dispose` only removes listeners and
  * deliberately leaves the quote bar alone, so a user mid-comment keeps their
  * text.)
@@ -305,6 +308,9 @@ function onLoad() {
   // per load so a reload cannot stack listeners.
   disposeThemeWatcher?.()
   disposeThemeWatcher = watchPreviewTheme(() => iframeRef.value)
+
+  disposeLinkHandler?.()
+  disposeLinkHandler = installPreviewLinkHandler(iframe)
 
   disposeSearchShortcut?.()
   disposeSearchShortcut = null
@@ -342,6 +348,8 @@ function disposeAll() {
   disposeQuoteBridge = null
   disposeThemeWatcher?.()
   disposeThemeWatcher = null
+  disposeLinkHandler?.()
+  disposeLinkHandler = null
 }
 
 onBeforeUnmount(disposeAll)
