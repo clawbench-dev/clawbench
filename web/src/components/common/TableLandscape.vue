@@ -152,11 +152,39 @@ function elementAtPath(root: Element, path: number[]): Element | null {
 }
 
 /**
+ * Identity attributes that survive a re-render. When the source wrapper has been
+ * replaced while the overlay was open (a streaming message re-renders its body),
+ * the clone no longer has a live counterpart at the same index path — fall back
+ * to the attribute that made the element a navigation target in the first place.
+ * Any live element with the same identity navigates to the same destination, so
+ * picking the first one is safe.
+ */
+const FORWARD_IDENTITY_ATTRS = ['data-file-path', 'data-commit-sha', 'data-worktree-path', 'data-url', 'href']
+
+function findLiveCounterpart(el: Element): Element | null {
+  for (const attr of FORWARD_IDENTITY_ATTRS) {
+    const value = el.getAttribute(attr)
+    if (!value) continue
+    const candidates = document.querySelectorAll(`${el.tagName.toLowerCase()}[${attr}]`)
+    for (const candidate of Array.from(candidates)) {
+      if (candidate === el) continue
+      if (candidate.getAttribute(attr) === value) return candidate
+    }
+  }
+  return null
+}
+
+/**
  * Leave the overlay, then replay the click on the element it was cloned from.
  * The source tree is structurally identical (nothing was added or removed), so
  * the index path resolves to the same node.
+ *
+ * The original event must be cancelled: the clone contains real `<a href>`
+ * elements, and without this the browser would navigate the whole SPA to the
+ * relative URL on top of the replayed click.
  */
 function leaveAndForward(event: MouseEvent): void {
+  event.preventDefault()
   const rendered = renderedWrapper()
   const current = state.value
   const target = event.target as Element
@@ -165,6 +193,9 @@ function leaveAndForward(event: MouseEvent): void {
   if (rendered && current) {
     const path = indexPath(target, rendered)
     if (path) sourceEl = elementAtPath(current.source, path)
+  }
+  if (!sourceEl?.isConnected) {
+    sourceEl = findLiveCounterpart(target)
   }
 
   close()
@@ -175,6 +206,34 @@ function leaveAndForward(event: MouseEvent): void {
     clientX: event.clientX,
     clientY: event.clientY,
   }))
+}
+
+/**
+ * Navigation targets are routed in the CAPTURE phase on `document`, not from the
+ * overlay's own click handler.
+ *
+ * The global external-link layer (`installExternalLinkClick`) is a document
+ * capture listener that calls `stopPropagation()` for `span.md-external-link`.
+ * Registered earlier, it wins the race — a bubble handler on the overlay would
+ * never see the click, so the overlay would stay open underneath the confirm
+ * dialog. `stopPropagation` does not stop other listeners on the same node,
+ * which is exactly what lets this one still run.
+ */
+function onDocumentClickCapture(event: MouseEvent): void {
+  const root = overlayRef.value
+  if (!root) return
+  const target = event.target as Element | null
+  if (!target || !root.contains(target)) return
+
+  // The external-link layer already claimed this click and is showing its own
+  // confirm dialog; only leave the overlay so the dialog is not stranded above
+  // it. Forwarding would fire that dialog a second time.
+  if (target.closest('.md-external-link')) {
+    close()
+    return
+  }
+
+  if (target.closest(NAV_TARGET_SELECTOR)) leaveAndForward(event)
 }
 
 function onOverlayClick(event: MouseEvent): void {
@@ -195,7 +254,7 @@ function onOverlayClick(event: MouseEvent): void {
   // Row viewer (touch only, same as everywhere else).
   if (handleTableRowClick(event)) return
 
-  if (target.closest(NAV_TARGET_SELECTOR)) leaveAndForward(event)
+  // Navigation targets are handled in onDocumentClickCapture (capture phase).
 }
 
 // ── Focus, keyboard, lifecycle ──────────────────────────────────────────────
@@ -251,6 +310,7 @@ function detach(): void {
   window.removeEventListener('resize', onViewportChange)
   window.visualViewport?.removeEventListener('resize', onViewportChange)
   document.removeEventListener('keydown', onDocumentKeydown, true)
+  document.removeEventListener('click', onDocumentClickCapture, true)
   if (unregisterBack) {
     unregisterBack()
     unregisterBack = null
@@ -271,6 +331,7 @@ watch(state, async (next) => {
     window.addEventListener('resize', onViewportChange)
     window.visualViewport?.addEventListener('resize', onViewportChange)
     document.addEventListener('keydown', onDocumentKeydown, true)
+    document.addEventListener('click', onDocumentClickCapture, true)
     unregisterBack = registerBackHandler({
       id: 'table-landscape',
       canGoBack: () => state.value !== null,
@@ -286,8 +347,9 @@ watch(state, async (next) => {
 
 onBeforeUnmount(() => {
   // Leaving the page with the overlay open would otherwise strand a fixed layer
-  // over the next route's content.
-  if (state.value) closeTableLandscape()
+  // over the next route's content. Go through close() so a wrap toggle made in
+  // the overlay is still carried back to the live table.
+  if (state.value) close()
   detach()
 })
 </script>

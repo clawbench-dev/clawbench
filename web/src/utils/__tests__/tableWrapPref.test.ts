@@ -4,6 +4,7 @@ import {
   applyTableWrapToRenderedTables,
   getDefaultTableWrap,
   setDefaultTableWrap,
+  tableWrapVersion,
   TABLE_WRAP_STORAGE_KEY,
 } from '@/utils/tableWrapPref.ts'
 
@@ -83,6 +84,15 @@ describe('setDefaultTableWrap', () => {
     const wrapper = buildTable('word-wrap', false)
     applyTableWrapToRenderedTables(false)
     expect(wrapper.classList.contains('no-wrap')).toBe(true)
+  })
+
+  it('bumps the render-cache version only when the value actually changes', () => {
+    const start = tableWrapVersion.value
+    setDefaultTableWrap(false)
+    expect(tableWrapVersion.value).toBe(start + 1)
+    // Re-setting the same value must not invalidate every cached block.
+    setDefaultTableWrap(false)
+    expect(tableWrapVersion.value).toBe(start + 1)
   })
 
   it('ignores non-table wrappers', () => {

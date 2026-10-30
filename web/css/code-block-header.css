@@ -458,6 +458,12 @@
     margin: 0 auto;
 }
 
+/* Inside the overlay this slot IS the close button, so it must stay visible even
+   if the viewport grew past the breakpoint after the overlay opened. */
+.table-landscape .table-block-landscape-btn {
+    display: inline-flex;
+}
+
 /* The paperclip attaches the markdown FILE to chat. The clone has no file
    identity (no `data-file-path` ancestor), so it would be an inert button. */
 .table-landscape .table-block-header .table-block-attach-btn {

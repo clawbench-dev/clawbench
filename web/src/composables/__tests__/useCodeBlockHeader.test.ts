@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { annotateCodeBlockHeaders, annotateTableBlockHeaders, handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus, positionTableMenu } from '@/composables/useCodeBlockHeader.ts'
+import { annotateCodeBlockHeaders, annotateTableBlockHeaders, handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus, positionTableMenu, positionTableMenuInRotatedPanel } from '@/composables/useCodeBlockHeader.ts'
 import { closeTableLandscape, tableLandscapeState } from '@/composables/useTableLandscape.ts'
 import { _resetTableWrapPref, setDefaultTableWrap } from '@/utils/tableWrapPref.ts'
 // Source of the menu's positioning rule — jsdom cannot reproduce overflow
@@ -1012,5 +1012,59 @@ describe('handleTableBlockClick — landscape view', () => {
     handleTableBlockClick(click(btn))
     expect(tableLandscapeState.value).toBeNull()
     wrapper.remove()
+  })
+})
+
+describe('positionTableMenuInRotatedPanel', () => {
+  function stubRect(el: HTMLElement, rect: { left: number, top: number, right: number, bottom: number }) {
+    el.getBoundingClientRect = () => ({
+      ...rect,
+      x: rect.left, y: rect.top, width: rect.right - rect.left, height: rect.bottom - rect.top,
+      toJSON: () => ({}),
+    }) as DOMRect
+  }
+  function stubSize(el: HTMLElement, width: number, height: number) {
+    Object.defineProperty(el, 'offsetWidth', { configurable: true, value: width })
+    Object.defineProperty(el, 'offsetHeight', { configurable: true, value: height })
+  }
+
+  it('maps the trigger into panel-local space before placing the menu', () => {
+    // A 400×800 viewport showing an 800×400 panel rotated 90°: the panel's
+    // local (x, y) maps to viewport (right - y, top + x).
+    const panel = document.createElement('div')
+    stubRect(panel, { left: 0, top: 0, right: 400, bottom: 800 })
+    stubSize(panel, 800, 400)
+
+    const trigger = document.createElement('button')
+    stubRect(trigger, { left: 340, top: 700, right: 380, bottom: 720 })
+
+    const menu = document.createElement('div')
+    stubSize(menu, 140, 100)
+
+    positionTableMenuInRotatedPanel(trigger, menu, panel)
+
+    // local: right = 720, top = 400-380 = 20, bottom = 400-340 = 60
+    // left = 720 - 140 = 580 (fits inside 800 - 140 - 8 = 652)
+    // top  = 60 + 4 = 64 (fits inside 400 - 100 - 8 = 292)
+    expect(menu.style.left).toBe('580px')
+    expect(menu.style.top).toBe('64px')
+  })
+
+  it('flips above the trigger when there is no room below in local space', () => {
+    const panel = document.createElement('div')
+    stubRect(panel, { left: 0, top: 0, right: 400, bottom: 800 })
+    stubSize(panel, 800, 400)
+
+    // Local bottom edge at 380 → a 100px menu would overflow the 400px side.
+    const trigger = document.createElement('button')
+    stubRect(trigger, { left: 20, top: 700, right: 60, bottom: 720 })
+    const menu = document.createElement('div')
+    stubSize(menu, 140, 100)
+
+    positionTableMenuInRotatedPanel(trigger, menu, panel)
+
+    // local: right = 720, top = 400-60 = 340, bottom = 400-20 = 380
+    // 380 + 4 + 100 > 392 → flip above: 340 - 4 - 100 = 236
+    expect(menu.style.top).toBe('236px')
   })
 })

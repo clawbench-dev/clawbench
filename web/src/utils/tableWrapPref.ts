@@ -1,3 +1,4 @@
+import { ref } from 'vue'
 import { gt } from '@/composables/useLocale'
 
 /**
@@ -19,6 +20,13 @@ export const TABLE_WRAP_STORAGE_KEY = 'clawbench-settings-tableWrap'
 
 /** `null` until the first read, so localStorage is touched once per session. */
 let cached: boolean | null = null
+
+/**
+ * Bumped on every change. Rendered markdown is cached by
+ * `ContentBlocks.getBlockHtml`; the cache key has to include this or a cached
+ * block would come back with the previous default's wrapper classes.
+ */
+export const tableWrapVersion = ref(0)
 
 /** The default wrap mode for a table that has not been toggled by hand. */
 export function getDefaultTableWrap(): boolean {
@@ -57,6 +65,7 @@ export function applyTableWrapToRenderedTables(wrap: boolean): void {
 
 /** Update the in-memory default and apply it to the tables on screen. */
 export function setDefaultTableWrap(wrap: boolean): void {
+  if (cached !== wrap) tableWrapVersion.value++
   cached = wrap
   try {
     localStorage.setItem(TABLE_WRAP_STORAGE_KEY, JSON.stringify(wrap))
@@ -69,4 +78,5 @@ export function setDefaultTableWrap(wrap: boolean): void {
 /** @internal Reset the memoised value — for tests only. */
 export function _resetTableWrapPref(): void {
   cached = null
+  tableWrapVersion.value = 0
 }

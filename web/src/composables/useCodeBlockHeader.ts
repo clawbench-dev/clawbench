@@ -681,7 +681,7 @@ export function positionTableMenu(trigger: HTMLElement, menu: HTMLElement): void
  * below/flip/clamp logic there, and write `left`/`top` directly — no
  * `placeFixedAt`, whose origin/scale probe cannot represent a rotation.
  */
-function positionTableMenuInRotatedPanel(trigger: HTMLElement, menu: HTMLElement, panel: HTMLElement): void {
+export function positionTableMenuInRotatedPanel(trigger: HTMLElement, menu: HTMLElement, panel: HTMLElement): void {
     const panelRect = panel.getBoundingClientRect()
     const localWidth = panel.offsetWidth
     const localHeight = panel.offsetHeight
@@ -730,10 +730,26 @@ function onTableMenuViewportChange(): void {
     const trigger = menu.previousElementSibling as HTMLElement | null
     if (!trigger) return
     const rect = trigger.getBoundingClientRect()
-    if (rect.bottom < 0 || rect.top > window.innerHeight) {
+
+    // In a rotated landscape panel the content scrolls ALONG the viewport's
+    // horizontal axis, so the vertical test below would never fire and the menu
+    // would hang in place after its trigger scrolled away. Compare against the
+    // panel's box instead, on both axes.
+    const overlay = menu.closest<HTMLElement>('.table-landscape')
+    if (overlay?.classList.contains('is-rotated')) {
+        const panelRect = overlay.firstElementChild?.getBoundingClientRect()
+        if (panelRect && (
+            rect.bottom < panelRect.top || rect.top > panelRect.bottom ||
+            rect.right < panelRect.left || rect.left > panelRect.right
+        )) {
+            closeAllTableBlockMenus()
+            return
+        }
+    } else if (rect.bottom < 0 || rect.top > window.innerHeight) {
         closeAllTableBlockMenus()
         return
     }
+
     positionTableMenu(trigger, menu)
 }
 

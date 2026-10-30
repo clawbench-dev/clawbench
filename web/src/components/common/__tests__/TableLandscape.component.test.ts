@@ -201,6 +201,64 @@ describe('TableLandscape', () => {
 
   })
 
+  it('cancels the original click so a relative <a href> cannot navigate the SPA', async () => {
+    await mountOverlay()
+    const source = buildSourceBlock('<tbody><tr><td><a href="./src/a.ts">src/a.ts</a></td></tr></tbody>')
+    const link = source.querySelector('a')!
+    const onSourceClick = vi.fn((e: Event) => e.preventDefault())
+    link.addEventListener('click', onSourceClick)
+
+    openTableLandscape(source)
+    await flushPromises()
+
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    overlayEl().querySelector('a')!.dispatchEvent(event)
+    await flushPromises()
+
+    // The replayed click does the real work; the original must not also let the
+    // browser follow the href and blow the SPA away.
+    expect(event.defaultPrevented).toBe(true)
+    expect(onSourceClick).toHaveBeenCalledTimes(1)
+    expect(tableLandscapeState.value).toBeNull()
+  })
+
+  it('leaves the overlay for an external link without replaying it', async () => {
+    // installExternalLinkClick() runs at app start and claims .md-external-link
+    // in the CAPTURE phase with stopPropagation(); emulate that ordering so the
+    // regression (overlay left open under the confirm dialog) is caught.
+    const claimed = vi.fn()
+    const globalHandler = (e: MouseEvent) => {
+      if ((e.target as Element)?.closest?.('.md-external-link')) {
+        e.preventDefault()
+        e.stopPropagation()
+        claimed()
+      }
+    }
+    document.addEventListener('click', globalHandler, true)
+
+    await mountOverlay()
+    const source = buildSourceBlock(
+      '<tbody><tr><td><span class="md-external-link" data-href="https://example.test">x</span></td></tr></tbody>',
+    )
+    const span = source.querySelector('.md-external-link')!
+    const onSourceClick = vi.fn()
+    span.addEventListener('click', onSourceClick)
+
+    openTableLandscape(source)
+    await flushPromises()
+
+    overlayEl().querySelector('.md-external-link')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await flushPromises()
+
+    expect(claimed).toHaveBeenCalledTimes(1)
+    expect(tableLandscapeState.value).toBeNull()
+    // Replaying would fire the confirm dialog a second time.
+    expect(onSourceClick).not.toHaveBeenCalled()
+
+    document.removeEventListener('click', globalHandler, true)
+  })
+
   it('closes on Escape and releases the scroll lock', async () => {
     await mountOverlay()
     openTableLandscape(buildSourceBlock())
