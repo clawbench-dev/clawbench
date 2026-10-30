@@ -1150,7 +1150,9 @@ func TestHandleViewerControl_ScreenStopClearsSharer(t *testing.T) {
 func TestCreateLiveShareRoom_RotatesStaleToken(t *testing.T) {
 	resetLiveRegistry(t)
 	prev := liveShareReuseGrace
-	liveShareReuseGrace = 0
+	// Negative, not zero: time.Since can be exactly 0 on a coarse clock
+	// (Windows ~15 ms), and "0 <= 0" would keep the stale token.
+	liveShareReuseGrace = -time.Second
 	t.Cleanup(func() { liveShareReuseGrace = prev })
 
 	project := projPath("/proj/a")
