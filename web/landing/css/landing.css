@@ -1083,20 +1083,6 @@ main {
 /* ── 下载 ───────────────────────────────────────────────────── */
 /* 平台名（Windows / macOS / Linux / Android）与架构标注两种语言下完全
    相同，所以刻意不带 data-i18n —— 只有分组标题和说明文字需要翻译。 */
-.dl-block + .dl-block {
-  margin-top: 34px;
-}
-
-.dl-block-title {
-  margin-bottom: 14px;
-  color: var(--fg-dim);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .dl-block-note {
   max-width: 620px;
   margin: -4px 0 16px;
@@ -1603,12 +1589,21 @@ main {
 }
 
 .tab {
-  padding: 7px 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
   border-radius: 999px;
   color: var(--fg-faint);
   font-size: 13px;
   font-weight: 500;
   transition: color 0.25s, background 0.25s;
+}
+
+.tab svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
 }
 
 .tab:hover {
@@ -1712,13 +1707,74 @@ main {
   color: #b8bb26;
 }
 
-.deploy-note {
+/* ── 部署向导：两步，序号圆点 + 竖线 ───────────────────────── */
+.step {
+  position: relative;
+  padding-left: 46px;
+}
+
+.step + .step {
+  margin-top: 52px;
+}
+
+/* 连接线：从第一步的圆点下方连到第二步的圆点 */
+.step::before {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 38px;
+  bottom: -52px;
+  width: 1px;
+  background: var(--line-strong);
+}
+
+.step:last-child::before {
+  display: none;
+}
+
+.step-no {
+  position: absolute;
+  left: 0;
+  top: -2px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(254, 128, 25, 0.35);
+  border-radius: 50%;
+  background: rgba(254, 128, 25, 0.08);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.step-title {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.step-desc {
+  margin-top: 6px;
+  color: var(--fg-muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.step > .tabs,
+.step > .dl-grid {
+  margin-top: 18px;
+}
+
+.step-note {
   margin-top: 16px;
   color: var(--fg-faint);
   font-size: 13px;
+  line-height: 1.7;
 }
 
-.deploy-note code {
+.step-note code {
   padding: 2px 6px;
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -2033,7 +2089,7 @@ main {
     grid-column: span 2;
   }
 
-  .dl-panel .dl-grid {
+  .step .dl-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

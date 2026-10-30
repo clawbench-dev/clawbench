@@ -149,15 +149,21 @@
       '36 named themes, system-following switch and a circular reveal transition; local gallery, daily Bing and animated wallpapers.',
 
     'dep.kicker': 'Deploy',
-    'dep.title': 'One command.<br>Sixty seconds.',
+    'dep.title': 'Server first,<br>then clients.',
     'dep.lede':
-      'No Node runtime, no separate database service. The first launch prints a randomly generated password to the console.',
+      'Two steps: start the server, then connect from desktop, phone or a browser. No Node runtime, no separate database service.',
     'dep.tab.binary': 'Binary',
     'dep.copy': 'Copy',
+
+    'step.server.t': 'Start the server',
+    'step.server.d': 'Pick one of three ways. The first run prints a random password to the console.',
+    'step.server.note': 'The console prints the address and a random password once it is up — you need them in the next step.',
+    'step.next': 'Next: connect a client',
+    'step.client.t': 'Connect a client',
+    'step.client.d': 'Install the desktop or Android client, then enter the address and password from the previous step.',
+    'step.client.note': 'No client needed — open the same address in any browser (<code>http://your-server-ip:20000</code>) and you get the same interface.',
     'code.npm.mirror': '# Mirror first if you are in mainland China — much faster',
     'code.npm.cmt': '# No global install — runs the latest version',
-    'dep.note':
-      'Once it is running, open <code>http://your-server-ip:20000</code> from the app or any browser.',
 
     'gal.kicker': 'Screenshots',
     'gal.title': 'Screenshots beat adjectives.',
@@ -432,15 +438,6 @@
         p.classList.toggle('is-active', on);
         p.hidden = !on;
       });
-    });
-  });
-
-  // 指向部署区的入口（如「下载桌面客户端」）要直接落在安装包页签上，
-  // 否则用户看到的是 npm 命令，还得自己再点一次。
-  document.querySelectorAll('[data-open-tab]').forEach(function (link) {
-    link.addEventListener('click', function () {
-      var tab = document.querySelector('.tab[data-tab="' + link.getAttribute('data-open-tab') + '"]');
-      if (tab) tab.click();
     });
   });
 

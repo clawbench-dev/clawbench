@@ -338,14 +338,16 @@ describe('landing page', () => {
 
       expect(layout.length).toBe(8)
       expect(layout.map((c) => `${c.platform}: ${c.arches.join('+')}`)).toEqual([
-        'Windows: x64',
-        'macOS: Apple Silicon+Intel',
-        'Linux: x64+ARM64',
-        'Android: arm64',
+        // 服务端（第一步的安装包页签）
         'Windows: x64',
         'macOS: Apple Silicon+Intel',
         'Linux: x64+ARM64',
         'Android · Termux: arm64',
+        // 客户端（第二步）
+        'Windows: x64',
+        'macOS: Apple Silicon+Intel',
+        'Linux: x64+ARM64',
+        'Android: arm64',
       ])
       dom.window.close()
     })
@@ -364,18 +366,42 @@ describe('landing page', () => {
       ;(doc.querySelector('.tab[data-tab="binary"]') as HTMLElement).click()
       expect(panel.hidden).toBe(false)
       expect((doc.querySelector('[data-panel="npm"]') as HTMLElement).hidden).toBe(true)
-      expect(panel.querySelectorAll('a[data-asset]').length).toBe(12)
+      // 安装包页签只留服务端产物，客户端在第二步
+      expect(panel.querySelectorAll('a[data-asset]').length).toBe(6)
       dom.window.close()
     })
 
-    it('jumps straight to the package tab from the desktop section', () => {
-      // The desktop block's "download the desktop app" link must land on the
-      // cards, not on the npm command.
+    it('walks from the server step to the client step', () => {
+      // Both steps are expanded (nothing is hidden behind a click), and the
+      // first one ends with a link that lands on the second.
       const dom = boot('zh-CN')
       const doc = dom.window.document
-      ;(doc.querySelector('[data-open-tab="binary"]') as HTMLElement).click()
-      expect((doc.querySelector('.tab[data-tab="binary"]') as HTMLElement).getAttribute('aria-selected')).toBe('true')
-      expect((doc.querySelector('.dl-panel[data-panel="binary"]') as HTMLElement).hidden).toBe(false)
+      const steps = Array.from(doc.querySelectorAll('#deploy .step'))
+
+      expect(steps.map((s) => s.id)).toEqual(['step-server', 'step-client'])
+      expect(steps.map((s) => s.querySelector('.step-no')?.textContent)).toEqual(['1', '2'])
+      expect((steps[0] as HTMLElement).hidden).toBe(false)
+      expect((steps[1] as HTMLElement).hidden).toBe(false)
+
+      const next = steps[0].querySelector('.step-next')!
+      expect(next.getAttribute('href')).toBe('#step-client')
+      expect(doc.getElementById('step-client')).toBeTruthy()
+      dom.window.close()
+    })
+
+    it('keeps the tab icons when the language switches', () => {
+      // data-i18n replaces textContent, so the label has to be its own span —
+      // putting the key on the <button> wipes the icon on every toggle.
+      const dom = boot('zh-CN')
+      const doc = dom.window.document
+      ;(doc.getElementById('langToggle') as HTMLElement).click()
+
+      const tabs = Array.from(doc.querySelectorAll('.tabs .tab'))
+      expect(tabs.length).toBe(3)
+      for (const tab of tabs) expect(tab.querySelector('svg use')).toBeTruthy()
+      expect(
+        tabs[2].querySelector('[data-i18n]')?.getAttribute('data-i18n'),
+      ).toBe('dep.tab.binary')
       dom.window.close()
     })
 
