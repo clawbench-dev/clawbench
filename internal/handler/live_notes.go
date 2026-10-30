@@ -181,7 +181,7 @@ func ServeLiveShareNoteSegment(w http.ResponseWriter, r *http.Request) {
 		Channel:    channel,
 		Speaker:    truncateRunes(strings.TrimSpace(r.FormValue("speaker")), liveNoteSpeakerMaxRunes),
 		StartedAt:  parseLiveNoteMillis(r.FormValue("startedAt")),
-		DurationMS: clampInt64(parseLiveNoteMillis(r.FormValue("durationMs")), 0, liveNoteSegmentMaxDurationMS),
+		DurationMS: capInt64(parseLiveNoteMillis(r.FormValue("durationMs")), liveNoteSegmentMaxDurationMS),
 		Text:       truncateRunes(text, liveNoteTextMaxRunes),
 	}
 	id, err := service.AppendLiveNoteSegment(r.Context(), token, projectID, seg)
@@ -450,10 +450,9 @@ func parseLiveNoteMillis(raw string) int64 {
 	return v
 }
 
-func clampInt64(v, lo, hi int64) int64 {
-	if v < lo {
-		return lo
-	}
+// capInt64 bounds v from above. There is no lower bound because the only
+// caller feeds it parseLiveNoteMillis, which already rejects negative input.
+func capInt64(v, hi int64) int64 {
 	if v > hi {
 		return hi
 	}

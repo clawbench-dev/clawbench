@@ -97,7 +97,7 @@ func ServeTLSGenerateSelfSigned(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := model.GenerateSelfSignedCert(dir, ips, dnsNames); err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "TLSCertGenerateFailed",
-			map[string]any{"Error": err.Error()})
+			map[string]any{errDetailKey: err.Error()})
 		return
 	}
 
@@ -153,15 +153,19 @@ func httpsURLFor(r *http.Request) string {
 	if host == "" {
 		return ""
 	}
-	return "https://" + net.JoinHostPort(host, portOf(r.Host, "20000"))
+	return "https://" + net.JoinHostPort(host, portOf(r.Host))
 }
 
-// portOf returns the port part of hostport, or fallback when there is none.
-func portOf(hostport, fallback string) string {
+// defaultHTTPSPort is the port the server listens on when the request carries
+// no explicit one (the app serves HTTP and HTTPS on the same listener).
+const defaultHTTPSPort = "20000"
+
+// portOf returns the port part of hostport, or the default when there is none.
+func portOf(hostport string) string {
 	if _, p, err := net.SplitHostPort(hostport); err == nil && p != "" {
 		return p
 	}
-	return fallback
+	return defaultHTTPSPort
 }
 
 // isSelfSigned reports whether the certificate is its own issuer.
