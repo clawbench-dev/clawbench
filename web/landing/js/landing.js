@@ -151,7 +151,7 @@
     'dep.kicker': 'Deploy',
     'dep.title': 'Server first,<br>then clients.',
     'dep.lede':
-      'Two steps: start the server, then connect from desktop, phone or a browser. No Node runtime, no separate database service.',
+      'Two steps: start the server, then connect from desktop, phone or a browser.',
     'dep.tab.binary': 'Binary',
     'dep.copy': 'Copy',
 
