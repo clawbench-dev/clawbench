@@ -259,6 +259,19 @@ func (r *Room) SetTalkEnabled(on bool) {
 	r.touch()
 }
 
+// CreatedAt is when the room was minted. Used to tell "this room is being
+// reused after its publisher vanished" from "the publisher is about to attach".
+func (r *Room) CreatedAt() time.Time { return r.createdAt }
+
+// HasPublisher reports whether a publisher is attached OR reserved. A room
+// without one is a leftover: the publisher socket closed (crash, restart) and
+// the idle reaper has not collected the room yet.
+func (r *Room) HasPublisher() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.publisher != nil || r.publisherReserved
+}
+
 // Publisher returns the publisher sink, or nil when no publisher is attached.
 func (r *Room) Publisher() Sink {
 	r.mu.Lock()

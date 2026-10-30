@@ -1479,7 +1479,13 @@ func changeGroupHostTx(groupID, memberID string) (changed bool, name string, err
 			"FROM chat_sessions WHERE id = ? AND session_type = ?",
 		memberID, groupMemberSessionType,
 	).Scan(&memberGroup, &memberAgentID, &memberBackend, &memberName, &disabled); qerr != nil {
-		return false, "", ErrHostNotMember
+		// Only "no such row" means the id is not a member of this group. A
+		// database failure must NOT be reported as a 400 the user could "fix" by
+		// picking someone else — it is an outage and belongs in the 500 path.
+		if errors.Is(qerr, sql.ErrNoRows) {
+			return false, "", ErrHostNotMember
+		}
+		return false, "", qerr
 	}
 	if memberGroup != groupID {
 		return false, "", ErrHostNotMember

@@ -1144,3 +1144,55 @@ func TestHandleViewerControl_ScreenStopClearsSharer(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, liveshare.MsgScreenState, msg.Type)
 }
+
+// A room whose publisher vanished (crash, app restart) is a leftover: reusing
+// its token would make the next meeting inherit the previous transcript.
+func TestCreateLiveShareRoom_RotatesStaleToken(t *testing.T) {
+	resetLiveRegistry(t)
+	prev := liveShareReuseGrace
+	// Negative, not zero: time.Since can be exactly 0 on a coarse clock
+	// (Windows ~15 ms), and "0 <= 0" would keep the stale token.
+	liveShareReuseGrace = -time.Second
+	t.Cleanup(func() { liveShareReuseGrace = prev })
+
+	project := projPath("/proj/a")
+	first, err := createLiveShareRoom(project, "会议")
+	require.NoError(t, err)
+
+	second, err := createLiveShareRoom(project, "会议")
+	require.NoError(t, err)
+	assert.NotEqual(t, first.Token(), second.Token(), "a leftover room must not hand its token to the next meeting")
+	assert.Nil(t, liveRegistry.Get(first.Token()), "the stale room is gone")
+}
+
+// While a publisher is attached (or about to attach) the room is live and the
+// token must stay stable — a second device or a retry must join the same share.
+func TestCreateLiveShareRoom_KeepsTokenWhileLive(t *testing.T) {
+	resetLiveRegistry(t)
+	prev := liveShareReuseGrace
+	liveShareReuseGrace = 0
+	t.Cleanup(func() { liveShareReuseGrace = prev })
+
+	project := projPath("/proj/a")
+	first, err := createLiveShareRoom(project, "会议")
+	require.NoError(t, err)
+	first.SetPublisher(&recordingSink{})
+
+	second, err := createLiveShareRoom(project, "会议")
+	require.NoError(t, err)
+	assert.Equal(t, first.Token(), second.Token())
+}
+
+// The normal sequence is "create, then attach the socket a moment later": the
+// grace period must keep that from rotating the token out from under itself.
+func TestCreateLiveShareRoom_KeepsTokenWithinGrace(t *testing.T) {
+	resetLiveRegistry(t)
+
+	project := projPath("/proj/a")
+	first, err := createLiveShareRoom(project, "会议")
+	require.NoError(t, err)
+
+	second, err := createLiveShareRoom(project, "会议")
+	require.NoError(t, err)
+	assert.Equal(t, first.Token(), second.Token())
+}

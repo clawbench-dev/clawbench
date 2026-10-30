@@ -441,7 +441,11 @@ export class LiveViewer {
         audio: false,
       })
       const track = stream.getVideoTracks()[0]
-      if (!track) return false
+      if (!track) {
+        // Nothing to send: release the capture the browser just granted.
+        for (const t of stream.getTracks()) t.stop()
+        return false
+      }
       this.screenTrack = track
       await this.screenTx.sender.replaceTrack(track)
       // The browser's own "stop sharing" bar ends the track without telling us
@@ -453,7 +457,10 @@ export class LiveViewer {
       return true
     } catch (e) {
       appLog.w(TAG, 'screen capture unavailable', e)
-      this.screenTrack = null
+      // screenTrack may already be set (replaceTrack failed): it must be
+      // STOPPED, not just forgotten — a dangling track keeps the browser's
+      // "sharing your screen" indicator on and keeps capturing.
+      this.releaseScreenTrack()
       return false
     }
   }
@@ -552,6 +559,8 @@ export class LiveViewer {
       this.pc = null
     }
     this.talkTx = null
+    this.screenTx = null
+    this.relayRxTx = null
     if (this.ws) {
       try {
         this.ws.close()

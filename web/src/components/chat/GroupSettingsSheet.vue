@@ -240,6 +240,7 @@ import { getAgentAvatar, useAgents } from '@/composables/useAgents'
 import { addGroupMembers, generateMemberAvatars, setGroupHost, setGroupMemberDisabled, setGroupParallelDefault, setGroupCruise, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { toggleAutoApprove, applyCruiseAutoApproveDefault } from '@/composables/useSessionIdentity'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
+import { useToast } from '@/composables/useToast'
 import { usagePct as usagePctOf, usageColor as usageColorOf } from '@/utils/usageDisplay'
 import { formatModelIdForDisplay } from '@/utils/modelDisplay'
 import { appLog } from '@/utils/appLog'
@@ -266,6 +267,7 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'changed'): void }>()
 
 const { t } = useI18n()
+const toast = useToast()
 // Model resolution for the roster's model line. `useAgents()` is the singleton
 // store accessor (no fetch — loadAgents is called by the app shell), so reading
 // it here costs nothing and keeps the row's label in step with a model refresh.
@@ -420,7 +422,13 @@ async function makeHost(m: GroupMemberInfo) {
   try {
     await setGroupHost(props.groupId, m.id)
     emit('changed')
-  } catch { /* ignore: the roster still reflects the server's host */ }
+  } catch (e) {
+    // The roster still reflects the server's host, but a silent failure looks
+    // like a dead button: the user taps the crown, nothing happens, and the
+    // next turn still routes to the old host.
+    appLog.w('GroupSettings', 'change host failed', e)
+    toast.show(t('group.hostChangeFailed'))
+  }
 }
 
 async function onAgentsPicked(ids: string | string[]) {

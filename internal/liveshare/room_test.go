@@ -657,3 +657,40 @@ func TestRoom_NotesSwitch(t *testing.T) {
 		t.Fatal("SetNotesEnabled(false) must be observable")
 	}
 }
+
+// HasPublisher is what tells a stale room (publisher crashed, idle reaper has
+// not run yet) from a live one; a reservation counts, because the publisher is
+// already on its way.
+func TestRoom_HasPublisherAndCreatedAt(t *testing.T) {
+	g := newTestRegistry(t)
+	room, err := g.Create("/proj/a", "A")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if room.HasPublisher() {
+		t.Fatal("a fresh room has no publisher")
+	}
+	if room.CreatedAt().IsZero() {
+		t.Fatal("CreatedAt must be stamped at creation")
+	}
+
+	if !room.ReservePublisher() {
+		t.Fatal("ReservePublisher must succeed on an idle room")
+	}
+	if !room.HasPublisher() {
+		t.Fatal("a reservation counts as a publisher on its way")
+	}
+	room.ReleaseReservation()
+	if room.HasPublisher() {
+		t.Fatal("a released reservation is not a publisher")
+	}
+
+	room.SetPublisher(&fakeSink{})
+	if !room.HasPublisher() {
+		t.Fatal("an attached publisher must be reported")
+	}
+	room.SetPublisher(nil)
+	if room.HasPublisher() {
+		t.Fatal("a detached publisher must be reported as gone")
+	}
+}

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -2514,4 +2515,35 @@ func TestPendingBccStoresSenderAttribution(t *testing.T) {
 func TestChangeGroupHost_RejectsEmptyIDs(t *testing.T) {
 	assert.ErrorIs(t, ChangeGroupHost("/proj/a", "", "m1"), ErrHostNotMember)
 	assert.ErrorIs(t, ChangeGroupHost("/proj/a", "g1", ""), ErrHostNotMember)
+}
+
+// A database failure while promoting a host must not be reported as "that id is
+// not a member" (400) — the user cannot fix an outage by picking someone else.
+func TestChangeGroupHost_DatabaseFailureIsNotAMembershipError(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Deliberately missing agent_name/agent_id/backend: the GROUP lookup succeeds
+	// (so we reach the member query) but the member query fails with a schema
+	// error, which must surface as a failure — not as "that id is not a member",
+	// which the handler would answer with a 400 the user cannot act on.
+	_, err = db.Exec(`CREATE TABLE chat_sessions (
+		id TEXT PRIMARY KEY,
+		session_type TEXT,
+		context_state TEXT,
+		updated_at DATETIME
+	)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO chat_sessions (id, session_type, context_state) VALUES ('g1', 'group', '{}')`)
+	require.NoError(t, err)
+	restore := store.SetDBForTest(db, db)
+	t.Cleanup(restore)
+
+	err = ChangeGroupHost("/proj/a", "g1", "m1")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrHostNotMember)
+	assert.NotErrorIs(t, err, ErrGroupNotHostMode)
+	assert.Contains(t, err.Error(), "no such column")
 }

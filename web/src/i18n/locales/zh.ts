@@ -3450,6 +3450,7 @@ export default {
       tlsRestartNow: '立即重启',
       tlsRestarting: '正在重启…',
       tlsRestartFailed: '重启失败，请手动重启服务端。',
+      tlsRestartedNoHTTPS: '已重启。请刷新页面继续。',
       tlsOpenHint: '重启完成后用这个地址打开：',
       tlsServingHint: '当前页面已经是 HTTPS。',
       tlsLoadFailed: '读取证书状态失败。',

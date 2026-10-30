@@ -204,6 +204,54 @@ describe('useLiveNotes — finishing', () => {
   })
 })
 
+describe('useLiveNotes — session isolation', () => {
+  // The state is a module-level singleton: closing the dialog and starting a new
+  // meeting must not let the previous meeting's background drain write into it.
+  it('a drain finishing after a new session started leaves the new one alone', async () => {
+    const notes = useLiveNotes()
+    notes.start({ token: 'tok-a', ctx, systemStream: null, micStream: null })
+    notes.segments.value = [{ id: 1, channel: 'mic', speaker: '我', startedAt: 1, durationMs: 1, text: 'A 的内容' }]
+
+    const capA = lastCapture()
+    let releaseDrain: (v: boolean) => void = () => {}
+    capA.drainUploads = () => new Promise<boolean>((resolve) => { releaseDrain = resolve })
+
+    const finishing = notes.finishUploads()
+    expect(notes.phase.value).toBe('finalizing')
+
+    // The user closes the dialog (reset) and immediately starts another meeting.
+    notes.reset()
+    notes.start({ token: 'tok-b', ctx, systemStream: null, micStream: null })
+    expect(notes.phase.value).toBe('recording')
+
+    releaseDrain(true)
+    await finishing
+
+    expect(notes.phase.value).toBe('recording', "A's drain must not reset B's phase")
+    expect(fetchMock).not.toHaveBeenCalled(), 'A must not request minutes for B'
+  })
+
+  it('a poll response that arrives after reset is dropped', async () => {
+    vi.useFakeTimers()
+    const notes = useLiveNotes()
+    notes.start({ token: 'tok-a', ctx, systemStream: null, micStream: null })
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ status: 'generating' }))
+      .mockResolvedValueOnce(jsonResponse({ minutes: { status: 'ready', markdown: '## A 的纪要' } }))
+
+    await notes.generateMinutes()
+    notes.reset()
+    notes.start({ token: 'tok-b', ctx, systemStream: null, micStream: null })
+
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(notes.minutes.value).toBe('')
+    expect(notes.minutesPhase.value).toBe('idle')
+    expect(notes.phase.value).toBe('recording')
+  })
+})
+
 describe('useLiveNotes — minutes', () => {
   it('is a no-op without a session token', async () => {
     const notes = useLiveNotes()
