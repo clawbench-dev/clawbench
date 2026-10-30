@@ -20,3 +20,31 @@ import (
 func T(messageID string, templateData ...map[string]any) string {
 	return i18n.T(i18n.LocalizerForLocale(model.Language), messageID, templateData...)
 }
+
+// Template placeholders shared by several push strings. Kept as constants
+// because a typo in one of these silently renders "{{.Count}}" into the chat,
+// and because both backends use the same names across many call sites.
+const (
+	// TemplateCount is the message count placeholder (queued/files).
+	TemplateCount = "Count"
+	// TemplateLabel is the session label placeholder.
+	TemplateLabel = "Label"
+	// TemplateID is the short session id placeholder.
+	TemplateID = "ID"
+	// TemplateProject is the project path/label placeholder.
+	TemplateProject = "Project"
+	// TemplateCommand is the slash-command word placeholder.
+	TemplateCommand = "Command"
+)
+
+// CommandWithAttachmentText is the reply for a slash command that arrived
+// together with an attachment.
+//
+// Commands are not routed to a session, and the attachment path delivers
+// Route.Message (which a command leaves empty) — so silently continuing would
+// post an empty message and drop the command word. Both backends answer with
+// this instead: it names the command and tells the user to send the files
+// separately, which is the only way to get both.
+func CommandWithAttachmentText(command string) string {
+	return T("PushCommandWithAttachment", map[string]any{TemplateCommand: command})
+}

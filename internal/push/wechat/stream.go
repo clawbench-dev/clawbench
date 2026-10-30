@@ -262,11 +262,150 @@ func (m *Manager) handleIncomingText(ctx context.Context, userID, token, text st
 	switch route.Kind {
 	case common.RouteListSessions:
 		m.handleSessionList(ctx, userID, token)
+	case common.RouteShowLastReply:
+		m.handleShowLastReply(ctx, userID, token, route.Arg)
+	case common.RouteStopSession:
+		m.handleStopSession(ctx, userID, token, route.Arg)
+	case common.RouteNewSession:
+		m.handleNewSession(ctx, userID, token, route.Arg)
 	case common.RouteNoTarget:
 		m.replyNoTarget(ctx, userID, token)
 	case common.RouteToSession:
 		m.deliverToSession(ctx, userID, token, route)
 	}
+}
+
+// handleShowLastReply resends the target session's last finalized AI reply.
+//
+// The target is the command's argument or the sticky session. A session with no
+// finished reply gets an explicit hint rather than an empty message, and the
+// text is the whole final answer — /show exists because the push preview is
+// truncated.
+//
+// WeChat is a plain-text channel: the template strings carry Markdown emphasis
+// (`**上一条**`), so the composed body goes through stripMarkdownForWeChat. The
+// answer itself is capped by truncateForWeChat, which is the channel's
+// single-message ceiling (~2000 runes), not an arbitrary preview budget.
+func (m *Manager) handleShowLastReply(ctx context.Context, userID, token, arg string) {
+	if sessionMessenger == nil {
+		_ = m.SendText(ctx, userID, common.T("PushSessionServiceUnavailable"), token)
+		return
+	}
+
+	sessionID, title, err := common.ResolveCommandTarget(sessionMessenger, arg, m.lastSessionID(userID))
+	if err != nil {
+		slog.Warn("wechat: show target resolve failed", "error", err, "arg", arg)
+		_ = m.SendText(ctx, userID, err.Error(), token)
+		return
+	}
+
+	label := common.FormatSessionLabel(sessionID, title)
+	// Sample the running state BEFORE the read so the note and the text describe
+	// the same moment (mirrors the DingTalk/Feishu handlers).
+	running := sessionMessenger.IsSessionRunning(sessionID)
+	text, ok, err := sessionMessenger.LastAssistantReply(sessionID)
+	if err != nil {
+		slog.Warn("wechat: read last reply failed", "error", err, "session_id", sessionID)
+		_ = m.SendText(ctx, userID, common.T("PushSessionUnavailable"), token)
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString(common.T("PushShowSessionLabel", map[string]any{common.TemplateLabel: label}) + "\n\n")
+	if ok && running {
+		// The streaming row is deliberately excluded, so the text below belongs
+		// to the PREVIOUS turn; without this note the user reads it as the answer
+		// to the question they just asked.
+		sb.WriteString(common.T("PushShowRunning") + "\n\n")
+	}
+	if !ok {
+		sb.WriteString(common.T("PushShowEmpty"))
+	} else {
+		sb.WriteString(truncateForWeChat(text))
+	}
+	_ = m.SendText(ctx, userID, stripMarkdownForWeChat(sb.String()), token)
+}
+
+// handleStopSession stops the target session and drops its queue.
+//
+// The reply distinguishes "was running" from "already idle": a silent success on
+// an idle session looks identical to a failed cancel, and the cleared count is
+// the only evidence the queue was touched.
+func (m *Manager) handleStopSession(ctx context.Context, userID, token, arg string) {
+	if sessionMessenger == nil {
+		_ = m.SendText(ctx, userID, common.T("PushSessionServiceUnavailable"), token)
+		return
+	}
+
+	sessionID, title, err := common.ResolveCommandTarget(sessionMessenger, arg, m.lastSessionID(userID))
+	if err != nil {
+		slog.Warn("wechat: stop target resolve failed", "error", err, "arg", arg)
+		_ = m.SendText(ctx, userID, err.Error(), token)
+		return
+	}
+
+	wasRunning, cleared, err := sessionMessenger.StopAndClearSession(sessionID)
+	if err != nil {
+		slog.Warn("wechat: stop session failed", "error", err, "session_id", sessionID)
+		_ = m.SendText(ctx, userID, err.Error(), token)
+		return
+	}
+
+	key := "PushStoppedIdle"
+	if wasRunning {
+		key = "PushStoppedRunning"
+	}
+	body := common.T(key, map[string]any{
+		common.TemplateLabel: common.FormatSessionLabel(sessionID, title),
+		common.TemplateCount: cleared,
+	})
+	_ = m.SendText(ctx, userID, stripMarkdownForWeChat(body), token)
+}
+
+// handleNewSession renders the project list for a bare "/new", or creates an
+// empty session in the selected project and makes it the sticky target.
+func (m *Manager) handleNewSession(ctx context.Context, userID, token, arg string) {
+	if sessionMessenger == nil {
+		_ = m.SendText(ctx, userID, common.T("PushSessionServiceUnavailable"), token)
+		return
+	}
+
+	projects, err := sessionMessenger.ListProjects()
+	if err != nil {
+		slog.Warn("wechat: list projects failed", "error", err)
+		_ = m.SendText(ctx, userID, common.T("PushNewListFailed"), token)
+		return
+	}
+
+	if strings.TrimSpace(arg) == "" {
+		_ = m.SendText(ctx, userID, stripMarkdownForWeChat(common.RenderProjectList(projects)), token)
+		return
+	}
+
+	path, ref, err := common.SelectProject(projects, arg)
+	if err != nil {
+		slog.Warn("wechat: project selector failed", "error", err, "arg", arg)
+		_ = m.SendText(ctx, userID, err.Error(), token)
+		return
+	}
+
+	sessionID, _, err := sessionMessenger.CreateSessionInProject(path)
+	if err != nil {
+		slog.Warn("wechat: create session failed", "error", err, "path", path)
+		_ = m.SendText(ctx, userID, err.Error(), token)
+		return
+	}
+	// Only a successful create moves the sticky target, mirroring deliverToSession.
+	m.rememberSession(userID, sessionID)
+
+	body := common.T("PushNewCreated", map[string]any{
+		common.TemplateProject: path,
+		common.TemplateID:      common.ShortSessionID(sessionID),
+	})
+	if !ref.Exists {
+		body += "\n\n" + common.T("PushNewProjectMissingDir")
+	}
+	_ = m.SendText(ctx, userID, stripMarkdownForWeChat(body), token)
 }
 
 // deliverToSession resolves the route's target, sends the message, then records

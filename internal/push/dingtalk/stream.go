@@ -149,6 +149,12 @@ func (m *Manager) handleIncomingText(ctx context.Context, data *chatbot.BotCallb
 	switch route.Kind {
 	case common.RouteListSessions:
 		m.handleSessionList(ctx, data)
+	case common.RouteShowLastReply:
+		m.handleShowLastReply(ctx, data, staffID, route.Arg)
+	case common.RouteStopSession:
+		m.handleStopSession(ctx, data, staffID, route.Arg)
+	case common.RouteNewSession:
+		m.handleNewSession(ctx, data, staffID, route.Arg)
 	case common.RouteNoTarget:
 		m.replyNoTarget(ctx, data)
 	case common.RouteToSession:
@@ -176,6 +182,17 @@ func (m *Manager) handleIncomingWithMedia(ctx context.Context, data *chatbot.Bot
 	}
 	if route.Kind == common.RouteNoTarget {
 		m.replyNoTarget(ctx, data)
+		return
+	}
+	// A slash command is not addressed to a session, and Route.Message is empty
+	// for one — falling through would post an empty message carrying the
+	// attachments and silently drop the command word. Refuse instead of guessing
+	// which half the user wanted.
+	if route.Kind.IsCommand() {
+		slog.Info("dingtalk: command cannot carry attachments",
+			"staff_id", staffID, "command", route.Kind.CommandWord(), "media", len(media))
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook,
+			[]byte(common.CommandWithAttachmentText(route.Kind.CommandWord())))
 		return
 	}
 
@@ -292,7 +309,7 @@ func (m *Manager) downloadFailureText(out downloadOutcome) string {
 		return common.T("PushFileTooLarge", map[string]any{"MaxMB": common.AttachmentMaxBytes() / (1024 * 1024)})
 	}
 	if out.failed > 1 {
-		return common.T("PushFilesDownloadFailed", map[string]any{"Count": out.failed})
+		return common.T("PushFilesDownloadFailed", map[string]any{common.TemplateCount: out.failed})
 	}
 	return common.T("PushFileDownloadFailed")
 }
@@ -303,12 +320,12 @@ func (m *Manager) attachmentSentMarkdown(sessionID, sessionTitle string, sent in
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "### %s\n%s",
 		common.T("PushFileSent"),
-		common.T("PushSentToSessionBold", map[string]any{"Label": common.FormatSessionLabel(sessionID, sessionTitle)}))
+		common.T("PushSentToSessionBold", map[string]any{common.TemplateLabel: common.FormatSessionLabel(sessionID, sessionTitle)}))
 	if sent > 1 {
-		fmt.Fprintf(&sb, "%s", common.T("PushFilesCount", map[string]any{"Count": sent}))
+		fmt.Fprintf(&sb, "%s", common.T("PushFilesCount", map[string]any{common.TemplateCount: sent}))
 	}
 	if out.failed > 0 {
-		fmt.Fprintf(&sb, "\n\n%s", common.T("PushPartialDownloadFailed", map[string]any{"Count": out.failed}))
+		fmt.Fprintf(&sb, "\n\n%s", common.T("PushPartialDownloadFailed", map[string]any{common.TemplateCount: out.failed}))
 	}
 	if out.truncated {
 		fmt.Fprintf(&sb, "\n\n%s", common.T("PushAttachmentsTruncated", map[string]any{
@@ -362,7 +379,7 @@ func (m *Manager) deliverToSession(ctx context.Context, data *chatbot.BotCallbac
 		[]byte(common.T("PushMessageSent")),
 		[]byte(fmt.Sprintf("### %s\n%s",
 			common.T("PushMessageSent"),
-			common.T("PushSentToSessionBold", map[string]any{"Label": sessionLabel}))))
+			common.T("PushSentToSessionBold", map[string]any{common.TemplateLabel: sessionLabel}))))
 }
 
 // lastSessionID reads the user's sticky target, treating any failure as "none
@@ -390,6 +407,144 @@ func (m *Manager) rememberSession(staffID, sessionID string) {
 	if err := db.SetLastSessionID(staffID, sessionID); err != nil {
 		slog.Warn("dingtalk: record last session id failed", "error", err, "staff_id", staffID)
 	}
+}
+
+// handleShowLastReply resends the target session's last finalized AI reply.
+//
+// The target is the command's argument or the sticky session; when neither
+// exists the user gets the same "/ls" hint as any other untargeted message. A
+// session with no finished reply gets an explicit hint rather than an empty
+// message.
+func (m *Manager) handleShowLastReply(ctx context.Context, data *chatbot.BotCallbackDataModel, staffID, arg string) {
+	replier := chatbot.NewChatbotReplier()
+	if sessionMessenger == nil {
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(common.T("PushSessionServiceUnavailable")))
+		return
+	}
+
+	sessionID, title, err := common.ResolveCommandTarget(sessionMessenger, arg, m.lastSessionID(staffID))
+	if err != nil {
+		slog.Warn("dingtalk: show target resolve failed", "error", err, "arg", arg)
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(err.Error()))
+		return
+	}
+
+	label := common.FormatSessionLabel(sessionID, title)
+	// Sample the running state BEFORE the read so the note and the text describe
+	// the same moment: a turn that finishes in between would otherwise be
+	// labeled "still running" while the text already includes it.
+	running := sessionMessenger.IsSessionRunning(sessionID)
+	text, ok, err := sessionMessenger.LastAssistantReply(sessionID)
+	if err != nil {
+		slog.Warn("dingtalk: read last reply failed", "error", err, "session_id", sessionID)
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(common.T("PushSessionUnavailable")))
+		return
+	}
+
+	body := "### " + common.T("PushShowTitle") + "\n" +
+		common.T("PushShowSessionLabel", map[string]any{common.TemplateLabel: label}) + "\n\n"
+	if ok && running {
+		// The streaming row is deliberately excluded, so the text below belongs
+		// to the PREVIOUS turn. Without this note the user reads it as the answer
+		// to the question they just asked.
+		body += common.T("PushShowRunning") + "\n\n"
+	}
+	if !ok {
+		body += common.T("PushShowEmpty")
+	} else {
+		body += truncateForDingTalk(text)
+	}
+	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
+		[]byte(common.T("PushShowTitle")), []byte(body))
+}
+
+// handleStopSession stops the target session and drops its queue.
+//
+// The reply distinguishes "was running" from "already idle": a silent success
+// on an idle session looks identical to a failed cancel, and the cleared count
+// is the only evidence the queue was touched.
+func (m *Manager) handleStopSession(ctx context.Context, data *chatbot.BotCallbackDataModel, staffID, arg string) {
+	replier := chatbot.NewChatbotReplier()
+	if sessionMessenger == nil {
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(common.T("PushSessionServiceUnavailable")))
+		return
+	}
+
+	sessionID, title, err := common.ResolveCommandTarget(sessionMessenger, arg, m.lastSessionID(staffID))
+	if err != nil {
+		slog.Warn("dingtalk: stop target resolve failed", "error", err, "arg", arg)
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(err.Error()))
+		return
+	}
+
+	wasRunning, cleared, err := sessionMessenger.StopAndClearSession(sessionID)
+	if err != nil {
+		slog.Warn("dingtalk: stop session failed", "error", err, "session_id", sessionID)
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(err.Error()))
+		return
+	}
+
+	key := "PushStoppedIdle"
+	if wasRunning {
+		key = "PushStoppedRunning"
+	}
+	body := "### " + common.T("PushStoppedTitle") + "\n" +
+		common.T(key, map[string]any{
+			common.TemplateLabel: common.FormatSessionLabel(sessionID, title),
+			common.TemplateCount: cleared,
+		})
+	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
+		[]byte(common.T("PushStoppedTitle")), []byte(body))
+}
+
+// handleNewSession renders the project list for a bare "/new", or creates an
+// empty session in the selected project and makes it the sticky target.
+func (m *Manager) handleNewSession(ctx context.Context, data *chatbot.BotCallbackDataModel, staffID, arg string) {
+	replier := chatbot.NewChatbotReplier()
+	if sessionMessenger == nil {
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(common.T("PushSessionServiceUnavailable")))
+		return
+	}
+
+	projects, err := sessionMessenger.ListProjects()
+	if err != nil {
+		slog.Warn("dingtalk: list projects failed", "error", err)
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(common.T("PushNewListFailed")))
+		return
+	}
+
+	if strings.TrimSpace(arg) == "" {
+		_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
+			[]byte(common.T("PushNewTitle")), []byte(common.RenderProjectList(projects)))
+		return
+	}
+
+	path, ref, err := common.SelectProject(projects, arg)
+	if err != nil {
+		slog.Warn("dingtalk: project selector failed", "error", err, "arg", arg)
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(err.Error()))
+		return
+	}
+
+	sessionID, _, err := sessionMessenger.CreateSessionInProject(path)
+	if err != nil {
+		slog.Warn("dingtalk: create session failed", "error", err, "path", path)
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(err.Error()))
+		return
+	}
+	// Only a successful create moves the sticky target, mirroring deliverToSession.
+	m.rememberSession(staffID, sessionID)
+
+	body := "### " + common.T("PushNewTitle") + "\n" +
+		common.T("PushNewCreated", map[string]any{
+			common.TemplateProject: path,
+			common.TemplateID:      common.ShortSessionID(sessionID),
+		})
+	if !ref.Exists {
+		body += "\n\n" + common.T("PushNewProjectMissingDir")
+	}
+	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
+		[]byte(common.T("PushNewTitle")), []byte(body))
 }
 
 // replyNoTarget tells the user how to pick a session. It is the fallback when

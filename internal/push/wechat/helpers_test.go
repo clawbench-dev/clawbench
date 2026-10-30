@@ -92,6 +92,21 @@ type mockSessionMessenger struct {
 	sentSessionID string
 	sentMessage   string
 	sentFiles     []model.FileEntry
+
+	// /show
+	lastReply    string
+	lastReplyOK  bool
+	lastReplyErr error
+	// /stop
+	stopRunning bool
+	stopCleared int
+	stopErr     error
+	// /new
+	projects    []common.ProjectRef
+	projectsErr error
+	createdID   string
+	createErr   error
+	createPath  string
 }
 
 func (m *mockSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]common.SessionInfo, error) {
@@ -135,6 +150,23 @@ func (m *mockSessionMessenger) SendMessageToSession(sessionID, message string, f
 	m.sentMessage = message
 	m.sentFiles = files
 	return nil
+}
+
+func (m *mockSessionMessenger) LastAssistantReply(string) (string, bool, error) {
+	return m.lastReply, m.lastReplyOK, m.lastReplyErr
+}
+
+func (m *mockSessionMessenger) StopAndClearSession(string) (bool, int, error) {
+	return m.stopRunning, m.stopCleared, m.stopErr
+}
+
+func (m *mockSessionMessenger) ListProjects() ([]common.ProjectRef, error) {
+	return m.projects, m.projectsErr
+}
+
+func (m *mockSessionMessenger) CreateSessionInProject(path string) (string, string, error) {
+	m.createPath = path
+	return m.createdID, "T", m.createErr
 }
 
 // setupPushMode sets push_mode for one test and restores it afterwards.

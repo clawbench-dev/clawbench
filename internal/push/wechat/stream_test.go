@@ -2,6 +2,7 @@ package wechat
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -329,4 +330,220 @@ func TestHandleIncomingText_NoTargetReplies(t *testing.T) {
 	if got != common.T("PushNoSessionSelected") {
 		t.Errorf("reply = %q, want the /ls hint", got)
 	}
+}
+
+// ── /show /stop /new ────────────────────────────────────────────────────────
+//
+// These three commands used to be ordinary text on this channel: the router
+// grew the routes and WeChat had no branch for them, so without handlers a
+// message that used to reach the model would vanish instead.
+
+// installMessenger swaps the package-level messenger for one test.
+func installMessenger(t *testing.T, m *mockSessionMessenger) *mockDB {
+	t.Helper()
+	origDB := db
+	t.Cleanup(func() { db = origDB })
+	mock := &mockDB{}
+	db = mock
+
+	origMessenger := sessionMessenger
+	t.Cleanup(func() { sessionMessenger = origMessenger })
+	sessionMessenger = m
+	return mock
+}
+
+func TestHandleShowLastReply_ReturnsAnswerWithRunningNote(t *testing.T) {
+	messenger := &mockSessionMessenger{
+		sessions:    []common.SessionInfo{{ID: "abcdef1234567890", Title: "T"}},
+		running:     map[string]bool{"abcdef1234567890": true},
+		lastReply:   "the full answer",
+		lastReplyOK: true,
+	}
+	mock := installMessenger(t, messenger)
+	mock.lastSessionID = "abcdef1234567890"
+
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	mgr.handleIncomingText(context.Background(), "u1", "ctx", "/show")
+
+	require.Len(t, *bodies, 1)
+	got := textOf((*bodies)[0])
+	assert.Contains(t, got, "the full answer")
+	// The text belongs to the PREVIOUS turn (the streaming row is excluded), so
+	// reading it as the answer to the question just asked would be wrong.
+	// WeChat is plain text: the template's `**上一条**` must arrive without the
+	// asterisks, which is what stripMarkdownForWeChat is for.
+	assert.Contains(t, got, stripMarkdownForWeChat(common.T("PushShowRunning")),
+		"a running turn must be called out")
+}
+
+func TestHandleShowLastReply_EmptyReplySaysSo(t *testing.T) {
+	messenger := &mockSessionMessenger{
+		sessions:    []common.SessionInfo{{ID: "abcdef1234567890", Title: "T"}},
+		lastReplyOK: false,
+	}
+	mock := installMessenger(t, messenger)
+	mock.lastSessionID = "abcdef1234567890"
+
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	mgr.handleIncomingText(context.Background(), "u1", "ctx", "/show")
+
+	require.Len(t, *bodies, 1)
+	assert.Contains(t, textOf((*bodies)[0]), common.T("PushShowEmpty"))
+}
+
+// A single-character argument must not resolve to some arbitrary session: /show
+// can read a conversation's whole answer, so the target needs the same shape
+// check as @短ID.
+func TestHandleShowLastReply_RejectsMalformedArgument(t *testing.T) {
+	messenger := &mockSessionMessenger{
+		sessions: []common.SessionInfo{{ID: "abcdef1234567890", Title: "T"}},
+	}
+	installMessenger(t, messenger)
+
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	mgr.handleIncomingText(context.Background(), "u1", "ctx", "/show a")
+
+	require.Len(t, *bodies, 1)
+	got := textOf((*bodies)[0])
+	assert.NotContains(t, got, "the full answer")
+	assert.Contains(t, got, common.T("PushInvalidSessionID", map[string]any{"ID": "a"}))
+}
+
+func TestHandleStopSession_ReportsClearedCount(t *testing.T) {
+	messenger := &mockSessionMessenger{
+		sessions:    []common.SessionInfo{{ID: "abcdef1234567890", Title: "T"}},
+		stopRunning: true,
+		stopCleared: 3,
+	}
+	mock := installMessenger(t, messenger)
+	mock.lastSessionID = "abcdef1234567890"
+
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	mgr.handleIncomingText(context.Background(), "u1", "ctx", "/stop")
+
+	require.Len(t, *bodies, 1)
+	got := textOf((*bodies)[0])
+	assert.Contains(t, got, "3", "the cleared count is the only evidence the queue was touched")
+	want := common.T("PushStoppedRunning", map[string]any{
+		common.TemplateLabel: common.FormatSessionLabel("abcdef1234567890", "T"),
+		common.TemplateCount: 3,
+	})
+	assert.Equal(t, stripMarkdownForWeChat(want), got)
+}
+
+func TestHandleStopSession_IdleIsDistinctFromFailure(t *testing.T) {
+	messenger := &mockSessionMessenger{
+		sessions:    []common.SessionInfo{{ID: "abcdef1234567890", Title: "T"}},
+		stopRunning: false,
+	}
+	mock := installMessenger(t, messenger)
+	mock.lastSessionID = "abcdef1234567890"
+
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	mgr.handleIncomingText(context.Background(), "u1", "ctx", "/stop")
+
+	require.Len(t, *bodies, 1)
+	// Idle and failed must not look the same: this reply is the only signal that
+	// nothing was running.
+	want := common.T("PushStoppedIdle", map[string]any{
+		common.TemplateLabel: common.FormatSessionLabel("abcdef1234567890", "T"),
+		common.TemplateCount: 0,
+	})
+	assert.Equal(t, stripMarkdownForWeChat(want), textOf((*bodies)[0]))
+}
+
+func TestHandleNewSession_ListsProjectsWhenNoArgument(t *testing.T) {
+	messenger := &mockSessionMessenger{
+		projects: []common.ProjectRef{
+			{Index: 1, Path: "/proj/a", Exists: true},
+			{Index: 2, Path: "/proj/b", Exists: true},
+		},
+	}
+	installMessenger(t, messenger)
+
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	mgr.handleIncomingText(context.Background(), "u1", "ctx", "/new")
+
+	require.Len(t, *bodies, 1)
+	got := textOf((*bodies)[0])
+	assert.Contains(t, got, "/proj/a")
+	assert.Contains(t, got, "/proj/b")
+	assert.Empty(t, messenger.createPath, "a bare /new must not create anything")
+}
+
+func TestHandleNewSession_CreatesAndMovesStickyTarget(t *testing.T) {
+	messenger := &mockSessionMessenger{
+		projects:  []common.ProjectRef{{Index: 1, Path: "/proj/a", Exists: true}},
+		createdID: "new-session-id",
+	}
+	mock := installMessenger(t, messenger)
+
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	mgr.handleIncomingText(context.Background(), "u1", "ctx", "/new 1")
+
+	require.Len(t, *bodies, 1)
+	assert.Equal(t, "/proj/a", messenger.createPath)
+	assert.Equal(t, "new-session-id", mock.lastSessionID,
+		"a successful create must become the sticky target")
+}
+
+func TestHandleNewSession_FailedCreateKeepsStickyTarget(t *testing.T) {
+	messenger := &mockSessionMessenger{
+		projects:  []common.ProjectRef{{Index: 1, Path: "/proj/a", Exists: true}},
+		createErr: errors.New("create failed"),
+	}
+	mock := installMessenger(t, messenger)
+	mock.lastSessionID = "previous"
+
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	mgr.handleIncomingText(context.Background(), "u1", "ctx", "/new 1")
+
+	require.Len(t, *bodies, 1)
+	assert.Equal(t, "previous", mock.lastSessionID,
+		"a failed create must not move the target")
+}
+
+// A command carries no message text, so attachments would be delivered with an
+// empty body and the command word would be lost. Refuse instead of sending.
+func TestHandleIncomingWithMedia_CommandWithAttachmentIsRefused(t *testing.T) {
+	messenger := &mockSessionMessenger{
+		sessions: []common.SessionInfo{{ID: "abcdef1234567890", Title: "T"}},
+	}
+	installMessenger(t, messenger)
+
+	mgr, bodies := newSendServer(t, `{"ret":0}`)
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	mgr.handleIncomingWithMedia(context.Background(), "u1", "ctx", "/new 1",
+		[]mediaRef{{kind: "image"}})
+
+	require.Len(t, *bodies, 1)
+	assert.Contains(t, textOf((*bodies)[0]), "/new")
+	assert.Empty(t, messenger.sentSessionID, "nothing may be sent to a session")
+	assert.Empty(t, messenger.createPath, "the command must not run either")
 }

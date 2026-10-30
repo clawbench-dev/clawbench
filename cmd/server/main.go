@@ -217,6 +217,22 @@ func (dingtalkSessionMessenger) SendMessageToSession(sessionID, message string, 
 	return service.SendMessageToSessionFromDingTalk(sessionID, message, files)
 }
 
+func (dingtalkSessionMessenger) LastAssistantReply(sessionID string) (string, bool, error) {
+	return service.GetLastAssistantReply(sessionID)
+}
+
+func (dingtalkSessionMessenger) StopAndClearSession(sessionID string) (bool, int, error) {
+	return service.StopAndClearSession(sessionID)
+}
+
+func (dingtalkSessionMessenger) ListProjects() ([]common.ProjectRef, error) {
+	return listProjectsForPush()
+}
+
+func (dingtalkSessionMessenger) CreateSessionInProject(projectPath string) (string, string, error) {
+	return service.CreatePushSession(projectPath)
+}
+
 // feishuDBAdapter bridges the feishu package's DB interface to service package
 // functions, avoiding import cycles between service → feishu → service.
 type feishuDBAdapter struct{}
@@ -327,6 +343,40 @@ func (feishuSessionMessenger) GetSessionInfo(sessionID string) (common.SessionIn
 
 func (feishuSessionMessenger) SendMessageToSession(sessionID, message string, files []model.FileEntry) error {
 	return service.SendMessageToSessionFromFeishu(sessionID, message, files)
+}
+
+func (feishuSessionMessenger) LastAssistantReply(sessionID string) (string, bool, error) {
+	return service.GetLastAssistantReply(sessionID)
+}
+
+func (feishuSessionMessenger) StopAndClearSession(sessionID string) (bool, int, error) {
+	return service.StopAndClearSession(sessionID)
+}
+
+func (feishuSessionMessenger) ListProjects() ([]common.ProjectRef, error) {
+	return listProjectsForPush()
+}
+
+func (feishuSessionMessenger) CreateSessionInProject(projectPath string) (string, string, error) {
+	return service.CreatePushSession(projectPath)
+}
+
+// listProjectsForPush adapts the service-level project list to the push
+// package's type. Shared by both IM backends so their /new lists cannot drift.
+func listProjectsForPush() ([]common.ProjectRef, error) {
+	refs, err := service.ListProjectsForPush()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]common.ProjectRef, len(refs))
+	for i, r := range refs {
+		out[i] = common.ProjectRef{
+			Index:  r.Index,
+			Path:   r.Path,
+			Exists: r.Exists,
+		}
+	}
+	return out, nil
 }
 
 // wechatDBAdapter bridges the wechat package's DB interface to service package
@@ -447,6 +497,22 @@ func (wechatSessionMessenger) GetSessionInfo(sessionID string) (common.SessionIn
 
 func (wechatSessionMessenger) SendMessageToSession(sessionID, message string, files []model.FileEntry) error {
 	return service.SendMessageToSessionFromWeChat(sessionID, message, files)
+}
+
+func (wechatSessionMessenger) LastAssistantReply(sessionID string) (string, bool, error) {
+	return service.GetLastAssistantReply(sessionID)
+}
+
+func (wechatSessionMessenger) StopAndClearSession(sessionID string) (bool, int, error) {
+	return service.StopAndClearSession(sessionID)
+}
+
+func (wechatSessionMessenger) ListProjects() ([]common.ProjectRef, error) {
+	return listProjectsForPush()
+}
+
+func (wechatSessionMessenger) CreateSessionInProject(projectPath string) (string, string, error) {
+	return service.CreatePushSession(projectPath)
 }
 
 // wechatLoginAdapter adapts wechat.LoginService to the handler's view types,

@@ -2,6 +2,7 @@ package service
 
 import (
 	"log/slog"
+	"strings"
 	"sync"
 
 	"clawbench/internal/grouprouting"
@@ -32,20 +33,66 @@ func AssistantConclusion(sessionID string, blocks []model.ContentBlock) string {
 // already resolved. Callers that must resolve the policy BEFORE holding a read
 // cursor (GetConversationIndex) use this so the lookup is not repeated per row.
 func assistantConclusionWithPolicy(isGroup bool, blocks []model.ContentBlock) string {
-	text := summarize.ExtractLastAnswerFromBlocks(blocks)
-	if isGroup {
-		text = grouprouting.StripProtocolTags(text)
-	} else {
-		// Single chat: strip ONLY the auto-cruise completion signal. A single
-		// chat is not parsed for mention tags (doing so re-opened regression
-		// 58879, where a reply DISCUSSING the syntax was truncated), but the
-		// self-closing, content-free <clawbench-goal-satisfied/> is emitted by
-		// single-chat cruise and must not reach the summary / preview / TTS /
-		// RAG text. The frontend strips it for the bubble; this is the backend
-		// boundary for every text that leaves the device.
-		text = grouprouting.StripGoalSatisfied(text)
+	return applyProtocolPolicy(isGroup, summarize.ExtractLastAnswerFromBlocks(blocks))
+}
+
+// AssistantFullAnswer returns the assistant reply's COMPLETE final answer,
+// applying the same protocol policy as AssistantConclusion.
+//
+// It differs from AssistantConclusion in one way: every text block after the
+// last tool_use is joined, not just the first one. A turn can be split across
+// several adjacent text blocks (the accumulator starts a new block after each
+// thinking/tool boundary), so taking only the first returns a prefix of the
+// answer with no indication that anything was cut. AssistantConclusion keeps its
+// "first block" contract because a summary is meant to be short; this one is for
+// callers that promise the user the WHOLE reply (the /show command).
+//
+// Falls back to AssistantConclusion when nothing trails the last tool_use (the
+// AI answered and then called a terminal tool), so both paths agree there.
+func AssistantFullAnswer(sessionID string, blocks []model.ContentBlock) string {
+	isGroup := IsGroupSession(sessionID)
+	if text := trailingAnswerText(blocks); text != "" {
+		return applyProtocolPolicy(isGroup, text)
 	}
-	return text
+	return assistantConclusionWithPolicy(isGroup, blocks)
+}
+
+// trailingAnswerText joins every non-blank text block after the last tool_use.
+// Returns "" when the blocks carry no tool_use or nothing follows it, which is
+// the signal to fall back to the conclusion extractor.
+func trailingAnswerText(blocks []model.ContentBlock) string {
+	lastToolIdx := -1
+	for i, b := range blocks {
+		if b.Type == eventTypeToolUse {
+			lastToolIdx = i
+		}
+	}
+	if lastToolIdx < 0 {
+		return ""
+	}
+	var parts []string
+	for i := lastToolIdx + 1; i < len(blocks); i++ {
+		if blocks[i].Type == contentKeyText && strings.TrimSpace(blocks[i].Text) != "" {
+			parts = append(parts, blocks[i].Text)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// applyProtocolPolicy strips protocol tags according to the session kind. This
+// is the single place the policy lives; every extractor above routes through it.
+func applyProtocolPolicy(isGroup bool, text string) string {
+	if isGroup {
+		return grouprouting.StripProtocolTags(text)
+	}
+	// Single chat: strip ONLY the auto-cruise completion signal. A single chat is
+	// not parsed for mention tags (doing so re-opened regression 58879, where a
+	// reply DISCUSSING the syntax was truncated), but the self-closing,
+	// content-free <clawbench-goal-satisfied/> is emitted by single-chat cruise
+	// and must not reach the summary / preview / TTS / RAG text. The frontend
+	// strips it for the bubble; this is the backend boundary for every text that
+	// leaves the device.
+	return grouprouting.StripGoalSatisfied(text)
 }
 
 // summaryInFlight tracks chat-message IDs currently being summarized by the

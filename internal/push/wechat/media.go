@@ -40,6 +40,16 @@ func (m *Manager) handleIncomingWithMedia(ctx context.Context, userID, token, te
 		return
 	}
 
+	// A command never routes to a session (Route.Message is empty), so sending
+	// the attachments on would deliver them with no text — and silently drop the
+	// command word. Tell the user to split the request instead.
+	if route.Kind.IsCommand() {
+		slog.Info("wechat: command cannot carry attachments",
+			"user_id", userID, "command", route.Kind.CommandWord(), "media", len(media))
+		_ = m.SendText(ctx, userID, common.CommandWithAttachmentText(route.Kind.CommandWord()), token)
+		return
+	}
+
 	if sessionMessenger == nil {
 		slog.Warn("wechat: no session messenger for attachment")
 		_ = m.SendText(ctx, userID, common.T("PushSessionServiceUnavailable"), token)

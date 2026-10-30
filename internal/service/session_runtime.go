@@ -910,7 +910,7 @@ func CancelSession(sessionID string) bool {
 		_ = ClearQueuedMessages(sessionID)
 		if len(queueIDs) > 0 {
 			ws.EmitToSession(sessionID, ai.StreamEvent{
-				Type: "queue_cancel",
+				Type: eventTypeQueueCancel,
 				QueueEvent: &ai.QueueEventData{
 					SessionID: sessionID,
 					QueueIDs:  queueIDs,
