@@ -202,6 +202,15 @@ func CreatePushSession(projectPath string) (sessionID, title string, err error) 
 		slog.Warn("push: create session failed", "path", projectPath, "error", err)
 		return "", "", fmt.Errorf("%s", backgroundText("PushNewCreateFailed"))
 	}
+
+	// Every other create entry point answers an HTTP request from the client
+	// that then refreshes its own list. /new has no such client: without this
+	// broadcast the session exists in the DB but a web client keeps showing the
+	// old list until the first turn emits session_update. Reuses the title
+	// event because it already carries exactly the identity the list needs
+	// (session id, title, project path) and already means "a change the client
+	// did not initiate".
+	BroadcastSessionTitleUpdate(sessionID, title)
 	return sessionID, title, nil
 }
 

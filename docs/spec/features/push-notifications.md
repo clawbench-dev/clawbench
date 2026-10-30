@@ -203,6 +203,8 @@ sequenceDiagram
 
 **`/new` 的序号必须稳定**：`ListProjectsForPush` 按路径排序（**不是** `ListAllProjects` 的「最近活跃优先」）。后者会被「创建会话」本身刷新，导致同一条 `/new 2` 在使用后指向另一个项目。
 
+**`/new` 建完要广播**：`CreatePushSession` 成功后调 `BroadcastSessionTitleUpdate`。这是唯一没有「发起方 Web 客户端」的建会话入口——UI 走 HTTP，列表靠自己的响应刷新；IM 建出来的会话若不广播，已打开的网页要等到第一轮结束的 `session_update` 才看到那一行。复用标题事件是因为它的载荷（会话 id + 标题 + 项目路径）正好是列表需要的信息，且语义本就是「客户端没主动发起的变更」。
+
 **粘性目标**存在 `dingtalk_subscribers.last_session_id` / `feishu_subscribers.last_session_id`（`pragma_table_info` 守卫的增量迁移）。空值是正常状态——首次使用、或数据库来自该列存在之前——此时必须回退到提示，而不是替用户猜一个会话。
 
 **附件落盘**（`internal/push/common/attachment.go`）：写入会话所属项目的 `.clawbench/uploads/`，与网页上传端点同目录，因此 AI 提示、文件管理器和附件抽屉都把它们当普通上传处理。

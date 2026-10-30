@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/store"
+	"clawbench/internal/ws"
 )
 
 // setupTestDBForPushCommands installs a minimal in-memory schema carrying only
@@ -933,5 +935,95 @@ func TestListProjectsForPush_QueryFailurePropagates(t *testing.T) {
 	}
 	if _, err := ListProjectsForPush(); err == nil {
 		t.Fatal("expected an error when the projects table is gone")
+	}
+}
+
+// /new is the only create entry point with no web client of its own: the UI
+// creates sessions over HTTP and refreshes its own list from the response. From
+// IM there is no such client, so the broadcast is the ONLY way an already-open
+// session list learns the session exists — without it the row appears only when
+// the first turn ends and emits session_update.
+func TestCreatePushSession_BroadcastsForOpenClients(t *testing.T) {
+	teardown := setupTestDBForPushCommands(t)
+	defer teardown()
+
+	projectPath := "/tmp/push-broadcast"
+	if _, err := store.ProjectIDForPath(projectPath); err != nil {
+		t.Fatalf("register project: %v", err)
+	}
+
+	prevAgents, prevList := model.Agents, model.AgentList
+	defer model.ReplaceAgents(prevAgents, prevList)
+	agent := &model.Agent{ID: "broadcast-agent", Backend: "codebuddy"}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	prevMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(prevMgr)
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "test-client-new-session", "")
+	if sub == nil {
+		t.Fatal("subscribe failed")
+	}
+
+	sid, title, err := CreatePushSession(projectPath)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	var got *ws.SessionTitleUpdateData
+	for _, m := range sub.GetBufferedEvents() {
+		if m.Event != "session_title_update" {
+			continue
+		}
+		d, ok := m.Data.(ws.SessionTitleUpdateData)
+		if !ok {
+			continue
+		}
+		got = &d
+	}
+	if got == nil {
+		t.Fatal("no session_title_update was broadcast for the new session")
+	}
+	if got.SessionID != sid {
+		t.Errorf("session id = %q, want %q", got.SessionID, sid)
+	}
+	if got.Title != title {
+		t.Errorf("title = %q, want %q", got.Title, title)
+	}
+	// The project path is what lets a client filter the new row into the right
+	// list without an extra lookup.
+	if got.ProjectPath != projectPath {
+		t.Errorf("project path = %q, want %q", got.ProjectPath, projectPath)
+	}
+}
+
+// A refused create must not announce a session that does not exist — a list
+// refresh on a phantom id is worse than no refresh.
+func TestCreatePushSession_RefusalDoesNotBroadcast(t *testing.T) {
+	teardown := setupTestDBForPushCommands(t)
+	defer teardown()
+
+	prevMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(prevMgr)
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "test-client-refused", "")
+	if sub == nil {
+		t.Fatal("subscribe failed")
+	}
+
+	if _, _, err := CreatePushSession("/tmp/never-registered"); err == nil {
+		t.Fatal("expected a refusal")
+	}
+
+	for _, m := range sub.GetBufferedEvents() {
+		if m.Event == "session_title_update" {
+			t.Fatalf("refused create broadcast a session event: %+v", m.Data)
+		}
 	}
 }
