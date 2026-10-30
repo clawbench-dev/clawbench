@@ -94,24 +94,14 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 
 	case update.AgentMessageChunk != nil:
 		content := update.AgentMessageChunk.Content
-		// Duplicate delivery guard: a retry re-sends the SAME update object, so
-		// it is the immediately following frame (see acp_dup_chunk.go). Dropped
-		// here, before ANY downstream side effect, so a duplicate can neither
-		// extend the text nor re-open a thinking block.
-		if content.Text != nil && chunkDedupEnabled(backendID) && conn != nil {
-			msgID := acpTopLevelMessageID(update.AgentMessageChunk.MessageId)
-			if msgID == "" {
-				msgID = metaString(update.AgentMessageChunk.Meta[metaKeyCodeBuddyMessageID])
-			}
-			if conn.isDuplicateChunk(chunkIdentity(
-				conn.clawbenchSID, "agent_message_chunk", msgID,
-				update.AgentMessageChunk.Meta, content.Text.Text)) {
-				slog.Warn("acp: dropping duplicate agent_message_chunk",
-					slog.String("clawbench_sid", conn.clawbenchSID),
-					slog.String("message_id", msgID))
-				return
-			}
-		}
+		// No duplicate-frame guard here on purpose. CodeBuddy can re-send a
+		// member frame after its 5 s send timeout (AcpTeamBridge), but from the
+		// ACP wire a retry and a legitimate repeat of identical text are
+		// byte-identical — same messageId, same _meta.timestamp, same text. Any
+		// content-based rule deletes real output (a GFM table's `|---|---|`
+		// row is the same fragment five times), so the wire is left untouched
+		// and duplicates are handled where they can be told apart.
+		// See docs/dev/acp_dup_chunk_port.md for the three failed iterations.
 		// When the agent transitions from thinking to content output, emit
 		// thinking_done so the frontend can stop the thinking spinner immediately.
 		// Carry the chunk's parent so a sub-agent's completion marks ITS OWN
@@ -180,21 +170,6 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 	case update.AgentThoughtChunk != nil:
 		content := update.AgentThoughtChunk.Content
 		if content.Text != nil {
-			// Same guard as agent_message_chunk.
-			if chunkDedupEnabled(backendID) && conn != nil {
-				msgID := acpTopLevelMessageID(update.AgentThoughtChunk.MessageId)
-				if msgID == "" {
-					msgID = metaString(update.AgentThoughtChunk.Meta[metaKeyCodeBuddyMessageID])
-				}
-				if conn.isDuplicateChunk(chunkIdentity(
-					conn.clawbenchSID, "agent_thought_chunk", msgID,
-					update.AgentThoughtChunk.Meta, content.Text.Text)) {
-					slog.Warn("acp: dropping duplicate agent_thought_chunk",
-						slog.String("clawbench_sid", conn.clawbenchSID),
-						slog.String("message_id", msgID))
-					return
-				}
-			}
 			parentID := memberParentOrParent(backendID, conn, update.AgentThoughtChunk.Meta)
 			thinkMember := extractTeamMemberName(update.AgentThoughtChunk.Meta)
 			forwardACPEvent(ch, StreamEvent{Type: "thinking", Content: content.Text.Text, ParentToolCallID: parentID, MemberName: thinkMember, MemberColor: memberColorByName(conn, thinkMember)})

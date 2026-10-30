@@ -1061,12 +1061,6 @@ type ACPConn struct {
 	// map is what lets the mapper backfill ParentToolCallID and reuse the
 	// existing sub-agent grouping. Guarded by stateMu.
 	memberToolCallIDs map[string]string
-	// lastChunkKey is the identity of the most recently ACCEPTED model-output
-	// chunk, used to recognize a retry: CodeBuddy's team bridge re-sends the
-	// same update object synchronously, so a duplicate is always the very next
-	// frame. See acp_dup_chunk.go for why adjacency (not elapsed time) is the
-	// discriminator. Guarded by stateMu.
-	lastChunkKey string
 
 	// currentSelections is a generalized map for tracking the current
 	// selection of any category (mode, thought_level, model, etc.).

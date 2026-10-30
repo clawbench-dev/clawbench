@@ -1,13 +1,63 @@
-# CodeBuddy chunk 去重：按「紧邻」判重（2026-10-29）
+# CodeBuddy chunk 去重：三代尝试与最终移除（2026-10-22 → 2026-10-30）
 
-## 结论
+## 最终结论
 
-ClawBench 对 CodeBuddy 的模型输出帧做去重，判据是**紧邻**：一个 chunk 与
-**上一帧被接受的 chunk** 完全相同才算重试。不用时间窗。
+**已移除。ACP wire 层一律透传，不做任何帧级内容去重。**
 
-只对 `codebuddy` 生效；其他后端没有这个问题，不走这条路径。
+`internal/ai/acp_dup_chunk.go` 与其测试已删除，`acp_events.go` 两处接入、
+`acp_pool.go` 的 `lastChunkKey` 字段、`acp_conn_prompt.go` 的每回合清空一并移除。
 
-## 三次迭代的错误
+原因不是「某一版判据没调好」，而是**这个判据在 ACP 客户端这一层不存在**：
+序列化之后，「重试」与「模型确实又输出了相同文本」在字节上完全一致
+（同 `messageId`、同 `_meta.timestamp`、同 `text`）。三代实现都在文本维度上找判据，
+所以三代都在删真实内容。
+
+## 为什么上游能去重，客户端不能
+
+CodeBuddy 的 `publishSessionUpdateToBus`（`dist/codebuddy.js`）有两层：
+
+```js
+let eB = new WeakMap, eS = new Map, eQ = 5e3;
+function wasPublishedRecently(u){ const t = eB.get(u); return t !== undefined && Date.now()-t < eQ }
+function chunkPublicationKey(sid, u){ /* sid + variant + messageId + ts + reqId + parentId + text */ }
+function publishSessionUpdateToBus(sid, u){
+  if (wasPublishedRecently(u)) return false;      // ① WeakMap 按「JS 对象身份」
+  eB.set(u, Date.now());
+  const k = chunkPublicationKey(sid, u);
+  if (k) { const t = eS.get(k); if (t !== undefined && now - t < eQ) return false; eS.set(k, now); }  // ② 内容键 + 5s
+  ...
+}
+```
+
+- **① 是真正挡住重试的那层**，判据是 **JS 对象身份**。重试路径
+  `sendSessionUpdateBounded` 把 `conn.sessionUpdate(notification)` 与 5 秒定时器赛跑，
+  超时抛错后 `sendSessionUpdateWithRetries` **拿同一个 `notification` 对象**再发一次
+  （最多 3 次）。同一个对象 → WeakMap 必命中。
+  这个信号**不跨越 wire**：客户端只收到重新序列化的 JSON。
+- **② 挂在 WebUI 发布总线上**，订阅者（它的 WebUI）在进程内、chunk 已被合并，
+  粒度是「一段 update」而不是 4 个字符。
+
+所以「照抄上游」只可能抄到键的元素列表，抄不到判据。第二版（`482e8763e`）就是这么错的。
+
+## 重复的触发条件（决定概率，而不是文本）
+
+只有团队成员帧会走重试：
+
+- `AcpTeamBridge.subscribeMemberSession(session)` 第一行 `if (!session.teamContext?.memberName) return`；
+- `sendSessionUpdateBounded` / `sendSessionUpdateWithRetries` 全仓 4 个调用点都在
+  `AcpTeamBridge` 内（成员帧转发、成员 tool 终态、`flushPendingTeamUpdates`）；
+- 主持人自己的正文、普通单聊的正文走 `publishSessionUpdateToBus` → 总线 → 连接，
+  **没有任何超时重试**。
+
+触发链条：成员帧写入卡住 ≥5 秒（消费端背压：通知 goroutine 被锁/DB/WS 阻塞、
+进程被挂起、resume 重放洪峰）→ 超时抛错但**那次 write 并未取消** → 重试再写一遍
+→ 两帧都落地。停顿期间排队的**每一帧**都会重复，所以症状是整段文字翻倍
+（`已已把报告把报告发给发给 team team-le-leadad…`），不是个别字符。
+
+结论：**重复概率 = P(团队回合) × P(≥5 秒写入停顿)**，与文本是否重复零相关；
+而文本重复（`|---|---|` 连写、`\n\n`、缩进空格）在正常输出里是常态。
+
+## 三代实现与各自的误删
 
 ### 第一版（`0abbe8b0e`，2026-10-22）：键抄错
 
@@ -15,138 +65,46 @@ ClawBench 对 CodeBuddy 的模型输出帧做去重，判据是**紧邻**：一�
 sessionId + variant + messageId + timestamp + memberEvent + text
 ```
 
-上游 `chunkPublicationKey` 的第 5 个元素是 `conversationRequestId ?? requestId`、
-第 6 个是 `parentToolCallId`，且 `messageId` 优先取顶层字段。这一版都不对。
+上游第 5 个元素是 `conversationRequestId ?? requestId`、第 6 个是 `parentToolCallId`，
+`messageId` 优先取顶层字段。这一版都不对。
 
-### 第二版（`482e8763e`）：以为「键抄对」就能修好
+### 第二版（`482e8763e`）：键抄对，判据仍是内容
 
-照搬了上游键，但**保留了 5 秒窗口**。这个改动对实际缺陷无效，因为第一版和
-第二版的键**都包含 `timestamp`**——两次实现都不是因为「丢了 timestamp」而出错。
+照搬上游键 + 5 秒窗口。生产一周内 6436 次丢弃里，**179 组只丢了 1 次**——
+真重试是连续重发，必然连续丢 2–3 次；只丢 1 次说明是与窗口内某个更早帧文本相同的
+孤立帧，即误删。
 
-### 第三版（本提交）：判据错了
+### 第三版（`605285f1c`，2026-10-29）：改成「紧邻」仍然错
 
-时间窗本身就是错的。理由见下。
+判据改成「与上一帧被接受的 chunk 完全相同」，理由是「合法重复一定隔着别的输出」。
+该结论来自一份 82 帧样本（相邻同文本 0/81），在更宽的表上不成立：
 
-## 为什么时间窗是错的
+- 2026-10-30 msg 67355（单聊，`session_type=chat`，结构上不可能重复）：
+  原生 `~/.codebuddy/projects/*/*.jsonl` 的分隔行是 `|---|---|---|---|---|`，
+  ClawBench 落库为 `|---|---|---|`，正文其余 1414 字符逐字节相同；
+  该回合日志只有 1 条 `dropping duplicate agent_message_chunk`，丢的正是 8 字符
+  = 一个 `|---|---|` 帧。**8 字符 = 1 帧，与「真重试至少连续丢 2 次」直接矛盾。**
+- 同一天 msg 67237：`192.168.x.x:20000` → `192.168.x:20000`（丢 `.x`）。
+- 表格损坏统计（`分隔行列数 < 表头列数`）：10-20/10-21 去重上线前 144 张表 **0 损坏**；
+  上线后 10-22 起每天 2–13 张，三天 44 张，全库 codebuddy 累计 130 张。
 
-CodeBuddy 逐字符推送模型输出。一个 `|---|---|` 分隔行到达时是：
+关键：`timestamp` 也在键里，但两帧**合法**内容可以共享 `messageId + timestamp + text`
+（67355 即是），所以键里带 timestamp 不构成任何判别。
 
-```
-'|'  ' ---'  ' |'  ' ---'  ' |'  '\n'
-```
+## 如果重复真的复现
 
-一条消息里 `' |'` 重复 21 次、`' '` 16 次、`' ---'` 7 次。任何「相同文本再次出现
-就算重复」的规则都会删真实内容。
+不要回到逐帧文本比对。可行方向只有两个：
 
-### 生产数据
+1. **消息级密度门控**：一条消息里相邻重复帧占比极高（真重试风暴 ≈ 每个 delta 都重复）
+   才启用丢弃；孤立重复一律放行。代价是风暴最前面几帧仍会漏过。
+2. **上游修**：对象身份在 CodeBuddy 进程内是可得的，让 `sendSessionUpdateBounded`
+   在重试前检查 `wasPublishedRecently` 语义（或干脆不重试已被消费的帧）。
 
-统计 2026-10-22..10-29 的 `dropping duplicate` 日志（6436 次）：
-
-| 指标 | 值 |
-|---|---|
-| 同 (session, messageId) 组内相邻丢弃总数 | 116 |
-| 其中间隔 < 5 秒 | **106（91%）** |
-| 丢弃 1 次的组 | **179** |
-| 丢弃 2+ 次的组 | 62 |
-
-**关键判据：179 组只丢了 1 次。** 真重试是
-`sendSessionUpdateWithRetries` 连续重发（最多 3 次），必然连续丢 2-3 次。
-只丢 1 次意味着：这是一个孤立帧，它与窗口内某个更早的帧文本相同，于是被误删。
-
-## 为什么「紧邻」是对的
-
-真重试是同步重发**同一个 update 对象**（`sendSessionUpdateBounded` 超时后，
-`em.tail` 上重跑），所以它一定是**紧挨着的下一帧**。
-
-合法重复一定隔着别的输出。
-
-真实帧实测（2026-10-29，82 帧两表回复）：
-
-| 指标 | 值 |
-|---|---|
-| 相邻帧同文本 | **0 / 81** |
-| 非相邻帧同文本 | 55 对 |
-
-所以：**相邻同文本 = 重试，非相邻同文本 = 内容。** 这是唯一能分开两者的判据，
-时间做不到。
-
-## 实现
-
-```go
-func (c *ACPConn) isDuplicateChunk(identity string) bool {
-	if c == nil || identity == "" {
-		return false
-	}
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	if identity == c.lastChunkKey {
-		return true
-	}
-	c.lastChunkKey = identity
-	return false
-}
-```
-
-状态只有一个字段 `lastChunkKey`（上一帧被接受的 identity）。被丢弃的重试**不替换**
-它，所以三份连续拷贝塌成一份。
-
-`chunkIdentity` 仍照搬上游的元素列表：
-
-```
-sessionId + variant + messageId + timestamp + requestId + parentToolCallId + text
-```
-
-`timestamp` 保留在键里是必要的：真重试复用同一个对象，timestamp 相同；正常的新帧
-timestamp 不同。但它不再用于「多久算重复」——那由邻接决定。
-
-`messageId` 顶层优先、`requestId` 取 `conversationRequestId ?? requestId`，与上游一致。
-
-## 与上游的关系
-
-上游 `chunkPublicationKey` 配的是 5 秒窗口，用在它的 **WebUI 发布总线**
-（`publishSessionUpdateToBus`）上，那里 chunk 已合并。ClawBench 消费的是 ACP
-wire，粒度是字符级，所以上游的窗口策略不能直接套用。
-
-元素列表照搬，判据换成邻接。
-
-## 生效范围
-
-`chunkDedupEnabled` 只对 `codebuddy` 返回 true。全库统计（`chat_history` 按 backend）：
-
-| 后端 | 消息数 | 畸形表格分隔行 |
-|---|---|---|
-| codebuddy | 14929 | 130 |
-| opencode | 2559 | 0 |
-| claude | 54 | 0 |
-| pi | 79 | 0 |
-| codex | 14 | 0 |
-
-其他后端零畸形，不接这条路径。
-
-## 测试
-
-`internal/ai/acp_dup_chunk_test.go`：
-
-**键构造**
-- `RequiresTimestampAndMessageID` — 缺一不可
-- `PrefersTopLevelMessageID` / `RequestIDPrecedence` — 与上游 `??` 链一致
-- `DistinguishesEveryComponent` — 7 个元素各自参与
-- `IsInjective` — JSON 编码不会因 NUL 字节伪造键
-
-**判重**
-- `DropsOnlyTheImmediatelyRepeatedChunk` — 连续 3 份只留 1 份
-- `NonAdjacentRepeatIsContent` — **核心回归**：两个 `' ---'` 中间隔一帧，都要保留
-- `RepeatMuchLaterIsContent` — 隔 200 帧的重复是内容
-- `RetryDoesNotReplacePrevious` — 被丢的重试不成为新的「上一帧」
-- `EmptyIdentityNeverDrops` / `NilConnNeverDrops` / `ResetChunkDedup_*`
-
-**端到端**
-- `RealWireSequenceIsLossless` — **回放真实抓取的 82 帧**，逐字节断言
-- `TableDelimiterRowSurvives` / `MultipleTablesKeepTheirDelimiterRows` /
-  `SameTextLaterInMessageIsKept` / `ImmediateRetryIsDropped` /
-  `ThoughtChunkRetryIsDropped` / `DedupDoesNotApplyToOtherBackends` /
-  `KeepsChunksWithoutIdentity`
+判断是否复现的最快办法：日志里按 `messageId` 统计相邻同文本帧的数量——
+真风暴是「一条消息几百次」，零星几次是内容重复。
 
 ## 遗留
 
-已写入 DB 的畸形分隔行不会自愈，需单独迁移补回被删的 `|---|---|`。
+已写入 DB 的畸形分隔行不会自愈（用户 2026-10-30 决定先不修）。若要修，
+原生 `~/.codebuddy/projects/<slug>/<acp_sid>.jsonl` 的 `output_text` 是权威副本，
+可按逐字 diff 回填。
