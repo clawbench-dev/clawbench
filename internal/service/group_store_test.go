@@ -2508,3 +2508,10 @@ func TestPendingBccStoresSenderAttribution(t *testing.T) {
 		t.Fatalf("user attribution lost: %+v", got[1])
 	}
 }
+
+// Empty ids are a programming error, not "the group has no host": refusing them
+// keeps a blank pointer from being written.
+func TestChangeGroupHost_RejectsEmptyIDs(t *testing.T) {
+	assert.ErrorIs(t, ChangeGroupHost("/proj/a", "", "m1"), ErrHostNotMember)
+	assert.ErrorIs(t, ChangeGroupHost("/proj/a", "g1", ""), ErrHostNotMember)
+}

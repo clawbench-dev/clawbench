@@ -1063,3 +1063,84 @@ func TestLiveWS_RevokeStopsOneSharerAndDisablingStopsTheRoom(t *testing.T) {
 	state := readViewerMsg(t, view)
 	assert.False(t, state.Sharing)
 }
+
+// Switching audience screen sharing off must also stop the current sharer and
+// tell it why — its browser is still capturing.
+func TestApplySetScreenEnabled_StopsCurrentSharer(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
+	require.NoError(t, err)
+	viewer, err := room.AddViewer("a", &recordingSink{})
+	require.NoError(t, err)
+	pub := &recordingSink{}
+	room.SetPublisher(pub)
+	room.SetScreenEnabled(true)
+	require.NoError(t, room.ClaimScreen(viewer.ID))
+
+	applySetScreenEnabled(room, false)
+
+	assert.False(t, room.ScreenEnabled())
+	assert.Empty(t, room.ScreenSharer())
+	msg, ok := pub.last().(liveshare.PublisherMessage)
+	require.True(t, ok, "the publisher must learn the share stopped")
+	assert.Equal(t, liveshare.MsgScreenState, msg.Type)
+}
+
+// Revoking a viewer that is not sharing is a no-op: a stop frame racing a
+// disconnect must not fail.
+func TestApplyScreenRevoke_NotSharingIsNoop(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
+	require.NoError(t, err)
+	viewer, err := room.AddViewer("a", &recordingSink{})
+	require.NoError(t, err)
+	room.SetPublisher(&recordingSink{})
+	room.SetScreenEnabled(true)
+
+	require.NotPanics(t, func() { applyScreenRevoke(room, viewer.ID) })
+	assert.Empty(t, room.ScreenSharer())
+}
+
+func TestApplyScreenRevoke_TellsTheFormerSharer(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
+	require.NoError(t, err)
+	sink := &recordingSink{}
+	viewer, err := room.AddViewer("a", sink)
+	require.NoError(t, err)
+	room.SetPublisher(&recordingSink{})
+	room.SetScreenEnabled(true)
+	require.NoError(t, room.ClaimScreen(viewer.ID))
+
+	applyScreenRevoke(room, viewer.ID)
+
+	assert.Empty(t, room.ScreenSharer())
+	var denied bool
+	for _, m := range sink.all() {
+		if msg, ok := m.(liveshare.ViewerMessage); ok &&
+			msg.Type == liveshare.MsgScreenDenied && msg.Reason == liveshare.ReasonRevoked {
+			denied = true
+		}
+	}
+	assert.True(t, denied, "the former sharer must be told its share was revoked")
+}
+
+// A CtrlScreenStop frame from the sharer clears the state and broadcasts it.
+func TestHandleViewerControl_ScreenStopClearsSharer(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create(projPath("/proj/a"), "t")
+	require.NoError(t, err)
+	viewer, err := room.AddViewer("a", &recordingSink{})
+	require.NoError(t, err)
+	pub := &recordingSink{}
+	room.SetPublisher(pub)
+	room.SetScreenEnabled(true)
+	require.NoError(t, room.ClaimScreen(viewer.ID))
+
+	handleViewerControl(room, viewer, liveshare.ViewerControl{Type: liveshare.CtrlScreenStop})
+
+	assert.Empty(t, room.ScreenSharer())
+	msg, ok := pub.last().(liveshare.PublisherMessage)
+	require.True(t, ok)
+	assert.Equal(t, liveshare.MsgScreenState, msg.Type)
+}

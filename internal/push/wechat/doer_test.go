@@ -1,6 +1,7 @@
 package wechat
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -91,4 +92,38 @@ func TestAPIErrorDoer_Non2xxLeftToSDK(t *testing.T) {
 	require.NotNil(t, resp)
 	_ = resp.Body.Close()
 	assert.Equal(t, http.StatusBadGateway, resp.StatusCode)
+}
+
+// fakeDoer returns exactly what the test asks for, including the (nil, nil)
+// pair a careless transport can produce.
+type fakeDoer struct {
+	resp *http.Response
+	err  error
+}
+
+func (f fakeDoer) Do(*http.Request) (*http.Response, error) { return f.resp, f.err }
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("read failed") }
+func (failingReader) Close() error             { return nil }
+
+// A (nil, nil) response would make the SDK nil-deref on resp.Body.
+func TestAPIErrorDoer_NilResponseIsAnError(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "http://example.com/ilink/bot/sendmessage", strings.NewReader("{}"))
+	require.NoError(t, err)
+
+	_, err = apiErrorDoer{inner: fakeDoer{}}.Do(req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil http response")
+}
+
+func TestAPIErrorDoer_BodyReadFailureIsReturned(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "http://example.com/ilink/bot/sendmessage", strings.NewReader("{}"))
+	require.NoError(t, err)
+
+	resp := &http.Response{StatusCode: http.StatusOK, Body: failingReader{}}
+	_, err = apiErrorDoer{inner: fakeDoer{resp: resp}}.Do(req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read failed")
 }

@@ -68,3 +68,24 @@ func TestLocalTLSSANs_AlwaysCoversLoopback(t *testing.T) {
 	}
 	assert.True(t, found, "loopback must always be covered")
 }
+
+func TestDescribeTLSSANs_SortsAndJoinsEverything(t *testing.T) {
+	got := DescribeTLSSANs(
+		[]net.IP{net.ParseIP("10.0.0.5"), net.ParseIP("127.0.0.1")},
+		[]string{"localhost", "clawbench.local"},
+	)
+	assert.Equal(t, "10.0.0.5, 127.0.0.1, clawbench.local, localhost", got)
+
+	assert.Empty(t, DescribeTLSSANs(nil, nil))
+}
+
+// An unwritable target must be reported, not silently skipped: the caller shows
+// the reason to the user.
+func TestGenerateSelfSignedCert_CreateDirFailure(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
+
+	_, err := GenerateSelfSignedCert(filepath.Join(blocker, "tls"), []net.IP{net.ParseIP("127.0.0.1")}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create cert dir")
+}

@@ -3,11 +3,18 @@ package service
 import (
 	"context"
 	"database/sql"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 
 	"github.com/stretchr/testify/assert"
@@ -134,7 +141,8 @@ func TestLiveNoteSegments_IncrementalCursorIsById(t *testing.T) {
 	assert.Empty(t, none)
 
 	// The transcript is rebuilt in speaking order regardless of insertion order.
-	assert.Equal(t,
+	assert.Equal(
+		t,
 		"[00:00] 我：第二句\n[00:20] 系统声音：第一句",
 		BuildLiveNotesTranscript(first),
 	)
@@ -257,4 +265,264 @@ func TestWriteLiveNotesFile_RequiresProjectAndMinutes(t *testing.T) {
 
 	_, err = WriteLiveNotesFile(t.TempDir(), "t", "   ", nil, time.Now())
 	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
+}
+
+// ── Edge cases: persistence ─────────────────────────────────────────────────
+
+func TestAppendLiveNoteSegment_RejectsEmptyToken(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+
+	_, err := AppendLiveNoteSegment(context.Background(), "", 0, seg(0, "mic", "我", 1, "x"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty token")
+}
+
+func TestGetLiveNote_MissingShareIsNotAnError(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+
+	note, ok, err := GetLiveNote("nobody")
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.Empty(t, note.Status)
+
+	pid, exists, err := LiveNoteProjectID("nobody")
+	require.NoError(t, err)
+	assert.False(t, exists)
+	assert.Zero(t, pid)
+}
+
+// Cleanup with nothing old enough must be a no-op rather than an empty
+// transaction, and it must not touch fresh rows.
+func TestCleanupLiveNotes_NothingToDelete(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	_, err = AppendLiveNoteSegment(context.Background(), "fresh", pid, seg(0, "mic", "我", 1, "内容"))
+	require.NoError(t, err)
+
+	removed, err := CleanupLiveNotes(context.Background(), time.Now().Add(-time.Hour))
+	require.NoError(t, err)
+	assert.Zero(t, removed)
+
+	rows, err := ListLiveNoteSegments("fresh", 0)
+	require.NoError(t, err)
+	assert.Len(t, rows, 1)
+}
+
+// ── Edge cases: timeline assembly ───────────────────────────────────────────
+
+func TestBuildLiveNotesTranscript_EmptyInput(t *testing.T) {
+	assert.Empty(t, BuildLiveNotesTranscript(nil))
+	assert.Empty(t, BuildLiveNotesTranscript([]LiveNoteSegment{seg(1, "mic", "我", 1, "   ")}))
+}
+
+// A segment with no speaker label must fall back to its channel so the
+// summariser still knows who was talking.
+func TestBuildLiveNotesTranscript_FallsBackToChannel(t *testing.T) {
+	got := BuildLiveNotesTranscript([]LiveNoteSegment{
+		seg(1, "viewer:v1", "  ", 5_000, "  多个   空格  "),
+	})
+	assert.Equal(t, "[00:00] viewer:v1：多个 空格", got)
+}
+
+func TestNormalizeNoteText_FoldsCaseWhitespaceAndPunctuation(t *testing.T) {
+	assert.Equal(t, "helloworld", normalizeNoteText("  Hello, World!  "))
+	assert.Equal(t, "第一句", normalizeNoteText("第一句。"))
+	assert.Equal(t, "abc123", normalizeNoteText("ABC\t123"))
+	// Everything that is not a letter/digit/CJK ideograph disappears.
+	assert.Empty(t, normalizeNoteText("。，！？ —— "))
+}
+
+func TestDedupeLiveNoteSegments_SkipsPunctuationOnlyLines(t *testing.T) {
+	// normalizeNoteText folds these to "", so they cannot be compared and are
+	// dropped instead of being emitted as blank timeline lines.
+	got := DedupeLiveNoteSegments([]LiveNoteSegment{
+		seg(1, "mic", "我", 1_000, "……"),
+		seg(2, "mic", "我", 2_000, "有内容"),
+	})
+	require.Len(t, got, 1)
+	assert.Equal(t, "有内容", got[0].Text)
+}
+
+// The recent-window cache is bounded: older entries are forgotten so a long
+// meeting does not grow it without limit, but the newest eight still dedupe.
+func TestDedupeLiveNoteSegments_WindowIsBounded(t *testing.T) {
+	segments := make([]LiveNoteSegment, 0, 10)
+	for i := range 10 {
+		segments = append(segments, seg(int64(i+1), "mic", "我", int64(i)*10_000, "第"+string(rune('a'+i))+"句"))
+	}
+	got := DedupeLiveNoteSegments(segments)
+	require.Len(t, got, 10, "ten distinct utterances must all survive")
+
+	// A repeat of the very first utterance is outside the window by now and is
+	// therefore treated as a new utterance, not an echo.
+	segments = append(segments, seg(11, "system", "系统声音", 95_000, "第a句"))
+	assert.Len(t, DedupeLiveNoteSegments(segments), 11)
+}
+
+func TestAbsInt64(t *testing.T) {
+	assert.Equal(t, int64(5), absInt64(-5))
+	assert.Equal(t, int64(5), absInt64(5))
+	assert.Zero(t, absInt64(0))
+}
+
+// ── Minutes generation ─────────────────────────────────────────────────────
+
+// aiSummaryServer stands in for an OpenAI-compatible endpoint and returns one
+// canned reply per call (the last one repeats).
+func aiSummaryServer(t *testing.T, replies ...string) *httptest.Server {
+	t.Helper()
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		idx := calls
+		if idx >= len(replies) {
+			idx = len(replies) - 1
+		}
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + strconvQuote(replies[idx]) + `}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// strconvQuote JSON-quotes a string without pulling encoding/json into the test.
+func strconvQuote(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\n':
+			b.WriteString(`\n`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+func withAISummary(t *testing.T, baseURL string) {
+	t.Helper()
+	prev := model.ConfigInstance
+	t.Cleanup(func() { model.ConfigInstance = prev })
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.AISummary.API.BaseURL = baseURL
+	model.ConfigInstance.AISummary.Format = "openai"
+}
+
+func TestGenerateLiveNotesMinutes_EmptyTranscript(t *testing.T) {
+	_, err := GenerateLiveNotesMinutes(context.Background(), "标题", nil)
+	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
+}
+
+func TestGenerateLiveNotesMinutes_NoSummaryModel(t *testing.T) {
+	withAISummary(t, "")
+
+	_, err := GenerateLiveNotesMinutes(context.Background(), "标题", []LiveNoteSegment{
+		seg(1, "mic", "我", 1_000, "内容"),
+	})
+	assert.ErrorIs(t, err, ErrSummaryModelNotConfigured)
+}
+
+func TestGenerateLiveNotesMinutes_SingleChunk(t *testing.T) {
+	srv := aiSummaryServer(t, "## 概要\n\n发布计划已确认。")
+	withAISummary(t, srv.URL)
+
+	got, err := GenerateLiveNotesMinutes(context.Background(), "季度会", []LiveNoteSegment{
+		seg(1, "mic", "我", 1_000, "先确认时间"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "## 概要\n\n发布计划已确认。", got)
+}
+
+// A meeting longer than the chunk budget is map-reduced: every chunk is
+// condensed first, and only the condensed text reaches the final pass.
+func TestGenerateLiveNotesMinutes_LongMeetingIsMapReduced(t *testing.T) {
+	segments := make([]LiveNoteSegment, 0, 3)
+	long := strings.Repeat("很长的发言内容。", 400) // ~3200 runes per line
+	for i := range 3 {
+		segments = append(segments, seg(int64(i+1), "mic", "我", int64(i)*60_000, long))
+	}
+	require.Greater(t, len([]rune(BuildLiveNotesTranscript(segments))), liveNotesChunkRunes,
+		"fixture must exceed one chunk or the map-reduce path is not exercised")
+
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(body))
+		n := len(bodies)
+		mu.Unlock()
+		reply := "要点" + strconv.Itoa(n)
+		if n >= 3 {
+			reply = "## 概要\n\n合并后的纪要"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + strconvQuote(reply) + `}}]}`))
+	}))
+	defer srv.Close()
+	withAISummary(t, srv.URL)
+
+	got, err := GenerateLiveNotesMinutes(context.Background(), "", segments)
+	require.NoError(t, err)
+	assert.Equal(t, "## 概要\n\n合并后的纪要", got)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, bodies, 3, "two chunk passes plus one final pass")
+	assert.Contains(t, bodies[0], "第 1/2 段", "chunk prompt carries its position")
+	assert.Contains(t, bodies[1], "第 2/2 段")
+	assert.Contains(t, bodies[2], "要点1", "the final pass sees the condensed chunks")
+	assert.Contains(t, bodies[2], "要点2")
+}
+
+func TestGenerateLiveNotesMinutes_ProviderError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	withAISummary(t, srv.URL)
+
+	_, err := GenerateLiveNotesMinutes(context.Background(), "", []LiveNoteSegment{
+		seg(1, "mic", "我", 1_000, "内容"),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "live notes: minutes")
+}
+
+// ── Markdown output edge cases ─────────────────────────────────────────────
+
+func TestWriteLiveNotesFile_UntitledMeetingUsesDefaultHeading(t *testing.T) {
+	project := t.TempDir()
+	started := time.Date(2026, 10, 30, 8, 0, 0, 0, time.Local)
+
+	path, err := WriteLiveNotesFile(project, "   ", "## 概要", nil, started)
+	require.NoError(t, err)
+	assert.Equal(t, "2026-10-30-0800.md", filepath.Base(path), "no title means no slug suffix")
+
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "# 会议纪要 · 2026-10-30 08:00")
+	assert.NotContains(t, string(body), "## 附：完整转写", "an empty transcript appends no appendix")
+}
+
+func TestLiveNotesFileSlug_DropsUnsafeRunesAndCapsLength(t *testing.T) {
+	assert.Equal(t, "abcdefghij", liveNotesFileSlug("a/b\\c:d*e?f\"g<h>i|j"))
+	assert.Equal(t, "a b", liveNotesFileSlug("a\nb"), "line breaks become spaces")
+	assert.Equal(t, "x", liveNotesFileSlug("  x...  "), "trailing dots and spaces are trimmed")
+	assert.Empty(t, liveNotesFileSlug("   "))
+	assert.Empty(t, liveNotesFileSlug("///"))
+
+	long := strings.Repeat("会", liveNotesNameMaxRunes+20)
+	assert.Equal(t, liveNotesNameMaxRunes, len([]rune(liveNotesFileSlug(long))))
 }

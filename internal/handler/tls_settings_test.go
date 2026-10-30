@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,4 +153,116 @@ func writeCAIssuedCert(t *testing.T, dir string) {
 		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}),
 		0o600,
 	))
+}
+
+func TestServeTLSStatus_RejectsWrongMethod(t *testing.T) {
+	useTempCertDir(t)
+
+	w := httptest.NewRecorder()
+	ServeTLSStatus(w, newRequest(t, http.MethodPost, "/api/config/tls", http.NoBody))
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeTLSGenerate_RejectsWrongMethod(t *testing.T) {
+	useTempCertDir(t)
+
+	w := httptest.NewRecorder()
+	ServeTLSGenerateSelfSigned(w, newRequest(t, http.MethodGet, "/api/config/tls/self-signed", http.NoBody))
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeTLSGenerate_RejectsMalformedBody(t *testing.T) {
+	useTempCertDir(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/config/tls/self-signed", strings.NewReader("{oops"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	ServeTLSGenerateSelfSigned(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// Blank entries in the host list are what an empty form field produces; they
+// must be skipped, not turned into an empty DNS SAN.
+func TestServeTLSGenerate_SkipsBlankHosts(t *testing.T) {
+	useTempCertDir(t)
+
+	w := httptest.NewRecorder()
+	ServeTLSGenerateSelfSigned(w, newRequest(t, http.MethodPost, "/api/config/tls/self-signed", map[string]any{
+		"hosts": []string{"  ", "", "10.1.2.3"},
+	}))
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp tlsStatusResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp.Hosts, "10.1.2.3")
+	for _, h := range resp.Hosts {
+		assert.NotEmpty(t, strings.TrimSpace(h), "no blank SAN may be recorded")
+	}
+}
+
+// A directory that cannot be created must surface as a server error rather than
+// a silent 200 with no certificate.
+func TestServeTLSGenerate_ReportsGenerateFailure(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
+	prev := model.ConfigInstance.TLS.CertDir
+	model.ConfigInstance.TLS.CertDir = filepath.Join(blocker, "tls")
+	t.Cleanup(func() { model.ConfigInstance.TLS.CertDir = prev })
+
+	w := httptest.NewRecorder()
+	ServeTLSGenerateSelfSigned(w, newRequest(t, http.MethodPost, "/api/config/tls/self-signed", nil))
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestTLSCertDir_FallsBackToDataDir(t *testing.T) {
+	prevDir := model.ConfigInstance.TLS.CertDir
+	prevData := model.DataDir
+	model.ConfigInstance.TLS.CertDir = ""
+	model.DataDir = "/data/clawbench"
+	t.Cleanup(func() {
+		model.ConfigInstance.TLS.CertDir = prevDir
+		model.DataDir = prevData
+	})
+
+	assert.Equal(t, filepath.Join("/data/clawbench", "config", "tls"), tlsCertDir())
+}
+
+func TestHTTPSURLFor_ReusesRequestHost(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://example.com:20000/api/config/tls", http.NoBody)
+	assert.Equal(t, "https://example.com:20000", httpsURLFor(req))
+
+	req = httptest.NewRequest(http.MethodGet, "http://example.com/api/config/tls", http.NoBody)
+	assert.Equal(t, "https://example.com:20000", httpsURLFor(req), "a missing port falls back to the default")
+}
+
+func TestPortOf(t *testing.T) {
+	assert.Equal(t, "8080", portOf("host:8080"))
+	assert.Equal(t, "20000", portOf("host"))
+	assert.Equal(t, "20000", portOf(""))
+}
+
+func TestIsSelfSigned_MissingFileIsNotSelfSigned(t *testing.T) {
+	assert.False(t, isSelfSigned(filepath.Join(t.TempDir(), "absent.pem")))
+}
+
+// parseLeaf must return nil (not panic) for anything that is not a certificate:
+// a truncated write or an unrelated file in the directory is not fatal.
+func TestParseLeaf_InvalidInputs(t *testing.T) {
+	dir := t.TempDir()
+
+	assert.Nil(t, parseLeaf(filepath.Join(dir, "missing.pem")))
+
+	garbage := filepath.Join(dir, "garbage.pem")
+	require.NoError(t, os.WriteFile(garbage, []byte("not pem at all"), 0o644))
+	assert.Nil(t, parseLeaf(garbage))
+
+	keyOnly := filepath.Join(dir, "keyonly.pem")
+	require.NoError(t, os.WriteFile(keyOnly,
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: []byte("x")}), 0o600))
+	assert.Nil(t, parseLeaf(keyOnly), "a key block is not a certificate")
+
+	badDER := filepath.Join(dir, "badder.pem")
+	require.NoError(t, os.WriteFile(badDER,
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not a certificate")}), 0o644))
+	assert.Nil(t, parseLeaf(badDER))
 }

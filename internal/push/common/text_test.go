@@ -73,3 +73,15 @@ func TestFormatSessionLabel_LocalizedPrefix(t *testing.T) {
 		t.Errorf("titled label = %q", got)
 	}
 }
+
+// The reply must name the command: without it the user cannot tell which part
+// of their request was dropped.
+func TestCommandWithAttachmentText_NamesTheCommand(t *testing.T) {
+	got := CommandWithAttachmentText("new")
+	if !strings.Contains(got, "new") {
+		t.Fatalf("reply must name the command, got %q", got)
+	}
+	if strings.TrimSpace(got) == "" {
+		t.Fatal("reply must not be empty")
+	}
+}
