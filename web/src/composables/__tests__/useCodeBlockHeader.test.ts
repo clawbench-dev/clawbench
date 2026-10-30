@@ -943,20 +943,20 @@ describe('handleTableBlockClick — landscape view', () => {
   function buildBlock(wrapClass = 'word-wrap') {
     const wrapper = document.createElement('div')
     wrapper.className = `table-block-wrapper ${wrapClass}`
-    const btn = document.createElement('button')
-    btn.className = 'table-block-landscape-btn'
-    btn.setAttribute('data-action', 'landscape')
-    wrapper.appendChild(btn)
-
-    const holder = document.createElement('div')
-    holder.className = 'table-wrap'
-    holder.innerHTML = '<table data-table-idx="0"><tbody><tr data-row-idx="1"><td>cell</td></tr></tbody></table>'
-    wrapper.appendChild(holder)
+    wrapper.innerHTML = `
+      <div class="table-block-header">
+        <span class="table-block-header-actions">
+          <button class="table-block-wrap-btn is-wrapped" data-action="wrap"></button>
+          <button class="table-block-landscape-btn" data-action="landscape"></button>
+        </span>
+      </div>
+      <div class="table-wrap"><table data-table-idx="0"><tbody><tr data-row-idx="1"><td>cell</td></tr></tbody></table></div>`
     document.body.appendChild(wrapper)
+    const btn = wrapper.querySelector<HTMLElement>('.table-block-landscape-btn')!
     return { wrapper, btn }
   }
 
-  it('opens the overlay with the table and keeps the block wrap mode', () => {
+  it('opens the overlay with the whole block, header included', () => {
     const { wrapper, btn } = buildBlock('no-wrap')
     expect(handleTableBlockClick(click(btn))).toBe(true)
 
@@ -964,19 +964,21 @@ describe('handleTableBlockClick — landscape view', () => {
     expect(state).not.toBeNull()
     expect(state!.html).toContain('<table')
     expect(state!.html).toContain('cell')
-    expect(state!.wrapClass).toBe('no-wrap')
+    // Header controls travel with the clone — they are the overlay's controls.
+    expect(state!.html).toContain('table-block-header')
+    expect(state!.html).toContain('table-block-wrap-btn')
+    // The per-table wrap mode is part of the cloned wrapper class list.
+    expect(state!.html).toContain('table-block-wrapper no-wrap')
+    expect(state!.source).toBe(wrapper)
     expect(state!.trigger).toBe(btn)
     wrapper.remove()
   })
 
-  it('strips the row-viewer hooks from the cloned table', () => {
+  it('keeps the row-viewer hooks so rows stay tappable in the overlay', () => {
     const { wrapper, btn } = buildBlock()
     handleTableBlockClick(click(btn))
-    // The overlay is read-only: a cloned row must not look like a row target.
-    expect(tableLandscapeState.value!.html).not.toContain('data-row-idx')
-    expect(tableLandscapeState.value!.html).not.toContain('data-table-idx')
-    // The source block is untouched.
-    expect(wrapper.querySelector('tr')!.getAttribute('data-row-idx')).toBe('1')
+    expect(tableLandscapeState.value!.html).toContain('data-row-idx')
+    expect(tableLandscapeState.value!.html).toContain('data-table-idx')
     wrapper.remove()
   })
 

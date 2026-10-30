@@ -10,44 +10,72 @@
       :aria-label="t('tableBlock.landscape')"
     >
       <div class="table-landscape-panel">
-        <div class="table-landscape-toolbar">
-          <span class="table-landscape-title">{{ t('tableBlock.landscape') }}</span>
-          <button
-            ref="closeBtnRef"
-            type="button"
-            class="table-landscape-close"
-            :title="t('tableBlock.landscapeClose')"
-            :aria-label="t('tableBlock.landscapeClose')"
-            @click="close"
-          >
-            <X :size="20" />
-          </button>
-        </div>
-        <div class="table-landscape-scroll" @click.self="close">
-          <div class="markdown-body table-landscape-body" :class="state.wrapClass" v-html="state.html" />
-        </div>
+        <div
+          ref="bodyEl"
+          class="table-landscape-scroll markdown-body"
+          @mousedown="onTableMouseDown"
+          @touchstart.passive="onTableTouchStart"
+          @click="onOverlayClick"
+          @click.self="close"
+          v-html="state.html"
+        />
       </div>
     </div>
+
+    <!-- The row viewer is the same component the chat / file preview mount. It
+         lives here because the overlay is teleported out of the container whose
+         delegated click handler would otherwise open it — and it must paint
+         above the overlay (--z-sheet < ModalDialog's 2100). -->
+    <TableRowModal
+      :data="tableRowModal"
+      @close="closeTableRowModal"
+      @prev="tableRowPrev"
+      @next="tableRowNext"
+    />
   </Teleport>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { X } from 'lucide-vue-next'
+import TableRowModal from '@/components/common/TableRowModal.vue'
+import { handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
+import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import {
   closeTableLandscape,
   shouldRotateTableLandscape,
   tableLandscapeState as state,
 } from '@/composables/useTableLandscape.ts'
+import { gt } from '@/composables/useLocale'
 import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 
+/**
+ * Clicks on any of these leave the overlay and are replayed onto the original
+ * table, so the container's own handler (file viewer, commit, external link,
+ * localhost preview) runs unchanged. Everything else — header buttons, table
+ * rows, blank space — is handled in place.
+ */
+const NAV_TARGET_SELECTOR = [
+  'a[href]',
+  '.md-external-link',
+  '.chat-url-open-btn',
+  '.chat-file-path',
+  '.chat-file-open-btn',
+  '.chat-commit-hash',
+  '.chat-commit-open-btn',
+  '.chat-worktree-btn',
+].join(',')
+
 const { t } = useI18n()
 const { isTouchPrimary } = usePlatformDetect()
+const {
+  tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext,
+  handleTableRowClick, onTableMouseDown, onTableTouchStart,
+} = useTableRowExpand()
 
 const overlayRef = ref<HTMLElement | null>(null)
-const closeBtnRef = ref<HTMLButtonElement | null>(null)
+const bodyEl = ref<HTMLElement | null>(null)
 
 // `innerWidth/innerHeight` (layout viewport), not `visualViewport`: the
 // decision is "is this device held upright", which the layout viewport answers
@@ -67,8 +95,113 @@ function onViewportChange(): void {
   viewport.value = { width: window.innerWidth, height: window.innerHeight }
 }
 
+/** The rendered clone's root wrapper. */
+function renderedWrapper(): HTMLElement | null {
+  return bodyEl.value?.firstElementChild as HTMLElement | null
+}
+
+/**
+ * The wrap toggle edits the clone only. Carry the choice back to the live table
+ * (and its own toggle button) so closing the overlay does not silently undo it.
+ */
+function syncWrapStateToSource(): void {
+  const current = state.value
+  const rendered = renderedWrapper()
+  if (!current || !rendered) return
+
+  const wrapped = rendered.classList.contains('word-wrap')
+  current.source.classList.toggle('word-wrap', wrapped)
+  current.source.classList.toggle('no-wrap', !wrapped)
+
+  const btn = current.source.querySelector('.table-block-wrap-btn')
+  if (!btn) return
+  btn.classList.toggle('is-wrapped', wrapped)
+  const label = gt(wrapped ? 'tableBlock.wrapOn' : 'tableBlock.wrapOff')
+  btn.setAttribute('title', label)
+  btn.setAttribute('aria-label', label)
+}
+
 function close(): void {
+  closeTableRowModal()
+  syncWrapStateToSource()
   closeTableLandscape()
+}
+
+// ── Click routing ───────────────────────────────────────────────────────────
+
+/** Index path from `root` down to `el`, or null when `el` is not inside it. */
+function indexPath(el: Element, root: Element): number[] | null {
+  const path: number[] = []
+  let node: Element | null = el
+  while (node && node !== root) {
+    const parent: Element | null = node.parentElement
+    if (!parent) return null
+    path.unshift(Array.prototype.indexOf.call(parent.children, node))
+    node = parent
+  }
+  return node === root ? path : null
+}
+
+function elementAtPath(root: Element, path: number[]): Element | null {
+  let node: Element | null = root
+  for (const index of path) {
+    node = node.children[index] ?? null
+    if (!node) return null
+  }
+  return node
+}
+
+/**
+ * Leave the overlay, then replay the click on the element it was cloned from.
+ * The source tree is structurally identical (nothing was added or removed), so
+ * the index path resolves to the same node.
+ */
+function leaveAndForward(event: MouseEvent): void {
+  const rendered = renderedWrapper()
+  const current = state.value
+  const target = event.target as Element
+  let sourceEl: Element | null = null
+
+  if (rendered && current) {
+    const path = indexPath(target, rendered)
+    if (path) sourceEl = elementAtPath(current.source, path)
+  }
+
+  close()
+  if (!sourceEl) return
+  sourceEl.dispatchEvent(new MouseEvent('click', {
+    bubbles: true,
+    cancelable: true,
+    clientX: event.clientX,
+    clientY: event.clientY,
+  }))
+}
+
+function onOverlayClick(event: MouseEvent): void {
+  const target = event.target as HTMLElement
+
+  // The landscape slot becomes the close button inside the overlay.
+  if (target.closest('[data-action="landscape-close"]')) {
+    event.preventDefault()
+    event.stopPropagation()
+    close()
+    return
+  }
+
+  // Copy menu / copy format / wrap toggle — the same delegated handler the
+  // containers call, so nothing about those controls is reimplemented here.
+  if (handleTableBlockClick(event)) return
+
+  // Row viewer (touch only, same as everywhere else).
+  if (handleTableRowClick(event)) return
+
+  if (target.closest(NAV_TARGET_SELECTOR)) leaveAndForward(event)
+}
+
+// ── Focus, keyboard, lifecycle ──────────────────────────────────────────────
+
+function closeButton(): HTMLElement | null {
+  return overlayRef.value?.querySelector<HTMLElement>('[data-action="landscape-close"]') ?? null
 }
 
 /**
@@ -76,6 +209,10 @@ function close(): void {
  * users cannot wander into the page hidden behind it.
  */
 function onDocumentKeydown(event: KeyboardEvent): void {
+  // The row viewer paints above the overlay and owns ESC/Tab while it is open —
+  // trapping focus back into the overlay would fight it.
+  if (tableRowModal.value) return
+
   if (event.key === 'Escape') {
     event.preventDefault()
     event.stopPropagation()
@@ -141,7 +278,7 @@ watch(state, async (next) => {
       priority: PRIORITY_OVERLAY,
     })
     await nextTick()
-    closeBtnRef.value?.focus({ preventScroll: true })
+    closeButton()?.focus({ preventScroll: true })
   } else {
     detach()
   }

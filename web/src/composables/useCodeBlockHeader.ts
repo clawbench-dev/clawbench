@@ -626,6 +626,18 @@ function setTableMenuOpen(trigger: HTMLElement | null, menu: HTMLElement | null,
  * and clamped into the viewport.
  */
 export function positionTableMenu(trigger: HTMLElement, menu: HTMLElement): void {
+    // A landscape overlay rotates its panel, which makes that panel the
+    // containing block for this fixed menu — viewport offsets would be read as
+    // panel-local ones. See positionTableMenuInRotatedPanel.
+    const overlay = menu.closest<HTMLElement>('.table-landscape')
+    if (overlay?.classList.contains('is-rotated')) {
+        const panel = overlay.firstElementChild as HTMLElement | null
+        if (panel) {
+            positionTableMenuInRotatedPanel(trigger, menu, panel)
+            return
+        }
+    }
+
     // Measure while laid out: display is already 'block' (setTableMenuOpen ran).
     const width = menu.offsetWidth
     const height = menu.offsetHeight
@@ -652,6 +664,52 @@ export function positionTableMenu(trigger: HTMLElement, menu: HTMLElement): void
     top = Math.max(margin, Math.min(top, viewportHeight - height - margin))
 
     placeFixedAt(menu, left, top)
+}
+
+/**
+ * Place the copy menu inside a landscape overlay whose panel is rotated 90°.
+ *
+ * The panel is a transformed ancestor, so it IS the containing block for the
+ * menu's `position: fixed`. Offsets computed in viewport space would be read as
+ * panel-local ones and drop the menu somewhere unrelated (a 90° turn maps local
+ * (x, y) to viewport (right - y, top + x), so the mapping is not a translation).
+ *
+ * So: map the trigger's viewport rect into panel-local space, run the same
+ * below/flip/clamp logic there, and write `left`/`top` directly — no
+ * `placeFixedAt`, whose origin/scale probe cannot represent a rotation.
+ */
+function positionTableMenuInRotatedPanel(trigger: HTMLElement, menu: HTMLElement, panel: HTMLElement): void {
+    const panelRect = panel.getBoundingClientRect()
+    const localWidth = panel.offsetWidth
+    const localHeight = panel.offsetHeight
+    const triggerRect = trigger.getBoundingClientRect()
+
+    // viewport → panel-local: local x = vy - panelTop, local y = panelRight - vx.
+    // Only the edges the placement below actually reads are converted.
+    const localRight = triggerRect.bottom - panelRect.top
+    const localTop = panelRect.right - triggerRect.right
+    const localBottom = panelRect.right - triggerRect.left
+
+    const width = menu.offsetWidth
+    const height = menu.offsetHeight
+    const margin = 8
+    const gap = 4
+
+    let left = localRight - width
+    left = Math.min(left, localWidth - width - margin)
+    left = Math.max(margin, left)
+
+    let top = localBottom + gap
+    if (top + height > localHeight - margin) {
+        const above = localTop - gap - height
+        if (above >= margin) top = above
+    }
+    top = Math.max(margin, Math.min(top, localHeight - height - margin))
+
+    menu.style.right = ''
+    menu.style.bottom = ''
+    menu.style.left = `${left}px`
+    menu.style.top = `${top}px`
 }
 
 // ── Keep an open menu glued to its trigger ──────────────────────────────────

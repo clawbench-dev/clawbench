@@ -370,13 +370,14 @@
 /* ==========================================================================
    Landscape (full-screen) table view
 
-   A phone shows a wide table as a column of one-character lines. This overlay
-   clones the table into a full-screen layer and, on a touch device held in
-   portrait, rotates the whole panel 90° so the table's long axis follows the
-   device's long axis.
+   The overlay shows a CLONE of the whole `.table-block-wrapper` — header
+   included — so copy, the copy-format menu and the wrap toggle are the very
+   controls the table already had, with no second implementation. The one
+   exception is the landscape button itself, which the composable turns into a
+   close button in the clone.
 
-   Styles are GLOBAL (not scoped) because the table inside is injected with
-   v-html — scoped rules never match it. See design-guide 红线 1.
+   Styles are GLOBAL (not scoped) because the clone is injected with v-html —
+   scoped rules never match it. See design-guide 红线 1.
    ========================================================================== */
 
 /* ─── Toolbar button: touch / narrow only ───
@@ -393,6 +394,10 @@
 }
 
 /* ─── Overlay ───
+   `--z-sheet`, NOT `--z-lightbox`: the row viewer opened from inside must paint
+   above this layer (ModalDialog sits at 2100), and it is still above the app
+   header (1100) and the file overlay (1000).
+
    `dvh` (with a `vh` fallback) rather than `vh`: the mobile address bar
    collapsing changes the usable height, and a `vh`-sized layer is clipped. */
 .table-landscape {
@@ -402,23 +407,20 @@
     width: 100vw;
     height: 100vh;
     height: 100dvh;
-    z-index: var(--z-lightbox);
+    z-index: var(--z-sheet);
     background: var(--bg-primary);
     overflow: hidden;
     overscroll-behavior: contain;
 }
 
-/* The rotating unit. Everything (toolbar included) turns together, so the
-   toolbar ends up at the top of what the user sees once the phone is held
-   sideways — no separate "safe area" arithmetic for the rotated layout. */
+/* The rotating unit. The header turns with the table, which is what puts it at
+   the top of what the user sees once the phone is held sideways. */
 .table-landscape-panel {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    display: flex;
-    flex-direction: column;
     min-height: 0;
 }
 
@@ -435,92 +437,29 @@
     transform-origin: center center;
 }
 
-.table-landscape-toolbar {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
-    padding: var(--space-2) var(--space-4);
-    padding-top: calc(var(--space-2) + var(--header-safe-area-top, 0px));
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border-color);
-}
-
-.table-landscape-title {
-    font-size: var(--font-size-sm);
-    color: var(--text-secondary);
-    user-select: none;
-}
-
-.table-landscape-close {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: calc(32 * var(--dp));
-    height: calc(32 * var(--dp));
-    padding: 0;
-    border: none;
-    border-radius: var(--radius-full);
-    background: transparent;
-    color: var(--text-secondary);
-    cursor: pointer;
-}
-
-@media (hover: hover) {
-    .table-landscape-close:hover {
-        background: var(--bg-tertiary);
-        color: var(--text-primary);
-    }
-}
-
-.table-landscape-close:focus-visible {
-    outline: 2px solid var(--accent-color);
-    outline-offset: 2px;
-}
-
-/* ─── Scroll area ───
-   `overflow: auto` on a non-flex box: centring a too-wide child with
-   `justify-content: center` makes its left edge unreachable. */
-.table-landscape-scroll {
-    flex: 1;
-    min-height: 0;
+/* Carries `.markdown-body` so the table keeps its normal borders/padding, and
+   overrides the column cap + the hidden horizontal overflow that container
+   imposes. */
+.table-landscape-scroll.markdown-body {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    margin: 0;
+    padding: var(--space-5);
     overflow: auto;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
-    padding: var(--space-5);
-}
-
-/* Reset the `.markdown-body` container metrics it inherits for the table look:
-   the overlay is full-bleed, so the 900dp column cap, the vertical scroller and
-   the hidden horizontal overflow would all fight the overlay. */
-.table-landscape-body.markdown-body {
-    margin: 0 auto;
-    padding: 0;
-    max-width: 100%;
-    min-height: 0;
-    overflow: visible;
-    flex: none;
     background: transparent;
 }
 
-.table-landscape-body.word-wrap.markdown-body {
-    width: 100%;
+/* The wrapper already carries its own width/max-width; only the outer margin is
+   the overlay's business. */
+.table-landscape-scroll > .table-block-wrapper {
+    margin: 0 auto;
 }
 
-.table-landscape-body.word-wrap th,
-.table-landscape-body.word-wrap td {
-    white-space: normal;
-    overflow-wrap: break-word;
-}
-
-.table-landscape-body.no-wrap.markdown-body {
-    width: max-content;
-}
-
-.table-landscape-body.no-wrap th,
-.table-landscape-body.no-wrap td {
-    white-space: nowrap;
-    word-break: normal;
-    overflow-wrap: normal;
+/* The paperclip attaches the markdown FILE to chat. The clone has no file
+   identity (no `data-file-path` ancestor), so it would be an inert button. */
+.table-landscape .table-block-header .table-block-attach-btn {
+    display: none;
 }
