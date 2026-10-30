@@ -14,6 +14,7 @@ import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { buildShareLinks, type ShareLink } from '@/composables/useShareLinks'
 import { LiveMixer } from './useLiveMixer'
+import { useLiveNotes } from './useLiveNotes'
 
 const TAG = 'LiveShare'
 
@@ -157,6 +158,10 @@ export function useLiveShare() {
     systemAudio: boolean
     microphone: boolean
     shareTitle?: string
+    /** Enable AI 听记 (transcription + minutes) for this share. */
+    notes?: boolean
+    /** Localised speaker label for a channel ("system" / "mic" / "viewer:<id>"). */
+    notesLabel?: (channel: string) => string
   }): Promise<boolean> {
     if (state.value !== 'idle') return false
     error.value = ''
@@ -168,7 +173,7 @@ export function useLiveShare() {
       const resp = await fetch('/api/live-share', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: opts.shareTitle ?? '' }),
+        body: JSON.stringify({ title: opts.shareTitle ?? '', notes: Boolean(opts.notes) }),
       })
       if (!resp.ok) {
         fail(`create room failed: ${resp.status}`)
@@ -235,6 +240,21 @@ export function useLiveShare() {
       audioCtx = new AudioContext({ sampleRate: 48000 })
       await audioCtx.resume()
       mixer = new LiveMixer(audioCtx, displayStream, micStream)
+
+      // AI 听记 records the same sources, but one channel at a time: the mix
+      // sent to viewers is per-viewer and excludes that viewer, so it cannot be
+      // used to transcribe the meeting. Started before the socket so the first
+      // viewer's audio is never missed.
+      if (opts.notes) {
+        useLiveNotes().start({
+          token: token.value,
+          ctx: audioCtx,
+          systemStream: displayStream,
+          micStream,
+          title: title.value,
+          label: opts.notesLabel,
+        })
+      }
 
       // 5. Open the publisher socket.
       await openSocket()
@@ -348,6 +368,9 @@ export function useLiveShare() {
       const stream = ev.streams[0] ?? new MediaStream([ev.track])
       // Route it to everyone EXCEPT this viewer.
       mixer?.attachRemote(viewerId, stream)
+      // …and transcribe it on its own channel, so the line is attributed to
+      // this viewer rather than merged into the system audio.
+      useLiveNotes().addViewer(viewerId, stream)
     }
     pc.onicecandidate = (ev) => {
       if (ev.candidate) {
@@ -395,6 +418,7 @@ export function useLiveShare() {
       peers.delete(viewerId)
     }
     mixer?.removeViewer(viewerId)
+    useLiveNotes().removeViewer(viewerId)
     viewers.value = viewers.value.filter((v) => v.id !== viewerId)
   }
 
@@ -425,6 +449,13 @@ export function useLiveShare() {
     // Capture ownership before resetSession() clears it.
     const mayDelete = ownsRoom
 
+    // Stop the notes recorders and wait for their last blobs BEFORE the audio
+    // context is closed: MediaRecorder produces the final chunk in `onstop`,
+    // so closing first would silently drop the last few seconds of the meeting.
+    const notes = useLiveNotes()
+    const hadNotes = notes.phase.value !== 'idle'
+    if (hadNotes) await notes.stopCapture()
+
     send({ type: 'end' })
     resetSession()
     state.value = 'idle'
@@ -433,6 +464,10 @@ export function useLiveShare() {
     shareLinks.value = []
     viewers.value = []
     talkEnabled.value = false
+
+    // Uploads and minutes generation continue in the background; the dialog
+    // watches the notes state, not this promise.
+    if (hadNotes) void notes.finishUploads()
 
     if (tok && mayDelete) {
       try {
@@ -465,6 +500,7 @@ export function useLiveShare() {
 /** Test seam: drop all module state without touching the network. */
 export function _resetLiveShareForTest(): void {
   resetSession()
+  useLiveNotes().reset()
   state.value = 'idle'
   token.value = ''
   shareUrl.value = ''

@@ -31,6 +31,33 @@
       </div>
     </div>
 
+    <!-- AI 听记 panel. Collapsed by default: it overlays the picture, and most
+         viewers are here to watch, not to read. Opened from the dock; polling
+         only runs while it is open. -->
+    <div v-if="notesOpen" class="live-notes-panel" data-panel="notes">
+      <div class="live-notes-head">
+        <span class="live-notes-title">{{ t('share.live.notesTitle') }}</span>
+        <button
+          class="live-notes-close"
+          type="button"
+          :aria-label="t('common.close')"
+          data-action="notes-close"
+          @click="closeNotes"
+        >
+          <X :size="16" />
+        </button>
+      </div>
+      <div ref="notesBodyRef" class="live-notes-body">
+        <div v-if="noteBlocks.length === 0" class="live-notes-hint">
+          {{ t('share.live.notesWaiting') }}
+        </div>
+        <div v-for="b in noteBlocks" :key="b.key" class="live-note-line">
+          <span class="live-note-speaker">{{ b.speaker }}</span>
+          <span class="live-note-text">{{ b.text }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Floating control dock. Absolutely positioned so it overlays the video
          instead of taking height from it, and always mounted: fullscreen is
          useful even when the publisher never allowed speech. -->
@@ -83,6 +110,21 @@
       </button>
 
       <button
+        v-if="notesEnabled"
+        class="live-dock-btn"
+        :class="{ 'live-dock-btn--live': notesOpen }"
+        type="button"
+        :aria-pressed="notesOpen"
+        :aria-label="t('share.live.notesTitle')"
+        :title="t('share.live.notesTitle')"
+        data-action="notes"
+        @click="toggleNotes"
+      >
+        <FileText :size="16" />
+        <span class="live-dock-label">{{ t('share.live.notes') }}</span>
+      </button>
+
+      <button
         class="live-dock-btn"
         type="button"
         :aria-pressed="isFullscreen"
@@ -109,12 +151,14 @@
  * hold-to-talk control. All protocol work lives in LiveViewer so the state
  * machine is unit-testable without a DOM.
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Maximize, Mic, MicOff, Minimize, VideoOff, VolumeX } from 'lucide-vue-next'
+import { FileText, Maximize, Mic, MicOff, Minimize, VideoOff, VolumeX, X } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { LiveViewer, type LiveViewerState } from './liveViewer'
+import { ShareNotesPoller } from './liveNotesClient'
 import { getShareToken } from './shareMode'
+import { groupNoteSegments, type LiveNoteSegment } from '@/composables/liveNotes'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'LiveShareView'
@@ -131,6 +175,53 @@ const talking = ref(false)
 const needsSoundUnlock = ref(false)
 /** Mirrors the browser's fullscreen state so the icon can follow Esc / F11. */
 const isFullscreen = ref(false)
+
+// ── AI 听记 (viewer side) ────────────────────────────────────────────────────
+/** Whether the publisher enabled 听记. The panel is only offered when it did. */
+const notesEnabled = ref(false)
+/** Collapsed by default: the panel overlays the picture. */
+const notesOpen = ref(false)
+const notesSegments = ref<LiveNoteSegment[]>([])
+const noteBlocks = computed(() => groupNoteSegments(notesSegments.value).slice(-60))
+let notesPoller: ShareNotesPoller | null = null
+
+function openNotes(): void {
+  notesOpen.value = true
+  if (!notesPoller) {
+    notesPoller = new ShareNotesPoller((snapshot) => {
+      notesSegments.value = snapshot.segments
+    })
+  }
+  notesPoller.start()
+}
+
+function closeNotes(): void {
+  notesOpen.value = false
+  notesPoller?.stop()
+  notesPoller = null
+}
+
+function toggleNotes(): void {
+  if (notesOpen.value) closeNotes()
+  else openNotes()
+}
+
+const notesBodyRef = ref<HTMLElement | null>(null)
+
+// Follow the transcript, but only when the reader is already at the bottom:
+// scrolling away to re-read an earlier line must not be undone by the next
+// poll.
+watch(
+  () => noteBlocks.value.length,
+  async () => {
+    const el = notesBodyRef.value
+    if (!el) return
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    if (!nearBottom) return
+    await nextTick()
+    el.scrollTop = el.scrollHeight
+  },
+)
 
 let viewer: LiveViewer | null = null
 
@@ -224,10 +315,16 @@ function start(): void {
         if (detail?.reason) failReason.value = detail.reason
         if (s === 'ended' || s === 'full' || s === 'failed') {
           talking.value = false
+          // The room is gone, so the transcript endpoint 404s from here on.
+          closeNotes()
         }
       },
       onTalkEnabled: (v) => {
         talkEnabled.value = v
+      },
+      onNotesEnabled: (v) => {
+        notesEnabled.value = v
+        if (!v) closeNotes()
       },
       onTalkRevoked: () => {
         // Muted by the publisher, or the room switch went off: the toggle must
@@ -320,6 +417,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', syncFullscreen)
+  closeNotes()
   viewer?.close()
   viewer = null
   const el = videoRef.value
@@ -536,5 +634,101 @@ onBeforeUnmount(() => {
 .live-dock-btn {
     padding: var(--space-2, 4px) var(--space-3, 6px);
   }
+}
+
+/* ── AI 听记 panel ───────────────────────────────────────────────────────── */
+
+/*
+ * Sits directly above the dock, centred, and never wider than the viewport.
+ * `max-height` in vh keeps it from covering the whole picture on a phone; the
+ * body scrolls instead.
+ */
+.live-notes-panel {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--space-6, 12px) + env(safe-area-inset-bottom, 0px) + calc(52 * var(--dp)));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  width: min(calc(560 * var(--dp)), calc(100vw - 2 * var(--space-6, 12px)));
+  max-height: min(56vh, calc(380 * var(--dp)));
+  border-radius: var(--radius-lg, 10px);
+  background: color-mix(in srgb, var(--bg-secondary, #161b22) 94%, transparent);
+  border: 1px solid var(--border-color, #30363d);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  z-index: 6;
+  overflow: hidden;
+}
+
+.live-notes-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4, 8px);
+  padding: var(--space-4, 8px) var(--space-5, 10px);
+  border-bottom: 1px solid var(--border-color, #30363d);
+}
+
+.live-notes-title {
+  font-size: var(--font-size-sm, 13px);
+  font-weight: 600;
+  color: var(--text-primary, #e6edf3);
+}
+
+.live-notes-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--text-secondary, #8b949e);
+  cursor: pointer;
+}
+
+.live-notes-close:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+  color: var(--text-primary, #e6edf3);
+}
+
+.live-notes-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 6px);
+  padding: var(--space-4, 8px) var(--space-5, 10px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.live-notes-hint {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-muted, #8b949e);
+  line-height: 1.6;
+}
+
+.live-note-line {
+  display: flex;
+  gap: var(--space-4, 8px);
+  font-size: var(--font-size-sm, 13px);
+  line-height: 1.6;
+}
+
+.live-note-speaker {
+  flex: 0 0 calc(64 * var(--dp));
+  color: var(--text-muted, #8b949e);
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-note-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-primary, #e6edf3);
+  overflow-wrap: anywhere;
 }
 </style>

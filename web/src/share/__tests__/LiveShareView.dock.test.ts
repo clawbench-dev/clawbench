@@ -54,6 +54,9 @@ const i18n = createI18n({
           statusLive: '直播中',
           fullscreen: '全屏',
           exitFullscreen: '退出全屏',
+          notes: '听记',
+          notesTitle: 'AI 听记',
+          notesWaiting: '等待转写…',
         },
       },
     },
@@ -252,6 +255,25 @@ describe('LiveShareView control dock', () => {
     await flushPromises()
 
     expect(w.find('[data-action="enable-sound"]').exists()).toBe(false)
+
+    w.unmount()
+  })
+
+  it('offers the transcript only when the publisher enabled AI 听记', async () => {
+    const w = mountView()
+    await flushPromises()
+
+    // A share without 听记 must not show a button that opens an empty panel.
+    expect(w.find('[data-action="notes"]').exists()).toBe(false)
+
+    lastViewer?.opts?.callbacks?.onNotesEnabled?.(true)
+    await flushPromises()
+    expect(w.find('[data-action="notes"]').exists()).toBe(true)
+
+    // Turning it off (or the share ending) removes the button again.
+    lastViewer?.opts?.callbacks?.onNotesEnabled?.(false)
+    await flushPromises()
+    expect(w.find('[data-action="notes"]').exists()).toBe(false)
 
     w.unmount()
   })

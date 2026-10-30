@@ -131,10 +131,55 @@ talking --set-talk-enabled(false)--> none  （房间开关关闭，连带静音�
 | 8 人上限 | 发布端上行 = N × 码率 |
 | 房间是内存态 | 进程重启即失效（语义正确：直播是瞬时的） |
 
-### 安全
+## AI 听记
+
+发布端可选开启「AI 听记」：共享过程中实时转写，停止后生成结构化会议纪要（概要 / 议题与讨论 / 结论与决定 / 待办事项），观众可以展开只读面板跟读。**默认收起**，不挡画面。
+
+### 为什么必须在发布端采集
+
+共享是纯 P2P，**服务端一个音频包都收不到**。而发布端本来就握着全部音源：系统声音、自己的麦克风、以及每个观众的麦克风（`pc.ontrack`）。所以转写只能在发布端做——它也是唯一还保留着**信道分离**的地方。
+
+### 信道分离 + 按时间重排
+
+每个音源单独录一条信道，互不混音：
+
+```
+system      系统声音（屏幕里对方会议的声音）
+mic         发布端的麦克风
+viewer:<id> 每个观众的麦克风，一人一条
+```
+
+于是**说话人标签是免费拿到的**，不需要说话人分离（diarization）模型。代价是各信道独立转写、完成顺序与说话顺序不同，所以读取时必须按 `startedAt` 重排——`startedAt` 由发布端**同一个时钟**打，跨信道可比。
+
+- **在停顿处切段**，不是按固定时钟切：用 `AnalyserNode` 每 100ms 取一次 RMS，静音超过 450ms 且本段已满 4s 就收尾；连续说话则由 20s 硬上限兜底（仍在 Whisper 原生窗口内）。固定 10s 切会让每句话都有概率在词中间断开，Whisper 在切口处会吞词或猜词，一小时会议几百个切口，转写质量会明显变差。
+- 每次收尾都得到**独立可解码**的完整 WebM/Opus 文件（`timeslice` 更省，但只有第一片带容器头，后续切片单独解不出来）。整段全是静音的会被丢弃——它不含内容，送上去只会换回一个空字符串；无法测电平的短尾段则保留（「不知道」不能当成「静音」）。
+- 上传**每信道串行**，失败按 1s/3s/9s 退避重试。**积压不丢段**——字幕可以滞后，转写不能缺口；队列上限 180 段/信道（约 30 分钟音频）只是防内存泄漏的硬闸门，触顶会在界面上标「转写不完整」。
+- 停止时先停录音机、等最后一段真正产出（`onstop` 才生成 blob）再关 `AudioContext`，然后等队列排空（最长 3 分钟）才生成纪要；排不空就明确提示「纪要可能缺少结尾」。
+- 回声去重：观众的声音经发布端扬声器被系统回环再次采集，同一句话会在两条信道各出现一次。合并时若两条信道在 **±5s** 内出现**归一化后完全相同**的文本，只保留较早的那条。真正的同时说话用词不同，不受影响。
+
+### 数据流
+
+```
+发布端  ── POST /api/live-share/notes/segment（multipart 音频 + channel + startedAt）
+        ←─ { id, text }                     服务端用 STT provider 同步转写后落库
+观众    ── GET /api/share/{token}/notes?since=<maxId>   （公开，token 即凭证，面板展开时才轮询）
+发布端  ── POST /api/live-share/notes/minutes           （异步生成，轮询 GET 取状态）
+```
+
+- **鉴权**：发布端三个端点需登录 + 项目 cookie。token 归属判定接受两种来源：房间还在（`room.ProjectKey() == 项目`），或**已有本项目的听记行**——后者让「结束共享」瞬间的最后一段上传与纪要请求仍能落地（房间随发布端断开立刻销毁）。
+- **公开读**：`{token}/notes` 只在房间存活期间可读。共享结束后 token 立即失效，不会留下可长期读取的转写。
+- **保留期**：转写与纪要按 token 落库保留 **7 天**，由房间回收器每小时顺带清理。
+- **纪要生成**：转写超过 6000 字时先分段提取要点，再合并成纪要（map-reduce），避免整段塞进模型窗口被截断。
+
+### 隐私
+
+听记默认开启（用户是主动开共享的），但**观众端会显示「听记」入口**——被记录的人能看见，不做静默录音。关闭开关则完全不采集、不上传。
+
+## 安全
 
 - 管理端点（`POST`/`GET`/`DELETE /api/live-share`）**需登录**，且只操作本项目；发布端 WS 校验 token 与项目归属
-- 观众 WS（`/api/share/{token}/signal`）**公开**，token 即凭证
+- 观众 WS（`/api/share/{token}/signal`）与听记读取（`/api/share/{token}/notes`）**公开**，token 即凭证
+- 听记上传（`/api/live-share/notes/segment`）需登录 + 项目 cookie，且 token 必须属于该项目；上传体上限 4MB、单段时长上限 120s、每段文本上限 2000 字
 - `setPendingCaptureSource` 一次性消费：消费后清空，任何页面后续调用 `getDisplayMedia` 都会被拒绝
 - 复用 `ServeSharePage` 的 `Referrer-Policy: no-referrer`，避免 token 经子资源请求泄露
 
@@ -146,11 +191,16 @@ talking --set-talk-enabled(false)--> none  （房间开关关闭，连带静音�
 | `internal/liveshare/talk.go` | 发言授权状态机 |
 | `internal/liveshare/signal.go` | 协议结构体（与前端镜像） |
 | `internal/handler/live_share.go` | HTTP/WS 绑定、鉴权切分、信令转发 |
+| `internal/handler/live_notes.go` | 听记上传 / 读取 / 纪要端点、STT 并发闸门 |
+| `internal/service/live_notes.go` | 听记落库、时间线重排与去重、纪要生成 |
+| `web/src/composables/liveNotes.ts` | 分信道录音（纯逻辑，可单测） |
+| `web/src/composables/useLiveNotes.ts` | 听记响应式状态、上传与纪要轮询 |
+| `web/src/share/liveNotesClient.ts` | 观众端听记轮询 |
 | `web/src/composables/useLiveShare.ts` | 发布端：房间、采集、每观众 PeerConnection |
 | `web/src/composables/useLiveMixer.ts` | 混音图（纯逻辑，可单测） |
 | `web/src/share/liveViewer.ts` | 观众端：信令 + 单个 PeerConnection |
 | `web/src/share/LiveShareView.vue` | 观众端页面 |
-| `web/src/components/live/LiveShareDialog.vue` | 发布端弹窗 |
+| `web/src/components/live/LiveShareDialog.vue` | 发布端弹窗（含实时字幕与纪要） |
 | `desktop/src/main/capture.ts` | 捕获源列表、`setDisplayMediaRequestHandler`、节流开关 |
 
 设计文档：[docs/plans/2026-10-28-desktop-screen-audio-share-design.md](../../plans/2026-10-28-desktop-screen-audio-share-design.md)

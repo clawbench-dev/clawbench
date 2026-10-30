@@ -108,6 +108,12 @@ type Room struct {
 	// talkEnabled is the room-level switch. Per-viewer grants are on Viewer.
 	talkEnabled bool
 
+	// notesEnabled tells viewers whether the publisher is running AI 听记.
+	// Purely informational: the transcript itself never passes through the room
+	// (it is uploaded over HTTP), but a viewer must not show a "听记" control for
+	// a share that has none.
+	notesEnabled bool
+
 	maxViewers  int
 	idleTimeout time.Duration
 	lastActive  time.Time
@@ -132,6 +138,22 @@ func (r *Room) TalkEnabled() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.talkEnabled
+}
+
+// NotesEnabled reports whether the publisher is running AI 听记 for this room.
+func (r *Room) NotesEnabled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.notesEnabled
+}
+
+// SetNotesEnabled flips the AI 听记 flag. Set from the create call, before the
+// publisher socket attaches; viewers learn it from their `joined` frame.
+func (r *Room) SetNotesEnabled(on bool) {
+	r.mu.Lock()
+	r.notesEnabled = on
+	r.mu.Unlock()
+	r.touch()
 }
 
 // SetTalkEnabled flips the room-level speech switch. Turning it off also mutes

@@ -116,10 +116,13 @@ type ViewerMessage struct {
 	// ICEServers is reserved for a future TURN/STUN addition. Always empty
 	// today; the viewer already passes it straight to RTCPeerConnection, so
 	// enabling relay later needs no client change.
-	ICEServers  []any  `json:"iceServers"`
-	TalkEnabled bool   `json:"talkEnabled,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	Message     string `json:"message,omitempty"`
+	ICEServers  []any `json:"iceServers"`
+	TalkEnabled bool  `json:"talkEnabled,omitempty"`
+	// NotesEnabled tells the viewer that this share is running AI 听记, so the
+	// transcript panel can be offered at all. It carries no transcript.
+	NotesEnabled bool   `json:"notesEnabled,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	Message      string `json:"message,omitempty"`
 }
 
 // PublisherControl is a frame received from the publisher.

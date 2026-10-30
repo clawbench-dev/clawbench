@@ -933,6 +933,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := store.WriteExec(SessionSharesDDL); err != nil {
 		return fmt.Errorf("failed to create session_shares table: %w", err)
 	}
+	// AI 听记 transcripts and generated minutes for live shares. Defined in
+	// live_notes.go so the handler tests can create the same schema.
+	if _, err := store.WriteExec(LiveNotesDDL); err != nil {
+		return fmt.Errorf("failed to create live_notes tables: %w", err)
+	}
 	// Migrate: session shares no longer freeze a JSON snapshot. The DDL above is
 	// a no-op on an existing database, so the probe has to run AFTER it — the
 	// table is guaranteed to exist by this point, and the rebuild below is the

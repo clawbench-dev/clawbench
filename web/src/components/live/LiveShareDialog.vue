@@ -2,7 +2,7 @@
   <ModalDialog :open="open" :title="t('liveShare.dialogTitle')" :z-index="2500" @close="onClose">
     <div class="live-dialog">
       <!-- Idle: pick a source and options, then start. -->
-      <template v-if="share.state.value === 'idle'">
+      <template v-if="share.state.value === 'idle' && phase !== 'minutes'">
         <div v-if="!supported" class="live-dialog-warn">
           {{ t('liveShare.unsupported') }}
         </div>
@@ -43,6 +43,19 @@
             <input v-model="withMicrophone" type="checkbox" />
             <span>{{ t('liveShare.includeMicrophone') }}</span>
           </label>
+
+          <!-- AI 听记. On by default: the user opened this dialog to share, and
+               a meeting that loses its transcript because a box was unchecked
+               is a worse outcome than one that has one. Viewers see that 听记 is
+               running (the panel is offered to them), so nobody is recorded
+               silently. -->
+          <label class="live-check">
+            <input v-model="withNotes" type="checkbox" />
+            <span>{{ t('liveShare.notes.enable') }}</span>
+          </label>
+          <div class="live-dialog-hint live-dialog-hint--indent">
+            {{ t('liveShare.notes.enableHint') }}
+          </div>
         </template>
       </template>
 
@@ -51,6 +64,42 @@
            top-left corner of a mostly empty panel. -->
       <div v-else-if="share.state.value === 'capturing'" class="live-dialog-loading">
         <LoadingIndicator :label="t('liveShare.starting')" size="lg" />
+      </div>
+
+      <!-- Minutes: shown after stopping a share that had 听记 enabled. The
+           dialog deliberately stays open — the transcript exists nowhere else
+           in the UI, and closing it would throw the meeting away. -->
+      <div v-else-if="phase === 'minutes'" class="live-notes-minutes">
+        <div class="live-dialog-section">{{ t('liveShare.notes.minutesTitle') }}</div>
+        <div v-if="notes.phase.value === 'finalizing'" class="live-dialog-hint">
+          <LoadingIndicator size="sm" inline />
+          {{
+            notes.pending.value > 0
+              ? t('liveShare.notes.uploading', { n: notes.pending.value })
+              : t('liveShare.notes.finalizing')
+          }}
+        </div>
+        <div v-else-if="notes.minutesPhase.value === 'generating'" class="live-dialog-hint">
+          <LoadingIndicator size="sm" inline />
+          {{ t('liveShare.notes.generating') }}
+        </div>
+        <div v-else-if="notes.minutesPhase.value === 'failed'" class="live-dialog-error">
+          {{ notes.error.value || t('liveShare.notes.generateFailed') }}
+        </div>
+        <div
+          v-else-if="notes.minutes.value"
+          class="live-notes-minutes-body markdown-body"
+          v-html="renderedMinutes"
+        ></div>
+        <div v-else class="live-dialog-hint">{{ t('liveShare.notes.empty') }}</div>
+
+        <!-- Never present a partial transcript as a complete meeting. -->
+        <div v-if="notes.lost.value > 0" class="live-dialog-warn">
+          {{ t('liveShare.notes.lostSegments', { n: notes.lost.value }) }}
+        </div>
+        <div v-else-if="notes.truncated.value" class="live-dialog-warn">
+          {{ t('liveShare.notes.truncated') }}
+        </div>
       </div>
 
       <!-- Publishing: link + audience + speech controls. -->
@@ -113,6 +162,22 @@
           {{ t('liveShare.muteAll') }}
         </button>
 
+        <!-- Live transcript. One line per speaker turn; the channels are
+             recorded separately and merged by timestamp, so a remote
+             participant and the publisher appear as different speakers. -->
+        <template v-if="notes.phase.value === 'recording'">
+          <div class="live-dialog-section">{{ t('liveShare.notes.title') }}</div>
+          <div v-if="noteBlocks.length === 0" class="live-dialog-hint">
+            {{ t('liveShare.notes.listening') }}
+          </div>
+          <div v-else ref="notesListRef" class="live-notes-list">
+            <div v-for="b in noteBlocks" :key="b.key" class="live-note-line">
+              <span class="live-note-speaker">{{ b.speaker }}</span>
+              <span class="live-note-text">{{ b.text }}</span>
+            </div>
+          </div>
+        </template>
+
         <div v-if="share.error.value" class="live-dialog-error">{{ share.error.value }}</div>
       </template>
     </div>
@@ -120,26 +185,57 @@
          already supplies padding, a separating border and the tinted bar. In
          the body they were flush against the bottom edge with no divider. -->
     <template #footer>
-      <button class="fbtn" type="button" @click="onClose">
-        {{ t('common.cancel') }}
-      </button>
-      <button
-        v-if="share.state.value === 'idle' && supported"
-        class="fbtn fbtn-primary"
-        type="button"
-        :disabled="!selectedSourceId || starting"
-        @click="onStart"
-      >
-        {{ starting ? t('liveShare.starting') : t('liveShare.start') }}
-      </button>
-      <button
-        v-else-if="share.state.value === 'publishing'"
-        class="fbtn fbtn-danger"
-        type="button"
-        @click="onStop"
-      >
-        {{ t('liveShare.stop') }}
-      </button>
+      <template v-if="phase === 'minutes'">
+        <button
+          v-if="notes.minutesPhase.value === 'failed'"
+          class="fbtn"
+          type="button"
+          @click="notes.generateMinutes(true)"
+        >
+          {{ t('common.retry') }}
+        </button>
+        <button
+          class="fbtn"
+          type="button"
+          :disabled="!notes.minutes.value"
+          @click="copyMinutes"
+        >
+          {{ t('liveShare.notes.copy') }}
+        </button>
+        <button
+          class="fbtn"
+          type="button"
+          :disabled="!notes.minutes.value"
+          @click="downloadMinutes"
+        >
+          {{ t('liveShare.notes.download') }}
+        </button>
+        <button class="fbtn fbtn-primary" type="button" @click="onClose">
+          {{ t('common.close') }}
+        </button>
+      </template>
+      <template v-else>
+        <button class="fbtn" type="button" @click="onClose">
+          {{ t('common.cancel') }}
+        </button>
+        <button
+          v-if="share.state.value === 'idle' && supported"
+          class="fbtn fbtn-primary"
+          type="button"
+          :disabled="!selectedSourceId || starting"
+          @click="onStart"
+        >
+          {{ starting ? t('liveShare.starting') : t('liveShare.start') }}
+        </button>
+        <button
+          v-else-if="share.state.value === 'publishing'"
+          class="fbtn fbtn-danger"
+          type="button"
+          @click="onStop"
+        >
+          {{ t('liveShare.stop') }}
+        </button>
+      </template>
     </template>
   </ModalDialog>
 </template>
@@ -153,7 +249,7 @@
  * dialog while publishing does NOT stop the share — the header button shows the
  * live indicator so the user can come back to it.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -165,6 +261,8 @@ import {
   useLiveShare,
   type CaptureSource,
 } from '@/composables/useLiveShare'
+import { groupNoteSegments, useLiveNotes } from '@/composables/useLiveNotes'
+import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { appLog } from '@/utils/appLog'
 import '@/assets/modal-footer-btn.css'
 
@@ -174,17 +272,37 @@ const emit = defineEmits<{ close: [] }>()
 const { t } = useI18n()
 const toast = useToast()
 const share = useLiveShare()
+const notes = useLiveNotes()
 
 const captureSources = ref<CaptureSource[]>([])
 const selectedSourceId = ref('')
 const withSystemAudio = ref(false)
 const withMicrophone = ref(true)
+const withNotes = ref(true)
 const systemAudioSupported = ref(false)
 const supported = ref(false)
 const loadingSources = ref(false)
 const starting = ref(false)
+/** 'publishing' = the normal dialog; 'minutes' = the post-share report. */
+const phase = ref<'publishing' | 'minutes'>('publishing')
+const notesListRef = ref<HTMLElement | null>(null)
 
 const hasTalkers = computed(() => share.viewers.value.some((v) => v.talk === 'talking'))
+/** Only the tail is rendered: a long meeting would otherwise rebuild thousands
+ *  of nodes on every new line. The full transcript still reaches the minutes. */
+const noteBlocks = computed(() => groupNoteSegments(notes.segments.value).slice(-40))
+const renderedMinutes = computed(() =>
+  notes.minutes.value ? renderMarkdownHtml(notes.minutes.value) : '',
+)
+
+/** Localised speaker label for one recording channel. */
+function notesLabel(channel: string): string {
+  if (channel === 'system') return t('liveShare.notes.speakerSystem')
+  if (channel === 'mic') return t('liveShare.notes.speakerMe')
+  const id = channel.startsWith('viewer:') ? channel.slice('viewer:'.length) : ''
+  const n = Number(id.replace(/^v/, '')) || 0
+  return t('liveShare.notes.speakerViewer', { n })
+}
 
 function talkLabel(talk: string): string {
   return talk === 'talking' ? t('liveShare.talkTalking') : t('liveShare.talkMuted')
@@ -218,6 +336,11 @@ watch(
   (isOpen) => {
     if (!isOpen) return
     if (share.state.value === 'idle') void loadSources()
+    // Reopened mid-share: pick up any lines transcribed while the dialog was
+    // closed (the capture keeps running in the module singleton).
+    if (share.state.value === 'publishing' && notes.phase.value === 'recording') {
+      void notes.refresh()
+    }
   },
   { immediate: true },
 )
@@ -229,6 +352,8 @@ async function onStart(): Promise<void> {
       sourceId: selectedSourceId.value,
       systemAudio: withSystemAudio.value,
       microphone: withMicrophone.value,
+      notes: withNotes.value,
+      notesLabel,
     })
     if (!ok && share.error.value) toast.show(share.error.value, { type: 'error', icon: 'warning' })
   } finally {
@@ -237,7 +362,14 @@ async function onStart(): Promise<void> {
 }
 
 async function onStop(): Promise<void> {
+  const hadNotes = notes.phase.value === 'recording'
   await share.stop()
+  if (hadNotes) {
+    // Keep the dialog open: the minutes are generated in the background and
+    // this is the only place they are shown.
+    phase.value = 'minutes'
+    return
+  }
   emit('close')
 }
 
@@ -247,8 +379,50 @@ function onToggleTalk(on: boolean): void {
 
 /** Closing while publishing keeps the share running; the header shows it. */
 function onClose(): void {
+  if (phase.value === 'minutes') {
+    // The report has been seen (or deliberately dismissed). Reset only after
+    // the dialog closes so the footer does not flicker to the setup view.
+    notes.reset()
+    phase.value = 'publishing'
+  }
   emit('close')
 }
+
+async function copyMinutes(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(notes.minutes.value)
+    toast.show(t('common.copied'), { type: 'success', icon: 'copy' })
+  } catch (e) {
+    appLog.w('LiveShareDialog', 'copy minutes failed', e)
+  }
+}
+
+function downloadMinutes(): void {
+  const text = notes.minutes.value
+  if (!text) return
+  const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${t('liveShare.notes.fileName')}.md`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  // Revoke on the next task: Safari aborts the download if the URL is released
+  // in the same tick as the click.
+  setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+// Follow the transcript while it grows. Runs after the DOM update so the new
+// line is already measured.
+watch(
+  () => noteBlocks.value.length,
+  async () => {
+    await nextTick()
+    const el = notesListRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  },
+)
 </script>
 
 <style scoped>
@@ -511,5 +685,67 @@ function onClose(): void {
    own left alignment rather than the flex-end the footer uses. */
 .live-dialog > .live-btn {
   align-self: flex-start;
+}
+
+/* ── AI 听记 ─────────────────────────────────────────────────────────────── */
+
+/*
+ * Fixed height with its own scroll: the dialog's height must not jump every
+ * ten seconds as a new line lands, and an hour-long meeting must not push the
+ * footer off-screen.
+ */
+.live-notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 6px);
+  max-height: calc(150 * var(--dp));
+  overflow-y: auto;
+  padding: var(--space-4, 8px) var(--space-5, 10px);
+  border-radius: var(--radius-md, 6px);
+  background: var(--bg-tertiary, #f6f8fa);
+  overscroll-behavior: contain;
+}
+
+.live-note-line {
+  display: flex;
+  gap: var(--space-4, 8px);
+  font-size: var(--font-size-xs, 11px);
+  line-height: 1.6;
+}
+
+/* A fixed column keeps every line's text starting at the same x, which is what
+   makes a multi-speaker transcript scannable. */
+.live-note-speaker {
+  flex: 0 0 calc(64 * var(--dp));
+  color: var(--text-muted, #656d76);
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-note-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-primary, #1f2328);
+  overflow-wrap: anywhere;
+}
+
+.live-notes-minutes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5, 10px);
+  min-width: 0;
+}
+
+/* The report is the tallest thing this dialog ever shows; cap it and scroll
+   rather than growing the card past the viewport. */
+.live-notes-minutes-body {
+  max-height: calc(360 * var(--dp));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  font-size: var(--font-size-sm, 13px);
+  line-height: 1.7;
 }
 </style>

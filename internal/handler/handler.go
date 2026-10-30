@@ -676,6 +676,11 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// the credential, exactly like the file/session share endpoints above.
 	register("/api/live-share", ServeLiveShareManage)
 	register("/api/live-share/publish/ws", LiveSharePublishWS)
+	// AI 听记: the publisher uploads one audio segment per channel, reads the
+	// merged timeline back, and asks for the minutes once the share ends.
+	register("/api/live-share/notes", ServeLiveShareNotes)
+	register("/api/live-share/notes/segment", ServeLiveShareNoteSegment)
+	register("/api/live-share/notes/minutes", ServeLiveShareNotesMinutes)
 	registerPublic("/api/share/", ServeSharePublic)
 	registerPublic("/share/", ServeSharePage)
 	register("/api/dir", ListDir)

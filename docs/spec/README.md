@@ -32,7 +32,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [会话标签](features/session-tags.md) | 按项目隔离的标签定义（`UNIQUE(name, project_id)`，全局标签用 `project_id=0` 哨兵）+ 会话关联、长按菜单打标签、会话行标签行、顶部过滤栏（仅列在用标签，可换行 + 高度封顶）、可读性校准的哈希配色、胶囊即选中控件、失败可见、PATCH 全量替换语义 |
 | [AI 群聊](features/group-chat.md) | 多智能体群会话（跨后端）：**主持人模式**（成员轮流控场，AI 决定发言者，标签路由 + 失败回退轮转）与**自由模式**（无主持人，@ 提及接力，@用户昵称交回人类）；**自动巡航**（正交开关，把终止从「交回用户」改为成员确认完成，host 一人拍板 / free 至少半数，六种主持人收工形态全拦改确认回合，开关每回合实时读，每回合按时间线高水位重置，会话信息栏「自动巡航」chip 显示「巡航中」）；成员是隐藏 `chat_sessions` 行（`group_member`）复用连接池/resume/空闲回收，消息只存群时间线一份；**同一智能体可多实例**（首个保留本名、重复实例取名池名 `Alice`/`Bob`…，池尽回退 `本名 序号`；成员名以 `agent_name` 为权威、头像以 `agent_avatar` 快照为准、真实智能体名经 `SpeakerIdentity.agentName` 披露）；增量注入游标（`seen_cursor`，失败不推进）、**@ 成员卡**（公开点名 + 密送批注）、**用户昵称**（`chat.user_nickname`，与智能体名双向唯一）、密送（`private` 提及 + `group_pending_bcc`，注入 fail-closed / 显示 fail-open）、成员**禁用/启用**（`chat_sessions.disabled`，只影响调度、不动行与上下文，启用后补齐禁用期间内容）与加人系统事件、**按成员的上下文用量（花名册 chip + 嵌套详情面板，数据源是成员行自己的 `context_state.usage`，未上报显示 `—`）与单成员压缩**（`POST /api/group/member-compact`，不走 `/api/ai/chat`、不在时间线产出输出、期间消息排队，开始/完成/失败写系统行）、干净收尾写「轮到用户发言」系统行、AskUserQuestion 交回、并发发言（快照不变 + 按 id 定位流式行）、单成员失败不终止整群、ACP sweep 保护、整轮只跑一次摘要 |
 | [语音合成](features/tts.md) | 多引擎 TTS（Edge / OpenAI 兼容 / Piper / Kokoro / MOSS-Nano），总结后端三选一（simple / api / **auto 按内容杂质比例分流**），保守文本清理（不篡改技术文本），**群聊按发言人轮流朗读**（speakerName 前缀 + FIFO 队列），**缓存键并入合成配置**（引擎/音色/模型/速率，API key 排除），缓存策略 |
-| [屏幕与声音共享](features/live-share.md) | Windows 桌面发布屏幕 + 系统声音 + 麦克风，token 链接给匿名观众在浏览器观看；**纯 P2P WebRTC**（服务端只转发 SDP/ICE，零新增端口）；**多人语音经发布端混音**（每观众独立混音排除自己，0 条额外连接，不需 SFU）；发言三层授权（房间开关默认关 + 逐人批准 + 按住说话）；观众上限 8，无 TURN 中继（仅同一局域网） |
+| [屏幕与声音共享](features/live-share.md) | Windows 桌面发布屏幕 + 系统声音 + 麦克风，token 链接给匿名观众在浏览器观看；**纯 P2P WebRTC**（服务端只转发 SDP/ICE，零新增端口）；**多人语音经发布端混音**（每观众独立混音排除自己，0 条额外连接，不需 SFU）；发言两层授权（房间开关默认关 + 每人麦克风开关）；**AI 听记**（按信道分别转写系统声音 / 发布端麦克风 / 每个观众，按时间重排成带说话人的时间线，结束后生成会议纪要）；观众上限 8，无 TURN 中继（仅同一局域网） |
 | [语音输入](features/stt.md) | 双模式语音识别（流式 WS + 非流式 POST）、vLLM Whisper 引擎、增量识别 + 最终全量、安全上下文检测、快捷键触发 |
 | [推荐回复](features/chat-recommendation.md) | AI 回复完成后自动生成下一步建议、stable/rolling 分离支持 prompt caching、快捷指令感知、离线恢复、会话隔离 |
 | [Web 终端](features/terminal.md) | PTY 多标签会话（独立进程组防 /dev/tty 阻塞）、三模式手势系统（浏览/手势/选择）、拖拽选择+浮动复制栏、选中即复制（默认开启，150ms 沉降收敛手势，移动端复制栏降级保留）、虚拟修饰键、键位/符号配置、终端主题切换、终端输入抽屉、终端帮助抽屉、TUI 应用支持 |
@@ -73,7 +73,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 
 | 模块 | 说明 |
 |------|------|
-| [OpenAPI 规格](../../internal/api/openapi.yaml) | 完整 OpenAPI 3.0 单文件（181 路径 / 232 操作）：所有 HTTP 端点、鉴权标注、统一错误体、请求/响应 schema；WebSocket 与 SSE 端点以说明形式收录。源文件已迁至 `internal/api/openapi.yaml` 以支持 `go:embed`（详见 [API 文档说明](api/README.md)） |
+| [OpenAPI 规格](../../internal/api/openapi.yaml) | 完整 OpenAPI 3.0 单文件（184 路径 / 235 操作）：所有 HTTP 端点、鉴权标注、统一错误体、请求/响应 schema；WebSocket 与 SSE 端点以说明形式收录。源文件已迁至 `internal/api/openapi.yaml` 以支持 `go:embed`（详见 [API 文档说明](api/README.md)） |
 
 ### client/ — 客户端
 

@@ -54,6 +54,11 @@ const shareMetaSegment = "meta"
 // signaling socket (/api/share/{token}/signal).
 const shareSignalSegment = "signal"
 
+// shareNotesSegment is the URL path segment carrying the live-share AI 听记
+// timeline (/api/share/{token}/notes). Public like the signaling socket: the
+// token is the credential.
+const shareNotesSegment = "notes"
+
 // shareKindFile and shareKindSession are the `kind` values the share meta
 // endpoint reports, telling the share SPA which renderer to use. Kept distinct
 // from entryTypeFile, which classifies a directory-search entry rather than a
@@ -475,6 +480,12 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 	// reject every signaling request.
 	if rest == shareSignalSegment {
 		LiveShareSignalWS(w, r)
+		return
+	}
+	// AI 听记 timeline for a live share. Same subtree for the same reason: a
+	// live token has no file_shares row.
+	if rest == shareNotesSegment {
+		ServeShareLiveNotes(w, r, token)
 		return
 	}
 

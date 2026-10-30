@@ -34,6 +34,8 @@ interface ServerMessage {
   candidate?: RTCIceCandidateInit
   iceServers?: RTCIceServer[]
   talkEnabled?: boolean
+  /** Whether the publisher is running AI 听记 for this share. */
+  notesEnabled?: boolean
   reason?: string
   message?: string
 }
@@ -45,6 +47,8 @@ export interface LiveViewerCallbacks {
   onTitle?: (title: string) => void
   /** Whether the room allows audience speech. Drives the "hold to talk" UI. */
   onTalkEnabled?: (enabled: boolean) => void
+  /** Whether the publisher is running AI 听记 (shows the transcript panel). */
+  onNotesEnabled?: (enabled: boolean) => void
   /** The publisher muted us, or the room switch was turned off. */
   onTalkRevoked?: (reason: string) => void
 }
@@ -81,6 +85,7 @@ export class LiveViewer {
   private _state: LiveViewerState = 'idle'
   private _talkEnabled = false
   private _talking = false
+  private _notesEnabled = false
   private _closed = false
 
   constructor(opts: LiveViewerOptions) {
@@ -98,6 +103,11 @@ export class LiveViewer {
 
   get talking(): boolean {
     return this._talking
+  }
+
+  /** Whether this share is transcribing (AI 听记). */
+  get notesEnabled(): boolean {
+    return this._notesEnabled
   }
 
   /** Open the socket and start negotiating. Safe to call once. */
@@ -201,6 +211,8 @@ export class LiveViewer {
   private onJoined(msg: ServerMessage): void {
     this._talkEnabled = Boolean(msg.talkEnabled)
     this.cb.onTalkEnabled?.(this._talkEnabled)
+    this._notesEnabled = Boolean(msg.notesEnabled)
+    this.cb.onNotesEnabled?.(this._notesEnabled)
     if (msg.title) this.cb.onTitle?.(msg.title)
 
     const pcFactory =
