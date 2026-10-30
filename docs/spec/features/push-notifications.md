@@ -119,7 +119,7 @@ sequenceDiagram
 
 ## 钉钉企业推送
 
-当配置 `push_mode: "dingtalk"` 时，系统通过钉钉企业机器人将事件推送到用户钉钉单聊。适用于企业内网部署场景——用户可能无法直接访问 ClawBench Web 界面，但钉钉始终在线。钉钉和飞书推送共享 `internal/push/common/` 包的接口（`PushDB`、`SessionMessenger`、`SubscriberInfo`）和会话命令解析逻辑（`ParseSessionCommand`、`ResolveShortSessionID`），保证两个平台的交互行为一致。
+当配置 `push_mode: "dingtalk"` 时，系统通过钉钉企业机器人将事件推送到用户钉钉单聊。适用于企业内网部署场景——用户可能无法直接访问 ClawBench Web 界面，但钉钉始终在线。钉钉、飞书与微信推送共享 `internal/push/common/` 包的接口（`PushDB`、`SessionMessenger`、`SubscriberInfo`）和会话命令解析逻辑（`ParseSessionCommand`、`ResolveShortSessionID`），保证三个平台的交互行为一致。
 
 ### 架构
 
@@ -197,7 +197,7 @@ sequenceDiagram
 
 **命令词**只在消息**以它开头**时生效（`please /stop it` 按普通文本处理），且**大小写敏感**；未知斜杠命令原样发给会话，因此用户仍可对 AI 使用 `/help` 之类。
 
-**命令与附件互斥**：命令不路由到会话（`Route.Message` 为空），所以带附件的消息里出现命令时两个 backend 都回「命令不能和附件一起发送」并要求分两步发，而不是把空文本 + 附件投进会话（那会静默丢掉命令词）。判据是 `RouteKind.IsCommand()`。
+**命令与附件互斥**：命令不路由到会话（`Route.Message` 为空），所以带附件的消息里出现命令时三个 backend 都回「命令不能和附件一起发送」并要求分两步发，而不是把空文本 + 附件投进会话（那会静默丢掉命令词）。判据是 `RouteKind.IsCommand()`。
 
 **命令参数**（`/show` `/stop` 的短 ID）与 `@{短ID}` 走同一形状校验：8 位以上十六进制（`sessionPrefixRe`），否则直接回「ID 格式无效」——这两个命令能读正文、能停回合，单字符参数不得命中任意会话。
 
@@ -264,5 +264,6 @@ sequenceDiagram
 | 截断限制 | 4000 字符 | 4000 runes | 2000 runes（剥离后计） |
 | 主动推送前提 | 任意 | 任意 | **必须已有 `context_token`**（用户先发过消息） |
 | SDK 依赖 | `open-dingtalk/dingtalk-stream-sdk-go` | `larksuite/oapi-sdk-go/v3/ws` | `openilink/openilink-sdk-go`（零外部依赖） |
+| 会话命令 | `/ls` `/show` `/stop` `/new` | 同左 | 同左（正文剥离 Markdown，`/show` 受 2000 字上限约束） |
 | 群聊 | 支持 | 支持 | **不支持**（出站无群寻址字段） |
 | 会话过期 | 重连 | 重连 | `-14` → 立即停止并提示重新扫码 |

@@ -23,7 +23,7 @@ func T(messageID string, templateData ...map[string]any) string {
 
 // Template placeholders shared by several push strings. Kept as constants
 // because a typo in one of these silently renders "{{.Count}}" into the chat,
-// and because both backends use the same names across many call sites.
+// and because every push backend uses the same names across many call sites.
 const (
 	// TemplateCount is the message count placeholder (queued/files).
 	TemplateCount = "Count"

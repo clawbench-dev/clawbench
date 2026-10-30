@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// RenderProjectList renders the /new project list. Shared by both backends so
-// the index a user reads is the index they type back.
+// RenderProjectList renders the /new project list. Shared by all three push
+// backends so the index a user reads is the index they type back.
 //
 // A missing directory is flagged inline: the session can still be created, but
 // the user should know the agent may fail to run there.
