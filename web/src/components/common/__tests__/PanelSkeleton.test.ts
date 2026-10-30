@@ -120,4 +120,38 @@ describe('PanelSkeleton', () => {
       'the skeleton root needs width: 100% (a row-direction flex parent collapses it to 0)',
     ).toMatch(/(^|\n)\s*width:\s*100%\s*;/)
   })
+
+  /**
+   * The horizontal inset must be a variable, not a hard-coded value.
+   *
+   * A placeholder that is inset differently from the real rows makes the panel
+   * jump sideways the moment the data lands, and "correct" ranges from 0 (full
+   * bleed) to 18dp (a card row inside a padded list) — so each surface
+   * overrides `--panel-skeleton-inset`. Pinned at the source because jsdom does
+   * no layout: the invariant is that every shape rule READS the variable and
+   * keeps today's value as its fallback.
+   */
+  it('reads its horizontal inset from a variable with the documented fallback', () => {
+    const src = readSource('web/src/components/common/PanelSkeleton.vue')
+    const scoped = src.slice(src.indexOf('<style scoped>'), src.lastIndexOf('</style>'))
+    const bare = scoped.replace(/\/\*[\s\S]*?\*\//g, '')
+
+    const rule = (selector: string) => {
+      const m = bare.match(new RegExp(`\\.${selector}\\s*\\{([\\s\\S]*?)\\}`))
+      expect(m, `.${selector} rule must exist`).not.toBeNull()
+      return m![1]
+    }
+
+    // Rows and tiles default to the shared 8dp gutter; paragraph bodies default
+    // to 0 because every text caller already sits in a padded container.
+    expect(rule('panel-skeleton-row')).toContain(
+      'padding: var(--space-3) var(--panel-skeleton-inset, var(--space-4))',
+    )
+    expect(rule('panel-skeleton-grid')).toContain(
+      'padding: var(--space-4) var(--panel-skeleton-inset, var(--space-4))',
+    )
+    expect(rule('panel-skeleton-text')).toContain(
+      'padding: var(--space-4) var(--panel-skeleton-inset, 0)',
+    )
+  })
 })

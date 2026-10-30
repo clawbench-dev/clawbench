@@ -282,6 +282,8 @@ function handleClose() {
      does not read as a stray edge. */
   padding: 0;
   overflow-y: auto;
+  /* 12dp is `.sp-row`'s inset; the placeholder must land on the same edge. */
+  --panel-skeleton-inset: calc(12 * var(--dp));
 }
 
 /* Single line per row. `min-height` rather than a fixed `height` so a taller

@@ -243,6 +243,8 @@ onBeforeUnmount(teardownObserver)
 
 /* First load: preview the session rows; the empty states stay centred. */
 .acp-session-skeleton {
+  /* 14dp is `.acp-session-item`'s inset. */
+  --panel-skeleton-inset: calc(14 * var(--dp));
   padding: var(--space-2) 0;
 }
 

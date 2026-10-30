@@ -84,6 +84,8 @@ function shortDate(dateStr: string) {
 }
 
 .section-skeleton {
+  /* 12dp is `.tag-row`'s inset. */
+  --panel-skeleton-inset: calc(12 * var(--dp));
   padding: var(--space-2) 0;
 }
 

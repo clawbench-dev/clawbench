@@ -5,7 +5,7 @@
       <span class="bs-header-title">{{ t('chat.messageList.conversationIndexTitle') }}</span>
       <span class="panel-count count-badge count-badge--md">{{ isSearching ? `${filteredMessages.length}/${messages.length}` : messages.length }}</span>
     </template>
-    <PanelSkeleton v-if="loading" variant="list" :rows="8" :meta="false" :label="t('chat.messageList.loadingMore')" />
+    <PanelSkeleton v-if="loading" class="msg-index-skeleton" variant="list" :rows="8" :meta="false" :label="t('chat.messageList.loadingMore')" />
     <LoadingIndicator v-else-if="jumping" size="md" :label="t('chat.messageList.loadingMore')" />
     <div v-else-if="messages.length === 0" class="panel-empty">
       <span class="panel-empty-icon-wrap">
@@ -212,6 +212,11 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+/* Rows are `MessageIndexRow`, inset 12dp on the leading edge. */
+.msg-index-skeleton {
+  --panel-skeleton-inset: calc(12 * var(--dp));
 }
 
 .panel-list {

@@ -794,6 +794,8 @@ defineExpose({ activeTab, handleFileDrop })
   flex: 1;
   overflow-y: auto;
   padding: var(--space-2) 0;
+  /* 14dp is `.ad-file-row`'s inset. */
+  --panel-skeleton-inset: calc(14 * var(--dp));
 }
 .ad-empty {
   padding: calc(24 * var(--dp)) var(--space-7);

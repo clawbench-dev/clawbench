@@ -1097,13 +1097,21 @@ defineExpose({
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: calc(40 * var(--dp));
+    /* Vertical only: the horizontal inset belongs to the skeleton, so it can
+       match the markdown column it stands in for. */
+    padding: calc(40 * var(--dp)) 0;
 }
 
 /* The placeholder owns its own width: the wrapper centres, but a text skeleton
-   squeezed to its content would not line up with the real paragraph. */
+   squeezed to its content would not line up with the real paragraph. It also
+   takes the markdown reading column's measure and inset (`.markdown-body`:
+   900dp cap, 10dp padding) — at the wrapper's old 40dp the first line sat 30dp
+   right of where the preview text lands. */
 .file-viewer-skeleton {
     width: 100%;
+    max-width: min(calc(900 * var(--dp)), 100%);
+    margin: 0 auto;
+    --panel-skeleton-inset: calc(10 * var(--dp));
 }
 
 

@@ -161,7 +161,10 @@ onMounted(load)
   text-align: center;
 }
 
+/* Rows are inset 16dp (`.projects-row`: `var(--space-5) var(--space-7)`); the
+   placeholder must land on the same edge or the list jumps when they arrive. */
 .projects-skeleton {
+  --panel-skeleton-inset: calc(16 * var(--dp));
   padding: var(--space-2) 0;
 }
 

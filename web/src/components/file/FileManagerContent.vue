@@ -342,13 +342,13 @@
       @dragend="onDragEnd"
     >
       <template v-if="searchHasQuery">
-        <PanelSkeleton v-if="search.state.searching && search.state.results.length === 0" variant="grid" :rows="12" :label="t('file.search.searching')" />
+        <PanelSkeleton v-if="search.state.searching && search.state.results.length === 0" class="file-grid-skeleton" variant="grid" :rows="12" :label="t('file.search.searching')" />
         <div v-else-if="search.state.results.length === 0 && !search.state.searching" class="empty-state fs-search-empty">
           <FileX :size="56" class="fs-search-empty-icon" />
           <p class="fs-search-empty-text">{{ t('file.search.noResults') }}</p>
         </div>
       </template>
-      <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" variant="grid" :rows="12" :label="t('common.loading')" />
+      <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" class="file-grid-skeleton" variant="grid" :rows="12" :label="t('common.loading')" />
       <div v-else-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
         <FileIcon path="" :is-dir="true" :size="48" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
@@ -3532,6 +3532,13 @@ function scrollSelectedIntoView(path) {
    the real content width. */
 .file-grid > .panel-skeleton {
     grid-column: 1 / -1;
+}
+
+/* `.file-grid` already supplies the 8dp gutter the real tiles sit on, so the
+   placeholder's own inset would be a SECOND 8dp — the grey tiles landed one
+   gutter inside the real ones. */
+.file-grid > .file-grid-skeleton {
+    --panel-skeleton-inset: 0;
 }
 
 .grid-item {

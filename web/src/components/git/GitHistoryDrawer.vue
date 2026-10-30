@@ -323,6 +323,8 @@ watch(() => props.open, async (val) => {
   align-items: stretch;
   justify-content: flex-start;
   min-width: 0;
+  /* 14dp is `.drilldown-item`'s inset — the rows this placeholder previews. */
+  --panel-skeleton-inset: calc(14 * var(--dp));
 }
 
 .git-history-error {

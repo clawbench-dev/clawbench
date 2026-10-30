@@ -414,6 +414,9 @@ defineExpose({ open, openDrill, closeDrill, drillCluster, representativeShare })
 .mc-content {
   display: flex;
   flex-direction: column;
+  /* 16dp is `.mc-cluster-item`'s inset (`var(--space-7)`) — the rows the
+     placeholder previews. */
+  --panel-skeleton-inset: calc(16 * var(--dp));
   /* flex:1 + min-height:0 (not height:100%): the sheet runs in `auto` height
      mode, so a percentage height resolves against an auto-sized parent and the
      inner list never becomes the scroller — the body would scroll instead and

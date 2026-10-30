@@ -684,6 +684,9 @@ function forgeTargetFromItemKey(key: string) {
 
 /* First load: preview the row shape in place of a lone spinner. */
 .notif-skeleton {
+  /* `.notif-body` already pads 12dp; 10dp more matches the card's `.nc-main`
+     text edge (22dp total), so the grey lines do not jump when cards arrive. */
+  --panel-skeleton-inset: calc(10 * var(--dp));
   padding: var(--space-2) 0;
 }
 

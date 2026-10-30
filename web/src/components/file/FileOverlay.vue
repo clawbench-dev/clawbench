@@ -247,8 +247,17 @@ function handleContentClick(event) {
   inset: 0;
   z-index: 5;
   background: var(--bg-primary, #fff);
-  padding: var(--space-6);
+  /* Vertical only: the placeholder below carries the markdown column's own
+     10dp inset, so the mask must not add a second one. */
+  padding: var(--space-6) 0;
   overflow: hidden;
+}
+
+/* Same measure and inset as the preview it masks (`.markdown-body`). */
+.file-loading-mask > .panel-skeleton {
+  max-width: min(calc(900 * var(--dp)), 100%);
+  margin: 0 auto;
+  --panel-skeleton-inset: calc(10 * var(--dp));
 }
 </style>
 
