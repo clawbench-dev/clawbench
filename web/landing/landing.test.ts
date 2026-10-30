@@ -58,6 +58,30 @@ function webpSize(buf: Buffer): { width: number; height: number } {
   throw new Error(`unsupported WebP chunk: ${chunk}`)
 }
 
+function jpegSize(buf: Buffer): { width: number; height: number } {
+  if (buf[0] !== 0xff || buf[1] !== 0xd8) throw new Error('not a JPEG file')
+  let i = 2
+  while (i + 9 < buf.length) {
+    if (buf[i] !== 0xff) {
+      i++
+      continue
+    }
+    const marker = buf[i + 1]
+    // SOF0/1/2 and friends are the only markers carrying the frame size;
+    // 0xC4/0xC8/0xCC sit in the same range but are Huffman/arithmetic tables.
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+      return { width: buf.readUInt16BE(i + 7), height: buf.readUInt16BE(i + 5) }
+    }
+    // Standalone markers have no length field.
+    if (marker === 0x01 || marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) {
+      i += 2
+      continue
+    }
+    i += 2 + buf.readUInt16BE(i + 2)
+  }
+  throw new Error('no SOF marker found')
+}
+
 /** Boots the page with the script executed, at the given navigator language. */
 function boot(language: string, fetchImpl?: unknown): JSDOM {
   const dom = new JSDOM(html, {
@@ -284,6 +308,115 @@ describe('landing page', () => {
       const noSrc = Array.from(doc.querySelectorAll('img')).filter((el) => !el.hasAttribute('src'))
       expect(noSrc.map((el) => el.id)).toEqual(['lightboxImg'])
       expect((doc.getElementById('lightbox') as HTMLElement).hidden).toBe(true)
+    })
+  })
+
+  describe('seo', () => {
+    // The page is published to two hosts: Cloudflare Pages (primary) and
+    // GitHub Pages (a project-page copy of the same bytes). Everything here is
+    // about telling crawlers which one is the real one.
+    const CANONICAL = 'https://clawbench.pages.dev/'
+
+    it('declares the Cloudflare host as canonical', () => {
+      const doc = new JSDOM(html).window.document
+      expect(doc.querySelector('link[rel="canonical"]')?.getAttribute('href')).toBe(CANONICAL)
+    })
+
+    it('points og:url at the same URL as the canonical link', () => {
+      // Disagreement here makes social crawlers treat the two hosts as two
+      // distinct pages, which is the exact split the canonical link prevents.
+      const doc = new JSDOM(html).window.document
+      expect(doc.querySelector('meta[property="og:url"]')?.getAttribute('content')).toBe(CANONICAL)
+    })
+
+    it('gives social crawlers an absolute og:image that exists', () => {
+      // A relative path here resolves against nothing: og:image is read by the
+      // crawler, not the browser, and it does not honour <base>. The result is
+      // a share card with no picture and no error anywhere.
+      const doc = new JSDOM(html).window.document
+      const content = doc.querySelector('meta[property="og:image"]')?.getAttribute('content') || ''
+
+      expect(content.startsWith(CANONICAL), `og:image is not on the canonical host: ${content}`).toBe(true)
+      expect(existsSync(resolve(here, content.slice(CANONICAL.length))), content).toBe(true)
+    })
+
+    it('ships the 1200×630 card and declares that size to crawlers', () => {
+      // 1200×630 is the native 1.91:1 card every platform renders without
+      // re-cropping. A different ratio gets centre-cropped by the feed, which
+      // is how a logo loses its left edge. The declared width/height must match
+      // the real pixels: when they disagree, crawlers drop the image instead of
+      // laying out the card.
+      const doc = new JSDOM(html).window.document
+      const size = jpegSize(readFileSync(resolve(here, 'img/og.jpg')))
+
+      expect(size).toEqual({ width: 1200, height: 630 })
+      expect(doc.querySelector('meta[property="og:image:width"]')?.getAttribute('content')).toBe(
+        String(size.width),
+      )
+      expect(doc.querySelector('meta[property="og:image:height"]')?.getAttribute('content')).toBe(
+        String(size.height),
+      )
+    })
+
+    it('ships a robots.txt that advertises the sitemap', () => {
+      const robots = readFileSync(resolve(here, 'robots.txt'), 'utf8')
+
+      expect(robots).toMatch(/^User-agent: \*$/m)
+      expect(robots).toMatch(/^Allow: \/$/m)
+      // `Disallow: /` is a single line that removes the site from every index
+      // without a single error message; it must never appear by accident.
+      expect(robots).not.toMatch(/^Disallow:\s*\/\s*$/m)
+      // The Sitemap line must name the same host as the canonical URL, or
+      // crawlers discard it.
+      expect(robots).toMatch(new RegExp(`^Sitemap: ${CANONICAL}sitemap\\.xml$`, 'm'))
+    })
+
+    it('lists exactly the canonical URL in the sitemap', () => {
+      const xml = readFileSync(resolve(here, 'sitemap.xml'), 'utf8')
+
+      expect(xml).toMatch(/^<\?xml version="1\.0" encoding="UTF-8"\?>/)
+      expect(xml).toContain('xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"')
+
+      const locs = Array.from(xml.matchAll(/<loc>([^<]+)<\/loc>/g)).map((m) => m[1])
+      // Both directions matter: a missing entry means the page is undiscovered,
+      // a stale one means the sitemap points at a URL that no longer exists.
+      expect(locs).toEqual([CANONICAL])
+    })
+
+    /** Paths handed to `cp -r` by a workflow's staging step. */
+    function stagedPaths(yml: string): string[] {
+      const lines = yml.split('\n')
+      const out: string[] = []
+      for (let i = 0; i < lines.length; i++) {
+        if (!/^\s*cp -r\s/.test(lines[i])) continue
+        // Join bash line continuations so a wrapped `cp` is read as one command.
+        let cmd = lines[i]
+        while (cmd.trimEnd().endsWith('\\')) {
+          i++
+          cmd = `${cmd.trimEnd().slice(0, -1)} ${lines[i]}`
+        }
+        out.push(...Array.from(cmd.matchAll(/web\/landing\/([\w.]+)/g)).map((m) => m[1]))
+      }
+      return out
+    }
+
+    it('publishes the SEO files to the canonical host only', () => {
+      // Both workflows enumerate what to copy instead of `cp -r web/landing`,
+      // so a new top-level file is silently left behind — it 404s in
+      // production while the local file looks perfectly fine.
+      const cloudflare = stagedPaths(
+        readFileSync(resolve(here, '../../.github/workflows/deploy-landing.yml'), 'utf8'),
+      )
+      const githubPages = stagedPaths(
+        readFileSync(resolve(here, '../../.github/workflows/deploy-landing-pages.yml'), 'utf8'),
+      )
+
+      expect(cloudflare.sort()).toEqual(
+        ['_headers', 'css', 'img', 'index.html', 'js', 'robots.txt', 'sitemap.xml'].sort(),
+      )
+      // The GitHub Pages copy must not carry them: the sitemap lists the
+      // Cloudflare host, and a sitemap may only contain its own host's URLs.
+      expect(githubPages.sort()).toEqual(['css', 'img', 'index.html', 'js'].sort())
     })
   })
 

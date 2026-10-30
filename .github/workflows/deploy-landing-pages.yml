@@ -40,6 +40,11 @@ jobs:
       # Same staging as the Cloudflare workflow, minus `_headers`: GitHub Pages
       # has no header syntax and would serve it at /_headers. The test file is
       # excluded for the same reason it is there — it would be published.
+      #
+      # robots.txt / sitemap.xml are also left out on purpose. This host is a
+      # duplicate of the Cloudflare one and defers to it via <link rel=
+      # "canonical">; the sitemap's <loc> points at the Cloudflare host, and a
+      # sitemap may only list URLs from its own host.
       - name: Stage site
         run: |
           mkdir -p dist

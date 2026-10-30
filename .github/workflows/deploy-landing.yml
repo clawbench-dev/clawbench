@@ -41,11 +41,17 @@ jobs:
       # `wrangler pages deploy` uploads a directory as-is; there is no build
       # step for this page. The test file must be excluded — it would
       # otherwise be published at /landing.test.ts.
+      #
+      # `robots.txt` / `sitemap.xml` go to this host only: the sitemap lists
+      # this host's URL, and a sitemap served from another host is rejected
+      # wholesale (Google: URLs must be from a single host). The GitHub Pages
+      # copy is the duplicate, so it carries neither file.
       - name: Stage site
         run: |
           mkdir -p dist
           cp -r web/landing/css web/landing/img web/landing/js \
-                web/landing/index.html web/landing/_headers dist/
+                web/landing/index.html web/landing/_headers \
+                web/landing/robots.txt web/landing/sitemap.xml dist/
           rm -f dist/*.test.ts
 
       - name: Deploy

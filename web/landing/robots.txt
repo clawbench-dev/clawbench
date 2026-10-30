@@ -1,0 +1,6 @@
+# ClawBench landing page — https://clawbench.pages.dev/
+# 只发布到主域。GitHub Pages 上的副本靠 canonical 归并，不需要自己的 robots/sitemap。
+User-agent: *
+Allow: /
+
+Sitemap: https://clawbench.pages.dev/sitemap.xml
