@@ -154,6 +154,26 @@ talking --set-talk-enabled(false)--> none  （房间开关关闭，连带静音�
 - **Escape 是本地逃生键**：按 Esc 只结束自己的控制，不会转发给对端。
 - 限制：仅 Windows 可注入；对端窗口若以管理员权限运行（UIPI），`SendInput` 会被系统拒绝，界面会收到 `ok:false` 而不是假装成功。
 
+## 成员端：浏览器 vs 客户端
+
+同一个分享页在两种宿主里跑，能力不同：
+
+| 能力 | 浏览器 | 桌面客户端 |
+|---|---|---|
+| 观看画面 / 聊天 / 标注 / 缩放 | ✓ | ✓ |
+| 共享自己的屏幕 | 仅 HTTPS | ✓（原生选择器，HTTP 也行） |
+| 使用麦克风 | 仅 HTTPS | ✓ |
+| 被主持人远程控制 | ✗（浏览器没有输入注入 API） | ✓ |
+| 系统声音 | ✗ | ✗（成员端没有第二条音频 m-line） |
+
+客户端入口在共享弹窗里：「加入别人的共享」→ 粘贴链接 → 在独立窗口打开（复用同一 preload，所以分享页能识别出自己跑在客户端里）。
+
+**为什么客户端能绕开 HTTPS**：桌面壳启动时对配置的服务器 origin 加了 Chromium 的 `unsafely-treat-insecure-origin-as-secure`（见 `desktop/src/main/index.ts`），所以 `navigator.mediaDevices` 在该 origin 上存在。切换服务器需要重启才生效——这是进程级开关的固有限制。
+
+**客户端模式下共享屏幕要先选源**：Electron 的 `setDisplayMediaRequestHandler` 拒绝未声明的源，所以分享页会先调 `listCaptureSources()` 弹一个选择器，再 `setPendingCaptureSource()` + `getDisplayMedia()`。
+
+浏览器端在主持人开启「允许成员共享屏幕」时会显示一条提示，说明共享屏幕/系统声音/被控制需要客户端——只在真的用得上时出现，不是每场都弹。
+
 ## 成员反向共享屏幕
 
 发布端可以打开「允许成员共享屏幕」，成员（**电脑**浏览器）就能把自己的屏幕共享给**所有人**。

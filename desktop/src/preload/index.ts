@@ -102,6 +102,7 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
     text?: string
     modifiers?: string[]
   }) => ipcRenderer.invoke('native:remote-control', ev) as Promise<{ ok: boolean; supported: boolean }>,
+  openShareLink: (url: string) => ipcRenderer.invoke('native:open-share', url) as Promise<boolean>,
   remoteControlSupported: () => ipcRenderer.invoke('native:remote-control-supported') as Promise<boolean>,
   remoteControlGrant: (viewerId: string) =>
     ipcRenderer.invoke('native:remote-control-grant', viewerId) as Promise<void>,

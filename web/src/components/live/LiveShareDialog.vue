@@ -56,6 +56,32 @@
           <div class="live-dialog-hint live-dialog-hint--indent">
             {{ t('liveShare.notes.enableHint') }}
           </div>
+
+          <!-- Joining someone else's share from the desktop client. In a
+               browser the same link works, but without screen capture (no
+               secure context over plain HTTP) and without remote control. -->
+          <div class="live-dialog-section">{{ t('liveShare.joinTitle') }}</div>
+          <div class="live-dialog-hint">{{ t('liveShare.joinHint') }}</div>
+          <div class="live-join">
+            <input
+              v-model="joinUrl"
+              class="live-join__input"
+              type="url"
+              :placeholder="t('liveShare.joinPlaceholder')"
+              data-role="join-url"
+              @keydown.enter="joinShare"
+            />
+            <button
+              class="live-btn"
+              type="button"
+              :disabled="!joinUrl.trim()"
+              data-action="join-share"
+              @click="joinShare"
+            >
+              {{ t('liveShare.joinAction') }}
+            </button>
+          </div>
+          <div v-if="joinError" class="live-dialog-error">{{ joinError }}</div>
         </template>
       </template>
 
@@ -441,6 +467,8 @@ const chatOpen = ref(false)
 const unread = ref(0)
 const chatMessages = ref<ChatMessage[]>([])
 const switching = ref(false)
+const joinUrl = ref('')
+const joinError = ref('')
 const switchingBusy = ref(false)
 /** viewerId → currently visible. Absent means "no report yet". */
 const presence = ref<Record<string, boolean>>({})
@@ -551,6 +579,23 @@ function revokeControl(viewerId: string): void {
   controlRequests.value = new Set([...controlRequests.value].filter((id) => id !== viewerId))
   share.sendControlTo(viewerId, { t: 'ctrl-grant', viewerId, granted: false })
   void getNative()?.remoteControlRevoke?.()
+}
+
+async function joinShare(): Promise<void> {
+  const url = joinUrl.value.trim()
+  if (!url) return
+  joinError.value = ''
+  const bridge = getNative()
+  if (!bridge?.openShareLink) {
+    joinError.value = t('liveShare.joinUnsupported')
+    return
+  }
+  const ok = await bridge.openShareLink(url)
+  if (!ok) {
+    joinError.value = t('liveShare.joinInvalid')
+    return
+  }
+  joinUrl.value = ''
 }
 
 async function openSwitch(): Promise<void> {
@@ -1088,6 +1133,24 @@ watch(
   min-width: 0;
   color: var(--text-primary, #1f2328);
   overflow-wrap: anywhere;
+}
+
+/* ── Join row ───────────────────────────────────────────────────────────── */
+
+.live-join {
+  display: flex;
+  gap: var(--space-3, 6px);
+}
+
+.live-join__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--space-3, 6px) var(--space-4, 8px);
+  border: 1px solid var(--border-color, #d0d7de);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--bg-secondary, #fff);
+  color: var(--text-primary, #1f2328);
+  font-size: var(--font-size-sm, 13px);
 }
 
 /* ── Tool row ───────────────────────────────────────────────────────────── */

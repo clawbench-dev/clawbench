@@ -316,6 +316,25 @@ describe('LiveShareView control dock', () => {
     w.unmount()
   })
 
+  it('tells a browser user what only the client can do', async () => {
+    const w = mountView()
+    await flushPromises()
+
+    lastViewer?.opts?.callbacks?.onScreenEnabled?.(true)
+    await flushPromises()
+
+    // jsdom has no capture API, which is exactly the plain-HTTP browser case:
+    // the button stays disabled and a hint points at the desktop client.
+    expect(w.find('[data-action="screen-share"]').attributes('disabled')).toBeDefined()
+    const hint = w.find('[data-role="client-hint"]')
+    expect(hint.exists()).toBe(true)
+
+    await hint.find('.live-client-hint__close').trigger('click')
+    expect(w.find('[data-role="client-hint"]').exists()).toBe(false)
+
+    w.unmount()
+  })
+
   it('stops listening after unmount', async () => {
     const w = mountView()
     await flushPromises()

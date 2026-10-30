@@ -5,6 +5,7 @@ import os from 'node:os'
 import fs from 'node:fs'
 import { getStore, initStore } from './store'
 import { registerRemoteControlHandlers } from './remoteControl'
+import { openShareWindow } from './shareWindow'
 import {
   getPassword, savePassword, savePasswordFor, getPasswordFor, removePasswordFor,
   migratePasswords, getServersForRenderer, saveServerName,
@@ -37,6 +38,9 @@ export function registerBridge(): void {
   // Remote control IPC lives with the bridge because it is the same surface:
   // one `native:*` handler set registered once at startup.
   registerRemoteControlHandlers(ipcMain)
+  // Opens a share link in its own window so the viewer gets the desktop
+  // capabilities (native capture, remote control) instead of the browser's.
+  ipcMain.handle('native:open-share', (_e, url: string) => openShareWindow(url))
   // Absorb credentials written by older builds into the per-URL map before any
   // handler can read them. Idempotent.
   migratePasswords()

@@ -3899,6 +3899,9 @@ export default {
       notes: 'Notes',
       notesTitle: 'AI notes',
       notesWaiting: 'Waiting for the transcript…',
+      pickSource: 'What to share',
+      clientHint:
+        'A browser can only watch. Sharing a screen, capturing system audio and being remote-controlled need the desktop client.',
       shareScreen: 'Share screen',
       stopSharing: 'Stop sharing',
       shareScreenHint: 'Share your screen with everyone',
@@ -3943,6 +3946,13 @@ export default {
     controlDeny: 'Deny',
     controlStop: 'Revoke',
     controlUnsupported: 'This client cannot inject input, so remote control is unavailable',
+    joinTitle: 'Join a share',
+    joinHint:
+      'Paste a share link to open it in the client. The client can share a screen, capture system audio and be controlled by the host.',
+    joinPlaceholder: 'http://192.168.1.5:20000/share/xxxx',
+    joinAction: 'Open',
+    joinUnsupported: 'This environment cannot open share links',
+    joinInvalid: 'That does not look like a share link (…/share/<token>)',
     toolsSection: 'Tools',
     annotate: 'Annotate',
     chat: 'Chat',

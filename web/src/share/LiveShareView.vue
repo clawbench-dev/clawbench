@@ -135,6 +135,52 @@
       </div>
     </div>
 
+    <!-- Browser-only hint: the link works, but the desktop client is what
+         unlocks capture and remote control. Shown only when the host actually
+         allows screen sharing, so it is not noise on every share. -->
+    <div
+      v-if="!clientMode && screenEnabled && !canShareScreen && !clientHintClosed"
+      class="live-client-hint"
+      data-role="client-hint"
+    >
+      <span>{{ t('share.live.clientHint') }}</span>
+      <button
+        class="live-client-hint__close"
+        type="button"
+        :aria-label="t('common.close')"
+        @click="clientHintClosed = true"
+      >
+        ×
+      </button>
+    </div>
+
+    <!-- Client-mode source picker. Electron refuses an undeclared capture
+         source, so the choice has to happen before getDisplayMedia. -->
+    <div
+      v-if="pickingSource"
+      class="live-picker"
+      data-role="source-picker"
+      @click.self="pickingSource = false"
+    >
+      <div class="live-picker__card">
+        <div class="live-picker__title">{{ t('share.live.pickSource') }}</div>
+        <div class="live-picker__list">
+          <button
+            v-for="src in clientSources"
+            :key="src.id"
+            class="live-picker__item"
+            type="button"
+            @click="startClientShare(src.id)"
+          >
+            {{ src.name }}
+          </button>
+        </div>
+        <button class="live-picker__cancel" type="button" @click="pickingSource = false">
+          {{ t('common.cancel') }}
+        </button>
+      </div>
+    </div>
+
     <!-- Chat. Same overlay slot as the notes panel; only one is open at a time
          so they never fight over the picture. -->
     <div v-if="chatOpen" class="live-chat-panel" data-panel="chat">
@@ -329,6 +375,7 @@ import { ShareNotesPoller } from './liveNotesClient'
 import { getShareToken } from './shareMode'
 import { groupNoteSegments, type LiveNoteSegment } from '@/composables/liveNotes'
 import { appLog } from '@/utils/appLog'
+import { getNative } from '@/utils/clawbenchNative'
 
 const TAG = 'LiveShareView'
 
@@ -656,6 +703,12 @@ const screenSharer = ref('')
 const sharingScreen = ref(false)
 const viewMode = ref<'host' | 'member'>('host')
 const screenError = ref('')
+/** True when this page runs inside the desktop shell. */
+const clientMode = computed(() => Boolean(getNative()?.isNativeApp?.()))
+/** Client mode picks a source through the native picker, not the browser's. */
+const pickingSource = ref(false)
+const clientSources = ref<Array<{ id: string; name: string; kind: string }>>([])
+const clientHintClosed = ref(false)
 
 /**
  * Screen capture needs a secure context (HTTPS or localhost): on a plain
@@ -666,7 +719,10 @@ const canShareScreen = computed(
   () =>
     screenEnabled.value &&
     typeof window !== 'undefined' &&
-    window.isSecureContext &&
+    // The desktop shell promotes its server origin to a secure context at
+    // startup, so `isSecureContext` is true there too — but the native picker
+    // is what makes capture work over plain HTTP without that switch.
+    (clientMode.value || window.isSecureContext) &&
     !!navigator.mediaDevices?.getDisplayMedia,
 )
 
@@ -698,9 +754,47 @@ async function toggleScreenShare(): Promise<void> {
     sharingScreen.value = false
     return
   }
+  if (clientMode.value) {
+    // Electron's display-media handler refuses an undeclared source, so the
+    // picker has to run first.
+    await openClientPicker()
+    return
+  }
   const ok = await viewer.startScreenShare()
   sharingScreen.value = ok
   if (!ok) screenError.value = t('share.live.shareFailed')
+}
+
+async function openClientPicker(): Promise<void> {
+  const bridge = getNative()
+  if (!bridge?.listCaptureSources) {
+    screenError.value = t('share.live.shareFailed')
+    return
+  }
+  try {
+    const raw = await bridge.listCaptureSources()
+    const list = JSON.parse(raw) as Array<{ id: string; name: string; kind: string }>
+    clientSources.value = list
+    pickingSource.value = true
+  } catch (e) {
+    appLog.w(TAG, 'list capture sources failed', e)
+    screenError.value = t('share.live.shareFailed')
+  }
+}
+
+async function startClientShare(sourceId: string): Promise<void> {
+  pickingSource.value = false
+  const bridge = getNative()
+  if (!bridge?.setPendingCaptureSource || !viewer) return
+  try {
+    await bridge.setPendingCaptureSource(sourceId, false)
+    const ok = await viewer.startScreenShare()
+    sharingScreen.value = ok
+    if (!ok) screenError.value = t('share.live.shareFailed')
+  } catch (e) {
+    appLog.w(TAG, 'client screen share failed', e)
+    screenError.value = t('share.live.shareFailed')
+  }
 }
 const noteBlocks = computed(() => groupNoteSegments(notesSegments.value).slice(-60))
 let notesPoller: ShareNotesPoller | null = null
@@ -1263,6 +1357,97 @@ onBeforeUnmount(() => {
   bottom: calc(var(--space-6, 12px) + env(safe-area-inset-bottom, 0px) + calc(52 * var(--dp)));
   border-color: color-mix(in srgb, var(--color-red, #cf222e) 55%, transparent);
   color: var(--color-red, #cf222e);
+}
+
+/* ── Client-mode hint + source picker ───────────────────────────────────── */
+
+.live-client-hint {
+  position: absolute;
+  top: calc(var(--space-5, 10px) + env(safe-area-inset-top, 0px));
+  right: calc(var(--space-5, 10px) + env(safe-area-inset-right, 0px));
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 6px);
+  max-width: min(calc(420 * var(--dp)), 70vw);
+  padding: var(--space-3, 6px) var(--space-4, 8px);
+  border-radius: var(--radius-md, 6px);
+  background: color-mix(in srgb, var(--bg-secondary, #161b22) 90%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color, #4a90d9) 45%, transparent);
+  color: var(--text-secondary, #8b949e);
+  font-size: var(--font-size-xs, 11px);
+  line-height: 1.5;
+  z-index: 7;
+}
+
+.live-client-hint__close {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.live-picker {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.live-picker__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4, 8px);
+  width: min(calc(360 * var(--dp)), calc(100vw - 32px));
+  max-height: 70vh;
+  padding: var(--space-5, 10px);
+  border-radius: var(--radius-lg, 10px);
+  background: var(--bg-secondary, #161b22);
+  border: 1px solid var(--border-color, #30363d);
+}
+
+.live-picker__title {
+  font-size: var(--font-size-sm, 13px);
+  font-weight: 600;
+  color: var(--text-primary, #e6edf3);
+}
+
+.live-picker__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 4px);
+  overflow-y: auto;
+}
+
+.live-picker__item {
+  padding: var(--space-3, 6px) var(--space-4, 8px);
+  border: 1px solid var(--border-color, #30363d);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--bg-primary, #0d1117);
+  color: var(--text-primary, #e6edf3);
+  font-size: var(--font-size-sm, 13px);
+  text-align: left;
+  cursor: pointer;
+}
+
+.live-picker__item:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+}
+
+.live-picker__cancel {
+  align-self: flex-end;
+  padding: var(--space-2, 4px) var(--space-4, 8px);
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--text-muted, #8b949e);
+  font-size: var(--font-size-sm, 13px);
+  cursor: pointer;
 }
 
 /* ── Chat panel ─────────────────────────────────────────────────────────── */

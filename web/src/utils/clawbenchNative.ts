@@ -42,6 +42,8 @@ export interface ClawBenchNative {
     text?: string
     modifiers?: string[]
   }): Promise<{ ok: boolean; supported: boolean } | boolean> | void
+  /** Opens a share link in a dedicated client window (desktop only). */
+  openShareLink?(url: string): Promise<boolean> | boolean
   /** Whether this client can inject input at all. */
   remoteControlSupported?(): Promise<boolean> | boolean
   /**
