@@ -165,7 +165,8 @@ getDisplayMedia
 
 `getDisplayMedia` 只在安全上下文存在：`http://192.168.x.x:20000` 这种页面里 `navigator.mediaDevices` 直接是 undefined。所以：
 
-- 成员端**必须通过 HTTPS 打开分享页**（自签名即可：`./clawbench --gen-cert` 生成覆盖本机所有 IPv4 + localhost 的证书，重启后生效，浏览器点一次「继续访问」）。
+- 成员端**必须通过 HTTPS 打开分享页**。自签名证书有两条路：设置 → 安全 →「HTTPS 证书」里点「生成自签名证书」（覆盖本机所有 IPv4 + localhost，一键重启），或命令行 `./clawbench --gen-cert`。浏览器点一次「继续访问」之后即生效。
+- 证书把**IP 写进 SAN**（浏览器不认 CN）；换网络后 IP 变了要重新生成一次。设置面板会显示当前覆盖的地址。
 - 同一限制也作用于**观众麦克风**——HTTP 下「允许观众发言」同样用不了。
 - 手机浏览器（Chrome Android / Safari iOS）不支持共享屏幕，只能看。
 - 开关打开但当前不是安全上下文时，按钮**仍然显示但置灰**并提示需要 HTTPS：直接隐藏会让人以为功能不存在。

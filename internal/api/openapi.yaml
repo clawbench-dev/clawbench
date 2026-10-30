@@ -169,6 +169,59 @@ paths:
         "429":
           description: 尝试过于频繁
 
+  /api/config/tls:
+    get:
+      tags: [Config]
+      summary: HTTPS 证书状态
+      description: |
+        返回磁盘上证书的启用状态、路径、覆盖的地址与到期时间，供设置面板渲染。
+        `active` 表示磁盘上有可用的证书（**下次启动**生效）；`serving` 表示当前这个
+        请求本身是走 TLS 的。`httpsUrl` 由当前请求推导，用于「用 HTTPS 重新打开」。
+      operationId: configTLSStatus
+      responses:
+        "200":
+          description: 证书状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TLSStatus"
+
+  /api/config/tls/self-signed:
+    post:
+      tags: [Config]
+      summary: 生成自签名证书
+      description: |
+        生成覆盖本机全部 IPv4 + `localhost` + `::1` 的自签名证书（浏览器只认 SAN，
+        不认 CN），写入证书目录。生成后需要重启服务端才生效（监听器在启动时创建）。
+
+        请求体可选：`hosts` 追加当前没配在网卡上的地址或域名；`force` 用于覆盖
+        **非自签名**的既有证书——那种证书来自 CA，重新生成会丢掉它，所以默认拒绝。
+      operationId: configTLSGenerateSelfSigned
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hosts:
+                  type: array
+                  items:
+                    type: string
+                force:
+                  type: boolean
+      responses:
+        "200":
+          description: "已生成（`restartRequired: true`）"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TLSStatus"
+        "409":
+          description: 既有证书不是自签名证书，且未带 `force`
+        "500":
+          $ref: "#/components/responses/Error"
+
   # ── WeChat push (personal WeChat via iLink Bot) ───────────────────────────
   /api/push/wechat/login:
     post:
@@ -6975,6 +7028,26 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
+    TLSStatus:
+      type: object
+      description: |
+        HTTPS 证书状态。`active` = 磁盘上有可用证书（重启后生效）；`serving` = 当前请求
+        是否走 TLS；`selfSigned` = 证书自签（浏览器会提示不受信任，接受一次即可）。
+      properties:
+        active: { type: boolean }
+        serving: { type: boolean }
+        selfSigned: { type: boolean }
+        certFile: { type: string }
+        keyFile: { type: string }
+        certDir: { type: string }
+        hosts:
+          type: array
+          items: { type: string }
+        notAfter: { type: string }
+        httpsUrl: { type: string }
+        restartRequired: { type: boolean }
+      required: [active, serving, certDir]
+
     LiveNoteSegment:
       type: object
       description: |

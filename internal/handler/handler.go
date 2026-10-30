@@ -562,6 +562,11 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/config/test", ServeConfigTest)
 	register("/api/config/restart", ServeConfigRestart)
 	register("/api/config/password", ServeConfigPassword)
+	// HTTPS certificate: status + one-click self-signed generation. Both are
+	// authenticated: writing a private key is not something an anonymous caller
+	// may trigger, and the paths leak the server's data directory.
+	register("/api/config/tls", ServeTLSStatus)
+	register("/api/config/tls/self-signed", ServeTLSGenerateSelfSigned)
 	register("/api/push/wechat/login", ServeWeChatLogin)
 	register("/api/push/wechat/status", ServeWeChatStatus)
 	register("/api/push/wechat/logout", ServeWeChatLogout)

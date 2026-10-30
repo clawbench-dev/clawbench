@@ -382,3 +382,5 @@ UsageMeterMetricNotString: "The metric must be one of: tokens, credit, cost"
 UsageMeterCycleModeInvalid: "The cycle type must be fixed (a set number of days) or monthly (calendar month)"
 RestartFailed: "Restart failed: {{.Error}}"
 RestartUnavailable: Restart is not wired up on this server, cannot restart
+TLSCertNotSelfSigned: "The existing certificate is not self-signed (probably issued by a CA). Regenerating would overwrite it; pass force to confirm"
+TLSCertGenerateFailed: "Could not generate the certificate: {{.Error}}"

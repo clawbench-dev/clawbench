@@ -375,3 +375,5 @@ UsageMeterMetricNotString: 统计口径必须是 tokens、credit 或 cost 之一
 UsageMeterCycleModeInvalid: 周期类型必须是 fixed（固定天数）或 monthly（自然月）
 RestartFailed: 重启失败：{{.Error}}
 RestartUnavailable: 重启功能未初始化，无法重启服务端
+TLSCertNotSelfSigned: 现有证书不是自签名证书（可能来自 CA），重新生成会覆盖它；确认要覆盖请带上 force
+TLSCertGenerateFailed: 生成证书失败：{{.Error}}
