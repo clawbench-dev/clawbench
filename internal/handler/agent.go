@@ -1085,6 +1085,64 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		}
 	}
 
+	// Model-provider binding. null clears the binding (back to the CLI's own
+	// configuration); a number points at a providers row.
+	//
+	// Validation lives here rather than in the service because it needs the
+	// agent's backend, and because a config-file backend additionally requires
+	// the caller to acknowledge that ClawBench will modify a file outside its
+	// data directory.
+	if v, exists := patch["provider_id"]; exists {
+		if v == nil {
+			ap.ClearProviderID = true
+		} else {
+			num, ok := v.(float64)
+			if !ok || num <= 0 {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderNotFound")
+				return
+			}
+			providerID := int64(num)
+			provider, err := service.GetProvider(providerID)
+			if err != nil {
+				writeProviderError(w, r, err)
+				return
+			}
+			if !model.ProviderEnvSupported(agent.Backend, provider.Protocol) {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderUnsupported",
+					map[string]any{"Backend": agent.Backend, "Protocol": provider.Protocol})
+				return
+			}
+			if model.ProviderUsesConfigFile(agent.Backend) {
+				conflicts, cerr := service.ProviderBindingConflict(agent.Backend, agentID, providerID)
+				if cerr != nil {
+					writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+					return
+				}
+				if len(conflicts) > 0 {
+					writeLocalizedErrorf(w, r, http.StatusConflict, "ProviderConfigConflict",
+						map[string]any{"Agents": strings.Join(conflicts, ", ")})
+					return
+				}
+				if confirmed, _ := patch["confirm_config_write"].(bool); !confirmed {
+					files := service.ProviderConfigPaths(agent.Backend)
+					writeLocalizedErrorf(w, r, http.StatusConflict, "ProviderConfigConsentRequired",
+						map[string]any{"Files": strings.Join(files, ", ")})
+					return
+				}
+				// Write the file BEFORE persisting the binding: a failed write
+				// must not leave an agent pointing at a provider the CLI never
+				// learned about.
+				if werr := service.ApplyProviderConfigToBackend(agent.Backend, provider); werr != nil {
+					slog.Error("apply provider config failed",
+						"agent_id", agentID, "backend", agent.Backend, "error", werr)
+					writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+					return
+				}
+			}
+			ap.ProviderID = &providerID
+		}
+	}
+
 	// Persist to database
 	if err := service.PatchAgentFields(agentID, ap); err != nil {
 		if errors.Is(err, service.ErrAgentNameReserved) {
@@ -1160,6 +1218,12 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			pid := *ap.ProjectID
 			agent.ProjectID = &pid
 		}
+		if ap.ClearProviderID {
+			agent.ProviderID = nil
+		} else if ap.ProviderID != nil {
+			pid := *ap.ProviderID
+			agent.ProviderID = &pid
+		}
 	})
 
 	if updated == nil {
@@ -1183,6 +1247,15 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			reason = "acp command changed"
 		}
 		slog.Info("closed ACP connections", "agent", agentID, "reason", reason)
+	}
+
+	// A cleared binding must also undo the config-file edit — but only when no
+	// other agent of the same backend still needs it. Reconcile covers both
+	// directions (restore when unbound, re-apply when bound).
+	if _, touched := patch["provider_id"]; touched && model.ProviderUsesConfigFile(agent.Backend) {
+		if rerr := service.ReconcileProviderConfigs(); rerr != nil {
+			slog.Warn("reconcile provider configs failed", "agent_id", agentID, "error", rerr)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, updated)

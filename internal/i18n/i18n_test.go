@@ -168,6 +168,17 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"CannotDeleteDefaultAgent",
 		"AgentNotInProject",
 		"CannotScopeDefaultAgent",
+		// Model providers: these are rendered from request handlers, but the
+		// settings page depends on the exact text (consent/conflict messages),
+		// so a one-sided add would surface a raw key to the user.
+		"ProviderNotFound",
+		"ProviderNameTaken",
+		"ProviderInUse",
+		"ProviderInvalid",
+		"ProviderUnsupported",
+		"ProviderProtocolConflict",
+		"ProviderConfigConflict",
+		"ProviderConfigConsentRequired",
 		"GroupYourTurn",
 		"GroupDiscussionLimitReached",
 		"GroupCruiseConfirming",

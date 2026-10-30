@@ -194,6 +194,7 @@ import AgentAvatarPicker from './AgentAvatarPicker.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { patchAgentField } from '@/composables/useSettingsConfig'
+import { apiGet, apiPatch } from '@/utils/api'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { useAgentSelfTest, type AgentSelfTestCheck } from '@/composables/useAgentSelfTest'
@@ -234,6 +235,18 @@ const copying = ref(false)
 const copyError = ref('')
 const avatarPickerOpen = ref(false)
 
+/**
+ * Model providers the user configured in Settings → Model Providers. Fetched
+ * here (not from a global store) because only this page and the provider page
+ * use them, and a stale list would offer a provider that was just deleted.
+ */
+interface ProviderOption {
+  id: number
+  name: string
+  protocol: string
+}
+const providers = ref<ProviderOption[]>([])
+
 onMounted(async () => {
   await loadAgents(true)
   // Merge ACP-reported models into agent.models so the preferred-model selector
@@ -241,6 +254,13 @@ onMounted(async () => {
   // this, /api/agents now returns the pure CLI list and ACP-only models would
   // be missing when this agent isn't the current session's agent.
   await populateACPStateFromCache(props.agentId)
+  try {
+    const data = await apiGet<{ providers: ProviderOption[] }>('/api/providers')
+    providers.value = data.providers ?? []
+  } catch {
+    // The provider picker is optional; the rest of the page still works.
+    providers.value = []
+  }
 })
 
 const agent = computed(() => getAgent(props.agentId))
@@ -297,6 +317,18 @@ interface AgentItem {
   patchField?: string
   disabled?: boolean
 }
+
+/**
+ * Providers this agent's backend can actually use. A protocol the backend does
+ * not read would be a binding that silently does nothing, so it is filtered
+ * out — except the currently bound one, which must stay visible for editing.
+ */
+const providerOptions = computed(() => {
+  const a = agent.value
+  const allowed = a?.providerProtocols ?? []
+  const bound = a?.providerId ?? null
+  return providers.value.filter((p) => allowed.includes(p.protocol) || p.id === bound)
+})
 
 const items = computed<AgentItem[]>(() => {
   const a = agent.value
@@ -375,6 +407,30 @@ const items = computed<AgentItem[]>(() => {
         modelId: m.id,
       })),
       patchField: 'preferred_model',
+    })
+  }
+
+  // Model provider: one-click reference to a provider configured in Settings.
+  // Environment backends apply it per process; config-file backends (codex)
+  // ask for consent because they modify a file outside ClawBench.
+  if (a.providerProtocols && a.providerProtocols.length > 0) {
+    result.push({
+      key: 'provider_id',
+      label: t('settings.items.agentProvider'),
+      description: t('settings.items.agentProviderHint'),
+      type: 'select',
+      options: [
+        { label: t('settings.items.agentProviderNone'), value: '' },
+        ...providerOptions.value.map((p) => ({ label: `${p.name} · ${p.protocol}`, value: p.id })),
+      ],
+      patchField: 'provider_id',
+    })
+  } else {
+    result.push({
+      key: 'provider_id',
+      label: t('settings.items.agentProvider'),
+      description: t('settings.items.agentProviderUnsupported'),
+      type: 'info',
     })
   }
 
@@ -548,6 +604,8 @@ function getItemValue(item: AgentItem): unknown {
       return a.preferredModel || (a.models?.length ? a.models.find((m: { default: boolean }) => m.default)?.id || a.models[0]?.id : '')
     case 'preferred_thinking_effort':
       return a.preferredThinkingEffort || ''
+    case 'provider_id':
+      return a.providerId ?? ''
     case 'preferred_mode':
       return a.preferredMode || ''
     case 'transport':
@@ -591,6 +649,30 @@ async function handleUpdate(item: AgentItem, value: unknown) {
   }
 
   if (!item.patchField) return
+
+  // Provider binding has its own path: a config-file backend needs explicit
+  // consent, and the request must carry confirm_config_write in the same call.
+  if (item.patchField === 'provider_id') {
+    const a = getAgent(props.agentId)
+    const providerId = value === '' || value === null || value === undefined ? null : Number(value)
+    let confirmWrite = false
+    if (providerId !== null && a?.providerConfigBackend) {
+      const ok = await dialog.confirm(t('settings.items.agentProviderConsent'), { dangerous: true })
+      if (!ok) return
+      confirmWrite = true
+    }
+    try {
+      await apiPatch('/api/agents', {
+        id: props.agentId,
+        provider_id: providerId,
+        ...(confirmWrite ? { confirm_config_write: true } : {}),
+      })
+      await loadAgents(true)
+    } catch {
+      toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+    }
+    return
+  }
 
   try {
     await patchAgentField(props.agentId, item.patchField, value as string | number | boolean | null)

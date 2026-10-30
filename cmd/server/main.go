@@ -1301,11 +1301,24 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// 必须同步完成的部分：model.Agents / AgentList 要在默认 agent 选择
 	// （下方）与 scheduler.LoadTasksFromDB（其会校验 task.AgentID 是否存在，
 	// 否则静默跳过注册）之前就绪。
+	// Model providers must be in memory before the first turn: the spawn paths
+	// read the snapshot (not the DB) to keep every turn off the read pool.
+	if err := service.LoadProvidersIntoMemory(); err != nil {
+		slog.Error("failed to load model providers", "error", err)
+	}
+
 	if _, err := model.RefreshAgents(store.WriteDB(), model.RefreshOptions{
 		ConfigDir:     filepath.Dir(configPath),
 		SkipDiscovery: true,
 	}); err != nil {
 		slog.Error("failed to refresh agents", "error", err)
+	}
+
+	// Config-file backends (codex) mirror the provider into their own file.
+	// Reconciling at startup keeps that file in step with the database even if
+	// the previous process died between a binding edit and the write.
+	if err := service.ReconcileProviderConfigs(); err != nil {
+		slog.Error("failed to reconcile provider config files", "error", err)
 	}
 
 	slog.Info("agents loaded", slog.Int("count", len(model.AgentList)))

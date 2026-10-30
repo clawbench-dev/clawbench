@@ -695,6 +695,21 @@ UNIQUE：`(type, key_id)`
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
 | updated_at | DATETIME | | CURRENT_TIMESTAMP | 更新时间 |
 
+### providers（模型提供商）
+
+用户配置的端点 + 凭据，智能体通过 `agents.provider_id` 引用。定义集中在一行（与 `mcp.servers` 同一取舍：轮换密钥只改一处），智能体只存引用。`api_key` 只写不读回（接口只返回 `hasKey`）。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
+| name | TEXT | NOT NULL, UNIQUE（NOCASE） | — | 显示名，唯一 |
+| protocol | TEXT | NOT NULL | `anthropic` | `anthropic` / `openai` / `gemini` |
+| base_url | TEXT | NOT NULL | `''` | 端点；空表示只注入密钥 |
+| api_key | TEXT | NOT NULL | `''` | 凭据，永不回显 |
+| auth_mode | TEXT | NOT NULL | `auto` | `auto` / `x-api-key` / `bearer` |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
+| updated_at | DATETIME | | CURRENT_TIMESTAMP | 更新时间 |
+
 ### schema_migrations（数据转换迁移台账）
 
 按名字记账，保证数据转换类迁移只跑一次。**名字一旦发布不得再改**——改了等于让所有已升级的库重跑一次全表扫描。

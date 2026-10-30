@@ -145,6 +145,14 @@ CannotDisableDefaultAgent: The default agent cannot be disabled
 CannotDeleteDefaultAgent: The default agent cannot be deleted
 AgentNotInProject: This agent is only available in its own project
 CannotScopeDefaultAgent: The default agent cannot be limited to one project
+ProviderNotFound: Model provider not found
+ProviderNameTaken: A model provider with this name already exists
+ProviderInUse: This model provider is still referenced by agents; unbind it first
+ProviderInvalid: "Invalid model provider: {{.Reason}}"
+ProviderUnsupported: Agent {{.Backend}} does not support the {{.Protocol}} protocol
+ProviderProtocolConflict: "These agents do not support this protocol: {{.Agents}}"
+ProviderConfigConflict: Agent(s) {{.Agents}} are bound to another provider; this backend shares one global config file and can only bind one
+ProviderConfigConsentRequired: "This agent needs a config file change to apply the provider: {{.Files}}. Confirm and retry"
 InvalidSHA: Invalid commit SHA format
 InvalidBranchName: Invalid branch name
 ModelDiscoveryNotSupported: This agent does not support model discovery

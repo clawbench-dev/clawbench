@@ -85,6 +85,12 @@ interface AgentRecord {
    * receives contains only agents visible here.
    */
   projectId?: number
+  /** Model-provider binding (providers.id); absent/null = use the CLI's own config. */
+  providerId?: number | null
+  /** Protocols this agent's backend can be pointed at (empty = cannot take a provider). */
+  providerProtocols?: string[]
+  /** True when the provider is applied by editing the CLI's config file (needs consent). */
+  providerConfigBackend?: boolean
   /** Derived usage counts from GET /api/agents (not persisted). */
   sessionCount?: number
   taskCount?: number

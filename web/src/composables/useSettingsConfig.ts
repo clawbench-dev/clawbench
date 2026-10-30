@@ -716,6 +716,7 @@ export async function patchAgentField(
     auto_approve: 'autoApprove',
     disabled: 'disabled',
     mcp_servers: 'mcpServers',
+    provider_id: 'providerId',
     // name, specialty map to themselves
   }
   updateAgentField(agentId, fieldMap[field] || field, value)

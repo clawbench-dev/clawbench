@@ -146,6 +146,14 @@ CannotDisableDefaultAgent: 默认智能体不能被禁用
 CannotDeleteDefaultAgent: 默认智能体不能被删除
 AgentNotInProject: 该智能体仅在其所属项目中可用
 CannotScopeDefaultAgent: 默认智能体不能仅限当前项目
+ProviderNotFound: 模型提供商未找到
+ProviderNameTaken: 已存在同名模型提供商
+ProviderInUse: 该模型提供商仍被智能体引用，请先解除引用
+ProviderInvalid: 模型提供商配置无效：{{.Reason}}
+ProviderUnsupported: 智能体 {{.Backend}} 不支持 {{.Protocol}} 协议的模型提供商
+ProviderProtocolConflict: 以下智能体不支持该协议：{{.Agents}}
+ProviderConfigConflict: 智能体 {{.Agents}} 已绑定其他提供商；该后端共用一份全局配置文件，只能绑定一个
+ProviderConfigConsentRequired: 该智能体需要修改配置文件才能生效：{{.Files}}。请确认后重试
 InvalidSHA: 无效的提交SHA格式
 InvalidBranchName: 无效的分支名
 ModelDiscoveryNotSupported: 该智能体不支持模型自动发现

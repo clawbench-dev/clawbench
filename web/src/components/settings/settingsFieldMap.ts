@@ -377,6 +377,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // listed in PLACEHOLDER_ITEMS in SettingsCategory.vue.
     { type: 'item', spec: { labelKey: 'settings.items.mcpSection', descriptionKey: 'settings.items.mcpDesc', key: 'mcpServers', type: 'info', source: 'server', sectionHeader: 'settings.items.mcpSection' } },
   ],
+  providers: [
+    // Model-provider list (endpoint + credential). Same shape as the MCP
+    // section: the card body is ProviderSetting, so this placeholder item only
+    // opens the section and must be listed in PLACEHOLDER_ITEMS.
+    { type: 'item', spec: { labelKey: 'settings.items.providerSection', descriptionKey: 'settings.items.providerDesc', key: 'providersCard', type: 'info', source: 'server', sectionHeader: 'settings.items.providerSection' } },
+  ],
   forgeIntegration: [
     // The master switch gets its OWN card, ahead of everything else: it decides
     // whether the rest of this page applies at all, so burying it inside the
