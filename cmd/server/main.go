@@ -747,6 +747,8 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		fmt.Println("Server options:")
 		fmt.Println("  --port PORT       Server port (overrides config file, default: 20000)")
 		fmt.Println("  --data-dir DIR    Runtime data directory (default: ~/.clawbench)")
+		fmt.Println("  --gen-cert        Generate a self-signed HTTPS certificate and exit")
+		fmt.Println("                    (add --host IP[,IP] for addresses to cover)")
 		fmt.Println("  --version         Print version and exit")
 		os.Exit(0)
 	}
@@ -802,6 +804,13 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			os.Exit(1)
 		}
 		model.DataDir = filepath.Join(homeDir, ".clawbench")
+	}
+
+	// --gen-cert: write a self-signed certificate covering this machine's
+	// addresses and exit. Dispatched after the data directory is resolved
+	// because the default cert directory lives inside it.
+	if hasFlag("--gen-cert") {
+		os.Exit(runGenerateCert())
 	}
 
 	// Warn about legacy BinDir layout if detected
@@ -2472,4 +2481,61 @@ func hotReloadTerminal(cfg model.Config, port int) {
 // newSTTProvider builds the STT provider from config.
 func newSTTProvider(cfg model.Config) stt.STTProvider {
 	return stt.NewVLLMProvider(cfg.STT.BaseURL, cfg.STT.Model, cfg.STT.APIKey, cfg.STT.Language)
+}
+
+// hasFlag reports whether argv contains flag (without consuming a value).
+func hasFlag(flag string) bool {
+	for _, arg := range os.Args[1:] {
+		if arg == flag {
+			return true
+		}
+	}
+	return false
+}
+
+// runGenerateCert writes a self-signed certificate for this machine and prints
+// what it covers. Returns the process exit code.
+//
+// The SAN list is the point of this command: browsers ignore Common Name, so a
+// certificate without IP entries is rejected with a name mismatch even after the
+// user accepts the self-signed warning.
+func runGenerateCert() int {
+	dir := model.ConfigInstance.TLS.CertDir
+	if dir == "" {
+		dir = model.DefaultTLSCertDir()
+	}
+	ips, dnsNames := model.LocalTLSSANs()
+
+	// Extra addresses: --host 10.0.0.5,192.168.1.7 (useful when the machine has
+	// an address that is not currently assigned, e.g. a fixed office IP).
+	for i, arg := range os.Args[1:] {
+		if arg != "--host" || i+2 > len(os.Args)-1 {
+			continue
+		}
+		for _, raw := range strings.Split(os.Args[i+2], ",") {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				continue
+			}
+			if ip := net.ParseIP(raw); ip != nil {
+				ips = append(ips, ip)
+			} else {
+				dnsNames = append(dnsNames, raw)
+			}
+		}
+	}
+
+	certs, err := model.GenerateSelfSignedCert(dir, ips, dnsNames)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	fmt.Println("已生成自签名证书：")
+	fmt.Println("  证书:", certs.CertFile)
+	fmt.Println("  私钥:", certs.KeyFile)
+	fmt.Println("  覆盖:", model.DescribeTLSSANs(ips, dnsNames))
+	fmt.Println()
+	fmt.Println("重启 ClawBench 后生效。浏览器首次访问会提示证书不受信任，")
+	fmt.Println("点「高级」→「继续前往」即可；之后该地址就是安全上下文。")
+	return 0
 }

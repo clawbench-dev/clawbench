@@ -335,6 +335,14 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 		}
 		return false
 
+	case liveshare.CtrlSetScreenEnabled:
+		applySetScreenEnabled(room, ctl.Enabled)
+		return false
+
+	case liveshare.CtrlScreenRevoke:
+		applyScreenRevoke(room, ctl.ViewerID)
+		return false
+
 	default:
 		_ = sink.Send(liveshare.PublisherMessage{Type: liveshare.MsgError, Name: "unknown control type: " + ctl.Type})
 		return false
@@ -387,11 +395,17 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer func() {
+		wasSharing := room.ScreenSharer() == viewer.ID
 		room.RemoveViewer(viewer.ID)
 		room.SendToPublisher(liveshare.PublisherMessage{
 			Type:     liveshare.MsgViewerLeave,
 			ViewerID: viewer.ID,
 		})
+		// RemoveViewer already cleared the slot; everyone else still has to be
+		// told, or they keep showing a screen that no longer exists.
+		if wasSharing {
+			broadcastScreenState(room)
+		}
 	}()
 
 	// Re-check after attaching: the publisher may have detached between the
@@ -408,12 +422,14 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 		ViewerID: viewer.ID,
 	})
 	if err := sink.Send(liveshare.ViewerMessage{
-		Type:         liveshare.MsgJoined,
-		ViewerID:     viewer.ID,
-		Title:        room.Title(),
-		ICEServers:   []any{}, // reserved for a future TURN; see signal.go
-		TalkEnabled:  room.TalkEnabled(),
-		NotesEnabled: room.NotesEnabled(),
+		Type:          liveshare.MsgJoined,
+		ViewerID:      viewer.ID,
+		Title:         room.Title(),
+		ICEServers:    []any{}, // reserved for a future TURN; see signal.go
+		TalkEnabled:   room.TalkEnabled(),
+		NotesEnabled:  room.NotesEnabled(),
+		ScreenEnabled: room.ScreenEnabled(),
+		ScreenSharer:  room.ScreenSharer(),
 	}); err != nil {
 		return
 	}
@@ -473,7 +489,78 @@ func handleViewerControl(room *liveshare.Room, viewer *liveshare.Viewer, ctl liv
 			return
 		}
 		notifyTalkState(room, viewer.ID, false)
+
+	case liveshare.CtrlScreenStart:
+		if err := room.ClaimScreen(viewer.ID); err != nil {
+			reason := liveshare.ReasonDisabled
+			if errors.Is(err, liveshare.ErrScreenBusy) {
+				reason = liveshare.ReasonBusy
+			}
+			// Denied loudly: the viewer is already capturing locally, so it has
+			// to know to stop and release the camera/microphone indicator.
+			room.SendToViewer(viewer.ID, liveshare.ViewerMessage{
+				Type:   liveshare.MsgScreenDenied,
+				Reason: reason,
+			})
+			return
+		}
+		broadcastScreenState(room)
+
+	case liveshare.CtrlScreenStop:
+		if room.ReleaseScreen(viewer.ID) {
+			broadcastScreenState(room)
+		}
 	}
+}
+
+// applySetScreenEnabled flips the room switch and stops the current sharer.
+//
+// Split out of the control switch purely to keep that function's cyclomatic
+// complexity within the linter's budget; the behavior is the switch case.
+func applySetScreenEnabled(room *liveshare.Room, enabled bool) {
+	stopped := room.SetScreenEnabled(enabled)
+	if stopped != "" {
+		// The former sharer needs an explicit denial: its browser is still
+		// capturing, and nothing else will tell it to stop.
+		room.SendToViewer(stopped, liveshare.ViewerMessage{
+			Type:   liveshare.MsgScreenDenied,
+			Reason: liveshare.ReasonDisabled,
+		})
+	}
+	broadcastScreenState(room)
+}
+
+// applyScreenRevoke stops one viewer's share without touching the switch.
+func applyScreenRevoke(room *liveshare.Room, viewerID string) {
+	if !room.ReleaseScreen(viewerID) {
+		return
+	}
+	room.SendToViewer(viewerID, liveshare.ViewerMessage{
+		Type:   liveshare.MsgScreenDenied,
+		Reason: liveshare.ReasonRevoked,
+	})
+	broadcastScreenState(room)
+}
+
+// broadcastScreenState tells the publisher and every viewer who is sharing.
+//
+// One frame for both sides: the publisher renders a preview and the viewers
+// switch their main picture, and both must agree on WHO — a viewer that keeps
+// showing a stale sharer is indistinguishable from a frozen stream.
+func broadcastScreenState(room *liveshare.Room) {
+	sharer := room.ScreenSharer()
+	room.BroadcastToViewers(liveshare.ViewerMessage{
+		Type:          liveshare.MsgScreenState,
+		ViewerID:      sharer,
+		Sharing:       sharer != "",
+		ScreenEnabled: room.ScreenEnabled(),
+	}, "")
+	room.SendToPublisher(liveshare.PublisherMessage{
+		Type:          liveshare.MsgScreenState,
+		ViewerID:      sharer,
+		Sharing:       sharer != "",
+		ScreenEnabled: room.ScreenEnabled(),
+	})
 }
 
 // notifyTalkState tells the publisher that a viewer started or stopped speaking.

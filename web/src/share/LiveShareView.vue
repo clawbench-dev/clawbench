@@ -7,11 +7,38 @@
       <video
         ref="videoRef"
         class="live-video"
-        :class="{ 'live-video--hidden': state !== 'playing' }"
+        :class="{ 'live-video--hidden': state !== 'playing' || viewMode === 'member' }"
         autoplay
         playsinline
         muted
       />
+
+      <!-- A member's screen, forwarded by the host. Its own element rather than
+           swapping srcObject: switching back to the host must not depend on
+           re-attaching a stream that is still live. -->
+      <video
+        v-show="viewMode === 'member'"
+        ref="memberVideoRef"
+        class="live-video"
+        autoplay
+        playsinline
+        muted
+      />
+
+      <!-- Who is presenting. Without it a viewer cannot tell whose screen this
+           is, and "why did the picture change" becomes a support question. -->
+      <div v-if="screenBanner" class="live-screen-banner" data-role="screen-banner">
+        <span>{{ screenBanner }}</span>
+        <button
+          v-if="memberStream"
+          class="live-screen-banner-btn"
+          type="button"
+          data-action="toggle-view"
+          @click="toggleView"
+        >
+          {{ viewMode === 'member' ? t('share.live.backToHost') : t('share.live.viewShared') }}
+        </button>
+      </div>
 
       <div v-if="state !== 'playing'" class="live-overlay">
         <template v-if="state === 'connecting' || state === 'negotiating'">
@@ -109,6 +136,35 @@
         <span class="live-dock-label">{{ talking ? t('share.live.micOn') : t('share.live.micOff') }}</span>
       </button>
 
+      <!-- Shown whenever the host allows it, even when THIS browser cannot
+           capture: hiding it entirely leaves a member wondering why the button
+           their colleague sees is missing. Disabled + a title explains it. -->
+      <button
+        v-if="screenEnabled"
+        class="live-dock-btn"
+        :class="{ 'live-dock-btn--live': sharingScreen }"
+        type="button"
+        role="switch"
+        :aria-checked="sharingScreen"
+        :disabled="!canShareScreen"
+        :aria-label="t('share.live.shareScreen')"
+        :title="
+          !canShareScreen
+            ? t('share.live.screenNeedsHttps')
+            : sharingScreen
+              ? t('share.live.stopSharingHint')
+              : t('share.live.shareScreenHint')
+        "
+        data-action="screen-share"
+        @click="toggleScreenShare"
+      >
+        <ScreenShare v-if="!sharingScreen" :size="16" />
+        <ScreenShareOff v-else :size="16" />
+        <span class="live-dock-label">
+          {{ sharingScreen ? t('share.live.stopSharing') : t('share.live.shareScreen') }}
+        </span>
+      </button>
+
       <button
         v-if="notesEnabled"
         class="live-dock-btn"
@@ -153,7 +209,18 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { FileText, Maximize, Mic, MicOff, Minimize, VideoOff, VolumeX, X } from 'lucide-vue-next'
+import {
+  FileText,
+  Maximize,
+  Mic,
+  MicOff,
+  Minimize,
+  ScreenShare,
+  ScreenShareOff,
+  VideoOff,
+  VolumeX,
+  X,
+} from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { LiveViewer, type LiveViewerState } from './liveViewer'
 import { ShareNotesPoller } from './liveNotesClient'
@@ -182,6 +249,64 @@ const notesEnabled = ref(false)
 /** Collapsed by default: the panel overlays the picture. */
 const notesOpen = ref(false)
 const notesSegments = ref<LiveNoteSegment[]>([])
+
+// ── Member screen share (viewer side) ───────────────────────────────────────
+const memberVideoRef = ref<HTMLVideoElement | null>(null)
+/** The screen another viewer is sharing, forwarded by the host. */
+const memberStream = ref<MediaStream | null>(null)
+/** Room-level switch for audience screen sharing. */
+const screenEnabled = ref(false)
+/** Viewer id currently sharing ('' = nobody). */
+const screenSharer = ref('')
+const sharingScreen = ref(false)
+const viewMode = ref<'host' | 'member'>('host')
+const screenError = ref('')
+
+/**
+ * Screen capture needs a secure context (HTTPS or localhost): on a plain
+ * http://LAN address `navigator.mediaDevices` does not exist at all, so the
+ * button would silently do nothing. Hiding it is the honest option.
+ */
+const canShareScreen = computed(
+  () =>
+    screenEnabled.value &&
+    typeof window !== 'undefined' &&
+    window.isSecureContext &&
+    !!navigator.mediaDevices?.getDisplayMedia,
+)
+
+const screenBanner = computed(() => {
+  if (screenError.value) return screenError.value
+  if (sharingScreen.value) return t('share.live.youAreSharing')
+  if (screenSharer.value) return t('share.live.viewingSharer', { id: screenSharer.value })
+  return ''
+})
+
+function toggleView(): void {
+  viewMode.value = viewMode.value === 'member' ? 'host' : 'member'
+}
+
+function attachMember(stream: MediaStream | null): void {
+  const el = memberVideoRef.value
+  if (!el) return
+  el.srcObject = stream
+  if (stream) {
+    void el.play().catch((e) => appLog.w(TAG, 'member screen autoplay blocked', e))
+  }
+}
+
+async function toggleScreenShare(): Promise<void> {
+  if (!viewer) return
+  screenError.value = ''
+  if (sharingScreen.value) {
+    await viewer.stopScreenShare()
+    sharingScreen.value = false
+    return
+  }
+  const ok = await viewer.startScreenShare()
+  sharingScreen.value = ok
+  if (!ok) screenError.value = t('share.live.shareFailed')
+}
 const noteBlocks = computed(() => groupNoteSegments(notesSegments.value).slice(-60))
 let notesPoller: ShareNotesPoller | null = null
 
@@ -315,6 +440,9 @@ function start(): void {
         if (detail?.reason) failReason.value = detail.reason
         if (s === 'ended' || s === 'full' || s === 'failed') {
           talking.value = false
+          sharingScreen.value = false
+          screenSharer.value = ''
+          memberStream.value = null
           // The room is gone, so the transcript endpoint 404s from here on.
           closeNotes()
         }
@@ -325,6 +453,29 @@ function start(): void {
       onNotesEnabled: (v) => {
         notesEnabled.value = v
         if (!v) closeNotes()
+      },
+      onScreenEnabled: (v) => {
+        screenEnabled.value = v
+      },
+      onScreenSharer: (id) => {
+        screenSharer.value = id
+        if (!id) {
+          memberStream.value = null
+          viewMode.value = 'host'
+          attachMember(null)
+        }
+      },
+      onMemberScreenStream: (stream) => {
+        memberStream.value = stream
+        // Presenting takes over the main picture; the host's screen is one
+        // click away in the banner.
+        viewMode.value = stream && !sharingScreen.value ? 'member' : 'host'
+        attachMember(stream)
+      },
+      onScreenDenied: (reason) => {
+        sharingScreen.value = false
+        screenError.value =
+          reason === 'busy' ? t('share.live.screenBusy') : t('share.live.screenDisabled')
       },
       onTalkRevoked: () => {
         // Muted by the publisher, or the room switch went off: the toggle must
@@ -417,6 +568,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', syncFullscreen)
+  attachMember(null)
   closeNotes()
   viewer?.close()
   viewer = null
@@ -634,6 +786,39 @@ onBeforeUnmount(() => {
 .live-dock-btn {
     padding: var(--space-2, 4px) var(--space-3, 6px);
   }
+}
+
+/* ── Member screen banner ───────────────────────────────────────────────── */
+
+/* Floating pill at the top: who is presenting, plus the way back to the host's
+   picture. Absolutely positioned so it never steals height from the video. */
+.live-screen-banner {
+  position: absolute;
+  top: calc(var(--space-5, 10px) + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 6px);
+  max-width: calc(100vw - 2 * var(--space-6, 12px));
+  padding: var(--space-2, 4px) var(--space-3, 6px) var(--space-2, 4px) var(--space-5, 10px);
+  border-radius: var(--radius-full, 999px);
+  background: color-mix(in srgb, var(--bg-secondary, #161b22) 88%, transparent);
+  border: 1px solid var(--border-color, #30363d);
+  color: var(--text-primary, #e6edf3);
+  font-size: var(--font-size-xs, 11px);
+  z-index: 7;
+  white-space: nowrap;
+}
+
+.live-screen-banner-btn {
+  padding: var(--space-1, 2px) var(--space-4, 8px);
+  border: none;
+  border-radius: var(--radius-full, 999px);
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 22%, transparent);
+  color: var(--accent-color, #4a90d9);
+  font-size: var(--font-size-xs, 11px);
+  cursor: pointer;
 }
 
 /* ── AI 听记 panel ───────────────────────────────────────────────────────── */

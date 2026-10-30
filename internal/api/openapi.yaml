@@ -3721,8 +3721,12 @@ paths:
       tags: [LiveShare]
       summary: 发布端信令 WebSocket（升级）
       description: |
-        WebSocket 端点，承载发布端的 SDP/ICE 转发与发言授权控制帧。OpenAPI 不建模
-        升级握手。发布端断开即视为共享结束，房间随之销毁。
+        WebSocket 端点，承载发布端的 SDP/ICE 转发、发言授权与成员屏幕共享控制帧。
+        OpenAPI 不建模升级握手。发布端断开即视为共享结束，房间随之销毁。
+
+        屏幕共享控制帧：`set-screen-enabled {enabled}`（房间开关，关闭会连带停掉正在
+        共享的人）与 `screen-revoke {viewerId}`（只停某个人）。服务端以
+        `screen-state {viewerId, sharing, screenEnabled}` 广播给发布端与全部观众。
       operationId: liveSharePublishWS
       parameters:
         - name: token
@@ -4112,6 +4116,11 @@ paths:
         **直播共享**另有 `{token}/signal`（信令 WebSocket）与 `{token}/notes`
         （AI 听记时间线 + 纪要状态，`?since=` 增量）。`{token}/notes` 只在房间存活期间
         可读：共享结束后房间销毁，token 立即失效，不会留下可长期读取的转写。
+
+        `{token}/signal` 的观众控制帧含 `talk-start` / `talk-end`（麦克风）与
+        `screen-start` / `screen-stop`（共享自己的屏幕，需房间开关已打开且当前无人共享）。
+        服务端以 `screen-state` 广播谁在共享；被拒时回 `screen-denied`（`disabled` / `busy` /
+        `revoked`）。屏幕采集要求安全上下文（HTTPS），HTTP 页面里浏览器不提供该 API。
 
         会话 JSON 另附身份信息供分享页渲染真实智能体图标：`sessionAgent`（会话级智能体，
         单聊用）、`speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`

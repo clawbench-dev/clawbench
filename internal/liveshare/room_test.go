@@ -474,3 +474,105 @@ func TestAttachPublisher_NotVisibleAsReservationAfterRelease(t *testing.T) {
 		t.Fatal("ReleaseReservation must not detach an attached publisher")
 	}
 }
+
+// ── Audience screen sharing ─────────────────────────────────────────────────
+
+func TestScreenShare_RequiresTheRoomSwitch(t *testing.T) {
+	g := newTestRegistry(t)
+	room, err := g.Create("/p", "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := room.AddViewer("", &fakeSink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := room.ClaimScreen(v.ID); !errors.Is(err, ErrScreenNotAllowed) {
+		t.Fatalf("claim with the switch off: got %v, want ErrScreenNotAllowed", err)
+	}
+
+	room.SetScreenEnabled(true)
+	if err := room.ClaimScreen(v.ID); err != nil {
+		t.Fatalf("claim after enabling: %v", err)
+	}
+	if got := room.ScreenSharer(); got != v.ID {
+		t.Fatalf("sharer = %q, want %q", got, v.ID)
+	}
+}
+
+func TestScreenShare_OnlyOneSharerAtATime(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/p", "t")
+	room.SetScreenEnabled(true)
+	a, _ := room.AddViewer("", &fakeSink{})
+	b, _ := room.AddViewer("", &fakeSink{})
+
+	if err := room.ClaimScreen(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := room.ClaimScreen(b.ID); !errors.Is(err, ErrScreenBusy) {
+		t.Fatalf("second claim: got %v, want ErrScreenBusy", err)
+	}
+	// Re-claiming by the current sharer is idempotent: a client that resends
+	// screen-start (a retry) must not be told it is busy with itself.
+	if err := room.ClaimScreen(a.ID); err != nil {
+		t.Fatalf("re-claim by the sharer: %v", err)
+	}
+}
+
+func TestScreenShare_DisablingStopsTheSharer(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/p", "t")
+	room.SetScreenEnabled(true)
+	a, _ := room.AddViewer("", &fakeSink{})
+	if err := room.ClaimScreen(a.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	stopped := room.SetScreenEnabled(false)
+	if stopped != a.ID {
+		t.Fatalf("stopped = %q, want %q", stopped, a.ID)
+	}
+	if got := room.ScreenSharer(); got != "" {
+		t.Fatalf("sharer should be cleared, got %q", got)
+	}
+	if err := room.ClaimScreen(a.ID); !errors.Is(err, ErrScreenNotAllowed) {
+		t.Fatalf("claim after disabling: got %v, want ErrScreenNotAllowed", err)
+	}
+}
+
+func TestScreenShare_ReleaseAndDisconnect(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/p", "t")
+	room.SetScreenEnabled(true)
+	a, _ := room.AddViewer("", &fakeSink{})
+	b, _ := room.AddViewer("", &fakeSink{})
+	if err := room.ClaimScreen(a.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// A non-sharer cannot release somebody else's share.
+	if room.ReleaseScreen(b.ID) {
+		t.Fatal("non-sharer released the share")
+	}
+	if !room.ReleaseScreen(a.ID) {
+		t.Fatal("sharer could not release")
+	}
+	if room.ReleaseScreen(a.ID) {
+		t.Fatal("double release must be a no-op")
+	}
+
+	// Closing the tab while sharing must free the slot, otherwise the room is
+	// "busy" forever and nobody can ever share again.
+	if err := room.ClaimScreen(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	room.RemoveViewer(a.ID)
+	if got := room.ScreenSharer(); got != "" {
+		t.Fatalf("disconnect left a phantom sharer %q", got)
+	}
+	if err := room.ClaimScreen(b.ID); err != nil {
+		t.Fatalf("claim after the sharer left: %v", err)
+	}
+}

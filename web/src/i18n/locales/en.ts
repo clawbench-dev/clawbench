@@ -3839,6 +3839,18 @@ export default {
       notes: 'Notes',
       notesTitle: 'AI notes',
       notesWaiting: 'Waiting for the transcript…',
+      shareScreen: 'Share screen',
+      stopSharing: 'Stop sharing',
+      shareScreenHint: 'Share your screen with everyone',
+      stopSharingHint: 'Stop sharing your screen',
+      youAreSharing: 'You are sharing your screen',
+      viewingSharer: 'Viewer {id} is sharing a screen',
+      backToHost: 'Host screen',
+      viewShared: 'Shared screen',
+      shareFailed: 'Could not start sharing — check the browser permission',
+      screenBusy: 'Another viewer is already sharing',
+      screenDisabled: 'The host has not enabled screen sharing',
+      screenNeedsHttps: 'Screen sharing needs HTTPS (this page is plain HTTP)',
     },
   },
   liveShare: {
@@ -3865,6 +3877,12 @@ export default {
     stop: 'Stop sharing',
     talkMuted: 'Muted',
     talkTalking: 'Speaking',
+    allowScreenShare: 'Allow viewers to share their screen',
+    allowScreenShareHint:
+      'Viewers can present their own screen to everyone, one at a time. The viewer side needs HTTPS to capture a screen.',
+    memberSharing: 'Viewer {id} is sharing a screen',
+    viewFullscreen: 'Fullscreen',
+    stopScreenShare: 'Stop sharing',
     notes: {
       enable: 'AI notes',
       enableHint:

@@ -174,6 +174,42 @@
           {{ t('liveShare.muteAll') }}
         </button>
 
+        <!-- Audience screen sharing. Off by default: the token is a read
+             credential, and a screen is a much bigger thing to hand out than a
+             microphone. -->
+        <label class="live-check">
+          <input
+            type="checkbox"
+            :checked="share.screenEnabled.value"
+            @change="onToggleScreen(($event.target as HTMLInputElement).checked)"
+          />
+          <span>{{ t('liveShare.allowScreenShare') }}</span>
+        </label>
+        <div class="live-dialog-hint live-dialog-hint--indent">
+          {{ t('liveShare.allowScreenShareHint') }}
+        </div>
+
+        <template v-if="share.screenSharer.value">
+          <div class="live-dialog-section">
+            {{ t('liveShare.memberSharing', { id: share.screenSharer.value }) }}
+          </div>
+          <div class="live-screen-preview">
+            <video ref="remoteScreenRef" autoplay playsinline muted />
+          </div>
+          <div class="live-screen-actions">
+            <button class="live-btn" type="button" @click="openScreenFullscreen">
+              {{ t('liveShare.viewFullscreen') }}
+            </button>
+            <button
+              class="live-btn live-btn--danger"
+              type="button"
+              @click="share.revokeScreen(share.screenSharer.value)"
+            >
+              {{ t('liveShare.stopScreenShare') }}
+            </button>
+          </div>
+        </template>
+
         <!-- Live transcript. One line per speaker turn; the channels are
              recorded separately and merged by timestamp, so a remote
              participant and the publisher appear as different speakers. -->
@@ -192,6 +228,25 @@
 
         <div v-if="share.error.value" class="live-dialog-error">{{ share.error.value }}</div>
       </template>
+
+      <!-- Fullscreen viewer for the member's screen. Rendered inside the dialog
+           root but fixed to the viewport, so it is not clipped by the card. -->
+      <div
+        v-if="screenFullscreen && share.remoteScreenStream.value"
+        class="live-screen-fullscreen"
+        data-role="screen-fullscreen"
+        @click.self="closeScreenFullscreen"
+      >
+        <video ref="fullscreenVideoRef" autoplay playsinline muted />
+        <button
+          class="live-screen-fullscreen-close"
+          type="button"
+          :aria-label="t('common.close')"
+          @click="closeScreenFullscreen"
+        >
+          <X :size="18" />
+        </button>
+      </div>
     </div>
     <!-- Actions live in ModalDialog's footer, like every other dialog: it
          already supplies padding, a separating border and the tinted bar. In
@@ -262,6 +317,7 @@
  * live indicator so the user can come back to it.
  */
 import { computed, nextTick, ref, watch } from 'vue'
+import { X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -298,6 +354,9 @@ const starting = ref(false)
 /** 'publishing' = the normal dialog; 'minutes' = the post-share report. */
 const phase = ref<'publishing' | 'minutes'>('publishing')
 const notesListRef = ref<HTMLElement | null>(null)
+const remoteScreenRef = ref<HTMLVideoElement | null>(null)
+const fullscreenVideoRef = ref<HTMLVideoElement | null>(null)
+const screenFullscreen = ref(false)
 
 const hasTalkers = computed(() => share.viewers.value.some((v) => v.talk === 'talking'))
 /** Only the tail is rendered: a long meeting would otherwise rebuild thousands
@@ -388,6 +447,46 @@ async function onStop(): Promise<void> {
 function onToggleTalk(on: boolean): void {
   share.setTalkEnabled(on)
 }
+
+function onToggleScreen(on: boolean): void {
+  share.setScreenEnabled(on)
+}
+
+function openScreenFullscreen(): void {
+  screenFullscreen.value = true
+}
+
+function closeScreenFullscreen(): void {
+  screenFullscreen.value = false
+}
+
+/**
+ * Bind the relayed screen to whichever <video> elements exist.
+ *
+ * Two elements (inline preview + fullscreen) share one MediaStream; both can
+ * play it, and re-binding on every change keeps them in sync without moving a
+ * single element around the DOM.
+ */
+watch(
+  () => share.remoteScreenStream.value,
+  async (stream) => {
+    await nextTick()
+    if (remoteScreenRef.value) remoteScreenRef.value.srcObject = stream
+    if (fullscreenVideoRef.value) fullscreenVideoRef.value.srcObject = stream
+    if (!stream) screenFullscreen.value = false
+  },
+  { immediate: true },
+)
+
+// Opening the fullscreen element after the ref exists still needs the stream
+// attached (the watcher ran before the element was mounted).
+watch(screenFullscreen, async (open) => {
+  if (!open) return
+  await nextTick()
+  if (fullscreenVideoRef.value) {
+    fullscreenVideoRef.value.srcObject = share.remoteScreenStream.value
+  }
+})
 
 /** Closing while publishing keeps the share running; the header shows it. */
 function onClose(): void {
@@ -751,6 +850,61 @@ watch(
   min-width: 0;
   color: var(--text-primary, #1f2328);
   overflow-wrap: anywhere;
+}
+
+/* ── Member screen preview ──────────────────────────────────────────────── */
+
+/* 16:9 box so the dialog does not jump when the first frame arrives. */
+.live-screen-preview {
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-md, 6px);
+  overflow: hidden;
+  background: #000;
+}
+
+.live-screen-preview video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.live-screen-actions {
+  display: flex;
+  gap: var(--space-3, 6px);
+}
+
+/* Fullscreen overlay. Fixed (not absolute): the dialog card is small and would
+   clip it, and the point is to use the whole window. */
+.live-screen-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.92);
+}
+
+.live-screen-fullscreen video {
+  max-width: 96vw;
+  max-height: 92vh;
+}
+
+.live-screen-fullscreen-close {
+  position: absolute;
+  top: calc(16 * var(--dp));
+  right: calc(16 * var(--dp));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(36 * var(--dp));
+  height: calc(36 * var(--dp));
+  border: none;
+  border-radius: var(--radius-full, 999px);
+  background: color-mix(in srgb, var(--bg-secondary, #fff) 20%, transparent);
+  color: #fff;
+  cursor: pointer;
 }
 
 .live-notes-minutes {

@@ -24,6 +24,9 @@ const (
 	MsgICE = "ice"
 	// MsgTalkState reports a viewer's speech state change.
 	MsgTalkState = "talk-state"
+	// MsgScreenState reports who is sharing a screen, to the publisher AND to
+	// every viewer. One frame for both sides keeps the two views from drifting.
+	MsgScreenState = "screen-state"
 )
 
 // Message types on the viewer socket (server → viewer).
@@ -44,6 +47,9 @@ const (
 	// MsgTalkDisabled means the viewer asked to speak while the room switch is
 	// off. The viewer's mic must go back to off.
 	MsgTalkDisabled = "talk-disabled"
+	// MsgScreenDenied means the viewer asked to share its screen and the room
+	// refused: the switch is off, or somebody else is already sharing.
+	MsgScreenDenied = "screen-denied"
 	// MsgError reports a rejected control frame without closing the socket.
 	MsgError = "error"
 )
@@ -65,6 +71,12 @@ const (
 	CtrlICE = "ice"
 	// CtrlSetTalkEnabled flips the room-level speech switch.
 	CtrlSetTalkEnabled = "set-talk-enabled"
+	// CtrlSetScreenEnabled flips the room-level screen-sharing switch. Turning
+	// it off also stops whoever is sharing.
+	CtrlSetScreenEnabled = "set-screen-enabled"
+	// CtrlScreenRevoke stops one viewer's screen share without disabling the
+	// switch for everyone else.
+	CtrlScreenRevoke = "screen-revoke"
 )
 
 // Viewer control messages (client → server).
@@ -77,6 +89,10 @@ const (
 	CtrlTalkEnd = "talk-end"
 	// CtrlOffer carries the viewer's SDP offer.
 	CtrlOffer = "offer"
+	// CtrlScreenStart announces that the viewer's screen track is live.
+	CtrlScreenStart = "screen-start"
+	// CtrlScreenStop announces that the viewer stopped sharing.
+	CtrlScreenStop = "screen-stop"
 )
 
 // PublisherMessage is a frame sent to the publisher.
@@ -93,6 +109,11 @@ type PublisherMessage struct {
 	Candidate any `json:"candidate,omitempty"`
 	// Talking is meaningful only on MsgTalkState.
 	Talking bool `json:"talking,omitempty"`
+	// Sharing is meaningful only on MsgScreenState: whether ViewerID is
+	// currently sharing a screen.
+	Sharing bool `json:"sharing,omitempty"`
+	// ScreenEnabled is the room-level screen-sharing switch.
+	ScreenEnabled bool `json:"screenEnabled,omitempty"`
 }
 
 // Reasons carried on talk-revoked / talk-denied. Constants (not literals) so the
@@ -104,6 +125,10 @@ const (
 	ReasonRevoked = "revoked"
 	// ReasonMuted means a mute-all cleared every approval.
 	ReasonMuted = "muted"
+	// ReasonBusy means somebody else is already sharing a screen. Only one
+	// sharer at a time: every forwarded screen is another stream the publisher
+	// must upload to every viewer.
+	ReasonBusy = "busy"
 )
 
 // ViewerMessage is a frame sent to a viewer.
@@ -120,9 +145,15 @@ type ViewerMessage struct {
 	TalkEnabled bool  `json:"talkEnabled,omitempty"`
 	// NotesEnabled tells the viewer that this share is running AI 听记, so the
 	// transcript panel can be offered at all. It carries no transcript.
-	NotesEnabled bool   `json:"notesEnabled,omitempty"`
-	Reason       string `json:"reason,omitempty"`
-	Message      string `json:"message,omitempty"`
+	NotesEnabled bool `json:"notesEnabled,omitempty"`
+	// ScreenEnabled / ScreenSharer are the screen-sharing state at join time.
+	// Later changes arrive as MsgScreenState.
+	ScreenEnabled bool   `json:"screenEnabled,omitempty"`
+	ScreenSharer  string `json:"screenSharer,omitempty"`
+	// Sharing is meaningful only on MsgScreenState.
+	Sharing bool   `json:"sharing,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 // PublisherControl is a frame received from the publisher.

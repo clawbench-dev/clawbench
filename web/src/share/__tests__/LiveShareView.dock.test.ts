@@ -57,6 +57,18 @@ const i18n = createI18n({
           notes: '听记',
           notesTitle: 'AI 听记',
           notesWaiting: '等待转写…',
+          shareScreen: '共享屏幕',
+          stopSharing: '停止共享',
+          shareScreenHint: '把你的屏幕共享给所有人',
+          stopSharingHint: '停止共享你的屏幕',
+          youAreSharing: '你正在共享屏幕',
+          viewingSharer: '成员 {id} 正在共享屏幕',
+          backToHost: '看主持人',
+          viewShared: '看共享',
+          shareFailed: '无法开始共享',
+          screenBusy: '已有成员在共享屏幕',
+          screenDisabled: '主持人未开启屏幕共享',
+          screenNeedsHttps: '需要 HTTPS',
         },
       },
     },
@@ -274,6 +286,23 @@ describe('LiveShareView control dock', () => {
     lastViewer?.opts?.callbacks?.onNotesEnabled?.(false)
     await flushPromises()
     expect(w.find('[data-action="notes"]').exists()).toBe(false)
+
+    w.unmount()
+  })
+
+  it('offers screen sharing only when the host allows it, disabled over http', async () => {
+    const w = mountView()
+    await flushPromises()
+    expect(w.find('[data-action="screen-share"]').exists()).toBe(false)
+
+    lastViewer?.opts?.callbacks?.onScreenEnabled?.(true)
+    await flushPromises()
+    const btn = w.find('[data-action="screen-share"]')
+    expect(btn.exists()).toBe(true)
+    // jsdom is not a secure context and has no mediaDevices: exactly the
+    // situation of an http:// LAN page. The button must explain, not vanish.
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.attributes('title')).toContain('HTTPS')
 
     w.unmount()
   })

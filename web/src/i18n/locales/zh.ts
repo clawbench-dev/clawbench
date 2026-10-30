@@ -3834,6 +3834,18 @@ export default {
       notes: '听记',
       notesTitle: 'AI 听记',
       notesWaiting: '等待转写…',
+      shareScreen: '共享屏幕',
+      stopSharing: '停止共享',
+      shareScreenHint: '把你的屏幕共享给所有人',
+      stopSharingHint: '停止共享你的屏幕',
+      youAreSharing: '你正在共享屏幕',
+      viewingSharer: '成员 {id} 正在共享屏幕',
+      backToHost: '看主持人',
+      viewShared: '看共享',
+      shareFailed: '无法开始共享，请检查浏览器权限',
+      screenBusy: '已有成员在共享屏幕',
+      screenDisabled: '主持人未开启屏幕共享',
+      screenNeedsHttps: '需要 HTTPS 才能共享屏幕（当前是 HTTP）',
     },
   },
   liveShare: {
@@ -3860,6 +3872,12 @@ export default {
     stop: '结束共享',
     talkMuted: '麦克风关',
     talkTalking: '正在说话',
+    allowScreenShare: '允许成员共享屏幕',
+    allowScreenShareHint:
+      '开启后成员可以把自己的屏幕共享给所有人，一次只能一个人。成员端需要 HTTPS 才能采集屏幕。',
+    memberSharing: '成员 {id} 正在共享屏幕',
+    viewFullscreen: '全屏查看',
+    stopScreenShare: '停止共享',
     notes: {
       enable: 'AI 听记',
       enableHint:
