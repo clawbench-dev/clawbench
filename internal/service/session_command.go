@@ -32,6 +32,10 @@ type DingTalkSessionInfo struct {
 // It shares the same structure as DingTalkSessionInfo.
 type FeishuSessionInfo = DingTalkSessionInfo
 
+// WeChatSessionInfo carries session metadata for the WeChat session command feature.
+// It shares the same structure as DingTalkSessionInfo.
+type WeChatSessionInfo = DingTalkSessionInfo
+
 // FindSessionsByPrefix finds non-archived chat sessions whose ID starts with the given prefix.
 // Case-insensitive matching.
 func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
@@ -150,6 +154,11 @@ func SendMessageToSessionFromDingTalk(sessionID, message string, files []model.F
 
 // SendMessageToSessionFromFeishu sends a message to a non-running session from Feishu.
 func SendMessageToSessionFromFeishu(sessionID, message string, files []model.FileEntry) error {
+	return sendMessageToSessionFromPush(sessionID, message, files)
+}
+
+// SendMessageToSessionFromWeChat sends a message to a non-running session from WeChat.
+func SendMessageToSessionFromWeChat(sessionID, message string, files []model.FileEntry) error {
 	return sendMessageToSessionFromPush(sessionID, message, files)
 }
 

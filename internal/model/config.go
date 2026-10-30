@@ -180,7 +180,8 @@ type Config struct {
 	Terminal    TerminalConfig    `yaml:"terminal"`     // Interactive web terminal configuration
 	DingTalk    DingTalkConfig    `yaml:"dingtalk"`     // DingTalk enterprise bot push notifications
 	Feishu      FeishuConfig      `yaml:"feishu"`       // Feishu (飞书) enterprise bot push notifications
-	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "feishu", "disabled"
+	WeChat      WeChatConfig      `yaml:"wechat"`       // Personal WeChat (iLink Bot) push credentials, obtained by QR scan
+	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "feishu", "wechat", "disabled"
 	FileSearch  FileSearchConfig  `yaml:"file_search"`  // File search configuration
 	Forge       ForgeConfig       `yaml:"forge"`        // GitHub / GitLab integration (read-only issue & PR browsing)
 	Skills      SkillsConfig      `yaml:"skills"`       // Cross-agent skill discovery (native dirs + custom dirs + git repos)
@@ -410,6 +411,25 @@ type FeishuConfig struct {
 	AppID     string   `yaml:"app_id"`     // Enterprise app App ID (from Feishu developer console)
 	AppSecret string   `yaml:"app_secret"` // Enterprise app App Secret, masked after save
 	Users     []string `yaml:"users"`      // Static Feishu open_id list for single-chat push
+}
+
+// WeChatConfig holds the personal-WeChat (iLink Bot) push credentials. The
+// values are produced by the QR login flow, not typed by the user.
+//
+// Deliberately has NO Enabled field: for DingTalk/Feishu, Enabled is derived
+// from PushMode by ApplyDefaults, which cannot express "logged out". WeChat's
+// gate is PushMode == "wechat" && BotToken != "", so a stale token left behind
+// by a failed re-login cannot silently re-enable the channel.
+//
+// Deliberately has NO Users list: a push needs a context_token, which the
+// platform only mints when the user messages the bot, so a static subscriber
+// list would be a dead field. Subscribers are discovered from inbound traffic
+// (source = "stream") only.
+type WeChatConfig struct {
+	BotToken string `yaml:"bot_token"` // Bot token from the QR login; write-only, never returned by GET /api/config
+	BotID    string `yaml:"bot_id"`    // ilink_bot_id of the logged-in bot
+	BaseURL  string `yaml:"base_url"`  // Server-assigned API base URL; empty = SDK default
+	UserID   string `yaml:"user_id"`   // ilink_user_id of the account that scanned
 }
 
 // AISummaryConfig holds the shared AI model configuration used by both the

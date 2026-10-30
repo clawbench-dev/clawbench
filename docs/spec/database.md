@@ -5,7 +5,7 @@ RAG：同一数据库文件，独立连接池
 
 > 项目身份统一为整数 `project_id`（`projects` 表），所有项目作用域表存 id 而非路径——改名/移动目录只需一条 UPDATE。`project_id=0` 是保留哨兵（全局标签、无法归属的分享），故不声明外键。
 >
-> 本文档按**全新安装**跑完 `service.InitDB()` 后的实际 schema 描述（`sqlite_master` + `pragma_table_info` 实测），共 **38 张表**（含迁移台账 `schema_migrations`）。RAG 的三张表由 `internal/rag` 独立连接池创建，单列于文末。
+> 本文档按**全新安装**跑完 `service.InitDB()` 后的实际 schema 描述（`sqlite_master` + `pragma_table_info` 实测），共 **39 张表**（含迁移台账 `schema_migrations`）。RAG 的三张表由 `internal/rag` 独立连接池创建，单列于文末。
 >
 > 升级路径上的列由 `database.go` 的 `ALTER TABLE ... ADD COLUMN` 补齐（102 条），最终形状与本文件一致；但 `CREATE TABLE IF NOT EXISTS` 对已存在的表是空操作，**所以老库不会自动获得新列，只能靠 ALTER**。改 schema 时必须两条路一起改。
 
@@ -579,6 +579,23 @@ IM 机器人推送的暂存队列（**不是**通知中心的数据源，两者�
 
 索引：`idx_feishu_user UNIQUE(user_id)`
 
+### wechat_subscribers（个人微信订阅者）
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
+| user_id | TEXT | NOT NULL UNIQUE | — | 微信用户 ID（`from_user_id`） |
+| conversation_id | TEXT | NOT NULL | `''` | 会话 ID |
+| user_name | TEXT | NOT NULL | `''` | 用户名 |
+| source | TEXT | NOT NULL | `'stream'` | 订阅来源；微信只有 `stream`（主动推送必须带 `context_token`，静态名单是死字段） |
+| context_token | TEXT | NOT NULL | `''` | 用户最近一条入站消息带回的回复令牌；主动推送必填 |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
+| last_session_id | TEXT | NOT NULL | `''` | 最近一次对话绑定的 ClawBench 会话 |
+
+索引：`idx_wechat_user UNIQUE(user_id)`
+
+`context_token` 落库而不是只留在内存里：iLink SDK 的令牌缓存是进程内 `sync.Map`，重启即空，只靠它会让每次重启后的推送静默失效，直到每个用户恰好再发一条消息。
+
 ### group_pending_bcc（群密送待投递）
 
 群聊密送（BCC）的待投递队列：主持人在发言里发出的 `private` 提及，按目标名字暂存于此，在**该目标下一次发言时**注入一次。行在成功投递后 **DELETE**；失败/取消的回合保留待下次重试（与成员注入游标"失败不推进"同语义）。人类用户用保留名 `User` 寻址。
@@ -1145,6 +1162,17 @@ erDiagram
         TEXT chat_id
         TEXT user_name
         TEXT source
+        DATETIME created_at
+        TEXT last_session_id
+    }
+
+    wechat_subscribers {
+        INTEGER id PK
+        TEXT user_id
+        TEXT conversation_id
+        TEXT user_name
+        TEXT source
+        TEXT context_token
         DATETIME created_at
         TEXT last_session_id
     }

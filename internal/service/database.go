@@ -859,6 +859,18 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_feishu_user ON feishu_subscribers(user_id);
 
+		-- WeChat (iLink Bot) subscriber management (added 2026-10)
+		CREATE TABLE IF NOT EXISTS wechat_subscribers (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id         TEXT NOT NULL UNIQUE,
+			conversation_id TEXT NOT NULL DEFAULT '',
+			user_name       TEXT NOT NULL DEFAULT '',
+			source          TEXT NOT NULL DEFAULT 'stream',
+			context_token   TEXT NOT NULL DEFAULT '',
+			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_wechat_user ON wechat_subscribers(user_id);
+
 		-- Cluster cache: stores precomputed cluster results for quick-send suggestions
 		CREATE TABLE IF NOT EXISTS message_clusters_cache (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2019,7 +2031,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// text or a file/image sent from DingTalk/Feishu goes to the session the
 	// user last addressed. Pre-existing rows get '' and the handler falls back
 	// to the "/ls" hint rather than guessing a target.
-	for _, tbl := range []string{"dingtalk_subscribers", "feishu_subscribers"} {
+	for _, tbl := range []string{"dingtalk_subscribers", "feishu_subscribers", "wechat_subscribers"} {
 		var exists int
 		_ = store.ReadDB().QueryRow(
 			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name='last_session_id'", tbl,
@@ -2030,6 +2042,26 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			)); err != nil {
 				return fmt.Errorf("failed to add %s.last_session_id column: %w", tbl, err)
 			}
+		}
+	}
+
+	// Migrate: add context_token to wechat_subscribers. WeChat refuses an
+	// outbound message that carries no context_token, and the platform only
+	// mints one on an inbound message. The SDK caches them in a process-local
+	// sync.Map, so without this column every server restart silently disables
+	// push until each user happens to message the bot again.
+	//
+	// CREATE TABLE IF NOT EXISTS is a no-op on an existing table, so a database
+	// created before this column existed only gets it from here.
+	var hasContextToken int
+	_ = store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('wechat_subscribers') WHERE name='context_token'",
+	).Scan(&hasContextToken)
+	if hasContextToken == 0 {
+		if _, err := store.WriteExec(
+			"ALTER TABLE wechat_subscribers ADD COLUMN context_token TEXT NOT NULL DEFAULT ''",
+		); err != nil {
+			return fmt.Errorf("failed to add wechat_subscribers.context_token column: %w", err)
 		}
 	}
 

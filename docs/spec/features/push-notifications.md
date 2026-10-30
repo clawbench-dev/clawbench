@@ -215,3 +215,40 @@ sequenceDiagram
 ### 事件丢弃与写前日志的边界
 
 `EmitToSession` 在会话无订阅者时**不能直接 return**：`StreamHub.Emit` 是写前日志（`pending_events`）唯一的落库点，提前返回会让事件既未投递也未持久化，重连重放也无法补偿。因此无订阅者时仍要把事件交给写前日志，由 `StoreNotifiableEvent` 按上述**会话级**条件决定是否真正落库（投递丢弃计数照常记录）。
+
+## 微信推送（个人微信 iLink Bot）
+
+当配置 `push_mode: "wechat"` 时，系统通过个人微信的 iLink Bot 协议把事件推到用户的微信单聊。与钉钉/飞书的根本差别是**凭据来自扫码而非手填**：微信没有 app_key/app_secret，只有一次授权产生的 bot token，所以「配置」这件事本身就是一个登录流程。
+
+### 架构
+
+- **长轮询**：`Manager`（`internal/push/wechat/manager.go`）用 `github.com/openilink/openilink-sdk-go` 的 `Client.Monitor` 长轮询 `ilink/bot/getupdates`。游标（`get_updates_buf`）落盘到 `<DataDir>/wechat/sync_buf.<bot_id>`（0600，`tmp` + `rename` 原子写）——不落盘的话每次服务重启都可能把历史入站消息当新消息重放，重复跑一遍 AI 回合。**按 bot 分文件**是必需的：游标只对产生它的账号有意义，共用一个文件时「登出 A → 扫入 B」会让 B 从 A 的游标开始，要么服务端拒收且 SDK 永远重试同一个坏值（`OnBufUpdate` 只在成功时触发，坏值永不替换）导致 bot 永久失聪，要么被接受而跳过 B 的待处理消息。bot id 来自网络，写文件名前按白名单字符过滤，避免 `../` 逃出状态目录。登出时 `ClearSyncBuf` 删除该 bot 的游标
+- **纯文本消息**：微信没有 Markdown，也没有卡片头。`push.go` 自己把 Markdown 拍平成纯文本（`text.go` 的 `stripMarkdownForWeChat`），**不复用 `summarize.StripMarkdown`**：那个是 TTS 契约，会删掉裸 URL 与整段代码块（`strip_markdown.go:86,162` / `:43,133`），用在微信上会把 forge 通知里的详情链接和代码答案的正文删掉。截断 2000 runes，在剥离**之后**做
+- **`context_token` 必须持久化**：微信拒绝不带 `context_token` 的出站消息，而该 token 只在**用户给 bot 发消息时**由平台下发。SDK 自带一个进程内 `sync.Map` 缓存，重启即空 —— 只靠它会让每次重启后的推送静默失效，直到每个用户恰好再发一条消息。因此 `wechat_subscribers.context_token` 是这一通道的核心字段，出站一律 `Client.SendText(ctx, to, text, token)` 显式传 token，**不用 `Client.Push`**（后者读内存缓存）
+- **仅 1:1**：门是 `MessageType == MsgTypeUser && GroupID == ""`。这不是保守取舍而是硬约束：出站消息结构体只有 `ToUserID`，没有群寻址字段，群推送用这个 SDK 实现不了
+- **扫码登录**：`LoginService`（`login.go`）把 SDK 的阻塞式 `LoginWithQR`（内部超时 8 分钟、最多刷新 3 次二维码）放进后台 goroutine，HTTP 层只读快照。`POST /api/push/wechat/login` 立即返回 `202` + 会话快照（进行中重复调用返回同一会话，避免页面刷新把 goroutine 丢成孤儿），前端按 `login_id` 每 1.2s 轮询 `GET`。**登录 goroutine 必须与请求 ctx 解绑**（`context.WithoutCancel`）：`net/http` 在 handler 返回时立刻取消 `r.Context()`，直接派生会让第一次 `FetchQRCode` 在 202 写出后几微秒内被中断，会话直接进入 `cancelled`、二维码永远出不来。二维码由前端用 `qrcode` npm 包把 `qr_url` 渲染成图（`qr_seq` 变化即重绘）。`DELETE` 取消；组件卸载时也会 `DELETE`，否则服务端会白跑最长 8 分钟
+- **凭据只写不读**：`bot_token` 落 `config.yaml` 的 `wechat.*`，但 `GET /api/config` 只回报 `has_token`/`bot_id`/`user_id`（与 forge token 同一约定）。连接状态另走 `GET /api/push/wechat/status`，因为它会不经过 config 写入而变化
+- **`-14` 会话过期**：SDK 的 `Monitor` 在 `OnSessionExpired` 之后会 `sleep(1h)` 再重试 —— 静默睡一小时等于「看不见的死 bot」。因此回调里**取消 Manager 自己的 ctx**，让睡眠立刻返回、循环退出；`Status().State` 置 `expired`，`started` 清空让 `Push*` 短路（不拿死 token 反复试）。`expired` **必须经 `GET /api/push/wechat/status` 的 `state` 字段暴露**（由 main.go 注入的 `WeChatStatusProvider` 读取 Manager），否则 token 仍在、`has_token` 为真，面板会一直显示绿色「已连接」而通知永远不来。热重载把「凭据未变但 `IsStarted()` 为假」也当作需要重建，否则 `-14` 之后没有任何路径能让 monitor 复活。`Stop()` 是退出登录/切模式的路径，会清掉 `expired` 标记（主动停 ≠ 坏了）
+- **generation 守卫**：每次 `Start` 递增 `gen`，monitor goroutine 只在 `m.gen == gen` 时才改状态，否则旧 token 的 monitor 退出会把刚重启的 Manager 标死
+- **出站响应校验**：SDK 的发送路径只看 HTTP 状态码，`200 + {"ret":-1}` 会被当成成功 —— 而「成功」会让调用方删掉 pending event，通知就无声消失了。`doer.go` 的 `apiErrorDoer` 把包体里的 `ret`/`errcode` 翻成 Go error；`getupdates` 刻意排除在外（`GetUpdates` 自己解析 `ret`，需要看到 -14）
+- **`SubscriberInfo.ContextToken`**：读搭在已有的 `GetSubscribers()` 上（零额外查询）；**写**是微信专属，放在 wechat 自己的 `DB` 超集接口里，不污染 `common.PushDB`（否则钉钉/飞书各要一个 no-op 实现加四个测试 mock）
+- **无静态订阅者名单**：`WeChatConfig` 没有 `Users` 字段，`MergeConfigSubscribers` 是 no-op。推送必须带 `context_token`，而它只能由入站消息产生，静态名单会是死字段
+- **无 `Enabled` 字段**：钉钉/飞书的 `Enabled` 由 `ApplyDefaults` 从 `PushMode` 派生，无法表达「已退出登录」。微信的启动门是 `PushMode == "wechat" && BotToken != ""`，且**刻意不参与 `PushMode` 的派生链** —— 否则一个残留的 token 会静默复活已登出的通道
+- **语音**：优先用 `VoiceItem.Text`（平台语音转文字）；为空则回「暂不支持该消息类型」。原始 `.silk` 对任何 AI 后端都不可用，解码需要注入 SILK 解码器（破坏零依赖）却换来一份用不上的载荷
+
+### 初始化桥接
+
+与钉钉/飞书相同模式：`cmd/server/main.go` 定义 `wechatDBAdapter`（`common.PushDB` + `SetContextToken`）、`wechatSessionMessenger` 和 `wechatLoginAdapter`（把 `wechat.LoginSnapshot` 适配成 `handler.WeChatLoginView`，保持 `internal/handler` 不 import 任何 `internal/push/*`）。DB adapter 与登录服务**无条件注册**（用户随时可以扫码），Manager 只在 `PushMode == "wechat" && BotToken != ""` 时创建。
+
+### 钉钉、飞书与微信的差异
+
+| 维度 | 钉钉 | 飞书 | 微信 |
+|------|------|------|------|
+| 连接方式 | Stream SDK 长轮询 | Lark SDK WebSocket | iLink 长轮询（`getupdates`） |
+| 凭据来源 | 手填 app_key/app_secret | 手填 app_id/app_secret | **扫码登录**（bot token） |
+| 消息格式 | `sampleMarkdown` 单聊 | `interactive` 交互式卡片 | 纯文本（Markdown 剥离） |
+| 截断限制 | 4000 字符 | 4000 runes | 2000 runes（剥离后计） |
+| 主动推送前提 | 任意 | 任意 | **必须已有 `context_token`**（用户先发过消息） |
+| SDK 依赖 | `open-dingtalk/dingtalk-stream-sdk-go` | `larksuite/oapi-sdk-go/v3/ws` | `openilink/openilink-sdk-go`（零外部依赖） |
+| 群聊 | 支持 | 支持 | **不支持**（出站无群寻址字段） |
+| 会话过期 | 重连 | 重连 | `-14` → 立即停止并提示重新扫码 |

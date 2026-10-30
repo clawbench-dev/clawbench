@@ -494,6 +494,11 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	cfg.DingTalk.Enabled = cfg.PushMode == "dingtalk"
 	// Keep Feishu.Enabled in sync with PushMode
 	cfg.Feishu.Enabled = cfg.PushMode == "feishu"
+	// WeChat is deliberately NOT part of the derivation above and has no
+	// Enabled flag to sync. Its credentials only exist after a successful QR
+	// scan, and the scan writes push_mode itself — so deriving "wechat" from a
+	// leftover bot_token would silently re-enable a channel the user logged out
+	// of (or whose token the server has since expired).
 
 	// --- Forge (GitHub / GitLab integration) ---
 	// The master switch defaults to ON: bool zero-value trap, same as terminal /

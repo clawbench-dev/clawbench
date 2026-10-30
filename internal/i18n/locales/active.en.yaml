@@ -208,6 +208,13 @@ PushSubscribedListFailedDingtalk: Subscribed to ClawBench notifications. Failed 
 PushSubscribedListFailedFeishu: ClawBench notifications subscribed. Failed to list sessions.
 PushSubscribedNoSessionsDingtalk: Subscribed to ClawBench notifications. No sessions.
 PushSubscribedNoSessionsFeishu: ClawBench notifications subscribed. No sessions.
+PushSessionListIntroWechat: 'Send @sessionID <message> to send a message to a session:'
+PushSubscribedNoAvailableWechat: WeChat notifications subscribed. No sessions available.
+PushSubscribedListFailedWechat: WeChat notifications subscribed. Failed to list sessions.
+PushSubscribedNoSessionsWechat: WeChat notifications subscribed. No sessions.
+PushWeChatNotLoggedIn: WeChat push is selected but not logged in. Scan the QR code in Settings → Notifications.
+PushQuoteLabel: Quote
+PushQuoteMedia: media
 PushMultipleRunningSessions: 'Multiple running sessions matched; use a longer ID ({{.ID}}…)'
 PushMultipleSessions: 'Multiple sessions matched; use a longer ID ({{.ID}}…)'
 PushSessionNotFound: Session {{.ID}} not found

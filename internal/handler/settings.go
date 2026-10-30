@@ -225,6 +225,28 @@ func SetReconfigureFunc(f func()) {
 	reconfigureOnHotReload = f
 }
 
+// TriggerReconfigure applies the current ConfigInstance to the hot-reloadable
+// subsystems.
+//
+// Exported for flows that mutate config outside a PATCH — the WeChat QR login
+// writes credentials and must make them take effect immediately.
+//
+// It takes configMutex itself. The login flow calls this AFTER its own persist
+// returned, i.e. with the lock released, so unlike the PATCH path (which already
+// holds it across applyHotReloadGlobals → reconfigureOnHotReload) this is a
+// fresh acquisition. Without it, hotReloadReconfigure would copy
+// model.ConfigInstance by value while a concurrent PATCH mutates it — a torn
+// snapshot that it then acts on — and two concurrent callers could both see the
+// same manager, both Stop it, and both install a new one, leaving one monitor
+// goroutine orphaned and polling (every inbound message delivered twice).
+func TriggerReconfigure() {
+	configMutex.Lock()
+	defer configMutex.Unlock()
+	if reconfigureOnHotReload != nil {
+		reconfigureOnHotReload()
+	}
+}
+
 // hotReloadWarnings stores warnings produced during hot-reload (e.g. DingTalk
 // connection failure). Collected by applyHotReloadWarnings() after patch.
 var (
@@ -269,6 +291,7 @@ type configResponse struct {
 	AISummary      configAISummary      `json:"ai_summary"`
 	DingTalk       configDingTalk       `json:"dingtalk"`
 	Feishu         configFeishu         `json:"feishu"`
+	WeChat         configWeChat         `json:"wechat"`
 	PushMode       string               `json:"push_mode"`
 	FileSearch     configFileSearch     `json:"file_search"`
 	TLS            configTLS            `json:"tls"`
@@ -512,6 +535,18 @@ type configFeishu struct {
 	AppID     string   `json:"app_id"`
 	AppSecret string   `json:"app_secret"`
 	Users     []string `json:"users"`
+}
+
+// configWeChat reports only whether WeChat is logged in.
+//
+// bot_token is deliberately NOT returned, mirroring the forge credential
+// handling: a credential produced by the QR login can be observed (has_token,
+// bot_id) but never read back. The connection state lives at
+// GET /api/push/wechat/status, because it changes without a config write.
+type configWeChat struct {
+	HasToken bool   `json:"has_token"`
+	BotID    string `json:"bot_id"`
+	UserID   string `json:"user_id"`
 }
 
 // configForge exposes the GitHub/GitLab integration settings. Credentials are
@@ -1068,6 +1103,11 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			AppID:     cfg.Feishu.AppID,
 			AppSecret: cfg.Feishu.AppSecret,
 			Users:     cfg.Feishu.Users,
+		},
+		WeChat: configWeChat{
+			HasToken: cfg.WeChat.BotToken != "",
+			BotID:    cfg.WeChat.BotID,
+			UserID:   cfg.WeChat.UserID,
 		},
 		PushMode: cfg.PushMode,
 		FileSearch: configFileSearch{
@@ -1972,8 +2012,8 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 
 	// Validate push_mode value
 	if v, ok := patch["push_mode"].(string); ok {
-		if v != "native" && v != "dingtalk" && v != "feishu" && v != "disabled" {
-			return fmt.Errorf("push_mode must be one of: native, dingtalk, feishu, disabled")
+		if v != "native" && v != "dingtalk" && v != "feishu" && v != "wechat" && v != "disabled" {
+			return fmt.Errorf("push_mode must be one of: native, dingtalk, feishu, wechat, disabled")
 		}
 	}
 
@@ -2035,6 +2075,8 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		cfg.PushMode = v
 		cfg.DingTalk.Enabled = (v == "dingtalk")
 		cfg.Feishu.Enabled = (v == "feishu")
+		// WeChat has no Enabled flag: its gate is PushMode == "wechat" &&
+		// BotToken != "" (see model.WeChatConfig). Nothing to sync here.
 	}
 
 	if tlsMap, ok := patch["tls"].(map[string]any); ok {

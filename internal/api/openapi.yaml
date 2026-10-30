@@ -169,6 +169,120 @@ paths:
         "429":
           description: 尝试过于频繁
 
+  # ── WeChat push (personal WeChat via iLink Bot) ───────────────────────────
+  /api/push/wechat/login:
+    post:
+      tags: [Config]
+      summary: 开始微信扫码登录
+      operationId: wechatLoginStart
+      description: |
+        启动一次个人微信（iLink Bot）扫码登录。服务端在后台 goroutine 中执行完整
+        登录流程（SDK 内部超时 8 分钟、最多刷新 3 次二维码），本端点立即返回会话
+        快照；前端按 `login_id` 轮询状态。
+
+        登录进行中重复调用返回**同一个**会话（幂等），避免页面刷新把 goroutine
+        丢成孤儿。
+
+        登录成功后凭据落盘到 `config.yaml` 的 `wechat.*`，并由热重载启动推送
+        连接。`bot_token` 只写不读，`GET /api/config` 仅回报 `has_token`。
+      responses:
+        "202":
+          description: 登录会话快照
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeChatLogin"
+        "503":
+          description: 登录服务不可用
+        "401":
+          $ref: "#/components/responses/Error"
+    get:
+      tags: [Config]
+      summary: 轮询微信扫码状态
+      operationId: wechatLoginPoll
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: |
+            当前快照。`state` 取值 `pending` / `scanned` / `connected` /
+            `expired` / `failed` / `cancelled`；`qr_seq` 每次刷新二维码递增，
+            前端据此重绘。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeChatLogin"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: 未知或已被回收的登录会话（客户端应重新发起）
+        "401":
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Config]
+      summary: 取消微信扫码登录
+      operationId: wechatLoginCancel
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: 已取消（幂等，未知 id 同样返回 204）
+        "401":
+          $ref: "#/components/responses/Error"
+
+  /api/push/wechat/status:
+    get:
+      tags: [Config]
+      summary: 微信推送连接状态
+      operationId: wechatStatus
+      description: |
+        令牌只写不读，因此连接状态由此端点回报，而非 `GET /api/config`。
+
+        `state` 是**实时**连接状态，与 `has_token` 正交：微信可能在不删除令牌的
+        情况下结束会话（`errcode -14`），此时 `has_token` 仍为真但 `state` 为
+        `expired`，前端必须据此提示重新扫码，而不是继续显示「已连接」。
+      responses:
+        "200":
+          description: 当前登录与连接状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  push_mode: { type: string }
+                  has_token: { type: boolean }
+                  bot_id: { type: string }
+                  user_id: { type: string }
+                  base_url: { type: string }
+                  state:
+                    type: string
+                    enum: [stopped, running, expired]
+                  last_error:
+                    type: string
+                    description: 最近一次连接错误的原文（例如 -14 会话过期）
+
+  /api/push/wechat/logout:
+    post:
+      tags: [Config]
+      summary: 退出微信登录
+      operationId: wechatLogout
+      description: |
+        清除 `wechat.*` 凭据与所有 `context_token`，并停止推送连接。订阅者行
+        保留——它们的粘性会话目标属于用户偏好，同一 bot 重新登录后仍然有效。
+      responses:
+        "204":
+          description: 已退出
+        "401":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+
   # ── System ────────────────────────────────────────────────────────────────
   /api/system/resources:
     get:
@@ -6833,6 +6947,28 @@ components:
         markdown: { type: string }
         error: { type: string }
       required: [status]
+
+    WeChatLogin:
+      type: object
+      description: |
+        微信扫码登录会话快照。`qr_url` 是待编码成二维码的字符串（通常是一个
+        `liteapp.weixin.qq.com` 链接），由前端渲染成二维码供微信扫描。
+        `state` 为 `pending` / `scanned` / `connected` / `expired` / `failed` /
+        `cancelled`；`qr_seq` 每次刷新二维码递增。
+      properties:
+        login_id: { type: string }
+        state: { type: string }
+        qr_url: { type: string }
+        qr_seq: { type: integer }
+        refresh: { type: integer }
+        refresh_max: { type: integer }
+        bot_id: { type: string }
+        message: { type: string }
+        error: { type: string }
+        expires_at:
+          type: integer
+          description: Unix 毫秒时间戳
+      required: [login_id, state]
 
     ErrorResponse:
       type: object

@@ -825,7 +825,7 @@ func TestSchema_PushSubscribersLastSessionID(t *testing.T) {
 	restoreDB := store.SnapshotDBForTest()
 	defer restoreDB()
 
-	tables := []string{"dingtalk_subscribers", "feishu_subscribers"}
+	tables := []string{"dingtalk_subscribers", "feishu_subscribers", "wechat_subscribers"}
 
 	// Phase 1: build the current schema, then drop last_session_id from both
 	// subscriber tables to simulate a pre-migration database.
@@ -873,11 +873,56 @@ func TestSchema_PushSubscribersLastSessionID_Idempotent(t *testing.T) {
 	require.NoError(t, InitDB())
 	defer store.Close()
 
-	for _, tbl := range []string{"dingtalk_subscribers", "feishu_subscribers"} {
+	for _, tbl := range []string{"dingtalk_subscribers", "feishu_subscribers", "wechat_subscribers"} {
 		cols := getTableColumns(t, store.UnsafeDBForTest(), tbl)
 		assert.True(t, cols["last_session_id"],
 			"%s.last_session_id must survive repeated migrations", tbl)
 	}
+}
+
+// TestSchema_WeChatSubscribersContextToken verifies the additive migration that
+// persists the WeChat reply token.
+//
+// The token is the only thing that lets the bot push to a user, and the iLink
+// SDK keeps it in a process-local sync.Map. Without this column every server
+// restart would silently disable push until each user messaged the bot again,
+// so the migration is load-bearing rather than cosmetic.
+//
+// Exercised the only way that proves anything: build the schema, drop the
+// column, run InitDB again, assert it comes back with an empty default.
+func TestSchema_WeChatSubscribersContextToken(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir, origDataDir := model.BinDir, model.DataDir
+	model.BinDir, model.DataDir = tmpDir, filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir, model.DataDir = origBinDir, origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+
+	require.NoError(t, InitDB())
+	store.Close()
+
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = raw.Exec("ALTER TABLE wechat_subscribers DROP COLUMN context_token")
+	require.NoError(t, err, "dropping context_token must be possible (no index may reference it)")
+	raw.Close()
+
+	require.NoError(t, InitDB())
+	defer store.Close()
+
+	cols := getTableColumns(t, store.UnsafeDBForTest(), "wechat_subscribers")
+	assert.True(t, cols["context_token"],
+		"wechat_subscribers must regain context_token (outbound push needs it after a restart)")
+
+	// A pre-existing row must default to '' so sendToAllSubscribers skips it
+	// rather than sending with an empty token the platform will reject.
+	require.NoError(t, UpsertWeChatSubscriber("wx-legacy", "conv-1", "Legacy", "stream"))
+	subs, err := GetWeChatSubscribers()
+	require.NoError(t, err)
+	require.Len(t, subs, 1)
+	assert.Equal(t, "", subs[0].ContextToken,
+		"a subscriber from before the migration must read as having no token")
 }
 
 func TestSchema_TaskExecutionsColumns(t *testing.T) {

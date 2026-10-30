@@ -3,12 +3,17 @@ package common
 import "clawbench/internal/model"
 
 // SubscriberInfo is the subscriber data transferred across the interface boundary.
-// Shared by all push backends (DingTalk, Feishu, etc.).
+// Shared by all push backends (DingTalk, Feishu, WeChat).
 type SubscriberInfo struct {
 	UserID         string
 	ConversationID string // DingTalk: conversation_id; Feishu: chat_id
 	UserName       string
 	Source         string // "stream" (auto) or "manual" (config/panel)
+	// ContextToken is WeChat's per-user reply token. Always empty for
+	// DingTalk/Feishu. WeChat cannot send proactively without one — the
+	// platform mints it on an inbound message — so a subscriber with an empty
+	// token is unreachable and the WeChat backend skips it.
+	ContextToken string
 }
 
 // PushDB is the DB operations interface shared by all push backends.

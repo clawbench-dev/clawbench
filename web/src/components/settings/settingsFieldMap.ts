@@ -433,6 +433,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
           { labelKey: 'settings.items.pushModeNative', value: 'native' },
           { labelKey: 'settings.items.pushModeDingtalk', value: 'dingtalk' },
           { labelKey: 'settings.items.pushModeFeishu', value: 'feishu' },
+          // WeChat has no editable credentials: selecting it renders the QR
+          // login block instead (see WeChatLoginPanel), so it has no
+          // optionSubFields entry and is excluded from requiredFields.
+          { labelKey: 'settings.items.pushModeWechat', value: 'wechat' },
           { labelKey: 'settings.items.pushModeDisabled', value: 'disabled' },
         ],
         defaultValue: 'native',

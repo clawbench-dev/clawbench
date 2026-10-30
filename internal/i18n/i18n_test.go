@@ -332,6 +332,10 @@ func TestLocalizerForLocale_PushNotificationKeys(t *testing.T) {
 		"PushSubscribedNoAvailableDingtalk", "PushSubscribedNoAvailableFeishu",
 		"PushSubscribedListFailedDingtalk", "PushSubscribedListFailedFeishu",
 		"PushSubscribedNoSessionsDingtalk", "PushSubscribedNoSessionsFeishu",
+		"PushSessionListIntroWechat",
+		"PushSubscribedNoAvailableWechat", "PushSubscribedListFailedWechat",
+		"PushSubscribedNoSessionsWechat", "PushWeChatNotLoggedIn",
+		"PushQuoteLabel", "PushQuoteMedia",
 		"PushMultipleRunningSessions", "PushMultipleSessions",
 		"PushSessionNotFound", "PushRecentSessionUnavailable",
 	}

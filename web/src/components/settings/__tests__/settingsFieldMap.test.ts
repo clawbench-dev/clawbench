@@ -739,8 +739,8 @@ describe('settingsFieldMap', () => {
     expect(cfg.entrySelector).toBeDefined()
     expect(cfg.entrySelector!.key).toBe('push_mode')
     expect(cfg.entrySelector!.type).toBe('select')
-    expect(cfg.entrySelector!.options!.length).toBe(4)
-    expect(cfg.entrySelector!.options!.map(o => o.value)).toEqual(['native', 'dingtalk', 'feishu', 'disabled'])
+    expect(cfg.entrySelector!.options!.length).toBe(5)
+    expect(cfg.entrySelector!.options!.map(o => o.value)).toEqual(['native', 'dingtalk', 'feishu', 'wechat', 'disabled'])
     expect(cfg.commonFields.length).toBe(0)
 
     const dingtalkSub = cfg.optionSubFields!.find(osf => osf.when === 'dingtalk')
@@ -759,8 +759,18 @@ describe('settingsFieldMap', () => {
     expect((cfg.hasConnectivityTest as Function)({ push_mode: 'feishu' })).toBe(true)
     expect((cfg.hasConnectivityTest as Function)({ push_mode: 'native' })).toBe(false)
     expect((cfg.hasConnectivityTest as Function)({ push_mode: 'disabled' })).toBe(false)
+    // WeChat has no connectivity test: its QR login panel IS the check, and a
+    // test button next to it would probe a credential that may not exist yet.
+    expect((cfg.hasConnectivityTest as Function)({ push_mode: 'wechat' })).toBe(false)
+    expect((cfg.getTestCategories as Function)({ push_mode: 'wechat' })).toEqual([])
     expect(cfg.getTestCategories).toBeDefined()
     expect(cfg.afterSave).toBeDefined()
+
+    // WeChat is configured by scanning, not by typing: it must have no
+    // optionSubFields entry (that would render empty credential rows) and must
+    // not appear in requiredFields (nothing to validate before Save).
+    expect(cfg.optionSubFields!.find(osf => osf.when === 'wechat')).toBeUndefined()
+    expect(cfg.requiredFields!.some(k => k.startsWith('wechat.'))).toBe(false)
   })
 
   // ── Sub-page route helpers (data-driven) ──

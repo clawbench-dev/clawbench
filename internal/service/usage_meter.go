@@ -13,6 +13,7 @@ import (
 	"clawbench/internal/model"
 	"clawbench/internal/push/dingtalk"
 	"clawbench/internal/push/feishu"
+	"clawbench/internal/push/wechat"
 	"clawbench/internal/store"
 	"clawbench/internal/ws"
 )
@@ -866,6 +867,10 @@ func pushUsageMeterToIM(eventID, title, body string) {
 		return
 	}
 	if feishu.IsStarted() && feishu.PushUsageMeterEvent(title, body) {
+		_ = DeletePendingEvent(eventID)
+		return
+	}
+	if wechat.IsStarted() && wechat.PushUsageMeterEvent(title, body) {
 		_ = DeletePendingEvent(eventID)
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"clawbench/internal/model"
 	"clawbench/internal/push/dingtalk"
 	"clawbench/internal/push/feishu"
+	"clawbench/internal/push/wechat"
 	"clawbench/internal/summarize"
 	"clawbench/internal/ws"
 
@@ -794,14 +795,25 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 	}
 	mgr.BroadcastEvent(msg)
 
-	// DingTalk push notification for task events.
-	// Pass raw (untruncated) preview — DingTalk package applies its own limit.
+	pushTaskEventToIM(msg.ID, taskID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath)
+}
+
+// pushTaskEventToIM forwards a task event to whichever IM backend is running.
+//
+// Extracted from emitTaskEvent: the three-way backend dispatch pushed that
+// function over the cyclomatic-complexity limit, and this chain is mechanical
+// (try each backend, drop the pending event on the first success).
+func pushTaskEventToIM(eventID, taskID, status, taskName, responsePreviewRaw, projectPath string) {
+	// Pass raw (untruncated) preview — each backend applies its own limit.
 	// If push succeeds, remove from pending_events to avoid duplicate
 	// Android notification when the app comes back online.
-	if dingtalk.IsStarted() && dingtalk.PushTaskEvent(taskID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath) {
-		_ = DeletePendingEvent(msg.ID)
-	} else if feishu.IsStarted() && feishu.PushTaskEvent(taskID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath) {
-		_ = DeletePendingEvent(msg.ID)
+	switch {
+	case dingtalk.IsStarted() && dingtalk.PushTaskEvent(taskID, status, taskName, responsePreviewRaw, projectPath):
+		_ = DeletePendingEvent(eventID)
+	case feishu.IsStarted() && feishu.PushTaskEvent(taskID, status, taskName, responsePreviewRaw, projectPath):
+		_ = DeletePendingEvent(eventID)
+	case wechat.IsStarted() && wechat.PushTaskEvent(taskID, status, taskName, responsePreviewRaw, projectPath):
+		_ = DeletePendingEvent(eventID)
 	}
 }
 

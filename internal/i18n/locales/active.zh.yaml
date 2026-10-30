@@ -207,6 +207,13 @@ PushSubscribedListFailedDingtalk: 已订阅 ClawBench 通知。获取会话列�
 PushSubscribedListFailedFeishu: ClawBench 通知已订阅。获取会话列表失败。
 PushSubscribedNoSessionsDingtalk: 已订阅 ClawBench 通知。暂无会话。
 PushSubscribedNoSessionsFeishu: ClawBench 通知已订阅。暂无会话。
+PushSessionListIntroWechat: 发送 @会话ID <消息> 向会话发送消息：
+PushSubscribedNoAvailableWechat: ClawBench 微信通知已订阅。暂无可用会话。
+PushSubscribedListFailedWechat: ClawBench 微信通知已订阅。获取会话列表失败。
+PushSubscribedNoSessionsWechat: ClawBench 微信通知已订阅。暂无会话。
+PushWeChatNotLoggedIn: 已选择微信推送但尚未登录，请在「设置 → 推送通知」中扫码登录。
+PushQuoteLabel: 引用
+PushQuoteMedia: 媒体
 PushMultipleRunningSessions: 匹配到多个正在运行的会话，请使用更长的 ID（{{.ID}}…）
 PushMultipleSessions: 匹配到多个会话，请使用更长的 ID（{{.ID}}…）
 PushSessionNotFound: 未找到会话 {{.ID}}
