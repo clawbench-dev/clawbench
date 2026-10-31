@@ -79,6 +79,7 @@
               <button class="dock-btn" :data-tab="tab" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="dockTabTitle(tab)">
                 <component :is="wideDockTabIcon(tab)" />
               </button>
+              <span v-if="liveDotVisible(tab, leftTab === tab)" class="dock-badge dock-badge--live" />
               <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
             </div>
           </div>
@@ -549,6 +550,7 @@
               <button class="dock-btn" :data-tab="tab" :class="dockInlineOverflowBtnClass(tab)" @click.stop="handleInlineOverflowClick(tab)" :title="dockTabTitle(tab)">
                 <component :is="dockTabIcon(tab)" />
               </button>
+              <span v-if="liveDotVisible(tab, activeTab === tab)" class="dock-badge dock-badge--live" />
               <span v-if="tab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
               <span v-if="tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
               <span v-if="tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
@@ -559,6 +561,7 @@
               <button class="dock-btn" :data-tab="singleDirectTab" :class="dockInlineOverflowBtnClass(singleDirectTab)" @click.stop="handleInlineOverflowClick(singleDirectTab)" :title="dockTabTitle(singleDirectTab)">
                 <component :is="dockTabIcon(singleDirectTab)" />
               </button>
+              <span v-if="liveDotVisible(singleDirectTab, activeTab === singleDirectTab)" class="dock-badge dock-badge--live" />
               <span v-if="singleDirectTab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
               <span v-if="singleDirectTab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
               <span v-if="singleDirectTab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
@@ -3419,7 +3422,6 @@ function dockTabTitle(tab: string) {
 function dockInlineOverflowBtnClass(tab: string) {
   return {
     active: activeTab.value === tab,
-    'is-live': tab === 'live' && liveShareActive.value,
     'is-recording': tab === 'notes' && notesRecording.value,
     'has-unread': tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab.value !== 'tasks',
     'just-completed': tab === 'tasks' && store.state.taskJustCompleted && activeTab.value !== 'tasks',
@@ -3658,12 +3660,25 @@ function wideDockBtnClass(tab: string) {
   return {
     // When the left pane is collapsed no dock tab is active (VS Code-style).
     active: leftTab.value === tab && !leftCollapsed.value,
-    'is-live': tab === 'live' && liveShareActive.value,
     'is-recording': tab === 'notes' && notesRecording.value,
     'has-unread': tab === 'tasks' && store.state.taskUnreadCount > 0 && leftTab.value !== 'tasks',
     'just-completed': tab === 'tasks' && store.state.taskJustCompleted && leftTab.value !== 'tasks',
     'has-running': tab === 'tasks' && store.state.taskRunning && leftTab.value !== 'tasks',
   }
+}
+/**
+ * A live share is a STATE, not an unread count: there is no number to show, so
+ * the dock marks the tab with a plain dot instead of a count pill. It is
+ * deliberately not a red icon tint — red reads as an error/recording state,
+ * while a share is a normal ongoing activity, so the dot borrows the theme
+ * accent the panel header's own marker uses.
+ *
+ * Hidden while the live tab itself is active, like every other dock badge: the
+ * panel header already says "live" there, and a badge on the tab you are
+ * looking at carries no information.
+ */
+function liveDotVisible(tab: string, isActive: boolean) {
+  return tab === 'live' && liveShareActive.value && !isActive
 }
 // Badge lookups shared by the narrow popup, the inline overflow buttons and the
 // wide-screen dock. One switch per concern instead of one per dock.
@@ -5211,14 +5226,32 @@ onUnmounted(() => {
     justify-content: center;
 }
 
-/* A share is on air. Tinted rather than badged: there is no count to show, and
-   the red is the same one the panel header uses for its LIVE marker. */
-.dock-btn.is-live {
-  color: var(--color-red, #cf222e);
+/* A share is on air: a state dot, not a tinted icon. Red is reserved for
+   errors and for the recording indicator; a share is ordinary ongoing work, so
+   the dot uses the theme accent (same marker colour as the panel header). */
+.dock-badge--live {
+  animation: dock-live-pulse 1.4s ease-in-out infinite;
 }
 
-/* A running dictation gets the same treatment as a live share: red icon, so a
-   forgotten recorder is visible from the dock. */
+@keyframes dock-live-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* The dot itself is the information; the pulse is not, so it can be frozen. */
+@media (prefers-reduced-motion: reduce) {
+  .dock-badge--live {
+    animation: none;
+  }
+}
+
+/* A running dictation keeps the red icon: unlike a share, a forgotten
+   microphone is exactly the kind of "is this still on?" state red is for. */
 .dock-btn.is-recording {
   color: var(--color-red, #cf222e);
 }
