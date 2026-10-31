@@ -14,44 +14,44 @@
         @keydown.meta.enter.prevent="save"
       />
 
-      <div class="qme-attachments">
-        <span class="qme-section-label">{{ t('chat.pending.attachment') }}</span>
-        <div class="qme-chips">
-          <!-- Quotes are rendered here rather than through AttachmentTags: that
-               component deliberately drops quote entries (they carry no path),
-               and a quote is still an attachment the user may want to remove. -->
-          <span
-            v-for="q in quoteEntries"
-            :key="fileEntryKey(q)"
-            class="qme-chip qme-chip-quote"
-            :title="q.text || q.path"
-          >
-            <span class="qme-chip-label">{{ q.path || t('chat.pending.fileReference') }}</span>
-            <button
-              type="button"
-              class="qme-chip-remove"
-              data-action="queue-edit-remove-quote"
-              :title="t('common.remove')"
-              @click="removeEntry(q)"
-            >×</button>
-          </span>
+      <div class="qme-chips">
+        <!-- First in the list, always: adding is the entry point of this row,
+             and it is sized like the cards so the row reads as one control
+             group rather than a button plus a separate strip. -->
+        <button
+          type="button"
+          class="qme-add"
+          data-action="queue-edit-add-attachment"
+          :title="t('chat.pending.addAttachment')"
+          @click="attachOpen = true"
+        >
+          <Paperclip :size="14" />
+          {{ t('chat.pending.addAttachment') }}
+        </button>
 
-          <AttachmentTags
-            :files="fileEntries"
-            @remove="removeEntry"
-          />
-
+        <!-- Quotes are rendered here rather than through AttachmentTags: that
+             component deliberately drops quote entries (they carry no path),
+             and a quote is still an attachment the user may want to remove. -->
+        <span
+          v-for="q in quoteEntries"
+          :key="fileEntryKey(q)"
+          class="qme-chip qme-chip-quote"
+          :title="q.text || q.path"
+        >
+          <span class="qme-chip-label">{{ q.path || t('chat.pending.fileReference') }}</span>
           <button
             type="button"
-            class="qme-add"
-            data-action="queue-edit-add-attachment"
-            :title="t('chat.pending.addAttachment')"
-            @click="attachOpen = true"
-          >
-            <Paperclip :size="12" />
-            {{ t('chat.pending.addAttachment') }}
-          </button>
-        </div>
+            class="qme-chip-remove"
+            data-action="queue-edit-remove-quote"
+            :title="t('common.remove')"
+            @click="removeEntry(q)"
+          >×</button>
+        </span>
+
+        <AttachmentTags
+          :files="fileEntries"
+          @remove="removeEntry"
+        />
       </div>
 
       <p v-if="error" class="qme-error">{{ error }}</p>
@@ -251,21 +251,23 @@ function save() {
   border-color: var(--accent-color);
 }
 
-.qme-attachments {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.qme-section-label {
-  font-size: var(--font-size-xs);
-  color: var(--text-secondary);
-}
-
+/* One row: the add control, quote chips, then the shared attachment cards.
+   The cards keep their own horizontal scroll, so a long list never pushes the
+   add control out of reach — it stays pinned at the left. */
 .qme-chips {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* The shared strip brings the input box's inset; the row above already provides
+   one, so drop it and let the cards line up with the add control. */
+.qme-chips :deep(.chat-attachment-tags) {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
   gap: var(--space-2);
 }
 
@@ -301,22 +303,32 @@ function save() {
   color: var(--text-primary);
 }
 
+/* Same height and corner radius as the attachment cards it sits next to, so the
+   row reads as one set of tiles instead of a small pill plus cards. Only the
+   dashed accent outline says "this one adds". */
 .qme-add {
   display: inline-flex;
   align-items: center;
-  gap: calc(3 * var(--dp));
-  padding: 1px var(--space-3);
-  border: 1px dashed var(--border-color);
-  border-radius: var(--radius-full);
-  background: none;
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
+  flex-shrink: 0;
+  gap: var(--space-3);
+  height: calc(40 * var(--dp));
+  /* The 1px dashed outline must not make the tile 2px taller than the cards
+     next to it (there is no global border-box reset in this app). */
+  box-sizing: border-box;
+  padding: 0 var(--space-4);
+  border: 1px dashed color-mix(in srgb, var(--accent-color, #0066cc) 45%, transparent);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--accent-color, #0066cc);
+  font-size: var(--font-size-sm);
   cursor: pointer;
+  transition: background var(--duration-base);
 }
 
-.qme-add:hover {
-  color: var(--text-primary);
-  border-color: var(--text-secondary);
+@media (hover: hover) {
+  .qme-add:hover {
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
+  }
 }
 
 .qme-error {

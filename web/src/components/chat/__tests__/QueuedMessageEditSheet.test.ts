@@ -217,6 +217,31 @@ describe('QueuedMessageEditSheet (attachments)', () => {
     expect(wrapper.findComponent(AttachDrawerStub).props('open')).toBe(true)
   })
 
+  it('puts the add control FIRST in the row, even when cards exist', async () => {
+    const wrapper = mountSheet({
+      entry: entry({ files: [{ path: '/project/a.png' }, { path: '/project/b.png' }] }),
+    })
+    await nextTick()
+
+    const row = wrapper.find('.qme-chips')
+    expect(row.exists()).toBe(true)
+    const first = row.element.firstElementChild as HTMLElement
+    expect(first.getAttribute('data-action'), 'add is always the first tile').toBe('queue-edit-add-attachment')
+  })
+
+  it('sizes the add control like the attachment cards and drops the section label', () => {
+    // jsdom has no CSS engine, so the geometry and the removed label are pinned
+    // at the source. Same 40dp height / lg radius as the shared cards is what
+    // makes the row read as one group of tiles.
+    const src = readFileSync(resolve(__dirname, '../QueuedMessageEditSheet.vue'), 'utf8')
+    const m = src.match(/\.qme-add\s*\{([^}]*)\}/)
+    expect(m, '.qme-add rule must exist').not.toBeNull()
+    expect(m![1], 'same height as the cards').toMatch(/height:\s*calc\(40 \* var\(--dp\)\)/)
+    expect(m![1], 'same corner radius as the cards').toMatch(/border-radius:\s*var\(--radius-lg\)/)
+    // The "附件" label above the row is gone — the tiles say what they are.
+    expect(src, 'no section label').not.toContain('qme-section-label')
+  })
+
   it('keeps two quotes of the same range apart', async () => {
     // Both are message quotes: same (empty) label path, different ids. Keying
     // them by path would collapse the v-for keys and removing one would drop
