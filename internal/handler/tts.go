@@ -336,7 +336,8 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) {
 	if isStreaming {
 		ctx, cancel := context.WithCancel(context.Background())
 		job := service.RegisterStreamingTTSJob(cacheKey, cancel)
-		ttsRunJob(ctx, job, cacheKey, projectPath, relAudioPath, absAudioPath,
+		ttsRunJob(
+			ctx, job, cacheKey, projectPath, relAudioPath, absAudioPath,
 			req, curSummarizer, errSummarizeFailed, errSynthesizeFailed, speakerPrefix, true,
 			func(sCtx context.Context, summary, outPath, lang string) error {
 				return streamingProvider.SynthesizeStream(sCtx, summary, outPath, lang, job.AudioCh)
@@ -346,7 +347,8 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) {
 	} else {
 		ctx, cancel := context.WithCancel(context.Background())
 		job := service.RegisterTTSJob(cacheKey, cancel)
-		ttsRunJob(ctx, job, cacheKey, projectPath, relAudioPath, absAudioPath,
+		ttsRunJob(
+			ctx, job, cacheKey, projectPath, relAudioPath, absAudioPath,
 			req, curSummarizer, errSummarizeFailed, errSynthesizeFailed, speakerPrefix, false,
 			func(sCtx context.Context, summary, outPath, lang string) error {
 				return curProvider.Synthesize(sCtx, summary, outPath, lang)
