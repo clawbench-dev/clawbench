@@ -32,12 +32,16 @@ import { applyZoomFactor } from './zoom'
 import { classifyUrl } from './urlPolicy'
 import { shouldUseFramelessWindow } from './windowChrome'
 import { registerFloatingIpc, updateFloatingColors } from './floating'
+import { registerAnnotateIpc } from './annotateOverlay'
 
 export function registerBridge(): void {
   initStore()
   // Remote control IPC lives with the bridge because it is the same surface:
   // one `native:*` handler set registered once at startup.
   registerRemoteControlHandlers(ipcMain)
+  // Annotation overlay: same surface as remote control — a desktop-only verb
+  // set registered once at startup.
+  registerAnnotateIpc()
   // Opens a share link in its own window so the viewer gets the desktop
   // capabilities (native capture, remote control) instead of the browser's.
   ipcMain.handle('native:open-share', (_e, url: string) => openShareWindow(url))

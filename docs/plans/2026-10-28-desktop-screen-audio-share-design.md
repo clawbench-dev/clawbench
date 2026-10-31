@@ -421,6 +421,12 @@ publisher-gone → ended
 2. **发布端断开**：收到 `publisher-gone` 或 `pc.connectionState === 'failed'` 时，显示「共享已结束」并提供「刷新重试」（发布端可能重开同一 token？不会——每次 `POST` 都是新 token，所以只能提示重新索要链接）。
 3. **移动端横竖屏**：`<video>` 用 `object-fit: contain` + 全屏按钮。
 
+**Linux / X11 的三条边界**（Wayland 之外的另一种 Linux 会话）：
+
+1. `getSources(['screen','window'])` 在**没有窗口管理器**的会话里会整体返回空（窗口枚举失败会拖垮整个查询）。`listCaptureSources` 因此加了兜底：合并查询为空时改用仅屏幕查询，否则选择器会显示「没有可共享的源」而屏幕其实完全可采。
+2. 透明覆盖层需要**合成器**（GNOME/KDE 默认有）。裸 X11 + 无 compositor（例如 i3 不装 picom）时透明窗会渲染成黑块，把整块屏盖住且会被采集——Electron 侧没有查询合成状态的 API，只能在文档里说明。
+3. 覆盖层在无 WM 的环境下会被 Electron 调成「屏幕尺寸 −1px」（`setBounds` / `setContentSize` 都改不回来），最后一行/列画不到；有 WM 时通常就是屏幕尺寸。
+
 **控制通道（`cb-live` DataChannel）必须由观众创建。** answer 不能新增 offer 里没有的 m-line，所以发布端 `createDataChannel()` 得到的通道永远停在 `connecting`，聊天与「请求控制」两边都发不出去（表现就是按钮像坏了）。观众在 `createOffer` 之前建通道，发布端在 `ondatachannel` 里接管。
 
 ### 8.3 多人语音（观众 ↔ 观众，经发布端混音）

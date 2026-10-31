@@ -24,6 +24,7 @@ const displayHandler = vi.hoisted(() => ({
   value: null as null | ((req: unknown, cb: (s: unknown) => void) => void),
 }))
 const recorded = vi.hoisted(() => ({ value: [] as string[] }))
+const failCombined = vi.hoisted(() => ({ value: false }))
 
 vi.mock('electron', () => ({
   ipcMain: { handle: () => undefined },
@@ -35,7 +36,12 @@ vi.mock('electron', () => ({
     },
   },
   desktopCapturer: {
-    getSources: async () => sources.value,
+    getSources: async (opts: { types: string[] }) => {
+      // An X11 session without a window manager answers the combined query with
+      // nothing, even though the screens are fine.
+      if (failCombined.value && opts.types.includes('window')) return []
+      return sources.value
+    },
   },
 }))
 
@@ -180,6 +186,20 @@ describe('listCaptureSources', () => {
     sources.value = [fakeSource('screen:1:0', 'screen', false)]
     const list = await listCaptureSources()
     expect(list[0].thumbnail).toContain('data:image/png')
+  })
+
+  it('falls back to screens when window enumeration returns nothing', async () => {
+    // No window manager: the combined query comes back empty while the screen
+    // is perfectly capturable. Sharing must still be possible.
+    sources.value = [fakeSource('screen:1:0', 'screen', false)]
+    failCombined.value = true
+    try {
+      const list = await listCaptureSources()
+      expect(list.map((s) => s.id)).toEqual(['screen:1:0'])
+      expect(recorded.value.some((r) => r.includes('retrying with screens only'))).toBe(true)
+    } finally {
+      failCombined.value = false
+    }
   })
 
   it('reads a nameless Wayland placeholder as a screen', async () => {

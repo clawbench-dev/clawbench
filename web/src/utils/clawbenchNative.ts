@@ -189,6 +189,20 @@ export interface ClawBenchNative {
    * minimized window throttles the encoder and the stream stalls.
    */
   setPublishingActive?(active: boolean): Promise<void>
+  /**
+   * Desktop only: a transparent, always-on-top window over the shared display,
+   * so annotation is drawn on the real screen instead of a preview.
+   *
+   * `inkViaControl` says whether the audience gets strokes as control frames.
+   * It is false on Linux, where the overlay is part of the captured picture —
+   * broadcasting there would draw every stroke twice.
+   */
+  openAnnotateOverlay?(): Promise<{ opened: boolean; inkViaControl: boolean }>
+  closeAnnotateOverlay?(): Promise<void> | void
+  /** Stroke/laser frames from the overlay, already JSON-encoded. */
+  onAnnotateInk?(cb: (msg: string) => void): () => void
+  /** The overlay window went away (its own close button or Esc). */
+  onAnnotateClosed?(cb: () => void): () => void
 
   // Async reads (main-process / native state)
   getAppVersion(): Promise<string>

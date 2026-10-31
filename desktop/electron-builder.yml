@@ -27,6 +27,11 @@ extraResources:
     to: logo.png
   - from: assets/url-utils.js
     to: url-utils.js
+  # Full-screen annotation overlay (transparent window over the shared screen).
+  # Same placement rule as floating.html: tsc only emits JS, an .html under src/
+  # would never reach dist/.
+  - from: assets/annotate.html
+    to: annotate.html
   # Remote-control helper (Go, pure syscall). Built by scripts/build-input-helper.mjs
   # before every package; present in all platforms' builds so the config stays
   # uniform, but only Windows actually injects input.

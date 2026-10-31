@@ -243,7 +243,13 @@
                own, so it is not offered again here. -->
           <div class="live-dialog-section">{{ t('liveShare.toolsSection') }}</div>
           <div class="live-tools">
-            <button class="live-btn" type="button" data-action="annotate" @click="openAnnotate">
+            <button
+              class="live-btn"
+              :class="{ 'live-btn--on': isAnnotating }"
+              type="button"
+              data-action="annotate"
+              @click="openAnnotate"
+            >
               {{ t('liveShare.annotate') }}
             </button>
             <button
@@ -585,7 +591,7 @@ import { getNative } from '@/utils/clawbenchNative'
 import { resolveRemoteControlSupport } from '@/utils/remoteControlSupport'
 import LiveAnnotateOverlay from '@/share/LiveAnnotateOverlay.vue'
 import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
-import { toInjectorEvent, type ControlMessage } from '@/share/liveControl'
+import { parseControlMessage, toInjectorEvent, type ControlMessage } from '@/share/liveControl'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { appLog } from '@/utils/appLog'
 import '@/assets/modal-footer-btn.css'
@@ -637,6 +643,9 @@ const screenWindowTarget = screenWindow.target
 const windowVideoRef = ref<HTMLVideoElement | null>(null)
 const annotateWindow = useScreenWindow()
 const annotateWindowTarget = annotateWindow.target
+/** True while the desktop overlay window owns the annotation surface. */
+const nativeAnnotating = ref(false)
+const isAnnotating = computed(() => annotating.value || nativeAnnotating.value)
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
 /** Which of the three publishing surfaces is showing. */
@@ -693,6 +702,8 @@ const controlRequests = ref<Set<string>>(new Set())
 const controlSupported = ref(false)
 let controlUnsupportedWarned = false
 let unsubscribeControl: (() => void) | null = null
+let unsubscribeInk: (() => void) | undefined
+let unsubscribeClosed: (() => void) | undefined
 
 function toggleChat(): void {
   windowChatOpen.value = !windowChatOpen.value
@@ -850,8 +861,12 @@ watch(
     // previous one are gone, so landing on either would show an empty pane.
     activeTab.value = 'basic'
     windowChatOpen.value = false
-    // The share is over: a drawing window over a dead picture helps nobody.
+    // The share is over: a drawing surface over a dead picture helps nobody.
     annotateWindow.close()
+    if (nativeAnnotating.value) {
+      nativeAnnotating.value = false
+      void getNative()?.closeAnnotateOverlay?.()
+    }
     void getNative()?.remoteControlRevoke?.()
   },
 )
@@ -992,6 +1007,27 @@ function closeScreenWindow(): void {
  * publisher aimed. Hosts without Document PiP keep the in-panel overlay.
  */
 async function openAnnotate(): Promise<void> {
+  // Preferred: draw straight on the screen through the desktop shell. The
+  // window is transparent and covers the shared display, so what the publisher
+  // marks is where the audience looks — no preview, no second window to place.
+  const bridge = getNative()
+  // A single-window share is not the desktop: the overlay would draw over the
+  // whole screen while the audience only sees that one window, so the ink would
+  // either be outside the picture or land in the wrong place. The preview
+  // surface is the only correct target there.
+  if (bridge?.openAnnotateOverlay && share.captureKind.value === 'screen') {
+    try {
+      const res = await bridge.openAnnotateOverlay()
+      if (res?.opened) {
+        nativeAnnotating.value = true
+        return
+      }
+    } catch (e) {
+      appLog.w('LiveSharePanel', 'annotate overlay failed, falling back', e)
+    }
+  }
+  // Web / Android hosts have no transparent overlay; the in-app surface is the
+  // only place a canvas can live there.
   const result = await annotateWindow.open({ width: 1200, height: 800 })
   if (result !== 'opened') appLog.w('LiveSharePanel', 'annotate window unavailable', result)
   annotating.value = true
@@ -1000,6 +1036,10 @@ async function openAnnotate(): Promise<void> {
 function closeAnnotate(): void {
   annotating.value = false
   annotateWindow.close()
+  if (nativeAnnotating.value) {
+    nativeAnnotating.value = false
+    void getNative()?.closeAnnotateOverlay?.()
+  }
 }
 
 // Closing the window with its own title-bar button must end the drawing mode
@@ -1019,10 +1059,24 @@ watch(annotateWindowTarget, (target) => {
 // subscribe once so chat keeps arriving while the dialog is closed.
 onMounted(() => {
   unsubscribeControl = share.onControl(onControl)
+  // Strokes from the desktop overlay. The main process only forwards them on
+  // platforms where the overlay is hidden from the capture; elsewhere the ink
+  // is already in the picture and relaying it would draw it twice.
+  unsubscribeInk = getNative()?.onAnnotateInk?.((msg) => {
+    const parsed = parseControlMessage(msg)
+    if (parsed) share.sendControl(parsed)
+  })
+  unsubscribeClosed = getNative()?.onAnnotateClosed?.(() => {
+    nativeAnnotating.value = false
+  })
 })
 onBeforeUnmount(() => {
   unsubscribeControl?.()
   unsubscribeControl = null
+  unsubscribeInk?.()
+  unsubscribeInk = undefined
+  unsubscribeClosed?.()
+  unsubscribeClosed = undefined
   closeScreenWindow()
   closeAnnotate()
 })

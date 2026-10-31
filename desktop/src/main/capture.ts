@@ -36,6 +36,15 @@ interface PendingCapture {
 
 let pending: PendingCapture | null = null
 
+/**
+ * Display the current capture is showing, as reported by desktopCapturer.
+ *
+ * The annotation overlay has to cover THAT screen, not the primary one — a
+ * two-monitor host would otherwise draw on the wrong desktop. Empty when the
+ * platform does not say (Wayland hands out a nameless placeholder).
+ */
+let capturedDisplayId = ''
+
 /** Thumbnail size for the picker. Small on purpose: this crosses IPC as base64. */
 const THUMB_SIZE = { width: 320, height: 180 }
 
@@ -68,11 +77,21 @@ export function arePlaceholderSources(sources: Array<{ name: string }>): boolean
 
 /** List screens and windows for the picker. */
 export async function listCaptureSources(): Promise<CaptureSourceInfo[]> {
-  const sources = await desktopCapturer.getSources({
-    types: ['screen', 'window'],
+  const query = {
+    types: ['screen', 'window'] as Array<'screen' | 'window'>,
     thumbnailSize: THUMB_SIZE,
     fetchWindowIcons: false,
-  })
+  }
+  let sources = await desktopCapturer.getSources(query)
+  if (sources.length === 0) {
+    // Window enumeration can fail on its own — an X11 session without a window
+    // manager, or a locked-down desktop — and Electron then answers the WHOLE
+    // combined request with an empty list. The picker would say "no sources"
+    // while screens are perfectly capturable, so ask for the subset instead.
+    // Screens-only cannot mask a real permission problem: it is strictly less.
+    record('W', TAG, 'combined source query was empty; retrying with screens only')
+    sources = await desktopCapturer.getSources({ ...query, types: ['screen'] })
+  }
   return sources.map((s: DesktopCapturerSource) => ({
     id: s.id,
     name: s.name,
@@ -155,6 +174,11 @@ export function decideCapture(
   return { sourceId: target.id, withAudio }
 }
 
+/** Display id of the screen currently being captured ('' when unknown). */
+export function currentCaptureDisplayId(): string {
+  return capturedDisplayId
+}
+
 /** Test seam: read the pending declaration. */
 export function _pendingCaptureForTest(): PendingCapture | null {
   return pending
@@ -168,6 +192,7 @@ export function _setPendingCaptureForTest(v: PendingCapture | null): void {
 /** Test seam: reset module state between tests. */
 export function _resetCaptureForTest(): void {
   pending = null
+  capturedDisplayId = ''
 }
 
 /**
@@ -208,6 +233,7 @@ export function installDisplayMediaHandler(): void {
             return
           }
           const match = sources.find((s) => s.id === decision.sourceId)!
+          capturedDisplayId = match.display_id ?? ''
           callback({
             video: match,
             // Cast: the typings accept the literal, but the union also allows a

@@ -29,8 +29,9 @@ vi.mock('@/composables/useMarkdownRenderer', () => ({
   renderMarkdownHtml: (text: string) => `<p>${text}</p>`,
 }))
 
+const nativeBridge = vi.hoisted(() => ({ current: null as unknown }))
 vi.mock('@/utils/clawbenchNative', () => ({
-  getNative: () => null,
+  getNative: () => nativeBridge.current,
 }))
 
 vi.mock('@/utils/remoteControlSupport', () => ({
@@ -137,6 +138,7 @@ function mountPanel() {
 
 beforeEach(() => {
   vi.unstubAllGlobals()
+  nativeBridge.current = null
   ;(shareApi.state as { value: string }).value = 'publishing'
   ;(shareApi.screenSharer as { value: string }).value = ''
   ;(shareApi.remoteScreenStream as { value: unknown }).value = null
@@ -171,6 +173,75 @@ describe('LiveSharePanel windows', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-role="annotate-overlay"]').exists()).toBe(true)
+  })
+
+  it('draws on the desktop overlay when the shell provides one', async () => {
+    const requestWindow = vi.fn(async () => fakeWindow() as unknown as Window)
+    vi.stubGlobal('documentPictureInPicture', { requestWindow })
+    const openAnnotateOverlay = vi.fn(async () => ({ opened: true, inkViaControl: true }))
+    let onInk: ((msg: string) => void) | undefined
+    nativeBridge.current = {
+      openAnnotateOverlay,
+      closeAnnotateOverlay: vi.fn(async () => undefined),
+      onAnnotateInk: (cb: (msg: string) => void) => {
+        onInk = cb
+        return () => undefined
+      },
+      onAnnotateClosed: () => () => undefined,
+    }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.find('[data-action="annotate"]').trigger('click')
+    await flushPromises()
+
+    // The desktop overlay wins: no second window, nothing inline.
+    expect(openAnnotateOverlay).toHaveBeenCalledTimes(1)
+    expect(requestWindow).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-role="annotate-overlay"]').exists()).toBe(false)
+
+    // Strokes from the overlay go out over the control channel.
+    onInk?.('{"t":"ink","phase":"move","x":0.25,"y":0.5,"color":"#ff3b30","width":4}')
+    expect(shareApi.sendControl).toHaveBeenCalledWith(
+      expect.objectContaining({ t: 'ink', x: 0.25, y: 0.5 }),
+    )
+  })
+
+  it('keeps the preview surface when a single window is being shared', async () => {
+    const win = fakeWindow()
+    vi.stubGlobal('documentPictureInPicture', { requestWindow: vi.fn(async () => win as unknown as Window) })
+    const openAnnotateOverlay = vi.fn(async () => ({ opened: true, inkViaControl: true }))
+    nativeBridge.current = { openAnnotateOverlay }
+    ;(shareApi.captureKind as { value: string }).value = 'window'
+
+    try {
+      const wrapper = mountPanel()
+      await flushPromises()
+      await wrapper.find('[data-action="annotate"]').trigger('click')
+      await flushPromises()
+
+      // The overlay covers the whole screen; the audience only sees that one
+      // window, so the strokes would land outside the picture.
+      expect(openAnnotateOverlay).not.toHaveBeenCalled()
+      expect(win.document.querySelector('[data-role="annotate-overlay"]')).not.toBeNull()
+    } finally {
+      ;(shareApi.captureKind as { value: string }).value = 'screen'
+    }
+  })
+
+  it('falls back to the in-app surface when the overlay refuses to open', async () => {
+    const win = fakeWindow()
+    vi.stubGlobal('documentPictureInPicture', { requestWindow: vi.fn(async () => win as unknown as Window) })
+    nativeBridge.current = {
+      openAnnotateOverlay: vi.fn(async () => ({ opened: false, inkViaControl: false })),
+    }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.find('[data-action="annotate"]').trigger('click')
+    await flushPromises()
+
+    expect(win.document.querySelector('[data-role="annotate-overlay"]')).not.toBeNull()
   })
 
   it("shows the member's screen in its own window with a dock", async () => {

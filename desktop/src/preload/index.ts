@@ -109,6 +109,22 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   remoteControlRevoke: () => ipcRenderer.invoke('native:remote-control-revoke') as Promise<void>,
   setPublishingActive: (active: boolean) =>
     ipcRenderer.invoke('native:set-publishing-active', active) as Promise<void>,
+  // Annotation overlay: a transparent window over the shared display. The main
+  // process decides whether strokes travel as control frames (see
+  // main/annotateOverlay.ts) — the renderer only relays what it is given.
+  openAnnotateOverlay: () =>
+    ipcRenderer.invoke('native:annotate-open') as Promise<{ opened: boolean; inkViaControl: boolean }>,
+  closeAnnotateOverlay: () => ipcRenderer.invoke('native:annotate-close') as Promise<void>,
+  onAnnotateInk: (cb: (msg: string) => void) => {
+    const handler = (_e: unknown, msg: string) => cb(msg)
+    ipcRenderer.on('native:annotate-ink', handler)
+    return () => ipcRenderer.removeListener('native:annotate-ink', handler)
+  },
+  onAnnotateClosed: (cb: () => void) => {
+    const handler = () => cb()
+    ipcRenderer.on('native:annotate-closed', handler)
+    return () => ipcRenderer.removeListener('native:annotate-closed', handler)
+  },
   log: (level: string, tag: string, msg: string) => { ipcRenderer.send('native:log', level, tag, msg) },
   // The desktop shell DOES have a splash overlay (a native WebContentsView
   // floating above the app while it connects and boots — see main/splash.ts).

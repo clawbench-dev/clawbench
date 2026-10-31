@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ClawBench 标注</title>
+    <!--
+      Annotation overlay document.
+
+      Loaded by main/annotateOverlay.ts into a transparent, always-on-top window
+      that covers the shared display. It draws on a canvas over a fully
+      transparent page, so the desktop underneath stays visible.
+
+      Every stroke is ALSO reported to the main process. On Windows/macOS the
+      window is excluded from the screen capture and those frames are what the
+      audience draws from; on Linux the window is part of the picture and the
+      main process drops them (forwarding would double every stroke). The page
+      does not need to know which — it always reports.
+
+      Self-contained on purpose: no bundler, no fonts, no network. The window
+      must paint the instant it is shown.
+    -->
+    <style>
+      :root {
+        color-scheme: dark;
+        --bar-bg: rgba(22, 24, 28, 0.92);
+        --bar-border: rgba(255, 255, 255, 0.16);
+        --bar-fg: #f5f6f8;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        cursor: crosshair;
+        user-select: none;
+        -webkit-user-select: none;
+        font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      }
+      #ink {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        touch-action: none;
+      }
+      /* The toolbar floats at the bottom and fades out while the publisher is
+         drawing, so it does not sit in the middle of the shared picture (it is
+         visible to the audience on platforms where the window is captured). */
+      #bar {
+        position: fixed;
+        left: 50%;
+        bottom: 24px;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: var(--bar-bg);
+        border: 1px solid var(--bar-border);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        transition: opacity 0.18s ease;
+        cursor: default;
+      }
+      #bar.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #bar button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 30px;
+        height: 30px;
+        padding: 0 8px;
+        border: none;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        color: var(--bar-fg);
+        font-size: 12px;
+        cursor: pointer;
+      }
+      #bar button:hover {
+        background: rgba(255, 255, 255, 0.2);
+      }
+      #bar button.on {
+        background: rgba(88, 166, 255, 0.85);
+        color: #fff;
+      }
+      .swatch {
+        width: 18px;
+        height: 18px;
+        min-width: 18px;
+        padding: 0;
+        border-radius: 50%;
+        border: 2px solid transparent;
+      }
+      .swatch.on {
+        border-color: #fff;
+      }
+      .sep {
+        width: 1px;
+        height: 18px;
+        background: var(--bar-border);
+      }
+      #close {
+        background: rgba(207, 34, 46, 0.85);
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="ink"></canvas>
+    <div id="bar">
+      <button id="pen" class="on" title="画笔">✎</button>
+      <button id="laser" title="激光笔">◉</button>
+      <span class="sep"></span>
+      <button class="swatch on" data-color="#ff3b30" style="background: #ff3b30" title="红"></button>
+      <button class="swatch" data-color="#ffd60a" style="background: #ffd60a" title="黄"></button>
+      <button class="swatch" data-color="#34c759" style="background: #34c759" title="绿"></button>
+      <button class="swatch" data-color="#0a84ff" style="background: #0a84ff" title="蓝"></button>
+      <span class="sep"></span>
+      <button id="undo" title="撤销">↶</button>
+      <button id="clear" title="清空">✕</button>
+      <button id="close" title="关闭标注">关闭</button>
+    </div>
+    <script>
+      (() => {
+        const canvas = document.getElementById('ink')
+        const ctx = canvas.getContext('2d')
+        const bar = document.getElementById('bar')
+        const host = window.AnnotateHost || { ink() {}, close() {} }
+
+        let mode = 'pen'
+        let color = '#ff3b30'
+        const width = 4
+        /** Finished strokes, in normalised 0..1 coordinates. */
+        let strokes = []
+        let current = null
+        /** Laser marker: {x, y, at} or null. */
+        let laser = null
+        let dpr = 1
+
+        function resize() {
+          dpr = window.devicePixelRatio || 1
+          canvas.width = Math.round(window.innerWidth * dpr)
+          canvas.height = Math.round(window.innerHeight * dpr)
+          redraw()
+        }
+
+        function drawStroke(s) {
+          if (s.points.length === 0) return
+          ctx.strokeStyle = s.color
+          ctx.lineWidth = width * dpr
+          ctx.lineCap = 'round'
+          ctx.lineJoin = 'round'
+          ctx.beginPath()
+          const p0 = s.points[0]
+          ctx.moveTo(p0.x * canvas.width, p0.y * canvas.height)
+          for (let i = 1; i < s.points.length; i++) {
+            const p = s.points[i]
+            ctx.lineTo(p.x * canvas.width, p.y * canvas.height)
+          }
+          ctx.stroke()
+        }
+
+        function redraw() {
+          ctx.clearRect(0, 0, canvas.width, canvas.height)
+          for (const s of strokes) drawStroke(s)
+          if (current) drawStroke(current)
+          if (laser) {
+            ctx.beginPath()
+            ctx.fillStyle = 'rgba(255, 59, 48, 0.9)'
+            ctx.arc(laser.x * canvas.width, laser.y * canvas.height, 9 * dpr, 0, Math.PI * 2)
+            ctx.fill()
+          }
+        }
+
+        function send(msg) {
+          host.ink(JSON.stringify(msg))
+        }
+
+        function normalise(ev) {
+          return {
+            x: Math.min(1, Math.max(0, ev.clientX / window.innerWidth)),
+            y: Math.min(1, Math.max(0, ev.clientY / window.innerHeight)),
+          }
+        }
+
+        function hideBarSoon() {
+          clearTimeout(hideBarSoon.timer)
+          hideBarSoon.timer = setTimeout(() => bar.classList.add('hidden'), 2600)
+        }
+
+        function wake() {
+          bar.classList.remove('hidden')
+          hideBarSoon()
+        }
+
+        canvas.addEventListener('pointerdown', (ev) => {
+          canvas.setPointerCapture(ev.pointerId)
+          wake()
+          const p = normalise(ev)
+          if (mode === 'laser') {
+            laser = { x: p.x, y: p.y }
+            send({ t: 'laser', x: p.x, y: p.y, on: true })
+            redraw()
+            return
+          }
+          current = { color, points: [p] }
+          send({ t: 'ink', phase: 'start', x: p.x, y: p.y, color, width })
+          redraw()
+        })
+
+        canvas.addEventListener('pointermove', (ev) => {
+          if (mode === 'laser') {
+            if (!laser) return
+            const p = normalise(ev)
+            laser = { x: p.x, y: p.y }
+            send({ t: 'laser', x: p.x, y: p.y, on: true })
+            redraw()
+            return
+          }
+          if (!current) return
+          const p = normalise(ev)
+          current.points.push(p)
+          send({ t: 'ink', phase: 'move', x: p.x, y: p.y, color, width })
+          redraw()
+        })
+
+        function endStroke(ev) {
+          if (mode === 'laser') {
+            if (!laser) return
+            send({ t: 'laser', x: 0, y: 0, on: false })
+            laser = null
+            redraw()
+            return
+          }
+          if (!current) return
+          const p = ev && ev.clientX !== undefined ? normalise(ev) : current.points[current.points.length - 1]
+          send({ t: 'ink', phase: 'end', x: p.x, y: p.y, color, width })
+          strokes.push(current)
+          current = null
+          redraw()
+        }
+
+        canvas.addEventListener('pointerup', endStroke)
+        canvas.addEventListener('pointercancel', endStroke)
+
+        document.getElementById('pen').addEventListener('click', (e) => {
+          mode = 'pen'
+          e.currentTarget.classList.add('on')
+          document.getElementById('laser').classList.remove('on')
+          wake()
+        })
+        document.getElementById('laser').addEventListener('click', (e) => {
+          mode = 'laser'
+          e.currentTarget.classList.add('on')
+          document.getElementById('pen').classList.remove('on')
+          wake()
+        })
+        for (const sw of document.querySelectorAll('.swatch')) {
+          sw.addEventListener('click', () => {
+            color = sw.dataset.color
+            for (const other of document.querySelectorAll('.swatch')) other.classList.remove('on')
+            sw.classList.add('on')
+            mode = 'pen'
+            document.getElementById('pen').classList.add('on')
+            document.getElementById('laser').classList.remove('on')
+            wake()
+          })
+        }
+        document.getElementById('undo').addEventListener('click', () => {
+          strokes.pop()
+          send({ t: 'ink-undo' })
+          redraw()
+          wake()
+        })
+        document.getElementById('clear').addEventListener('click', () => {
+          strokes = []
+          current = null
+          send({ t: 'ink-clear' })
+          redraw()
+          wake()
+        })
+        document.getElementById('close').addEventListener('click', () => host.close())
+
+        document.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Escape') host.close()
+          if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') {
+            strokes.pop()
+            send({ t: 'ink-undo' })
+            redraw()
+          }
+        })
+
+        // Keep the toolbar reachable without a permanent strip of chrome: any
+        // pointer movement near the bottom edge brings it back.
+        document.addEventListener('pointermove', (ev) => {
+          if (ev.clientY > window.innerHeight - 120) wake()
+        })
+
+        window.addEventListener('resize', resize)
+        resize()
+        hideBarSoon()
+      })()
+    </script>
+  </body>
+</html>
