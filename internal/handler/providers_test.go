@@ -221,3 +221,40 @@ func TestProvidersAPI_ModelListUnreachableReturnsEmpty(t *testing.T) {
 	assert.Empty(t, body.Models)
 	assert.NotEmpty(t, body.Error, "an unreachable catalog must explain itself")
 }
+
+// A provider-backed agent may serve ids neither the CLI discovery nor the ACP
+// runtime has listed (BYOK gateways), so a free-form model must be accepted.
+func TestAgentPatch_AllowsUnlistedModelWithProvider(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	provider, err := service.CreateProvider(model.Provider{
+		Name: "BYOK", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1", APIKey: "k",
+	})
+	require.NoError(t, err)
+	agent := &model.Agent{ID: "byok-agent", Name: "BYOK", Backend: "claude", ProviderID: &provider.ID}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	rec := doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{
+		"id": agent.ID, "preferred_model": "gateway-only-model",
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "gateway-only-model", model.GetAgent(agent.ID).PreferredModel)
+}
+
+// Without a provider the discovered list stays authoritative: a typo must not
+// be saved as a model the CLI cannot run.
+func TestAgentPatch_RejectsUnlistedModelWithoutProvider(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	agent := &model.Agent{
+		ID: "plain-agent", Name: "Plain", Backend: "claude",
+		Models: []model.AgentModel{{ID: "known-model", Name: "Known", Default: true}},
+	}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	rec := doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{
+		"id": agent.ID, "preferred_model": "typo-model",
+	})
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "InvalidModelForAgent")
+}

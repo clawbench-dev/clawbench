@@ -109,7 +109,7 @@
         :refreshable="isRagProgressField(entry.field)"
         :refreshing="ragRefreshing"
         :no-divider="isLastInSection(idx)"
-        @update:model-value="(v: unknown) => setLocalValue(entry.field.key, v)"
+        @update:model-value="(v: unknown) => onFieldValue(entry.field, v)"
         @edit-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
         @desc-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
         @click="handleFieldClick(entry.field)"
@@ -242,7 +242,7 @@ import { useI18n } from 'vue-i18n'
 import { ChevronRight, ListChecks, RotateCcw } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
-import { engineVoiceOptions, isDependsOnMet, type ItemSpec, type GroupPanelConfig } from './settingsFieldMap'
+import { CUSTOM_OPTION_VALUE, engineVoiceOptions, isDependsOnMet, type ItemSpec, type GroupPanelConfig } from './settingsFieldMap'
 import { usePanelSnapshot } from '@/composables/usePanelSnapshot'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
@@ -628,6 +628,25 @@ function setLocalValue(key: string, value: unknown) {
 }
 
 /**
+ * Route a field edit. `allowCustom` fields append a sentinel entry that asks
+ * for a free-form value instead of storing it: model ids are open-ended, and a
+ * closed list would make an unlisted id impossible to configure.
+ */
+async function onFieldValue(field: ItemSpec, value: unknown) {
+  if (value === CUSTOM_OPTION_VALUE) {
+    const typed = await dialog.prompt(t('settings.items.customModelPrompt'), {
+      value: String(localValues[field.key] ?? ''),
+      title: t('settings.items.customModelTitle'),
+      singleLine: true,
+    })
+    if (typed === null) return
+    localValues[field.key] = typed.trim()
+    return
+  }
+  setLocalValue(field.key, value)
+}
+
+/**
  * A select with no options is a dead end. The summary model falls back to a
  * free-text input when the provider does not publish a model catalogue, so a
  * gateway without /models can still be configured.
@@ -640,6 +659,14 @@ function resolveFieldType(field: ItemSpec): ItemSpec['type'] {
 }
 
 function resolveFieldOptions(field: ItemSpec): { label: string; value: unknown }[] | undefined {
+  const options = baseFieldOptions(field)
+  if (field.allowCustom && options && options.length > 0) {
+    return [...options, { label: t('settings.items.customModelOption'), value: CUSTOM_OPTION_VALUE }]
+  }
+  return options
+}
+
+function baseFieldOptions(field: ItemSpec): { label: string; value: unknown }[] | undefined {
   // Providers the summary model can use (it only speaks OpenAI/Anthropic).
   if (field.key === 'ai_summary.provider_id') {
     return summaryProviders().map(p => ({ label: `${p.name} · ${p.protocol}`, value: p.id }))

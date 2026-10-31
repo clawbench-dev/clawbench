@@ -187,6 +187,7 @@ import { computed, ref, onMounted } from 'vue'
 import { Activity, ArrowLeft, Ban, ChevronRight, Copy, Play, Trash2, UserX, Zap } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
+import { CUSTOM_OPTION_VALUE } from './settingsFieldMap'
 import AgentMCPSection from './AgentMCPSection.vue'
 import SettingsCard from './SettingsCard.vue'
 import CopyAgentDialog from './CopyAgentDialog.vue'
@@ -412,6 +413,9 @@ const items = computed<AgentItem[]>(() => {
         // second line (the value stays untouched).
         modelId: m.id,
       })),
+      // A provider-backed agent may serve an id neither list knows about, so
+      // the picker always keeps a free-form escape.
+      ...(a.providerId != null ? [{ label: t('settings.items.customModelOption'), value: CUSTOM_OPTION_VALUE }] : []),
       patchField: 'preferred_model',
     })
   }
@@ -655,6 +659,23 @@ async function handleUpdate(item: AgentItem, value: unknown) {
   }
 
   if (!item.patchField) return
+
+  // Free-form model id: ask for it, then save it like any other pick. Only
+  // offered when a provider is bound (the backend accepts unlisted ids then).
+  if (item.patchField === 'preferred_model' && value === CUSTOM_OPTION_VALUE) {
+    const typed = await dialog.prompt(t('settings.items.customModelPrompt'), {
+      value: getAgent(props.agentId)?.preferredModel || '',
+      title: t('settings.items.customModelTitle'),
+      singleLine: true,
+    })
+    if (typed === null || typed.trim() === '') return
+    try {
+      await patchAgentField(props.agentId, 'preferred_model', typed.trim())
+    } catch {
+      toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+    }
+    return
+  }
 
   // Provider binding has its own path: a config-file backend needs explicit
   // consent, and the request must carry confirm_config_write in the same call.

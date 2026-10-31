@@ -121,8 +121,9 @@ vi.mock('@/composables/useRagStatus', () => ({
   }),
 }))
 
+const mockDialogPrompt = vi.fn().mockResolvedValue('custom-model-id')
 vi.mock('@/composables/useDialog', () => ({
-  useDialog: () => ({ confirm: vi.fn().mockResolvedValue(true) }),
+  useDialog: () => ({ confirm: vi.fn().mockResolvedValue(true), prompt: mockDialogPrompt }),
 }))
 
 // The rebuild is triggered then polled to completion by this composable.
@@ -389,6 +390,28 @@ describe('SettingsGroupPanel', () => {
       .find(i => i.attributes('data-key') === 'settings.items.aiSummaryModel')
     expect(modelItem).toBeDefined()
     expect(modelItem!.attributes('data-type')).toBe('text')
+  })
+
+  it('ai_summary model picker offers a free-form id for models outside the list', async () => {
+    mockSummaryProviders.mockReturnValue([{ id: 3, name: 'P3', protocol: 'openai', baseUrl: '', hasKey: true }])
+    mockModelsByProvider.value = { 3: ['model-a'] }
+    localValues['ai_summary.provider_id'] = 3
+
+    const wrapper = mountPanel({
+      panelId: 'ai_summary',
+      commonFields: [
+        { labelKey: 'settings.items.aiSummaryModel', key: 'ai_summary.model', type: 'select', source: 'server', allowCustom: true },
+      ],
+      requiredFields: [],
+    } as unknown as GroupPanelConfig)
+    await flushPromises()
+
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })[0]
+    item.vm.$emit('update:modelValue', '__custom__')
+    await flushPromises()
+
+    expect(mockDialogPrompt).toHaveBeenCalled()
+    expect(localValues['ai_summary.model']).toBe('custom-model-id')
   })
 
   it('ai_summary model picker becomes a select once the catalogue loads', async () => {

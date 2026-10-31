@@ -848,7 +848,11 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 					}
 				}
 			}
-			if !found {
+			// A bound provider makes the model list advisory: the endpoint is
+			// user-chosen (often a BYOK gateway) and may serve ids neither the
+			// CLI discovery nor the ACP runtime has listed. Without one, the
+			// list stays authoritative so a typo cannot be saved.
+			if !found && agent.ProviderID == nil {
 				writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidModelForAgent")
 				return
 			}

@@ -89,6 +89,8 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 - `GET /api/catalog` 返回状态（供应商数、时间、是否过期）；`POST /api/catalog` 立即刷新
 - 映射靠 `providers.preset_id`：从预设创建的 provider 记住 models.dev 的供应商 id；手填端点没有映射，不会误用别人的目录
 
+**手填模型**：列表永远不是封闭的。摘要模型与「绑定了提供商的智能体」都保留「自定义…」入口，可输入列表之外的 id（网关的私有模型、刚上线还没进目录的模型）。绑定提供商时后端接受任意非空模型 id；未绑定时仍按发现列表校验，避免把拼写错误存成一个跑不起来的模型。
+
 **优先级**：ACP 上报的模型 > 目录。目录只在两个地方出现：
 
 1. 提供商 `/models` 探测失败或返回空时，`GET /api/providers/{id}/models` 用目录兜底（响应 `source: "catalog"`）
