@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import TaskScriptCard from '../TaskScriptCard.vue'
 
 vi.mock('vue-i18n', () => ({
@@ -51,8 +51,11 @@ describe('TaskScriptCard', () => {
     expect(wrapper.find('.card-toggle-btn').exists()).toBe(true)
   })
 
-  it('passes the task script to a disabled editor', () => {
+  it('passes the task script to a disabled editor', async () => {
     const wrapper = mountCard({ script: 'test -f x && echo changed' })
+    // The editor is an async component (its CodeMirror chunk must not be in the
+    // first-screen bundle), so it appears one microtask after mount.
+    await flushPromises()
     const editor = wrapper.find('.script-editor-stub')
     expect(editor.attributes('data-script')).toBe('test -f x && echo changed')
     // Read-only: the detail view must not offer to edit the stored script.

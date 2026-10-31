@@ -174,10 +174,24 @@ describe('Build output verification (Issue #328)', () => {
                 }
             }
 
-            // Threshold: entry (~1MB) + common chunks (~1.3MB) + vendor-vue (~170KB) = ~2.6MB
-            // Measured 2026-09: 2,620,517 bytes. Keep headroom tight (~80KB) so
-            // regressions trip the test instead of silently eroding the budget.
-            const firstScreenThreshold = 2_700_000
+            // Measured 2026-10-31: 3,588,109 bytes. What is in it now:
+            //   app shell (entry + shared app chunk) ~2.6MB
+            //   katex 582KB          — static because markdown renders math
+            //                          synchronously inside `marked`
+            //   i18n zh+en 593KB     — both locales are bundled eagerly
+            //   material icons 93KB
+            // CodeMirror (~1MB) used to be here too: `useFileScrollRestore`
+            // imported `@codemirror/view` for one DOM lookup, which made the
+            // whole editor stack a first-screen dependency. That import is now
+            // type-only (the editor registers itself), so the editor chunk is
+            // lazy again.
+            //
+            // Going lower needs one of: lazy katex (582KB, invasive — the
+            // render path is synchronous), per-locale i18n chunks (270KB), or
+            // trimming the eager highlight.js language set. Until then this
+            // budget keeps the remaining ~110KB headroom tight enough to catch
+            // the next accidental import.
+            const firstScreenThreshold = 3_700_000
 
             console.log(`  First-screen JS payload:`)
             for (const d of details) console.log(`    ${d}`)

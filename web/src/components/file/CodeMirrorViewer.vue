@@ -44,6 +44,7 @@ import { search, highlightSelectionMatches, findNext, findPrevious, getSearchQue
 import { searchPanel, searchPanelField, openSearchPanelCommand, closeSearchPanelCommand } from '@/utils/codeMirrorSearchPanel'
 import { syntaxHighlighting } from '@codemirror/language'
 import { buildLangExtension, buildCompletionExtension } from '@/utils/codeEditorLang'
+import { registerEditorView, unregisterEditorView } from '@/composables/useFileScrollRestore'
 import { codeHighlightStyle } from '@/utils/codeHighlightStyle'
 import { diffMarkers, openDiffDrawer, clearDiffMarkers } from '@/composables/useMarkdownDiff.ts'
 import { flashRanges, flashType, syncMarkersFor } from '@/composables/useFileRefresh.ts'
@@ -638,6 +639,10 @@ onMounted(() => {
     mountLang()
     mountCompletion()
     sticky.init(view.value, props.file?.path, stickyScrollEnabled())
+    // The scroll-restore composable looks editors up by scroll container
+    // instead of importing @codemirror/view (that import used to pull this
+    // whole chunk into the first screen).
+    registerEditorView(view.value.scrollDOM, view.value)
     window.addEventListener('cm-scroll-to-line', onScrollToLine)
     window.addEventListener('cm-editor-viewport-line', onViewportLine)
     document.addEventListener('pointerup', onDocPointerUp)
@@ -657,6 +662,7 @@ onUnmounted(() => {
     if (flashTimer) clearTimeout(flashTimer)
     if (selDebounceTimer) clearTimeout(selDebounceTimer)
     sticky.teardown()
+    if (view.value) unregisterEditorView(view.value.scrollDOM)
     view.value?.destroy()
     view.value = null
 })

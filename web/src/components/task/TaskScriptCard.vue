@@ -7,10 +7,11 @@
         <ChevronDown :size="14" :class="{ 'is-collapsed': collapsed }" class="card-chevron" />
       </button>
     </h3>
-    <!-- v-show keeps the CodeMirror instance alive across collapse/expand:
-         re-mounting it on every toggle would rebuild the editor state and lose
-         the scroll position. It is cheap enough (one read-only view) that the
-         always-mounted cost is worth the stable toggle. -->
+    <!-- The editor is async on purpose: CodeMirror + Lezer are ~1MB, and a
+         static import here put them in the FIRST-SCREEN bundle (this card lives
+         in the always-loaded task page). The chunk now loads when a task detail
+         actually renders. v-show still keeps the instance alive across
+         collapse/expand once it exists. -->
     <div v-show="!collapsed" class="script-body">
       <TaskScriptEditor :model-value="script" language="shell" :disabled="true" />
     </div>
@@ -18,10 +19,17 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, defineAsyncComponent } from 'vue'
 import { ChevronDown, Terminal } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import TaskScriptEditor from '@/components/task/TaskScriptEditor.vue'
+
+// Plain defineAsyncComponent (no loader/error chrome): this is a read-only
+// preview inside an already-collapsed card, so a failed chunk load should just
+// leave the section empty instead of rendering an error card.
+const TaskScriptEditor = defineAsyncComponent(
+  async () => (await import('@/components/task/TaskScriptEditor.vue')).default,
+)
+
 import '@/assets/task-overview-card.css'
 
 const { t } = useI18n()

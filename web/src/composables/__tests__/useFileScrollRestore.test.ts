@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { getFileScroll, getFileScrollEntry, setFileScroll, _resetFileScrollCache } from '@/utils/fileScrollCache'
 import {
+    registerEditorView,
     useFileScrollRestore,
     isScrollable,
     isVisiblyAttached,
@@ -18,11 +19,10 @@ vi.mock('@/utils/scrollRenderedToLine', () => ({
     renderedLineScrollTop: (...a: unknown[]) => renderedLineScrollTopMock(...a),
 }))
 
-// CodeMirror EditorView.findFromDOM — faked to return a controllable view.
-let fakeView: unknown = null
-vi.mock('@codemirror/view', () => ({
-    EditorView: { findFromDOM: () => fakeView },
-}))
+// The composable resolves the editor through a registry (it must not import
+// @codemirror/view — that import used to drag 1.4MB into the first screen).
+// Tests register their fake view on the container they hand to the composable.
+let fakeView: any = null
 
 // A controllable fake scroll container. Tests drive scrollHeight/clientHeight
 // and fire scroll events manually. offsetParent is settable so the visibility
@@ -217,6 +217,7 @@ describe('useFileScrollRestore', () => {
                 state: { doc: { lines: 1000, line: () => ({ from: 200 }) } },
                 lineBlockAt: () => ({ top: 4600 }), // max scroll = 450
             }
+            registerEditorView(el, fakeView)
             const ctx = makeContext({
                 contentRoot: () => el,
                 isMarkdown: () => true,
@@ -358,6 +359,7 @@ describe('useFileScrollRestore', () => {
                 lineBlockAtHeight: () => ({ from: 0 }),
                 state: { doc: { lineAt: () => ({ number: 12 }) } },
             }
+            registerEditorView(el, fakeView)
             const ctx = makeContext({
                 contentRoot: () => el,
                 isMarkdown: () => true,
@@ -461,6 +463,7 @@ describe('useFileScrollRestore', () => {
                 state: { doc: { lines: 100, line: () => ({ from: 200 }) } },
                 lineBlockAt: () => ({ top: 250 }),
             }
+            registerEditorView(el, fakeView)
             const ctx = makeContext({
                 contentRoot: () => el,
                 isMarkdown: () => true,
