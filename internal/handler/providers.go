@@ -17,6 +17,8 @@ import (
 // providerResponse is the wire shape of a provider. The API key is never
 // returned — the client only learns whether one is stored, matching the Forge
 // credentials contract.
+const jsonKeyModels = "models"
+
 type providerResponse struct {
 	ID         int64    `json:"id"`
 	Name       string   `json:"name"`
@@ -110,15 +112,26 @@ func serveProviderCreate(w http.ResponseWriter, r *http.Request) {
 // pattern, so the fixed routes never reach this handler.
 func ServeProviderSubRoutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/providers/")
-	switch {
-	case path == "presets":
+	switch path {
+	case "presets":
 		serveProviderPresets(w, r)
 		return
-	case path == "test":
+	case "test":
 		serveProviderTest(w, r)
 		return
-	case path == "" || strings.Contains(path, "/"):
-		writeLocalizedErrorf(w, r, http.StatusNotFound, "NotFound")
+	}
+	// /api/providers/{id}/models — the model catalog a provider exposes.
+	if idPart, sub, found := strings.Cut(path, "/"); found {
+		if sub != "models" {
+			writeLocalizedErrorf(w, r, http.StatusNotFound, "NotFound")
+			return
+		}
+		id, err := strconv.ParseInt(idPart, 10, 64)
+		if err != nil || id <= 0 {
+			writeLocalizedErrorf(w, r, http.StatusNotFound, "NotFound")
+			return
+		}
+		serveProviderModels(w, r, id)
 		return
 	}
 	id, err := strconv.ParseInt(path, 10, 64)
@@ -196,6 +209,8 @@ func writeProviderError(w http.ResponseWriter, r *http.Request, err error) {
 		writeLocalizedErrorf(w, r, http.StatusConflict, "ProviderNameTaken")
 	case errors.Is(err, service.ErrProviderInUse):
 		writeLocalizedErrorf(w, r, http.StatusConflict, "ProviderInUse")
+	case errors.Is(err, service.ErrProviderUsedBySummary):
+		writeLocalizedErrorf(w, r, http.StatusConflict, "ProviderUsedBySummary")
 	case errors.Is(err, service.ErrProviderInvalid):
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderInvalid", map[string]any{"Reason": err.Error()})
 	case errors.As(err, &conflict):
@@ -265,6 +280,7 @@ func probeProviderModels(ctx context.Context, p *model.Provider) ([]string, int,
 	var lastErr error
 	lastStatus := 0
 	for _, url := range candidates {
+		//nolint:gosec // G704: the URL is the user-configured provider endpoint
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 		if err != nil {
 			return nil, 0, err
@@ -283,6 +299,7 @@ func probeProviderModels(ctx context.Context, p *model.Provider) ([]string, int,
 			req.Header.Set("Authorization", "Bearer "+p.APIKey)
 		}
 
+		//nolint:gosec // G704: the URL is the user-configured provider endpoint
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
@@ -329,4 +346,30 @@ func parseProviderModelIDs(body []byte) []string {
 		}
 	}
 	return ids
+}
+
+// serveProviderModels returns the model ids a saved provider advertises. It is
+// the data source for the summary-model picker, so a gateway that does not
+// publish /models yields an empty list plus the reason — the caller falls back
+// to a free-text input rather than blocking configuration.
+func serveProviderModels(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodGet {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+	p, err := service.GetProvider(id)
+	if err != nil {
+		writeProviderError(w, r, err)
+		return
+	}
+	if p.BaseURL == "" {
+		writeJSON(w, http.StatusOK, map[string]any{jsonKeyModels: []string{}})
+		return
+	}
+	models, status, probeErr := probeProviderModels(r.Context(), p)
+	result := map[string]any{jsonKeyModels: models, jsonKeyStatus: status}
+	if probeErr != nil {
+		result[watchMsgError] = probeErr.Error()
+	}
+	writeJSON(w, http.StatusOK, result)
 }

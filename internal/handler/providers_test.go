@@ -173,3 +173,51 @@ func TestAgentPatch_ConfigBackendNeedsConsent(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.NotNil(t, model.GetAgent(agent.ID).ProviderID)
 }
+
+func TestProvidersAPI_ModelList(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"model-a"},{"id":"model-b"}]}`))
+	}))
+	defer srv.Close()
+
+	p, err := service.CreateProvider(model.Provider{
+		Name: "WithModels", Protocol: model.ProviderProtocolOpenAI, BaseURL: srv.URL + "/v1", APIKey: "k",
+	})
+	require.NoError(t, err)
+
+	rec := doProviderRequest(t, ServeProviderSubRoutes, http.MethodGet, "/api/providers/1/models", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		Models []string `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, []string{"model-a", "model-b"}, body.Models)
+	assert.NotZero(t, p.ID)
+}
+
+func TestProvidersAPI_ModelListUnreachableReturnsEmpty(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "no catalog", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	_, err := service.CreateProvider(model.Provider{
+		Name: "NoModels", Protocol: model.ProviderProtocolOpenAI, BaseURL: srv.URL, APIKey: "k",
+	})
+	require.NoError(t, err)
+
+	rec := doProviderRequest(t, ServeProviderSubRoutes, http.MethodGet, "/api/providers/1/models", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		Models []string `json:"models"`
+		Error  string   `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Empty(t, body.Models)
+	assert.NotEmpty(t, body.Error, "an unreachable catalog must explain itself")
+}

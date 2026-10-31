@@ -39,6 +39,10 @@ var (
 	ErrProviderNameTaken = errors.New("provider name already taken")
 	// ErrProviderInUse is returned when agents still reference the provider.
 	ErrProviderInUse = errors.New("provider is referenced by agents")
+	// ErrProviderUsedBySummary is returned when the shared AI-summary model
+	// references the provider and the operation would break it (delete, or a
+	// protocol the summarizer cannot speak).
+	ErrProviderUsedBySummary = errors.New("provider is used by the AI summary model")
 	// ErrProviderInvalid is returned for malformed field values.
 	ErrProviderInvalid = errors.New("invalid provider")
 )
@@ -159,6 +163,9 @@ func UpdateProvider(id int64, patch ProviderPatch) (*model.Provider, error) {
 		return nil, ErrProviderNameTaken
 	}
 	if next.Protocol != current.Protocol {
+		if summaryUsesProvider(id) && next.Protocol != model.ProviderProtocolAnthropic && next.Protocol != model.ProviderProtocolOpenAI {
+			return nil, ErrProviderUsedBySummary
+		}
 		incompatible, cerr := agentsIncompatibleWithProvider(id, next.Protocol)
 		if cerr != nil {
 			return nil, cerr
@@ -224,6 +231,9 @@ func DeleteProvider(id int64) error {
 	}
 	if count > 0 {
 		return ErrProviderInUse
+	}
+	if summaryUsesProvider(id) {
+		return ErrProviderUsedBySummary
 	}
 	res, err := store.WriteExec("DELETE FROM providers WHERE id = ?", id)
 	if err != nil {
@@ -349,4 +359,12 @@ func providerNameTaken(name string, excludeID int64) bool {
 
 func isUniqueConstraint(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "unique constraint")
+}
+
+// summaryUsesProvider reports whether the shared AI-summary model is bound to
+// the provider. The binding lives in config.yaml, so the check reads the
+// in-memory config rather than a table.
+func summaryUsesProvider(id int64) bool {
+	pid := model.ConfigInstance.AISummary.ProviderID
+	return pid != nil && *pid == id
 }

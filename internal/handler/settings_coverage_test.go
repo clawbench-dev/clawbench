@@ -538,7 +538,7 @@ func TestServeConfigPatch_SummarizeTTSBackendAPIWithoutBaseURL(t *testing.T) {
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "ai_summary.api.base_url")
+	assert.Contains(t, w.Body.String(), "ai_summary.provider_id")
 }
 
 func TestServeConfigPatch_SummarizeTTSBackendSwitchedToAPI(t *testing.T) {
@@ -565,7 +565,7 @@ func TestServeConfigPatch_SummarizeTTSBackendAutoValid(t *testing.T) {
 	model.ConfigInstance = model.Config{}
 
 	// "auto" needs no LLM configured — it degrades to simple, so the patch must
-	// succeed even with an empty ai_summary.api.base_url.
+	// succeed even with no ai_summary.provider_id bound.
 	body := `{"summarize":{"tts_backend":"auto"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -608,23 +608,50 @@ func TestServeConfigPatch_AutoJunkRatioOutOfRange(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "summarize.auto_junk_ratio")
 }
 
-func TestServeConfigPatch_AISummaryAPISubConfig(t *testing.T) {
+func TestServeConfigPatch_AISummaryProvider(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
 	model.ConfigInstance = model.Config{}
 	model.ConfigInstance.Summarize.TTSBackend = "api"
-	model.ConfigInstance.AISummary.API.BaseURL = "https://example.com"
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 7, Name: "Summary", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "https://example.com/v1", APIKey: "k", AuthMode: model.ProviderAuthAuto,
+	}})
+	t.Cleanup(func() { model.ReplaceProviders(nil) })
 
-	body := `{"ai_summary":{"api":{"base_url":"https://updated.com","key":"test-key"}}}`
+	body := `{"ai_summary":{"provider_id":7}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "https://updated.com", model.ConfigInstance.AISummary.API.BaseURL)
-	assert.Equal(t, "test-key", model.ConfigInstance.AISummary.API.Key)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.NotNil(t, model.ConfigInstance.AISummary.ProviderID)
+	assert.Equal(t, int64(7), *model.ConfigInstance.AISummary.ProviderID)
+}
+
+// A provider whose protocol the summarizer cannot speak is rejected at PATCH
+// time instead of failing on the first summary request.
+func TestServeConfigPatch_AISummaryProviderRejectsGemini(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 9, Name: "Gem", Protocol: model.ProviderProtocolGemini,
+		BaseURL: "https://gem.example", APIKey: "k", AuthMode: model.ProviderAuthAuto,
+	}})
+	t.Cleanup(func() { model.ReplaceProviders(nil) })
+
+	body := `{"ai_summary":{"provider_id":9}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "ai_summary.provider_id")
 }
 
 // --- ai_summary.model patch ---
@@ -647,14 +674,14 @@ func TestServeConfigPatch_AISummaryModel(t *testing.T) {
 
 // --- ServeConfig GET: AISummary API conditional sub-config ---
 
-func TestServeConfig_Get_AISummaryAPISubConfig(t *testing.T) {
+func TestServeConfig_Get_AISummaryProvider(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
 	model.ConfigInstance = model.Config{}
 	model.ConfigInstance.Summarize.TTSBackend = "api"
-	model.ConfigInstance.AISummary.API.BaseURL = "https://tts.example.com"
-	model.ConfigInstance.AISummary.API.Key = "tts-key"
+	pid := int64(11)
+	model.ConfigInstance.AISummary.ProviderID = &pid
 
 	req := newRequest(t, http.MethodGet, "/api/config", nil)
 	w := callHandler(ServeConfig, req)
@@ -663,8 +690,8 @@ func TestServeConfig_Get_AISummaryAPISubConfig(t *testing.T) {
 	var resp configResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	require.NotNil(t, resp.AISummary.API)
-	assert.Equal(t, "https://tts.example.com", resp.AISummary.API.BaseURL)
+	require.NotNil(t, resp.AISummary.ProviderID)
+	assert.Equal(t, int64(11), *resp.AISummary.ProviderID)
 }
 
 // --- ServeConfig GET: PushMode field ---

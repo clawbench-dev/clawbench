@@ -160,30 +160,62 @@ func resolveIntValue(values map[string]any, key string, defaultVal int) int {
 // feeds both voice summarization and conversation recommendation, so the test
 // always probes the ai_summary.api endpoint regardless of summarize.tts_backend.
 func testSummarizeVoice(ctx context.Context, values map[string]any) ConnectivityTestResult {
-	baseURL := resolveStringValue(values, "ai_summary.api.base_url", model.ConfigInstance.AISummary.API.BaseURL)
-	apiKey := resolveStringValue(values, "ai_summary.api.key", model.ConfigInstance.AISummary.API.Key)
 	modelName := resolveStringValue(values, "ai_summary.model", model.ConfigInstance.AISummary.Model)
-
-	if baseURL == "" {
-		return ConnectivityTestResult{Success: false, Message: "AI summary API base URL is required"}
-	}
 	if modelName == "" {
 		modelName = "gpt-4o-mini"
 	}
 
-	return testAPISummarizer(ctx, baseURL, apiKey, modelName)
+	// The provider is the supported configuration: its protocol also decides the
+	// request shape, which a URL heuristic cannot recover for Anthropic-style
+	// gateways that do not contain "anthropic" in the host.
+	if p := model.GetProvider(summaryProviderID(values)); p != nil && p.BaseURL != "" {
+		if p.Protocol != model.ProviderProtocolAnthropic && p.Protocol != model.ProviderProtocolOpenAI {
+			return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Provider %q uses the %s protocol, which the summary model does not support", p.Name, p.Protocol)}
+		}
+		format := model.ProviderProtocolOpenAI
+		if p.Protocol == model.ProviderProtocolAnthropic {
+			format = model.ProviderProtocolAnthropic
+		}
+		return testAPISummarizer(ctx, p.BaseURL, p.APIKey, modelName, format)
+	}
+
+	// Legacy shape, kept until the startup migration rewrites config.yaml.
+	baseURL := resolveStringValue(values, "ai_summary.api.base_url", model.ConfigInstance.AISummary.API.BaseURL)
+	apiKey := resolveStringValue(values, "ai_summary.api.key", model.ConfigInstance.AISummary.API.Key)
+	if baseURL == "" {
+		return ConnectivityTestResult{Success: false, Message: "AI summary provider is required"}
+	}
+	return testAPISummarizer(ctx, baseURL, apiKey, modelName, "")
+}
+
+// summaryProviderID reads the draft value first, then the saved config.
+func summaryProviderID(values map[string]any) int64 {
+	if raw, ok := values["ai_summary.provider_id"]; ok {
+		switch v := raw.(type) {
+		case float64:
+			return int64(v)
+		case int64:
+			return v
+		case int:
+			return int64(v)
+		}
+	}
+	if pid := model.ConfigInstance.AISummary.ProviderID; pid != nil {
+		return *pid
+	}
+	return 0
 }
 
 // testAPISummarizer sends a minimal chat completion request to verify API connectivity.
 // The API format (OpenAI vs Anthropic) is auto-detected from the base URL:
 //   - URLs containing "anthropic.com" or ending with "/v1/messages" → Anthropic format
 //   - All other URLs → OpenAI format
-func testAPISummarizer(ctx context.Context, baseURL, apiKey, modelName string) ConnectivityTestResult {
+func testAPISummarizer(ctx context.Context, baseURL, apiKey, modelName, format string) ConnectivityTestResult {
 	url := strings.TrimRight(baseURL, "/")
 
 	client := &http.Client{Timeout: 10 * time.Second}
 
-	if summarize.IsAnthropicURL(url) {
+	if format == model.ProviderProtocolAnthropic || (format == "" && summarize.IsAnthropicURL(url)) {
 		return testAnthropicAPI(ctx, client, url, apiKey, modelName)
 	}
 	return testOpenAIAPI(ctx, client, url, apiKey, modelName)

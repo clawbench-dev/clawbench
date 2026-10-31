@@ -578,10 +578,8 @@ describe('SettingsCategory', () => {
       }
     })
 
-    it('marks the jump rows configured once the base URL is set', () => {
-      ;(serverConfig.value as Record<string, unknown>).ai_summary = {
-        api: { base_url: 'https://summary.example.com' },
-      }
+    it('marks the jump rows configured once a provider is bound', () => {
+      ;(serverConfig.value as Record<string, unknown>).ai_summary = { provider_id: 7 }
       const rows = jumpRows(mountCategory('chat'))
       expect(rows.length).toBeGreaterThan(0)
       for (const row of rows) {
@@ -590,9 +588,7 @@ describe('SettingsCategory', () => {
     })
 
     it('leaves rows without the opt-in flag without a status', () => {
-      ;(serverConfig.value as Record<string, unknown>).ai_summary = {
-        api: { base_url: 'https://summary.example.com' },
-      }
+      ;(serverConfig.value as Record<string, unknown>).ai_summary = { provider_id: 7 }
       const wrapper = mountCategory('chat')
       const plain = wrapper
         .findAllComponents({ name: 'SettingsItem' })

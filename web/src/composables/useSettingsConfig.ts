@@ -635,7 +635,7 @@ const serverDefaults: Record<string, unknown> = {
   'summarize.tts_backend': 'simple',
   'summarize.auto_junk_ratio': 0.5,
   'ai_summary.model': '',
-  'ai_summary.format': 'openai',
+  'ai_summary.provider_id': 0,
   'port_forward.allowed_ports': '1024-65535',
   'push_mode': 'native',
   'file_search.display_limit': 100,

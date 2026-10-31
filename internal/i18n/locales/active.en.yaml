@@ -150,6 +150,7 @@ CannotScopeDefaultAgent: The default agent cannot be limited to one project
 ProviderNotFound: Model provider not found
 ProviderNameTaken: A model provider with this name already exists
 ProviderInUse: This model provider is still referenced by agents; unbind it first
+ProviderUsedBySummary: This model provider is used by the AI summary model; pick another one in AI Summary first
 ProviderInvalid: "Invalid model provider: {{.Reason}}"
 ProviderUnsupported: Agent {{.Backend}} does not support the {{.Protocol}} protocol
 ProviderProtocolConflict: "These agents do not support this protocol: {{.Agents}}"

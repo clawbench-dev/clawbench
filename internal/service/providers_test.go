@@ -186,3 +186,35 @@ func TestProviderBindingConflictOnlyForSameBackend(t *testing.T) {
 	// errors.Is must still work for the sentinel checks used by the handler.
 	assert.False(t, errors.Is(service.ErrProviderInUse, service.ErrProviderNotFound))
 }
+
+func TestDeleteProviderRefusedWhenSummaryUsesIt(t *testing.T) {
+	setupProvidersDB(t)
+
+	p, err := service.CreateProvider(model.Provider{Name: "Summary", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://x", APIKey: "k"})
+	require.NoError(t, err)
+
+	pid := p.ID
+	model.ConfigInstance.AISummary.ProviderID = &pid
+	t.Cleanup(func() { model.ConfigInstance.AISummary.ProviderID = nil })
+
+	err = service.DeleteProvider(p.ID)
+	assert.ErrorIs(t, err, service.ErrProviderUsedBySummary)
+
+	// Switching the summary provider away makes it deletable again.
+	model.ConfigInstance.AISummary.ProviderID = nil
+	require.NoError(t, service.DeleteProvider(p.ID))
+}
+
+func TestUpdateProviderRejectsGeminiWhenSummaryUsesIt(t *testing.T) {
+	setupProvidersDB(t)
+
+	p, err := service.CreateProvider(model.Provider{Name: "Summary", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://x", APIKey: "k"})
+	require.NoError(t, err)
+	pid := p.ID
+	model.ConfigInstance.AISummary.ProviderID = &pid
+	t.Cleanup(func() { model.ConfigInstance.AISummary.ProviderID = nil })
+
+	gemini := model.ProviderProtocolGemini
+	_, err = service.UpdateProvider(p.ID, service.ProviderPatch{Protocol: &gemini})
+	assert.ErrorIs(t, err, service.ErrProviderUsedBySummary)
+}

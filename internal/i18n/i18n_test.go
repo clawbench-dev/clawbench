@@ -179,6 +179,7 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"ProviderNotFound",
 		"ProviderNameTaken",
 		"ProviderInUse",
+		"ProviderUsedBySummary",
 		"ProviderInvalid",
 		"ProviderUnsupported",
 		"ProviderProtocolConflict",

@@ -80,6 +80,21 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 - 同一后端全局只能绑定一个提供商：冲突返回 409 `ProviderConfigConflict`。
 - 解绑/删除/启动对账（`ReconcileProviderConfigs`）会移除托管块并恢复原始值。
 
+## AI 摘要（共享摘要模型）
+
+语音摘要、推荐回复、会话自动命名与 `/btw` 共用 `ai_summary` 配置。它不再自带端点与密钥，只保存：
+
+- `ai_summary.provider_id`：引用 `providers` 行，**端点、密钥、协议全部取自该行**；
+- `ai_summary.model`：模型 id（自由文本，或从该提供商的 `/models` 列表中选择）。
+
+约束与行为：
+
+- **强制引用**：设置页不再写 `format` / `api.*`；PATCH 白名单只接受 `provider_id` 与 `model`。
+- **迁移**：启动时 `MigrateAISummaryProvider` 把旧的 `ai_summary.api.base_url/key` 建成一条 provider（名称 `AI Summary`，协议按旧 `format` 或 URL 推断），重写 `config.yaml` 并清掉旧字段。迁移失败时旧的读取路径仍然生效，下次启动重试。
+- **协议限制**：摘要器只会说 OpenAI / Anthropic 两种线格式；绑定 Gemini 提供商在 PATCH 时 400，运行时也视为未配置。
+- **引用守卫**：摘要正在使用的 provider 不能删除（`ProviderUsedBySummary`），也不能把协议改成 Gemini。
+- **模型列表**：`GET /api/providers/{id}/models` 返回该提供商声明的模型；网关不暴露列表时返回空数组与原因，设置页退化为手填。
+
 ## API
 
 | 方法 | 路径 | 说明 |

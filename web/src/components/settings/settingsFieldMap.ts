@@ -697,17 +697,14 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'panel', config: {
       panelId: 'ai_summary',
       commonFields: [
-        { labelKey: 'settings.items.aiSummaryModel', descriptionKey: 'settings.items.aiSummaryModelDesc', key: 'ai_summary.model', type: 'text', source: 'server', sectionHeader: 'settings.items.aiSummaryApiHeader' },
-        { labelKey: 'settings.items.aiSummaryFormat', descriptionKey: 'settings.items.aiSummaryFormatDesc', key: 'ai_summary.format', type: 'select', source: 'server', options: [
-          { labelKey: 'settings.items.aiSummaryFormatAuto', value: '' },
-          { labelKey: 'settings.items.aiSummaryFormatOpenAI', value: 'openai' },
-          { labelKey: 'settings.items.aiSummaryFormatAnthropic', value: 'anthropic' },
-        ]},
-        { labelKey: 'settings.items.aiSummaryBaseUrl', descriptionKey: 'settings.items.aiSummaryBaseUrlDesc', key: 'ai_summary.api.base_url', type: 'text', source: 'server' },
-        { labelKey: 'settings.items.aiSummaryApiKey', descriptionKey: 'settings.items.aiSummaryApiKeyDesc', key: 'ai_summary.api.key', type: 'password', source: 'server' },
+        // The endpoint, key and wire format all come from the referenced
+        // provider — one place to rotate a key for TTS summaries, next-step
+        // recommendations, session titles and /btw alike.
+        { labelKey: 'settings.items.aiSummaryProvider', descriptionKey: 'settings.items.aiSummaryProviderDesc', key: 'ai_summary.provider_id', type: 'select', source: 'server', sectionHeader: 'settings.items.aiSummaryApiHeader' },
+        { labelKey: 'settings.items.aiSummaryModel', descriptionKey: 'settings.items.aiSummaryModelDesc', key: 'ai_summary.model', type: 'select', source: 'server' },
       ],
       requiredFields: [],
-      hasConnectivityTest: (v) => !!v['ai_summary.api.base_url'],
+      hasConnectivityTest: (v) => !!v['ai_summary.provider_id'],
       getTestCategories(values) {
         return [{ category: 'summarize_voice', values }]
       },

@@ -122,9 +122,7 @@ var hotReloadFields = map[string]bool{
 	"summarize.tts_backend":     true,
 	"summarize.auto_junk_ratio": true,
 	"ai_summary.model":          true,
-	"ai_summary.format":         true,
-	"ai_summary.api.base_url":   true,
-	"ai_summary.api.key":        true,
+	"ai_summary.provider_id":    true,
 	// Port Forward — SSH tunnel; enabled and port can be hot-reloaded.
 	// port_forward.transport is accepted but has no effect: it is pinned to
 	// "both" (see applyConfigPatch), so listing it here only avoids reporting a
@@ -517,9 +515,10 @@ type configSummarize struct {
 }
 
 type configAISummary struct {
-	Model  string     `json:"model"`
-	Format string     `json:"format"`
-	API    *configAPI `json:"api,omitempty"`
+	// ProviderID is the providers row that supplies the endpoint, key and wire
+	// format. nil = the shared summary model is unconfigured.
+	ProviderID *int64 `json:"provider_id,omitempty"`
+	Model      string `json:"model"`
 }
 
 type configDingTalk struct {
@@ -902,9 +901,7 @@ var PatchableConfigPaths = map[string]bool{
 	"summarize.tts_backend":              true,
 	"summarize.auto_junk_ratio":          true,
 	"ai_summary.model":                   true,
-	"ai_summary.format":                  true,
-	"ai_summary.api.base_url":            true,
-	"ai_summary.api.key":                 true,
+	"ai_summary.provider_id":             true,
 	"dingtalk.enabled":                   true,
 	"dingtalk.app_key":                   true,
 	"dingtalk.app_secret":                true,
@@ -1088,8 +1085,8 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			AutoJunkRatio: cfg.Summarize.AutoJunkRatio,
 		},
 		AISummary: configAISummary{
-			Model:  cfg.AISummary.Model,
-			Format: cfg.AISummary.Format,
+			ProviderID: cfg.AISummary.ProviderID,
+			Model:      cfg.AISummary.Model,
 		},
 		DingTalk: configDingTalk{
 			Enabled:   cfg.DingTalk.Enabled,
@@ -1135,14 +1132,6 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Metric:     cfg.UsageMeter.Metric,
 			Quota:      cfg.UsageMeter.Quota,
 		},
-	}
-
-	// Conditionally populate AISummary API sub-config when a base URL is set
-	if cfg.AISummary.API.BaseURL != "" {
-		resp.AISummary.API = &configAPI{
-			BaseURL: cfg.AISummary.API.BaseURL,
-			Key:     cfg.AISummary.API.Key,
-		}
 	}
 
 	// Conditionally populate engine-specific sub-configs
@@ -1763,6 +1752,22 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	// 1b. When summarize.tts_backend is "api", ai_summary.api.base_url must not be empty.
 	effectiveTTSBackend := cfg.Summarize.TTSBackend
 	ttsBackendSwitchedToAPI := false
+	if aiSummary, ok := patch["ai_summary"].(map[string]any); ok {
+		if raw, present := aiSummary["provider_id"]; present && raw != nil {
+			n, ok := raw.(float64)
+			if !ok || n <= 0 {
+				return fmt.Errorf("ai_summary.provider_id must be a positive provider id")
+			}
+			provider := model.GetProvider(int64(n))
+			if provider == nil {
+				return fmt.Errorf("ai_summary.provider_id: provider %d not found", int64(n))
+			}
+			if provider.Protocol != model.ProviderProtocolAnthropic && provider.Protocol != model.ProviderProtocolOpenAI {
+				return fmt.Errorf("ai_summary.provider_id: provider %q speaks %s, but the summary model only supports openai/anthropic", provider.Name, provider.Protocol)
+			}
+		}
+	}
+
 	if summarize, ok := patch["summarize"].(map[string]any); ok {
 		if v, ok := summarize["tts_backend"].(string); ok {
 			if v == "api" && cfg.Summarize.TTSBackend != "api" {
@@ -1772,16 +1777,18 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 	if effectiveTTSBackend == "api" && !ttsBackendSwitchedToAPI {
-		effectiveTTSBaseURL := cfg.AISummary.API.BaseURL
+		configured := cfg.AISummary.SummaryConfigured()
 		if aiSummary, ok := patch["ai_summary"].(map[string]any); ok {
-			if api, ok := aiSummary["api"].(map[string]any); ok {
-				if v, ok := api["base_url"].(string); ok {
-					effectiveTTSBaseURL = v
+			if raw, present := aiSummary["provider_id"]; present {
+				if n, ok := raw.(float64); ok && n > 0 {
+					configured = true
+				} else if raw == nil {
+					configured = false
 				}
 			}
 		}
-		if effectiveTTSBaseURL == "" {
-			return fmt.Errorf("ai_summary.api.base_url is required when summarize.tts_backend is \"api\"")
+		if !configured {
+			return fmt.Errorf("ai_summary.provider_id is required when summarize.tts_backend is \"api\"")
 		}
 	}
 
@@ -1908,22 +1915,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if v, ok := summarize["auto_junk_ratio"].(float64); ok {
 			if v <= 0 || v > 1 {
 				return fmt.Errorf("summarize.auto_junk_ratio must be between 0 (exclusive) and 1")
-			}
-		}
-	}
-
-	// Validate ai_summary section
-	if aiSummary, ok := patch["ai_summary"].(map[string]any); ok {
-		if v, ok := aiSummary["format"].(string); ok && v != "" {
-			if v != "openai" && v != "anthropic" {
-				return fmt.Errorf("ai_summary.format must be one of: openai, anthropic (empty = auto-detect)")
-			}
-		}
-		if api, ok := aiSummary["api"].(map[string]any); ok {
-			if v, ok := api["base_url"].(string); ok && v != "" {
-				if _, err := url.ParseRequestURI(v); err != nil {
-					return fmt.Errorf("ai_summary.api.base_url must be a valid URL")
-				}
 			}
 		}
 	}
@@ -2395,15 +2386,15 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := aiSummary["model"].(string); ok {
 			cfg.AISummary.Model = v
 		}
-		if v, ok := aiSummary["format"].(string); ok {
-			cfg.AISummary.Format = v
-		}
-		if api, ok := aiSummary["api"].(map[string]any); ok {
-			if v, ok := api["base_url"].(string); ok {
-				cfg.AISummary.API.BaseURL = v
-			}
-			if v, ok := api["key"].(string); ok {
-				cfg.AISummary.API.Key = v
+		// provider_id is the only way to point the summary model at an
+		// endpoint; null clears it. The legacy format/api fields are no longer
+		// writable (they survive only until the startup migration runs).
+		if raw, present := aiSummary["provider_id"]; present {
+			if raw == nil {
+				cfg.AISummary.ProviderID = nil
+			} else if n, ok := raw.(float64); ok && n > 0 {
+				pid := int64(n)
+				cfg.AISummary.ProviderID = &pid
 			}
 		}
 	}

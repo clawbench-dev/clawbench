@@ -1307,6 +1307,13 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		slog.Error("failed to load model providers", "error", err)
 	}
 
+	// The shared summary model is configured by referencing a provider. Turn a
+	// legacy ai_summary endpoint into a providers row once, before anything can
+	// read the config (a failed write leaves the legacy fallback working).
+	if err := handler.MigrateAISummaryProvider(); err != nil {
+		slog.Error("failed to migrate ai_summary to a model provider", "error", err)
+	}
+
 	if _, err := model.RefreshAgents(store.WriteDB(), model.RefreshOptions{
 		ConfigDir:     filepath.Dir(configPath),
 		SkipDiscovery: true,

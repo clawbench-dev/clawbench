@@ -485,29 +485,27 @@ describe('settingsFieldMap', () => {
     expect(ratio.spec.max).toBe(0.9)
   })
 
-  it('ai_summary panel has shared model fields', () => {
+  it('ai_summary panel references a provider instead of duplicating its endpoint', () => {
     const panels = getCategoryPanels('aiSummary')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
     expect(cfg.panelId).toBe('ai_summary')
 
-    const baseUrl = cfg.commonFields.find(f => f.key === 'ai_summary.api.base_url')
-    expect(baseUrl).toBeDefined()
-    expect(baseUrl!.type).toBe('text')
+    const provider = cfg.commonFields.find(f => f.key === 'ai_summary.provider_id')
+    expect(provider).toBeDefined()
+    expect(provider!.type).toBe('select')
 
     const model = cfg.commonFields.find(f => f.key === 'ai_summary.model')
     expect(model).toBeDefined()
 
-    const format = cfg.commonFields.find(f => f.key === 'ai_summary.format')
-    expect(format).toBeDefined()
-    expect(format!.type).toBe('select')
-
-    const apiKey = cfg.commonFields.find(f => f.key === 'ai_summary.api.key')
-    expect(apiKey).toBeDefined()
-    expect(apiKey!.type).toBe('password')
+    // The old manual endpoint/key/format fields must be gone: the provider row
+    // is the single source for all three.
+    expect(cfg.commonFields.find(f => f.key === 'ai_summary.api.base_url')).toBeUndefined()
+    expect(cfg.commonFields.find(f => f.key === 'ai_summary.api.key')).toBeUndefined()
+    expect(cfg.commonFields.find(f => f.key === 'ai_summary.format')).toBeUndefined()
 
     expect(typeof cfg.hasConnectivityTest === 'function').toBe(true)
-    expect((cfg.hasConnectivityTest as Function)({ 'ai_summary.api.base_url': 'https://x' })).toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ 'ai_summary.provider_id': 3 })).toBe(true)
     expect((cfg.hasConnectivityTest as Function)({})).toBe(false)
   })
 

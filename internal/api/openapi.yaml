@@ -5329,6 +5329,23 @@ paths:
         "409":
           description: 仍被引用（`ProviderInUse`）
 
+  /api/providers/{id}/models:
+    get:
+      tags: [Providers]
+      summary: 提供商的模型列表
+      description: |
+        请求该提供商的 `/models`（必要时补 `/v1`），返回
+        `{models:[...], status?, error?}`。供「AI 摘要」的模型选择器使用：
+        网关不暴露列表时返回空数组与原因，前端退化为手动输入，不阻塞配置。
+      operationId: providersModels
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 模型列表（可能为空）
+        "404":
+          description: 不存在（`ProviderNotFound`）
+
   /api/agents/{id}/self-test:
     post:
       tags: [Agents]
