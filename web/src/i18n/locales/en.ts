@@ -4029,7 +4029,13 @@ export default {
       'This client cannot capture the screen — update the desktop app, or open this page in it.',
     includeSystemAudio: 'Include system audio',
     includeMicrophone: 'Include microphone',
-    systemAudioUnavailable: 'This platform cannot capture system audio (Windows only).',
+    systemAudioUnavailable: 'This platform cannot capture system audio (Windows and Android 10+ only).',
+    androidCaptureHint:
+      'Android will ask for confirmation. After that the whole screen is shared, system dialogs included. A persistent notification stays visible and sharing continues when you switch apps.',
+    androidDenied: 'Screen sharing permission was cancelled.',
+    androidFailed: 'Could not start screen sharing. Please try again.',
+    androidSystemAudioHint:
+      'Only audio that apps allow to be captured (media, games) is recorded; calls and some protected content are not.',
     start: 'Start sharing',
     starting: 'Starting…',
     copyLink: 'Copy link',

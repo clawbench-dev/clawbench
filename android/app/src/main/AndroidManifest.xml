@@ -7,6 +7,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+    <!-- Screen sharing (桌面共享) runs as a foreground service of type
+         mediaProjection: Android requires the service to be foreground with that
+         type BEFORE MediaProjectionManager.getMediaProjection() is called, and
+         the permission below is mandatory for apps targeting API 34+. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -81,6 +86,15 @@
             android:name=".BackgroundService"
             android:foregroundServiceType="dataSync|remoteMessaging"
             android:stopWithTask="false"
+            android:exported="false" />
+
+        <!-- Screen-share capture (MediaProjection). stopWithTask=false is wrong
+             here: sharing is tied to the app being alive, and a task that the
+             user swiped away must not leave the screen being captured. -->
+        <service
+            android:name=".ScreenShareService"
+            android:foregroundServiceType="mediaProjection"
+            android:stopWithTask="true"
             android:exported="false" />
 
         <!-- Sandbox browser for testing forwarded ports — runs in separate process for Cookie/Storage isolation.

@@ -15,10 +15,21 @@ const bridge = vi.hoisted(() => ({
   setPendingCaptureSource: vi.fn(async () => undefined),
   getAudioCaptureSupport: vi.fn(async () => JSON.stringify({ systemAudio: false, reason: 'test' })),
   setPublishingActive: vi.fn(async () => undefined),
+  // Absent on the desktop shell; the Android host is the only one that has it,
+  // so tests opt in by assigning a function.
+  startScreenCapture: undefined as undefined | (() => string),
 }))
 
 vi.mock('@/utils/clawbenchNative', () => ({
   getNative: () => bridge,
+}))
+
+const androidCapture = vi.hoisted(() => ({
+  startAndroidScreenCapture: vi.fn(),
+}))
+
+vi.mock('@/composables/androidScreenCapture', () => ({
+  startAndroidScreenCapture: androidCapture.startAndroidScreenCapture,
 }))
 
 class FakeTrack {
@@ -298,6 +309,8 @@ beforeEach(async () => {
   vi.stubGlobal('fetch', fetchMock)
   bridge.setPendingCaptureSource.mockClear()
   bridge.setPublishingActive.mockClear()
+  bridge.startScreenCapture = undefined
+  androidCapture.startAndroidScreenCapture.mockReset()
 
   const mod = await import('../useLiveShare')
   mod._resetLiveShareForTest()
@@ -358,6 +371,36 @@ describe('start', () => {
     await startSharing()
     // A minimized window throttles timers, which stalls the encoder.
     expect(bridge.setPublishingActive).toHaveBeenCalledWith(true)
+  })
+
+  it('captures through MediaProjection when the host offers it (Android)', async () => {
+    const stopAndroid = vi.fn()
+    const androidStream = new FakeStream([new FakeTrack('video', 'android-1')])
+    androidCapture.startAndroidScreenCapture.mockResolvedValue({
+      stream: androidStream,
+      width: 1080,
+      height: 2400,
+      systemAudio: false,
+      stop: stopAndroid,
+    })
+    bridge.startScreenCapture = vi.fn(() => '{"state":"requesting"}')
+
+    const { share, ok } = await startSharing()
+
+    expect(ok).toBe(true)
+    expect(androidCapture.startAndroidScreenCapture).toHaveBeenCalledTimes(1)
+    // Android has no getDisplayMedia, and there is no source to declare either:
+    // touching either path would fail the capture on a real device. (The reset
+    // helper clears the declaration with '', so only a real id would count.)
+    expect(navigator.mediaDevices.getDisplayMedia).not.toHaveBeenCalled()
+    expect(bridge.setPendingCaptureSource).not.toHaveBeenCalledWith('screen:1:0', expect.anything())
+    expect(share.captureKind.value).toBe('screen')
+    expect(share.previewStream.value).toBe(androidStream)
+
+    await share.stop()
+    // Stopping the tracks alone would leave the native foreground service
+    // capturing with nobody reading it.
+    expect(stopAndroid).toHaveBeenCalled()
   })
 
   it('fails cleanly when the room cannot be created', async () => {

@@ -15,6 +15,8 @@ import android.net.Uri;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
+import android.media.projection.MediaProjectionManager;
+import android.util.Base64;
 import android.net.http.SslError;
 import android.os.Build;
 import android.os.Bundle;
@@ -233,6 +235,109 @@ public class MainActivity extends AppCompatActivity {
                     request.deny();
                 }
             });
+
+    // ── Screen sharing (桌面共享) ────────────────────────────────────────────
+    // Android has no getDisplayMedia, so the share runs on MediaProjection. Two
+    // system dialogs stand between the click and the first frame:
+    //   1. RECORD_AUDIO (only when system audio is requested) — AudioPlaybackCapture
+    //      refuses to start without it, and the app may never have asked for the
+    //      microphone (voice input is the only other consumer, and it is opt-in).
+    //   2. The MediaProjection consent dialog, which cannot be skipped, cached or
+    //      replayed: Android 14 requires a fresh grant for every session.
+    // The two are chained rather than fired together so the user never sees two
+    // dialogs stacked on top of each other.
+    private ScreenShareOptions pendingScreenShareOptions;
+
+    private final ActivityResultLauncher<String> screenShareAudioPermissionLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
+                if (!isGranted && pendingScreenShareOptions != null) {
+                    AppLog.w(TAG, "RECORD_AUDIO denied — sharing without system audio");
+                    // Degrade instead of aborting: the picture is still useful.
+                    pendingScreenShareOptions = pendingScreenShareOptions.withoutSystemAudio();
+                }
+                launchProjectionConsent();
+            });
+
+    private final ActivityResultLauncher<Intent> projectionConsentLauncher =
+            registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+                ScreenShareOptions options = pendingScreenShareOptions;
+                pendingScreenShareOptions = null;
+                if (options == null) return;
+                if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null) {
+                    AppLog.i(TAG, "screen share consent denied");
+                    ScreenShareStatus.setDenied();
+                    return;
+                }
+                installScreenShareTickListener();
+                ScreenShareService.start(this, result.getResultCode(), result.getData(), options);
+            });
+
+    /**
+     * Route capture progress into the page.
+     *
+     * <p>The service cannot touch the WebView (it has no reference and may
+     * outlive it), so it publishes into ScreenShareStatus and calls this listener
+     * instead. The page pulls the actual payload — that keeps the multi-hundred
+     * kilobyte frames out of an evaluated script string and gives the WebView
+     * natural backpressure: a frame it never takes is simply overwritten.
+     */
+    private void installScreenShareTickListener() {
+        ScreenShareStatus.setTickListener(() -> {
+            WebView view = webView;
+            if (view == null) return;
+            view.post(() -> {
+                try {
+                    view.evaluateJavascript(
+                            "window.__clawbenchScreenTick&&window.__clawbenchScreenTick()", null);
+                } catch (Exception e) {
+                    AppLog.w(TAG, "screen tick dispatch failed", e);
+                }
+            });
+        });
+    }
+
+    /** Start the consent chain. Called from the bridge. */
+    void requestScreenCapture(ScreenShareOptions options) {
+        pendingScreenShareOptions = options;
+        ScreenShareStatus.beginRequesting();
+        if (options.systemAudio
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            screenShareAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO);
+            return;
+        }
+        launchProjectionConsent();
+    }
+
+    private void launchProjectionConsent() {
+        ScreenShareOptions options = pendingScreenShareOptions;
+        if (options == null) return;
+        MediaProjectionManager manager =
+                (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        if (manager == null) {
+            pendingScreenShareOptions = null;
+            ScreenShareStatus.setError("MediaProjectionManager unavailable");
+            return;
+        }
+        try {
+            projectionConsentLauncher.launch(manager.createScreenCaptureIntent());
+        } catch (Exception e) {
+            pendingScreenShareOptions = null;
+            AppLog.e(TAG, "createScreenCaptureIntent failed", e);
+            ScreenShareStatus.setError("cannot request screen capture");
+        }
+    }
+
+    /** Stop capture and release the projection. Idempotent. */
+    void stopScreenCaptureInternal() {
+        pendingScreenShareOptions = null;
+        ScreenShareStatus.setTickListener(null);
+        ScreenShareService.stop(this);
+        // The service resets the status again in onDestroy, but stopService is
+        // asynchronous; clearing here makes "stopped" observable immediately for
+        // a page that asks right after the click.
+        ScreenShareStatus.reset();
+    }
 
     // Activity result launcher for file chooser (replaces deprecated onActivityResult)
     private final ActivityResultLauncher<Intent> fileChooserLauncher =
@@ -3285,6 +3390,78 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public boolean isNativeApp() {
             return true;
+        }
+
+        // ── Screen sharing (桌面共享) ────────────────────────────────────────
+        //
+        // The WebView has no getDisplayMedia, so the page drives the native
+        // MediaProjection session through these calls instead. They are
+        // synchronous (a @JavascriptInterface method cannot return a promise),
+        // which is why starting is "request + poll": the consent dialog is
+        // asynchronous by nature, and the page polls getScreenCaptureState()
+        // until it turns running / denied / error.
+
+        /** Whether this host can share its screen at all. */
+        @JavascriptInterface
+        public boolean isScreenCaptureSupported() {
+            return true;
+        }
+
+        /**
+         * Whether system (playback) audio can be captured.
+         *
+         * <p>AudioPlaybackCapture exists from API 29; below that the share is
+         * picture-only, and the UI must say so instead of offering a switch that
+         * silently does nothing.
+         */
+        @JavascriptInterface
+        public String getAudioCaptureSupport() {
+            boolean supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
+            return "{\"systemAudio\":" + supported + "}";
+        }
+
+        /**
+         * Begin the consent chain. Returns the current status, but callers must
+         * poll — the user has a dialog in front of them.
+         */
+        @JavascriptInterface
+        public String startScreenCapture(String optionsJson) {
+            final ScreenShareOptions options = ScreenShareOptions.parse(optionsJson);
+            // ActivityResultLauncher.launch() is main-thread only, and this
+            // method runs on the WebView's private bridge thread.
+            activity.runOnUiThread(() -> activity.requestScreenCapture(options));
+            return ScreenShareStatus.snapshotJson();
+        }
+
+        @JavascriptInterface
+        public void stopScreenCapture() {
+            activity.runOnUiThread(activity::stopScreenCaptureInternal);
+        }
+
+        /** JSON status snapshot; see {@link ScreenShareStatus#snapshotJson()}. */
+        @JavascriptInterface
+        public String getScreenCaptureState() {
+            return ScreenShareStatus.snapshotJson();
+        }
+
+        /**
+         * Take the newest captured frame as base64 JPEG, or "" when none is
+         * pending. Called from the tick the service fires, so the payload never
+         * travels inside an evaluated script string.
+         */
+        @JavascriptInterface
+        public String takeScreenFrame() {
+            byte[] frame = ScreenShareStatus.takeFrame();
+            if (frame == null || frame.length == 0) return "";
+            return Base64.encodeToString(frame, Base64.NO_WRAP);
+        }
+
+        /** Drain queued PCM (48 kHz stereo, 16-bit LE) as base64, or "" when empty. */
+        @JavascriptInterface
+        public String takeSystemAudio() {
+            byte[] pcm = ScreenShareStatus.takeAudio();
+            if (pcm == null || pcm.length == 0) return "";
+            return Base64.encodeToString(pcm, Base64.NO_WRAP);
         }
 
         /**

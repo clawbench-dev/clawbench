@@ -113,6 +113,11 @@
     <string name="notif_listening">消息监听中</string>
     <string name="notif_service_stopping">后台服务即将停止</string>
     <string name="notif_service_starting">后台服务启动中…</string>
+    <!-- Screen sharing (桌面共享) -->
+    <string name="notif_channel_screen_share">屏幕共享</string>
+    <string name="notif_channel_screen_share_desc">共享屏幕期间常驻显示</string>
+    <string name="notif_screen_share_title">正在共享屏幕</string>
+    <string name="notif_screen_share_text">拿到链接的人都能看到这块屏幕</string>
     <!-- Share feature -->
     <string name="share_file_failed">分享文件失败</string>
     <string name="share_multiple_files">分享多个文件</string>

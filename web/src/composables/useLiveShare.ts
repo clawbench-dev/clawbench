@@ -21,8 +21,21 @@ import {
   type ControlMessage,
 } from '@/share/liveControl'
 import { useLiveNotes } from './useLiveNotes'
+import { startAndroidScreenCapture, type AndroidCaptureHandle } from './androidScreenCapture'
 
 const TAG = 'LiveShare'
+
+/**
+ * Capture shape for the Android path.
+ *
+ * 10 fps at 1280 px keeps the bridge traffic (JPEG over the WebView JS bridge,
+ * then re-encoded by WebRTC) inside what a mid-range phone can sustain; a phone
+ * screen is tall and mostly static, so the frame rate matters less than the
+ * resolution. See androidScreenCapture.ts for why the transport looks like this.
+ */
+const ANDROID_CAPTURE_FPS = 10
+const ANDROID_CAPTURE_MAX_WIDTH = 1280
+const ANDROID_CAPTURE_QUALITY = 55
 
 export type LiveShareState = 'idle' | 'capturing' | 'publishing'
 
@@ -107,6 +120,8 @@ let audioCtx: AudioContext | null = null
 let mixer: LiveMixer | null = null
 let displayStream: MediaStream | null = null
 let micStream: MediaStream | null = null
+/** The Android native capture, when the share runs through MediaProjection. */
+let androidCapture: AndroidCaptureHandle | null = null
 /** The mixed track sent to viewers (video + mixed audio). */
 let outVideoTrack: MediaStreamTrack | null = null
 /** The track a viewer is sharing, relayed to every other viewer. */
@@ -171,6 +186,11 @@ function resetSession(): void {
   for (const s of [displayStream, micStream]) {
     s?.getTracks().forEach((t) => t.stop())
   }
+  // Ends the native projection as well; stopping the tracks alone would leave
+  // the foreground service capturing (and the system "screen is shared" badge
+  // showing) with nobody reading the frames.
+  androidCapture?.stop()
+  androidCapture = null
   displayStream = null
   previewStream.value = null
   micStream = null
@@ -289,25 +309,45 @@ export function useLiveShare() {
       shareUrl.value = shareLinks.value[0]?.url ?? window.location.origin + `/share/${data.token}`
       title.value = opts.shareTitle ?? ''
 
-      // 2. Declare the capture source before asking for the stream.
+      // 2. Capture. Two hosts, two mechanisms:
+      //    - Electron declares a source and answers getDisplayMedia with it.
+      //    - Android has no getDisplayMedia at all, so it runs a native
+      //      MediaProjection session and hands back a stream built from its
+      //      frames (see androidScreenCapture.ts). Everything downstream —
+      //      mixing, peers, notes, the room — is identical.
       const bridge = getNative()
-      if (!bridge?.setPendingCaptureSource) {
-        fail('screen capture is unavailable on this host')
-        // The room already exists at this point. Leaving it behind would burn a
-        // slot in maxLiveRooms forever (nothing else deletes a room that never
-        // got a publisher), so end it explicitly.
-        await stop()
-        return false
-      }
-      await bridge.setPendingCaptureSource(opts.sourceId, opts.systemAudio)
-      captureKind.value = opts.sourceId.startsWith('screen:') ? 'screen' : 'window'
-
-      // 3. Capture. The host answers getDisplayMedia with the declared source.
       systemAudioWanted = opts.systemAudio
-      displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: opts.systemAudio,
-      })
+      if (bridge?.startScreenCapture) {
+        androidCapture = await startAndroidScreenCapture({
+          fps: ANDROID_CAPTURE_FPS,
+          maxWidth: ANDROID_CAPTURE_MAX_WIDTH,
+          quality: ANDROID_CAPTURE_QUALITY,
+          systemAudio: opts.systemAudio,
+          // The user can revoke the projection from the system UI; when that
+          // happens the picture is gone and the room must not keep advertising
+          // a live share.
+          onEnded: () => {
+            void stop()
+          },
+        })
+        displayStream = androidCapture.stream
+        captureKind.value = 'screen'
+      } else {
+        if (!bridge?.setPendingCaptureSource) {
+          fail('screen capture is unavailable on this host')
+          // The room already exists at this point. Leaving it behind would burn a
+          // slot in maxLiveRooms forever (nothing else deletes a room that never
+          // got a publisher), so end it explicitly.
+          await stop()
+          return false
+        }
+        await bridge.setPendingCaptureSource(opts.sourceId, opts.systemAudio)
+        captureKind.value = opts.sourceId.startsWith('screen:') ? 'screen' : 'window'
+        displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: opts.systemAudio,
+        })
+      }
       previewStream.value = displayStream
       outVideoTrack = displayStream.getVideoTracks()[0] ?? null
       if (!outVideoTrack) {

@@ -3315,8 +3315,11 @@ const overflowTabs = computed(() =>
     portForwardUnavailable: isPortForwardUnavailable.value,
     forgeHidden: isForgeTabHidden.value,
     // Screen capture is a native capability: a browser tab cannot start a
-    // share, so the tab would only ever show "unsupported".
-    liveUnavailable: !isDesktopApp.value,
+    // share, so the tab would only ever show "unsupported". Android qualifies
+    // too — it captures through MediaProjection instead of getDisplayMedia
+    // (see composables/androidScreenCapture.ts), so the gate is "can this host
+    // capture at all", not "is this the desktop shell".
+    liveUnavailable: !isDesktopApp.value && !getNative()?.startScreenCapture,
   }),
 )
 

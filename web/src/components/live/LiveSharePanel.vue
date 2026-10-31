@@ -37,7 +37,13 @@
 
         <template v-else>
           <div class="live-dialog-section">{{ t('liveShare.pickSource') }}</div>
-          <div v-if="loadingSources" class="live-dialog-hint">
+          <!-- Android: the source is whatever the system dialog ends up
+               mirroring, so there is nothing to pick. Showing a one-tile grid
+               would suggest a choice that does not exist. -->
+          <div v-if="isAndroidCapture" class="live-dialog-hint">
+            {{ t('liveShare.androidCaptureHint') }}
+          </div>
+          <div v-else-if="loadingSources" class="live-dialog-hint">
             <LoadingIndicator size="sm" inline />
           </div>
           <div v-else-if="captureSources.length === 0" class="live-dialog-hint">
@@ -66,6 +72,12 @@
           <div v-if="!systemAudioSupported" class="live-dialog-hint live-dialog-hint--indent">
             {{ t('liveShare.systemAudioUnavailable') }}
           </div>
+          <div
+            v-else-if="isAndroidCapture && withSystemAudio"
+            class="live-dialog-hint live-dialog-hint--indent"
+          >
+            {{ t('liveShare.androidSystemAudioHint') }}
+          </div>
 
           <label class="live-check">
             <input v-model="withMicrophone" type="checkbox" />
@@ -87,29 +99,33 @@
 
           <!-- Joining someone else's share from the desktop client. In a
                browser the same link works, but without screen capture (no
-               secure context over plain HTTP) and without remote control. -->
-          <div class="live-dialog-section">{{ t('liveShare.joinTitle') }}</div>
-          <div class="live-dialog-hint">{{ t('liveShare.joinHint') }}</div>
-          <div class="live-join">
-            <input
-              v-model="joinUrl"
-              class="live-join__input"
-              type="url"
-              :placeholder="t('liveShare.joinPlaceholder')"
-              data-role="join-url"
-              @keydown.enter="joinShare"
-            />
-            <button
-              class="live-btn"
-              type="button"
-              :disabled="!joinUrl.trim()"
-              data-action="join-share"
-              @click="joinShare"
-            >
-              {{ t('liveShare.joinAction') }}
-            </button>
-          </div>
-          <div v-if="joinError" class="live-dialog-error">{{ joinError }}</div>
+               secure context over plain HTTP) and without remote control.
+               Android has no `openShareLink` bridge: the entry would only ever
+               answer "unsupported", so it is not offered there. -->
+          <template v-if="!isAndroidCapture">
+            <div class="live-dialog-section">{{ t('liveShare.joinTitle') }}</div>
+            <div class="live-dialog-hint">{{ t('liveShare.joinHint') }}</div>
+            <div class="live-join">
+              <input
+                v-model="joinUrl"
+                class="live-join__input"
+                type="url"
+                :placeholder="t('liveShare.joinPlaceholder')"
+                data-role="join-url"
+                @keydown.enter="joinShare"
+              />
+              <button
+                class="live-btn"
+                type="button"
+                :disabled="!joinUrl.trim()"
+                data-action="join-share"
+                @click="joinShare"
+              >
+                {{ t('liveShare.joinAction') }}
+              </button>
+            </div>
+            <div v-if="joinError" class="live-dialog-error">{{ joinError }}</div>
+          </template>
         </template>
       </template>
 
@@ -209,7 +225,13 @@
             {{ t('liveShare.chat') }}
             <span v-if="unread > 0" class="live-tools__badge">{{ unread > 9 ? '9+' : unread }}</span>
           </button>
-          <button class="live-btn" type="button" data-action="switch-source" @click="openSwitch">
+          <button
+            v-if="!isAndroidCapture"
+            class="live-btn"
+            type="button"
+            data-action="switch-source"
+            @click="openSwitch"
+          >
             {{ t('liveShare.switchSource') }}
           </button>
         </div>
@@ -561,7 +583,17 @@ const supported = ref(false)
  * IPC — for those the empty list is not a permission problem and saying so would
  * send the user looking in the wrong place.
  */
-const hasNativeCapture = computed(() => Boolean(getNative()?.listCaptureSources))
+const hasNativeCapture = computed(() =>
+  Boolean(getNative()?.listCaptureSources || getNative()?.startScreenCapture),
+)
+/**
+ * Android captures through MediaProjection rather than getDisplayMedia, which
+ * changes the UI in two places: there is exactly one (system-chosen) source, so
+ * the picker and the mid-share swap are meaningless.
+ */
+const isAndroidCapture = computed(() => Boolean(getNative()?.startScreenCapture))
+/** Sentinel source id for the Android path; never rendered as a tile. */
+const ANDROID_SOURCE_ID = 'android:screen'
 const loadingSources = ref(false)
 const starting = ref(false)
 /** 'publishing' = the normal dialog; 'minutes' = the post-share report. */
@@ -779,18 +811,25 @@ async function loadSources(): Promise<void> {
   loadingSources.value = true
   try {
     const [list, sysAudio] = await Promise.all([listCaptureSources(), getAudioCaptureSupport()])
-    captureSources.value = list
+    // Android has no source enumeration: the system consent dialog decides what
+    // gets mirrored. Keep one sentinel entry so "start" is enabled, and let the
+    // template show a sentence instead of a one-tile picker.
+    captureSources.value = isAndroidCapture.value
+      ? [{ id: ANDROID_SOURCE_ID, name: t('liveShare.entireScreen'), kind: 'screen', thumbnail: '' }]
+      : list
     systemAudioSupported.value = sysAudio
     // Default the audio toggle to the platform's capability rather than off:
     // on Windows sharing the system sound is the common case.
     withSystemAudio.value = sysAudio
     supported.value =
       hasNativeCapture.value &&
-      (list.length > 0 || sysAudio || Boolean(navigator.mediaDevices?.getDisplayMedia))
-    if (!selectedSourceId.value && list.length > 0) {
+      (captureSources.value.length > 0 ||
+        sysAudio ||
+        Boolean(navigator.mediaDevices?.getDisplayMedia))
+    if (!selectedSourceId.value && captureSources.value.length > 0) {
       // Prefer a full screen over a window: sharing a window is the exception.
-      const screen = list.find((s) => s.kind === 'screen')
-      selectedSourceId.value = (screen ?? list[0]).id
+      const screen = captureSources.value.find((s) => s.kind === 'screen')
+      selectedSourceId.value = (screen ?? captureSources.value[0]).id
     }
   } catch (e) {
     appLog.e('LiveSharePanel', 'loadSources failed', e)

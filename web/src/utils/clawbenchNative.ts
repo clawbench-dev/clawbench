@@ -53,6 +53,24 @@ export interface ClawBenchNative {
   remoteControlGrant?(viewerId: string): Promise<void> | void
   /** Disarms it. Called on revoke and whenever the share ends. */
   remoteControlRevoke?(): Promise<void> | void
+  /**
+   * Screen capture on Android (MediaProjection).
+   *
+   * The WebView has no `getDisplayMedia`, so the host owns the projection and
+   * exposes it as a pull-based stream: `startScreenCapture` opens the consent
+   * chain, the page polls `getScreenCaptureState` until it turns `running`, and
+   * afterwards pulls one JPEG frame and one PCM chunk per native tick. All of
+   * these are absent on Electron, which uses the capture IPC instead.
+   */
+  isScreenCaptureSupported?(): Promise<boolean> | boolean
+  startScreenCapture?(optionsJson: string): Promise<string> | string
+  stopScreenCapture?(): Promise<void> | void
+  /** JSON: `{ state, error, width, height, systemAudio }`. */
+  getScreenCaptureState?(): Promise<string> | string
+  /** Newest captured frame as base64 JPEG, or "" when none is pending. */
+  takeScreenFrame?(): Promise<string> | string
+  /** Queued 48 kHz stereo 16-bit PCM as base64, or "" when empty. */
+  takeSystemAudio?(): Promise<string> | string
   // Sync (preload / JS-interface local values)
   isNativeApp(): boolean
   /**
