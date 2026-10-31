@@ -10,14 +10,7 @@
 
     <div class="summary-picker">
       <div class="summary-search">
-        <Search :size="14" class="summary-search-icon" />
-        <input
-          v-model="query"
-          class="summary-search-input"
-          type="text"
-          autocomplete="off"
-          :placeholder="t('settings.items.summaryModelSearch')"
-        />
+        <SearchInput v-model="query" :placeholder="t('settings.items.summaryModelSearch')" />
       </div>
 
       <div v-if="loading" class="summary-empty">{{ t('settings.items.providerModelsLoading') }}</div>
@@ -88,8 +81,9 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, Search, Sparkles } from 'lucide-vue-next'
+import { Check, Sparkles } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import { apiGet, apiPatch } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
@@ -265,29 +259,9 @@ function close() {
   gap: var(--space-3);
   min-height: 0;
 }
+/* Gutter only: the field is the shared SearchInput pill. */
 .summary-search {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
   margin: 0 var(--space-6);
-  padding: 0 var(--space-4);
-  height: calc(32 * var(--dp));
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary);
-}
-.summary-search-icon {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-.summary-search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: var(--font-size-md);
 }
 .summary-list {
   display: flex;

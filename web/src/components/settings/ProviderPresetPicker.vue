@@ -20,14 +20,7 @@
 
     <div class="preset-picker">
       <div class="preset-search">
-        <Search :size="14" class="preset-search-icon" />
-        <input
-          v-model="query"
-          class="preset-search-input"
-          type="text"
-          autocomplete="off"
-          :placeholder="t('settings.items.providerPresetSearch')"
-        />
+        <SearchInput v-model="query" :placeholder="t('settings.items.providerPresetSearch')" />
       </div>
 
       <div class="preset-list">
@@ -74,8 +67,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Ban, Boxes, Check, Search } from 'lucide-vue-next'
+import { Ban, Boxes, Check } from 'lucide-vue-next'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 
 export interface PresetOption {
@@ -143,37 +137,20 @@ function choose(preset: PresetOption | null) {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  /* The dialog body has no inset of its own (each shell's slot content owns
-     it), and the sticky search needs a gap above it when the list scrolls. */
-  padding-top: var(--space-4);
 }
-/* Sticky so the list can scroll underneath without losing the filter. */
+/* Sticky so the list can scroll underneath without losing the filter. The
+   field itself is the shared SearchInput pill; this wrapper only owns the
+   gutter, the gap above the field and the sticky offset (a fallthrough class
+   would land on the pill's own root and fight its geometry). It paints the
+   card's own --bg-secondary, not the pill's fill, so the scrolling list
+   disappears behind it instead of showing through. */
 .preset-search {
   position: sticky;
   top: 0;
   z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
   margin: 0 var(--space-6) var(--space-3);
-  padding: 0 var(--space-4);
-  height: calc(32 * var(--dp));
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary);
-}
-.preset-search-icon {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-.preset-search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: var(--font-size-md);
+  padding-top: var(--space-4);
+  background: var(--bg-secondary);
 }
 .preset-list {
   display: flex;

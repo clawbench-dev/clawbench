@@ -258,7 +258,7 @@ describe('SessionDrawer', () => {
 
   it('shows model search input on default model tab', () => {
     const wrapper = mountDrawer()
-    expect(wrapper.find('.model-search-input').exists()).toBe(true)
+    expect(wrapper.find('.model-search-row .search-pill input').exists()).toBe(true)
   })
 
   it('renders model items for the current agent', () => {
@@ -310,7 +310,7 @@ describe('SessionDrawer', () => {
       { id: '["deepseek-official","deepseek-flash"]', name: 'DeepSeek-V41-Flash', default: false },
     ]
     const wrapper = mountDrawer()
-    const input = wrapper.find('.model-search-input')
+    const input = wrapper.find('.model-search-row .search-pill input')
     input.setValue('official/deepseek-v4')
     return wrapper.vm.$nextTick().then(() => {
       const names = wrapper.findAll('.model-row__name').map(n => n.text())

@@ -18,14 +18,7 @@
 
     <div class="models-picker">
       <div class="models-search">
-        <Search :size="14" class="models-search-icon" />
-        <input
-          v-model="query"
-          class="models-search-input"
-          type="text"
-          autocomplete="off"
-          :placeholder="t('settings.items.providerModelsSearch')"
-        />
+        <SearchInput v-model="query" :placeholder="t('settings.items.providerModelsSearch')" />
       </div>
 
       <div class="models-source">
@@ -72,8 +65,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, Layers, Search } from 'lucide-vue-next'
+import { Check, Layers } from 'lucide-vue-next'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
 import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 
@@ -175,29 +169,10 @@ function close() {
   min-height: 0;
   padding-top: var(--space-4);
 }
+/* Gutter only: the field is the shared SearchInput pill (same as every other
+   filter box in the app). */
 .models-search {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
   margin: 0 var(--space-6);
-  padding: 0 var(--space-4);
-  height: calc(32 * var(--dp));
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary);
-}
-.models-search-icon {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-.models-search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: var(--font-size-md);
 }
 .models-source {
   display: flex;

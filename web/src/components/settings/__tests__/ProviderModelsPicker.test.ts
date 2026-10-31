@@ -97,7 +97,7 @@ describe('ProviderModelsPicker', () => {
   it('filters the list', async () => {
     const wrapper = mountPicker([])
     await flushPromises()
-    await wrapper.find('.models-search-input').setValue('m-b')
+    await wrapper.find('.models-search .search-pill input').setValue('m-b')
     expect(wrapper.findAll('.models-row')).toHaveLength(1)
     expect(wrapper.find('.models-id').text()).toBe('m-b')
   })

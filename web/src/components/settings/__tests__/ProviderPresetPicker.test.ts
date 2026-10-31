@@ -61,7 +61,7 @@ describe('ProviderPresetPicker', () => {
 
   it('filters by name, id and endpoint', async () => {
     const wrapper = mountPicker()
-    const search = wrapper.find('.preset-search-input')
+    const search = wrapper.find('.preset-search .search-pill input')
 
     await search.setValue('deep')
     expect(wrapper.findAll('.preset-row[data-preset-id]')).toHaveLength(1)
