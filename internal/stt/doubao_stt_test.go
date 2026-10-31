@@ -26,6 +26,8 @@ func newDoubao(baseURL string) *DoubaoProvider {
 		ResourceID: "volc.seedasr.sauc.duration",
 		BaseURL:    baseURL,
 		HTTPClient: &http.Client{},
+		EnableITN:  true,
+		EnablePunc: true,
 	}
 }
 

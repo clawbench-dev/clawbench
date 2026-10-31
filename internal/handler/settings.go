@@ -111,15 +111,20 @@ var hotReloadFields = map[string]bool{
 	"tts.openai.voice":           true,
 	"tts.openai.stream_mode":     true,
 	// STT — speech-to-text config, hot-reloadable
-	"stt.provider":     true,
-	"stt.base_url":     true,
-	"stt.api_key":      true,
-	"stt.model":        true,
-	"stt.resource_id":  true,
-	"stt.language":     true,
-	"stt.streaming":    true,
-	"stt.chunk_ms":     true,
-	"stt.shortcut_key": true,
+	"stt.provider":          true,
+	"stt.base_url":          true,
+	"stt.api_key":           true,
+	"stt.model":             true,
+	"stt.resource_id":       true,
+	"stt.language":          true,
+	"stt.streaming":         true,
+	"stt.chunk_ms":          true,
+	"stt.shortcut_key":      true,
+	"stt.enable_itn":        true,
+	"stt.enable_punc":       true,
+	"stt.enable_ddc":        true,
+	"stt.output_zh_variant": true,
+	"stt.end_window_size":   true,
 	// Summarize — reconstruct TTS summarizer from shared ai_summary
 	"summarize.tts_backend":     true,
 	"summarize.auto_junk_ratio": true,
@@ -483,15 +488,20 @@ type configAPI struct {
 }
 
 type configSTT struct {
-	Provider    string `json:"provider"`
-	BaseURL     string `json:"base_url"`
-	APIKey      string `json:"api_key"`
-	Model       string `json:"model"`
-	ResourceID  string `json:"resource_id"`
-	Language    string `json:"language"`
-	Streaming   bool   `json:"streaming"`
-	ChunkMs     int    `json:"chunk_ms"`
-	ShortcutKey string `json:"shortcut_key"`
+	Provider        string `json:"provider"`
+	BaseURL         string `json:"base_url"`
+	APIKey          string `json:"api_key"`
+	Model           string `json:"model"`
+	ResourceID      string `json:"resource_id"`
+	Language        string `json:"language"`
+	Streaming       bool   `json:"streaming"`
+	ChunkMs         int    `json:"chunk_ms"`
+	ShortcutKey     string `json:"shortcut_key"`
+	EnableITN       bool   `json:"enable_itn"`
+	EnablePunc      bool   `json:"enable_punc"`
+	EnableDDC       bool   `json:"enable_ddc"`
+	OutputZHVariant string `json:"output_zh_variant"`
+	EndWindowSize   int    `json:"end_window_size"`
 }
 
 type configRAG struct {
@@ -890,6 +900,11 @@ var PatchableConfigPaths = map[string]bool{
 	"stt.streaming":                      true,
 	"stt.chunk_ms":                       true,
 	"stt.shortcut_key":                   true,
+	"stt.enable_itn":                     true,
+	"stt.enable_punc":                    true,
+	"stt.enable_ddc":                     true,
+	"stt.output_zh_variant":              true,
+	"stt.end_window_size":                true,
 	"rag.vector_enabled":                 true,
 	"rag.base_url":                       true,
 	"rag.model":                          true,
@@ -1059,15 +1074,20 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			MaxCacheFiles: cfg.TTS.MaxCacheFiles,
 		},
 		STT: configSTT{
-			Provider:    cfg.STT.Provider,
-			BaseURL:     cfg.STT.BaseURL,
-			APIKey:      cfg.STT.APIKey,
-			Model:       cfg.STT.Model,
-			ResourceID:  cfg.STT.ResourceID,
-			Language:    cfg.STT.Language,
-			Streaming:   cfg.STT.Streaming,
-			ChunkMs:     cfg.STT.ChunkMs,
-			ShortcutKey: cfg.STT.ShortcutKey,
+			Provider:        cfg.STT.Provider,
+			BaseURL:         cfg.STT.BaseURL,
+			APIKey:          cfg.STT.APIKey,
+			Model:           cfg.STT.Model,
+			ResourceID:      cfg.STT.ResourceID,
+			Language:        cfg.STT.Language,
+			Streaming:       cfg.STT.Streaming,
+			ChunkMs:         cfg.STT.ChunkMs,
+			ShortcutKey:     cfg.STT.ShortcutKey,
+			EnableITN:       cfg.STT.EnableITN,
+			EnablePunc:      cfg.STT.EnablePunc,
+			EnableDDC:       cfg.STT.EnableDDC,
+			OutputZHVariant: cfg.STT.OutputZHVariant,
+			EndWindowSize:   cfg.STT.EndWindowSize,
 		},
 		RAG: configRAG{
 			VectorEnabled:  cfg.RAG.VectorEnabled,
@@ -2365,6 +2385,21 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := sttVal["shortcut_key"].(string); ok {
 			cfg.STT.ShortcutKey = v
+		}
+		if v, ok := sttVal["enable_itn"].(bool); ok {
+			cfg.STT.EnableITN = v
+		}
+		if v, ok := sttVal["enable_punc"].(bool); ok {
+			cfg.STT.EnablePunc = v
+		}
+		if v, ok := sttVal["enable_ddc"].(bool); ok {
+			cfg.STT.EnableDDC = v
+		}
+		if v, ok := sttVal["output_zh_variant"].(string); ok {
+			cfg.STT.OutputZHVariant = v
+		}
+		if v, ok := sttVal["end_window_size"].(float64); ok {
+			cfg.STT.EndWindowSize = int(v)
 		}
 	}
 

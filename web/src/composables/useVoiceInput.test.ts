@@ -187,50 +187,131 @@ describe('useVoiceInput', () => {
     await vi.waitFor(() => expect(v.inputText.value).toBe('已输入的文字识别结果'))
   })
 
-  it('streaming start passes chunk_ms as the MediaRecorder timeslice', async () => {
-    const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { 'stt.streaming': true, 'stt.chunk_ms': 500 }
+  // ── streaming (PCM + AudioWorklet) ───────────────────────────────
 
+  interface FakeWS {
+    readyState: number
+    onopen: (() => void) | null
+    onmessage: ((e: { data: string }) => void) | null
+    onerror: (() => void) | null
+    onclose: (() => void) | null
+    send: ReturnType<typeof vi.fn>
+    close: ReturnType<typeof vi.fn>
+  }
+
+  /** Installs fake WebSocket / AudioContext / AudioWorkletNode globals. */
+  function stubStreamingEnv() {
     const track = { stop: vi.fn() }
     const stream = { getTracks: () => [track] }
     vi.stubGlobal('navigator', {
       mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) },
     })
 
-    const startArg: { current: number | undefined } = { current: undefined }
-    vi.stubGlobal('MediaRecorder', class {
-      state = 'recording'
-      ondataavailable: unknown = null
-      onstop: unknown = null
-      start(timeslice?: number) { startArg.current = timeslice; this.state = 'recording' }
-      stop() { this.state = 'inactive' }
-      static isTypeSupported = vi.fn(() => true)
-    })
-
-    let wsInstance: {
-      onopen: (() => void) | null
-      onmessage: unknown
-      onerror: unknown
-      onclose: unknown
-    } | undefined
+    let wsInstance: FakeWS | undefined
     vi.stubGlobal('WebSocket', class {
-      readyState = 1
       static OPEN = 1
+      readyState = 1
       onopen: (() => void) | null = null
-      onmessage: unknown = null
-      onerror: unknown = null
-      onclose: unknown = null
+      onmessage: ((e: { data: string }) => void) | null = null
+      onerror: (() => void) | null = null
+      onclose: (() => void) | null = null
       send = vi.fn()
       close = vi.fn()
-      constructor() { wsInstance = this }
+      constructor() { wsInstance = this as unknown as FakeWS }
     })
+
+    const workletNode = {
+      port: { onmessage: null as ((e: { data: ArrayBuffer }) => void) | null },
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    vi.stubGlobal('AudioWorkletNode', class {
+      port = workletNode.port
+      connect = workletNode.connect
+      disconnect = workletNode.disconnect
+    })
+    const source = { connect: vi.fn(), disconnect: vi.fn() }
+    vi.stubGlobal('AudioContext', class {
+      sampleRate = 16000
+      destination = {}
+      audioWorklet = { addModule: vi.fn().mockResolvedValue(undefined) }
+      createMediaStreamSource = vi.fn(() => source)
+      close = vi.fn().mockResolvedValue(undefined)
+    })
+    vi.stubGlobal('URL', Object.assign(URL, {
+      createObjectURL: vi.fn(() => 'blob:worklet'),
+      revokeObjectURL: vi.fn(),
+    }))
+
+    return {
+      getWS: () => wsInstance,
+      workletNode,
+      track,
+    }
+  }
+
+  it('streaming start sends a start frame with the PCM format and typed text as context', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { 'stt.streaming': true }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start('帮我总结')
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.getWS()!.send).toHaveBeenCalled())
+
+    const first = JSON.parse(env.getWS()!.send.mock.calls[0][0] as string)
+    expect(first.type).toBe('start')
+    expect(first.sampleRate).toBe(16000)
+    expect(first.channels).toBe(1)
+    expect(first.bits).toBe(16)
+    // The text already in the box becomes recognition context.
+    expect(first.context).toBe('帮我总结')
+    v.cancel()
+  })
+
+  it('streaming forwards PCM frames as binary and ends with an end control', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { 'stt.streaming': true }
+    const env = stubStreamingEnv()
 
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
     await v.start()
-    wsInstance!.onopen!()
-    expect(startArg.current).toBe(500)
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
+
+    const frame = new Int16Array([1, 2, 3]).buffer
+    env.workletNode.port.onmessage!({ data: frame })
+    expect(env.getWS()!.send).toHaveBeenCalledWith(frame)
+
+    await v.stop()
+    const last = env.getWS()!.send.mock.calls.at(-1)![0] as string
+    expect(JSON.parse(last)).toEqual({ type: 'end' })
     v.cancel()
+  })
+
+  it('partial messages replace the transcript while keeping the typed prefix', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { 'stt.streaming': true }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start('前缀')
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.getWS()!.send).toHaveBeenCalled())
+
+    env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '你好' }) })
+    expect(v.inputText.value).toBe('前缀你好')
+    // A later revision replaces rather than appends.
+    env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '你好世界' }) })
+    expect(v.inputText.value).toBe('前缀你好世界')
+
+    env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'done', final: '你好世界。' }) })
+    expect(v.inputText.value).toBe('前缀你好世界。')
+    expect(v.state.value).toBe('idle')
   })
 
   it('uses fallback MediaRecorder construction when webm is unsupported', async () => {

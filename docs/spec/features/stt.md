@@ -62,5 +62,6 @@ sequenceDiagram
 - **STTProvider 可替换**：后端通过 `STTProvider` 接口抽象识别引擎，由 `stt.provider` 选择实现，接口只做"给定音频段→返回文本"，不关心流式/非流式——流式控制由 handler 层处理。目前有两个实现：
   - `vllm`（默认）：OpenAI 兼容的 `/v1/audio/transcriptions`，配 `stt.base_url` / `stt.model` / `stt.api_key` / `stt.language`
   - `doubao`：火山引擎豆包 Seed-ASR 极速版（`/api/v3/auc/bigmodel/recognize/flash`）。鉴权头是 `X-Api-Key` + `X-Api-Resource-Id`（**不是** `Authorization: Bearer`），只需配 `stt.api_key` 与 `stt.resource_id`（默认 `volc.seedasr.sauc.duration`，按录音时长计费）；`base_url` / `model` / `language` 对它无效，语言由模型自动识别。音频以 base64 内联提交，容器格式按魔数识别（浏览器录音的 WebM/Opus 可直接识别，无需转码）
+  - **流式**：豆包走真正的双向流式（`wss://.../api/v3/sauc/bigmodel_async`）。浏览器用 AudioWorklet 把麦克风混成 16 kHz 单声道 PCM 逐帧推送（MediaRecorder 只能产出 WebM/Opus，而流式接口只收裸音频帧）；服务端把引擎返回的**累积文本**以 `{"type":"partial"}` 下发，前端整段替换而非拼接——流式识别会不断修正前文，追加会产生重复。vLLM 没有流式能力，仍走「缓存音频 + 定时重识别」的兜底路径（`{"type":"text"}` 增量追加）
   - **判定可用性看响应体而非 HTTP 状态**：豆包对无效 Key / 未授权资源同样返回 HTTP 200，真正结果在 `header.code`（`20000000` 成功；`45000010` Key 无效；`45000030` Key 有效但该资源未授权；`45000006` 音频不可下载）。设置页的连通性测试因此会真的上传一段"你好"语音并要求返回非空文本，而不是只探测端点存活
 - **音频大小限制**：非流式请求 10MB 上限，流式连接 20MB 上限，防止内存溢出

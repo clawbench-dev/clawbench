@@ -406,6 +406,17 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.STT.ResourceID == "" {
 		cfg.STT.ResourceID = "volc.seedasr.sauc.duration"
 	}
+	// Bool zero-value trap: ITN and punctuation default to ON, so only an
+	// explicit value in config.yaml may turn them off.
+	if _, ok := presence["stt.enable_itn"]; !ok {
+		cfg.STT.EnableITN = true
+	}
+	if _, ok := presence["stt.enable_punc"]; !ok {
+		cfg.STT.EnablePunc = true
+	}
+	if cfg.STT.EndWindowSize <= 0 {
+		cfg.STT.EndWindowSize = 800
+	}
 	if cfg.STT.Language == "" {
 		cfg.STT.Language = "zh"
 	}

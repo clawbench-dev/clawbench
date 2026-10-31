@@ -50,16 +50,34 @@ type DoubaoProvider struct {
 	ResourceID string
 	BaseURL    string       // overridable for tests; defaults to DoubaoBaseURL
 	HTTPClient *http.Client // injectable for tests
+
+	// Recognition options shared by the flash and streaming paths.
+	EnableITN       bool   // 数字/日期规范化，默认开
+	EnablePunc      bool   // 标点，默认开
+	EnableDDC       bool   // 语义顺滑（删语气词/重复），默认关
+	OutputZHVariant string // "" | traditional | tw | hk
+	EndWindowSize   int    // 流式 VAD 判停静音阈值(ms)，默认 800
 }
 
 // NewDoubaoProvider creates a Doubao STT provider.
 func NewDoubaoProvider(apiKey, resourceID string) *DoubaoProvider {
 	return &DoubaoProvider{
-		APIKey:     apiKey,
-		ResourceID: resourceID,
-		BaseURL:    DoubaoBaseURL,
-		HTTPClient: &http.Client{Timeout: 120 * time.Second},
+		APIKey:        apiKey,
+		ResourceID:    resourceID,
+		BaseURL:       DoubaoBaseURL,
+		HTTPClient:    &http.Client{Timeout: 120 * time.Second},
+		EnableITN:     true,
+		EnablePunc:    true,
+		EndWindowSize: 800,
 	}
+}
+
+// resourceID returns the configured resource or the duration-billed default.
+func (p *DoubaoProvider) resourceID() string {
+	if p.ResourceID != "" {
+		return p.ResourceID
+	}
+	return DoubaoDefaultResourceID
 }
 
 // doubaoRequest is the flash-endpoint request body.
@@ -79,9 +97,11 @@ type doubaoAudio struct {
 }
 
 type doubaoOptions struct {
-	ModelName  string `json:"model_name"`
-	EnableITN  bool   `json:"enable_itn"`
-	EnablePunc bool   `json:"enable_punc"`
+	ModelName       string `json:"model_name"`
+	EnableITN       bool   `json:"enable_itn"`
+	EnablePunc      bool   `json:"enable_punc"`
+	EnableDDC       bool   `json:"enable_ddc"`
+	OutputZHVariant string `json:"output_zh_variant,omitempty"`
 }
 
 // doubaoResponse is the flash-endpoint response. Success bodies carry only
@@ -114,9 +134,15 @@ func (p *DoubaoProvider) Transcribe(ctx context.Context, audioReader io.Reader, 
 	}
 
 	payload, err := json.Marshal(doubaoRequest{
-		User:    doubaoUser{UID: "clawbench"},
-		Audio:   doubaoAudio{Format: format, Data: base64.StdEncoding.EncodeToString(audio)},
-		Request: doubaoOptions{ModelName: doubaoModelName, EnableITN: true, EnablePunc: true},
+		User:  doubaoUser{UID: "clawbench"},
+		Audio: doubaoAudio{Format: format, Data: base64.StdEncoding.EncodeToString(audio)},
+		Request: doubaoOptions{
+			ModelName:       doubaoModelName,
+			EnableITN:       p.EnableITN,
+			EnablePunc:      p.EnablePunc,
+			EnableDDC:       p.EnableDDC,
+			OutputZHVariant: p.OutputZHVariant,
+		},
 	})
 	if err != nil {
 		return "", fmt.Errorf("stt: encode request: %w", err)
@@ -126,10 +152,7 @@ func (p *DoubaoProvider) Transcribe(ctx context.Context, audioReader io.Reader, 
 	if base == "" {
 		base = DoubaoBaseURL
 	}
-	resourceID := p.ResourceID
-	if resourceID == "" {
-		resourceID = DoubaoDefaultResourceID
-	}
+	resourceID := p.resourceID()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(base, "/")+doubaoFlashPath, bytes.NewReader(payload))
 	if err != nil {

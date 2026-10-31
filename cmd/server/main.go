@@ -2510,7 +2510,13 @@ func hotReloadTerminal(cfg model.Config, port int) {
 // newSTTProvider builds the STT provider from config.
 func newSTTProvider(cfg model.Config) stt.STTProvider {
 	if cfg.STT.Provider == "doubao" {
-		return stt.NewDoubaoProvider(cfg.STT.APIKey, cfg.STT.ResourceID)
+		p := stt.NewDoubaoProvider(cfg.STT.APIKey, cfg.STT.ResourceID)
+		p.EnableITN = cfg.STT.EnableITN
+		p.EnablePunc = cfg.STT.EnablePunc
+		p.EnableDDC = cfg.STT.EnableDDC
+		p.OutputZHVariant = cfg.STT.OutputZHVariant
+		p.EndWindowSize = cfg.STT.EndWindowSize
+		return p
 	}
 	return stt.NewVLLMProvider(cfg.STT.BaseURL, cfg.STT.Model, cfg.STT.APIKey, cfg.STT.Language)
 }

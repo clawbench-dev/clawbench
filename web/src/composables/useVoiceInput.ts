@@ -28,6 +28,63 @@ const isRecording = ref(false)
 let mediaRecorder: MediaRecorder | null = null
 let ws: WebSocket | null = null
 let mediaStream: MediaStream | null = null
+// Text already in the input box when recording started; transcripts are
+// composed as prefix + recognized text.
+let voicePrefix = ''
+// PCM capture for the streaming engine (AudioWorklet).
+let audioCtx: AudioContext | null = null
+let pcmNode: AudioWorkletNode | null = null
+let pcmSource: MediaStreamAudioSourceNode | null = null
+
+/** PCM rate the streaming engine is told to expect. */
+const PCM_SAMPLE_RATE = 16000
+
+/**
+ * AudioWorklet processor: mixes to mono, resamples to `targetRate` with a box
+ * filter and posts 100 ms Int16 frames — the streaming ASR wants raw PCM, and
+ * MediaRecorder can only produce WebM/Opus.
+ *
+ * Kept as source text rather than a separate module so no bundler asset wiring
+ * (and no CSP surprise) is involved: it is loaded from a Blob URL.
+ */
+const PCM_WORKLET_SOURCE = `
+class ClawbenchPcm extends AudioWorkletProcessor {
+  constructor(options) {
+    super()
+    const target = (options.processorOptions && options.processorOptions.targetRate) || 16000
+    this.ratio = sampleRate / target
+    this.acc = 0
+    this.count = 0
+    this.pos = 0
+    this.out = []
+    this.frameSize = Math.round(target / 10)
+  }
+  process(inputs) {
+    const input = inputs[0]
+    if (!input || !input[0]) return true
+    const ch = input[0]
+    for (let i = 0; i < ch.length; i++) {
+      this.acc += ch[i]
+      this.count++
+      this.pos += 1
+      if (this.pos >= this.ratio) {
+        const v = this.acc / this.count
+        this.out.push(Math.max(-32768, Math.min(32767, Math.round(v < 0 ? v * 0x8000 : v * 0x7fff))))
+        this.acc = 0
+        this.count = 0
+        this.pos -= this.ratio
+      }
+    }
+    if (this.out.length >= this.frameSize) {
+      const pcm = Int16Array.from(this.out)
+      this.out = []
+      this.port.postMessage(pcm.buffer, [pcm.buffer])
+    }
+    return true
+  }
+}
+registerProcessor('clawbench-pcm', ClawbenchPcm)
+`
 
 function stopMediaStream() {
   if (mediaStream) {
@@ -63,8 +120,6 @@ export function useVoiceInput() {
     (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.shortcut_key'] as string | undefined ?? 'F9'
   const streaming = () =>
     Boolean((settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.streaming'] ?? false)
-  const chunkMs = () =>
-    Number((settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.chunk_ms'] ?? 1000)
   const language = () =>
     (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.language'] as string | undefined
 
@@ -182,9 +237,10 @@ export function useVoiceInput() {
     }
 
     // A new recording starts fresh — never echo transcriptions from earlier
-    // recordings (appendText would otherwise pile them up with '\n' separators).
-    // `prefix` carries whatever the user already typed, so dictation appends to
-    // it instead of wiping the input box.
+    // recordings (appendText would otherwise pile them up). `prefix` carries
+    // whatever the user already typed, so dictation appends to it instead of
+    // wiping the input box.
+    voicePrefix = prefix
     inputText.value = prefix
 
     if (streaming()) {
@@ -226,45 +282,111 @@ export function useVoiceInput() {
     mediaRecorder.start()
   }
 
+  async function startPcmCapture(): Promise<void> {
+    if (!mediaStream) throw new Error('no media stream')
+    audioCtx = new AudioContext({ sampleRate: PCM_SAMPLE_RATE })
+    // A context created outside a user gesture starts suspended and would feed
+    // nothing to the worklet.
+    if (audioCtx.state === 'suspended') await audioCtx.resume()
+    const url = URL.createObjectURL(new Blob([PCM_WORKLET_SOURCE], { type: 'application/javascript' }))
+    try {
+      await audioCtx.audioWorklet.addModule(url)
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+    pcmSource = audioCtx.createMediaStreamSource(mediaStream)
+    pcmNode = new AudioWorkletNode(audioCtx, 'clawbench-pcm', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      channelCount: 1,
+      processorOptions: { targetRate: PCM_SAMPLE_RATE },
+    })
+    pcmNode.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(e.data)
+    }
+    pcmSource.connect(pcmNode)
+    // The worklet emits silence, but the graph only runs while it reaches the
+    // destination.
+    pcmNode.connect(audioCtx.destination)
+  }
+
+  function stopPcmCapture(): void {
+    if (pcmNode) {
+      pcmNode.port.onmessage = null
+      pcmNode.disconnect()
+      pcmNode = null
+    }
+    if (pcmSource) {
+      pcmSource.disconnect()
+      pcmSource = null
+    }
+    if (audioCtx) {
+      void audioCtx.close().catch(() => { /* already closed */ })
+      audioCtx = null
+    }
+  }
+
   function startStreaming() {
     state.value = 'recording'
     isRecording.value = true
-    const mimeType = pickMimeType()
-    mediaRecorder = new MediaRecorder(mediaStream!, mimeType ? { mimeType } : undefined)
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(e.data)
-      }
-    }
     ws = new WebSocket(wsUrl('/api/stt/transcribe/ws'))
     ws.onmessage = (e) => {
       try {
-        const msg = JSON.parse(e.data as string) as { type?: string; text?: string; final?: string }
-        if (msg.type === 'text' && msg.text) appendText(msg.text)
-        if (msg.type === 'done') {
-          if (msg.final) inputText.value = msg.final
+        const msg = JSON.parse(e.data as string) as {
+          type?: string
+          text?: string
+          final?: string
+          message?: string
+        }
+        if (msg.type === 'partial') {
+          // Whole transcript so far: replace, never append — the engine revises
+          // earlier words as it hears more audio.
+          setPartial(msg.text ?? '')
+        } else if (msg.type === 'text' && msg.text) {
+          // Buffered-engine fallback emits deltas only.
+          appendText(msg.text)
+        } else if (msg.type === 'done') {
+          setPartial(msg.final ?? '')
           finalize()
+        } else if (msg.type === 'error') {
+          fail(msg.message || i18n.global.t('chat.voice.transcribeFailed'))
+          cancel()
         }
       } catch { /* ignore malformed */ }
     }
-    ws.onopen = () => mediaRecorder!.start(chunkMs())
+    ws.onopen = () => {
+      if (!ws) return
+      ws.send(JSON.stringify({
+        type: 'start',
+        sampleRate: PCM_SAMPLE_RATE,
+        channels: 1,
+        bits: 16,
+        context: voicePrefix,
+      }))
+      startPcmCapture().catch((e) => {
+        appLog.e('VoiceInput', 'pcm capture failed', e)
+        fail(i18n.global.t('chat.voice.micUnavailable'))
+        cancel()
+      })
+    }
     ws.onerror = () => {
       fail(i18n.global.t('chat.voice.connectFailed'))
       cancel()
     }
     ws.onclose = () => {
-      if (state.value === 'recording') {
+      if (state.value === 'recording' || state.value === 'transcribing') {
         cancel()
-      }
-    }
-    mediaRecorder.onstop = () => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'end' }))
       }
     }
   }
 
+  /** Replaces the transcript while keeping whatever the user had typed. */
+  function setPartial(text: string) {
+    inputText.value = voicePrefix + text
+  }
+
   function finalize() {
+    stopPcmCapture()
     if (ws) { ws.close(); ws = null }
     stopMediaStream()
     state.value = 'done'
@@ -274,12 +396,20 @@ export function useVoiceInput() {
   }
 
   async function stop() {
+    if (ws) {
+      // Streaming: stop capture first so no frame lands after the end marker.
+      stopPcmCapture()
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'end' }))
+      state.value = 'transcribing'
+      return
+    }
     if (mediaRecorder && mediaRecorder.state === 'recording') {
       mediaRecorder.stop()
     }
   }
 
   function cancel() {
+    stopPcmCapture()
     if (mediaRecorder && mediaRecorder.state === 'recording') {
       try { mediaRecorder.stop() } catch { /* noop */ }
     }

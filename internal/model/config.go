@@ -372,15 +372,21 @@ type BingWallpaperConfig struct {
 
 // STTConfig holds configuration for speech-to-text (voice input).
 type STTConfig struct {
-	Provider    string `yaml:"provider"`     // "vllm" (default) or "doubao" (Volcano Engine Seed-ASR)
-	BaseURL     string `yaml:"base_url"`     // vLLM OpenAI-compatible base URL (default: "http://localhost:8000/v1"); unused by doubao
-	APIKey      string `yaml:"api_key"`      // API key: vLLM bearer token, or the doubao X-Api-Key
-	Model       string `yaml:"model"`        // vLLM recognition model (default: "openai/whisper-large-v3"); unused by doubao
-	ResourceID  string `yaml:"resource_id"`  // doubao purchased resource (default: "volc.seedasr.sauc.duration"); unused by vllm
-	Language    string `yaml:"language"`     // Language code (default: "zh"); doubao auto-detects and ignores it
-	Streaming   bool   `yaml:"streaming"`    // true=streaming incremental, false=non-streaming full (default: false)
-	ChunkMs     int    `yaml:"chunk_ms"`     // Streaming slice interval in ms (default: 1000)
-	ShortcutKey string `yaml:"shortcut_key"` // Recording shortcut (default: "F9")
+	Provider   string `yaml:"provider"`    // "vllm" (default) or "doubao" (Volcano Engine Seed-ASR)
+	BaseURL    string `yaml:"base_url"`    // vLLM OpenAI-compatible base URL (default: "http://localhost:8000/v1"); unused by doubao
+	APIKey     string `yaml:"api_key"`     // API key: vLLM bearer token, or the doubao X-Api-Key
+	Model      string `yaml:"model"`       // vLLM recognition model (default: "openai/whisper-large-v3"); unused by doubao
+	ResourceID string `yaml:"resource_id"` // doubao purchased resource (default: "volc.seedasr.sauc.duration"); unused by vllm
+	Language   string `yaml:"language"`    // Language code (default: "zh"); doubao auto-detects and ignores it
+	// doubao recognition options (ignored by vllm)
+	EnableITN       bool   `yaml:"enable_itn"`        // Normalize numbers/dates to written form (default: true)
+	EnablePunc      bool   `yaml:"enable_punc"`       // Add punctuation (default: true)
+	EnableDDC       bool   `yaml:"enable_ddc"`        // Semantic smoothing: drop filler words and repeats (default: false)
+	OutputZHVariant string `yaml:"output_zh_variant"` // "" | traditional | tw | hk (default: "")
+	EndWindowSize   int    `yaml:"end_window_size"`   // Streaming VAD silence threshold in ms (default: 800)
+	Streaming       bool   `yaml:"streaming"`         // true=streaming incremental, false=non-streaming full (default: false)
+	ChunkMs         int    `yaml:"chunk_ms"`          // Streaming slice interval in ms (default: 1000)
+	ShortcutKey     string `yaml:"shortcut_key"`      // Recording shortcut (default: "F9")
 }
 
 // FileSearchConfig holds configuration for the file search feature.
