@@ -274,20 +274,6 @@
       </div>
     </PopupMenu>
 
-    <!-- Voice notes. Sits where the share button used to be: the share itself
-         moved into the dock (it is a workspace), but a one-tap "record my
-         voice" entry still belongs in the header. -->
-    <button
-      v-if="canSoloNotes"
-      class="theme-quick-toggle"
-      :title="t('liveShare.solo.button')"
-      :aria-label="t('liveShare.solo.button')"
-      data-action="solo-notes"
-      @click="soloNotesOpen = true"
-    >
-      <Mic :size="18" />
-    </button>
-
     <!-- Server button: merged gauge + status dot. Icon color reflects connection status -->
     <button ref="serverBtnRef" class="server-toggle" :class="[statusDotClass, { 'pressure-alert': isUnderPressure && showMetricIcon }]" @click="toggleResourcesMenu" :title="t('systemResources.title')">
       <Server v-if="!isUnderPressure || !showMetricIcon" :size="18" />
@@ -306,8 +292,6 @@
       @close="serverSwitchOpen = false"
       @logout="handleLogout"
     />
-
-    <SoloNotesDialog :open="soloNotesOpen" @close="soloNotesOpen = false" />
 
     <!-- App-drawn window controls (frameless desktop shell, Windows/Linux).
          Present only when the window has no native frame, so the two can never
@@ -361,7 +345,7 @@
 </template>
 
 <script setup lang="ts">
-import { Mic, Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Minus } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Minus } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -374,7 +358,6 @@ import { setPendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import SystemResourcesPanel from '@/components/common/SystemResourcesPanel.vue'
 import ServerSwitchDialog from '@/components/common/ServerSwitchDialog.vue'
-import SoloNotesDialog from '@/components/live/SoloNotesDialog.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import HintTooltip from '@/components/common/HintTooltip.vue'
@@ -405,12 +388,6 @@ const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
 const { isAppMode, isDesktopApp } = useAppMode()
 
-// Voice notes (solo dictation): microphone only, no room, no link. Offered
-// wherever getUserMedia exists — i.e. the desktop shell and a browser on a
-// secure origin. Hidden in the Android app, where the WebView microphone needs
-// a runtime permission this build does not request yet.
-const canSoloNotes = computed(() => !isAppMode.value || isDesktopApp.value)
-const soloNotesOpen = ref(false)
 const {
   hasCustomControls,
   isMaximized: isWindowMaximized,
@@ -1247,47 +1224,6 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     height: calc(22 * var(--dp));
     border-radius: 50%;
     flex-shrink: 0;
-}
-
-/*
- * Geometry comes from .theme-quick-toggle, but the margin does NOT: that class
- * carries `margin-left: auto` to push the right-hand cluster against the edge,
- * which would strand this button in the middle of the header now that it sits
- * between the theme picker and the server button.
- *
- * -8dp is the gap the server button already uses to tuck up against its
- * neighbour, so the theme → share → server rhythm matches the old
- * theme → server rhythm instead of inventing a third spacing. Both neighbours
- * must therefore end up with the SAME margin: an asymmetric pair shows up as
- * one visibly wider gap (measured 61px vs 50px centre-to-centre on a 543px
- * header, i.e. the full 8dp).
- *
- * The `.header` prefix is load-bearing, not decoration. `.header--has-meter
- * .theme-quick-toggle` is (0,2,0) and sits LATER in this file, and the share
- * button carries `.theme-quick-toggle` too — so it matched that rule and
- * silently took `margin-left: 0` instead of -8dp whenever the usage capsule was
- * on screen. Doubling the class alone (also (0,2,0)) is not enough; the extra
- * ancestor takes this rule to (0,3,0) so it wins by specificity rather than by
- * source order. headerClusterSpacing.test.ts pins that.
- */
-.header .theme-quick-toggle.live-share-toggle {
-    margin-left: calc(-8 * var(--dp));
-    position: relative;
-}
-
-/* A live share keeps running after the dialog closes, so the button has to say
-   so. The dot is a pseudo-element rather than a nested span to avoid adding
-   markup to a flex-centred button. */
-.live-share-toggle--active::after {
-    content: '';
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--color-red, #cf222e);
-    box-shadow: 0 0 0 2px var(--bg-primary, #fff);
 }
 
 @media (hover: hover) {

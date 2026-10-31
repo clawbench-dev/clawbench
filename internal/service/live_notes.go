@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -897,6 +898,237 @@ func writeLiveNotesTranscript(paths LiveNotesPaths, target, heading, note, title
 		return "", fmt.Errorf("live notes: write transcript file: %w", err)
 	}
 	return target, nil
+}
+
+// ── History ─────────────────────────────────────────────────────────────────
+
+// ErrLiveNoteSessionNotFound is returned for a meeting folder that is not
+// there (or whose name is not a folder name this package produced).
+var ErrLiveNoteSessionNotFound = errors.New("live notes: session not found")
+
+// ErrLiveNoteArtifactKind is returned for an artifact name outside the three
+// known kinds.
+var ErrLiveNoteArtifactKind = errors.New("live notes: unknown artifact kind")
+
+// ErrLiveNoteArtifactTooLarge bounds one artifact read. Minutes and transcripts
+// are text produced by a model; anything past this is a corrupt file, not a
+// meeting.
+var ErrLiveNoteArtifactTooLarge = errors.New("live notes: artifact too large")
+
+// liveNoteArtifactMaxBytes is the read cap for one artifact.
+const liveNoteArtifactMaxBytes = 4 << 20
+
+// liveNoteDirPattern matches the folder names EnsureLiveNotesDir produces:
+// `<YYYY-MM-DD-HHMM>[-<slug>]-<token6>`. Anything else under the notes root is
+// somebody else's directory and is left alone.
+var liveNoteDirPattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}-\d{4}(?:-.+)?$`)
+
+// liveNoteTokenSuffix matches the trailing share-token fragment. The token is
+// hex (liveshare.NewToken), and only its first six characters are kept.
+var liveNoteTokenSuffix = regexp.MustCompile(`-[0-9a-f]{6}$`)
+
+// liveNoteStartedAtPattern is the timestamp prefix of a folder name.
+const liveNoteStartedAtPattern = "2006-01-02-1504"
+
+// LiveNoteSession is one meeting folder found on disk.
+//
+// The database rows expire after the retention window; the folders do not. That
+// is why history is read from disk: it is the copy the user actually owns, and
+// it is the only one that survives a cleanup.
+type LiveNoteSession struct {
+	// Dir is the folder name inside the notes root. It is the session's id.
+	Dir string `json:"dir"`
+	// DirPath is the absolute folder path (publisher only: it is a path on the
+	// publisher's disk, and only the publisher's UI opens files from it).
+	DirPath string `json:"dirPath"`
+	// Title is the slug embedded in the folder name, with the share token
+	// stripped. Empty when the meeting was recorded without a title.
+	Title string `json:"title"`
+	// StartedAt is the meeting start encoded in the folder name, in unix
+	// milliseconds. 0 when the name does not parse (a hand-made folder).
+	StartedAt int64 `json:"startedAt"`
+	// UpdatedAt is the folder's mtime: the last time anything was written.
+	UpdatedAt     int64 `json:"updatedAt"`
+	HasMinutes    bool  `json:"hasMinutes"`
+	HasTranscript bool  `json:"hasTranscript"`
+	HasRevised    bool  `json:"hasRevised"`
+	// AudioFiles counts the recorded segments, so the list can say "12 段录音"
+	// without opening the folder.
+	AudioFiles int `json:"audioFiles"`
+}
+
+// ListLiveNoteSessions returns the meeting folders of a project, newest first.
+//
+// A missing notes root is not an error: a project that has never recorded
+// anything simply has no history.
+func ListLiveNoteSessions(projectPath string) ([]LiveNoteSession, error) {
+	out := make([]LiveNoteSession, 0, 8)
+	if strings.TrimSpace(projectPath) == "" {
+		return out, nil
+	}
+	root := liveNotesRoot(projectPath)
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return out, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("live notes: list history: %w", err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !liveNoteDirPattern.MatchString(e.Name()) {
+			continue
+		}
+		session, statErr := liveNoteSessionOf(root, e.Name())
+		if statErr != nil {
+			// The folder vanished between ReadDir and Stat (or is unreadable).
+			// One bad entry must not hide the rest of the history.
+			continue
+		}
+		out = append(out, session)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		left, right := out[i].sortKey(), out[j].sortKey()
+		if left != right {
+			return left > right
+		}
+		return out[i].Dir > out[j].Dir
+	})
+	return out, nil
+}
+
+// sortKey is the ordering timestamp: the meeting start when the folder name
+// carries one, else the last write.
+func (s LiveNoteSession) sortKey() int64 {
+	if s.StartedAt > 0 {
+		return s.StartedAt
+	}
+	return s.UpdatedAt
+}
+
+func ReadLiveNoteArtifact(projectPath, dir, kind string) (string, error) {
+	if !validLiveNoteDirName(dir) {
+		return "", ErrLiveNoteSessionNotFound
+	}
+	var name string
+	switch kind {
+	case "minutes":
+		name = "minutes.md"
+	case "transcript":
+		name = "transcript.md"
+	case "revised":
+		name = "transcript-revised.md"
+	default:
+		return "", ErrLiveNoteArtifactKind
+	}
+	full := filepath.Join(liveNotesRoot(projectPath), dir, name)
+	info, err := os.Stat(full)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", ErrLiveNoteSessionNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("live notes: stat artifact: %w", err)
+	}
+	if info.IsDir() {
+		return "", ErrLiveNoteSessionNotFound
+	}
+	if info.Size() > liveNoteArtifactMaxBytes {
+		return "", ErrLiveNoteArtifactTooLarge
+	}
+	body, err := os.ReadFile(full)
+	if err != nil {
+		return "", fmt.Errorf("live notes: read artifact: %w", err)
+	}
+	return string(body), nil
+}
+
+// liveNotesRoot is the per-project folder holding every meeting.
+func liveNotesRoot(projectPath string) string {
+	return filepath.Join(projectPath, filepath.FromSlash(LiveNotesDir))
+}
+
+// validLiveNoteDirName accepts only a single path element shaped like a folder
+// this package created.
+func validLiveNoteDirName(dir string) bool {
+	if dir == "" || dir != filepath.Base(dir) || dir == "." || dir == ".." {
+		return false
+	}
+	return liveNoteDirPattern.MatchString(dir)
+}
+
+// liveNoteSessionOf stats one folder and derives its metadata.
+func liveNoteSessionOf(root, dir string) (LiveNoteSession, error) {
+	full := filepath.Join(root, dir)
+	info, err := os.Stat(full)
+	if err != nil {
+		return LiveNoteSession{}, err
+	}
+	session := LiveNoteSession{
+		Dir:       dir,
+		DirPath:   full,
+		Title:     liveNoteTitleFromDirName(dir),
+		StartedAt: liveNoteStartedAt(dir),
+		UpdatedAt: info.ModTime().UnixMilli(),
+	}
+	paths := liveNotesPathsFor(full)
+	session.HasMinutes = fileExists(paths.Minutes)
+	session.HasTranscript = fileExists(paths.Transcript)
+	session.HasRevised = fileExists(paths.Revised)
+	session.AudioFiles = countLiveNoteAudio(paths.Audio)
+	return session, nil
+}
+
+// liveNoteTitleFromDirName recovers the title from `<date>[-<slug>]-<token6>`.
+//
+// The slug is the sanitized title (see liveNotesFileSlug), so it is what the
+// user typed minus characters that cannot live in a path element. The trailing
+// token is stripped; a title that itself ends in six hex characters loses them,
+// which is a cosmetic loss on a display label only.
+func liveNoteTitleFromDirName(dir string) string {
+	rest := dir
+	if len(rest) > len(liveNoteStartedAtPattern) {
+		rest = rest[len(liveNoteStartedAtPattern):]
+	} else {
+		rest = ""
+	}
+	// Order matters: the token suffix is stripped first, because a folder with
+	// no slug is `<date>-<token6>` — trimming the leading dash first would eat
+	// the separator the suffix pattern needs.
+	rest = liveNoteTokenSuffix.ReplaceAllString(rest, "")
+	rest = strings.TrimPrefix(rest, "-")
+	return strings.TrimSpace(rest)
+}
+
+// liveNoteStartedAt parses the timestamp prefix of a folder name.
+func liveNoteStartedAt(dir string) int64 {
+	if len(dir) < len(liveNoteStartedAtPattern) {
+		return 0
+	}
+	started, err := time.ParseInLocation(liveNoteStartedAtPattern, dir[:len(liveNoteStartedAtPattern)], time.Local)
+	if err != nil {
+		return 0
+	}
+	return started.UnixMilli()
+}
+
+// fileExists reports whether path is a regular file.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+// countLiveNoteAudio counts the recorded segments in one meeting folder.
+func countLiveNoteAudio(audioDir string) int {
+	entries, err := os.ReadDir(audioDir)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".webm") {
+			n++
+		}
+	}
+	return n
 }
 
 // liveNotesFileSlug turns a share title into a safe single path element.

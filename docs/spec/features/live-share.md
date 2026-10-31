@@ -223,7 +223,13 @@ getDisplayMedia
 
 桌面共享不再是顶栏的一个弹窗，而是**左栏 Dock 的一个页签**（在「端口映射」前面）：链接、观众、发言授权、成员共享、实时转写、会后纪要都在这一个面板里，切走再切回不中断共享。页签在共享期间标红（`is-live`），面板头部有 LIVE 标记，所以离开页签也看得出还在直播。
 
-**语音听记**（单人）是独立的入口：顶栏麦克风按钮，只录自己的麦克风，不建房间、不生成链接。它复用同一条听记流水线——服务端生成一个 token 并写入 `live_notes`，之后的分段上传、上下文校对、纪要与产物落盘全部照旧，鉴权依据是那一行而不是房间。
+**AI 听记**同样是 Dock 的一个页签（在「桌面共享」前面），不是一个弹窗：上面是录音区（标题、开始/停止、实时转写、会后纪要），下面是**历史纪要**。切走再切回不中断录音，页签在录音期间标红。
+
+顶栏**没有**听记入口：Dock 页签是唯一入口。共享按钮当初从顶栏搬进 Dock 时留下了一个麦克风按钮占位，后来又被改成「快捷入口」，结果是顶栏出现两个同款按钮、间距被 `margin-left: auto` 平分。现在两个按钮都只在 Dock 里，顶栏右侧回到「主题 → 服务器」这一对（`headerClusterSpacing.test.ts` 钉住这条）。
+
+听记页签的可见性与共享页签**不同**：它只需要 `getUserMedia`，浏览器标签页、桌面端和 **Android App 都能用**（安卓壳已声明 `RECORD_AUDIO` 并在 `onPermissionRequest` 里只授权 `AUDIO_CAPTURE`，与输入框的语音转写同一条权限链）。共享页签仍然只在桌面端出现，因为屏幕采集是原生能力。
+
+**单人听记**与会议听记共用这个页签和同一条流水线：不建房间、不生成链接，服务端只生成一个 token 并写入 `live_notes`，之后的分段上传、上下文校对、纪要与产物落盘全部照旧，鉴权依据是那一行而不是房间。
 
 ## AI 听记
 
@@ -293,6 +299,8 @@ viewer:<id> 每个观众的麦克风，一人一条
         ←─ { id, text }                     服务端用 STT provider 同步转写后落库
 观众    ── GET /api/share/{token}/notes?since=<maxId>   （公开，token 即凭证，面板展开时才轮询）
 发布端  ── POST /api/live-share/notes/minutes           （异步生成，轮询 GET 取状态）
+发布端  ── GET  /api/live-share/notes/sessions          （历史：磁盘上的会议目录）
+发布端  ── GET  /api/live-share/notes/sessions/artifact （历史：读某个目录的 Markdown）
 ```
 
 - **鉴权**：发布端三个端点需登录 + 项目 cookie。token 归属判定接受两种来源：房间还在（`room.ProjectKey() == 项目`），或**已有本项目的听记行**——后者让「结束共享」瞬间的最后一段上传与纪要请求仍能落地（房间随发布端断开立刻销毁）。
@@ -300,6 +308,15 @@ viewer:<id> 每个观众的麦克风，一人一条
 - **保留期**：数据库里的转写与纪要按 token 保留 **7 天**，由房间回收器每小时顺带清理；磁盘上的会议目录**永久保留**，只能由用户删除。
 - **纪要生成**：修订版转写超过 6000 字时先分段提取要点，再合并成纪要（map-reduce），避免整段塞进模型窗口被截断。
 - **落盘**：见上面的「产物」一节。纪要生成后写 `minutes.md`，同时把两份转写和录音留在同一目录；同一场共享重新生成会覆盖同名文件而不是堆副本。
+
+### 历史纪要（页签下半部分）
+
+历史读的是**磁盘上的会议目录**，不是 `live_notes` 表：表行 7 天后清理，目录永久保留。页签要列的是用户还拥有的东西，不是数据库还记得的东西。
+
+- `GET /api/live-share/notes/sessions` 扫描 `<项目>/.clawbench/notes/`，按会议开始时间倒序。只认 `<YYYY-MM-DD-HHMM>[-<标题>]-<token6>` 形状的目录；标题从目录名解析（尾部 token 剥掉），没有标题时显示「未命名听记」。目录从第一段录音就存在，所以「有录音但还没有纪要」是正常状态，行上会标出来。
+- `GET /api/live-share/notes/sessions/artifact?dir=&kind=` 读 `minutes.md` / `transcript.md` / `transcript-revised.md`。`dir` 是目录**名**不是路径，服务端按目录名形状校验，越权取值一律 404，读不到 notes 根目录之外的文件。
+- 「在编辑器中打开」走前端已有的文件查看器，传目录里那个文件的绝对路径。
+- 每次切到页签、以及录音结束后都会重读一次，另有手动刷新按钮。
 
 ### 隐私
 
@@ -324,10 +341,11 @@ viewer:<id> 每个观众的麦克风，一人一条
 | `internal/liveshare/talk.go` | 发言授权状态机 |
 | `internal/liveshare/signal.go` | 协议结构体（与前端镜像） |
 | `internal/handler/live_share.go` | HTTP/WS 绑定、鉴权切分、信令转发 |
-| `internal/handler/live_notes.go` | 听记上传 / 读取 / 纪要端点、STT 并发闸门 |
-| `internal/service/live_notes.go` | 听记落库、时间线重排与去重、产物落盘、上下文修订、纪要生成 |
+| `internal/handler/live_notes.go` | 听记上传 / 读取 / 纪要端点、历史列表与产物读取、STT 并发闸门 |
+| `internal/service/live_notes.go` | 听记落库、时间线重排与去重、产物落盘、历史目录扫描、上下文修订、纪要生成 |
 | `web/src/composables/liveNotes.ts` | 分信道录音（纯逻辑，可单测） |
 | `web/src/composables/useLiveNotes.ts` | 听记响应式状态、上传与纪要轮询 |
+| `web/src/components/live/NotesPanel.vue` | 听记页签：录音区 + 实时转写 + 纪要 + 历史纪要列表 |
 | `web/src/share/liveNotesClient.ts` | 观众端听记轮询 |
 | `web/src/composables/useLiveShare.ts` | 发布端：房间、采集、每观众 PeerConnection |
 | `web/src/composables/useLiveMixer.ts` | 混音图（纯逻辑，可单测） |

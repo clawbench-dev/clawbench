@@ -220,6 +220,16 @@
                   />
                 </TabPanel>
 
+                <!-- AI 听记 Tab (voice notes + the minutes past recordings left
+                     behind). Sits next to screen sharing: both record a
+                     conversation, but this one needs only a microphone. -->
+                <TabPanel tabId="notes" :activeTab="leftPanelActive" :noHeader="true">
+                  <NotesPanel
+                    :active="panelIsActive('notes')"
+                    @open-file="handleTaskOpenFile"
+                  />
+                </TabPanel>
+
                 <!-- Desktop sharing Tab (screen share + meeting controls).
                      Sits next to port forwarding: both are "connections this
                      machine offers to other machines". -->
@@ -639,6 +649,11 @@ import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
 const LiveSharePanel = defineAsyncComponent(
   buildAsyncComponentOptions({ loader: () => import('./components/live/LiveSharePanel.vue') }),
 )
+// AI 听记: a dictaphone plus the archive of past minutes. Needs a microphone,
+// not screen capture, so unlike sharing it is offered to browser tabs too.
+const NotesPanel = defineAsyncComponent(
+  buildAsyncComponentOptions({ loader: () => import('./components/live/NotesPanel.vue') }),
+)
 import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AnimatedWallpaper from './components/AnimatedWallpaper.vue'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
@@ -701,6 +716,7 @@ import { useSoftKeyboard } from './composables/useSoftKeyboard.ts'
 import { useVisualViewportInset } from './composables/useVisualViewportInset.ts'
 import { usePortForward } from './composables/usePortForward.ts'
 import { useLiveShare } from './composables/useLiveShare.ts'
+import { useLiveNotes } from './composables/useLiveNotes.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
@@ -1969,6 +1985,10 @@ const { isAppMode, isDesktopApp } = useAppMode()
 // in both dock variants.
 const liveShareState = useLiveShare().state
 const liveShareActive = computed(() => liveShareState.value !== 'idle')
+// Same treatment for a running dictation: a red icon in the dock is how the
+// user notices they left the recorder on after switching tabs.
+const notesPhase = useLiveNotes().phase
+const notesRecording = computed(() => notesPhase.value === 'recording')
 const { syncToNative, sshInfo, loadSSHInfo, transportAllowsH2 } = usePortForward()
 const { terminalRuntimeEnabled, platformSupported, loadTerminalStatus } = useTerminalStatus()
 // Port forwarding is unusable only when NEITHER wire can carry it: the SSH
@@ -3400,6 +3420,7 @@ function dockInlineOverflowBtnClass(tab: string) {
   return {
     active: activeTab.value === tab,
     'is-live': tab === 'live' && liveShareActive.value,
+    'is-recording': tab === 'notes' && notesRecording.value,
     'has-unread': tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab.value !== 'tasks',
     'just-completed': tab === 'tasks' && store.state.taskJustCompleted && activeTab.value !== 'tasks',
     'has-running': tab === 'tasks' && store.state.taskRunning && activeTab.value !== 'tasks',
@@ -3638,6 +3659,7 @@ function wideDockBtnClass(tab: string) {
     // When the left pane is collapsed no dock tab is active (VS Code-style).
     active: leftTab.value === tab && !leftCollapsed.value,
     'is-live': tab === 'live' && liveShareActive.value,
+    'is-recording': tab === 'notes' && notesRecording.value,
     'has-unread': tab === 'tasks' && store.state.taskUnreadCount > 0 && leftTab.value !== 'tasks',
     'just-completed': tab === 'tasks' && store.state.taskJustCompleted && leftTab.value !== 'tasks',
     'has-running': tab === 'tasks' && store.state.taskRunning && leftTab.value !== 'tasks',
@@ -5192,6 +5214,12 @@ onUnmounted(() => {
 /* A share is on air. Tinted rather than badged: there is no count to show, and
    the red is the same one the panel header uses for its LIVE marker. */
 .dock-btn.is-live {
+  color: var(--color-red, #cf222e);
+}
+
+/* A running dictation gets the same treatment as a live share: red icon, so a
+   forgotten recorder is visible from the dock. */
+.dock-btn.is-recording {
   color: var(--color-red, #cf222e);
 }
 

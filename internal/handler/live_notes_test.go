@@ -1040,3 +1040,65 @@ func TestServeLiveShareNoteSegment_MalformedMultipartIs400(t *testing.T) {
 	ServeLiveShareNoteSegment(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+// ── History endpoints ───────────────────────────────────────────────────────
+
+func liveNotesProjectRequest(t *testing.T, target, project string) *http.Request {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.AddCookie(&http.Cookie{
+		Name:  model.ScopedCookieName("clawbench_project"),
+		Value: url.QueryEscape(project),
+	})
+	return req
+}
+
+func TestServeLiveNotesSessions_ListsTheProjectsFolders(t *testing.T) {
+	setupLiveNotesDB(t)
+	project := t.TempDir()
+	dir := filepath.Join(project, filepath.FromSlash(service.LiveNotesDir), "2026-10-31-1732-周会-a1b2c3")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "minutes.md"), []byte("MINUTES"), 0o644))
+
+	rec := httptest.NewRecorder()
+	ServeLiveNotesSessions(rec, liveNotesProjectRequest(t, "/api/live-share/notes/sessions", project))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body struct {
+		Sessions []service.LiveNoteSession `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Sessions, 1)
+	assert.Equal(t, "周会", body.Sessions[0].Title)
+	assert.True(t, body.Sessions[0].HasMinutes)
+}
+
+func TestServeLiveNotesArtifact_ServesMinutesAndRejectsEscape(t *testing.T) {
+	setupLiveNotesDB(t)
+	project := t.TempDir()
+	dirName := "2026-10-31-1732-周会-a1b2c3"
+	dir := filepath.Join(project, filepath.FromSlash(service.LiveNotesDir), dirName)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "minutes.md"), []byte("MINUTES"), 0o644))
+
+	rec := httptest.NewRecorder()
+	ServeLiveNotesArtifact(rec, liveNotesProjectRequest(t,
+		"/api/live-share/notes/sessions/artifact?dir="+url.QueryEscape(dirName), project))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "minutes", body["kind"], "an omitted kind defaults to the minutes")
+	assert.Equal(t, "MINUTES", body["content"])
+
+	// A folder name is not a path: a traversal attempt is answered as "not
+	// found" rather than by reading something outside the notes root.
+	rec = httptest.NewRecorder()
+	ServeLiveNotesArtifact(rec, liveNotesProjectRequest(t,
+		"/api/live-share/notes/sessions/artifact?dir=..%2F..%2Fetc", project))
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	rec = httptest.NewRecorder()
+	ServeLiveNotesArtifact(rec, liveNotesProjectRequest(t,
+		"/api/live-share/notes/sessions/artifact?dir="+url.QueryEscape(dirName)+"&kind=audio", project))
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}

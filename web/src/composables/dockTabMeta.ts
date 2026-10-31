@@ -11,6 +11,7 @@ import {
   Github,
   Inbox,
   MonitorUp,
+  NotebookPen,
 } from 'lucide-vue-next'
 import { DOCK_TABS, type DockTabId, type DockTabDescriptor } from '@/composables/dockTabs'
 
@@ -35,6 +36,10 @@ const DOCK_TAB_ICONS: Record<DockTabId, Component> = {
   // and imply the unread state the log deliberately does not have.
   notifications: Inbox,
   terminal: TerminalIcon,
+  // A notebook with a pen, not a microphone: the tab is both the dictaphone and
+  // the archive of what past recordings produced, and the microphone glyph is
+  // already the header's one-tap "start recording" entry.
+  notes: NotebookPen,
   live: MonitorUp,
   proxy: Network,
   stats: BarChart3,

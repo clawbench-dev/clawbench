@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"io"
@@ -745,4 +746,131 @@ func TestCleanupLiveNotes_SkipsShareRefreshedAfterTheScan(t *testing.T) {
 	rows, err := ListLiveNoteSegments("tok", 0)
 	require.NoError(t, err)
 	assert.Len(t, rows, 1)
+}
+
+// ── History ─────────────────────────────────────────────────────────────────
+
+// writeMeetingFolder lays out one meeting folder the way the writer does, so
+// the history reader is tested against the real layout rather than a guess.
+func writeMeetingFolder(t *testing.T, project, name string, files map[string]string) string {
+	t.Helper()
+	dir := filepath.Join(project, filepath.FromSlash(LiveNotesDir), name)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "audio"), 0o755))
+	for file, body := range files {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, file), []byte(body), 0o644))
+	}
+	return dir
+}
+
+func TestListLiveNoteSessions_NewestFirstWithTitleAndArtifacts(t *testing.T) {
+	project := t.TempDir()
+	writeMeetingFolder(t, project, "2026-10-30-0900-晨会-111111", map[string]string{
+		"minutes.md": "# 晨会 · 2026-10-30 09:00\n",
+	})
+	writeMeetingFolder(t, project, "2026-10-31-1732-周会-a1b2c3", map[string]string{
+		"minutes.md":            "# 周会 · 2026-10-31 17:32\n",
+		"transcript.md":         "# 转写 · 周会\n",
+		"transcript-revised.md": "# 修订版转写 · 周会\n",
+	})
+	require.NoError(t, os.WriteFile(
+		filepath.Join(project, filepath.FromSlash(LiveNotesDir), "2026-10-31-1732-周会-a1b2c3", "audio", "001-mic.webm"),
+		[]byte("x"), 0o644,
+	))
+
+	sessions, err := ListLiveNoteSessions(project)
+	require.NoError(t, err)
+	require.Len(t, sessions, 2)
+
+	newest := sessions[0]
+	assert.Equal(t, "2026-10-31-1732-周会-a1b2c3", newest.Dir)
+	// The share token is stripped: the user typed "周会", not "周会-a1b2c3".
+	assert.Equal(t, "周会", newest.Title)
+	assert.True(t, newest.HasMinutes)
+	assert.True(t, newest.HasTranscript)
+	assert.True(t, newest.HasRevised)
+	assert.Equal(t, 1, newest.AudioFiles)
+	assert.Positive(t, newest.StartedAt)
+	assert.True(t, filepath.IsAbs(newest.DirPath))
+
+	older := sessions[1]
+	assert.Equal(t, "晨会", older.Title)
+	assert.True(t, older.HasMinutes)
+	assert.False(t, older.HasTranscript)
+	assert.Zero(t, older.AudioFiles)
+	// Sorted by meeting start, not by name: "1" sorts before "2" as text.
+	assert.Greater(t, newest.sortKey(), older.sortKey())
+}
+
+func TestListLiveNoteSessions_NoRootIsEmptyNotAnError(t *testing.T) {
+	sessions, err := ListLiveNoteSessions(t.TempDir())
+	require.NoError(t, err)
+	assert.Empty(t, sessions)
+}
+
+func TestListLiveNoteSessions_IgnoresFoldersItDidNotCreate(t *testing.T) {
+	project := t.TempDir()
+	root := filepath.Join(project, filepath.FromSlash(LiveNotesDir))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "scratch"), 0o755))
+	writeMeetingFolder(t, project, "2026-10-31-1732-a1b2c3", nil) // no title: token only
+
+	sessions, err := ListLiveNoteSessions(project)
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Empty(t, sessions[0].Title, "a folder with no slug has no title to show")
+	assert.False(t, sessions[0].HasMinutes)
+}
+
+func TestReadLiveNoteArtifact_ReturnsEachKind(t *testing.T) {
+	project := t.TempDir()
+	writeMeetingFolder(t, project, "2026-10-31-1732-周会-a1b2c3", map[string]string{
+		"minutes.md":            "MINUTES",
+		"transcript.md":         "RAW",
+		"transcript-revised.md": "REVISED",
+	})
+
+	for kind, want := range map[string]string{"minutes": "MINUTES", "transcript": "RAW", "revised": "REVISED"} {
+		got, err := ReadLiveNoteArtifact(project, "2026-10-31-1732-周会-a1b2c3", kind)
+		require.NoError(t, err, kind)
+		assert.Equal(t, want, got)
+	}
+}
+
+func TestReadLiveNoteArtifact_RejectsTraversalAndUnknownKinds(t *testing.T) {
+	project := t.TempDir()
+	writeMeetingFolder(t, project, "2026-10-31-1732-周会-a1b2c3", map[string]string{"minutes.md": "MINUTES"})
+
+	for _, dir := range []string{"", ".", "..", "../etc", "2026-10-31-1732-周会-a1b2c3/../..", "/etc"} {
+		_, err := ReadLiveNoteArtifact(project, dir, "minutes")
+		assert.ErrorIs(t, err, ErrLiveNoteSessionNotFound, "dir=%q must not resolve", dir)
+	}
+	_, err := ReadLiveNoteArtifact(project, "2026-10-31-1732-周会-a1b2c3", "audio")
+	assert.ErrorIs(t, err, ErrLiveNoteArtifactKind)
+	_, err = ReadLiveNoteArtifact(project, "2026-10-31-1732-周会-a1b2c3", "transcript")
+	assert.ErrorIs(t, err, ErrLiveNoteSessionNotFound, "the file was never written")
+}
+
+func TestListLiveNoteSessions_FallsBackToModTimeWhenNameHasNoTimestamp(t *testing.T) {
+	project := t.TempDir()
+	// The shape is right but the date is impossible, so the prefix cannot be
+	// parsed. The row must still appear, ordered by its last write.
+	writeMeetingFolder(t, project, "2026-99-99-9999-坏名字-abcdef", nil)
+
+	sessions, err := ListLiveNoteSessions(project)
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Zero(t, sessions[0].StartedAt)
+	assert.Positive(t, sessions[0].sortKey(), "falls back to the folder mtime")
+}
+
+func TestReadLiveNoteArtifact_RejectsOversizedFile(t *testing.T) {
+	project := t.TempDir()
+	dir := writeMeetingFolder(t, project, "2026-10-31-1732-周会-a1b2c3", nil)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "minutes.md"),
+		bytes.Repeat([]byte("x"), liveNoteArtifactMaxBytes+1),
+		0o644,
+	))
+
+	_, err := ReadLiveNoteArtifact(project, "2026-10-31-1732-周会-a1b2c3", "minutes")
+	assert.ErrorIs(t, err, ErrLiveNoteArtifactTooLarge)
 }

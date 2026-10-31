@@ -82,6 +82,7 @@ export default {
     forgeGitlab: 'GitLab Integration',
     tasks: 'Tasks',
     notifications: 'Notification Center',
+    notes: 'AI notes',
     liveShare: 'Screen sharing',
     portForward: 'Port Mapping',
 
@@ -3984,7 +3985,6 @@ export default {
   liveShare: {
     newShare: 'Start a new share',
     solo: {
-      button: 'Voice notes',
       title: 'Voice notes',
       hint: 'Microphone only — no screen sharing, no link. When you stop, the recording, the raw transcript, the proofread transcript and the minutes are all kept in the project.',
       titlePlaceholder: 'What is this recording called? (optional)',
@@ -4080,6 +4080,22 @@ export default {
       artifactRevised: 'Revised transcript',
       artifactAudio: 'Recording ({n} clips)',
       copyPath: 'Copy path',
+    },
+    history: {
+      title: 'Past notes',
+      empty: 'No notes yet. Start a recording and its minutes will be kept here.',
+      untitled: 'Untitled note',
+      loading: 'Loading…',
+      loadFailed: 'Could not load the history',
+      refresh: 'Refresh',
+      back: 'Back',
+      noMinutes: 'This note has no minutes yet.',
+      noTranscript: 'This note left no transcript.',
+      openInEditor: 'Open in editor',
+      copy: 'Copy',
+      audioCount: 'Clips: {n}',
+      viewMinutes: 'Minutes',
+      viewTranscript: 'Transcript',
     },
   },
   shareAddress: {

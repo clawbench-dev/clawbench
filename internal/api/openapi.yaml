@@ -4027,6 +4027,72 @@ paths:
         "404":
           description: token 不存在或不属于当前项目
 
+  /api/live-share/notes/sessions:
+    get:
+      tags: [LiveShare]
+      summary: 列出项目里的听记历史
+      description: |
+        扫描 `<项目>/.clawbench/notes/` 下的会议目录，按会议开始时间倒序返回。
+
+        **数据源是磁盘而不是 `live_notes` 表**：数据库行 7 天后清理，而目录
+        （录音、两份转写、纪要）永久保留。听记页签要列的是用户还拥有的东西，
+        不是数据库还记得的东西。没有目录时返回空数组，不是错误。
+
+        目录名形如 `<YYYY-MM-DD-HHMM>[-<标题>]-<token6>`；标题从目录名解析，
+        尾部 token 会被剥掉。不符合该形状的目录一律忽略。
+      operationId: liveShareNotesSessions
+      responses:
+        "200":
+          description: 会议目录列表（最新在前）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LiveNoteSession"
+        "403":
+          description: 缺少项目上下文
+
+  /api/live-share/notes/sessions/artifact:
+    get:
+      tags: [LiveShare]
+      summary: 读取一次听记的文本产物
+      description: |
+        `dir` 是目录**名**（不是路径）：服务端按目录名形状校验，任何越权取值
+        都按「不存在」返回 404，读不到 notes 根目录之外的文件。
+        `kind` 为 `minutes`（默认）/ `transcript` / `revised`。
+      operationId: liveShareNotesArtifact
+      parameters:
+        - name: dir
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 会议目录名（来自列表接口的 `dir` 字段）
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [minutes, transcript, revised]
+      responses:
+        "200":
+          description: 产物正文
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kind: { type: string }
+                  content: { type: string }
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: 目录或该产物不存在
+
   # ── Share ─────────────────────────────────────────────────────────────────
   /api/share:
     post:
@@ -7359,6 +7425,25 @@ components:
             audio: { type: string }
             audioFiles: { type: integer }
       required: [status]
+
+    LiveNoteSession:
+      type: object
+      description: |
+        项目里的一场听记（磁盘上的会议目录）。`dir` 是目录名，也是列表与产物
+        接口之间的唯一标识；`dirPath` 是绝对路径，只对发布端有意义。
+        `hasMinutes` / `hasTranscript` / `hasRevised` 直接反映文件是否存在——
+        目录从第一段录音就存在，纪要要等会后任务跑完才有。
+      properties:
+        dir: { type: string }
+        dirPath: { type: string }
+        title: { type: string }
+        startedAt: { type: integer, format: int64, description: Unix 毫秒（来自目录名） }
+        updatedAt: { type: integer, format: int64, description: 目录最后写入时间，Unix 毫秒 }
+        hasMinutes: { type: boolean }
+        hasTranscript: { type: boolean }
+        hasRevised: { type: boolean }
+        audioFiles: { type: integer }
+      required: [dir, title, hasMinutes, hasTranscript, hasRevised, audioFiles]
 
     WeChatLogin:
       type: object

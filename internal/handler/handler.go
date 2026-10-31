@@ -693,6 +693,10 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/live-share/notes/session", ServeLiveShareNotesSession)
 	register("/api/live-share/notes/segment", ServeLiveShareNoteSegment)
 	register("/api/live-share/notes/minutes", ServeLiveShareNotesMinutes)
+	// Meeting history: the folders left in the project (permanent) rather than
+	// the database rows (which expire), plus their Markdown artifacts.
+	register("/api/live-share/notes/sessions", ServeLiveNotesSessions)
+	register("/api/live-share/notes/sessions/artifact", ServeLiveNotesArtifact)
 	registerPublic("/api/share/", ServeSharePublic)
 	registerPublic("/share/", ServeSharePage)
 	register("/api/dir", ListDir)

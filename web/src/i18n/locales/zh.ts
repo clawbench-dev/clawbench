@@ -82,6 +82,7 @@ export default {
     forgeGitlab: 'GitLab 集成',
     tasks: '任务',
     notifications: '通知中心',
+    notes: 'AI 听记',
     liveShare: '桌面共享',
     portForward: '端口映射',
 
@@ -3978,7 +3979,6 @@ export default {
   liveShare: {
     newShare: '开始新的共享',
     solo: {
-      button: '语音听记',
       title: '语音听记',
       hint: '只用麦克风记录：不共享屏幕、不生成链接。停止后自动整理成纪要，录音、原始转写、修订版转写和纪要都会留在项目目录里。',
       titlePlaceholder: '这次记录叫什么（可选）',
@@ -4070,6 +4070,22 @@ export default {
       artifactRevised: '修订版转写',
       artifactAudio: '录音（{n} 段）',
       copyPath: '复制路径',
+    },
+    history: {
+      title: '历史纪要',
+      empty: '还没有听记。开始一次记录，纪要会自动留在这里。',
+      untitled: '未命名听记',
+      loading: '正在读取…',
+      loadFailed: '读取历史失败',
+      refresh: '刷新',
+      back: '返回',
+      noMinutes: '这次听记还没有生成纪要。',
+      noTranscript: '这次听记没有留下转写。',
+      openInEditor: '在编辑器中打开',
+      copy: '复制',
+      audioCount: '录音 {n} 段',
+      viewMinutes: '纪要',
+      viewTranscript: '转写',
     },
   },
   shareAddress: {

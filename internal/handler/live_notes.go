@@ -133,6 +133,65 @@ func ServeLiveShareNotesSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
+// ServeLiveNotesSessions handles GET /api/live-share/notes/sessions
+// (authenticated, project-scoped): the project's meeting folders on disk.
+//
+// History is read from the filesystem rather than from `live_notes`: those rows
+// expire with the retention window, while the folders — audio, both transcripts
+// and the minutes — are permanent. The notes tab lists what the user still has,
+// not what the database still remembers.
+func ServeLiveNotesSessions(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	projectPath, _, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	sessions, err := service.ListLiveNoteSessions(projectPath)
+	if err != nil {
+		slog.Error("live notes: list sessions failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
+}
+
+// ServeLiveNotesArtifact handles
+// GET /api/live-share/notes/sessions/artifact?dir=&kind= (authenticated,
+// project-scoped).
+//
+// `dir` is a folder name, not a path; the service validates it against the
+// shape the writer produces, so no value can escape the project's notes root.
+// `kind` is one of minutes / transcript / revised (default minutes).
+func ServeLiveNotesArtifact(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	projectPath, _, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	kind := r.URL.Query().Get("kind")
+	if kind == "" {
+		kind = "minutes"
+	}
+	content, err := service.ReadLiveNoteArtifact(projectPath, r.URL.Query().Get("dir"), kind)
+	switch {
+	case errors.Is(err, service.ErrLiveNoteSessionNotFound):
+		http.NotFound(w, r)
+		return
+	case errors.Is(err, service.ErrLiveNoteArtifactKind), errors.Is(err, service.ErrLiveNoteArtifactTooLarge):
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return
+	case err != nil:
+		slog.Error("live notes: read artifact failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"kind": kind, "content": content})
+}
+
 // ServeLiveShareNotes handles GET /api/live-share/notes?token=&since=
 // (authenticated, project-scoped).
 func ServeLiveShareNotes(w http.ResponseWriter, r *http.Request) {

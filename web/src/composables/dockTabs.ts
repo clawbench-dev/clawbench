@@ -28,6 +28,7 @@ export type TabId =
   | 'tasks'
   | 'notifications'
   | 'terminal'
+  | 'notes'
   | 'live'
   | 'proxy'
   | 'stats'
@@ -82,6 +83,11 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
   { id: 'tasks', titleKey: 'nav.tasks' },
   { id: 'terminal', titleKey: 'terminal.title' },
   { id: 'stats', titleKey: 'nav.stats' },
+  // AI 听记 (voice notes + the meeting history those notes leave behind). It
+  // sits next to screen sharing because both are "record this conversation"
+  // surfaces, and it used to be a header-button dialog: a dictation plus a
+  // browsable archive of past minutes is a workspace, not a one-shot action.
+  { id: 'notes', titleKey: 'nav.notes' },
   // Desktop screen sharing + the meeting controls that go with it. It used to
   // be a header-button dialog; it lives in the dock now because it is a
   // workspace (link, audience, transcripts, minutes), not a one-shot action.
