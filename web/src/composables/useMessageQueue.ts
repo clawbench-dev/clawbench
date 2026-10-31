@@ -236,7 +236,13 @@ export function addQueued(sessionId: string, wire: QueuedMessageWire): void {
 }
 
 /**
- * Replace the text of one queued entry (an edit saved server-side).
+ * Replace the text (and optionally the attachments) of one queued entry after
+ * an edit was saved server-side.
+ *
+ * `files` is optional on purpose: a text-only edit must not touch the stored
+ * attachments, while an attachment edit passes the full list the server now
+ * holds. `undefined` means "leave them alone"; an empty array means "they were
+ * all removed" and must be written as such.
  *
  * Publishes a NEW array for the same reason addQueued does: `queuedMessages` is
  * a computed returning the stored array, and Vue skips notifying when a computed
@@ -246,13 +252,21 @@ export function addQueued(sessionId: string, wire: QueuedMessageWire): void {
  * A no-op when the session or queue id is unknown — the entry may have been
  * drained while the edit was in flight, and the drain already removed it.
  */
-export function updateQueuedText(sessionId: string, queueId: string, text: string): void {
+export function updateQueuedText(
+  sessionId: string,
+  queueId: string,
+  text: string,
+  files?: FileEntry[],
+): void {
   if (!sessionId || !queueId) return
   const list = queues.get(sessionId)
   if (!list) return
   const idx = list.findIndex((m) => m.queueId === queueId)
   if (idx === -1) return
-  queues.set(sessionId, list.map((m, i) => (i === idx ? { ...m, text } : m)))
+  queues.set(sessionId, list.map((m, i) => {
+    if (i !== idx) return m
+    return files === undefined ? { ...m, text } : { ...m, text, files }
+  }))
   bump()
 }
 

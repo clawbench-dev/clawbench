@@ -489,6 +489,25 @@ describe('updateQueuedText', () => {
     expect(getQueue('other')).toHaveLength(0)
   })
 
+  it('leaves attachments alone when no file list is supplied', () => {
+    addQueued('s1', { queueId: 'q1', text: 'old', files: [{ path: '/p/a.png' }] })
+
+    updateQueuedText('s1', 'q1', 'new')
+
+    expect(getQueue('s1')[0].files.map((f) => f.path)).toEqual(['/p/a.png'])
+  })
+
+  it('replaces the attachment list when one is supplied, including an empty one', () => {
+    addQueued('s1', { queueId: 'q1', text: 'old', files: [{ path: '/p/a.png' }] })
+
+    updateQueuedText('s1', 'q1', 'new', [{ path: '/p/b.png' }])
+    expect(getQueue('s1')[0].files.map((f) => f.path)).toEqual(['/p/b.png'])
+
+    // An empty array is a real value ("all removed"), not "unchanged".
+    updateQueuedText('s1', 'q1', 'new', [])
+    expect(getQueue('s1')[0].files).toEqual([])
+  })
+
   it('is exported from useMessageQueue()', () => {
     expect(typeof useMessageQueue().updateQueuedText).toBe('function')
   })

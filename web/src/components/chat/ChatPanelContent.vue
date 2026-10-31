@@ -275,6 +275,15 @@
     :block-ask-questions="render.blockAskQuestions"
     :static-block-cache="render.staticBlockCache"
   />
+
+  <!-- Queued-message editor: text plus attachments, saved in place. -->
+  <QueuedMessageEditSheet
+    :open="editEntry !== null"
+    :entry="editEntry"
+    :saving="editBusy !== ''"
+    @close="closeEditPending"
+    @save="handleEditSave"
+  />
 </template>
 
 <script setup>
@@ -295,6 +304,7 @@ import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
 import ChatMessageRail from './ChatMessageRail.vue'
 import QueuedMessageBar from './QueuedMessageBar.vue'
+import QueuedMessageEditSheet from './QueuedMessageEditSheet.vue'
 import PlanPanel from './PlanPanel.vue'
 import TeamPanel from './TeamPanel.vue'
 import BusyBar from '@/components/common/BusyBar.vue'
@@ -326,7 +336,7 @@ import { stripGroupProtocolTags, serializeMentionCards } from '@/utils/groupRout
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
 import { pendingMessageNavigation, consumePendingMessageNavigation, setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
 import { openExternalUrl } from '@/utils/externalLink.ts'
-import { buildSendPayload } from '@/utils/fileAttachmentUtils.ts'
+import { buildSendPayload, fileEntryKey } from '@/utils/fileAttachmentUtils.ts'
 import { enqueueAndMaybeStart } from '@/utils/chatQueueSend.ts'
 import { trackInFlightSend, untrackInFlightSend } from '@/utils/chatStreamUtils.ts'
 import { refreshCurrentFile } from '@/composables/useFileRefresh.ts'
@@ -414,6 +424,13 @@ const mergeBusy = ref(false)
  * controls while one row is saving — a silent UI regression with no error.
  */
 const editBusy = ref('')
+/**
+ * The queue entry currently open in the edit sheet (null = closed).
+ *
+ * Holds the ENTRY, not just its id: the sheet seeds its draft from the text and
+ * attachments on open, and the diff on save compares against this snapshot.
+ */
+const editEntry = ref(null)
 const messages = ref([])
 const messageStore = createChatMessageStore(messages)
 /** Rendered messages = persisted messages (pending messages already in messages.value with pending: true) */
@@ -2285,44 +2302,71 @@ async function handlePendingAction(queueId, mode) {
 }
 
 /**
- * Edit a queued message's text in place.
+ * Open the edit sheet for a queued message.
  *
- * The dialog is primed with the current text and opts into Enter-inserts-newline:
- * a queued message is often a multi-line requirement, and the prompt's default
- * Enter-to-submit made a second line impossible to type.
- *
- * Saving does NOT resend: the row keeps its queue position, so a message that
- * has been waiting fifteen minutes is still next in line after the edit.
+ * In-place editing (not "recall into the input box and resend"): the row keeps
+ * its queue position, so a message that has been waiting fifteen minutes is
+ * still next in line after the edit. The sheet is primed with the current text
+ * and attachments; it saves through PATCH /api/ai/queue.
  */
-async function handleEditPending(queueId) {
+function handleEditPending(queueId) {
     if (!queueId || editBusy.value) return
     const sessionId = identity.currentSessionId.value
     const entry = getQueue(sessionId).find(m => m.queueId === queueId)
     if (!entry) return
+    editEntry.value = entry
+}
 
-    const next = await dialog.prompt(t('chat.pending.editPrompt'), {
-        title: t('chat.pending.editTitle'),
-        value: entry.text,
-        placeholder: t('chat.pending.editPlaceholder'),
-        confirmText: t('common.save'),
-        cancelText: t('common.cancel'),
-        enterInsertsNewline: true,
-    })
-    if (next === null) return
-    const trimmed = String(next).trim()
-    // An unchanged or emptied body is not an edit. Emptying an attachment-only
-    // message is rejected server-side too, so declining here is consistent.
-    if (!trimmed || trimmed === entry.text.trim()) return
+/** Close the sheet. Ignored while a save is in flight (the draft must not be
+ *  discarded mid-request; the caller closes it when the request settles). */
+function closeEditPending() {
+    if (editBusy.value) return
+    editEntry.value = null
+}
 
-    editBusy.value = queueId
+/**
+ * Save the sheet's draft in place: text and, when it changed, attachments.
+ *
+ * `files` is only sent when the user actually changed the list. The endpoint
+ * reads an absent key as "keep the stored attachments", so sending an unchanged
+ * list would re-validate paths for no reason — and a file deleted from disk in
+ * the meantime would then fail a text-only edit.
+ */
+async function handleEditSave({ text, files }) {
+    const entry = editEntry.value
+    if (!entry || editBusy.value) return
+    const sessionId = identity.currentSessionId.value
+    const textChanged = text !== entry.text.trim()
+    // Compare by attachment IDENTITY, the same notion the send path dedupes by.
+    // A structural (JSON) comparison reports a change for lists the backend
+    // considers identical, which would re-send — and re-validate — attachments
+    // the user never touched.
+    const currentFiles = entry.files || []
+    const filesChanged = files.length !== currentFiles.length
+        || files.some((f, i) => fileEntryKey(f) !== fileEntryKey(currentFiles[i]))
+    // Nothing to send: the sheet only allows an empty text when attachments
+    // remain, and an unchanged draft is not an edit at all.
+    if (!textChanged && !filesChanged) {
+        editEntry.value = null
+        return
+    }
+
+    editBusy.value = entry.queueId
     try {
-        await manager.editQueuedMessage(queueId, trimmed)
+        const ok = await manager.editQueuedMessage(entry.queueId, text, filesChanged ? files : undefined)
+        // Close on success. On failure, close only when the entry is gone (the
+        // 409 path drops it and explains why); otherwise keep the sheet open
+        // with the draft so the user can retry.
+        if (ok || !getQueue(sessionId).some(m => m.queueId === entry.queueId)) {
+            editEntry.value = null
+        }
     } finally {
         editBusy.value = ''
     }
 }
 
-/** Merge every queued message of this session into one (queue-wide action). */async function handleMergeQueue() {
+/** Merge every queued message of this session into one (queue-wide action). */
+async function handleMergeQueue() {
     if (mergeBusy.value) return
     mergeBusy.value = true
     try {

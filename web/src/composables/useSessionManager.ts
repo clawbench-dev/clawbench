@@ -188,7 +188,13 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   }
 
   /**
-   * Edit the text of a still-queued message, in place.
+   * Edit a still-queued message, in place: its text and, optionally, its
+   * attachments.
+   *
+   * `files` is optional and omitted from the request when not supplied, because
+   * the endpoint reads an ABSENT key as "keep the stored attachments" and an
+   * empty array as "remove them all". A text-only save must therefore not send
+   * `files` at all — sending `[]` would silently wipe the user's images.
    *
    * Deliberately NOT optimistic. The drain loop can claim the row at any
    * moment; updating locally first would show the new text and then snap back
@@ -201,7 +207,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
    * with the OLD text: the entry is dropped locally so the panel does not keep a
    * phantom, and the user is told why the edit did not apply.
    */
-  async function editQueuedMessage(queueId: string, text: string): Promise<boolean> {
+  async function editQueuedMessage(queueId: string, text: string, files?: FileEntry[]): Promise<boolean> {
     if (!queueId) return false
     const sessionId = identity.currentSessionId.value
     if (!sessionId) return false
@@ -210,8 +216,9 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       await apiPatch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`, {
         queueId,
         message: text,
+        ...(files === undefined ? {} : { files }),
       })
-      updateQueuedText(sessionId, queueId, text)
+      updateQueuedText(sessionId, queueId, text, files)
       return true
     } catch (err) {
       const status = (err as { status?: number })?.status

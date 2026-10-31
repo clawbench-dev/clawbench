@@ -908,6 +908,54 @@ describe('useSessionManager', () => {
             expect(await mgr.editQueuedMessage('', 'text')).toBe(false)
             expect(mockApiPatch).not.toHaveBeenCalled()
         })
+
+        it('omits `files` for a text-only edit so the stored attachments survive', async () => {
+            // The endpoint reads an ABSENT key as "keep the attachments" and an
+            // empty array as "remove them all" — sending [] here would wipe the
+            // user's images on a text-only save.
+            const opts = createMockOptions()
+            addQueued('session-1', { queueId: 'q-1', text: 'original', files: [{ path: '/p/a.png' }] })
+            mockApiPatch.mockResolvedValue({ ok: true })
+            const mgr = useSessionManager(opts)
+
+            await mgr.editQueuedMessage('q-1', 'revised')
+
+            expect(mockApiPatch).toHaveBeenCalledWith(
+                expect.stringContaining('/api/ai/queue?session_id=session-1'),
+                { queueId: 'q-1', message: 'revised' },
+            )
+            expect(getQueue('session-1')[0].files.map((f) => f.path)).toEqual(['/p/a.png'])
+        })
+
+        it('sends and mirrors a replaced attachment list', async () => {
+            const opts = createMockOptions()
+            addQueued('session-1', { queueId: 'q-1', text: 'original', files: [{ path: '/p/a.png' }] })
+            mockApiPatch.mockResolvedValue({ ok: true })
+            const mgr = useSessionManager(opts)
+
+            await mgr.editQueuedMessage('q-1', 'revised', [{ path: '/p/b.png' }])
+
+            expect(mockApiPatch).toHaveBeenCalledWith(
+                expect.stringContaining('/api/ai/queue?session_id=session-1'),
+                { queueId: 'q-1', message: 'revised', files: [{ path: '/p/b.png' }] },
+            )
+            expect(getQueue('session-1')[0].files.map((f) => f.path)).toEqual(['/p/b.png'])
+        })
+
+        it('can clear every attachment by sending an empty list', async () => {
+            const opts = createMockOptions()
+            addQueued('session-1', { queueId: 'q-1', text: 'original', files: [{ path: '/p/a.png' }] })
+            mockApiPatch.mockResolvedValue({ ok: true })
+            const mgr = useSessionManager(opts)
+
+            await mgr.editQueuedMessage('q-1', 'revised', [])
+
+            expect(mockApiPatch).toHaveBeenCalledWith(
+                expect.stringContaining('/api/ai/queue?session_id=session-1'),
+                { queueId: 'q-1', message: 'revised', files: [] },
+            )
+            expect(getQueue('session-1')[0].files).toEqual([])
+        })
     })
 
     // ── registerIdentityActions ──

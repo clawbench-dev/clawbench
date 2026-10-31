@@ -521,10 +521,11 @@ func handleQueueGet(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleQueueUpdate rewrites the TEXT of a still-queued message in place.
+// handleQueueUpdate rewrites a still-queued message in place: its text and,
+// optionally, its attachments.
 //
 // PATCH /api/ai/queue?session_id=xxx
-// Body: {"queueId": "...", "message": "..."}
+// Body: {"queueId": "...", "message": "...", "files": [...]}
 //
 // In-place editing (rather than "recall into the input box and resend") is the
 // point: a queued message can wait many minutes, and re-queuing would send the
@@ -532,9 +533,12 @@ func handleQueueGet(w http.ResponseWriter, r *http.Request) {
 // were trying to avoid. The row's DB id — which is the queue order — is never
 // touched.
 //
-// Only the text is editable. Attachments would need the same identity dedupe
-// and path re-validation the enqueue path performs, and the UI does not offer
-// it; sending `files` here would silently accept an unvalidated path.
+// `files` is a FULL REPLACEMENT list: the client sends every attachment the
+// message should end up with. Omitting the key leaves the stored attachments
+// untouched (text-only edit), which is why an absent field and an empty array
+// must stay distinguishable — `[]` means "remove them all". Every path goes
+// through the same validation as enqueue (validateQueueFiles): a path outside
+// the project or one that no longer exists is rejected rather than persisted.
 func handleQueueUpdate(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := requireProject(w, r)
 	if !ok {
@@ -552,8 +556,9 @@ func handleQueueUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		QueueID string `json:"queueId"`
-		Message string `json:"message"`
+		QueueID string            `json:"queueId"`
+		Message string            `json:"message"`
+		Files   []model.FileEntry `json:"files"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -571,26 +576,40 @@ func handleQueueUpdate(w http.ResponseWriter, r *http.Request) {
 	// when the entry keeps attachments — that combination is sendable.
 	content := strings.TrimSpace(req.Message)
 
-	// Read first to reject an edit that would leave nothing to send. This is a
-	// plain read, not part of the write: attachments cannot change between here
-	// and the update (no endpoint edits them), and if the row is claimed in
-	// between, the update below reports not-found and the caller gets the 409 —
-	// so the pre-check cannot produce a wrong verdict, only a stale-but-harmless
-	// one. Doing it this way avoids an "update then roll back" that would need to
-	// remember the previous text.
+	// nil vs [] is the "leave attachments alone" vs "remove them all" signal, so
+	// it is captured before validation normalises the slice.
+	files, filesProvided, ok := queueUpdateFiles(w, r, projectPath, req.Files)
+	if !ok {
+		return
+	}
+
+	// Reject an edit that would leave nothing to send: such a row would drain
+	// into an empty turn. Only the text-only path needs a read (the effective
+	// attachments are then whatever is stored); with files supplied the outcome
+	// is known from the request. A row claimed between this read and the update
+	// is reported as not-found below, so the pre-check can only be stale, never
+	// wrong.
 	if content == "" {
-		current, found, gErr := service.GetQueuedMessage(sessionID, queueID)
-		if gErr != nil {
-			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "QueueUpdateFailed")
-			return
+		effective := files
+		if !filesProvided {
+			current, found, gErr := service.GetQueuedMessage(sessionID, queueID)
+			if gErr != nil {
+				writeLocalizedErrorf(w, r, http.StatusInternalServerError, "QueueUpdateFailed")
+				return
+			}
+			if !found {
+				writeLocalizedErrorf(w, r, http.StatusConflict, "QueueAlreadyDrained")
+				return
+			}
+			effective = current.Files
 		}
-		if found && len(current.Files) == 0 {
+		if len(effective) == 0 {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "MessageOrFilesRequired")
 			return
 		}
 	}
 
-	updated, found, err := service.UpdateQueuedMessageContent(sessionID, queueID, content)
+	updated, found, err := service.UpdateQueuedMessage(sessionID, queueID, content, files)
 	if err != nil {
 		slog.Error("queue: update failed",
 			slog.String("session", sessionID),
@@ -622,6 +641,37 @@ func handleQueueUpdate(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "queue": updated})
+}
+
+// queueUpdateFiles validates an optional replacement attachment list for
+// PATCH /api/ai/queue.
+//
+// provided=false means the request omitted the key, so the stored attachments
+// must be kept. An explicit empty array is provided=true with an empty (non-nil)
+// result, which the service reads as "remove them all" — the two intents must
+// stay distinguishable, or a text-only edit would wipe the user's images.
+//
+// Writes the error response itself and reports ok=false when the request is
+// rejected (path outside the project, missing file, …).
+func queueUpdateFiles(
+	w http.ResponseWriter,
+	r *http.Request,
+	projectPath string,
+	entries []model.FileEntry,
+) (files []model.FileEntry, provided bool, ok bool) {
+	if entries == nil {
+		return nil, false, true
+	}
+	validated, valid := validateQueueFiles(w, r, projectPath, nil, entries)
+	if !valid {
+		return nil, true, false
+	}
+	if validated == nil {
+		// validateQueueFiles dedupes, and an empty input can come back as nil —
+		// which would degrade into the "keep the attachments" sentinel.
+		validated = []model.FileEntry{}
+	}
+	return validated, true, true
 }
 
 func handleQueueDelete(w http.ResponseWriter, r *http.Request) {

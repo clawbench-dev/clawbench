@@ -1987,3 +1987,164 @@ func TestQueueUpdate_ReadFailureIs500(t *testing.T) {
 
 	assertStatus(t, w, http.StatusInternalServerError)
 }
+
+// --- PATCH /api/ai/queue (attachments) --------------------------------------
+
+// TestQueueUpdate_ReplacesAttachments: `files` is a full replacement, and the
+// replacement is what the drain loop will later read. The queue position must
+// not move — the whole point of editing in place.
+func TestQueueUpdate_ReplacesAttachments(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-update-files"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	for _, name := range []string{"keep.md", "old.png", "new.pdf"} {
+		require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, name), []byte("x"), 0o644))
+	}
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "look", []model.FileEntry{
+		{Path: filepath.Join(env.ProjectDir, "old.png")},
+		{Path: filepath.Join(env.ProjectDir, "keep.md")},
+	}, "q-1", "")
+	require.NoError(t, err)
+	_, err = service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "later", nil, "q-2", "")
+	require.NoError(t, err)
+
+	body := map[string]any{
+		"queueId": "q-1",
+		"message": "look at these",
+		"files": []map[string]any{
+			{"path": filepath.Join(env.ProjectDir, "keep.md")},
+			{"path": filepath.Join(env.ProjectDir, "new.pdf")},
+		},
+	}
+	req := newRequest(t, http.MethodPatch, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertOK(t, w)
+
+	queued, qerr := service.GetQueuedMessages(sessionID)
+	require.NoError(t, qerr)
+	require.Len(t, queued, 2, "an attachment edit must not add or remove queue rows")
+	assert.Equal(t, "q-1", queued[0].QueueID, "position is preserved")
+	require.Len(t, queued[0].Files, 2)
+	assert.Equal(t, filepath.Join(env.ProjectDir, "keep.md"), queued[0].Files[0].Path)
+	assert.Equal(t, filepath.Join(env.ProjectDir, "new.pdf"), queued[0].Files[1].Path,
+		"the removed attachment must be gone and the new one stored")
+}
+
+// TestQueueUpdate_EmptyFilesArrayRemovesAttachments: `[]` means "remove them
+// all", which must stay distinguishable from omitting the key (keep them).
+func TestQueueUpdate_EmptyFilesArrayRemovesAttachments(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-update-clear-files"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "shot.png"), []byte("png"), 0o644))
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "with a file", []model.FileEntry{
+		{Path: filepath.Join(env.ProjectDir, "shot.png")},
+	}, "q-1", "")
+	require.NoError(t, err)
+
+	body := map[string]any{"queueId": "q-1", "message": "text only now", "files": []map[string]any{}}
+	req := newRequest(t, http.MethodPatch, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertOK(t, w)
+
+	queued, qerr := service.GetQueuedMessages(sessionID)
+	require.NoError(t, qerr)
+	require.Len(t, queued, 1)
+	assert.Empty(t, queued[0].Files)
+	assert.Equal(t, "text only now", queued[0].Text)
+}
+
+// TestQueueUpdate_RejectsPathOutsideProject: the update endpoint accepts paths
+// from the client, so it must apply the same containment check as enqueue. A
+// traversal must be refused outright, not stored and resolved later.
+func TestQueueUpdate_RejectsPathOutsideProject(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-update-traversal"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "keep me", nil, "q-1", "")
+	require.NoError(t, err)
+
+	body := map[string]any{
+		"queueId": "q-1",
+		"message": "keep me",
+		"files":   []map[string]any{{"path": "../../etc/passwd"}},
+	}
+	req := newRequest(t, http.MethodPatch, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertStatus(t, w, http.StatusForbidden)
+	queued, qerr := service.GetQueuedMessages(sessionID)
+	require.NoError(t, qerr)
+	require.Len(t, queued, 1)
+	assert.Empty(t, queued[0].Files, "a rejected edit must leave the row untouched")
+}
+
+// TestQueueUpdate_RejectsMissingAttachment: a path that no longer exists would
+// make the drain fail (or send a dangling reference), so it is a 404 like the
+// enqueue path.
+func TestQueueUpdate_RejectsMissingAttachment(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-update-missing-file"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "keep me", nil, "q-1", "")
+	require.NoError(t, err)
+
+	body := map[string]any{
+		"queueId": "q-1",
+		"message": "keep me",
+		"files":   []map[string]any{{"path": filepath.Join(env.ProjectDir, "nope.png")}},
+	}
+	req := newRequest(t, http.MethodPatch, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+// TestQueueUpdate_EmptyTextWithEmptyFilesRejected: removing the text AND every
+// attachment leaves nothing to send — the entry would drain into an empty turn.
+func TestQueueUpdate_EmptyTextWithEmptyFilesRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-update-empty-both"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "shot.png"), []byte("png"), 0o644))
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "text", []model.FileEntry{
+		{Path: filepath.Join(env.ProjectDir, "shot.png")},
+	}, "q-1", "")
+	require.NoError(t, err)
+
+	body := map[string]any{"queueId": "q-1", "message": "   ", "files": []map[string]any{}}
+	req := newRequest(t, http.MethodPatch, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	queued, qerr := service.GetQueuedMessages(sessionID)
+	require.NoError(t, qerr)
+	require.Len(t, queued, 1)
+	assert.Equal(t, "text", queued[0].Text)
+	assert.Len(t, queued[0].Files, 1, "a rejected edit must not clear the attachments either")
+}

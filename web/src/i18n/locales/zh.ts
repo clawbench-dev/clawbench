@@ -1076,10 +1076,12 @@ export default {
       remove: '删除这条排队消息',
       attachment: '附件',
       edit: '编辑',
-      editHint: '修改这条排队消息的正文',
+      editHint: '修改这条排队消息的正文或附件',
       editTitle: '编辑排队消息',
       editPrompt: '修改后仍在原来的队列位置，不会重新排队',
       editPlaceholder: '输入新的内容，Ctrl+Enter 保存',
+      addAttachment: '添加附件',
+      editNothingToSend: '正文和附件不能同时为空',
       editFailed: '修改失败，排队消息未改变',
       alreadySent: '这条消息已经发出，无法再修改',
       // Bubble annotation for a mid-turn injection that MERGED into the running

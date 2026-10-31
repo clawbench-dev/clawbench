@@ -208,13 +208,14 @@ test.describe('Queued messages ordering', () => {
     await expect(target).toHaveCount(1)
     await target.locator('[data-action="queue-edit"]').click()
 
-    // The dialog is primed with the entry's current text.
-    const dialogInput = page.locator('.dlg-textarea')
+    // The editor is primed with the entry's current text (and its attachments,
+    // which the sheet also lets the user change).
+    const dialogInput = page.locator('.qme-textarea')
     await expect(dialogInput).toBeVisible({ timeout: 5000 })
     await expect(dialogInput).toHaveValue(queuedB)
 
     await dialogInput.fill(revisedB)
-    await page.locator('.dlg-ok').click()
+    await page.locator('[data-action="queue-edit-save"]').click()
 
     // THE ASSERTION THAT MATTERS: the edited entry keeps its index. If the save
     // had re-queued it, it would now be last and queuedA would have moved up.

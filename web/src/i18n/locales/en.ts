@@ -1071,10 +1071,12 @@ export default {
       remove: 'Remove this queued message',
       attachment: 'Attachment',
       edit: 'Edit',
-      editHint: 'Edit the text of this queued message',
+      editHint: 'Edit the text or attachments of this queued message',
       editTitle: 'Edit queued message',
       editPrompt: 'The edit keeps its place in the queue — it will not be re-queued',
       editPlaceholder: 'New content. Ctrl+Enter to save',
+      addAttachment: 'Add attachment',
+      editNothingToSend: 'A message needs text or an attachment',
       editFailed: 'Edit failed — the queued message is unchanged',
       alreadySent: 'This message has already been sent and can no longer be edited',
       // Bubble annotation for a mid-turn injection that MERGED into the running
