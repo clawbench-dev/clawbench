@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import AttachmentTags from '../AttachmentTags.vue'
 
 // Pass the real module through and override only `useI18n`: the component now
@@ -287,5 +289,27 @@ describe('AttachmentTags (readonly)', () => {
     })
     expect(wrapper.findAll('.attachment-close-btn')).toHaveLength(1)
     expect(wrapper.classes()).not.toContain('is-readonly')
+  })
+
+  it('gives an image its square thumbnail tile in read-only mode', () => {
+    const wrapper = mount(AttachmentTags, {
+      props: { readonly: true, files: [{ path: 'shot.png', isDir: false }] },
+    })
+    const card = wrapper.find('.chat-file-attachment')
+    expect(card.classes()).toContain('attachment-image-only')
+    expect(card.find('img.attachment-thumb-img').exists()).toBe(true)
+  })
+
+  it('does not reserve the × gutter on image-only cards (it squeezed the thumbnail)', () => {
+    // jsdom has no CSS engine, so the guard reads the rule. The bug was a
+    // specificity fight: the three-class readonly rule outranks
+    // `.chat-file-attachment.attachment-image-only` (two classes), so a plain
+    // `padding-right` there shrinks a fixed 40dp tile's content box and the
+    // thumbnail renders narrower than its square — reported as "the image is
+    // not centred".
+    const src = readFileSync(resolve(__dirname, '../AttachmentTags.vue'), 'utf8')
+    const m = src.match(/\.chat-attachment-tags\.is-readonly\s+\.chat-file-attachment[^{]*\{([^}]*)\}/)
+    expect(m, 'the readonly padding rule must exist').not.toBeNull()
+    expect(m![0], 'image-only tiles must be excluded from the gutter').toContain(':not(.attachment-image-only)')
   })
 })

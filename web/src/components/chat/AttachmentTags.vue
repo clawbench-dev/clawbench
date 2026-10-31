@@ -268,8 +268,13 @@ watch(() => props.files, (files) => {
 }
 
 /* Read-only surfaces (queued rows): no × means no need for the space reserved
-   for it, which otherwise reads as an unexplained gap at the card's right. */
-.chat-attachment-tags.is-readonly .chat-file-attachment {
+   for it, which otherwise reads as an unexplained gap at the card's right.
+   Image-only cards are EXCLUDED on purpose: they are a fixed 40dp square whose
+   thumbnail must fill it edge to edge. This selector is three classes deep, so
+   without the :not() it outranks `.chat-file-attachment.attachment-image-only`
+   (two classes) and re-introduces a right padding — the thumbnail then renders
+   narrower than its tile and looks off-centre. */
+.chat-attachment-tags.is-readonly .chat-file-attachment:not(.attachment-image-only) {
   padding-right: var(--space-4);
 }
 
