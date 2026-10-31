@@ -21,8 +21,13 @@
       </div>
 
       <div v-if="loading" class="summary-empty">{{ t('settings.items.providerModelsLoading') }}</div>
+      <div v-else-if="baseGroups.length === 0" class="summary-empty">
+        {{ providers.length === 0
+          ? t('settings.items.summaryModelNoProviders')
+          : t('settings.items.summaryModelNoCompatibleProviders') }}
+      </div>
       <div v-else-if="groups.length === 0" class="summary-empty">
-        {{ t('settings.items.summaryModelNoProviders') }}
+        {{ t('settings.items.providerModelsNoMatch') }}
       </div>
 
       <div v-else class="summary-list">
@@ -30,6 +35,9 @@
           <div class="summary-group-head">
             <ProviderIcon :provider-id="group.provider.presetId || String(group.provider.id)" :name="group.provider.name" :size="18" />
             <span class="summary-group-name">{{ group.provider.name }}</span>
+          </div>
+          <div v-if="group.resolving" class="summary-group-hint">
+            {{ t('settings.items.providerModelsLoading') }}
           </div>
           <button
             v-for="model in group.models"
@@ -42,6 +50,35 @@
             <span class="summary-row-model">{{ model }}</span>
             <Check v-if="isCurrent(group.provider.id, model)" :size="16" class="summary-row-check" />
           </button>
+
+          <!-- A provider without a curated list accepts any model id, so typing
+               one is the only way to pick a model its endpoint does not
+               publish (many Anthropic-compatible gateways have no /models). -->
+          <template v-if="!group.curated">
+            <div v-if="!group.resolving" class="summary-group-hint">
+              {{ group.error
+                ? t('settings.items.summaryModelProbeFailed', { reason: group.error })
+                : t('settings.items.summaryModelManualHint') }}
+            </div>
+            <div class="summary-manual">
+              <input
+                v-model="manualDraft[group.provider.id]"
+                class="summary-manual-input"
+                type="text"
+                autocomplete="off"
+                :placeholder="t('settings.items.providerModelsCustom')"
+                @keydown.enter.prevent="useManual(group.provider.id)"
+              />
+              <button
+                type="button"
+                class="summary-manual-use"
+                :disabled="!manualText(group.provider.id)"
+                @click="useManual(group.provider.id)"
+              >
+                {{ t('settings.items.summaryModelUse') }}
+              </button>
+            </div>
+          </template>
         </div>
       </div>
     </div>
@@ -49,7 +86,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, Search, Sparkles } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -57,6 +94,7 @@ import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import { apiGet, apiPatch } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
+import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
@@ -71,10 +109,17 @@ interface ProviderRow {
 
 const { t } = useI18n()
 const { serverConfig, loadConfig } = useSettingsConfig()
+const toast = useToast()
 
 const query = ref('')
 const loading = ref(false)
 const providers = ref<ProviderRow[]>([])
+/** Models resolved for a provider that curates none, via the same
+ *  live-probe → catalog resolution the provider editor uses. */
+const resolvedModels = ref<Record<number, string[]>>({})
+const resolvingIds = ref<number[]>([])
+const probeErrors = ref<Record<number, string>>({})
+const manualDraft = reactive<Record<number, string>>({})
 
 const currentProviderId = computed<number | null>(() => {
   const raw = (serverConfig.value.ai_summary as { provider_id?: number } | undefined)?.provider_id
@@ -97,6 +142,10 @@ watch(
 
 async function load() {
   loading.value = true
+  resolvedModels.value = {}
+  probeErrors.value = {}
+  resolvingIds.value = []
+  for (const key of Object.keys(manualDraft)) delete manualDraft[Number(key)]
   try {
     const data = await apiGet<{ providers: ProviderRow[] }>('/api/providers')
     providers.value = data.providers ?? []
@@ -106,25 +155,87 @@ async function load() {
   } finally {
     loading.value = false
   }
+  // The sheet is already usable at this point: curated lists render
+  // immediately and each uncatalogued provider fills in when its probe lands.
+  void resolveUncatalogued()
 }
 
-/** Only providers that curate models can back the summary: without a list
- *  there is nothing to choose, and an arbitrary id would be a guess. */
+function isEligible(p: ProviderRow): boolean {
+  return p.protocol === 'anthropic' || p.protocol === 'openai'
+}
+
+async function resolveUncatalogued() {
+  const pending = providers.value.filter((p) => isEligible(p) && (p.models?.length ?? 0) === 0)
+  await Promise.all(pending.map(resolveOne))
+}
+
+async function resolveOne(p: ProviderRow) {
+  resolvingIds.value = [...resolvingIds.value, p.id]
+  try {
+    const data = await apiGet<{ models?: string[]; error?: string }>(
+      `/api/providers/${p.id}/models`,
+    )
+    resolvedModels.value = { ...resolvedModels.value, [p.id]: data.models ?? [] }
+    if (data.error) probeErrors.value = { ...probeErrors.value, [p.id]: data.error }
+  } catch (err) {
+    appLog.w('SummaryModelPicker', 'resolve provider models failed', err)
+    probeErrors.value = {
+      ...probeErrors.value,
+      [p.id]: err instanceof Error ? err.message : String(err),
+    }
+  } finally {
+    resolvingIds.value = resolvingIds.value.filter((id) => id !== p.id)
+  }
+}
+
+/** Every provider that can back the summary, with the models it offers. A
+ *  provider that curates a list is authoritative (the server rejects models
+ *  outside it); otherwise the resolved list is a suggestion and typing a model
+ *  id stays possible. */
+const baseGroups = computed(() => {
+  return providers.value.filter(isEligible).map((p) => {
+    const curated = p.models ?? []
+    let models = curated.length > 0 ? curated : (resolvedModels.value[p.id] ?? [])
+    // The saved choice stays visible even when the endpoint no longer lists it,
+    // so the current selection is never invisible in the sheet.
+    if (currentProviderId.value === p.id && currentModel.value && !models.includes(currentModel.value)) {
+      models = [...models, currentModel.value]
+    }
+    return {
+      provider: p,
+      curated: curated.length > 0,
+      resolving: resolvingIds.value.includes(p.id),
+      error: probeErrors.value[p.id] ?? '',
+      models,
+    }
+  })
+})
+
 const groups = computed(() => {
   const q = query.value.trim().toLowerCase()
-  return providers.value
-    .filter((p) => (p.models?.length ?? 0) > 0 && (p.protocol === 'anthropic' || p.protocol === 'openai'))
-    .map((p) => ({
-      provider: p,
-      models: (p.models ?? []).filter(
-        (m) => !q || m.toLowerCase().includes(q) || p.name.toLowerCase().includes(q),
-      ),
-    }))
-    .filter((g) => g.models.length > 0)
+  if (!q) return baseGroups.value
+  return baseGroups.value
+    .map((g) => {
+      if (g.provider.name.toLowerCase().includes(q)) return g
+      return { ...g, models: g.models.filter((m) => m.toLowerCase().includes(q)) }
+    })
+    // A group with nothing left to show is noise — except an uncatalogued one,
+    // whose manual input is still a valid answer to any query.
+    .filter((g) => g.models.length > 0 || (!g.curated && g.provider.name.toLowerCase().includes(q)))
 })
 
 function isCurrent(providerId: number, model: string): boolean {
   return currentProviderId.value === providerId && currentModel.value === model
+}
+
+function manualText(providerId: number): string {
+  return (manualDraft[providerId] ?? '').trim()
+}
+
+function useManual(providerId: number) {
+  const model = manualText(providerId)
+  if (!model) return
+  void choose(providerId, model)
 }
 
 async function choose(providerId: number, model: string) {
@@ -133,10 +244,12 @@ async function choose(providerId: number, model: string) {
     // provider change while the old model is still attached.
     await apiPatch('/api/config', { ai_summary: { provider_id: providerId, model } })
     await loadConfig()
+    close()
   } catch (err) {
     appLog.w('SummaryModelPicker', 'save summary model failed', err)
-  } finally {
-    close()
+    // Stay open on rejection: the server refuses a model outside a curated
+    // list, and closing would leave the user with no way to correct it.
+    toast.show(err instanceof Error ? err.message : String(err), { type: 'error', icon: 'error' })
   }
 }
 
@@ -197,6 +310,44 @@ function close() {
 }
 .summary-group-name {
   font-weight: var(--font-weight-medium);
+}
+.summary-group-hint {
+  padding: 0 var(--space-6) var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+.summary-manual {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 var(--space-6) var(--space-3);
+}
+.summary-manual-input {
+  flex: 1;
+  min-width: 0;
+  height: calc(30 * var(--dp));
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+.summary-manual-use {
+  flex-shrink: 0;
+  height: calc(30 * var(--dp));
+  padding: 0 var(--space-5);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.summary-manual-use:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .summary-row {
   display: flex;
