@@ -626,7 +626,32 @@ func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 	// turn — rewriting a running session's identity would strand its executor on
 	// a half-swapped row. Checked BEFORE closing ACP connections so a refused
 	// delete does not kill live connections.
-	replacement := model.GetAgent(model.GetDefaultAgentID())
+	//
+	// The takeover target is the default AS SEEN FROM THE CALLER'S PROJECT, not
+	// the raw configured default: that one may be scoped to another project
+	// (PATCH refuses to scope the default, but it can be scoped BEFORE becoming
+	// default). Handing the sessions to it would leave them on an agent this
+	// project's GET /api/agents does not return, so the picker and model list
+	// could not resolve it. Same rule as every other "which default" entry
+	// point; the agent being deleted is excluded so the fallback can never pick
+	// the row that is about to disappear.
+	projectPath := middleware.GetProjectFromCookie(r)
+	visible := visibleAgentsInProject(model.GetAgentList(), projectPath)
+	candidates := make([]*model.Agent, 0, len(visible))
+	for _, a := range visible {
+		if a.ID != req.ID {
+			candidates = append(candidates, a)
+		}
+	}
+	replacement := model.GetAgent(visibleDefaultAgent(model.GetDefaultAgentID(), candidates, projectPath))
+	if replacement == nil {
+		// Nothing visible is left here (the deleted agent was the only one this
+		// project could see). Handing the sessions to the configured default
+		// anyway beats refusing the delete: the rows stay valid and the project
+		// can re-scope or add an agent afterwards, whereas a dangling agent_id
+		// strands every session and a 500 blocks the delete entirely.
+		replacement = model.GetAgent(model.GetDefaultAgentID())
+	}
 	if replacement == nil {
 		// Cannot happen in practice (the default is refused above only when the
 		// caller names it), but deleting without a takeover target would strand
@@ -1194,7 +1219,7 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 				writeProviderError(w, r, err)
 				return
 			}
-			if !model.ProviderEnvSupported(agent.Backend, provider.Protocol) {
+			if !model.ProviderEnvSupportedProvider(agent.Backend, provider) {
 				writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderUnsupported",
 					map[string]any{"Backend": agent.Backend, "Protocol": provider.Protocol})
 				return
