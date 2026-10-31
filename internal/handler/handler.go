@@ -688,6 +688,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// AI 听记: the publisher uploads one audio segment per channel, reads the
 	// merged timeline back, and asks for the minutes once the share ends.
 	register("/api/live-share/notes", ServeLiveShareNotes)
+	// Microphone-only notes with no room behind them (solo dictation). Creates
+	// the notes row that makes every other notes endpoint authorize.
+	register("/api/live-share/notes/session", ServeLiveShareNotesSession)
 	register("/api/live-share/notes/segment", ServeLiveShareNoteSegment)
 	register("/api/live-share/notes/minutes", ServeLiveShareNotesMinutes)
 	registerPublic("/api/share/", ServeSharePublic)

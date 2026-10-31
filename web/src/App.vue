@@ -220,6 +220,13 @@
                   />
                 </TabPanel>
 
+                <!-- Desktop sharing Tab (screen share + meeting controls).
+                     Sits next to port forwarding: both are "connections this
+                     machine offers to other machines". -->
+                <TabPanel tabId="live" :activeTab="leftPanelActive" :noHeader="true">
+                  <LiveSharePanel />
+                </TabPanel>
+
                 <!-- Proxy Tab -->
                 <TabPanel tabId="proxy" :activeTab="leftPanelActive" :noHeader="true">
                   <ProxyPanelContent :active="panelIsActive('proxy')" />
@@ -627,6 +634,11 @@ import FileIcon from './components/common/FileIcon.vue'
 import { baseName, dirName } from '@/utils/path.ts'
 import GitHistoryContent from './components/git/GitHistoryContent.vue'
 import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
+// Desktop sharing is only possible in the desktop shell (it needs native
+// capture); the tab is hidden elsewhere, exactly like the old header button.
+const LiveSharePanel = defineAsyncComponent(
+  buildAsyncComponentOptions({ loader: () => import('./components/live/LiveSharePanel.vue') }),
+)
 import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AnimatedWallpaper from './components/AnimatedWallpaper.vue'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
@@ -688,6 +700,7 @@ import { useChatKeyboard } from './composables/useChatKeyboard.ts'
 import { useSoftKeyboard } from './composables/useSoftKeyboard.ts'
 import { useVisualViewportInset } from './composables/useVisualViewportInset.ts'
 import { usePortForward } from './composables/usePortForward.ts'
+import { useLiveShare } from './composables/useLiveShare.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
@@ -1951,6 +1964,11 @@ async function restoreProjectWorkspace() {
 }
 
 const { isAppMode, isDesktopApp } = useAppMode()
+// A running share is not a count, so it gets a tinted tab rather than a badge:
+// "1" would be meaningless, and a dot needs a slot the badge layer does not have
+// in both dock variants.
+const liveShareState = useLiveShare().state
+const liveShareActive = computed(() => liveShareState.value !== 'idle')
 const { syncToNative, sshInfo, loadSSHInfo, transportAllowsH2 } = usePortForward()
 const { terminalRuntimeEnabled, platformSupported, loadTerminalStatus } = useTerminalStatus()
 // Port forwarding is unusable only when NEITHER wire can carry it: the SSH
@@ -3273,6 +3291,9 @@ const overflowTabs = computed(() =>
     terminalDisabled: isTerminalDisabled.value,
     portForwardUnavailable: isPortForwardUnavailable.value,
     forgeHidden: isForgeTabHidden.value,
+    // Screen capture is a native capability: a browser tab cannot start a
+    // share, so the tab would only ever show "unsupported".
+    liveUnavailable: !isDesktopApp.value,
   }),
 )
 
@@ -3378,6 +3399,7 @@ function dockTabTitle(tab: string) {
 function dockInlineOverflowBtnClass(tab: string) {
   return {
     active: activeTab.value === tab,
+    'is-live': tab === 'live' && liveShareActive.value,
     'has-unread': tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab.value !== 'tasks',
     'just-completed': tab === 'tasks' && store.state.taskJustCompleted && activeTab.value !== 'tasks',
     'has-running': tab === 'tasks' && store.state.taskRunning && activeTab.value !== 'tasks',
@@ -3615,6 +3637,7 @@ function wideDockBtnClass(tab: string) {
   return {
     // When the left pane is collapsed no dock tab is active (VS Code-style).
     active: leftTab.value === tab && !leftCollapsed.value,
+    'is-live': tab === 'live' && liveShareActive.value,
     'has-unread': tab === 'tasks' && store.state.taskUnreadCount > 0 && leftTab.value !== 'tasks',
     'just-completed': tab === 'tasks' && store.state.taskJustCompleted && leftTab.value !== 'tasks',
     'has-running': tab === 'tasks' && store.state.taskRunning && leftTab.value !== 'tasks',
@@ -5164,6 +5187,12 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     justify-content: center;
+}
+
+/* A share is on air. Tinted rather than badged: there is no count to show, and
+   the red is the same one the panel header uses for its LIVE marker. */
+.dock-btn.is-live {
+  color: var(--color-red, #cf222e);
 }
 
 .dock-badge {

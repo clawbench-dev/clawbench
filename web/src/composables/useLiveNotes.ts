@@ -30,6 +30,26 @@ const FINISH_UPLOAD_TIMEOUT_MS = 180_000
 export type NotesPhase = 'idle' | 'recording' | 'finalizing'
 export type MinutesPhase = 'idle' | 'generating' | 'ready' | 'failed'
 
+/** Files a meeting leaves in the project. Empty until the server reports them. */
+export interface NotesArtifacts {
+  dir?: string
+  minutes?: string
+  transcript?: string
+  revised?: string
+  audio?: string
+  audioFiles?: number
+}
+
+/** One stage report from the server: minutes or the proofreading pass. */
+interface NotesStagePayload {
+  status?: MinutesPhase
+  markdown?: string
+  error?: string
+  filePath?: string
+  revise?: { status?: MinutesPhase; error?: string }
+  artifacts?: NotesArtifacts
+}
+
 export type { LiveNoteSegment, NoteBlock }
 export { groupNoteSegments, mergeNoteSegments }
 
@@ -39,6 +59,15 @@ const minutes = ref('')
 /** Path of the Markdown copy written inside the project (empty until saved). */
 const minutesFile = ref('')
 const minutesPhase = ref<MinutesPhase>('idle')
+/**
+ * The proofreading stage that runs before the summary. Tracked separately
+ * because it fails independently: a proofread failure still leaves usable
+ * minutes, and the dialog has to say which one went wrong.
+ */
+const revisePhase = ref<MinutesPhase>('idle')
+const reviseError = ref('')
+/** Where the recording, both transcripts and the minutes were written. */
+const artifacts = ref<NotesArtifacts>({})
 const error = ref('')
 /** Segments recorded but not yet transcribed (shown while finalizing). */
 const pending = ref(0)
@@ -66,6 +95,10 @@ function uploadSegment(token: string): NotesUploader {
   return async (args) => {
     const form = new FormData()
     form.append('token', token)
+    // The title travels with every segment: the server creates the meeting
+    // folder on the FIRST one (audio is written as it arrives), and it needs a
+    // name before the minutes request ever happens.
+    if (sessionTitle) form.append('title', sessionTitle)
     form.append('channel', args.channel)
     form.append('speaker', args.speaker)
     form.append('startedAt', String(args.startedAt))
@@ -90,13 +123,14 @@ function uploadSegment(token: string): NotesUploader {
 
 export function useLiveNotes() {
   /**
-   * Begin capturing. `systemStream` / `micStream` may be null (the user turned
-   * that source off); viewers are added later as they join.
+   * Begin capturing. Only microphones are transcribed: the system-audio loop
+   * would capture whatever else the machine is playing, which is not what a
+   * meeting transcript is for, and it duplicated every remote voice into a
+   * second channel. Viewers are added later as they join.
    */
   function start(opts: {
     token: string
     ctx: AudioContext
-    systemStream: MediaStream | null
     micStream: MediaStream | null
     title?: string
     label?: (channel: string) => string
@@ -115,7 +149,6 @@ export function useLiveNotes() {
         lost.value += 1
       },
     })
-    capture.addChannel('system', labelFor('system'), opts.systemStream)
     capture.addChannel('mic', labelFor('mic'), opts.micStream)
     phase.value = 'recording'
   }
@@ -193,24 +226,11 @@ export function useLiveNotes() {
         body: JSON.stringify({ token: sessionToken, title: sessionTitle, regenerate }),
       })
       if (!resp.ok) throw new Error(`minutes request failed: ${resp.status}`)
-      const data = (await resp.json()) as {
-        status?: MinutesPhase
-        markdown?: string
-        error?: string
-        filePath?: string
-      }
+      const data = (await resp.json()) as NotesStagePayload
       if (gen !== sessionGen) return
-      if (data.status === 'ready' && data.markdown) {
-        minutes.value = data.markdown
-        minutesFile.value = data.filePath ?? ''
-        minutesPhase.value = 'ready'
-        return
-      }
-      if (data.status === 'idle') {
-        // Nothing transcribed: there is no meeting to summarise.
-        minutesPhase.value = 'idle'
-        return
-      }
+      applyStage(data)
+      if (data.status === 'ready' && data.markdown) return
+      if (data.status === 'idle') return
       pollMinutes()
     } catch (e) {
       appLog.w(TAG, 'generate minutes failed', e)
@@ -239,24 +259,19 @@ export function useLiveNotes() {
         if (!resp.ok) throw new Error(`notes poll failed: ${resp.status}`)
         const data = (await resp.json()) as {
           segments?: LiveNoteSegment[]
-          minutes?: { status?: MinutesPhase; markdown?: string; error?: string; filePath?: string }
+          minutes?: NotesStagePayload
         }
         if (gen !== sessionGen) return
         if (data.segments?.length) {
           segments.value = mergeNoteSegments(segments.value, data.segments)
         }
-        const st = data.minutes?.status ?? 'idle'
-        minutesPhase.value = st
-        if (st === 'ready') {
-          minutes.value = data.minutes?.markdown ?? ''
-          minutesFile.value = data.minutes?.filePath ?? ''
-          return
-        }
-        if (st === 'failed') {
+        applyStage(data.minutes ?? {})
+        if (minutesPhase.value === 'ready') return
+        if (minutesPhase.value === 'failed') {
           error.value = data.minutes?.error ?? ''
           return
         }
-        if (st === 'idle') return
+        if (minutesPhase.value === 'idle') return
         pollMinutes(attempt + 1)
       } catch (e) {
         appLog.w(TAG, 'minutes poll failed', e)
@@ -264,6 +279,23 @@ export function useLiveNotes() {
         pollMinutes(attempt + 1)
       }
     }, 2000)
+  }
+
+  /**
+   * Applies one server payload.
+   *
+   * Three call sites (initial POST, poll, refresh) used to parse the same shape
+   * by hand; they now share this so a new field cannot be wired into one and
+   * forgotten in the others.
+   */
+  function applyStage(data: NotesStagePayload): void {
+    const st = data.status ?? 'idle'
+    minutesPhase.value = st
+    if (data.markdown !== undefined) minutes.value = data.markdown
+    if (data.filePath) minutesFile.value = data.filePath
+    if (data.artifacts) artifacts.value = data.artifacts
+    if (data.revise?.status) revisePhase.value = data.revise.status
+    reviseError.value = data.revise?.error ?? ''
   }
 
   /** Pulls anything the local state missed (dialog reopened mid-share). */
@@ -277,17 +309,13 @@ export function useLiveNotes() {
       if (!resp.ok) return
       const data = (await resp.json()) as {
         segments?: LiveNoteSegment[]
-        minutes?: { status?: MinutesPhase; markdown?: string; error?: string; filePath?: string }
+        minutes?: NotesStagePayload
       }
       if (gen !== sessionGen) return
       if (data.segments?.length) {
         segments.value = mergeNoteSegments(segments.value, data.segments)
       }
-      if (data.minutes?.status) {
-        minutesPhase.value = data.minutes.status
-        minutes.value = data.minutes.markdown ?? minutes.value
-        minutesFile.value = data.minutes.filePath ?? minutesFile.value
-      }
+      if (data.minutes?.status) applyStage(data.minutes)
     } catch (e) {
       appLog.d(TAG, 'refresh failed', e)
     }
@@ -322,6 +350,9 @@ export function useLiveNotes() {
     minutes.value = ''
     minutesFile.value = ''
     minutesPhase.value = 'idle'
+    revisePhase.value = 'idle'
+    reviseError.value = ''
+    artifacts.value = {}
     error.value = ''
     pending.value = 0
     lost.value = 0
@@ -334,6 +365,9 @@ export function useLiveNotes() {
     minutes,
     minutesFile,
     minutesPhase,
+    revisePhase,
+    reviseError,
+    artifacts,
     error,
     pending,
     lost,

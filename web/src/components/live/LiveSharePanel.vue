@@ -1,6 +1,34 @@
 <template>
-  <ModalDialog :open="open" :title="t('liveShare.dialogTitle')" :z-index="2500" @close="onClose">
-    <div class="live-dialog">
+  <div class="live-panel">
+    <!-- Panel header, in the same shape as the port-forward / forge panels: an
+         icon, the tab title, then the live state. The share is a workspace you
+         come back to, so its state has to be visible from the tab, not only
+         inside a dialog that has been closed. -->
+    <div class="live-panel__header">
+      <span class="live-panel__icon">
+        <MonitorUp :size="14" />
+      </span>
+      <span class="live-panel__title">{{ t('nav.liveShare') }}</span>
+      <span v-if="isLive" class="live-panel__live" data-role="live-badge">
+        <span class="live-panel__dot" />
+        {{ t('liveShare.live') }}
+      </span>
+      <span v-else-if="phase === 'minutes'" class="live-panel__state">
+        {{ t('liveShare.notes.minutesTitle') }}
+      </span>
+      <span class="live-panel__spacer" />
+      <button
+        v-if="share.state.value === 'publishing'"
+        class="live-panel__stop"
+        type="button"
+        data-action="panel-stop"
+        @click="onStop"
+      >
+        {{ t('liveShare.stop') }}
+      </button>
+    </div>
+
+    <div class="live-panel__body live-dialog">
       <!-- Idle: pick a source and options, then start. -->
       <template v-if="share.state.value === 'idle' && phase !== 'minutes'">
         <div v-if="!supported" class="live-dialog-warn">
@@ -107,7 +135,11 @@
         </div>
         <div v-else-if="notes.minutesPhase.value === 'generating'" class="live-dialog-hint">
           <LoadingIndicator size="sm" inline />
-          {{ t('liveShare.notes.generating') }}
+          {{
+            notes.revisePhase.value === 'generating'
+              ? t('liveShare.notes.proofreading')
+              : t('liveShare.notes.generating')
+          }}
         </div>
         <div v-else-if="notes.minutesPhase.value === 'failed'" class="live-dialog-error">
           {{ notes.error.value || t('liveShare.notes.generateFailed') }}
@@ -119,16 +151,28 @@
         ></div>
         <div v-else class="live-dialog-hint">{{ t('liveShare.notes.empty') }}</div>
 
-        <!-- Where the durable copy lives. The database row expires; this file
-             does not, and the user can edit or commit it. -->
-        <div v-if="notes.minutesFile.value" class="live-notes-file">
-          <span class="live-notes-file-label">{{ t('liveShare.notes.savedTo') }}</span>
-          <span class="live-notes-file-path" :title="notes.minutesFile.value">
-            {{ notes.minutesFile.value }}
-          </span>
-          <button class="live-btn live-btn--sm" type="button" @click="copyPath">
-            {{ t('liveShare.notes.copyPath') }}
-          </button>
+        <!-- The proofread pass failed but the minutes still exist: say so,
+             otherwise the summary silently describes a transcript nobody
+             corrected. -->
+        <div
+          v-if="notes.minutesPhase.value === 'ready' && notes.revisePhase.value === 'failed'"
+          class="live-dialog-warn"
+          data-role="proofread-failed"
+        >
+          {{ t('liveShare.notes.proofreadFailed') }}
+        </div>
+
+        <!-- Where the durable copies live. The database rows expire; these files
+             do not, and the user can edit or commit them. -->
+        <div v-if="artifactRows.length" class="live-notes-artifacts" data-role="artifacts">
+          <div class="live-notes-file-label">{{ t('liveShare.notes.savedTo') }}</div>
+          <div v-for="row in artifactRows" :key="row.key" class="live-notes-file">
+            <span class="live-notes-file-label">{{ row.label }}</span>
+            <span class="live-notes-file-path" :title="row.path">{{ row.path }}</span>
+            <button class="live-btn live-btn--sm" type="button" @click="copyArtifactPath(row.path)">
+              {{ t('liveShare.notes.copyPath') }}
+            </button>
+          </div>
         </div>
 
         <!-- Never present a partial transcript as a complete meeting. -->
@@ -213,7 +257,18 @@
                  queue, so the publisher's controls are "mute this one" and
                  "mute everyone" (below). -->
             <template v-if="controlRequests.has(v.id)">
-              <button class="live-btn live-btn--sm" type="button" data-action="control-allow" @click="grantControl(v.id)">
+              <!-- Granting on a platform with no injector would silently do
+                   nothing, so say so instead of showing the button. -->
+              <span v-if="!controlSupported" class="live-viewer-note" data-role="control-unsupported">
+                {{ t('liveShare.controlUnsupported') }}
+              </span>
+              <button
+                v-else
+                class="live-btn live-btn--sm"
+                type="button"
+                data-action="control-allow"
+                @click="grantControl(v.id)"
+              >
                 {{ t('liveShare.controlAllow') }}
               </button>
               <button class="live-btn live-btn--sm live-btn--danger" type="button" data-action="control-deny" @click="revokeControl(v.id)">
@@ -347,10 +402,10 @@
         </button>
       </div>
     </div>
-    <!-- Actions live in ModalDialog's footer, like every other dialog: it
-         already supplies padding, a separating border and the tinted bar. In
-         the body they were flush against the bottom edge with no divider. -->
-    <template #footer>
+    <!-- Pinned action bar, same treatment the dialog footer used to give them:
+         a tinted bar with a separating border, so the buttons never float in
+         the middle of a long scroll. -->
+    <div class="live-panel__footer">
       <template v-if="phase === 'minutes'">
         <button
           v-if="notes.minutesPhase.value === 'failed'"
@@ -376,14 +431,11 @@
         >
           {{ t('liveShare.notes.download') }}
         </button>
-        <button class="fbtn fbtn-primary" type="button" @click="onClose">
-          {{ t('common.close') }}
+        <button class="fbtn fbtn-primary" type="button" data-action="new-share" @click="resetReport">
+          {{ t('liveShare.newShare') }}
         </button>
       </template>
       <template v-else>
-        <button class="fbtn" type="button" @click="onClose">
-          {{ t('common.cancel') }}
-        </button>
         <button
           v-if="share.state.value === 'idle' && supported"
           class="fbtn fbtn-primary"
@@ -402,23 +454,23 @@
           {{ t('liveShare.stop') }}
         </button>
       </template>
-    </template>
-  </ModalDialog>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
 /**
- * Publisher dialog for a live screen/audio share.
+ * The desktop-sharing dock panel: start a share, hand out the link, watch the
+ * audience, and read the transcript / minutes afterwards.
  *
- * The capture session itself lives in useLiveShare (module-level, one per app
- * instance); this component only drives it and renders state. Closing the
- * dialog while publishing does NOT stop the share — the header button shows the
- * live indicator so the user can come back to it.
+ * The capture session lives in useLiveShare (module-level, one per app
+ * instance); this component only drives it and renders state. Leaving the tab
+ * while publishing does NOT stop the share — the panel header keeps a LIVE
+ * badge so it is obvious from the dock that something is still on air.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { X } from 'lucide-vue-next'
+import { MonitorUp, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import ModalDialog from '@/components/common/ModalDialog.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import { useToast } from '@/composables/useToast'
@@ -430,6 +482,7 @@ import {
 } from '@/composables/useLiveShare'
 import { groupNoteSegments, useLiveNotes } from '@/composables/useLiveNotes'
 import { getNative } from '@/utils/clawbenchNative'
+import { resolveRemoteControlSupport } from '@/utils/remoteControlSupport'
 import LiveAnnotateOverlay from '@/share/LiveAnnotateOverlay.vue'
 import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
 import { toInjectorEvent, type ControlMessage } from '@/share/liveControl'
@@ -437,13 +490,15 @@ import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { appLog } from '@/utils/appLog'
 import '@/assets/modal-footer-btn.css'
 
-const props = defineProps<{ open: boolean }>()
-const emit = defineEmits<{ close: [] }>()
-
 const { t } = useI18n()
 const toast = useToast()
 const share = useLiveShare()
 const notes = useLiveNotes()
+
+/** True while a capture/publish session is running (not while idle or reporting). */
+const isLive = computed(
+  () => share.state.value === 'publishing' || share.state.value === 'capturing',
+)
 
 const captureSources = ref<CaptureSource[]>([])
 const selectedSourceId = ref('')
@@ -483,6 +538,12 @@ const presence = ref<Record<string, boolean>>({})
 const controlledBy = ref('')
 /** Viewers that asked for control and are waiting for an answer. */
 const controlRequests = ref<Set<string>>(new Set())
+/**
+ * Whether this machine can inject input. Starts false and is filled in on
+ * mount: the panel lives on the desktop only, but "unknown" must never look
+ * like "yes" — the allow button would promise something the OS cannot do.
+ */
+const controlSupported = ref(false)
 let controlUnsupportedWarned = false
 let unsubscribeControl: (() => void) | null = null
 
@@ -648,7 +709,6 @@ const renderedMinutes = computed(() =>
 
 /** Localised speaker label for one recording channel. */
 function notesLabel(channel: string): string {
-  if (channel === 'system') return t('liveShare.notes.speakerSystem')
   if (channel === 'mic') return t('liveShare.notes.speakerMe')
   const id = channel.startsWith('viewer:') ? channel.slice('viewer:'.length) : ''
   const n = Number(id.replace(/^v/, '')) || 0
@@ -678,25 +738,25 @@ async function loadSources(): Promise<void> {
       selectedSourceId.value = (screen ?? list[0]).id
     }
   } catch (e) {
-    appLog.e('LiveShareDialog', 'loadSources failed', e)
+    appLog.e('LiveSharePanel', 'loadSources failed', e)
   } finally {
     loadingSources.value = false
   }
 }
 
-watch(
-  () => props.open,
-  (isOpen) => {
-    if (!isOpen) return
-    if (share.state.value === 'idle') void loadSources()
-    // Reopened mid-share: pick up any lines transcribed while the dialog was
-    // closed (the capture keeps running in the module singleton).
-    if (share.state.value === 'publishing' && notes.phase.value === 'recording') {
-      void notes.refresh()
-    }
-  },
-  { immediate: true },
-)
+// The panel is mounted the first time its tab is opened and then kept alive, so
+// "entered the panel" == "mounted". A share that is already publishing gets its
+// transcript refreshed: the capture lives in the module singleton and kept
+// transcribing while the tab was closed.
+onMounted(() => {
+  void resolveRemoteControlSupport(getNative()).then((ok) => {
+    controlSupported.value = ok
+  })
+  if (share.state.value === 'idle') void loadSources()
+  if (share.state.value === 'publishing' && notes.phase.value === 'recording') {
+    void notes.refresh()
+  }
+})
 
 async function onStart(): Promise<void> {
   starting.value = true
@@ -718,12 +778,10 @@ async function onStop(): Promise<void> {
   const hadNotes = notes.phase.value === 'recording'
   await share.stop()
   if (hadNotes) {
-    // Keep the dialog open: the minutes are generated in the background and
-    // this is the only place they are shown.
+    // The minutes are generated in the background; the panel switches to the
+    // report view and stays there until the user starts a new share.
     phase.value = 'minutes'
-    return
   }
-  emit('close')
 }
 
 function onToggleTalk(on: boolean): void {
@@ -780,15 +838,10 @@ watch(screenFullscreen, async (open) => {
   }
 })
 
-/** Closing while publishing keeps the share running; the header shows it. */
-function onClose(): void {
-  if (phase.value === 'minutes') {
-    // The report has been seen (or deliberately dismissed). Reset only after
-    // the dialog closes so the footer does not flicker to the setup view.
-    notes.reset()
-    phase.value = 'publishing'
-  }
-  emit('close')
+/** Leaves the report and goes back to the setup view, ready for a new share. */
+function resetReport(): void {
+  notes.reset()
+  phase.value = 'publishing'
 }
 
 async function copyMinutes(): Promise<void> {
@@ -796,16 +849,49 @@ async function copyMinutes(): Promise<void> {
     await navigator.clipboard.writeText(notes.minutes.value)
     toast.show(t('common.copied'), { type: 'success', icon: 'copy' })
   } catch (e) {
-    appLog.w('LiveShareDialog', 'copy minutes failed', e)
+    appLog.w('LiveSharePanel', 'copy minutes failed', e)
   }
 }
 
-async function copyPath(): Promise<void> {
+/**
+ * The files this meeting left in the project, in reading order.
+ *
+ * Built from the server's artifact report rather than from a fixed list: a
+ * failed proofread has no revised file, and showing an empty row would suggest
+ * the file exists.
+ */
+const artifactRows = computed(() => {
+  const a = notes.artifacts.value
+  const rows: Array<{ key: string; label: string; path: string }> = []
+  if (a.minutes) {
+    rows.push({ key: 'minutes', label: t('liveShare.notes.artifactMinutes'), path: a.minutes })
+  }
+  if (a.transcript) {
+    rows.push({
+      key: 'transcript',
+      label: t('liveShare.notes.artifactTranscript'),
+      path: a.transcript,
+    })
+  }
+  if (a.revised) {
+    rows.push({ key: 'revised', label: t('liveShare.notes.artifactRevised'), path: a.revised })
+  }
+  if (a.audio) {
+    rows.push({
+      key: 'audio',
+      label: t('liveShare.notes.artifactAudio', { n: a.audioFiles ?? 0 }),
+      path: a.audio,
+    })
+  }
+  return rows
+})
+
+async function copyArtifactPath(path: string): Promise<void> {
   try {
-    await navigator.clipboard.writeText(notes.minutesFile.value)
+    await navigator.clipboard.writeText(path)
     toast.show(t('common.copied'), { type: 'success', icon: 'copy' })
   } catch (e) {
-    appLog.w('LiveShareDialog', 'copy path failed', e)
+    appLog.w('LiveSharePanel', 'copy path failed', e)
   }
 }
 
@@ -1023,6 +1109,11 @@ watch(
 .live-viewer-id {
   font-family: var(--font-mono, monospace);
   color: var(--text-secondary, #424a53);
+}
+
+.live-viewer-note {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-muted, #656d76);
 }
 
 .live-viewer-talk {
@@ -1275,6 +1366,12 @@ watch(
    rather than growing the card past the viewport. */
 /* The saved path is long and machine-generated: wrap it instead of widening the
    dialog, and keep it in a monospace face so separators are readable. */
+.live-notes-artifacts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 4px);
+}
+
 .live-notes-file {
   display: flex;
   align-items: center;
@@ -1310,4 +1407,134 @@ watch(
   font-size: var(--font-size-sm, 13px);
   line-height: 1.7;
 }
+/* ── Panel shell ─────────────────────────────────────────────────────────────
+   Same skeleton as the port-forward and forge panels: a fixed header strip, a
+   scrolling body, a pinned action bar. The share used to be a modal card, where
+   the header was the window chrome and the footer floated at the bottom of a
+   fixed-height card; in a tab both have to be structural. */
+
+.live-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-primary, #ffffff);
+}
+
+.live-panel__header {
+  display: flex;
+  align-items: center;
+  height: var(--header-height);
+  padding: 0 var(--space-5, 10px) 0 var(--space-6, 12px);
+  gap: var(--space-3, 6px);
+  flex-shrink: 0;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+}
+
+.live-panel__icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary, #666);
+  flex-shrink: 0;
+}
+
+.live-panel__title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary, #1a1a1a);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-panel__spacer {
+  flex: 1;
+}
+
+/* "On air" marker. Red dot rather than a word alone: the dock is scanned, not
+   read, and a live share must be obvious without opening the tab. */
+.live-panel__live {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2, 4px);
+  height: calc(18 * var(--dp));
+  padding: 0 var(--space-3, 6px);
+  border-radius: var(--radius-full, 999px);
+  background: color-mix(in srgb, var(--color-red, #cf222e) 14%, transparent);
+  color: var(--color-red, #cf222e);
+  font-size: var(--font-size-xs, 11px);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.live-panel__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: live-panel-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes live-panel-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.live-panel__state {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-secondary, #666);
+  flex-shrink: 0;
+}
+
+.live-panel__stop {
+  height: calc(26 * var(--dp));
+  padding: 0 var(--space-5, 10px);
+  border: 1px solid color-mix(in srgb, var(--color-red, #cf222e) 40%, transparent);
+  border-radius: var(--radius-lg, 8px);
+  background: transparent;
+  color: var(--color-red, #cf222e);
+  font-size: var(--font-size-sm, 12px);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.live-panel__stop:hover {
+  background: color-mix(in srgb, var(--color-red, #cf222e) 8%, transparent);
+}
+
+.live-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* The dialog body used to be centred in a card; in a tab the content is a
+   column, and a max width keeps long lines (transcripts, paths) readable on a
+   wide dock panel. */
+.live-panel__body.live-dialog {
+  padding: var(--space-6, 12px) var(--space-7, 16px);
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+  min-height: 0;
+}
+
+.live-panel__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3, 6px);
+  flex-shrink: 0;
+  padding: var(--space-4, 8px) var(--space-6, 12px);
+  border-top: 1px solid var(--border-color, #e5e5e5);
+  background: var(--bg-secondary, #f6f8fa);
+}
+
 </style>

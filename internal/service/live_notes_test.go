@@ -216,58 +216,108 @@ func TestSplitRunes_ShortTextIsOneChunk(t *testing.T) {
 	assert.Equal(t, []string{"abc"}, splitRunes("abc", 100))
 }
 
-func TestWriteLiveNotesFile_WritesMinutesAndTranscript(t *testing.T) {
-	project := t.TempDir()
+func TestWriteLiveNotesMinutesFile_LinksSiblingsInsteadOfInlining(t *testing.T) {
+	paths := LiveNotesPathsIn(filepath.Join(t.TempDir(), "2026-10-30-1430-季度规划-abc123"))
 	started := time.Date(2026, 10, 30, 14, 30, 0, 0, time.Local)
-	segments := []LiveNoteSegment{
-		seg(1, "system", "系统声音", started.UnixMilli(), "今天讨论发布计划"),
-		seg(2, "mic", "我", started.UnixMilli()+10_000, "先确认时间"),
-	}
 
-	path, err := WriteLiveNotesFile(project, "季度规划", "## 概要\n\n发布计划确认。", segments, started)
+	written, err := WriteLiveNotesMinutesFile(paths, "季度规划", started, "## 概要\n\n发布计划确认。", 7)
 	require.NoError(t, err)
+	assert.Equal(t, paths.Minutes, written)
 
-	assert.Equal(t, filepath.Join(project, ".clawbench", "notes", "2026-10-30-1430-季度规划.md"), path)
-	body, err := os.ReadFile(path)
+	body, err := os.ReadFile(written)
 	require.NoError(t, err)
 	text := string(body)
-
 	assert.Contains(t, text, "# 季度规划 · 2026-10-30 14:30")
 	assert.Contains(t, text, "## 概要")
-	assert.Contains(t, text, "## 附：完整转写", "the full transcript must be kept in the file")
-	assert.Contains(t, text, "[00:00] 系统声音：今天讨论发布计划")
-	assert.Contains(t, text, "[00:10] 我：先确认时间")
+	// The transcript has its own file now. A copy here would go stale the moment
+	// somebody edits it, and it is the transcript that must never be lost.
+	assert.NotContains(t, text, "## 附：完整转写")
+	assert.Contains(t, text, "[transcript.md](transcript.md)")
+	assert.Contains(t, text, "[transcript-revised.md](transcript-revised.md)")
+	assert.Contains(t, text, "`audio/`（7 段）")
 }
 
-func TestWriteLiveNotesFile_SanitizesTitleAndOverwrites(t *testing.T) {
-	project := t.TempDir()
-	started := time.Date(2026, 10, 30, 9, 5, 0, 0, time.Local)
-	segs := []LiveNoteSegment{seg(1, "mic", "我", started.UnixMilli(), "内容")}
-
-	first, err := WriteLiveNotesFile(project, "a/b:c*d?e", "第一版", segs, started)
-	require.NoError(t, err)
-	assert.NotContains(t, filepath.Base(first), "/")
-	assert.NotContains(t, filepath.Base(first), ":")
-	assert.NotContains(t, filepath.Base(first), "*")
-	assert.Contains(t, filepath.Base(first), "abcde")
-
-	// Regenerating the same share overwrites instead of creating a second file.
-	second, err := WriteLiveNotesFile(project, "a/b:c*d?e", "第二版", segs, started)
-	require.NoError(t, err)
-	assert.Equal(t, first, second)
-
-	body, err := os.ReadFile(second)
-	require.NoError(t, err)
-	assert.Contains(t, string(body), "第二版")
-	assert.NotContains(t, string(body), "第一版")
-}
-
-func TestWriteLiveNotesFile_RequiresProjectAndMinutes(t *testing.T) {
-	_, err := WriteLiveNotesFile("", "t", "m", nil, time.Now())
+func TestWriteLiveNotesMinutesFile_RequiresDirAndMinutes(t *testing.T) {
+	_, err := WriteLiveNotesMinutesFile(LiveNotesPathsIn(""), "t", time.Now(), "m", 0)
 	assert.Error(t, err)
 
-	_, err = WriteLiveNotesFile(t.TempDir(), "t", "   ", nil, time.Now())
+	_, err = WriteLiveNotesMinutesFile(LiveNotesPathsIn(t.TempDir()), "t", time.Now(), "   ", 0)
 	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
+}
+
+func TestWriteLiveNotesTranscriptFile_KeepsHeadingNoteAndLines(t *testing.T) {
+	paths := LiveNotesPathsIn(t.TempDir())
+	started := time.Date(2026, 10, 30, 14, 30, 0, 0, time.Local)
+
+	path, err := WriteLiveNotesRevisedTranscript(
+		paths, "季度规划", started, "[00:00] 我：确认 ClawBench 的发布计划",
+	)
+	require.NoError(t, err)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "# 修订版转写 · 季度规划 · 2026-10-30 14:30")
+	assert.Contains(t, string(body), "> 已结合项目上下文修正听写错误与专有名词")
+	assert.Contains(t, string(body), "[00:00] 我：确认 ClawBench 的发布计划")
+
+	raw, err := WriteLiveNotesRawTranscript(paths, "季度规划", started, "[00:00] 我：原样")
+	require.NoError(t, err)
+	rawBody, err := os.ReadFile(raw)
+	require.NoError(t, err)
+	assert.Contains(t, string(rawBody), "# 转写 · 季度规划 · 2026-10-30 14:30")
+	assert.NotContains(t, string(rawBody), "> ", "the raw transcript carries no note")
+
+	_, err = WriteLiveNotesRawTranscript(paths, "", started, "  ")
+	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
+}
+
+// The folder is created while the meeting is still running, so it must be
+// stable: every later segment (and the minutes job) has to land in it even
+// though the title may have changed in between.
+func TestEnsureLiveNotesDir_IsStableAndKeepsAudioOutOfGit(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+
+	project := t.TempDir()
+	started := time.Date(2026, 10, 30, 14, 30, 0, 0, time.Local).UnixMilli()
+
+	paths, err := EnsureLiveNotesDir("abcdef123456", 0, project, "季度/规划", started)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(project, ".clawbench", "notes", "2026-10-30-1430-季度规划-abcdef"), paths.Dir)
+
+	info, err := os.Stat(paths.Audio)
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
+
+	ignore, err := os.ReadFile(filepath.Join(paths.Audio, ".gitignore"))
+	require.NoError(t, err)
+	assert.Equal(t, "*\n", string(ignore), "binary audio must not be committed by default")
+
+	again, err := EnsureLiveNotesDir("abcdef123456", 0, project, "改名了", started)
+	require.NoError(t, err)
+	assert.Equal(t, paths.Dir, again.Dir, "the recorded folder wins over the new title")
+}
+
+func TestEnsureLiveNotesDir_RequiresProjectPath(t *testing.T) {
+	_, err := EnsureLiveNotesDir("tok", 0, "  ", "t", 1)
+	assert.Error(t, err)
+}
+
+func TestSaveLiveNoteAudio_NamesByStartTimeAndChannel(t *testing.T) {
+	paths := LiveNotesPathsIn(t.TempDir())
+
+	first, err := SaveLiveNoteAudio(paths, "viewer:2", 1_700_000_000_123, []byte("a"))
+	require.NoError(t, err)
+	assert.Equal(t, "1700000000123-viewer-2.webm", filepath.Base(first))
+
+	second, err := SaveLiveNoteAudio(paths, "mic", 1_700_000_001_000, []byte("b"))
+	require.NoError(t, err)
+	assert.Equal(t, "1700000001000-mic.webm", filepath.Base(second))
+	// Sorting the folder by name must be sorting by time: that is what makes the
+	// recording usable without an index file.
+	assert.Less(t, filepath.Base(first), filepath.Base(second))
+
+	_, err = SaveLiveNoteAudio(paths, "mic", 1, nil)
+	assert.Error(t, err, "an empty upload must not create a zero-byte file")
 }
 
 // ── Edge cases: persistence ─────────────────────────────────────────────────
@@ -423,16 +473,14 @@ func withAISummary(t *testing.T, baseURL string) {
 }
 
 func TestGenerateLiveNotesMinutes_EmptyTranscript(t *testing.T) {
-	_, err := GenerateLiveNotesMinutes(context.Background(), "标题", nil)
+	_, err := GenerateLiveNotesMinutes(context.Background(), "标题", "")
 	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
 }
 
 func TestGenerateLiveNotesMinutes_NoSummaryModel(t *testing.T) {
 	withAISummary(t, "")
 
-	_, err := GenerateLiveNotesMinutes(context.Background(), "标题", []LiveNoteSegment{
-		seg(1, "mic", "我", 1_000, "内容"),
-	})
+	_, err := GenerateLiveNotesMinutes(context.Background(), "标题", "[00:00] 我：内容")
 	assert.ErrorIs(t, err, ErrSummaryModelNotConfigured)
 }
 
@@ -440,9 +488,7 @@ func TestGenerateLiveNotesMinutes_SingleChunk(t *testing.T) {
 	srv := aiSummaryServer(t, "## 概要\n\n发布计划已确认。")
 	withAISummary(t, srv.URL)
 
-	got, err := GenerateLiveNotesMinutes(context.Background(), "季度会", []LiveNoteSegment{
-		seg(1, "mic", "我", 1_000, "先确认时间"),
-	})
+	got, err := GenerateLiveNotesMinutes(context.Background(), "季度会", "[00:00] 我：先确认时间")
 	require.NoError(t, err)
 	assert.Equal(t, "## 概要\n\n发布计划已确认。", got)
 }
@@ -476,7 +522,7 @@ func TestGenerateLiveNotesMinutes_LongMeetingIsMapReduced(t *testing.T) {
 	defer srv.Close()
 	withAISummary(t, srv.URL)
 
-	got, err := GenerateLiveNotesMinutes(context.Background(), "", segments)
+	got, err := GenerateLiveNotesMinutes(context.Background(), "", BuildLiveNotesTranscript(segments))
 	require.NoError(t, err)
 	assert.Equal(t, "## 概要\n\n合并后的纪要", got)
 
@@ -496,27 +542,106 @@ func TestGenerateLiveNotesMinutes_ProviderError(t *testing.T) {
 	defer srv.Close()
 	withAISummary(t, srv.URL)
 
-	_, err := GenerateLiveNotesMinutes(context.Background(), "", []LiveNoteSegment{
-		seg(1, "mic", "我", 1_000, "内容"),
-	})
+	_, err := GenerateLiveNotesMinutes(context.Background(), "", "[00:00] 我：内容")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "live notes: minutes")
 }
 
+// ── Context-aware proofreading ─────────────────────────────────────────────
+
+// The proofreader is fed the project's own documents: that is where the correct
+// spelling of product names lives, and it is the only reason this stage exists.
+func TestReviseLiveNotesTranscript_UsesProjectContextAndKeepsTheTimeline(t *testing.T) {
+	project := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(project, "AGENTS.md"), []byte("ClawBench 是产品名；ACP 是协议名。"), 0o644,
+	))
+
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(body))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[00:00] 我：确认 ClawBench 的 ACP 计划"}}]}`))
+	}))
+	defer srv.Close()
+	withAISummary(t, srv.URL)
+
+	got, err := ReviseLiveNotesTranscript(context.Background(), project, "周会", []LiveNoteSegment{
+		seg(1, "mic", "我", 1_000, "确认科劳本奇的 a c p 计划"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "[00:00] 我：确认 ClawBench 的 ACP 计划", got)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, bodies, 1)
+	assert.Contains(t, bodies[0], "ClawBench 是产品名", "project context must reach the model")
+	assert.Contains(t, bodies[0], "确认科劳本奇的 a c p 计划", "and so must the raw line")
+}
+
+func TestReviseLiveNotesTranscript_EmptyTranscript(t *testing.T) {
+	_, err := ReviseLiveNotesTranscript(context.Background(), t.TempDir(), "", nil)
+	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
+}
+
+func TestReviseLiveNotesTranscript_NoSummaryModel(t *testing.T) {
+	withAISummary(t, "")
+	_, err := ReviseLiveNotesTranscript(context.Background(), t.TempDir(), "", []LiveNoteSegment{
+		seg(1, "mic", "我", 1_000, "内容"),
+	})
+	assert.ErrorIs(t, err, ErrSummaryModelNotConfigured)
+}
+
+func TestSetLiveNoteRevise_RoundTrips(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+
+	require.NoError(t, SetLiveNoteRevise("tok", 3, LiveNotesStatusReady, "修订后的文字", ""))
+	note, ok, err := GetLiveNote("tok")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, LiveNotesStatusReady, note.ReviseStatus)
+	assert.Equal(t, "修订后的文字", note.Revised)
+	assert.Equal(t, "", note.ReviseError)
+
+	require.NoError(t, SetLiveNoteRevise("tok", 3, LiveNotesStatusFailed, "", "model down"))
+	note, _, err = GetLiveNote("tok")
+	require.NoError(t, err)
+	assert.Equal(t, LiveNotesStatusFailed, note.ReviseStatus)
+	assert.Equal(t, "model down", note.ReviseError)
+}
+
 // ── Markdown output edge cases ─────────────────────────────────────────────
 
-func TestWriteLiveNotesFile_UntitledMeetingUsesDefaultHeading(t *testing.T) {
-	project := t.TempDir()
+func TestWriteLiveNotesMinutesFile_UntitledMeetingUsesDefaultHeading(t *testing.T) {
+	paths := LiveNotesPathsIn(t.TempDir())
 	started := time.Date(2026, 10, 30, 8, 0, 0, 0, time.Local)
 
-	path, err := WriteLiveNotesFile(project, "   ", "## 概要", nil, started)
+	written, err := WriteLiveNotesMinutesFile(paths, "   ", started, "## 概要", 0)
 	require.NoError(t, err)
-	assert.Equal(t, "2026-10-30-0800.md", filepath.Base(path), "no title means no slug suffix")
 
-	body, err := os.ReadFile(path)
+	body, err := os.ReadFile(written)
 	require.NoError(t, err)
 	assert.Contains(t, string(body), "# 会议纪要 · 2026-10-30 08:00")
-	assert.NotContains(t, string(body), "## 附：完整转写", "an empty transcript appends no appendix")
+	assert.NotContains(t, string(body), "`audio/`", "no segments means no audio line")
+}
+
+// Two meetings can start in the same minute under the same title; sharing a
+// folder would interleave their audio and overwrite each other's minutes.
+func TestLiveNotesMeetingDirName_SanitizesAndDisambiguates(t *testing.T) {
+	started := time.Date(2026, 10, 30, 9, 5, 0, 0, time.Local)
+
+	name := liveNotesMeetingDirName(started, "a/b:c*d?e", "abcdef123456")
+	assert.Equal(t, "2026-10-30-0905-abcde-abcdef", name)
+	assert.NotContains(t, name, "/")
+	assert.NotContains(t, name, ":")
+
+	assert.NotEqual(t, name, liveNotesMeetingDirName(started, "a/b:c*d?e", "999999"))
+	assert.Equal(t, "2026-10-30-0905", liveNotesMeetingDirName(started, "", ""))
 }
 
 func TestLiveNotesFileSlug_DropsUnsafeRunesAndCapsLength(t *testing.T) {

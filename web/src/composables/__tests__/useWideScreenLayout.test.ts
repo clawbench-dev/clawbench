@@ -444,6 +444,19 @@ describe('dock tab registry (single source of truth)', () => {
     expect(rendered.indexOf('notifications')).toBeLessThan(rendered.indexOf('settings'))
   })
 
+  it('renders the sharing tab immediately before port mapping', () => {
+    // The user asked for that exact slot: both tabs are "connections this
+    // machine offers", and port mapping must stay the last of the pair.
+    const rendered = secondaryDockTabs()
+    expect(rendered.indexOf('live')).toBe(rendered.indexOf('proxy') - 1)
+  })
+
+  it('hides the sharing tab where screen capture is impossible', () => {
+    // A browser tab can start voice notes, but it cannot start a share.
+    expect(secondaryDockTabs({ liveUnavailable: true })).not.toContain('live')
+    expect(secondaryDockTabs()).toContain('live')
+  })
+
   it('every registry entry carries an i18n title key', () => {
     for (const tab of DOCK_TABS) {
       expect(tab.titleKey, `${tab.id} has no titleKey`).toMatch(/^[a-z]+\.[A-Za-z]/)

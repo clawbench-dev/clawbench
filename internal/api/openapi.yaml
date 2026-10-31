@@ -3862,6 +3862,41 @@ paths:
         "409":
           description: 已有发布端在共享
 
+  /api/live-share/notes/session:
+    post:
+      tags: [LiveShare]
+      summary: 开启单人语音听记
+      description: |
+        只录麦克风的听写：**不建房间、不生成分享链接、没有观众**。服务端生成一个
+        token 并写入 `live_notes`（带项目归属），之后的分段上传、纪要、产物端点都
+        照常工作——它们的鉴权依据是这一行，而不是一个存活的房间。
+
+        返回的 token 与分享 token 同格式，但 `/api/share/{token}/...` 一律 404
+        （没有房间）。
+      operationId: liveShareNotesSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  description: 记录标题，用于命名会议目录与纪要文件
+      responses:
+        "200":
+          description: 会话 token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+              required: [token]
+        "403":
+          description: 缺少项目上下文
+
   /api/live-share/notes:
     get:
       tags: [LiveShare]
@@ -3915,6 +3950,10 @@ paths:
 
         信道分离是说话人标注的来源：发布端物理上持有每个参与者独立的音轨，
         不需要说话人分离模型。静音段（转写结果为空）返回 `id: 0`，不落库。
+
+        **音频在转写之前就写进项目目录**（`<项目>/.clawbench/notes/<场次>/audio/`），
+        因为录音是唯一无法再生的产物：转写失败仍可用它重跑。落盘失败只记日志，
+        不影响本次转写。`title` 只在第一段时用于给会议目录命名，后续忽略。
       operationId: liveShareNoteSegment
       requestBody:
         required: true
@@ -3932,6 +3971,9 @@ paths:
                 speaker:
                   type: string
                   description: 展示用说话人标签（发布端已本地化）
+                title:
+                  type: string
+                  description: 会议标题，用于命名会议目录（仅第一段有效）
                 startedAt:
                   type: integer
                   format: int64
@@ -7285,12 +7327,37 @@ components:
     LiveNoteMinutes:
       type: object
       description: |
-        会议纪要。`status` 为 `idle`（尚未生成）/ `generating` / `ready` / `failed`；
-        `markdown` 仅在 `ready` 时有值，`error` 仅在 `failed` 时有值。
+        会议纪要及其产物。`status` 为 `idle`（尚未生成）/ `generating` / `ready` /
+        `failed`；`markdown` 仅在 `ready` 时有值，`error` 仅在 `failed` 时有值。
+
+        `revise` 是生成纪要**之前**的上下文校对阶段：结合项目文档（AGENTS.md /
+        README.md 等）修正听写错误与专有名词，纪要由修订后的转写生成。它失败时
+        纪要改用原始转写，因此 `revise.status` 与 `status` 可以不同。
+
+        `filePath` 与 `artifacts` 只对发布端返回：它们是发布端磁盘上的路径。
       properties:
         status: { type: string }
         markdown: { type: string }
         error: { type: string }
+        filePath:
+          type: string
+          description: 纪要 Markdown 的绝对路径（仅发布端）
+        revise:
+          type: object
+          properties:
+            status: { type: string }
+            error: { type: string }
+          required: [status]
+        artifacts:
+          type: object
+          description: 这场会留在项目目录里的文件（仅发布端，未生成时为空）
+          properties:
+            dir: { type: string }
+            minutes: { type: string }
+            transcript: { type: string }
+            revised: { type: string }
+            audio: { type: string }
+            audioFiles: { type: integer }
       required: [status]
 
     WeChatLogin:

@@ -28,6 +28,7 @@ export type TabId =
   | 'tasks'
   | 'notifications'
   | 'terminal'
+  | 'live'
   | 'proxy'
   | 'stats'
   | 'settings'
@@ -81,6 +82,10 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
   { id: 'tasks', titleKey: 'nav.tasks' },
   { id: 'terminal', titleKey: 'terminal.title' },
   { id: 'stats', titleKey: 'nav.stats' },
+  // Desktop screen sharing + the meeting controls that go with it. It used to
+  // be a header-button dialog; it lives in the dock now because it is a
+  // workspace (link, audience, transcripts, minutes), not a one-shot action.
+  { id: 'live', titleKey: 'nav.liveShare' },
   { id: 'proxy', titleKey: 'nav.portForward' },
   // Notifications sits immediately before settings: settings stays the final
   // tab (it is the "exit" affordance at the end of the dock), and the
@@ -135,11 +140,17 @@ export function isDockTabId(tab: string): tab is DockTabId {
  * import-free on purpose (see the header), so it takes the resulting boolean.
  */
 export function secondaryDockTabs(
-  opts: { terminalDisabled?: boolean; portForwardUnavailable?: boolean; forgeHidden?: boolean } = {},
+  opts: {
+    terminalDisabled?: boolean
+    portForwardUnavailable?: boolean
+    forgeHidden?: boolean
+    liveUnavailable?: boolean
+  } = {},
 ): DockTabId[] {
   return DOCK_TABS.filter((t) => !t.primary)
     .filter((t) => !(t.id === 'terminal' && opts.terminalDisabled))
     .filter((t) => !(t.id === 'proxy' && opts.portForwardUnavailable))
     .filter((t) => !(t.id === 'forge' && opts.forgeHidden))
+    .filter((t) => !(t.id === 'live' && opts.liveUnavailable))
     .map((t) => t.id)
 }

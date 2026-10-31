@@ -64,6 +64,10 @@ CREATE TABLE IF NOT EXISTS live_notes (
 	minutes TEXT NOT NULL DEFAULT '',
 	error TEXT NOT NULL DEFAULT '',
 	file_path TEXT NOT NULL DEFAULT '',
+	dir_path TEXT NOT NULL DEFAULT '',
+	revised TEXT NOT NULL DEFAULT '',
+	revise_status TEXT NOT NULL DEFAULT 'idle',
+	revise_error TEXT NOT NULL DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -103,6 +107,17 @@ type LiveNote struct {
 	// FilePath is the Markdown file the minutes were written to, inside the
 	// project. Empty when the project directory was unavailable.
 	FilePath string `json:"filePath"`
+	// DirPath is the meeting folder holding every artifact (minutes, both
+	// transcripts, audio). Empty until the first segment or the minutes job
+	// creates it.
+	DirPath string `json:"dirPath"`
+	// Revised is the proofread transcript the minutes were generated from.
+	Revised string `json:"revised"`
+	// ReviseStatus / ReviseError track the proofreading stage separately from
+	// the minutes: the minutes can succeed with a raw transcript when the
+	// proofreader is unavailable.
+	ReviseStatus string `json:"reviseStatus"`
+	ReviseError  string `json:"reviseError"`
 }
 
 // AppendLiveNoteSegment stores one transcribed segment. It also makes sure the
@@ -181,8 +196,10 @@ func ListLiveNoteSegments(token string, sinceID int64) ([]LiveNoteSegment, error
 func GetLiveNote(token string) (LiveNote, bool, error) {
 	var n LiveNote
 	err := store.ReadDB().QueryRow(
-		`SELECT token, title, status, minutes, error, file_path FROM live_notes WHERE token = ?`, token,
-	).Scan(&n.Token, &n.Title, &n.Status, &n.Minutes, &n.Error, &n.FilePath)
+		`SELECT token, title, status, minutes, error, file_path, dir_path, revised, revise_status, revise_error
+		   FROM live_notes WHERE token = ?`, token,
+	).Scan(&n.Token, &n.Title, &n.Status, &n.Minutes, &n.Error, &n.FilePath,
+		&n.DirPath, &n.Revised, &n.ReviseStatus, &n.ReviseError)
 	if errors.Is(err, sql.ErrNoRows) {
 		return LiveNote{}, false, nil
 	}
@@ -222,6 +239,28 @@ func SetLiveNoteMinutes(token string, projectID int64, title, status, minutes, e
 	)
 	if err != nil {
 		return fmt.Errorf("live notes: set minutes: %w", err)
+	}
+	return nil
+}
+
+// SetLiveNoteRevise records the proofreading stage of a share's transcript.
+//
+// Kept separate from the minutes status on purpose: the two stages fail
+// independently, and a failed proofread must not hide a perfectly good summary
+// (which is then generated from the raw transcript).
+func SetLiveNoteRevise(token string, projectID int64, status, revised, errMsg string) error {
+	_, err := store.WriteExec(
+		`INSERT INTO live_notes (token, project_id, revise_status, revised, revise_error, updated_at)
+		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		 ON CONFLICT(token) DO UPDATE SET
+		   revise_status = excluded.revise_status,
+		   revised = excluded.revised,
+		   revise_error = excluded.revise_error,
+		   updated_at = CURRENT_TIMESTAMP`,
+		token, projectID, status, revised, errMsg,
+	)
+	if err != nil {
+		return fmt.Errorf("live notes: set revise: %w", err)
 	}
 	return nil
 }
@@ -451,14 +490,90 @@ const liveNotesChunkPrompt = `你是一名会议记录员。下面是一场长�
 // well below the model window so that prompt + output still fit.
 const liveNotesChunkRunes = 6000
 
-// GenerateLiveNotesMinutes turns a share's transcript into Markdown minutes.
+// liveNotesReviseMaxTokens bounds one proofread chunk. The output is roughly
+// the same length as the input, so this is a ceiling against a runaway model
+// rather than a real limit.
+const liveNotesReviseMaxTokens = 4000
+
+// liveNotesRevisePrompt proofreads one chunk of the transcript.
+//
+// The instructions are deliberately narrow. A proofreader that is allowed to
+// "improve" a sentence rewrites the meeting: minutes then describe what the
+// model thinks should have been said. Only substitutions are allowed here —
+// every timestamp, speaker and line must survive unchanged so the result is
+// still a transcript and not an essay.
+const liveNotesRevisePrompt = `你是一名会议转写校对员。输入是语音识别的会议转写，每行格式为「[mm:ss] 说话人：内容」。
+
+你的任务只有一件：修正听写错误。
+
+1. 只改明显的同音/近音错字、专有名词、产品名、技术术语、人名与缩写。
+2. 「项目背景」里出现过的写法是唯一正确写法：转写里与之接近的一律改成它（例如把同音词改成项目里的真实名字）。
+3. 不要润色、不要改写句式、不要合并或拆分句子、不要补全没听清的内容。
+4. 不要删除任何信息（口头语也保留），不要改变时间戳、说话人、行数和顺序。
+5. 听不清且无法确定的，保持原样，不要猜测。
+
+直接输出修订后的转写，不要任何解释、不要加代码块。`
+
+const liveNotesReviseQuestion = "请输出这一段修订后的转写。"
+
+// ReviseLiveNotesTranscript proofreads the raw transcript against the project's
+// own vocabulary and returns the corrected timeline.
+//
+// Why this stage exists: ASR has no idea that "claw bench" is ClawBench or that
+// "ACP" is not "a c p". The project's own documents (AGENTS.md / README.md) are
+// full of the correct spellings, and feeding them to the proofreader fixes
+// exactly the errors a human would fix — which is what makes the minutes
+// readable.
+//
+// Chunked for the same reason the minutes are: a one-hour meeting does not fit
+// in one request. Chunks are cut on line boundaries so a line is never split.
+func ReviseLiveNotesTranscript(ctx context.Context, projectPath, title string, segments []LiveNoteSegment) (string, error) {
+	transcript := BuildLiveNotesTranscript(segments)
+	if strings.TrimSpace(transcript) == "" {
+		return "", ErrLiveNotesEmpty
+	}
+	summarizer := summarize.NewAISummarizer(model.ConfigInstance.AISummary)
+	if summarizer == nil {
+		return "", ErrSummaryModelNotConfigured
+	}
+
+	background := strings.Join(projectContext(projectPath), "\n\n")
+	chunks := splitRunes(transcript, liveNotesChunkRunes)
+	out := make([]string, 0, len(chunks))
+	for i, chunk := range chunks {
+		// The transcript always gets its own heading, even with no project
+		// documents: without it the model has no delimiter between "context" and
+		// "the thing to correct", and a project without an AGENTS.md is the
+		// normal case for a fresh directory.
+		block := "## 待修订转写\n" + chunk
+		if background != "" {
+			block = "## 项目背景（专有名词以此为准）\n" + background + "\n\n" + block
+		}
+		question := liveNotesReviseQuestion
+		if len(chunks) > 1 {
+			question = fmt.Sprintf("这是第 %d/%d 段。%s", i+1, len(chunks), liveNotesReviseQuestion)
+		}
+		revised, err := summarize.AskAboutContext(ctx, summarizer, liveNotesRevisePrompt, block, question, liveNotesReviseMaxTokens)
+		if err != nil {
+			return "", fmt.Errorf("live notes: revise chunk %d: %w", i+1, err)
+		}
+		// The provider already fails on an empty answer, so a blank chunk cannot
+		// reach here; trimming is all that is left to do.
+		out = append(out, strings.TrimSpace(revised))
+	}
+	return strings.Join(out, "\n"), nil
+}
+
+// GenerateLiveNotesMinutes turns a transcript into Markdown minutes.
+//
+// It takes the transcript as text (not segments) because the caller decides
+// which variant to summarize — normally the proofread one.
 //
 // Long meetings are map-reduced: each chunk is condensed to bullet points, then
 // the bullet points are merged into the final minutes. Sending the whole
 // transcript in one request would either overflow the model window or be
 // silently truncated by the provider.
-func GenerateLiveNotesMinutes(ctx context.Context, title string, segments []LiveNoteSegment) (string, error) {
-	transcript := BuildLiveNotesTranscript(segments)
+func GenerateLiveNotesMinutes(ctx context.Context, title, transcript string) (string, error) {
 	if strings.TrimSpace(transcript) == "" {
 		return "", ErrLiveNotesEmpty
 	}
@@ -525,65 +640,263 @@ func splitRunes(s string, n int) []string {
 
 // ── Markdown output ─────────────────────────────────────────────────────────
 
-// LiveNotesDir is where minutes are written inside a project.
+// LiveNotesDir is where a meeting's artifacts are written inside a project.
 //
 // Dot-prefixed so it does not clutter the tree, and under `.clawbench/` because
 // that is already the convention for generated artifacts in this repo.
 const LiveNotesDir = ".clawbench/notes"
 
-// liveNotesNameMaxRunes bounds the title part of the file name. Long titles are
-// unwieldy in a file manager and can exceed the platform's path limit once the
-// directory is prepended.
+// liveNotesNameMaxRunes bounds the title part of the folder name. Long titles
+// are unwieldy in a file manager and can exceed the platform's path limit once
+// the directory is prepended.
 const liveNotesNameMaxRunes = 40
 
-// WriteLiveNotesFile saves one share's minutes as Markdown inside the project,
-// with the full transcript appended.
+// LiveNotesPaths are the files one meeting leaves behind.
 //
-// The database row is a cache with a retention window; this file is the copy
-// the user owns — it survives cleanup, can be edited, and can be committed. The
-// appendix matters: it is the complete transcript, which is the part that must
-// never be lost.
+// Every one of them is permanent: the database rows expire after the retention
+// window, but the folder stays until the user deletes it. That is why audio is
+// written as it arrives rather than at the end — a crash mid-meeting must not
+// cost the recording.
+type LiveNotesPaths struct {
+	// Dir is the meeting folder.
+	Dir string
+	// Minutes is `<dir>/minutes.md` — the generated summary.
+	Minutes string
+	// Transcript is `<dir>/transcript.md` — the raw ASR output.
+	Transcript string
+	// Revised is `<dir>/transcript-revised.md` — proofread against the project's
+	// own vocabulary. This is what the minutes are generated from.
+	Revised string
+	// Audio is `<dir>/audio/` — one WebM file per transcribed segment.
+	Audio string
+}
+
+// LiveNotesPathsIn returns the artifact paths for a meeting folder.
+func LiveNotesPathsIn(dir string) LiveNotesPaths { return liveNotesPathsFor(dir) }
+
+func liveNotesPathsFor(dir string) LiveNotesPaths {
+	return LiveNotesPaths{
+		Dir:        dir,
+		Minutes:    filepath.Join(dir, "minutes.md"),
+		Transcript: filepath.Join(dir, "transcript.md"),
+		Revised:    filepath.Join(dir, "transcript-revised.md"),
+		Audio:      filepath.Join(dir, "audio"),
+	}
+}
+
+// liveNotesMeetingDirName builds the folder name from the meeting start.
 //
-// The name is derived from the meeting start, so regenerating the minutes of
-// the same share overwrites the same file instead of piling up copies.
-func WriteLiveNotesFile(projectPath, title, minutes string, segments []LiveNoteSegment, startedAt time.Time) (string, error) {
+// The token suffix is not decoration: two meetings can start in the same minute
+// under the same title, and sharing a folder would interleave their audio and
+// overwrite each other's minutes.
+func liveNotesMeetingDirName(startedAt time.Time, title, token string) string {
+	name := startedAt.Format("2006-01-02-1504")
+	if slug := liveNotesFileSlug(title); slug != "" {
+		name += "-" + slug
+	}
+	suffix := token
+	if len(suffix) > 6 {
+		suffix = suffix[:6]
+	}
+	if suffix != "" {
+		name += "-" + suffix
+	}
+	return name
+}
+
+// LiveNotesDirFor returns the folder already recorded for a share, or "".
+func LiveNotesDirFor(token string) (string, error) {
+	var dir string
+	err := store.ReadDB().QueryRow(`SELECT dir_path FROM live_notes WHERE token = ?`, token).Scan(&dir)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("live notes: dir lookup: %w", err)
+	}
+	return dir, nil
+}
+
+// EnsureLiveNotesDir creates the meeting folder (once) and returns its paths.
+//
+// Called from the segment uploader, i.e. while the meeting is still running, so
+// audio has somewhere to go before anything is summarized. Idempotent: the
+// first caller records the folder, every later one reuses it even if the title
+// changed since.
+func EnsureLiveNotesDir(token string, projectID int64, projectPath, title string, startedAtMS int64) (LiveNotesPaths, error) {
 	if strings.TrimSpace(projectPath) == "" {
+		return LiveNotesPaths{}, errors.New("live notes: no project path")
+	}
+	if dir, err := LiveNotesDirFor(token); err != nil {
+		return LiveNotesPaths{}, err
+	} else if dir != "" {
+		return ensureLiveNotesDirs(dir)
+	}
+
+	startedAt := time.UnixMilli(startedAtMS)
+	if startedAtMS <= 0 {
+		startedAt = time.Now()
+	}
+	dir := filepath.Join(projectPath, filepath.FromSlash(LiveNotesDir), liveNotesMeetingDirName(startedAt, title, token))
+	paths, err := ensureLiveNotesDirs(dir)
+	if err != nil {
+		return LiveNotesPaths{}, err
+	}
+	// CASE, not excluded.dir_path: a concurrent caller (or the minutes job) may
+	// have recorded a folder between the lookup above and this write.
+	if _, err := store.WriteExec(
+		`INSERT INTO live_notes (token, project_id, dir_path, updated_at)
+		 VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+		 ON CONFLICT(token) DO UPDATE SET
+		   dir_path = CASE WHEN live_notes.dir_path = '' THEN excluded.dir_path ELSE live_notes.dir_path END,
+		   updated_at = CURRENT_TIMESTAMP`,
+		token, projectID, dir,
+	); err != nil {
+		return LiveNotesPaths{}, fmt.Errorf("live notes: record dir: %w", err)
+	}
+	return paths, nil
+}
+
+func ensureLiveNotesDirs(dir string) (LiveNotesPaths, error) {
+	paths := liveNotesPathsFor(dir)
+	if err := os.MkdirAll(paths.Audio, 0o755); err != nil {
+		return LiveNotesPaths{}, fmt.Errorf("live notes: create notes dir: %w", err)
+	}
+	// Audio is binary and can reach tens of megabytes per meeting. Keep it out
+	// of the repository by default; the Markdown next to it stays committable,
+	// which is what the folder is for.
+	ignore := filepath.Join(paths.Audio, ".gitignore")
+	if _, err := os.Stat(ignore); errors.Is(err, os.ErrNotExist) {
+		// Best effort: an ignored audio folder is a convenience, not a
+		// requirement, and the caller is in the middle of an upload.
+		_ = os.WriteFile(ignore, []byte("*\n"), 0o644)
+	}
+	return paths, nil
+}
+
+// SaveLiveNoteAudio writes one received segment next to the minutes.
+//
+// Named by the segment's wall-clock start so the files sort in speaking order
+// and two channels never collide. The name is also the only link back to the
+// transcript line, which is what makes a future "jump to audio" possible.
+func SaveLiveNoteAudio(paths LiveNotesPaths, channel string, startedAtMS int64, audio []byte) (string, error) {
+	if len(audio) == 0 {
+		return "", errors.New("live notes: empty audio")
+	}
+	if startedAtMS <= 0 {
+		startedAtMS = time.Now().UnixMilli()
+	}
+	if err := os.MkdirAll(paths.Audio, 0o755); err != nil {
+		return "", fmt.Errorf("live notes: create audio dir: %w", err)
+	}
+	name := fmt.Sprintf("%013d-%s.webm", startedAtMS, liveNotesChannelSlug(channel))
+	path := filepath.Join(paths.Audio, name)
+	if err := os.WriteFile(path, audio, 0o644); err != nil {
+		return "", fmt.Errorf("live notes: write audio: %w", err)
+	}
+	return path, nil
+}
+
+// liveNotesChannelSlug turns "viewer:2" into a safe file-name element.
+func liveNotesChannelSlug(channel string) string {
+	slug := strings.ReplaceAll(channel, ":", "-")
+	var b strings.Builder
+	for _, r := range slug {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		return "channel"
+	}
+	return b.String()
+}
+
+// WriteLiveNotesMinutesFile saves the generated minutes inside the meeting
+// folder and links to the sibling artifacts.
+//
+// The transcript is NOT appended any more: it has its own file, and a copy here
+// would go stale the moment somebody edits it. A link keeps one source of truth.
+func WriteLiveNotesMinutesFile(paths LiveNotesPaths, title string, startedAt time.Time, minutes string, audioSegments int) (string, error) {
+	if strings.TrimSpace(paths.Dir) == "" {
 		return "", errors.New("live notes: no project path")
 	}
 	if strings.TrimSpace(minutes) == "" {
 		return "", ErrLiveNotesEmpty
 	}
-	dir := filepath.Join(projectPath, filepath.FromSlash(LiveNotesDir))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
 		return "", fmt.Errorf("live notes: create notes dir: %w", err)
 	}
 
-	name := startedAt.Format("2006-01-02-1504")
-	if slug := liveNotesFileSlug(title); slug != "" {
-		name += "-" + slug
-	}
-	path := filepath.Join(dir, name+".md")
-
-	var b strings.Builder
 	heading := startedAt.Format("2006-01-02 15:04")
+	var b strings.Builder
 	if t := strings.TrimSpace(title); t != "" {
 		fmt.Fprintf(&b, "# %s · %s\n\n", t, heading)
 	} else {
 		fmt.Fprintf(&b, "# 会议纪要 · %s\n\n", heading)
 	}
 	b.WriteString(strings.TrimSpace(minutes))
-	b.WriteString("\n")
-
-	if transcript := BuildLiveNotesTranscript(segments); transcript != "" {
-		b.WriteString("\n---\n\n## 附：完整转写\n\n")
-		b.WriteString(transcript)
-		b.WriteString("\n")
+	b.WriteString("\n\n---\n\n## 本次产物\n\n")
+	b.WriteString("- 转写：[transcript.md](transcript.md)\n")
+	b.WriteString("- 修订版转写：[transcript-revised.md](transcript-revised.md)\n")
+	if audioSegments > 0 {
+		fmt.Fprintf(&b, "- 录音：`audio/`（%d 段）\n", audioSegments)
 	}
 
-	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+	if err := os.WriteFile(paths.Minutes, []byte(b.String()), 0o644); err != nil {
 		return "", fmt.Errorf("live notes: write minutes file: %w", err)
 	}
-	return path, nil
+	return paths.Minutes, nil
+}
+
+// WriteLiveNotesRawTranscript writes transcript.md: exactly what the ASR heard.
+func WriteLiveNotesRawTranscript(paths LiveNotesPaths, title string, startedAt time.Time, body string) (string, error) {
+	return writeLiveNotesTranscript(paths, paths.Transcript, "转写", "", title, startedAt, body)
+}
+
+// WriteLiveNotesRevisedTranscript writes transcript-revised.md, the proofread
+// variant the minutes are generated from.
+//
+// The blockquote is not decoration: months later nobody remembers why this file
+// differs from transcript.md, and "the timestamps were not touched" is the one
+// thing that makes it comparable.
+func WriteLiveNotesRevisedTranscript(paths LiveNotesPaths, title string, startedAt time.Time, body string) (string, error) {
+	return writeLiveNotesTranscript(paths, paths.Revised, "修订版转写",
+		"已结合项目上下文修正听写错误与专有名词；时间戳、说话人、行序均未改动。",
+		title, startedAt, body)
+}
+
+// writeLiveNotesTranscript writes one transcript variant into the meeting
+// folder. `note` is an optional blockquote placed under the heading.
+func writeLiveNotesTranscript(paths LiveNotesPaths, target, heading, note, title string, startedAt time.Time, body string) (string, error) {
+	if strings.TrimSpace(paths.Dir) == "" {
+		return "", errors.New("live notes: no project path")
+	}
+	if strings.TrimSpace(body) == "" {
+		return "", ErrLiveNotesEmpty
+	}
+	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
+		return "", fmt.Errorf("live notes: create notes dir: %w", err)
+	}
+
+	stamp := startedAt.Format("2006-01-02 15:04")
+	var b strings.Builder
+	if t := strings.TrimSpace(title); t != "" {
+		fmt.Fprintf(&b, "# %s · %s · %s\n\n", heading, t, stamp)
+	} else {
+		fmt.Fprintf(&b, "# %s · %s\n\n", heading, stamp)
+	}
+	if note != "" {
+		fmt.Fprintf(&b, "> %s\n\n", note)
+	}
+	b.WriteString(strings.TrimSpace(body))
+	b.WriteString("\n")
+
+	if err := os.WriteFile(target, []byte(b.String()), 0o644); err != nil {
+		return "", fmt.Errorf("live notes: write transcript file: %w", err)
+	}
+	return target, nil
 }
 
 // liveNotesFileSlug turns a share title into a safe single path element.

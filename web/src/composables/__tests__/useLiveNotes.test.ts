@@ -103,32 +103,24 @@ afterEach(() => {
 })
 
 describe('useLiveNotes — recording', () => {
-  it('registers one channel per source and reports recording', () => {
+  it('records the microphone only — system audio is not transcribed', () => {
     const notes = useLiveNotes()
-    const system = {} as MediaStream
     const mic = {} as MediaStream
 
-    notes.start({
-      token: 'tok',
-      ctx,
-      systemStream: system,
-      micStream: mic,
-      label: (channel) => `L:${channel}`,
-    })
+    notes.start({ token: 'tok', ctx, micStream: mic, label: (channel) => `L:${channel}` })
 
     const cap = lastCapture()
     expect(notes.phase.value).toBe('recording')
-    expect(cap.channels).toEqual([
-      { channel: 'system', speaker: 'L:system', stream: system },
-      { channel: 'mic', speaker: 'L:mic', stream: mic },
-    ])
+    // One channel: the system loopback would duplicate every remote voice into
+    // a second line and transcribe whatever else the machine is playing.
+    expect(cap.channels).toEqual([{ channel: 'mic', speaker: 'L:mic', stream: mic }])
   })
 
   it('falls back to the raw channel name when no labeller is given', () => {
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
 
-    expect(lastCapture().channels.map((c) => c.speaker)).toEqual(['system', 'mic'])
+    expect(lastCapture().channels.map((c) => c.speaker)).toEqual(['mic'])
   })
 
   it('adds and removes viewer channels, ignoring empty ids and calls before start', () => {
@@ -136,7 +128,7 @@ describe('useLiveNotes — recording', () => {
     notes.addViewer('v1', {} as MediaStream)
     expect(h.instances).toHaveLength(0)
 
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     const cap = lastCapture()
 
     notes.addViewer('v1', {} as MediaStream)
@@ -151,7 +143,7 @@ describe('useLiveNotes — recording', () => {
     const notes = useLiveNotes()
     await expect(notes.stopCapture()).resolves.toBeUndefined()
 
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     await notes.stopCapture()
     expect(lastCapture().flushTimeout).toBe(2000)
   })
@@ -160,7 +152,7 @@ describe('useLiveNotes — recording', () => {
 describe('useLiveNotes — finishing', () => {
   it('drains the backlog, then asks for the minutes', async () => {
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     // Pretend a segment already landed through the upload response.
     notes.segments.value = [{ id: 1, channel: 'mic', speaker: '我', startedAt: 1, durationMs: 1, text: '内容' }]
     fetchMock.mockResolvedValue(jsonResponse({ status: 'generating' }))
@@ -176,7 +168,7 @@ describe('useLiveNotes — finishing', () => {
 
   it('flags a truncated transcript when the drain times out', async () => {
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     lastCapture().drainResult = false
 
     await notes.finishUploads()
@@ -193,7 +185,7 @@ describe('useLiveNotes — finishing', () => {
 
   it('finish() stops the recorders before draining', async () => {
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     fetchMock.mockResolvedValue(jsonResponse({ status: 'idle' }))
 
     await notes.finish()
@@ -209,7 +201,7 @@ describe('useLiveNotes — session isolation', () => {
   // meeting must not let the previous meeting's background drain write into it.
   it('a drain finishing after a new session started leaves the new one alone', async () => {
     const notes = useLiveNotes()
-    notes.start({ token: 'tok-a', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok-a', ctx, micStream: null })
     notes.segments.value = [{ id: 1, channel: 'mic', speaker: '我', startedAt: 1, durationMs: 1, text: 'A 的内容' }]
 
     const capA = lastCapture()
@@ -221,7 +213,7 @@ describe('useLiveNotes — session isolation', () => {
 
     // The user closes the dialog (reset) and immediately starts another meeting.
     notes.reset()
-    notes.start({ token: 'tok-b', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok-b', ctx, micStream: null })
     expect(notes.phase.value).toBe('recording')
 
     releaseDrain(true)
@@ -234,7 +226,7 @@ describe('useLiveNotes — session isolation', () => {
   it('a poll response that arrives after reset is dropped', async () => {
     vi.useFakeTimers()
     const notes = useLiveNotes()
-    notes.start({ token: 'tok-a', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok-a', ctx, micStream: null })
 
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ status: 'generating' }))
@@ -242,13 +234,104 @@ describe('useLiveNotes — session isolation', () => {
 
     await notes.generateMinutes()
     notes.reset()
-    notes.start({ token: 'tok-b', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok-b', ctx, micStream: null })
 
     await vi.advanceTimersByTimeAsync(2000)
 
     expect(notes.minutes.value).toBe('')
     expect(notes.minutesPhase.value).toBe('idle')
     expect(notes.phase.value).toBe('recording')
+  })
+})
+
+describe('useLiveNotes — artifacts', () => {
+  it('sends the meeting title with every segment so the folder can be named', async () => {
+    const notes = useLiveNotes()
+    notes.start({ token: 'tok', title: '季度会', ctx, micStream: null })
+    fetchMock.mockResolvedValue(jsonResponse({ id: 1, text: '内容' }))
+
+    // The uploader is what the capture calls for each finished segment.
+    await lastCapture().upload({
+      channel: 'mic',
+      speaker: '我',
+      startedAt: 1,
+      durationMs: 2,
+      blob: new Blob(['x']),
+    })
+
+    const form = (fetchMock.mock.calls[0]?.[1] as RequestInit).body as FormData
+    expect(form.get('title')).toBe('季度会')
+  })
+
+  it('adopts the proofreading status and the files the meeting left behind', async () => {
+    const notes = useLiveNotes()
+    notes.start({ token: 'tok', ctx, micStream: null })
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        status: 'ready',
+        markdown: '## 概要',
+        filePath: '/p/notes/m/minutes.md',
+        revise: { status: 'ready' },
+        artifacts: {
+          dir: '/p/notes/m',
+          minutes: '/p/notes/m/minutes.md',
+          transcript: '/p/notes/m/transcript.md',
+          revised: '/p/notes/m/transcript-revised.md',
+          audio: '/p/notes/m/audio',
+          audioFiles: 12,
+        },
+      }),
+    )
+
+    await notes.generateMinutes()
+
+    expect(notes.revisePhase.value).toBe('ready')
+    expect(notes.artifacts.value.transcript).toBe('/p/notes/m/transcript.md')
+    expect(notes.artifacts.value.audioFiles).toBe(12)
+  })
+
+  it('reports a failed proofread without hiding the minutes', async () => {
+    const notes = useLiveNotes()
+    notes.start({ token: 'tok', ctx, micStream: null })
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        status: 'ready',
+        markdown: '## 概要',
+        revise: { status: 'failed', error: 'model down' },
+        artifacts: { dir: '/p/notes/m', minutes: '/p/notes/m/minutes.md' },
+      }),
+    )
+
+    await notes.generateMinutes()
+
+    // The summary exists — it was generated from the raw transcript — but the
+    // UI has to say the proofreading did not happen.
+    expect(notes.minutesPhase.value).toBe('ready')
+    expect(notes.minutes.value).toBe('## 概要')
+    expect(notes.revisePhase.value).toBe('failed')
+    expect(notes.reviseError.value).toBe('model down')
+    // No revised file: the server reports only what it wrote.
+    expect(notes.artifacts.value.revised).toBeUndefined()
+  })
+
+  it('clears the artifacts when a new meeting starts', async () => {
+    const notes = useLiveNotes()
+    notes.start({ token: 'tok', ctx, micStream: null })
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        status: 'ready',
+        markdown: '## 概要',
+        revise: { status: 'ready' },
+        artifacts: { dir: '/p/notes/m', transcript: '/p/notes/m/transcript.md' },
+      }),
+    )
+    await notes.generateMinutes()
+    expect(notes.artifacts.value.dir).toBe('/p/notes/m')
+
+    notes.start({ token: 'tok2', ctx, micStream: null })
+
+    expect(notes.artifacts.value).toEqual({})
+    expect(notes.revisePhase.value).toBe('idle')
   })
 })
 
@@ -261,7 +344,7 @@ describe('useLiveNotes — minutes', () => {
 
   it('adopts minutes returned inline', async () => {
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     fetchMock.mockResolvedValue(
       jsonResponse({ status: 'ready', markdown: '## 概要', filePath: '/p/notes.md' }),
     )
@@ -275,7 +358,7 @@ describe('useLiveNotes — minutes', () => {
 
   it('stays idle when nothing was transcribed', async () => {
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     fetchMock.mockResolvedValue(jsonResponse({ status: 'idle' }))
 
     await notes.generateMinutes()
@@ -285,7 +368,7 @@ describe('useLiveNotes — minutes', () => {
 
   it('surfaces a failed request instead of leaving the UI generating', async () => {
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     fetchMock.mockResolvedValue(jsonResponse({}, false, 500))
 
     await notes.generateMinutes()
@@ -297,7 +380,7 @@ describe('useLiveNotes — minutes', () => {
   it('polls until the minutes are ready', async () => {
     vi.useFakeTimers()
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
 
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ status: 'generating' }))
@@ -325,7 +408,7 @@ describe('useLiveNotes — minutes', () => {
   it('records the server-side failure reason', async () => {
     vi.useFakeTimers()
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
 
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ status: 'generating' }))
@@ -341,7 +424,7 @@ describe('useLiveNotes — minutes', () => {
   it('keeps polling after a transport error', async () => {
     vi.useFakeTimers()
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
 
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ status: 'generating' }))
@@ -359,7 +442,7 @@ describe('useLiveNotes — minutes', () => {
   it('gives up after too many attempts', async () => {
     vi.useFakeTimers()
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     fetchMock.mockResolvedValue(jsonResponse({ minutes: { status: 'generating' } }))
 
     await notes.generateMinutes()
@@ -371,7 +454,7 @@ describe('useLiveNotes — minutes', () => {
 
   it('regenerate clears the previous error', async () => {
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     notes.error.value = 'old'
     fetchMock.mockResolvedValue(jsonResponse({ status: 'idle' }))
 
@@ -386,7 +469,7 @@ describe('useLiveNotes — minutes', () => {
 describe('useLiveNotes — refresh and reset', () => {
   it('refresh merges what was missed and adopts the server status', async () => {
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     notes.segments.value = [{ id: 1, channel: 'mic', speaker: '我', startedAt: 1, durationMs: 1, text: '本地' }]
     fetchMock.mockResolvedValue(
       jsonResponse({
@@ -408,7 +491,7 @@ describe('useLiveNotes — refresh and reset', () => {
     await expect(notes.refresh()).resolves.toBeUndefined()
     expect(fetchMock).not.toHaveBeenCalled()
 
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     fetchMock.mockRejectedValue(new Error('offline'))
     await expect(notes.refresh()).resolves.toBeUndefined()
     expect(notes.minutesPhase.value).toBe('idle')
@@ -416,7 +499,7 @@ describe('useLiveNotes — refresh and reset', () => {
 
   it('reset clears every observable field', () => {
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     notes.segments.value = [{ id: 1, channel: 'mic', speaker: '我', startedAt: 1, durationMs: 1, text: 'x' }]
     notes.minutes.value = '## x'
     notes.minutesFile.value = '/p/x.md'
@@ -443,7 +526,7 @@ describe('useLiveNotes — refresh and reset', () => {
 describe('useLiveNotes — upload callback', () => {
   it('merges a transcribed segment into the timeline', async () => {
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     fetchMock.mockResolvedValue(
       jsonResponse({
         id: 5,
@@ -469,7 +552,7 @@ describe('useLiveNotes — upload callback', () => {
 
   it('returns null for silence so nothing is added to the timeline', async () => {
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     fetchMock.mockResolvedValue(jsonResponse({ id: 0, text: '' }))
 
     const seg = await lastCapture().upload({
@@ -486,7 +569,7 @@ describe('useLiveNotes — upload callback', () => {
 
   it('throws when the server rejects the segment', async () => {
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     fetchMock.mockResolvedValue(jsonResponse({}, false, 502))
 
     await expect(
@@ -496,7 +579,7 @@ describe('useLiveNotes — upload callback', () => {
 
   it('counts lost segments reported by the recorder', () => {
     const notes = useLiveNotes()
-    notes.start({ token: 'tok', ctx, systemStream: null, micStream: null })
+    notes.start({ token: 'tok', ctx, micStream: null })
     const opts = lastCapture().opts as { onSegmentLost: () => void; onOverflow: () => void }
 
     opts.onSegmentLost()

@@ -213,6 +213,24 @@ elif command -v go >/dev/null 2>&1; then
     # Build ACP mock agent binary (for E2E testing with ACP stdio transport)
     go build -o "acp-mock" ./cmd/acp-mock || { echo "ERROR: acp-mock build failed" >&2; exit 1; }
     echo "  ACP mock: ./acp-mock"
+
+    # Remote-control helper for the desktop package. It is an extraResource of
+    # electron-builder, so packaging without it produces an app whose "allow
+    # remote control" button does nothing. release.yml builds it in each desktop
+    # job; doing it here as well means a local `cd desktop && npx
+    # electron-builder --dir` works too. Windows-only by design (the injector is
+    # a pure-syscall Windows implementation), so it is not tied to $TARGET_OS.
+    if [ -f "desktop/scripts/build-input-helper.mjs" ]; then
+        if command -v node >/dev/null 2>&1; then
+            if node desktop/scripts/build-input-helper.mjs; then
+                echo "  Remote-control helper: desktop/assets/input-helper.exe"
+            else
+                echo "WARNING: remote-control helper build failed; desktop packages will lack it" >&2
+            fi
+        else
+            echo "WARNING: node not found; skipping remote-control helper" >&2
+        fi
+    fi
 else
     echo "  Go not found, skipping backend build"
 fi

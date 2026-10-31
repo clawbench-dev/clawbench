@@ -540,7 +540,7 @@ func (g *Registry) Create(projectKey, title string) (*Room, error) {
 		return nil, ErrTooManyRooms
 	}
 
-	token, err := newToken()
+	token, err := NewToken()
 	if err != nil {
 		return nil, err
 	}
@@ -622,8 +622,12 @@ func (g *Registry) FindByProject(projectKey string) *Room {
 	return g.rooms[token]
 }
 
-// newToken mints a 32-character lowercase hex token.
-func newToken() (string, error) {
+// NewToken mints a 32-character lowercase hex token.
+//
+// Exported because the notes pipeline mints its own token for solo (room-less)
+// sessions: the format has to stay identical to a share token, otherwise the
+// notes endpoints would accept one and reject the other.
+func NewToken() (string, error) {
 	b := make([]byte, tokenBytes)
 	if _, err := rand.Read(b); err != nil {
 		return "", err

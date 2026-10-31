@@ -274,20 +274,18 @@
       </div>
     </PopupMenu>
 
-    <!-- Live screen share. Sits between the theme picker and the server
-         button. Desktop shell only: it needs Electron's capture APIs, and
-         system audio is Windows-only. The button stays visible while
-         publishing so the user can reopen the dialog after closing it. -->
+    <!-- Voice notes. Sits where the share button used to be: the share itself
+         moved into the dock (it is a workspace), but a one-tap "record my
+         voice" entry still belongs in the header. -->
     <button
-      v-if="canLiveShare"
-      class="theme-quick-toggle live-share-toggle"
-      :class="{ 'live-share-toggle--active': liveShareState !== 'idle' }"
-      :title="liveShareState === 'idle' ? t('liveShare.button') : t('liveShare.live')"
-      :aria-label="liveShareState === 'idle' ? t('liveShare.button') : t('liveShare.live')"
-      data-action="live-share"
-      @click="openLiveShare"
+      v-if="canSoloNotes"
+      class="theme-quick-toggle"
+      :title="t('liveShare.solo.button')"
+      :aria-label="t('liveShare.solo.button')"
+      data-action="solo-notes"
+      @click="soloNotesOpen = true"
     >
-      <MonitorUp :size="18" />
+      <Mic :size="18" />
     </button>
 
     <!-- Server button: merged gauge + status dot. Icon color reflects connection status -->
@@ -309,10 +307,7 @@
       @logout="handleLogout"
     />
 
-    <!-- Publisher dialog for the live screen share. Mounted here (not inside
-         the button) so the share survives the dialog being closed: the session
-         lives in useLiveShare's module state, and the button shows a live dot. -->
-    <LiveShareDialog v-if="canLiveShare" :open="liveShareDialogOpen" @close="liveShareDialogOpen = false" />
+    <SoloNotesDialog :open="soloNotesOpen" @close="soloNotesOpen = false" />
 
     <!-- App-drawn window controls (frameless desktop shell, Windows/Linux).
          Present only when the window has no native frame, so the two can never
@@ -366,7 +361,7 @@
 </template>
 
 <script setup lang="ts">
-import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Minus, MonitorUp } from 'lucide-vue-next'
+import { Mic, Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Minus } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -377,10 +372,9 @@ import { store } from '@/stores/app.ts'
 import { setPendingManageNavigation } from '@/composables/useCommitNavigation.ts'
 import { setPendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import PopupMenu from '@/components/common/PopupMenu.vue'
-import LiveShareDialog from '@/components/live/LiveShareDialog.vue'
-import { useLiveShare } from '@/composables/useLiveShare'
 import SystemResourcesPanel from '@/components/common/SystemResourcesPanel.vue'
 import ServerSwitchDialog from '@/components/common/ServerSwitchDialog.vue'
+import SoloNotesDialog from '@/components/live/SoloNotesDialog.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import HintTooltip from '@/components/common/HintTooltip.vue'
@@ -411,19 +405,12 @@ const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
 const { isAppMode, isDesktopApp } = useAppMode()
 
-// Live share needs Electron's desktopCapturer / setDisplayMediaRequestHandler,
-// so it is gated on the desktop shell. The browser could technically call
-// getDisplayMedia, but the picker and the system-audio switch are desktop-only,
-// and offering a half-working entry point is worse than hiding it.
-const canLiveShare = computed(() => isDesktopApp.value)
-
-const liveShare = useLiveShare()
-const liveShareState = liveShare.state
-const liveShareDialogOpen = ref(false)
-
-function openLiveShare(): void {
-  liveShareDialogOpen.value = true
-}
+// Voice notes (solo dictation): microphone only, no room, no link. Offered
+// wherever getUserMedia exists — i.e. the desktop shell and a browser on a
+// secure origin. Hidden in the Android app, where the WebView microphone needs
+// a runtime permission this build does not request yet.
+const canSoloNotes = computed(() => !isAppMode.value || isDesktopApp.value)
+const soloNotesOpen = ref(false)
 const {
   hasCustomControls,
   isMaximized: isWindowMaximized,

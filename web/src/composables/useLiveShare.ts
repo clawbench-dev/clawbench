@@ -333,7 +333,6 @@ export function useLiveShare() {
         useLiveNotes().start({
           token: token.value,
           ctx: audioCtx,
-          systemStream: displayStream,
           micStream,
           title: title.value,
           label: opts.notesLabel,

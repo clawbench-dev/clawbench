@@ -950,20 +950,25 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := store.WriteExec(LiveNotesDDL); err != nil {
 		return fmt.Errorf("failed to create live_notes tables: %w", err)
 	}
-	// Migrate: live_notes gained file_path (the Markdown copy written into the
-	// project). CREATE TABLE IF NOT EXISTS is a no-op on an existing table, so a
-	// database that ran the previous build only gets the column from here.
-	{
-		var hasFilePath int
+	// Migrate: live_notes grew the artifact columns. CREATE TABLE IF NOT EXISTS
+	// is a no-op on an existing table, so a database that ran an earlier build
+	// only gets them from here. Probed one by one (rather than recording a
+	// schema_migrations row) because a column probe is self-healing.
+	for _, col := range []string{"file_path", "dir_path", "revised", "revise_status", "revise_error"} {
+		var present int
 		_ = store.ReadDB().QueryRow(
-			"SELECT COUNT(*) FROM pragma_table_info('live_notes') WHERE name='file_path'",
-		).Scan(&hasFilePath)
-		if hasFilePath == 0 {
-			if _, err := store.WriteExec(
-				"ALTER TABLE live_notes ADD COLUMN file_path TEXT NOT NULL DEFAULT ''",
-			); err != nil {
-				return fmt.Errorf("failed to add live_notes.file_path column: %w", err)
-			}
+			"SELECT COUNT(*) FROM pragma_table_info('live_notes') WHERE name = ?", col,
+		).Scan(&present)
+		if present > 0 {
+			continue
+		}
+		stmt := "ALTER TABLE live_notes ADD COLUMN " + col + " TEXT NOT NULL DEFAULT ''"
+		if col == "revise_status" {
+			// Matches the DDL default: an untouched share has never been proofread.
+			stmt = "ALTER TABLE live_notes ADD COLUMN revise_status TEXT NOT NULL DEFAULT 'idle'"
+		}
+		if _, err := store.WriteExec(stmt); err != nil {
+			return fmt.Errorf("failed to add live_notes.%s column: %w", col, err)
 		}
 	}
 	// Migrate: session shares no longer freeze a JSON snapshot. The DDL above is

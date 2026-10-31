@@ -10,6 +10,7 @@ import {
   Settings,
   Github,
   Inbox,
+  MonitorUp,
 } from 'lucide-vue-next'
 import { DOCK_TABS, type DockTabId, type DockTabDescriptor } from '@/composables/dockTabs'
 
@@ -34,6 +35,7 @@ const DOCK_TAB_ICONS: Record<DockTabId, Component> = {
   // and imply the unread state the log deliberately does not have.
   notifications: Inbox,
   terminal: TerminalIcon,
+  live: MonitorUp,
   proxy: Network,
   stats: BarChart3,
   settings: Settings,

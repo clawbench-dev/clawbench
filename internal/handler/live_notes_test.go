@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -444,6 +445,58 @@ func TestServeLiveShareNoteSegment_TranscriptionFailureIsBadGateway(t *testing.T
 	assert.Equal(t, http.StatusBadGateway, w.Code)
 }
 
+// ── Solo (room-less) sessions ──────────────────────────────────────────────
+
+// A solo dictation has no room: the notes row is what authorizes the upload.
+func TestServeLiveShareNotesSession_MintsATokenThatAuthorizesUploads(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	w := httptest.NewRecorder()
+	ServeLiveShareNotesSession(w, liveReq(t, http.MethodPost, "/api/live-share/notes/session", project,
+		map[string]any{"title": "口述"}))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp["token"])
+	assert.Nil(t, liveRegistry.Get(resp["token"]), "a solo session has no room")
+
+	prev := GetSTTProvider()
+	SetSTTProvider(&stubSTT{text: "你好"})
+	t.Cleanup(func() { SetSTTProvider(prev) })
+
+	rec := httptest.NewRecorder()
+	ServeLiveShareNoteSegment(rec, notesUpload(t, project, map[string]string{
+		"token":     resp["token"],
+		"channel":   "mic",
+		"title":     "口述",
+		"startedAt": "1700000000000",
+	}, []byte("audio")))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	segments, err := service.ListLiveNoteSegments(resp["token"], 0)
+	require.NoError(t, err)
+	require.Len(t, segments, 1)
+	assert.Equal(t, "你好", segments[0].Text)
+}
+
+func TestServeLiveShareNotesSession_RequiresProjectAndPost(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNotesSession(w, httptest.NewRequest(http.MethodGet, "/api/live-share/notes/session", http.NoBody))
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+
+	w = httptest.NewRecorder()
+	ServeLiveShareNotesSession(w, liveReq(t, http.MethodPost, "/api/live-share/notes/session", "",
+		map[string]any{"title": "x"}))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
 // ── Minutes endpoint ───────────────────────────────────────────────────────
 
 func withSummaryModel(t *testing.T, baseURL string) {
@@ -576,7 +629,7 @@ func TestGenerateLiveNotesMinutes_BackgroundFailureMarksFailed(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, service.SetLiveNoteMinutes("tok-fail", pid, "", service.LiveNotesStatusGenerating, "", "", ""))
 
-	generateLiveNotesMinutes("tok-fail", pid, t.TempDir(), "", []service.LiveNoteSegment{
+	generateLiveNotesArtifacts("tok-fail", pid, t.TempDir(), "", []service.LiveNoteSegment{
 		{Channel: "mic", Speaker: "我", StartedAt: 1_000, Text: "内容"},
 	})
 
@@ -605,6 +658,187 @@ func TestServeShareLiveNotes_InvalidTokenIs404(t *testing.T) {
 	w := httptest.NewRecorder()
 	ServeShareLiveNotes(w, httptest.NewRequest(http.MethodGet, "/api/share/tok/notes", http.NoBody), "bad token")
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// A path is only reported when the file is actually there: the folder exists
+// from the first audio segment, the transcripts and minutes much later.
+func TestLiveNoteArtifactsOf_OnlyListsFilesThatExist(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "audio"), 0o755))
+
+	empty := liveNoteArtifactsOf(dir)
+	assert.Equal(t, dir, empty.Dir)
+	assert.Equal(t, filepath.Join(dir, "audio"), empty.Audio)
+	assert.Empty(t, empty.Minutes)
+	assert.Empty(t, empty.Transcript)
+	assert.Empty(t, empty.Revised)
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "transcript.md"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "audio", "1-mic.webm"), []byte("a"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "audio", ".gitignore"), []byte("*\n"), 0o644))
+
+	got := liveNoteArtifactsOf(dir)
+	assert.Equal(t, filepath.Join(dir, "transcript.md"), got.Transcript)
+	assert.Empty(t, got.Minutes, "minutes.md is only listed once it exists")
+	assert.Equal(t, 1, got.AudioFiles, "the .gitignore is not a recording")
+}
+
+// The recording is the one artifact that cannot be regenerated, so it is
+// written BEFORE the STT call: a provider outage must cost the text, never the
+// audio.
+func TestServeLiveShareNoteSegment_PersistsAudioEvenWhenTranscriptionFails(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+
+	prev := GetSTTProvider()
+	SetSTTProvider(&stubSTT{err: errors.New("stt down")})
+	t.Cleanup(func() { SetSTTProvider(prev) })
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteSegment(w, notesUpload(t, project, map[string]string{
+		"token":     room.Token(),
+		"channel":   "viewer:2",
+		"title":     "季度会",
+		"startedAt": "1700000000123",
+	}, []byte("audio-bytes")))
+	assert.Equal(t, http.StatusBadGateway, w.Code)
+
+	notesDir := filepath.Join(project, ".clawbench", "notes")
+	entries, err := os.ReadDir(notesDir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "one meeting, one folder")
+
+	audio := filepath.Join(notesDir, entries[0].Name(), "audio", "1700000000123-viewer-2.webm")
+	body, err := os.ReadFile(audio)
+	require.NoError(t, err)
+	assert.Equal(t, "audio-bytes", string(body))
+}
+
+// Full post-meeting job: raw transcript, proofread transcript, minutes — all
+// three on disk, and the minutes generated from the PROOFREAD text.
+func TestServeLiveShareNotesMinutes_WritesThreeArtifactsAndSummarisesTheProofreadText(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(body))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		// The proofreading pass is the one that carries the raw transcript; the
+		// summarisation pass carries whatever it returned.
+		if strings.Contains(string(body), "待修订转写") {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[00:00] 我：确认 ClawBench 发布计划"}}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要\n\n确认 ClawBench 发布计划。"}}]}`))
+	}))
+	defer srv.Close()
+	withSummaryModel(t, srv.URL)
+
+	project := t.TempDir()
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	_, err = service.AppendLiveNoteSegment(context.Background(), room.Token(), pid, service.LiveNoteSegment{
+		Channel: "mic", Speaker: "我", StartedAt: 1_700_000_000_000, Text: "确认科劳本奇发布计划",
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNotesMinutes(w, liveReq(t, http.MethodPost, "/api/live-share/notes/minutes", project,
+		map[string]any{"token": room.Token(), "title": "周会"}))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	require.Eventually(t, func() bool {
+		note, ok, err := service.GetLiveNote(room.Token())
+		return err == nil && ok && note.Status == service.LiveNotesStatusReady
+	}, 10*time.Second, 20*time.Millisecond, "background job must finish")
+
+	note, _, err := service.GetLiveNote(room.Token())
+	require.NoError(t, err)
+	assert.Equal(t, service.LiveNotesStatusReady, note.ReviseStatus)
+	assert.Equal(t, "[00:00] 我：确认 ClawBench 发布计划", note.Revised)
+	require.NotEmpty(t, note.DirPath)
+
+	raw, err := os.ReadFile(filepath.Join(note.DirPath, "transcript.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "确认科劳本奇发布计划", "the raw transcript keeps what the ASR heard")
+
+	revised, err := os.ReadFile(filepath.Join(note.DirPath, "transcript-revised.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(revised), "ClawBench")
+
+	minutes, err := os.ReadFile(filepath.Join(note.DirPath, "minutes.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(minutes), "## 概要")
+	assert.Contains(t, string(minutes), "[transcript-revised.md](transcript-revised.md)")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, bodies, 2, "one proofread pass, one summarisation pass")
+	assert.Contains(t, bodies[1], "ClawBench 发布计划", "the minutes see the corrected spelling")
+	assert.NotContains(t, bodies[1], "科劳本奇", "and never the raw mis-recognition")
+}
+
+// A failed proofread must not cost the summary: the minutes are generated from
+// the raw transcript instead, and the failure is recorded where the UI can show
+// it.
+func TestServeLiveShareNotesMinutes_ProofreadFailureFallsBackToRaw(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "待修订转写") {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要"}}]}`))
+	}))
+	defer srv.Close()
+	withSummaryModel(t, srv.URL)
+
+	project := t.TempDir()
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	_, err = service.AppendLiveNoteSegment(context.Background(), room.Token(), pid, service.LiveNoteSegment{
+		Channel: "mic", Speaker: "我", StartedAt: 1_700_000_000_000, Text: "内容",
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNotesMinutes(w, liveReq(t, http.MethodPost, "/api/live-share/notes/minutes", project,
+		map[string]any{"token": room.Token()}))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	require.Eventually(t, func() bool {
+		note, ok, err := service.GetLiveNote(room.Token())
+		return err == nil && ok && note.Status == service.LiveNotesStatusReady
+	}, 10*time.Second, 20*time.Millisecond, "minutes must still be produced")
+
+	note, _, err := service.GetLiveNote(room.Token())
+	require.NoError(t, err)
+	assert.Equal(t, service.LiveNotesStatusFailed, note.ReviseStatus)
+	assert.NotEmpty(t, note.ReviseError)
+	assert.Contains(t, note.Minutes, "## 概要")
+
+	_, err = os.Stat(filepath.Join(note.DirPath, "transcript-revised.md"))
+	assert.True(t, os.IsNotExist(err), "a failed proofread writes no revised file")
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -657,7 +891,7 @@ func TestGenerateLiveNotesMinutes_FileWriteFailureStillStoresMinutes(t *testing.
 	blocker := filepath.Join(t.TempDir(), "blocker")
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
 
-	generateLiveNotesMinutes("tok-nofile", pid, blocker, "", []service.LiveNoteSegment{
+	generateLiveNotesArtifacts("tok-nofile", pid, blocker, "", []service.LiveNoteSegment{
 		{Channel: "mic", Speaker: "我", StartedAt: 1_000, Text: "内容"},
 	})
 
