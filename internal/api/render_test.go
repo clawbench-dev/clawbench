@@ -200,9 +200,10 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// the behavioral rules live in the prompt template, not the spec.
 		// Measured at 5708 when the self-test routes joined; grew to 6733 when
 		// the delete description gained the takeover contract (#606), and to
-		// 6749 when provider_id joined the PATCH field list. The headroom is
-		// deliberate, not drift.
-		CommandAgent: 6900,
+		// 6749 when provider_id joined the PATCH field list, then 6986 after
+		// #611 (queued-message edit) and the catalog endpoints landed. The
+		// headroom is deliberate, not drift.
+		CommandAgent: 7100,
 		// The MCP command renders four operations whose descriptions carry the
 		// full config and agent contracts (mcp.servers validation rules, the
 		// whole-replacement semantics, the per-agent policy shape). Measured at
