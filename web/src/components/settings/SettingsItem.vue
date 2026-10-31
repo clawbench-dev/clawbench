@@ -75,6 +75,9 @@
         <span class="settings-item__value">{{ displayValue }}</span>
       </template>
       <template v-else-if="type === 'action'">
+        <!-- Action rows are usually pure navigation, but a picker-style action
+             shows its current value here (e.g. the summary model). -->
+        <span v-if="modelValue !== undefined && modelValue !== ''" class="settings-item__value">{{ displayValue }}</span>
       </template>
       <template v-else-if="type === 'info'">
         <!-- info value shown in description area below, nothing on the right -->

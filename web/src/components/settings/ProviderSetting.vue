@@ -109,7 +109,42 @@
         <input v-model="clearKey" type="checkbox" />
         {{ t('settings.items.providerClearKey') }}
       </label>
+
+      <!-- The curated model set. Agents bound to this provider inherit it, so
+           this is the only place a model can be "known to work". -->
+      <div v-if="editingId" class="provider-models">
+        <div class="provider-models-head">
+          <span class="provider-models-label">{{ t('settings.items.providerModelsLabel') }}</span>
+          <button type="button" class="fbtn" @click="modelsPickerOpen = true">
+            <Layers :size="13" />
+            {{ t('settings.items.providerModelsChoose') }}
+          </button>
+        </div>
+        <div v-if="draft.models.length === 0" class="provider-models-empty">
+          {{ t('settings.items.providerModelsNone') }}
+        </div>
+        <div v-else class="provider-models-chips">
+          <span v-for="id in draft.models" :key="id" class="provider-model-chip">
+            {{ id }}
+            <button type="button" class="provider-model-chip-x" @click="removeModel(id)">×</button>
+          </span>
+        </div>
+        <div v-if="draft.models.length > 0" class="provider-models-default">
+          <span>{{ t('settings.items.providerDefaultModel') }}</span>
+          <select v-model="draft.defaultModel" class="provider-input provider-select">
+            <option v-for="id in draft.models" :key="id" :value="id">{{ id }}</option>
+          </select>
+        </div>
+      </div>
     </div>
+
+    <ProviderModelsPicker
+      :open="modelsPickerOpen"
+      :provider-id="editingId"
+      :selected="draft.models"
+      @update:open="modelsPickerOpen = $event"
+      @update:selected="onModelsSelected"
+    />
 
     <ProviderPresetPicker
       :open="presetPickerOpen"
@@ -129,12 +164,13 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, CheckCircle2, ChevronsUpDown, Loader2, Pencil, PlugZap, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { AlertCircle, CheckCircle2, ChevronsUpDown, Layers, Loader2, Pencil, PlugZap, RefreshCw, Trash2 } from 'lucide-vue-next'
 import '@/assets/modal-footer-btn.css'
 import { apiDelete, apiGet, apiPost, apiPut } from '@/utils/api'
 import { useDialog } from '@/composables/useDialog'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import ProviderPresetPicker, { type PresetOption } from './ProviderPresetPicker.vue'
+import ProviderModelsPicker from './ProviderModelsPicker.vue'
 import { appLog } from '@/utils/appLog'
 
 defineProps<{ description?: string }>()
@@ -146,6 +182,8 @@ interface ProviderRow {
   baseUrl: string
   authMode: string
   presetId?: string
+  models?: string[]
+  defaultModel?: string
   hasKey: boolean
   agentCount: number
 }
@@ -177,6 +215,8 @@ const draft = reactive({
   apiKey: '',
   authMode: 'auto',
   presetId: '',
+  models: [] as string[],
+  defaultModel: '',
 })
 
 // Authoritative catalogue state (models.dev snapshot).
@@ -199,6 +239,8 @@ function resetDraft() {
   draft.apiKey = ''
   draft.authMode = 'auto'
   draft.presetId = ''
+  draft.models = []
+  draft.defaultModel = ''
   presetId.value = ''
   clearKey.value = false
   editingId.value = null
@@ -227,6 +269,16 @@ async function loadPresets() {
 /** Fill the form from a catalogue entry. Only fields the preset knows are
  *  overwritten; a typed key is never touched. */
 const presetPickerOpen = ref(false)
+const modelsPickerOpen = ref(false)
+
+function onModelsSelected(ids: string[]) {
+  draft.models = ids
+  if (!ids.includes(draft.defaultModel)) draft.defaultModel = ids[0] ?? ''
+}
+
+function removeModel(id: string) {
+  onModelsSelected(draft.models.filter((m) => m !== id))
+}
 
 /** The chosen catalogue entry, for the trigger row (icon + name). */
 const selectedPreset = computed<PresetOption | undefined>(() =>
@@ -270,6 +322,8 @@ async function saveDraft() {
         authMode: draft.authMode,
         apiKey: draft.apiKey,
         clearApiKey: clearKey.value,
+        models: draft.models,
+        defaultModel: draft.defaultModel,
       })
     }
     resetDraft()
@@ -291,6 +345,8 @@ function startEdit(p: ProviderRow) {
   draft.baseUrl = p.baseUrl
   draft.authMode = p.authMode || 'auto'
   draft.presetId = p.presetId || ''
+  draft.models = [...(p.models || [])]
+  draft.defaultModel = p.defaultModel || ''
   draft.apiKey = ''
 }
 
@@ -528,6 +584,65 @@ onMounted(() => {
   outline: none;
   border-color: var(--accent-color);
   box-shadow: 0 0 0 calc(2 * var(--dp)) var(--focus-ring);
+}
+.provider-models {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-color);
+}
+.provider-models-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.provider-models-label {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+.provider-models-empty {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+.provider-models-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.provider-model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  height: calc(22 * var(--dp));
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+.provider-model-chip-x {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--font-size-md);
+  line-height: 1;
+  padding: 0;
+}
+.provider-models-default {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+.provider-models-default .provider-select {
+  flex: 0 0 calc(160 * var(--dp));
 }
 .provider-clear {
   display: flex;

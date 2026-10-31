@@ -218,3 +218,34 @@ func TestUpdateProviderRejectsGeminiWhenSummaryUsesIt(t *testing.T) {
 	_, err = service.UpdateProvider(p.ID, service.ProviderPatch{Protocol: &gemini})
 	assert.ErrorIs(t, err, service.ErrProviderUsedBySummary)
 }
+
+func TestProviderModelsPersistAndNormalize(t *testing.T) {
+	setupProvidersDB(t)
+
+	created, err := service.CreateProvider(model.Provider{
+		Name: "GW", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1", APIKey: "k",
+		Models: []string{" m1 ", "m2", "m1", ""},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"m1", "m2"}, created.Models)
+	// An unset default falls back to the first curated model.
+	assert.Equal(t, "m1", created.DefaultModel)
+
+	read, err := service.GetProvider(created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"m1", "m2"}, read.Models)
+	assert.Equal(t, "m1", read.DefaultModel)
+
+	models := []string{"m3"}
+	def := "m3"
+	updated, err := service.UpdateProvider(created.ID, service.ProviderPatch{Models: &models, DefaultModel: &def})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"m3"}, updated.Models)
+	assert.Equal(t, "m3", updated.DefaultModel)
+
+	// A default outside the list is corrected rather than stored.
+	def = "nope"
+	updated, err = service.UpdateProvider(created.ID, service.ProviderPatch{DefaultModel: &def})
+	require.NoError(t, err)
+	assert.Equal(t, "m3", updated.DefaultModel)
+}

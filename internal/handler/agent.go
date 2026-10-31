@@ -255,6 +255,21 @@ func gateUnconfirmedACPModels(a *model.Agent) *model.Agent {
 // reported models yet. It requires a bound provider created from a preset: the
 // catalog is keyed by models.dev provider ids, and a hand-written endpoint
 // has no reliable way to say which entry it corresponds to.
+// providerModelsForAgent turns the provider's curated list into picker entries.
+// It is nil when the agent is unbound or the provider has not curated models,
+// in which case discovery (and the catalogue fallback) still applies.
+func providerModelsForAgent(a *model.Agent) []model.AgentModel {
+	p := a.Provider()
+	if p == nil || len(p.Models) == 0 {
+		return nil
+	}
+	out := make([]model.AgentModel, 0, len(p.Models))
+	for _, id := range p.Models {
+		out = append(out, model.AgentModel{ID: id, Name: id, Default: id == p.DefaultModel})
+	}
+	return out
+}
+
 func catalogModelsForAgent(a *model.Agent) []model.AgentModel {
 	if a.ProviderID == nil {
 		return nil
@@ -306,6 +321,14 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 	// next refresh would treat ACP-only models as CLI-discovered.
 	for i, a := range agents {
 		if !a.SupportsACP() {
+			// CLI agents inherit the curated list too: the endpoint is custom,
+			// so the CLI's own discovery is not authoritative for it.
+			if pm := providerModelsForAgent(a); pm != nil {
+				clone := *a
+				clone.CLIModels = a.Models
+				clone.Models = pm
+				agents[i] = &clone
+			}
 			continue
 		}
 		// Use BackendSpec.ACPLoadSession as the authoritative source —
@@ -321,7 +344,14 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 			// No ACP data at all yet (the fresh-install path). The agent's own
 			// Models are the CLI list, which must not be presented as runnable
 			// over ACP.
-			agents[i] = gateUnconfirmedACPModels(a)
+			gated := gateUnconfirmedACPModels(a)
+			if pm := providerModelsForAgent(a); pm != nil {
+				clone := *gated
+				clone.Models = pm
+				clone.CatalogModels = nil
+				gated = &clone
+			}
+			agents[i] = gated
 			continue
 		}
 
@@ -342,7 +372,14 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 			// The ACP list (when concrete) dropped every CLI model, or there is
 			// nothing to merge. Still gate: without ACP-confirmed models this
 			// would fall through to the raw CLI list.
-			agents[i] = gateUnconfirmedACPModels(a)
+			gated := gateUnconfirmedACPModels(a)
+			if pm := providerModelsForAgent(a); pm != nil {
+				clone := *gated
+				clone.Models = pm
+				clone.CatalogModels = nil
+				gated = &clone
+			}
+			agents[i] = gated
 			continue
 		}
 

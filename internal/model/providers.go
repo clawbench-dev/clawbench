@@ -44,6 +44,13 @@ type Provider struct {
 	// a hand-written endpoint). It is the only reliable link from a user row to
 	// the authoritative catalog: ids there are provider keys, not hosts.
 	PresetID string `json:"presetId,omitempty"`
+	// Models is the model set this endpoint actually serves. Agents bound to
+	// the provider inherit it, so a picker can never offer a model the endpoint
+	// rejects. Empty = "not curated": fall back to discovery.
+	Models []string `json:"models,omitempty"`
+	// DefaultModel is the model a bound agent uses when it has no preference of
+	// its own. Must be one of Models (Normalized enforces it).
+	DefaultModel string `json:"defaultModel,omitempty"`
 
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
@@ -59,6 +66,13 @@ func (p Provider) Normalized() Provider {
 	p.APIKey = strings.TrimSpace(p.APIKey)
 	p.AuthMode = strings.ToLower(strings.TrimSpace(p.AuthMode))
 	p.PresetID = strings.TrimSpace(p.PresetID)
+	p.Models = normalizeModelIDs(p.Models)
+	p.DefaultModel = strings.TrimSpace(p.DefaultModel)
+	if len(p.Models) == 0 {
+		p.DefaultModel = ""
+	} else if p.DefaultModel == "" || !containsString(p.Models, p.DefaultModel) {
+		p.DefaultModel = p.Models[0]
+	}
 	if p.AuthMode == "" {
 		p.AuthMode = ProviderAuthAuto
 	}
@@ -164,4 +178,43 @@ func ProviderEnvVersion(agentID string) string {
 		p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode,
 	}, "\x00")))
 	return hex.EncodeToString(sum[:8])
+}
+
+// normalizeModelIDs trims, drops empties and removes duplicates while keeping
+// the user's order (the first entry becomes the default).
+func normalizeModelIDs(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func containsString(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
+// Provider returns the provider this agent is bound to, or nil.
+func (a *Agent) Provider() *Provider {
+	if a == nil || a.ProviderID == nil {
+		return nil
+	}
+	return GetProvider(*a.ProviderID)
 }

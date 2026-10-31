@@ -176,8 +176,21 @@ type Agent struct {
 }
 
 // DefaultModelID returns the default model ID for this agent.
-// Priority: PreferredModel (user preference) > first model with Default:true > first model in list > empty string.
+//
+// A bound provider that curates its models wins: its list is the only set the
+// endpoint is known to serve, so a preference outside it would 404. Without a
+// curated list the priority is the old one:
+// PreferredModel > first model with Default:true > first model in list > "".
 func (a *Agent) DefaultModelID() string {
+	if p := a.Provider(); p != nil && len(p.Models) > 0 {
+		if a.PreferredModel != "" && containsString(p.Models, a.PreferredModel) {
+			return a.PreferredModel
+		}
+		if p.DefaultModel != "" {
+			return p.DefaultModel
+		}
+		return p.Models[0]
+	}
 	if a.PreferredModel != "" {
 		return a.PreferredModel
 	}

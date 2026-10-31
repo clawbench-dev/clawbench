@@ -651,11 +651,13 @@ async function onFieldValue(field: ItemSpec, value: unknown) {
  * free-text input when the provider does not publish a model catalogue, so a
  * gateway without /models can still be configured.
  */
-function resolveFieldType(field: ItemSpec): ItemSpec['type'] {
+function resolveFieldType(field: ItemSpec): Exclude<ItemSpec['type'], 'summaryModel'> {
   if (field.key === 'ai_summary.model' && (resolveFieldOptions(field)?.length ?? 0) === 0) {
     return 'text'
   }
-  return field.type
+  // Panels never carry the summary-model row (it is rendered by
+  // SettingsCategory), so the narrower return type is safe.
+  return field.type as Exclude<ItemSpec['type'], 'summaryModel'>
 }
 
 function resolveFieldOptions(field: ItemSpec): { label: string; value: unknown }[] | undefined {

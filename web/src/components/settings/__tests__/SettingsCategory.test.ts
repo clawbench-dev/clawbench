@@ -398,6 +398,7 @@ const i18n = createI18n({
           debugSection: '调试',
           // aiSummary nav
           aiSummaryRef: 'AI摘要',
+          summaryModelRow: '摘要模型',
           aiSummaryRefDesc: 'AI摘要',
           summaryModelConfigured: '已配置',
           summaryModelNotConfigured: '未配置',
@@ -558,18 +559,18 @@ describe('SettingsCategory', () => {
 
   // ─── Shared AI-summary-model status ─────────────────────
   describe('AI summary model status', () => {
-    /** The three rows that jump to the aiSummary panel all share one label. */
+    /** The three in-place model pickers all share one label. */
     function jumpRows(wrapper: ReturnType<typeof mountCategory>) {
       return wrapper
         .findAllComponents({ name: 'SettingsItem' })
-        .filter(i => i.props().label === 'AI摘要')
+        .filter(i => i.props().label === '摘要模型')
     }
 
     afterEach(() => {
       delete (serverConfig.value as Record<string, unknown>).ai_summary
     })
 
-    it('marks the jump rows unconfigured when the base URL is unset', () => {
+    it('marks the model rows unconfigured when no provider is bound', () => {
       delete (serverConfig.value as Record<string, unknown>).ai_summary
       const rows = jumpRows(mountCategory('chat'))
       expect(rows.length).toBeGreaterThan(0)
@@ -578,7 +579,7 @@ describe('SettingsCategory', () => {
       }
     })
 
-    it('marks the jump rows configured once a provider is bound', () => {
+    it('marks the model rows configured once a provider is bound', () => {
       ;(serverConfig.value as Record<string, unknown>).ai_summary = { provider_id: 7 }
       const rows = jumpRows(mountCategory('chat'))
       expect(rows.length).toBeGreaterThan(0)

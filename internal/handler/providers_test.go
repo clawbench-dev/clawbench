@@ -258,3 +258,61 @@ func TestAgentPatch_RejectsUnlistedModelWithoutProvider(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "InvalidModelForAgent")
 }
+
+// A CLI agent bound to a provider inherits the provider's curated models: the
+// endpoint is custom, so the CLI's own discovery is not authoritative for it.
+func TestAgents_CLIAgentInheritsProviderModels(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	provider, err := service.CreateProvider(model.Provider{
+		Name: "GW", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1", APIKey: "k",
+		Models: []string{"gw-a", "gw-b"}, DefaultModel: "gw-b",
+	})
+	require.NoError(t, err)
+
+	agent := &model.Agent{
+		ID: "cli-bound", Name: "CLI", Backend: "claude", ProviderID: &provider.ID,
+		Models: []model.AgentModel{{ID: "cli-only", Default: true}},
+	}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	rec := doProviderRequest(t, ServeAgents, http.MethodGet, "/api/agents", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var body struct {
+		Agents []struct {
+			Models []struct {
+				ID      string `json:"id"`
+				Default bool   `json:"default"`
+			} `json:"models"`
+		} `json:"agents"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Agents, 1)
+	require.Len(t, body.Agents[0].Models, 2)
+	assert.Equal(t, "gw-a", body.Agents[0].Models[0].ID)
+	assert.True(t, body.Agents[0].Models[1].Default, "the provider default must be flagged")
+}
+
+// The summary model must be one the provider actually serves.
+func TestServeConfigPatch_SummaryModelMustBeServed(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	provider, err := service.CreateProvider(model.Provider{
+		Name: "GW", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1", APIKey: "k",
+		Models: []string{"served-model"},
+	})
+	require.NoError(t, err)
+
+	model.ConfigInstance = model.Config{}
+	rec := doProviderRequest(t, ServeConfig, http.MethodPatch, "/api/config", map[string]any{
+		"ai_summary": map[string]any{"provider_id": provider.ID, "model": "not-served"},
+	})
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "ai_summary.model")
+
+	rec = doProviderRequest(t, ServeConfig, http.MethodPatch, "/api/config", map[string]any{
+		"ai_summary": map[string]any{"provider_id": provider.ID, "model": "served-model"},
+	})
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}

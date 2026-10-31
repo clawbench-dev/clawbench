@@ -80,6 +80,16 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 - 同一后端全局只能绑定一个提供商：冲突返回 409 `ProviderConfigConflict`。
 - 解绑/删除/启动对账（`ReconcileProviderConfigs`）会移除托管块并恢复原始值。
 
+## 提供商自带模型清单
+
+`providers.models`（有序 JSON 数组）+ `providers.default_model`。
+
+- 提供商编辑页可「选择模型」：从实测 `/models` 拉取，失败用权威目录兜底，也可手填；保存后即为该端点的模型集合
+- 绑定该提供商的智能体直接继承这份清单（CLI 与 ACP 未上报时都适用），模型下拉不会再出现端点跑不了的 id
+- 默认模型：`preferred_model` 在清单内 → 用它；否则用 `default_model`；再否则用清单第一个
+- **ACP 上报后仍以 ACP 为准**；清单为空时退回原来的发现逻辑
+- 摘要模型只从「提供商 → 模型」里选，校验时要求模型在提供商的清单内（清单为空则不校验）
+
 ## 权威模型目录（快照）
 
 来源：`https://models.dev/api.json`（OpenCode 同源），约 6 MB。线上原始 234 个供应商 / 8900+ 模型，按本应用支持的三种协议过滤后约 211 个供应商 / 6900 个模型。

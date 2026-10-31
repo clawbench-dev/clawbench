@@ -20,32 +20,36 @@ import (
 const jsonKeyModels = "models"
 
 type providerResponse struct {
-	ID         int64    `json:"id"`
-	Name       string   `json:"name"`
-	Protocol   string   `json:"protocol"`
-	BaseURL    string   `json:"baseUrl"`
-	AuthMode   string   `json:"authMode"`
-	PresetID   string   `json:"presetId,omitempty"`
-	HasKey     bool     `json:"hasKey"`
-	AgentCount int      `json:"agentCount"`
-	Agents     []string `json:"agents,omitempty"`
-	CreatedAt  string   `json:"createdAt,omitempty"`
-	UpdatedAt  string   `json:"updatedAt,omitempty"`
+	ID           int64    `json:"id"`
+	Name         string   `json:"name"`
+	Protocol     string   `json:"protocol"`
+	BaseURL      string   `json:"baseUrl"`
+	AuthMode     string   `json:"authMode"`
+	PresetID     string   `json:"presetId,omitempty"`
+	Models       []string `json:"models"`
+	DefaultModel string   `json:"defaultModel,omitempty"`
+	HasKey       bool     `json:"hasKey"`
+	AgentCount   int      `json:"agentCount"`
+	Agents       []string `json:"agents,omitempty"`
+	CreatedAt    string   `json:"createdAt,omitempty"`
+	UpdatedAt    string   `json:"updatedAt,omitempty"`
 }
 
 func toProviderResponse(p *model.Provider, usage map[int64]int, agents []string) providerResponse {
 	return providerResponse{
-		ID:         p.ID,
-		Name:       p.Name,
-		Protocol:   p.Protocol,
-		BaseURL:    p.BaseURL,
-		AuthMode:   p.AuthMode,
-		PresetID:   p.PresetID,
-		HasKey:     p.APIKey != "",
-		AgentCount: usage[p.ID],
-		Agents:     agents,
-		CreatedAt:  p.CreatedAt,
-		UpdatedAt:  p.UpdatedAt,
+		ID:           p.ID,
+		Name:         p.Name,
+		Protocol:     p.Protocol,
+		BaseURL:      p.BaseURL,
+		AuthMode:     p.AuthMode,
+		PresetID:     p.PresetID,
+		Models:       append([]string{}, p.Models...),
+		DefaultModel: p.DefaultModel,
+		HasKey:       p.APIKey != "",
+		AgentCount:   usage[p.ID],
+		Agents:       agents,
+		CreatedAt:    p.CreatedAt,
+		UpdatedAt:    p.UpdatedAt,
 	}
 }
 
@@ -81,12 +85,14 @@ func serveProvidersList(w http.ResponseWriter, r *http.Request) {
 }
 
 type providerCreateRequest struct {
-	Name     string `json:"name"`
-	Protocol string `json:"protocol"`
-	BaseURL  string `json:"baseUrl"`
-	APIKey   string `json:"apiKey"`
-	AuthMode string `json:"authMode"`
-	PresetID string `json:"presetId"`
+	Name         string   `json:"name"`
+	Protocol     string   `json:"protocol"`
+	BaseURL      string   `json:"baseUrl"`
+	APIKey       string   `json:"apiKey"`
+	AuthMode     string   `json:"authMode"`
+	PresetID     string   `json:"presetId"`
+	Models       []string `json:"models"`
+	DefaultModel string   `json:"defaultModel"`
 }
 
 func serveProviderCreate(w http.ResponseWriter, r *http.Request) {
@@ -95,12 +101,14 @@ func serveProviderCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created, err := service.CreateProvider(model.Provider{
-		Name:     req.Name,
-		Protocol: req.Protocol,
-		BaseURL:  req.BaseURL,
-		APIKey:   req.APIKey,
-		AuthMode: req.AuthMode,
-		PresetID: req.PresetID,
+		Name:         req.Name,
+		Protocol:     req.Protocol,
+		BaseURL:      req.BaseURL,
+		APIKey:       req.APIKey,
+		AuthMode:     req.AuthMode,
+		PresetID:     req.PresetID,
+		Models:       req.Models,
+		DefaultModel: req.DefaultModel,
 	})
 	if err != nil {
 		writeProviderError(w, r, err)
@@ -165,13 +173,15 @@ func ServeProviderSubRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 type providerUpdateRequest struct {
-	Name        *string `json:"name"`
-	Protocol    *string `json:"protocol"`
-	BaseURL     *string `json:"baseUrl"`
-	APIKey      *string `json:"apiKey"`
-	AuthMode    *string `json:"authMode"`
-	PresetID    *string `json:"presetId"`
-	ClearAPIKey bool    `json:"clearApiKey"`
+	Name         *string   `json:"name"`
+	Protocol     *string   `json:"protocol"`
+	BaseURL      *string   `json:"baseUrl"`
+	APIKey       *string   `json:"apiKey"`
+	AuthMode     *string   `json:"authMode"`
+	PresetID     *string   `json:"presetId"`
+	Models       *[]string `json:"models"`
+	DefaultModel *string   `json:"defaultModel"`
+	ClearAPIKey  bool      `json:"clearApiKey"`
 }
 
 func serveProviderUpdate(w http.ResponseWriter, r *http.Request, id int64) {
@@ -180,13 +190,15 @@ func serveProviderUpdate(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	updated, err := service.UpdateProvider(id, service.ProviderPatch{
-		Name:        req.Name,
-		Protocol:    req.Protocol,
-		BaseURL:     req.BaseURL,
-		APIKey:      req.APIKey,
-		AuthMode:    req.AuthMode,
-		PresetID:    req.PresetID,
-		ClearAPIKey: req.ClearAPIKey,
+		Name:         req.Name,
+		Protocol:     req.Protocol,
+		BaseURL:      req.BaseURL,
+		APIKey:       req.APIKey,
+		AuthMode:     req.AuthMode,
+		PresetID:     req.PresetID,
+		Models:       req.Models,
+		DefaultModel: req.DefaultModel,
+		ClearAPIKey:  req.ClearAPIKey,
 	})
 	if err != nil {
 		writeProviderError(w, r, err)
@@ -366,6 +378,12 @@ func serveProviderModels(w http.ResponseWriter, r *http.Request, id int64) {
 	p, err := service.GetProvider(id)
 	if err != nil {
 		writeProviderError(w, r, err)
+		return
+	}
+	if len(p.Models) > 0 {
+		// The provider curates its own list; it wins over the probe so the
+		// picker cannot drift from what the user saved.
+		writeJSON(w, http.StatusOK, map[string]any{jsonKeyModels: p.Models, "source": "curated", jsonKeyStatus: http.StatusOK})
 		return
 	}
 	if p.BaseURL == "" {

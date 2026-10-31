@@ -106,34 +106,51 @@
           v-if="card.title === t('settings.items.allProjectsSection')"
           @navigate="(id: string) => $emit('navigate', id)"
         />
-        <SettingsItem
+        <template
           v-for="item in card.items"
           :key="item.key + (item.key === 'forge.enabled' ? '-' + configRenderEpoch : '')"
-          :setting-key="item.key"
-          :label="getItemLabel(item)"
-          :description="item.descriptionKey ? t(item.descriptionKey) : ''"
-          :type="item.type"
-          :model-value="getItemValue(item)"
-          :disabled="getItemDisabled(item)"
-          :options="resolveItemOptions(item)"
-          :options-filter="resolveOptionsFilter(item)"
-          :option-previews="item.key === 'theme' ? themePreviews : undefined"
-          :reveal-on-select="item.key === 'theme'"
-          :min="item.min"
-          :max="getItemMax(item)"
-          :step="item.step"
-          :needs-restart="item.needsRestart"
-          :summary-model-status="resolveSummaryModelStatus(item)"
-          :force-close="activeKey !== null && activeKey !== item.key"
-          :no-divider="false"
-          :default-value="item.defaultValue"
-          :display-format="item.displayFormat"
-          :display-transform="item.displayTransform"
-          @update:model-value="(v: unknown) => handleUpdate(item, v)"
-          @click="handleClick(item)"
-          @edit-toggle="(open: boolean) => handleEditToggle(item.key, open)"
-          @discard="handleDiscard"
-        />
+        >
+          <!-- The summary model is chosen where it is referenced, not on a
+               separate page: this row opens a provider → model picker. -->
+          <SettingsItem
+            v-if="item.type === 'summaryModel'"
+            :setting-key="item.key"
+            :label="getItemLabel(item)"
+            :description="item.descriptionKey ? t(item.descriptionKey) : ''"
+            type="action"
+            :model-value="summaryModelLabel"
+            :disabled="getItemDisabled(item)"
+            :summary-model-status="resolveSummaryModelStatus(item)"
+            @click="openSummaryModelPicker"
+          />
+          <SettingsItem
+            v-else
+            :setting-key="item.key"
+            :label="getItemLabel(item)"
+            :description="item.descriptionKey ? t(item.descriptionKey) : ''"
+            :type="item.type"
+            :model-value="getItemValue(item)"
+            :disabled="getItemDisabled(item)"
+            :options="resolveItemOptions(item)"
+            :options-filter="resolveOptionsFilter(item)"
+            :option-previews="item.key === 'theme' ? themePreviews : undefined"
+            :reveal-on-select="item.key === 'theme'"
+            :min="item.min"
+            :max="getItemMax(item)"
+            :step="item.step"
+            :needs-restart="item.needsRestart"
+            :summary-model-status="resolveSummaryModelStatus(item)"
+            :force-close="activeKey !== null && activeKey !== item.key"
+            :no-divider="false"
+            :default-value="item.defaultValue"
+            :display-format="item.displayFormat"
+            :display-transform="item.displayTransform"
+            @update:model-value="(v: unknown) => handleUpdate(item, v)"
+            @click="handleClick(item)"
+            @edit-toggle="(open: boolean) => handleEditToggle(item.key, open)"
+            @discard="handleDiscard"
+          />
+        </template>
       </SettingsCard>
       <!-- Group panel — C2 fix: arrow closure passes panelId -->
       <SettingsGroupPanel
@@ -143,6 +160,9 @@
         @restart-needed="(fields) => $emit('restartNeeded', fields)"
       />
     </template>
+    <!-- Summary model picker (provider → model) -->
+    <SummaryModelPicker :open="summaryPickerOpen" @update:open="summaryPickerOpen = $event" />
+
     <!-- Password change dialog -->
     <PasswordChangeDialog
       :open="showPasswordDialog"
@@ -169,6 +189,7 @@ import SkillsSetting from './SkillsSetting.vue'
 import TlsCertPanel from './TlsCertPanel.vue'
 import MCPSetting from './MCPSetting.vue'
 import ProviderSetting from './ProviderSetting.vue'
+import SummaryModelPicker from './SummaryModelPicker.vue'
 import SkillsDirsSetting from './SkillsDirsSetting.vue'
 import SkillsReposSetting from './SkillsReposSetting.vue'
 import SkillsDiscoveredSetting from './SkillsDiscoveredSetting.vue'
@@ -239,6 +260,17 @@ const { isNativeApp, isAndroidApp } = usePlatformDetect()
 const desktopDownload = useDesktopDownload()
 const activeKey = ref<string | null>(null)
 const showPasswordDialog = ref(false)
+const summaryPickerOpen = ref(false)
+
+/** Current summary model, shown on the action row. */
+const summaryModelLabel = computed(() => {
+  const raw = (serverConfig.value.ai_summary as { model?: string } | undefined)?.model
+  return typeof raw === 'string' ? raw : ''
+})
+
+function openSummaryModelPicker() {
+  summaryPickerOpen.value = true
+}
 const showIosSheet = ref(false)
 const upgradeDialogRef = ref<InstanceType<typeof UpgradeDialog> | null>(null)
 const nativeAppVersion = ref('')

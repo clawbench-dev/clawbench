@@ -1987,6 +1987,21 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: providers own the model list their endpoint serves. Existing
+	// rows get an empty list, which means "not curated" (discovery decides).
+	for _, col := range []struct{ name, ddl string }{
+		{"models", "ALTER TABLE providers ADD COLUMN models TEXT NOT NULL DEFAULT '[]'"},
+		{"default_model", "ALTER TABLE providers ADD COLUMN default_model TEXT NOT NULL DEFAULT ''"},
+	} {
+		var has int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('providers') WHERE name=?", col.name).Scan(&has)
+		if has == 0 {
+			if _, err := store.WriteExec(col.ddl); err != nil {
+				return fmt.Errorf("failed to add %s to providers: %w", col.name, err)
+			}
+		}
+	}
+
 	// Migrate: add provider_id column to agents. NULL = use the CLI's own
 	// configuration (no injection); a value points at a row in providers.
 	// Existing agents default to NULL, so nothing changes after the upgrade.

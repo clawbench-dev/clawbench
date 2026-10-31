@@ -2,6 +2,7 @@ package service
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -27,6 +28,8 @@ CREATE TABLE IF NOT EXISTS providers (
 	api_key TEXT NOT NULL DEFAULT '',
 	auth_mode TEXT NOT NULL DEFAULT 'auto',
 	preset_id TEXT NOT NULL DEFAULT '',
+	models TEXT NOT NULL DEFAULT '[]',
+	default_model TEXT NOT NULL DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -51,13 +54,15 @@ var (
 // ProviderPatch holds optional provider updates. Nil means "leave alone";
 // ClearAPIKey is the only way to remove a stored secret.
 type ProviderPatch struct {
-	Name        *string
-	Protocol    *string
-	BaseURL     *string
-	APIKey      *string
-	ClearAPIKey bool
-	AuthMode    *string
-	PresetID    *string
+	Name         *string
+	Protocol     *string
+	BaseURL      *string
+	APIKey       *string
+	ClearAPIKey  bool
+	AuthMode     *string
+	PresetID     *string
+	Models       *[]string
+	DefaultModel *string
 }
 
 // LoadProvidersIntoMemory loads every provider row into the in-memory snapshot
@@ -73,7 +78,7 @@ func LoadProvidersIntoMemory() error {
 
 func listProvidersFromDB(db dbutil.Reader) ([]*model.Provider, error) {
 	rows, err := db.Query(`SELECT id, name, protocol, base_url, api_key, auth_mode, preset_id,
-		created_at, updated_at FROM providers`)
+		models, default_model, created_at, updated_at FROM providers`)
 	if err != nil {
 		return nil, fmt.Errorf("query providers: %w", err)
 	}
@@ -83,9 +88,12 @@ func listProvidersFromDB(db dbutil.Reader) ([]*model.Provider, error) {
 	for rows.Next() {
 		p := &model.Provider{}
 		var createdAt, updatedAt sql.NullString
-		if err := rows.Scan(&p.ID, &p.Name, &p.Protocol, &p.BaseURL, &p.APIKey, &p.AuthMode, &p.PresetID, &createdAt, &updatedAt); err != nil {
+		var modelsJSON string
+		if err := rows.Scan(&p.ID, &p.Name, &p.Protocol, &p.BaseURL, &p.APIKey, &p.AuthMode, &p.PresetID,
+			&modelsJSON, &p.DefaultModel, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan provider: %w", err)
 		}
+		p.Models = decodeModelIDs(modelsJSON)
 		p.CreatedAt = createdAt.String
 		p.UpdatedAt = updatedAt.String
 		out = append(out, p)
@@ -102,15 +110,18 @@ func ListProviders() ([]*model.Provider, error) {
 func GetProvider(id int64) (*model.Provider, error) {
 	p := &model.Provider{}
 	var createdAt, updatedAt sql.NullString
+	var modelsJSON string
 	err := store.ReadDB().QueryRow(`SELECT id, name, protocol, base_url, api_key, auth_mode, preset_id,
-		created_at, updated_at FROM providers WHERE id = ?`, id).
-		Scan(&p.ID, &p.Name, &p.Protocol, &p.BaseURL, &p.APIKey, &p.AuthMode, &p.PresetID, &createdAt, &updatedAt)
+		models, default_model, created_at, updated_at FROM providers WHERE id = ?`, id).
+		Scan(&p.ID, &p.Name, &p.Protocol, &p.BaseURL, &p.APIKey, &p.AuthMode, &p.PresetID,
+			&modelsJSON, &p.DefaultModel, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrProviderNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get provider: %w", err)
 	}
+	p.Models = decodeModelIDs(modelsJSON)
 	p.CreatedAt = createdAt.String
 	p.UpdatedAt = updatedAt.String
 	return p, nil
@@ -127,8 +138,9 @@ func CreateProvider(p model.Provider) (*model.Provider, error) {
 		return nil, ErrProviderNameTaken
 	}
 
-	res, err := store.WriteExec(`INSERT INTO providers (name, protocol, base_url, api_key, auth_mode, preset_id)
-		VALUES (?, ?, ?, ?, ?, ?)`, p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.PresetID)
+	res, err := store.WriteExec(`INSERT INTO providers (name, protocol, base_url, api_key, auth_mode, preset_id, models, default_model)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.PresetID,
+		encodeModelIDs(p.Models), p.DefaultModel)
 	if err != nil {
 		if isUniqueConstraint(err) {
 			return nil, ErrProviderNameTaken
@@ -178,8 +190,9 @@ func UpdateProvider(id int64, patch ProviderPatch) (*model.Provider, error) {
 	}
 
 	if _, werr := store.WriteExec(`UPDATE providers SET name = ?, protocol = ?, base_url = ?,
-		api_key = ?, auth_mode = ?, preset_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		next.Name, next.Protocol, next.BaseURL, next.APIKey, next.AuthMode, next.PresetID, id); werr != nil {
+		api_key = ?, auth_mode = ?, preset_id = ?, models = ?, default_model = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		next.Name, next.Protocol, next.BaseURL, next.APIKey, next.AuthMode, next.PresetID,
+		encodeModelIDs(next.Models), next.DefaultModel, id); werr != nil {
 		if isUniqueConstraint(werr) {
 			return nil, ErrProviderNameTaken
 		}
@@ -218,6 +231,12 @@ func applyProviderPatch(current model.Provider, patch ProviderPatch) model.Provi
 	}
 	if patch.PresetID != nil {
 		next.PresetID = *patch.PresetID
+	}
+	if patch.Models != nil {
+		next.Models = *patch.Models
+	}
+	if patch.DefaultModel != nil {
+		next.DefaultModel = *patch.DefaultModel
 	}
 	if patch.ClearAPIKey {
 		next.APIKey = ""
@@ -372,4 +391,25 @@ func isUniqueConstraint(err error) bool {
 func summaryUsesProvider(id int64) bool {
 	pid := model.ConfigInstance.AISummary.ProviderID
 	return pid != nil && *pid == id
+}
+
+// encodeModelIDs stores the curated model list as JSON. The column is TEXT so
+// an empty list is "[]" rather than NULL, which keeps the read path branch-free.
+func encodeModelIDs(models []string) string {
+	data, err := json.Marshal(models)
+	if err != nil || len(models) == 0 {
+		return "[]"
+	}
+	return string(data)
+}
+
+func decodeModelIDs(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	return out
 }

@@ -1753,17 +1753,42 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	effectiveTTSBackend := cfg.Summarize.TTSBackend
 	ttsBackendSwitchedToAPI := false
 	if aiSummary, ok := patch["ai_summary"].(map[string]any); ok {
-		if raw, present := aiSummary["provider_id"]; present && raw != nil {
-			n, ok := raw.(float64)
-			if !ok || n <= 0 {
-				return fmt.Errorf("ai_summary.provider_id must be a positive provider id")
+		// Validate the pair the patch would produce, not just the changed key:
+		// a model edit is only meaningful against its provider's list.
+		providerID := int64(0)
+		if pid := cfg.AISummary.ProviderID; pid != nil {
+			providerID = *pid
+		}
+		if raw, present := aiSummary["provider_id"]; present {
+			if raw == nil {
+				providerID = 0
+			} else {
+				n, ok := raw.(float64)
+				if !ok || n <= 0 {
+					return fmt.Errorf("ai_summary.provider_id must be a positive provider id")
+				}
+				providerID = int64(n)
 			}
-			provider := model.GetProvider(int64(n))
+		}
+		if providerID > 0 {
+			provider := model.GetProvider(providerID)
 			if provider == nil {
-				return fmt.Errorf("ai_summary.provider_id: provider %d not found", int64(n))
+				return fmt.Errorf("ai_summary.provider_id: provider %d not found", providerID)
 			}
 			if provider.Protocol != model.ProviderProtocolAnthropic && provider.Protocol != model.ProviderProtocolOpenAI {
 				return fmt.Errorf("ai_summary.provider_id: provider %q speaks %s, but the summary model only supports openai/anthropic", provider.Name, provider.Protocol)
+			}
+			// When the provider curates its models, the summary model must be
+			// one of them — otherwise the picker offers what the endpoint
+			// rejects.
+			if len(provider.Models) > 0 {
+				effective := cfg.AISummary.Model
+				if m, ok := aiSummary["model"].(string); ok {
+					effective = m
+				}
+				if effective != "" && !modelContains(provider.Models, effective) {
+					return fmt.Errorf("ai_summary.model: %q is not in the model list of provider %q", effective, provider.Name)
+				}
 			}
 		}
 	}
@@ -3113,4 +3138,15 @@ func mergeUsageMeterStateIntoPatch(patch map[string]any) map[string]any {
 	}
 	out["usage_meter"] = merged
 	return out
+}
+
+// modelContains is a tiny helper kept local to avoid importing slices just for
+// one call site.
+func modelContains(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }

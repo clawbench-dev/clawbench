@@ -78,3 +78,29 @@ func TestSummaryEndpoint_ProviderWinsOverLegacy(t *testing.T) {
 		t.Fatalf("base = %q, want the provider endpoint", base)
 	}
 }
+
+func TestDefaultModelID_PrefersCuratedProviderList(t *testing.T) {
+	pid := int64(77)
+	ReplaceProviders([]*Provider{{
+		ID: 77, Name: "GW", Protocol: ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1",
+		APIKey: "k", Models: []string{"m1", "m2"}, DefaultModel: "m2",
+	}})
+	t.Cleanup(func() { ReplaceProviders(nil) })
+
+	agent := &Agent{ProviderID: &pid, PreferredModel: "not-served", Models: []AgentModel{{ID: "cli-model", Default: true}}}
+	if got := agent.DefaultModelID(); got != "m2" {
+		t.Fatalf("default = %q, want the provider default (the preference is not served)", got)
+	}
+
+	agent.PreferredModel = "m1"
+	if got := agent.DefaultModelID(); got != "m1" {
+		t.Fatalf("default = %q, want the served preference", got)
+	}
+
+	// Without a curated list the old priority stands.
+	agent.PreferredModel = ""
+	ReplaceProviders(nil)
+	if got := agent.DefaultModelID(); got != "cli-model" {
+		t.Fatalf("default = %q, want the CLI default", got)
+	}
+}
