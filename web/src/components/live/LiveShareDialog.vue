@@ -4,7 +4,7 @@
       <!-- Idle: pick a source and options, then start. -->
       <template v-if="share.state.value === 'idle' && phase !== 'minutes'">
         <div v-if="!supported" class="live-dialog-warn">
-          {{ t('liveShare.unsupported') }}
+          {{ hasNativeCapture ? t('liveShare.unsupported') : t('liveShare.captureNeedsClient') }}
         </div>
 
         <template v-else>
@@ -452,6 +452,13 @@ const withMicrophone = ref(true)
 const withNotes = ref(true)
 const systemAudioSupported = ref(false)
 const supported = ref(false)
+/**
+ * Whether this host can enumerate capture sources at all. The desktop shell
+ * can; a browser cannot, and neither can a desktop build older than the capture
+ * IPC — for those the empty list is not a permission problem and saying so would
+ * send the user looking in the wrong place.
+ */
+const hasNativeCapture = computed(() => Boolean(getNative()?.listCaptureSources))
 const loadingSources = ref(false)
 const starting = ref(false)
 /** 'publishing' = the normal dialog; 'minutes' = the post-share report. */
@@ -662,7 +669,9 @@ async function loadSources(): Promise<void> {
     // Default the audio toggle to the platform's capability rather than off:
     // on Windows sharing the system sound is the common case.
     withSystemAudio.value = sysAudio
-    supported.value = list.length > 0 || sysAudio || Boolean(navigator.mediaDevices?.getDisplayMedia)
+    supported.value =
+      hasNativeCapture.value &&
+      (list.length > 0 || sysAudio || Boolean(navigator.mediaDevices?.getDisplayMedia))
     if (!selectedSourceId.value && list.length > 0) {
       // Prefer a full screen over a window: sharing a window is the exception.
       const screen = list.find((s) => s.kind === 'screen')

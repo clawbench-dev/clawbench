@@ -49,6 +49,7 @@ import {
   _pendingCaptureForTest,
   _resetCaptureForTest,
   _setPendingCaptureForTest,
+  arePlaceholderSources,
   audioCaptureSupport,
   decideCapture,
   installDisplayMediaHandler,
@@ -108,6 +109,44 @@ describe('decideCapture', () => {
     // Platform cannot do loopback: forwarding it would fail the whole capture.
     expect(decideCapture(want, true, false, available)?.withAudio).toBe(false)
   })
+
+  it('uses the fresh listing when the ids are per-call placeholders (Wayland)', () => {
+    // Wayland hands out `window:<n>:0:s` with an incrementing n, so the id the
+    // renderer saw can never appear in the re-enumeration. Refusing here is what
+    // made every Linux/Wayland share fail.
+    const answer = decideCapture(
+      { sourceId: 'window:1:0:s', systemAudio: false },
+      false,
+      false,
+      [{ id: 'window:2:0:s' }],
+      true,
+    )
+    expect(answer).toEqual({ sourceId: 'window:2:0:s', withAudio: false })
+  })
+
+  it('still refuses a vanished source when the ids are stable', () => {
+    // On X11/Windows the id is a real handle: a mismatch means the window closed,
+    // and capturing whatever happens to be first would share the wrong thing.
+    expect(
+      decideCapture({ sourceId: 'screen:9:0', systemAudio: false }, false, false, [{ id: 'screen:1:0' }], false),
+    ).toBeNull()
+    // Placeholder mode with nothing to fall back on also refuses.
+    expect(decideCapture({ sourceId: 'window:1:0:s', systemAudio: false }, false, false, [], true)).toBeNull()
+  })
+})
+
+describe('arePlaceholderSources', () => {
+  it('detects the nameless Wayland stand-in', () => {
+    expect(arePlaceholderSources([{ name: '' }])).toBe(true)
+    expect(arePlaceholderSources([{ name: '' }, { name: '' }])).toBe(true)
+  })
+
+  it('treats named sources and an empty list as real', () => {
+    expect(arePlaceholderSources([{ name: 'Entire screen' }])).toBe(false)
+    expect(arePlaceholderSources([{ name: '' }, { name: 'Firefox' }])).toBe(false)
+    // An empty list is "nothing to capture", not "ids are unstable".
+    expect(arePlaceholderSources([])).toBe(false)
+  })
 })
 
 describe('audioCaptureSupport', () => {
@@ -141,6 +180,14 @@ describe('listCaptureSources', () => {
     sources.value = [fakeSource('screen:1:0', 'screen', false)]
     const list = await listCaptureSources()
     expect(list[0].thumbnail).toContain('data:image/png')
+  })
+
+  it('reads a nameless Wayland placeholder as a screen', async () => {
+    // Its id starts with `window:` but the portal asks which *screen* to share,
+    // so the picker must not offer it as "share one window".
+    sources.value = [fakeSource('window:1:0:s', '')]
+    const list = await listCaptureSources()
+    expect(list[0]).toMatchObject({ kind: 'screen', name: '' })
   })
 })
 
@@ -185,6 +232,19 @@ describe('display media handler', () => {
 
     expect(await requestCapture()).toEqual({})
     expect(recorded.value.join()).toContain('unavailable')
+  })
+
+  it('answers a Wayland placeholder listing even though its id changed', async () => {
+    // The declaration was made from one listing; the handler re-enumerates and
+    // gets a different index. Without the placeholder path this refused every
+    // Linux/Wayland share.
+    sources.value = [fakeSource('window:2:0:s', '')]
+    _setPendingCaptureForTest({ sourceId: 'window:1:0:s', systemAudio: false })
+
+    const answer = await requestCapture()
+
+    expect(answer.video).toMatchObject({ id: 'window:2:0:s' })
+    expect(recorded.value.join()).not.toContain('unavailable')
   })
 
   it('does not leak the pending declaration across installs', () => {

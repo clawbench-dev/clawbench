@@ -814,7 +814,9 @@ async function openClientPicker(): Promise<void> {
   try {
     const raw = await bridge.listCaptureSources()
     const list = JSON.parse(raw) as Array<{ id: string; name: string; kind: string }>
-    clientSources.value = list
+    // Wayland exposes one nameless placeholder (the system dialog does the real
+    // picking), so an unlabelled entry would render as an empty button.
+    clientSources.value = list.map((s) => ({ ...s, name: s.name || t('liveShare.entireScreen') }))
     pickingSource.value = true
   } catch (e) {
     appLog.w(TAG, 'list capture sources failed', e)

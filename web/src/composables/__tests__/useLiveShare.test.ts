@@ -570,6 +570,20 @@ describe('listCaptureSources', () => {
     expect(list[0].kind).toBe('screen')
   })
 
+  it('labels a nameless source instead of rendering a blank tile', async () => {
+    // Wayland lists one placeholder with no name; the system dialog does the
+    // real picking. An empty label would render an unclickable-looking tile.
+    bridge.listCaptureSources.mockResolvedValueOnce(
+      JSON.stringify([{ id: 'window:1:0:s', name: '', kind: 'screen', thumbnail: '' }]),
+    )
+    const { listCaptureSources } = await import('../useLiveShare')
+
+    const list = await listCaptureSources()
+
+    expect(list[0].name).not.toBe('')
+    expect(list[0].id).toBe('window:1:0:s')
+  })
+
   it('returns an empty list when the host fails', async () => {
     bridge.listCaptureSources.mockRejectedValueOnce(new Error('boom'))
     const { listCaptureSources } = await import('../useLiveShare')

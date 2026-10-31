@@ -52,6 +52,20 @@ export function audioCaptureSupport(): { systemAudio: boolean; reason: string } 
   return { systemAudio: false, reason: 'system audio capture is only supported on Windows' }
 }
 
+/**
+ * Sources the compositor will not describe, only stand in for.
+ *
+ * A Wayland client cannot enumerate other applications' windows, so Electron
+ * answers `getSources` with a single placeholder that has no name and no
+ * thumbnail. Its id is a per-call index (`window:1:0:s`, then `window:2:0:s`, …)
+ * rather than a handle, so it cannot be used to re-identify the same source
+ * later. The real choice happens in the desktop portal's own dialog when the
+ * stream is requested, which is why the id carries no meaning there.
+ */
+export function arePlaceholderSources(sources: Array<{ name: string }>): boolean {
+  return sources.length > 0 && sources.every((s) => !s.name)
+}
+
 /** List screens and windows for the picker. */
 export async function listCaptureSources(): Promise<CaptureSourceInfo[]> {
   const sources = await desktopCapturer.getSources({
@@ -62,8 +76,9 @@ export async function listCaptureSources(): Promise<CaptureSourceInfo[]> {
   return sources.map((s: DesktopCapturerSource) => ({
     id: s.id,
     name: s.name,
-    // `screen:` ids are monitors; everything else is a window.
-    kind: s.id.startsWith('screen:') ? 'screen' : 'window',
+    // `screen:` ids are monitors; everything else is a window. Placeholders are
+    // screens in practice (the portal asks which one), so they read as screens.
+    kind: s.id.startsWith('screen:') || !s.name ? 'screen' : 'window',
     thumbnail: s.thumbnail.isEmpty() ? '' : s.thumbnail.toDataURL(),
   }))
 }
@@ -115,20 +130,29 @@ export function registerCaptureHandlers(getWindow: () => WebContents | null): vo
  * Electron: it takes the pending declaration, whether the platform supports
  * loopback, and the available sources, and returns either an empty answer (refuse)
  * or the chosen source plus whether to attach system audio.
+ *
+ * `volatileIds` says the source ids are per-call indexes (Wayland), so matching
+ * the declared id against a fresh listing can never succeed — the listing has to
+ * be trusted as-is. The declaration is still one-shot and still comes only from
+ * our own picker; on Wayland the portal picks the actual screen afterwards, so
+ * the id was never a handle to begin with.
  */
 export function decideCapture(
   choice: PendingCapture | null,
   audioRequested: boolean,
   platformSupportsLoopback: boolean,
   available: Array<{ id: string }>,
+  volatileIds = false,
 ): { sourceId: string; withAudio: boolean } | null {
   if (!choice) return null
-  if (!available.some((s) => s.id === choice.sourceId)) return null
+  const exact = available.find((s) => s.id === choice.sourceId)
+  const target = exact ?? (volatileIds ? available[0] : undefined)
+  if (!target) return null
   // Only forward loopback audio when the renderer asked, the platform allows it,
   // and the request actually wanted audio. Passing 'loopback' where it is
   // unsupported fails the whole capture, not just the audio track.
   const withAudio = audioRequested && choice.systemAudio && platformSupportsLoopback
-  return { sourceId: choice.sourceId, withAudio }
+  return { sourceId: target.id, withAudio }
 }
 
 /** Test seam: read the pending declaration. */
@@ -176,6 +200,7 @@ export function installDisplayMediaHandler(): void {
             request.audioRequested,
             audioCaptureSupport().systemAudio,
             sources,
+            arePlaceholderSources(sources),
           )
           if (!decision) {
             record('W', TAG, `declared source ${choice.sourceId} is unavailable`)

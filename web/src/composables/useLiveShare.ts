@@ -10,6 +10,7 @@
  * per viewer and forwards ICE both ways; it never parses SDP.
  */
 import { ref, shallowRef } from 'vue'
+import i18n from '@/i18n'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { buildShareLinks, type ShareLink } from '@/composables/useShareLinks'
@@ -198,7 +199,14 @@ export async function listCaptureSources(): Promise<CaptureSource[]> {
   try {
     const raw = await bridge.listCaptureSources()
     const parsed = JSON.parse(raw) as unknown
-    return Array.isArray(parsed) ? (parsed as CaptureSource[]) : []
+    if (!Array.isArray(parsed)) return []
+    // A Wayland host cannot name what it lists: the compositor exposes one
+    // nameless placeholder and the actual pick happens in the system dialog.
+    // Without a label the picker would render a blank tile.
+    return (parsed as CaptureSource[]).map((s) => ({
+      ...s,
+      name: s.name || i18n.global.t('liveShare.entireScreen'),
+    }))
   } catch (e) {
     appLog.e(TAG, 'listCaptureSources failed', e)
     return []

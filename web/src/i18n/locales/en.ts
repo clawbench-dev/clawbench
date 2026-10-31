@@ -3971,9 +3971,13 @@ export default {
     button: 'Share screen',
     live: 'Sharing',
     dialogTitle: 'Share screen',
-    unsupported: 'Screen sharing is not available in this environment. It requires the Windows desktop app.',
+    unsupported: 'Screen sharing is not available in this environment. Use the desktop app.',
     pickSource: 'What to share',
-    noSources: 'No screen or window available. Check the system screen-recording permission.',
+    entireScreen: 'Entire screen (chosen by the system)',
+    noSources:
+      'No screen or window available. Make sure screen recording is allowed (Linux/Wayland needs xdg-desktop-portal).',
+    captureNeedsClient:
+      'This client cannot capture the screen — update the desktop app, or open this page in it.',
     includeSystemAudio: 'Include system audio',
     includeMicrophone: 'Include microphone',
     systemAudioUnavailable: 'This platform cannot capture system audio (Windows only).',
