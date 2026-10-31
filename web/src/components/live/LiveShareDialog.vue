@@ -1174,7 +1174,9 @@ watch(
   border-radius: var(--radius-full, 999px);
   background: var(--color-red, #cf222e);
   color: #fff;
-  font-size: 10px;
+  /* Scales with the root font size like every other size in the app; there is
+     no 10px token, so express it in --dp instead of a literal. */
+  font-size: calc(10 * var(--dp));
   line-height: 14px;
   text-align: center;
 }

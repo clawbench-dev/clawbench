@@ -1424,7 +1424,7 @@ onBeforeUnmount(() => {
   border: none;
   background: transparent;
   color: inherit;
-  font-size: 14px;
+  font-size: calc(14 * var(--dp));
   cursor: pointer;
   padding: 0 2px;
 }
@@ -1515,7 +1515,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-full, 999px);
   background: var(--color-red, #cf222e);
   color: #fff;
-  font-size: 10px;
+  font-size: calc(10 * var(--dp));
   line-height: 16px;
   text-align: center;
 }
