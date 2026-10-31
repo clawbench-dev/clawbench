@@ -22,12 +22,20 @@ describe('useVoiceInput', () => {
     expect(v.state.value).toBe('done')
   })
 
-  it('appendText appends to inputText with newline separator', async () => {
+  it('appendText concatenates without inserting a separator', async () => {
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
     v.setInputText('你好')
     v.appendText('世界')
-    expect(v.inputText.value).toBe('你好\n世界')
+    expect(v.inputText.value).toBe('你好世界')
+  })
+
+  it('appendText keeps the existing text byte-for-byte (no trim)', async () => {
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    v.setInputText('hello ')
+    v.appendText('world')
+    expect(v.inputText.value).toBe('hello world')
   })
 
   it('appendText ignores empty text', async () => {
@@ -150,6 +158,33 @@ describe('useVoiceInput', () => {
     v.stop()
     await vi.waitFor(() => expect(v.inputText.value).toBe('second recording'))
     expect(v.inputText.value).not.toContain('first recording')
+  })
+
+  it('start(prefix) keeps the text already in the input box and appends to it', async () => {
+    const track = { stop: vi.fn() }
+    const stream = { getTracks: () => [track] }
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    })
+    vi.stubGlobal('MediaRecorder', class {
+      state = 'recording'
+      ondataavailable: unknown = null
+      onstop: (() => void) | null = null
+      start() { this.state = 'recording' }
+      stop() { this.state = 'inactive'; this.onstop?.() }
+      static isTypeSupported = vi.fn(() => true)
+    })
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() =>
+      Promise.resolve({ ok: true, json: async () => ({ text: '识别结果' }) })
+    ))
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+
+    // Dictation must append to what the user already typed, not replace it.
+    await v.start('已输入的文字')
+    v.stop()
+    await vi.waitFor(() => expect(v.inputText.value).toBe('已输入的文字识别结果'))
   })
 
   it('streaming start passes chunk_ms as the MediaRecorder timeslice', async () => {

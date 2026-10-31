@@ -3766,6 +3766,21 @@ describe('ChatInputBar', () => {
       vi.useRealTimers()
     })
 
+    it('long-press starts dictation even when the input already has text', async () => {
+      vi.useFakeTimers()
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '已有内容'
+      await wrapper.vm.$nextTick()
+      const sendBtn = wrapper.find('.chat-send-btn')
+      await sendBtn.trigger('pointerdown')
+      vi.advanceTimersByTime(600)
+      // The current text is handed over as the prefix so the transcript is
+      // appended to it instead of replacing it.
+      expect(mockVoiceToggle).toHaveBeenCalledWith('已有内容')
+      wrapper.unmount()
+      vi.useRealTimers()
+    })
+
     it('F9 press-and-hold: keydown starts recording, keyup stops it', async () => {
       mockVoiceShortcutKey.mockReturnValue('F9')
       const wrapper = mountBar()

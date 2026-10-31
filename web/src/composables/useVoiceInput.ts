@@ -15,6 +15,7 @@ import { useSettingsConfig } from './useSettingsConfig'
 import { useToast } from './useToast'
 import { useDialog } from './useDialog'
 import { appLog } from '@/utils/appLog'
+import { getNative } from '@/utils/clawbenchNative'
 import i18n from '@/i18n'
 
 export type VoiceInputState = 'idle' | 'recording' | 'transcribing' | 'done'
@@ -67,15 +68,91 @@ export function useVoiceInput() {
   const language = () =>
     (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.language'] as string | undefined
 
-  async function toggle() {
+  async function toggle(prefix = '') {
     if (state.value === 'recording' || state.value === 'transcribing') {
       await stop()
     } else {
-      await start()
+      await start(prefix)
     }
   }
 
-  async function start() {
+  /**
+   * Logs the environment a failed getUserMedia ran in. Without this the only
+   * trace is `getUserMedia failed {}` — a DOMException has no enumerable own
+   * properties, so the error name (NotAllowedError vs NotFoundError vs
+   * NotReadableError) and the installed app version are both lost.
+   */
+  async function logVoiceEnv(): Promise<void> {
+    let appVersion = 'n/a'
+    const native = getNative()
+    if (native?.getAppVersion) {
+      try {
+        appVersion = (await native.getAppVersion()) ?? 'n/a'
+      } catch { /* bridge unavailable */ }
+    }
+
+    // Permissions API state tells "the browser thinks it may capture" apart
+    // from "the device refuses to start" — the two failures need completely
+    // different fixes.
+    let permState: string
+    try {
+      const status = await navigator.permissions?.query({ name: 'microphone' as PermissionName })
+      permState = status?.state ?? 'unknown'
+    } catch {
+      permState = 'error'
+    }
+
+    // Android only: record natively to find out whether the OS lets this app
+    // use the mic at all. A WebView-side failure with a working native probe
+    // means the fault is inside Chromium's audio stack, not the permission.
+    let nativeMic = 'n/a'
+    if (native?.probeMicrophone) {
+      try {
+        nativeMic = (await native.probeMicrophone()) ?? 'n/a'
+      } catch {
+        nativeMic = 'error'
+      }
+    }
+
+    // Enumerate inputs: 0 devices means the OS exposes no microphone to the
+    // WebView; missing labels means capture permission is not really in effect
+    // even though the settings page shows it granted.
+    let inputs: string
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const audioInputs = devices.filter((d) => d.kind === 'audioinput')
+      inputs = `${audioInputs.length}[${audioInputs.map((d) => d.label || '<no-label>').join('|')}]`
+    } catch {
+      inputs = 'error'
+    }
+
+    appLog.i(
+      'VoiceInput',
+      `env secure=${window.isSecureContext} proto=${window.location.protocol} host=${window.location.host} ` +
+        `mediaDevices=${typeof navigator.mediaDevices} permission=${permState} inputs=${inputs} ` +
+        `nativeMic=${nativeMic} app=${appVersion}`,
+    )
+  }
+
+  /**
+   * Opens the microphone.
+   *
+   * NotReadableError means the permission gate passed but the audio device
+   * refused to start (busy, or the HAL was not ready yet). One short retry
+   * covers the transient case; a persistent failure is a system-level block
+   * and must not be retried forever.
+   */
+  async function acquireMic(): Promise<MediaStream> {
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch (e) {
+      if ((e as { name?: string } | null)?.name !== 'NotReadableError') throw e
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      return navigator.mediaDevices.getUserMedia({ audio: true })
+    }
+  }
+
+  async function start(prefix = '') {
     if (state.value !== 'idle') return
     error.value = ''
     // navigator.mediaDevices only exists in a secure context (HTTPS or
@@ -84,6 +161,7 @@ export function useVoiceInput() {
     if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
       error.value = i18n.global.t('chat.voice.insecureContext')
       appLog.w('VoiceInput', 'voice input requires secure context (HTTPS or localhost)')
+      void logVoiceEnv()
       void dialog.alert(error.value, {
         title: i18n.global.t('chat.voice.unavailableTitle'),
         confirmText: i18n.global.t('chat.voice.gotIt'),
@@ -91,16 +169,23 @@ export function useVoiceInput() {
       return
     }
     try {
-      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      mediaStream = await acquireMic()
     } catch (e) {
-      fail(i18n.global.t('chat.voice.micDenied'))
-      appLog.e('VoiceInput', 'getUserMedia failed', e)
+      const err = e as { name?: string; message?: string } | null
+      // NotAllowedError = permission refused. Anything else (NotReadableError,
+      // NotFoundError) means the OS let us through but the device did not
+      // start, so telling the user to "grant permission" sends them the wrong way.
+      fail(i18n.global.t(err?.name === 'NotAllowedError' ? 'chat.voice.micDenied' : 'chat.voice.micUnavailable'))
+      appLog.e('VoiceInput', `getUserMedia failed name=${err?.name ?? 'unknown'} message=${err?.message ?? String(e)}`)
+      void logVoiceEnv()
       return
     }
 
     // A new recording starts fresh — never echo transcriptions from earlier
     // recordings (appendText would otherwise pile them up with '\n' separators).
-    inputText.value = ''
+    // `prefix` carries whatever the user already typed, so dictation appends to
+    // it instead of wiping the input box.
+    inputText.value = prefix
 
     if (streaming()) {
       startStreaming()
@@ -206,7 +291,10 @@ export function useVoiceInput() {
 
   function appendText(text: string) {
     if (!text) return
-    inputText.value = (inputText.value.trim() ? inputText.value.trim() + '\n' : '') + text
+    // Concatenate as-is: the transcript continues whatever is already in the
+    // box, and inserting a separator (or trimming the existing text) would
+    // rewrite input the user typed. Recognized text carries its own punctuation.
+    inputText.value += text
   }
 
   function setState(s: VoiceInputState) { state.value = s }

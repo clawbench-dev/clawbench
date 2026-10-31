@@ -10,6 +10,9 @@ import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
 import android.net.http.SslError;
 import android.os.Build;
 import android.os.Bundle;
@@ -25,6 +28,7 @@ import android.webkit.CookieManager;
 import android.widget.FrameLayout;
 import android.webkit.DownloadListener;
 import android.webkit.JavascriptInterface;
+import android.webkit.PermissionRequest;
 import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
 import android.webkit.ConsoleMessage;
@@ -204,6 +208,26 @@ public class MainActivity extends AppCompatActivity {
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
                 if (!isGranted) {
                     AppLog.w(TAG, "POST_NOTIFICATIONS permission denied — tunnel notification will not show");
+                }
+            });
+
+    // Microphone permission launcher — the WebView only asks us (via
+    // onPermissionRequest) once a page calls getUserMedia, and the OS grant has
+    // to happen first. The pending request is held so the answer can be relayed
+    // back to the page instead of leaving it hanging.
+    private PermissionRequest pendingMicRequest;
+
+    private final ActivityResultLauncher<String> micPermissionLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
+                PermissionRequest request = pendingMicRequest;
+                pendingMicRequest = null;
+                if (request == null) return;
+                String[] grantable = MicPermissionPolicy.grantableResources(request.getResources());
+                if (isGranted && grantable.length > 0) {
+                    request.grant(grantable);
+                } else {
+                    AppLog.w(TAG, "RECORD_AUDIO denied — voice input unavailable");
+                    request.deny();
                 }
             });
 
@@ -821,6 +845,31 @@ public class MainActivity extends AppCompatActivity {
                     launchFileChooserWithoutCamera();
                 }
                 return true;
+            }
+
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {
+                // Voice input (getUserMedia) is denied by default in a WebView:
+                // the page gets NotAllowedError unless this callback grants the
+                // resource AND the app holds the matching OS permission.
+                String[] grantable = MicPermissionPolicy.grantableResources(request.getResources());
+                if (grantable.length == 0) {
+                    AppLog.w(TAG, "WebView permission request denied (not audio capture)");
+                    request.deny();
+                    return;
+                }
+                if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
+                        == PackageManager.PERMISSION_GRANTED) {
+                    request.grant(grantable);
+                    return;
+                }
+                // Supersede any request still waiting on the dialog — a second
+                // getUserMedia call must not leave the first page hanging.
+                if (pendingMicRequest != null) {
+                    pendingMicRequest.deny();
+                }
+                pendingMicRequest = request;
+                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO);
             }
 
             @Override
@@ -3108,6 +3157,58 @@ public class MainActivity extends AppCompatActivity {
                 return "1.0.0";
             }
         }
+
+        /**
+         * Diagnostic probe: try to open and start an {@link AudioRecord} directly.
+         *
+         * <p>WebView reports {@code NotReadableError} ("Could not start audio
+         * source") when its own capture fails, but that message cannot tell
+         * "the OS refuses this app the microphone" apart from "Chromium's audio
+         * stack failed". Recording natively answers exactly that: if this probe
+         * succeeds, the app may record and the fault is inside WebView.
+         *
+         * <p>Returns a short human-readable status; never throws across the bridge.
+         */
+        @JavascriptInterface
+        public String probeMicrophone() {
+            int minBuffer = AudioRecord.getMinBufferSize(
+                    PROBE_SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+            if (minBuffer <= 0) {
+                return "minBufferSize=" + minBuffer;
+            }
+            AudioRecord recorder = null;
+            try {
+                recorder = new AudioRecord(
+                        MediaRecorder.AudioSource.MIC,
+                        PROBE_SAMPLE_RATE,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        Math.max(minBuffer, 4096));
+                int state = recorder.getState();
+                if (state != AudioRecord.STATE_INITIALIZED) {
+                    return "init_failed state=" + state;
+                }
+                recorder.startRecording();
+                boolean recording = recorder.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING;
+                return "ok recording=" + recording;
+            } catch (Throwable t) {
+                return t.getClass().getSimpleName() + ": " + t.getMessage();
+            } finally {
+                if (recorder != null) {
+                    try {
+                        if (recorder.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                            recorder.stop();
+                        }
+                    } catch (Throwable ignored) {
+                        // stop() throws IllegalStateException if start never took
+                    }
+                    recorder.release();
+                }
+            }
+        }
+
+        /** Sample rate for {@link #probeMicrophone()} — matches WebRTC's default. */
+        private static final int PROBE_SAMPLE_RATE = 16000;
 
         @JavascriptInterface
         public boolean isNativeApp() {

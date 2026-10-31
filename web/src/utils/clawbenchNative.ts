@@ -174,6 +174,13 @@ export interface ClawBenchNative {
 
   // Async reads (main-process / native state)
   getAppVersion(): Promise<string>
+  /**
+   * Android only, diagnostic: opens an AudioRecord directly and reports the
+   * outcome ("ok recording=true", "init_failed state=-1", "SecurityException: …").
+   * Used to tell "the OS refuses this app the microphone" apart from "WebView's
+   * own audio stack failed" when getUserMedia throws NotReadableError.
+   */
+  probeMicrophone?(): Promise<string>
   getServerList(): Promise<string>
   getSavedServerConfig(): Promise<string>
   getServerUrl(): Promise<string>

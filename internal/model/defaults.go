@@ -394,11 +394,17 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 
 	// --- STT ---
+	if cfg.STT.Provider == "" {
+		cfg.STT.Provider = "vllm"
+	}
 	if cfg.STT.BaseURL == "" {
 		cfg.STT.BaseURL = "http://localhost:8000/v1"
 	}
 	if cfg.STT.Model == "" {
 		cfg.STT.Model = "openai/whisper-large-v3"
+	}
+	if cfg.STT.ResourceID == "" {
+		cfg.STT.ResourceID = "volc.seedasr.sauc.duration"
 	}
 	if cfg.STT.Language == "" {
 		cfg.STT.Language = "zh"

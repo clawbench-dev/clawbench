@@ -372,10 +372,12 @@ type BingWallpaperConfig struct {
 
 // STTConfig holds configuration for speech-to-text (voice input).
 type STTConfig struct {
-	BaseURL     string `yaml:"base_url"`     // vLLM OpenAI-compatible base URL (default: "http://localhost:8000/v1")
-	APIKey      string `yaml:"api_key"`      // API key (optional)
-	Model       string `yaml:"model"`        // Recognition model (default: "openai/whisper-large-v3")
-	Language    string `yaml:"language"`     // Language code (default: "zh")
+	Provider    string `yaml:"provider"`     // "vllm" (default) or "doubao" (Volcano Engine Seed-ASR)
+	BaseURL     string `yaml:"base_url"`     // vLLM OpenAI-compatible base URL (default: "http://localhost:8000/v1"); unused by doubao
+	APIKey      string `yaml:"api_key"`      // API key: vLLM bearer token, or the doubao X-Api-Key
+	Model       string `yaml:"model"`        // vLLM recognition model (default: "openai/whisper-large-v3"); unused by doubao
+	ResourceID  string `yaml:"resource_id"`  // doubao purchased resource (default: "volc.seedasr.sauc.duration"); unused by vllm
+	Language    string `yaml:"language"`     // Language code (default: "zh"); doubao auto-detects and ignores it
 	Streaming   bool   `yaml:"streaming"`    // true=streaming incremental, false=non-streaming full (default: false)
 	ChunkMs     int    `yaml:"chunk_ms"`     // Streaming slice interval in ms (default: 1000)
 	ShortcutKey string `yaml:"shortcut_key"` // Recording shortcut (default: "F9")

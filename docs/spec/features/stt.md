@@ -53,11 +53,14 @@ sequenceDiagram
 - **语音输入（流式）**：通过 WebSocket 实时发送音频分片，后端按 `chunk_ms` 间隔增量识别，前端实时显示部分结果。用户停止后后端对全量音频重新识别，最终结果替换增量文本。适合长语音，用户可以边说边看到识别进展
 - **安全上下文检测**：语音输入需要 HTTPS 或 localhost 环境才能访问麦克风（`navigator.mediaDevices` API 要求安全上下文）。非安全上下文时弹出提示，用户知道为什么无法使用
 - **快捷键触发**：可配置快捷键（默认 F9）切换录音状态，无需点击按钮
-- **多语言支持**：通过 `language` 参数指定识别语言（如 `zh`、`en`），传给后端 STT 引擎
+- **多语言支持**：通过 `language` 参数指定识别语言（如 `zh`、`en`），传给后端 STT 引擎（豆包引擎由模型自动识别，忽略此参数）
 
 ## 设计要点
 
 - **双模式分离**：流式和非流式使用独立的 HTTP/WS 端点，非流式走 `POST /api/stt/transcribe`，流式走 `WS /api/stt/transcribe/ws`。前端根据 `stt.streaming` 配置选择模式，无需同时处理两种协议
 - **流式增量 + 最终全量**：流式模式分两阶段——增量阶段只识别新增音频片段（低延迟、可累积误差），最终阶段对完整音频重做一次识别（高精度、替换增量结果）。兼顾了实时反馈和最终准确性
-- **STTProvider 可替换**：后端通过 `STTProvider` 接口抽象识别引擎，当前实现为 vLLM Whisper（OpenAI 兼容端点），可替换为其他 ASR 引擎。接口只做"给定音频段→返回文本"，不关心流式/非流式——流式控制由 handler 层处理
+- **STTProvider 可替换**：后端通过 `STTProvider` 接口抽象识别引擎，由 `stt.provider` 选择实现，接口只做"给定音频段→返回文本"，不关心流式/非流式——流式控制由 handler 层处理。目前有两个实现：
+  - `vllm`（默认）：OpenAI 兼容的 `/v1/audio/transcriptions`，配 `stt.base_url` / `stt.model` / `stt.api_key` / `stt.language`
+  - `doubao`：火山引擎豆包 Seed-ASR 极速版（`/api/v3/auc/bigmodel/recognize/flash`）。鉴权头是 `X-Api-Key` + `X-Api-Resource-Id`（**不是** `Authorization: Bearer`），只需配 `stt.api_key` 与 `stt.resource_id`（默认 `volc.seedasr.sauc.duration`，按录音时长计费）；`base_url` / `model` / `language` 对它无效，语言由模型自动识别。音频以 base64 内联提交，容器格式按魔数识别（浏览器录音的 WebM/Opus 可直接识别，无需转码）
+  - **判定可用性看响应体而非 HTTP 状态**：豆包对无效 Key / 未授权资源同样返回 HTTP 200，真正结果在 `header.code`（`20000000` 成功；`45000010` Key 无效；`45000030` Key 有效但该资源未授权；`45000006` 音频不可下载）。设置页的连通性测试因此会真的上传一段"你好"语音并要求返回非空文本，而不是只探测端点存活
 - **音频大小限制**：非流式请求 10MB 上限，流式连接 20MB 上限，防止内存溢出

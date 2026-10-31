@@ -22,6 +22,7 @@ import (
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
 	"clawbench/internal/speech"
+	"clawbench/internal/stt"
 	"clawbench/internal/summarize"
 )
 
@@ -358,8 +359,13 @@ func testRAG(ctx context.Context, values map[string]any) ConnectivityTestResult 
 
 // ── STT ──────────────────────────────────────────────────────
 
-// testSTT tests connectivity to the vLLM STT (Whisper) service.
+// testSTT tests connectivity to the configured speech-to-text backend.
 func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	provider := resolveStringValue(values, "stt.provider", model.ConfigInstance.STT.Provider)
+	if provider == "doubao" {
+		return testDoubaoSTT(ctx, values)
+	}
+
 	baseURL := resolveStringValue(values, "stt.base_url", model.ConfigInstance.STT.BaseURL)
 	sttModel := resolveStringValue(values, "stt.model", model.ConfigInstance.STT.Model)
 	apiKey := resolveStringValue(values, "stt.api_key", model.ConfigInstance.STT.APIKey)
@@ -416,6 +422,38 @@ func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult 
 		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT service reachable, but model '%s' not recognized", sttModel)}
 	}
 	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("STT service reachable at %s (probe returned HTTP %d)", baseURL, resp.StatusCode)}
+}
+
+// doubaoSTTBaseURL is the doubao speech API root used by the connectivity
+// test. Overridable in tests; production always hits the real host.
+//
+//nolint:gochecknoglobals // test seam, mirrors dingtalkTokenURL
+var doubaoSTTBaseURL = stt.DoubaoBaseURL
+
+// testDoubaoSTT probes the Doubao (Volcano Engine) Seed-ASR endpoint with the
+// embedded "你好" clip. Auth is X-Api-Key plus the purchased resource ID, and
+// the response body carries the real status code — a reachable host with a
+// revoked key still answers HTTP 200, so the body is authoritative.
+func testDoubaoSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	apiKey := resolveStringValue(values, "stt.api_key", model.ConfigInstance.STT.APIKey)
+	resourceID := resolveStringValue(values, "stt.resource_id", model.ConfigInstance.STT.ResourceID)
+
+	if apiKey == "" {
+		return ConnectivityTestResult{Success: false, Message: "Doubao API key is required"}
+	}
+
+	provider := stt.NewDoubaoProvider(apiKey, resourceID)
+	provider.BaseURL = doubaoSTTBaseURL
+	provider.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+	text, err := provider.Transcribe(ctx, bytes.NewReader(sttProbeAudio), "")
+	if err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Doubao transcription failed: %v", err)}
+	}
+	if strings.TrimSpace(text) == "" {
+		return ConnectivityTestResult{Success: false, Message: "Doubao transcription returned empty text"}
+	}
+	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("Doubao transcription succeeded: %q", text)}
 }
 
 // buildSTTProbe builds a multipart transcription probe body (embedded "你好"

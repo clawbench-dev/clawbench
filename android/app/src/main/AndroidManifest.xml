@@ -18,10 +18,22 @@
         android:maxSdkVersion="28" />
     <!-- Camera permission for photo upload via file chooser -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Microphone permission for voice input (WebView getUserMedia).
+         Without this the WebView cannot open the mic no matter what
+         onPermissionRequest answers. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Normal (non-runtime) permission. Chromium's audio device module calls
+         AudioManager.setMode()/setSpeakerphoneOn() while starting capture; those
+         calls require this permission, and without it capture can fail with
+         NotReadableError even though RECORD_AUDIO is granted. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Install APK updates from within the app -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- RECORD_AUDIO implies a required microphone unless relaxed here; voice
+         input is optional, so devices without a mic must still be installable. -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <!-- Package visibility (API 30+): without this, resolveActivity() on the
          camera intent returns null even when a camera app is installed, and

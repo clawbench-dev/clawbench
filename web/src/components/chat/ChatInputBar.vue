@@ -881,10 +881,13 @@ function onSendPointerDown() {
   voiceJustRecorded = false
   if (voicePressTimer) { clearTimeout(voicePressTimer) }
   voicePressTimer = setTimeout(() => {
-    if (voicePointerDown && !hasInputContent.value) {
+    if (voicePointerDown) {
       voiceLongPressActive = true
       voiceJustRecorded = true
-      void toggleVoice()
+      // Long-press starts dictation regardless of what is already typed; the
+      // recognized text is appended to the existing content rather than
+      // replacing it (see useVoiceInput.start's `prefix`).
+      void toggleVoice(inputText.value)
     }
   }, VOICE_LONG_PRESS_MS)
 }
@@ -912,7 +915,7 @@ function onVoiceShortcutDown(e) {
   const sc = voiceShortcutKey()
   if (sc === 'F9' && e.code === 'F9' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.repeat) {
     e.preventDefault()
-    startVoice()
+    startVoice(inputText.value)
   }
 }
 

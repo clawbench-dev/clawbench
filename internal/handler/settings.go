@@ -111,9 +111,11 @@ var hotReloadFields = map[string]bool{
 	"tts.openai.voice":           true,
 	"tts.openai.stream_mode":     true,
 	// STT — speech-to-text config, hot-reloadable
+	"stt.provider":     true,
 	"stt.base_url":     true,
 	"stt.api_key":      true,
 	"stt.model":        true,
+	"stt.resource_id":  true,
 	"stt.language":     true,
 	"stt.streaming":    true,
 	"stt.chunk_ms":     true,
@@ -481,9 +483,11 @@ type configAPI struct {
 }
 
 type configSTT struct {
+	Provider    string `json:"provider"`
 	BaseURL     string `json:"base_url"`
 	APIKey      string `json:"api_key"`
 	Model       string `json:"model"`
+	ResourceID  string `json:"resource_id"`
 	Language    string `json:"language"`
 	Streaming   bool   `json:"streaming"`
 	ChunkMs     int    `json:"chunk_ms"`
@@ -877,9 +881,11 @@ var PatchableConfigPaths = map[string]bool{
 	"tts.openai.model":                   true,
 	"tts.openai.voice":                   true,
 	"tts.openai.stream_mode":             true,
+	"stt.provider":                       true,
 	"stt.base_url":                       true,
 	"stt.api_key":                        true,
 	"stt.model":                          true,
+	"stt.resource_id":                    true,
 	"stt.language":                       true,
 	"stt.streaming":                      true,
 	"stt.chunk_ms":                       true,
@@ -946,6 +952,13 @@ var PatchableConfigPaths = map[string]bool{
 // validTTSEngines is the set of valid TTS engine values.
 var validTTSEngines = map[string]bool{
 	"edge": true, "piper": true, "kokoro": true, "moss-nano": true, strOpenAI: true,
+}
+
+// validSTTProviders is the set of valid STT engine values. An unknown value
+// must be rejected rather than falling back to vLLM, otherwise a typo silently
+// sends recordings to a service the user did not configure.
+var validSTTProviders = map[string]bool{
+	"vllm": true, "doubao": true,
 }
 
 // validUILanguages is the set of UI languages the bundled i18n tables carry
@@ -1046,9 +1059,11 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			MaxCacheFiles: cfg.TTS.MaxCacheFiles,
 		},
 		STT: configSTT{
+			Provider:    cfg.STT.Provider,
 			BaseURL:     cfg.STT.BaseURL,
 			APIKey:      cfg.STT.APIKey,
 			Model:       cfg.STT.Model,
+			ResourceID:  cfg.STT.ResourceID,
 			Language:    cfg.STT.Language,
 			Streaming:   cfg.STT.Streaming,
 			ChunkMs:     cfg.STT.ChunkMs,
@@ -1608,6 +1623,11 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	}
 
 	if sttVal, ok := patch["stt"].(map[string]any); ok {
+		if v, ok := sttVal["provider"].(string); ok && v != "" {
+			if !validSTTProviders[v] {
+				return fmt.Errorf("stt.provider must be one of: vllm,doubao")
+			}
+		}
 		if v, ok := sttVal["base_url"].(string); ok && v != "" {
 			if _, err := url.ParseRequestURI(v); err != nil {
 				return fmt.Errorf("stt.base_url must be a valid URL")
@@ -2319,6 +2339,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	}
 
 	if sttVal, ok := patch["stt"].(map[string]any); ok {
+		if v, ok := sttVal["provider"].(string); ok {
+			cfg.STT.Provider = v
+		}
 		if v, ok := sttVal["base_url"].(string); ok {
 			cfg.STT.BaseURL = v
 		}
@@ -2327,6 +2350,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := sttVal["model"].(string); ok {
 			cfg.STT.Model = v
+		}
+		if v, ok := sttVal["resource_id"].(string); ok {
+			cfg.STT.ResourceID = v
 		}
 		if v, ok := sttVal["language"].(string); ok {
 			cfg.STT.Language = v

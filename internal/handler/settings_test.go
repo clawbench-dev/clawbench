@@ -1904,8 +1904,44 @@ func TestServeConfig_Patch_ForbiddenNestedField(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "forbidden_field")
 }
 
-// --- recent_projects.max_count tests ---
+// TestServeConfig_Patch_STTProvider covers the full PATCH path for the STT
+// engine switch. PatchableConfigPaths and applyConfigPatch are separate lists,
+// so a field missing from the allowlist answers forbidden_field even though
+// applyConfigPatch would happily accept it — this test exercises the allowlist.
+func TestServeConfig_Patch_STTProvider(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
 
+	body := `{"stt":{"provider":"doubao","resource_id":"volc.seedasr.sauc.duration","api_key":"k"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "doubao", model.ConfigInstance.STT.Provider)
+	assert.Equal(t, "volc.seedasr.sauc.duration", model.ConfigInstance.STT.ResourceID)
+	assert.Equal(t, "k", model.ConfigInstance.STT.APIKey)
+}
+
+// TestServeConfig_Patch_STTProviderRejectsUnknown guards the enum: an unknown
+// engine must be rejected instead of silently falling back to vLLM.
+func TestServeConfig_Patch_STTProviderRejectsUnknown(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	body := `{"stt":{"provider":"whisper.cpp"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "stt.provider")
+	assert.NotEqual(t, "whisper.cpp", model.ConfigInstance.STT.Provider)
+}
+
+// --- recent_projects.max_count tests ---
 func TestServeConfig_Get_RecentProjects(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
@@ -3017,9 +3053,11 @@ func TestApplyConfigPatch_STT(t *testing.T) {
 
 	applyConfigPatch(map[string]any{
 		"stt": map[string]any{
+			"provider":     "doubao",
 			"base_url":     "http://localhost:9000/v1",
 			"api_key":      "k",
 			"model":        "whisper-small",
+			"resource_id":  "volc.seedasr.sauc.duration",
 			"language":     "en",
 			"streaming":    true,
 			"chunk_ms":     float64(800),
@@ -3027,6 +3065,12 @@ func TestApplyConfigPatch_STT(t *testing.T) {
 		},
 	})
 	cfg2 := model.ConfigInstance
+	if cfg2.STT.Provider != "doubao" {
+		t.Errorf("STT.Provider = %q, want doubao", cfg2.STT.Provider)
+	}
+	if cfg2.STT.ResourceID != "volc.seedasr.sauc.duration" {
+		t.Errorf("STT.ResourceID = %q, want volc.seedasr.sauc.duration", cfg2.STT.ResourceID)
+	}
 	if cfg2.STT.BaseURL != "http://localhost:9000/v1" {
 		t.Errorf("STT.BaseURL = %q, want http://localhost:9000/v1", cfg2.STT.BaseURL)
 	}
@@ -3064,9 +3108,11 @@ func TestServeConfig_Get_STT(t *testing.T) {
 	defer teardown()
 
 	cfg := model.Config{}
+	cfg.STT.Provider = "doubao"
 	cfg.STT.BaseURL = "http://localhost:9000/v1"
 	cfg.STT.APIKey = "k"
 	cfg.STT.Model = "whisper-small"
+	cfg.STT.ResourceID = "volc.seedasr.sauc.duration"
 	cfg.STT.Language = "en"
 	cfg.STT.Streaming = true
 	cfg.STT.ChunkMs = 800
@@ -3084,9 +3130,11 @@ func TestServeConfig_Get_STT(t *testing.T) {
 
 	stt, ok := resp["stt"].(map[string]any)
 	require.True(t, ok, "response should contain stt section")
+	assert.Equal(t, "doubao", stt["provider"])
 	assert.Equal(t, "http://localhost:9000/v1", stt["base_url"])
 	assert.Equal(t, "k", stt["api_key"])
 	assert.Equal(t, "whisper-small", stt["model"])
+	assert.Equal(t, "volc.seedasr.sauc.duration", stt["resource_id"])
 	assert.Equal(t, "en", stt["language"])
 	assert.Equal(t, true, stt["streaming"])
 	assert.Equal(t, float64(800), stt["chunk_ms"])

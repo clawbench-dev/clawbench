@@ -1082,6 +1082,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	handler.SetSTTProvider(sttProvider)
 	slog.Info(
 		"stt provider configured",
+		slog.String("provider", cfg.STT.Provider),
 		slog.String("base_url", cfg.STT.BaseURL),
 		slog.String("model", cfg.STT.Model),
 		slog.Bool("streaming", cfg.STT.Streaming),
@@ -2508,6 +2509,9 @@ func hotReloadTerminal(cfg model.Config, port int) {
 
 // newSTTProvider builds the STT provider from config.
 func newSTTProvider(cfg model.Config) stt.STTProvider {
+	if cfg.STT.Provider == "doubao" {
+		return stt.NewDoubaoProvider(cfg.STT.APIKey, cfg.STT.ResourceID)
+	}
 	return stt.NewVLLMProvider(cfg.STT.BaseURL, cfg.STT.Model, cfg.STT.APIKey, cfg.STT.Language)
 }
 
