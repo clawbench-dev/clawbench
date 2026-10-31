@@ -888,18 +888,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Migrate legacy TTS summary model config (summarize.tts_model / tts_api)
 	// into the new shared ai_summary section so existing configs keep working.
-	if cfg.AISummary.API.BaseURL == "" && legacySummaryBaseURL != "" {
-		cfg.AISummary.API.BaseURL = legacySummaryBaseURL
-		cfg.AISummary.API.Key = legacySummaryKey
-	}
-	if cfg.AISummary.Model == "" {
-		cfg.AISummary.Model = legacySummaryModel
-	}
-	// Migrate the API format too, so anthropic endpoints are not defaulted to
-	// "openai" (which would cause the recommendation/summary call to fail).
-	if cfg.AISummary.Format == "" {
-		cfg.AISummary.Format = legacySummaryFormat
-	}
+	applyLegacySummaryFallback(&cfg, legacySummaryBaseURL, legacySummaryKey, legacySummaryModel, legacySummaryFormat)
 
 	// Apply all defaults (returns auto-generated password if created)
 	autoPassword := model.ApplyDefaults(&cfg, presence)
@@ -1241,7 +1230,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	case summarizeBackendAPI:
 		ttsSummarizer = buildAISummarizer(cfg)
 		if ttsSummarizer == nil {
-			slog.Error("summarize.tts_backend is \"api\" but ai_summary.api.base_url is not configured")
+			slog.Error("summarize.tts_backend is \"api\" but no summary model is configured (bind a provider in settings)")
 			os.Exit(1)
 		}
 	case summarizeBackendAuto:
@@ -2332,14 +2321,57 @@ func newOpenAITTSProvider(cfg model.Config) *speech.OpenAITTSProvider {
 	return o
 }
 
+// applyLegacySummaryFallback copies the removed summarize.tts_api / tts_model
+// block into the shared ai_summary config.
+//
+// It is a migration safety net for configs written before ai_summary existed,
+// and it deliberately runs ONLY while no provider is bound. Once a provider is
+// referenced, the legacy keys are dead weight: re-applying them made the
+// startup log report the pre-provider endpoint as the active one, and kept a
+// stale endpoint reachable behind the binding — so deleting the provider row
+// silently fell back to it instead of reading as "not configured" (the
+// contract model.AISummaryConfig documents).
+func applyLegacySummaryFallback(cfg *model.Config, baseURL, key, modelName, format string) {
+	if cfg.AISummary.ProviderID != nil {
+		return
+	}
+	if cfg.AISummary.API.BaseURL == "" && baseURL != "" {
+		cfg.AISummary.API.BaseURL = baseURL
+		cfg.AISummary.API.Key = key
+	}
+	if cfg.AISummary.Model == "" {
+		cfg.AISummary.Model = modelName
+	}
+	// The API format too, so anthropic endpoints are not defaulted to "openai"
+	// (which would cause the recommendation/summary call to fail).
+	if cfg.AISummary.Format == "" {
+		cfg.AISummary.Format = format
+	}
+}
+
 // buildAISummarizer creates an LLM summarizer from the shared ai_summary config.
-// Returns nil if ai_summary.api.base_url is empty.
+// Returns nil when the summary model is not configured.
+//
+// The gate is SummaryConfigured, not the legacy ai_summary.api.base_url: since
+// the provider migration rewrites config.yaml to {provider_id, model} and
+// clears that block, gating on it made the summarizer nil on the first restart
+// after a successful migration — startup then hard-failed when
+// summarize.tts_backend was "api" and silently degraded "auto" to the simple
+// cleaner.
 func buildAISummarizer(cfg model.Config) summarize.Summarizer {
-	if cfg.AISummary.API.BaseURL == "" {
+	baseURL, _, format, ok := cfg.AISummary.SummaryEndpoint()
+	if !ok {
 		return nil
 	}
 	s := summarize.NewAISummarizer(cfg.AISummary)
-	slog.Info("ai summarizer configured", slog.String("format", cfg.AISummary.Format), slog.String("base_url", cfg.AISummary.API.BaseURL))
+	if s == nil {
+		return nil
+	}
+	slog.Info("ai summarizer configured",
+		slog.String("format", summarize.ResolveFormat(baseURL, format)),
+		slog.String("base_url", baseURL),
+		slog.String("model", cfg.AISummary.SummaryModel()),
+	)
 	return s
 }
 
@@ -2351,7 +2383,7 @@ func newTTSSummarizer(cfg model.Config) summarize.Summarizer {
 	case summarizeBackendAPI:
 		s := buildAISummarizer(cfg)
 		if s == nil {
-			slog.Warn("hot-reload: summarize.tts_backend is \"api\" but ai_summary.api.base_url is empty, falling back to simple")
+			slog.Warn("hot-reload: summarize.tts_backend is \"api\" but no summary model is configured, falling back to simple")
 			return summarize.NewSimple()
 		}
 		return s

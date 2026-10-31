@@ -79,16 +79,25 @@ func NewAISummarizer(cfg model.AISummaryConfig) Summarizer {
 	if !ok {
 		return nil
 	}
-	switch format {
-	case "anthropic":
-		return NewAnthropic(baseURL, key, cfg.Model)
-	case "openai":
-		return NewOpenAI(baseURL, key, cfg.Model)
-	}
-	if IsAnthropicURL(baseURL) {
+	if ResolveFormat(baseURL, format) == "anthropic" {
 		return NewAnthropic(baseURL, key, cfg.Model)
 	}
 	return NewOpenAI(baseURL, key, cfg.Model)
+}
+
+// ResolveFormat returns the wire format a summarizer will speak for the given
+// endpoint: an explicit "anthropic"/"openai" wins, otherwise the URL decides.
+// Exported so callers that only report the configuration (the startup log)
+// cannot describe a different endpoint than the one actually called.
+func ResolveFormat(baseURL, format string) string {
+	switch format {
+	case "anthropic", "openai":
+		return format
+	}
+	if IsAnthropicURL(baseURL) {
+		return "anthropic"
+	}
+	return "openai"
 }
 
 // RecommendNextStep generates a concise next-step suggestion based on the
