@@ -995,6 +995,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := store.WriteExec(NotificationsDDL); err != nil {
 		return fmt.Errorf("failed to create notifications table: %w", err)
 	}
+	// Model providers (endpoint + credential shared by agents). Defined in
+	// providers.go as a constant so tests share one source of truth.
+	if _, err := store.WriteExec(ProvidersDDL); err != nil {
+		return fmt.Errorf("failed to create providers table: %w", err)
+	}
 	// project_forges.scheme: the API scheme the binding's host is reached with.
 	//
 	// Existing rows backfill to '' (unknown) rather than 'https'. The distinction
@@ -1968,6 +1973,28 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if hasAgentProjectID == 0 {
 		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN project_id INTEGER DEFAULT NULL"); err != nil {
 			return fmt.Errorf("failed to add project_id column to agents: %w", err)
+		}
+	}
+
+	// Migrate: add preset_id to providers — the models.dev id the row was
+	// created from, used to fall back to the authoritative catalog when the
+	// endpoint does not expose /models. Existing rows default to '' (unknown).
+	var hasProviderPresetID int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('providers') WHERE name='preset_id'").Scan(&hasProviderPresetID)
+	if hasProviderPresetID == 0 {
+		if _, err := store.WriteExec("ALTER TABLE providers ADD COLUMN preset_id TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add preset_id to providers: %w", err)
+		}
+	}
+
+	// Migrate: add provider_id column to agents. NULL = use the CLI's own
+	// configuration (no injection); a value points at a row in providers.
+	// Existing agents default to NULL, so nothing changes after the upgrade.
+	var hasAgentProviderID int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='provider_id'").Scan(&hasAgentProviderID)
+	if hasAgentProviderID == 0 {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN provider_id INTEGER DEFAULT NULL"); err != nil {
+			return fmt.Errorf("failed to add provider_id column to agents: %w", err)
 		}
 	}
 

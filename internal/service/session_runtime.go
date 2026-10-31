@@ -1166,7 +1166,7 @@ func triggerChatRecommendation(ctx context.Context, sessionID, projectPath strin
 	if !model.ConfigInstance.Chat.RecommendEnabled {
 		return
 	}
-	if model.ConfigInstance.AISummary.API.BaseURL == "" {
+	if !model.ConfigInstance.AISummary.SummaryConfigured() {
 		return
 	}
 	conclusion := AssistantConclusion(sessionID, blocks)

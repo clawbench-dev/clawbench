@@ -54,6 +54,7 @@ func setupTestDBForDiscovery(t *testing.T) *sql.DB {
 			auto_approve INTEGER NOT NULL DEFAULT 0,
 			disabled INTEGER NOT NULL DEFAULT 0,
 			project_id INTEGER DEFAULT NULL,
+			provider_id INTEGER DEFAULT NULL,
 			mcp_servers TEXT NOT NULL DEFAULT '{"mode":"all","names":[]}',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP

@@ -730,6 +730,11 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register(legacyLocalFilePrefix, ServeLocalFile)
 	register("/api/agents", ServeAgents)
 	register("/api/agents/", ServeAgentSubRoutes)
+	// Model providers: definitions + presets + connectivity probe.
+	register("/api/providers", ServeProviders)
+	register("/api/providers/", ServeProviderSubRoutes)
+	// Authoritative model catalog (models.dev snapshot): status + refresh.
+	register("/api/catalog", ServeCatalog)
 	register("/api/backends", ServeBackends)
 	register("/api/tts/generate", TTSGenerate)
 	register("/api/tts/stream/", TTSStream)

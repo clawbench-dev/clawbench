@@ -436,9 +436,19 @@ type WeChatConfig struct {
 // voice/TTS summarizer (when summarize.tts_backend is "api") and the
 // next-step recommendation feature (chat.recommend_enabled).
 type AISummaryConfig struct {
-	Model  string    `yaml:"model"`  // Model name (empty = backend default)
-	Format string    `yaml:"format"` // API format: "openai" / "anthropic" (empty = auto-detect from base_url)
-	API    APIConfig `yaml:"api"`    // API endpoint + key
+	// ProviderID binds the summary model to a providers row. This is the only
+	// supported way to configure it: the endpoint, key and wire format all come
+	// from that row, so rotating a key happens once for every feature that uses
+	// the shared model. Nil = not configured.
+	ProviderID *int64 `yaml:"provider_id,omitempty"`
+	Model      string `yaml:"model"` // Model name (empty = backend default)
+
+	// Deprecated: migration-only fallback. Read while provider_id is absent so
+	// an upgrade cannot lose a working configuration; the startup migration
+	// turns these into a providers row and clears them. The settings UI never
+	// writes them.
+	Format string    `yaml:"format,omitempty"` // "openai" / "anthropic" ("" = detect from base_url)
+	API    APIConfig `yaml:"api,omitempty"`    // API endpoint + key
 }
 
 // SummarizeConfig holds configuration for voice/TTS reading summaries.

@@ -154,6 +154,21 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 	// any processes left behind by a crashed server instance.
 	cmd.Env = append(cmd.Env, OrphanChildEnvVar)
 
+	// Model provider injection. Resolved from the agent every turn (never from
+	// a captured snapshot) so a provider edit or a re-binding takes effect on
+	// the next turn. The backend id comes from the AGENT, not from
+	// b.BackendName: a custom `command` may point at a different wrapper while
+	// the agent's backend still decides which variables that wrapper reads.
+	if providerEnv, perr := providerEnvForRequest(req, b.BackendName); perr != nil {
+		return nil, perr
+	} else if len(providerEnv) > 0 {
+		cmd.Env = append(cmd.Env, providerEnv...)
+		slog.Info("cli: injected model provider environment",
+			slog.String("backend", b.BackendName),
+			slog.String("agent_id", req.AgentID),
+			slog.Any("env", model.RedactProviderEnv(providerEnv)))
+	}
+
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 

@@ -48,6 +48,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [应用内完成通知](features/completion-popup.md) | 后台事件时滑入纯通知卡片：头部区（图标 + 主类别徽章 + 事件类型纯文字标题 + 关闭）+ 正文区（标题段 + 最多 4 行摘要）+ 跨项目整卡换色与区隔带 + 跳转（顺带标记已读），5 秒自动关闭；事件覆盖与系统通知完全对齐（会话/任务/仓库），队列上限 3 + 同仓库合并 |
 | [智能体用量统计](features/usage-stats.md) | 按项目聚合 `chat_metadata` 用量行（独立台账，不随会话删除丢失）的数据统计：用量总览环形图 + 缓存命中下钻、按指标拆分的图表（bar/pie/trend 可切换）、24h/7d/30d/自定义时间窗与 model/backend/agent 筛选、**AI 工作时长**（`wall_ms` 合计，取消回合也计，升级时 `MigrateLedgerWallClock` 回填历史；按量级显示为一位小数的 毫秒/秒/分钟/小时/天）、费用两位小数统一、移动端纵向堆叠；`/cb-usage` 支持 `scope=all` 跨项目全量统计（仅本机 AI 令牌，附 project 维度）；数据统计页签另含代码存量/代码增量双子页（见 [Git 管理](features/git-management.md)） |
 | [用量提醒](features/usage-meter.md) | 一条全局规则（**独立启用开关**；起始时间 / 周期 / 额度**全部可选**，按已配置内容做最大程度展示，缺额度只统计不设预算、缺周期则永不滚动；周期**固定天数或自然月**二选一：自然月按起始时刻的日号每月滚动、分母取当月实际天数、小月钳到月末且不漂移），按**线性匀速**算出「此刻最多该用多少」并与实际对比；header 胶囊带基准线刻度、浮层展示实际/应花/额度三条同轴对比与累计曲线（含用尽预测）、移动端并入资源面板末尾；越线与用尽**各提醒一次**（通知中心 + 原生 + IM），**只提醒不拦截**；触发状态随周期起点自动重新武装 |
+| [模型提供商](features/model-providers.md) | 独立表 `providers`（端点 + 凭据，密钥只写不回显）+ 智能体 `provider_id` 一键引用；按「后端 × 协议」注入环境变量（claude/codebuddy/opencode/kimi/deepseek/grok/pi/zcode/hermes/antigravity/dsh/cursor/commandcode），Codex 走配置文件（托管块 + 备份 + 确认 + 解绑还原）；ACP 连接按 provider 指纹决定是否重连；不支持的 backend 绑定时直接报错 |
 | [MCP 服务](features/mcp.md) | 全局 MCP 定义（`config.yaml` 的 `mcp.servers`，stdio/http/sse）+ 按智能体启用策略（all/none/selected）；三层过滤（策略 → 后端黑名单 dsh/deepseek/pi → 能力位 http/sse）；四条建会话路径都注入、每轮前比对策略哈希决定是否重连；配置页带真实握手测试；`/cb-mcp` 支持对话内配置 |
 | [系统资源监控](features/system-resources.md) | gopsutil 采集 CPU/内存/磁盘/网络/负载、500ms 采样缓存、WS 按订阅需求推送（`metrics_preference` 声明速率）、可见性感知、WS 断线时显示连接状态 |
 
@@ -73,7 +74,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 
 | 模块 | 说明 |
 |------|------|
-| [OpenAPI 规格](../../internal/api/openapi.yaml) | 完整 OpenAPI 3.0 单文件（190 路径 / 244 操作）：所有 HTTP 端点、鉴权标注、统一错误体、请求/响应 schema；WebSocket 与 SSE 端点以说明形式收录。源文件已迁至 `internal/api/openapi.yaml` 以支持 `go:embed`（详见 [API 文档说明](api/README.md)） |
+| [OpenAPI 规格](../../internal/api/openapi.yaml) | 完整 OpenAPI 3.0 单文件（196 路径 / 254 操作）：所有 HTTP 端点、鉴权标注、统一错误体、请求/响应 schema；WebSocket 与 SSE 端点以说明形式收录。源文件已迁至 `internal/api/openapi.yaml` 以支持 `go:embed`（详见 [API 文档说明](api/README.md)） |
 
 ### client/ — 客户端
 

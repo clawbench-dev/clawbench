@@ -71,23 +71,24 @@ func AskAboutContext(ctx context.Context, s Summarizer, systemPrompt, contextBlo
 }
 
 // NewAISummarizer builds an LLM summarizer from the shared AISummaryConfig.
-// Returns nil if ai_summary.api.base_url is empty. The format is resolved from
-// the explicit format field, or auto-detected from the URL when empty.
+// Returns nil when no provider is bound (or the legacy endpoint is empty). The
+// format comes from the provider's protocol; a legacy config with no format is
+// auto-detected from the URL.
 func NewAISummarizer(cfg model.AISummaryConfig) Summarizer {
-	baseURL := cfg.API.BaseURL
-	if baseURL == "" {
+	baseURL, key, format, ok := cfg.SummaryEndpoint()
+	if !ok {
 		return nil
 	}
-	switch cfg.Format {
+	switch format {
 	case "anthropic":
-		return NewAnthropic(baseURL, cfg.API.Key, cfg.Model)
+		return NewAnthropic(baseURL, key, cfg.Model)
 	case "openai":
-		return NewOpenAI(baseURL, cfg.API.Key, cfg.Model)
+		return NewOpenAI(baseURL, key, cfg.Model)
 	}
 	if IsAnthropicURL(baseURL) {
-		return NewAnthropic(baseURL, cfg.API.Key, cfg.Model)
+		return NewAnthropic(baseURL, key, cfg.Model)
 	}
-	return NewOpenAI(baseURL, cfg.API.Key, cfg.Model)
+	return NewOpenAI(baseURL, key, cfg.Model)
 }
 
 // RecommendNextStep generates a concise next-step suggestion based on the

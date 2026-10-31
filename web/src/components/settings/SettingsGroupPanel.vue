@@ -90,7 +90,7 @@
         v-else
         :label="t(entry.field.labelKey)"
         :description="entry.field.descriptionKey ? t(entry.field.descriptionKey) : ''"
-        :type="entry.field.type"
+        :type="resolveFieldType(entry.field)"
         :model-value="getLocalValue(entry.field)"
         :options="resolveFieldOptions(entry.field)"
         :option-previews="entry.field.key === 'terminalTheme' ? terminalThemePreviews : undefined"
@@ -109,7 +109,7 @@
         :refreshable="isRagProgressField(entry.field)"
         :refreshing="ragRefreshing"
         :no-divider="isLastInSection(idx)"
-        @update:model-value="(v: unknown) => setLocalValue(entry.field.key, v)"
+        @update:model-value="(v: unknown) => onFieldValue(entry.field, v)"
         @edit-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
         @desc-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
         @click="handleFieldClick(entry.field)"
@@ -242,7 +242,7 @@ import { useI18n } from 'vue-i18n'
 import { ChevronRight, ListChecks, RotateCcw } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
-import { engineVoiceOptions, isDependsOnMet, type ItemSpec, type GroupPanelConfig } from './settingsFieldMap'
+import { CUSTOM_OPTION_VALUE, engineVoiceOptions, isDependsOnMet, type ItemSpec, type GroupPanelConfig } from './settingsFieldMap'
 import { usePanelSnapshot } from '@/composables/usePanelSnapshot'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
@@ -253,6 +253,7 @@ import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { getNative, reconnectTunnel } from '@/utils/clawbenchNative'
 import { usePortForward } from '@/composables/usePortForward'
 import { useRagStatus } from '@/composables/useRagStatus'
+import { useProviders } from '@/composables/useProviders'
 import { useDialog } from '@/composables/useDialog'
 import { startRebuild, rebuildStatus, type RebuildKind } from '@/composables/useRagRebuild'
 import { formatFileSize } from '@/utils/fileType'
@@ -276,6 +277,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const { modelsByProvider, loadProviders, loadModels, summaryProviders } = useProviders()
 const toast = useToast()
 const { registerGuard, unregisterGuard } = useSettingsNavigation()
 const { testing: connectivityTesting, testResults: connectivityTestResults, runTests: runConnectivityTests, clearResults: clearConnectivityResults } = useConnectivityTest()
@@ -371,12 +373,28 @@ const terminalThemePreviews = computed<Record<string, TerminalPreview> | undefin
 
 // ── Lifecycle ──
 
+/** The provider bound to the shared summary model, as a number (or null). */
+const aiSummaryProviderId = computed<number | null>(() => {
+  const raw = localValues['ai_summary.provider_id']
+  if (typeof raw === 'number' && raw > 0) return raw
+  if (typeof raw === 'string' && raw !== '' && !Number.isNaN(Number(raw))) return Number(raw)
+  return null
+})
+
 onMounted(() => {
   initSnapshot()
   registerGuard(`panel-${props.config.panelId}`, () => !panelDirty.value && !hasFailedSave.value)
   // Fetch RAG status on mount so progress counts are visible immediately
   if (props.config.panelId === 'rag') {
     refreshRagStatus()
+  }
+  // The AI-summary panel is driven by the provider list: load it (and the
+  // bound provider's model catalogue) before the selects render.
+  if (props.config.panelId === 'ai_summary') {
+    void loadProviders(true).then(() => {
+      const id = aiSummaryProviderId.value
+      if (id) void loadModels(id)
+    })
   }
   // The port-forward panel needs the server's resolved SSH port in two places:
   // the readiness row (web mode has no client tunnel to probe) and the auto
@@ -389,6 +407,17 @@ onMounted(() => {
     loadSSHInfo().finally(() => {
       if (isWebApp.value) webStatusChecking.value = false
     })
+  }
+})
+
+// Switching providers must not leave a model id from the previous catalogue
+// behind: the summary request would 404 against the new endpoint.
+watch(aiSummaryProviderId, async (id) => {
+  if (props.config.panelId !== 'ai_summary' || !id) return
+  const models = await loadModels(id)
+  const current = localValues['ai_summary.model']
+  if (models.length > 0 && typeof current === 'string' && current && !models.includes(current)) {
+    localValues['ai_summary.model'] = ''
   }
 })
 
@@ -598,7 +627,56 @@ function setLocalValue(key: string, value: unknown) {
   localValues[key] = value
 }
 
+/**
+ * Route a field edit. `allowCustom` fields append a sentinel entry that asks
+ * for a free-form value instead of storing it: model ids are open-ended, and a
+ * closed list would make an unlisted id impossible to configure.
+ */
+async function onFieldValue(field: ItemSpec, value: unknown) {
+  if (value === CUSTOM_OPTION_VALUE) {
+    const typed = await dialog.prompt(t('settings.items.customModelPrompt'), {
+      value: String(localValues[field.key] ?? ''),
+      title: t('settings.items.customModelTitle'),
+      singleLine: true,
+    })
+    if (typed === null) return
+    localValues[field.key] = typed.trim()
+    return
+  }
+  setLocalValue(field.key, value)
+}
+
+/**
+ * A select with no options is a dead end. The summary model falls back to a
+ * free-text input when the provider does not publish a model catalogue, so a
+ * gateway without /models can still be configured.
+ */
+function resolveFieldType(field: ItemSpec): ItemSpec['type'] {
+  if (field.key === 'ai_summary.model' && (resolveFieldOptions(field)?.length ?? 0) === 0) {
+    return 'text'
+  }
+  return field.type
+}
+
 function resolveFieldOptions(field: ItemSpec): { label: string; value: unknown }[] | undefined {
+  const options = baseFieldOptions(field)
+  if (field.allowCustom && options && options.length > 0) {
+    return [...options, { label: t('settings.items.customModelOption'), value: CUSTOM_OPTION_VALUE }]
+  }
+  return options
+}
+
+function baseFieldOptions(field: ItemSpec): { label: string; value: unknown }[] | undefined {
+  // Providers the summary model can use (it only speaks OpenAI/Anthropic).
+  if (field.key === 'ai_summary.provider_id') {
+    return summaryProviders().map(p => ({ label: `${p.name} · ${p.protocol}`, value: p.id }))
+  }
+  // Model catalogue of the selected provider.
+  if (field.key === 'ai_summary.model') {
+    const id = aiSummaryProviderId.value
+    if (!id) return []
+    return (modelsByProvider.value[id] ?? []).map(m => ({ label: m, value: m }))
+  }
   // Dynamic voice options based on current engine
   if (field.key === 'tts.voice') {
     const engine = (localValues['tts.engine'] as string) || 'edge'

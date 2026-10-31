@@ -501,13 +501,13 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
-		transport, acp_command, auto_approve, disabled, thinking_effort_by_model,
+		transport, acp_command, auto_approve, disabled, provider_id, thinking_effort_by_model,
 		mcp_servers)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.CustomSystemPrompt, agent.Avatar, string(modelsJSON), agent.ModelsAutoDetected, agent.SortOrder,
-		transport, agent.AcpCommand, autoApprove, disabled, string(effortByModelJSON),
+		transport, agent.AcpCommand, autoApprove, disabled, agent.ProviderID, string(effortByModelJSON),
 		string(mcpServersJSON))
 	return err
 }
@@ -640,6 +640,8 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 		}
 		agent.SupportsCLI = BackendSupportsCLI(agent.Backend)
 		agent.SupportsMidTurn = BackendSupportsMidTurn(agent.Backend)
+		agent.ProviderProtocols = SupportedProtocols(agent.Backend)
+		agent.ProviderConfigBackend = ProviderUsesConfigFile(agent.Backend)
 		agent.RuntimeSystemPrompt = ComposeSystemPrompt(agent.CustomSystemPrompt)
 		newAgentsMap[agent.ID] = agent
 	}
@@ -682,7 +684,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
 		transport, acp_command, auto_approve, disabled, project_id,
-		thinking_effort_by_model, mcp_servers
+		provider_id, thinking_effort_by_model, mcp_servers
 		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -694,14 +696,14 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		agent := &Agent{}
 		var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON string
 		var autoDetected, autoApprove, disabled int
-		var projectID sql.NullInt64
+		var projectID, providerID sql.NullInt64
 
 		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Specialty,
 			&agent.Backend, &agent.Command, &agent.ThinkingEffort, &levelsJSON,
 			&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
 			&agent.CustomSystemPrompt, &agent.Avatar, &modelsJSON, &autoDetected,
 			&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove, &disabled, &projectID,
-			&effortByModelJSON, &mcpServersJSON); err != nil {
+			&providerID, &effortByModelJSON, &mcpServersJSON); err != nil {
 			return nil, err
 		}
 
@@ -711,6 +713,10 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		if projectID.Valid {
 			id := projectID.Int64
 			agent.ProjectID = &id
+		}
+		if providerID.Valid {
+			id := providerID.Int64
+			agent.ProviderID = &id
 		}
 
 		if err := json.Unmarshal([]byte(modelsJSON), &agent.Models); err != nil {

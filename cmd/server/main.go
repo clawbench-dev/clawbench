@@ -1301,11 +1301,39 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// 必须同步完成的部分：model.Agents / AgentList 要在默认 agent 选择
 	// （下方）与 scheduler.LoadTasksFromDB（其会校验 task.AgentID 是否存在，
 	// 否则静默跳过注册）之前就绪。
+	// Model providers must be in memory before the first turn: the spawn paths
+	// read the snapshot (not the DB) to keep every turn off the read pool.
+	if err := service.LoadProvidersIntoMemory(); err != nil {
+		slog.Error("failed to load model providers", "error", err)
+	}
+
+	// Authoritative model catalogue: load the last snapshot synchronously (so a
+	// cold start still has a list) and refresh in the background when it is
+	// missing or stale. Nothing on the turn path waits for the download.
+	if err := model.LoadCatalogFromDisk(); err != nil {
+		slog.Warn("failed to load model catalog snapshot", "error", err)
+	}
+	model.RefreshCatalogIfStale()
+
+	// The shared summary model is configured by referencing a provider. Turn a
+	// legacy ai_summary endpoint into a providers row once, before anything can
+	// read the config (a failed write leaves the legacy fallback working).
+	if err := handler.MigrateAISummaryProvider(); err != nil {
+		slog.Error("failed to migrate ai_summary to a model provider", "error", err)
+	}
+
 	if _, err := model.RefreshAgents(store.WriteDB(), model.RefreshOptions{
 		ConfigDir:     filepath.Dir(configPath),
 		SkipDiscovery: true,
 	}); err != nil {
 		slog.Error("failed to refresh agents", "error", err)
+	}
+
+	// Config-file backends (codex) mirror the provider into their own file.
+	// Reconciling at startup keeps that file in step with the database even if
+	// the previous process died between a binding edit and the write.
+	if err := service.ReconcileProviderConfigs(); err != nil {
+		slog.Error("failed to reconcile provider config files", "error", err)
 	}
 
 	slog.Info("agents loaded", slog.Int("count", len(model.AgentList)))

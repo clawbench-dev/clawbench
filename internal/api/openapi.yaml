@@ -5077,7 +5077,7 @@ paths:
         `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
         `transport`、`acp_command`、`name`、`specialty`、`custom_system_prompt`、
         `avatar`、`sort_order`、`auto_approve`、`disabled`、`project_scope`、
-        `mcp_servers`。
+        `mcp_servers`、`provider_id`。
         `avatar` 为原始 SVG 字符串；空串恢复内置图标，非空时校验大小与安全性。
         `acp_command` 为 ACP 启动命令（空格拆分、不支持引号、≤4096 字节），**仅
         `custom-acp` 可改**：非空同时把 `transport` 切到 `acp-stdio` 并重启其连接；
@@ -5244,6 +5244,143 @@ paths:
       responses:
         "200":
           description: 操作结果
+
+  /api/catalog:
+    get:
+      tags: [Providers]
+      summary: 权威模型目录状态
+      description: |
+        返回 `{fetchedAt, source, stale, providers:[{id,name,protocol,modelCount}]}`。
+        目录来自 models.dev 快照，仅用于「ACP 尚未上报模型」时的默认模型配置与
+        摘要模型选择；ACP 上报的模型始终优先。
+      operationId: catalogStatus
+      responses:
+        "200":
+          description: 目录状态（快照不存在时 providers 为空、stale=true）
+    post:
+      tags: [Providers]
+      summary: 刷新权威模型目录
+      description: 立即重新下载并替换快照（约 6 MB，超时 90 秒）。失败返回 502 与原因，旧快照保持不变。
+      operationId: catalogRefresh
+      responses:
+        "200":
+          description: 刷新后的目录状态
+        "502":
+          description: 下载或解析失败
+
+  /api/providers:
+    get:
+      tags: [Providers]
+      summary: 列出模型提供商
+      description: |
+        返回 `{providers:[...]}`。每项含 `id/name/protocol/baseUrl/authMode/
+        hasKey/agentCount`。**API Key 永不返回**，只给出 `hasKey`。
+      operationId: providersList
+      responses:
+        "200":
+          description: 提供商列表
+    post:
+      tags: [Providers]
+      summary: 新建模型提供商
+      description: |
+        body：`{name, protocol, baseUrl, apiKey, authMode}`。
+        `protocol` 为 `anthropic` / `openai` / `gemini`；`authMode` 为
+        `auto` / `x-api-key` / `bearer`（省略即 `auto`）。名称唯一。
+      operationId: providersCreate
+      responses:
+        "201":
+          description: 已创建
+        "400":
+          description: 字段非法（`ProviderInvalid`）
+        "409":
+          description: 名称已被占用（`ProviderNameTaken`）
+
+  /api/providers/presets:
+    get:
+      tags: [Providers]
+      summary: 内置提供商预设目录
+      description: |
+        返回 `{presets:[{id,name,protocol,baseUrl}]}`，来源为 models.dev 快照，
+        只用于新建时预填，不携带任何密钥。
+      operationId: providersPresets
+      responses:
+        "200":
+          description: 预设列表
+
+  /api/providers/test:
+    post:
+      tags: [Providers]
+      summary: 探测提供商端点
+      description: |
+        body：`{id}`。对已保存的提供商发起一次 `GET {baseUrl}/models`（必要时
+        补 `/v1`），返回 `{ok, status, models?|error?}`。**只是诊断**：部分网关
+        不暴露模型列表，失败不代表聊天不可用；不会修改任何状态。
+      operationId: providersTest
+      responses:
+        "200":
+          description: 探测结果
+
+  /api/providers/{id}:
+    get:
+      tags: [Providers]
+      summary: 单个模型提供商
+      operationId: providersGet
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 提供商详情（含 `agents` 名称列表）
+        "404":
+          description: 不存在（`ProviderNotFound`）
+    put:
+      tags: [Providers]
+      summary: 更新模型提供商
+      description: |
+        部分更新：`name` / `protocol` / `baseUrl` / `apiKey` / `authMode`。
+        `apiKey` 省略或为空表示保持不变，`clearApiKey=true` 显式清除。
+        改 `protocol` 时若已绑定的智能体不支持新协议，返回 `409`
+        `ProviderProtocolConflict`（`detail.Agents` 列出这些智能体）。
+      operationId: providersUpdate
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 更新结果
+        "404":
+          description: 不存在（`ProviderNotFound`）
+        "409":
+          description: 名称冲突（`ProviderNameTaken`）或协议与已绑定智能体冲突（`ProviderProtocolConflict`）
+    delete:
+      tags: [Providers]
+      summary: 删除模型提供商
+      description: 仍被智能体引用时拒绝删除（`409` + `ProviderInUse`）。
+      operationId: providersDelete
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: 已删除
+        "404":
+          description: 不存在（`ProviderNotFound`）
+        "409":
+          description: 仍被引用（`ProviderInUse`）
+
+  /api/providers/{id}/models:
+    get:
+      tags: [Providers]
+      summary: 提供商的模型列表
+      description: |
+        请求该提供商的 `/models`（必要时补 `/v1`），返回
+        `{models:[...], status?, error?}`。供「AI 摘要」的模型选择器使用：
+        网关不暴露列表时返回空数组与原因，前端退化为手动输入，不阻塞配置。
+      operationId: providersModels
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 模型列表（可能为空）
+        "404":
+          description: 不存在（`ProviderNotFound`）
 
   /api/agents/{id}/self-test:
     post:

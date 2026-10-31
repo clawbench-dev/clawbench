@@ -198,8 +198,11 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// the two self-test routes were added so "create an agent" can be
 		// verified rather than merely asserted. Descriptions are kept terse;
 		// the behavioral rules live in the prompt template, not the spec.
-		// Measured at 5708 when the self-test routes joined.
-		CommandAgent: 5900,
+		// Measured at 5708 when the self-test routes joined; grew to 6733 when
+		// the delete description gained the takeover contract (#606), and to
+		// 6749 when provider_id joined the PATCH field list. The headroom is
+		// deliberate, not drift.
+		CommandAgent: 6900,
 		// The MCP command renders four operations whose descriptions carry the
 		// full config and agent contracts (mcp.servers validation rules, the
 		// whole-replacement semantics, the per-agent policy shape). Measured at

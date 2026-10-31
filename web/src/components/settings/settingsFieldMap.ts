@@ -95,6 +95,9 @@ export function formatAnchorForDisplay(value: unknown): string {
   return `${raw.slice(0, sep)} ${raw.slice(sep + 1)}`
 }
 
+/** Sentinel option value for "type it yourself" in an allowCustom select. */
+export const CUSTOM_OPTION_VALUE = '__custom__'
+
 export interface ItemSpec {
   labelKey: string
   descriptionKey?: string
@@ -103,6 +106,12 @@ export interface ItemSpec {
   source: 'server' | 'local'
   needsRestart?: boolean
   options?: { labelKey: string; value: unknown; modelName?: string; groupKey?: string; badgeKey?: string }[]
+  /**
+   * Append a "custom…" entry that asks for a free-form value. Model ids are
+   * open-ended: a gateway may serve one the catalogue and its /models do not
+   * list, so a closed select would make it unconfigurable.
+   */
+  allowCustom?: boolean
   min?: number
   max?: number
   step?: number
@@ -376,6 +385,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // (MCPSetting); this entry only opens the section, so it must also be
     // listed in PLACEHOLDER_ITEMS in SettingsCategory.vue.
     { type: 'item', spec: { labelKey: 'settings.items.mcpSection', descriptionKey: 'settings.items.mcpDesc', key: 'mcpServers', type: 'info', source: 'server', sectionHeader: 'settings.items.mcpSection' } },
+  ],
+  providers: [
+    // Model-provider list (endpoint + credential). Same shape as the MCP
+    // section: the card body is ProviderSetting, so this placeholder item only
+    // opens the section and must be listed in PLACEHOLDER_ITEMS.
+    { type: 'item', spec: { labelKey: 'settings.items.providerSection', descriptionKey: 'settings.items.providerDesc', key: 'providersCard', type: 'info', source: 'server', sectionHeader: 'settings.items.providerSection' } },
   ],
   forgeIntegration: [
     // The master switch gets its OWN card, ahead of everything else: it decides
@@ -691,17 +706,14 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'panel', config: {
       panelId: 'ai_summary',
       commonFields: [
-        { labelKey: 'settings.items.aiSummaryModel', descriptionKey: 'settings.items.aiSummaryModelDesc', key: 'ai_summary.model', type: 'text', source: 'server', sectionHeader: 'settings.items.aiSummaryApiHeader' },
-        { labelKey: 'settings.items.aiSummaryFormat', descriptionKey: 'settings.items.aiSummaryFormatDesc', key: 'ai_summary.format', type: 'select', source: 'server', options: [
-          { labelKey: 'settings.items.aiSummaryFormatAuto', value: '' },
-          { labelKey: 'settings.items.aiSummaryFormatOpenAI', value: 'openai' },
-          { labelKey: 'settings.items.aiSummaryFormatAnthropic', value: 'anthropic' },
-        ]},
-        { labelKey: 'settings.items.aiSummaryBaseUrl', descriptionKey: 'settings.items.aiSummaryBaseUrlDesc', key: 'ai_summary.api.base_url', type: 'text', source: 'server' },
-        { labelKey: 'settings.items.aiSummaryApiKey', descriptionKey: 'settings.items.aiSummaryApiKeyDesc', key: 'ai_summary.api.key', type: 'password', source: 'server' },
+        // The endpoint, key and wire format all come from the referenced
+        // provider — one place to rotate a key for TTS summaries, next-step
+        // recommendations, session titles and /btw alike.
+        { labelKey: 'settings.items.aiSummaryProvider', descriptionKey: 'settings.items.aiSummaryProviderDesc', key: 'ai_summary.provider_id', type: 'select', source: 'server', sectionHeader: 'settings.items.aiSummaryApiHeader' },
+        { labelKey: 'settings.items.aiSummaryModel', descriptionKey: 'settings.items.aiSummaryModelDesc', key: 'ai_summary.model', type: 'select', source: 'server', allowCustom: true },
       ],
       requiredFields: [],
-      hasConnectivityTest: (v) => !!v['ai_summary.api.base_url'],
+      hasConnectivityTest: (v) => !!v['ai_summary.provider_id'],
       getTestCategories(values) {
         return [{ category: 'summarize_voice', values }]
       },

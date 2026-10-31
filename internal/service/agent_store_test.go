@@ -298,6 +298,8 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"acp_config_options":   true, "acp_mcp_http": true, "acp_mcp_sse": true,
 		"auto_approve": true, "disabled": true,
 		"project_id": true,
+		// Model-provider binding (NULL = use the CLI's own configuration).
+		"provider_id": true,
 		// Per-agent MCP enablement policy (JSON). The definitions live in
 		// config.yaml, not here — see model.MCPServerPolicy.
 		"mcp_servers": true,

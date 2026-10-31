@@ -76,6 +76,12 @@
           v-if="card.title === t('settings.items.mcpSection')"
           :description="t('settings.items.mcpDesc')"
         />
+        <!-- Model providers: endpoint + credential shared by agents. The card
+             body is a dedicated component (same pattern as MCPSetting). -->
+        <ProviderSetting
+          v-if="card.title === t('settings.items.providerSection')"
+          :description="t('settings.items.providerDesc')"
+        />
         <!-- Cross-agent skill discovery: directory + git repo lists with
              write-only tokens, plus the live discovered-skill listing. -->
         <SkillsSetting
@@ -162,6 +168,7 @@ import ForgeCredentialsRow from './ForgeCredentialsRow.vue'
 import SkillsSetting from './SkillsSetting.vue'
 import TlsCertPanel from './TlsCertPanel.vue'
 import MCPSetting from './MCPSetting.vue'
+import ProviderSetting from './ProviderSetting.vue'
 import SkillsDirsSetting from './SkillsDirsSetting.vue'
 import SkillsReposSetting from './SkillsReposSetting.vue'
 import SkillsDiscoveredSetting from './SkillsDiscoveredSetting.vue'
@@ -374,7 +381,7 @@ const cards = computed<RenderCard[]>(() => {
         //   - panelOpacity   → rendered inside WallpaperSetting
         //   - skillsCard     → supplies the description, rendered by SkillsSetting
         //   - skillsDiscovered → rendered by SkillsDiscoveredSetting
-        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers', 'tlsCert'])
+        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers', 'providersCard', 'tlsCert'])
         if (!PLACEHOLDER_ITEMS.has(entry.spec.key)) {
           cur.items.push(entry.spec)
         }

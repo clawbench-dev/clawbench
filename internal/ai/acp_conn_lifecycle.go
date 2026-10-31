@@ -255,12 +255,23 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	// filtered list would force a reconnect on every fresh process.
 	wantMCPVersion := c.mcpPolicyVersion()
 	mcpChanged := wantMCPVersion != c.mcpVersion
-	if c.canReuseLocked() && !mcpChanged {
+	// Provider environment is fixed when the process is spawned. Compare the
+	// fingerprint here, between turns, so an edit takes effect on the next turn
+	// instead of requiring the user to kill the session.
+	wantProviderVersion := model.ProviderEnvVersion(c.agent.ID)
+	providerChanged := wantProviderVersion != c.providerVersion
+	if c.canReuseLocked() && !mcpChanged && !providerChanged {
 		slog.Debug("acp conn: reusing existing connection", "clawbench_sid", c.clawbenchSID, "acp_sid", c.acpSID)
 		c.lastUsed = time.Now()
 		return false, nil
 	}
 	c.logMCPReconnectLocked(mcpChanged, wantMCPVersion)
+	if providerChanged && c.alive {
+		slog.Info("acp conn: model provider changed, reconnecting before this turn",
+			"clawbench_sid", c.clawbenchSID,
+			"old_version", c.providerVersion,
+			"new_version", wantProviderVersion)
+	}
 
 	// Snapshot cached config state before spawn
 	prevConfig := c.snapshotCachedConfig()
@@ -309,6 +320,7 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 		// it here (and not before the call) keeps a failed recovery from
 		// claiming the new policy was applied.
 		c.mcpVersion = wantMCPVersion
+		c.providerVersion = wantProviderVersion
 		return false, nil
 	}
 
@@ -343,6 +355,7 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	c.lastNewSessionResp = &sessResp
 	c.lastUsed = time.Now()
 	c.mcpVersion = wantMCPVersion
+	c.providerVersion = wantProviderVersion
 	slog.Info("acp conn: created new session", "clawbench_sid", c.clawbenchSID, "acp_sid", c.acpSID)
 	return true, nil
 }
@@ -938,6 +951,26 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 		}()))
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, OrphanChildEnvVar)
+
+	// Model provider environment. Resolved from the live agent (c.agent is a
+	// creation-time snapshot; a re-binding after the pool entry was created
+	// must still reach this spawn). Failure aborts the spawn instead of letting
+	// the process fall back to its own credentials silently.
+	providerAgent := c.agent
+	if live := model.GetAgent(c.agent.ID); live != nil {
+		providerAgent = live
+	}
+	providerEnv, provErr := providerEnvForAgentID(providerAgent.ID, providerAgent.Backend)
+	if provErr != nil {
+		return fmt.Errorf("acp: model provider: %w", provErr)
+	}
+	if len(providerEnv) > 0 {
+		cmd.Env = append(cmd.Env, providerEnv...)
+		slog.Info("acp conn: injected model provider environment",
+			slog.String("agent_id", providerAgent.ID),
+			slog.String("backend", providerAgent.Backend),
+			slog.Any("env", model.RedactProviderEnv(providerEnv)))
+	}
 	// Workaround for the opencode ACP subagent permission-ask hang:
 	// opencode's ACP layer (packages/opencode/src/acp/permission.ts) silently
 	// drops permission requests from subagent (task-tool) sessions — the

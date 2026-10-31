@@ -1044,6 +1044,12 @@ type ACPConn struct {
 	// ensureAliveWithSession, which holds it).
 	mcpVersion string
 
+	// providerVersion is the model-provider fingerprint this process was
+	// spawned with (model.ProviderEnvVersion). Environment variables are fixed
+	// at exec time, so editing a provider or re-binding an agent cannot reach a
+	// live process — the next turn must respawn it. Guarded by c.mu.
+	providerVersion string
+
 	// cached state — populated from NewSession/ResumeSession responses.
 	// Guarded by stateMu, NOT c.mu (see stateMu).
 	currentModeID           string
@@ -1699,6 +1705,7 @@ func (c *ACPConn) SyncLoadSession(ctx context.Context, cwd, acpSID string) error
 	// must record the version too — otherwise the next ensureAliveWithSession
 	// would see a mismatch and reconnect for nothing.
 	c.mcpVersion = c.mcpPolicyVersion()
+	c.providerVersion = model.ProviderEnvVersion(c.agent.ID)
 	slog.Info("acp conn: SyncLoadSession replay completed", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
 	return nil
 }

@@ -136,6 +136,32 @@ type Agent struct {
 	// while the agent was global keeps working after it is scoped.
 	ProjectID *int64 `json:"projectId,omitempty"`
 
+	// ProviderID binds this agent to a model provider (providers.id). nil means
+	// the agent keeps using its CLI's own configuration. The provider supplies
+	// the endpoint + credential through environment variables at spawn time; the
+	// model list is deliberately untouched (the agent's own discovery still
+	// decides which model ids are offered).
+	ProviderID *int64 `json:"providerId,omitempty"`
+
+	// ProviderProtocols lists the wire protocols this agent's backend can be
+	// pointed at, computed at load time from model.ProviderEnvSpec. An empty
+	// list means the backend cannot take a provider at all (the settings UI
+	// greys out the picker instead of letting the user create a binding that
+	// would fail on the next turn).
+	ProviderProtocols []string `json:"providerProtocols,omitempty"`
+
+	// CatalogModels is a runtime-only fallback for agents whose backend has not
+	// reported its model list yet (ACP before the first session). It comes from
+	// the authoritative catalog and is used ONLY to configure a default — the
+	// turn keeps leaving the model to the agent until ACP confirms a list.
+	CatalogModels []AgentModel `json:"catalogModels,omitempty"`
+
+	// ProviderConfigBackend is true when the backend receives its provider by
+	// editing a CLI config file (codex) instead of environment variables. The
+	// settings UI asks for explicit consent before such a binding, and the
+	// server requires confirm_config_write.
+	ProviderConfigBackend bool `json:"providerConfigBackend,omitempty"`
+
 	// MCPServers is this agent's MCP enablement policy — which of the global
 	// servers (config.yaml `mcp.servers`) it may use.
 	//

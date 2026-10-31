@@ -25,6 +25,13 @@ func InitInMemoryDB() (*sql.DB, error) {
 		return nil, err
 	}
 
+	// Model providers: agent PATCH validates the binding and the delete guard
+	// counts references, so the table must exist in the shared fixture.
+	if _, err := db.ExecContext(context.Background(), ProvidersDDL); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
 	// The projects registry: agent project-scope resolution (ProjectIDForPath /
 	// ProjectIDByPath) reads it, so handler tests that exercise scoping need it.
 	if _, err := db.ExecContext(context.Background(), store.ProjectsDDL); err != nil {

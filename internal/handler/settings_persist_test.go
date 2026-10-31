@@ -508,27 +508,20 @@ func TestPersist_OpenAITTSStreamModeRejectsUnknown(t *testing.T) {
 
 // ─── TTS API sub-config ──────────────────────────────────────
 
-func TestPersist_SummarizeTTSAPIBaseURL(t *testing.T) {
+func TestPersist_AISummaryProviderID(t *testing.T) {
 	_, cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
 	model.ConfigInstance.Summarize.TTSBackend = "api"
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 5, Name: "Summary", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "https://api.openai.com/v1", APIKey: "sk-1234567890abcdef", AuthMode: model.ProviderAuthAuto,
+	}})
+	t.Cleanup(func() { model.ReplaceProviders(nil) })
 
-	cfg := patchAndReadConfig(t, `{"ai_summary":{"api":{"base_url":"https://api.openai.com/v1/chat"}}}`)
-	assert.Equal(t, "https://api.openai.com/v1/chat", getNestedValue(cfg, "ai_summary.api.base_url"))
-}
-
-func TestPersist_SummarizeTTSAPIKey(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.Summarize.TTSBackend = "api"
-	model.ConfigInstance.AISummary.API.BaseURL = "https://api.openai.com/v1"
-
-	cfg := patchAndReadConfig(t, `{"ai_summary":{"api":{"key":"sk-1234567890abcdef"}}}`)
-	assert.Equal(t, "sk-1234567890abcdef", getNestedValue(cfg, "ai_summary.api.key"))
+	cfg := patchAndReadConfig(t, `{"ai_summary":{"provider_id":5}}`)
+	assert.EqualValues(t, 5, getNestedValue(cfg, "ai_summary.provider_id"))
 }
 
 // ─── RAG section ──────────────────────────────────────
