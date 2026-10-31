@@ -2720,6 +2720,38 @@ defineExpose({
   contain: paint;
 }
 
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Breathing room above the stacked cards (plan / team / queued)
+
+   The scroller's own bottom padding is --space-6 (12px) while two messages
+   are separated by the list's --space-8 (20px) gap, so the first card ended
+   up CLOSER to the last bubble than two bubbles are to each other — it read
+   as glued to the message area. --space-4 on top restores the 20px rhythm
+   (12 + 8) without touching the scroller, whose padding is symmetric with
+   its top edge.
+
+   Only the FIRST visible card gets it. The cards carry a bottom margin
+   (`margin: 0 var(--chat-content-card-gutter) var(--space-4)`, guarded by
+   chatContentMeasure.css.test.ts) and this column is a flex container, so
+   margins never collapse — giving every card a top margin would double the
+   gap between two stacked cards from 8px to 16px.
+
+   `div.` is load-bearing: the child's own scoped `.plan-panel` rule has the
+   same class-level weight, so without the extra type selector which rule
+   wins would depend on stylesheet order.
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.chat-panel-content > div.plan-panel,
+.chat-panel-content > div.team-panel,
+.chat-panel-content > div.queued-bar {
+  margin-top: var(--space-4);
+}
+
+.chat-panel-content > .plan-panel ~ div.team-panel,
+.chat-panel-content > .plan-panel ~ div.queued-bar,
+.chat-panel-content > .team-panel ~ div.queued-bar {
+  margin-top: 0;
+}
+
 /* Session swipe indicator — floats at top of message area */
 .session-switch-indicator {
   display: flex;

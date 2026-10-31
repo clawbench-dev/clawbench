@@ -400,3 +400,54 @@ describe('chrome stays full width', () => {
     expect(bar).not.toMatch(/max-width/)
   })
 })
+
+describe('the stacked cards clear the message area', () => {
+  /** Every rule in `source` whose selector list mentions `needle`. */
+  function rulesFor(source: string, needle: string): string[] {
+    const code = stripComments(source)
+    const out: string[] = []
+    for (const m of code.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = m[1].trim()
+      if (selector.includes('@') || !selector.includes(needle)) continue
+      out.push(`${selector}{${m[2]}}`)
+    }
+    return out
+  }
+
+  it('gives the first card a top gap that matches the message rhythm', () => {
+    // Without it the first card sits --space-6 (the scroller's bottom padding,
+    // 12px) below the last bubble while two bubbles are --space-8 (20px)
+    // apart — the card reads as glued to the conversation.
+    const spaced = rulesFor(PANEL, '.plan-panel').filter(r => /margin-top:\s*var\(--space-4\)/.test(r))
+    expect(spaced, 'the first stacked card needs a top margin').toHaveLength(1)
+    // All three card kinds must be covered, or the gap appears only sometimes.
+    for (const cls of ['.plan-panel', '.team-panel', '.queued-bar']) {
+      expect(
+        spaced[0],
+        `${cls} must be in the same rule (the first visible card can be any of them)`,
+      ).toContain(`> div${cls}`)
+    }
+  })
+
+  it('does not double the gap between two stacked cards', () => {
+    // Flex margins never collapse, so a top margin on EVERY card would turn
+    // the intended 8px between cards into 16px.
+    const reset = rulesFor(PANEL, '~').filter(r => /margin-top:\s*0/.test(r))
+    expect(reset, 'non-first cards must have their top margin reset').toHaveLength(1)
+    for (const pair of [
+      '.plan-panel ~ div.team-panel',
+      '.plan-panel ~ div.queued-bar',
+      '.team-panel ~ div.queued-bar',
+    ]) {
+      expect(reset[0], `${pair} must be reset`).toContain(pair)
+    }
+  })
+
+  it('outranks the card\'s own scoped margin rule', () => {
+    // `.plan-panel` inside the child is also class-level (Vue appends the scope
+    // attribute to the last compound selector), so a plain `.chat-panel-content
+    // > .plan-panel` would tie and win or lose by stylesheet order alone.
+    const spaced = rulesFor(PANEL, '.plan-panel').filter(r => /margin-top:\s*var\(--space-4\)/.test(r))
+    expect(spaced[0]).toMatch(/>\s*div\.(plan-panel|team-panel|queued-bar)/)
+  })
+})
