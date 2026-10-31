@@ -265,7 +265,7 @@ describe('settingsFieldMap', () => {
     const expectedCategories = [
       'appearance', 'agents', 'project', 'files', 'chat', 'debug', 'security', 'about',
       'notification',
-      'terminal', 'tts', 'tts_engine', 'aiSummary', 'rag', 'portForward',
+      'terminal', 'tts', 'tts_engine', 'rag', 'portForward',
     ]
     for (const cat of expectedCategories) {
       expect(categoryItems[cat]).toBeDefined()
@@ -304,7 +304,6 @@ describe('settingsFieldMap', () => {
   it('categoryHasPanels identifies panel categories', () => {
     expect(categoryHasPanels('terminal')).toBe(true)
     expect(categoryHasPanels('tts')).toBe(false)
-    expect(categoryHasPanels('aiSummary')).toBe(true)
     expect(categoryHasPanels('rag')).toBe(true)
     expect(categoryHasPanels('portForward')).toBe(true)
 
@@ -317,7 +316,6 @@ describe('settingsFieldMap', () => {
   it('isPanelOnlyCategory identifies panel-only categories', () => {
     expect(isPanelOnlyCategory('terminal')).toBe(true)
     expect(isPanelOnlyCategory('tts')).toBe(false)
-    expect(isPanelOnlyCategory('aiSummary')).toBe(true)
     expect(isPanelOnlyCategory('rag')).toBe(true)
     expect(isPanelOnlyCategory('portForward')).toBe(true)
 
@@ -489,30 +487,6 @@ describe('settingsFieldMap', () => {
     expect(ratio.spec.dependsOn).toEqual({ key: 'summarize.tts_backend', value: 'auto' })
     expect(ratio.spec.min).toBe(0.1)
     expect(ratio.spec.max).toBe(0.9)
-  })
-
-  it('ai_summary panel references a provider instead of duplicating its endpoint', () => {
-    const panels = getCategoryPanels('aiSummary')
-    expect(panels.length).toBe(1)
-    const cfg = panels[0]
-    expect(cfg.panelId).toBe('ai_summary')
-
-    const provider = cfg.commonFields.find(f => f.key === 'ai_summary.provider_id')
-    expect(provider).toBeDefined()
-    expect(provider!.type).toBe('select')
-
-    const model = cfg.commonFields.find(f => f.key === 'ai_summary.model')
-    expect(model).toBeDefined()
-
-    // The old manual endpoint/key/format fields must be gone: the provider row
-    // is the single source for all three.
-    expect(cfg.commonFields.find(f => f.key === 'ai_summary.api.base_url')).toBeUndefined()
-    expect(cfg.commonFields.find(f => f.key === 'ai_summary.api.key')).toBeUndefined()
-    expect(cfg.commonFields.find(f => f.key === 'ai_summary.format')).toBeUndefined()
-
-    expect(typeof cfg.hasConnectivityTest === 'function').toBe(true)
-    expect((cfg.hasConnectivityTest as Function)({ 'ai_summary.provider_id': 3 })).toBe(true)
-    expect((cfg.hasConnectivityTest as Function)({})).toBe(false)
   })
 
   // ── RAG panel ──

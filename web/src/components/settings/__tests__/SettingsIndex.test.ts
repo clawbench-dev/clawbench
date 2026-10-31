@@ -63,11 +63,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 20 category rows', () => {
+  it('renders 19 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(20)
+    expect(rows.length).toBe(19)
   })
 
   it('renders category labels', () => {
@@ -103,9 +103,11 @@ describe('SettingsIndex', () => {
     )
     // 通知与安全 holds three rows: 推送通知, 用量, 安全. The usage meter sits
     // beside push notifications rather than inside that category.
-    // AI 与对话 gained MCP 服务 (7 → 8), then 模型提供商 (8 → 9).
-    expect(perCard).toEqual([3, 9, 3, 3, 2])
-    expect(perCard.reduce((a, b) => a + b, 0)).toBe(20)
+    // AI 与对话 gained MCP 服务 (7 → 8) and 模型提供商 (8 → 9); the standalone
+    // AI 摘要 category was removed (9 → 8) once the model is picked where it is
+    // referenced.
+    expect(perCard).toEqual([3, 8, 3, 3, 2])
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(19)
   })
 
   it('emits navigate with categoryId when row clicked', async () => {
@@ -123,7 +125,7 @@ describe('SettingsIndex', () => {
 
     const expectedIds = [
       'project', 'appearance', 'files',
-      'chat', 'agents', 'providers', 'skills', 'mcp', 'aiSummary', 'rag', 'tts', 'stt',
+      'chat', 'agents', 'providers', 'skills', 'mcp', 'rag', 'tts', 'stt',
       'terminal', 'portForward', 'forgeIntegration',
       'notification', 'usageMeter', 'security',
       'debug', 'about',
@@ -145,7 +147,7 @@ describe('SettingsIndex', () => {
 //
 // This guard reads the REAL locale files and the component SOURCE rather than
 // the hand-written message subset above: that subset is precisely what made the
-// bug invisible (it silently lacks skills / mcp / aiSummary / forgeIntegration).
+// bug invisible (it silently lacks skills / mcp / rag / forgeIntegration).
 describe('SettingsIndex category i18n coverage', () => {
   const localeFiles = import.meta.glob('../../../i18n/locales/*.ts', { eager: true }) as Record<
     string,

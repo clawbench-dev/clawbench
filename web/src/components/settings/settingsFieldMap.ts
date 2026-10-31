@@ -95,7 +95,7 @@ export function formatAnchorForDisplay(value: unknown): string {
   return `${raw.slice(0, sep)} ${raw.slice(sep + 1)}`
 }
 
-/** Sentinel option value for "type it yourself" in an allowCustom select. */
+/** Sentinel option value for "type it yourself" in a model select. */
 export const CUSTOM_OPTION_VALUE = '__custom__'
 
 export interface ItemSpec {
@@ -106,12 +106,6 @@ export interface ItemSpec {
   source: 'server' | 'local'
   needsRestart?: boolean
   options?: { labelKey: string; value: unknown; modelName?: string; groupKey?: string; badgeKey?: string }[]
-  /**
-   * Append a "custom…" entry that asks for a free-form value. Model ids are
-   * open-ended: a gateway may serve one the catalogue and its /models do not
-   * list, so a closed select would make it unconfigurable.
-   */
-  allowCustom?: boolean
   min?: number
   max?: number
   step?: number
@@ -151,7 +145,7 @@ export interface ItemSpec {
   navigateTo?: string
   /**
    * Show the shared AI-summary-model config status pill on this row
-   * (已配置 / 未配置). Used by the rows that jump to the `aiSummary` panel, so
+   * (已配置 / 未配置). Used by the summary-model rows, so
    * the user can tell at a glance whether the model those features call is
    * actually configured — the backend silently skips when it is not.
    */
@@ -700,23 +694,6 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       requiredFields: ['stt.base_url', 'stt.model'],
       hasConnectivityTest: true,
       getTestCategories: (values) => [{ category: 'stt', values }],
-    }},
-  ],
-  aiSummary: [
-    { type: 'panel', config: {
-      panelId: 'ai_summary',
-      commonFields: [
-        // The endpoint, key and wire format all come from the referenced
-        // provider — one place to rotate a key for TTS summaries, next-step
-        // recommendations, session titles and /btw alike.
-        { labelKey: 'settings.items.aiSummaryProvider', descriptionKey: 'settings.items.aiSummaryProviderDesc', key: 'ai_summary.provider_id', type: 'select', source: 'server', sectionHeader: 'settings.items.aiSummaryApiHeader' },
-        { labelKey: 'settings.items.aiSummaryModel', descriptionKey: 'settings.items.aiSummaryModelDesc', key: 'ai_summary.model', type: 'select', source: 'server', allowCustom: true },
-      ],
-      requiredFields: [],
-      hasConnectivityTest: (v) => !!v['ai_summary.provider_id'],
-      getTestCategories(values) {
-        return [{ category: 'summarize_voice', values }]
-      },
     }},
   ],
   rag: [

@@ -35,20 +35,6 @@ vi.mock('@/composables/usePanelSnapshot', () => ({
   }),
 }))
 
-const mockModelsByProvider = ref<Record<number, string[]>>({})
-const mockLoadProviders = vi.fn().mockResolvedValue(undefined)
-const mockLoadModels = vi.fn().mockResolvedValue([])
-const mockSummaryProviders = vi.fn().mockReturnValue([])
-
-vi.mock('@/composables/useProviders', () => ({
-  useProviders: () => ({
-    modelsByProvider: mockModelsByProvider,
-    loadProviders: mockLoadProviders,
-    loadModels: mockLoadModels,
-    summaryProviders: mockSummaryProviders,
-  }),
-}))
-
 const mockGetServerValueWithDefault = vi.fn()
 const settingsLocalConfig = reactive<Record<string, unknown>>({ theme: 'auto', locale: 'zh' })
 
@@ -121,9 +107,8 @@ vi.mock('@/composables/useRagStatus', () => ({
   }),
 }))
 
-const mockDialogPrompt = vi.fn().mockResolvedValue('custom-model-id')
 vi.mock('@/composables/useDialog', () => ({
-  useDialog: () => ({ confirm: vi.fn().mockResolvedValue(true), prompt: mockDialogPrompt }),
+  useDialog: () => ({ confirm: vi.fn().mockResolvedValue(true) }),
 }))
 
 // The rebuild is triggered then polled to completion by this composable.
@@ -371,70 +356,6 @@ function mountPanel(config: GroupPanelConfig, showTitle = true) {
 // ── Tests ──
 
 describe('SettingsGroupPanel', () => {
-  it('ai_summary model picker falls back to free text when the provider has no catalogue', async () => {
-    mockSummaryProviders.mockReturnValue([{ id: 1, name: 'P', protocol: 'openai', baseUrl: '', hasKey: true }])
-    mockModelsByProvider.value = { 1: [] }
-    localValues['ai_summary.provider_id'] = 1
-
-    const wrapper = mountPanel({
-      panelId: 'ai_summary',
-      commonFields: [
-        { labelKey: 'settings.items.aiSummaryProvider', key: 'ai_summary.provider_id', type: 'select', source: 'server' },
-        { labelKey: 'settings.items.aiSummaryModel', key: 'ai_summary.model', type: 'select', source: 'server' },
-      ],
-      requiredFields: [],
-    } as unknown as GroupPanelConfig)
-    await flushPromises()
-
-    const modelItem = wrapper.findAll('.mock-settings-item')
-      .find(i => i.attributes('data-key') === 'settings.items.aiSummaryModel')
-    expect(modelItem).toBeDefined()
-    expect(modelItem!.attributes('data-type')).toBe('text')
-  })
-
-  it('ai_summary model picker offers a free-form id for models outside the list', async () => {
-    mockSummaryProviders.mockReturnValue([{ id: 3, name: 'P3', protocol: 'openai', baseUrl: '', hasKey: true }])
-    mockModelsByProvider.value = { 3: ['model-a'] }
-    localValues['ai_summary.provider_id'] = 3
-
-    const wrapper = mountPanel({
-      panelId: 'ai_summary',
-      commonFields: [
-        { labelKey: 'settings.items.aiSummaryModel', key: 'ai_summary.model', type: 'select', source: 'server', allowCustom: true },
-      ],
-      requiredFields: [],
-    } as unknown as GroupPanelConfig)
-    await flushPromises()
-
-    const item = wrapper.findAllComponents({ name: 'SettingsItem' })[0]
-    item.vm.$emit('update:modelValue', '__custom__')
-    await flushPromises()
-
-    expect(mockDialogPrompt).toHaveBeenCalled()
-    expect(localValues['ai_summary.model']).toBe('custom-model-id')
-  })
-
-  it('ai_summary model picker becomes a select once the catalogue loads', async () => {
-    mockSummaryProviders.mockReturnValue([{ id: 2, name: 'P2', protocol: 'anthropic', baseUrl: '', hasKey: true }])
-    mockModelsByProvider.value = { 2: ['model-a', 'model-b'] }
-    localValues['ai_summary.provider_id'] = 2
-    localValues['ai_summary.model'] = 'model-a'
-
-    const wrapper = mountPanel({
-      panelId: 'ai_summary',
-      commonFields: [
-        { labelKey: 'settings.items.aiSummaryProvider', key: 'ai_summary.provider_id', type: 'select', source: 'server' },
-        { labelKey: 'settings.items.aiSummaryModel', key: 'ai_summary.model', type: 'select', source: 'server' },
-      ],
-      requiredFields: [],
-    } as unknown as GroupPanelConfig)
-    await flushPromises()
-
-    const modelItem = wrapper.findAll('.mock-settings-item')
-      .find(i => i.attributes('data-key') === 'settings.items.aiSummaryModel')
-    expect(modelItem).toBeDefined()
-    expect(modelItem!.attributes('data-type')).toBe('select')
-  })
 
   beforeEach(() => {
     vi.clearAllMocks()

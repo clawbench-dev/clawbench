@@ -396,10 +396,7 @@ const i18n = createI18n({
           aboutActionsSection: '操作',
           securitySection: '安全',
           debugSection: '调试',
-          // aiSummary nav
-          aiSummaryRef: 'AI摘要',
           summaryModelRow: '摘要模型',
-          aiSummaryRefDesc: 'AI摘要',
           summaryModelConfigured: '已配置',
           summaryModelNotConfigured: '未配置',
         },

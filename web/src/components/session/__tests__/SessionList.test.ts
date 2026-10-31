@@ -1927,7 +1927,7 @@ describe('SessionList', () => {
     it('rename from the menu offers generate when the summary model is configured', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
       mockDialogHolder.prompt = vi.fn().mockResolvedValue(null)
-      settingsHolder.serverConfig.value = { ai_summary: { api: { base_url: 'https://summary.example.com' } } }
+      settingsHolder.serverConfig.value = { ai_summary: { provider_id: 7 } }
       mockGenerateSessionTitle.mockResolvedValue('Generated Title')
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
@@ -1945,7 +1945,7 @@ describe('SessionList', () => {
     it('rename from the menu toasts when generation yields no title', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
       mockDialogHolder.prompt = vi.fn().mockResolvedValue(null)
-      settingsHolder.serverConfig.value = { ai_summary: { api: { base_url: 'https://summary.example.com' } } }
+      settingsHolder.serverConfig.value = { ai_summary: { provider_id: 7 } }
       mockGenerateSessionTitle.mockResolvedValue(null)
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
