@@ -4015,6 +4015,7 @@ export default {
       stop: 'Stop and write the minutes',
       recording: 'Recording',
       micDenied: 'Could not open the microphone — check the system permission.',
+      micUnavailable: 'Microphone could not start — it may be in use by another app or blocked by system privacy settings',
       busy: 'A screen share is running. End it before starting voice notes.',
     },
     button: 'Share screen',

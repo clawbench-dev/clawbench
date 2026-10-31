@@ -21,6 +21,7 @@ import {
   type ControlMessage,
 } from '@/share/liveControl'
 import { useLiveNotes } from './useLiveNotes'
+import { acquireMic, describeMicError, logMicEnv } from '@/utils/micCapture'
 import { startAndroidScreenCapture, type AndroidCaptureHandle } from './androidScreenCapture'
 
 const TAG = 'LiveShare'
@@ -362,13 +363,15 @@ export function useLiveShare() {
 
       if (opts.microphone) {
         try {
-          micStream = await navigator.mediaDevices.getUserMedia({
+          micStream = await acquireMic({
             audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
           })
         } catch (e) {
           // A denied microphone must not abort the share: the audience still
-          // gets the screen and (possibly) system audio.
-          appLog.w(TAG, 'microphone unavailable, continuing without it', e)
+          // gets the screen and (possibly) system audio. The notes channel is
+          // lost, so leave a trail that can be diagnosed later.
+          appLog.w(TAG, `microphone unavailable, continuing without it: ${describeMicError(e)}`)
+          void logMicEnv('LiveShare')
           micStream = null
         }
       }

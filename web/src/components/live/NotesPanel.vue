@@ -267,6 +267,7 @@ import { useLiveShare } from '@/composables/useLiveShare'
 import { groupNoteSegments, useLiveNotes } from '@/composables/useLiveNotes'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { appLog } from '@/utils/appLog'
+import { acquireMic, classifyMicError, logMicEnv } from '@/utils/micCapture'
 
 const props = defineProps<{ active?: boolean }>()
 const emit = defineEmits<{ 'open-file': [path: string] }>()
@@ -423,7 +424,7 @@ async function start(): Promise<void> {
     const data = (await resp.json()) as { token?: string }
     if (!data.token) throw new Error('session request returned no token')
 
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    micStream = await acquireMic()
     audioCtx = new AudioContext()
     notes.start({
       token: data.token,
@@ -440,12 +441,12 @@ async function start(): Promise<void> {
     phase.value = 'recording'
   } catch (e) {
     appLog.w('NotesPanel', 'start failed', e)
+    // A refused permission and a device that will not start need different
+    // advice; the raw DOMException text ("Could not start audio source") is
+    // useless to the user.
     error.value =
-      e instanceof DOMException && e.name === 'NotAllowedError'
-        ? t('liveShare.solo.micDenied')
-        : e instanceof Error
-          ? e.message
-          : String(e)
+      classifyMicError(e) === 'denied' ? t('liveShare.solo.micDenied') : t('liveShare.solo.micUnavailable')
+    void logMicEnv('NotesPanel')
     await teardown()
   } finally {
     starting.value = false

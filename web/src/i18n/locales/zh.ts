@@ -4009,6 +4009,7 @@ export default {
       stop: '停止并生成纪要',
       recording: '正在记录',
       micDenied: '无法访问麦克风，请检查系统权限。',
+      micUnavailable: '麦克风无法启动：可能被其他应用占用，或被系统隐私保护拦截',
       busy: '正在共享屏幕，请先结束共享再开始语音听记。',
     },
     button: '共享屏幕',
