@@ -147,6 +147,23 @@ const CONTENT_MEDIA_SELECTOR =
     ':scope > .lightbox-svg-wrap > svg.lightbox-svg, ' +
     ':scope > .mermaid > svg'
 
+/**
+ * Marks the media element a failed load was hidden behind.
+ *
+ * `localMediaFallback.ts` keeps the failed `<img>` in the DOM (so the fallback
+ * is reversible when the file appears) and hides it with this class, mounting
+ * the placeholder card in its place. The structural selector above still
+ * matches that hidden element, so without this check the placeholder itself
+ * becomes a zoom target: clicking "this media could not be loaded" would grow
+ * the figure into a 60dvh viewport around a card that has nothing to zoom.
+ *
+ * Keyed on the hidden state rather than the figure's `.image-block-missing`
+ * marker because it is the stylesheet's own contract for "this element is not
+ * rendered" (`display: none !important` in `media-block.css`) — a media element
+ * that is not painted cannot be zoomed, whatever surface hid it.
+ */
+const HIDDEN_MEDIA_CLASS = 'local-media-hidden'
+
 /** Resolve the zoomable media of a figure, or null. */
 export function zoomableMedia(figure: Element | null): HTMLElement | null {
     if (!figure) return null
@@ -161,6 +178,10 @@ export function zoomableMedia(figure: Element | null): HTMLElement | null {
     if (figure.closest('td, th')) return null
     const media = figure.querySelector<HTMLElement>(CONTENT_MEDIA_SELECTOR)
     if (!media) return null
+    // A figure whose media failed to load shows the placeholder card instead —
+    // there is nothing to zoom. Reversible by construction: the class is
+    // removed when the retry succeeds, and zoom works again from that moment.
+    if (media.classList.contains(HIDDEN_MEDIA_CLASS)) return null
     // The toolbar's own icon SVGs live inside `.image-block-header`, never in a
     // content cell, so the `:scope >` anchors above are enough to exclude them.
     return media
