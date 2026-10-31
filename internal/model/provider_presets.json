@@ -126,6 +126,12 @@
   "baseUrl": "https://developer.amd.com.cn/radeon/api/v1"
  },
  {
+  "id": "anthropic",
+  "name": "Anthropic",
+  "protocol": "anthropic",
+  "baseUrl": "https://api.anthropic.com"
+ },
+ {
   "id": "anyapi",
   "name": "AnyAPI",
   "protocol": "openai",
@@ -390,6 +396,12 @@
   "baseUrl": "https://api.gmi-serving.com/v1"
  },
  {
+  "id": "google",
+  "name": "Google",
+  "protocol": "gemini",
+  "baseUrl": "https://generativelanguage.googleapis.com"
+ },
+ {
   "id": "greenpt",
   "name": "GreenPT",
   "protocol": "openai",
@@ -406,6 +418,12 @@
   "name": "Hetzner",
   "protocol": "openai",
   "baseUrl": "https://inference.hetzner.com/api/v1"
+ },
+ {
+  "id": "hopper",
+  "name": "Hopper",
+  "protocol": "openai",
+  "baseUrl": "https://api.withhopper.com/v1"
  },
  {
   "id": "hpc-ai",
@@ -672,6 +690,12 @@
   "baseUrl": "https://api-inference.modelscope.cn/v1"
  },
  {
+  "id": "modular",
+  "name": "Modular",
+  "protocol": "openai",
+  "baseUrl": "https://api.modular.com/v1"
+ },
+ {
   "id": "moonshotai",
   "name": "Moonshot AI",
   "protocol": "openai",
@@ -772,6 +796,12 @@
   "name": "Ollama Cloud",
   "protocol": "openai",
   "baseUrl": "https://ollama.com/v1"
+ },
+ {
+  "id": "openai",
+  "name": "OpenAI",
+  "protocol": "openai",
+  "baseUrl": "https://api.openai.com/v1"
  },
  {
   "id": "opencode",

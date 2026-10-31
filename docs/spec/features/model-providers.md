@@ -82,7 +82,7 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 
 ## 权威模型目录（快照）
 
-来源：`https://models.dev/api.json`（OpenCode 同源），约 6 MB，234 个供应商、8900+ 模型。
+来源：`https://models.dev/api.json`（OpenCode 同源），约 6 MB。线上原始 234 个供应商 / 8900+ 模型，按本应用支持的三种协议过滤后约 211 个供应商 / 6900 个模型。
 
 - 快照落在 `{data-dir}/catalog/models.json`，含 `fetched_at` / `source` / 每个供应商的模型（id、名称、上下文与输出上限）
 - 启动时同步读盘（冷启动也有列表），过期（7 天）或缺文件时**后台**刷新，不阻塞启动
@@ -115,7 +115,7 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 |---|---|---|
 | GET | `/api/providers` | 列表 + `hasKey` + `agentCount` |
 | POST | `/api/providers` | 新建 |
-| GET | `/api/providers/presets` | 内置预设（models.dev 快照，204 家） |
+| GET | `/api/providers/presets` | 内置预设（models.dev 快照，209 家） |
 | POST | `/api/providers/test` | `GET {base}/models` 探活（诊断，不改状态） |
 | GET/PUT/DELETE | `/api/providers/{id}` | 详情 / 更新（`apiKey` 空=不变，`clearApiKey`）/ 删除（被引用 409） |
 | PATCH | `/api/agents` | 新增 `provider_id`（null 清除） |

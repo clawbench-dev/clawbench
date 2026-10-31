@@ -236,7 +236,12 @@ func parseCatalog(body []byte) (*Catalog, error) {
 	for id, entry := range doc {
 		protocol := protocolForNPM(entry.NPM)
 		baseURL := strings.TrimSpace(entry.API)
-		if protocol == "" || !strings.HasPrefix(baseURL, "http") || len(entry.Models) == 0 {
+		if !strings.HasPrefix(baseURL, "http") {
+			// models.dev omits `api` for providers that rely on their SDK's
+			// built-in endpoint (the official Anthropic/OpenAI/Google entries).
+			baseURL = catalogDefaultBaseURL(id)
+		}
+		if protocol == "" || len(entry.Models) == 0 {
 			continue
 		}
 		if protocol == ProviderProtocolAnthropic && strings.HasSuffix(baseURL, "/v1") {
@@ -263,6 +268,21 @@ func parseCatalog(body []byte) (*Catalog, error) {
 		return nil, fmt.Errorf("model catalog contains no usable providers")
 	}
 	return cat, nil
+}
+
+// catalogDefaultBaseURL fills in the endpoint models.dev leaves implicit for
+// the official providers. Unknown ids stay empty: guessing a host would point a
+// third-party provider at someone else's API.
+func catalogDefaultBaseURL(providerID string) string {
+	switch providerID {
+	case "anthropic":
+		return "https://api.anthropic.com"
+	case "openai":
+		return "https://api.openai.com/v1"
+	case "google":
+		return "https://generativelanguage.googleapis.com"
+	}
+	return ""
 }
 
 func protocolForNPM(npm string) string {

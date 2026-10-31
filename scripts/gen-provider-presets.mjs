@@ -25,11 +25,20 @@ function protocolOf(npm) {
   return null
 }
 
+// models.dev omits `api` for the official providers (they rely on their SDK's
+// default endpoint), so mirror the backend's fallback table here.
+const DEFAULT_BASE_URLS = {
+  anthropic: 'https://api.anthropic.com',
+  openai: 'https://api.openai.com/v1',
+  google: 'https://generativelanguage.googleapis.com',
+}
+
 const catalog = JSON.parse(readFileSync(source, 'utf8'))
 const out = []
 for (const [id, entry] of Object.entries(catalog)) {
   const protocol = protocolOf(entry.npm)
   let baseUrl = (entry.api || '').trim()
+  if (!baseUrl.startsWith('http')) baseUrl = DEFAULT_BASE_URLS[id] || ''
   if (!protocol || !baseUrl.startsWith('http')) continue
   // Anthropic CLIs append /v1/messages themselves, so the injected base URL
   // must not already end in /v1 (models.dev's SDK base does).
