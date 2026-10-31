@@ -54,9 +54,7 @@
           :data-preset-id="p.id"
           @click="choose(p)"
         >
-          <span class="preset-icon">
-            <ProviderIcon :provider-id="p.id" :name="p.name" :size="22" />
-          </span>
+          <ProviderIcon tile :provider-id="p.id" :name="p.name" :size="30" />
           <span class="preset-text">
             <span class="preset-name">{{ p.name }}</span>
             <span class="preset-meta">{{ hostOf(p.baseUrl) }}</span>
@@ -198,20 +196,17 @@ function choose(preset: PresetOption | null) {
 .preset-row--active {
   background: color-mix(in srgb, var(--accent-color) 8%, transparent);
 }
-.preset-icon {
+.preset-icon--none {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: calc(32 * var(--dp));
-  height: calc(32 * var(--dp));
+  width: calc(30 * var(--dp));
+  height: calc(30 * var(--dp));
   border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  flex-shrink: 0;
-}
-.preset-icon--none {
   color: var(--text-muted);
   background: transparent;
   border: 1px dashed var(--border-color);
+  flex-shrink: 0;
 }
 .preset-text {
   display: flex;

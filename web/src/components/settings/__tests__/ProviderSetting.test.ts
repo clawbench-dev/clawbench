@@ -42,6 +42,11 @@ const i18n = createI18n({
           providerNoKey: '未配置密钥',
           providerNoBaseUrl: '未设置端点',
           providerUsedBy: '{count} 个智能体在用',
+          providerModelCount: '{count} 个模型',
+          providerNoModels: '未选择模型',
+          providerDefaultModelValue: '默认 {model}',
+          providerAgentsValue: '智能体 {agents}',
+          providerAuthAutoShort: '自动认证',
           providerAuthAuto: '自动',
           providerPresetPlaceholder: '从预设选择',
           providerPresetTitle: '选择供应商',
@@ -132,6 +137,44 @@ describe('ProviderSetting', () => {
     expect(wrapper.text()).toContain('已配置密钥')
     expect(wrapper.text()).toContain('2 个智能体在用')
     expect(wrapper.html()).not.toContain('sk-')
+  })
+
+  it('shows the whole configured provider on its card', async () => {
+    const wrapper = mountSetting([
+      {
+        id: 1, name: 'MiniMax', protocol: 'anthropic', baseUrl: 'https://api.minimax.io/anthropic',
+        authMode: 'bearer', presetId: 'minimax', models: ['MiniMax-M2', 'MiniMax-M3'],
+        defaultModel: 'MiniMax-M2', hasKey: true, agentCount: 1, agents: ['Writer'],
+      },
+    ])
+    await flushPromises()
+    const row = wrapper.find('.provider-row[data-provider-id="1"]')
+
+    // A card is only "complete" if it answers: where does it point, how does it
+    // authenticate, what can it serve, what is the default, and who uses it.
+    expect(row.text()).toContain('MiniMax')
+    expect(row.text()).toContain('anthropic')
+    expect(row.text()).toContain('bearer')
+    expect(row.text()).toContain('https://api.minimax.io/anthropic')
+    expect(row.text()).toContain('2 个模型')
+    expect(row.text()).toContain('默认 MiniMax-M2')
+    expect(row.text()).toContain('智能体 Writer')
+    expect(row.text()).toContain('已配置密钥')
+    expect(row.text()).toContain('1 个智能体在用')
+    // The brand tile is what makes a long list scannable.
+    expect(row.find('.provider-icon-tile').exists()).toBe(true)
+  })
+
+  it('says so when a provider has no models picked yet', async () => {
+    const wrapper = mountSetting([
+      { id: 2, name: 'Bare', protocol: 'openai', baseUrl: '', authMode: 'auto', hasKey: false, agentCount: 0, models: [] },
+    ])
+    await flushPromises()
+    const row = wrapper.find('.provider-row[data-provider-id="2"]')
+    expect(row.text()).toContain('未设置端点')
+    expect(row.text()).toContain('未选择模型')
+    expect(row.text()).toContain('自动认证')
+    expect(row.text()).toContain('未配置密钥')
   })
 
   it('keeps the configuration form out of the list until it is opened', async () => {

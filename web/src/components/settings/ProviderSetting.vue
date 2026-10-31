@@ -34,38 +34,45 @@
     </div>
 
     <div v-for="p in providers" :key="p.id" class="provider-row" :data-provider-id="p.id">
-      <div class="provider-row-head">
-        <span class="provider-name">{{ p.name }}</span>
-        <span class="provider-proto">{{ p.protocol }}</span>
-        <span v-if="p.hasKey" class="provider-key-badge">{{ t('settings.items.providerKeySet') }}</span>
-        <span v-else class="provider-key-missing">{{ t('settings.items.providerNoKey') }}</span>
-        <span v-if="p.agentCount > 0" class="provider-usage">
-          {{ t('settings.items.providerUsedBy', { count: p.agentCount }) }}
-        </span>
-        <div class="provider-actions">
-          <button
-            class="fbtn"
-            :disabled="testingId !== null"
-            :title="t('settings.items.providerTestHint')"
-            @click="testProvider(p)"
-          >
-            <component :is="testingId === p.id ? Loader2 : PlugZap" :size="13" :class="{ 'provider-spin': testingId === p.id }" />
-            {{ testingId === p.id ? t('settings.items.providerTesting') : t('settings.items.providerTest') }}
-          </button>
-          <button class="fbtn" @click="openEdit(p)">
-            <Pencil :size="13" />
-            {{ t('settings.items.providerEdit') }}
-          </button>
-          <button class="fbtn" @click="removeProvider(p)">
-            <Trash2 :size="13" />
-            {{ t('settings.items.providerRemove') }}
-          </button>
+      <div class="provider-row-main">
+        <ProviderIcon tile :provider-id="iconIdFor(p)" :name="p.name" :size="34" />
+        <div class="provider-row-body">
+          <div class="provider-row-head">
+            <span class="provider-name">{{ p.name }}</span>
+            <span class="provider-proto">{{ p.protocol }}</span>
+            <span class="provider-proto">{{ authLabel(p.authMode) }}</span>
+            <span v-if="p.hasKey" class="provider-key-badge">{{ t('settings.items.providerKeySet') }}</span>
+            <span v-else class="provider-key-missing">{{ t('settings.items.providerNoKey') }}</span>
+            <span v-if="p.agentCount > 0" class="provider-usage">
+              {{ t('settings.items.providerUsedBy', { count: p.agentCount }) }}
+            </span>
+          </div>
+          <div class="provider-summary">{{ p.baseUrl || t('settings.items.providerNoBaseUrl') }}</div>
+          <div class="provider-detail">{{ detailLine(p) }}</div>
+          <div v-if="testResults[p.id]" class="provider-test-result" :class="testResults[p.id].ok ? 'provider-test-result--ok' : 'provider-test-result--fail'">
+            <component :is="testResults[p.id].ok ? CheckCircle2 : AlertCircle" :size="13" />
+            <span>{{ testResults[p.id].message }}</span>
+          </div>
         </div>
       </div>
-      <div class="provider-summary">{{ p.baseUrl || t('settings.items.providerNoBaseUrl') }}</div>
-      <div v-if="testResults[p.id]" class="provider-test-result" :class="testResults[p.id].ok ? 'provider-test-result--ok' : 'provider-test-result--fail'">
-        <component :is="testResults[p.id].ok ? CheckCircle2 : AlertCircle" :size="13" />
-        <span>{{ testResults[p.id].message }}</span>
+      <div class="provider-actions">
+        <button
+          class="fbtn"
+          :disabled="testingId !== null"
+          :title="t('settings.items.providerTestHint')"
+          @click="testProvider(p)"
+        >
+          <component :is="testingId === p.id ? Loader2 : PlugZap" :size="13" :class="{ 'provider-spin': testingId === p.id }" />
+          {{ testingId === p.id ? t('settings.items.providerTesting') : t('settings.items.providerTest') }}
+        </button>
+        <button class="fbtn" @click="openEdit(p)">
+          <Pencil :size="13" />
+          {{ t('settings.items.providerEdit') }}
+        </button>
+        <button class="fbtn" @click="removeProvider(p)">
+          <Trash2 :size="13" />
+          {{ t('settings.items.providerRemove') }}
+        </button>
       </div>
     </div>
 
@@ -93,6 +100,7 @@ import { AlertCircle, CheckCircle2, Loader2, Pencil, Plus, PlugZap, RefreshCw, T
 import '@/assets/modal-footer-btn.css'
 import { apiDelete, apiGet, apiPost, apiPut } from '@/utils/api'
 import { useDialog } from '@/composables/useDialog'
+import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import ProviderFormDialog, { type ProviderFormValue, type ProviderRow } from './ProviderFormDialog.vue'
 import type { PresetOption } from './ProviderPresetPicker.vue'
 import { appLog } from '@/utils/appLog'
@@ -143,6 +151,32 @@ async function loadPresets() {
     // Presets are a convenience; the manual form still works.
     appLog.w('ProviderSetting', 'load presets failed', err)
   }
+}
+
+/** A provider created by hand carries no `presetId`; its display name still
+ *  names the brand, and `resolveProviderIconId` folds "Moonshot AI" onto the
+ *  same family slug the catalogue uses. */
+function iconIdFor(p: ProviderRow): string {
+  return p.presetId || p.name
+}
+
+function authLabel(mode: string): string {
+  return !mode || mode === 'auto' ? t('settings.items.providerAuthAutoShort') : mode
+}
+
+/** One muted line under the endpoint: what this provider offers and who uses
+ *  it. Kept as a single joined string so it wraps as prose on a phone instead
+ *  of stacking three separate rows per provider. */
+function detailLine(p: ProviderRow): string {
+  const models = p.models ?? []
+  const parts = [
+    models.length > 0
+      ? t('settings.items.providerModelCount', { count: models.length })
+      : t('settings.items.providerNoModels'),
+  ]
+  if (p.defaultModel) parts.push(t('settings.items.providerDefaultModelValue', { model: p.defaultModel }))
+  if (p.agents?.length) parts.push(t('settings.items.providerAgentsValue', { agents: p.agents.join(', ') }))
+  return parts.join(' · ')
 }
 
 function openCreate() {
@@ -312,19 +346,35 @@ onMounted(() => {
   color: var(--text-muted);
   font-size: var(--font-size-md);
 }
+/* The card is two stacked rows: what this provider is, then what you can do
+ * with it. Mixing the buttons into the info row made a narrow pane look like
+ * one crowded paragraph, so the actions always get their own line. */
 .provider-row {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
 }
+.provider-row-main {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.provider-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+}
 .provider-row-head {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 .provider-name {
@@ -346,19 +396,26 @@ onMounted(() => {
   color: var(--color-orange);
   border-color: color-mix(in srgb, var(--color-orange) 40%, transparent);
 }
-/* Actions are one cluster pushed to the right edge; without the wrapper each
- * button wrapped on its own and the row read as a stack of pills. */
+/* Its own row, separated from the info block by a hairline so the buttons read
+ * as the card's footer rather than as part of the provider's description. */
 .provider-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-3);
-  margin-left: auto;
   flex-wrap: wrap;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-color);
 }
 .provider-summary {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
   word-break: break-all;
+}
+.provider-detail {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 .provider-error,
 .provider-test-result {

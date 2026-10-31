@@ -14,7 +14,7 @@
       <div v-if="!provider" class="provider-preset-row">
         <button type="button" class="provider-input provider-preset-trigger" @click="presetPickerOpen = true">
           <template v-if="selectedPreset">
-            <ProviderIcon :provider-id="selectedPreset.id" :name="selectedPreset.name" :size="16" />
+            <ProviderIcon tile :provider-id="selectedPreset.id" :name="selectedPreset.name" :size="20" />
             <span class="provider-preset-name">{{ selectedPreset.name }}</span>
             <span class="provider-preset-proto">{{ selectedPreset.protocol }}</span>
           </template>
@@ -32,13 +32,32 @@
         </select>
       </div>
       <input v-model="draft.baseUrl" class="provider-input" :placeholder="t('settings.items.providerBaseUrl')" />
-      <input
-        v-model="draft.apiKey"
-        type="password"
-        autocomplete="off"
-        class="provider-input"
-        :placeholder="provider ? t('settings.items.providerKeyKeep') : t('settings.items.providerKey')"
-      />
+      <div class="provider-key-field">
+        <input
+          v-model="draft.apiKey"
+          :type="showKey ? 'text' : 'password'"
+          autocomplete="off"
+          class="provider-input provider-key-input"
+          :placeholder="provider ? t('settings.items.providerKeyKeep') : t('settings.items.providerKey')"
+        />
+        <!-- The stored key is never sent with the list; the eye asks for it
+             explicitly, so a plaintext key only travels when someone is
+             actually looking at it. -->
+        <button
+          type="button"
+          class="provider-key-toggle"
+          :disabled="keyLoading"
+          :title="showKey ? t('settings.items.providerKeyHide') : t('settings.items.providerKeyReveal')"
+          :aria-label="showKey ? t('settings.items.providerKeyHide') : t('settings.items.providerKeyReveal')"
+          @click="toggleKeyVisibility"
+        >
+          <component :is="showKey ? EyeOff : Eye" :size="14" />
+        </button>
+      </div>
+      <div v-if="keyError" class="provider-error">
+        <AlertCircle :size="13" />
+        <span>{{ keyError }}</span>
+      </div>
       <select v-model="draft.authMode" class="provider-input provider-select provider-select--full">
         <option value="auto">{{ t('settings.items.providerAuthAuto') }}</option>
         <option value="x-api-key">x-api-key</option>
@@ -114,8 +133,10 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, ChevronsUpDown, Layers } from 'lucide-vue-next'
+import { AlertCircle, ChevronsUpDown, Eye, EyeOff, Layers } from 'lucide-vue-next'
 import '@/assets/modal-footer-btn.css'
+import { apiGet } from '@/utils/api'
+import { appLog } from '@/utils/appLog'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import ProviderPresetPicker, { type PresetOption } from './ProviderPresetPicker.vue'
@@ -132,6 +153,8 @@ export interface ProviderRow {
   defaultModel?: string
   hasKey: boolean
   agentCount: number
+  /** Names of the agents bound to this provider (list endpoint fills it). */
+  agents?: string[]
 }
 
 /** Everything the dialog collects; the caller decides POST vs PUT. */
@@ -169,6 +192,12 @@ const presetPickerOpen = ref(false)
 const modelsPickerOpen = ref(false)
 const presetId = ref('')
 const clearKey = ref(false)
+/** Password vs plaintext for the key field, and whether the stored key has
+ *  already been fetched for this open. */
+const showKey = ref(false)
+const keyLoaded = ref(false)
+const keyLoading = ref(false)
+const keyError = ref('')
 
 const draft = reactive({
   name: '',
@@ -193,6 +222,10 @@ function resetFromProvider() {
   presetPickerOpen.value = false
   modelsPickerOpen.value = false
   clearKey.value = false
+  showKey.value = false
+  keyLoaded.value = false
+  keyLoading.value = false
+  keyError.value = ''
   presetId.value = p?.presetId ?? ''
   draft.name = p?.name ?? ''
   draft.protocol = p?.protocol ?? 'anthropic'
@@ -202,6 +235,38 @@ function resetFromProvider() {
   draft.presetId = p?.presetId ?? ''
   draft.models = [...(p?.models ?? [])]
   draft.defaultModel = p?.defaultModel ?? ''
+}
+
+/** Reveal / re-hide the key. An edit with a stored key fetches it on first
+ *  reveal — the list response never carries it, and we do not want to pull a
+ *  plaintext secret just because the dialog was opened. A key the user has
+ *  already typed is never overwritten by the fetch. */
+async function toggleKeyVisibility() {
+  if (showKey.value) {
+    showKey.value = false
+    return
+  }
+  const p = props.provider
+  if (p && p.hasKey && !keyLoaded.value && draft.apiKey === '') {
+    keyLoading.value = true
+    keyError.value = ''
+    try {
+      const data = await apiGet<{ apiKey?: string }>(`/api/providers/${p.id}?reveal=1`)
+      // An empty answer while the list says a key exists means the server did
+      // not understand `reveal` (older binary). Say so instead of rendering an
+      // empty field that looks like the key was lost.
+      if (!data.apiKey) throw new Error(t('settings.items.providerKeyRevealFailed'))
+      draft.apiKey = data.apiKey
+      keyLoaded.value = true
+    } catch (err) {
+      keyError.value = err instanceof Error ? err.message : String(err)
+      appLog.w('ProviderFormDialog', 'reveal provider key failed', keyError.value)
+      return
+    } finally {
+      keyLoading.value = false
+    }
+  }
+  showKey.value = true
 }
 
 // Re-seed on every open so a cancelled edit never leaks into the next create.
@@ -288,6 +353,44 @@ function close() {
 .provider-form > .provider-input {
   align-self: stretch;
   flex: none;
+}
+/* The key field owns the reveal button, so it needs the stretch behaviour the
+ * bare input used to get from being a direct child. */
+.provider-key-field {
+  position: relative;
+  display: flex;
+  align-self: stretch;
+  height: calc(30 * var(--dp));
+}
+.provider-key-field > .provider-input {
+  flex: 1;
+  min-width: 0;
+  /* Leave room for the button so a long key never runs underneath it. */
+  padding-right: calc(34 * var(--dp));
+}
+.provider-key-toggle {
+  position: absolute;
+  top: 50%;
+  right: calc(4 * var(--dp));
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.provider-key-toggle:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+}
+.provider-key-toggle:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 .provider-select {
   flex: 0 0 calc(120 * var(--dp));

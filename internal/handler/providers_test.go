@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -68,6 +69,53 @@ func TestProvidersAPI_CreateListAndNoKeyEcho(t *testing.T) {
 	require.Len(t, list.Providers, 1)
 	assert.Equal(t, "MiniMax", list.Providers[0].Name)
 	assert.True(t, list.Providers[0].HasKey)
+}
+
+// The settings card lists who uses each provider, so the list response has to
+// carry agent names — but still never the key.
+func TestProvidersAPI_ListCarriesAgentNames(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	p, err := service.CreateProvider(model.Provider{
+		Name: "Named", Protocol: model.ProviderProtocolAnthropic, APIKey: "sk-hidden",
+	})
+	require.NoError(t, err)
+	require.NoError(t, service.SaveAgent(store.WriteDB(), &model.Agent{
+		ID: "a1", Name: "Writer", Backend: "claude", ProviderID: &p.ID,
+	}))
+
+	rec := doProviderRequest(t, ServeProviders, http.MethodGet, "/api/providers", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var list struct {
+		Providers []providerResponse `json:"providers"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
+	require.Len(t, list.Providers, 1)
+	assert.Equal(t, []string{"Writer"}, list.Providers[0].Agents)
+	assert.Equal(t, 1, list.Providers[0].AgentCount)
+	assert.NotContains(t, rec.Body.String(), "sk-hidden")
+}
+
+// The edit dialog's eye button is the only caller of reveal=1: the key must
+// stay out of the plain detail read, or every settings page load would carry
+// every stored secret.
+func TestProvidersAPI_RevealKeyOnlyOnRequest(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	p, err := service.CreateProvider(model.Provider{
+		Name: "Reveal", Protocol: model.ProviderProtocolOpenAI, APIKey: "sk-reveal",
+	})
+	require.NoError(t, err)
+	path := fmt.Sprintf("/api/providers/%d", p.ID)
+
+	rec := doProviderRequest(t, ServeProviderSubRoutes, http.MethodGet, path, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "sk-reveal")
+	assert.Contains(t, rec.Body.String(), `"hasKey":true`)
+
+	rec = doProviderRequest(t, ServeProviderSubRoutes, http.MethodGet, path+"?reveal=1", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"apiKey":"sk-reveal"`)
 }
 
 func TestProvidersAPI_DuplicateNameConflicts(t *testing.T) {

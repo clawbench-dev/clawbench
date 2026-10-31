@@ -14,9 +14,9 @@ import (
 	"clawbench/internal/service"
 )
 
-// providerResponse is the wire shape of a provider. The API key is never
-// returned — the client only learns whether one is stored, matching the Forge
-// credentials contract.
+// providerResponse is the wire shape of a provider. It deliberately has no key
+// field: every ordinary response (list, create, update) is secret-free by
+// construction, so no path can leak a key by forgetting a flag.
 const jsonKeyModels = "models"
 
 type providerResponse struct {
@@ -33,6 +33,14 @@ type providerResponse struct {
 	Agents       []string `json:"agents,omitempty"`
 	CreatedAt    string   `json:"createdAt,omitempty"`
 	UpdatedAt    string   `json:"updatedAt,omitempty"`
+}
+
+// providerRevealResponse is the one reply that carries the stored key, and only
+// for GET /api/providers/{id}?reveal=1 — the explicit "show me what is stored"
+// request behind the eye button in the edit dialog.
+type providerRevealResponse struct {
+	providerResponse
+	APIKey string `json:"apiKey"`
 }
 
 func toProviderResponse(p *model.Provider, usage map[int64]int, agents []string) providerResponse {
@@ -76,9 +84,15 @@ func serveProvidersList(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
+	agentNames, err := service.ProviderAgentNamesAll()
+	if err != nil {
+		// The names are decoration on the list card; a failure must not take
+		// the whole provider list down with it.
+		agentNames = nil
+	}
 	out := make([]providerResponse, 0, len(providers))
 	for _, p := range providers {
-		out = append(out, toProviderResponse(p, usage, nil))
+		out = append(out, toProviderResponse(p, usage, agentNames[p.ID]))
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"providers": out})
@@ -161,8 +175,17 @@ func ServeProviderSubRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 		usage, _ := service.ProviderUsageCounts()
 		names, _ := service.ProviderAgentNames(id)
+		resp := toProviderResponse(p, usage, names)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(toProviderResponse(p, usage, names))
+		// `reveal=1` is the only path that carries the stored key: the request
+		// is authenticated and explicit, and the value never appears in the
+		// list or in a write echo.
+		if r.URL.Query().Get("reveal") == "1" {
+			//nolint:gosec // G117: returning the key is the whole point of reveal=1.
+			_ = json.NewEncoder(w).Encode(providerRevealResponse{providerResponse: resp, APIKey: p.APIKey})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(resp)
 	case http.MethodPut, http.MethodPatch:
 		serveProviderUpdate(w, r, id)
 	case http.MethodDelete:

@@ -5382,7 +5382,9 @@ paths:
       summary: 列出模型提供商
       description: |
         返回 `{providers:[...]}`。每项含 `id/name/protocol/baseUrl/authMode/
-        hasKey/agentCount`。**API Key 永不返回**，只给出 `hasKey`。
+        presetId/models/defaultModel/hasKey/agentCount/agents`（`agents` 为引用
+        该提供商的智能体名称）。**列表不返回 API Key**，只给出 `hasKey`；
+        明文密钥只在 `GET /api/providers/{id}?reveal=1` 返回。
       operationId: providersList
       responses:
         "200":
@@ -5432,12 +5434,24 @@ paths:
     get:
       tags: [Providers]
       summary: 单个模型提供商
+      description: |
+        返回 `{id,name,protocol,baseUrl,authMode,presetId,models,defaultModel,
+        hasKey,agentCount,agents}`。
+        加 `reveal=1` 时额外返回 `apiKey`（明文）。这是编辑弹窗「查看密钥」的
+        唯一来源：鉴权后仍需显式索取，列表与任何写操作的回显都不带密钥。
       operationId: providersGet
       parameters:
         - $ref: "#/components/parameters/Id"
+        - name: reveal
+          in: query
+          required: false
+          description: 传 `1` 时在响应里带上明文 `apiKey`
+          schema:
+            type: string
+            enum: ["1"]
       responses:
         "200":
-          description: 提供商详情（含 `agents` 名称列表）
+          description: 提供商详情（含 `agents` 名称列表；`reveal=1` 时含 `apiKey`）
         "404":
           description: 不存在（`ProviderNotFound`）
     put:

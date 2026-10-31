@@ -325,6 +325,29 @@ func ProviderAgentNames(id int64) ([]string, error) {
 	return names, rows.Err()
 }
 
+// ProviderAgentNamesAll is the list-page counterpart: one query for every
+// provider, keyed by provider id. The settings list shows who uses each
+// provider, so a per-row query would be N round trips for one screen.
+func ProviderAgentNamesAll() (map[int64][]string, error) {
+	rows, err := store.ReadDB().Query(
+		"SELECT provider_id, name FROM agents WHERE provider_id IS NOT NULL ORDER BY name",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list provider agents: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[int64][]string)
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], name)
+	}
+	return out, rows.Err()
+}
+
 // ProviderProtocolConflictError reports agents that cannot use the new
 // protocol. It is a typed error so the handler can put the names in the
 // response detail.

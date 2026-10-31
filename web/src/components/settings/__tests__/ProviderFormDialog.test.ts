@@ -1,6 +1,12 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+
+const mockGet = vi.fn()
+
+vi.mock('@/utils/api', () => ({
+  apiGet: (...args: unknown[]) => mockGet(...args),
+}))
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -26,6 +32,9 @@ const i18n = createI18n({
           providerBaseUrl: '端点地址',
           providerKey: 'API Key',
           providerKeyKeep: '留空表示不修改',
+          providerKeyReveal: '查看密钥',
+          providerKeyHide: '隐藏密钥',
+          providerKeyRevealFailed: '服务端没有返回已保存的密钥',
           providerAuthAuto: '自动',
           providerPresetPlaceholder: '从预设选择',
           providerClearKey: '清除密钥',
@@ -84,6 +93,10 @@ function inputs(wrapper: ReturnType<typeof mountDialog>) {
 }
 
 describe('ProviderFormDialog', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
   it('opens in create mode with blank fields and no edit-only sections', () => {
     const wrapper = mountDialog()
     expect(wrapper.find('.mock-title').text()).toBe('添加模型提供商')
@@ -93,13 +106,70 @@ describe('ProviderFormDialog', () => {
     expect(wrapper.find('.provider-clear').exists()).toBe(false)
   })
 
-  it('opens in edit mode prefilled and never echoes a stored key', () => {
+  it('opens in edit mode prefilled and keeps the stored key hidden', () => {
     const wrapper = mountDialog({ provider: existing })
     expect(wrapper.find('.mock-title').text()).toBe('编辑模型提供商')
     expect((inputs(wrapper)[0].element as HTMLInputElement).value).toBe('Existing')
     expect((inputs(wrapper)[2].element as HTMLInputElement).value).toBe('')
+    expect(inputs(wrapper)[2].attributes('type')).toBe('password')
+    expect(mockGet).not.toHaveBeenCalled()
     expect(wrapper.find('.provider-models').exists()).toBe(true)
     expect(wrapper.text()).toContain('m-a')
+  })
+
+  it('fetches the stored key only when the eye is clicked', async () => {
+    mockGet.mockResolvedValue({ apiKey: 'sk-stored' })
+    const wrapper = mountDialog({ provider: existing })
+
+    await wrapper.find('.provider-key-toggle').trigger('click')
+    await flushPromises()
+
+    expect(mockGet).toHaveBeenCalledWith('/api/providers/7?reveal=1')
+    const key = () => inputs(wrapper)[2]
+    expect(key().attributes('type')).toBe('text')
+    expect((key().element as HTMLInputElement).value).toBe('sk-stored')
+
+    // Second click hides it again without another round trip.
+    await wrapper.find('.provider-key-toggle').trigger('click')
+    expect(key().attributes('type')).toBe('password')
+    expect(mockGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('never replaces a key the user already typed with the stored one', async () => {
+    mockGet.mockResolvedValue({ apiKey: 'sk-stored' })
+    const wrapper = mountDialog({ provider: existing })
+    await inputs(wrapper)[2].setValue('sk-typed')
+
+    await wrapper.find('.provider-key-toggle').trigger('click')
+    await flushPromises()
+
+    expect(mockGet).not.toHaveBeenCalled()
+    expect((inputs(wrapper)[2].element as HTMLInputElement).value).toBe('sk-typed')
+    expect(inputs(wrapper)[2].attributes('type')).toBe('text')
+  })
+
+  it('surfaces a failed reveal instead of showing an empty field', async () => {
+    mockGet.mockRejectedValue(new Error('forbidden'))
+    const wrapper = mountDialog({ provider: existing })
+
+    await wrapper.find('.provider-key-toggle').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.provider-error').text()).toContain('forbidden')
+    expect(inputs(wrapper)[2].attributes('type')).toBe('password')
+  })
+
+  it('treats an empty reveal answer as a failure, not an empty key', async () => {
+    // An older server ignores `reveal` and answers without apiKey; rendering
+    // that as "" would look like the stored key had been wiped.
+    mockGet.mockResolvedValue({ hasKey: true })
+    const wrapper = mountDialog({ provider: existing })
+
+    await wrapper.find('.provider-key-toggle').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.provider-error').text()).toContain('服务端没有返回已保存的密钥')
+    expect(inputs(wrapper)[2].attributes('type')).toBe('password')
   })
 
   it('emits the trimmed values, and blocks submit without a name', async () => {
