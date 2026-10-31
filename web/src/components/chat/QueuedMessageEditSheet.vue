@@ -73,9 +73,10 @@
   </BottomSheet>
 
   <!-- The app's only file picker: it owns the upload (progress, camera/photo
-       entries on mobile) and reports finished files through add-attached. A
-       second, sheet-local picker would have to re-implement all of that — the
-       exact "inline file selector" the feature was scoped to avoid. -->
+       entries on mobile) and reports the COMMITTED selection through
+       add/remove-attached when the user confirms. A second, sheet-local picker
+       would have to re-implement all of that — the exact "inline file selector"
+       the feature was scoped to avoid. -->
   <AttachDrawer
     :open="attachOpen"
     :attached-files="draftFiles"

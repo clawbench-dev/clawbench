@@ -221,22 +221,21 @@
       </template>
     </div>
 
-    <!-- Footer: selected files (AttachmentTags) above the shared .fbtn action
-         pair. Always rendered — Cancel/OK are the drawer's only explicit exit,
-         since the narrow sheet's header tap is not discoverable and the wide
-         card has its own X. Both buttons use the same pill language as every
-         other dialog footer (see assets/modal-footer-btn.css). -->
+    <!-- Footer: the DRAFT selection (not the composer's list — nothing is
+         applied until OK) above the shared .fbtn action pair. Always rendered:
+         Cancel/OK are the sheet's only explicit exit, since the narrow header
+         tap is not discoverable and the wide card has its own X. -->
     <template #footer>
       <div class="ad-footer">
         <AttachmentTags
-          v-if="attachedFiles.length > 0"
-          :files="attachedFiles"
+          v-if="draft.length > 0"
+          :files="draft"
           @file-click="emit('file-open', $event)"
-          @remove="emit('remove-attached', $event)"
+          @remove="removeFromDraft"
         />
         <div class="ad-footer-actions">
-          <button type="button" class="fbtn" @click="handleCancel">{{ t('common.cancel') }}</button>
-          <button type="button" class="fbtn fbtn-primary" @click="emit('close')">{{ t('common.confirm') }}</button>
+          <button type="button" class="fbtn" @click="emit('close')">{{ t('common.cancel') }}</button>
+          <button type="button" class="fbtn fbtn-primary" @click="handleConfirm">{{ t('common.confirm') }}</button>
         </div>
       </div>
     </template>
@@ -329,9 +328,9 @@ const { recentUploads, fetchRecentUploads, deleteRecentUpload, clearRecentUpload
 
 // ── Upload logic (now lives inside the drawer) ──
 // `attachedFiles` from the composable is the GLOBAL chat draft. It must not
-// shadow the `attachedFiles` PROP in this component's template: the footer and
-// the "already attached" checks describe the list the CALLER is editing, which
-// is not always the chat draft (the queued-message editor passes its own list).
+// shadow the `attachedFiles` PROP: the draft seeded on open and the "already
+// selected" checks describe the list the CALLER is editing, which is not
+// always the chat draft (the queued-message editor passes its own list).
 // Shadowing them made a file picked from that editor vanish from the footer —
 // the selection only ever reached the caller, never the shared draft.
 const { pendingFiles, attachedFiles: chatAttachedFiles, handleFileSelect, handleFileDrop, readPickedCount, terminateChatUploadBatch, chatUploadCancelled } = useFileUpload()
@@ -424,35 +423,32 @@ function handleCameraClick() {
 
 async function onFileSelect(e: Event) {
   filePickerOpen.value = false
-  // Choosing a file is the end of the drawer's job: dismiss it right away
-  // instead of waiting for the upload to finish. The transfer keeps running in
-  // the background and reports progress on the input bar's attachment cards,
-  // so keeping the sheet open only delays the user.
-  //
   // Whether anything was picked comes from the composable's readPickedCount,
   // NOT from an inline read of `e.target.files`: handleFileSelect clears
   // `input.value`, which empties the FileList, so the count must be taken
   // before the call. That ordering contract now lives with the code that does
   // the clearing (and is asserted by its own tests) instead of being a comment
   // on this side that a future refactor of the composable could silently break.
-  // A cancelled picker reports 0 and keeps the drawer open — the user is still
-  // browsing tabs and never asked to leave.
-  if (readPickedCount(e) > 0) emit('close')
+  //
+  // The sheet now STAYS OPEN until OK (selection is local — see `draft`), so
+  // the transfer needs somewhere to report progress: jump to the uploads tab
+  // before awaiting, which is where the in-flight rows and the terminate
+  // button live. A cancelled picker reports 0 and leaves the tab alone.
+  if (readPickedCount(e) > 0) activeTab.value = 'uploads'
   const uploadedPaths = await handleFileSelect(e)
-  // Terminated mid-batch: the user asked to clear everything, so do not attach
+  // Terminated mid-batch: the user asked to clear everything, so do not select
   // the files that had already finished. The terminate handler already dropped
   // them, and `chatUploadCancelled` is only reset when a new batch starts.
   if (chatUploadCancelled.value) return
-  // Switch to the uploads tab and select the freshly uploaded files so the
-  // user immediately sees (and has attached) what they just uploaded when they
-  // open the drawer again. Only do this on a successful upload — switching for
-  // a cancelled/empty picker would yank the user away from their current tab
-  // for nothing.
   if (uploadedPaths.length === 0) return
-  activeTab.value = 'uploads'
+  // Freshly uploaded files join the DRAFT only. They reach the composer on OK,
+  // like every other selection — uploading is not a reason to bypass the
+  // commit step.
+  const known = new Set(draft.value.map(f => f.path))
   for (const path of uploadedPaths) {
-    if (!isAttached(path)) emit('add-attached', path, false)
+    if (!known.has(path)) draft.value = [...draft.value, { path, isDir: false }]
   }
+  activeTab.value = 'uploads'
 }
 
 /**
@@ -460,9 +456,9 @@ async function onFileSelect(e: Event) {
  *
  * The action itself lives in useFileUpload.terminateChatUploadBatch, shared
  * with the input bar's attachment strip — that strip is where the user actually
- * is during an upload, because this drawer closes as soon as files are picked
- * (see onFileSelect). Two copies of "cancel, abort, then detach the finished
- * ones" would drift on exactly that last step.
+ * is after the sheet closes, and the sheet's own banner is where they are while
+ * it stays open. Two copies of "cancel, abort, then detach the finished ones"
+ * would drift on exactly that last step.
  */
 function handleTerminateUpload() {
   terminateChatUploadBatch()
@@ -493,49 +489,70 @@ watch(uploadingFiles, (now) => {
 
 // ── Attachment logic ──
 
+/**
+ * The selection being edited. This sheet is a PICKER: tapping a row only
+ * changes this draft, and the composer is touched exactly once, on OK. So
+ * Cancel needs no undo bookkeeping — the draft is simply dropped.
+ *
+ * Seeded from the caller's list when the sheet opens (see the open watcher);
+ * the composer's own `attachedFiles` is read only to compute the OK delta.
+ */
+const draft = ref<FileEntry[]>([])
+
+/** The composer's list when the sheet opened — the baseline for OK's delta. */
+const attachSnapshot = ref<FileEntry[]>([])
+
 function isAttached(path: string) {
-  return props.attachedFiles?.some(f => f.path === path) ?? false
+  return draft.value.some(f => f.path === path)
 }
 
 function toggleAttached(path: string, isDir: boolean = false) {
   if (isAttached(path)) {
-    emit('remove-attached', { path, isDir })
+    draft.value = draft.value.filter(f => f.path !== path)
   } else {
-    emit('add-attached', path, isDir)
+    draft.value = [...draft.value, { path, isDir }]
   }
 }
 
-/**
- * Attachments the composer had when this sheet opened.
- *
- * Rows apply immediately (the drawer only emits add/remove, the parent owns the
- * list), so there is nothing to "submit" on OK. Cancel is therefore the only
- * button that can mean anything, and it undoes the session: re-add what the
- * user detached, detach what they attached. Captured on open rather than on
- * first toggle so a plain open-and-cancel is a no-op.
- */
-const attachSnapshot = ref<FileEntry[]>([])
+/** Footer chip "×": drops one entry from the draft (never the composer). */
+function removeFromDraft(entry: FileEntry) {
+  draft.value = draft.value.filter(f => f.path !== entry.path)
+}
 
 /**
- * Drop paths from the cancel snapshot after they were destroyed on disk.
+ * Forget paths that were destroyed on disk.
  *
- * Deleting a recent share/upload detaches it; without this, Cancel would
- * re-attach a file that no longer exists and the composer would send a dangling
- * reference.
+ * Unlike a toggle this is NOT undone by Cancel — the file is gone. Both the
+ * draft and the baseline drop it, and the composer is told right away: leaving
+ * a deleted file attached would make the next message reference a path that no
+ * longer exists.
  */
-function forgetSnapshotPaths(paths: string[]) {
+function forgetPaths(paths: string[]) {
   const gone = new Set(paths)
+  draft.value = draft.value.filter(e => !gone.has(e.path))
   attachSnapshot.value = attachSnapshot.value.filter(e => !gone.has(e.path))
 }
 
-function handleCancel() {
-  const before = new Map(attachSnapshot.value.map(e => [e.path, e]))
-  const now = new Set((props.attachedFiles ?? []).map(e => e.path))
-  for (const path of now) {
-    if (!before.has(path)) emit('remove-attached', { path })
+function composerHas(path: string) {
+  return (props.attachedFiles ?? []).some(f => f.path === path)
+}
+
+/**
+ * OK: apply the draft to the composer as a delta, then close.
+ *
+ * A delta (not a full replacement) because the parent's handlers are
+ * add/remove primitives — replaying the whole list would detach and re-attach
+ * every untouched entry, which for line-range references and staged quotes is
+ * not the same thing.
+ */
+function handleConfirm() {
+  const before = new Set(attachSnapshot.value.map(e => e.path))
+  const now = new Set(draft.value.map(e => e.path))
+  for (const entry of draft.value) {
+    if (!before.has(entry.path)) emit('add-attached', entry.path, entry.isDir === true)
   }
-  for (const [path, entry] of before) {
-    if (!now.has(path)) emit('add-attached', path, entry.isDir === true)
+  for (const entry of attachSnapshot.value) {
+    if (!now.has(entry.path)) emit('remove-attached', { path: entry.path, isDir: entry.isDir })
   }
   emit('close')
 }
@@ -548,9 +565,9 @@ async function handleDeleteShare(item: { path: string; name?: string }) {
     confirmText: t('common.delete'),
   })
   if (!confirmed) return
-  if (isAttached(item.path)) emit('remove-attached', { path: item.path })
+  forgetPaths([item.path])
+  if (composerHas(item.path)) emit('remove-attached', { path: item.path })
   await deleteRecentShare(item.path)
-  forgetSnapshotPaths([item.path])
 }
 
 /**
@@ -570,9 +587,9 @@ async function handleDeleteUpload(item: { path: string; name?: string; origin?: 
     { dangerous: !isProjectFile, confirmText: t(isProjectFile ? 'chat.attach.forgetUpload' : 'common.delete') },
   )
   if (!confirmed) return
-  if (isAttached(item.path)) emit('remove-attached', { path: item.path })
+  forgetPaths([item.path])
+  if (composerHas(item.path)) emit('remove-attached', { path: item.path })
   await deleteRecentUpload(item.path)
-  forgetSnapshotPaths([item.path])
 }
 
 // Which tab's clear-all is in flight. A single ref rather than two booleans:
@@ -599,13 +616,15 @@ async function handleClearShares() {
     })
     if (!confirmed) return
 
-    // Detach every attached file that lives in this directory, not just the
-    // ones in the visible list: the sweep removes the whole directory.
-    const swept = (props.attachedFiles ?? [])
-      .map(f => f.path)
-      .filter(p => isInRecentDir(p, 'share-in'))
-    for (const path of swept) emit('remove-attached', { path })
-    forgetSnapshotPaths(swept)
+    // Detach every attached file that lives in this directory — in the draft
+    // AND in the composer — not just the ones in the visible list: the sweep
+    // removes the whole directory.
+    const swept = [...new Set([
+      ...draft.value.map(f => f.path),
+      ...(props.attachedFiles ?? []).map(f => f.path),
+    ])].filter(p => isInRecentDir(p, 'share-in'))
+    for (const path of swept) if (composerHas(path)) emit('remove-attached', { path })
+    forgetPaths(swept)
     const result = await clearRecentShares()
     reportClearResult(result, 'chat.attach.clearSharesDone', 'chat.attach.clearSharesFailed')
   } finally {
@@ -624,11 +643,12 @@ async function handleClearUploads() {
     })
     if (!confirmed) return
 
-    const swept = (props.attachedFiles ?? [])
-      .map(f => f.path)
-      .filter(p => isInRecentDir(p, 'uploads'))
-    for (const path of swept) emit('remove-attached', { path })
-    forgetSnapshotPaths(swept)
+    const swept = [...new Set([
+      ...draft.value.map(f => f.path),
+      ...(props.attachedFiles ?? []).map(f => f.path),
+    ])].filter(p => isInRecentDir(p, 'uploads'))
+    for (const path of swept) if (composerHas(path)) emit('remove-attached', { path })
+    forgetPaths(swept)
     const result = await clearRecentUploads()
     reportClearResult(result, 'chat.attach.clearUploadsDone', 'chat.attach.clearUploadsFailed')
   } finally {
@@ -677,9 +697,11 @@ const currentDirDisplayName = computed(() => {
 // Fetch data when drawer opens
 watch(() => props.open, async (v) => {
   if (v) {
-    // Cancel's baseline: whatever the composer already had when the sheet
-    // opened (see attachSnapshot).
+    // Seed the draft (what the footer and the row check marks show) and the
+    // baseline OK diffs against. Copy the entries: toggling must never mutate
+    // the caller's objects.
     attachSnapshot.value = (props.attachedFiles ?? []).map(e => ({ ...e }))
+    draft.value = (props.attachedFiles ?? []).map(e => ({ ...e }))
     loading.value = true
     try {
       await Promise.all([fetchRecentShares(), fetchRecentUploads()])
