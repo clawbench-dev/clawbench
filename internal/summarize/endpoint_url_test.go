@@ -34,10 +34,18 @@ func TestBuildEndpointURL(t *testing.T) {
 		{"Anthropic bare host", "https://api.anthropic.com", "/v1/messages", "https://api.anthropic.com/v1/messages"},
 		{"Anthropic with /v1", "https://api.anthropic.com/v1", "/v1/messages", "https://api.anthropic.com/v1/messages"},
 		{"Anthropic already complete", "https://api.anthropic.com/v1/messages", "/v1/messages", "https://api.anthropic.com/v1/messages"},
+		// A gateway mounted under a versionless namespace is a BASE, not an
+		// endpoint: MiniMax publishes "/anthropic" and serves
+		// "/anthropic/v1/messages". Using it verbatim 404s on every summary call.
+		{"anthropic gateway namespace", "https://api.minimax.cn/anthropic", "/v1/messages", "https://api.minimax.cn/anthropic/v1/messages"},
+		{"openai gateway namespace", "https://gateway.example.com/openai", "/v1/chat/completions", "https://gateway.example.com/openai/v1/chat/completions"},
+		{"namespace with version", "https://host/anthropic/v1", "/v1/messages", "https://host/anthropic/v1/messages"},
 		// A provider-specific endpoint typed in full must be left alone —
 		// appending would produce a guaranteed 404.
 		{"custom endpoint preserved", "https://api.minimax.chat/v1/text/chatcompletion_v2", "/v1/chat/completions", "https://api.minimax.chat/v1/text/chatcompletion_v2"},
 		{"custom anthropic endpoint preserved", "https://host/anthropic/v1/messages", "/v1/messages", "https://host/anthropic/v1/messages"},
+		// An endpoint without the version prefix (Azure-style) is complete too.
+		{"azure deployment endpoint", "https://x.openai.azure.com/openai/deployments/d/chat/completions", "/v1/chat/completions", "https://x.openai.azure.com/openai/deployments/d/chat/completions"},
 		// A path with no slash in defaultPath still gets a separator.
 		{"path without leading slash", "https://api.example.com", "chat", "https://api.example.com/chat"},
 		{"empty base", "", "/v1/chat/completions", ""},
@@ -66,6 +74,28 @@ func TestNewAnthropic_NormalizesBareBaseURL(t *testing.T) {
 func TestNewOpenAI_PreservesCustomEndpoint(t *testing.T) {
 	s := NewOpenAI("https://api.minimax.chat/v1/text/chatcompletion_v2", "key", "")
 	assert.Equal(t, "https://api.minimax.chat/v1/text/chatcompletion_v2", s.BaseURL)
+}
+
+// A provider base mounted under a versionless namespace must still reach the
+// protocol endpoint. This is the MiniMax shape: base_url
+// "https://api.minimax.cn/anthropic" and a real endpoint at
+// "/anthropic/v1/messages"; posting to the namespace 404s, which is what broke
+// every summary-model feature (auto title, recommendation, voice summary,
+// /btw, live notes) while the same provider worked fine for chat.
+func TestNewAnthropic_CompletesNamespaceBaseURL(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"Title"}]}`))
+	}))
+	defer srv.Close()
+
+	s := NewAnthropic(srv.URL+"/anthropic", "key", "MiniMax-M2.7")
+	_, err := GenerateSessionTitle(context.Background(), s, []string{"登录总是超时"}, "zh")
+	require.NoError(t, err)
+	assert.Equal(t, "/anthropic/v1/messages", gotPath,
+		"a versionless namespace base must be completed to the messages endpoint")
 }
 
 // End-to-end through the real path a title generation takes: a bare base_url

@@ -31,13 +31,18 @@ const (
 //   - "https://api.openai.com/v1"                  → "https://api.openai.com/v1/chat/completions"
 //   - "https://openrouter.ai/api/v1"               → "https://openrouter.ai/api/v1/chat/completions"
 //   - "https://api.openai.com/v1/chat/completions" → unchanged
+//   - "https://api.minimax.cn/anthropic"           → "https://api.minimax.cn/anthropic/v1/messages"
 //   - "https://host/v1/text/chatcompletion_v2"     → unchanged (custom endpoint)
 //
 // The rule: an empty path is a bare base; a path ending with defaultPath is
 // already complete; a path ending with a leading run of defaultPath's segments
-// (e.g. "/v1", "/api/v1") is a partial base and gets the remainder appended.
-// Anything else is the user's explicit custom endpoint and is used verbatim —
-// blindly appending would turn a provider-specific path like MiniMax's
+// (e.g. "/v1", "/api/v1") is a partial base and gets the remainder appended; a
+// path ending with defaultPath's last segment (Azure's
+// "/openai/deployments/<id>/chat/completions") is an endpoint without the
+// version prefix and is left alone; a path with no version segment at all is a
+// namespace the API is mounted under and gets defaultPath appended; anything
+// else is the user's explicit custom endpoint and is used verbatim — blindly
+// appending would turn a provider-specific path like MiniMax's
 // "/v1/text/chatcompletion_v2" into a 404.
 //
 // This is the single implementation shared by the summarizer constructors and
@@ -75,8 +80,36 @@ func BuildEndpointURL(baseURL, defaultPath string) string {
 			return u + strings.TrimPrefix(dp, prefix)
 		}
 	}
+	// An endpoint that keeps the protocol's action segment but drops the version
+	// prefix is still complete, e.g. Azure OpenAI's
+	// "/openai/deployments/<deployment>/chat/completions".
+	if last := segments[len(segments)-1]; last != "" && strings.HasSuffix(path, "/"+last) {
+		return u
+	}
+	// A versionless path is a namespace the API is mounted under, not an
+	// endpoint: every wire protocol here ends with a versioned path. MiniMax's
+	// Anthropic gateway publishes "/anthropic" as its base_url and serves
+	// "/anthropic/v1/messages"; posting to the namespace itself 404s.
+	if !hasVersionSegment(path) {
+		return u + dp
+	}
 	// A provider-specific endpoint the user typed in full.
 	return u
+}
+
+// hasVersionSegment reports whether a URL path carries an API version segment
+// ("v1", "v2", …). A versioned path is an address the user typed deliberately;
+// a versionless one is a mount point to complete.
+func hasVersionSegment(path string) bool {
+	for _, seg := range strings.Split(path, "/") {
+		if len(seg) < 2 || seg[0] != 'v' {
+			continue
+		}
+		if digits := seg[1:]; strings.Trim(digits, "0123456789") == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // ensureLeadingSlash prefixes path with "/" unless it already has one.
