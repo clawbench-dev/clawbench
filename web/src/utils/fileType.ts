@@ -31,6 +31,9 @@ const FILE_TYPES: FileType[] = [
     { exts: ['.ini', '.conf', '.cfg'], lang: 'ini', label: 'INI', color: '#8b8b8b', isMarkdown: false },
     { exts: ['.properties'], lang: 'properties', label: 'Props', color: '#8b8b8b', isMarkdown: false },
     { exts: ['.csv', '.tsv'], lang: 'plaintext', label: 'CSV', color: '#237f4a', isMarkdown: false },
+    // Meeting transcripts are SubRip; rendering them as Markdown merged every
+    // cue into one paragraph, so they stay plain text with their own badge.
+    { exts: ['.srt'], lang: 'plaintext', label: 'SRT', color: '#7a5af8', isMarkdown: false },
     { exts: ['.go', '.mod', '.sum'], lang: 'go', label: 'Go', color: '#00acd7', isMarkdown: false },
     { exts: ['.py', '.pyi', '.pyw'], lang: 'python', label: 'PY', color: '#3572a5', isMarkdown: false },
     { exts: ['.rs'], lang: 'rust', label: 'RS', color: '#ce412b', isMarkdown: false },

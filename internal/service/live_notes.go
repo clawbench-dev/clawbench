@@ -431,19 +431,9 @@ func absInt64(v int64) int64 {
 // the summariser: one line per utterance, prefixed with the offset from the
 // first segment and the speaker label.
 func BuildLiveNotesTranscript(segments []LiveNoteSegment) string {
-	merged := DedupeLiveNoteSegments(SortLiveNoteSegments(segments))
+	merged, base := mergedLiveNoteTimeline(segments)
 	if len(merged) == 0 {
 		return ""
-	}
-	// The origin is the earliest POSITIVE timestamp, never 0. A segment whose
-	// startedAt is missing parses to 0 and sorts first; using it as the base
-	// would turn every real offset into "milliseconds since 1970" and put the
-	// line that actually happened last at the top of the transcript.
-	base := int64(0)
-	for _, s := range merged {
-		if s.StartedAt > 0 && (base == 0 || s.StartedAt < base) {
-			base = s.StartedAt
-		}
 	}
 	var b strings.Builder
 	for _, s := range merged {
@@ -464,6 +454,86 @@ func BuildLiveNotesTranscript(segments []LiveNoteSegment) string {
 		fmt.Fprintf(&b, "[%02d:%02d] %s：%s\n", offset/60, offset%60, speaker, text)
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// mergedLiveNoteTimeline sorts and dedupes the segments and returns the epoch-ms
+// origin used for offsets.
+//
+// The origin is the earliest POSITIVE timestamp, never 0. A segment whose
+// startedAt is missing parses to 0 and sorts first; using it as the base would
+// turn every real offset into "milliseconds since 1970" and put the line that
+// actually happened last at the top of the transcript.
+func mergedLiveNoteTimeline(segments []LiveNoteSegment) ([]LiveNoteSegment, int64) {
+	merged := DedupeLiveNoteSegments(SortLiveNoteSegments(segments))
+	base := int64(0)
+	for _, s := range merged {
+		if s.StartedAt > 0 && (base == 0 || s.StartedAt < base) {
+			base = s.StartedAt
+		}
+	}
+	return merged, base
+}
+
+// srtFallbackCueMS is the cue length used when a segment carries no duration.
+// SRT requires an end after the start, so a missing duration cannot be written
+// as-is.
+const srtFallbackCueMS = 2000
+
+// BuildLiveNotesSRT renders the merged timeline as SubRip subtitles.
+//
+// The raw transcript is stored as SRT rather than Markdown because it is a
+// subtitle track: Markdown collapses consecutive lines into one paragraph, so
+// every utterance ran together when the file was previewed. SRT also keeps the
+// timing, which makes the file usable in a player next to the recording.
+func BuildLiveNotesSRT(segments []LiveNoteSegment) string {
+	merged, base := mergedLiveNoteTimeline(segments)
+	if len(merged) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	cursor := int64(0) // end of the previous cue
+	index := 0
+	for _, s := range merged {
+		text := strings.Join(strings.Fields(s.Text), " ")
+		if text == "" {
+			continue
+		}
+		speaker := strings.TrimSpace(s.Speaker)
+		if speaker == "" {
+			speaker = s.Channel
+		}
+
+		start, end := cursor, cursor+srtFallbackCueMS
+		if s.StartedAt > 0 && base > 0 {
+			start = s.StartedAt - base
+			if start < 0 {
+				start = 0
+			}
+			end = start + s.DurationMS
+			if end <= start {
+				end = start + srtFallbackCueMS
+			}
+		}
+		cursor = end
+
+		index++
+		fmt.Fprintf(&b, "%d\n%s --> %s\n%s：%s\n\n",
+			index, srtTimestamp(start), srtTimestamp(end), speaker, text)
+	}
+	if index == 0 {
+		return ""
+	}
+	return b.String()
+}
+
+// srtTimestamp formats milliseconds as SubRip's HH:MM:SS,mmm.
+func srtTimestamp(ms int64) string {
+	if ms < 0 {
+		ms = 0
+	}
+	return fmt.Sprintf("%02d:%02d:%02d,%03d",
+		ms/3600000, (ms%3600000)/60000, (ms%60000)/1000, ms%1000)
 }
 
 // ── Minutes generation ──────────────────────────────────────────────────────
@@ -663,7 +733,7 @@ type LiveNotesPaths struct {
 	Dir string
 	// Minutes is `<dir>/minutes.md` — the generated summary.
 	Minutes string
-	// Transcript is `<dir>/transcript.md` — the raw ASR output.
+	// Transcript is `<dir>/transcript.srt` — the raw ASR output, as SubRip.
 	Transcript string
 	// Revised is `<dir>/transcript-revised.md` — proofread against the project's
 	// own vocabulary. This is what the minutes are generated from.
@@ -672,6 +742,14 @@ type LiveNotesPaths struct {
 	Audio string
 }
 
+const (
+	// liveNoteTranscriptSRT is the raw transcript artifact.
+	liveNoteTranscriptSRT = "transcript.srt"
+	// liveNoteTranscriptLegacyMD is the Markdown transcript written before the
+	// artifact switched to SRT. Meetings recorded earlier keep it on disk.
+	liveNoteTranscriptLegacyMD = "transcript.md"
+)
+
 // LiveNotesPathsIn returns the artifact paths for a meeting folder.
 func LiveNotesPathsIn(dir string) LiveNotesPaths { return liveNotesPathsFor(dir) }
 
@@ -679,7 +757,7 @@ func liveNotesPathsFor(dir string) LiveNotesPaths {
 	return LiveNotesPaths{
 		Dir:        dir,
 		Minutes:    filepath.Join(dir, "minutes.md"),
-		Transcript: filepath.Join(dir, "transcript.md"),
+		Transcript: filepath.Join(dir, liveNoteTranscriptSRT),
 		Revised:    filepath.Join(dir, "transcript-revised.md"),
 		Audio:      filepath.Join(dir, "audio"),
 	}
@@ -839,7 +917,7 @@ func WriteLiveNotesMinutesFile(paths LiveNotesPaths, title string, startedAt tim
 	}
 	b.WriteString(strings.TrimSpace(minutes))
 	b.WriteString("\n\n---\n\n## 本次产物\n\n")
-	b.WriteString("- 转写：[transcript.md](transcript.md)\n")
+	b.WriteString("- 转写：[transcript.srt](transcript.srt)\n")
 	b.WriteString("- 修订版转写：[transcript-revised.md](transcript-revised.md)\n")
 	if audioSegments > 0 {
 		fmt.Fprintf(&b, "- 录音：`audio/`（%d 段）\n", audioSegments)
@@ -851,16 +929,32 @@ func WriteLiveNotesMinutesFile(paths LiveNotesPaths, title string, startedAt tim
 	return paths.Minutes, nil
 }
 
-// WriteLiveNotesRawTranscript writes transcript.md: exactly what the ASR heard.
-func WriteLiveNotesRawTranscript(paths LiveNotesPaths, title string, startedAt time.Time, body string) (string, error) {
-	return writeLiveNotesTranscript(paths, paths.Transcript, "转写", "", title, startedAt, body)
+// WriteLiveNotesRawTranscript writes transcript.srt: exactly what the ASR heard.
+//
+// No Markdown heading: the file is a subtitle track, and a `# 转写 · …` line
+// would make every player show it as the first cue.
+func WriteLiveNotesRawTranscript(paths LiveNotesPaths, segments []LiveNoteSegment) (string, error) {
+	if strings.TrimSpace(paths.Dir) == "" {
+		return "", errors.New("live notes: no project path")
+	}
+	body := BuildLiveNotesSRT(segments)
+	if strings.TrimSpace(body) == "" {
+		return "", ErrLiveNotesEmpty
+	}
+	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
+		return "", fmt.Errorf("live notes: create notes dir: %w", err)
+	}
+	if err := os.WriteFile(paths.Transcript, []byte(body), 0o644); err != nil {
+		return "", fmt.Errorf("live notes: write transcript file: %w", err)
+	}
+	return paths.Transcript, nil
 }
 
 // WriteLiveNotesRevisedTranscript writes transcript-revised.md, the proofread
 // variant the minutes are generated from.
 //
 // The blockquote is not decoration: months later nobody remembers why this file
-// differs from transcript.md, and "the timestamps were not touched" is the one
+// differs from transcript.srt, and "the timestamps were not touched" is the one
 // thing that makes it comparable.
 func WriteLiveNotesRevisedTranscript(paths LiveNotesPaths, title string, startedAt time.Time, body string) (string, error) {
 	return writeLiveNotesTranscript(paths, paths.Revised, "修订版转写",
@@ -1005,40 +1099,57 @@ func (s LiveNoteSession) sortKey() int64 {
 	return s.UpdatedAt
 }
 
+// ReadLiveNoteArtifact returns one text artifact of a meeting folder.
+//
+// `dir` is a folder NAME, never a path: it is validated against the pattern the
+// writer produces, so a crafted value cannot escape the notes root.
 func ReadLiveNoteArtifact(projectPath, dir, kind string) (string, error) {
+	body, _, err := ReadLiveNoteArtifactWithName(projectPath, dir, kind)
+	return body, err
+}
+
+// ReadLiveNoteArtifactWithName is ReadLiveNoteArtifact plus the file name that
+// was actually read — the UI opens the artifact in the file viewer and needs
+// the resolved name (a transcript may still be the pre-SRT Markdown file).
+func ReadLiveNoteArtifactWithName(projectPath, dir, kind string) (string, string, error) {
 	if !validLiveNoteDirName(dir) {
-		return "", ErrLiveNoteSessionNotFound
+		return "", "", ErrLiveNoteSessionNotFound
 	}
-	var name string
+	var candidates []string
 	switch kind {
 	case "minutes":
-		name = "minutes.md"
+		candidates = []string{"minutes.md"}
 	case "transcript":
-		name = "transcript.md"
+		// SRT is the current artifact; older meetings only have the Markdown one.
+		candidates = []string{liveNoteTranscriptSRT, liveNoteTranscriptLegacyMD}
 	case "revised":
-		name = "transcript-revised.md"
+		candidates = []string{"transcript-revised.md"}
 	default:
-		return "", ErrLiveNoteArtifactKind
+		return "", "", ErrLiveNoteArtifactKind
 	}
-	full := filepath.Join(liveNotesRoot(projectPath), dir, name)
-	info, err := os.Stat(full)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", ErrLiveNoteSessionNotFound
+
+	for _, name := range candidates {
+		full := filepath.Join(liveNotesRoot(projectPath), dir, name)
+		info, err := os.Stat(full)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return "", "", fmt.Errorf("live notes: stat artifact: %w", err)
+		}
+		if info.IsDir() {
+			continue
+		}
+		if info.Size() > liveNoteArtifactMaxBytes {
+			return "", "", ErrLiveNoteArtifactTooLarge
+		}
+		body, err := os.ReadFile(full)
+		if err != nil {
+			return "", "", fmt.Errorf("live notes: read artifact: %w", err)
+		}
+		return string(body), name, nil
 	}
-	if err != nil {
-		return "", fmt.Errorf("live notes: stat artifact: %w", err)
-	}
-	if info.IsDir() {
-		return "", ErrLiveNoteSessionNotFound
-	}
-	if info.Size() > liveNoteArtifactMaxBytes {
-		return "", ErrLiveNoteArtifactTooLarge
-	}
-	body, err := os.ReadFile(full)
-	if err != nil {
-		return "", fmt.Errorf("live notes: read artifact: %w", err)
-	}
-	return string(body), nil
+	return "", "", ErrLiveNoteSessionNotFound
 }
 
 // liveNotesRoot is the per-project folder holding every meeting.
@@ -1071,7 +1182,8 @@ func liveNoteSessionOf(root, dir string) (LiveNoteSession, error) {
 	}
 	paths := liveNotesPathsFor(full)
 	session.HasMinutes = fileExists(paths.Minutes)
-	session.HasTranscript = fileExists(paths.Transcript)
+	session.HasTranscript = fileExists(paths.Transcript) ||
+		fileExists(filepath.Join(paths.Dir, liveNoteTranscriptLegacyMD))
 	session.HasRevised = fileExists(paths.Revised)
 	session.AudioFiles = countLiveNoteAudio(paths.Audio)
 	return session, nil

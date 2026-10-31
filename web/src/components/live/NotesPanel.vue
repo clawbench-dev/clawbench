@@ -304,6 +304,9 @@ const historyError = ref('')
 const selected = ref<NotesSession | null>(null)
 const detailKind = ref<ArtifactKind>('minutes')
 const detailContent = ref('')
+// File name the server actually read for the open artifact. A transcript may
+// still be the pre-SRT `transcript.md`, so the name cannot be guessed here.
+const detailFile = ref('')
 const detailLoading = ref(false)
 const detailError = ref('')
 
@@ -537,8 +540,9 @@ async function loadDetail(): Promise<void> {
     const url = `/api/live-share/notes/sessions/artifact?dir=${encodeURIComponent(s.dir)}&kind=${kind}`
     const resp = await fetch(url)
     if (!resp.ok) throw new Error(`artifact request failed: ${resp.status}`)
-    const data = (await resp.json()) as { content?: string }
+    const data = (await resp.json()) as { content?: string; file?: string }
     detailContent.value = data.content ?? ''
+    detailFile.value = data.file ?? ''
   } catch (e) {
     appLog.w('NotesPanel', 'load artifact failed', e)
     detailError.value = t('liveShare.history.loadFailed')
@@ -551,7 +555,7 @@ async function loadDetail(): Promise<void> {
 function openInEditor(): void {
   const s = selected.value
   if (!s) return
-  const file = detailKind.value === 'minutes' ? 'minutes.md' : 'transcript.md'
+  const file = detailFile.value || (detailKind.value === 'minutes' ? 'minutes.md' : 'transcript.srt')
   // The server's path uses the host's separator; joining with "/" would break
   // on Windows, where dirPath ends in a backslash.
   const sep = s.dirPath.includes('\\') ? '\\' : '/'

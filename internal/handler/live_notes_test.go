@@ -673,12 +673,12 @@ func TestLiveNoteArtifactsOf_OnlyListsFilesThatExist(t *testing.T) {
 	assert.Empty(t, empty.Transcript)
 	assert.Empty(t, empty.Revised)
 
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "transcript.md"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "transcript.srt"), []byte("x"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "audio", "1-mic.webm"), []byte("a"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "audio", ".gitignore"), []byte("*\n"), 0o644))
 
 	got := liveNoteArtifactsOf(dir)
-	assert.Equal(t, filepath.Join(dir, "transcript.md"), got.Transcript)
+	assert.Equal(t, filepath.Join(dir, "transcript.srt"), got.Transcript)
 	assert.Empty(t, got.Minutes, "minutes.md is only listed once it exists")
 	assert.Equal(t, 1, got.AudioFiles, "the .gitignore is not a recording")
 }
@@ -771,9 +771,10 @@ func TestServeLiveShareNotesMinutes_WritesThreeArtifactsAndSummarisesTheProofrea
 	assert.Equal(t, "[00:00] 我：确认 ClawBench 发布计划", note.Revised)
 	require.NotEmpty(t, note.DirPath)
 
-	raw, err := os.ReadFile(filepath.Join(note.DirPath, "transcript.md"))
+	raw, err := os.ReadFile(filepath.Join(note.DirPath, "transcript.srt"))
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "确认科劳本奇发布计划", "the raw transcript keeps what the ASR heard")
+	assert.Contains(t, string(raw), "--> ", "the raw transcript is SubRip, not Markdown")
 
 	revised, err := os.ReadFile(filepath.Join(note.DirPath, "transcript-revised.md"))
 	require.NoError(t, err)

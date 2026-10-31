@@ -265,7 +265,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 ```
 <项目>/.clawbench/notes/2026-10-31-1430-周会-a1b2c3/
     minutes.md               纪要（末尾链接同目录的另外两份）
-    transcript.md            原始转写（STT 原样输出）
+    transcript.srt           原始转写（STT 原样输出，SubRip 字幕；老会议仍是 transcript.md）
     transcript-revised.md    修订版转写（结合项目上下文校对）
     audio/                   录音，一段一个 WebM
         1700000000123-system.webm
@@ -314,7 +314,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 历史读的是**磁盘上的会议目录**，不是 `live_notes` 表：表行 7 天后清理，目录永久保留。页签要列的是用户还拥有的东西，不是数据库还记得的东西。
 
 - `GET /api/live-share/notes/sessions` 扫描 `<项目>/.clawbench/notes/`，按会议开始时间倒序。只认 `<YYYY-MM-DD-HHMM>[-<标题>]-<token6>` 形状的目录；标题从目录名解析（尾部 token 剥掉），没有标题时显示「未命名听记」。目录从第一段录音就存在，所以「有录音但还没有纪要」是正常状态，行上会标出来。
-- `GET /api/live-share/notes/sessions/artifact?dir=&kind=` 读 `minutes.md` / `transcript.md` / `transcript-revised.md`。`dir` 是目录**名**不是路径，服务端按目录名形状校验，越权取值一律 404，读不到 notes 根目录之外的文件。
+- `GET /api/live-share/notes/sessions/artifact?dir=&kind=` 读 `minutes.md` / `transcript.srt`（老会议回退 `transcript.md`）/ `transcript-revised.md`，响应里的 `file` 是实际读到的文件名。`dir` 是目录**名**不是路径，服务端按目录名形状校验，越权取值一律 404，读不到 notes 根目录之外的文件。
 - 「在编辑器中打开」走前端已有的文件查看器，传目录里那个文件的绝对路径。
 - 每次切到页签、以及录音结束后都会重读一次，另有手动刷新按钮。
 

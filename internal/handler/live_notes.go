@@ -176,7 +176,7 @@ func ServeLiveNotesArtifact(w http.ResponseWriter, r *http.Request) {
 	if kind == "" {
 		kind = "minutes"
 	}
-	content, err := service.ReadLiveNoteArtifact(projectPath, r.URL.Query().Get("dir"), kind)
+	content, file, err := service.ReadLiveNoteArtifactWithName(projectPath, r.URL.Query().Get("dir"), kind)
 	switch {
 	case errors.Is(err, service.ErrLiveNoteSessionNotFound):
 		http.NotFound(w, r)
@@ -189,7 +189,7 @@ func ServeLiveNotesArtifact(w http.ResponseWriter, r *http.Request) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"kind": kind, "content": content})
+	writeJSON(w, http.StatusOK, map[string]string{"kind": kind, "content": content, "file": file})
 }
 
 // ServeLiveShareNotes handles GET /api/live-share/notes?token=&since=
@@ -461,7 +461,7 @@ func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 //
 // It runs three stages in order, and each one has its own durable output:
 //
-//  1. transcript.md          raw ASR, exactly as recognized
+//  1. transcript.srt         raw ASR, exactly as recognized (SubRip cues)
 //  2. transcript-revised.md  proofread against the project's own vocabulary
 //  3. minutes.md             summary generated FROM the proofread transcript
 //
@@ -490,7 +490,7 @@ func generateLiveNotesArtifacts(token string, projectID int64, projectPath, titl
 	raw := service.BuildLiveNotesTranscript(segments)
 	if onDisk {
 		writeLiveNotesArtifact("transcript", func() (string, error) {
-			return service.WriteLiveNotesRawTranscript(paths, title, startedAt, raw)
+			return service.WriteLiveNotesRawTranscript(paths, segments)
 		})
 	}
 

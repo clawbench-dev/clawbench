@@ -233,7 +233,7 @@ func TestWriteLiveNotesMinutesFile_LinksSiblingsInsteadOfInlining(t *testing.T) 
 	// The transcript has its own file now. A copy here would go stale the moment
 	// somebody edits it, and it is the transcript that must never be lost.
 	assert.NotContains(t, text, "## 附：完整转写")
-	assert.Contains(t, text, "[transcript.md](transcript.md)")
+	assert.Contains(t, text, "[transcript.srt](transcript.srt)")
 	assert.Contains(t, text, "[transcript-revised.md](transcript-revised.md)")
 	assert.Contains(t, text, "`audio/`（7 段）")
 }
@@ -260,15 +260,28 @@ func TestWriteLiveNotesTranscriptFile_KeepsHeadingNoteAndLines(t *testing.T) {
 	assert.Contains(t, string(body), "> 已结合项目上下文修正听写错误与专有名词")
 	assert.Contains(t, string(body), "[00:00] 我：确认 ClawBench 的发布计划")
 
-	raw, err := WriteLiveNotesRawTranscript(paths, "季度规划", started, "[00:00] 我：原样")
+	base := started.UnixMilli()
+	raw, err := WriteLiveNotesRawTranscript(paths, []LiveNoteSegment{
+		{Speaker: "我", StartedAt: base, DurationMS: 1500, Text: "原样"},
+	})
 	require.NoError(t, err)
 	rawBody, err := os.ReadFile(raw)
 	require.NoError(t, err)
-	assert.Contains(t, string(rawBody), "# 转写 · 季度规划 · 2026-10-30 14:30")
-	assert.NotContains(t, string(rawBody), "> ", "the raw transcript carries no note")
+	assert.Equal(t, paths.Transcript, raw)
+	assert.True(t, strings.HasSuffix(raw, "transcript.srt"), "raw transcript is SRT, got %q", raw)
+	// A subtitle track starts with a cue index, not a Markdown heading.
+	assert.True(t, strings.HasPrefix(string(rawBody), "1\n"), "want an SRT cue, got %q", string(rawBody))
+	assert.NotContains(t, string(rawBody), "# 转写")
+	assert.Contains(t, string(rawBody), "00:00:00,000 --> 00:00:01,500")
+	assert.Contains(t, string(rawBody), "我：原样")
 
-	_, err = WriteLiveNotesRawTranscript(paths, "", started, "  ")
+	_, err = WriteLiveNotesRawTranscript(paths, nil)
 	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
+
+	_, err = WriteLiveNotesRawTranscript(LiveNotesPathsIn(""), []LiveNoteSegment{
+		{Speaker: "我", StartedAt: base, DurationMS: 1000, Text: "原样"},
+	})
+	assert.Error(t, err)
 }
 
 // The folder is created while the meeting is still running, so it must be
@@ -873,4 +886,65 @@ func TestReadLiveNoteArtifact_RejectsOversizedFile(t *testing.T) {
 
 	_, err := ReadLiveNoteArtifact(project, "2026-10-31-1732-周会-a1b2c3", "minutes")
 	assert.ErrorIs(t, err, ErrLiveNoteArtifactTooLarge)
+}
+
+// ── SRT transcript ──────────────────────────────────────────────────────────
+
+func TestBuildLiveNotesSRT(t *testing.T) {
+	base := time.Date(2026, 10, 30, 14, 30, 0, 0, time.Local).UnixMilli()
+	got := BuildLiveNotesSRT([]LiveNoteSegment{
+		{Speaker: "张三", StartedAt: base, DurationMS: 1500, Text: "第一句"},
+		// No duration: SRT still needs an end, so a floor applies.
+		{Speaker: "李四", StartedAt: base + 2000, DurationMS: 0, Text: "第二句  有空格"},
+		// No speaker: fall back to the channel label.
+		{Speaker: "", Channel: "mic", StartedAt: base + 5000, DurationMS: 1000, Text: "第三句"},
+		// Blank text must not produce a cue.
+		{Speaker: "张三", StartedAt: base + 6000, DurationMS: 1000, Text: "   "},
+	})
+
+	assert.Contains(t, got, "1\n00:00:00,000 --> 00:00:01,500\n张三：第一句\n")
+	assert.Contains(t, got, "2\n00:00:02,000 --> 00:00:04,000\n李四：第二句 有空格\n")
+	assert.Contains(t, got, "3\n00:00:05,000 --> 00:00:06,000\nmic：第三句\n")
+	assert.NotContains(t, got, "4\n", "a blank utterance produces no cue")
+}
+
+func TestBuildLiveNotesSRT_UntimedSegmentsChainForward(t *testing.T) {
+	got := BuildLiveNotesSRT([]LiveNoteSegment{
+		{Speaker: "我", Text: "没有时间戳"},
+		{Speaker: "我", Text: "也没有"},
+	})
+	// Unknown timing chains from the previous cue instead of inventing an
+	// epoch offset (which would show up as thousands of hours).
+	assert.Contains(t, got, "1\n00:00:00,000 --> 00:00:02,000\n我：没有时间戳\n")
+	assert.Contains(t, got, "2\n00:00:02,000 --> 00:00:04,000\n我：也没有\n")
+}
+
+func TestBuildLiveNotesSRT_Empty(t *testing.T) {
+	assert.Empty(t, BuildLiveNotesSRT(nil))
+	assert.Empty(t, BuildLiveNotesSRT([]LiveNoteSegment{{Speaker: "我", Text: "  "}}))
+}
+
+func TestReadLiveNoteArtifactWithName_PrefersSRT(t *testing.T) {
+	project := t.TempDir()
+	writeMeetingFolder(t, project, "2026-10-31-1732-周会-a1b2c3", map[string]string{
+		"transcript.srt": "1\n00:00:00,000 --> 00:00:01,000\n我：新\n",
+		"transcript.md":  "OLD MARKDOWN",
+	})
+
+	body, file, err := ReadLiveNoteArtifactWithName(project, "2026-10-31-1732-周会-a1b2c3", "transcript")
+	require.NoError(t, err)
+	assert.Equal(t, "transcript.srt", file)
+	assert.Contains(t, body, "00:00:00,000 --> 00:00:01,000")
+}
+
+func TestReadLiveNoteArtifactWithName_FallsBackToMarkdown(t *testing.T) {
+	project := t.TempDir()
+	writeMeetingFolder(t, project, "2026-10-31-1732-周会-a1b2c3", map[string]string{
+		"transcript.md": "# 转写 · 旧会议\n",
+	})
+
+	body, file, err := ReadLiveNoteArtifactWithName(project, "2026-10-31-1732-周会-a1b2c3", "transcript")
+	require.NoError(t, err)
+	assert.Equal(t, "transcript.md", file, "meetings recorded before SRT keep their file")
+	assert.Contains(t, body, "旧会议")
 }
