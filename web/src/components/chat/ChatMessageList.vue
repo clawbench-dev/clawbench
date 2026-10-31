@@ -248,6 +248,7 @@ import { useUserMsgIndex } from '@/composables/useUserMsgIndex.ts'
 import { anchorCount, anchorPending, anchorKeyPending, messageAnchorKey } from '@/utils/btwAnchors.ts'
 import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
+import { railReadingIndex } from '@/utils/railReadingPosition.ts'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { isUserScrolling, shouldPin, isUserAwayFromBottom, shouldLoadOlderHistory, SCROLL_STOP_MS, NEAR_BOTTOM_PX, RESUME_FOLLOW_PX } from '@/utils/scrollState'
 import { saveChatScrollPosition, clearChatScrollPosition, getChatScrollPosition, hasChatScrollPosition } from '@/utils/chatScrollMemory'
@@ -1398,28 +1399,28 @@ const sessionSpeaker = computed(() => {
 const scrollTick = ref(0)
 
 /**
- * Indices + centre distances for every message, computed in ONE pass.
+ * Geometry for every message, measured in ONE pass.
  *
- * Why this exists: the two "nearest message" computeds below used to each walk
+ * Why this exists: the "nearest message" computeds below used to each walk
  * every message calling `getBoundingClientRect()`. Reading layout inside a loop
- * forces a synchronous re-layout on each read (layout thrashing), and both
- * computeds re-ran on every `scrollTick` bump — i.e. on every scroll frame.
+ * forces a synchronous re-layout on each read (layout thrashing), and every
+ * consumer re-ran on each `scrollTick` bump — i.e. on every scroll frame.
  * A 130-message session meant ~260 forced full-document re-layouts per frame
  * (Chrome trace: `Layout dirty=668 total=668`, ~400ms of unattributable time
  * inside a single 578ms task, freezing the UI).
  *
  * Measuring all rects in one tight loop lets the browser batch the reads (one
- * layout flush for the whole loop instead of one per read), and both consumers
- * share the result. This is a deliberate read-batching pass: do not add DOM
+ * layout flush for the whole loop instead of one per read), and every consumer
+ * shares the result. This is a deliberate read-batching pass: do not add DOM
  * writes inside it, or the batching is lost.
  */
-const messageCenters = computed(() => {
+const messageGeometry = computed(() => {
   void scrollTick.value // dependency trigger
-  // The message array is a dependency too, not just scrollTick. `centers` is
+  // The message array is a dependency too, not just scrollTick. The arrays are
   // indexed in lockstep with `props.messages`, and the array can change WITHOUT
   // a scroll event: a prepend (loadMore) whose anchor delta happens to be zero
   // leaves scrollTop untouched, so handleScroll never fires. Without this, the
-  // cached `centers` keeps the old length while the DOM has already shifted,
+  // cached geometry keeps the old length while the DOM has already shifted,
   // and nearestMessageIndex would pair stale offsets with new messages.
   void props.messages.length
   const el = messagesRef.value
@@ -1430,19 +1431,37 @@ const messageCenters = computed(() => {
   // Read the container rect ONCE (it was previously re-read on every iteration).
   const containerRect = el.getBoundingClientRect()
   const center = containerRect.top + containerRect.height / 2
+  // Where the reader's eye sits while they are not at either end: a third of
+  // the way down. The centre is too low — half the visible messages sit above
+  // it, so the cue lagged the message being read.
+  const readingLine = containerRect.top + containerRect.height * 0.34
 
   // One batched read pass over all message rects.
   const centers = new Array(items.length)
+  const tops = new Array(items.length)
+  const bottoms = new Array(items.length)
   for (let i = 0; i < items.length; i++) {
     const rect = items[i].getBoundingClientRect()
     centers[i] = rect.top + rect.height / 2
+    tops[i] = rect.top
+    bottoms[i] = rect.bottom
   }
-  return { centers, center }
+  const maxScroll = el.scrollHeight - el.clientHeight
+  return {
+    centers,
+    tops,
+    bottoms,
+    center,
+    readingLine,
+    atTop: el.scrollTop <= 1,
+    // `maxScroll <= 0` (everything fits) is handled by `atTop`: scrollTop is 0.
+    atBottom: maxScroll > 0 && el.scrollTop >= maxScroll - 1,
+  }
 })
 
 /** Index of the message whose centre is closest to the viewport centre. */
 function nearestMessageIndex(role) {
-  const data = messageCenters.value
+  const data = messageGeometry.value
   if (!data) return null
   const { centers, center } = data
   let bestIdx = null
@@ -1477,14 +1496,19 @@ const nearestIndexMsgId = computed(() => {
 /**
  * Active id for the always-visible rail.
  *
- * Same measurement as `nearestIndexMsgId` but WITHOUT the drawer gate: the rail
- * is on screen whenever the pane has a gutter, so it must track the reading
- * position unconditionally. The two are separate computeds on purpose — sharing
- * one would force the drawer's per-frame walk to run whenever the rail is
- * visible, which is the exact cost that gate was added to avoid.
+ * A separate computed from `nearestIndexMsgId` on purpose — sharing one would
+ * force the drawer's per-frame walk to run whenever the rail is visible, which
+ * is the exact cost that gate was added to avoid — and a different RULE:
+ *
+ * The drawer is a list, so "nearest to the centre" is a fine cursor for it. The
+ * rail is a "you are here" marker, so it must name the message the reader is
+ * actually looking at. Nearest-to-centre got both ends of the conversation
+ * wrong (the first bubbles are scrolled past the centre line, a short final
+ * reply sits below it), which read as "the highlight doesn't follow the
+ * page". See `railReadingIndex`.
  */
 const nearestRailMsgId = computed(() => {
-  const idx = nearestMessageIndex()
+  const idx = railReadingIndex(messageGeometry.value)
   return idx === null ? null : (props.messages[idx]?.id ?? null)
 })
 
@@ -1849,6 +1873,12 @@ defineExpose({
   // dependency. A plain function would freeze at whatever the id was when the
   // panel last rendered for an unrelated reason.
   railActiveId: nearestRailMsgId,
+  // Whether the viewport is pinned to the latest reply. The rail needs it to
+  // decide who owns the "you are here" mark while a turn is in flight: at the
+  // bottom the reader is watching the reply being written (so the pending slot
+  // is where they are), but as soon as they scroll up to read history the mark
+  // must follow them instead of staying welded to the tail.
+  railAtBottom: isAtBottom,
   getRailSpeakerResolver: () => resolveIndexSpeaker,
   getBtwAnchorLookup: () => hasBtwAnchor,
   getMessagesEl,

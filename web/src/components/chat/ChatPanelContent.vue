@@ -175,6 +175,7 @@
       :get-scroller="messageListRef.getMessagesEl"
       :bottom-inset="railBottomInset"
       :generating="railGenerating"
+      :pending-active="railPendingActive"
       @select="handleRailSelect"
       @select-pending="handleRailSelectPending"
     />
@@ -1574,6 +1575,18 @@ function handleRailSelectPending() {
  */
 const railGenerating = computed(() =>
   identity.runningSessions.value.has(identity.currentSessionId.value),
+)
+
+/**
+ * Whether the in-flight slot owns the rail's "you are here" mark.
+ *
+ * Only while the reader is actually watching the reply: a real turn can stream
+ * for minutes, and pinning the mark to the tail meant scrolling up to read
+ * history left the highlight stuck at the bottom — it looked frozen. Once they
+ * scroll away the mark follows the reading position like it does when idle.
+ */
+const railPendingActive = computed(() =>
+  railGenerating.value && messageListRef.value?.railAtBottom === true,
 )
 
 /**
