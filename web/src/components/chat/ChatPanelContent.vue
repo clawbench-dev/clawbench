@@ -280,7 +280,7 @@
   <!-- Queued-message editor: text plus attachments, saved in place. -->
   <QueuedMessageEditSheet
     :open="editEntry !== null"
-    :entry="editEntry"
+    :entry="editEntry ? editEntry.entry : null"
     :saving="editBusy !== ''"
     @close="closeEditPending"
     @save="handleEditSave"
@@ -428,8 +428,12 @@ const editBusy = ref('')
 /**
  * The queue entry currently open in the edit sheet (null = closed).
  *
- * Holds the ENTRY, not just its id: the sheet seeds its draft from the text and
- * attachments on open, and the diff on save compares against this snapshot.
+ * Holds `{ sessionId, entry }`, not just the entry: the sheet seeds its draft
+ * from the text and attachments on open, the diff on save compares against this
+ * snapshot, and the PATCH is addressed by the session the entry was QUEUED IN.
+ * Capturing that session here (rather than re-reading the active one on save)
+ * keeps a draft bound to its own queue: a programmatic session switch (deep
+ * link, notification) must not retarget the request at whatever is on screen.
  */
 const editEntry = ref(null)
 const messages = ref([])
@@ -1064,9 +1068,20 @@ watch(loading, (newVal, oldVal) => {
 // The queue panel reads from a module-level store keyed by session; point it at
 // the session this panel is showing. Immediate so a remount (project switch,
 // drawer reopen) restores the right queue without waiting for a change.
+//
+// The edit draft is dropped on the same edge: it belongs to the queue it was
+// opened from, and the sheet is a modal over a view that can switch sessions
+// underneath it (deep link, notification — the BottomSheet only blocks
+// pointers). Leaving it open would show session A's draft while the save is
+// addressed at B, where the queueId does not exist.
 watch(
   () => identity.currentSessionId.value,
-  (sid) => setActiveQueueSession(sid || ''),
+  (sid) => {
+    setActiveQueueSession(sid || '')
+    editEntry.value = null
+    editBusy.value = ''
+    mergeBusy.value = false
+  },
   { immediate: true },
 )
 
@@ -2327,7 +2342,9 @@ function handleEditPending(queueId) {
     const sessionId = identity.currentSessionId.value
     const entry = getQueue(sessionId).find(m => m.queueId === queueId)
     if (!entry) return
-    editEntry.value = entry
+    // The session travels WITH the entry: it is what addresses the save, and it
+    // is the only thing that keeps a draft valid if the view switches sessions.
+    editEntry.value = { sessionId, entry }
 }
 
 /** Close the sheet. Ignored while a save is in flight (the draft must not be
@@ -2346,9 +2363,12 @@ function closeEditPending() {
  * the meantime would then fail a text-only edit.
  */
 async function handleEditSave({ text, files }) {
-    const entry = editEntry.value
-    if (!entry || editBusy.value) return
-    const sessionId = identity.currentSessionId.value
+    const target = editEntry.value
+    if (!target || editBusy.value) return
+    // The session captured when the sheet opened, NOT the active one: the
+    // queueId only exists in that session's queue, so re-reading the active
+    // session after a switch would 409 and silently drop the edit.
+    const { sessionId, entry } = target
     const textChanged = text !== entry.text.trim()
     // Compare by attachment IDENTITY, the same notion the send path dedupes by.
     // A structural (JSON) comparison reports a change for lists the backend
@@ -2366,7 +2386,7 @@ async function handleEditSave({ text, files }) {
 
     editBusy.value = entry.queueId
     try {
-        const ok = await manager.editQueuedMessage(entry.queueId, text, filesChanged ? files : undefined)
+        const ok = await manager.editQueuedMessage(entry.queueId, text, filesChanged ? files : undefined, sessionId)
         // Close on success. On failure, close only when the entry is gone (the
         // 409 path drops it and explains why); otherwise keep the sheet open
         // with the draft so the user can retry.
@@ -2374,7 +2394,9 @@ async function handleEditSave({ text, files }) {
             editEntry.value = null
         }
     } finally {
-        editBusy.value = ''
+        // Guarded: a session switch clears editBusy while this request is in
+        // flight, and an unconditional reset could clobber a newer save's state.
+        if (editBusy.value === entry.queueId) editBusy.value = ''
     }
 }
 

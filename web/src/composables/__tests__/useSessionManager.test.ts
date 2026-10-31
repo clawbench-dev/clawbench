@@ -956,6 +956,30 @@ describe('useSessionManager', () => {
             )
             expect(getQueue('session-1')[0].files).toEqual([])
         })
+
+        it('addresses the PATCH at the entry\'s own session, not the active one', async () => {
+            // A draft can outlive a programmatic session switch. Addressing the
+            // PATCH by the ACTIVE session then names a queue that does not hold
+            // this queueId: the server answers 409 ("already drained") and the
+            // edit is discarded with a misleading toast.
+            const opts = createMockOptions()
+            addQueued('session-a', { queueId: 'q-a', text: 'original', files: [] })
+            addQueued('session-b', { queueId: 'q-b', text: 'other', files: [] })
+            mockCurrentSessionId.value = 'session-b'
+            mockApiPatch.mockResolvedValue({ ok: true })
+            const mgr = useSessionManager(opts)
+
+            const ok = await mgr.editQueuedMessage('q-a', 'revised', undefined, 'session-a')
+
+            expect(ok).toBe(true)
+            expect(mockApiPatch).toHaveBeenCalledWith(
+                expect.stringContaining('session_id=session-a'),
+                { queueId: 'q-a', message: 'revised' },
+            )
+            expect(getQueue('session-a')[0].text).toBe('revised')
+            expect(getQueue('session-b')[0].text).toBe('other',
+                'the session on screen must not be touched by another session\'s edit')
+        })
     })
 
     // ── registerIdentityActions ──

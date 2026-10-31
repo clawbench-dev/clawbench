@@ -1040,12 +1040,37 @@ describe('ChatPanelContent — queued message edit', () => {
     // it: the sheet is seeded from the entry and owns the draft.
     const region = await sourceRegion('function handleEditPending(queueId)', '/** Merge every queued message')
     expect(region).toMatch(/getQueue\(sessionId\)/)
-    expect(region).toMatch(/editEntry\.value = entry/)
+    // The session is captured WITH the entry: the save is addressed by it.
+    expect(region).toMatch(/editEntry\.value = \{ sessionId, entry \}/)
 
     const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    expect(source, 'the sheet must receive the entry being edited').toMatch(/:entry="editEntry"/)
+    expect(source, 'the sheet must receive the entry being edited').toMatch(/:entry="editEntry \? editEntry\.entry : null"/)
     expect(source, 'and be closed through the same state').toMatch(/:open="editEntry !== null"/)
+  })
+
+  it('saves into the session the draft was opened from', async () => {
+    // The queueId only exists in the session the entry was QUEUED IN. Re-reading
+    // the active session here is the bug: a programmatic switch (deep link,
+    // notification) retargets the PATCH, the server finds no such row and 409s,
+    // and the user's edit is silently dropped with a wrong "already sent" toast.
+    const region = await sourceRegion('async function handleEditSave({ text, files })', '/** Merge every queued message')
+    expect(region).not.toMatch(/identity\.currentSessionId/)
+    expect(region).toMatch(/manager\.editQueuedMessage\([^)]*,\s*sessionId\)/)
+  })
+
+  it('drops the draft when the active session changes', async () => {
+    // Belt to the braces above: a draft that is bound to another session's
+    // queue must not stay open over this one.
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    const at = source.indexOf('setActiveQueueSession(sid')
+    expect(at, 'the queue-following watcher must exist').toBeGreaterThan(-1)
+    const watcher = source.slice(
+      source.lastIndexOf('watch(', at),
+      source.indexOf('const stream = useChatStream', at),
+    )
+    expect(watcher, 'a draft must not survive a session switch').toMatch(/editEntry\.value = null/)
   })
 
   it('skips the request when neither the text nor the attachments changed', async () => {

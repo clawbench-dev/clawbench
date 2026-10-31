@@ -206,10 +206,20 @@ export function useSessionManager(options: UseSessionManagerOptions) {
    * for its own broadcast). A 409 means the message is already a real turn sent
    * with the OLD text: the entry is dropped locally so the panel does not keep a
    * phantom, and the user is told why the edit did not apply.
+   *
+   * `sessionId` is the session the entry was QUEUED IN, and it addresses the
+   * PATCH. It defaults to the active session, but callers that hold a draft
+   * across a session switch must pass the original one: re-reading the active
+   * session would address a queue that does not contain the queueId, and the
+   * server's 409 ("already drained") would silently discard the edit.
    */
-  async function editQueuedMessage(queueId: string, text: string, files?: FileEntry[]): Promise<boolean> {
+  async function editQueuedMessage(
+    queueId: string,
+    text: string,
+    files?: FileEntry[],
+    sessionId = identity.currentSessionId.value,
+  ): Promise<boolean> {
     if (!queueId) return false
-    const sessionId = identity.currentSessionId.value
     if (!sessionId) return false
 
     try {
