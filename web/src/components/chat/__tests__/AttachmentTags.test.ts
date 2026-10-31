@@ -24,9 +24,7 @@ describe('AttachmentTags', () => {
         files: [{ path: 'src/main.go', isDir: false }],
       },
     })
-    // URL chips render before file cards, so assert on the whole set rather
-    // than on the first match.
-    expect(wrapper.findAll('.attachment-filename').map((w) => w.text())).toContain('main.go')
+    expect(wrapper.find('.attachment-filename').text()).toBe('main.go')
   })
 
   // ── URL attachment chips ──
@@ -275,9 +273,11 @@ describe('AttachmentTags (readonly)', () => {
       },
     })
 
-    expect(wrapper.find('.attachment-filename').text()).toBe('main.go')
+    // URL chips render before file cards, so assert on the whole set rather
+    // than on the first match.
+    expect(wrapper.findAll('.attachment-filename').map((w) => w.text())).toContain('main.go')
     expect(wrapper.find('a.attachment-url').exists()).toBe(true)
-    expect(wrapper.findAll('.attachment-close-btn')).toHaveLength(0)
+    expect(wrapper.findAll('.attachment-close-btn'), 'no dead × on a read-only surface').toHaveLength(0)
     expect(wrapper.classes()).toContain('is-readonly')
   })
 
