@@ -33,7 +33,7 @@ function mountPicker(selectedId = '') {
     global: {
       plugins: [i18n],
       stubs: {
-        BottomSheet: {
+        ModalDialog: {
           props: ['open'],
           template: '<div v-if="open"><slot name="header" /><slot /></div>',
         },

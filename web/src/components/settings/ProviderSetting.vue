@@ -1,7 +1,8 @@
 <template>
   <!-- Global model-provider list. A provider is one endpoint + credential;
        agents reference it from their own settings page, so a key rotation is
-       one edit here instead of one edit per agent. -->
+       one edit here instead of one edit per agent. Creating and editing happen
+       in ProviderFormDialog — this page only ever shows what is configured. -->
   <div class="provider-setting">
     <div class="provider-hint">{{ description || t('settings.items.providerDesc') }}</div>
 
@@ -18,6 +19,13 @@
       <button class="fbtn" :disabled="refreshingCatalog" @click="refreshCatalog">
         <component :is="refreshingCatalog ? Loader2 : RefreshCw" :size="13" :class="{ 'provider-spin': refreshingCatalog }" />
         {{ refreshingCatalog ? t('settings.items.providerCatalogRefreshing') : t('settings.items.providerCatalogRefresh') }}
+      </button>
+    </div>
+
+    <div class="provider-toolbar">
+      <button class="fbtn fbtn-primary" @click="openCreate">
+        <Plus :size="13" />
+        {{ t('settings.items.providerAdd') }}
       </button>
     </div>
 
@@ -44,7 +52,7 @@
             <component :is="testingId === p.id ? Loader2 : PlugZap" :size="13" :class="{ 'provider-spin': testingId === p.id }" />
             {{ testingId === p.id ? t('settings.items.providerTesting') : t('settings.items.providerTest') }}
           </button>
-          <button class="fbtn" @click="startEdit(p)">
+          <button class="fbtn" @click="openEdit(p)">
             <Pencil :size="13" />
             {{ t('settings.items.providerEdit') }}
           </button>
@@ -61,97 +69,14 @@
       </div>
     </div>
 
-    <div class="provider-form">
-      <!-- The catalogue has 200+ entries, so the picker is a searchable list
-           with brand icons rather than a native <select>. -->
-      <div v-if="!editingId" class="provider-preset-row">
-        <button type="button" class="provider-input provider-preset-trigger" @click="presetPickerOpen = true">
-          <template v-if="selectedPreset">
-            <ProviderIcon :provider-id="selectedPreset.id" :name="selectedPreset.name" :size="16" />
-            <span class="provider-preset-name">{{ selectedPreset.name }}</span>
-            <span class="provider-preset-proto">{{ selectedPreset.protocol }}</span>
-          </template>
-          <span v-else class="provider-preset-placeholder">{{ t('settings.items.providerPresetPlaceholder') }}</span>
-          <ChevronsUpDown :size="14" class="provider-preset-chevron" />
-        </button>
-      </div>
-
-      <div class="provider-grid">
-        <input v-model="draft.name" class="provider-input" :placeholder="t('settings.items.providerName')" />
-        <select v-model="draft.protocol" class="provider-input provider-select">
-          <option value="anthropic">anthropic</option>
-          <option value="openai">openai</option>
-          <option value="gemini">gemini</option>
-        </select>
-      </div>
-      <input v-model="draft.baseUrl" class="provider-input" :placeholder="t('settings.items.providerBaseUrl')" />
-      <input
-        v-model="draft.apiKey"
-        type="password"
-        autocomplete="off"
-        class="provider-input"
-        :placeholder="editingId ? t('settings.items.providerKeyKeep') : t('settings.items.providerKey')"
-      />
-      <div class="provider-grid">
-        <select v-model="draft.authMode" class="provider-input provider-select">
-          <option value="auto">{{ t('settings.items.providerAuthAuto') }}</option>
-          <option value="x-api-key">x-api-key</option>
-          <option value="bearer">bearer</option>
-        </select>
-        <button class="fbtn fbtn-primary" :disabled="!canSave || saving" @click="saveDraft">
-          {{ editingId ? t('settings.items.providerSave') : t('settings.items.providerAdd') }}
-        </button>
-        <button v-if="editingId" class="fbtn" @click="cancelEdit">
-          {{ t('settings.items.providerCancel') }}
-        </button>
-      </div>
-      <label v-if="editingId" class="provider-clear">
-        <input v-model="clearKey" type="checkbox" />
-        {{ t('settings.items.providerClearKey') }}
-      </label>
-
-      <!-- The curated model set. Agents bound to this provider inherit it, so
-           this is the only place a model can be "known to work". -->
-      <div v-if="editingId" class="provider-models">
-        <div class="provider-models-head">
-          <span class="provider-models-label">{{ t('settings.items.providerModelsLabel') }}</span>
-          <button type="button" class="fbtn" @click="modelsPickerOpen = true">
-            <Layers :size="13" />
-            {{ t('settings.items.providerModelsChoose') }}
-          </button>
-        </div>
-        <div v-if="draft.models.length === 0" class="provider-models-empty">
-          {{ t('settings.items.providerModelsNone') }}
-        </div>
-        <div v-else class="provider-models-chips">
-          <span v-for="id in draft.models" :key="id" class="provider-model-chip">
-            {{ id }}
-            <button type="button" class="provider-model-chip-x" @click="removeModel(id)">×</button>
-          </span>
-        </div>
-        <div v-if="draft.models.length > 0" class="provider-models-default">
-          <span>{{ t('settings.items.providerDefaultModel') }}</span>
-          <select v-model="draft.defaultModel" class="provider-input provider-select">
-            <option v-for="id in draft.models" :key="id" :value="id">{{ id }}</option>
-          </select>
-        </div>
-      </div>
-    </div>
-
-    <ProviderModelsPicker
-      :open="modelsPickerOpen"
-      :provider-id="editingId"
-      :selected="draft.models"
-      @update:open="modelsPickerOpen = $event"
-      @update:selected="onModelsSelected"
-    />
-
-    <ProviderPresetPicker
-      :open="presetPickerOpen"
+    <ProviderFormDialog
+      :open="formOpen"
+      :provider="editingProvider"
       :presets="presets"
-      :selected-id="presetId"
-      @update:open="presetPickerOpen = $event"
-      @select="onPresetSelect"
+      :saving="saving"
+      :error-message="formError"
+      @close="closeForm"
+      @submit="saveDraft"
     />
 
     <div v-if="error" class="provider-error">
@@ -162,62 +87,32 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, CheckCircle2, ChevronsUpDown, Layers, Loader2, Pencil, PlugZap, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { AlertCircle, CheckCircle2, Loader2, Pencil, Plus, PlugZap, RefreshCw, Trash2 } from 'lucide-vue-next'
 import '@/assets/modal-footer-btn.css'
 import { apiDelete, apiGet, apiPost, apiPut } from '@/utils/api'
 import { useDialog } from '@/composables/useDialog'
-import ProviderIcon from '@/components/common/ProviderIcon.vue'
-import ProviderPresetPicker, { type PresetOption } from './ProviderPresetPicker.vue'
-import ProviderModelsPicker from './ProviderModelsPicker.vue'
+import ProviderFormDialog, { type ProviderFormValue, type ProviderRow } from './ProviderFormDialog.vue'
+import type { PresetOption } from './ProviderPresetPicker.vue'
 import { appLog } from '@/utils/appLog'
 
 defineProps<{ description?: string }>()
-
-interface ProviderRow {
-  id: number
-  name: string
-  protocol: string
-  baseUrl: string
-  authMode: string
-  presetId?: string
-  models?: string[]
-  defaultModel?: string
-  hasKey: boolean
-  agentCount: number
-}
-
-interface Preset {
-  id: string
-  name: string
-  protocol: string
-  baseUrl: string
-}
 
 const { t } = useI18n()
 const { confirm } = useDialog()
 
 const providers = ref<ProviderRow[]>([])
-const presets = ref<Preset[]>([])
-const presetId = ref('')
+const presets = ref<PresetOption[]>([])
 const saving = ref(false)
+/** List-level failures (load / delete / catalogue). Form failures live in
+ *  `formError` so the dialog can show them without closing. */
 const error = ref('')
-const editingId = ref<number | null>(null)
-const clearKey = ref(false)
+const formError = ref('')
+const formOpen = ref(false)
+const editingProvider = ref<ProviderRow | null>(null)
 const testingId = ref<number | null>(null)
 const testResults = ref<Record<number, { ok: boolean; message: string }>>({})
-
-const draft = reactive({
-  name: '',
-  protocol: 'anthropic',
-  baseUrl: '',
-  apiKey: '',
-  authMode: 'auto',
-  presetId: '',
-  models: [] as string[],
-  defaultModel: '',
-})
 
 // Authoritative catalogue state (models.dev snapshot).
 const catalogFetchedAt = ref('')
@@ -229,22 +124,6 @@ const catalogDate = computed(() => {
   const d = new Date(catalogFetchedAt.value)
   return Number.isNaN(d.getTime()) ? catalogFetchedAt.value : d.toLocaleDateString()
 })
-
-const canSave = computed(() => draft.name.trim() !== '')
-
-function resetDraft() {
-  draft.name = ''
-  draft.protocol = 'anthropic'
-  draft.baseUrl = ''
-  draft.apiKey = ''
-  draft.authMode = 'auto'
-  draft.presetId = ''
-  draft.models = []
-  draft.defaultModel = ''
-  presetId.value = ''
-  clearKey.value = false
-  editingId.value = null
-}
 
 async function loadProviders() {
   try {
@@ -258,7 +137,7 @@ async function loadProviders() {
 
 async function loadPresets() {
   try {
-    const data = await apiGet<{ presets: Preset[] }>('/api/providers/presets')
+    const data = await apiGet<{ presets: PresetOption[] }>('/api/providers/presets')
     presets.value = data.presets ?? []
   } catch (err) {
     // Presets are a convenience; the manual form still works.
@@ -266,92 +145,58 @@ async function loadPresets() {
   }
 }
 
-/** Fill the form from a catalogue entry. Only fields the preset knows are
- *  overwritten; a typed key is never touched. */
-const presetPickerOpen = ref(false)
-const modelsPickerOpen = ref(false)
-
-function onModelsSelected(ids: string[]) {
-  draft.models = ids
-  if (!ids.includes(draft.defaultModel)) draft.defaultModel = ids[0] ?? ''
+function openCreate() {
+  editingProvider.value = null
+  formError.value = ''
+  formOpen.value = true
 }
 
-function removeModel(id: string) {
-  onModelsSelected(draft.models.filter((m) => m !== id))
+function openEdit(p: ProviderRow) {
+  editingProvider.value = p
+  formError.value = ''
+  formOpen.value = true
 }
 
-/** The chosen catalogue entry, for the trigger row (icon + name). */
-const selectedPreset = computed<PresetOption | undefined>(() =>
-  presets.value.find((p) => p.id === presetId.value),
-)
-
-function onPresetSelect(preset: PresetOption | null) {
-  if (!preset) {
-    // "No preset" keeps whatever the user has typed; it only drops the link to
-    // the catalogue.
-    presetId.value = ''
-    draft.presetId = ''
-    return
-  }
-  presetId.value = preset.id
-  draft.name = preset.name
-  draft.protocol = preset.protocol
-  draft.baseUrl = preset.baseUrl
-  draft.presetId = preset.id
+function closeForm() {
+  formOpen.value = false
+  formError.value = ''
 }
 
-async function saveDraft() {
-  if (!canSave.value || saving.value) return
+async function saveDraft(value: ProviderFormValue) {
+  if (saving.value) return
   saving.value = true
-  error.value = ''
+  formError.value = ''
   try {
-    if (editingId.value === null) {
+    if (editingProvider.value === null) {
       await apiPost('/api/providers', {
-        name: draft.name.trim(),
-        protocol: draft.protocol,
-        baseUrl: draft.baseUrl.trim(),
-        apiKey: draft.apiKey,
-        authMode: draft.authMode,
-        presetId: draft.presetId,
+        name: value.name,
+        protocol: value.protocol,
+        baseUrl: value.baseUrl,
+        apiKey: value.apiKey,
+        authMode: value.authMode,
+        presetId: value.presetId,
       })
     } else {
-      await apiPut(`/api/providers/${editingId.value}`, {
-        name: draft.name.trim(),
-        protocol: draft.protocol,
-        baseUrl: draft.baseUrl.trim(),
-        authMode: draft.authMode,
-        apiKey: draft.apiKey,
-        clearApiKey: clearKey.value,
-        models: draft.models,
-        defaultModel: draft.defaultModel,
+      await apiPut(`/api/providers/${editingProvider.value.id}`, {
+        name: value.name,
+        protocol: value.protocol,
+        baseUrl: value.baseUrl,
+        authMode: value.authMode,
+        apiKey: value.apiKey,
+        clearApiKey: value.clearApiKey,
+        models: value.models,
+        defaultModel: value.defaultModel,
       })
     }
-    resetDraft()
+    closeForm()
     await loadProviders()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
-    appLog.w('ProviderSetting', 'save provider failed', error.value)
+    // Keep the dialog open with the typed values so the user can correct them.
+    formError.value = err instanceof Error ? err.message : String(err)
+    appLog.w('ProviderSetting', 'save provider failed', formError.value)
   } finally {
     saving.value = false
   }
-}
-
-function startEdit(p: ProviderRow) {
-  editingId.value = p.id
-  presetId.value = ''
-  clearKey.value = false
-  draft.name = p.name
-  draft.protocol = p.protocol
-  draft.baseUrl = p.baseUrl
-  draft.authMode = p.authMode || 'auto'
-  draft.presetId = p.presetId || ''
-  draft.models = [...(p.models || [])]
-  draft.defaultModel = p.defaultModel || ''
-  draft.apiKey = ''
-}
-
-function cancelEdit() {
-  resetDraft()
 }
 
 async function removeProvider(p: ProviderRow) {
@@ -360,7 +205,7 @@ async function removeProvider(p: ProviderRow) {
   error.value = ''
   try {
     await apiDelete(`/api/providers/${p.id}`)
-    if (editingId.value === p.id) resetDraft()
+    if (editingProvider.value?.id === p.id) closeForm()
     delete testResults.value[p.id]
     await loadProviders()
   } catch (err) {
@@ -424,9 +269,9 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* Geometry and type tokens mirror MCPSetting: both are "list + add form" cards
- * rendered inside the same settings card, so they must share the 16px inset,
- * the row chrome and the 30dp control height. Using the wrong token names here
+/* Geometry and type tokens mirror MCPSetting: both are "list" cards rendered
+ * inside the same settings card, so they must share the 16px inset, the row
+ * chrome and the 30dp control height. Using the wrong token names here
  * (--text-sm / --border-primary) silently falls back to inherited values —
  * that is exactly how this page drifted out of alignment before. */
 .provider-setting {
@@ -456,6 +301,12 @@ onMounted(() => {
 .provider-catalog-stale {
   margin-left: var(--space-2);
   color: var(--color-orange);
+}
+/* The create action belongs to the list, not to a row: it sits on its own line
+ * so the (long) catalogue sentence keeps the width it needs on a phone. */
+.provider-toolbar {
+  display: flex;
+  justify-content: flex-end;
 }
 .provider-empty {
   color: var(--text-muted);
@@ -508,148 +359,6 @@ onMounted(() => {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
   word-break: break-all;
-}
-.provider-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border-color);
-}
-.provider-grid {
-  display: flex;
-  gap: var(--space-3);
-}
-/* Same per-axis sizing rule as MCPSetting: a bare `flex` on a column child
- * would override the control height. */
-.provider-input {
-  box-sizing: border-box;
-  height: calc(30 * var(--dp));
-  padding: 0 var(--space-6);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: var(--font-size-md);
-}
-.provider-grid > .provider-input:not(.provider-select) {
-  flex: 1;
-  min-width: calc(120 * var(--dp));
-}
-.provider-form > .provider-input {
-  align-self: stretch;
-  flex: none;
-}
-.provider-select {
-  flex: 0 0 calc(120 * var(--dp));
-  padding: 0 var(--space-3);
-}
-/* Trigger row for the preset picker: looks like the inputs around it, but
- * opens the in-app sheet instead of a native dropdown. */
-.provider-preset-trigger {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  padding: 0 var(--space-4);
-  text-align: left;
-  cursor: pointer;
-}
-.provider-preset-name {
-  font-size: var(--font-size-md);
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.provider-preset-proto {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  padding: 0 var(--space-2);
-  flex-shrink: 0;
-}
-.provider-preset-placeholder {
-  flex: 1;
-  font-size: var(--font-size-md);
-  color: var(--text-muted);
-}
-.provider-preset-chevron {
-  margin-left: auto;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-.provider-input:focus {
-  outline: none;
-  border-color: var(--accent-color);
-  box-shadow: 0 0 0 calc(2 * var(--dp)) var(--focus-ring);
-}
-.provider-models {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border-color);
-}
-.provider-models-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-.provider-models-label {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-  color: var(--text-primary);
-}
-.provider-models-empty {
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-}
-.provider-models-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-.provider-model-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-2) 0 var(--space-3);
-  height: calc(22 * var(--dp));
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  font-size: var(--font-size-xs);
-  color: var(--text-secondary);
-}
-.provider-model-chip-x {
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: var(--font-size-md);
-  line-height: 1;
-  padding: 0;
-}
-.provider-models-default {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-}
-.provider-models-default .provider-select {
-  flex: 0 0 calc(160 * var(--dp));
-}
-.provider-clear {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
 }
 .provider-error,
 .provider-test-result {

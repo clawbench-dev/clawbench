@@ -2,12 +2,20 @@
   <!-- Provider picker: a brand-icon list with search instead of a native
        <select>. The catalogue has 200+ entries whose names mean little on
        their own; the icon + host makes the right row recognizable at a glance.
-       BottomSheet is the app's own modal, so it inherits the theme and the
-       mobile drag/close behaviour. -->
-  <BottomSheet :open="open" auto @close="close">
+       This is a ModalDialog rather than a BottomSheet because it always opens
+       from inside ProviderFormDialog: a sheet lives in the overlay band (1000)
+       and would be buried under that dialog, and ModalDialog's back handler
+       (PRIORITY_OVERLAY+1) would beat the sheet's. Two dialogs tie on priority,
+       so the one opened later wins — which is this one. -->
+  <ModalDialog
+    :open="open"
+    :title="t('settings.items.providerPresetTitle')"
+    :z-index="2600"
+    @close="close"
+  >
     <template #header>
-      <Boxes :size="16" class="bs-header-icon" />
-      <span class="bs-header-title">{{ t('settings.items.providerPresetTitle') }}</span>
+      <Boxes :size="16" class="modal-header-icon" />
+      <span class="modal-title">{{ t('settings.items.providerPresetTitle') }}</span>
     </template>
 
     <div class="preset-picker">
@@ -62,14 +70,14 @@
         </div>
       </div>
     </div>
-  </BottomSheet>
+  </ModalDialog>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Ban, Boxes, Check, Search } from 'lucide-vue-next'
-import BottomSheet from '@/components/common/BottomSheet.vue'
+import ModalDialog from '@/components/common/ModalDialog.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 
 export interface PresetOption {
@@ -137,6 +145,9 @@ function choose(preset: PresetOption | null) {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* The dialog body has no inset of its own (each shell's slot content owns
+     it), and the sticky search needs a gap above it when the list scrolls. */
+  padding-top: var(--space-4);
 }
 /* Sticky so the list can scroll underneath without losing the filter. */
 .preset-search {

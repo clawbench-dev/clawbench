@@ -3255,6 +3255,8 @@ export default {
       providerPresetNone: '不使用预设',
       providerPresetEmpty: '没有匹配的供应商',
       providerAdd: '添加提供商',
+      providerAddTitle: '添加模型提供商',
+      providerEditTitle: '编辑模型提供商',
       providerSave: '保存',
       providerCancel: '取消',
       providerEdit: '编辑',

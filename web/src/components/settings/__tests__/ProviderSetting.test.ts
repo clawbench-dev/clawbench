@@ -49,6 +49,8 @@ const i18n = createI18n({
           providerPresetNone: '不使用预设',
           providerPresetEmpty: '没有匹配的供应商',
           providerAdd: '添加提供商',
+          providerAddTitle: '添加模型提供商',
+          providerEditTitle: '编辑模型提供商',
           providerSave: '保存',
           providerCancel: '取消',
           providerEdit: '编辑',
@@ -87,16 +89,23 @@ function mountSetting(providers: unknown[], catalog: unknown = {}) {
         Loader2: true,
         PlugZap: true,
         Pencil: true,
+        Plus: true,
         Trash2: true,
-        // The real sheet teleports to <body>; render it inline so the picker's
-        // rows stay inside the wrapper.
-        BottomSheet: {
-          props: ['open'],
-          template: '<div v-if="open" class="mock-sheet"><slot name="header" /><slot /></div>',
+        // The real dialog teleports to <body>; render it inline so its fields
+        // and buttons stay inside the wrapper (the pickers use it too).
+        ModalDialog: {
+          props: ['open', 'title'],
+          template: '<div v-if="open" class="mock-dialog"><span class="mock-title">{{ title }}</span><slot name="header" /><slot /><slot name="footer" /></div>',
         },
       },
     },
   })
+}
+
+/** The dialog's own primary button — the toolbar's "add" button is also
+ *  `.fbtn-primary`, so every form assertion has to be scoped to the dialog. */
+function dialogSave(wrapper: ReturnType<typeof mountSetting>) {
+  return wrapper.find('.mock-dialog .fbtn-primary')
 }
 
 describe('ProviderSetting', () => {
@@ -125,17 +134,35 @@ describe('ProviderSetting', () => {
     expect(wrapper.html()).not.toContain('sk-')
   })
 
-  it('creates a provider with the typed values', async () => {
+  it('keeps the configuration form out of the list until it is opened', async () => {
+    const wrapper = mountSetting([])
+    await flushPromises()
+    // The list page must not carry the form inline (that is what made the page
+    // read as "list glued to a form").
+    expect(wrapper.find('.mock-dialog').exists()).toBe(false)
+    expect(wrapper.find('.provider-preset-trigger').exists()).toBe(false)
+
+    await wrapper.find('.provider-toolbar .fbtn-primary').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.mock-dialog').exists()).toBe(true)
+    expect(wrapper.find('.mock-dialog').text()).toContain('添加模型提供商')
+  })
+
+  it('creates a provider with the values typed in the dialog', async () => {
     const wrapper = mountSetting([])
     await flushPromises()
 
-    const inputs = wrapper.findAll('.provider-input')
-    // [0] preset select, [1] name, [2] protocol, [3] baseUrl, [4] apiKey, [5] authMode
-    await inputs[1].setValue('My Provider')
-    await inputs[3].setValue('https://api.example.com/v1')
-    await inputs[4].setValue('sk-secret')
+    await wrapper.find('.provider-toolbar .fbtn-primary').trigger('click')
+    await flushPromises()
 
-    await wrapper.find('.fbtn-primary').trigger('click')
+    const dialog = wrapper.find('.mock-dialog')
+    const inputs = dialog.findAll('input.provider-input')
+    // [0] name, [1] baseUrl, [2] apiKey (selects are excluded by `input.`)
+    await inputs[0].setValue('My Provider')
+    await inputs[1].setValue('https://api.example.com/v1')
+    await inputs[2].setValue('sk-secret')
+
+    await dialogSave(wrapper).trigger('click')
     await flushPromises()
 
     expect(mockPost).toHaveBeenCalledWith('/api/providers', expect.objectContaining({
@@ -144,10 +171,16 @@ describe('ProviderSetting', () => {
       baseUrl: 'https://api.example.com/v1',
       apiKey: 'sk-secret',
     }))
+    // A successful save closes the dialog and reloads the list.
+    expect(wrapper.find('.mock-dialog').exists()).toBe(false)
+    expect(mockGet).toHaveBeenCalledWith('/api/providers')
   })
 
-  it('applies a preset into the form and remembers its catalogue id', async () => {
+  it('applies a preset into the dialog and remembers its catalogue id', async () => {
     const wrapper = mountSetting([])
+    await flushPromises()
+
+    await wrapper.find('.provider-toolbar .fbtn-primary').trigger('click')
     await flushPromises()
 
     await wrapper.find('.provider-preset-trigger').trigger('click')
@@ -157,12 +190,12 @@ describe('ProviderSetting', () => {
     await row!.trigger('click')
     await flushPromises()
 
-    const inputs = wrapper.findAll('.provider-input')
-    expect((inputs[1].element as HTMLInputElement).value).toBe('Preset One')
-    expect((inputs[3].element as HTMLInputElement).value).toBe('https://p1/v1')
+    const inputs = wrapper.find('.mock-dialog').findAll('input.provider-input')
+    expect((inputs[0].element as HTMLInputElement).value).toBe('Preset One')
+    expect((inputs[1].element as HTMLInputElement).value).toBe('https://p1/v1')
 
-    await inputs[4].setValue('sk-1')
-    await wrapper.find('.fbtn-primary').trigger('click')
+    await inputs[2].setValue('sk-1')
+    await dialogSave(wrapper).trigger('click')
     await flushPromises()
     expect(mockPost).toHaveBeenCalledWith('/api/providers', expect.objectContaining({
       name: 'Preset One',
@@ -188,7 +221,7 @@ describe('ProviderSetting', () => {
     expect(mockPost).toHaveBeenCalledWith('/api/catalog', {})
   })
 
-  it('editing sends an empty apiKey (keep) unless clear is ticked', async () => {
+  it('editing opens the dialog prefilled and sends an empty apiKey (keep) unless clear is ticked', async () => {
     const wrapper = mountSetting([
       { id: 7, name: 'Existing', protocol: 'openai', baseUrl: 'https://x/v1', authMode: 'bearer', hasKey: true, agentCount: 0 },
     ])
@@ -196,13 +229,36 @@ describe('ProviderSetting', () => {
 
     await wrapper.findAll('.fbtn').find((b) => b.text().includes('编辑'))!.trigger('click')
     await flushPromises()
-    await wrapper.find('.fbtn-primary').trigger('click')
+
+    const dialog = wrapper.find('.mock-dialog')
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.text()).toContain('编辑模型提供商')
+    const inputs = dialog.findAll('input.provider-input')
+    expect((inputs[0].element as HTMLInputElement).value).toBe('Existing')
+    expect((inputs[1].element as HTMLInputElement).value).toBe('https://x/v1')
+
+    await dialogSave(wrapper).trigger('click')
     await flushPromises()
 
     expect(mockPut).toHaveBeenCalledWith('/api/providers/7', expect.objectContaining({
       apiKey: '',
       clearApiKey: false,
     }))
+  })
+
+  it('keeps the dialog open with the server error when saving fails', async () => {
+    const wrapper = mountSetting([])
+    await flushPromises()
+
+    mockPost.mockRejectedValueOnce(new Error('name already exists'))
+    await wrapper.find('.provider-toolbar .fbtn-primary').trigger('click')
+    await flushPromises()
+    await wrapper.find('.mock-dialog').findAll('input.provider-input')[0].setValue('Dup')
+    await dialogSave(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.mock-dialog').exists()).toBe(true)
+    expect(wrapper.find('.mock-dialog').text()).toContain('name already exists')
   })
 
   it('deletes only after confirmation', async () => {

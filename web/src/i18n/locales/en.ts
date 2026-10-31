@@ -3259,6 +3259,8 @@ export default {
       providerPresetNone: 'No preset',
       providerPresetEmpty: 'No matching provider',
       providerAdd: 'Add provider',
+      providerAddTitle: 'Add model provider',
+      providerEditTitle: 'Edit model provider',
       providerSave: 'Save',
       providerCancel: 'Cancel',
       providerEdit: 'Edit',

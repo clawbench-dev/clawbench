@@ -2,11 +2,18 @@
   <!-- Model set for one provider. The endpoint is the only authority on what it
        serves, so the list comes from its /models probe; when the gateway does
        not publish one we fall back to the catalogue snapshot (the response says
-       which). Anything missing can still be typed in. -->
-  <BottomSheet :open="open" auto @close="close">
+       which). Anything missing can still be typed in.
+       ModalDialog (not BottomSheet) for the same reason as ProviderPresetPicker:
+       it always opens from inside ProviderFormDialog and must paint above it. -->
+  <ModalDialog
+    :open="open"
+    :title="t('settings.items.providerModelsTitle')"
+    :z-index="2600"
+    @close="close"
+  >
     <template #header>
-      <Layers :size="16" class="bs-header-icon" />
-      <span class="bs-header-title">{{ t('settings.items.providerModelsTitle') }}</span>
+      <Layers :size="16" class="modal-header-icon" />
+      <span class="modal-title">{{ t('settings.items.providerModelsTitle') }}</span>
     </template>
 
     <div class="models-picker">
@@ -59,14 +66,14 @@
         <button class="fbtn" :disabled="!custom.trim()" @click="addCustom">{{ t('settings.items.providerModelsAdd') }}</button>
       </div>
     </div>
-  </BottomSheet>
+  </ModalDialog>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, Layers, Search } from 'lucide-vue-next'
-import BottomSheet from '@/components/common/BottomSheet.vue'
+import ModalDialog from '@/components/common/ModalDialog.vue'
 import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 
@@ -166,6 +173,7 @@ function close() {
   flex-direction: column;
   gap: var(--space-3);
   min-height: 0;
+  padding-top: var(--space-4);
 }
 .models-search {
   display: flex;
@@ -259,6 +267,11 @@ function close() {
   gap: var(--space-3);
   padding: var(--space-3) var(--space-6) var(--space-4);
   border-top: 1px solid var(--border-color);
+  /* Pinned: inside a dialog the body is the scroller, and a long list would
+     otherwise push the "add a model id" row out of reach. */
+  position: sticky;
+  bottom: 0;
+  background: var(--bg-secondary);
 }
 .models-custom-input {
   flex: 1;
