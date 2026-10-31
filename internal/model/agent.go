@@ -150,6 +150,12 @@ type Agent struct {
 	// would fail on the next turn).
 	ProviderProtocols []string `json:"providerProtocols,omitempty"`
 
+	// CatalogModels is a runtime-only fallback for agents whose backend has not
+	// reported its model list yet (ACP before the first session). It comes from
+	// the authoritative catalog and is used ONLY to configure a default — the
+	// turn keeps leaving the model to the agent until ACP confirms a list.
+	CatalogModels []AgentModel `json:"catalogModels,omitempty"`
+
 	// ProviderConfigBackend is true when the backend receives its provider by
 	// editing a CLI config file (codex) instead of environment variables. The
 	// settings UI asks for explicit consent before such a binding, and the

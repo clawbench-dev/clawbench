@@ -25,6 +25,7 @@ type providerResponse struct {
 	Protocol   string   `json:"protocol"`
 	BaseURL    string   `json:"baseUrl"`
 	AuthMode   string   `json:"authMode"`
+	PresetID   string   `json:"presetId,omitempty"`
 	HasKey     bool     `json:"hasKey"`
 	AgentCount int      `json:"agentCount"`
 	Agents     []string `json:"agents,omitempty"`
@@ -39,6 +40,7 @@ func toProviderResponse(p *model.Provider, usage map[int64]int, agents []string)
 		Protocol:   p.Protocol,
 		BaseURL:    p.BaseURL,
 		AuthMode:   p.AuthMode,
+		PresetID:   p.PresetID,
 		HasKey:     p.APIKey != "",
 		AgentCount: usage[p.ID],
 		Agents:     agents,
@@ -84,6 +86,7 @@ type providerCreateRequest struct {
 	BaseURL  string `json:"baseUrl"`
 	APIKey   string `json:"apiKey"`
 	AuthMode string `json:"authMode"`
+	PresetID string `json:"presetId"`
 }
 
 func serveProviderCreate(w http.ResponseWriter, r *http.Request) {
@@ -97,6 +100,7 @@ func serveProviderCreate(w http.ResponseWriter, r *http.Request) {
 		BaseURL:  req.BaseURL,
 		APIKey:   req.APIKey,
 		AuthMode: req.AuthMode,
+		PresetID: req.PresetID,
 	})
 	if err != nil {
 		writeProviderError(w, r, err)
@@ -166,6 +170,7 @@ type providerUpdateRequest struct {
 	BaseURL     *string `json:"baseUrl"`
 	APIKey      *string `json:"apiKey"`
 	AuthMode    *string `json:"authMode"`
+	PresetID    *string `json:"presetId"`
 	ClearAPIKey bool    `json:"clearApiKey"`
 }
 
@@ -180,6 +185,7 @@ func serveProviderUpdate(w http.ResponseWriter, r *http.Request, id int64) {
 		BaseURL:     req.BaseURL,
 		APIKey:      req.APIKey,
 		AuthMode:    req.AuthMode,
+		PresetID:    req.PresetID,
 		ClearAPIKey: req.ClearAPIKey,
 	})
 	if err != nil {
@@ -367,8 +373,22 @@ func serveProviderModels(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	models, status, probeErr := probeProviderModels(r.Context(), p)
-	result := map[string]any{jsonKeyModels: models, jsonKeyStatus: status}
-	if probeErr != nil {
+	source := "live"
+	if len(models) == 0 {
+		// The endpoint does not publish a catalog (many Anthropic-compatible
+		// gateways do not). Fall back to the authoritative snapshot so the
+		// picker still has something to offer; the caller sees which it got.
+		if cp := model.CatalogProviderForPreset(p.PresetID); cp != nil {
+			for _, m := range cp.Models {
+				models = append(models, m.ID)
+			}
+			if len(models) > 0 {
+				source = "catalog"
+			}
+		}
+	}
+	result := map[string]any{jsonKeyModels: models, jsonKeyStatus: status, "source": source}
+	if probeErr != nil && len(models) == 0 {
 		result[watchMsgError] = probeErr.Error()
 	}
 	writeJSON(w, http.StatusOK, result)

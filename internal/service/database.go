@@ -1976,6 +1976,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add preset_id to providers — the models.dev id the row was
+	// created from, used to fall back to the authoritative catalog when the
+	// endpoint does not expose /models. Existing rows default to '' (unknown).
+	var hasProviderPresetID int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('providers') WHERE name='preset_id'").Scan(&hasProviderPresetID)
+	if hasProviderPresetID == 0 {
+		if _, err := store.WriteExec("ALTER TABLE providers ADD COLUMN preset_id TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add preset_id to providers: %w", err)
+		}
+	}
+
 	// Migrate: add provider_id column to agents. NULL = use the CLI's own
 	// configuration (no injection); a value points at a row in providers.
 	// Existing agents default to NULL, so nothing changes after the upgrade.

@@ -56,16 +56,22 @@ const i18n = createI18n({
           providerTestHint: '诊断',
           providerTestOk: '连接正常，返回 {count} 个模型',
           providerTestFailed: '连接失败',
+          providerCatalogUpdated: '权威模型目录：{date} · {count} 个供应商',
+          providerCatalogMissing: '尚未获取权威模型目录',
+          providerCatalogStale: '（可能已过期）',
+          providerCatalogRefresh: '刷新目录',
+          providerCatalogRefreshing: '刷新中',
         },
       },
     },
   },
 })
 
-function mountSetting(providers: unknown[]) {
+function mountSetting(providers: unknown[], catalog: unknown = {}) {
   mockGet.mockImplementation((url: string) => {
     if (url === '/api/providers') return Promise.resolve({ providers })
     if (url === '/api/providers/presets') return Promise.resolve({ presets: [{ id: 'p1', name: 'Preset One', protocol: 'openai', baseUrl: 'https://p1/v1' }] })
+    if (url === '/api/catalog') return Promise.resolve(catalog)
     return Promise.resolve({})
   })
   return mount(ProviderSetting, {
@@ -123,7 +129,7 @@ describe('ProviderSetting', () => {
     }))
   })
 
-  it('applies a preset into the form', async () => {
+  it('applies a preset into the form and remembers its catalogue id', async () => {
     const wrapper = mountSetting([])
     await flushPromises()
 
@@ -134,6 +140,32 @@ describe('ProviderSetting', () => {
     const inputs = wrapper.findAll('.provider-input')
     expect((inputs[1].element as HTMLInputElement).value).toBe('Preset One')
     expect((inputs[3].element as HTMLInputElement).value).toBe('https://p1/v1')
+
+    await inputs[4].setValue('sk-1')
+    await wrapper.find('.fbtn-primary').trigger('click')
+    await flushPromises()
+    expect(mockPost).toHaveBeenCalledWith('/api/providers', expect.objectContaining({
+      name: 'Preset One',
+      presetId: 'p1',
+    }))
+  })
+
+  it('shows the catalogue age and count, and refreshes on demand', async () => {
+    const wrapper = mountSetting([], {
+      fetchedAt: '2026-10-31T00:00:00Z',
+      providers: [{ id: 'anthropic' }, { id: 'openai' }],
+      stale: false,
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('2')
+    const refresh = wrapper.findAll('.fbtn').find(b => b.text().includes('刷新目录'))
+    expect(refresh).toBeDefined()
+
+    mockPost.mockResolvedValueOnce({})
+    await refresh!.trigger('click')
+    await flushPromises()
+    expect(mockPost).toHaveBeenCalledWith('/api/catalog', {})
   })
 
   it('editing sends an empty apiKey (keep) unless clear is ticked', async () => {

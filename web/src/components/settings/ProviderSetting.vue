@@ -5,6 +5,22 @@
   <div class="provider-setting">
     <div class="provider-hint">{{ description || t('settings.items.providerDesc') }}</div>
 
+    <!-- Authoritative catalogue status. This snapshot is what supplies model
+         lists when an endpoint has no /models and before an ACP agent reports
+         its own list, so its age is worth showing. -->
+    <div class="provider-catalog">
+      <span class="provider-catalog-text">
+        {{ catalogFetchedAt
+          ? t('settings.items.providerCatalogUpdated', { date: catalogDate, count: catalogCount })
+          : t('settings.items.providerCatalogMissing') }}
+        <span v-if="catalogStale" class="provider-catalog-stale">{{ t('settings.items.providerCatalogStale') }}</span>
+      </span>
+      <button class="fbtn" :disabled="refreshingCatalog" @click="refreshCatalog">
+        <component :is="refreshingCatalog ? Loader2 : RefreshCw" :size="13" :class="{ 'provider-spin': refreshingCatalog }" />
+        {{ refreshingCatalog ? t('settings.items.providerCatalogRefreshing') : t('settings.items.providerCatalogRefresh') }}
+      </button>
+    </div>
+
     <div v-if="providers.length === 0" class="provider-empty">
       {{ t('settings.items.providerEmpty') }}
     </div>
@@ -98,7 +114,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, CheckCircle2, Loader2, Pencil, PlugZap, Trash2 } from 'lucide-vue-next'
+import { AlertCircle, CheckCircle2, Loader2, Pencil, PlugZap, RefreshCw, Trash2 } from 'lucide-vue-next'
 import '@/assets/modal-footer-btn.css'
 import { apiDelete, apiGet, apiPost, apiPut } from '@/utils/api'
 import { useDialog } from '@/composables/useDialog'
@@ -112,6 +128,7 @@ interface ProviderRow {
   protocol: string
   baseUrl: string
   authMode: string
+  presetId?: string
   hasKey: boolean
   agentCount: number
 }
@@ -142,6 +159,18 @@ const draft = reactive({
   baseUrl: '',
   apiKey: '',
   authMode: 'auto',
+  presetId: '',
+})
+
+// Authoritative catalogue state (models.dev snapshot).
+const catalogFetchedAt = ref('')
+const catalogCount = ref(0)
+const catalogStale = ref(true)
+const refreshingCatalog = ref(false)
+const catalogDate = computed(() => {
+  if (!catalogFetchedAt.value) return ''
+  const d = new Date(catalogFetchedAt.value)
+  return Number.isNaN(d.getTime()) ? catalogFetchedAt.value : d.toLocaleDateString()
 })
 
 const canSave = computed(() => draft.name.trim() !== '')
@@ -152,6 +181,7 @@ function resetDraft() {
   draft.baseUrl = ''
   draft.apiKey = ''
   draft.authMode = 'auto'
+  draft.presetId = ''
   presetId.value = ''
   clearKey.value = false
   editingId.value = null
@@ -185,6 +215,7 @@ function applyPreset() {
   draft.name = preset.name
   draft.protocol = preset.protocol
   draft.baseUrl = preset.baseUrl
+  draft.presetId = preset.id
 }
 
 async function saveDraft() {
@@ -199,6 +230,7 @@ async function saveDraft() {
         baseUrl: draft.baseUrl.trim(),
         apiKey: draft.apiKey,
         authMode: draft.authMode,
+        presetId: draft.presetId,
       })
     } else {
       await apiPut(`/api/providers/${editingId.value}`, {
@@ -228,6 +260,7 @@ function startEdit(p: ProviderRow) {
   draft.protocol = p.protocol
   draft.baseUrl = p.baseUrl
   draft.authMode = p.authMode || 'auto'
+  draft.presetId = p.presetId || ''
   draft.apiKey = ''
 }
 
@@ -272,9 +305,35 @@ async function testProvider(p: ProviderRow) {
   }
 }
 
+async function loadCatalog() {
+  try {
+    const data = await apiGet<{ fetchedAt?: string; providers?: unknown[]; stale?: boolean }>('/api/catalog')
+    catalogFetchedAt.value = data.fetchedAt ?? ''
+    catalogCount.value = data.providers?.length ?? 0
+    catalogStale.value = data.stale ?? true
+  } catch (err) {
+    appLog.w('ProviderSetting', 'load catalog status failed', err)
+  }
+}
+
+async function refreshCatalog() {
+  if (refreshingCatalog.value) return
+  refreshingCatalog.value = true
+  error.value = ''
+  try {
+    await apiPost('/api/catalog', {})
+    await loadCatalog()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    refreshingCatalog.value = false
+  }
+}
+
 onMounted(() => {
   void loadProviders()
   void loadPresets()
+  void loadCatalog()
 })
 </script>
 
@@ -289,6 +348,22 @@ onMounted(() => {
   font-size: var(--text-sm);
   color: var(--text-secondary);
   line-height: 1.5;
+}
+.provider-catalog {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(8 * var(--dp));
+  padding: calc(4 * var(--dp)) 0;
+  border-bottom: 1px dashed var(--border-primary);
+}
+.provider-catalog-text {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.provider-catalog-stale {
+  margin-left: calc(6 * var(--dp));
+  color: var(--warning, var(--text-secondary));
 }
 .provider-empty {
   font-size: var(--text-sm);

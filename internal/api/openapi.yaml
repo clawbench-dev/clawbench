@@ -5232,6 +5232,29 @@ paths:
         "200":
           description: 操作结果
 
+  /api/catalog:
+    get:
+      tags: [Providers]
+      summary: 权威模型目录状态
+      description: |
+        返回 `{fetchedAt, source, stale, providers:[{id,name,protocol,modelCount}]}`。
+        目录来自 models.dev 快照，仅用于「ACP 尚未上报模型」时的默认模型配置与
+        摘要模型选择；ACP 上报的模型始终优先。
+      operationId: catalogStatus
+      responses:
+        "200":
+          description: 目录状态（快照不存在时 providers 为空、stale=true）
+    post:
+      tags: [Providers]
+      summary: 刷新权威模型目录
+      description: 立即重新下载并替换快照（约 6 MB，超时 90 秒）。失败返回 502 与原因，旧快照保持不变。
+      operationId: catalogRefresh
+      responses:
+        "200":
+          description: 刷新后的目录状态
+        "502":
+          description: 下载或解析失败
+
   /api/providers:
     get:
       tags: [Providers]

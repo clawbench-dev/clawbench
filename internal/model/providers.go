@@ -40,6 +40,10 @@ type Provider struct {
 	BaseURL  string `json:"baseUrl"`
 	APIKey   string `json:"-"`
 	AuthMode string `json:"authMode"`
+	// PresetID is the models.dev provider id this row was created from ("" for
+	// a hand-written endpoint). It is the only reliable link from a user row to
+	// the authoritative catalog: ids there are provider keys, not hosts.
+	PresetID string `json:"presetId,omitempty"`
 
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
@@ -54,6 +58,7 @@ func (p Provider) Normalized() Provider {
 	p.BaseURL = strings.TrimSpace(p.BaseURL)
 	p.APIKey = strings.TrimSpace(p.APIKey)
 	p.AuthMode = strings.ToLower(strings.TrimSpace(p.AuthMode))
+	p.PresetID = strings.TrimSpace(p.PresetID)
 	if p.AuthMode == "" {
 		p.AuthMode = ProviderAuthAuto
 	}

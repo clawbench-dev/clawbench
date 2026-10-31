@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS providers (
 	base_url TEXT NOT NULL DEFAULT '',
 	api_key TEXT NOT NULL DEFAULT '',
 	auth_mode TEXT NOT NULL DEFAULT 'auto',
+	preset_id TEXT NOT NULL DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -56,6 +57,7 @@ type ProviderPatch struct {
 	APIKey      *string
 	ClearAPIKey bool
 	AuthMode    *string
+	PresetID    *string
 }
 
 // LoadProvidersIntoMemory loads every provider row into the in-memory snapshot
@@ -70,7 +72,7 @@ func LoadProvidersIntoMemory() error {
 }
 
 func listProvidersFromDB(db dbutil.Reader) ([]*model.Provider, error) {
-	rows, err := db.Query(`SELECT id, name, protocol, base_url, api_key, auth_mode,
+	rows, err := db.Query(`SELECT id, name, protocol, base_url, api_key, auth_mode, preset_id,
 		created_at, updated_at FROM providers`)
 	if err != nil {
 		return nil, fmt.Errorf("query providers: %w", err)
@@ -81,7 +83,7 @@ func listProvidersFromDB(db dbutil.Reader) ([]*model.Provider, error) {
 	for rows.Next() {
 		p := &model.Provider{}
 		var createdAt, updatedAt sql.NullString
-		if err := rows.Scan(&p.ID, &p.Name, &p.Protocol, &p.BaseURL, &p.APIKey, &p.AuthMode, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Protocol, &p.BaseURL, &p.APIKey, &p.AuthMode, &p.PresetID, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan provider: %w", err)
 		}
 		p.CreatedAt = createdAt.String
@@ -100,9 +102,9 @@ func ListProviders() ([]*model.Provider, error) {
 func GetProvider(id int64) (*model.Provider, error) {
 	p := &model.Provider{}
 	var createdAt, updatedAt sql.NullString
-	err := store.ReadDB().QueryRow(`SELECT id, name, protocol, base_url, api_key, auth_mode,
+	err := store.ReadDB().QueryRow(`SELECT id, name, protocol, base_url, api_key, auth_mode, preset_id,
 		created_at, updated_at FROM providers WHERE id = ?`, id).
-		Scan(&p.ID, &p.Name, &p.Protocol, &p.BaseURL, &p.APIKey, &p.AuthMode, &createdAt, &updatedAt)
+		Scan(&p.ID, &p.Name, &p.Protocol, &p.BaseURL, &p.APIKey, &p.AuthMode, &p.PresetID, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrProviderNotFound
 	}
@@ -125,8 +127,8 @@ func CreateProvider(p model.Provider) (*model.Provider, error) {
 		return nil, ErrProviderNameTaken
 	}
 
-	res, err := store.WriteExec(`INSERT INTO providers (name, protocol, base_url, api_key, auth_mode)
-		VALUES (?, ?, ?, ?, ?)`, p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode)
+	res, err := store.WriteExec(`INSERT INTO providers (name, protocol, base_url, api_key, auth_mode, preset_id)
+		VALUES (?, ?, ?, ?, ?, ?)`, p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.PresetID)
 	if err != nil {
 		if isUniqueConstraint(err) {
 			return nil, ErrProviderNameTaken
@@ -176,8 +178,8 @@ func UpdateProvider(id int64, patch ProviderPatch) (*model.Provider, error) {
 	}
 
 	if _, werr := store.WriteExec(`UPDATE providers SET name = ?, protocol = ?, base_url = ?,
-		api_key = ?, auth_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		next.Name, next.Protocol, next.BaseURL, next.APIKey, next.AuthMode, id); werr != nil {
+		api_key = ?, auth_mode = ?, preset_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		next.Name, next.Protocol, next.BaseURL, next.APIKey, next.AuthMode, next.PresetID, id); werr != nil {
 		if isUniqueConstraint(werr) {
 			return nil, ErrProviderNameTaken
 		}
@@ -213,6 +215,9 @@ func applyProviderPatch(current model.Provider, patch ProviderPatch) model.Provi
 	}
 	if patch.AuthMode != nil {
 		next.AuthMode = *patch.AuthMode
+	}
+	if patch.PresetID != nil {
+		next.PresetID = *patch.PresetID
 	}
 	if patch.ClearAPIKey {
 		next.APIKey = ""

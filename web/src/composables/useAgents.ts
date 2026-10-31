@@ -91,6 +91,12 @@ interface AgentRecord {
   providerProtocols?: string[]
   /** True when the provider is applied by editing the CLI's config file (needs consent). */
   providerConfigBackend?: boolean
+  /**
+   * Catalogue models shown while the backend has not reported its own list
+   * (ACP before the first session). Configuration only — the turn keeps letting
+   * the agent pick until ACP confirms.
+   */
+  catalogModels?: Array<{ id: string; name: string; default: boolean }>
   /** Derived usage counts from GET /api/agents (not persisted). */
   sessionCount?: number
   taskCount?: number

@@ -247,7 +247,23 @@ func gateUnconfirmedACPModels(a *model.Agent) *model.Agent {
 	clone := *a
 	clone.CLIModels = a.Models
 	clone.Models = []model.AgentModel{}
+	clone.CatalogModels = catalogModelsForAgent(a)
 	return &clone
+}
+
+// catalogModelsForAgent resolves the catalog list for an agent that has not
+// reported models yet. It requires a bound provider created from a preset: the
+// catalog is keyed by models.dev provider ids, and a hand-written endpoint
+// has no reliable way to say which entry it corresponds to.
+func catalogModelsForAgent(a *model.Agent) []model.AgentModel {
+	if a.ProviderID == nil {
+		return nil
+	}
+	provider := model.GetProvider(*a.ProviderID)
+	if provider == nil || provider.PresetID == "" {
+		return nil
+	}
+	return model.CatalogModelsForPreset(provider.PresetID)
 }
 
 func serveAgentsGet(w http.ResponseWriter, r *http.Request) {

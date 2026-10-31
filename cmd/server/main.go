@@ -1307,6 +1307,14 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		slog.Error("failed to load model providers", "error", err)
 	}
 
+	// Authoritative model catalogue: load the last snapshot synchronously (so a
+	// cold start still has a list) and refresh in the background when it is
+	// missing or stale. Nothing on the turn path waits for the download.
+	if err := model.LoadCatalogFromDisk(); err != nil {
+		slog.Warn("failed to load model catalog snapshot", "error", err)
+	}
+	model.RefreshCatalogIfStale()
+
 	// The shared summary model is configured by referencing a provider. Turn a
 	// legacy ai_summary endpoint into a providers row once, before anything can
 	// read the config (a failed write leaves the legacy fallback working).

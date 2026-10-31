@@ -389,13 +389,19 @@ const items = computed<AgentItem[]>(() => {
     type: 'switch',
   })
 
-  // Preferred Model
-  if (a.models && a.models.length > 0) {
+  // Preferred Model. Before an ACP agent reports its list there is nothing to
+  // pick from, so the authoritative catalogue stands in — clearly marked, since
+  // the ids are not confirmed to run until the agent connects.
+  const modelChoices = a.models && a.models.length > 0 ? a.models : (a.catalogModels ?? [])
+  const usingCatalogModels = (!a.models || a.models.length === 0) && modelChoices.length > 0
+  if (modelChoices.length > 0) {
     result.push({
       key: 'preferred_model',
       label: t('settings.items.agentPreferredModel'),
+      description: usingCatalogModels ? t('settings.items.agentCatalogModelsDesc') : undefined,
+      note: usingCatalogModels ? t('settings.items.agentCatalogModelsNote') : undefined,
       type: 'select',
-      options: a.models.map((m: { name: string; id: string }) => ({
+      options: modelChoices.map((m: { name: string; id: string }) => ({
         label: m.name || m.id,
         value: m.id,
         modelName: m.name || m.id,

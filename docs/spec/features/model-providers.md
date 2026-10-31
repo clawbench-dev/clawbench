@@ -80,6 +80,20 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 - 同一后端全局只能绑定一个提供商：冲突返回 409 `ProviderConfigConflict`。
 - 解绑/删除/启动对账（`ReconcileProviderConfigs`）会移除托管块并恢复原始值。
 
+## 权威模型目录（快照）
+
+来源：`https://models.dev/api.json`（OpenCode 同源），约 6 MB，234 个供应商、8900+ 模型。
+
+- 快照落在 `{data-dir}/catalog/models.json`，含 `fetched_at` / `source` / 每个供应商的模型（id、名称、上下文与输出上限）
+- 启动时同步读盘（冷启动也有列表），过期（7 天）或缺文件时**后台**刷新，不阻塞启动
+- `GET /api/catalog` 返回状态（供应商数、时间、是否过期）；`POST /api/catalog` 立即刷新
+- 映射靠 `providers.preset_id`：从预设创建的 provider 记住 models.dev 的供应商 id；手填端点没有映射，不会误用别人的目录
+
+**优先级**：ACP 上报的模型 > 目录。目录只在两个地方出现：
+
+1. 提供商 `/models` 探测失败或返回空时，`GET /api/providers/{id}/models` 用目录兜底（响应 `source: "catalog"`）
+2. ACP 智能体尚未上报模型时，`/api/agents` 额外返回 `catalogModels`，设置页用它预填默认模型；回合仍不指定模型，等 ACP 确认后才生效
+
 ## AI 摘要（共享摘要模型）
 
 语音摘要、推荐回复、会话自动命名与 `/btw` 共用 `ai_summary` 配置。它不再自带端点与密钥，只保存：
