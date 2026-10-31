@@ -783,6 +783,7 @@ import { forgeTargetItemKey } from './composables/useForge.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData, attachDragTargets } from './utils/attachDrag'
 import { readQuoteDragData, hasQuoteDragData } from './utils/quoteDrag'
+import { browserScreenCaptureAvailable } from './utils/screenCaptureSupport'
 import SplitView from './components/common/SplitView.vue'
 import {
   useWideScreenLayout,
@@ -3314,12 +3315,16 @@ const overflowTabs = computed(() =>
     terminalDisabled: isTerminalDisabled.value,
     portForwardUnavailable: isPortForwardUnavailable.value,
     forgeHidden: isForgeTabHidden.value,
-    // Screen capture is a native capability: a browser tab cannot start a
-    // share, so the tab would only ever show "unsupported". Android qualifies
-    // too — it captures through MediaProjection instead of getDisplayMedia
-    // (see composables/androidScreenCapture.ts), so the gate is "can this host
-    // capture at all", not "is this the desktop shell".
-    liveUnavailable: !isDesktopApp.value && !getNative()?.startScreenCapture,
+    // The gate is "can this host capture at all", not "is this the desktop
+    // shell". Android qualifies through MediaProjection (see
+    // composables/androidScreenCapture.ts), and a browser qualifies when it
+    // exposes getDisplayMedia — which it only does in a secure context, so an
+    // install opened over plain HTTP still hides the tab instead of offering a
+    // button that could only fail.
+    liveUnavailable:
+      !isDesktopApp.value &&
+      !getNative()?.startScreenCapture &&
+      !browserScreenCaptureAvailable(),
   }),
 )
 

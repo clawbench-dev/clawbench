@@ -58,8 +58,8 @@
     <div class="live-panel__body live-dialog" :class="{ 'live-panel__body--fill': fillTab }">
       <!-- Idle: pick a source and options, then start. -->
       <template v-if="share.state.value === 'idle' && phase !== 'minutes'">
-        <div v-if="!supported" class="live-dialog-warn">
-          {{ hasNativeCapture ? t('liveShare.unsupported') : t('liveShare.captureNeedsClient') }}
+        <div v-if="!supported" class="live-dialog-warn" data-role="capture-unsupported">
+          {{ unsupportedHint }}
         </div>
 
         <template v-else>
@@ -73,8 +73,8 @@
           <div v-else-if="loadingSources" class="live-dialog-hint">
             <LoadingIndicator size="sm" inline />
           </div>
-          <div v-else-if="captureSources.length === 0" class="live-dialog-hint">
-            {{ t('liveShare.noSources') }}
+          <div v-else-if="captureSources.length === 0" class="live-dialog-hint" data-role="no-sources">
+            {{ browserCapture ? t('liveShare.browserCaptureHint') : t('liveShare.noSources') }}
           </div>
           <div v-else class="live-source-grid">
             <button
@@ -124,12 +124,11 @@
             {{ t('liveShare.notes.enableHint') }}
           </div>
 
-          <!-- Joining someone else's share from the desktop client. In a
-               browser the same link works, but without screen capture (no
-               secure context over plain HTTP) and without remote control.
-               Android has no `openShareLink` bridge: the entry would only ever
-               answer "unsupported", so it is not offered there. -->
-          <template v-if="!isAndroidCapture">
+          <!-- Joining someone else's share opens a second window through the
+               desktop shell. A browser has no such bridge — the same link just
+               goes in a new tab — so the entry is omitted rather than shown
+               with a button that can only answer "unsupported". -->
+          <template v-if="canOpenShareLink">
             <div class="live-dialog-section">{{ t('liveShare.joinTitle') }}</div>
             <div class="live-dialog-hint">{{ t('liveShare.joinHint') }}</div>
             <div class="live-join">
@@ -545,7 +544,8 @@
           v-if="share.state.value === 'idle' && supported"
           class="fbtn fbtn-primary"
           type="button"
-          :disabled="!selectedSourceId || starting"
+          data-action="start-share"
+          :disabled="starting || (hasNativeCapture ? !selectedSourceId : !browserCapture)"
           @click="onStart"
         >
           {{ starting ? t('liveShare.starting') : t('liveShare.start') }}
@@ -589,6 +589,10 @@ import { groupNoteSegments, useLiveNotes } from '@/composables/useLiveNotes'
 import { useScreenWindow } from '@/composables/useScreenWindow'
 import { getNative } from '@/utils/clawbenchNative'
 import { resolveRemoteControlSupport } from '@/utils/remoteControlSupport'
+import {
+  browserScreenCaptureAvailable,
+  isInsecureCaptureContext,
+} from '@/utils/screenCaptureSupport'
 import LiveAnnotateOverlay from '@/share/LiveAnnotateOverlay.vue'
 import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
 import { parseControlMessage, toInjectorEvent, type ControlMessage } from '@/share/liveControl'
@@ -623,11 +627,35 @@ const hasNativeCapture = computed(() =>
   Boolean(getNative()?.listCaptureSources || getNative()?.startScreenCapture),
 )
 /**
+ * Whether the page itself can capture (secure context + `getDisplayMedia`).
+ *
+ * A browser has no source list to show — its own picker is the source choice —
+ * so this flag also decides whether the setup form can skip the tile grid and
+ * still offer "start".
+ */
+const browserCapture = browserScreenCaptureAvailable()
+/** Can this host capture at all, by either mechanism? */
+const canCapture = computed(() => hasNativeCapture.value || browserCapture)
+/**
+ * Why capture is missing, in the user's terms. Three different situations were
+ * previously answered with one message, which sent two thirds of them looking
+ * in the wrong place.
+ */
+const unsupportedHint = computed(() => {
+  if (hasNativeCapture.value) return t('liveShare.unsupported')
+  if (isInsecureCaptureContext()) return t('liveShare.insecureContext')
+  return t('liveShare.captureNeedsClient')
+})
+/**
  * Android captures through MediaProjection rather than getDisplayMedia, which
  * changes the UI in two places: there is exactly one (system-chosen) source, so
  * the picker and the mid-share swap are meaningless.
  */
 const isAndroidCapture = computed(() => Boolean(getNative()?.startScreenCapture))
+/** Opening a share link spawns a second window, which only the desktop shell can do. */
+const canOpenShareLink = computed(
+  () => !isAndroidCapture.value && Boolean(getNative()?.openShareLink),
+)
 /** Sentinel source id for the Android path; never rendered as a tile. */
 const ANDROID_SOURCE_ID = 'android:screen'
 const loadingSources = ref(false)
@@ -827,6 +855,15 @@ async function joinShare(): Promise<void> {
 }
 
 async function openSwitch(): Promise<void> {
+  // A browser has no source list to offer: every switch is another system
+  // picker, so invoking it is the whole interaction.
+  if (!hasNativeCapture.value) {
+    switchingBusy.value = true
+    const ok = await share.switchSource('')
+    switchingBusy.value = false
+    if (!ok) toast.show(t('liveShare.switchSourceFailed'), { type: 'error', icon: 'warning' })
+    return
+  }
   switching.value = !switching.value
   if (switching.value && captureSources.value.length === 0) await loadSources()
 }
@@ -904,11 +941,10 @@ async function loadSources(): Promise<void> {
     // Default the audio toggle to the platform's capability rather than off:
     // on Windows sharing the system sound is the common case.
     withSystemAudio.value = sysAudio
+    // A browser shows no tiles (its picker is the source choice), so the empty
+    // list must not read as "nothing to share".
     supported.value =
-      hasNativeCapture.value &&
-      (captureSources.value.length > 0 ||
-        sysAudio ||
-        Boolean(navigator.mediaDevices?.getDisplayMedia))
+      canCapture.value && (captureSources.value.length > 0 || sysAudio || browserCapture)
     if (!selectedSourceId.value && captureSources.value.length > 0) {
       // Prefer a full screen over a window: sharing a window is the exception.
       const screen = captureSources.value.find((s) => s.kind === 'screen')

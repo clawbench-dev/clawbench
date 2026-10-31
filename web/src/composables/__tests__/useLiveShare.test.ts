@@ -38,6 +38,8 @@ class FakeTrack {
   kind: string
   id: string
   stopped = false
+  /** What the browser reports about the surface it captured (displaySurface). */
+  settings: Record<string, unknown> = {}
   private endedHandlers: Array<() => void> = []
   constructor(kind: string, id: string) {
     this.kind = kind
@@ -45,6 +47,9 @@ class FakeTrack {
   }
   stop() {
     this.stopped = true
+  }
+  getSettings() {
+    return this.settings
   }
   addEventListener(ev: string, fn: () => void) {
     if (ev === 'ended') this.endedHandlers.push(fn)
@@ -417,14 +422,42 @@ describe('start', () => {
     expect(bridge.setPendingCaptureSource).not.toHaveBeenCalledWith('screen:1:0', expect.anything())
   })
 
-  it('fails when the host cannot declare a capture source', async () => {
+  it('captures through the browser picker when the host has no capture bridge', async () => {
+    // A plain web page: no IPC at all. The browser's own picker replaces both
+    // the source list and the declaration step.
     const native = await import('@/utils/clawbenchNative')
     const spy = vi.spyOn(native, 'getNative').mockReturnValue({} as never)
+    const track = new FakeTrack('video', 'browser-1')
+    track.settings = { displaySurface: 'monitor' }
+    const stream = new FakeStream([track, new FakeTrack('audio', 'sys-1')])
+    const gdm = (navigator as unknown as { mediaDevices: { getDisplayMedia: ReturnType<typeof vi.fn> } })
+      .mediaDevices.getDisplayMedia
+    gdm.mockResolvedValueOnce(stream)
+
+    const { share, ok } = await startSharing()
+
+    expect(ok).toBe(true)
+    expect(share.state.value).toBe('publishing')
+    expect(gdm).toHaveBeenCalledTimes(1)
+    expect(bridge.setPendingCaptureSource).not.toHaveBeenCalledWith('screen:1:0', expect.anything())
+    // The source id is meaningless here; the captured surface is what decides
+    // whether remote control could ever map the pointer onto the desktop.
+    expect(share.captureKind.value).toBe('screen')
+    spy.mockRestore()
+  })
+
+  it('fails when the page has no getDisplayMedia (insecure origin or mobile browser)', async () => {
+    const native = await import('@/utils/clawbenchNative')
+    const spy = vi.spyOn(native, 'getNative').mockReturnValue({} as never)
+    // `mediaDevices` exists for the microphone on Android Chrome, but screen
+    // capture was never implemented there — the method is the real gate.
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn() } })
 
     const { share, ok } = await startSharing()
 
     expect(ok).toBe(false)
     expect(share.state.value).toBe('idle')
+    expect(share.error.value).toContain('screen capture is unavailable')
     spy.mockRestore()
   })
 
@@ -764,9 +797,22 @@ describe('getAudioCaptureSupport', () => {
     expect(await getAudioCaptureSupport()).toBe(true)
   })
 
-  it('defaults to false when unsupported', async () => {
+  it('falls back to the browser when the host has no probe', async () => {
     const native = await import('@/utils/clawbenchNative')
     const spy = vi.spyOn(native, 'getNative').mockReturnValue({} as never)
+    const { getAudioCaptureSupport } = await import('../useLiveShare')
+
+    // A browser cannot pre-check: what comes with the picture is decided in its
+    // own picker. Reporting false here would disable the toggle on every web
+    // install even though Chrome does share tab/system audio.
+    expect(await getAudioCaptureSupport()).toBe(true)
+    spy.mockRestore()
+  })
+
+  it('reports false when the page cannot capture at all', async () => {
+    const native = await import('@/utils/clawbenchNative')
+    const spy = vi.spyOn(native, 'getNative').mockReturnValue({} as never)
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn() } })
     const { getAudioCaptureSupport } = await import('../useLiveShare')
 
     expect(await getAudioCaptureSupport()).toBe(false)
@@ -949,6 +995,31 @@ describe('switchSource', () => {
     // The new stream must become the session's stream, otherwise resetSession()
     // never stops it and the capture indicator stays on after "end share".
     expect(share.captureKind.value).toBe('window')
+  })
+
+  it('re-opens the browser picker when there is no source list to choose from', async () => {
+    const native = await import('@/utils/clawbenchNative')
+    const spy = vi.spyOn(native, 'getNative').mockReturnValue({} as never)
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+
+    const nextTrack = new FakeTrack('video', 'browser-2')
+    nextTrack.settings = { displaySurface: 'window' }
+    const nextStream = new FakeMediaStream([nextTrack])
+    const gdm = (navigator as unknown as { mediaDevices: { getDisplayMedia: ReturnType<typeof vi.fn> } })
+      .mediaDevices.getDisplayMedia
+    gdm.mockResolvedValueOnce(nextStream)
+    // The reset helper clears the declaration with '', so start counting after.
+    bridge.setPendingCaptureSource.mockClear()
+
+    const ok = await share.switchSource('')
+
+    expect(ok).toBe(true)
+    // Nothing to declare: the second picker call IS the switch.
+    expect(bridge.setPendingCaptureSource).not.toHaveBeenCalled()
+    expect(FakePC.instances[0].transceivers[1].sender.replaceTrack).toHaveBeenCalledWith(nextTrack)
+    expect(share.captureKind.value).toBe('window')
+    spy.mockRestore()
   })
 
   it('clears the one-shot capture declaration when the switch fails', async () => {

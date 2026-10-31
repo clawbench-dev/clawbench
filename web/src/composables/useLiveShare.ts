@@ -22,6 +22,7 @@ import {
 } from '@/share/liveControl'
 import { useLiveNotes } from './useLiveNotes'
 import { acquireMic, describeMicError, logMicEnv } from '@/utils/micCapture'
+import { browserScreenCaptureAvailable } from '@/utils/screenCaptureSupport'
 import { startAndroidScreenCapture, type AndroidCaptureHandle } from './androidScreenCapture'
 
 const TAG = 'LiveShare'
@@ -260,7 +261,12 @@ export async function listCaptureSources(): Promise<CaptureSource[]> {
 /** Whether this host can capture system (loopback) audio. */
 export async function getAudioCaptureSupport(): Promise<boolean> {
   const bridge = getNative()
-  if (!bridge?.getAudioCaptureSupport) return false
+  // A browser has no capability probe: what comes with the picture is decided
+  // by the user in the picker (Chrome offers audio for a tab or the entire
+  // screen, never for a single window). Asking anyway is harmless — an
+  // unavailable track simply never arrives — so the toggle stays usable
+  // instead of being permanently disabled on every web install.
+  if (!bridge?.getAudioCaptureSupport) return browserScreenCaptureAvailable()
   try {
     const raw = await bridge.getAudioCaptureSupport()
     const parsed = JSON.parse(raw) as { systemAudio?: boolean }
@@ -268,6 +274,19 @@ export async function getAudioCaptureSupport(): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/**
+ * What the captured picture actually is, as far as remote control cares.
+ *
+ * A browser does not name its sources; it reports the surface it ended up
+ * capturing. Only `monitor` means "this is the desktop" — a window or a tab
+ * puts the pointer somewhere other than where the fraction of the screen says.
+ */
+function captureKindOf(stream: MediaStream): 'screen' | 'window' {
+  const track = stream.getVideoTracks()[0]
+  const settings = track?.getSettings?.() as { displaySurface?: string } | undefined
+  return settings?.displaySurface === 'monitor' ? 'screen' : 'window'
 }
 
 export function useLiveShare() {
@@ -318,12 +337,15 @@ export function useLiveShare() {
       shareUrl.value = shareLinks.value[0]?.url ?? window.location.origin + `/share/${data.token}`
       title.value = opts.shareTitle ?? ''
 
-      // 2. Capture. Two hosts, two mechanisms:
+      // 2. Capture. Three hosts, two mechanisms:
       //    - Electron declares a source and answers getDisplayMedia with it.
       //    - Android has no getDisplayMedia at all, so it runs a native
       //      MediaProjection session and hands back a stream built from its
-      //      frames (see androidScreenCapture.ts). Everything downstream —
-      //      mixing, peers, notes, the room — is identical.
+      //      frames (see androidScreenCapture.ts).
+      //    - A plain browser has no declaration step: its own picker IS the
+      //      source choice, so it calls getDisplayMedia directly.
+      //    Everything downstream — mixing, peers, notes, the room — is
+      //    identical for all three.
       const bridge = getNative()
       systemAudioWanted = opts.systemAudio
       if (bridge?.startScreenCapture) {
@@ -342,7 +364,11 @@ export function useLiveShare() {
         displayStream = androidCapture.stream
         captureKind.value = 'screen'
       } else {
-        if (!bridge?.setPendingCaptureSource) {
+        // Both remaining hosts end in getDisplayMedia. Missing here means an
+        // insecure origin (no `mediaDevices` at all) or a mobile browser that
+        // never implemented it — neither can be worked around in the page.
+        const capture = navigator.mediaDevices?.getDisplayMedia
+        if (!capture) {
           fail('screen capture is unavailable on this host')
           // The room already exists at this point. Leaving it behind would burn a
           // slot in maxLiveRooms forever (nothing else deletes a room that never
@@ -350,12 +376,16 @@ export function useLiveShare() {
           await stop()
           return false
         }
-        await bridge.setPendingCaptureSource(opts.sourceId, opts.systemAudio)
-        captureKind.value = opts.sourceId.startsWith('screen:') ? 'screen' : 'window'
-        displayStream = await navigator.mediaDevices.getDisplayMedia({
+        const declare = bridge?.setPendingCaptureSource
+        if (declare && bridge) {
+          await declare.call(bridge, opts.sourceId, opts.systemAudio)
+          captureKind.value = opts.sourceId.startsWith('screen:') ? 'screen' : 'window'
+        }
+        displayStream = await capture.call(navigator.mediaDevices, {
           video: true,
           audio: opts.systemAudio,
         })
+        if (!declare) captureKind.value = captureKindOf(displayStream)
       }
       previewStream.value = displayStream
       outVideoTrack = displayStream.getVideoTracks()[0] ?? null
@@ -409,8 +439,9 @@ export function useLiveShare() {
       await openSocket()
 
       // 6. Keep the renderer unthrottled: a minimized window otherwise throttles
-      //    the encoder and the stream stalls for every viewer.
-      void bridge.setPublishingActive?.(true)
+      //    the encoder and the stream stalls for every viewer. A browser has no
+      //    such switch — it also has no window to minimize into the tray.
+      void bridge?.setPublishingActive?.(true)
 
       state.value = 'publishing'
       return true
@@ -704,13 +735,17 @@ export function useLiveShare() {
   async function switchSource(sourceId: string): Promise<boolean> {
     if (state.value !== 'publishing') return false
     const bridge = getNative()
-    if (!bridge?.setPendingCaptureSource) {
+    const declare = bridge?.setPendingCaptureSource
+    // A browser re-opens its own picker on every call, which is exactly the
+    // interaction "switch source" means there — `sourceId` is unused.
+    const capture = navigator.mediaDevices?.getDisplayMedia
+    if (!capture) {
       fail('screen capture is unavailable on this host')
       return false
     }
     try {
-      await bridge.setPendingCaptureSource(sourceId, systemAudioWanted)
-      const next = await navigator.mediaDevices.getDisplayMedia({
+      if (declare && bridge) await declare.call(bridge, sourceId, systemAudioWanted)
+      const next = await capture.call(navigator.mediaDevices, {
         video: true,
         // Audio stays with the original capture: switching the picture must not
         // silently change what the meeting hears.
@@ -721,7 +756,9 @@ export function useLiveShare() {
         fail('no video track captured')
         return false
       }
-      captureKind.value = sourceId.startsWith('screen:') ? 'screen' : 'window'
+      captureKind.value = declare
+        ? sourceId.startsWith('screen:') ? 'screen' : 'window'
+        : captureKindOf(next)
       const previousStream = displayStream
       const previous = outVideoTrack
       outVideoTrack = track
@@ -747,7 +784,7 @@ export function useLiveShare() {
       // The declaration is one-shot; leaving it armed would let the NEXT
       // getDisplayMedia (e.g. a viewer starting a share) capture this source
       // without a picker.
-      void bridge.setPendingCaptureSource('', false)
+      void bridge?.setPendingCaptureSource?.('', false)
       fail('switch source failed')
       return false
     }

@@ -4032,6 +4032,10 @@ export default {
       'No screen or window available. Make sure screen recording is allowed (Linux/Wayland needs xdg-desktop-portal).',
     captureNeedsClient:
       'This client cannot capture the screen — update the desktop app, or open this page in it.',
+    insecureContext:
+      'The page is not on a secure origin, so the browser will not expose screen capture. Open it over HTTPS or on localhost, or use the desktop app.',
+    browserCaptureHint:
+      'Start sharing and the browser will ask what to share — pick a screen, a window or a tab. Audio is offered for a tab or the entire screen.',
     includeSystemAudio: 'Include system audio',
     includeMicrophone: 'Include microphone',
     systemAudioUnavailable: 'This platform cannot capture system audio (Windows and Android 10+ only).',

@@ -4024,6 +4024,10 @@ export default {
     entireScreen: '整个屏幕（由系统选择）',
     noSources: '没有可共享的屏幕或窗口。请确认系统已授权屏幕录制（Linux/Wayland 需要 xdg-desktop-portal）。',
     captureNeedsClient: '当前客户端不支持屏幕共享。请更新桌面客户端，或在客户端中打开本页面。',
+    insecureContext:
+      '当前地址不是安全上下文，浏览器不会提供屏幕采集能力。请改用 HTTPS 或 localhost 打开，或使用桌面客户端。',
+    browserCaptureHint:
+      '点「开始共享」后浏览器会弹出选择框，选一个屏幕、窗口或标签页即可。共享标签页或整个屏幕时才能带上声音。',
     includeSystemAudio: '包含系统声音',
     includeMicrophone: '包含麦克风',
     systemAudioUnavailable: '当前平台不支持采集系统声音（Windows 与 Android 10+ 支持）。',

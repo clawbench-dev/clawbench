@@ -127,7 +127,7 @@ talking --set-talk-enabled(false)--> none  （房间开关关闭，连带静音�
 |---|---|
 | 仅同一局域网 | **无 TURN 中继**。跨网段、公网、开客户端隔离的 AP 一律不可用 |
 | mDNS 候选 | 观众端是浏览器、通常无媒体权限，Chromium 会把 host candidate 伪装成 `<uuid>.local`。AP 禁组播则解析失败 |
-| 系统声音仅 Windows / Android 10+ | Electron 的 `loopback` 只支持 Windows；安卓走 AudioPlaybackCapture，且只能录到允许被录制的声音 |
+| 系统声音仅 Windows / Android 10+ / 部分浏览器 | Electron 的 `loopback` 只支持 Windows；安卓走 AudioPlaybackCapture，且只能录到允许被录制的声音；浏览器由选择器决定（Chrome 只在共享标签页或整个屏幕时给音频） |
 | 8 人上限 | 发布端上行 = N × 码率 |
 | 房间是内存态 | 进程重启即失效（语义正确：直播是瞬时的） |
 
@@ -219,6 +219,31 @@ getDisplayMedia
 - 手机**浏览器**（Chrome Android / Safari iOS）不支持共享屏幕，只能看；安卓**App** 内可以发起共享（见下一节）。
 - 开关打开但当前不是安全上下文时，按钮**仍然显示但置灰**并提示需要 HTTPS：直接隐藏会让人以为功能不存在。
 
+## 浏览器发起共享
+
+桌面浏览器（Chrome / Edge / Firefox / Safari 15+）也能当发布端：Dock 的「桌面共享」页签在安全上下文里出现，采集走标准 `getDisplayMedia`。房间、信令、P2P、混音、听记、观众端与客户端完全一致，服务端一行没改。
+
+### 与客户端的三点差异
+
+| 能力 | 桌面客户端 | 浏览器 |
+|---|---|---|
+| 选择共享源 | 先列出屏幕/窗口（带缩略图），再 `setPendingCaptureSource` 声明 | 无列表：`getDisplayMedia` 自带系统选择器 |
+| 中途切换共享源 | 源网格里选一个 | 再调一次 `getDisplayMedia`（等于再弹一次选择器） |
+| 系统声音 | 原生探测 `getAudioCaptureSupport()` | 由选择器决定（Chrome 只在标签页/整个屏幕时提供），开关默认按「支持」显示 |
+| 窗口最小化 | `setPublishingActive` 保活，编码不降频 | 无等价物，标签页被隐藏时可能掉帧 |
+| 被观众远程控制 | Windows 可注入 | ✗（浏览器没有输入注入能力，按钮显示为不支持） |
+
+### 两个实现分支
+
+- **没有源列表就没有「选源」这一步**：`start()` 只在宿主提供 `setPendingCaptureSource` 时才声明源并先校验；否则直接 `getDisplayMedia`。浏览器每次调用都会弹自己的选择器，所以「切换源」在浏览器端就是再调一次，不渲染源网格（`openSwitch()` 按 `hasNativeCapture` 分叉）。
+- **`captureKind` 由 `getSettings().displaySurface` 推导**：`monitor` = 整个屏幕，`window` / `browser` = 窗口或标签页。它只影响远程控制与标注覆盖层：窗口/标签页共享时指针映射到桌面会错位，所以按「非桌面」处理。
+
+### 门槛
+
+- **必须是安全上下文**：`http://192.168.x.x:20000` 下 `navigator.mediaDevices` 是 undefined，页签直接不出现（与之前一致）。要发起就开 HTTPS（见「HTTPS 是硬门槛」的证书说明）或用 localhost。
+- **手机浏览器不支持**：Chrome for Android / Safari iOS 都没有 `getDisplayMedia`，手机端发起仍然只能靠安卓 App。
+- 能力判定集中在 `web/src/utils/screenCaptureSupport.ts`：`getDisplayMedia` 是否存在决定「能不能采」，`isSecureContext` 只用来选提示文案（「需要 HTTPS」而不是「请更新客户端」）。
+
 ## 安卓端发起共享
 
 Android App 也能当发布端：Dock 的「桌面共享」页签在安卓上可用，分享出去的是**手机屏幕 + 系统声音 + 麦克风**。房间、信令、P2P、混音、听记、观众端全部复用桌面那套，服务端一行没改。
@@ -277,7 +302,7 @@ MediaProjection ─▶ VirtualDisplay ─▶ ImageReader ─▶ 缩放 + JPEG
 
 顶栏**没有**听记入口：Dock 页签是唯一入口。共享按钮当初从顶栏搬进 Dock 时留下了一个麦克风按钮占位，后来又被改成「快捷入口」，结果是顶栏出现两个同款按钮、间距被 `margin-left: auto` 平分。现在两个按钮都只在 Dock 里，顶栏右侧回到「主题 → 服务器」这一对（`headerClusterSpacing.test.ts` 钉住这条）。
 
-听记页签的可见性与共享页签**不同**：它只需要 `getUserMedia`，浏览器标签页、桌面端和 **Android App 都能用**（安卓壳已声明 `RECORD_AUDIO` 并在 `onPermissionRequest` 里只授权 `AUDIO_CAPTURE`，与输入框的语音转写同一条权限链）。共享页签在桌面端和 **Android App** 出现，两者的采集都是原生能力（安卓走 MediaProjection，见下一节）；纯浏览器标签页没有采集能力，页签不出现。
+听记页签的可见性与共享页签**不同**：它只需要 `getUserMedia`，浏览器标签页、桌面端和 **Android App 都能用**（安卓壳已声明 `RECORD_AUDIO` 并在 `onPermissionRequest` 里只授权 `AUDIO_CAPTURE`，与输入框的语音转写同一条权限链）。共享页签在桌面端、**Android App** 和**安全上下文里的桌面浏览器**出现：前两者是原生采集（安卓走 MediaProjection），浏览器走 `getDisplayMedia`（见「浏览器发起共享」）；非安全上下文（HTTP 访问）下浏览器没有采集能力，页签不出现。
 
 **单人听记**与会议听记共用这个页签和同一条流水线：不建房间、不生成链接，服务端只生成一个 token 并写入 `live_notes`，之后的分段上传、上下文校对、纪要与产物落盘全部照旧，鉴权依据是那一行而不是房间。
 
@@ -398,6 +423,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 | `web/src/components/live/NotesPanel.vue` | 听记页签：录音区 + 实时转写 + 纪要 + 历史纪要列表 |
 | `web/src/share/liveNotesClient.ts` | 观众端听记轮询 |
 | `web/src/composables/useLiveShare.ts` | 发布端：房间、采集、每观众 PeerConnection |
+| `web/src/utils/screenCaptureSupport.ts` | 浏览器能否采集（`getDisplayMedia` 存在性）与是否非安全上下文，供 Dock 页签门槛与面板提示共用 |
 | `web/src/composables/useLiveMixer.ts` | 混音图（纯逻辑，可单测） |
 | `web/src/share/liveViewer.ts` | 观众端：信令 + 单个 PeerConnection |
 | `web/src/share/LiveShareView.vue` | 观众端页面 |
