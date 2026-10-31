@@ -27,7 +27,7 @@ vi.mock('lucide-vue-next', () => ({
 vi.mock('@/components/common/BottomSheet.vue', () => ({
   default: {
     name: 'BottomSheet',
-    template: '<div class="bottom-sheet" :data-open="open"><slot name="header" /><slot /></div>',
+    template: '<div class="bottom-sheet" :data-open="open"><slot name="header" /><slot /><footer class="bs-footer"><slot name="footer" /></footer></div>',
     props: ['open', 'closeGuard', 'auto', 'title'],
     emits: ['close'],
   },
@@ -148,6 +148,11 @@ vi.mock('@/utils/fileManager', () => ({
 
 vi.mock('@/utils/fileAttachmentUtils', () => ({
   isImageFile: () => false,
+  // The footer renders AttachmentTags (which splits URL/quote chips from file
+  // chips), so the drawer's mock has to answer for those predicates too.
+  isUrlEntry: () => false,
+  isQuoteEntry: () => false,
+  isSafeExternalUrl: () => false,
 }))
 
 vi.mock('@/utils/format', () => ({
@@ -207,7 +212,7 @@ const i18n = createI18n({
           forgetUploadConfirm: 'Remove "{name}" from recent uploads? The file stays in your project.',
         },
       },
-      common: { remove: 'Remove', delete: 'Delete' },
+      common: { remove: 'Remove', delete: 'Delete', cancel: 'Cancel', confirm: 'OK' },
     },
   },
 })
@@ -1353,5 +1358,143 @@ describe('AttachDrawer clear-all (最近上传 / 最近分享 顶部一键清空
 
     await state.handleClearUploads()
     expect(state.clearing.value).toBeNull()
+  })
+})
+
+describe('AttachDrawer footer actions', () => {
+  beforeEach(() => {
+    sharedRecentShares.value = []
+    sharedRecentUploads.value = []
+    mockDialogConfirm.mockReset()
+  })
+
+  it('renders the shared .fbtn pair even with nothing attached', () => {
+    // The footer used to appear only once something was attached, which left
+    // the sheet with no explicit exit at all (the narrow header tap is the
+    // only close affordance and is not discoverable).
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    const buttons = wrapper.findAll('.ad-footer-actions button')
+    expect(buttons.map(b => b.text())).toEqual(['Cancel', 'OK'])
+    // Same pill language as every other dialog footer — not a bespoke button.
+    expect(buttons[0].classes()).toContain('fbtn')
+    expect(buttons[1].classes()).toContain('fbtn')
+    expect(buttons[1].classes()).toContain('fbtn-primary')
+  })
+
+  it('lists the CALLER’s attachments in the footer, not the global chat draft', () => {
+    // The footer is the "selected so far" area. It must describe the list the
+    // caller is editing: the queued-message editor passes its own draft, and
+    // the composable's `attachedFiles` (the global chat draft) shadowed that
+    // prop in the template — so a file picked there was attached but never
+    // showed up in the footer, while the same pick in the chat input did.
+    sharedAttachedFiles.value = [{ path: 'src/chat-draft.ts' }]
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/queued-edit.ts' }] })
+
+    const names = wrapper.findAll('.ad-footer .attachment-filename').map(w => w.text())
+    expect(names).toEqual(['queued-edit.ts'])
+    expect(names).not.toContain('chat-draft.ts')
+  })
+
+  it('follows the caller’s list when it grows (a pick shows up immediately)', async () => {
+    // Same flow as picking a file: the caller appends the new entry, the drawer
+    // re-renders its footer from the prop.
+    sharedAttachedFiles.value = []
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(0)
+
+    await wrapper.setProps({ attachedFiles: [{ path: 'src/picked.ts' }] })
+    expect(wrapper.findAll('.ad-footer .attachment-filename').map(w => w.text()))
+      .toEqual(['picked.ts'])
+  })
+
+  it('confirm just closes (the rows already applied)', async () => {
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/a.ts' }] })
+    await wrapper.findAll('.ad-footer-actions button')[1].trigger('click')
+    expect(wrapper.emitted('close')).toBeTruthy()
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+  })
+
+  it('cancel restores the list the sheet was opened with', async () => {
+    // Rows apply immediately, so Cancel is the only button that can carry a
+    // meaning: detach what this session added, re-attach what it removed.
+    const wrapper = mountDrawer({
+      attachedFiles: [{ path: 'src/keep.ts' }, { path: 'src/removed-dir', isDir: true }],
+    })
+    await wrapper.setProps({
+      attachedFiles: [{ path: 'src/keep.ts' }, { path: 'src/added.ts' }],
+    })
+
+    await wrapper.findAll('.ad-footer-actions button')[0].trigger('click')
+
+    expect((wrapper.emitted('remove-attached') as any[]).map(e => e[0].path))
+      .toEqual(['src/added.ts'])
+    // isDir must survive the round trip: a directory re-attached as a file
+    // would render the wrong icon and send the wrong flag.
+    expect(wrapper.emitted('add-attached')![0]).toEqual(['src/removed-dir', true])
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('cancel is a no-op when nothing was changed', async () => {
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/a.ts' }] })
+    await wrapper.findAll('.ad-footer-actions button')[0].trigger('click')
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('cancel does not resurrect a file deleted from the recent list', async () => {
+    // Deleting detaches the row AND removes the file from disk. Re-adding it
+    // from the snapshot would leave the composer pointing at a missing file.
+    mockDialogConfirm.mockResolvedValue(true)
+    const wrapper = mountDrawer({
+      attachedFiles: [{ path: '.clawbench/uploads/a.png' }],
+    })
+    await getRawState(wrapper).handleDeleteUpload({ path: '.clawbench/uploads/a.png', origin: 'uploads' })
+    await wrapper.setProps({ attachedFiles: [] })
+
+    await wrapper.findAll('.ad-footer-actions button')[0].trigger('click')
+
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+})
+
+describe('AttachDrawer chrome (compact source strip, borderless clear-all)', () => {
+  const source = readFileSync(join(__dirname, '..', 'AttachDrawer.vue'), 'utf8')
+
+  /** Declarations of the first `<selector> {` rule in the SFC. */
+  function declsOf(selector: string): string {
+    const m = source.match(
+      new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}'),
+    )
+    expect(m, `${selector} rule must exist in AttachDrawer.vue`).not.toBeNull()
+    return m![1]
+  }
+
+  it('the three source entries are single-line pills, not stacked blocks', () => {
+    // "Compact but keep the icon and the label": icon and text side by side on
+    // one short row. A column layout with 44px min-height is what made the
+    // strip eat a fifth of the sheet on a phone.
+    const decls = declsOf('.ad-source-btn')
+    expect(decls).not.toMatch(/flex-direction\s*:\s*column/)
+    expect(decls).toMatch(/height\s*:\s*calc\(34 \* var\(--dp\)\)/)
+    expect(decls).toMatch(/border-radius\s*:\s*var\(--radius-sm\)/)
+  })
+
+  it('clear-all is a borderless icon+label button like the other clear-alls', () => {
+    // The bordered pill made it the loudest thing in the sheet while every
+    // other clear-all in the app is a plain text button.
+    const decls = declsOf('.ad-clear-btn')
+    expect(decls).toMatch(/border\s*:\s*none/)
+    expect(decls).toMatch(/background\s*:\s*transparent/)
+    expect(decls).not.toMatch(/--radius-full/)
+  })
+
+  it('clear-all stays muted at rest and only turns red on interaction', () => {
+    expect(declsOf('.ad-clear-btn')).toMatch(/color\s*:\s*var\(--text-muted\)/)
+    const hover = source.match(/\.ad-clear-btn:hover:not\(:disabled\)\s*\{([^}]*)\}/)
+    expect(hover, 'the hover rule must exist').not.toBeNull()
+    expect(hover![1]).toMatch(/--color-red/)
   })
 })

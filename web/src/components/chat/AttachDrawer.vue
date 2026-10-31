@@ -30,15 +30,15 @@
          opens in the right mode — file picker, photo library, or camera. -->
     <div v-if="isMobileLayout" class="ad-source-bar">
       <button type="button" class="ad-source-btn" @click.stop="handleCameraClick">
-        <Camera :size="18" />
+        <Camera :size="16" />
         <span class="ad-source-label">{{ t('chat.attach.takePhoto') }}</span>
       </button>
       <button type="button" class="ad-source-btn" @click.stop="handlePhotoClick">
-        <ImageIcon :size="18" />
+        <ImageIcon :size="16" />
         <span class="ad-source-label">{{ t('chat.attach.pickImage') }}</span>
       </button>
       <button type="button" class="ad-source-btn" @click.stop="handleUploadClick">
-        <Upload :size="18" />
+        <Upload :size="16" />
         <span class="ad-source-label ad-upload-label">{{ t('chat.attach.uploadFile') }}</span>
       </button>
     </div>
@@ -126,7 +126,7 @@
         <div v-if="recentShares?.length" class="ad-clear-bar">
           <span class="ad-clear-hint">{{ t('chat.attach.clearSharesHint', { n: recentShares.length }) }}</span>
           <button class="ad-clear-btn" :disabled="clearing === 'shares'" @click.stop="handleClearShares">
-            <Trash2 :size="12" />
+            <Trash2 :size="14" />
             <span>{{ t('chat.attach.clearAll') }}</span>
           </button>
         </div>
@@ -191,7 +191,7 @@
         <div v-if="recentUploads?.length" class="ad-clear-bar">
           <span class="ad-clear-hint">{{ t('chat.attach.clearUploadsHint', { n: recentUploads.length }) }}</span>
           <button class="ad-clear-btn" :disabled="clearing === 'uploads'" @click.stop="handleClearUploads">
-            <Trash2 :size="12" />
+            <Trash2 :size="14" />
             <span>{{ t('chat.attach.clearAll') }}</span>
           </button>
         </div>
@@ -221,9 +221,24 @@
       </template>
     </div>
 
-    <!-- Selected files footer (reuses AttachmentTags component) -->
-    <template v-if="attachedFiles.length > 0" #footer>
-      <AttachmentTags :files="attachedFiles" @file-click="emit('file-open', $event)" @remove="emit('remove-attached', $event)" />
+    <!-- Footer: selected files (AttachmentTags) above the shared .fbtn action
+         pair. Always rendered — Cancel/OK are the drawer's only explicit exit,
+         since the narrow sheet's header tap is not discoverable and the wide
+         card has its own X. Both buttons use the same pill language as every
+         other dialog footer (see assets/modal-footer-btn.css). -->
+    <template #footer>
+      <div class="ad-footer">
+        <AttachmentTags
+          v-if="attachedFiles.length > 0"
+          :files="attachedFiles"
+          @file-click="emit('file-open', $event)"
+          @remove="emit('remove-attached', $event)"
+        />
+        <div class="ad-footer-actions">
+          <button type="button" class="fbtn" @click="handleCancel">{{ t('common.cancel') }}</button>
+          <button type="button" class="fbtn fbtn-primary" @click="emit('close')">{{ t('common.confirm') }}</button>
+        </div>
+      </div>
     </template>
 
     <!-- Hidden file inputs (owned by drawer).
@@ -263,6 +278,9 @@ import { formatFileSize } from '@/utils/fileType'
 import { formatRelativeTime } from '@/utils/format'
 import { isThumbableExt } from '@/utils/fileManager'
 import { isImageFile, type FileEntry } from '@/utils/fileAttachmentUtils'
+// The footer's Cancel/OK pair uses the shared .fbtn language; import it here
+// rather than relying on BottomSheet having loaded it (design-guide rule).
+import '@/assets/modal-footer-btn.css'
 
 interface ReferencedFile {
   path: string
@@ -310,7 +328,13 @@ const { recentShares, fetchRecentShares, deleteRecentShare, clearRecentShares } 
 const { recentUploads, fetchRecentUploads, deleteRecentUpload, clearRecentUploads } = useUploadRecent()
 
 // ── Upload logic (now lives inside the drawer) ──
-const { pendingFiles, attachedFiles, handleFileSelect, handleFileDrop, readPickedCount, terminateChatUploadBatch, chatUploadCancelled } = useFileUpload()
+// `attachedFiles` from the composable is the GLOBAL chat draft. It must not
+// shadow the `attachedFiles` PROP in this component's template: the footer and
+// the "already attached" checks describe the list the CALLER is editing, which
+// is not always the chat draft (the queued-message editor passes its own list).
+// Shadowing them made a file picked from that editor vanish from the footer —
+// the selection only ever reached the caller, never the shared draft.
+const { pendingFiles, attachedFiles: chatAttachedFiles, handleFileSelect, handleFileDrop, readPickedCount, terminateChatUploadBatch, chatUploadCancelled } = useFileUpload()
 
 const activeTab = ref('current')
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -453,7 +477,7 @@ watch(uploadingFiles, (now) => {
     // Remove finished (non-uploading) entries from pendingFiles,
     // but preserve auto-attached ones (path also in attachedFiles)
     // so they survive until sendMessage processes them.
-    const attachedPaths = new Set(attachedFiles.value.map(a => a.path))
+    const attachedPaths = new Set(chatAttachedFiles.value.map(a => a.path))
     pendingFiles.value = pendingFiles.value.filter(f => f.uploading || attachedPaths.has(f.path))
     // Refresh recent uploads so completed files appear
     if (!uploadRefreshScheduled) {
@@ -481,6 +505,41 @@ function toggleAttached(path: string, isDir: boolean = false) {
   }
 }
 
+/**
+ * Attachments the composer had when this sheet opened.
+ *
+ * Rows apply immediately (the drawer only emits add/remove, the parent owns the
+ * list), so there is nothing to "submit" on OK. Cancel is therefore the only
+ * button that can mean anything, and it undoes the session: re-add what the
+ * user detached, detach what they attached. Captured on open rather than on
+ * first toggle so a plain open-and-cancel is a no-op.
+ */
+const attachSnapshot = ref<FileEntry[]>([])
+
+/**
+ * Drop paths from the cancel snapshot after they were destroyed on disk.
+ *
+ * Deleting a recent share/upload detaches it; without this, Cancel would
+ * re-attach a file that no longer exists and the composer would send a dangling
+ * reference.
+ */
+function forgetSnapshotPaths(paths: string[]) {
+  const gone = new Set(paths)
+  attachSnapshot.value = attachSnapshot.value.filter(e => !gone.has(e.path))
+}
+
+function handleCancel() {
+  const before = new Map(attachSnapshot.value.map(e => [e.path, e]))
+  const now = new Set((props.attachedFiles ?? []).map(e => e.path))
+  for (const path of now) {
+    if (!before.has(path)) emit('remove-attached', { path })
+  }
+  for (const [path, entry] of before) {
+    if (!now.has(path)) emit('add-attached', path, entry.isDir === true)
+  }
+  emit('close')
+}
+
 // Delete a recent share/upload. If it's currently attached, detach it first so
 // the footer doesn't hold a reference to a removed file.
 async function handleDeleteShare(item: { path: string; name?: string }) {
@@ -491,6 +550,7 @@ async function handleDeleteShare(item: { path: string; name?: string }) {
   if (!confirmed) return
   if (isAttached(item.path)) emit('remove-attached', { path: item.path })
   await deleteRecentShare(item.path)
+  forgetSnapshotPaths([item.path])
 }
 
 /**
@@ -512,6 +572,7 @@ async function handleDeleteUpload(item: { path: string; name?: string; origin?: 
   if (!confirmed) return
   if (isAttached(item.path)) emit('remove-attached', { path: item.path })
   await deleteRecentUpload(item.path)
+  forgetSnapshotPaths([item.path])
 }
 
 // Which tab's clear-all is in flight. A single ref rather than two booleans:
@@ -540,9 +601,11 @@ async function handleClearShares() {
 
     // Detach every attached file that lives in this directory, not just the
     // ones in the visible list: the sweep removes the whole directory.
-    for (const f of [...(props.attachedFiles ?? [])]) {
-      if (isInRecentDir(f.path, 'share-in')) emit('remove-attached', { path: f.path })
-    }
+    const swept = (props.attachedFiles ?? [])
+      .map(f => f.path)
+      .filter(p => isInRecentDir(p, 'share-in'))
+    for (const path of swept) emit('remove-attached', { path })
+    forgetSnapshotPaths(swept)
     const result = await clearRecentShares()
     reportClearResult(result, 'chat.attach.clearSharesDone', 'chat.attach.clearSharesFailed')
   } finally {
@@ -561,9 +624,11 @@ async function handleClearUploads() {
     })
     if (!confirmed) return
 
-    for (const f of [...(props.attachedFiles ?? [])]) {
-      if (isInRecentDir(f.path, 'uploads')) emit('remove-attached', { path: f.path })
-    }
+    const swept = (props.attachedFiles ?? [])
+      .map(f => f.path)
+      .filter(p => isInRecentDir(p, 'uploads'))
+    for (const path of swept) emit('remove-attached', { path })
+    forgetSnapshotPaths(swept)
     const result = await clearRecentUploads()
     reportClearResult(result, 'chat.attach.clearUploadsDone', 'chat.attach.clearUploadsFailed')
   } finally {
@@ -612,6 +677,9 @@ const currentDirDisplayName = computed(() => {
 // Fetch data when drawer opens
 watch(() => props.open, async (v) => {
   if (v) {
+    // Cancel's baseline: whatever the composer already had when the sheet
+    // opened (see attachSnapshot).
+    attachSnapshot.value = (props.attachedFiles ?? []).map(e => ({ ...e }))
     loading.value = true
     try {
       await Promise.all([fetchRecentShares(), fetchRecentUploads()])
@@ -625,7 +693,7 @@ watch(() => props.open, async (v) => {
       thumbErrors.value = new Set()
     }
   }
-})
+}, { immediate: true })
 
 // When the native file picker closes (user picks files or cancels),
 // we need to reset filePickerOpen so BottomSheet's closeGuard lifts
@@ -710,19 +778,20 @@ defineExpose({ activeTab, handleFileDrop })
 }
 
 /* Source actions strip — MOBILE ONLY (see the template comment): the three
-   ways to add a file that is not already in the project. Full width and above
-   the tab bar so it reads as the primary action rather than as header chrome.
+   ways to add a file that is not already in the project. Above the tab bar so
+   it reads as the primary action rather than as header chrome.
 
-   Equal thirds rather than content-sized: the labels are short and of similar
-   length in both languages, so thirds give every entry the same touch target
-   and keep the strip from reflowing when the locale changes. 44px is the
-   minimum comfortable touch height; the row is the drawer's first interactive
-   element, so it must not be the smallest. */
+   Compact single-line pills: icon and label sit side by side on a 34dp row
+   with a 6dp radius, so the strip stays out of the file list's way on a phone
+   while every entry keeps its icon (the icon is what makes them scannable at a
+   glance). Equal thirds rather than content-sized: the labels are short and of
+   similar length in both languages, so thirds give every entry the same target
+   and keep the strip from reflowing when the locale changes. */
 .ad-source-bar {
   display: flex;
   align-items: stretch;
   gap: var(--space-2);
-  padding: var(--space-4) var(--space-6);
+  padding: var(--space-3) var(--space-6);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
@@ -730,23 +799,26 @@ defineExpose({ activeTab, handleFileDrop })
   flex: 1 1 0;
   min-width: 0;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  padding: var(--space-4) var(--space-2);
-  min-height: calc(44 * var(--dp));
+  height: calc(34 * var(--dp));
+  padding: 0 var(--space-2);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--bg-primary);
   color: var(--accent-color);
   cursor: pointer;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   transition: background var(--duration-fast), border-color var(--duration-fast);
 }
 .ad-source-btn:active {
   background: var(--bg-tertiary);
   border-color: var(--accent-color);
+}
+/* The icon must never be the thing that gives way when the label is long. */
+.ad-source-btn svg {
+  flex-shrink: 0;
 }
 @media (hover: hover) {
   .ad-source-btn:hover {
@@ -759,7 +831,9 @@ defineExpose({ activeTab, handleFileDrop })
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 100%;
+  /* Row layout: the label is a flex item now, so it needs an explicit
+     min-width to shrink (the default `auto` would push the icon out instead). */
+  min-width: 0;
 }
 
 /* Tab bar */
@@ -1043,38 +1117,55 @@ defineExpose({ activeTab, handleFileDrop })
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Clear-all. Deliberately a borderless icon+label text button, matching the
+   clear-all in the task detail header (`.clear-all-btn`) — a bordered pill
+   reads as a primary action, and this one is a secondary destructive shortcut
+   that shares its row with a muted hint. Red only on hover/active: red at rest
+   would out-shout every file row in the list below it. */
 .ad-clear-btn {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  height: calc(24 * var(--dp));
-  padding: 0 var(--space-4);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-full);
-  background: none;
-  color: var(--color-red);
-  font-size: var(--font-size-xs);
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: background var(--duration-fast), border-color var(--duration-fast);
+  transition: color var(--duration-base), background var(--duration-base);
 }
 .ad-clear-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: default;
 }
 .ad-clear-btn:active:not(:disabled) {
-  background: color-mix(in srgb, var(--color-red) 12%, transparent);
-  border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
+  color: var(--color-red);
+  background: color-mix(in srgb, var(--color-red) 10%, transparent);
 }
 @media (hover: hover) {
   .ad-clear-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-red) 12%, transparent);
-    border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
+    color: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 10%, transparent);
   }
 }
 
-/* Override BottomSheet footer's flex-end alignment to left-align tags */
-.bs-panel > .bs-footer:has(.chat-attachment-tags) {
-  justify-content: flex-start;
+/* Footer: selected tags above the Cancel/OK pair. The wrapper spans the whole
+   footer width so the tags keep their left edge (BottomSheet's `.bs-footer` is
+   flex-end) while the buttons stay right-aligned under them. */
+.ad-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+  min-width: 0;
+}
+.ad-footer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-4);
 }
 </style>
