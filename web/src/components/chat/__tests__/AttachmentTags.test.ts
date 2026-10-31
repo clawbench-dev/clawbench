@@ -24,7 +24,9 @@ describe('AttachmentTags', () => {
         files: [{ path: 'src/main.go', isDir: false }],
       },
     })
-    expect(wrapper.find('.attachment-filename').text()).toBe('main.go')
+    // URL chips render before file cards, so assert on the whole set rather
+    // than on the first match.
+    expect(wrapper.findAll('.attachment-filename').map((w) => w.text())).toContain('main.go')
   })
 
   // ── URL attachment chips ──
@@ -253,5 +255,37 @@ describe('AttachmentTags', () => {
     await wrapper.find('.attachment-pending .attachment-close-btn').trigger('click')
 
     expect(upload.chatUploadCancelled.value).toBe(false)
+  })
+})
+
+/**
+ * Read-only mode: surfaces that only DISPLAY attachments (the queued-message
+ * row) must not offer a remove control — removal there is a separate row
+ * action, and a dead "×" that emits into the void reads as broken.
+ */
+describe('AttachmentTags (readonly)', () => {
+  it('renders the same cards without any remove button', () => {
+    const wrapper = mount(AttachmentTags, {
+      props: {
+        readonly: true,
+        files: [
+          { path: 'src/main.go', isDir: false },
+          { path: 'acme/widgets#1', kind: 'url', url: 'https://github.com/acme/widgets/issues/1' },
+        ],
+      },
+    })
+
+    expect(wrapper.find('.attachment-filename').text()).toBe('main.go')
+    expect(wrapper.find('a.attachment-url').exists()).toBe(true)
+    expect(wrapper.findAll('.attachment-close-btn')).toHaveLength(0)
+    expect(wrapper.classes()).toContain('is-readonly')
+  })
+
+  it('keeps the remove buttons by default', () => {
+    const wrapper = mount(AttachmentTags, {
+      props: { files: [{ path: 'src/main.go', isDir: false }] },
+    })
+    expect(wrapper.findAll('.attachment-close-btn')).toHaveLength(1)
+    expect(wrapper.classes()).not.toContain('is-readonly')
   })
 })

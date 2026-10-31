@@ -748,3 +748,55 @@ describe('QueuedMessageBar density + coexistence (source contract)', () => {
     expect(rule('.queued-bar-list'), 'the queue list must be capped').toMatch(/max-height:\s*min\(40vh,\s*calc\(\s*240\s*\*\s*var\(--dp\)\s*\)\)/)
   })
 })
+
+/**
+ * Attachment rendering. The row used to print one filename pill per attachment;
+ * it now reuses the SAME cards the input box shows (thumbnail for images, icon +
+ * name otherwise), so a queued attachment looks like an attached one.
+ *
+ * Quotes are the exception: the shared cards skip entries with no path (a card
+ * would be an empty pill), so they keep the reference chip.
+ */
+describe('QueuedMessageBar (attachments reuse the input cards)', () => {
+  function mountRow(files: Array<Record<string, unknown>>) {
+    return mount(QueuedMessageBar, {
+      props: {
+        messages: [{ queueId: 'q1', text: 'look at this', files, createdAt: '' }],
+        midTurnSupported: true,
+        busy: '',
+      },
+      global: { plugins: [i18n] },
+    })
+  }
+
+  it('renders a file through the shared attachment card, not a filename pill', async () => {
+    const wrapper = mountRow([{ path: '/project/main.go', isDir: false }])
+    await wrapper.find('.queued-bar-header').trigger('click')
+
+    expect(wrapper.find('.chat-file-attachment').exists(), 'shared card').toBe(true)
+    expect(wrapper.find('.attachment-filename').text()).toBe('main.go')
+    expect(wrapper.find('.queued-bar-file').exists(), 'no filename pill').toBe(false)
+  })
+
+  it('keeps quotes as reference chips (the shared cards skip them)', async () => {
+    const wrapper = mountRow([
+      { path: '', kind: 'quote', id: 'quote-1', text: 'quoted' },
+      { path: '/project/main.go', isDir: false },
+    ])
+    await wrapper.find('.queued-bar-header').trigger('click')
+
+    const chips = wrapper.findAll('.queued-bar-file')
+    expect(chips, 'one chip for the quote').toHaveLength(1)
+    expect(wrapper.findAll('.chat-file-attachment'), 'the file still renders as a card').toHaveLength(1)
+  })
+
+  it('is read-only: no remove control inside a queued row', async () => {
+    const wrapper = mountRow([{ path: '/project/main.go', isDir: false }])
+    await wrapper.find('.queued-bar-header').trigger('click')
+
+    // Removal is the row's own × button (and the editor); a second, dead ×
+    // inside the card would read as broken.
+    expect(wrapper.find('.attachment-close-btn').exists()).toBe(false)
+    expect(wrapper.find('.queued-bar-remove').exists()).toBe(true)
+  })
+})

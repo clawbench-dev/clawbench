@@ -44,6 +44,10 @@ const i18n = createI18n({
           providerUsedBy: '{count} 个智能体在用',
           providerAuthAuto: '自动',
           providerPresetPlaceholder: '从预设选择',
+          providerPresetTitle: '选择供应商',
+          providerPresetSearch: '搜索',
+          providerPresetNone: '不使用预设',
+          providerPresetEmpty: '没有匹配的供应商',
           providerAdd: '添加提供商',
           providerSave: '保存',
           providerCancel: '取消',
@@ -77,7 +81,20 @@ function mountSetting(providers: unknown[], catalog: unknown = {}) {
   return mount(ProviderSetting, {
     global: {
       plugins: [i18n],
-      stubs: { AlertCircle: true, CheckCircle2: true, Loader2: true, PlugZap: true, Pencil: true, Trash2: true },
+      stubs: {
+        AlertCircle: true,
+        CheckCircle2: true,
+        Loader2: true,
+        PlugZap: true,
+        Pencil: true,
+        Trash2: true,
+        // The real sheet teleports to <body>; render it inline so the picker's
+        // rows stay inside the wrapper.
+        BottomSheet: {
+          props: ['open'],
+          template: '<div v-if="open" class="mock-sheet"><slot name="header" /><slot /></div>',
+        },
+      },
     },
   })
 }
@@ -133,9 +150,12 @@ describe('ProviderSetting', () => {
     const wrapper = mountSetting([])
     await flushPromises()
 
-    const presetSelect = wrapper.find('.provider-preset-row select')
-    await presetSelect.setValue('p1')
-    await presetSelect.trigger('change')
+    await wrapper.find('.provider-preset-trigger').trigger('click')
+    await flushPromises()
+    const row = wrapper.findAll('.preset-row').find(r => r.attributes('data-preset-id') === 'p1')
+    expect(row).toBeDefined()
+    await row!.trigger('click')
+    await flushPromises()
 
     const inputs = wrapper.findAll('.provider-input')
     expect((inputs[1].element as HTMLInputElement).value).toBe('Preset One')

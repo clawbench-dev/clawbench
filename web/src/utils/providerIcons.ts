@@ -275,6 +275,38 @@ export function getProviderIcon(providerId: string): ProviderIconData | null {
 }
 
 /**
+ * models.dev provider ids that differ from the icon registry's slug. Only
+ * aliases that map to a real brand icon belong here; anything else falls back
+ * to the initial-letter tile.
+ */
+const providerIconAliases: Record<string, string> = {
+    moonshotai: 'kimi',
+    'moonshotai-cn': 'kimi',
+    moonshot: 'kimi',
+    zhipuai: 'zhipu',
+    'zhipuai-coding-plan': 'zhipu',
+    zai: 'zhipu',
+    bigmodel: 'zhipu',
+    alibaba: 'qwen',
+    'alibaba-cn': 'qwen',
+    mistralai: 'mistral',
+    'amazon-bedrock': 'bedrock',
+    'google-vertex': 'google',
+    'google-vertex-anthropic': 'google',
+    'github-copilot': 'copilot',
+    bytedance: 'doubao',
+    volcengine: 'doubao',
+}
+
+/** Resolve a catalogue/provider id to a slug that has an icon, or null. */
+export function resolveProviderIconId(providerId: string): string | null {
+    if (!providerId) return null
+    if (providerIconMap[providerId]) return providerId
+    const alias = providerIconAliases[providerId]
+    return alias && providerIconMap[alias] ? alias : null
+}
+
+/**
  * Extract the inner content of an SVG (everything inside the <svg> tag).
  * If the <svg> tag has fill="currentColor", propagates it to child elements
  * that don't have their own fill attribute — so `currentColor` still works

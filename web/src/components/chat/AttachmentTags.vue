@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-attachment-tags" @wheel="onHorizontalWheel">
+  <div class="chat-attachment-tags" :class="{ 'is-readonly': readonly }" @wheel="onHorizontalWheel">
     <!-- Whole-batch terminate, shown while the picker's sequential upload is
          still running.
          The drawer's own terminate button is unreachable in practice: picking
@@ -29,7 +29,7 @@
           <LoadingIndicator class="attachment-spinner" size="sm" inline />
           <span class="attachment-progress-text">{{ pf.progress }}%</span>
         </div>
-        <button class="attachment-close-btn" @click.stop="$emit('remove-pending', idx)" :title="t('common.remove')">×</button>
+        <button v-if="!readonly" class="attachment-close-btn" @click.stop="$emit('remove-pending', idx)" :title="t('common.remove')">×</button>
       </span>
     </template>
 
@@ -45,7 +45,7 @@
       :title="fileEntry.url">
       <LinkIcon :size="16" class="attachment-file-icon" />
       <span class="attachment-filename">{{ fileEntry.path || fileEntry.url }}</span>
-      <button class="attachment-close-btn" @click.stop.prevent="$emit('remove', fileEntry)" :title="t('common.remove')">×</button>
+      <button v-if="!readonly" class="attachment-close-btn" @click.stop.prevent="$emit('remove', fileEntry)" :title="t('common.remove')">×</button>
     </a>
 
     <!-- Attached file reference cards -->
@@ -64,7 +64,7 @@
       <span v-if="!showsThumb(fileEntry)" class="attachment-filename">
         {{ getFileName(fileEntry.path) }}<template v-if="fileEntry.startLine !== undefined"><span class="attachment-range">{{ lineRangeLabel(fileEntry) }}</span></template>
       </span>
-      <button class="attachment-close-btn" @click.stop="$emit('remove', fileEntry)" :title="t('common.remove')">×</button>
+      <button v-if="!readonly" class="attachment-close-btn" @click.stop="$emit('remove', fileEntry)" :title="t('common.remove')">×</button>
     </span>
   </div>
 </template>
@@ -85,9 +85,16 @@ import { useFileUpload, type PendingFile } from '@/composables/useFileUpload'
 const props = withDefaults(defineProps<{
   files?: FileEntry[]
   pendingFiles?: PendingFile[]
+  /**
+   * Render the cards without their remove buttons and without the space
+   * reserved for one. Used by surfaces that only DISPLAY attachments (the
+   * queued-message row); removal there is a separate action on the row.
+   */
+  readonly?: boolean
 }>(), {
   files: () => [],
   pendingFiles: () => [],
+  readonly: false,
 })
 
 defineEmits<{
@@ -258,6 +265,12 @@ watch(() => props.files, (files) => {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 20%, transparent);
   color: var(--accent-color, #0066cc);
+}
+
+/* Read-only surfaces (queued rows): no × means no need for the space reserved
+   for it, which otherwise reads as an unexplained gap at the card's right. */
+.chat-attachment-tags.is-readonly .chat-file-attachment {
+  padding-right: var(--space-4);
 }
 
 .chat-attachment-tags .attachment-ref .attachment-filename {

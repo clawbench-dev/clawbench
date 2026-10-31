@@ -48,7 +48,7 @@
             :title="t('chat.pending.addAttachment')"
             @click="attachOpen = true"
           >
-            <Plus :size="12" />
+            <Paperclip :size="12" />
             {{ t('chat.pending.addAttachment') }}
           </button>
         </div>
@@ -88,7 +88,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Plus } from 'lucide-vue-next'
+import { Paperclip } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'

@@ -5,11 +5,13 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { getModelProvider, getProviderFullSvg } from '@/utils/providerIcons'
+import { getModelProvider, getProviderFullSvg, resolveProviderIconId } from '@/utils/providerIcons'
 
 const props = withDefaults(defineProps<{
     /** Model name to detect provider from */
-    modelName: string
+    modelName?: string
+    /** Explicit provider id; wins over `modelName` when both are given. */
+    providerId?: string
     /** Display name for aria-label and initial-letter fallback */
     name?: string
     /** Icon size in pixels */
@@ -18,19 +20,21 @@ const props = withDefaults(defineProps<{
     size: 16,
 })
 
-const providerId = computed(() => getModelProvider(props.modelName))
+const providerId = computed(() =>
+    props.providerId ? resolveProviderIconId(props.providerId) : getModelProvider(props.modelName ?? ''),
+)
 
 /** Full SVG string rendered via v-html on a <span>.
  *  Avoids SVG-namespace issues with v-html on <svg> elements
  *  that cause blank rendering in some mobile WebViews. */
 const fullSvg = computed(() => {
     if (!providerId.value) return null
-    return getProviderFullSvg(providerId.value, props.size, [], props.name || props.modelName)
+    return getProviderFullSvg(providerId.value, props.size, [], props.name || props.modelName || props.providerId)
 })
 
 const initial = computed(() => {
-    if (props.name) return props.name.charAt(0).toUpperCase()
-    return props.modelName ? props.modelName.charAt(0).toUpperCase() : '?'
+    const label = props.name || props.modelName || props.providerId || ''
+    return label ? label.charAt(0).toUpperCase() : '?'
 })
 
 const initialStyle = computed(() => ({

@@ -62,13 +62,18 @@
     </div>
 
     <div class="provider-form">
+      <!-- The catalogue has 200+ entries, so the picker is a searchable list
+           with brand icons rather than a native <select>. -->
       <div v-if="!editingId" class="provider-preset-row">
-        <select v-model="presetId" class="provider-input provider-select" @change="applyPreset">
-          <option value="">{{ t('settings.items.providerPresetPlaceholder') }}</option>
-          <option v-for="preset in presets" :key="preset.id" :value="preset.id">
-            {{ preset.name }} · {{ preset.protocol }}
-          </option>
-        </select>
+        <button type="button" class="provider-input provider-preset-trigger" @click="presetPickerOpen = true">
+          <template v-if="selectedPreset">
+            <ProviderIcon :provider-id="selectedPreset.id" :name="selectedPreset.name" :size="16" />
+            <span class="provider-preset-name">{{ selectedPreset.name }}</span>
+            <span class="provider-preset-proto">{{ selectedPreset.protocol }}</span>
+          </template>
+          <span v-else class="provider-preset-placeholder">{{ t('settings.items.providerPresetPlaceholder') }}</span>
+          <ChevronsUpDown :size="14" class="provider-preset-chevron" />
+        </button>
       </div>
 
       <div class="provider-grid">
@@ -106,6 +111,14 @@
       </label>
     </div>
 
+    <ProviderPresetPicker
+      :open="presetPickerOpen"
+      :presets="presets"
+      :selected-id="presetId"
+      @update:open="presetPickerOpen = $event"
+      @select="onPresetSelect"
+    />
+
     <div v-if="error" class="provider-error">
       <AlertCircle :size="13" />
       <span>{{ error }}</span>
@@ -116,10 +129,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, CheckCircle2, Loader2, Pencil, PlugZap, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { AlertCircle, CheckCircle2, ChevronsUpDown, Loader2, Pencil, PlugZap, RefreshCw, Trash2 } from 'lucide-vue-next'
 import '@/assets/modal-footer-btn.css'
 import { apiDelete, apiGet, apiPost, apiPut } from '@/utils/api'
 import { useDialog } from '@/composables/useDialog'
+import ProviderIcon from '@/components/common/ProviderIcon.vue'
+import ProviderPresetPicker, { type PresetOption } from './ProviderPresetPicker.vue'
 import { appLog } from '@/utils/appLog'
 
 defineProps<{ description?: string }>()
@@ -211,9 +226,22 @@ async function loadPresets() {
 
 /** Fill the form from a catalogue entry. Only fields the preset knows are
  *  overwritten; a typed key is never touched. */
-function applyPreset() {
-  const preset = presets.value.find((p) => p.id === presetId.value)
-  if (!preset) return
+const presetPickerOpen = ref(false)
+
+/** The chosen catalogue entry, for the trigger row (icon + name). */
+const selectedPreset = computed<PresetOption | undefined>(() =>
+  presets.value.find((p) => p.id === presetId.value),
+)
+
+function onPresetSelect(preset: PresetOption | null) {
+  if (!preset) {
+    // "No preset" keeps whatever the user has typed; it only drops the link to
+    // the catalogue.
+    presetId.value = ''
+    draft.presetId = ''
+    return
+  }
+  presetId.value = preset.id
   draft.name = preset.name
   draft.protocol = preset.protocol
   draft.baseUrl = preset.baseUrl
@@ -459,6 +487,42 @@ onMounted(() => {
 .provider-select {
   flex: 0 0 calc(120 * var(--dp));
   padding: 0 var(--space-3);
+}
+/* Trigger row for the preset picker: looks like the inputs around it, but
+ * opens the in-app sheet instead of a native dropdown. */
+.provider-preset-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 0 var(--space-4);
+  text-align: left;
+  cursor: pointer;
+}
+.provider-preset-name {
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.provider-preset-proto {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  flex-shrink: 0;
+}
+.provider-preset-placeholder {
+  flex: 1;
+  font-size: var(--font-size-md);
+  color: var(--text-muted);
+}
+.provider-preset-chevron {
+  margin-left: auto;
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
 .provider-input:focus {
   outline: none;
