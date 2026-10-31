@@ -196,7 +196,7 @@
              screen, chat, or swap which window is being shared. -->
         <div class="live-dialog-section">{{ t('liveShare.toolsSection') }}</div>
         <div class="live-tools">
-          <button class="live-btn" type="button" data-action="annotate" @click="annotating = true">
+          <button class="live-btn" type="button" data-action="annotate" @click="openAnnotate">
             {{ t('liveShare.annotate') }}
           </button>
           <button
@@ -344,8 +344,8 @@
             <video ref="remoteScreenRef" autoplay playsinline muted />
           </div>
           <div class="live-screen-actions">
-            <button class="live-btn" type="button" @click="openScreenFullscreen">
-              {{ t('liveShare.viewFullscreen') }}
+            <button class="live-btn" type="button" data-action="open-screen-window" @click="openScreenWindow">
+              {{ t('liveShare.openInWindow') }}
             </button>
             <button
               class="live-btn live-btn--danger"
@@ -376,10 +376,20 @@
         <div v-if="share.error.value" class="live-dialog-error">{{ share.error.value }}</div>
       </template>
 
+      <!-- Drawing surface in its own window, so the ink and the shared picture
+           are never squeezed into the panel. Hosts without Document PiP fall
+           back to the in-panel overlay below. -->
+      <Teleport v-if="annotateWindowTarget && annotating && share.previewStream.value" :to="annotateWindowTarget">
+        <LiveAnnotateOverlay
+          :stream="share.previewStream.value"
+          @close="closeAnnotate"
+          @send="share.sendControl"
+        />
+      </Teleport>
       <LiveAnnotateOverlay
-        v-if="annotating && share.previewStream.value"
+        v-else-if="annotating && share.previewStream.value"
         :stream="share.previewStream.value"
-        @close="annotating = false"
+        @close="closeAnnotate"
         @send="share.sendControl"
       />
 
@@ -401,6 +411,43 @@
           <X :size="18" />
         </button>
       </div>
+
+      <!-- The member's screen in its own OS window. Document PiP keeps it in
+           THIS renderer, which is the only way to show a live MediaStream
+           outside the app window: a real BrowserWindow gets a separate JS
+           context and cannot see the track at all. -->
+      <Teleport v-if="screenWindowTarget" :to="screenWindowTarget">
+        <div class="live-window">
+          <video ref="windowVideoRef" class="live-window__video" autoplay playsinline muted />
+          <div class="live-window__dock">
+            <span class="live-window__who" :title="share.screenSharer.value">
+              {{ t('liveShare.memberSharing', { id: share.screenSharer.value }) }}
+            </span>
+            <button class="live-window__btn" type="button" @click="toggleChat">
+              {{ t('liveShare.chat') }}
+              <span v-if="unread > 0" class="live-tools__badge">{{ unread > 9 ? '9+' : unread }}</span>
+            </button>
+            <button
+              class="live-window__btn live-window__btn--danger"
+              type="button"
+              @click="share.revokeScreen(share.screenSharer.value)"
+            >
+              {{ t('liveShare.stopScreenShare') }}
+            </button>
+            <button
+              class="live-window__btn live-window__btn--icon"
+              type="button"
+              :aria-label="t('common.close')"
+              @click="closeScreenWindow"
+            >
+              <X :size="14" />
+            </button>
+          </div>
+          <div v-if="chatOpen" class="live-window__chat">
+            <LiveChatPanel :messages="chatMessages" @send="sendChat" />
+          </div>
+        </div>
+      </Teleport>
     </div>
     <!-- Pinned action bar, same treatment the dialog footer used to give them:
          a tinted bar with a separating border, so the buttons never float in
@@ -481,6 +528,7 @@ import {
   type CaptureSource,
 } from '@/composables/useLiveShare'
 import { groupNoteSegments, useLiveNotes } from '@/composables/useLiveNotes'
+import { useScreenWindow } from '@/composables/useScreenWindow'
 import { getNative } from '@/utils/clawbenchNative'
 import { resolveRemoteControlSupport } from '@/utils/remoteControlSupport'
 import LiveAnnotateOverlay from '@/share/LiveAnnotateOverlay.vue'
@@ -522,6 +570,11 @@ const notesListRef = ref<HTMLElement | null>(null)
 const remoteScreenRef = ref<HTMLVideoElement | null>(null)
 const fullscreenVideoRef = ref<HTMLVideoElement | null>(null)
 const screenFullscreen = ref(false)
+const screenWindow = useScreenWindow()
+const screenWindowTarget = screenWindow.target
+const windowVideoRef = ref<HTMLVideoElement | null>(null)
+const annotateWindow = useScreenWindow()
+const annotateWindowTarget = annotateWindow.target
 
 // ── Tools: annotation, chat, source switch, presence ────────────────────────
 const annotating = ref(false)
@@ -697,6 +750,8 @@ watch(
     chatMessages.value = []
     unread.value = 0
     annotating.value = false
+    // The share is over: a drawing window over a dead picture helps nobody.
+    annotateWindow.close()
     void getNative()?.remoteControlRevoke?.()
   },
 )
@@ -801,6 +856,52 @@ function closeScreenFullscreen(): void {
 }
 
 /**
+ * Show the member's screen in its own window, with a dock like the audience's:
+ * who is sharing, chat, and stop-sharing.
+ */
+async function openScreenWindow(): Promise<void> {
+  const stream = share.remoteScreenStream.value
+  if (!stream) return
+  const result = await screenWindow.open()
+  // No Document PiP on this host: the in-app overlay is the only way to show
+  // the picture large. Falling through silently would look like a dead button.
+  if (result === 'unsupported' || result === 'failed') {
+    openScreenFullscreen()
+    return
+  }
+  await nextTick()
+  if (windowVideoRef.value) windowVideoRef.value.srcObject = stream
+}
+
+function closeScreenWindow(): void {
+  screenWindow.close()
+}
+
+/**
+ * Open the drawing surface in its own window.
+ *
+ * The canvas has to be as large as the shared picture: drawn inline it is
+ * squeezed into the panel, and a stroke lands somewhere other than where the
+ * publisher aimed. Hosts without Document PiP keep the in-panel overlay.
+ */
+async function openAnnotate(): Promise<void> {
+  const result = await annotateWindow.open({ width: 1200, height: 800 })
+  if (result !== 'opened') appLog.w('LiveSharePanel', 'annotate window unavailable', result)
+  annotating.value = true
+}
+
+function closeAnnotate(): void {
+  annotating.value = false
+  annotateWindow.close()
+}
+
+// Closing the window with its own title-bar button must end the drawing mode
+// too, otherwise the inline fallback would pop up behind it.
+watch(annotateWindowTarget, (target) => {
+  if (!target && annotating.value) annotating.value = false
+})
+
+/**
  * Bind the relayed screen to whichever <video> elements exist.
  *
  * Two elements (inline preview + fullscreen) share one MediaStream; both can
@@ -815,6 +916,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   unsubscribeControl?.()
   unsubscribeControl = null
+  closeScreenWindow()
+  annotateWindow.close()
 })
 
 watch(
@@ -823,7 +926,13 @@ watch(
     await nextTick()
     if (remoteScreenRef.value) remoteScreenRef.value.srcObject = stream
     if (fullscreenVideoRef.value) fullscreenVideoRef.value.srcObject = stream
-    if (!stream) screenFullscreen.value = false
+    if (windowVideoRef.value) windowVideoRef.value.srcObject = stream
+    if (!stream) {
+      screenFullscreen.value = false
+      // The member stopped sharing: a window showing a dead picture is worse
+      // than none, and nothing else would close it.
+      closeScreenWindow()
+    }
   },
   { immediate: true },
 )
@@ -1295,6 +1404,88 @@ watch(
   overflow: hidden;
 }
 
+/* ── Member screen window (Document PiP) ────────────────────────────────────
+   Rendered into a second document; the panel's stylesheet is copied there, so
+   these scoped rules apply. Sizes use --dp like the rest of the app. */
+.live-window {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+}
+
+.live-window__video {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+/* Floating dock, mirroring the audience page: it must not eat picture area. */
+.live-window__dock {
+  position: absolute;
+  left: 50%;
+  bottom: calc(14 * var(--dp));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: calc(6 * var(--dp));
+  padding: calc(5 * var(--dp)) calc(8 * var(--dp));
+  border-radius: var(--radius-full, 999px);
+  background: color-mix(in srgb, #000 62%, transparent);
+  border: 1px solid color-mix(in srgb, #fff 16%, transparent);
+  box-shadow: 0 calc(6 * var(--dp)) calc(20 * var(--dp)) color-mix(in srgb, #000 45%, transparent);
+}
+
+.live-window__who {
+  max-width: calc(220 * var(--dp));
+  padding: 0 calc(6 * var(--dp));
+  color: #fff;
+  font-size: var(--font-size-xs, 11px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-window__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: calc(4 * var(--dp)) calc(10 * var(--dp));
+  border: none;
+  border-radius: var(--radius-full, 999px);
+  background: color-mix(in srgb, #fff 14%, transparent);
+  color: #fff;
+  font-size: var(--font-size-xs, 11px);
+  cursor: pointer;
+}
+
+.live-window__btn:hover {
+  background: color-mix(in srgb, #fff 24%, transparent);
+}
+
+.live-window__btn--danger {
+  background: color-mix(in srgb, var(--color-red, #cf222e) 80%, transparent);
+}
+
+.live-window__btn--icon {
+  padding: calc(4 * var(--dp));
+}
+
+.live-window__chat {
+  position: absolute;
+  right: calc(14 * var(--dp));
+  bottom: calc(60 * var(--dp));
+  width: calc(280 * var(--dp));
+  height: calc(320 * var(--dp));
+  border-radius: var(--radius-md, 6px);
+  overflow: hidden;
+  background: var(--bg-primary, #fff);
+  box-shadow: 0 calc(8 * var(--dp)) calc(24 * var(--dp)) color-mix(in srgb, #000 45%, transparent);
+}
+
 .live-source-grid--compact {
   max-height: calc(140 * var(--dp));
   overflow-y: auto;
@@ -1453,8 +1644,10 @@ watch(
   flex: 1;
 }
 
-/* "On air" marker. Red dot rather than a word alone: the dock is scanned, not
-   read, and a live share must be obvious without opening the tab. */
+/* "On air" marker. A dot plus the word rather than the word alone: the tab is
+   scanned, not read. Accent-coloured, NOT red — red in this UI means an error
+   or a destructive action (the Stop button next to it), while a running share
+   is normal ongoing work. */
 .live-panel__live {
   display: inline-flex;
   align-items: center;
@@ -1462,8 +1655,8 @@ watch(
   height: calc(18 * var(--dp));
   padding: 0 var(--space-3, 6px);
   border-radius: var(--radius-full, 999px);
-  background: color-mix(in srgb, var(--color-red, #cf222e) 14%, transparent);
-  color: var(--color-red, #cf222e);
+  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+  color: var(--accent-color);
   font-size: var(--font-size-xs, 11px);
   font-weight: var(--font-weight-semibold);
   letter-spacing: 0.04em;

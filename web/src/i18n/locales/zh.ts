@@ -4040,7 +4040,7 @@ export default {
     allowScreenShareHint:
       '开启后成员可以把自己的屏幕共享给所有人，一次只能一个人。成员端需要 HTTPS 才能采集屏幕。',
     memberSharing: '成员 {id} 正在共享屏幕',
-    viewFullscreen: '全屏查看',
+    openInWindow: '在新窗口打开',
     stopScreenShare: '停止共享',
     notes: {
       enable: 'AI 听记',

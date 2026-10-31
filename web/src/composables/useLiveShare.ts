@@ -77,6 +77,21 @@ interface PublisherPeer {
   channel: RTCDataChannel | null
   /** The m-line carrying our picture; kept so a source switch can swap it. */
   videoTx: RTCRtpTransceiver | null
+  /** This viewer's audio mix, wired into the m-lines when its offer arrives. */
+  mixedTrack: MediaStreamTrack | null
+  /**
+   * Whether the offered m-lines have been wired up already.
+   *
+   * The publisher ANSWERS, so it cannot reserve m-lines ahead of the offer: a
+   * transceiver created by `addTransceiver()` before `setRemoteDescription()`
+   * keeps `mid === null` and the browser answers the offered m-lines with
+   * brand-new recvonly ones instead — the answer then says "I send nothing" and
+   * the viewer never leaves "negotiating". Wiring therefore happens once, right
+   * after the first offer is applied.
+   */
+  attached: boolean
+  /** Viewer candidates that arrived before its offer was applied. */
+  pendingIce: RTCIceCandidateInit[]
 }
 
 let ws: WebSocket | null = null
@@ -436,6 +451,9 @@ export function useLiveShare() {
     if (!viewerId || peers.has(viewerId)) return
 
     const pc = new RTCPeerConnection({ iceServers: [] })
+    // One destination per viewer, carrying system audio + mic + the OTHER
+    // viewers. Excluding this viewer is what keeps it from hearing itself.
+    const mixedTrack = mixer?.addViewer(viewerId) ?? null
     peers.set(viewerId, {
       pc,
       viewerId,
@@ -443,49 +461,21 @@ export function useLiveShare() {
       screenTrack: null,
       channel: null,
       videoTx: null,
+      mixedTrack,
+      attached: false,
+      pendingIce: [],
     })
     viewers.value = [...viewers.value, { id: viewerId, name: '', talk: 'muted' }]
 
-    // One destination per viewer, carrying system audio + mic + the OTHER
-    // viewers. Excluding this viewer is what keeps it from hearing itself.
-    const mixed = mixer?.addViewer(viewerId) ?? null
-    // Both tracks MUST share one MediaStream: the viewer assigns `srcObject`
-    // per received stream, so two streams means the second assignment replaces
-    // the first and the viewer gets either video or audio, never both.
-    const outgoing = new MediaStream()
-    if (outVideoTrack) outgoing.addTrack(outVideoTrack)
-    if (mixed) outgoing.addTrack(mixed)
-
-    // THREE m-lines, in this exact order (a contract with liveViewer.ts):
-    //   1 audio  — our mix down, the viewer's microphone up
-    //   2 video  — our picture down, the viewer's shared screen up
-    //   3 video  — another viewer's screen, relayed down
-    // They are reserved up front so starting/stopping a share only needs
-    // replaceTrack. Adding an m-line mid-call would force a renegotiation on a
-    // connection that is already carrying the meeting.
-    if (mixed) pc.addTransceiver(mixed, { direction: 'sendrecv', streams: [outgoing] })
-    else pc.addTransceiver('audio', { direction: 'sendrecv' })
-    const videoTx = outVideoTrack
-      ? pc.addTransceiver(outVideoTrack, { direction: 'sendrecv', streams: [outgoing] })
-      : pc.addTransceiver('video', { direction: 'sendrecv' })
-    {
+    // Control bus. The viewer's offer carries it (an answer cannot introduce an
+    // m-line, so the answerer must never try to create one), and it arrives
+    // here as soon as we apply that offer. Hooked up at join time so a channel
+    // that fires during setRemoteDescription is not missed.
+    pc.ondatachannel = (ev) => {
       const p = peers.get(viewerId)
-      if (p) p.videoTx = videoTx
-    }
-    const relayTx = pc.addTransceiver('video', { direction: 'sendonly' })
-    if (remoteScreenTrack) void relayTx.sender.replaceTrack(remoteScreenTrack).catch(() => undefined)
-    const peer = peers.get(viewerId)
-    if (peer) peer.relayTx = relayTx
-
-    // Control bus. Created by the publisher so every viewer gets one at the
-    // same time as the media; the viewer just listens for `ondatachannel`.
-    try {
-      const channel = pc.createDataChannel('cb-live', { ordered: true })
-      channel.onmessage = (ev) => onViewerControl(viewerId, ev.data)
-      const p = peers.get(viewerId)
-      if (p) p.channel = channel
-    } catch (e) {
-      appLog.w(TAG, 'createDataChannel failed', viewerId, e)
+      if (!p) return
+      p.channel = ev.channel
+      ev.channel.onmessage = (e) => onViewerControl(viewerId, e.data)
     }
 
     pc.ontrack = (ev) => {
@@ -520,11 +510,80 @@ export function useLiveShare() {
     }
   }
 
+  /**
+   * Wire our media into the m-lines the viewer's offer just created.
+   *
+   * THREE m-lines, in this exact order (a contract with liveViewer.ts):
+   *   1 audio  — our mix down, the viewer's microphone up
+   *   2 video  — our picture down, the viewer's shared screen up
+   *   3 video  — another viewer's screen, relayed down
+   *
+   * They are reused rather than reserved: `setRemoteDescription(offer)` is what
+   * associates a transceiver with an m-line, and only associated transceivers
+   * end up in the answer with a `send` direction. Wiring them here (with
+   * replaceTrack, so no renegotiation is ever needed later) is what keeps the
+   * answer from being all-recvonly.
+   *
+   * Returns false when the layout is not the one we expect: answering anyway
+   * would produce a connection that silently carries nothing.
+   */
+  async function attachPeerMedia(peer: PublisherPeer): Promise<boolean> {
+    const txs = peer.pc.getTransceivers()
+    const kinds = txs.map((t) => t.receiver.track?.kind ?? '?')
+    if (txs.length !== 3 || kinds[0] !== 'audio' || kinds[1] !== 'video' || kinds[2] !== 'video') {
+      appLog.e(TAG, 'viewer offered an unexpected m-line layout', peer.viewerId, kinds)
+      return false
+    }
+    const [audioTx, videoTx, relayTx] = txs
+
+    // Both tracks MUST share one MediaStream: the viewer assigns `srcObject`
+    // per received stream, so two streams means the second assignment replaces
+    // the first and the viewer gets either video or audio, never both.
+    const outgoing = new MediaStream()
+    if (outVideoTrack) outgoing.addTrack(outVideoTrack)
+    if (peer.mixedTrack) outgoing.addTrack(peer.mixedTrack)
+
+    if (peer.mixedTrack) {
+      await audioTx.sender.replaceTrack(peer.mixedTrack)
+      audioTx.sender.setStreams?.(outgoing)
+    }
+    audioTx.direction = 'sendrecv'
+    if (outVideoTrack) {
+      await videoTx.sender.replaceTrack(outVideoTrack)
+      videoTx.sender.setStreams?.(outgoing)
+    }
+    videoTx.direction = 'sendrecv'
+    relayTx.direction = 'sendonly'
+    if (remoteScreenTrack) await relayTx.sender.replaceTrack(remoteScreenTrack)
+
+    peer.videoTx = videoTx
+    peer.relayTx = relayTx
+    return true
+  }
+
+  /** Apply the candidates that arrived while the offer was still being set. */
+  async function flushPendingIce(peer: PublisherPeer): Promise<void> {
+    const queued = peer.pendingIce
+    peer.pendingIce = []
+    for (const candidate of queued) {
+      try {
+        await peer.pc.addIceCandidate(candidate)
+      } catch (e) {
+        appLog.d(TAG, 'addIceCandidate ignored', e)
+      }
+    }
+  }
+
   async function onOffer(viewerId: string, sdp: string): Promise<void> {
     const peer = peers.get(viewerId)
     if (!peer || !sdp) return
     try {
       await peer.pc.setRemoteDescription({ type: 'offer', sdp })
+      if (!peer.attached) {
+        if (!(await attachPeerMedia(peer))) return
+        peer.attached = true
+      }
+      await flushPendingIce(peer)
       const answer = await peer.pc.createAnswer()
       await peer.pc.setLocalDescription(answer)
       send({ type: 'answer', viewerId, sdp: answer.sdp ?? '' })
@@ -536,6 +595,14 @@ export function useLiveShare() {
   async function onRemoteICE(viewerId: string, candidate: RTCIceCandidateInit | undefined): Promise<void> {
     const peer = peers.get(viewerId)
     if (!peer || !candidate) return
+    // A viewer trickles right after its offer, so candidates routinely arrive
+    // before that offer has been applied — addIceCandidate throws until there
+    // is a remote description, and dropping them leaves ICE with nowhere to
+    // send. Hold them until the offer lands.
+    if (!peer.pc.remoteDescription) {
+      peer.pendingIce.push(candidate)
+      return
+    }
     try {
       await peer.pc.addIceCandidate(candidate)
     } catch (e) {

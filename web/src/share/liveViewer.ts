@@ -316,13 +316,16 @@ export class LiveViewer {
     const pc = pcFactory({ iceServers: msg.iceServers ?? [] })
     this.pc = pc
 
-    pc.ondatachannel = (ev) => {
-      // The publisher creates the channel; this side only listens.
-      this.dc = ev.channel
-      this.dc.onmessage = (e) => {
-        const msg = parseControlMessage(String(e.data))
-        if (msg) this.cb.onControl?.(msg)
-      }
+    // Control bus. The OFFERER creates it: an answer may not introduce an
+    // m-line the offer did not have, so a channel created by the publisher
+    // stays `connecting` forever and every chat/control frame is dropped —
+    // which is indistinguishable from the buttons being dead. The publisher
+    // adopts it through its own `ondatachannel`.
+    const dc = pc.createDataChannel('cb-live', { ordered: true })
+    this.dc = dc
+    dc.onmessage = (e) => {
+      const msg = parseControlMessage(String(e.data))
+      if (msg) this.cb.onControl?.(msg)
     }
 
     pc.ontrack = (ev) => {

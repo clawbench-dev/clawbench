@@ -60,8 +60,12 @@ class FakeStream {
 
 class FakeSender {
   track: FakeTrack | null = null
+  streams: unknown[] = []
   replaceTrack = vi.fn(async (t: FakeTrack | null) => {
     this.track = t
+  })
+  setStreams = vi.fn((...s: unknown[]) => {
+    this.streams = s
   })
 }
 
@@ -94,12 +98,14 @@ class FakeDataChannel {
 class FakePC {
   static instances: FakePC[] = []
   ontrack: ((ev: { track: FakeTrack; streams: FakeStream[] }) => void) | null = null
+  ondatachannel: ((ev: { channel: FakeDataChannel }) => void) | null = null
   onicecandidate: ((ev: { candidate: { toJSON: () => unknown } | null }) => void) | null = null
   onconnectionstatechange: (() => void) | null = null
   connectionState = 'new'
   transceivers: FakeTransceiver[] = []
   tracks: FakeTrack[] = []
   remoteDescriptions: unknown[] = []
+  remoteDescription: unknown = null
   localDescription: unknown = null
   addedCandidates: unknown[] = []
   closed = false
@@ -124,8 +130,11 @@ class FakePC {
     this.transceivers.push(tx)
     return tx
   }
-  createDataChannel(label: string) {
-    return new FakeDataChannel(label) as unknown as RTCDataChannel
+  channelsDelivered = false
+  /** The publisher must NEVER create a channel: an answer cannot add an m-line. */
+  createDataChannel = vi.fn((label: string) => new FakeDataChannel(label) as unknown as RTCDataChannel)
+  getTransceivers() {
+    return this.transceivers
   }
   createAnswer = vi.fn(async () => ({ type: 'answer', sdp: 'v=0-answer' }))
   setLocalDescription = vi.fn(async (d: unknown) => {
@@ -133,6 +142,27 @@ class FakePC {
   })
   setRemoteDescription = vi.fn(async (d: unknown) => {
     this.remoteDescriptions.push(d)
+    this.remoteDescription = d
+    // Chrome creates one transceiver per offered m-line when the offer is
+    // applied, and only THOSE end up in the answer with a send direction. A
+    // transceiver created by addTransceiver() beforehand keeps `mid === null`
+    // and the browser answers with a second, recvonly set instead — the bug
+    // this fake has to be able to reproduce.
+    if ((d as { type?: string } | null)?.type === 'offer') {
+      if (this.transceivers.length === 0) {
+        for (const kind of ['audio', 'video', 'video']) {
+          const tx = new FakeTransceiver('recvonly')
+          tx.receiver.track = new FakeTrack(kind, `rx-${kind}`)
+          this.transceivers.push(tx)
+        }
+      }
+      // The viewer's offer carries the control bus, so applying it is what
+      // delivers the channel. The publisher only adopts it.
+      if (!this.channelsDelivered) {
+        this.channelsDelivered = true
+        this.ondatachannel?.({ channel: new FakeDataChannel('cb-live') })
+      }
+    }
   })
   addIceCandidate = vi.fn(async (c: unknown) => {
     this.addedCandidates.push(c)
@@ -289,6 +319,21 @@ function lastWS(): FakeWS {
   return FakeWS.instances[FakeWS.instances.length - 1]
 }
 
+/**
+ * Attach a viewer and drive its offer.
+ *
+ * The publisher ANSWERS, so the m-lines only exist once the offer is applied —
+ * a viewer that never offers has no transceivers and no control channel.
+ */
+async function joinAndOffer(viewerId: string): Promise<FakePC> {
+  lastWS().emit({ type: 'viewer-join', viewerId })
+  lastWS().emit({ type: 'offer', viewerId, sdp: `v=0-offer-${viewerId}` })
+  await vi.waitFor(() =>
+    expect(lastWS().sentJSON().filter((m) => m.type === 'answer' && m.viewerId === viewerId)).toHaveLength(1),
+  )
+  return FakePC.instances[FakePC.instances.length - 1]
+}
+
 describe('start', () => {
   it('creates a room, declares the source and opens the publisher socket', async () => {
     const { share, ok } = await startSharing()
@@ -363,28 +408,91 @@ describe('start', () => {
 })
 
 describe('viewers', () => {
-  it('builds one PeerConnection per viewer with video and mixed audio', async () => {
+  it('builds one PeerConnection per viewer and wires its m-lines on the offer', async () => {
     const { share } = await startSharing()
 
     lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
     await vi.waitFor(() => expect(FakePC.instances).toHaveLength(1))
 
     const pc = FakePC.instances[0]
+    // Nothing is reserved before the offer. A transceiver created by
+    // addTransceiver() this early keeps `mid === null` and the browser answers
+    // the offered m-lines with a second, recvonly set instead — which is what
+    // left every viewer stuck on "协商中".
+    expect(pc.transceivers).toHaveLength(0)
+    expect(share.viewers.value).toHaveLength(1)
+
+    lastWS().emit({ type: 'offer', viewerId: 'v1', sdp: 'v=0-offer' })
+    await vi.waitFor(() => expect(lastWS().sentJSON().some((m) => m.type === 'answer')).toBe(true))
+
     // m-line order is a contract with the viewer: audio, then video, then the
     // relay m-line. The audio track comes first because it is the viewer's
     // microphone slot.
-    expect(pc.tracks.map((t) => t.kind)).toEqual(['audio', 'video'])
+    expect(pc.transceivers.map((t) => t.direction)).toEqual(['sendrecv', 'sendrecv', 'sendonly'])
+    expect(pc.transceivers[0].sender.track?.kind).toBe('audio')
+    expect(pc.transceivers[1].sender.track?.kind).toBe('video')
     // CRITICAL: both tracks must belong to the SAME MediaStream. The viewer
     // assigns `srcObject` per received stream, so two streams would mean the
     // second assignment replaces the first — the viewer would get either video
     // or audio, never both.
-    expect(pc.addedStreams).toHaveLength(2)
-    expect(pc.addedStreams[0]).toBe(pc.addedStreams[1])
-    // Three m-lines: audio (mic up), video (our picture down / their screen
-    // up), video (relayed member screen down). All reserved up front so that
-    // sharing never renegotiates.
+    const audioStreams = pc.transceivers[0].sender.streams
+    const videoStreams = pc.transceivers[1].sender.streams
+    expect(audioStreams).toHaveLength(1)
+    expect(audioStreams[0]).toBe(videoStreams[0])
+    expect((audioStreams[0] as unknown as FakeMediaStream).getTracks().map((t) => t.kind)).toEqual([
+      'video',
+      'audio',
+    ])
+  })
+
+  it('answers every offered m-line with a direction that actually sends', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(1))
+    lastWS().emit({ type: 'offer', viewerId: 'v1', sdp: 'v=0-offer' })
+    await vi.waitFor(() => expect(lastWS().sentJSON().some((m) => m.type === 'answer')).toBe(true))
+
+    const pc = FakePC.instances[0]
+    // The answer is built from the transceivers the offer created: all three
+    // must be reused (not duplicated) and carry our media outwards.
+    expect(pc.transceivers).toHaveLength(3)
     expect(pc.transceivers.map((t) => t.direction)).toEqual(['sendrecv', 'sendrecv', 'sendonly'])
+    // The control bus rides the same answer, so it has to exist before it.
+    expect(FakeDataChannel.instances).toHaveLength(1)
+    expect(pc.remoteDescription).toEqual({ type: 'offer', sdp: 'v=0-offer' })
+  })
+
+  it('holds a viewer candidate until its offer has been applied', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(1))
+
+    // Trickled right after the offer, so it routinely overtakes it. Applying it
+    // before a remote description exists throws, and a dropped candidate leaves
+    // ICE with nowhere to send.
+    lastWS().emit({ type: 'ice', viewerId: 'v1', candidate: { candidate: 'early' } })
+    expect(FakePC.instances[0].addedCandidates).toHaveLength(0)
+
+    lastWS().emit({ type: 'offer', viewerId: 'v1', sdp: 'v=0-offer' })
+    await vi.waitFor(() =>
+      expect(FakePC.instances[0].addedCandidates).toContainEqual({ candidate: 'early' }),
+    )
     expect(share.viewers.value).toHaveLength(1)
+  })
+
+  it("adopts the viewer's control channel instead of creating one", async () => {
+    const { share } = await startSharing()
+    const pc = await joinAndOffer('v1')
+
+    // An answer may not introduce an m-line, so a channel created here would
+    // stay `connecting` forever — chat and "request control" would look dead.
+    expect(pc.createDataChannel).not.toHaveBeenCalled()
+    expect(FakeDataChannel.instances).toHaveLength(1)
+
+    const seen: Array<Record<string, unknown>> = []
+    share.onControl((m) => seen.push(m as unknown as Record<string, unknown>))
+    FakeDataChannel.instances[0].emit({ t: 'ctrl-req' })
+    expect(seen).toEqual([{ t: 'ctrl-req', from: 'v1' }])
   })
 
   it('answers an offer and forwards ICE both ways', async () => {
@@ -622,9 +730,8 @@ describe('getAudioCaptureSupport', () => {
 describe('audience screen relay', () => {
   it('forwards a viewer screen to everyone else and never back to the sharer', async () => {
     const { share } = await startSharing()
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v2' })
-    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(2))
+    await joinAndOffer('v1')
+    await joinAndOffer('v2')
 
     const [pc1, pc2] = FakePC.instances
     const screen = new FakeTrack('video', 'screen-1')
@@ -643,9 +750,8 @@ describe('audience screen relay', () => {
 
   it('detaches the relayed screen from every viewer when the share ends', async () => {
     const { share } = await startSharing()
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v2' })
-    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(2))
+    await joinAndOffer('v1')
+    await joinAndOffer('v2')
 
     const [pc1, pc2] = FakePC.instances
     lastWS().emit({ type: 'screen-state', screenEnabled: true, viewerId: 'v1', sharing: true })
@@ -660,14 +766,12 @@ describe('audience screen relay', () => {
 
   it('relays to a viewer that joins after the share started', async () => {
     const { share } = await startSharing()
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
-    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(1))
+    await joinAndOffer('v1')
     const screen = new FakeTrack('video', 'screen-1')
     lastWS().emit({ type: 'screen-state', screenEnabled: true, viewerId: 'v1', sharing: true })
     FakePC.instances[0].ontrack?.({ track: screen, streams: [] })
 
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v2' })
-    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(2))
+    await joinAndOffer('v2')
 
     // The late joiner gets the already-running screen attached at join time.
     expect(FakePC.instances[1].transceivers[2].sender.replaceTrack).toHaveBeenCalledWith(screen)
@@ -687,9 +791,8 @@ describe('audience screen relay', () => {
 describe('control channel', () => {
   it('relays a viewer frame to the others, tagged with the real sender', async () => {
     const { share } = await startSharing()
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v2' })
-    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(2))
+    await joinAndOffer('v1')
+    await joinAndOffer('v2')
 
     const [dc1, dc2] = FakeDataChannel.instances
     const seen: unknown[] = []
@@ -707,8 +810,7 @@ describe('control channel', () => {
 
   it('drops frames a viewer is not allowed to send', async () => {
     const { share } = await startSharing()
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
-    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(1))
+    await joinAndOffer('v1')
     const dc = FakeDataChannel.instances[0]
     const seen: unknown[] = []
     share.onControl((m) => seen.push(m))
@@ -720,9 +822,8 @@ describe('control channel', () => {
 
   it('addresses a grant to one viewer instead of broadcasting it', async () => {
     const { share } = await startSharing()
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v2' })
-    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(2))
+    await joinAndOffer('v1')
+    await joinAndOffer('v2')
     const [dc1, dc2] = FakeDataChannel.instances
 
     share.sendControlTo('v1', { t: 'ctrl-grant', viewerId: 'v1', granted: true })
@@ -737,8 +838,7 @@ describe('control channel', () => {
 describe('switchSource', () => {
   it('swaps the track on every peer and stops the old capture', async () => {
     const { share } = await startSharing()
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
-    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(1))
+    await joinAndOffer('v1')
 
     const oldTrack = displayStream.getVideoTracks()[0]
     const nextTrack = new FakeTrack('video', 'screen-2')
@@ -777,8 +877,7 @@ describe('switchSource', () => {
 describe('speaking indicator', () => {
   it('broadcasts the publisher level when it crosses the speaking threshold', async () => {
     const { share } = await startSharing()
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
-    await vi.waitFor(() => expect(FakeDataChannel.instances).toHaveLength(1))
+    await joinAndOffer('v1')
     const dc = FakeDataChannel.instances[0]
 
     fakeMicLevel = 0.6

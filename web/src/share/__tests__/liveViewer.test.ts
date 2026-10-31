@@ -44,6 +44,14 @@ class FakePC {
     return tx as unknown as RTCRtpTransceiver
   }
 
+  /** Channels the VIEWER created (the offerer owns the control bus). */
+  channels: FakeDC[] = []
+  createDataChannel = vi.fn((label: string) => {
+    const dc = new FakeDC(label)
+    this.channels.push(dc)
+    return dc as unknown as RTCDataChannel
+  })
+
   createOffer = vi.fn(async () => ({ type: 'offer' as const, sdp: 'v=0-offer' }))
 
   setLocalDescription = vi.fn(async (desc: RTCSessionDescriptionInit) => {
@@ -61,6 +69,23 @@ class FakePC {
   close = vi.fn(() => {
     this.closed = true
   })
+}
+
+class FakeDC {
+  readyState = 'open'
+  sent: string[] = []
+  onmessage: ((ev: { data: string }) => void) | null = null
+  constructor(public label: string) {}
+  send(data: string) {
+    this.sent.push(data)
+  }
+  /** Push a frame as if the publisher sent it. */
+  emit(msg: unknown) {
+    this.onmessage?.({ data: JSON.stringify(msg) })
+  }
+  sentJSON(): Record<string, unknown>[] {
+    return this.sent.map((x) => JSON.parse(x) as Record<string, unknown>)
+  }
 }
 
 class FakeWS {
@@ -153,6 +178,36 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+})
+
+describe('control bus', () => {
+  it('creates the channel itself, before the offer, and exchanges frames over it', async () => {
+    const seen: unknown[] = []
+    const viewer = new LiveViewer({
+      token: 'tok123',
+      callbacks: { onControl: (m) => seen.push(m) },
+      wsFactory: (url) => new FakeWS(url) as unknown as WebSocket,
+      pcFactory: (cfg) => new FakePC(cfg) as unknown as RTCPeerConnection,
+    })
+    joinRoom(viewer)
+    const pc = lastPC()
+
+    // The OFFERER owns the bus: an answer cannot introduce an m-line, so a
+    // channel created by the publisher would stay `connecting` forever and
+    // every chat/control frame would go nowhere.
+    expect(pc.channels).toHaveLength(1)
+    expect(pc.createDataChannel).toHaveBeenCalledWith('cb-live', { ordered: true })
+    expect(pc.createDataChannel.mock.invocationCallOrder[0]).toBeLessThan(
+      pc.createOffer.mock.invocationCallOrder[0],
+    )
+
+    expect(viewer.sendControl({ t: 'ctrl-req' })).toBe(true)
+    expect(pc.channels[0].sentJSON()).toEqual([{ t: 'ctrl-req' }])
+
+    pc.channels[0].emit({ t: 'chat', id: 'c1', from: 'host', name: '主持人', text: 'hi', at: 1 })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ t: 'chat', text: 'hi' })
+  })
 })
 
 describe('liveSignalUrl', () => {
