@@ -57,6 +57,8 @@ func TestCodexProviderConfig_ApplyAndRestore(t *testing.T) {
 	assert.Contains(t, content, "[model_providers.clawbench]")
 	assert.Contains(t, content, `base_url = "https://api.minimaxi.com/v1"`)
 	assert.Contains(t, content, `env_key = "CLAWBENCH_PROVIDER_API_KEY"`)
+	// An unset WireAPI keeps the historical default: the Responses API.
+	assert.Contains(t, content, `wire_api = "responses"`)
 	// The secret must never be written to disk.
 	assert.NotContains(t, content, "sk-secret")
 	// Existing user config is preserved.
@@ -80,6 +82,24 @@ func TestCodexProviderConfig_ApplyAndRestore(t *testing.T) {
 	assert.NotContains(t, restored, "clawbench provider")
 	assert.Contains(t, restored, `model_provider = "deepseek"`)
 	assert.Contains(t, restored, `[model_providers.deepseek]`)
+}
+
+// A gateway that only serves /chat/completions must be able to say so: codex
+// otherwise sends every turn to /responses and 404s with no visible cause.
+func TestCodexProviderConfig_WireAPIFollowsProvider(t *testing.T) {
+	path := setupCodexHome(t)
+
+	p := &model.Provider{
+		ID: 3, Name: "ChatOnly", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "https://api.deepseek.com/v1", APIKey: "sk", AuthMode: model.ProviderAuthAuto,
+		WireAPI: model.ProviderWireChat,
+	}
+	require.NoError(t, service.ApplyProviderConfigToBackend("codex", p))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `wire_api = "chat"`)
+	assert.NotContains(t, string(data), `wire_api = "responses"`)
 }
 
 func TestCodexProviderConfig_RestoreWithoutOriginalKey(t *testing.T) {

@@ -205,6 +205,32 @@ func TestDeleteProviderRefusedWhenSummaryUsesIt(t *testing.T) {
 	require.NoError(t, service.DeleteProvider(p.ID))
 }
 
+func TestUpdateProviderRejectsEmptyBaseURLWhenSummaryUsesIt(t *testing.T) {
+	setupProvidersDB(t)
+
+	p, err := service.CreateProvider(model.Provider{Name: "Summary", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://x", APIKey: "k"})
+	require.NoError(t, err)
+	pid := p.ID
+	model.ConfigInstance.AISummary.ProviderID = &pid
+	t.Cleanup(func() { model.ConfigInstance.AISummary.ProviderID = nil })
+
+	// The summary PATCH refuses to bind a provider without an endpoint; this is
+	// the other half — clearing it later must not strand the existing binding.
+	empty := ""
+	_, err = service.UpdateProvider(p.ID, service.ProviderPatch{BaseURL: &empty})
+	assert.ErrorIs(t, err, service.ErrProviderUsedBySummary)
+
+	// Unrelated edits still go through.
+	name := "Summary 2"
+	_, err = service.UpdateProvider(p.ID, service.ProviderPatch{Name: &name})
+	require.NoError(t, err)
+
+	// Once the summary model no longer uses it, the endpoint can be cleared.
+	model.ConfigInstance.AISummary.ProviderID = nil
+	_, err = service.UpdateProvider(p.ID, service.ProviderPatch{BaseURL: &empty})
+	require.NoError(t, err)
+}
+
 func TestUpdateProviderRejectsGeminiWhenSummaryUsesIt(t *testing.T) {
 	setupProvidersDB(t)
 
@@ -217,6 +243,40 @@ func TestUpdateProviderRejectsGeminiWhenSummaryUsesIt(t *testing.T) {
 	gemini := model.ProviderProtocolGemini
 	_, err = service.UpdateProvider(p.ID, service.ProviderPatch{Protocol: &gemini})
 	assert.ErrorIs(t, err, service.ErrProviderUsedBySummary)
+}
+
+func TestProviderWireAPIPersistsAndDefaults(t *testing.T) {
+	setupProvidersDB(t)
+
+	// Unset means the Responses API, which is what codex always got before the
+	// field existed — an old row must not change behaviour.
+	def, err := service.CreateProvider(model.Provider{Name: "Default", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://x", APIKey: "k"})
+	require.NoError(t, err)
+	assert.Equal(t, model.ProviderWireResponses, def.WireAPI)
+
+	chat, err := service.CreateProvider(model.Provider{
+		Name: "ChatOnly", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://y", APIKey: "k",
+		WireAPI: model.ProviderWireChat,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, model.ProviderWireChat, chat.WireAPI)
+
+	read, err := service.GetProvider(chat.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ProviderWireChat, read.WireAPI, "the column must survive a round trip")
+
+	// The in-memory snapshot is what the codex block is rendered from.
+	assert.Equal(t, model.ProviderWireChat, model.GetProvider(chat.ID).WireAPI)
+
+	responses := model.ProviderWireResponses
+	updated, err := service.UpdateProvider(chat.ID, service.ProviderPatch{WireAPI: &responses})
+	require.NoError(t, err)
+	assert.Equal(t, model.ProviderWireResponses, updated.WireAPI)
+
+	// Fail fast on a value codex would not understand.
+	bogus := "grpc"
+	_, err = service.UpdateProvider(chat.ID, service.ProviderPatch{WireAPI: &bogus})
+	assert.ErrorIs(t, err, service.ErrProviderInvalid)
 }
 
 func TestProviderModelsPersistAndNormalize(t *testing.T) {

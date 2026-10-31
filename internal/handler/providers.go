@@ -28,6 +28,7 @@ type providerResponse struct {
 	PresetID     string   `json:"presetId,omitempty"`
 	Models       []string `json:"models"`
 	DefaultModel string   `json:"defaultModel,omitempty"`
+	WireAPI      string   `json:"wireApi"`
 	HasKey       bool     `json:"hasKey"`
 	AgentCount   int      `json:"agentCount"`
 	Agents       []string `json:"agents,omitempty"`
@@ -53,6 +54,7 @@ func toProviderResponse(p *model.Provider, usage map[int64]int, agents []string)
 		PresetID:     p.PresetID,
 		Models:       append([]string{}, p.Models...),
 		DefaultModel: p.DefaultModel,
+		WireAPI:      p.WireAPI,
 		HasKey:       p.APIKey != "",
 		AgentCount:   usage[p.ID],
 		Agents:       agents,
@@ -107,6 +109,7 @@ type providerCreateRequest struct {
 	PresetID     string   `json:"presetId"`
 	Models       []string `json:"models"`
 	DefaultModel string   `json:"defaultModel"`
+	WireAPI      string   `json:"wireApi"`
 }
 
 func serveProviderCreate(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +126,7 @@ func serveProviderCreate(w http.ResponseWriter, r *http.Request) {
 		PresetID:     req.PresetID,
 		Models:       req.Models,
 		DefaultModel: req.DefaultModel,
+		WireAPI:      req.WireAPI,
 	})
 	if err != nil {
 		writeProviderError(w, r, err)
@@ -204,6 +208,7 @@ type providerUpdateRequest struct {
 	PresetID     *string   `json:"presetId"`
 	Models       *[]string `json:"models"`
 	DefaultModel *string   `json:"defaultModel"`
+	WireAPI      *string   `json:"wireApi"`
 	ClearAPIKey  bool      `json:"clearApiKey"`
 }
 
@@ -221,6 +226,7 @@ func serveProviderUpdate(w http.ResponseWriter, r *http.Request, id int64) {
 		PresetID:     req.PresetID,
 		Models:       req.Models,
 		DefaultModel: req.DefaultModel,
+		WireAPI:      req.WireAPI,
 		ClearAPIKey:  req.ClearAPIKey,
 	})
 	if err != nil {

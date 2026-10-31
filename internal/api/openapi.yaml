@@ -1836,9 +1836,15 @@ paths:
             完整成员名单（含已禁用）见 `GET /api/group/members`。
 
             每行还带 `agentName`（智能体显示名，注册表可解析时返回）。本端点按调用方
-            当前项目取数，智能体通常能由客户端自行反查，`agentName` 主要覆盖「智能体已被
-            删除但会话仍在」——此时行仍显示人名而不是裸 id。`agentAvatar` 只在调用方无法
+            当前项目取数，智能体通常能由客户端自行反查，`agentName` 覆盖的是客户端反查
+            不到的情况（会话的 `agentId` 已不在注册表里，例如 #606 之前删除智能体留下的
+            历史行）——此时行仍显示人名而不是裸 id。`agentAvatar` 只在调用方无法
             自行解析该智能体时才返回（见 `GET /api/ai/sessions/overview` 的同名字段）。
+
+            每行还带 `agentTakeoverFrom`（旧智能体的显示名；省略 = 从未被接管）。#606 起
+            删除智能体会把它的会话交给默认智能体（不再让会话悬空），本字段记录被删除者的
+            名字，供客户端渲染「由 X 接管」徽标；服务端也据它判断下一轮能否 resume 原生的
+            外部会话。
     post:
       tags: [Sessions]
       summary: 新建会话
@@ -1912,10 +1918,16 @@ paths:
         - `agentAvatar`：**仅**当调用方无法自行解析该智能体（即它在调用方当前项目
           不可见）时返回，避免给正常行附上数 KB 的 SVG。
         注册表查不到的 id 两者都省略，交由客户端既有兜底处理。
+
+        每行同样带 `agentTakeoverFrom`（旧智能体的显示名；省略 = 从未被接管），
+        语义与 `GET /api/ai/sessions` 的同名字段一致：智能体被删除后会话由默认智能体
+        接管，本字段记录被删除者的名字，供客户端渲染「由 X 接管」徽标。
       operationId: sessionsOverview
       responses:
         "200":
-          description: 各项目会话概览
+          description: |
+            各项目会话概览（`{projects: [{name, sessions}], total}`）。每行携带
+            `agentTakeoverFrom`（旧智能体显示名；省略 = 从未被接管）。
 
   /api/ai/session/settings:
     get:
@@ -5382,7 +5394,7 @@ paths:
       summary: 列出模型提供商
       description: |
         返回 `{providers:[...]}`。每项含 `id/name/protocol/baseUrl/authMode/
-        presetId/models/defaultModel/hasKey/agentCount/agents`（`agents` 为引用
+        wireApi/presetId/models/defaultModel/hasKey/agentCount/agents`（`agents` 为引用
         该提供商的智能体名称）。**列表不返回 API Key**，只给出 `hasKey`；
         明文密钥只在 `GET /api/providers/{id}?reveal=1` 返回。
       operationId: providersList
@@ -5393,9 +5405,11 @@ paths:
       tags: [Providers]
       summary: 新建模型提供商
       description: |
-        body：`{name, protocol, baseUrl, apiKey, authMode, presetId, models, defaultModel}`。
+        body：`{name, protocol, baseUrl, apiKey, authMode, wireApi, presetId, models, defaultModel}`。
         `protocol` 为 `anthropic` / `openai` / `gemini`；`authMode` 为
-        `auto` / `x-api-key` / `bearer`（省略即 `auto`）。名称唯一。
+        `auto` / `x-api-key` / `bearer`（省略即 `auto`）；`wireApi` 为
+        `responses`（默认）/ `chat`，只影响 codex 托管配置块里的 `wire_api`
+        （只提供 `/chat/completions` 的网关须选 `chat`）。名称唯一。
       operationId: providersCreate
       responses:
         "201":
@@ -5435,8 +5449,8 @@ paths:
       tags: [Providers]
       summary: 单个模型提供商
       description: |
-        返回 `{id,name,protocol,baseUrl,authMode,presetId,models,defaultModel,
-        hasKey,agentCount,agents}`。
+        返回 `{id,name,protocol,baseUrl,authMode,wireApi,presetId,models,
+        defaultModel,hasKey,agentCount,agents}`。
         加 `reveal=1` 时额外返回 `apiKey`（明文）。这是编辑弹窗「查看密钥」的
         唯一来源：鉴权后仍需显式索取，列表与任何写操作的回显都不带密钥。
       operationId: providersGet
@@ -5458,8 +5472,8 @@ paths:
       tags: [Providers]
       summary: 更新模型提供商
       description: |
-        部分更新：`name` / `protocol` / `baseUrl` / `apiKey` / `authMode` / `presetId` /
-        `models` / `defaultModel`。
+        部分更新：`name` / `protocol` / `baseUrl` / `apiKey` / `authMode` / `wireApi` /
+        `presetId` / `models` / `defaultModel`。
         `apiKey` 省略或为空表示保持不变，`clearApiKey=true` 显式清除。
         改 `protocol` 时若已绑定的智能体不支持新协议，返回 `409`
         `ProviderProtocolConflict`（`detail.Agents` 列出这些智能体）。

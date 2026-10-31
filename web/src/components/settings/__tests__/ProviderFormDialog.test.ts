@@ -42,6 +42,9 @@ const i18n = createI18n({
           providerModelsChoose: '选择模型',
           providerModelsNone: '还没有选择模型',
           providerDefaultModel: '默认模型',
+          providerWireLabel: '接口协议',
+          providerWireResponses: 'Responses API',
+          providerWireChat: 'Chat Completions',
         },
       },
     },
@@ -104,6 +107,16 @@ describe('ProviderFormDialog', () => {
     expect((inputs(wrapper)[2].element as HTMLInputElement).value).toBe('')
     expect(wrapper.find('.provider-models').exists()).toBe(false)
     expect(wrapper.find('.provider-clear').exists()).toBe(false)
+  })
+
+  it('defaults the wire API to responses and follows the provider on edit', () => {
+    // codex's managed block is rendered from this value; a chat-only gateway
+    // that keeps "responses" fails every turn.
+    const created = mountDialog()
+    expect((created.find('[data-role="wire-api"]').element as HTMLSelectElement).value).toBe('responses')
+
+    const edited = mountDialog({ provider: { ...existing, wireApi: 'chat' } })
+    expect((edited.find('[data-role="wire-api"]').element as HTMLSelectElement).value).toBe('chat')
   })
 
   it('opens in edit mode prefilled and keeps the stored key hidden', () => {

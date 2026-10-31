@@ -173,6 +173,36 @@ func ProviderEnvSupported(backendID, protocol string) bool {
 	return spec.KeyOnly != "" && !spec.ConfigOnly
 }
 
+// BackendIsKeyOnly reports whether the backend consumes only a credential:
+// it has no endpoint slot at all, so a provider bound to it must carry no
+// base_url (see BuildProviderEnv).
+func BackendIsKeyOnly(backendID string) bool {
+	spec, ok := providerEnvTable[backendID]
+	return ok && spec.KeyOnly != "" && !spec.ConfigOnly
+}
+
+// ProviderEnvSupportedProvider mirrors BuildProviderEnv's decision for a whole
+// provider row.
+//
+// ProviderEnvSupported only knows the protocol, so for a key-only backend it
+// answers "yes" even when the provider carries an endpoint — the binding is
+// accepted, then every turn fails with "backend X does not support the Y
+// protocol" because BuildProviderEnv takes the key-only branch only when the
+// endpoint is empty. Callers that hold the row must use this instead.
+func ProviderEnvSupportedProvider(backendID string, p *Provider) bool {
+	if p == nil {
+		return false
+	}
+	spec, ok := providerEnvTable[backendID]
+	if !ok {
+		return false
+	}
+	if spec.supportsProtocol(p.Protocol) {
+		return true
+	}
+	return spec.KeyOnly != "" && !spec.ConfigOnly && p.BaseURL == ""
+}
+
 // any reports whether the spec can take a provider at all.
 func (s ProviderEnvSpec) any() bool {
 	return s.Anthropic != nil || s.OpenAI != nil || s.Gemini != nil || s.KeyOnly != "" || s.ConfigOnly

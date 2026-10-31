@@ -89,6 +89,9 @@ interface AgentRecord {
   providerId?: number | null
   /** Protocols this agent's backend can be pointed at (empty = cannot take a provider). */
   providerProtocols?: string[]
+  /** Backend takes only a credential (no endpoint slot): any provider without
+   *  a base_url is a valid binding even though providerProtocols is empty. */
+  providerKeyOnly?: boolean
   /** True when the provider is applied by editing the CLI's config file (needs consent). */
   providerConfigBackend?: boolean
   /**

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"clawbench/internal/dbutil"
 	"clawbench/internal/model"
@@ -30,11 +31,15 @@ CREATE TABLE IF NOT EXISTS providers (
 	preset_id TEXT NOT NULL DEFAULT '',
 	models TEXT NOT NULL DEFAULT '[]',
 	default_model TEXT NOT NULL DEFAULT '',
+	wire_api TEXT NOT NULL DEFAULT 'responses',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_name ON providers(name);
 `
+
+// providerWriteMu serialises provider read-modify-write sequences.
+var providerWriteMu sync.Mutex
 
 var (
 	// ErrProviderNotFound is returned when the id does not exist.
@@ -63,6 +68,7 @@ type ProviderPatch struct {
 	PresetID     *string
 	Models       *[]string
 	DefaultModel *string
+	WireAPI      *string
 }
 
 // LoadProvidersIntoMemory loads every provider row into the in-memory snapshot
@@ -78,7 +84,7 @@ func LoadProvidersIntoMemory() error {
 
 func listProvidersFromDB(db dbutil.Reader) ([]*model.Provider, error) {
 	rows, err := db.Query(`SELECT id, name, protocol, base_url, api_key, auth_mode, preset_id,
-		models, default_model, created_at, updated_at FROM providers`)
+		models, default_model, wire_api, created_at, updated_at FROM providers`)
 	if err != nil {
 		return nil, fmt.Errorf("query providers: %w", err)
 	}
@@ -90,7 +96,7 @@ func listProvidersFromDB(db dbutil.Reader) ([]*model.Provider, error) {
 		var createdAt, updatedAt sql.NullString
 		var modelsJSON string
 		if err := rows.Scan(&p.ID, &p.Name, &p.Protocol, &p.BaseURL, &p.APIKey, &p.AuthMode, &p.PresetID,
-			&modelsJSON, &p.DefaultModel, &createdAt, &updatedAt); err != nil {
+			&modelsJSON, &p.DefaultModel, &p.WireAPI, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan provider: %w", err)
 		}
 		p.Models = decodeModelIDs(modelsJSON)
@@ -112,9 +118,9 @@ func GetProvider(id int64) (*model.Provider, error) {
 	var createdAt, updatedAt sql.NullString
 	var modelsJSON string
 	err := store.ReadDB().QueryRow(`SELECT id, name, protocol, base_url, api_key, auth_mode, preset_id,
-		models, default_model, created_at, updated_at FROM providers WHERE id = ?`, id).
+		models, default_model, wire_api, created_at, updated_at FROM providers WHERE id = ?`, id).
 		Scan(&p.ID, &p.Name, &p.Protocol, &p.BaseURL, &p.APIKey, &p.AuthMode, &p.PresetID,
-			&modelsJSON, &p.DefaultModel, &createdAt, &updatedAt)
+			&modelsJSON, &p.DefaultModel, &p.WireAPI, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrProviderNotFound
 	}
@@ -138,9 +144,9 @@ func CreateProvider(p model.Provider) (*model.Provider, error) {
 		return nil, ErrProviderNameTaken
 	}
 
-	res, err := store.WriteExec(`INSERT INTO providers (name, protocol, base_url, api_key, auth_mode, preset_id, models, default_model)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.PresetID,
-		encodeModelIDs(p.Models), p.DefaultModel)
+	res, err := store.WriteExec(`INSERT INTO providers (name, protocol, base_url, api_key, auth_mode, preset_id, models, default_model, wire_api)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.PresetID,
+		encodeModelIDs(p.Models), p.DefaultModel, p.WireAPI)
 	if err != nil {
 		if isUniqueConstraint(err) {
 			return nil, ErrProviderNameTaken
@@ -165,6 +171,14 @@ func CreateProvider(p model.Provider) (*model.Provider, error) {
 // any bound agent's backend cannot speak the new protocol — otherwise those
 // agents would start failing every turn with no way to tell why.
 func UpdateProvider(id int64, patch ProviderPatch) (*model.Provider, error) {
+	// Read-modify-write across two statements: two clients editing the same
+	// provider at once would each read the old row and the later UPDATE would
+	// silently revert the other's field. The whole write goes through one
+	// process, so a mutex is the right scope (multi-process access to one
+	// database is not a supported deployment).
+	providerWriteMu.Lock()
+	defer providerWriteMu.Unlock()
+
 	current, err := GetProvider(id)
 	if err != nil {
 		return nil, err
@@ -180,7 +194,7 @@ func UpdateProvider(id int64, patch ProviderPatch) (*model.Provider, error) {
 		if summaryUsesProvider(id) && next.Protocol != model.ProviderProtocolAnthropic && next.Protocol != model.ProviderProtocolOpenAI {
 			return nil, ErrProviderUsedBySummary
 		}
-		incompatible, cerr := agentsIncompatibleWithProvider(id, next.Protocol)
+		incompatible, cerr := agentsIncompatibleWithProvider(id, next)
 		if cerr != nil {
 			return nil, cerr
 		}
@@ -188,11 +202,19 @@ func UpdateProvider(id int64, patch ProviderPatch) (*model.Provider, error) {
 			return nil, &ProviderProtocolConflictError{AgentNames: incompatible}
 		}
 	}
+	// Clearing the endpoint has the same effect as switching to a protocol the
+	// summarizer cannot speak: the binding still looks configured while every
+	// summary call has nowhere to go. Refuse it while the summary model uses
+	// this provider (the handler-level PATCH check only covers the bind step).
+	if next.BaseURL == "" && summaryUsesProvider(id) {
+		return nil, ErrProviderUsedBySummary
+	}
 
 	if _, werr := store.WriteExec(`UPDATE providers SET name = ?, protocol = ?, base_url = ?,
-		api_key = ?, auth_mode = ?, preset_id = ?, models = ?, default_model = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		api_key = ?, auth_mode = ?, preset_id = ?, models = ?, default_model = ?, wire_api = ?,
+		updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		next.Name, next.Protocol, next.BaseURL, next.APIKey, next.AuthMode, next.PresetID,
-		encodeModelIDs(next.Models), next.DefaultModel, id); werr != nil {
+		encodeModelIDs(next.Models), next.DefaultModel, next.WireAPI, id); werr != nil {
 		if isUniqueConstraint(werr) {
 			return nil, ErrProviderNameTaken
 		}
@@ -237,6 +259,9 @@ func applyProviderPatch(current model.Provider, patch ProviderPatch) model.Provi
 	}
 	if patch.DefaultModel != nil {
 		next.DefaultModel = *patch.DefaultModel
+	}
+	if patch.WireAPI != nil {
+		next.WireAPI = *patch.WireAPI
 	}
 	if patch.ClearAPIKey {
 		next.APIKey = ""
@@ -359,7 +384,7 @@ func (e *ProviderProtocolConflictError) Error() string {
 	return fmt.Sprintf("provider protocol is not supported by agents: %s", strings.Join(e.AgentNames, ", "))
 }
 
-func agentsIncompatibleWithProvider(providerID int64, protocol string) ([]string, error) {
+func agentsIncompatibleWithProvider(providerID int64, next model.Provider) ([]string, error) {
 	rows, err := store.ReadDB().Query(
 		"SELECT name, backend FROM agents WHERE provider_id = ? ORDER BY name", providerID,
 	)
@@ -373,7 +398,7 @@ func agentsIncompatibleWithProvider(providerID int64, protocol string) ([]string
 		if err := rows.Scan(&name, &backend); err != nil {
 			return nil, err
 		}
-		if !model.ProviderEnvSupported(backend, protocol) {
+		if !model.ProviderEnvSupportedProvider(backend, &next) {
 			names = append(names, name)
 		}
 	}
@@ -389,6 +414,9 @@ func validateProviderFields(p model.Provider) error {
 	}
 	if !model.ValidAuthMode(p.AuthMode) {
 		return fmt.Errorf("%w: unknown auth mode %q", ErrProviderInvalid, p.AuthMode)
+	}
+	if !model.ValidWireAPI(p.WireAPI) {
+		return fmt.Errorf("%w: unknown wire api %q", ErrProviderInvalid, p.WireAPI)
 	}
 	return nil
 }

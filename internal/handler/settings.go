@@ -1818,6 +1818,14 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			if provider.Protocol != model.ProviderProtocolAnthropic && provider.Protocol != model.ProviderProtocolOpenAI {
 				return fmt.Errorf("ai_summary.provider_id: provider %q speaks %s, but the summary model only supports openai/anthropic", provider.Name, provider.Protocol)
 			}
+			// A provider without a base_url only injects credentials into an
+			// agent's environment (see docs/spec/features/model-providers.md);
+			// it has nowhere to send a completion request. Binding one here
+			// used to succeed and then leave every summary feature silently
+			// disabled, because SummaryEndpoint reports "not configured".
+			if provider.BaseURL == "" {
+				return fmt.Errorf("ai_summary.provider_id: provider %q has no API endpoint, so it cannot back the summary model", provider.Name)
+			}
 			// When the provider curates its models, the summary model must be
 			// one of them — otherwise the picker offers what the endpoint
 			// rejects.

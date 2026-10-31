@@ -232,13 +232,22 @@ func restoreCodexProvider(path string) error {
 
 // codexProviderBlock renders the managed TOML block. The secret is referenced
 // through env_key, never written to disk.
+//
+// wire_api comes from the provider: codex defaults to the Responses API, which
+// a gateway serving only /chat/completions does not implement. Writing
+// "responses" unconditionally made every turn fail against those endpoints with
+// nothing in the UI pointing at the cause.
 func codexProviderBlock(p *model.Provider) string {
+	wire := p.WireAPI
+	if !model.ValidWireAPI(wire) {
+		wire = model.ProviderWireResponses
+	}
 	return codexBlockStart + "\n" +
 		"[model_providers.clawbench]\n" +
 		"name = " + tomlString(p.Name) + "\n" +
 		"base_url = " + tomlString(p.BaseURL) + "\n" +
 		`env_key = "CLAWBENCH_PROVIDER_API_KEY"` + "\n" +
-		`wire_api = "responses"` + "\n" +
+		"wire_api = " + tomlString(wire) + "\n" +
 		"requires_openai_auth = false\n" +
 		codexBlockEnd + "\n"
 }

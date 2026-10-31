@@ -10,6 +10,13 @@
  *
  * This is the one place that knows the shape. A missing binding, or one that
  * points at 0, means "not configured".
+ *
+ * It deliberately does not check that the bound provider has an endpoint:
+ * `GET /api/config` carries only `ai_summary.provider_id` / `model`, while
+ * provider rows (and their base_url) live behind `GET /api/providers`. The
+ * endpoint requirement is therefore enforced where a binding is created — the
+ * server rejects a provider without a base_url (400) and the summary-model
+ * picker does not offer one.
  */
 export function isSummaryModelConfigured(
   serverConfig: Record<string, unknown> | undefined,

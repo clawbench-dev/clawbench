@@ -1912,6 +1912,11 @@ func TestServeConfig_Patch_STTProvider(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
+	// The PATCH validates `summarize.tts_backend` against the global config, and
+	// `model.ConfigInstance` is not reset by setupTestEnv: a sibling test that
+	// leaves it on "api" would otherwise make this one fail depending on order.
+	model.ConfigInstance = model.Config{}
+
 	body := `{"stt":{"provider":"doubao","resource_id":"volc.seedasr.sauc.duration","api_key":"k"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

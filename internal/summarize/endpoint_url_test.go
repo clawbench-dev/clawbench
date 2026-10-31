@@ -30,6 +30,18 @@ func TestBuildEndpointURL(t *testing.T) {
 		// A gateway mounted under a prefix: "/api/v1" is a leading run of the
 		// target segments, so only the remainder is appended.
 		{"prefixed base", "https://openrouter.ai/api/v1", "/v1/chat/completions", "https://openrouter.ai/api/v1/chat/completions"},
+		// A version other than the protocol's own is still a base: the version
+		// is an address namespace, so only the part of defaultPath after its
+		// version prefix is appended. Volcengine Ark publishes "/api/v3" and
+		// serves "/api/v3/chat/completions"; passing it through verbatim 404'd
+		// every summary, recommendation, auto-title and /btw call.
+		{"api v3 namespace", "https://ark.cn-beijing.volces.com/api/v3", "/v1/chat/completions", "https://ark.cn-beijing.volces.com/api/v3/chat/completions"},
+		{"api v3 namespace trailing slash", "https://ark.cn-beijing.volces.com/api/v3/", "/v1/chat/completions", "https://ark.cn-beijing.volces.com/api/v3/chat/completions"},
+		{"bare v3", "https://host/v3", "/v1/chat/completions", "https://host/v3/chat/completions"},
+		{"prefixed v2", "https://host/openai/v2", "/v1/chat/completions", "https://host/openai/v2/chat/completions"},
+		{"v3 complete endpoint preserved", "https://host/api/v3/chat/completions", "/v1/chat/completions", "https://host/api/v3/chat/completions"},
+		{"api v3 anthropic", "https://gw.example.com/api/v3", "/v1/messages", "https://gw.example.com/api/v3/messages"},
+		{"v3 anthropic complete preserved", "https://gw.example.com/api/v3/messages", "/v1/messages", "https://gw.example.com/api/v3/messages"},
 		// Anthropic equivalents.
 		{"Anthropic bare host", "https://api.anthropic.com", "/v1/messages", "https://api.anthropic.com/v1/messages"},
 		{"Anthropic with /v1", "https://api.anthropic.com/v1", "/v1/messages", "https://api.anthropic.com/v1/messages"},

@@ -24,53 +24,67 @@
       </div>
 
       <div v-else class="summary-list">
-        <div v-for="group in groups" :key="group.provider.id" class="summary-group">
+        <div
+          v-for="group in groups"
+          :key="group.provider.id"
+          class="summary-group"
+          :class="{ 'summary-group--disabled': group.noEndpoint }"
+        >
           <div class="summary-group-head">
             <ProviderIcon :provider-id="group.provider.presetId || String(group.provider.id)" :name="group.provider.name" :size="18" />
             <span class="summary-group-name">{{ group.provider.name }}</span>
           </div>
-          <div v-if="group.resolving" class="summary-group-hint">
-            {{ t('settings.items.providerModelsLoading') }}
+          <!-- A provider without a base_url only injects credentials into an
+               agent's environment: it has nowhere to send a completion
+               request, so the server rejects binding it (and the summary
+               features would stay silently off). -->
+          <div v-if="group.noEndpoint" class="summary-group-hint">
+            {{ t('settings.items.summaryModelProviderNoEndpoint') }}
           </div>
-          <button
-            v-for="model in group.models"
-            :key="model"
-            type="button"
-            class="summary-row"
-            :class="{ 'summary-row--active': isCurrent(group.provider.id, model) }"
-            @click="choose(group.provider.id, model)"
-          >
-            <span class="summary-row-model">{{ model }}</span>
-            <Check v-if="isCurrent(group.provider.id, model)" :size="16" class="summary-row-check" />
-          </button>
+          <template v-else>
+            <div v-if="group.resolving" class="summary-group-hint">
+              {{ t('settings.items.providerModelsLoading') }}
+            </div>
+            <button
+              v-for="model in group.models"
+              :key="model"
+              type="button"
+              class="summary-row"
+              :class="{ 'summary-row--active': isCurrent(group.provider.id, model) }"
+              @click="choose(group.provider.id, model)"
+            >
+              <span class="summary-row-model">{{ model }}</span>
+              <Check v-if="isCurrent(group.provider.id, model)" :size="16" class="summary-row-check" />
+            </button>
 
-          <!-- A provider without a curated list accepts any model id, so typing
-               one is the only way to pick a model its endpoint does not
-               publish (many Anthropic-compatible gateways have no /models). -->
-          <template v-if="!group.curated">
-            <div v-if="!group.resolving" class="summary-group-hint">
-              {{ group.error
-                ? t('settings.items.summaryModelProbeFailed', { reason: group.error })
-                : t('settings.items.summaryModelManualHint') }}
-            </div>
-            <div class="summary-manual">
-              <input
-                v-model="manualDraft[group.provider.id]"
-                class="summary-manual-input"
-                type="text"
-                autocomplete="off"
-                :placeholder="t('settings.items.providerModelsCustom')"
-                @keydown.enter.prevent="useManual(group.provider.id)"
-              />
-              <button
-                type="button"
-                class="summary-manual-use"
-                :disabled="!manualText(group.provider.id)"
-                @click="useManual(group.provider.id)"
-              >
-                {{ t('settings.items.summaryModelUse') }}
-              </button>
-            </div>
+            <!-- A provider without a curated list accepts any model id, so typing
+                 one is the only way to pick a model its endpoint does not
+                 publish (many Anthropic-compatible gateways have no /models). -->
+            <template v-if="!group.curated">
+              <div v-if="!group.resolving" class="summary-group-hint">
+                {{ group.error
+                  ? t('settings.items.summaryModelProbeFailed', { reason: group.error })
+                  : t('settings.items.summaryModelManualHint') }}
+              </div>
+              <div class="summary-manual">
+                <input
+                  v-model="manualDraft[group.provider.id]"
+                  class="summary-manual-input"
+                  type="text"
+                  autocomplete="off"
+                  :placeholder="t('settings.items.providerModelsCustom')"
+                  @keydown.enter.prevent="useManual(group.provider.id)"
+                />
+                <button
+                  type="button"
+                  class="summary-manual-use"
+                  :disabled="!manualText(group.provider.id)"
+                  @click="useManual(group.provider.id)"
+                >
+                  {{ t('settings.items.summaryModelUse') }}
+                </button>
+              </div>
+            </template>
           </template>
         </div>
       </div>
@@ -98,6 +112,9 @@ interface ProviderRow {
   name: string
   protocol: string
   presetId?: string
+  /** Endpoint the provider calls. Empty = key-only provider (no endpoint), which
+   *  can never back the summary — see docs/spec/features/model-providers.md. */
+  baseUrl?: string
   models?: string[]
 }
 
@@ -158,8 +175,16 @@ function isEligible(p: ProviderRow): boolean {
   return p.protocol === 'anthropic' || p.protocol === 'openai'
 }
 
+/** A provider with no base_url has no endpoint to summarize against. It stays
+ *  visible (so the user can see why it is not offered) but is not selectable. */
+function hasEndpoint(p: ProviderRow): boolean {
+  return (p.baseUrl ?? '').trim() !== ''
+}
+
 async function resolveUncatalogued() {
-  const pending = providers.value.filter((p) => isEligible(p) && (p.models?.length ?? 0) === 0)
+  const pending = providers.value.filter(
+    (p) => isEligible(p) && hasEndpoint(p) && (p.models?.length ?? 0) === 0,
+  )
   await Promise.all(pending.map(resolveOne))
 }
 
@@ -198,6 +223,7 @@ const baseGroups = computed(() => {
     return {
       provider: p,
       curated: curated.length > 0,
+      noEndpoint: !hasEndpoint(p),
       resolving: resolvingIds.value.includes(p.id),
       error: probeErrors.value[p.id] ?? '',
       models,
@@ -233,6 +259,10 @@ function useManual(providerId: number) {
 }
 
 async function choose(providerId: number, model: string) {
+  // Defensive: the group is rendered disabled, but a stale click must not
+  // produce a request the server will reject anyway.
+  const provider = providers.value.find((p) => p.id === providerId)
+  if (!provider || !hasEndpoint(provider)) return
   try {
     // One PATCH for the pair: validating them separately would reject the
     // provider change while the old model is still attached.
@@ -273,6 +303,10 @@ function close() {
   border-top: 1px solid var(--border-color);
   margin-top: var(--space-2);
   padding-top: var(--space-2);
+}
+/* Shown but not selectable: the group explains why it cannot back the summary. */
+.summary-group--disabled .summary-group-head {
+  opacity: 0.6;
 }
 .summary-group-head {
   display: flex;

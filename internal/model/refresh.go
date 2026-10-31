@@ -641,6 +641,7 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 		agent.SupportsCLI = BackendSupportsCLI(agent.Backend)
 		agent.SupportsMidTurn = BackendSupportsMidTurn(agent.Backend)
 		agent.ProviderProtocols = SupportedProtocols(agent.Backend)
+		agent.ProviderKeyOnly = BackendIsKeyOnly(agent.Backend)
 		agent.ProviderConfigBackend = ProviderUsesConfigFile(agent.Backend)
 		agent.RuntimeSystemPrompt = ComposeSystemPrompt(agent.CustomSystemPrompt)
 		newAgentsMap[agent.ID] = agent

@@ -245,6 +245,8 @@ interface ProviderOption {
   id: number
   name: string
   protocol: string
+  /** Empty for a key-only provider, which only injects the credential. */
+  baseUrl: string
 }
 const providers = ref<ProviderOption[]>([])
 
@@ -327,8 +329,15 @@ interface AgentItem {
 const providerOptions = computed(() => {
   const a = agent.value
   const allowed = a?.providerProtocols ?? []
+  const keyOnly = a?.providerKeyOnly === true
   const bound = a?.providerId ?? null
-  return providers.value.filter((p) => allowed.includes(p.protocol) || p.id === bound)
+  return providers.value.filter((p) => {
+    if (p.id === bound) return true
+    if (allowed.includes(p.protocol)) return true
+    // A key-only backend never reads an endpoint, so a provider WITH one would
+    // be a binding that fails on the next turn; only bare credentials qualify.
+    return keyOnly && !p.baseUrl
+  })
 })
 
 const items = computed<AgentItem[]>(() => {
@@ -423,7 +432,9 @@ const items = computed<AgentItem[]>(() => {
   // Model provider: one-click reference to a provider configured in Settings.
   // Environment backends apply it per process; config-file backends (codex)
   // ask for consent because they modify a file outside ClawBench.
-  if (a.providerProtocols && a.providerProtocols.length > 0) {
+  // Key-only backends advertise no protocols yet still take a provider, so the
+  // gate cannot be "has protocols" alone (it hid the picker for cursor).
+  if ((a.providerProtocols && a.providerProtocols.length > 0) || a.providerKeyOnly) {
     result.push({
       key: 'provider_id',
       label: t('settings.items.agentProvider'),

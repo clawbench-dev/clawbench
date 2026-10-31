@@ -654,8 +654,36 @@ func TestServeConfigPatch_AISummaryProviderRejectsGemini(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "ai_summary.provider_id")
 }
 
-// --- ai_summary.model patch ---
+// A provider with no base_url only injects a key into an agent's environment,
+// so it has no endpoint to send a completion request to. Accepting the binding
+// left every summary feature silently disabled (SummaryEndpoint reports "not
+// configured") while the settings row still showed "configured".
+func TestServeConfigPatch_AISummaryProviderRejectsEmptyBaseURL(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
 
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.AISummary.Model = "keep-me"
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 11, Name: "KeyOnly", Protocol: model.ProviderProtocolOpenAI,
+		APIKey: "k", AuthMode: model.ProviderAuthAuto,
+	}})
+	t.Cleanup(func() { model.ReplaceProviders(nil) })
+
+	body := `{"ai_summary":{"provider_id":11,"model":"gpt-4o-mini"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "ai_summary.provider_id")
+	// The rejection must not leave a half-applied binding behind.
+	assert.Nil(t, model.ConfigInstance.AISummary.ProviderID)
+	assert.Equal(t, "keep-me", model.ConfigInstance.AISummary.Model)
+}
+
+// --- ai_summary.model patch ---
 func TestServeConfigPatch_AISummaryModel(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()

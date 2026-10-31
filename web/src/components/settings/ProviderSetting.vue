@@ -208,6 +208,7 @@ async function saveDraft(value: ProviderFormValue) {
         baseUrl: value.baseUrl,
         apiKey: value.apiKey,
         authMode: value.authMode,
+        wireApi: value.wireApi,
         presetId: value.presetId,
       })
     } else {
@@ -216,6 +217,7 @@ async function saveDraft(value: ProviderFormValue) {
         protocol: value.protocol,
         baseUrl: value.baseUrl,
         authMode: value.authMode,
+        wireApi: value.wireApi,
         apiKey: value.apiKey,
         clearApiKey: value.clearApiKey,
         models: value.models,

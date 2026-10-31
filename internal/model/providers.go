@@ -51,6 +51,14 @@ type Provider struct {
 	// DefaultModel is the model a bound agent uses when it has no preference of
 	// its own. Must be one of Models (Normalized enforces it).
 	DefaultModel string `json:"defaultModel,omitempty"`
+	// WireAPI is the OpenAI wire protocol a Responses-first client has to speak
+	// to this endpoint: "responses" (default) or "chat".
+	//
+	// Only codex reads it, and it is written into codex's managed config block.
+	// A gateway that serves only /chat/completions (DeepSeek, MiniMax, most
+	// self-hosted ones) 404s on /responses, so binding it while the block said
+	// "responses" made every codex turn fail with no visible reason.
+	WireAPI string `json:"wireApi,omitempty"`
 
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
@@ -76,6 +84,10 @@ func (p Provider) Normalized() Provider {
 	if p.AuthMode == "" {
 		p.AuthMode = ProviderAuthAuto
 	}
+	p.WireAPI = strings.ToLower(strings.TrimSpace(p.WireAPI))
+	if p.WireAPI == "" {
+		p.WireAPI = ProviderWireResponses
+	}
 	return p
 }
 
@@ -92,6 +104,23 @@ func ValidProtocol(protocol string) bool {
 func ValidAuthMode(mode string) bool {
 	switch mode {
 	case ProviderAuthAuto, ProviderAuthAPIKey, ProviderAuthBearer:
+		return true
+	}
+	return false
+}
+
+// Wire protocols codex can be told to speak. "responses" is the OpenAI
+// Responses API (codex's default); "chat" is plain /chat/completions, which is
+// all most compatible gateways implement.
+const (
+	ProviderWireResponses = "responses"
+	ProviderWireChat      = "chat"
+)
+
+// ValidWireAPI reports whether api is a wire protocol codex understands.
+func ValidWireAPI(api string) bool {
+	switch api {
+	case ProviderWireResponses, ProviderWireChat:
 		return true
 	}
 	return false

@@ -200,6 +200,39 @@ func TestAgentPatch_ProviderUnsupportedBackend(t *testing.T) {
 	assert.Nil(t, model.GetAgent(agent.ID).ProviderID)
 }
 
+// A key-only backend never reads the endpoint, so binding it to a provider that
+// has one produced a binding that failed on every turn. The UI now offers only
+// bare credentials, and the API has to agree.
+func TestAgentPatch_KeyOnlyBackendRequiresProviderWithoutEndpoint(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	withEndpoint, err := service.CreateProvider(model.Provider{
+		Name: "WithEndpoint", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://x/v1", APIKey: "k",
+	})
+	require.NoError(t, err)
+	bare, err := service.CreateProvider(model.Provider{
+		Name: "Bare", Protocol: model.ProviderProtocolOpenAI, APIKey: "k",
+	})
+	require.NoError(t, err)
+
+	agent := &model.Agent{ID: "cursor-agent", Name: "Cursor", Backend: "cursor"}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	rec := doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{
+		"id": agent.ID, "provider_id": withEndpoint.ID,
+	})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "ProviderUnsupported")
+	assert.Nil(t, model.GetAgent(agent.ID).ProviderID)
+
+	rec = doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{
+		"id": agent.ID, "provider_id": bare.ID,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NotNil(t, model.GetAgent(agent.ID).ProviderID)
+	assert.Equal(t, bare.ID, *model.GetAgent(agent.ID).ProviderID)
+}
+
 func TestAgentPatch_ConfigBackendNeedsConsent(t *testing.T) {
 	setupProvidersHandlerTest(t)
 

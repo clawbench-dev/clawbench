@@ -26,6 +26,11 @@ func setupMigrationEnv(t *testing.T) string {
 	model.ConfigInstance = model.Config{}
 	model.ReplaceProviders(nil)
 
+	// The migration resolves config.yaml through platform.FindConfigPath, whose
+	// fallback is CWD-relative. Chdir into a scratch dir so a test that leaves
+	// the data dir without a config never touches the package directory.
+	t.Chdir(t.TempDir())
+
 	t.Cleanup(func() {
 		cleanup()
 		_ = db.Close()
@@ -105,7 +110,8 @@ func TestMigrateAISummaryProvider_NoLegacyEndpointIsNoop(t *testing.T) {
 }
 
 func TestMigrateAISummaryProvider_AnthropicFormatKept(t *testing.T) {
-	setupMigrationEnv(t)
+	path := setupMigrationEnv(t)
+	writeConfigFile(t, path, "ai_summary:\n  model: claude\n")
 	model.ConfigInstance.AISummary.Format = "anthropic"
 	model.ConfigInstance.AISummary.API = model.APIConfig{BaseURL: "https://gw.example/anthropic", Key: "k"}
 
@@ -113,6 +119,82 @@ func TestMigrateAISummaryProvider_AnthropicFormatKept(t *testing.T) {
 	provider := model.GetProvider(*model.ConfigInstance.AISummary.ProviderID)
 	require.NotNil(t, provider)
 	assert.Equal(t, model.ProviderProtocolAnthropic, provider.Protocol)
+}
+
+// A failed config write must not leave the provider row behind: the legacy
+// fields still drive the next start's retry, and every retry would otherwise
+// add another "AI Summary N" row until the name suffix runs out.
+func TestMigrateAISummaryProvider_WriteFailureLeavesNoOrphan(t *testing.T) {
+	path := setupMigrationEnv(t)
+	// Turning the target into a directory makes the atomic rename fail after
+	// the provider row has been created.
+	require.NoError(t, os.Mkdir(path, 0o755))
+
+	model.ConfigInstance.AISummary.API = model.APIConfig{BaseURL: "https://legacy.example/v1", Key: "sk-legacy"}
+
+	err := MigrateAISummaryProvider()
+	require.Error(t, err)
+
+	// The legacy fallback must survive so the configuration still works.
+	assert.Nil(t, model.ConfigInstance.AISummary.ProviderID)
+	assert.Equal(t, "https://legacy.example/v1", model.ConfigInstance.AISummary.API.BaseURL)
+
+	providers, listErr := service.ListProviders()
+	require.NoError(t, listErr)
+	assert.Empty(t, providers, "a failed write must not leave an orphan provider")
+}
+
+// The migration must edit the config.yaml the server actually loaded. It used
+// to hardcode <DataDir>/config/config.yaml, so a real config in the CWD got a
+// data-dir stub containing only ai_summary next to it — and that stub won the
+// next startup lookup, resetting every other setting.
+func TestMigrateAISummaryProvider_WritesTheLoadedConfigFile(t *testing.T) {
+	dataConfigPath := setupMigrationEnv(t)
+
+	cwdDir := t.TempDir()
+	t.Chdir(cwdDir)
+	cwdConfigPath := filepath.Join(cwdDir, "config", "config.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(cwdConfigPath), 0o755))
+	writeConfigFile(t, cwdConfigPath, `port: 8080
+ai_summary:
+  model: gpt-4o-mini
+  api:
+    base_url: https://legacy.example/v1
+    key: sk-legacy
+`)
+
+	model.ConfigInstance.AISummary.Model = "gpt-4o-mini"
+	model.ConfigInstance.AISummary.API = model.APIConfig{BaseURL: "https://legacy.example/v1", Key: "sk-legacy"}
+
+	require.NoError(t, MigrateAISummaryProvider())
+
+	raw := readConfigMap(t, cwdConfigPath)
+	assert.EqualValues(t, 8080, raw["port"], "unrelated settings must survive")
+	block, ok := raw["ai_summary"].(map[string]any)
+	require.True(t, ok)
+	assert.NotNil(t, block["provider_id"])
+	assert.NotContains(t, block, "api")
+
+	_, statErr := os.Stat(dataConfigPath)
+	assert.True(t, os.IsNotExist(statErr), "must not create an ai_summary-only stub at %s", dataConfigPath)
+}
+
+// With no config file anywhere the migration must not create one: a fresh file
+// would hold only ai_summary and shadow the real configuration.
+func TestMigrateAISummaryProvider_NoConfigFileDoesNotCreateOne(t *testing.T) {
+	dataConfigPath := setupMigrationEnv(t)
+	cwdConfigPath := filepath.Join("config", "config.yaml")
+
+	model.ConfigInstance.AISummary.API = model.APIConfig{BaseURL: "https://legacy.example/v1", Key: "sk-legacy"}
+
+	require.NoError(t, MigrateAISummaryProvider())
+	// The in-memory binding is kept so the running process still works.
+	require.NotNil(t, model.ConfigInstance.AISummary.ProviderID)
+
+	_, dataErr := os.Stat(dataConfigPath)
+	assert.True(t, os.IsNotExist(dataErr), "must not create %s", dataConfigPath)
+	_, cwdErr := os.Stat(cwdConfigPath)
+	assert.True(t, os.IsNotExist(cwdErr), "must not create %s", cwdConfigPath)
 }
 
 func mustRead(t *testing.T, path string) []byte {

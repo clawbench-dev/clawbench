@@ -132,6 +132,47 @@ func TestProviderEnvSupported(t *testing.T) {
 	}
 }
 
+// The protocol-only check cannot see the endpoint, so for a key-only backend it
+// answered "supported" for a provider that carries one — the binding was
+// accepted and then every turn failed inside BuildProviderEnv.
+func TestProviderEnvSupportedProvider(t *testing.T) {
+	keyOnlyNoEndpoint := &Provider{Name: "k", Protocol: ProviderProtocolOpenAI, APIKey: "k"}
+	keyOnlyWithEndpoint := &Provider{Name: "k", Protocol: ProviderProtocolOpenAI, APIKey: "k", BaseURL: "https://x/v1"}
+	anthropic := &Provider{Name: "a", Protocol: ProviderProtocolAnthropic, APIKey: "k", BaseURL: "https://x"}
+	openai := &Provider{Name: "o", Protocol: ProviderProtocolOpenAI, APIKey: "k", BaseURL: "https://x/v1"}
+
+	cases := []struct {
+		backend string
+		p       *Provider
+		want    bool
+	}{
+		{"cursor", keyOnlyNoEndpoint, true},
+		{"cursor", keyOnlyWithEndpoint, false},
+		{"commandcode", keyOnlyNoEndpoint, true},
+		{"commandcode", keyOnlyWithEndpoint, false},
+		{"claude", anthropic, true},
+		{"claude", openai, false},
+		{"copilot", openai, false},
+		{"codex", openai, true},
+		{"cursor", nil, false},
+		{"nope", openai, false},
+	}
+	for _, tc := range cases {
+		if got := ProviderEnvSupportedProvider(tc.backend, tc.p); got != tc.want {
+			t.Errorf("ProviderEnvSupportedProvider(%q,%v) = %v, want %v", tc.backend, tc.p, got, tc.want)
+		}
+	}
+}
+
+func TestBackendIsKeyOnly(t *testing.T) {
+	if !BackendIsKeyOnly("cursor") || !BackendIsKeyOnly("commandcode") {
+		t.Fatal("cursor and commandcode take only a credential")
+	}
+	if BackendIsKeyOnly("claude") || BackendIsKeyOnly("codex") || BackendIsKeyOnly("copilot") {
+		t.Fatal("env/config backends are not key-only")
+	}
+}
+
 func TestRedactProviderEnv(t *testing.T) {
 	got := RedactProviderEnv([]string{"A=secret", "MALFORMED"})
 	if got[0] != "A=***" || got[1] != "MALFORMED" {

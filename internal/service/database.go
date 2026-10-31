@@ -230,6 +230,22 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Pre-migration: providers.wire_api. The CREATE TABLE is a no-op on an
+	// existing database, so the column would never appear there; a fresh one
+	// gets it from the DDL. Existing rows default to "responses", which is what
+	// the codex block always wrote before the column existed.
+	var providersExists int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='providers'").Scan(&providersExists)
+	if providersExists > 0 {
+		var hasWireAPI int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('providers') WHERE name='wire_api'").Scan(&hasWireAPI)
+		if hasWireAPI == 0 {
+			if _, err := store.WriteExec("ALTER TABLE providers ADD COLUMN wire_api TEXT NOT NULL DEFAULT 'responses'"); err != nil {
+				return fmt.Errorf("failed to add providers.wire_api: %w", err)
+			}
+		}
+	}
+
 	// Pre-migration: make sure file_shares carries project_id before createTables
 	// indexes it. A database can hold file_shares WITHOUT any project-scoped
 	// chat table (an install that only ever used file sharing), in which case the

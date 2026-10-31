@@ -64,6 +64,20 @@
         <option value="bearer">bearer</option>
       </select>
 
+      <!-- Only codex reads this: its managed config block tells codex whether
+           the endpoint speaks the Responses API or plain chat/completions. A
+           gateway that serves only the latter 404s every turn when this says
+           "responses", with nothing in the UI pointing at the cause. -->
+      <span class="provider-models-label">{{ t('settings.items.providerWireLabel') }}</span>
+      <select
+        v-model="draft.wireApi"
+        class="provider-input provider-select provider-select--full"
+        data-role="wire-api"
+      >
+        <option value="responses">{{ t('settings.items.providerWireResponses') }}</option>
+        <option value="chat">{{ t('settings.items.providerWireChat') }}</option>
+      </select>
+
       <label v-if="provider" class="provider-clear">
         <input v-model="clearKey" type="checkbox" />
         {{ t('settings.items.providerClearKey') }}
@@ -148,6 +162,8 @@ export interface ProviderRow {
   protocol: string
   baseUrl: string
   authMode: string
+  /** OpenAI wire protocol codex should speak: 'responses' | 'chat'. */
+  wireApi?: string
   presetId?: string
   models?: string[]
   defaultModel?: string
@@ -164,6 +180,7 @@ export interface ProviderFormValue {
   baseUrl: string
   apiKey: string
   authMode: string
+  wireApi: string
   presetId: string
   clearApiKey: boolean
   models: string[]
@@ -205,6 +222,7 @@ const draft = reactive({
   baseUrl: '',
   apiKey: '',
   authMode: 'auto',
+  wireApi: 'responses',
   presetId: '',
   models: [] as string[],
   defaultModel: '',
@@ -232,6 +250,7 @@ function resetFromProvider() {
   draft.baseUrl = p?.baseUrl ?? ''
   draft.apiKey = ''
   draft.authMode = p?.authMode || 'auto'
+  draft.wireApi = p?.wireApi || 'responses'
   draft.presetId = p?.presetId ?? ''
   draft.models = [...(p?.models ?? [])]
   draft.defaultModel = p?.defaultModel ?? ''
@@ -306,6 +325,7 @@ function submit() {
     baseUrl: draft.baseUrl.trim(),
     apiKey: draft.apiKey,
     authMode: draft.authMode,
+    wireApi: draft.wireApi,
     presetId: draft.presetId,
     clearApiKey: clearKey.value,
     models: [...draft.models],

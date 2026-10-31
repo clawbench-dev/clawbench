@@ -150,6 +150,12 @@ type Agent struct {
 	// would fail on the next turn).
 	ProviderProtocols []string `json:"providerProtocols,omitempty"`
 
+	// ProviderKeyOnly marks a backend that takes only a credential (cursor,
+	// commandcode). Its ProviderProtocols list is empty, yet a provider with no
+	// endpoint is still a valid binding — the settings UI must not hide the
+	// picker for those.
+	ProviderKeyOnly bool `json:"providerKeyOnly,omitempty"`
+
 	// CatalogModels is a runtime-only fallback for agents whose backend has not
 	// reported its model list yet (ACP before the first session). It comes from
 	// the authoritative catalog and is used ONLY to configure a default — the

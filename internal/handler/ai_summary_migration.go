@@ -3,14 +3,15 @@ package handler
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"clawbench/internal/model"
+	"clawbench/internal/platform"
 	"clawbench/internal/service"
 )
 
@@ -21,7 +22,8 @@ import (
 // upgrade must not silently drop a working endpoint. The legacy fields stay
 // readable (see model.AISummaryConfig.SummaryEndpoint), which also means a
 // failed write leaves the user with a working configuration rather than a
-// broken one — the migration retries on the next start.
+// broken one — the provider created for the migration is deleted again and the
+// migration retries on the next start.
 func MigrateAISummaryProvider() error {
 	cfg := &model.ConfigInstance.AISummary
 	if cfg.ProviderID != nil || cfg.API.BaseURL == "" {
@@ -38,11 +40,22 @@ func MigrateAISummaryProvider() error {
 		return err
 	}
 
+	legacyFormat, legacyAPI := cfg.Format, cfg.API
 	cfg.ProviderID = &provider.ID
 	cfg.Format = ""
 	cfg.API = model.APIConfig{}
 
 	if err := rewriteAISummaryConfig(cfg.ProviderID, cfg.Model); err != nil {
+		// The row is already committed, and the legacy fields are what makes
+		// the next start retry. Leaving the row behind would make every retry
+		// create another "AI Summary N" until the name suffix runs out.
+		cfg.ProviderID = nil
+		cfg.Format = legacyFormat
+		cfg.API = legacyAPI
+		if delErr := service.DeleteProvider(provider.ID); delErr != nil {
+			slog.Error("failed to roll back the migrated ai_summary provider",
+				"provider_id", provider.ID, "error", delErr)
+		}
 		return err
 	}
 	slog.Info("migrated ai_summary endpoint to a model provider",
@@ -87,13 +100,29 @@ func looksAnthropic(baseURL string) bool {
 // does not survive in the file. Other sections are preserved byte-for-byte in
 // meaning (the file is re-marshaled, so comments are lost — the same trade-off
 // writeConfigYAML already makes).
+//
+// The file it edits is the one the server actually loaded, resolved the same
+// way as startup (platform.FindConfigPath): hardcoding <DataDir> used to create
+// a second, ai_summary-only config.yaml next to a real one in the CWD, and that
+// stub then won the next startup lookup — resetting every other setting.
 func rewriteAISummaryConfig(providerID *int64, modelName string) error {
-	configDir := filepath.Join(model.DataDir, "config")
-	configPath := filepath.Join(configDir, "config.yaml")
+	configPath := platform.FindConfigPath(model.DataDir)
+	existing, err := os.ReadFile(configPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// Never create the file here. A brand-new config.yaml would hold
+			// only ai_summary and shadow the real configuration, so keep the
+			// binding in memory and leave persistence to the settings page.
+			slog.Warn("ai_summary migration: no config.yaml to rewrite; keeping the provider binding in memory only",
+				"path", configPath)
+			return nil
+		}
+		return fmt.Errorf("migrate ai_summary: read config.yaml: %w", err)
+	}
 
 	raw := map[string]any{}
-	if data, err := os.ReadFile(configPath); err == nil && len(data) > 0 {
-		if err := yaml.Unmarshal(data, &raw); err != nil {
+	if len(existing) > 0 {
+		if err := yaml.Unmarshal(existing, &raw); err != nil {
 			return fmt.Errorf("migrate ai_summary: parse config.yaml: %w", err)
 		}
 	}
@@ -110,9 +139,6 @@ func rewriteAISummaryConfig(providerID *int64, modelName string) error {
 		return fmt.Errorf("migrate ai_summary: marshal config.yaml: %w", err)
 	}
 
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		return err
-	}
 	backupConfigYAML(configPath, configPath+".bak", raw, false)
 
 	tmpPath := configPath + ".tmp"

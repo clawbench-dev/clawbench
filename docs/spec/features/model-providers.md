@@ -18,8 +18,9 @@
 | `name` | 显示名，`COLLATE NOCASE` 唯一 |
 | `protocol` | `anthropic` / `openai` / `gemini` |
 | `base_url` | 端点；空表示只注入密钥 |
-| `api_key` | 凭据，**永不回显**（接口只返回 `hasKey`） |
+| `api_key` | 凭据，默认**不回显**（列表与写回执只返回 `hasKey`）；只有显式 `GET /api/providers/{id}?reveal=1` 才返回明文，供设置页「查看密钥」使用 |
 | `auth_mode` | `auto` / `x-api-key` / `bearer` |
+| `wire_api` | `responses`（默认）/ `chat`；只影响 codex 托管配置块，决定它走 Responses API 还是 `/chat/completions` |
 
 `agents.provider_id INTEGER DEFAULT NULL`：NULL = 使用 CLI 自身配置，不注入。
 
