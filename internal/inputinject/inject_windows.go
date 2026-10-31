@@ -131,21 +131,16 @@ func buttonFlags(button int, down bool) (uint32, bool) {
 func Apply(ev Event) error {
 	switch ev.Kind {
 	case "move", "down", "up":
-		// The normalised coordinate describes the CAPTURED PICTURE. For a screen
-		// capture that picture is a monitor, so the fraction is mapped over the
-		// whole virtual desktop (all monitors) rather than the primary one.
-		// Window capture is refused by the UI, which is why no window offset is
-		// applied here.
+		// The normalised coordinate describes the CAPTURED PICTURE. That picture
+		// is one display, not the whole virtual desktop: `Bounds` says where it
+		// sits, so a click on the second monitor lands on the second monitor.
+		// Without bounds (a capture that did not report its display) the
+		// fraction covers every monitor, which is what this did before.
 		vx, vy, vw, vh := virtualScreen()
-		if vw <= 0 || vh <= 0 {
-			return fmt.Errorf("no virtual screen")
+		dx, dy, err := AbsolutePointer(ev, vx, vy, vw, vh)
+		if err != nil {
+			return err
 		}
-		// MOUSEEVENTF_ABSOLUTE uses 0..65535 across the virtual desktop; the
-		// origin offset is applied by VIRTUALDESK itself.
-		_ = vx
-		_ = vy
-		dx := int32(ev.X * 65535)
-		dy := int32(ev.Y * 65535)
 		flags := uint32(mouseMove | mouseAbsolute | mouseVirtualDesk)
 		if ev.Kind == "down" || ev.Kind == "up" {
 			btn, ok := buttonFlags(ev.Button, ev.Kind == "down")

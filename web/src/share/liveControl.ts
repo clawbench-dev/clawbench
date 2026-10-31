@@ -63,6 +63,16 @@ export const VIEWER_MESSAGE_TYPES = new Set([
 /** Upper bound for one chat line. A control channel is not a file transfer. */
 export const CHAT_MAX_CHARS = 2000
 
+/**
+ * Upper bound for one `kind=text` frame, in characters.
+ *
+ * Must stay in step with `maxTextRunes` in internal/inputinject/event.go (512):
+ * the injector truncates there, so a shorter limit here silently eats the tail
+ * of what the viewer typed — an IME commit ("一次上屏 40 字") used to arrive as
+ * 32 characters. Change one side, change the other.
+ */
+export const TEXT_MAX_CHARS = 512
+
 function clamp01(n: number): number {
   return n < 0 ? 0 : n > 1 ? 1 : n
 }
@@ -175,7 +185,7 @@ export function parseControlMessage(raw: string): ControlMessage | null {
         button: typeof m.button === 'number' ? m.button : undefined,
         key: typeof m.key === 'string' ? m.key.slice(0, 32) : undefined,
         delta: typeof m.delta === 'number' ? Math.max(-1000, Math.min(1000, m.delta)) : undefined,
-        text: typeof m.text === 'string' ? m.text.slice(0, 32) : undefined,
+        text: typeof m.text === 'string' ? m.text.slice(0, TEXT_MAX_CHARS) : undefined,
         modifiers: Array.isArray(m.modifiers)
           ? m.modifiers.filter((x): x is string => typeof x === 'string').slice(0, 4)
           : undefined,

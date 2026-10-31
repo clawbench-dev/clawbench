@@ -41,6 +41,10 @@ type Event struct {
 	Modifiers []string `json:"modifiers"`
 	// Text is literal text to type for kind=text.
 	Text string `json:"text"`
+	// Bounds is the physical-pixel rectangle of the captured display, when the
+	// sender knows it. Pointer coordinates are a fraction of THAT rectangle;
+	// without it they are a fraction of the whole virtual desktop.
+	Bounds *Rect `json:"bounds,omitempty"`
 }
 
 // ErrUnsupported means this platform has no injector compiled in.
@@ -68,6 +72,9 @@ func ParseLine(line string) (Event, error) {
 	case "move", "down", "up", "wheel":
 		if ev.X < 0 || ev.X > 1 || ev.Y < 0 || ev.Y > 1 {
 			return Event{}, fmt.Errorf("coordinates out of range: %v,%v", ev.X, ev.Y)
+		}
+		if ev.Bounds != nil && (ev.Bounds.Width <= 0 || ev.Bounds.Height <= 0) {
+			return Event{}, fmt.Errorf("invalid display bounds: %vx%v", ev.Bounds.Width, ev.Bounds.Height)
 		}
 	case "key":
 		if _, ok := VirtualKey(ev.Key); !ok {

@@ -488,6 +488,10 @@ function syncInkRect(): void {
  */
 function releaseControl(): void {
   if (controlState.value === 'none') return
+  // Release a held button BEFORE giving control back: once `ctrl-release` has
+  // been sent the publisher no longer accepts our events, so a late `up` would
+  // be dropped and the host's mouse button would stay down.
+  endControlPress()
   controlState.value = 'none'
   viewer?.sendControl({ t: 'ctrl-release' })
 }
@@ -495,6 +499,22 @@ function releaseControl(): void {
 function requestControl(): void {
   if (!viewer?.sendControl({ t: 'ctrl-req' })) return
   controlState.value = 'requested'
+}
+
+/** Client pixels → normalised picture coordinates (null when there is no stage). */
+function normalizedPoint(ev: PointerEvent | WheelEvent): { x: number; y: number } | null {
+  const stage = stageRef.value
+  if (!stage) return null
+  const rect = contentRectOf(
+    {
+      clientWidth: stage.clientWidth,
+      clientHeight: stage.clientHeight,
+      videoWidth: videoRef.value?.videoWidth ?? 0,
+      videoHeight: videoRef.value?.videoHeight ?? 0,
+    },
+    { left: 0, top: 0 },
+  )
+  return toNormalized(ev.clientX, ev.clientY, rect)
 }
 
 /**
@@ -505,18 +525,8 @@ function requestControl(): void {
  */
 function sendControlEvent(ev: PointerEvent | WheelEvent, kind: 'move' | 'down' | 'up' | 'wheel'): void {
   if (controlState.value !== 'granted') return
-  const stage = stageRef.value
-  if (!stage) return
-  const rect = contentRectOf(
-    {
-      clientWidth: stage.clientWidth,
-      clientHeight: stage.clientHeight,
-      videoWidth: videoRef.value?.videoWidth ?? 0,
-      videoHeight: videoRef.value?.videoHeight ?? 0,
-    },
-    { left: 0, top: 0 },
-  )
-  const p = toNormalized(ev.clientX, ev.clientY, rect)
+  const p = normalizedPoint(ev)
+  if (!p) return
   viewer?.sendControl({
     t: 'ctrl-ev',
     kind,
@@ -545,8 +555,25 @@ const KEY_MAP: Record<string, string> = {
   ' ': 'space',
 }
 
+/**
+ * Whether the event is going into something the viewer is typing in.
+ *
+ * While control is granted every keystroke is forwarded to the host, so a
+ * viewer who opens the chat box would type into whatever window the host has
+ * focused (a password field, a terminal) and `preventDefault` would keep the
+ * character out of the local input as well.
+ */
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false
+  if ((target as HTMLElement).isContentEditable) return true
+  return target.closest('input, textarea, [contenteditable]') !== null
+}
+
 function onControlKey(ev: KeyboardEvent): void {
   if (controlState.value !== 'granted') return
+  // Local typing is not remote control: leave the key alone (no forward, no
+  // preventDefault) so the chat box keeps working.
+  if (isEditableTarget(ev.target)) return
   // Escape is the local escape hatch: it must never be forwarded, or a viewer
   // could not stop controlling without reaching for the mouse.
   if (ev.key === 'Escape' && !ev.ctrlKey && !ev.altKey) {
@@ -565,16 +592,26 @@ function onControlKey(ev: KeyboardEvent): void {
   if (ev.altKey) mods.push('alt')
   if (ev.metaKey) mods.push('meta')
 
-  // A single printable character without ctrl/meta is typed literally: that is
+  // A single printable character with no modifier is typed literally: that is
   // what makes non-ASCII input (Chinese, emoji) work without a key-code table.
-  if (ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey) {
+  // A modified one is a shortcut (Ctrl+C, Alt+F), and sending it as `text`
+  // would deliver the bare character while silently dropping the modifier.
+  if (ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
     viewer?.sendControl({ t: 'ctrl-ev', kind: 'text', text: ev.key })
     ev.preventDefault()
     return
   }
 
   const named = KEY_MAP[ev.key] ?? (/^F\d{1,2}$/.test(ev.key) ? ev.key.toLowerCase() : '')
-  if (!named) return
+  if (!named) {
+    // Shortcut on a printable key: the injector takes it as a key press with
+    // modifiers, which is the only way the host sees the combination.
+    if (ev.key.length === 1 && /^[a-z0-9]$/i.test(ev.key) && mods.length > 0) {
+      viewer?.sendControl({ t: 'ctrl-ev', kind: 'key', key: ev.key.toLowerCase(), modifiers: mods })
+      ev.preventDefault()
+    }
+    return
+  }
   viewer?.sendControl({ t: 'ctrl-ev', kind: 'key', key: named, modifiers: mods })
   ev.preventDefault()
 }
@@ -587,8 +624,57 @@ function onControlComposition(ev: CompositionEvent): void {
   viewer?.sendControl({ t: 'ctrl-ev', kind: 'text', text })
 }
 
+/**
+ * The press currently open in control mode, with its last picture position.
+ *
+ * The host holds the button down until it hears `up`, so this is what lets a
+ * release that arrives from somewhere other than the stage still produce a
+ * well-formed frame — and what keeps one release from sending two.
+ */
+let controlPress: { x: number; y: number; button: number } | null = null
+
+/**
+ * Close an open press.
+ *
+ * Every way out of a press has to run through here: the pointer released
+ * outside the picture, control given back, the grant revoked. Leaving it open
+ * leaves the host's mouse button down until the viewer clicks again.
+ */
+function endControlPress(): void {
+  const press = controlPress
+  if (!press) return
+  controlPress = null
+  viewer?.sendControl({ t: 'ctrl-ev', kind: 'up', x: press.x, y: press.y, button: press.button })
+}
+
+/**
+ * A press released anywhere on the page.
+ *
+ * `pointerup` is targeted at whatever is under the cursor, so a drag that
+ * leaves the picture never reaches the stage and the host would keep its mouse
+ * button down forever.
+ */
+function onWindowPointerUp(ev: PointerEvent): void {
+  if (controlState.value !== 'granted') return
+  const press = controlPress
+  if (!press) return
+  controlPress = null
+  const p = normalizedPoint(ev) ?? press
+  viewer?.sendControl({ t: 'ctrl-ev', kind: 'up', x: p.x, y: p.y, button: press.button })
+}
+
 function onStageDown(ev: PointerEvent): void {
   if (controlState.value === 'granted') {
+    const p = normalizedPoint(ev)
+    if (p) controlPress = { ...p, button: ev.button }
+    // Keep the pointer events coming once the cursor leaves the picture, and
+    // make sure the matching `up` is not lost: the window listener below is the
+    // fallback for a capture that never happened or was lost.
+    try {
+      stageRef.value?.setPointerCapture?.(ev.pointerId)
+    } catch (e) {
+      appLog.d(TAG, 'setPointerCapture failed', e)
+    }
     sendControlEvent(ev, 'down')
     return
   }
@@ -605,6 +691,10 @@ function onStageMove(ev: PointerEvent): void {
 
 function onStageUp(ev: PointerEvent): void {
   if (controlState.value === 'granted') {
+    // Only close a press we actually opened; the window fallback uses the same
+    // flag so one release never produces two `up` frames.
+    if (!controlPress) return
+    controlPress = null
     sendControlEvent(ev, 'up')
     return
   }
@@ -1087,9 +1177,17 @@ watch(controlState, (next) => {
   if (next === 'granted') {
     window.addEventListener('keydown', onControlKey)
     window.addEventListener('compositionend', onControlComposition)
+    // A release outside the picture never reaches the stage, so the window has
+    // to be listened to as well.
+    window.addEventListener('pointerup', onWindowPointerUp)
+    window.addEventListener('pointercancel', onWindowPointerUp)
   } else {
     window.removeEventListener('keydown', onControlKey)
     window.removeEventListener('compositionend', onControlComposition)
+    window.removeEventListener('pointerup', onWindowPointerUp)
+    window.removeEventListener('pointercancel', onWindowPointerUp)
+    // Safety net for a grant revoked by the publisher while a button is held.
+    endControlPress()
   }
 })
 
@@ -1143,7 +1241,12 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onVisibility)
   window.removeEventListener('keydown', onControlKey)
   window.removeEventListener('compositionend', onControlComposition)
+  window.removeEventListener('pointerup', onWindowPointerUp)
+  window.removeEventListener('pointercancel', onWindowPointerUp)
   window.removeEventListener('resize', syncInkRect)
+  // The page is going away mid-drag: close the press while the channel is
+  // still open, or the host keeps the button down with nobody left to release.
+  endControlPress()
   board.dispose()
   document.removeEventListener('fullscreenchange', syncFullscreen)
   attachMember(null)

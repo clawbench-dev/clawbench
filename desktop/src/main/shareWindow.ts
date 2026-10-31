@@ -6,11 +6,15 @@
  * has all three — the only missing piece was a way to OPEN the link inside it.
  *
  * The window reuses the same preload as the app, so the share page sees
- * `window.ClawBenchNative` and switches itself into client mode.
+ * `window.ClawBenchNative` and switches itself into client mode. That makes it
+ * a capability window: it may only ever show pages from the configured server
+ * (see `isShareUrl`), and it may never navigate away from them.
  */
 import { BrowserWindow, shell } from 'electron'
 import path from 'node:path'
 import { isShareUrl } from '../shared/shareLink'
+import { classifyUrl } from './urlPolicy'
+import { getStore } from './store'
 
 let shareWindow: BrowserWindow | null = null
 
@@ -22,7 +26,8 @@ let shareWindow: BrowserWindow | null = null
  * destroy the renderer's state.
  */
 export function openShareWindow(raw: string): boolean {
-  if (!isShareUrl(raw)) return false
+  const serverUrl = getStore().get('serverUrl')
+  if (!isShareUrl(raw, serverUrl)) return false
 
   if (shareWindow && !shareWindow.isDestroyed()) {
     shareWindow.loadURL(raw)
@@ -45,14 +50,19 @@ export function openShareWindow(raw: string): boolean {
   })
 
   // The share page must not be able to navigate this window anywhere else: it
-  // is a capability window (it can capture the screen and be remote-controlled).
+  // is a capability window (it can capture the screen and be remote-controlled),
+  // and the preload survives a navigation. Same-origin targets are the app
+  // itself; everything else goes to the browser or nowhere.
   shareWindow.webContents.on('will-navigate', (event, target) => {
-    if (target === raw) return
+    if (classifyUrl(target, serverUrl) === 'internal') return
     event.preventDefault()
-    if (/^https?:/i.test(target)) void shell.openExternal(target)
+    if (classifyUrl(target, serverUrl) === 'external') void shell.openExternal(target)
   })
   shareWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    // `openExternal` hands the URL to the OS protocol handler, so it needs the
+    // same scheme allow-list as the main window — `file:`/`ms-settings:` here
+    // would launch local programs.
+    if (classifyUrl(url, serverUrl) === 'external') void shell.openExternal(url)
     return { action: 'deny' }
   })
 

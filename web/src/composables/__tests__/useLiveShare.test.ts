@@ -15,6 +15,8 @@ const bridge = vi.hoisted(() => ({
   setPendingCaptureSource: vi.fn(async () => undefined),
   getAudioCaptureSupport: vi.fn(async () => JSON.stringify({ systemAudio: false, reason: 'test' })),
   setPublishingActive: vi.fn(async () => undefined),
+  remoteControlGrant: vi.fn(async () => undefined),
+  remoteControlRevoke: vi.fn(async () => undefined),
   // Absent on the desktop shell; the Android host is the only one that has it,
   // so tests opt in by assigning a function.
   startScreenCapture: undefined as undefined | (() => string),
@@ -309,6 +311,8 @@ beforeEach(async () => {
   vi.stubGlobal('fetch', fetchMock)
   bridge.setPendingCaptureSource.mockClear()
   bridge.setPublishingActive.mockClear()
+  bridge.remoteControlRevoke.mockClear()
+  bridge.remoteControlGrant.mockClear()
   bridge.startScreenCapture = undefined
   androidCapture.startAndroidScreenCapture.mockReset()
 
@@ -875,6 +879,52 @@ describe('control channel', () => {
     // Broadcasting would put every viewer into "controlling" and swallow their
     // typing, so v2 must see nothing.
     expect(dc2.sentJSON()).toHaveLength(0)
+  })
+})
+
+describe('remote control grantee', () => {
+  it('revokes control when the granted viewer disappears', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+    share.sendControlTo('v1', { t: 'ctrl-grant', viewerId: 'v1', granted: true })
+    const seen: Array<Record<string, unknown>> = []
+    share.onControl((m) => seen.push(m as unknown as Record<string, unknown>))
+
+    lastWS().emit({ type: 'viewer-leave', viewerId: 'v1' })
+
+    // The main process must not stay armed for a viewer that is gone: it holds
+    // the real capability (`grantedViewer`), the panel only shows it.
+    expect(bridge.remoteControlRevoke).toHaveBeenCalled()
+    // The panel owns `controlledBy`, so it clears it from the frame it already
+    // handles — a viewer's own release — rather than a second event type.
+    expect(seen).toContainEqual({ t: 'ctrl-release', from: 'v1' })
+  })
+
+  it('leaves an unrelated viewer departure alone', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+    await joinAndOffer('v2')
+    share.sendControlTo('v1', { t: 'ctrl-grant', viewerId: 'v1', granted: true })
+    const seen: unknown[] = []
+    share.onControl((m) => seen.push(m))
+
+    lastWS().emit({ type: 'viewer-leave', viewerId: 'v2' })
+
+    // v1 still holds control: revoking here would stop a working session.
+    expect(bridge.remoteControlRevoke).not.toHaveBeenCalled()
+    expect(seen).toHaveLength(0)
+  })
+
+  it('forgets the grantee once the panel revokes it', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+    share.sendControlTo('v1', { t: 'ctrl-grant', viewerId: 'v1', granted: true })
+    share.sendControlTo('v1', { t: 'ctrl-grant', viewerId: 'v1', granted: false })
+
+    lastWS().emit({ type: 'viewer-leave', viewerId: 'v1' })
+
+    // A revoked grant must not fire a second revoke when that viewer leaves.
+    expect(bridge.remoteControlRevoke).not.toHaveBeenCalled()
   })
 })
 

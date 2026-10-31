@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CHAT_MAX_CHARS,
+  TEXT_MAX_CHARS,
   contentRectOf,
   fromNormalized,
   parseControlMessage,
@@ -39,6 +41,24 @@ describe('parseControlMessage', () => {
     const m = parseControlMessage(JSON.stringify({ t: 'chat', text: long }))
     expect(m).toMatchObject({ t: 'chat' })
     expect((m as { text: string }).text).toHaveLength(2000)
+  })
+
+  it('keeps a whole IME commit and only caps it at the injector limit', () => {
+    // 32 was the old limit and silently cut the tail of an IME commit (a
+    // pinyin/speech input that lands 40 characters at once). The Go injector
+    // accepts 512, so the wire format must not be stricter than it.
+    const commit = '一'.repeat(39)
+    const short = parseControlMessage(JSON.stringify({ t: 'ctrl-ev', kind: 'text', text: commit }))
+    expect((short as { text: string }).text).toBe(commit)
+
+    const long = parseControlMessage(
+      JSON.stringify({ t: 'ctrl-ev', kind: 'text', text: 'a'.repeat(513) }),
+    )
+    expect((long as { text: string }).text).toHaveLength(TEXT_MAX_CHARS)
+    expect(TEXT_MAX_CHARS).toBe(512)
+    // Chat lines have their own, much larger budget; the two must not be
+    // confused with each other.
+    expect(TEXT_MAX_CHARS).toBeLessThan(CHAT_MAX_CHARS)
   })
 
   it('parses a control release', () => {

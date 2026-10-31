@@ -20,10 +20,20 @@
  * granted control to that specific viewer, and `revoke` clears the grant on the
  * main side too (see bridge.ts), so a stale renderer cannot keep driving.
  */
-import { app } from 'electron'
+import { app, screen } from 'electron'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import { getMainWindow } from './window'
+import { currentCaptureDisplayId } from './capture'
+
+/** Physical-pixel rectangle of the captured display on the virtual desktop. */
+export interface DisplayBounds {
+  left: number
+  top: number
+  width: number
+  height: number
+}
 
 export interface RemoteControlEvent {
   kind: 'move' | 'down' | 'up' | 'wheel' | 'key' | 'text'
@@ -34,6 +44,8 @@ export interface RemoteControlEvent {
   key?: string
   modifiers?: string[]
   text?: string
+  /** Added by the main process; the renderer never sends it. */
+  bounds?: DisplayBounds
 }
 
 /**
@@ -45,6 +57,38 @@ export interface RemoteControlEvent {
  * armed here before an event is forwarded.
  */
 let grantedViewer = ''
+/** Where the granted viewer's picture sits on the virtual desktop (null = unknown). */
+let grantBounds: DisplayBounds | null = null
+
+/**
+ * The captured display's rectangle in physical pixels.
+ *
+ * A share captures ONE monitor, but the pointer is positioned across the whole
+ * virtual desktop; without this the fraction of the picture is applied to every
+ * monitor at once and clicks land on the wrong screen. Electron reports display
+ * bounds in DIP, while the injector works in physical pixels, so they are
+ * scaled by the display's factor (exact on a uniform-DPI setup, which is the
+ * common case; a mixed-DPI desktop is at worst off by the scale difference
+ * rather than by a whole monitor).
+ */
+function capturedDisplayBounds(): DisplayBounds | null {
+  const id = currentCaptureDisplayId()
+  if (!id) return null
+  const display = screen.getAllDisplays().find((d) => String(d.id) === id)
+  if (!display) return null
+  const scale = display.scaleFactor || 1
+  return {
+    left: Math.round(display.bounds.x * scale),
+    top: Math.round(display.bounds.y * scale),
+    width: Math.round(display.bounds.width * scale),
+    height: Math.round(display.bounds.height * scale),
+  }
+}
+
+/** Test seam: the rectangle attached to events, if any. */
+export function _grantBoundsForTest(): DisplayBounds | null {
+  return grantBounds
+}
 
 let child: ChildProcessWithoutNullStreams | null = null
 /** Replies arrive in request order, so a FIFO is enough to correlate them. */
@@ -144,26 +188,55 @@ export async function applyRemoteControlEvent(ev: RemoteControlEvent): Promise<b
 }
 
 /**
+ * Whether an IPC came from the app's own window.
+ *
+ * The capability is armed and driven only by the publishing panel, which lives
+ * in the main window. A share window (a different renderer with the same
+ * preload) must never be able to grant itself control, so the check is on the
+ * webContents identity rather than on the page's origin — both windows share an
+ * origin, and a share page is exactly the one that could be talked into it.
+ */
+function isPublisherSender(sender: unknown): boolean {
+  const main = getMainWindow()
+  return !!main && sender === main.webContents
+}
+
+/** Test seam: who currently holds control ('' when nobody does). */
+export function _grantedViewerForTest(): string {
+  return grantedViewer
+}
+
+/**
  * Registers the IPC the renderer calls while it holds remote control.
  *
  * Always registered: the answer carries `supported`, so a missing helper shows
  * up as a clear "not available" instead of a dead button.
  */
 export function registerRemoteControlHandlers(ipcMain: Electron.IpcMain): void {
-  ipcMain.handle('native:remote-control', async (_e, ev: RemoteControlEvent) => {
+  ipcMain.handle('native:remote-control', async (e, ev: RemoteControlEvent) => {
+    if (!isPublisherSender(e.sender)) return { ok: false, supported: true, reason: 'untrusted' }
     if (!remoteControlSupported()) return { ok: false, supported: false }
     // No active grant: the share ended, control was revoked, or nothing ever
     // granted it. Drop the event instead of moving the user's mouse.
     if (!grantedViewer) return { ok: false, supported: true, reason: 'no-grant' }
-    const ok = await applyRemoteControlEvent(ev)
+    // The renderer's coordinates are a fraction of the picture it captured; the
+    // injector needs to know which part of the desktop that picture covers.
+    const payload = grantBounds ? { ...ev, bounds: grantBounds } : ev
+    const ok = await applyRemoteControlEvent(payload)
     return { ok, supported: true }
   })
   ipcMain.handle('native:remote-control-supported', () => remoteControlSupported())
-  ipcMain.handle('native:remote-control-grant', (_e, viewerId: string) => {
+  ipcMain.handle('native:remote-control-grant', (e, viewerId: string) => {
+    if (!isPublisherSender(e.sender)) return
     grantedViewer = typeof viewerId === 'string' ? viewerId : ''
+    // Resolved at grant time: the capture is already running, so this is the
+    // display the viewer is actually looking at.
+    grantBounds = grantedViewer ? capturedDisplayBounds() : null
   })
+  // Revoking is allowed from any renderer: it only ever removes a capability.
   ipcMain.handle('native:remote-control-revoke', () => {
     grantedViewer = ''
+    grantBounds = null
     // Kill the helper too: a live process is a capability that outlives the
     // grant, and restarting it costs one spawn.
     stopRemoteControlHelper()

@@ -129,6 +129,13 @@ let outVideoTrack: MediaStreamTrack | null = null
 let remoteScreenTrack: MediaStreamTrack | null = null
 /** UI subscribers for control frames coming from viewers. */
 const controlHandlers = new Set<(msg: ControlMessage) => void>()
+/**
+ * Viewer id the panel last granted remote control to ('' when nobody).
+ *
+ * The authoritative `controlledBy` lives in the share panel; this mirror is
+ * only what the publisher needs in order to notice that grantee disappearing.
+ */
+let controlGrantee = ''
 /** The captured screen, exposed so the publisher can annotate on it. */
 const previewStream = shallowRef<MediaStream | null>(null)
 /**
@@ -199,6 +206,7 @@ function resetSession(): void {
   remoteScreenTrack = null
   remoteScreenStream.value = null
   screenSharer.value = ''
+  controlGrantee = ''
   if (ws) {
     try {
       ws.close()
@@ -666,6 +674,19 @@ export function useLiveShare() {
     mixer?.removeViewer(viewerId)
     useLiveNotes().removeViewer(viewerId)
     if (screenSharer.value === viewerId) clearRemoteScreen()
+    // A viewer that closes its tab or crashes never sends `ctrl-release`, so the
+    // publisher has to revoke on its behalf: otherwise the panel keeps showing
+    // "stop controlling" and the main process stays armed for a viewer that is
+    // gone. `controlledBy` lives in the panel, so its cleanup is reached by
+    // replaying the frame it already handles — a `ctrl-release` from that viewer
+    // runs exactly its `revokeControl`. Revoking here as well is deliberate and
+    // idempotent: it disarms the main process even when no panel is listening
+    // (the share window can be closed while publishing continues).
+    if (controlGrantee === viewerId) {
+      controlGrantee = ''
+      void getNative()?.remoteControlRevoke?.()
+      controlHandlers.forEach((cb) => cb({ t: 'ctrl-release', from: viewerId }))
+    }
     viewers.value = viewers.value.filter((v) => v.id !== viewerId)
   }
 
@@ -785,6 +806,10 @@ export function useLiveShare() {
 
   /** Send one control frame to a single viewer (grants must not be broadcast). */
   function sendControlTo(viewerId: string, msg: ControlMessage): void {
+    // Remembered even when the channel is closed: the panel sets its own
+    // `controlledBy` regardless, and a viewer that vanishes right after being
+    // granted still has to be cleaned up.
+    if (msg.t === 'ctrl-grant') controlGrantee = msg.granted ? viewerId : ''
     const peer = peers.get(viewerId)
     if (peer?.channel?.readyState !== 'open') return
     try {
