@@ -65,12 +65,18 @@ A: 把技能放进**项目根目录**下的 `.agents/skills/`（即 `<项目路�
 
 **Q: 如何启用 HTTPS？**
 
-A: 将证书文件放入 `<DataDir>/config/tls/` 目录即可。ClawBench 自动检测证书文件，支持三种命名方式（按优先级）：
+A: 两条路，选一条即可。
+
+**没有证书**：打开 **设置 → 安全 → HTTPS 证书**，点「生成自签名证书」，再点「立即重启」。证书会自动覆盖本机所有网卡地址与 localhost，重启后按面板给出的 HTTPS 地址访问（浏览器首次会提示「不安全」，选择继续访问即可）。命令行 `./clawbench --gen-cert` 做的是同一件事。
+
+**已有证书**：把文件放入 `<DataDir>/config/tls/` 目录，ClawBench 自动检测，支持三种命名方式（按优先级）：
 1. `fullchain.pem` + `privkey.pem`（Let's Encrypt 风格）
 2. `cert.pem` + `key.pem`（通用风格）
 3. `combined.pem`（证书和私钥合并文件）
 
 找到有效证书对即自动启用 HTTPS，否则回退 HTTP。也可通过 `tls.cert_dir` 配置项指定其他目录。
+
+> **换了网络（IP 变了）之后浏览器又报证书错误**：自签名证书把 IP 写进了证书本身，重新生成一次即可。
 
 **Q: 如何启用语音输入（STT）？**
 

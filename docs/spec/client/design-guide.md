@@ -411,6 +411,16 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - **共享外壳的关闭按钮与返回**：两个外壳各有一个右上角圆形关闭按钮 `.modal-close-btn`（lucide `X`、28px，与下钻返回键 `.fd-back-btn` 同尺寸；底色沿用 `.window-controls` 的 `--text-primary` 混入 `--bg-secondary` 配方，静止 16% / hover 24% / active 32%，跨 36 主题最差对比 1.110，hover 用 `@media (hover:hover)` 门控避免触屏残留）。**它必须绝对定位**——header 的右侧动作簇（如 `.bs-header-actions`）自带 `margin-left:auto`，把它作为 flex 子项会被挤走；因此 header 预留对应右内边距（窄屏 BottomSheet 用 `.bs-header-has-close` 修饰类，因 TabPanel 复用 `.bs-header` 却无关闭按钮）。**header 点击不再关闭**（避免误触），backdrop 点击与 Escape 保留。**ModalDialog 会注册返回处理器**（优先级 `PRIORITY_OVERLAY+1`，高于所有 BottomSheet 抽屉），因此 Android 返回键与左右边缘内划都能关闭弹窗——此前它没注册，弹窗对返回无响应。
 - **跨面板弹层不要用 `useTabDrawer` 的单 tab 绑定**（`effectiveOpen = currentTab===tabId && open`）——窄屏下会把可从多面板触发的弹层在其它 tab 静默吞掉。正解是直绑共享 `open` + 切 tab 时显式关闭。
 
+### 块级横屏查看（表格 / 代码块）
+
+窄屏上宽表格和长代码读不动，所以每个 `.table-block-wrapper` / `.code-block-wrapper` 的头部都有一个「横屏查看」按钮，点了把**整块**放大到全屏。
+
+- **状态在模块里，不在组件里**：块头按钮是**以 HTML 字符串注入**的，点击靠各容器的**事件委托**统一处理（聊天列表、文件预览、任务详情、任务概览、议题详情、/btw 抽屉、分享页等）——点击处根本没有 Vue 实例可挂 state。因此照 `useDialog()` 的路子：`useBlockLandscape.ts` 持有模块级 `shallowRef`，每个 app 根各挂一个 `<BlockLandscape />` 渲染它。
+- **克隆整块，而不是重建**：全屏里要保留复制、复制格式菜单、换行、表格行展开等全部行为，重建一份必然漂移。克隆后只改一个控件——横屏按钮原地变成关闭按钮（同槽位、同样式、不同动作）。
+- **导航点击要「回到原块上重放」**：克隆里的 `a[href]`、文件路径、commit、外链按钮点下去应当触发容器原有的处理（打开预览、跳文件、确认外链），而不是在克隆里空转。做法是按**索引路径**映射回原树的对应节点再 `click()`；克隆与源结构 1:1（不增删元素）是这条映射成立的前提。源块在浮层打开期间被流式重渲染替换时，索引路径会失效，此时退回按**身份属性**（`data-file-path` / `data-commit-sha` / `data-worktree-path` / `data-url` / `href`）找活着的同源节点。
+- **换行开关只改克隆，关闭时回写**：浮层里切换行若只作用于克隆，关掉就白切了；若直接改源块，浮层里那份又不同步。因此关闭时把克隆的 wrap 状态同步回源块及其按钮。**表格用 `word-wrap` / `no-wrap` 一对类，代码块只有 `word-wrap`**——给代码块补 `no-wrap` 会得到一个没有任何规则消费的死类。
+- **只在「触屏 + 竖屏」才旋转 90°**：判据是 `pointer: coarse` 且高 > 宽。桌面窗口恰好很窄时不能转——侧躺的表格在桌面是干扰而不是帮助（那个尺寸下按钮本来也隐藏）。
+
 ### 图标
 
 - 库：**`lucide-vue-next`**，用 `:size` 属性。
