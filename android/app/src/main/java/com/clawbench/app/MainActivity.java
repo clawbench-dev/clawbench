@@ -4,6 +4,8 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DownloadManager;
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -69,6 +71,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.security.cert.X509Certificate;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -1736,6 +1739,9 @@ public class MainActivity extends AppCompatActivity {
     private final java.util.concurrent.ConcurrentHashMap<Integer, okhttp3.Call> activeDownloads =
             new java.util.concurrent.ConcurrentHashMap<>();
 
+    /** Sub-directory of the public Downloads collection the app saves into. */
+    private static final String DOWNLOAD_SUBDIR = "ClawBench";
+
     /**
      * Download a project file while streaming byte progress back to the WebView.
      *
@@ -1743,8 +1749,20 @@ public class MainActivity extends AppCompatActivity {
      * DownloadManager and reports progress only in the system notification, this
      * streams the response with OkHttp and dispatches
      * {@code clawbench-download-progress} CustomEvents so the in-product progress
-     * bar can follow it. The finished file is registered with DownloadManager so
-     * it still appears in the Downloads app.
+     * bar can follow it.
+     *
+     * <p>The bytes land in the public Downloads collection through MediaStore.
+     * Scoped storage (targetSdk 29+) refuses to open a public Downloads path with
+     * the File API — it fails with {@code EACCES} whatever permission the app
+     * holds — so a MediaStore row is the only supported way for an app to
+     * contribute a file there. The row is created pending, which keeps the
+     * half-written file invisible until the last byte arrives, and it also makes
+     * the finished file show up in the Downloads app without a media scan.
+     *
+     * <p>Below API 29 the app holds no WRITE_EXTERNAL_STORAGE (declared with
+     * {@code maxSdkVersion=28} and never requested at runtime), so a direct save
+     * cannot work there either; the download is handed to DownloadManager, which
+     * writes the file as the system.
      *
      * <p>Runs off the UI thread; all JS dispatch is marshalled back to the UI
      * thread because {@code evaluateJavascript} must be called there.
@@ -1773,6 +1791,15 @@ public class MainActivity extends AppCompatActivity {
             if (safeName.length() > 200) safeName = safeName.substring(0, 200);
             final String finalName = safeName;
 
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                // No writable public path without the storage permission, and
+                // DownloadManager needs none.
+                AppLog.i(TAG, "streamDownloadWithProgress: API " + Build.VERSION.SDK_INT
+                        + ", delegating to DownloadManager");
+                downloadFileViaManager(url, finalName);
+                return;
+            }
+
             String cookie = CookieManager.getInstance().getCookie(serverUrl);
             Request request = new Request.Builder().url(url)
                     .addHeader("Cookie", cookie == null ? "" : cookie)
@@ -1780,14 +1807,10 @@ public class MainActivity extends AppCompatActivity {
             okhttp3.Call call = buildTrustingOkHttpClient().newCall(request);
             activeDownloads.put(downloadId, call);
 
-            java.io.File outDir = new java.io.File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "ClawBench");
-            if (!outDir.exists() && !outDir.mkdirs()) {
-                AppLog.w(TAG, "streamDownloadWithProgress: cannot create " + outDir);
-            }
-            java.io.File outFile = new java.io.File(outDir, finalName);
-            boolean ok = false;
+            ContentResolver cr = getContentResolver();
+            Uri sinkUri = null;
             long total = 0;
+            long received = 0;
             try (Response response = call.execute()) {
                 if (!response.isSuccessful() || response.body() == null) {
                     AppLog.w(TAG, "streamDownloadWithProgress: HTTP " + response.code());
@@ -1795,14 +1818,15 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
                 total = response.body().contentLength();
-                long received = 0;
+                sinkUri = createDownloadFile(cr, finalName, mimeTypeFor(finalName));
                 long lastReported = 0;
                 byte[] buffer = new byte[16384];
                 try (InputStream is = response.body().byteStream();
-                     FileOutputStream fos = new FileOutputStream(outFile)) {
+                     OutputStream os = cr.openOutputStream(sinkUri, "w")) {
+                    if (os == null) throw new IOException("no output stream for " + sinkUri);
                     int len;
                     while ((len = is.read(buffer)) != -1) {
-                        fos.write(buffer, 0, len);
+                        os.write(buffer, 0, len);
                         received += len;
                         // Throttle to ~1% granularity to avoid flooding the JS bridge.
                         if (total <= 0 || received - lastReported >= Math.max(1, total / 100)) {
@@ -1811,10 +1835,12 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
                 }
-                ok = true;
                 dispatchDownloadEvent(downloadId, received, total, false, false);
             } catch (Exception e) {
                 if (!call.isCanceled()) AppLog.e(TAG, "streamDownloadWithProgress failed", e);
+                // Drop the half-written row: it would otherwise stay in Downloads
+                // as a pending, unreadable entry forever.
+                if (sinkUri != null) deleteDownloadFile(cr, sinkUri);
                 // A user cancel is not a failure: report it separately so the
                 // renderer shows no error toast for a deliberate action.
                 dispatchDownloadEvent(downloadId, 0, total, true, !call.isCanceled(), call.isCanceled());
@@ -1823,37 +1849,83 @@ public class MainActivity extends AppCompatActivity {
                 activeDownloads.remove(downloadId);
             }
 
-            if (!ok) return;
+            publishDownloadFile(cr, sinkUri);
 
-            // Register with DownloadManager so the system notification and the
-            // Downloads app both see the completed file.
-            long dmId = -1;
-            try {
-                DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
-                String mimeType = android.webkit.MimeTypeMap.getSingleton()
-                        .getMimeTypeFromExtension(extensionOf(finalName));
-                if (mimeType == null) mimeType = "application/octet-stream";
-                dmId = dm.addCompletedDownload(finalName, getString(R.string.download_description),
-                        true, mimeType, outFile.getAbsolutePath(), outFile.length(), true);
-            } catch (Exception e) {
-                // addCompletedDownload can fail on some scopes; the file is saved.
-                AppLog.w(TAG, "streamDownloadWithProgress: addCompletedDownload failed", e);
+            // APK files keep the auto-install behaviour. The MediaStore row is
+            // owned by this app, so the installer can read it with the grant
+            // flag added by launchApkInstaller.
+            if (finalName.toLowerCase().endsWith(".apk")) {
+                launchApkInstaller(sinkUri);
             }
-            Intent scanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
-            scanIntent.setData(Uri.fromFile(outFile));
-            sendBroadcast(scanIntent);
-
-            // APK files keep the old auto-install behaviour. The URI must come
-            // from DownloadManager: on Android 10+ the app cannot read the
-            // public Downloads file it just wrote, so a file:// URI (or one
-            // derived from the path) is not usable by the installer.
-            if (finalName.toLowerCase().endsWith(".apk") && dmId != -1) {
-                DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
-                Uri apkUri = dm.getUriForDownloadedFile(dmId);
-                if (apkUri != null) launchApkInstaller(apkUri);
-            }
-            dispatchDownloadEvent(downloadId, outFile.length(), outFile.length(), true, false);
+            dispatchDownloadEvent(downloadId, received, received, true, false);
         }).start();
+    }
+
+    /** Relative path inside public storage that downloads are saved under. */
+    static String downloadRelativePath() {
+        return Environment.DIRECTORY_DOWNLOADS + "/" + DOWNLOAD_SUBDIR;
+    }
+
+    /** MIME type for a file name, defaulting to a generic byte stream. */
+    static String mimeTypeFor(String fileName) {
+        String ext = extensionOf(fileName);
+        // Pinned rather than looked up: the APK type is what opens the system
+        // installer, and it is missing from some devices' MimeTypeMap.
+        if ("apk".equals(ext)) return "application/vnd.android.package-archive";
+        String mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
+        return mime == null ? "application/octet-stream" : mime;
+    }
+
+    /**
+     * Column values of a pending row in the public Downloads collection.
+     *
+     * <p>Extracted so the wire contract (path, name, MIME type, pending flag)
+     * can be asserted without a live provider.
+     */
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
+    static ContentValues pendingDownloadValues(String displayName, String mimeType) {
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, displayName);
+        values.put(MediaStore.MediaColumns.MIME_TYPE, mimeType);
+        values.put(MediaStore.MediaColumns.RELATIVE_PATH, downloadRelativePath());
+        values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+        return values;
+    }
+
+    /**
+     * Reserve the destination row for a streamed download.
+     *
+     * @throws IOException when the provider refuses the row, so the caller
+     *         reports a failure instead of silently writing nowhere
+     */
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
+    static Uri createDownloadFile(ContentResolver cr, String displayName, String mimeType)
+            throws IOException {
+        Uri uri = cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                pendingDownloadValues(displayName, mimeType));
+        if (uri == null) throw new IOException("MediaStore rejected " + displayName);
+        return uri;
+    }
+
+    /** Clear the pending flag so the finished file becomes visible to others. */
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
+    static void publishDownloadFile(ContentResolver cr, Uri uri) {
+        ContentValues done = new ContentValues();
+        done.put(MediaStore.MediaColumns.IS_PENDING, 0);
+        try {
+            cr.update(uri, done, null, null);
+        } catch (Exception e) {
+            AppLog.w(TAG, "publishDownloadFile failed", e);
+        }
+    }
+
+    /** Drop a partially written row after a failure or a user cancel. */
+    static void deleteDownloadFile(ContentResolver cr, Uri uri) {
+        try {
+            cr.delete(uri, null, null);
+        } catch (Exception e) {
+            AppLog.w(TAG, "deleteDownloadFile failed", e);
+        }
     }
 
     /** Lowercase extension of a file name, or "" when there is none. */
