@@ -4055,6 +4055,11 @@ export default {
     toolsSection: '工具',
     annotate: '标注画面',
     chat: '聊天',
+    // 共享进行中的三个页签。聊天直接复用 liveShare.chat。
+    tabs: {
+      basic: '基础配置',
+      transcript: '转写',
+    },
     switchSource: '切换共享源',
     switchSourceFailed: '切换失败，已保留原来的画面',
     hostName: '主持人',
@@ -4075,6 +4080,7 @@ export default {
         '实时转写系统声音、你的麦克风和观众发言，按说话人分信道记录，结束后生成会议纪要。观众可以看到听记内容。',
       title: 'AI 听记 · 实时转写',
       listening: '正在听…',
+      notEnabled: '本次共享没有开启 AI 听记。下次开始共享前勾选「AI 听记」即可实时转写。',
       speakerSystem: '系统声音',
       speakerMe: '我',
       speakerViewer: '观众 {n}',

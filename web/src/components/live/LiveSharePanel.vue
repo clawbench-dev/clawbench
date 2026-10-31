@@ -28,7 +28,34 @@
       </button>
     </div>
 
-    <div class="live-panel__body live-dialog">
+    <!-- While publishing the panel is three surfaces, not one long form: the
+         setup, the live transcript and the chat. Stacked in a single scroll the
+         transcript sat below a wall of controls, and the chat opened as a box
+         wedged into the middle of it. -->
+    <div v-if="share.state.value === 'publishing'" class="live-tabs">
+      <button
+        v-for="tab in tabs"
+        :key="tab.key"
+        class="live-tab"
+        :class="{ 'live-tab--active': activeTab === tab.key }"
+        type="button"
+        :aria-pressed="activeTab === tab.key"
+        :data-live-tab="tab.key"
+        @click="selectTab(tab.key)"
+      >
+        {{ t(tab.labelKey) }}
+        <span v-if="tab.key === 'chat' && unread > 0" class="live-count">{{ unread > 9 ? '9+' : unread }}</span>
+        <!-- A red dot while the recorder runs: the tab bar is what the user
+             looks at while reading the other tabs. -->
+        <span
+          v-else-if="tab.key === 'notes' && notes.phase.value === 'recording'"
+          class="live-tab__rec"
+          :title="t('liveShare.notes.listening')"
+        />
+      </button>
+    </div>
+
+    <div class="live-panel__body live-dialog" :class="{ 'live-panel__body--fill': fillTab }">
       <!-- Idle: pick a source and options, then start. -->
       <template v-if="share.state.value === 'idle' && phase !== 'minutes'">
         <div v-if="!supported" class="live-dialog-warn">
@@ -200,201 +227,204 @@
         </div>
       </div>
 
-      <!-- Publishing: link + audience + speech controls. -->
+      <!-- Publishing: three surfaces. 基础配置 holds what is set up once and
+           then glanced at (link, tools, audience, permissions); the transcript
+           and the chat get their own tabs so each can use the panel's height. -->
       <template v-else>
-        <!-- Every address the server is reachable on, primary first. A machine
-             with Wi-Fi + Ethernet + Docker needs this: the address this browser
-             used is not necessarily one a colleague can reach. -->
-        <ShareAddressList :links="share.shareLinks.value" />
-        <div class="live-dialog-hint">{{ t('liveShare.linkHint') }}</div>
+        <template v-if="activeTab === 'basic'">
+          <!-- Every address the server is reachable on, primary first. A
+               machine with Wi-Fi + Ethernet + Docker needs this: the address
+               this browser used is not necessarily one a colleague can reach. -->
+          <ShareAddressList :links="share.shareLinks.value" />
+          <div class="live-dialog-hint">{{ t('liveShare.linkHint') }}</div>
 
-        <!-- Tools that only make sense while publishing: annotate the shared
-             screen, chat, or swap which window is being shared. -->
-        <div class="live-dialog-section">{{ t('liveShare.toolsSection') }}</div>
-        <div class="live-tools">
-          <button class="live-btn" type="button" data-action="annotate" @click="openAnnotate">
-            {{ t('liveShare.annotate') }}
-          </button>
-          <button
-            class="live-btn"
-            :class="{ 'live-btn--on': chatOpen }"
-            type="button"
-            data-action="chat"
-            @click="toggleChat"
-          >
-            {{ t('liveShare.chat') }}
-            <span v-if="unread > 0" class="live-tools__badge">{{ unread > 9 ? '9+' : unread }}</span>
-          </button>
-          <button
-            v-if="!isAndroidCapture"
-            class="live-btn"
-            type="button"
-            data-action="switch-source"
-            @click="openSwitch"
-          >
-            {{ t('liveShare.switchSource') }}
-          </button>
-        </div>
-
-        <!-- Source picker for a mid-share swap. Hidden until asked for: the
-             dialog is already dense, and switching is rare. -->
-        <div v-if="switching" class="live-source-grid live-source-grid--compact">
-          <button
-            v-for="src in captureSources"
-            :key="src.id"
-            class="live-source"
-            :class="{ 'live-source--selected': src.id === selectedSourceId }"
-            type="button"
-            :disabled="switchingBusy"
-            @click="applySwitch(src.id)"
-          >
-            {{ src.name }}
-          </button>
-        </div>
-
-        <div v-if="chatOpen" class="live-chat-inline">
-          <LiveChatPanel :messages="chatMessages" @send="sendChat" />
-        </div>
-
-        <div class="live-dialog-section">
-          {{ t('liveShare.audienceCount', { count: share.viewers.value.length }) }}
-        </div>
-        <div v-if="share.viewers.value.length === 0" class="live-dialog-hint">
-          {{ t('liveShare.noViewers') }}
-        </div>
-        <ul v-else class="live-viewer-list">
-          <li v-for="v in share.viewers.value" :key="v.id" class="live-viewer">
-            <span class="live-viewer-id">{{ v.id }}</span>
-            <span
-              v-if="presence[v.id] === false"
-              class="live-viewer-away"
-              :title="t('liveShare.viewerAway')"
+          <!-- Tools that only make sense while publishing: annotate the shared
+               screen or swap which window is being shared. Chat is a tab of its
+               own, so it is not offered again here. -->
+          <div class="live-dialog-section">{{ t('liveShare.toolsSection') }}</div>
+          <div class="live-tools">
+            <button class="live-btn" type="button" data-action="annotate" @click="openAnnotate">
+              {{ t('liveShare.annotate') }}
+            </button>
+            <button
+              v-if="!isAndroidCapture"
+              class="live-btn"
+              type="button"
+              data-action="switch-source"
+              @click="openSwitch"
             >
-              {{ t('liveShare.viewerAway') }}
-            </span>
-            <span class="live-viewer-talk" :class="`live-viewer-talk--${v.talk}`">
-              {{ talkLabel(v.talk) }}
-            </span>
-            <!-- Only speaking viewers need an action: there is no approval
-                 queue, so the publisher's controls are "mute this one" and
-                 "mute everyone" (below). -->
-            <template v-if="controlRequests.has(v.id)">
-              <!-- Granting on a platform with no injector would silently do
-                   nothing, so say so instead of showing the button. -->
-              <span v-if="!controlSupported" class="live-viewer-note" data-role="control-unsupported">
-                {{ t('liveShare.controlUnsupported') }}
+              {{ t('liveShare.switchSource') }}
+            </button>
+          </div>
+
+          <!-- Source picker for a mid-share swap. Hidden until asked for: the
+               panel is already dense, and switching is rare. -->
+          <div v-if="switching" class="live-source-grid live-source-grid--compact">
+            <button
+              v-for="src in captureSources"
+              :key="src.id"
+              class="live-source"
+              :class="{ 'live-source--selected': src.id === selectedSourceId }"
+              type="button"
+              :disabled="switchingBusy"
+              @click="applySwitch(src.id)"
+            >
+              {{ src.name }}
+            </button>
+          </div>
+
+          <div class="live-dialog-section">
+            {{ t('liveShare.audienceCount', { count: share.viewers.value.length }) }}
+          </div>
+          <div v-if="share.viewers.value.length === 0" class="live-dialog-hint">
+            {{ t('liveShare.noViewers') }}
+          </div>
+          <ul v-else class="live-viewer-list">
+            <li v-for="v in share.viewers.value" :key="v.id" class="live-viewer">
+              <span class="live-viewer-id">{{ v.id }}</span>
+              <span
+                v-if="presence[v.id] === false"
+                class="live-viewer-away"
+                :title="t('liveShare.viewerAway')"
+              >
+                {{ t('liveShare.viewerAway') }}
               </span>
+              <span class="live-viewer-talk" :class="`live-viewer-talk--${v.talk}`">
+                {{ talkLabel(v.talk) }}
+              </span>
+              <!-- Only speaking viewers need an action: there is no approval
+                   queue, so the publisher's controls are "mute this one" and
+                   "mute everyone" (below). -->
+              <template v-if="controlRequests.has(v.id)">
+                <!-- Granting on a platform with no injector would silently do
+                     nothing, so say so instead of showing the button. -->
+                <span v-if="!controlSupported" class="live-viewer-note" data-role="control-unsupported">
+                  {{ t('liveShare.controlUnsupported') }}
+                </span>
+                <button
+                  v-else
+                  class="live-btn live-btn--sm"
+                  type="button"
+                  data-action="control-allow"
+                  @click="grantControl(v.id)"
+                >
+                  {{ t('liveShare.controlAllow') }}
+                </button>
+                <button class="live-btn live-btn--sm live-btn--danger" type="button" data-action="control-deny" @click="revokeControl(v.id)">
+                  {{ t('liveShare.controlDeny') }}
+                </button>
+              </template>
               <button
-                v-else
+                v-else-if="controlledBy === v.id"
+                class="live-btn live-btn--sm live-btn--danger"
+                type="button"
+                data-action="control-stop"
+                @click="revokeControl(v.id)"
+              >
+                {{ t('liveShare.controlStop') }}
+              </button>
+              <button
+                v-if="v.talk === 'talking'"
                 class="live-btn live-btn--sm"
                 type="button"
-                data-action="control-allow"
-                @click="grantControl(v.id)"
+                @click="share.revokeTalk(v.id)"
               >
-                {{ t('liveShare.controlAllow') }}
+                {{ t('liveShare.mute') }}
               </button>
-              <button class="live-btn live-btn--sm live-btn--danger" type="button" data-action="control-deny" @click="revokeControl(v.id)">
-                {{ t('liveShare.controlDeny') }}
+            </li>
+          </ul>
+
+          <label class="live-check">
+            <input
+              type="checkbox"
+              :checked="share.talkEnabled.value"
+              @change="onToggleTalk(($event.target as HTMLInputElement).checked)"
+            />
+            <span>{{ t('liveShare.allowTalking') }}</span>
+          </label>
+          <div class="live-dialog-hint live-dialog-hint--indent">
+            {{ t('liveShare.allowTalkingHint') }}
+          </div>
+          <!-- The publisher hears viewers through its speakers, so its own
+               microphone can pick that up and send it back (twice). AEC covers
+               part of it; headphones are the only reliable fix. -->
+          <div v-if="share.talkEnabled.value" class="live-dialog-hint live-dialog-hint--indent">
+            {{ t('liveShare.headphoneHint') }}
+          </div>
+          <button
+            v-if="share.talkEnabled.value && hasTalkers"
+            class="live-btn live-btn--danger"
+            type="button"
+            @click="share.muteAll()"
+          >
+            {{ t('liveShare.muteAll') }}
+          </button>
+
+          <!-- Audience screen sharing. Off by default: the token is a read
+               credential, and a screen is a much bigger thing to hand out than
+               a microphone. -->
+          <label class="live-check">
+            <input
+              type="checkbox"
+              :checked="share.screenEnabled.value"
+              @change="onToggleScreen(($event.target as HTMLInputElement).checked)"
+            />
+            <span>{{ t('liveShare.allowScreenShare') }}</span>
+          </label>
+          <div class="live-dialog-hint live-dialog-hint--indent">
+            {{ t('liveShare.allowScreenShareHint') }}
+          </div>
+
+          <template v-if="share.screenSharer.value">
+            <div class="live-dialog-section">
+              {{ t('liveShare.memberSharing', { id: share.screenSharer.value }) }}
+            </div>
+            <div class="live-screen-preview">
+              <video ref="remoteScreenRef" autoplay playsinline muted />
+            </div>
+            <div class="live-screen-actions">
+              <button class="live-btn" type="button" data-action="open-screen-window" @click="openScreenWindow">
+                {{ t('liveShare.openInWindow') }}
               </button>
-            </template>
-            <button
-              v-else-if="controlledBy === v.id"
-              class="live-btn live-btn--sm live-btn--danger"
-              type="button"
-              data-action="control-stop"
-              @click="revokeControl(v.id)"
-            >
-              {{ t('liveShare.controlStop') }}
-            </button>
-            <button
-              v-if="v.talk === 'talking'"
-              class="live-btn live-btn--sm"
-              type="button"
-              @click="share.revokeTalk(v.id)"
-            >
-              {{ t('liveShare.mute') }}
-            </button>
-          </li>
-        </ul>
-
-        <label class="live-check">
-          <input
-            type="checkbox"
-            :checked="share.talkEnabled.value"
-            @change="onToggleTalk(($event.target as HTMLInputElement).checked)"
-          />
-          <span>{{ t('liveShare.allowTalking') }}</span>
-        </label>
-        <div class="live-dialog-hint live-dialog-hint--indent">
-          {{ t('liveShare.allowTalkingHint') }}
-        </div>
-        <!-- The publisher hears viewers through its speakers, so its own
-             microphone can pick that up and send it back (twice). AEC covers
-             part of it; headphones are the only reliable fix. -->
-        <div v-if="share.talkEnabled.value" class="live-dialog-hint live-dialog-hint--indent">
-          {{ t('liveShare.headphoneHint') }}
-        </div>
-        <button
-          v-if="share.talkEnabled.value && hasTalkers"
-          class="live-btn live-btn--danger"
-          type="button"
-          @click="share.muteAll()"
-        >
-          {{ t('liveShare.muteAll') }}
-        </button>
-
-        <!-- Audience screen sharing. Off by default: the token is a read
-             credential, and a screen is a much bigger thing to hand out than a
-             microphone. -->
-        <label class="live-check">
-          <input
-            type="checkbox"
-            :checked="share.screenEnabled.value"
-            @change="onToggleScreen(($event.target as HTMLInputElement).checked)"
-          />
-          <span>{{ t('liveShare.allowScreenShare') }}</span>
-        </label>
-        <div class="live-dialog-hint live-dialog-hint--indent">
-          {{ t('liveShare.allowScreenShareHint') }}
-        </div>
-
-        <template v-if="share.screenSharer.value">
-          <div class="live-dialog-section">
-            {{ t('liveShare.memberSharing', { id: share.screenSharer.value }) }}
-          </div>
-          <div class="live-screen-preview">
-            <video ref="remoteScreenRef" autoplay playsinline muted />
-          </div>
-          <div class="live-screen-actions">
-            <button class="live-btn" type="button" data-action="open-screen-window" @click="openScreenWindow">
-              {{ t('liveShare.openInWindow') }}
-            </button>
-            <button
-              class="live-btn live-btn--danger"
-              type="button"
-              @click="share.revokeScreen(share.screenSharer.value)"
-            >
-              {{ t('liveShare.stopScreenShare') }}
-            </button>
-          </div>
+              <button
+                class="live-btn live-btn--danger"
+                type="button"
+                @click="share.revokeScreen(share.screenSharer.value)"
+              >
+                {{ t('liveShare.stopScreenShare') }}
+              </button>
+            </div>
+          </template>
         </template>
 
         <!-- Live transcript. One line per speaker turn; the channels are
              recorded separately and merged by timestamp, so a remote
              participant and the publisher appear as different speakers. -->
-        <template v-if="notes.phase.value === 'recording'">
-          <div class="live-dialog-section">{{ t('liveShare.notes.title') }}</div>
-          <div v-if="noteBlocks.length === 0" class="live-dialog-hint">
-            {{ t('liveShare.notes.listening') }}
+        <div v-else-if="activeTab === 'notes'" class="live-tab-pane" data-role="notes-pane">
+          <div v-if="notes.phase.value !== 'recording'" class="live-dialog-hint">
+            {{ t('liveShare.notes.notEnabled') }}
           </div>
-          <div v-else ref="notesListRef" class="live-notes-list">
-            <div v-for="b in noteBlocks" :key="b.key" class="live-note-line">
-              <span class="live-note-speaker">{{ b.speaker }}</span>
-              <span class="live-note-text">{{ b.text }}</span>
+          <template v-else>
+            <div v-if="noteBlocks.length === 0" class="live-dialog-hint">
+              {{ t('liveShare.notes.listening') }}
             </div>
-          </div>
-        </template>
+            <div v-else ref="notesListRef" class="live-notes-list live-notes-list--fill">
+              <div v-for="b in noteBlocks" :key="b.key" class="live-note-line">
+                <span class="live-note-speaker">{{ b.speaker }}</span>
+                <span class="live-note-text">{{ b.text }}</span>
+              </div>
+            </div>
+          </template>
+        </div>
 
+        <div v-else class="live-tab-pane" data-role="chat-pane">
+          <div class="live-chat-inline live-chat-inline--fill">
+            <LiveChatPanel :messages="chatMessages" @send="sendChat" />
+          </div>
+        </div>
+
+        <!-- An error belongs to the share, not to a tab: it stays visible
+             whichever one is open. -->
         <div v-if="share.error.value" class="live-dialog-error">{{ share.error.value }}</div>
       </template>
 
@@ -447,7 +477,7 @@
             </span>
             <button class="live-window__btn" type="button" @click="toggleChat">
               {{ t('liveShare.chat') }}
-              <span v-if="unread > 0" class="live-tools__badge">{{ unread > 9 ? '9+' : unread }}</span>
+              <span v-if="unread > 0" class="live-count">{{ unread > 9 ? '9+' : unread }}</span>
             </button>
             <button
               class="live-window__btn live-window__btn--danger"
@@ -465,7 +495,7 @@
               <X :size="14" />
             </button>
           </div>
-          <div v-if="chatOpen" class="live-window__chat">
+          <div v-if="windowChatOpen" class="live-window__chat">
             <LiveChatPanel :messages="chatMessages" @send="sendChat" />
           </div>
         </div>
@@ -608,9 +638,41 @@ const windowVideoRef = ref<HTMLVideoElement | null>(null)
 const annotateWindow = useScreenWindow()
 const annotateWindowTarget = annotateWindow.target
 
+// ── Tabs ────────────────────────────────────────────────────────────────────
+/** Which of the three publishing surfaces is showing. */
+type LiveTab = 'basic' | 'notes' | 'chat'
+const activeTab = ref<LiveTab>('basic')
+/**
+ * The label keys are data, not three literal `t()` calls in the template: the
+ * tab bar renders them in a loop so the badge and the recording dot have one
+ * place to attach.
+ */
+const tabs: Array<{ key: LiveTab; labelKey: string }> = [
+  { key: 'basic', labelKey: 'liveShare.tabs.basic' },
+  { key: 'notes', labelKey: 'liveShare.tabs.transcript' },
+  { key: 'chat', labelKey: 'liveShare.chat' },
+]
+/**
+ * The transcript and the chat own their scrolling, so they take the body's
+ * whole height instead of sitting in a fixed box inside a scrolling form.
+ */
+const fillTab = computed(
+  () => share.state.value === 'publishing' && activeTab.value !== 'basic',
+)
+
+function selectTab(key: LiveTab): void {
+  activeTab.value = key
+  if (key === 'chat') unread.value = 0
+}
+
 // ── Tools: annotation, chat, source switch, presence ────────────────────────
 const annotating = ref(false)
-const chatOpen = ref(false)
+/**
+ * The chat opened from the member's-screen window (Document PiP). It is a
+ * separate surface: that window lives outside the app and its chat floats over
+ * the picture, so it must not be tied to the panel's chat tab.
+ */
+const windowChatOpen = ref(false)
 const unread = ref(0)
 const chatMessages = ref<ChatMessage[]>([])
 const switching = ref(false)
@@ -633,8 +695,8 @@ let controlUnsupportedWarned = false
 let unsubscribeControl: (() => void) | null = null
 
 function toggleChat(): void {
-  chatOpen.value = !chatOpen.value
-  if (chatOpen.value) unread.value = 0
+  windowChatOpen.value = !windowChatOpen.value
+  if (windowChatOpen.value) unread.value = 0
 }
 
 function sendChat(text: string): void {
@@ -664,7 +726,9 @@ function onControl(msg: ControlMessage): void {
         self: false,
       },
     ]
-    if (!chatOpen.value) unread.value += 1
+    // Not unread while the message is on screen: either the panel's chat tab
+    // or the floating chat in the member's-screen window counts as "seen".
+    if (activeTab.value !== 'chat' && !windowChatOpen.value) unread.value += 1
     return
   }
   if (msg.t === 'presence') {
@@ -782,6 +846,10 @@ watch(
     chatMessages.value = []
     unread.value = 0
     annotating.value = false
+    // A new share starts on the setup tab: the chat and the transcript of the
+    // previous one are gone, so landing on either would show an empty pane.
+    activeTab.value = 'basic'
+    windowChatOpen.value = false
     // The share is over: a drawing window over a dead picture helps nobody.
     annotateWindow.close()
     void getNative()?.remoteControlRevoke?.()
@@ -956,7 +1024,7 @@ onBeforeUnmount(() => {
   unsubscribeControl?.()
   unsubscribeControl = null
   closeScreenWindow()
-  annotateWindow.close()
+  closeAnnotate()
 })
 
 watch(
@@ -1343,7 +1411,7 @@ watch(
 /*
  * Fixed height with its own scroll: the dialog's height must not jump every
  * ten seconds as a new line lands, and an hour-long meeting must not push the
- * footer off-screen.
+ * footer off-screen. Inside its own tab it takes the pane instead.
  */
 .live-notes-list {
   display: flex;
@@ -1355,6 +1423,12 @@ watch(
   border-radius: var(--radius-md, 6px);
   background: var(--bg-tertiary, #f6f8fa);
   overscroll-behavior: contain;
+}
+
+.live-notes-list--fill {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
 }
 
 .live-note-line {
@@ -1409,13 +1483,15 @@ watch(
   gap: var(--space-3, 6px);
 }
 
+/* A tool that is currently on (annotation mode is running). */
 .live-btn--on {
   border-color: color-mix(in srgb, var(--accent-color, #4a90d9) 55%, transparent);
   color: var(--accent-color, #4a90d9);
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
 }
 
-.live-tools__badge {
+/* Unread chat count, on the chat tab and in the member's-screen window dock. */
+.live-count {
   min-width: 14px;
   padding: 0 3px;
   margin-left: 4px;
@@ -1435,12 +1511,18 @@ watch(
 }
 
 /* Inline chat inside the dialog: fixed height so the card does not grow with
-   the conversation. */
+   the conversation. In its own tab it takes the pane instead. */
 .live-chat-inline {
   height: calc(220 * var(--dp));
   border: 1px solid var(--border-color, #d0d7de);
   border-radius: var(--radius-md, 6px);
   overflow: hidden;
+}
+
+.live-chat-inline--fill {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
 }
 
 /* ── Member screen window (Document PiP) ────────────────────────────────────
@@ -1748,6 +1830,20 @@ watch(
   overflow-y: auto;
 }
 
+/* Tabs that own their scrolling (transcript, chat) hand the body's height down
+   to the pane instead of scrolling it. */
+.live-panel__body--fill {
+  overflow: hidden;
+}
+
+.live-tab-pane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-4, 8px);
+  min-height: 0;
+}
+
 /* The dialog body used to be centred in a card; in a tab the content is a
    column, and a max width keeps long lines (transcripts, paths) readable on a
    wide dock panel. */
@@ -1757,6 +1853,61 @@ watch(
   width: 100%;
   margin: 0 auto;
   min-height: 0;
+}
+
+/* ── Tabs ───────────────────────────────────────────────────────────────────
+   Underline tabs, the same shape the git panel uses for its sub-tabs: three
+   equal columns so the bar reads as a segmented switch rather than three
+   unrelated links. */
+.live-tabs {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  background: var(--bg-secondary, #f6f8fa);
+}
+
+.live-tab {
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2, 4px);
+  height: calc(34 * var(--dp));
+  padding: 0 var(--space-5, 10px);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-secondary, #666);
+  font-size: var(--font-size-sm, 12px);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast, 0.1s) ease,
+    border-color var(--duration-fast, 0.1s) ease;
+}
+
+@media (hover: hover) {
+  .live-tab:hover {
+    color: var(--text-primary, #1a1a1a);
+  }
+}
+
+.live-tab--active {
+  color: var(--accent-color, #4a90d9);
+  border-bottom-color: var(--accent-color, #4a90d9);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* Recording marker on the transcript tab: the tab bar is what stays visible
+   while the user reads the other tabs, so "still transcribing" has to show
+   there. Reuses the header badge's pulse so the two read as the same state. */
+.live-tab__rec {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-red, #cf222e);
+  animation: live-panel-pulse 1.4s ease-in-out infinite;
+  flex-shrink: 0;
 }
 
 .live-panel__footer {

@@ -4067,6 +4067,11 @@ export default {
     toolsSection: 'Tools',
     annotate: 'Annotate',
     chat: 'Chat',
+    // The three tabs while a share is running. The chat tab reuses liveShare.chat.
+    tabs: {
+      basic: 'Setup',
+      transcript: 'Transcript',
+    },
     switchSource: 'Switch source',
     switchSourceFailed: 'Could not switch; keeping the current picture',
     hostName: 'Host',
@@ -4087,6 +4092,7 @@ export default {
         'Transcribes system audio, your microphone and each viewer separately (so every line keeps its speaker) and writes meeting minutes when the share ends. Viewers can read the transcript.',
       title: 'AI notes · live transcript',
       listening: 'Listening…',
+      notEnabled: 'AI notes were off for this share. Tick "AI notes" before the next one starts to get a live transcript.',
       speakerSystem: 'System audio',
       speakerMe: 'Me',
       speakerViewer: 'Viewer {n}',
