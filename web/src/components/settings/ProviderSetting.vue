@@ -367,7 +367,7 @@ onMounted(() => {
 }
 .provider-catalog-text {
   min-width: 0;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .provider-catalog-stale {
   margin-left: var(--space-2);
@@ -479,7 +479,7 @@ onMounted(() => {
   gap: var(--space-3);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .provider-error,
 .provider-test-result--fail {
