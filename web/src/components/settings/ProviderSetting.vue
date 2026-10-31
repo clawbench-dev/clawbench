@@ -34,23 +34,25 @@
         <span v-if="p.agentCount > 0" class="provider-usage">
           {{ t('settings.items.providerUsedBy', { count: p.agentCount }) }}
         </span>
-        <button
-          class="fbtn"
-          :disabled="testingId !== null"
-          :title="t('settings.items.providerTestHint')"
-          @click="testProvider(p)"
-        >
-          <component :is="testingId === p.id ? Loader2 : PlugZap" :size="13" :class="{ 'provider-spin': testingId === p.id }" />
-          {{ testingId === p.id ? t('settings.items.providerTesting') : t('settings.items.providerTest') }}
-        </button>
-        <button class="fbtn" @click="startEdit(p)">
-          <Pencil :size="13" />
-          {{ t('settings.items.providerEdit') }}
-        </button>
-        <button class="fbtn" @click="removeProvider(p)">
-          <Trash2 :size="13" />
-          {{ t('settings.items.providerRemove') }}
-        </button>
+        <div class="provider-actions">
+          <button
+            class="fbtn"
+            :disabled="testingId !== null"
+            :title="t('settings.items.providerTestHint')"
+            @click="testProvider(p)"
+          >
+            <component :is="testingId === p.id ? Loader2 : PlugZap" :size="13" :class="{ 'provider-spin': testingId === p.id }" />
+            {{ testingId === p.id ? t('settings.items.providerTesting') : t('settings.items.providerTest') }}
+          </button>
+          <button class="fbtn" @click="startEdit(p)">
+            <Pencil :size="13" />
+            {{ t('settings.items.providerEdit') }}
+          </button>
+          <button class="fbtn" @click="removeProvider(p)">
+            <Trash2 :size="13" />
+            {{ t('settings.items.providerRemove') }}
+          </button>
+        </div>
       </div>
       <div class="provider-summary">{{ p.baseUrl || t('settings.items.providerNoBaseUrl') }}</div>
       <div v-if="testResults[p.id]" class="provider-test-result" :class="testResults[p.id].ok ? 'provider-test-result--ok' : 'provider-test-result--fail'">
@@ -338,121 +340,153 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* Geometry and type tokens mirror MCPSetting: both are "list + add form" cards
+ * rendered inside the same settings card, so they must share the 16px inset,
+ * the row chrome and the 30dp control height. Using the wrong token names here
+ * (--text-sm / --border-primary) silently falls back to inherited values —
+ * that is exactly how this page drifted out of alignment before. */
 .provider-setting {
+  padding: var(--space-6) var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: calc(10 * var(--dp));
-  padding: calc(4 * var(--dp)) 0;
+  gap: var(--space-4);
 }
 .provider-hint {
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-  line-height: 1.5;
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
 }
 .provider-catalog {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: calc(8 * var(--dp));
-  padding: calc(4 * var(--dp)) 0;
-  border-bottom: 1px dashed var(--border-primary);
+  gap: var(--space-4);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  line-height: var(--line-height-normal);
 }
 .provider-catalog-text {
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
+  min-width: 0;
+  word-break: break-word;
 }
 .provider-catalog-stale {
-  margin-left: calc(6 * var(--dp));
-  color: var(--warning, var(--text-secondary));
+  margin-left: var(--space-2);
+  color: var(--color-orange);
 }
 .provider-empty {
-  font-size: var(--text-sm);
-  color: var(--text-tertiary);
-  padding: calc(6 * var(--dp)) 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
 }
 .provider-row {
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  padding: calc(8 * var(--dp)) calc(10 * var(--dp));
   display: flex;
   flex-direction: column;
-  gap: calc(4 * var(--dp));
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
 }
 .provider-row-head {
   display: flex;
   align-items: center;
-  gap: calc(8 * var(--dp));
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 .provider-name {
-  font-weight: 600;
-  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
 }
 .provider-proto,
 .provider-key-badge,
 .provider-key-missing,
 .provider-usage {
-  font-size: var(--text-xs);
-  padding: 1px calc(6 * var(--dp));
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
+  padding: 0 var(--space-2);
+  white-space: nowrap;
 }
 .provider-key-missing {
-  color: var(--warning, var(--text-secondary));
+  color: var(--color-orange);
+  border-color: color-mix(in srgb, var(--color-orange) 40%, transparent);
+}
+/* Actions are one cluster pushed to the right edge; without the wrapper each
+ * button wrapped on its own and the row read as a stack of pills. */
+.provider-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+  flex-wrap: wrap;
 }
 .provider-summary {
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
   word-break: break-all;
 }
 .provider-form {
   display: flex;
   flex-direction: column;
-  gap: calc(8 * var(--dp));
-  border-top: 1px solid var(--border-primary);
-  padding-top: calc(10 * var(--dp));
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-color);
 }
 .provider-grid {
   display: flex;
-  gap: calc(8 * var(--dp));
-  align-items: center;
+  gap: var(--space-3);
 }
+/* Same per-axis sizing rule as MCPSetting: a bare `flex` on a column child
+ * would override the control height. */
 .provider-input {
-  flex: 1;
-  min-width: 0;
+  box-sizing: border-box;
   height: calc(30 * var(--dp));
-  padding: 0 calc(8 * var(--dp));
-  border: 1px solid var(--border-primary);
+  padding: 0 var(--space-6);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: var(--text-sm);
+  font-size: var(--font-size-md);
+}
+.provider-grid > .provider-input:not(.provider-select) {
+  flex: 1;
+  min-width: calc(120 * var(--dp));
+}
+.provider-form > .provider-input {
+  align-self: stretch;
+  flex: none;
 }
 .provider-select {
-  flex: 0 0 auto;
-  min-width: calc(120 * var(--dp));
+  flex: 0 0 calc(120 * var(--dp));
+  padding: 0 var(--space-3);
+}
+.provider-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 calc(2 * var(--dp)) var(--focus-ring);
 }
 .provider-clear {
   display: flex;
   align-items: center;
-  gap: calc(6 * var(--dp));
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
 }
 .provider-error,
 .provider-test-result {
   display: flex;
-  align-items: center;
-  gap: calc(6 * var(--dp));
-  font-size: var(--text-xs);
+  align-items: flex-start;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  word-break: break-word;
 }
 .provider-error,
 .provider-test-result--fail {
-  color: var(--error, #e5484d);
+  color: var(--color-red);
 }
 .provider-test-result--ok {
-  color: var(--success, #30a46c);
+  color: var(--color-green);
 }
 .provider-spin {
   animation: provider-spin 1s linear infinite;
@@ -460,6 +494,11 @@ onMounted(() => {
 @keyframes provider-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .provider-spin {
+    animation-duration: 3s;
   }
 }
 </style>
