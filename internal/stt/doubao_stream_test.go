@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,7 +43,13 @@ func readClientFrame(t *testing.T, data []byte) (msgType, flags byte, seq int32,
 // sendServerFrame writes one frame from the fake server.
 func sendServerFrame(t *testing.T, conn *websocket.Conn, msgType, flags byte, seq int32, body string) {
 	t.Helper()
-	frame, err := volcEncodeFrame(msgType, flags, volcSerializationJSON, volcCompressionGzip, &seq, []byte(body))
+	// The sequence field is only on the wire when the flags carry it; encoding
+	// one for a no-sequence frame shifts the payload length by four bytes.
+	var seqPtr *int32
+	if flags&(volcFlagPosSequence|volcFlagNegSequence) != 0 {
+		seqPtr = &seq
+	}
+	frame, err := volcEncodeFrame(msgType, flags, volcSerializationJSON, volcCompressionGzip, seqPtr, []byte(body))
 	if err != nil {
 		t.Fatalf("encode server frame: %v", err)
 	}
@@ -56,6 +64,7 @@ func TestDoubaoOpenStream(t *testing.T) {
 	var gotInit doubaoStreamRequest
 	var audioSeqs []int32
 	var lastSeq int32
+	var framesAfterEnd int
 	done := make(chan struct{})
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +94,19 @@ func TestDoubaoOpenStream(t *testing.T) {
 					lastSeq = seq
 					sendServerFrame(t, conn, volcMsgFullServerResponse, volcFlagPosSequence, 9,
 						`{"result":{"text":"你好世界"}}`)
+					// Nothing may follow the end marker. Watch briefly so an
+					// audio frame sent after Finish is caught rather than
+					// silently accepted.
+					watchCtx, cancelWatch := context.WithTimeout(ctx, 200*time.Millisecond)
+					for {
+						_, more, rerr := conn.Read(watchCtx)
+						if rerr != nil {
+							break
+						}
+						framesAfterEnd++
+						_ = more
+					}
+					cancelWatch()
 					return
 				}
 				audioSeqs = append(audioSeqs, seq)
@@ -131,6 +153,7 @@ func TestDoubaoOpenStream(t *testing.T) {
 	}
 
 assert:
+	<-done // the server goroutine owns audioSeqs/lastSeq/framesAfterEnd
 	if gotInit.Request.ModelName != "bigmodel" {
 		t.Errorf("model_name = %q", gotInit.Request.ModelName)
 	}
@@ -160,8 +183,15 @@ assert:
 	if len(audioSeqs) != 2 || audioSeqs[0] != 2 || audioSeqs[1] != 3 {
 		t.Fatalf("audio sequences = %v, want [2 3]", audioSeqs)
 	}
-	if lastSeq >= 0 {
-		t.Fatalf("last packet must carry a negative sequence, got %d", lastSeq)
+	// The end marker is the sequence *after* the last audio packet, negated.
+	// Merely being negative would also accept -(last audio seq), which reuses a
+	// sequence the engine already saw.
+	wantEnd := -(audioSeqs[len(audioSeqs)-1] + 1)
+	if lastSeq != wantEnd {
+		t.Fatalf("end sequence = %d, want %d", lastSeq, wantEnd)
+	}
+	if framesAfterEnd != 0 {
+		t.Fatalf("%d frame(s) sent after the end marker", framesAfterEnd)
 	}
 
 	if len(results) < 2 {
@@ -174,8 +204,6 @@ assert:
 	if final.Text != "你好世界" || !final.Final {
 		t.Errorf("final result = %+v", final)
 	}
-
-	<-done
 }
 
 // TestDoubaoOpenStream_RequiresAPIKey covers the guard.
@@ -184,6 +212,214 @@ func TestDoubaoOpenStream_RequiresAPIKey(t *testing.T) {
 	if _, err := p.OpenStream(context.Background(), StreamOptions{}); err == nil {
 		t.Fatal("expected an error for a missing API key")
 	}
+}
+
+// TestDoubaoOpenStream_ErrorFrame covers the failure path: the engine reports
+// bad credentials / quota as a 0xF frame, which must surface as an error rather
+// than a clean end with an empty transcript.
+func TestDoubaoOpenStream_ErrorFrame(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		ctx := context.Background()
+		for {
+			_, data, err := conn.Read(ctx)
+			if err != nil {
+				return
+			}
+			msgType, _, _, _ := readClientFrame(t, data)
+			switch msgType {
+			case volcMsgFullClientRequest:
+				sendServerFrame(t, conn, volcMsgFullServerResponse, volcFlagNoSequence, 0,
+					`{"result":{"additions":{"log_id":"log-1"}}}`)
+			case volcMsgAudioOnlyRequest:
+				sendServerFrame(t, conn, volcMsgError, volcFlagNoSequence, 0,
+					`{"error":"invalid api key","code":45000001,"message":"unauthorized"}`)
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	p := newDoubao(srv.URL)
+	session, err := p.OpenStream(context.Background(), StreamOptions{SampleRate: 16000, Channels: 1, Bits: 16})
+	if err != nil {
+		t.Fatalf("OpenStream: %v", err)
+	}
+	defer session.Close()
+
+	if err := session.Write([]byte{1, 2, 3, 4}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	var results []StreamResult
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case r, ok := <-session.Results():
+			if !ok {
+				goto assert
+			}
+			results = append(results, r)
+		case <-deadline:
+			t.Fatal("timed out waiting for results")
+		}
+	}
+
+assert:
+	if len(results) == 0 {
+		t.Fatal("the error frame produced no result")
+	}
+	last := results[len(results)-1]
+	if last.Err == nil {
+		t.Fatalf("error frame must surface as StreamResult.Err, got %+v", last)
+	}
+	if last.Final {
+		t.Error("an errored session must not also report a final transcript")
+	}
+	for _, want := range []string{"45000001", "unauthorized", "invalid api key"} {
+		if !strings.Contains(last.Err.Error(), want) {
+			t.Errorf("error %q should mention %q", last.Err, want)
+		}
+	}
+}
+
+// TestDoubaoErrorFromPayload covers the shapes an error frame can take: the
+// message must keep whatever the engine reported, including the raw body when
+// it is not JSON at all.
+func TestDoubaoErrorFromPayload(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "code, message and error",
+			body: `{"error":"invalid api key","code":45000001,"message":"unauthorized"}`,
+			want: "stt: doubao stream error: code 45000001: unauthorized: invalid api key",
+		},
+		{
+			name: "string code",
+			body: `{"code":"45000030","message":"resource not authorized"}`,
+			want: "stt: doubao stream error: code 45000030: resource not authorized",
+		},
+		{
+			name: "null code is skipped",
+			body: `{"code":null,"message":"quota exceeded"}`,
+			want: "stt: doubao stream error: quota exceeded",
+		},
+		{
+			name: "undecodable body is reported verbatim",
+			body: `upstream said no`,
+			want: "stt: doubao stream error: upstream said no",
+		},
+		{
+			name: "empty body still names the frame",
+			body: `{}`,
+			want: "stt: doubao stream error: {}",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := doubaoErrorFromPayload([]byte(tc.body))
+			if got == nil {
+				t.Fatal("expected an error")
+			}
+			if got.Error() != tc.want {
+				t.Errorf("error = %q, want %q", got.Error(), tc.want)
+			}
+		})
+	}
+}
+
+// blockingConn is a volcConn whose Write blocks until the session context is
+// cancelled or the test releases it.
+type blockingConn struct {
+	writeStarted chan struct{}
+	release      chan struct{}
+	closeOnce    sync.Once
+	closed       chan struct{}
+}
+
+func newBlockingConn() *blockingConn {
+	return &blockingConn{
+		writeStarted: make(chan struct{}),
+		release:      make(chan struct{}),
+		closed:       make(chan struct{}),
+	}
+}
+
+func (c *blockingConn) Read(ctx context.Context) (websocket.MessageType, []byte, error) {
+	<-ctx.Done()
+	return 0, nil, ctx.Err()
+}
+
+func (c *blockingConn) Write(ctx context.Context, _ websocket.MessageType, _ []byte) error {
+	select {
+	case <-c.writeStarted:
+	default:
+		close(c.writeStarted)
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.release:
+		return nil
+	}
+}
+
+func (c *blockingConn) Close(websocket.StatusCode, string) error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return nil
+}
+
+// TestDoubaoSession_CloseDoesNotWaitForStalledWrite covers shutdown: when the
+// upstream never accepts a frame, Close (and therefore the handler tearing the
+// WebSocket down) must not sit on the write for the full 15s timeout.
+func TestDoubaoSession_CloseDoesNotWaitForStalledWrite(t *testing.T) {
+	conn := newBlockingConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &doubaoStreamSession{
+		conn:    conn,
+		results: make(chan StreamResult, 8),
+		done:    make(chan struct{}),
+		ctx:     ctx,
+		cancel:  cancel,
+		seq:     doubaoFirstAudioSequence,
+	}
+
+	writeErr := make(chan error, 1)
+	go func() { writeErr <- s.Write([]byte{1, 2, 3, 4}) }()
+
+	select {
+	case <-conn.writeStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Write never reached the connection")
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		s.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Close blocked on an in-flight write")
+	}
+
+	select {
+	case err := <-writeErr:
+		if err == nil {
+			t.Fatal("the aborted write should report an error")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Write did not return after Close")
+	}
+	<-conn.closed
 }
 
 // TestDoubaoContextPayload covers truncation and the wrapping shape.

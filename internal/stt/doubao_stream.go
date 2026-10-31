@@ -176,13 +176,16 @@ func (p *DoubaoProvider) OpenStream(ctx context.Context, opts StreamOptions) (St
 		return nil, fmt.Errorf("stt: send stream request: %w", err)
 	}
 
+	sessionCtx, cancel := context.WithCancel(ctx)
 	s := &doubaoStreamSession{
 		conn:    conn,
-		seq:     doubaoFirstAudioSequence,
 		results: make(chan StreamResult, 8),
 		done:    make(chan struct{}),
+		ctx:     sessionCtx,
+		cancel:  cancel,
+		seq:     doubaoFirstAudioSequence,
 	}
-	go s.readLoop(ctx)
+	go s.readLoop(sessionCtx)
 	return s, nil
 }
 
@@ -208,7 +211,7 @@ func doubaoContextPayload(text string) string {
 }
 
 // writeVolcFrame encodes and sends one protocol frame.
-func writeVolcFrame(ctx context.Context, conn *websocket.Conn, msgType, flags, serialization, compression byte, seq *int32, payload []byte) error {
+func writeVolcFrame(ctx context.Context, conn volcConn, msgType, flags, serialization, compression byte, seq *int32, payload []byte) error {
 	frame, err := volcEncodeFrame(msgType, flags, serialization, compression, seq, payload)
 	if err != nil {
 		return err
@@ -305,11 +308,30 @@ func gzipReader(p []byte) ([]byte, error) {
 	return io.ReadAll(zr)
 }
 
+// volcConn is the part of *websocket.Conn the session drives. It is an
+// interface so a test can substitute a connection whose writes block, which is
+// the only way to prove Close does not wait for a stalled upstream.
+type volcConn interface {
+	Read(ctx context.Context) (websocket.MessageType, []byte, error)
+	Write(ctx context.Context, typ websocket.MessageType, p []byte) error
+	Close(code websocket.StatusCode, reason string) error
+}
+
 // doubaoStreamSession is one live recognition session.
 type doubaoStreamSession struct {
-	conn    *websocket.Conn
+	conn    volcConn
 	results chan StreamResult
 	done    chan struct{}
+
+	// ctx is derived from the caller's context and cancelled by Close, so an
+	// in-flight write is abandoned instead of running to its 15s timeout.
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	// writeMu serialises frames on the wire (order matters: audio packets and
+	// the end marker share one sequence space) without holding the state lock
+	// across the network write.
+	writeMu sync.Mutex
 
 	mu       sync.Mutex
 	seq      int32
@@ -322,19 +344,24 @@ func (s *doubaoStreamSession) Write(pcm []byte) error {
 	if len(pcm) == 0 {
 		return nil
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed || s.finished {
+		s.mu.Unlock()
 		return errors.New("stt: stream already finished")
 	}
 	seq := s.seq
 	s.seq++
-	return writeVolcFrame(context.Background(), s.conn, volcMsgAudioOnlyRequest, volcFlagPosSequence,
+	s.mu.Unlock()
+	return writeVolcFrame(s.ctx, s.conn, volcMsgAudioOnlyRequest, volcFlagPosSequence,
 		volcSerializationNone, volcCompressionGzip, &seq, pcm)
 }
 
 // Finish tells the engine that no more audio will arrive.
 func (s *doubaoStreamSession) Finish() error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	s.mu.Lock()
 	if s.finished || s.closed {
 		s.mu.Unlock()
@@ -343,7 +370,7 @@ func (s *doubaoStreamSession) Finish() error {
 	s.finished = true
 	seq := -s.seq
 	s.mu.Unlock()
-	return writeVolcFrame(context.Background(), s.conn, volcMsgAudioOnlyRequest, volcFlagNegSequence,
+	return writeVolcFrame(s.ctx, s.conn, volcMsgAudioOnlyRequest, volcFlagNegSequence,
 		volcSerializationNone, volcCompressionGzip, &seq, nil)
 }
 
@@ -351,6 +378,11 @@ func (s *doubaoStreamSession) Finish() error {
 func (s *doubaoStreamSession) Results() <-chan StreamResult { return s.results }
 
 // Close releases the connection. Safe to call more than once.
+//
+// It deliberately does not take writeMu: cancelling the session context aborts
+// a write that is stuck on an unresponsive upstream, and closing the socket
+// unblocks it as well. Waiting for the writer lock would hold the caller for
+// the full write timeout.
 func (s *doubaoStreamSession) Close() {
 	s.mu.Lock()
 	if s.closed {
@@ -359,6 +391,7 @@ func (s *doubaoStreamSession) Close() {
 	}
 	s.closed = true
 	s.mu.Unlock()
+	s.cancel()
 	close(s.done)
 	_ = s.conn.Close(websocket.StatusNormalClosure, "")
 }
@@ -378,7 +411,11 @@ func (s *doubaoStreamSession) readLoop(ctx context.Context) {
 			continue
 		}
 		if msgType == volcMsgError {
-			break
+			// A 0xF frame carries the reason (bad key, missing authorization,
+			// exhausted quota). Dropping it would end the session as a
+			// successful empty transcript, so surface it and stop.
+			s.emit(StreamResult{Err: doubaoErrorFromPayload(payload)})
+			return
 		}
 		if msgType != volcMsgFullServerResponse && msgType != volcMsgAudioServerResponse {
 			continue
@@ -388,7 +425,8 @@ func (s *doubaoStreamSession) readLoop(ctx context.Context) {
 			continue
 		}
 		if resp.Error != "" {
-			break
+			s.emit(StreamResult{Err: fmt.Errorf("stt: doubao stream error: %s", resp.Error)})
+			return
 		}
 		if resp.Result.Text != "" && resp.Result.Text != last {
 			last = resp.Result.Text
@@ -399,6 +437,56 @@ func (s *doubaoStreamSession) readLoop(ctx context.Context) {
 	}
 
 	s.emit(StreamResult{Text: last, Final: true})
+}
+
+// doubaoStreamError is the body of a 0xF error frame. Volcano reports failures
+// as {"error":"...","code":45000001,"message":"..."}, but the value types vary
+// between error classes, so error and code are kept raw.
+type doubaoStreamError struct {
+	Error   json.RawMessage `json:"error"`
+	Code    json.RawMessage `json:"code"`
+	Message string          `json:"message"`
+}
+
+// doubaoErrorFromPayload turns an error frame into a Go error, keeping the code
+// and message the engine sent. An undecodable payload is reported verbatim so
+// the user sees what the engine actually said.
+func doubaoErrorFromPayload(payload []byte) error {
+	var e doubaoStreamError
+	if err := json.Unmarshal(payload, &e); err != nil {
+		return fmt.Errorf("stt: doubao stream error: %s", truncate(payload, 256))
+	}
+	parts := make([]string, 0, 3)
+	if code := rawJSONText(e.Code); code != "" {
+		parts = append(parts, "code "+code)
+	}
+	if e.Message != "" {
+		parts = append(parts, e.Message)
+	}
+	if msg := rawJSONText(e.Error); msg != "" {
+		parts = append(parts, msg)
+	}
+	if len(parts) == 0 {
+		return fmt.Errorf("stt: doubao stream error: %s", truncate(payload, 256))
+	}
+	return fmt.Errorf("stt: doubao stream error: %s", strings.Join(parts, ": "))
+}
+
+// rawJSONText renders a raw JSON value as text: strings are unquoted, absent
+// and null values render as empty, anything else is kept as its JSON text.
+func rawJSONText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	text := strings.TrimSpace(string(raw))
+	if text == "null" {
+		return ""
+	}
+	return text
 }
 
 // emit delivers a result unless the session has been closed.

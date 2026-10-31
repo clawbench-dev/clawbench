@@ -16,9 +16,14 @@ type StreamOptions struct {
 // StreamResult is one recognition update. Text is the whole transcript so far,
 // not a delta, so callers can replace what they display instead of stitching
 // fragments together.
+//
+// Err carries a failure reported by the engine (bad credentials, quota, a
+// rejected frame). It is terminal: the session stops emitting after it, and
+// callers must surface it instead of treating the empty text as a result.
 type StreamResult struct {
 	Text  string
 	Final bool
+	Err   error
 }
 
 // StreamingSTTProvider is implemented by engines that accept audio while the

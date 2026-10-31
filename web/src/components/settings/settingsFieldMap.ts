@@ -692,7 +692,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         { labelKey: 'settings.items.sttApiKey', descriptionKey: 'settings.items.sttApiKeyDesc', key: 'stt.api_key', type: 'password', source: 'server' },
         { labelKey: 'settings.items.sttResourceId', descriptionKey: 'settings.items.sttResourceIdDesc', key: 'stt.resource_id', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
         { labelKey: 'settings.items.sttLanguage', descriptionKey: 'settings.items.sttLanguageDesc', key: 'stt.language', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
-        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.streaming', type: 'switch', source: 'server' },
+        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.streaming', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
         { labelKey: 'settings.items.sttChunkMs', descriptionKey: 'settings.items.sttChunkMsDesc', key: 'stt.chunk_ms', type: 'number', source: 'server', min: 200, max: 10000, step: 100, dependsOn: { key: 'stt.provider', value: 'vllm' } },
         { labelKey: 'settings.items.sttEnableItn', descriptionKey: 'settings.items.sttEnableItnDesc', key: 'stt.enable_itn', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
         { labelKey: 'settings.items.sttEnablePunc', descriptionKey: 'settings.items.sttEnablePuncDesc', key: 'stt.enable_punc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },

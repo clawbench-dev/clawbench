@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -55,7 +56,7 @@ func (s *fakeStreamSession) written() [][]byte {
 
 // fakeStreamProvider implements stt.StreamingSTTProvider.
 type fakeStreamProvider struct {
-	session *fakeStreamSession
+	session stt.StreamSession
 
 	mu   sync.Mutex
 	opts stt.StreamOptions
@@ -160,6 +161,65 @@ func TestSTTTranscribeWS_EndWithoutAudio(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &m))
 	assert.Equal(t, sttWSDone, m.Type)
 	assert.Empty(t, m.Final)
+}
+
+// errStreamSession reports a terminal engine failure (bad key, quota, rejected
+// frame) on the first audio frame, the way the Doubao session does when it
+// receives a 0xF error frame.
+type errStreamSession struct {
+	results chan stt.StreamResult
+	once    sync.Once
+}
+
+func (s *errStreamSession) Write([]byte) error {
+	s.once.Do(func() {
+		s.results <- stt.StreamResult{Err: errors.New("stt: doubao stream error: code 45000001: unauthorized")}
+		close(s.results)
+	})
+	return nil
+}
+
+func (s *errStreamSession) Finish() error                    { return nil }
+func (s *errStreamSession) Results() <-chan stt.StreamResult { return s.results }
+func (s *errStreamSession) Close()                           {}
+
+// TestSTTTranscribeWS_EngineErrorSurfaces covers the failure path: an engine
+// error must reach the client as {"type":"error"} instead of a clean
+// {"type":"done","final":""} that silently discards the whole recording.
+func TestSTTTranscribeWS_EngineErrorSurfaces(t *testing.T) {
+	old := GetSTTProvider()
+	defer SetSTTProvider(old)
+
+	SetSTTProvider(&fakeStreamProvider{session: &errStreamSession{
+		results: make(chan stt.StreamResult, 8),
+	}})
+
+	srv := httptest.NewServer(http.HandlerFunc(STTTranscribeWS))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+
+	require.NoError(t, conn.Write(ctx, websocket.MessageBinary, []byte{1, 2, 3, 4}))
+
+	_, data, err := conn.Read(ctx)
+	require.NoError(t, err)
+	var m sttWSServerMsg
+	require.NoError(t, json.Unmarshal(data, &m))
+	assert.Equal(t, sttWSError, m.Type)
+	assert.Contains(t, m.Message, "45000001")
+	assert.Contains(t, m.Message, "unauthorized")
+
+	// Nothing else may follow — in particular no empty "done".
+	readCtx, cancelRead := context.WithTimeout(ctx, 200*time.Millisecond)
+	_, extra, extraErr := conn.Read(readCtx)
+	cancelRead()
+	assert.Error(t, extraErr, "the relay must not send a final result after an engine error")
+	assert.Empty(t, extra)
 }
 
 // TestApplySTTStreamOptions covers the overlay rules.

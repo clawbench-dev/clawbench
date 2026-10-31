@@ -445,6 +445,12 @@ func (r *sttStreamRelay) openSession(ctx context.Context) error {
 func (r *sttStreamRelay) forwardResults() {
 	defer r.results.Done()
 	for res := range r.session.Results() {
+		// An engine failure (bad key, quota, rejected frame) is terminal and
+		// must reach the client as an error, not as an empty "done".
+		if res.Err != nil {
+			_ = sendSTTMsg(r.conn, sttWSServerMsg{Type: sttWSError, Message: res.Err.Error()})
+			return
+		}
 		msg := sttWSServerMsg{Type: sttWSPartial, Text: res.Text}
 		if res.Final {
 			msg = sttWSServerMsg{Type: sttWSDone, Final: res.Text}

@@ -89,8 +89,10 @@ describe('useVoiceInput', () => {
     const v = useVoiceInput()
     await v.start()
     v.stop()
-    await vi.waitFor(() => expect(track.stop).toHaveBeenCalled())
-    expect(v.state.value).toBe('idle')
+    // Wait for the actual completion, not for a side effect that now happens
+    // earlier (stop() releases the mic before the transcription finishes).
+    await vi.waitFor(() => expect(v.state.value).toBe('idle'))
+    expect(track.stop).toHaveBeenCalled()
     expect(v.isRecording.value).toBe(false)
   })
 
@@ -117,9 +119,9 @@ describe('useVoiceInput', () => {
     const v = useVoiceInput()
     await v.start()
     v.stop()
-    await vi.waitFor(() => expect(track.stop).toHaveBeenCalled())
     // After completion state must be back to idle so a new recording can start.
-    expect(v.state.value).toBe('idle')
+    await vi.waitFor(() => expect(v.state.value).toBe('idle'))
+    expect(track.stop).toHaveBeenCalled()
     // A second toggle must proceed (call getUserMedia again), not early-return.
     await v.start()
     expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(2)
@@ -200,7 +202,7 @@ describe('useVoiceInput', () => {
   }
 
   /** Installs fake WebSocket / AudioContext / AudioWorkletNode globals. */
-  function stubStreamingEnv() {
+  function stubStreamingEnv(initialReadyState = 1) {
     const track = { stop: vi.fn() }
     const stream = { getTracks: () => [track] }
     vi.stubGlobal('navigator', {
@@ -209,8 +211,9 @@ describe('useVoiceInput', () => {
 
     let wsInstance: FakeWS | undefined
     vi.stubGlobal('WebSocket', class {
+      static CONNECTING = 0
       static OPEN = 1
-      readyState = 1
+      readyState = initialReadyState
       onopen: (() => void) | null = null
       onmessage: ((e: { data: string }) => void) | null = null
       onerror: (() => void) | null = null
@@ -252,7 +255,7 @@ describe('useVoiceInput', () => {
 
   it('streaming start sends a start frame with the PCM format and typed text as context', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { 'stt.streaming': true }
+    serverConfig.value = { 'stt.streaming': true, 'stt.provider': 'doubao' }
     const env = stubStreamingEnv()
 
     const { useVoiceInput } = await import('./useVoiceInput')
@@ -273,7 +276,7 @@ describe('useVoiceInput', () => {
 
   it('streaming forwards PCM frames as binary and ends with an end control', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { 'stt.streaming': true }
+    serverConfig.value = { 'stt.streaming': true, 'stt.provider': 'doubao' }
     const env = stubStreamingEnv()
 
     const { useVoiceInput } = await import('./useVoiceInput')
@@ -289,12 +292,95 @@ describe('useVoiceInput', () => {
     await v.stop()
     const last = env.getWS()!.send.mock.calls.at(-1)![0] as string
     expect(JSON.parse(last)).toEqual({ type: 'end' })
+    // Releasing the button must also release the microphone.
+    expect(env.track.stop).toHaveBeenCalled()
+    v.cancel()
+  })
+
+  it('stop() while the socket is still connecting releases the mic and never starts capture', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { 'stt.streaming': true, 'stt.provider': 'doubao' }
+    const env = stubStreamingEnv(0) // CONNECTING
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+    await v.stop()
+
+    expect(env.track.stop).toHaveBeenCalled()
+
+    // The socket opens only after the button was released: it must not start
+    // capturing (the mic indicator stays off) and must not send a start frame.
+    env.getWS()!.onopen!()
+    expect(env.workletNode.port.onmessage).toBeNull()
+    expect(env.getWS()!.send).not.toHaveBeenCalled()
+    expect(v.state.value).toBe('idle')
+    expect(v.isRecording.value).toBe(false)
+  })
+
+  it('uses MediaRecorder when the provider cannot decode PCM, even with streaming on', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { 'stt.streaming': true, 'stt.provider': 'vllm' }
+
+    const track = { stop: vi.fn() }
+    const stream = { getTracks: () => [track] }
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    })
+    const wsCtor = vi.fn()
+    vi.stubGlobal('WebSocket', class {
+      static CONNECTING = 0
+      static OPEN = 1
+      constructor() { wsCtor() }
+    })
+    const audioCtor = vi.fn()
+    vi.stubGlobal('AudioContext', class {
+      constructor() { audioCtor() }
+    })
+    vi.stubGlobal('MediaRecorder', class {
+      state = 'recording'
+      ondataavailable: unknown = null
+      onstop: (() => void) | null = null
+      start() { this.state = 'recording' }
+      stop() { this.state = 'inactive'; this.onstop?.() }
+      static isTypeSupported = vi.fn(() => true)
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ text: '识别结果' }),
+    }))
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+
+    // Raw PCM is only meaningful to an engine that decodes it; sending it to
+    // Whisper makes every request fail.
+    expect(wsCtor).not.toHaveBeenCalled()
+    expect(audioCtor).not.toHaveBeenCalled()
+
+    v.stop()
+    await vi.waitFor(() => expect(v.inputText.value).toBe('识别结果'))
+  })
+
+  it('uses the PCM stream when the provider is doubao and streaming is on', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { 'stt.streaming': true, 'stt.provider': 'doubao' }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+
+    expect(env.getWS()).toBeDefined()
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
     v.cancel()
   })
 
   it('partial messages replace the transcript while keeping the typed prefix', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { 'stt.streaming': true }
+    serverConfig.value = { 'stt.streaming': true, 'stt.provider': 'doubao' }
     const env = stubStreamingEnv()
 
     const { useVoiceInput } = await import('./useVoiceInput')

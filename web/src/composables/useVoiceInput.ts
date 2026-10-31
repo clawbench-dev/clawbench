@@ -31,6 +31,9 @@ let mediaStream: MediaStream | null = null
 // Text already in the input box when recording started; transcripts are
 // composed as prefix + recognized text.
 let voicePrefix = ''
+// Set by stop() so a socket that is still connecting does not start capturing
+// after the user has already released the button. Reset on every start().
+let stopRequested = false
 // PCM capture for the streaming engine (AudioWorklet).
 let audioCtx: AudioContext | null = null
 let pcmNode: AudioWorkletNode | null = null
@@ -120,8 +123,18 @@ export function useVoiceInput() {
     (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.shortcut_key'] as string | undefined ?? 'F9'
   const streaming = () =>
     Boolean((settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.streaming'] ?? false)
+  const provider = () =>
+    (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.provider'] as string | undefined ?? 'vllm'
   const language = () =>
     (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.language'] as string | undefined
+
+  /**
+   * The streaming WebSocket only carries raw 16 kHz PCM. The server picks the
+   * protocol by provider capability, and only Doubao decodes PCM — every other
+   * provider receives the bytes as a `recording.webm` upload, so the flag alone
+   * must never select this path.
+   */
+  const usePcmStreaming = () => streaming() && provider() === 'doubao'
 
   async function toggle(prefix = '') {
     if (state.value === 'recording' || state.value === 'transcribing') {
@@ -164,8 +177,9 @@ export function useVoiceInput() {
     // wiping the input box.
     voicePrefix = prefix
     inputText.value = prefix
+    stopRequested = false
 
-    if (streaming()) {
+    if (usePcmStreaming()) {
       startStreaming()
     } else {
       startNonStreaming()
@@ -181,6 +195,9 @@ export function useVoiceInput() {
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
     mediaRecorder.onstop = async () => {
       state.value = 'transcribing'
+      // The recording is complete once this fires, so the capture indicator can
+      // go off while the upload runs — without cutting the final chunk.
+      stopMediaStream()
       const blob = new Blob(chunks, { type: 'audio/webm' })
       try {
         const form = new FormData()
@@ -251,8 +268,13 @@ export function useVoiceInput() {
   function startStreaming() {
     state.value = 'recording'
     isRecording.value = true
-    ws = new WebSocket(wsUrl('/api/stt/transcribe/ws'))
-    ws.onmessage = (e) => {
+    const sock = new WebSocket(wsUrl('/api/stt/transcribe/ws'))
+    ws = sock
+    // Every callback ignores a socket that is no longer the active one: stop()
+    // aborts a still-connecting socket, and its late close must not tear down a
+    // recording the user has started in the meantime.
+    sock.onmessage = (e) => {
+      if (ws !== sock) return
       try {
         const msg = JSON.parse(e.data as string) as {
           type?: string
@@ -276,9 +298,16 @@ export function useVoiceInput() {
         }
       } catch { /* ignore malformed */ }
     }
-    ws.onopen = () => {
-      if (!ws) return
-      ws.send(JSON.stringify({
+    sock.onopen = () => {
+      if (ws !== sock) return
+      if (stopRequested) {
+        // The button was released while the socket was still connecting: never
+        // start capturing, and drop the socket so the engine has nothing to
+        // transcribe.
+        finalize()
+        return
+      }
+      sock.send(JSON.stringify({
         type: 'start',
         sampleRate: PCM_SAMPLE_RATE,
         channels: 1,
@@ -291,11 +320,13 @@ export function useVoiceInput() {
         cancel()
       })
     }
-    ws.onerror = () => {
+    sock.onerror = () => {
+      if (ws !== sock) return
       fail(i18n.global.t('chat.voice.connectFailed'))
       cancel()
     }
-    ws.onclose = () => {
+    sock.onclose = () => {
+      if (ws !== sock) return
       if (state.value === 'recording' || state.value === 'transcribing') {
         cancel()
       }
@@ -318,14 +349,27 @@ export function useVoiceInput() {
   }
 
   async function stop() {
+    stopRequested = true
     if (ws) {
       // Streaming: stop capture first so no frame lands after the end marker.
       stopPcmCapture()
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'end' }))
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'end' }))
+      } else if (ws.readyState === WebSocket.CONNECTING) {
+        // Nothing was captured yet; abort the handshake instead of waiting for
+        // it to open and then starting capture on a released button.
+        ws.close()
+      }
+      // Release the microphone now — waiting for the engine's final result
+      // would leave the capture indicator on after the user let go.
+      stopMediaStream()
       state.value = 'transcribing'
       return
     }
     if (mediaRecorder && mediaRecorder.state === 'recording') {
+      // The recorder flushes its final chunk as it stops, so the microphone is
+      // released in `onstop` rather than here: stopping the tracks first can
+      // truncate the last utterance.
       mediaRecorder.stop()
     }
   }
