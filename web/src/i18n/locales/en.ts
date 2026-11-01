@@ -4163,6 +4163,7 @@ export default {
     joinInvalid: 'That does not look like a share link (…/share/<token>)',
     toolsSection: 'Tools',
     annotate: 'Annotate',
+    annotateNeedsWindow: 'This host cannot open a separate window for annotation.',
     chat: 'Chat',
     // The three tabs while a share is running. The chat tab reuses liveShare.chat.
     tabs: {

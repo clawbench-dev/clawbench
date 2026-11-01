@@ -316,22 +316,18 @@
              whichever one is open. -->
         <div v-if="share.error.value" class="live-dialog-error">{{ share.error.value }}</div>
 
-      <!-- Drawing surface in its own window, so the ink and the shared picture
-           are never squeezed into the panel. Hosts without Document PiP fall
-           back to the in-panel overlay below. -->
-      <Teleport v-if="annotateWindowTarget && annotating && share.previewStream.value" :to="annotateWindowTarget">
+      <!-- Drawing surface lives in its OWN window, never in this panel: the
+           ink and the shared picture must not be squeezed into the dialog, and
+           an in-panel surface is also impossible to draw on while presenting.
+           Hosts without Document PiP get no annotation at all (see
+           openAnnotate) rather than a degraded in-panel version. -->
+      <Teleport v-if="annotateWindowTarget && share.previewStream.value" :to="annotateWindowTarget">
         <LiveAnnotateOverlay
           :stream="share.previewStream.value"
           @close="closeAnnotate"
           @send="share.sendControl"
         />
       </Teleport>
-      <LiveAnnotateOverlay
-        v-else-if="annotating && share.previewStream.value"
-        :stream="share.previewStream.value"
-        @close="closeAnnotate"
-        @send="share.sendControl"
-      />
 
       <!-- Fullscreen viewer for the member's screen. Rendered inside the dialog
            root but fixed to the viewport, so it is not clipped by the card. -->
@@ -848,11 +844,19 @@ async function openAnnotate(): Promise<void> {
         return
       }
     } catch (e) {
-      appLog.w('MeetingStage', 'annotate overlay failed, falling back', e)
+      appLog.w('MeetingStage', 'annotate overlay failed, using a window', e)
     }
   }
+  // No desktop overlay (browser, window source, Android): the drawing surface
+  // still gets its OWN window. Never fall back to the panel — the user is
+  // presenting, so a surface inside the dialog is both cramped and out of the
+  // way of nothing; if no window can be opened, annotation is unavailable.
   const result = await annotateWindow.open({ width: 1200, height: 800 })
-  if (result !== 'opened') appLog.w('MeetingStage', 'annotate window unavailable', result)
+  if (result !== 'opened') {
+    appLog.w('MeetingStage', 'annotate window unavailable', result)
+    toast.show(t('liveShare.annotateNeedsWindow'), { type: 'error', icon: 'warning' })
+    return
+  }
   annotating.value = true
 }
 

@@ -26,8 +26,9 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
+const toastShow = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/useToast', () => ({
-  useToast: () => ({ show: vi.fn() }),
+  useToast: () => ({ show: toastShow }),
 }))
 
 vi.mock('@/composables/useMarkdownRenderer', () => ({
@@ -153,6 +154,7 @@ function mountPanel() {
 
 beforeEach(() => {
   vi.unstubAllGlobals()
+  toastShow.mockClear()
   nativeBridge.current = null
   ;(shareApi.state as { value: string }).value = 'publishing'
   ;(shareApi.screenSharer as { value: string }).value = ''
@@ -180,14 +182,20 @@ describe('MeetingStage windows', () => {
     expect(wrapper.find('[data-role="annotate-overlay"]').exists()).toBe(false)
   })
 
-  it('falls back to the inline overlay when the host has no Document PiP', async () => {
+  it('refuses to annotate inline when the host has no Document PiP', async () => {
     const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.find('[data-action="annotate"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('[data-role="annotate-overlay"]').exists()).toBe(true)
+    // The drawing surface must never land in the panel. With no window to put
+    // it in, the tool says so instead of degrading into an in-dialog canvas.
+    expect(wrapper.find('[data-role="annotate-overlay"]').exists()).toBe(false)
+    expect(toastShow).toHaveBeenCalledWith(
+      expect.stringContaining('separate window'),
+      expect.anything(),
+    )
   })
 
   it('draws on the desktop overlay when the shell provides one', async () => {
@@ -244,7 +252,7 @@ describe('MeetingStage windows', () => {
     }
   })
 
-  it('falls back to the in-app surface when the overlay refuses to open', async () => {
+  it('falls back to its own window when the desktop overlay refuses to open', async () => {
     const win = fakeWindow()
     vi.stubGlobal('documentPictureInPicture', { requestWindow: vi.fn(async () => win as unknown as Window) })
     nativeBridge.current = {
@@ -257,6 +265,7 @@ describe('MeetingStage windows', () => {
     await flushPromises()
 
     expect(win.document.querySelector('[data-role="annotate-overlay"]')).not.toBeNull()
+    expect(wrapper.find('[data-role="annotate-overlay"]').exists()).toBe(false)
   })
 
   it("shows the member's screen in its own window with a dock", async () => {

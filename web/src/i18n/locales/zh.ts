@@ -4153,6 +4153,7 @@ export default {
     joinInvalid: '链接格式不对，需要形如 /share/<token> 的地址',
     toolsSection: '工具',
     annotate: '标注画面',
+    annotateNeedsWindow: '当前环境打不开独立的标注窗口，无法标注',
     chat: '聊天',
     // 共享进行中的三个页签。聊天直接复用 liveShare.chat。
     tabs: {
