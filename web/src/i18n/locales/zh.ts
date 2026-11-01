@@ -3991,6 +3991,7 @@ export default {
       audioMerged: '录音',
       kindVoice: '语音会议',
       kindVideo: '视频会议',
+      kindUnknown: '会议',
       speakers: '{n} 人发言',
       pillMinutes: '纪要',
       pillTranscript: '转写',

@@ -211,7 +211,6 @@ describe('MeetingList rows', () => {
     const w = mountList()
 
     expect(pillTexts(w)).toEqual([
-      enMessages.meeting.list.kindVideo,
       enMessages.meeting.list.pillMinutes,
       enMessages.meeting.list.pillTranscript,
     ])
@@ -246,24 +245,25 @@ describe('MeetingList rows', () => {
     expect(w.find('.meeting-row').attributes('data-state')).toBe('generating')
   })
 
-  it('tells a voice meeting from a video one', () => {
+  it('marks the type with a badge left of the title', () => {
     sessions.value = [
       record({ token: 'v', kind: 'video' }),
       record({ token: 'a', kind: 'voice' }),
-      // A record written before the column existed: no pill, no guess.
+      // A record written before the column existed: a grey badge, no guess.
       record({ token: 'old', kind: '' }),
     ]
     const w = mountList()
 
-    const kinds = w.findAll('.meeting-row').map((r) => r.find('.meeting-pill').text())
-    expect(kinds).toEqual([
-      enMessages.meeting.list.kindVideo,
-      enMessages.meeting.list.kindVoice,
-      // The "old" row falls through to its first artifact pill.
-      enMessages.meeting.list.pillMinutes,
-    ])
-    expect(w.findAll('.meeting-row')[0].find('.meeting-pill').classes()).toContain('is-video')
-    expect(w.findAll('.meeting-row')[1].find('.meeting-pill').classes()).toContain('is-voice')
+    const rows = w.findAll('.meeting-row')
+    const badge = (i: number) => rows[i].find('.meeting-kind')
+    expect(badge(0).classes()).toContain('is-video')
+    expect(badge(1).classes()).toContain('is-voice')
+    expect(badge(2).classes()).toContain('is-unknown')
+
+    // It is the FIRST thing in the title row, i.e. where an avatar would be.
+    expect(rows[0].find('.meeting-row__head').element.firstElementChild).toBe(badge(0).element)
+    expect(badge(0).attributes('title')).toBe(enMessages.meeting.list.kindVideo)
+    expect(badge(2).attributes('title')).toBe(enMessages.meeting.list.kindUnknown)
   })
 
   it('surfaces the revised draft and the compact counts', () => {

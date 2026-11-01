@@ -47,6 +47,21 @@
                whole card to find any single fact. -->
           <div class="meeting-row__main">
             <div class="meeting-row__head">
+              <!-- The type sits where an avatar would: left of the name, big
+                   enough to read at a glance, and the ONLY thing on the card
+                   that carries a hue. It answers "could I see them or only
+                   hear them", which no artifact can. Grey = unknown, for
+                   records written before the kind was stored. -->
+              <span
+                class="meeting-kind"
+                :class="`is-${r.kind || 'unknown'}`"
+                :title="r.kindLabel"
+                :aria-label="r.kindLabel"
+              >
+                <Video v-if="r.kind === 'video'" :size="12" />
+                <Mic v-else-if="r.kind === 'voice'" :size="12" />
+                <component v-else :is="MEETING_ICON" :size="12" />
+              </span>
               <span class="meeting-row__title">{{ r.record.title || t('meeting.list.untitled') }}</span>
               <span v-if="r.state.label" class="meeting-pill" :class="r.state.cls">
                 <Check v-if="r.state.icon === 'check'" :size="10" />
@@ -80,15 +95,10 @@
               </template>
             </div>
 
-            <!-- Type and contents. The type pill is the only coloured one: it
-                 answers "was this a call I could see or only hear", which the
-                 artifacts cannot. -->
-            <div class="meeting-row__tags">
-              <span v-if="r.kind" class="meeting-pill" :class="r.kind === 'video' ? 'is-video' : 'is-voice'">
-                <Video v-if="r.kind === 'video'" :size="10" />
-                <Mic v-else :size="10" />
-                {{ r.kind === 'video' ? t('meeting.list.kindVideo') : t('meeting.list.kindVoice') }}
-              </span>
+            <!-- What it produced. Hidden entirely when there is nothing to
+                 say yet (a meeting that is still running), rather than leaving
+                 an empty third line on the card. -->
+            <div v-if="r.artifacts.length || r.showEmpty" class="meeting-row__tags">
               <span v-for="label in r.artifacts" :key="label" class="meeting-pill is-soft">{{ label }}</span>
               <span v-if="r.showEmpty" class="meeting-pill is-empty">{{ t('meeting.list.noArtifacts') }}</span>
             </div>
@@ -281,6 +291,11 @@ const rows = computed(() =>
       // Empty means "unknown" (a record written before the column existed):
       // no pill is drawn rather than guessing from the artifacts.
       kind: record.kind === 'voice' || record.kind === 'video' ? record.kind : '',
+      kindLabel: record.kind === 'video'
+        ? t('meeting.list.kindVideo')
+        : record.kind === 'voice'
+          ? t('meeting.list.kindVoice')
+          : t('meeting.list.kindUnknown'),
       speakers: record.speakerCount ?? 0,
       artifacts,
       // Only an ENDED meeting can be "empty"; a running one simply has not
@@ -340,6 +355,9 @@ onMounted(() => {
   min-height: 0;
   overflow: hidden;
   background: var(--bg-primary, #ffffff);
+  /* The card indents its sub-lines only when the PANEL is wide enough — the
+     dock column's width has nothing to do with the viewport's. */
+  container-type: inline-size;
 }
 
 .meeting-header {
@@ -442,6 +460,37 @@ onMounted(() => {
   gap: var(--space-3, 6px);
   min-width: 0;
 }
+/* The meeting type, drawn as an app-icon badge instead of a pill: it sits where
+   an avatar would, it is the first thing the eye lands on, and it is the only
+   element on the card that carries a hue. Grey means "not recorded" — a record
+   written before the kind was stored — and it keeps the title column aligned
+   with the rows that do know. */
+.meeting-kind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  flex-shrink: 0;
+}
+.meeting-kind.is-video {
+  color: var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-info) 38%, transparent);
+}
+.meeting-kind.is-voice {
+  color: var(--color-purple);
+  background: color-mix(in srgb, var(--color-purple) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-purple) 38%, transparent);
+}
+.meeting-kind.is-unknown {
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border-color: var(--border-color);
+}
+
 .meeting-row__title {
   flex: 1;
   min-width: 0;
@@ -468,6 +517,16 @@ onMounted(() => {
 .meeting-row__m { white-space: nowrap; }
 .meeting-row__m.is-accent { color: var(--accent-color); }
 .meeting-row__sep { padding: 0 var(--space-2, 4px); color: var(--text-hint); }
+
+/* On a wide panel the three tiers share one left edge, which is what makes the
+   block read as a block. On a phone the same indent would push the meta line
+   into a second row, so it stays flush and keeps the full width. */
+@container (min-width: 460px) {
+  .meeting-row__meta,
+  .meeting-row__tags {
+    padding-left: calc(22 * var(--dp) + var(--space-3, 6px));
+  }
+}
 
 .meeting-row__tags {
   display: flex;
@@ -501,16 +560,6 @@ onMounted(() => {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   border-color: var(--border-color);
-}
-.meeting-pill.is-video {
-  color: var(--color-info);
-  background: color-mix(in srgb, var(--color-info) 13%, transparent);
-  border-color: color-mix(in srgb, var(--color-info) 38%, transparent);
-}
-.meeting-pill.is-voice {
-  color: var(--color-purple);
-  background: color-mix(in srgb, var(--color-purple) 13%, transparent);
-  border-color: color-mix(in srgb, var(--color-purple) 38%, transparent);
 }
 .meeting-pill.is-empty {
   background: transparent;

@@ -3995,6 +3995,7 @@ export default {
       audioMerged: 'Recording',
       kindVoice: 'Voice',
       kindVideo: 'Video',
+      kindUnknown: 'Meeting',
       speakers: '{n} people',
       pillMinutes: 'Minutes',
       pillTranscript: 'Transcript',
