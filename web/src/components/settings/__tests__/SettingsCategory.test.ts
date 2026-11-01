@@ -249,6 +249,12 @@ const i18n = createI18n({
           ttsEngine: 'TTS引擎',
           ttsEngineDesc: 'TTS引擎',
           ttsEngineEdge: 'Edge',
+          ttsEngineSection: 'TTS 引擎',
+          voiceSummarySection: '语音摘要',
+          summarizeTtsSection: '语音摘要',
+          summarizeTtsBackendDesc: '对 AI 输出的消息进行摘要，便于语音朗读',
+          summarizeAutoJunkRatio: '自动判定杂质比例阈值',
+          summarizeAutoJunkRatioDesc: '自动模式下按杂质比例决定是否走大模型摘要',
           ttsVoice: '语音',
           ttsSpeed: '语速',
           summarizeBackend: '摘要方式',
@@ -548,6 +554,28 @@ describe('SettingsCategory', () => {
       expect(item).toBeTruthy()
       // session.max_count is hot-reloadable via applyHotReloadGlobals, no restart needed
       expect(item!.props().needsRestart).toBe(false)
+    })
+  })
+
+  // ─── TTS category ──────────────────────────────
+  describe('tts category', () => {
+    // Cards are grouped by CONSECUTIVE sectionHeader, so a summary row without
+    // one is flushed into the trailing "其他" card. That split the voice
+    // summary settings across two cards (the ratio row ended up alone under
+    // "其他"). All three summary rows must share the 语音摘要 card.
+    it('keeps every voice-summary row in a single 语音摘要 card', () => {
+      serverConfig.value.summarize = { tts_backend: 'auto', auto_junk_ratio: 0.5 }
+      const wrapper = mountCategory('tts')
+      const titles = wrapper.findAllComponents({ name: 'SettingsCard' }).map(c => c.props().title)
+
+      expect(titles).toEqual(['TTS 引擎', '语音摘要'])
+      expect(titles).not.toContain('其他')
+
+      const summaryCard = wrapper
+        .findAllComponents({ name: 'SettingsCard' })
+        .find(c => c.props().title === '语音摘要')!
+      const keys = summaryCard.findAll('[data-settings-key]').map(el => el.attributes('data-settings-key'))
+      expect(keys).toEqual(['summarize.tts_backend', 'summaryModel', 'summarize.auto_junk_ratio'])
     })
   })
 

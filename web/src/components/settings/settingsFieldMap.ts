@@ -611,8 +611,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.summarizeApi', value: 'api' },
       { labelKey: 'settings.items.summarizeAuto', value: 'auto' },
     ]} },
-    { type: 'item', spec: { labelKey: 'settings.items.summarizeAutoJunkRatio', descriptionKey: 'settings.items.summarizeAutoJunkRatioDesc', key: 'summarize.auto_junk_ratio', type: 'slider', source: 'server', min: 0.1, max: 0.9, step: 0.05, displayFormat: 'percent', dependsOn: { key: 'summarize.tts_backend', value: 'auto' } } },
     { type: 'item', spec: { labelKey: 'settings.items.summaryModelRow', descriptionKey: 'settings.items.summaryModelRowDesc', key: 'summaryModel', type: 'summaryModel', source: 'local', showSummaryModelStatus: true, sectionHeader: 'settings.items.voiceSummarySection' } },
+    // Same header as the two rows above: the cards are grouped by consecutive
+    // sectionHeader, so leaving this one header-less would drop it into the
+    // trailing "其他" card and split the summary settings in two.
+    { type: 'item', spec: { labelKey: 'settings.items.summarizeAutoJunkRatio', descriptionKey: 'settings.items.summarizeAutoJunkRatioDesc', key: 'summarize.auto_junk_ratio', type: 'slider', source: 'server', min: 0.1, max: 0.9, step: 0.05, displayFormat: 'percent', dependsOn: { key: 'summarize.tts_backend', value: 'auto' }, sectionHeader: 'settings.items.voiceSummarySection' } },
   ],
   tts_engine: [
     { type: 'panel', config: {
