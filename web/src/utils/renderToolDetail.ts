@@ -345,16 +345,13 @@ function viewImagePath(input: ToolInput): string {
 }
 
 /**
- * Render the ViewImage (CodeBuddy) tool call: the file it was asked to look at,
- * an inline preview, and the question it was asked about that file.
+ * Render the ViewImage (CodeBuddy) tool call: the file it was asked to look at
+ * and the question it was asked about that file.
  *
- * The tool's RESULT is the image itself — the backend returns
- * `[{"type":"image_url","image_url":{"url":"data:image/…;base64,…"}}]` — but the
- * payload is clipped at the 50 KB tool-output cap, and every real screenshot
- * exceeds it, so the base64 arrives cut mid-stream and cannot be decoded. The
- * preview therefore comes from `image_path` (the file the tool read) rather than
- * from the output, and the output renderer drops the unusable base64 dump
- * (see renderViewImageOutput).
+ * The RESULT is not text at all — CodeBuddy returns the image as an
+ * `[{type:"image_url",…}]` content block, which is why the picture lives in the
+ * OUTPUT section (see renderViewImageOutput) while this view only describes what
+ * was requested.
  */
 function renderViewImage(input: ToolInput): string {
   const imagePath = viewImagePath(input)
@@ -375,15 +372,6 @@ function renderViewImage(input: ToolInput): string {
     html += `<div class="tool-file-header" ${ANNOTATION_SKIP_ATTR}>`
     html += `<span class="tool-file-path">${escapeHtml(displayPath)}</span>`
     if (resolvedPath) html += fileOpenButtonHtml(resolvedPath)
-    html += '</div>'
-
-    // A plain <img>, deliberately NOT the markdown `.lightbox-img` marker: the
-    // lightbox only reacts to a click in touch mode (on desktop it needs its own
-    // view button), while here a click routes through the tool action handler to
-    // the file viewer on every platform.
-    html += '<div class="image-view-preview">'
-    html += `<img class="image-view-img" src="${escapeHtml(imagePreviewSrc(resolvedPath || imagePath))}"`
-    html += ` data-file-path="${escapeHtml(resolvedPath || imagePath)}" alt="" loading="lazy">`
     html += '</div>'
   }
 
@@ -412,19 +400,72 @@ function isImagePayload(text: string): boolean {
 }
 
 /**
- * Render the ViewImage result.
+ * The image as a complete data URL, or '' when the payload was clipped (the
+ * normal case) or is not an image at all.
  *
- * The image payload IS the tool result, so there is nothing to print: the
- * preview above already shows the picture, and dumping 50 KB of clipped base64
- * buries it. Returning '' removes the whole output section (the drawer renders
- * it only when this is non-empty). Anything else — an argument-validation error,
- * "file not found" — is the one part the user can act on, so it stays visible.
+ * `JSON.parse` is the completeness test: a truncated payload cannot parse, so a
+ * successful parse means the whole base64 arrived (only images under the 50 KB
+ * cap fit). A BARE data URL is deliberately not accepted — nothing about the
+ * string says whether it was clipped, and a half-length base64 renders as a
+ * broken image.
  */
-function renderViewImageOutput(output: string): string {
+function completeImageDataUrl(text: string): string {
+  const trimmed = text.trim()
+  if (!/^[[{]/.test(trimmed)) return ''
+  try {
+    const parsed = JSON.parse(trimmed)
+    const blocks = Array.isArray(parsed) ? parsed : [parsed]
+    for (const block of blocks) {
+      if (!block || typeof block !== 'object') continue
+      const b = block as ToolInput
+      const url = str((b.image_url as ToolInput | undefined)?.url) || str(b.url)
+      if (/^data:image\//i.test(url)) return url
+    }
+  } catch {
+    // Clipped payload — no complete data URL.
+  }
+  return ''
+}
+
+/**
+ * Render the ViewImage result — the picture itself, which is what the tool
+ * actually returns.
+ *
+ * The payload is clipped at the backend's 50 KB output cap, so every real
+ * screenshot arrives cut mid-base64 and cannot be decoded. The preview therefore
+ * comes from the input's `image_path` (the same file the tool read); the data
+ * URL is only used when it happens to be complete. Printing the clipped base64
+ * — what the JSON fallback used to do — buries the answer under 50 KB of noise.
+ *
+ * Non-image output (an argument-validation error, "file not found") is the only
+ * part the user can act on, so it is rendered as-is.
+ */
+function renderViewImageOutput(output: string, ctx?: ToolOutputCtx): string {
   const trimmed = output.trim()
   if (!trimmed) return ''
-  if (isImagePayload(trimmed)) return ''
-  return renderStatusOutput(trimmed)
+  if (!isImagePayload(trimmed)) return renderStatusOutput(trimmed)
+
+  const imagePath = viewImagePath((ctx?.input || {}) as ToolInput)
+  const projectRoot = store.state.projectRoot || ''
+  const homeDir = store.state.homeDir || ''
+  const resolvedPath = imagePath ? resolveFilePath(imagePath, projectRoot, homeDir) : null
+
+  // A plain <img>, deliberately NOT the markdown `.lightbox-img` marker: the
+  // lightbox only reacts to a click in touch mode (on desktop it needs its own
+  // view button), while here a click routes through the tool action handler to
+  // the file viewer on every platform.
+  if (imagePath) {
+    return '<div class="image-view-preview">'
+      + `<img class="image-view-img" src="${escapeHtml(imagePreviewSrc(resolvedPath || imagePath))}"`
+      + ` data-file-path="${escapeHtml(resolvedPath || imagePath)}" alt="" loading="lazy">`
+      + '</div>'
+  }
+
+  const dataUrl = completeImageDataUrl(trimmed)
+  if (dataUrl) {
+    return `<div class="image-view-preview"><img class="image-view-img" src="${escapeHtml(dataUrl)}" alt=""></div>`
+  }
+  return ''
 }
 
 /**
@@ -1720,7 +1761,19 @@ function annotateLocalhostInEscapedText(text: string): string {
 
 // ── Tool output renderer registry ──
 
-type ToolOutputRenderer = (output: string) => string
+/**
+ * Extra context for output renderers.
+ *
+ * `input` exists because some results only make sense next to their request:
+ * ViewImage's result is a (clipped) image payload whose preview has to be
+ * loaded from the input's `image_path`. Callers that have the tool input must
+ * pass it; renderers that don't need it ignore the argument.
+ */
+export interface ToolOutputCtx {
+  input?: ToolInput
+}
+
+type ToolOutputRenderer = (output: string, ctx?: ToolOutputCtx) => string
 const TOOL_OUTPUT_RENDERERS: Record<string, ToolOutputRenderer> = {}
 
 /**
@@ -1877,8 +1930,12 @@ function renderSmartOutput(output: string): string {
  * The default is `true` rather than `false` so a forgotten call site
  * over-annotates rather than silently losing the feature; every streaming call
  * site is pinned by a test.
+ *
+ * `input` is forwarded to the renderer (see ToolOutputCtx) — pass the tool's
+ * input whenever it is known, or results that reference their request (the
+ * ViewImage preview) cannot be rendered.
  */
-export function formatToolOutput(output: string, toolName?: string, { annotate = true }: { annotate?: boolean } = {}): string {
+export function formatToolOutput(output: string, toolName?: string, { annotate = true, input }: { annotate?: boolean; input?: ToolInput } = {}): string {
   if (!output) return ''
   // Clear pending output annotations from any previous render
   _pendingOutputPaths = []
@@ -1886,7 +1943,7 @@ export function formatToolOutput(output: string, toolName?: string, { annotate =
   // Check for a registered output renderer
   const renderer = toolName ? TOOL_OUTPUT_RENDERERS[toolName.toLowerCase()] : undefined
   // Fallback: smart output (detect JSON vs plain text)
-  const html = renderer ? renderer(output) : renderSmartOutput(output)
+  const html = renderer ? renderer(output, { input }) : renderSmartOutput(output)
   return annotate ? annotateAndCollect(html, 'output') : html
 }
 
