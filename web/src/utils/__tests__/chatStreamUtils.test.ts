@@ -1483,6 +1483,42 @@ describe('duplicate message root causes (regression)', () => {
     expect(tools[0].id).toBe('tool-1')
   })
 
+  it('rebuildFromDb does not duplicate a tool_use the DB flush and the live stream both carry (switch-back, pure-tool stretch)', () => {
+    // Reported: an Agent card rendered twice in a row at the bottom of a
+    // running turn (session bfc2d185, 2026-11-01 10:11). The user switched into
+    // the session mid-stream: the re-created placeholder received only the
+    // newest tool event (the Agent call), while the DB flush already carried the
+    // whole turn including that same Agent block. With NO text on either side
+    // and an earlier DB tool the live placeholder lacks, case 2 (prepend the DB
+    // prefix) was taken and prepended the DB's copy of the Agent block on top of
+    // the live one. Cases 0/1 already dedupe tool ids via mergeOrderedBlocks;
+    // case 2 filtered thinking markers only.
+    const agent = {
+      type: 'tool_use', name: 'Agent', id: 'call_00_ET_WwJrbMDCJ1UW09G8DHr65599',
+      summary: 'Independent review of meeting implementation', done: false,
+    }
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 67899, content: '', blocks: [{ ...agent }], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 67899, content: '', blocks: [
+        { type: 'tool_use', name: 'Bash', id: 'call_00_bash1', done: true },
+        { type: 'thinking', text: 'reasoned', done: true },
+        { type: 'tool_use', name: 'Bash', id: 'call_00_bash2', done: true },
+        { ...agent },
+      ], streaming: true },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 67899)
+    // The pre-switch history is still prepended…
+    expect((reply.blocks || []).filter((b: any) => b.type === 'tool_use').map((b: any) => b.id))
+      .toEqual(['call_00_bash1', 'call_00_bash2', agent.id])
+    // …and the Agent card exists exactly once.
+    expect((reply.blocks || []).filter((b: any) => b.name === 'Agent')).toHaveLength(1)
+  })
+
   it('rebuildFromDb dedupes a text seam re-emitted by both the DB flush and the live stream', () => {
     // The DB flush happened mid-word; the re-subscribed stream re-emits the
     // partial token boundary, so the DB text tail equals the live text head.

@@ -1360,8 +1360,21 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
   const liveThinkIDs = new Set(
     liveBlocks.filter((b) => b.type === 'thinking' && b.think_id).map((b) => b.think_id as string),
   )
+  // Same rule for tool_use: a DB block whose id the live placeholder already
+  // holds is the SAME call seen from two sides, so prepending it renders the
+  // card twice. Observed: switch back into a running session during a pure-tool
+  // stretch (no text on either side) — the re-subscribed stream delivered the
+  // newest tool (an Agent call) while the DB flush already carried it, and the
+  // turn's earlier tools made dbLiveMissingTool true. Case 2 then prepended the
+  // whole DB prefix, so the Agent card appeared twice in a row at the seam.
+  // mergeOrderedBlocks (cases 0/1) has always filtered on liveToolIds; this
+  // path did not.
+  const liveToolIDs = new Set(
+    liveBlocks.filter((b) => b.type === 'tool_use' && b.id).map((b) => b.id as string),
+  )
   const copy = dbBlocks
     .filter((b) => !(b.type === 'thinking' && b.think_id && liveThinkIDs.has(b.think_id as string)))
+    .filter((b) => !(b.type === 'tool_use' && b.id && liveToolIDs.has(b.id as string)))
     .map((b) => ({ ...b }))
   if (overlap > 0) {
     let remaining = overlap
