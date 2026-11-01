@@ -357,6 +357,14 @@ export class LiveViewer {
       const msg = parseControlMessage(String(e.data))
       if (msg) this.cb.onControl?.(msg)
     }
+    dc.onopen = () => {
+      // Ask for the transcript so far. Chat is never stored on this side, so
+      // without the replay a viewer that joins late — or drops out and comes
+      // back — sees an empty panel while the publisher still holds every line.
+      // Sent on open, not at construction: the reply comes back on this same
+      // channel, which is only usable once both ends agree it is open.
+      this.sendControl({ t: 'chat-history-req' })
+    }
 
     pc.ontrack = (ev) => {
       // Two video m-lines arrive here: the host's picture (with the mixed

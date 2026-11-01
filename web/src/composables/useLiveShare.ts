@@ -970,8 +970,26 @@ export function useLiveShare() {
     if (!msg) return
     if (!VIEWER_MESSAGE_TYPES.has(msg.t)) return
     const tagged = { ...msg, from: viewerId } as ControlMessage
-    controlHandlers.forEach((cb) => cb(tagged))
-    const data = JSON.stringify(tagged)
+    // `from` alone is not enough: a chat line carries a display name, and the
+    // other viewers render it verbatim — a viewer could label itself "主持人".
+    // The roster name the server accepted at join is the only trustworthy one,
+    // and it is what the publisher's own chat list already uses.
+    const frame: ControlMessage =
+      msg.t === 'chat'
+        ? {
+            t: 'chat',
+            id: msg.id,
+            from: viewerId,
+            name: viewers.value.find((v) => v.id === viewerId)?.name ?? '',
+            text: msg.text,
+            at: msg.at,
+          }
+        : tagged
+    controlHandlers.forEach((cb) => cb(frame))
+    // A history request is addressed to the publisher alone; relaying it would
+    // ask every other viewer to answer a question only this side can answer.
+    if (msg.t === 'chat-history-req') return
+    const data = JSON.stringify(frame)
     for (const [id, peer] of peers) {
       if (id === viewerId) continue
       if (peer.channel?.readyState === 'open') {

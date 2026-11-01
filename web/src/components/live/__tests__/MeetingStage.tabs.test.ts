@@ -226,6 +226,38 @@ describe('MeetingStage tabs', () => {
     expect(wrapper.find('.live-count').exists()).toBe(false)
   })
 
+  it('replays the transcript to a viewer that asks for it, and only to that viewer', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+    const relay = controlRelay()
+
+    relay({ t: 'chat', id: 'm1', from: 'v1', name: '小明', text: '早', at: 1000 })
+    // The host's own lines must be in the replay too — they never pass through
+    // the inbound handler.
+    await tab(wrapper, 'chat').trigger('click')
+    const chatPanel = wrapper.findComponent({ name: 'LiveChatPanel' })
+    chatPanel.vm.$emit('send', '开会了')
+    await nextTick()
+
+    relay({ t: 'chat-history-req', from: 'v2' })
+
+    expect(shareApi.sendControlTo).toHaveBeenCalledTimes(1)
+    const [target, frame] = (shareApi.sendControlTo as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(target).toBe('v2')
+    expect(frame.t).toBe('chat-history')
+    expect(frame.messages.map((m: { text: string }) => m.text)).toEqual(['早', '开会了'])
+    // The sender is carried along so the receiver can tell its own lines apart.
+    expect(frame.messages[0]).toMatchObject({ id: 'm1', from: 'v1' })
+  })
+
+  it('does not replay to a viewer whose request carries no id', async () => {
+    mountPanel()
+    await flushPromises()
+    controlRelay()({ t: 'chat-history-req' })
+
+    expect(shareApi.sendControlTo).not.toHaveBeenCalled()
+  })
+
   it('says the transcript was off rather than showing an empty pane', async () => {
     const wrapper = mountPanel()
     await flushPromises()

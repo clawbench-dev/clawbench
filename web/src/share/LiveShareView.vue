@@ -400,6 +400,7 @@ import LiveInkLayer from './LiveInkLayer.vue'
 import LiveChatPanel, { type ChatMessage } from './LiveChatPanel.vue'
 import { useInkBoard } from './useInkBoard'
 import { contentRectOf, toNormalized, type ContentRect, type ControlMessage } from './liveControl'
+import { mergeChatHistory } from './chatHistory'
 import { ShareNotesPoller } from './liveNotesClient'
 import { getShareToken } from './shareMode'
 import { groupNoteSegments, type LiveNoteSegment } from '@/composables/liveNotes'
@@ -748,7 +749,11 @@ function sendChat(text: string): void {
     t: 'chat',
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     from: viewer?.viewerId ?? '',
-    name: t('share.live.viewerName', { id: viewer?.viewerId ?? '?' }),
+    // The nickname the viewer chose at the gate, not the slot id: the local
+    // echo of this same frame is what the sender reads, so labelling it
+    // "viewer 1" would show the sender a different name than the publisher
+    // (who resolves the name from the room roster).
+    name: nick.value,
     text,
     at: Date.now(),
   }
@@ -757,11 +762,23 @@ function sendChat(text: string): void {
 }
 
 function applyControl(msg: ControlMessage): void {
+  if (msg.t === 'chat-history') {
+    // Catch-up for this (re)join. Merged rather than replaced: lines sent while
+    // the replay was in flight are already here, and the frames may be split.
+    chatMessages.value = mergeChatHistory(
+      chatMessages.value,
+      msg.messages,
+      viewer?.viewerId ?? '',
+      (from) => t('share.live.viewerName', { id: from }),
+    )
+    return
+  }
   if (msg.t === 'chat') {
     chatMessages.value = [
       ...chatMessages.value,
       {
         id: msg.id,
+        from: msg.from,
         name: msg.name || t('share.live.viewerName', { id: msg.from }),
         text: msg.text,
         at: msg.at,

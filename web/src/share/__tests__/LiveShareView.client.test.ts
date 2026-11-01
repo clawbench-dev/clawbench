@@ -12,6 +12,8 @@ import { createI18n } from 'vue-i18n'
  */
 
 let lastViewer: { opts?: { callbacks?: Record<string, (v?: unknown) => void> } } | null = null
+/** Every frame the component pushed onto the control channel. */
+let sent: Array<Record<string, unknown>> = []
 const startScreenShare = vi.fn(async () => true)
 
 vi.mock('@/share/liveViewer', () => ({
@@ -26,7 +28,10 @@ vi.mock('@/share/liveViewer', () => ({
     viewerId = 'v1'
     startScreenShare = startScreenShare
     stopScreenShare = vi.fn(async () => undefined)
-    sendControl = vi.fn(() => true)
+    sendControl = vi.fn((msg: Record<string, unknown>) => {
+      sent.push(msg)
+      return true
+    })
     getStats = vi.fn(async () => ({ rttMs: null, lossPct: null, bitrateKbps: null, jitterMs: null }))
   },
 }))
@@ -120,6 +125,7 @@ const i18n = createI18n({
 
 beforeEach(() => {
   lastViewer = null
+  sent = []
   startScreenShare.mockClear()
   nativeBridge.listCaptureSources.mockClear()
   nativeBridge.setPendingCaptureSource.mockClear()
@@ -169,6 +175,55 @@ describe('share page in the desktop client', () => {
     await flushPromises()
 
     expect(w.find('[data-role="client-hint"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('sends and displays the joined nickname, not the viewer slot id', async () => {
+    const w = mount(LiveShareView, { global: { plugins: [i18n] } })
+    passJoinGate(w, '小明')
+    await flushPromises()
+
+    await w.find('[data-action="chat"]').trigger('click')
+    await flushPromises()
+
+    const input = w.find('[data-role="chat-input"]')
+    ;(input.element as HTMLInputElement).value = '大家好'
+    await input.trigger('input')
+    await w.find('.live-chat__compose').trigger('submit')
+    await flushPromises()
+
+    // The frame carries the nickname so the publisher (which resolves names
+    // from the room roster) and the local echo agree.
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toMatchObject({ t: 'chat', name: '小明', text: '大家好' })
+    expect(w.findAll('.live-chat__name').map((n) => n.text())).toEqual(['小明'])
+    w.unmount()
+  })
+
+  it('shows the transcript it missed when it (re)joins', async () => {
+    const w = mount(LiveShareView, { global: { plugins: [i18n] } })
+    passJoinGate(w, '小明')
+    await flushPromises()
+    const onControl = lastViewer?.opts?.callbacks?.onControl
+
+    // One line arrived live while the replay was still in flight; the replay
+    // repeats it, and a duplicate here is exactly what a returning viewer must
+    // not see.
+    onControl?.({ t: 'chat', id: 'live', from: 'host', name: '主持人', text: '欢迎', at: 2000 })
+    onControl?.({
+      t: 'chat-history',
+      messages: [
+        { id: 'old1', from: 'v2', name: '小红', text: '早', at: 1000 },
+        { id: 'live', from: 'host', name: '主持人', text: '欢迎', at: 2000 },
+      ],
+    })
+    await flushPromises()
+
+    await w.find('[data-action="chat"]').trigger('click')
+    await flushPromises()
+
+    expect(w.findAll('.live-chat__text').map((n) => n.text())).toEqual(['早', '欢迎'])
+    expect(w.findAll('.live-chat__name').map((n) => n.text())).toEqual(['小红', '主持人'])
     w.unmount()
   })
 })

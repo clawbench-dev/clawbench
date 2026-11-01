@@ -486,11 +486,25 @@ onMounted(() => {
   overflow-wrap: anywhere;
 }
 
-.meeting-chat { display: flex; flex-direction: column; gap: var(--space-3); }
-.meeting-chat__row { display: flex; flex-direction: column; gap: var(--space-1); }
+/* The archived transcript is the SAME conversation the live panel showed, so
+   it is drawn as the same bubbles. Bare text lines here read as "the styling
+   was lost" — the padding/radius/background are what makes a line a message.
+   `LiveChatPanel.vue`'s `.live-chat__text` is the other half of this pair;
+   `meetingChatStyleParity.test.ts` keeps the two from drifting. */
+.meeting-chat { display: flex; flex-direction: column; gap: var(--space-4); }
+.meeting-chat__row { display: flex; flex-direction: column; gap: var(--space-1); max-width: 100%; }
 .meeting-chat__head { display: flex; gap: var(--space-3); font-size: var(--font-size-xs); color: var(--text-muted); }
 .meeting-chat__who { color: var(--text-secondary); font-weight: 500; }
-.meeting-chat__text { font-size: var(--font-size-sm); line-height: 1.55; color: var(--text-primary); overflow-wrap: break-word; }
+.meeting-chat__text {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 
 .meeting-generating {
   display: flex; flex-direction: column; gap: var(--space-3);

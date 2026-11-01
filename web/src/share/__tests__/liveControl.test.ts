@@ -43,6 +43,39 @@ describe('parseControlMessage', () => {
     expect((m as { text: string }).text).toHaveLength(2000)
   })
 
+  it('parses a replayed transcript and keeps only the usable lines', () => {
+    const m = parseControlMessage(
+      JSON.stringify({
+        t: 'chat-history',
+        messages: [
+          { id: 'a', from: 'v1', name: '小明', text: '早', at: 1000 },
+          // No id: nothing can dedupe it, so a replayed line would duplicate
+          // the live one it came from.
+          { from: 'v1', name: '小明', text: 'no id', at: 1001 },
+          { id: 'c', from: '', name: '', text: '  ', at: 1002 },
+          { id: 'd', from: 'host', name: '主持人', text: '开会了', at: 1003 },
+        ],
+      }),
+    )
+    expect(m).toEqual({
+      t: 'chat-history',
+      messages: [
+        { id: 'a', from: 'v1', name: '小明', text: '早', at: 1000 },
+        { id: 'd', from: 'host', name: '主持人', text: '开会了', at: 1003 },
+      ],
+    })
+  })
+
+  it('drops a history frame with no usable lines', () => {
+    expect(parseControlMessage('{"t":"chat-history","messages":[]}')).toBeNull()
+    expect(parseControlMessage('{"t":"chat-history","messages":"nope"}')).toBeNull()
+    expect(parseControlMessage('{"t":"chat-history","messages":[{"text":"x"}]}')).toBeNull()
+  })
+
+  it('parses the history request', () => {
+    expect(parseControlMessage('{"t":"chat-history-req"}')).toEqual({ t: 'chat-history-req' })
+  })
+
   it('keeps a whole IME commit and only caps it at the injector limit', () => {
     // 32 was the old limit and silently cut the tail of an IME commit (a
     // pinyin/speech input that lands 40 characters at once). The Go injector

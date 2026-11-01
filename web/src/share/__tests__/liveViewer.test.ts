@@ -75,6 +75,7 @@ class FakeDC {
   readyState = 'open'
   sent: string[] = []
   onmessage: ((ev: { data: string }) => void) | null = null
+  onopen: (() => void) | null = null
   constructor(public label: string) {}
   send(data: string) {
     this.sent.push(data)
@@ -207,6 +208,23 @@ describe('control bus', () => {
     pc.channels[0].emit({ t: 'chat', id: 'c1', from: 'host', name: '主持人', text: 'hi', at: 1 })
     expect(seen).toHaveLength(1)
     expect(seen[0]).toMatchObject({ t: 'chat', text: 'hi' })
+  })
+
+  it('asks for the missed transcript once its channel opens', () => {
+    const viewer = new LiveViewer({
+      token: 'tok123',
+      callbacks: {},
+      wsFactory: (url) => new FakeWS(url) as unknown as WebSocket,
+      pcFactory: (cfg) => new FakePC(cfg) as unknown as RTCPeerConnection,
+    })
+    joinRoom(viewer)
+    const dc = lastPC().channels[0]
+
+    // Not before `open`: the reply travels back on this same channel, so asking
+    // any earlier would have the publisher's answer race a half-open channel.
+    expect(dc.sentJSON()).toEqual([])
+    dc.onopen?.()
+    expect(dc.sentJSON()).toEqual([{ t: 'chat-history-req' }])
   })
 })
 

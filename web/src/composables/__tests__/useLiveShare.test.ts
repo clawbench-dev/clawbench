@@ -362,8 +362,8 @@ function lastWS(): FakeWS {
  * The publisher ANSWERS, so the m-lines only exist once the offer is applied —
  * a viewer that never offers has no transceivers and no control channel.
  */
-async function joinAndOffer(viewerId: string): Promise<FakePC> {
-  lastWS().emit({ type: 'viewer-join', viewerId })
+async function joinAndOffer(viewerId: string, name?: string): Promise<FakePC> {
+  lastWS().emit({ type: 'viewer-join', viewerId, ...(name ? { name } : {}) })
   lastWS().emit({ type: 'offer', viewerId, sdp: `v=0-offer-${viewerId}` })
   await vi.waitFor(() =>
     expect(lastWS().sentJSON().filter((m) => m.type === 'answer' && m.viewerId === viewerId)).toHaveLength(1),
@@ -955,6 +955,23 @@ describe('control channel', () => {
     expect(dc2.sentJSON()).toEqual([expect.objectContaining({ t: 'chat', from: 'v1' })])
   })
 
+  it('replaces a viewer-supplied chat name with the one the server accepted', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1', '小明')
+    await joinAndOffer('v2', '小红')
+
+    const [dc1, dc2] = FakeDataChannel.instances
+    const seen: unknown[] = []
+    share.onControl((m) => seen.push(m))
+
+    // A viewer can put anything in `name`; other viewers render it verbatim, so
+    // without the roster rewrite it could label itself as the host.
+    dc1.emit({ t: 'chat', id: 'c1', from: 'v1', name: '主持人', text: 'hi', at: 1 })
+
+    expect((seen[0] as { name: string }).name).toBe('小明')
+    expect(dc2.sentJSON()).toEqual([expect.objectContaining({ t: 'chat', from: 'v1', name: '小明' })])
+  })
+
   it('drops frames a viewer is not allowed to send', async () => {
     const { share } = await startSharing()
     await joinAndOffer('v1')
@@ -965,6 +982,22 @@ describe('control channel', () => {
     // `talk` is publisher→viewer only; a viewer must not be able to fake it.
     dc.emit({ t: 'talk', viewerId: 'v1', level: 1 })
     expect(seen).toHaveLength(0)
+  })
+
+  it('hands a history request to the UI without relaying it to other viewers', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+    await joinAndOffer('v2')
+
+    const [dc1, dc2] = FakeDataChannel.instances
+    const seen: unknown[] = []
+    share.onControl((m) => seen.push(m))
+
+    dc1.emit({ t: 'chat-history-req' })
+
+    // The publisher answers; the other viewers have no transcript to hand out.
+    expect(seen).toEqual([expect.objectContaining({ t: 'chat-history-req', from: 'v1' })])
+    expect(dc2.sentJSON()).toHaveLength(0)
   })
 
   it('addresses a grant to one viewer instead of broadcasting it', async () => {

@@ -402,6 +402,7 @@ import { resolveRemoteControlSupport } from '@/utils/remoteControlSupport'
 import LiveAnnotateOverlay from '@/share/LiveAnnotateOverlay.vue'
 import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
 import { parseControlMessage, toInjectorEvent, type ControlMessage } from '@/share/liveControl'
+import { chunkChatHistory } from '@/share/chatHistory'
 import { appLog } from '@/utils/appLog'
 import '@/assets/modal-footer-btn.css'
 
@@ -531,11 +532,22 @@ function sendChat(text: string): void {
 }
 
 function onControl(msg: ControlMessage): void {
+  if (msg.t === 'chat-history-req') {
+    // A viewer just opened its control channel. It holds no transcript of its
+    // own, so hand it the tail of this meeting's — the same lines, in the same
+    // frame shape, so they render identically to live ones.
+    if (!msg.from) return
+    for (const messages of chunkChatHistory(chatMessages.value)) {
+      share.sendControlTo(msg.from, { t: 'chat-history', messages })
+    }
+    return
+  }
   if (msg.t === 'chat') {
     chatMessages.value = [
       ...chatMessages.value,
       {
         id: msg.id,
+        from: msg.from,
         // The wire `name` is untrusted (a viewer could label itself "主持人");
         // prefer the nickname the server accepted for that viewer.
         name:

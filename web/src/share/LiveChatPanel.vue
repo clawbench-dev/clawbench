@@ -54,6 +54,8 @@ import { CHAT_MAX_CHARS } from '@/share/liveControl'
 
 export interface ChatMessage {
   id: string
+  /** The sender's room id; absent in the archived transcript, which has no "self". */
+  from?: string
   name: string
   text: string
   at: number
