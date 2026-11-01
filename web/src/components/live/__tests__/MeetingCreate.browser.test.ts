@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import enMessages from '@/i18n/locales/en'
-import LiveSharePanel from '../LiveSharePanel.vue'
+import MeetingCreate from '../MeetingCreate.vue'
 
 /**
  * The publisher setup form in a plain browser.
@@ -15,8 +15,11 @@ import LiveSharePanel from '../LiveSharePanel.vue'
  */
 
 vi.mock('lucide-vue-next', () => ({
-  MonitorUp: { name: 'MonitorUpIcon', render: () => null },
-  X: { name: 'XIcon', render: () => null },
+  ArrowLeft: { name: 'ArrowLeftIcon', render: () => null },
+  Mic: { name: 'MicIcon', render: () => null },
+  Monitor: { name: 'MonitorIcon', render: () => null },
+  NotebookPen: { name: 'NotebookPenIcon', render: () => null },
+  Volume2: { name: 'Volume2Icon', render: () => null },
 }))
 
 vi.mock('@/utils/appLog', () => ({
@@ -106,7 +109,7 @@ vi.mock('@/composables/useLiveNotes', async (importOriginal) => {
 
 function mountPanel() {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
-  return mount(LiveSharePanel, {
+  return mount(MeetingCreate, {
     global: {
       plugins: [i18n],
       stubs: {
@@ -133,20 +136,18 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('LiveSharePanel in a browser', () => {
-  it('offers the picker-driven start form without any source tile', async () => {
+describe('MeetingCreate in a browser', () => {
+  it('offers the voice tile and a usable start button when there is no source list', async () => {
     stubCaptureApi(true)
     const wrapper = mountPanel()
     await flushPromises()
 
-    expect(wrapper.find('[data-role="capture-unsupported"]').exists()).toBe(false)
-    // The empty list is not a problem here: the system dialog decides.
-    expect(wrapper.find('[data-role="no-sources"]').text()).toBe(
-      enMessages.liveShare.browserCaptureHint,
-    )
-    expect(wrapper.find('.live-source').exists()).toBe(false)
+    // A browser's own picker IS the source choice, so an empty list is not a
+    // problem: only the voice tile is rendered, and it is selected by default.
+    expect(wrapper.findAll('.meeting-source')).toHaveLength(1)
+    expect(wrapper.find('[data-source="voice"]').exists()).toBe(true)
 
-    const start = wrapper.find('[data-action="start-share"]')
+    const start = wrapper.find('[data-action="meeting-start"]')
     expect(start.exists()).toBe(true)
     expect(start.attributes('disabled')).toBeUndefined()
   })
@@ -159,10 +160,10 @@ describe('LiveSharePanel in a browser', () => {
       const wrapper = mountPanel()
       await flushPromises()
 
-      expect(wrapper.find('[data-role="capture-unsupported"]').text()).toBe(
-        enMessages.liveShare.insecureContext,
-      )
-      expect(wrapper.find('[data-action="start-share"]').exists()).toBe(false)
+      expect(wrapper.find('.meeting-warn').text()).toBe(enMessages.liveShare.insecureContext)
+      // Nothing can be started: the button is present but disabled rather than
+      // hidden, so the footer does not jump around between hosts.
+      expect(wrapper.find('[data-action="meeting-start"]').attributes('disabled')).toBeDefined()
     } finally {
       if (original) Object.defineProperty(window, 'isSecureContext', original)
       else delete (window as unknown as Record<string, unknown>).isSecureContext

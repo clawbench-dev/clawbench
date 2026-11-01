@@ -221,21 +221,16 @@
                   />
                 </TabPanel>
 
-                <!-- AI 听记 Tab (voice notes + the minutes past recordings left
-                     behind). Sits next to screen sharing: both record a
-                     conversation, but this one needs only a microphone. -->
-                <TabPanel tabId="notes" :activeTab="leftPanelActive" :noHeader="true">
-                  <NotesPanel
-                    :active="panelIsActive('notes')"
+                <!-- 会议 Tab: the meeting records, and the meeting itself.
+                     One tab, not two: 听记 and screen sharing were always the
+                     same pipeline, and a record can be either a voice meeting
+                     or a shared screen. -->
+                <TabPanel tabId="live" :activeTab="leftPanelActive" :noHeader="true">
+                  <MeetingPanel
+                    :active="panelIsActive('live')"
+                    @quote="handleMeetingQuote"
                     @open-file="handleTaskOpenFile"
                   />
-                </TabPanel>
-
-                <!-- Desktop sharing Tab (screen share + meeting controls).
-                     Sits next to port forwarding: both are "connections this
-                     machine offers to other machines". -->
-                <TabPanel tabId="live" :activeTab="leftPanelActive" :noHeader="true">
-                  <LiveSharePanel />
                 </TabPanel>
 
                 <!-- Proxy Tab -->
@@ -647,15 +642,10 @@ import FileIcon from './components/common/FileIcon.vue'
 import { baseName, dirName } from '@/utils/path.ts'
 import GitHistoryContent from './components/git/GitHistoryContent.vue'
 import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
-// Desktop sharing is only possible in the desktop shell (it needs native
-// capture); the tab is hidden elsewhere, exactly like the old header button.
-const LiveSharePanel = defineAsyncComponent(
-  buildAsyncComponentOptions({ loader: () => import('./components/live/LiveSharePanel.vue') }),
-)
-// AI 听记: a dictaphone plus the archive of past minutes. Needs a microphone,
-// not screen capture, so unlike sharing it is offered to browser tabs too.
-const NotesPanel = defineAsyncComponent(
-  buildAsyncComponentOptions({ loader: () => import('./components/live/NotesPanel.vue') }),
+// 会议: records + the meeting itself (screen share or voice only). The tab is
+// always offered — the list is readable even on a host that cannot capture.
+const MeetingPanel = defineAsyncComponent(
+  buildAsyncComponentOptions({ loader: () => import('./components/live/MeetingPanel.vue') }),
 )
 import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AnimatedWallpaper from './components/AnimatedWallpaper.vue'
@@ -719,7 +709,7 @@ import { useSoftKeyboard } from './composables/useSoftKeyboard.ts'
 import { useVisualViewportInset } from './composables/useVisualViewportInset.ts'
 import { usePortForward } from './composables/usePortForward.ts'
 import { useLiveShare } from './composables/useLiveShare.ts'
-import { useLiveNotes } from './composables/useLiveNotes.ts'
+import { useMeetingHistory } from './composables/useMeetingHistory.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
@@ -783,7 +773,6 @@ import { forgeTargetItemKey } from './composables/useForge.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData, attachDragTargets } from './utils/attachDrag'
 import { readQuoteDragData, hasQuoteDragData } from './utils/quoteDrag'
-import { browserScreenCaptureAvailable } from './utils/screenCaptureSupport'
 import SplitView from './components/common/SplitView.vue'
 import {
   useWideScreenLayout,
@@ -1989,10 +1978,10 @@ const { isAppMode, isDesktopApp } = useAppMode()
 // in both dock variants.
 const liveShareState = useLiveShare().state
 const liveShareActive = computed(() => liveShareState.value !== 'idle')
-// Same treatment for a running dictation: a red icon in the dock is how the
-// user notices they left the recorder on after switching tabs.
-const notesPhase = useLiveNotes().phase
-const notesRecording = computed(() => notesPhase.value === 'recording')
+// A running meeting (screen or voice) is ONE state: the dock shows a single
+// accent dot (`liveDotVisible` below). There is deliberately no red "recording"
+// tint any more — red is reserved for errors, and "recording vs publishing" is
+// a distinction that only matters inside the panel.
 const { syncToNative, sshInfo, loadSSHInfo, transportAllowsH2 } = usePortForward()
 const { terminalRuntimeEnabled, platformSupported, loadTerminalStatus } = useTerminalStatus()
 // Port forwarding is unusable only when NEITHER wire can carry it: the SSH
@@ -3315,16 +3304,6 @@ const overflowTabs = computed(() =>
     terminalDisabled: isTerminalDisabled.value,
     portForwardUnavailable: isPortForwardUnavailable.value,
     forgeHidden: isForgeTabHidden.value,
-    // The gate is "can this host capture at all", not "is this the desktop
-    // shell". Android qualifies through MediaProjection (see
-    // composables/androidScreenCapture.ts), and a browser qualifies when it
-    // exposes getDisplayMedia — which it only does in a secure context, so an
-    // install opened over plain HTTP still hides the tab instead of offering a
-    // button that could only fail.
-    liveUnavailable:
-      !isDesktopApp.value &&
-      !getNative()?.startScreenCapture &&
-      !browserScreenCaptureAvailable(),
   }),
 )
 
@@ -3430,7 +3409,6 @@ function dockTabTitle(tab: string) {
 function dockInlineOverflowBtnClass(tab: string) {
   return {
     active: activeTab.value === tab,
-    'is-recording': tab === 'notes' && notesRecording.value,
     'has-unread': tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab.value !== 'tasks',
     'just-completed': tab === 'tasks' && store.state.taskJustCompleted && activeTab.value !== 'tasks',
     'has-running': tab === 'tasks' && store.state.taskRunning && activeTab.value !== 'tasks',
@@ -3546,6 +3524,34 @@ const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBindi
 // commits (send / add), so dismissing the bar leaves the input untouched.
 // The bar is global (position: fixed), so no tab switch is needed on open;
 // committing goes through the session picker, whose "add and open" reveals chat.
+const meetingHistory = useMeetingHistory()
+
+/**
+ * Quote a meeting into the chat.
+ *
+ * The payload only carries the token: the meeting's text is fetched here, so
+ * the list-row drag and the detail page's quote button produce an identical
+ * card. A meeting with nothing written yet produces no card at all — a quote
+ * with only a title would spend a prompt slot saying nothing.
+ */
+async function handleMeetingQuote(token: string): Promise<void> {
+  if (!token) return
+  const record = await meetingHistory.get(token)
+  if (!record) return
+  const quote = await meetingHistory.buildQuote(record)
+  if (!quote) {
+    toast.show(t('meeting.quote.unavailable'), { type: 'error', icon: 'warning' })
+    return
+  }
+  addStagedQuote(quote)
+  switchTab('chat')
+  toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), {
+    icon: 'chat',
+    type: 'success',
+    duration: 1800,
+  })
+}
+
 function handleForgeQuote(payload: { item?: { url?: string; slug?: string; number?: number; label?: string } } | null) {
   const it = payload?.item
   if (!it) return
@@ -3639,6 +3645,12 @@ function onChatColDrop(e: DragEvent) {
   const quote = readQuoteDragData(e.dataTransfer)
   if (quote) {
     e.preventDefault()
+    // A meeting drag carries identity only (dragstart cannot await); the text
+    // is fetched here before the card is staged.
+    if (quote.meetingToken) {
+      void handleMeetingQuote(quote.meetingToken)
+      return
+    }
     addStagedQuote(quote)
     switchTab('chat')
     toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), { icon: 'chat', type: 'success', duration: 1800 })
@@ -3668,7 +3680,6 @@ function wideDockBtnClass(tab: string) {
   return {
     // When the left pane is collapsed no dock tab is active (VS Code-style).
     active: leftTab.value === tab && !leftCollapsed.value,
-    'is-recording': tab === 'notes' && notesRecording.value,
     'has-unread': tab === 'tasks' && store.state.taskUnreadCount > 0 && leftTab.value !== 'tasks',
     'just-completed': tab === 'tasks' && store.state.taskJustCompleted && leftTab.value !== 'tasks',
     'has-running': tab === 'tasks' && store.state.taskRunning && leftTab.value !== 'tasks',
@@ -5256,12 +5267,6 @@ onUnmounted(() => {
   .dock-badge--live {
     animation: none;
   }
-}
-
-/* A running dictation keeps the red icon: unlike a share, a forgotten
-   microphone is exactly the kind of "is this still on?" state red is for. */
-.dock-btn.is-recording {
-  color: var(--color-red, #cf222e);
 }
 
 .dock-badge {

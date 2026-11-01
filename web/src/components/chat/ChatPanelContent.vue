@@ -817,7 +817,16 @@ async function jumpToQuoteSource(q) {
         return
     }
 
-    // 3. Session + message: switch to the session and scroll to the message.
+    // 3. Meeting: switch to the 会议 tab and open that record. The panel owns
+    //    the view state, so the request travels as an event rather than a prop.
+    if (q.meetingToken) {
+        window.dispatchEvent(new CustomEvent('clawbench-open-meeting', {
+            detail: { token: q.meetingToken },
+        }))
+        return
+    }
+
+    // 4. Session + message: switch to the session and scroll to the message.
     //    The request is parked in module state because the session may still
     //    have to load (and may be a different project) — see useMessageNavigation.
     if (q.sessionId) {
@@ -833,6 +842,11 @@ async function jumpToQuoteSource(q) {
         openExternalUrl(q.url)
         return
     }
+
+    // A meeting quote whose token did not survive (an old message) has no
+    // addressable source: opening the label as a path would 404 and look like
+    // a broken file.
+    if (q.language === 'meeting' && !q.meetingToken) return
 
     // 5. A file: open it at its line range.
     if (!q.filePath) return

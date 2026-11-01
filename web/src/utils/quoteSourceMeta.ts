@@ -10,6 +10,7 @@ import {
   SquareTerminal,
   CircleDot,
   FileCode,
+  CalendarDays,
 } from 'lucide-vue-next'
 import type { QuoteDisplayType } from '@/utils/quoteItem'
 
@@ -39,6 +40,7 @@ export const QUOTE_TYPE_ICON: Record<QuoteDisplayType, unknown> = {
   terminal: SquareTerminal,
   chat: MessageSquareText,
   file: FileCode,
+  meeting: CalendarDays,
   selection: MousePointer2,
 }
 
@@ -60,5 +62,6 @@ export const QUOTE_TYPE_LABEL_KEY: Record<QuoteDisplayType, string> = {
   terminal: 'quoteBar.typeTerminal',
   chat: 'quoteBar.messageQuote',
   file: 'quoteBar.typeFile',
+  meeting: 'quoteBar.typeMeeting',
   selection: 'quoteBar.selectionQuote',
 }

@@ -45,6 +45,7 @@ vi.mock('@/share/liveViewer', () => ({
 vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok' }))
 
 import LiveShareView from '@/share/LiveShareView.vue'
+import { passJoinGate } from './joinGateTestHelper'
 
 const i18n = createI18n({
   legacy: false,
@@ -61,6 +62,13 @@ const i18n = createI18n({
           micOffHint: '点击打开麦克风发言',
           micNeedsHttps: '需要 HTTPS 才能使用麦克风',
           statusConnecting: '连接中…',
+          joinSubtitle: '主持人邀请你加入会议。填一个昵称，发布端与其他观众会看到它。',
+          joinNick: '你的昵称',
+          joinNickPlaceholder: '例如：小明',
+          joinNickHint: '昵称会记住，下次加入不用再填。',
+          joinEnter: '加入会议',
+          voiceTitle: '语音会议',
+          voiceDesc: '主持人没有共享画面',
           statusLive: '直播中',
           fullscreen: '全屏',
           exitFullscreen: '退出全屏',
@@ -134,7 +142,9 @@ afterEach(() => {
 })
 
 function mountView() {
-  return mount(LiveShareView, { global: { plugins: [i18n] } })
+  const w = mount(LiveShareView, { global: { plugins: [i18n] } })
+  passJoinGate(w)
+  return w
 }
 
 describe('LiveShareView control dock', () => {

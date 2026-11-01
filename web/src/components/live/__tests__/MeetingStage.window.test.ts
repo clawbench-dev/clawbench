@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, shallowRef } from 'vue'
 import enMessages from '@/i18n/locales/en'
-import LiveSharePanel from '../LiveSharePanel.vue'
+import MeetingStage from '../MeetingStage.vue'
 
 /**
  * The panel is a view: what it owns is WHICH surface each tool opens on.
@@ -14,6 +14,9 @@ import LiveSharePanel from '../LiveSharePanel.vue'
 
 vi.mock('lucide-vue-next', () => ({
   MonitorUp: { name: 'MonitorUpIcon', render: () => null },
+  Mic: { name: 'MicIcon', render: () => null },
+  NotebookPen: { name: 'NotebookPenIcon', render: () => null },
+  Volume2: { name: 'Volume2Icon', render: () => null },
   X: { name: 'XIcon', render: () => null },
 }))
 
@@ -56,6 +59,13 @@ vi.mock('@/composables/useLiveShare', async () => {
     levels: r({}),
     previewStream: sr({ id: 'preview' }),
     captureKind: r('screen'),
+    videoEnabled: r(true),
+    micEnabled: r(true),
+    systemAudioEnabled: r(false),
+    setMicEnabled: vi.fn(),
+    setSystemAudioEnabled: vi.fn(),
+    startNotes: vi.fn(() => true),
+    stopNotes: vi.fn(async () => undefined),
     start: vi.fn(async () => true),
     stop: vi.fn(async () => undefined),
     setTalkEnabled: vi.fn(),
@@ -123,7 +133,7 @@ function mountPanel() {
   // A fresh instance per mount: installing the same one twice trips
   // vue-i18n's "already set up" guard.
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
-  return mount(LiveSharePanel, {
+  return mount(MeetingStage, {
     global: {
       plugins: [i18n],
       stubs: {
@@ -145,7 +155,7 @@ beforeEach(() => {
   ;(notesApi.phase as { value: string }).value = 'idle'
 })
 
-describe('LiveSharePanel windows', () => {
+describe('MeetingStage windows', () => {
   it('opens the drawing surface in its own window instead of inline', async () => {
     const win = fakeWindow()
     const requestWindow = vi.fn(async () => win as unknown as Window)

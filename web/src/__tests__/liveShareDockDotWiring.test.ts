@@ -74,11 +74,11 @@ describe('live-share dock dot wiring', () => {
 })
 
 describe('live-share panel header marker', () => {
-  const panel = readWebFile('src/components/live/LiveSharePanel.vue')
+  const panel = readWebFile('src/components/live/MeetingStage.vue')
 
   function ruleBody(selector: string): string {
     const start = panel.indexOf(`${selector} {`)
-    expect(start, `${selector} rule not found in LiveSharePanel.vue`).toBeGreaterThan(-1)
+    expect(start, `${selector} rule not found in MeetingStage.vue`).toBeGreaterThan(-1)
     return panel.slice(start, start + panel.slice(start).indexOf('\n}'))
   }
 

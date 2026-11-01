@@ -49,6 +49,7 @@ vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok' }))
 vi.mock('@/utils/clawbenchNative', () => ({ getNative: () => undefined }))
 
 import LiveShareView from '@/share/LiveShareView.vue'
+import { passJoinGate } from './joinGateTestHelper'
 
 const i18n = createI18n({
   legacy: false,
@@ -65,6 +66,13 @@ const i18n = createI18n({
           controlling: '正在控制',
           controlPending: '等待授权',
           statusConnecting: '连接中…',
+          joinSubtitle: '主持人邀请你加入会议。填一个昵称，发布端与其他观众会看到它。',
+          joinNick: '你的昵称',
+          joinNickPlaceholder: '例如：小明',
+          joinNickHint: '昵称会记住，下次加入不用再填。',
+          joinEnter: '加入会议',
+          voiceTitle: '语音会议',
+          voiceDesc: '主持人没有共享画面',
           statusLive: '直播中',
           statusNegotiating: '协商中…',
         },
@@ -97,6 +105,7 @@ afterEach(() => {
 /** Mount and put the viewer into the "granted control" state. */
 async function mountControlling() {
   const w = mount(LiveShareView, { global: { plugins: [i18n] } })
+  passJoinGate(w)
   wrapper = w
   await flushPromises()
   lastViewer?.opts?.callbacks?.onControl?.({ t: 'ctrl-grant', viewerId: 'v-test', granted: true })

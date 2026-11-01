@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick, ref, shallowRef } from 'vue'
 import enMessages from '@/i18n/locales/en'
-import LiveSharePanel from '../LiveSharePanel.vue'
+import MeetingStage from '../MeetingStage.vue'
 
 /**
  * While a share runs the panel is three surfaces — setup, transcript, chat —
@@ -19,6 +19,9 @@ import LiveSharePanel from '../LiveSharePanel.vue'
 
 vi.mock('lucide-vue-next', () => ({
   MonitorUp: { name: 'MonitorUpIcon', render: () => null },
+  Mic: { name: 'MicIcon', render: () => null },
+  NotebookPen: { name: 'NotebookPenIcon', render: () => null },
+  Volume2: { name: 'Volume2Icon', render: () => null },
   X: { name: 'XIcon', render: () => null },
 }))
 
@@ -63,6 +66,13 @@ vi.mock('@/composables/useLiveShare', async () => {
     levels: r({}),
     previewStream: sr(null),
     captureKind: r('screen'),
+    videoEnabled: r(true),
+    micEnabled: r(true),
+    systemAudioEnabled: r(false),
+    setMicEnabled: vi.fn(),
+    setSystemAudioEnabled: vi.fn(),
+    startNotes: vi.fn(() => true),
+    stopNotes: vi.fn(async () => undefined),
     start: vi.fn(async () => true),
     stop: vi.fn(async () => undefined),
     setTalkEnabled: vi.fn(),
@@ -114,7 +124,7 @@ function mountPanel() {
   // A fresh instance per mount: installing the same one twice trips
   // vue-i18n's "already set up" guard.
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
-  return mount(LiveSharePanel, {
+  return mount(MeetingStage, {
     global: {
       plugins: [i18n],
       stubs: {
@@ -145,7 +155,7 @@ beforeEach(() => {
   ;(notesApi.segments as { value: unknown[] }).value = []
 })
 
-describe('LiveSharePanel tabs', () => {
+describe('MeetingStage tabs', () => {
   it('opens on the setup tab and shows neither the transcript nor the chat', async () => {
     const wrapper = mountPanel()
     await flushPromises()
@@ -238,5 +248,17 @@ describe('LiveSharePanel tabs', () => {
     await nextTick()
 
     expect(tab(wrapper, 'basic').classes()).toContain('live-tab--active')
+  })
+
+  it('drops the footer while a share is running: 结束共享 lives in the header', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // Positive control: the header stop button is the one that stays.
+    expect(wrapper.find('[data-action="panel-stop"]').exists()).toBe(true)
+    // No footer bar and none of its buttons — an empty strip is what this
+    // change removes, so both halves are asserted.
+    expect(wrapper.find('.live-panel__footer').exists()).toBe(false)
+    expect(wrapper.find('.fbtn').exists()).toBe(false)
   })
 })

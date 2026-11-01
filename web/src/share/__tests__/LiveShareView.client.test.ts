@@ -40,6 +40,7 @@ vi.mock('@/utils/clawbenchNative', () => ({ getNative: () => nativeBridge }))
 vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok' }))
 
 import LiveShareView from '@/share/LiveShareView.vue'
+import { passJoinGate } from './joinGateTestHelper'
 
 const i18n = createI18n({
   legacy: false,
@@ -84,6 +85,13 @@ const i18n = createI18n({
           controlCancel: '取消',
           statusLive: '直播中',
           statusConnecting: '连接中',
+          joinSubtitle: '主持人邀请你加入会议。填一个昵称，发布端与其他观众会看到它。',
+          joinNick: '你的昵称',
+          joinNickPlaceholder: '例如：小明',
+          joinNickHint: '昵称会记住，下次加入不用再填。',
+          joinEnter: '加入会议',
+          voiceTitle: '语音会议',
+          voiceDesc: '主持人没有共享画面',
           statusNegotiating: '协商中',
           statusEnded: '已结束',
           statusFull: '已满',
@@ -126,6 +134,7 @@ beforeEach(() => {
 describe('share page in the desktop client', () => {
   it('offers screen sharing and picks a source before capturing', async () => {
     const w = mount(LiveShareView, { global: { plugins: [i18n] } })
+    passJoinGate(w)
     await flushPromises()
 
     lastViewer?.opts?.callbacks?.onScreenEnabled?.(true)
@@ -154,6 +163,7 @@ describe('share page in the desktop client', () => {
 
   it('does not nag a client user with the browser hint', async () => {
     const w = mount(LiveShareView, { global: { plugins: [i18n] } })
+    passJoinGate(w)
     await flushPromises()
     lastViewer?.opts?.callbacks?.onScreenEnabled?.(true)
     await flushPromises()

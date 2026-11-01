@@ -1,5 +1,9 @@
 <template>
-  <div ref="rootRef" class="live-share-view">
+  <!-- The nickname gate runs BEFORE any connection: an empty name must not take
+       an audience slot. It also carries the meeting title the server already
+       resolved from the share link. -->
+  <LiveJoinGate v-if="!joined" :title="title" @join="onJoin" />
+  <div v-else ref="rootRef" class="live-share-view">
     <div
       ref="stageRef"
       class="live-stage"
@@ -42,9 +46,18 @@
 
         <!-- Ink covers exactly the picture, not the letterbox: a stroke drawn
              at 0.5/0.5 must land in the middle of the CONTENT on every screen. -->
-        <div class="live-ink-wrap" :style="inkWrapStyle">
+        <div v-if="videoEnabled" class="live-ink-wrap" :style="inkWrapStyle">
           <LiveInkLayer :strokes="board.strokes.value" :laser="board.laser.value" />
         </div>
+      </div>
+
+      <!-- Voice meeting: there is no picture to show. A placeholder says what
+           this is, instead of leaving a black rectangle that reads as a broken
+           stream. -->
+      <div v-if="!videoEnabled" class="live-voice-stage" data-role="voice-stage">
+        <Mic :size="34" />
+        <div class="live-voice-stage__title">{{ t('share.live.voiceTitle') }}</div>
+        <div class="live-voice-stage__desc">{{ t('share.live.voiceDesc') }}</div>
       </div>
 
       <!-- Connection health. Only shown once there is a reading, and it never
@@ -269,7 +282,7 @@
            capture: hiding it entirely leaves a member wondering why the button
            their colleague sees is missing. Disabled + a title explains it. -->
       <button
-        v-if="controlState === 'none'"
+        v-if="controlState === 'none' && videoEnabled"
         class="live-dock-btn"
         type="button"
         :aria-label="t('share.live.requestControl')"
@@ -382,6 +395,7 @@ import {
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { LiveViewer, type LiveStats, type LiveViewerState } from './liveViewer'
+import LiveJoinGate from './LiveJoinGate.vue'
 import LiveInkLayer from './LiveInkLayer.vue'
 import LiveChatPanel, { type ChatMessage } from './LiveChatPanel.vue'
 import { useInkBoard } from './useInkBoard'
@@ -399,6 +413,11 @@ const { t } = useI18n()
 const rootRef = ref<HTMLElement | null>(null)
 const videoRef = ref<HTMLVideoElement | null>(null)
 const state = ref<LiveViewerState>('connecting')
+/** The nickname gate has been passed; only then is a socket opened. */
+const joined = ref(false)
+const nick = ref('')
+/** Whether the publisher sends a picture (false = voice meeting). */
+const videoEnabled = ref(true)
 const title = ref('')
 const failReason = ref('')
 const talkEnabled = ref(false)
@@ -1061,6 +1080,13 @@ function unlockSound(): void {
   void el.play().catch((e) => appLog.w(TAG, 'unmuted play failed', e))
 }
 
+/** Gate callback: remember the name and connect. */
+function onJoin(name: string): void {
+  nick.value = name
+  joined.value = true
+  void nextTick(() => start())
+}
+
 function start(): void {
   const token = getShareToken()
   if (!token) {
@@ -1074,10 +1100,14 @@ function start(): void {
 
   viewer = new LiveViewer({
     token,
+    name: nick.value,
     callbacks: {
       onStream: attachStream,
       onTitle: (v) => {
         title.value = v
+      },
+      onVideoMode: (video) => {
+        videoEnabled.value = video
       },
       onStateChange: (s, detail) => {
         state.value = s
@@ -1252,7 +1282,6 @@ watch(title, (v) => {
 })
 
 onMounted(() => {
-  start()
   document.addEventListener('fullscreenchange', syncFullscreen)
   document.addEventListener('visibilitychange', onVisibility)
   window.addEventListener('resize', syncInkRect)
@@ -1813,4 +1842,25 @@ onBeforeUnmount(() => {
   color: var(--text-primary, #e6edf3);
   overflow-wrap: anywhere;
 }
+
+/* Voice meeting: no picture to show. The placeholder sits where the video
+   would be, on the stage's own background, so it reads as "this is the
+   meeting" rather than "the stream failed". */
+.live-voice-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3, 6px);
+  color: var(--text-muted, #6c757d);
+  pointer-events: none;
+}
+.live-voice-stage__title {
+  font-size: var(--font-size-lg, 14px);
+  font-weight: 600;
+  color: var(--text-primary, #212529);
+}
+.live-voice-stage__desc { font-size: var(--font-size-xs, 11px); }
 </style>

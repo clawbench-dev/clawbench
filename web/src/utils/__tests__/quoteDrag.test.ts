@@ -9,6 +9,7 @@ import {
   forgeItemDragPayload,
   pipelineDragPayload,
   forgeUnreadDragPayload,
+  meetingDragPayload,
 } from '@/utils/quoteDrag'
 import { resolveQuoteType } from '@/utils/quoteItem'
 
@@ -211,5 +212,28 @@ describe('forgeUnreadDragPayload', () => {
 
   it('refuses an issue row with no number', () => {
     expect(forgeUnreadDragPayload({ type: 'issue', number: 0, slug: 'o/r' })).toBeNull()
+  })
+})
+
+describe('meetingDragPayload', () => {
+  it('carries the token and a readable label, and no text', () => {
+    const p = meetingDragPayload({ token: 'abc123', label: 'Meeting · Release review · 11-01 14:30' })!
+
+    expect(p.meetingToken).toBe('abc123')
+    expect(p.text).toBe('')
+    expect(p.language).toBe('meeting')
+    expect(p.filePath).toBe('Meeting · Release review · 11-01 14:30')
+    expect(resolveQuoteType(p)).toBe('meeting')
+  })
+
+  it('falls back to the token when the caller has no label', () => {
+    const p = meetingDragPayload({ token: 'abc123' })!
+    expect(p.filePath).toBe('abc123')
+  })
+
+  // The drag has nothing to quote without a record to look the text up by.
+  it('refuses a record with no token', () => {
+    expect(meetingDragPayload({ token: '', label: 'x' })).toBeNull()
+    expect(meetingDragPayload(null)).toBeNull()
   })
 })

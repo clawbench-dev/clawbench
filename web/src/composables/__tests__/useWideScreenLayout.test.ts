@@ -451,10 +451,17 @@ describe('dock tab registry (single source of truth)', () => {
     expect(rendered.indexOf('live')).toBe(rendered.indexOf('proxy') - 1)
   })
 
-  it('hides the sharing tab where screen capture is impossible', () => {
-    // A browser tab can start voice notes, but it cannot start a share.
-    expect(secondaryDockTabs({ liveUnavailable: true })).not.toContain('live')
+  it('keeps the meeting tab visible on every host', () => {
+    // 会议 is no longer gated on capture: the record list is readable
+    // everywhere, and a voice meeting only needs a microphone. What the host
+    // cannot do is explained inside the create page.
     expect(secondaryDockTabs()).toContain('live')
+    expect(secondaryDockTabs({ portForwardUnavailable: true })).toContain('live')
+  })
+
+  it('has no separate notes tab any more', () => {
+    // 听记 and 桌面共享 were two entries for one pipeline; they are now one.
+    expect(DOCK_TAB_IDS).not.toContain('notes')
   })
 
   it('every registry entry carries an i18n title key', () => {

@@ -530,6 +530,18 @@ describe('start', () => {
 })
 
 describe('viewers', () => {
+  // The server accepts the nickname and forwards it; the publisher's audience
+  // list and the persisted chat both use it. It must be written AFTER the row
+  // exists — `updateViewer` only patches existing rows.
+  it('keeps the nickname the server accepted for the viewer', async () => {
+    const { share } = await startSharing()
+
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1', name: 'Alex' })
+    await vi.waitFor(() => expect(share.viewers.value).toHaveLength(1))
+
+    expect(share.viewers.value[0].name).toBe('Alex')
+  })
+
   it('builds one PeerConnection per viewer and wires its m-lines on the offer', async () => {
     const { share } = await startSharing()
 

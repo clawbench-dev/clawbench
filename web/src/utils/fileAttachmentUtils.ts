@@ -32,7 +32,7 @@ export interface FileEntry {
    * quote correctly after a reload — inference alone cannot distinguish a
    * terminal quote from a chat quote (both carry no url and no path).
    */
-  sourceKind?: 'file' | 'url' | 'message' | 'selection' | 'terminal'
+  sourceKind?: 'file' | 'url' | 'message' | 'selection' | 'terminal' | 'meeting'
   /**
    * Quote-only source locators. Each is a MACHINE-readable key that both the
    * jump handler and the AI prompt use to find the origin; the human-readable
@@ -52,6 +52,8 @@ export interface FileEntry {
   messageId?: number
   /** Task execution id, when the quote came from one run's detail view. */
   executionId?: string
+  /** Meeting token, when the quote came from a meeting record. */
+  meetingToken?: string
 }
 
 /** Whether an entry is a quoted snippet rather than a file or URL. */
@@ -114,6 +116,7 @@ export function normalizeFileEntry(f: string | FileEntry): FileEntry {
     ...(f.sessionId ? { sessionId: f.sessionId } : {}),
     ...(f.messageId ? { messageId: f.messageId } : {}),
     ...(f.executionId ? { executionId: f.executionId } : {}),
+    ...(f.meetingToken ? { meetingToken: f.meetingToken } : {}),
   }
 }
 

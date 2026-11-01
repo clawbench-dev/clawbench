@@ -146,7 +146,15 @@ const previewStream = shallowRef<MediaStream | null>(null)
  * only correct when the picture IS the desktop. A window capture would put
  * every click at the same fraction of the screen instead of inside the window.
  */
-const captureKind = ref<'screen' | 'window'>('screen')
+const captureKind = ref<'screen' | 'window' | null>('screen')
+/** Whether the running meeting publishes a picture (false = voice meeting). */
+const videoEnabled = ref(true)
+/** Whether the publisher's microphone is currently being sent. */
+const micEnabled = ref(true)
+/** Whether system loopback audio is currently being sent. */
+const systemAudioEnabled = ref(false)
+/** Speaker label fn from `start()`, reused when 听记 is switched on mid-meeting. */
+let notesLabelFn: ((channel: string) => string) | undefined
 /** Whether system audio was requested, remembered for a mid-share source swap. */
 let systemAudioWanted = false
 const peers = new Map<string, PublisherPeer>()
@@ -300,6 +308,14 @@ export function useLiveShare() {
     sourceId: string
     systemAudio: boolean
     microphone: boolean
+    /**
+     * `false` starts a VOICE meeting: no screen capture at all, only the
+     * microphone (plus, later, each viewer's). The room, signaling, chat and
+     * 听记 are identical — the only difference is that no video track is added
+     * to the peer connections, and viewers are told so they can render a
+     * placeholder instead of waiting for a picture.
+     */
+    video?: boolean
     shareTitle?: string
     /** Enable AI 听记 (transcription + minutes) for this share. */
     notes?: boolean
@@ -332,8 +348,20 @@ export function useLiveShare() {
       //    Everything downstream — mixing, peers, notes, the room — is
       //    identical for all three.
       const bridge = getNative()
-      systemAudioWanted = opts.systemAudio
-      if (bridge?.startScreenCapture) {
+      const wantsVideo = opts.video !== false
+      videoEnabled.value = wantsVideo
+      micEnabled.value = Boolean(opts.microphone)
+      systemAudioEnabled.value = wantsVideo && Boolean(opts.systemAudio)
+      notesLabelFn = opts.notesLabel
+      systemAudioWanted = wantsVideo && opts.systemAudio
+      if (!wantsVideo) {
+        // Nothing to capture: leave the preview and the capture kind empty so
+        // every video-only affordance (annotate, switch source, remote control)
+        // stays hidden, and skip straight to the microphone.
+        displayStream = null
+        previewStream.value = null
+        captureKind.value = null
+      } else if (bridge?.startScreenCapture) {
         androidCapture = await startAndroidScreenCapture({
           fps: ANDROID_CAPTURE_FPS,
           maxWidth: ANDROID_CAPTURE_MAX_WIDTH,
@@ -372,17 +400,19 @@ export function useLiveShare() {
         })
         if (!declare) captureKind.value = captureKindOf(displayStream)
       }
-      previewStream.value = displayStream
-      outVideoTrack = displayStream.getVideoTracks()[0] ?? null
-      if (!outVideoTrack) {
-        fail('no video track captured')
-        await stop()
-        return false
+      if (wantsVideo && displayStream) {
+        previewStream.value = displayStream
+        outVideoTrack = displayStream.getVideoTracks()[0] ?? null
+        if (!outVideoTrack) {
+          fail('no video track captured')
+          await stop()
+          return false
+        }
+        // The user can also end the share from the browser's own capture banner.
+        outVideoTrack.addEventListener('ended', () => {
+          void stop()
+        })
       }
-      // The user can also end the share from the browser's own capture banner.
-      outVideoTrack.addEventListener('ended', () => {
-        void stop()
-      })
 
       if (opts.microphone) {
         try {
@@ -405,7 +435,11 @@ export function useLiveShare() {
       const resp = await fetch('/api/live-share', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: opts.shareTitle ?? '', notes: Boolean(opts.notes) }),
+        body: JSON.stringify({
+          title: opts.shareTitle ?? '',
+          notes: Boolean(opts.notes),
+          video: wantsVideo,
+        }),
       })
       if (!resp.ok) {
         fail(`create room failed: ${resp.status}`)
@@ -467,6 +501,56 @@ export function useLiveShare() {
     }
   }
 
+  /**
+   * Mute / unmute the publisher's microphone for the REST of the meeting.
+   *
+   * Disabling the track (rather than removing it) keeps every peer connection
+   * and the mixer graph intact: no renegotiation, no gap for the other side.
+   */
+  function setMicEnabled(on: boolean): void {
+    micEnabled.value = on
+    micStream?.getAudioTracks().forEach((track) => {
+      track.enabled = on
+    })
+  }
+
+  /** Mute / unmute system loopback audio. A voice meeting has none. */
+  function setSystemAudioEnabled(on: boolean): void {
+    if (!videoEnabled.value) return
+    systemAudioEnabled.value = on
+    displayStream?.getAudioTracks().forEach((track) => {
+      track.enabled = on
+    })
+  }
+
+  /**
+   * Turn AI 听记 on mid-meeting.
+   *
+   * The recorder needs the AudioContext and the microphone the share already
+   * owns, which is why this lives here rather than in the panel. Starting late
+   * loses the earlier audio — the transcript begins at the toggle.
+   */
+  function startNotes(): boolean {
+    if (!audioCtx || !token.value) return false
+    if (useLiveNotes().phase.value === 'recording') return true
+    useLiveNotes().start({
+      token: token.value,
+      ctx: audioCtx,
+      micStream,
+      title: title.value,
+      label: notesLabelFn,
+    })
+    return true
+  }
+
+  /** Turn AI 听记 off mid-meeting: stop recording and drain the upload queue. */
+  async function stopNotes(): Promise<void> {
+    const notes = useLiveNotes()
+    if (notes.phase.value !== 'recording') return
+    await notes.stopCapture()
+    await notes.finishUploads()
+  }
+
   async function openSocket(): Promise<void> {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const url = `${proto}://${window.location.host}/api/live-share/publish/ws?token=${encodeURIComponent(token.value)}`
@@ -505,7 +589,12 @@ export function useLiveShare() {
 
     switch (type) {
       case 'viewer-join':
+        // The server forwards the nickname it accepted, so the publisher's list
+        // and the chat attribution use one authoritative value. The update must
+        // come AFTER the join: `updateViewer` only patches existing rows, and
+        // the row is appended inside `onViewerJoin`.
         await onViewerJoin(viewerId)
+        updateViewer(viewerId, { name: (msg.name as string) ?? '' })
         break
       case 'viewer-leave':
         onViewerLeave(viewerId)
@@ -1026,6 +1115,13 @@ export function useLiveShare() {
     switchSource,
     previewStream,
     captureKind,
+    videoEnabled,
+    micEnabled,
+    systemAudioEnabled,
+    setMicEnabled,
+    setSystemAudioEnabled,
+    startNotes,
+    stopNotes,
   }
 }
 

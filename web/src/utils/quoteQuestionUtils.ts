@@ -125,6 +125,8 @@ export interface QuoteSource {
   commitSha?: string
   taskId?: number
   sessionId?: string
+  /** Meeting token, when the region belongs to a meeting record. */
+  meetingToken?: string
   messageId?: number
   executionId?: string
 }
@@ -157,6 +159,7 @@ export function getQuoteSource(container: HTMLElement): QuoteSource | null {
   const commitSha = el?.getAttribute('data-quote-commit') || ''
   const sessionId = el?.getAttribute('data-quote-session-id') || ''
   const executionId = el?.getAttribute('data-quote-execution-id') || ''
+  const meetingToken = el?.getAttribute('data-quote-meeting-token') || ''
   return {
     label,
     language: el?.getAttribute('data-quote-language') || '',
@@ -168,6 +171,7 @@ export function getQuoteSource(container: HTMLElement): QuoteSource | null {
     ...(sessionId ? { sessionId } : {}),
     ...(messageId !== undefined ? { messageId } : {}),
     ...(executionId ? { executionId } : {}),
+    ...(meetingToken ? { meetingToken } : {}),
   }
 }
 

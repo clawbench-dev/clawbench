@@ -45,6 +45,8 @@ interface ServerMessage {
   talkEnabled?: boolean
   /** Whether the publisher is running AI 听记 for this share. */
   notesEnabled?: boolean
+  /** Whether the publisher sends a picture (false = voice meeting). */
+  video?: boolean
   /** Room-level switch for audience screen sharing. */
   screenEnabled?: boolean
   /** Viewer id currently sharing a screen ('' when nobody is). */
@@ -64,6 +66,12 @@ export interface LiveViewerCallbacks {
   onTalkEnabled?: (enabled: boolean) => void
   /** Whether the publisher is running AI 听记 (shows the transcript panel). */
   onNotesEnabled?: (enabled: boolean) => void
+  /**
+   * Whether the publisher sends a picture. A voice meeting has none, so the
+   * page renders a placeholder instead of waiting for a track that will never
+   * arrive — and must not offer the remote-control button.
+   */
+  onVideoMode?: (video: boolean) => void
   /** The room-level screen-sharing switch changed. */
   onScreenEnabled?: (enabled: boolean) => void
   /** Who is sharing a screen ('' = nobody). */
@@ -80,6 +88,8 @@ export interface LiveViewerCallbacks {
 
 export interface LiveViewerOptions {
   token: string
+  /** The viewer's nickname (required by the server; shown to the publisher). */
+  name: string
   callbacks?: LiveViewerCallbacks
   /** Injected for tests; defaults to the global WebSocket. */
   wsFactory?: (url: string) => WebSocket
@@ -90,11 +100,19 @@ export interface LiveViewerOptions {
 }
 
 /** ws(s):// URL for the signalling socket of a share token. */
-export function liveSignalUrl(token: string, origin?: { protocol: string; host: string }): string {
+export function liveSignalUrl(
+  token: string,
+  origin?: { protocol: string; host: string },
+  name?: string,
+): string {
   const proto =
     (origin?.protocol ?? window.location.protocol) === 'https:' ? 'wss' : 'ws'
   const host = origin?.host ?? window.location.host
-  return `${proto}://${host}/api/share/${encodeURIComponent(token)}/signal`
+  const base = `${proto}://${host}/api/share/${encodeURIComponent(token)}/signal`
+  // The nickname is REQUIRED by the server: it is what the publisher's audience
+  // list and the persisted chat call this viewer by. Encoded because it is free
+  // text (Chinese, emoji, spaces).
+  return name ? `${base}?name=${encodeURIComponent(name)}` : base
 }
 
 export class LiveViewer {
@@ -142,6 +160,11 @@ export class LiveViewer {
   /** Previous byte counter, for turning cumulative bytes into a bitrate. */
   private lastStats: { at: number; bytes: number } | null = null
   private _closed = false
+  /**
+   * Whether a picture is expected. Defaults to true so a room that predates the
+   * flag (or an older server) keeps behaving exactly as before.
+   */
+  private _videoEnabled = true
 
   constructor(opts: LiveViewerOptions) {
     this.opts = opts
@@ -150,6 +173,11 @@ export class LiveViewer {
 
   get state(): LiveViewerState {
     return this._state
+  }
+
+  /** Whether a picture is expected from the publisher. */
+  get videoEnabled(): boolean {
+    return this._videoEnabled
   }
 
   get talkEnabled(): boolean {
@@ -194,7 +222,7 @@ export class LiveViewer {
       this.opts.wsFactory ?? ((url: string) => new WebSocket(url))
     let ws: WebSocket
     try {
-      ws = factory(liveSignalUrl(this.opts.token))
+      ws = factory(liveSignalUrl(this.opts.token, undefined, this.opts.name))
     } catch (e) {
       appLog.e(TAG, 'failed to open signalling socket', e)
       this.setState('failed', { reason: 'socket' })
@@ -300,6 +328,8 @@ export class LiveViewer {
 
   private onJoined(msg: ServerMessage): void {
     this._talkEnabled = Boolean(msg.talkEnabled)
+    this._videoEnabled = msg.video !== false
+    this.cb.onVideoMode?.(this._videoEnabled)
     this.cb.onTalkEnabled?.(this._talkEnabled)
     this._viewerId = msg.viewerId ?? ''
     this._notesEnabled = Boolean(msg.notesEnabled)
@@ -348,7 +378,11 @@ export class LiveViewer {
       // The publisher sends video plus one mixed audio track. Wrap whatever
       // arrives into a single stream so the <video> element has one srcObject.
       this.cb.onStream?.(stream)
-      if (ev.track.kind === 'video') this.setState('playing')
+      // A voice meeting never sends video: the audio track IS the connection.
+      // Without this the page would sit on "connecting" forever.
+      if (ev.track.kind === 'video' || (ev.track.kind === 'audio' && !this._videoEnabled)) {
+        this.setState('playing')
+      }
     }
     pc.onicecandidate = (ev) => {
       if (ev.candidate) this.send({ type: 'ice', candidate: ev.candidate.toJSON() })

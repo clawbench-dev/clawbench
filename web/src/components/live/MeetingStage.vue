@@ -8,13 +8,10 @@
       <span class="live-panel__icon">
         <MonitorUp :size="14" />
       </span>
-      <span class="live-panel__title">{{ t('nav.liveShare') }}</span>
+      <span class="live-panel__title">{{ t('nav.meeting') }}</span>
       <span v-if="isLive" class="live-panel__live" data-role="live-badge">
         <span class="live-panel__dot" />
         {{ t('liveShare.live') }}
-      </span>
-      <span v-else-if="phase === 'minutes'" class="live-panel__state">
-        {{ t('liveShare.notes.minutesTitle') }}
       </span>
       <span class="live-panel__spacer" />
       <button
@@ -48,7 +45,7 @@
         <!-- A red dot while the recorder runs: the tab bar is what the user
              looks at while reading the other tabs. -->
         <span
-          v-else-if="tab.key === 'notes' && notes.phase.value === 'recording'"
+          v-else-if="tab.key === 'notes' && notesOn"
           class="live-tab__rec"
           :title="t('liveShare.notes.listening')"
         />
@@ -56,180 +53,10 @@
     </div>
 
     <div class="live-panel__body live-dialog" :class="{ 'live-panel__body--fill': fillTab }">
-      <!-- Idle: pick a source and options, then start. -->
-      <template v-if="share.state.value === 'idle' && phase !== 'minutes'">
-        <div v-if="!supported" class="live-dialog-warn" data-role="capture-unsupported">
-          {{ unsupportedHint }}
-        </div>
-
-        <template v-else>
-          <div class="live-dialog-section">{{ t('liveShare.pickSource') }}</div>
-          <!-- Android: the source is whatever the system dialog ends up
-               mirroring, so there is nothing to pick. Showing a one-tile grid
-               would suggest a choice that does not exist. -->
-          <div v-if="isAndroidCapture" class="live-dialog-hint">
-            {{ t('liveShare.androidCaptureHint') }}
-          </div>
-          <div v-else-if="loadingSources" class="live-dialog-hint">
-            <LoadingIndicator size="sm" inline />
-          </div>
-          <div v-else-if="captureSources.length === 0" class="live-dialog-hint" data-role="no-sources">
-            {{ browserCapture ? t('liveShare.browserCaptureHint') : t('liveShare.noSources') }}
-          </div>
-          <div v-else class="live-source-grid">
-            <button
-              v-for="s in captureSources"
-              :key="s.id"
-              class="live-source"
-              :class="{ 'live-source--active': s.id === selectedSourceId }"
-              type="button"
-              :data-source-id="s.id"
-              @click="selectedSourceId = s.id"
-            >
-              <img v-if="s.thumbnail" class="live-source-thumb" :src="s.thumbnail" :alt="s.name" />
-              <div v-else class="live-source-thumb live-source-thumb--empty" />
-              <span class="live-source-name" :title="s.name">{{ s.name }}</span>
-            </button>
-          </div>
-
-          <label class="live-check">
-            <input v-model="withSystemAudio" type="checkbox" :disabled="!systemAudioSupported" />
-            <span>{{ t('liveShare.includeSystemAudio') }}</span>
-          </label>
-          <div v-if="!systemAudioSupported" class="live-dialog-hint live-dialog-hint--indent">
-            {{ t('liveShare.systemAudioUnavailable') }}
-          </div>
-          <div
-            v-else-if="isAndroidCapture && withSystemAudio"
-            class="live-dialog-hint live-dialog-hint--indent"
-          >
-            {{ t('liveShare.androidSystemAudioHint') }}
-          </div>
-
-          <label class="live-check">
-            <input v-model="withMicrophone" type="checkbox" />
-            <span>{{ t('liveShare.includeMicrophone') }}</span>
-          </label>
-
-          <!-- AI 听记. On by default: the user opened this dialog to share, and
-               a meeting that loses its transcript because a box was unchecked
-               is a worse outcome than one that has one. Viewers see that 听记 is
-               running (the panel is offered to them), so nobody is recorded
-               silently. -->
-          <label class="live-check">
-            <input v-model="withNotes" type="checkbox" />
-            <span>{{ t('liveShare.notes.enable') }}</span>
-          </label>
-          <div class="live-dialog-hint live-dialog-hint--indent">
-            {{ t('liveShare.notes.enableHint') }}
-          </div>
-
-          <!-- Joining someone else's share opens a second window through the
-               desktop shell. A browser has no such bridge — the same link just
-               goes in a new tab — so the entry is omitted rather than shown
-               with a button that can only answer "unsupported". -->
-          <template v-if="canOpenShareLink">
-            <div class="live-dialog-section">{{ t('liveShare.joinTitle') }}</div>
-            <div class="live-dialog-hint">{{ t('liveShare.joinHint') }}</div>
-            <div class="live-join">
-              <input
-                v-model="joinUrl"
-                class="live-join__input"
-                type="url"
-                :placeholder="t('liveShare.joinPlaceholder')"
-                data-role="join-url"
-                @keydown.enter="joinShare"
-              />
-              <button
-                class="live-btn"
-                type="button"
-                :disabled="!joinUrl.trim()"
-                data-action="join-share"
-                @click="joinShare"
-              >
-                {{ t('liveShare.joinAction') }}
-              </button>
-            </div>
-            <div v-if="joinError" class="live-dialog-error">{{ joinError }}</div>
-          </template>
-        </template>
-      </template>
-
-      <!-- Capturing: brief, but a spinner beats a frozen dialog. Centered in
-           the card — as a plain hint it rendered as 11px text hugging the
-           top-left corner of a mostly empty panel. -->
-      <div v-else-if="share.state.value === 'capturing'" class="live-dialog-loading">
-        <LoadingIndicator :label="t('liveShare.starting')" size="lg" />
-      </div>
-
-      <!-- Minutes: shown after stopping a share that had 听记 enabled. The
-           dialog deliberately stays open — the transcript exists nowhere else
-           in the UI, and closing it would throw the meeting away. -->
-      <div v-else-if="phase === 'minutes'" class="live-notes-minutes">
-        <div class="live-dialog-section">{{ t('liveShare.notes.minutesTitle') }}</div>
-        <div v-if="notes.phase.value === 'finalizing'" class="live-dialog-hint">
-          <LoadingIndicator size="sm" inline />
-          {{
-            notes.pending.value > 0
-              ? t('liveShare.notes.uploading', { n: notes.pending.value })
-              : t('liveShare.notes.finalizing')
-          }}
-        </div>
-        <div v-else-if="notes.minutesPhase.value === 'generating'" class="live-dialog-hint">
-          <LoadingIndicator size="sm" inline />
-          {{
-            notes.revisePhase.value === 'generating'
-              ? t('liveShare.notes.proofreading')
-              : t('liveShare.notes.generating')
-          }}
-        </div>
-        <div v-else-if="notes.minutesPhase.value === 'failed'" class="live-dialog-error">
-          {{ notes.error.value || t('liveShare.notes.generateFailed') }}
-        </div>
-        <div
-          v-else-if="notes.minutes.value"
-          class="live-notes-minutes-body markdown-body"
-          v-html="renderedMinutes"
-        ></div>
-        <div v-else class="live-dialog-hint">{{ t('liveShare.notes.empty') }}</div>
-
-        <!-- The proofread pass failed but the minutes still exist: say so,
-             otherwise the summary silently describes a transcript nobody
-             corrected. -->
-        <div
-          v-if="notes.minutesPhase.value === 'ready' && notes.revisePhase.value === 'failed'"
-          class="live-dialog-warn"
-          data-role="proofread-failed"
-        >
-          {{ t('liveShare.notes.proofreadFailed') }}
-        </div>
-
-        <!-- Where the durable copies live. The database rows expire; these files
-             do not, and the user can edit or commit them. -->
-        <div v-if="artifactRows.length" class="live-notes-artifacts" data-role="artifacts">
-          <div class="live-notes-file-label">{{ t('liveShare.notes.savedTo') }}</div>
-          <div v-for="row in artifactRows" :key="row.key" class="live-notes-file">
-            <span class="live-notes-file-label">{{ row.label }}</span>
-            <span class="live-notes-file-path" :title="row.path">{{ row.path }}</span>
-            <button class="live-btn live-btn--sm" type="button" @click="copyArtifactPath(row.path)">
-              {{ t('liveShare.notes.copyPath') }}
-            </button>
-          </div>
-        </div>
-
-        <!-- Never present a partial transcript as a complete meeting. -->
-        <div v-if="notes.lost.value > 0" class="live-dialog-warn">
-          {{ t('liveShare.notes.lostSegments', { n: notes.lost.value }) }}
-        </div>
-        <div v-else-if="notes.truncated.value" class="live-dialog-warn">
-          {{ t('liveShare.notes.truncated') }}
-        </div>
-      </div>
-
       <!-- Publishing: three surfaces. 基础配置 holds what is set up once and
            then glanced at (link, tools, audience, permissions); the transcript
            and the chat get their own tabs so each can use the panel's height. -->
-      <template v-else>
+      <template>
         <template v-if="activeTab === 'basic'">
           <!-- Every address the server is reachable on, primary first. A
                machine with Wi-Fi + Ethernet + Docker needs this: the address
@@ -237,11 +64,50 @@
           <ShareAddressList :links="share.shareLinks.value" />
           <div class="live-dialog-hint">{{ t('liveShare.linkHint') }}</div>
 
+          <!-- A voice meeting has no picture: say so instead of leaving the
+               panel looking like a share whose capture failed. -->
+          <div v-if="isVoiceMeeting" class="live-dialog-warn" data-role="voice-meeting">
+            {{ t('meeting.stage.voiceHint') }}
+          </div>
+
+          <!-- Sound and 听记 are adjustable WHILE the meeting runs: the same
+               refs the create page wrote, so the two screens can never
+               disagree. -->
+          <div class="live-dialog-section">{{ t('meeting.create.sound') }}</div>
+          <label class="live-check">
+            <input type="checkbox" :checked="micEnabled" data-role="stage-mic"
+              @change="onToggleMic(($event.target as HTMLInputElement).checked)" />
+            <span class="live-check__icon"><Mic :size="13" /></span>
+            <span>{{ t('meeting.create.mic') }}</span>
+          </label>
+          <div class="live-dialog-hint live-dialog-hint--indent">
+            {{ micEnabled ? t('meeting.create.micOn') : t('meeting.create.micOff') }}
+          </div>
+          <label class="live-check" :class="{ 'live-check--disabled': isVoiceMeeting }">
+            <input type="checkbox" :checked="systemAudioEnabled && !isVoiceMeeting" :disabled="isVoiceMeeting"
+              data-role="stage-system-audio"
+              @change="onToggleSystemAudio(($event.target as HTMLInputElement).checked)" />
+            <span class="live-check__icon"><Volume2 :size="13" /></span>
+            <span>{{ t('meeting.create.systemAudio') }}</span>
+          </label>
+          <div class="live-dialog-hint live-dialog-hint--indent">
+            {{ isVoiceMeeting ? t('meeting.create.systemAudioVoice') : t('meeting.create.systemAudioHint') }}
+          </div>
+          <label class="live-check">
+            <input type="checkbox" :checked="notesOn" data-role="stage-notes"
+              @change="onToggleNotes(($event.target as HTMLInputElement).checked)" />
+            <span class="live-check__icon"><NotebookPen :size="13" /></span>
+            <span>{{ t('meeting.create.notes') }}</span>
+          </label>
+          <div class="live-dialog-hint live-dialog-hint--indent">
+            {{ notesOn ? t('meeting.create.notesOn') : t('meeting.create.notesOff') }}
+          </div>
+
           <!-- Tools that only make sense while publishing: annotate the shared
                screen or swap which window is being shared. Chat is a tab of its
                own, so it is not offered again here. -->
-          <div class="live-dialog-section">{{ t('liveShare.toolsSection') }}</div>
-          <div class="live-tools">
+          <div v-if="!isVoiceMeeting" class="live-dialog-section">{{ t('liveShare.toolsSection') }}</div>
+          <div v-if="!isVoiceMeeting" class="live-tools">
             <button
               class="live-btn"
               :class="{ 'live-btn--on': isAnnotating }"
@@ -286,7 +152,7 @@
           </div>
           <ul v-else class="live-viewer-list">
             <li v-for="v in share.viewers.value" :key="v.id" class="live-viewer">
-              <span class="live-viewer-id">{{ v.id }}</span>
+              <span class="live-viewer-id">{{ viewerLabel(v) }}</span>
               <span
                 v-if="presence[v.id] === false"
                 class="live-viewer-away"
@@ -368,7 +234,7 @@
           <!-- Audience screen sharing. Off by default: the token is a read
                credential, and a screen is a much bigger thing to hand out than
                a microphone. -->
-          <label class="live-check">
+          <label v-if="!isVoiceMeeting" class="live-check">
             <input
               type="checkbox"
               :checked="share.screenEnabled.value"
@@ -506,162 +372,67 @@
         </div>
       </Teleport>
     </div>
-    <!-- Pinned action bar, same treatment the dialog footer used to give them:
-         a tinted bar with a separating border, so the buttons never float in
-         the middle of a long scroll. -->
-    <div class="live-panel__footer">
-      <template v-if="phase === 'minutes'">
-        <button
-          v-if="notes.minutesPhase.value === 'failed'"
-          class="fbtn"
-          type="button"
-          @click="notes.generateMinutes(true)"
-        >
-          {{ t('common.retry') }}
-        </button>
-        <button
-          class="fbtn"
-          type="button"
-          :disabled="!notes.minutes.value"
-          @click="copyMinutes"
-        >
-          {{ t('liveShare.notes.copy') }}
-        </button>
-        <button
-          class="fbtn"
-          type="button"
-          :disabled="!notes.minutes.value"
-          @click="downloadMinutes"
-        >
-          {{ t('liveShare.notes.download') }}
-        </button>
-        <button class="fbtn fbtn-primary" type="button" data-action="new-share" @click="resetReport">
-          {{ t('liveShare.newShare') }}
-        </button>
-      </template>
-      <template v-else>
-        <button
-          v-if="share.state.value === 'idle' && supported"
-          class="fbtn fbtn-primary"
-          type="button"
-          data-action="start-share"
-          :disabled="starting || (hasNativeCapture ? !selectedSourceId : !browserCapture)"
-          @click="onStart"
-        >
-          {{ starting ? t('liveShare.starting') : t('liveShare.start') }}
-        </button>
-        <button
-          v-else-if="share.state.value === 'publishing'"
-          class="fbtn fbtn-danger"
-          type="button"
-          @click="onStop"
-        >
-          {{ t('liveShare.stop') }}
-        </button>
-      </template>
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 /**
- * The desktop-sharing dock panel: start a share, hand out the link, watch the
- * audience, and read the transcript / minutes afterwards.
+ * 会议中: the running meeting — link, audience, transcript and chat.
  *
  * The capture session lives in useLiveShare (module-level, one per app
  * instance); this component only drives it and renders state. Leaving the tab
- * while publishing does NOT stop the share — the panel header keeps a LIVE
- * badge so it is obvious from the dock that something is still on air.
+ * does NOT stop the meeting — the dock keeps a "in progress" dot.
+ *
+ * It is shown for BOTH screen and voice meetings. A voice meeting simply has no
+ * video track, so the video-only tools (annotate, switch source, remote
+ * control, member screen share) are hidden rather than disabled: a button that
+ * can only answer "not available" is worse than no button.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { MonitorUp, X } from 'lucide-vue-next'
+import { Mic, MonitorUp, NotebookPen, Volume2, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import { useToast } from '@/composables/useToast'
-import {
-  getAudioCaptureSupport,
-  listCaptureSources,
-  useLiveShare,
-  type CaptureSource,
-} from '@/composables/useLiveShare'
+import { listCaptureSources, useLiveShare, type CaptureSource } from '@/composables/useLiveShare'
 import { groupNoteSegments, useLiveNotes } from '@/composables/useLiveNotes'
+import { useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useScreenWindow } from '@/composables/useScreenWindow'
 import { getNative } from '@/utils/clawbenchNative'
 import { resolveRemoteControlSupport } from '@/utils/remoteControlSupport'
-import {
-  browserScreenCaptureAvailable,
-  isInsecureCaptureContext,
-} from '@/utils/screenCaptureSupport'
 import LiveAnnotateOverlay from '@/share/LiveAnnotateOverlay.vue'
 import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
 import { parseControlMessage, toInjectorEvent, type ControlMessage } from '@/share/liveControl'
-import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { appLog } from '@/utils/appLog'
 import '@/assets/modal-footer-btn.css'
+
+const emit = defineEmits<{ ended: [token: string] }>()
 
 const { t } = useI18n()
 const toast = useToast()
 const share = useLiveShare()
 const notes = useLiveNotes()
+const options = useMeetingOptions()
 
-/** True while a capture/publish session is running (not while idle or reporting). */
+/** True while a capture/publish session is running. */
 const isLive = computed(
   () => share.state.value === 'publishing' || share.state.value === 'capturing',
 )
+/** A voice meeting publishes no picture. */
+const isVoiceMeeting = computed(() => !share.videoEnabled.value)
+const micEnabled = computed(() => share.micEnabled.value)
+const systemAudioEnabled = computed(() => share.systemAudioEnabled.value)
+const notesOn = computed(() => notes.phase.value === 'recording')
 
 const captureSources = ref<CaptureSource[]>([])
 const selectedSourceId = ref('')
-const withSystemAudio = ref(false)
-const withMicrophone = ref(true)
-const withNotes = ref(true)
-const systemAudioSupported = ref(false)
-const supported = ref(false)
-/**
- * Whether this host can enumerate capture sources at all. The desktop shell
- * can; a browser cannot, and neither can a desktop build older than the capture
- * IPC — for those the empty list is not a permission problem and saying so would
- * send the user looking in the wrong place.
- */
+const loadingSources = ref(false)
+const switching = ref(false)
+const switchingBusy = ref(false)
 const hasNativeCapture = computed(() =>
   Boolean(getNative()?.listCaptureSources || getNative()?.startScreenCapture),
 )
-/**
- * Whether the page itself can capture (secure context + `getDisplayMedia`).
- *
- * A browser has no source list to show — its own picker is the source choice —
- * so this flag also decides whether the setup form can skip the tile grid and
- * still offer "start".
- */
-const browserCapture = browserScreenCaptureAvailable()
-/** Can this host capture at all, by either mechanism? */
-const canCapture = computed(() => hasNativeCapture.value || browserCapture)
-/**
- * Why capture is missing, in the user's terms. Three different situations were
- * previously answered with one message, which sent two thirds of them looking
- * in the wrong place.
- */
-const unsupportedHint = computed(() => {
-  if (hasNativeCapture.value) return t('liveShare.unsupported')
-  if (isInsecureCaptureContext()) return t('liveShare.insecureContext')
-  return t('liveShare.captureNeedsClient')
-})
-/**
- * Android captures through MediaProjection rather than getDisplayMedia, which
- * changes the UI in two places: there is exactly one (system-chosen) source, so
- * the picker and the mid-share swap are meaningless.
- */
 const isAndroidCapture = computed(() => Boolean(getNative()?.startScreenCapture))
-/** Opening a share link spawns a second window, which only the desktop shell can do. */
-const canOpenShareLink = computed(
-  () => !isAndroidCapture.value && Boolean(getNative()?.openShareLink),
-)
-/** Sentinel source id for the Android path; never rendered as a tile. */
-const ANDROID_SOURCE_ID = 'android:screen'
-const loadingSources = ref(false)
-const starting = ref(false)
-/** 'publishing' = the normal dialog; 'minutes' = the post-share report. */
-const phase = ref<'publishing' | 'minutes'>('publishing')
+
 const notesListRef = ref<HTMLElement | null>(null)
 const remoteScreenRef = ref<HTMLVideoElement | null>(null)
 const fullscreenVideoRef = ref<HTMLVideoElement | null>(null)
@@ -671,31 +442,18 @@ const screenWindowTarget = screenWindow.target
 const windowVideoRef = ref<HTMLVideoElement | null>(null)
 const annotateWindow = useScreenWindow()
 const annotateWindowTarget = annotateWindow.target
-/** True while the desktop overlay window owns the annotation surface. */
 const nativeAnnotating = ref(false)
 const isAnnotating = computed(() => annotating.value || nativeAnnotating.value)
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
-/** Which of the three publishing surfaces is showing. */
 type LiveTab = 'basic' | 'notes' | 'chat'
 const activeTab = ref<LiveTab>('basic')
-/**
- * The label keys are data, not three literal `t()` calls in the template: the
- * tab bar renders them in a loop so the badge and the recording dot have one
- * place to attach.
- */
 const tabs: Array<{ key: LiveTab; labelKey: string }> = [
   { key: 'basic', labelKey: 'liveShare.tabs.basic' },
   { key: 'notes', labelKey: 'liveShare.tabs.transcript' },
   { key: 'chat', labelKey: 'liveShare.chat' },
 ]
-/**
- * The transcript and the chat own their scrolling, so they take the body's
- * whole height instead of sitting in a fixed box inside a scrolling form.
- */
-const fillTab = computed(
-  () => share.state.value === 'publishing' && activeTab.value !== 'basic',
-)
+const fillTab = computed(() => activeTab.value !== 'basic')
 
 function selectTab(key: LiveTab): void {
   activeTab.value = key
@@ -704,29 +462,12 @@ function selectTab(key: LiveTab): void {
 
 // ── Tools: annotation, chat, source switch, presence ────────────────────────
 const annotating = ref(false)
-/**
- * The chat opened from the member's-screen window (Document PiP). It is a
- * separate surface: that window lives outside the app and its chat floats over
- * the picture, so it must not be tied to the panel's chat tab.
- */
 const windowChatOpen = ref(false)
 const unread = ref(0)
 const chatMessages = ref<ChatMessage[]>([])
-const switching = ref(false)
-const joinUrl = ref('')
-const joinError = ref('')
-const switchingBusy = ref(false)
-/** viewerId → currently visible. Absent means "no report yet". */
 const presence = ref<Record<string, boolean>>({})
-/** Viewer currently allowed to drive the pointer, '' when nobody is. */
 const controlledBy = ref('')
-/** Viewers that asked for control and are waiting for an answer. */
 const controlRequests = ref<Set<string>>(new Set())
-/**
- * Whether this machine can inject input. Starts false and is filled in on
- * mount: the panel lives on the desktop only, but "unknown" must never look
- * like "yes" — the allow button would promise something the OS cannot do.
- */
 const controlSupported = ref(false)
 let controlUnsupportedWarned = false
 let unsubscribeControl: (() => void) | null = null
@@ -736,6 +477,33 @@ let unsubscribeClosed: (() => void) | undefined
 function toggleChat(): void {
   windowChatOpen.value = !windowChatOpen.value
   if (windowChatOpen.value) unread.value = 0
+}
+
+/**
+ * Persist one chat line.
+ *
+ * Two writers, one function: the host's own messages never pass through
+ * `onControl` (they are broadcast directly), so hanging persistence off the
+ * inbound handler alone would silently drop every message the host typed.
+ */
+function persistChat(msg: ControlMessage): void {
+  const token = share.token.value
+  if (!token || msg.t !== 'chat') return
+  const known = msg.from && msg.from !== 'host'
+    ? share.viewers.value.find((v) => v.id === msg.from)?.name
+    : ''
+  const speaker = known || msg.name || (msg.from === 'host' ? t('liveShare.hostName') : msg.from || '')
+  void fetch('/api/live-share/notes/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      token,
+      id: msg.id,
+      speaker,
+      viewerId: msg.from === 'host' ? '' : msg.from,
+      text: msg.text,
+    }),
+  }).catch((e) => appLog.w('MeetingStage', 'persist chat failed', e))
 }
 
 function sendChat(text: string): void {
@@ -749,6 +517,7 @@ function sendChat(text: string): void {
   }
   share.sendControl(msg)
   chatMessages.value = [...chatMessages.value, { ...msg, self: true }]
+  persistChat(msg)
 }
 
 function onControl(msg: ControlMessage): void {
@@ -758,21 +527,20 @@ function onControl(msg: ControlMessage): void {
       {
         id: msg.id,
         // The wire `name` is untrusted (a viewer could label itself "主持人");
-        // derive the label from the relay-stamped id instead.
-        name: t('share.live.viewerName', { id: msg.from ?? '' }),
+        // prefer the nickname the server accepted for that viewer.
+        name:
+          share.viewers.value.find((v) => v.id === msg.from)?.name ||
+          t('share.live.viewerName', { id: msg.from ?? '' }),
         text: msg.text,
         at: msg.at,
         self: false,
       },
     ]
-    // Not unread while the message is on screen: either the panel's chat tab
-    // or the floating chat in the member's-screen window counts as "seen".
     if (activeTab.value !== 'chat' && !windowChatOpen.value) unread.value += 1
+    persistChat(msg)
     return
   }
   if (msg.t === 'presence') {
-    // `from` is stamped by the relay; the wire `viewerId` is whatever the peer
-    // typed. Trusting it would let viewer A mark viewer B as away.
     const id = msg.from ?? msg.viewerId
     if (id) presence.value = { ...presence.value, [id]: msg.visible }
     return
@@ -784,14 +552,10 @@ function onControl(msg: ControlMessage): void {
   if (msg.t === 'ctrl-release') {
     if (!msg.from) return
     if (msg.from === controlledBy.value) revokeControl(msg.from)
-    // Also covers "requested but not answered yet": the request disappears
-    // instead of sitting there forever.
     controlRequests.value = new Set([...controlRequests.value].filter((id) => id !== msg.from))
     return
   }
   if (msg.t === 'ctrl-ev') {
-    // Only the viewer we granted may move the pointer; anything else is a stale
-    // grant or a peer that never asked.
     if (!controlledBy.value || msg.from !== controlledBy.value) return
     const bridge = getNative()
     if (!bridge?.remoteControl) {
@@ -804,8 +568,6 @@ function onControl(msg: ControlMessage): void {
     const payload = toInjectorEvent(msg)
     if (!payload) return
     void Promise.resolve(bridge.remoteControl(payload)).then((res) => {
-      // The bridge answers `{supported:false}` when the native input module is
-      // not installed; say so once instead of swallowing every click.
       if (res && typeof res === 'object' && !res.supported && !controlUnsupportedWarned) {
         controlUnsupportedWarned = true
         toast.show(t('liveShare.controlUnsupported'), { type: 'error', icon: 'warning' })
@@ -815,17 +577,12 @@ function onControl(msg: ControlMessage): void {
 }
 
 function grantControl(viewerId: string): void {
-  // The pointer is mapped over the desktop, which is only correct when the
-  // picture IS the desktop. A window capture would put every click at the same
-  // fraction of the screen instead of inside the window.
   if (share.captureKind.value === 'window') {
     toast.show(t('liveShare.controlWindowUnsupported'), { type: 'error', icon: 'warning' })
     return
   }
   controlledBy.value = viewerId
   controlRequests.value = new Set([...controlRequests.value].filter((id) => id !== viewerId))
-  // Addressed to that viewer only: a broadcast would put everyone into
-  // "controlling" and swallow their typing.
   share.sendControlTo(viewerId, { t: 'ctrl-grant', viewerId, granted: true })
   void getNative()?.remoteControlGrant?.(viewerId)
 }
@@ -837,26 +594,7 @@ function revokeControl(viewerId: string): void {
   void getNative()?.remoteControlRevoke?.()
 }
 
-async function joinShare(): Promise<void> {
-  const url = joinUrl.value.trim()
-  if (!url) return
-  joinError.value = ''
-  const bridge = getNative()
-  if (!bridge?.openShareLink) {
-    joinError.value = t('liveShare.joinUnsupported')
-    return
-  }
-  const ok = await bridge.openShareLink(url)
-  if (!ok) {
-    joinError.value = t('liveShare.joinInvalid')
-    return
-  }
-  joinUrl.value = ''
-}
-
 async function openSwitch(): Promise<void> {
-  // A browser has no source list to offer: every switch is another system
-  // picker, so invoking it is the whole interaction.
   if (!hasNativeCapture.value) {
     switchingBusy.value = true
     const ok = await share.switchSource('')
@@ -877,12 +615,48 @@ async function applySwitch(sourceId: string): Promise<void> {
   else switching.value = false
 }
 
+/** Sources are only needed by the mid-meeting swap; enumerating is not free. */
+async function loadSources(): Promise<void> {
+  loadingSources.value = true
+  try {
+    captureSources.value = isAndroidCapture.value
+      ? [{ id: 'android:screen', name: t('liveShare.entireScreen'), kind: 'screen', thumbnail: '' }]
+      : await listCaptureSources()
+  } catch (e) {
+    appLog.e('MeetingStage', 'loadSources failed', e)
+  } finally {
+    loadingSources.value = false
+  }
+}
+
 const hasTalkers = computed(() => share.viewers.value.some((v) => v.talk === 'talking'))
 
 /**
+ * Display name per viewer, with a `#2` suffix for duplicates.
+ *
+ * Nicknames are not unique (the server does not reserve them): two people may
+ * both be "Alex". The list is keyed by viewerId, so the suffix only affects
+ * what is shown, never who is who.
+ */
+const viewerLabels = computed(() => {
+  const counts = new Map<string, number>()
+  const labels: Record<string, string> = {}
+  for (const v of share.viewers.value) {
+    const base = v.name || v.id
+    const n = (counts.get(base) ?? 0) + 1
+    counts.set(base, n)
+    labels[v.id] = n > 1 ? `${base} #${n}` : base
+  }
+  return labels
+})
+
+function viewerLabel(v: { id: string; name: string }): string {
+  return viewerLabels.value[v.id] || v.name || v.id
+}
+
+/**
  * Viewer ids restart at v1 for every share, so a grant from the previous share
- * would otherwise authorise the first viewer of the NEXT one. Clearing on the
- * transition out of `publishing` is what closes that hole.
+ * would otherwise authorise the first viewer of the NEXT one.
  */
 watch(
   () => share.state.value,
@@ -894,11 +668,8 @@ watch(
     chatMessages.value = []
     unread.value = 0
     annotating.value = false
-    // A new share starts on the setup tab: the chat and the transcript of the
-    // previous one are gone, so landing on either would show an empty pane.
     activeTab.value = 'basic'
     windowChatOpen.value = false
-    // The share is over: a drawing surface over a dead picture helps nobody.
     annotateWindow.close()
     if (nativeAnnotating.value) {
       nativeAnnotating.value = false
@@ -907,94 +678,70 @@ watch(
     void getNative()?.remoteControlRevoke?.()
   },
 )
+
 /** Only the tail is rendered: a long meeting would otherwise rebuild thousands
  *  of nodes on every new line. The full transcript still reaches the minutes. */
 const noteBlocks = computed(() => groupNoteSegments(notes.segments.value).slice(-40))
-const renderedMinutes = computed(() =>
-  notes.minutes.value ? renderMarkdownHtml(notes.minutes.value) : '',
-)
-
-/** Localised speaker label for one recording channel. */
-function notesLabel(channel: string): string {
-  if (channel === 'mic') return t('liveShare.notes.speakerMe')
-  const id = channel.startsWith('viewer:') ? channel.slice('viewer:'.length) : ''
-  const n = Number(id.replace(/^v/, '')) || 0
-  return t('liveShare.notes.speakerViewer', { n })
-}
 
 function talkLabel(talk: string): string {
   return talk === 'talking' ? t('liveShare.talkTalking') : t('liveShare.talkMuted')
 }
 
-/** Load sources lazily: enumerating screens is not free and is only needed here. */
-async function loadSources(): Promise<void> {
-  loadingSources.value = true
-  try {
-    const [list, sysAudio] = await Promise.all([listCaptureSources(), getAudioCaptureSupport()])
-    // Android has no source enumeration: the system consent dialog decides what
-    // gets mirrored. Keep one sentinel entry so "start" is enabled, and let the
-    // template show a sentence instead of a one-tile picker.
-    captureSources.value = isAndroidCapture.value
-      ? [{ id: ANDROID_SOURCE_ID, name: t('liveShare.entireScreen'), kind: 'screen', thumbnail: '' }]
-      : list
-    systemAudioSupported.value = sysAudio
-    // Default the audio toggle to the platform's capability rather than off:
-    // on Windows sharing the system sound is the common case.
-    withSystemAudio.value = sysAudio
-    // A browser shows no tiles (its picker is the source choice), so the empty
-    // list must not read as "nothing to share".
-    supported.value =
-      canCapture.value && (captureSources.value.length > 0 || sysAudio || browserCapture)
-    if (!selectedSourceId.value && captureSources.value.length > 0) {
-      // Prefer a full screen over a window: sharing a window is the exception.
-      const screen = captureSources.value.find((s) => s.kind === 'screen')
-      selectedSourceId.value = (screen ?? captureSources.value[0]).id
-    }
-  } catch (e) {
-    appLog.e('LiveSharePanel', 'loadSources failed', e)
-  } finally {
-    loadingSources.value = false
-  }
+// ── Runtime capture switches ────────────────────────────────────────────────
+function onToggleMic(on: boolean): void {
+  options.microphone.value = on
+  share.setMicEnabled(on)
 }
 
-// The panel is mounted the first time its tab is opened and then kept alive, so
-// "entered the panel" == "mounted". A share that is already publishing gets its
-// transcript refreshed: the capture lives in the module singleton and kept
-// transcribing while the tab was closed.
+function onToggleSystemAudio(on: boolean): void {
+  options.systemAudio.value = on
+  share.setSystemAudioEnabled(on)
+}
+
+function onToggleNotes(on: boolean): void {
+  options.notes.value = on
+  if (on) {
+    if (!share.startNotes()) {
+      toast.show(t('meeting.stage.notesUnavailable'), { type: 'error', icon: 'warning' })
+      options.notes.value = false
+    }
+    return
+  }
+  void share.stopNotes()
+}
+
+// ── Lifecycle ───────────────────────────────────────────────────────────────
 onMounted(() => {
+  unsubscribeControl = share.onControl(onControl)
+  unsubscribeInk = getNative()?.onAnnotateInk?.((msg) => {
+    const parsed = parseControlMessage(msg)
+    if (parsed) share.sendControl(parsed)
+  })
+  unsubscribeClosed = getNative()?.onAnnotateClosed?.(() => {
+    nativeAnnotating.value = false
+  })
   void resolveRemoteControlSupport(getNative()).then((ok) => {
     controlSupported.value = ok
   })
-  if (share.state.value === 'idle') void loadSources()
-  if (share.state.value === 'publishing' && notes.phase.value === 'recording') {
-    void notes.refresh()
-  }
+  if (notes.phase.value === 'recording') void notes.refresh()
 })
 
-async function onStart(): Promise<void> {
-  starting.value = true
-  try {
-    const ok = await share.start({
-      sourceId: selectedSourceId.value,
-      systemAudio: withSystemAudio.value,
-      microphone: withMicrophone.value,
-      notes: withNotes.value,
-      notesLabel,
-    })
-    if (!ok && share.error.value) toast.show(share.error.value, { type: 'error', icon: 'warning' })
-  } finally {
-    starting.value = false
-  }
-}
+onBeforeUnmount(() => {
+  unsubscribeControl?.()
+  unsubscribeControl = null
+  unsubscribeInk?.()
+  unsubscribeInk = undefined
+  unsubscribeClosed?.()
+  unsubscribeClosed = undefined
+  closeScreenWindow()
+  closeAnnotate()
+})
 
+/** End the meeting and hand the token to the shell so it can open the record. */
 async function onStop(): Promise<void> {
-  const hadNotes = notes.phase.value === 'recording'
+  const token = share.token.value
   await share.stop()
-  if (hadNotes) {
-    // The minutes are generated in the background; the panel switches to the
-    // report view and stays there until the user starts a new share.
-    phase.value = 'minutes'
-  }
+  emit('ended', token)
 }
 
 function onToggleTalk(on: boolean): void {
@@ -1013,16 +760,10 @@ function closeScreenFullscreen(): void {
   screenFullscreen.value = false
 }
 
-/**
- * Show the member's screen in its own window, with a dock like the audience's:
- * who is sharing, chat, and stop-sharing.
- */
 async function openScreenWindow(): Promise<void> {
   const stream = share.remoteScreenStream.value
   if (!stream) return
   const result = await screenWindow.open()
-  // No Document PiP on this host: the in-app overlay is the only way to show
-  // the picture large. Falling through silently would look like a dead button.
   if (result === 'unsupported' || result === 'failed') {
     openScreenFullscreen()
     return
@@ -1035,22 +776,8 @@ function closeScreenWindow(): void {
   screenWindow.close()
 }
 
-/**
- * Open the drawing surface in its own window.
- *
- * The canvas has to be as large as the shared picture: drawn inline it is
- * squeezed into the panel, and a stroke lands somewhere other than where the
- * publisher aimed. Hosts without Document PiP keep the in-panel overlay.
- */
 async function openAnnotate(): Promise<void> {
-  // Preferred: draw straight on the screen through the desktop shell. The
-  // window is transparent and covers the shared display, so what the publisher
-  // marks is where the audience looks — no preview, no second window to place.
   const bridge = getNative()
-  // A single-window share is not the desktop: the overlay would draw over the
-  // whole screen while the audience only sees that one window, so the ink would
-  // either be outside the picture or land in the wrong place. The preview
-  // surface is the only correct target there.
   if (bridge?.openAnnotateOverlay && share.captureKind.value === 'screen') {
     try {
       const res = await bridge.openAnnotateOverlay()
@@ -1059,13 +786,11 @@ async function openAnnotate(): Promise<void> {
         return
       }
     } catch (e) {
-      appLog.w('LiveSharePanel', 'annotate overlay failed, falling back', e)
+      appLog.w('MeetingStage', 'annotate overlay failed, falling back', e)
     }
   }
-  // Web / Android hosts have no transparent overlay; the in-app surface is the
-  // only place a canvas can live there.
   const result = await annotateWindow.open({ width: 1200, height: 800 })
-  if (result !== 'opened') appLog.w('LiveSharePanel', 'annotate window unavailable', result)
+  if (result !== 'opened') appLog.w('MeetingStage', 'annotate window unavailable', result)
   annotating.value = true
 }
 
@@ -1078,43 +803,8 @@ function closeAnnotate(): void {
   }
 }
 
-// Closing the window with its own title-bar button must end the drawing mode
-// too, otherwise the inline fallback would pop up behind it.
 watch(annotateWindowTarget, (target) => {
   if (!target && annotating.value) annotating.value = false
-})
-
-/**
- * Bind the relayed screen to whichever <video> elements exist.
- *
- * Two elements (inline preview + fullscreen) share one MediaStream; both can
- * play it, and re-binding on every change keeps them in sync without moving a
- * single element around the DOM.
- */
-// The control channel exists for the lifetime of the share, not of the dialog:
-// subscribe once so chat keeps arriving while the dialog is closed.
-onMounted(() => {
-  unsubscribeControl = share.onControl(onControl)
-  // Strokes from the desktop overlay. The main process only forwards them on
-  // platforms where the overlay is hidden from the capture; elsewhere the ink
-  // is already in the picture and relaying it would draw it twice.
-  unsubscribeInk = getNative()?.onAnnotateInk?.((msg) => {
-    const parsed = parseControlMessage(msg)
-    if (parsed) share.sendControl(parsed)
-  })
-  unsubscribeClosed = getNative()?.onAnnotateClosed?.(() => {
-    nativeAnnotating.value = false
-  })
-})
-onBeforeUnmount(() => {
-  unsubscribeControl?.()
-  unsubscribeControl = null
-  unsubscribeInk?.()
-  unsubscribeInk = undefined
-  unsubscribeClosed?.()
-  unsubscribeClosed = undefined
-  closeScreenWindow()
-  closeAnnotate()
 })
 
 watch(
@@ -1126,16 +816,12 @@ watch(
     if (windowVideoRef.value) windowVideoRef.value.srcObject = stream
     if (!stream) {
       screenFullscreen.value = false
-      // The member stopped sharing: a window showing a dead picture is worse
-      // than none, and nothing else would close it.
       closeScreenWindow()
     }
   },
   { immediate: true },
 )
 
-// Opening the fullscreen element after the ref exists still needs the stream
-// attached (the watcher ran before the element was mounted).
 watch(screenFullscreen, async (open) => {
   if (!open) return
   await nextTick()
@@ -1144,81 +830,6 @@ watch(screenFullscreen, async (open) => {
   }
 })
 
-/** Leaves the report and goes back to the setup view, ready for a new share. */
-function resetReport(): void {
-  notes.reset()
-  phase.value = 'publishing'
-}
-
-async function copyMinutes(): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(notes.minutes.value)
-    toast.show(t('common.copied'), { type: 'success', icon: 'copy' })
-  } catch (e) {
-    appLog.w('LiveSharePanel', 'copy minutes failed', e)
-  }
-}
-
-/**
- * The files this meeting left in the project, in reading order.
- *
- * Built from the server's artifact report rather than from a fixed list: a
- * failed proofread has no revised file, and showing an empty row would suggest
- * the file exists.
- */
-const artifactRows = computed(() => {
-  const a = notes.artifacts.value
-  const rows: Array<{ key: string; label: string; path: string }> = []
-  if (a.minutes) {
-    rows.push({ key: 'minutes', label: t('liveShare.notes.artifactMinutes'), path: a.minutes })
-  }
-  if (a.transcript) {
-    rows.push({
-      key: 'transcript',
-      label: t('liveShare.notes.artifactTranscript'),
-      path: a.transcript,
-    })
-  }
-  if (a.revised) {
-    rows.push({ key: 'revised', label: t('liveShare.notes.artifactRevised'), path: a.revised })
-  }
-  if (a.audio) {
-    rows.push({
-      key: 'audio',
-      label: t('liveShare.notes.artifactAudio', { n: a.audioFiles ?? 0 }),
-      path: a.audio,
-    })
-  }
-  return rows
-})
-
-async function copyArtifactPath(path: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(path)
-    toast.show(t('common.copied'), { type: 'success', icon: 'copy' })
-  } catch (e) {
-    appLog.w('LiveSharePanel', 'copy path failed', e)
-  }
-}
-
-function downloadMinutes(): void {
-  const text = notes.minutes.value
-  if (!text) return
-  const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${t('liveShare.notes.fileName')}.md`
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  // Revoke on the next task: Safari aborts the download if the URL is released
-  // in the same tick as the click.
-  setTimeout(() => URL.revokeObjectURL(url), 0)
-}
-
-// Follow the transcript while it grows. Runs after the DOM update so the new
-// line is already measured.
 watch(
   () => noteBlocks.value.length,
   async () => {
@@ -1990,12 +1601,14 @@ watch(
 
 /* Recording marker on the transcript tab: the tab bar is what stays visible
    while the user reads the other tabs, so "still transcribing" has to show
-   there. Reuses the header badge's pulse so the two read as the same state. */
+   there. Reuses the header badge's pulse and its accent colour — red means an
+   error or a destructive action in this UI, while a running recorder is normal
+   ongoing work. */
 .live-tab__rec {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--color-red, #cf222e);
+  background: var(--accent-color, #4a90d9);
   animation: live-panel-pulse 1.4s ease-in-out infinite;
   flex-shrink: 0;
 }
