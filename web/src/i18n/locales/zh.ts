@@ -3997,6 +3997,7 @@ export default {
       title: '创建会议',
       name: '会议名称',
       namePlaceholder: '选填，不填则用日期命名',
+      nickHint: '昵称是你在会议中的称呼，此外，在 AI 对话中，智能体也会用它称呼你。',
       type: '会议类型',
       voiceMeeting: '语音会议',
       voiceMeetingNote: '只有声音，没有画面',

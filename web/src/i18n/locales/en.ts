@@ -4003,6 +4003,7 @@ export default {
       title: 'New meeting',
       name: 'Meeting name',
       namePlaceholder: 'Optional — defaults to the date',
+      nickHint: 'Your nickname identifies you in meetings; agents also use it to address you in AI conversations.',
       type: 'Meeting type',
       voiceMeeting: 'Voice meeting',
       voiceMeetingNote: 'Sound only, no picture',
