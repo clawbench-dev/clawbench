@@ -158,19 +158,14 @@
 
           <!-- Source picker for a mid-share swap. Hidden until asked for: the
                panel is already dense, and switching is rare. -->
-          <div v-if="switching" class="live-source-grid live-source-grid--compact">
-            <button
-              v-for="src in captureSources"
-              :key="src.id"
-              class="live-source"
-              :class="{ 'live-source--selected': src.id === selectedSourceId }"
-              type="button"
-              :disabled="switchingBusy"
-              @click="applySwitch(src.id)"
-            >
-              {{ src.name }}
-            </button>
-          </div>
+          <CaptureSourceGrid
+            v-if="switching"
+            compact
+            :sources="captureSources"
+            :selected-id="selectedSourceId"
+            :disabled="switchingBusy"
+            @select="applySwitch"
+          />
 
           <div class="live-dialog-section">
             {{ t('liveShare.audienceCount', { count: share.viewers.value.length }) }}
@@ -413,6 +408,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Mic, MonitorUp, NotebookPen, Video, Volume2, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import TranscriptList from '@/components/live/TranscriptList.vue'
 import { useToast } from '@/composables/useToast'
@@ -995,65 +991,6 @@ watch(
   overflow-wrap: anywhere;
 }
 
-/* ── Source picker ─────────────────────────────────────────────────────── */
-
-.live-source-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: var(--space-4, 8px);
-  max-height: 240px;
-  overflow-y: auto;
-  /* Room for the active card's ring, which would otherwise be clipped by the
-     scroll container on the first and last column. */
-  padding: 2px;
-}
-
-.live-source {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2, 4px);
-  padding: var(--space-3, 6px);
-  border-radius: var(--radius-md, 6px);
-  border: 1px solid var(--border-color, #d0d7de);
-  background: var(--bg-secondary, #fff);
-  cursor: pointer;
-  min-width: 0;
-  text-align: left;
-  transition:
-    border-color var(--duration-fast, 0.1s) ease,
-    box-shadow var(--duration-fast, 0.1s) ease,
-    background var(--duration-fast, 0.1s) ease;
-}
-
-.live-source:hover {
-  border-color: var(--accent-color, #0969da);
-}
-
-.live-source--active {
-  border-color: var(--accent-color, #0969da);
-  box-shadow: 0 0 0 1px var(--accent-color, #0969da);
-}
-
-.live-source-thumb {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  object-fit: cover;
-  border-radius: var(--radius-sm, 4px);
-  background: var(--bg-tertiary, #f6f8fa);
-}
-
-.live-source-thumb--empty {
-  display: block;
-}
-
-.live-source-name {
-  font-size: var(--font-size-xs, 11px);
-  color: var(--text-secondary, #424a53);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* ── Checkbox rows ─────────────────────────────────────────────────────── */
 
 .live-check {
@@ -1329,11 +1266,6 @@ watch(
   overflow: hidden;
   background: var(--bg-primary, #fff);
   box-shadow: 0 calc(8 * var(--dp)) calc(24 * var(--dp)) color-mix(in srgb, #000 45%, transparent);
-}
-
-.live-source-grid--compact {
-  max-height: calc(140 * var(--dp));
-  overflow-y: auto;
 }
 
 /* ── Member screen preview ──────────────────────────────────────────────── */

@@ -111,24 +111,12 @@
             {{ pictureHint }}
           </div>
 
-          <div v-if="shareScreen" class="meeting-source-grid">
-            <button
-              v-for="src in sources"
-              :key="src.id"
-              class="meeting-source"
-              :class="{ 'meeting-source--on': selected === src.id }"
-              type="button"
-              :data-source="src.id"
-              @click="selected = src.id"
-            >
-              <span class="meeting-source__thumb">
-                <img v-if="src.thumbnail" :src="src.thumbnail" :alt="src.name" />
-                <Monitor v-else :size="20" />
-              </span>
-              <span class="meeting-source__name" :title="src.name">{{ src.name }}</span>
-              <span class="meeting-source__note">{{ src.kind === 'window' ? t('meeting.create.window') : t('meeting.create.screen') }}</span>
-            </button>
-          </div>
+          <CaptureSourceGrid
+            v-if="shareScreen"
+            :sources="sources"
+            :selected-id="selected"
+            @select="selected = $event"
+          />
           <div v-if="shareScreen && sources.length === 0 && !loadingSources" class="meeting-hint">
             {{ noSourceHint }}
           </div>
@@ -195,6 +183,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft, Mic, Monitor, NotebookPen, Video, Volume2 } from 'lucide-vue-next'
+import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import { useToast } from '@/composables/useToast'
 import { useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useMeetingNickname } from '@/composables/useMeetingNickname'
@@ -478,31 +467,6 @@ onMounted(() => {
   display: block; margin-top: 2px;
   font-size: var(--font-size-2xs); color: var(--text-muted);
 }
-
-.meeting-source-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(150 * var(--dp)), 1fr));
-  gap: var(--space-4); padding: 2px;
-}
-.meeting-source {
-  display: flex; flex-direction: column; gap: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--border-color); border-radius: var(--radius-md);
-  background: var(--bg-secondary); text-align: left; cursor: pointer; min-width: 0;
-}
-.meeting-source:hover { border-color: var(--accent-color); }
-.meeting-source--on { border-color: var(--accent-color); box-shadow: 0 0 0 1px var(--accent-color); }
-.meeting-source__thumb {
-  display: flex; align-items: center; justify-content: center;
-  width: 100%; aspect-ratio: 16 / 9;
-  border-radius: var(--radius-sm); background: var(--bg-tertiary); color: var(--text-hint);
-  overflow: hidden;
-}
-.meeting-source__thumb img { width: 100%; height: 100%; object-fit: cover; }
-.meeting-source__name {
-  font-size: var(--font-size-xs); color: var(--text-secondary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.meeting-source__note { font-size: var(--font-size-2xs); color: var(--text-muted); }
 
 .meeting-check {
   display: flex; align-items: center; gap: var(--space-2);

@@ -13,6 +13,7 @@ import MeetingStage from '../MeetingStage.vue'
  */
 
 vi.mock('lucide-vue-next', () => ({
+  Monitor: { name: 'MonitorIcon', render: () => null },
   MonitorUp: { name: 'MonitorUpIcon', render: () => null },
   Mic: { name: 'MicIcon', render: () => null },
   NotebookPen: { name: 'NotebookPenIcon', render: () => null },
