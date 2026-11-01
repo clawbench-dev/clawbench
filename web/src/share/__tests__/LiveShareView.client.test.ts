@@ -43,6 +43,10 @@ const nativeBridge = {
 }
 vi.mock('@/utils/clawbenchNative', () => ({ getNative: () => nativeBridge }))
 vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok' }))
+// Avatars are decoration here; the real generator pulls a DiceBear chunk.
+vi.mock('@/utils/lazyAvatar', () => ({
+  generateAvatarSvgWithStyle: async (seed: string) => `<svg data-seed="${seed}"/>`,
+}))
 
 import LiveShareView from '@/share/LiveShareView.vue'
 import { passJoinGate } from './joinGateTestHelper'
@@ -196,7 +200,7 @@ describe('share page in the desktop client', () => {
     // from the room roster) and the local echo agree.
     expect(sent).toHaveLength(1)
     expect(sent[0]).toMatchObject({ t: 'chat', name: '小明', text: '大家好' })
-    expect(w.findAll('.live-chat__name').map((n) => n.text())).toEqual(['小明'])
+    expect(w.findAll('.chat-row__name').map((n) => n.text())).toEqual(['小明'])
     w.unmount()
   })
 
@@ -222,8 +226,8 @@ describe('share page in the desktop client', () => {
     await w.find('[data-action="chat"]').trigger('click')
     await flushPromises()
 
-    expect(w.findAll('.live-chat__text').map((n) => n.text())).toEqual(['早', '欢迎'])
-    expect(w.findAll('.live-chat__name').map((n) => n.text())).toEqual(['小红', '主持人'])
+    expect(w.findAll('.chat-row__text').map((n) => n.text())).toEqual(['早', '欢迎'])
+    expect(w.findAll('.chat-row__name').map((n) => n.text())).toEqual(['小红', '主持人'])
     w.unmount()
   })
 })

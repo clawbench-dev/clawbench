@@ -55,7 +55,13 @@ function mountDetail() {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
   return mount(MeetingDetail, {
     props: { token: 'tok-1' },
-    global: { plugins: [i18n], stubs: { LoadingIndicator: true } },
+    global: {
+      plugins: [i18n],
+      stubs: {
+        LoadingIndicator: true,
+        SpeakerAvatar: { props: ['name'], template: '<span class="sa" :data-name="name" />' },
+      },
+    },
   })
 }
 
@@ -119,6 +125,11 @@ describe('MeetingDetail', () => {
 
     await w.find('[data-tab="chat"]').trigger('click')
     expect(w.text()).toContain('hello')
+    // Same row component as the live chat: avatar, name/time, bubble.
+    const rows = w.findAll('.chat-row')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].find('.sa').attributes('data-name')).toBe('Alex')
+    expect(rows[0].find('.chat-row__text').text()).toBe('hello')
     expect(w.find('[data-tab="chat"]').text()).toContain('1')
     expect(w.findAll('.meeting-footer .fbtn').some((b) => b.text() === enMessages.meeting.detail.copyAll)).toBe(true)
   })
@@ -172,15 +183,20 @@ describe('MeetingDetail', () => {
   })
 
   // The stored artifact is a subtitle track. The tab is a reading surface, so
-  // the header, cue ids and timestamps must not reach it.
-  it('shows the transcript as a conversation, not as subtitle markup', async () => {
+  // the header, cue ids and timestamps must not reach it — and it is drawn as
+  // the same speaker rows the live panel used, not as flattened text.
+  it('shows the transcript as the same speaker rows, not as subtitle markup', async () => {
     const w = mountDetail()
     await flushPromises()
 
     await w.find('[data-tab="transcript"]').trigger('click')
 
     const pane = w.find('[data-role="transcript"]')
-    expect(pane.text()).toBe('我：hi')
+    const rows = pane.findAll('.transcript__row')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].find('.transcript__speaker').text()).toBe('我')
+    expect(rows[0].find('.transcript__text').text()).toBe('hi')
+    expect(rows[0].find('.sa').attributes('data-name')).toBe('我')
     expect(pane.text()).not.toContain('WEBVTT')
     expect(pane.text()).not.toContain('<v')
     expect(pane.text()).not.toContain('00:00:00')

@@ -307,12 +307,7 @@
             <div v-if="noteBlocks.length === 0" class="live-dialog-hint">
               {{ t('liveShare.notes.listening') }}
             </div>
-            <div v-else ref="notesListRef" class="live-notes-list live-notes-list--fill">
-              <div v-for="b in noteBlocks" :key="b.key" class="live-note-line">
-                <span class="live-note-speaker">{{ b.speaker }}</span>
-                <span class="live-note-text">{{ b.text }}</span>
-              </div>
-            </div>
+            <TranscriptList v-else :blocks="noteBlocks" fill />
           </template>
         </div>
 
@@ -419,6 +414,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Mic, MonitorUp, NotebookPen, Video, Volume2, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
+import TranscriptList from '@/components/live/TranscriptList.vue'
 import { useToast } from '@/composables/useToast'
 import { listCaptureSources, useLiveShare, type CaptureSource } from '@/composables/useLiveShare'
 import { groupNoteSegments, useLiveNotes } from '@/composables/useLiveNotes'
@@ -482,7 +478,6 @@ const hasNativeCapture = computed(() =>
 )
 const isAndroidCapture = computed(() => Boolean(getNative()?.startScreenCapture))
 
-const notesListRef = ref<HTMLElement | null>(null)
 const remoteScreenRef = ref<HTMLVideoElement | null>(null)
 /** The publisher's own camera picture (mirrored by CSS). */
 const selfCameraRef = ref<HTMLVideoElement | null>(null)
@@ -916,14 +911,6 @@ watch(
   { immediate: true },
 )
 
-watch(
-  () => noteBlocks.value.length,
-  async () => {
-    await nextTick()
-    const el = notesListRef.value
-    if (el) el.scrollTop = el.scrollHeight
-  },
-)
 </script>
 
 <style scoped>
@@ -1193,57 +1180,6 @@ watch(
   align-self: flex-start;
 }
 
-/* ── AI 听记 ─────────────────────────────────────────────────────────────── */
-
-/*
- * Fixed height with its own scroll: the dialog's height must not jump every
- * ten seconds as a new line lands, and an hour-long meeting must not push the
- * footer off-screen. Inside its own tab it takes the pane instead.
- */
-.live-notes-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3, 6px);
-  max-height: calc(150 * var(--dp));
-  overflow-y: auto;
-  padding: var(--space-4, 8px) var(--space-5, 10px);
-  border-radius: var(--radius-md, 6px);
-  background: var(--bg-tertiary, #f6f8fa);
-  overscroll-behavior: contain;
-}
-
-.live-notes-list--fill {
-  flex: 1 1 auto;
-  min-height: 0;
-  max-height: none;
-}
-
-.live-note-line {
-  display: flex;
-  gap: var(--space-4, 8px);
-  font-size: var(--font-size-xs, 11px);
-  line-height: 1.6;
-}
-
-/* A fixed column keeps every line's text starting at the same x, which is what
-   makes a multi-speaker transcript scannable. */
-.live-note-speaker {
-  flex: 0 0 calc(64 * var(--dp));
-  color: var(--text-muted, #656d76);
-  font-weight: 600;
-  text-align: right;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.live-note-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--text-primary, #1f2328);
-  overflow-wrap: anywhere;
-}
-
 /* ── Join row ───────────────────────────────────────────────────────────── */
 
 .live-join {
@@ -1299,10 +1235,11 @@ watch(
 
 /* Inline chat inside the dialog: fixed height so the card does not grow with
    the conversation. In its own tab it takes the pane instead. */
+/* Sizing wrapper only. It used to draw a bordered card around the chat, which
+   stacked a border inside a bordered pane inside a tab — three frames for one
+   conversation. The chat now sits on the pane like the transcript does. */
 .live-chat-inline {
   height: calc(220 * var(--dp));
-  border: 1px solid var(--border-color, #d0d7de);
-  border-radius: var(--radius-md, 6px);
   overflow: hidden;
 }
 

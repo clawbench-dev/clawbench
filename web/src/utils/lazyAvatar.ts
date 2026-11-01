@@ -150,8 +150,21 @@ export interface AvatarKit {
  * on the public share page (which has no DiceBear runtime).
  */
 export async function generateAvatarSvg(seed: string): Promise<string> {
-    const core = await getAvatarLib()
     const styleName = AVATAR_STYLES[Math.floor(Math.random() * AVATAR_STYLES.length)]
+    return generateAvatarSvgWithStyle(seed, styleName)
+}
+
+/**
+ * Generate ONE DiceBear avatar SVG with a PINNED style.
+ *
+ * `generateAvatarSvg` deliberately rolls a random style — the picker wants a
+ * fresh look on every shuffle. Anything that must stay STABLE per person (a
+ * meeting participant's icon, redrawn on every transcript line) cannot use
+ * that: a random style re-rolls on every reload, so the same person changes
+ * face. This variant makes the output a pure function of (seed, style).
+ */
+export async function generateAvatarSvgWithStyle(seed: string, styleName: AvatarStyle): Promise<string> {
+    const core = await getAvatarLib()
     const mod = await retryableImport(STYLE_LOADERS[styleName])
     const style = new core.Style(mod.default as StyleDefinition)
     return new core.Avatar(style, { seed }).toString()

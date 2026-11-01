@@ -136,6 +136,7 @@ function mountPanel() {
         LiveChatPanel: true,
         LoadingIndicator: true,
         LiveAnnotateOverlay: { template: '<div data-role="annotate-overlay" />' },
+        SpeakerAvatar: { props: ['name'], template: '<span class="sa" :data-name="name" />' },
       },
     },
   })
@@ -366,5 +367,27 @@ describe('MeetingStage camera meeting', () => {
       ;(shareApi.previewCameraStream as { value: unknown }).value = null
       ;(shareApi.cameraEnabled as { value: boolean }).value = false
     }
+  })
+})
+
+describe('MeetingStage transcript rows', () => {
+  it('draws one avatar per speaker turn, beside the name and the text', async () => {
+    ;(notesApi.phase as { value: string }).value = 'recording'
+    ;(notesApi.segments as { value: unknown[] }).value = [
+      { id: 1, channel: 'mic', speaker: '我', startedAt: 1_000, durationMs: 2_000, text: '第一句' },
+      { id: 2, channel: 'viewer:v1', speaker: '小明', startedAt: 9_000, durationMs: 2_000, text: '第二句' },
+    ]
+    const wrapper = mountPanel()
+    await flushPromises()
+    await tab(wrapper, 'notes').trigger('click')
+
+    const rows = wrapper.findAll('.transcript__row')
+    expect(rows).toHaveLength(2)
+    // The avatar is what tells two participants apart when the same names
+    // repeat down a long transcript, so every turn carries its own.
+    expect(rows[0].find('.sa').attributes('data-name')).toBe('我')
+    expect(rows[1].find('.sa').attributes('data-name')).toBe('小明')
+    expect(rows[0].find('.transcript__speaker').text()).toBe('我')
+    expect(rows[0].find('.transcript__text').text()).toBe('第一句')
   })
 })

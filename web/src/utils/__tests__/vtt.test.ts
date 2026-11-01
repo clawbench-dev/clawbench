@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { vttToPlainText } from '../vtt'
+import { parseVttCues, vttToPlainText } from '../vtt'
 
 const sample = `WEBVTT
 
@@ -52,5 +52,42 @@ describe('vttToPlainText', () => {
   it('returns an empty string for empty input', () => {
     expect(vttToPlainText('')).toBe('')
     expect(vttToPlainText('WEBVTT\n\n')).toBe('')
+  })
+})
+
+describe('parseVttCues', () => {
+  it('reads the speaker from the voice span and the position from the timing line', () => {
+    expect(parseVttCues(sample)).toEqual([
+      { speaker: '我', text: '第一句', startMs: 0, endMs: 1500 },
+      { speaker: '张三', text: '第二句', startMs: 2000, endMs: 4000 },
+    ])
+  })
+
+  it('leaves the speaker empty when the writer emitted no voice span', () => {
+    expect(parseVttCues('WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n没有标注')).toEqual([
+      { speaker: '', text: '没有标注', startMs: 0, endMs: 1000 },
+    ])
+  })
+
+  it('strips inline markup and unescapes entities, without the speaker prefix', () => {
+    expect(parseVttCues('WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n<v 张三>加<b>粗</b>的 &lt;字&gt;</v>')[0]).toMatchObject({
+      speaker: '张三',
+      text: '加粗的 <字>',
+    })
+  })
+
+  it('skips NOTE blocks, cue ids and empty payloads', () => {
+    const vtt = 'WEBVTT\n\nNOTE 备注\n\nmic\n00:00:00.000 --> 00:00:01.000\n\n\n00:00:01.000 --> 00:00:02.000\n真内容'
+    expect(parseVttCues(vtt)).toEqual([{ speaker: '', text: '真内容', startMs: 1000, endMs: 2000 }])
+  })
+
+  it('tolerates cue settings after the end time and short (MM:SS) stamps', () => {
+    const [cue] = parseVttCues('WEBVTT\n\n01:02.500 --> 01:04.000 align:start position:0%\n内容')
+    expect(cue).toMatchObject({ startMs: 62_500, endMs: 64_000 })
+  })
+
+  it('reads a multi-hour stamp', () => {
+    const [cue] = parseVttCues('WEBVTT\n\n01:02:03.004 --> 01:02:04.005\n内容')
+    expect(cue).toMatchObject({ startMs: 3_723_004, endMs: 3_724_005 })
   })
 })

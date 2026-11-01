@@ -88,26 +88,31 @@
         </template>
 
         <template v-else-if="activeTab === 'transcript'">
-          <!-- The artifact is WebVTT and is converted to plain text in the
-               script, so this pane never sees the header, a cue id or a
-               timestamp line. Do NOT write the timing arrow as its two-dash
-               form here: an HTML comment ends at the first close marker, so
-               the rest of this comment would leak into the pane as visible
-               text. -->
-          <pre v-if="transcriptText" class="meeting-transcript" data-role="transcript">{{ transcriptText }}</pre>
+          <!-- The same rows the live 转写 tab drew, from the stored artifact:
+               the cue's voice span gives the speaker back. Do NOT write the
+               timing arrow as its two-dash form in this comment: an HTML
+               comment ends at the first close marker, so the rest would leak
+               into the pane as visible text. -->
+          <TranscriptList
+            v-if="transcriptLines.length"
+            :blocks="transcriptLines"
+            data-role="transcript"
+          />
           <div v-else class="meeting-hint">{{ t('meeting.detail.noTranscript') }}</div>
         </template>
 
         <template v-else>
           <div v-if="chat.length === 0" class="meeting-hint">{{ t('meeting.detail.noChatMessages') }}</div>
+          <!-- The same conversation the live panel showed, drawn by the same
+               row component: same bubble, same avatar, same timestamp. -->
           <div v-else class="meeting-chat">
-            <div v-for="m in chat" :key="m.id" class="meeting-chat__row">
-              <div class="meeting-chat__head">
-                <span class="meeting-chat__who">{{ m.speaker || t('meeting.detail.anonymous') }}</span>
-                <span>{{ formatClock(m.at) }}</span>
-              </div>
-              <div class="meeting-chat__text">{{ m.text }}</div>
-            </div>
+            <ChatMessageRow
+              v-for="m in chat"
+              :key="m.id"
+              :name="m.speaker || t('meeting.detail.anonymous')"
+              :at="m.at"
+              :text="m.text"
+            />
           </div>
         </template>
       </div>
@@ -141,6 +146,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft, Copy, ExternalLink, MessageSquare, Trash2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import ChatMessageRow from './ChatMessageRow.vue'
+import TranscriptList from './TranscriptList.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
@@ -152,8 +159,10 @@ import {
   type MeetingRecord,
 } from '@/composables/useMeetingHistory'
 import { cleanupDragGhost } from '@/utils/attachDrag'
+import { formatClockTime } from '@/utils/format'
 import { meetingDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
-import { vttToPlainText } from '@/utils/vtt'
+import { parseVttCues, vttToPlainText, type VttCue } from '@/utils/vtt'
+import { groupNoteSegments, type NoteBlock } from '@/composables/liveNotes'
 import { appLog } from '@/utils/appLog'
 import '@/assets/modal-footer-btn.css'
 
@@ -171,6 +180,8 @@ const record = ref<MeetingRecord | null>(null)
 const loading = ref(true)
 const minutesText = ref('')
 const transcriptText = ref('')
+/** The stored cues, kept structured so the tab can draw speaker rows. */
+const transcriptCues = ref<VttCue[]>([])
 const transcriptFile = ref('')
 const chat = ref<MeetingChatMessage[]>([])
 
@@ -186,6 +197,26 @@ const minutesFailed = computed(() => record.value?.status === 'failed')
 
 const minutesHtml = computed(() => (minutesText.value ? renderMarkdownHtml(minutesText.value) : ''))
 
+/**
+ * The stored cues as speaker turns.
+ *
+ * The cue's voice span is the speaker, so the record shows the same rows the
+ * live panel showed. Consecutive lines from one speaker are merged by the same
+ * rule the live transcript uses (`groupNoteSegments`) — not by a second one
+ * that would split the conversation differently on the two surfaces.
+ */
+const transcriptLines = computed<NoteBlock[]>(() =>
+  groupNoteSegments(
+    transcriptCues.value.map((cue, i) => ({
+      id: i + 1,
+      channel: cue.speaker || 'unknown',
+      speaker: cue.speaker,
+      startedAt: cue.startMs,
+      durationMs: Math.max(0, cue.endMs - cue.startMs),
+      text: cue.text,
+    })),
+  ),
+)
 
 const quoteSource = computed(() => {
   const r = record.value
@@ -227,7 +258,7 @@ const copyText = computed(() => {
     return chat.value
       .map((m) =>
         t('meeting.detail.chatLine', {
-          time: formatClock(m.at),
+          time: formatClockTime(new Date(m.at)),
           speaker: m.speaker || t('meeting.detail.anonymous'),
           text: m.text,
         }),
@@ -245,12 +276,6 @@ function formatWhen(ms: number): string {
     hour: '2-digit',
     minute: '2-digit',
   })
-}
-
-function formatClock(ms: number): string {
-  if (!ms) return ''
-  const d = new Date(ms)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
 /**
@@ -275,6 +300,7 @@ async function load(silent = false): Promise<void> {
     // The artifact is WebVTT; the tab is a reading surface, so the markup is
     // stripped here rather than in the file.
     transcriptText.value = vttToPlainText(transcript?.content ?? '')
+    transcriptCues.value = parseVttCues(transcript?.content ?? '')
     transcriptFile.value = transcript?.file ?? ''
     const messages = await history.chat(props.token)
     chat.value = messages.messages
@@ -492,35 +518,11 @@ onMounted(() => {
   color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-.meeting-transcript {
-  margin: 0;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--font-size-xs);
-  line-height: 1.7;
-  color: var(--text-primary);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-/* The archived transcript is the SAME conversation the live panel showed, so
-   it is drawn as the same bubbles. Bare text lines here read as "the styling
-   was lost" — the padding/radius/background are what makes a line a message.
-   `LiveChatPanel.vue`'s `.live-chat__text` is the other half of this pair;
-   `meetingChatStyleParity.test.ts` keeps the two from drifting. */
-.meeting-chat { display: flex; flex-direction: column; gap: var(--space-4); }
-.meeting-chat__row { display: flex; flex-direction: column; gap: var(--space-1); max-width: 100%; }
-.meeting-chat__head { display: flex; gap: var(--space-3); font-size: var(--font-size-xs); color: var(--text-muted); }
-.meeting-chat__who { color: var(--text-secondary); font-weight: 500; }
-.meeting-chat__text {
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
+/* The archived chat is the SAME conversation the live panel showed, so the row
+   itself is the same component (`ChatMessageRow.vue`) — bubble, avatar and
+   timestamp have exactly one implementation. This container only owns the
+   scroll column and the gap between messages. */
+.meeting-chat { display: flex; flex-direction: column; gap: var(--space-3); }
 
 .meeting-generating {
   display: flex; flex-direction: column; gap: var(--space-3);

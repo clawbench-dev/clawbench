@@ -4,18 +4,14 @@
       <div v-if="messages.length === 0" class="live-chat__empty">
         {{ t('share.live.chatEmpty') }}
       </div>
-      <div
+      <ChatMessageRow
         v-for="m in messages"
         :key="m.id"
-        class="live-chat__msg"
-        :class="{ 'live-chat__msg--self': m.self }"
-      >
-        <div class="live-chat__meta">
-          <span class="live-chat__name">{{ m.name }}</span>
-          <span class="live-chat__time">{{ timeOf(m.at) }}</span>
-        </div>
-        <div class="live-chat__text">{{ m.text }}</div>
-      </div>
+        :name="m.name"
+        :at="m.at"
+        :text="m.text"
+        :self="m.self"
+      />
     </div>
 
     <form class="live-chat__compose" @submit.prevent="submit">
@@ -50,6 +46,7 @@
  */
 import { nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import ChatMessageRow from '@/components/live/ChatMessageRow.vue'
 import { CHAT_MAX_CHARS } from '@/share/liveControl'
 
 export interface ChatMessage {
@@ -69,11 +66,6 @@ const emit = defineEmits<{ send: [text: string] }>()
 const { t } = useI18n()
 const draft = ref('')
 const listRef = ref<HTMLElement | null>(null)
-
-function timeOf(at: number): string {
-  const d = new Date(at)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-}
 
 function submit(): void {
   const text = draft.value.trim()
@@ -111,8 +103,10 @@ watch(
   overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
-  gap: var(--space-4, 8px);
-  padding: var(--space-4, 8px) var(--space-5, 10px);
+  /* No padding of its own: the pane already insets every surface by 16dp, and
+     a second inset here put the chat 10px deeper than the transcript beside it. */
+  gap: var(--space-3, 6px);
+  padding: 0;
 }
 
 .live-chat__empty {
@@ -120,60 +114,36 @@ watch(
   font-size: var(--font-size-xs, 11px);
 }
 
-.live-chat__msg {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-width: 100%;
-}
-
-.live-chat__msg--self {
-  align-items: flex-end;
-}
-
-.live-chat__meta {
-  display: flex;
-  gap: var(--space-3, 6px);
-  font-size: var(--font-size-xs, 11px);
-  color: var(--text-muted, #8b949e);
-}
-
-.live-chat__text {
-  padding: var(--space-3, 6px) var(--space-4, 8px);
-  border-radius: var(--radius-md, 6px);
-  background: var(--bg-tertiary, rgba(255, 255, 255, 0.06));
-  color: var(--text-primary, #e6edf3);
-  font-size: var(--font-size-sm, 13px);
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-.live-chat__msg--self .live-chat__text {
-  background: color-mix(in srgb, var(--accent-color, #4a90d9) 22%, transparent);
-}
-
+/* No rule above the composer: the filled field is the boundary. */
 .live-chat__compose {
   display: flex;
   gap: var(--space-3, 6px);
-  padding: var(--space-4, 8px);
-  border-top: 1px solid var(--border-color, #30363d);
+  padding: var(--space-4, 8px) 0 0;
 }
 
+/* Flat field: no border, the fill is the affordance. The mix is against the
+   panel colour rather than a background step — 15 of the 36 themes have
+   secondary↔tertiary within 1.12 of each other, where a stepped fill vanishes. */
 .live-chat__input {
   flex: 1 1 auto;
   min-width: 0;
-  padding: var(--space-3, 6px) var(--space-4, 8px);
-  border: 1px solid var(--border-color, #30363d);
+  padding: calc(5 * var(--dp)) calc(9 * var(--dp));
+  border: none;
   border-radius: var(--radius-sm, 4px);
-  background: var(--bg-primary, #0d1117);
+  background: color-mix(in srgb, var(--text-primary, #e6edf3) 6%, var(--bg-primary, #0d1117));
   color: var(--text-primary, #e6edf3);
   font-size: var(--font-size-sm, 13px);
+}
+
+.live-chat__input:focus {
+  outline: none;
+  background: color-mix(in srgb, var(--text-primary, #e6edf3) 10%, var(--bg-primary, #0d1117));
+  box-shadow: 0 0 0 1px var(--accent-color, #4a90d9);
 }
 
 .live-chat__send {
   flex: 0 0 auto;
-  padding: var(--space-3, 6px) var(--space-5, 10px);
+  padding: calc(5 * var(--dp)) calc(12 * var(--dp));
   border: none;
   border-radius: var(--radius-sm, 4px);
   background: var(--accent-color, #4a90d9);

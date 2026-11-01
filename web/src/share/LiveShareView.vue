@@ -163,14 +163,12 @@
           <X :size="16" />
         </button>
       </div>
-      <div ref="notesBodyRef" class="live-notes-body">
+      <div class="live-notes-body">
         <div v-if="noteBlocks.length === 0" class="live-notes-hint">
           {{ t('share.live.notesWaiting') }}
         </div>
-        <div v-for="b in noteBlocks" :key="b.key" class="live-note-line">
-          <span class="live-note-speaker">{{ b.speaker }}</span>
-          <span class="live-note-text">{{ b.text }}</span>
-        </div>
+        <!-- The same rows the publisher's 转写 tab draws: one implementation. -->
+        <TranscriptList v-else :blocks="noteBlocks" fill />
       </div>
     </div>
 
@@ -421,6 +419,7 @@ import {
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { LiveViewer, type LiveStats, type LiveViewerState } from './liveViewer'
+import TranscriptList from '@/components/live/TranscriptList.vue'
 import LiveJoinGate from './LiveJoinGate.vue'
 import LiveInkLayer from './LiveInkLayer.vue'
 import LiveChatPanel, { type ChatMessage } from './LiveChatPanel.vue'
@@ -1050,23 +1049,6 @@ function toggleNotes(): void {
   if (notesOpen.value) closeNotes()
   else openNotes()
 }
-
-const notesBodyRef = ref<HTMLElement | null>(null)
-
-// Follow the transcript, but only when the reader is already at the bottom:
-// scrolling away to re-read an earlier line must not be undone by the next
-// poll.
-watch(
-  () => noteBlocks.value.length,
-  async () => {
-    const el = notesBodyRef.value
-    if (!el) return
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
-    if (!nearBottom) return
-    await nextTick()
-    el.scrollTop = el.scrollHeight
-  },
-)
 
 let viewer: LiveViewer | null = null
 
@@ -1904,43 +1886,21 @@ onBeforeUnmount(() => {
   color: var(--text-primary, #e6edf3);
 }
 
+/* The overlay's own inset; the rows themselves are `TranscriptList` (the same
+   component the publisher's 转写 tab uses), so nothing about the line language
+   is repeated here. */
 .live-notes-body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3, 6px);
+  flex: 1 1 auto;
+  min-height: 0;
   padding: var(--space-4, 8px) var(--space-5, 10px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 .live-notes-hint {
   font-size: var(--font-size-xs, 11px);
   color: var(--text-muted, #8b949e);
   line-height: 1.6;
-}
-
-.live-note-line {
-  display: flex;
-  gap: var(--space-4, 8px);
-  font-size: var(--font-size-sm, 13px);
-  line-height: 1.6;
-}
-
-.live-note-speaker {
-  flex: 0 0 calc(64 * var(--dp));
-  color: var(--text-muted, #8b949e);
-  font-weight: 600;
-  text-align: right;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.live-note-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--text-primary, #e6edf3);
-  overflow-wrap: anywhere;
 }
 
 /* Voice meeting: no picture to show. The placeholder sits where the video
