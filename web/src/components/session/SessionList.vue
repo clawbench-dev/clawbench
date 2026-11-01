@@ -41,7 +41,9 @@
              for its normal jobs — selecting text on desktop, scrolling the list
              on touch — so no press delay is needed and the two can never fight.
              The button still opens the menu on a plain click; Sortable only
-             takes over once the pointer actually moves.
+             takes over once the pointer moves PAST `fallbackTolerance` (see
+             DRAG_FALLBACK_TOLERANCE — without it the tiniest finger wobble
+             became a drag and ate the click).
 
              Menu entry point: the row's ⋮ button, on every device. There is
              deliberately no right-click and no long-press handler: a touch
@@ -63,6 +65,7 @@
           filter=".session-row.pinned"
           draggable=".session-row.is-top"
           :prevent-on-filter="false"
+          :fallback-tolerance="DRAG_FALLBACK_TOLERANCE"
           :animation="150"
           @move="onDragMove"
           @end="onDragEnd"
@@ -368,6 +371,28 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['select', 'archive', 'destroy', 'update:activeTab'])
+
+/**
+ * How far the pointer may travel before Sortable turns a press on the ⋮ button
+ * into a drag.
+ *
+ * The button serves two gestures: a tap opens the row menu, a drag reorders.
+ * Sortable's default (`0`) means the FIRST touchmove — however small — is
+ * already a drag. A real finger always drifts 1–3px between touching down and
+ * lifting, so on Android almost every tap became a drag: the row flashed
+ * `.sortable-chosen`/`.sortable-ghost` and Sortable's global capture-phase
+ * click handler swallowed the click, leaving the menu shut. Only a perfectly
+ * still tap worked, which read as "tapping the dots does nothing, but tapping
+ * slightly off to the right sometimes works".
+ *
+ * 12px is the smallest value that survived a ±6px random-walk wobble in a
+ * reproduction against the real library, while staying far below the row's
+ * ~44dp touch target — a deliberate drag crosses it within the first frame or
+ * two, so reordering still feels immediate. Values ≥16 start to require a
+ * visible lurch before the drag engages.
+ */
+const DRAG_FALLBACK_TOLERANCE = 12
+
 const { t } = useI18n()
 const { getAgentBackend, getAgentName, getAgentAvatar, getAgentModel } = useAgents()
 const { isSessionShared, setSharedSessionIds } = useSessionShare()
