@@ -89,7 +89,10 @@
 
         <template v-else-if="activeTab === 'transcript'">
           <!-- SRT is plain text: running it through the Markdown renderer turns
-               cue numbers into headings and swallows the `-->` arrows. -->
+               cue numbers into headings and swallows the arrow in a timestamp
+               line. Do NOT write that arrow as its two-dash form here: an HTML
+               comment ends at the first close marker, so the rest of this
+               comment would leak into the pane as visible text. -->
           <pre v-if="transcriptText" class="meeting-transcript" data-role="transcript">{{ transcriptText }}</pre>
           <div v-else class="meeting-hint">{{ t('meeting.detail.noTranscript') }}</div>
         </template>

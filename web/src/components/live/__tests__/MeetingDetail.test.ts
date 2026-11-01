@@ -144,6 +144,23 @@ describe('MeetingDetail', () => {
     expect(w.findAll('.meeting-file')).toHaveLength(0)
   })
 
+  it('renders only the empty hint when a meeting has no transcript', async () => {
+    // The template comment above the transcript <pre> used to contain the
+    // two-dash arrow. An HTML comment ends at the first close marker, so the
+    // rest of the comment ("` arrows. -->") leaked into the pane as visible
+    // text above the empty hint. Assert the pane contains exactly the hint.
+    getMock.mockResolvedValue(record({ hasTranscript: false }))
+    artifactMock.mockImplementation(async (_token: string, kind: string) =>
+      kind === 'minutes' ? { content: '# MINUTES', file: 'minutes.md' } : null,
+    )
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-tab="transcript"]').trigger('click')
+
+    expect(w.find('.meeting-body').text().trim()).toBe(enMessages.meeting.detail.noTranscript)
+  })
+
   it('asks before deleting and then leaves the view', async () => {
     const w = mountDetail()
     await flushPromises()
