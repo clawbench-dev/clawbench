@@ -42,6 +42,19 @@ vi.mock('@/utils/remoteControlSupport', () => ({
   resolveRemoteControlSupport: async () => false,
 }))
 
+// The create page reads the account nickname (user.nickname) for its required
+// identity field, and writes an edit back through the settings API.
+const settingsApi = vi.hoisted(() => ({
+  serverConfig: { value: {} as Record<string, unknown> },
+  setServerValue: vi.fn(),
+}))
+vi.mock('@/composables/useSettingsConfig', () => ({
+  useSettingsConfig: () => ({
+    serverConfig: settingsApi.serverConfig,
+    setServerValue: settingsApi.setServerValue,
+  }),
+}))
+
 const shareApi = vi.hoisted(() => ({} as Record<string, unknown>))
 vi.mock('@/composables/useLiveShare', async () => {
   const { ref: r, shallowRef: sr } = await import('vue')
@@ -129,6 +142,10 @@ function stubCaptureApi(available: boolean): void {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear()
+  settingsApi.serverConfig.value = {}
+  settingsApi.setServerValue.mockReset()
+  settingsApi.setServerValue.mockResolvedValue({ needsRestart: false, changedColdFields: [], warnings: [] })
   ;(shareApi.state as { value: string }).value = 'idle'
 })
 
@@ -149,7 +166,39 @@ describe('MeetingCreate in a browser', () => {
 
     const start = wrapper.find('[data-action="meeting-start"]')
     expect(start.exists()).toBe(true)
+    // The nickname is required, so fill it before checking the start button.
+    await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
     expect(start.attributes('disabled')).toBeUndefined()
+  })
+
+  it('cannot start without a nickname', async () => {
+    stubCaptureApi(true)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const start = wrapper.find('[data-action="meeting-start"]')
+    expect(start.attributes('disabled')).toBeDefined()
+
+    await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
+    expect(start.attributes('disabled')).toBeUndefined()
+  })
+
+  it('pre-fills the account nickname', async () => {
+    stubCaptureApi(true)
+    settingsApi.serverConfig.value = { user: { nickname: '泷泽' } }
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect((wrapper.find('[data-role="meeting-nick"]').element as HTMLInputElement).value).toBe('泷泽')
+  })
+
+  it('does not pre-fill the fallback literal', async () => {
+    stubCaptureApi(true)
+    settingsApi.serverConfig.value = { user: { nickname: 'User' } }
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect((wrapper.find('[data-role="meeting-nick"]').element as HTMLInputElement).value).toBe('')
   })
 
   it('explains an insecure origin instead of blaming the client', async () => {

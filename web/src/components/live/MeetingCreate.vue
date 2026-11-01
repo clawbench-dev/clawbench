@@ -14,8 +14,22 @@
       </template>
 
       <template v-else>
-        <!-- Name first: it is the only field that needs typing, and it is
-             optional — an unnamed meeting is named after its start time. -->
+        <!-- Identity first: it is required (viewers see it in chat), unlike the
+             meeting name below. Pre-filled from the account nickname when set,
+             but the host may use a different name for this meeting. -->
+        <div class="meeting-section">{{ t('meeting.join.nick') }}</div>
+        <input
+          v-model="nickname"
+          class="meeting-input"
+          type="text"
+          :maxlength="MEETING_NICK_MAX"
+          data-role="meeting-nick"
+          :placeholder="t('meeting.join.nickPlaceholder')"
+        />
+        <div class="meeting-hint">{{ t('meeting.join.nickHint') }}</div>
+
+        <!-- Name next: optional — an unnamed meeting is named after its start
+             time. -->
         <div class="meeting-section">{{ t('meeting.create.name') }}</div>
         <input
           v-model="title"
@@ -125,6 +139,8 @@ import { useI18n } from 'vue-i18n'
 import { ArrowLeft, Mic, Monitor, NotebookPen, Volume2 } from 'lucide-vue-next'
 import { useToast } from '@/composables/useToast'
 import { useMeetingOptions } from '@/composables/useMeetingOptions'
+import { useMeetingNickname } from '@/composables/useMeetingNickname'
+import { MEETING_NICK_MAX } from '@/share/meetingNickname'
 import {
   getAudioCaptureSupport,
   listCaptureSources,
@@ -141,6 +157,7 @@ const { t } = useI18n()
 const toast = useToast()
 const share = useLiveShare()
 const { microphone, systemAudio, notes } = useMeetingOptions()
+const { nickname, persist } = useMeetingNickname()
 
 /** Sentinel source id for the voice meeting (no screen at all). */
 const VOICE = 'voice'
@@ -178,7 +195,9 @@ const startLabel = computed(() => {
 const canStart = computed(() => {
   if (starting.value) return false
   if (!supported.value) return false
-  return Boolean(selected.value)
+  // The nickname is required: viewers see it in chat, and an empty name would
+  // fall back to the shared "User" label.
+  return Boolean(selected.value) && Boolean(nickname.value.trim())
 })
 
 async function loadSources(): Promise<void> {
@@ -218,6 +237,16 @@ async function start(): Promise<void> {
   if (!canStart.value) return
   starting.value = true
   try {
+    // The nickname is the account identity (user.nickname), not a per-meeting
+    // field: persist an edit before the room exists, so the name viewers see in
+    // chat is the one saved here. A rejected name (e.g. collides with an agent)
+    // must stop the meeting rather than start it under a different label.
+    try {
+      await persist()
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : String(e), { type: 'error', icon: 'warning' })
+      return
+    }
     const voice = isVoice.value
     const ok = await share.start({
       sourceId: voice ? '' : selected.value,

@@ -61,41 +61,16 @@ import { useI18n } from 'vue-i18n'
 import { ArrowLeft } from 'lucide-vue-next'
 import { getNative } from '@/utils/clawbenchNative'
 import { useToast } from '@/composables/useToast'
-import { useSettingsConfig } from '@/composables/useSettingsConfig'
-import { MEETING_NICK_MAX, readMeetingNick, saveMeetingNick } from '@/share/meetingNickname'
-import { GROUP_USER_TARGET_NAME } from '@/utils/groupRouting'
+import { useMeetingNickname } from '@/composables/useMeetingNickname'
+import { MEETING_NICK_MAX, saveMeetingNick } from '@/share/meetingNickname'
 
 const emit = defineEmits<{ back: [] }>()
 
 const { t } = useI18n()
 const toast = useToast()
-const { serverConfig, setServerValue } = useSettingsConfig()
+const { nickname, persist } = useMeetingNickname()
 const url = ref('')
 const error = ref('')
-
-/** The account nickname from /api/config, or '' when unset/not loaded. */
-function configuredNickname(): string {
-  const user = serverConfig.value?.user
-  const v = user && typeof user === 'object' ? (user as Record<string, unknown>).nickname : undefined
-  const name = typeof v === 'string' ? v.trim() : ''
-  // The fallback literal is not an identity: never pre-fill it. Otherwise every
-  // account that never configured a name joins as "User", and the publisher's
-  // audience list cannot tell those viewers apart.
-  return name === GROUP_USER_TARGET_NAME ? '' : name
-}
-
-/**
- * Local edit override. `null` means "follow the server value", so a late
- * /api/config load still fills the field; once the user types, their text wins
- * and is not clobbered by the config arriving.
- */
-const edited = ref<string | null>(null)
-const nickname = computed({
-  get: () => edited.value ?? (configuredNickname() || readMeetingNick()),
-  set: (v: string) => {
-    edited.value = v
-  },
-})
 
 const canJoin = computed(() => Boolean(nickname.value.trim()) && Boolean(url.value.trim()))
 
@@ -111,15 +86,12 @@ async function join(): Promise<void> {
     return
   }
   error.value = ''
-  // Editing the name here edits the same setting group chat uses. Only PATCH
-  // when it actually changed, so an untouched field costs nothing.
-  if (nick !== configuredNickname()) {
-    try {
-      await setServerValue('user.nickname', nick)
-    } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e)
-      return
-    }
+  // Editing the name here edits the same setting group chat uses.
+  try {
+    await persist()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+    return
   }
   saveMeetingNick(nick)
   const bridge = getNative()

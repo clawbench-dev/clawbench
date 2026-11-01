@@ -395,7 +395,9 @@ import { listCaptureSources, useLiveShare, type CaptureSource } from '@/composab
 import { groupNoteSegments, useLiveNotes } from '@/composables/useLiveNotes'
 import { useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useScreenWindow } from '@/composables/useScreenWindow'
+import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { getNative } from '@/utils/clawbenchNative'
+import { resolveUserNickname } from '@/utils/userNickname'
 import { resolveRemoteControlSupport } from '@/utils/remoteControlSupport'
 import LiveAnnotateOverlay from '@/share/LiveAnnotateOverlay.vue'
 import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
@@ -410,6 +412,16 @@ const toast = useToast()
 const share = useLiveShare()
 const notes = useLiveNotes()
 const options = useMeetingOptions()
+const { serverConfig } = useSettingsConfig()
+
+/**
+ * The host's chat name: the account nickname, or the role label when unset.
+ * Viewers render the `name` carried on the wire, so this is what identifies the
+ * host in their chat and in the archived transcript.
+ */
+const hostChatName = computed(
+  () => resolveUserNickname(serverConfig.value?.user) || t('liveShare.hostName'),
+)
 
 /** True while a capture/publish session is running. */
 const isLive = computed(
@@ -490,7 +502,7 @@ function persistChat(msg: ControlMessage): void {
   const known = msg.from && msg.from !== 'host'
     ? share.viewers.value.find((v) => v.id === msg.from)?.name
     : ''
-  const speaker = known || msg.name || (msg.from === 'host' ? t('liveShare.hostName') : msg.from || '')
+  const speaker = known || msg.name || (msg.from === 'host' ? hostChatName.value : msg.from || '')
   void fetch('/api/live-share/notes/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -509,7 +521,7 @@ function sendChat(text: string): void {
     t: 'chat',
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     from: 'host',
-    name: t('liveShare.hostName'),
+    name: hostChatName.value,
     text,
     at: Date.now(),
   }
