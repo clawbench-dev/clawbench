@@ -22,7 +22,6 @@ import {
 } from '@/share/liveControl'
 import { useLiveNotes } from './useLiveNotes'
 import { acquireMic, describeMicError, logMicEnv } from '@/utils/micCapture'
-import { browserScreenCaptureAvailable } from '@/utils/screenCaptureSupport'
 import { startAndroidScreenCapture, type AndroidCaptureHandle } from './androidScreenCapture'
 
 const TAG = 'LiveShare'
@@ -166,8 +165,14 @@ const previewStream = shallowRef<MediaStream | null>(null)
  * every click at the same fraction of the screen instead of inside the window.
  */
 const captureKind = ref<'screen' | 'window' | null>('screen')
-/** Whether the running meeting publishes a picture (false = voice meeting). */
-const videoEnabled = ref(true)
+/**
+ * Whether a picture is being published RIGHT NOW.
+ *
+ * Meetings have no type: the host can start or stop a screen share and turn the
+ * camera on or off at any time. This is derived state, not a mode — every
+ * change is broadcast so viewers and late joiners agree with it.
+ */
+const videoEnabled = ref(false)
 /**
  * Whether the publisher's camera is on right now.
  *
@@ -180,12 +185,8 @@ const cameraEnabled = ref(false)
 const previewCameraStream = shallowRef<MediaStream | null>(null)
 /** Whether the publisher's microphone is currently being sent. */
 const micEnabled = ref(true)
-/** Whether system loopback audio is currently being sent. */
-const systemAudioEnabled = ref(false)
 /** Speaker label fn from `start()`, reused when 听记 is switched on mid-meeting. */
 let notesLabelFn: ((channel: string) => string) | undefined
-/** Whether system audio was requested, remembered for a mid-share source swap. */
-let systemAudioWanted = false
 const peers = new Map<string, PublisherPeer>()
 
 /**
@@ -239,6 +240,8 @@ function resetSession(): void {
   androidCapture = null
   displayStream = null
   previewStream.value = null
+  captureKind.value = null
+  videoEnabled.value = false
   micStream = null
   cameraStream = null
   previewCameraStream.value = null
@@ -299,24 +302,6 @@ export async function listCaptureSources(): Promise<CaptureSource[]> {
   }
 }
 
-/** Whether this host can capture system (loopback) audio. */
-export async function getAudioCaptureSupport(): Promise<boolean> {
-  const bridge = getNative()
-  // A browser has no capability probe: what comes with the picture is decided
-  // by the user in the picker (Chrome offers audio for a tab or the entire
-  // screen, never for a single window). Asking anyway is harmless — an
-  // unavailable track simply never arrives — so the toggle stays usable
-  // instead of being permanently disabled on every web install.
-  if (!bridge?.getAudioCaptureSupport) return browserScreenCaptureAvailable()
-  try {
-    const raw = await bridge.getAudioCaptureSupport()
-    const parsed = JSON.parse(raw) as { systemAudio?: boolean }
-    return Boolean(parsed?.systemAudio)
-  } catch {
-    return false
-  }
-}
-
 /**
  * What the captured picture actually is, as far as remote control cares.
  *
@@ -362,9 +347,225 @@ export async function hasCameraDevice(): Promise<boolean> {
   }
 }
 
+/** The last camera failure, so the caller can pick the right message. */
+let lastCameraError: unknown = null
+
+/**
+ * Acquire the camera at the size the tile uses.
+ *
+ * Small and slow on purpose: a face in a corner (or the whole picture on a
+ * camera-only call), and each viewer costs the publisher another upload of it.
+ * 640×480 at 15 fps is plenty.
+ */
+async function acquireCamera(): Promise<MediaStream | null> {
+  const gum = navigator.mediaDevices?.getUserMedia
+  if (!gum) {
+    lastCameraError = new Error('getUserMedia is unavailable on this host')
+    return null
+  }
+  try {
+    lastCameraError = null
+    return await gum.call(navigator.mediaDevices, {
+      video: {
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+        frameRate: { ideal: 15, max: 20 },
+      },
+      audio: false,
+    })
+  } catch (e) {
+    appLog.w(TAG, `camera unavailable: ${describeMicError(e)}`)
+    lastCameraError = e
+    return null
+  }
+}
+
+/**
+ * Capture a screen or window on whichever host we are running on.
+ *
+ * Three hosts, two mechanisms:
+ * - Electron declares a source and answers getDisplayMedia with it.
+ * - Android has no getDisplayMedia at all, so it runs a native MediaProjection
+ *   session and hands back a stream built from its frames (see
+ *   androidScreenCapture.ts).
+ * - A plain browser has no declaration step: its own picker IS the source
+ *   choice, so it calls getDisplayMedia directly.
+ *
+ * System audio is always requested. It is not a user choice: a loopback track
+ * arrives with the picture or not at all, and a source without one simply
+ * yields a video-only stream.
+ */
+async function captureScreen(sourceId: string): Promise<MediaStream | null> {
+  const bridge = getNative()
+  if (bridge?.startScreenCapture) {
+    androidCapture = await startAndroidScreenCapture({
+      fps: ANDROID_CAPTURE_FPS,
+      maxWidth: ANDROID_CAPTURE_MAX_WIDTH,
+      quality: ANDROID_CAPTURE_QUALITY,
+      systemAudio: true,
+      // The user can revoke the projection from the system UI. That ends the
+      // SCREEN, not the meeting: without a meeting type there is no reason to
+      // hang up because the picture went away.
+      onEnded: () => {
+        void stopScreen()
+      },
+    })
+    captureKind.value = 'screen'
+    return androidCapture.stream
+  }
+
+  const capture = navigator.mediaDevices?.getDisplayMedia
+  if (!capture) {
+    fail('screen capture is unavailable on this host')
+    return null
+  }
+  try {
+    const declare = bridge?.setPendingCaptureSource
+    if (declare && bridge) {
+      await declare.call(bridge, sourceId, true)
+      captureKind.value = sourceId.startsWith('screen:') ? 'screen' : 'window'
+    }
+    const stream = await capture.call(navigator.mediaDevices, {
+      video: true,
+      audio: true,
+    })
+    if (!declare) captureKind.value = captureKindOf(stream)
+    return stream
+  } catch (e) {
+    appLog.w(TAG, 'screen capture unavailable', e)
+    // The declaration is one-shot; leaving it armed would let the NEXT
+    // getDisplayMedia capture that source without a picker.
+    void bridge?.setPendingCaptureSource?.('', false)
+    return null
+  }
+}
+
+/**
+ * Point every peer's m-lines at the current picture.
+ *
+ * The m-lines are negotiated once, at join, as sendrecv/sendonly with no track.
+ * That is what makes a picture appear or disappear without renegotiating: the
+ * receiver already exists, it simply starts (or stops) receiving frames.
+ *
+ * Two m-lines are involved: the main one carries the screen when there is one
+ * and the camera otherwise, and the tile line carries the camera only while a
+ * screen is also up.
+ */
+async function applyPicture(): Promise<void> {
+  const screenTrack = displayStream?.getVideoTracks()[0] ?? null
+  const cameraTrack = cameraStream?.getVideoTracks()[0] ?? null
+  const main = screenTrack ?? cameraTrack
+  const tile = screenTrack && cameraEnabled.value ? cameraTrack : null
+  outVideoTrack = main
+  outCameraTrack = tile
+  for (const peer of peers.values()) {
+    try {
+      await peer.videoTx?.sender.replaceTrack(main)
+    } catch (e) {
+      appLog.w(TAG, 'main picture replaceTrack failed', peer.viewerId, e)
+    }
+    if (peer.cameraTx) {
+      try {
+        await peer.cameraTx.sender.replaceTrack(tile)
+      } catch (e) {
+        appLog.w(TAG, 'camera tile replaceTrack failed', peer.viewerId, e)
+      }
+    }
+  }
+}
+
+/**
+ * Tell the room what the picture is now.
+ *
+ * One frame for all three flags: they always change together, and a viewer that
+ * applied them separately could render a combination that never existed. The
+ * room keeps them too, so a viewer joining later gets the current state in its
+ * `joined` frame.
+ */
+function publishPicture(): void {
+  const screen = Boolean(displayStream?.getVideoTracks().length)
+  const camera = cameraEnabled.value && Boolean(cameraStream?.getVideoTracks().length)
+  videoEnabled.value = screen || camera
+  send({ type: 'set-picture', video: videoEnabled.value, camera, screen })
+}
+
+/** Start sharing a screen mid-meeting (or after joining with none). */
+async function startScreen(sourceId: string): Promise<boolean> {
+  if (state.value !== 'publishing' || displayStream) return false
+  const stream = await captureScreen(sourceId)
+  if (!stream) return false
+  displayStream = stream
+  previewStream.value = stream
+  mixer?.setSystemStream(stream)
+  stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+    void stopScreen()
+  })
+  await applyPicture()
+  publishPicture()
+  return true
+}
+
+/**
+ * Stop sharing the screen without ending the meeting.
+ *
+ * A camera that is on takes over the main picture — the meeting simply keeps
+ * going with a different picture. When there is no camera either, viewers get
+ * the "no picture" placeholder.
+ */
+async function stopScreen(): Promise<void> {
+  if (!displayStream) return
+  const stream = displayStream
+  displayStream = null
+  previewStream.value = null
+  captureKind.value = null
+  androidCapture?.stop()
+  androidCapture = null
+  for (const track of stream.getTracks()) track.stop()
+  mixer?.setSystemStream(null)
+  await applyPicture()
+  publishPicture()
+}
+
+/**
+ * Turn the camera on or off for the rest of the meeting.
+ *
+ * Turning it on after the meeting started acquires the device now: the m-lines
+ * already exist, so only the track has to be attached. Turning it off keeps the
+ * track (muted) so turning it back on is instant.
+ */
+async function setCameraEnabled(on: boolean): Promise<boolean> {
+  if (on) {
+    if (!cameraStream) {
+      cameraStream = await acquireCamera()
+      if (!cameraStream) {
+        error.value = i18n.global.t(cameraErrorKey(lastCameraError))
+        return false
+      }
+      previewCameraStream.value = cameraStream
+    }
+    cameraEnabled.value = true
+    cameraStream.getVideoTracks().forEach((track) => {
+      track.enabled = true
+    })
+  } else {
+    cameraEnabled.value = false
+    cameraStream?.getVideoTracks().forEach((track) => {
+      track.enabled = false
+    })
+  }
+  await applyPicture()
+  publishPicture()
+  return true
+}
+
 export function useLiveShare() {
   /**
-   * Create (or reuse) the room, capture the screen and start publishing.
+   * Create (or reuse) the room, capture whatever the host ticked, and start
+   * publishing.
+   *
+   * There is no meeting type. The checkboxes are independent — screen, camera,
+   * microphone — and every one of them can be flipped again while the meeting
+   * runs (`startScreen` / `stopScreen` / `setCameraEnabled`).
    *
    * `sourceId` comes from listCaptureSources(); the host consumes it on the next
    * getDisplayMedia call and clears it immediately.
@@ -373,9 +574,9 @@ export function useLiveShare() {
     /**
      * Which screen/window to share, or '' for none.
      *
-     * Empty is a normal value: a voice meeting shares no screen, a camera-only
-     * video meeting shares no screen either, and a plain browser has no list to
-     * pick from — its own picker decides (see `screen`).
+     * Empty is a normal value: a camera-only or voice-only meeting shares no
+     * screen, and a plain browser has no list to pick from — its own picker
+     * decides (see `screen`).
      */
     sourceId: string
     /**
@@ -386,17 +587,8 @@ export function useLiveShare() {
      * omitted, a non-empty `sourceId` implies a screen (the desktop path).
      */
     screen?: boolean
-    systemAudio: boolean
     microphone: boolean
-    /**
-     * `false` starts a VOICE meeting: no screen capture at all, only the
-     * microphone (plus, later, each viewer's). The room, signaling, chat and
-     * 听记 are identical — the only difference is that no video track is added
-     * to the peer connections, and viewers are told so they can render a
-     * placeholder instead of waiting for a picture.
-     */
-    video?: boolean
-    /** Capture the publisher's camera (video meetings only). */
+    /** Capture the publisher's camera as well. */
     camera?: boolean
     shareTitle?: string
     /** Enable AI 听记 (transcription + minutes) for this share. */
@@ -419,127 +611,48 @@ export function useLiveShare() {
       //    needs is remote (the native source declaration is IPC), so going
       //    first costs nothing, and a cancelled picker no longer leaves a room
       //    behind that has to be deleted again.
-      //
-      //    Three hosts, two mechanisms:
-      //    - Electron declares a source and answers getDisplayMedia with it.
-      //    - Android has no getDisplayMedia at all, so it runs a native
-      //      MediaProjection session and hands back a stream built from its
-      //      frames (see androidScreenCapture.ts).
-      //    - A plain browser has no declaration step: its own picker IS the
-      //      source choice, so it calls getDisplayMedia directly.
-      //    Everything downstream — mixing, peers, notes, the room — is
-      //    identical for all three.
       const bridge = getNative()
-      const wantsVideo = opts.video !== false
-      // "Is there a picture" and "what is the picture" are separate questions.
-      // The screen is optional (a camera-only call), the camera is optional
-      // (screen-only sharing is the original feature), and both together is the
-      // picture-in-picture case.
-      const wantsScreen = wantsVideo && (opts.screen ?? Boolean(opts.sourceId))
-      const wantsCamera = wantsVideo && Boolean(opts.camera)
-      videoEnabled.value = wantsVideo
+      const wantsScreen = opts.screen ?? Boolean(opts.sourceId)
+      const wantsCamera = Boolean(opts.camera)
       micEnabled.value = Boolean(opts.microphone)
-      systemAudioEnabled.value = wantsScreen && Boolean(opts.systemAudio)
       notesLabelFn = opts.notesLabel
-      systemAudioWanted = wantsScreen && opts.systemAudio
-      if (!wantsScreen) {
-        // Nothing to capture: a voice meeting, or a video meeting whose only
-        // source is the camera. Leave the preview and the capture kind empty so
-        // every screen-only affordance (annotate, switch source, remote
-        // control) stays hidden.
-        displayStream = null
-        previewStream.value = null
-        captureKind.value = null
-      } else if (bridge?.startScreenCapture) {
-        androidCapture = await startAndroidScreenCapture({
-          fps: ANDROID_CAPTURE_FPS,
-          maxWidth: ANDROID_CAPTURE_MAX_WIDTH,
-          quality: ANDROID_CAPTURE_QUALITY,
-          systemAudio: opts.systemAudio,
-          // The user can revoke the projection from the system UI; when that
-          // happens the picture is gone and the room must not keep advertising
-          // a live share.
-          onEnded: () => {
-            void stop()
-          },
-        })
-        displayStream = androidCapture.stream
-        captureKind.value = 'screen'
-      } else {
-        // Both remaining hosts end in getDisplayMedia. Missing here means an
-        // insecure origin (no `mediaDevices` at all) or a mobile browser that
-        // never implemented it — neither can be worked around in the page.
-        const capture = navigator.mediaDevices?.getDisplayMedia
-        if (!capture) {
-          fail('screen capture is unavailable on this host')
-          // stop() rather than a bare `state = 'idle'`: it also clears the
-          // one-shot source declaration, which would otherwise stay armed for
-          // whatever calls getDisplayMedia next.
+      if (wantsScreen) {
+        displayStream = await captureScreen(opts.sourceId)
+        if (!displayStream) {
+          // The picker was cancelled or the host cannot capture: there is
+          // nothing to publish, and the room does not exist yet.
           await stop()
           return false
         }
-        const declare = bridge?.setPendingCaptureSource
-        if (declare && bridge) {
-          await declare.call(bridge, opts.sourceId, opts.systemAudio)
-          captureKind.value = opts.sourceId.startsWith('screen:') ? 'screen' : 'window'
-        }
-        displayStream = await capture.call(navigator.mediaDevices, {
-          video: true,
-          audio: opts.systemAudio,
-        })
-        if (!declare) captureKind.value = captureKindOf(displayStream)
       }
       if (wantsCamera) {
-        try {
-          const gum = navigator.mediaDevices?.getUserMedia
-          if (!gum) throw new Error('getUserMedia is unavailable on this host')
-          cameraStream = await gum.call(navigator.mediaDevices, {
-            // Small and slow on purpose: this is a picture-in-picture tile, and
-            // each viewer costs the publisher another upload of it. 640×480 at
-            // 15 fps is plenty for a face and a fraction of a 1080p screen.
-            video: {
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-              frameRate: { ideal: 15, max: 20 },
-            },
-            audio: false,
-          })
-        } catch (e) {
-          appLog.w(TAG, `camera unavailable: ${describeMicError(e)}`)
-          cameraStream = null
-          // A camera-only meeting has no other picture: starting it would put
-          // every viewer in front of a black rectangle. With a screen to fall
-          // back on, degrade instead — the meeting is still worth having.
-          error.value = i18n.global.t(cameraErrorKey(e))
-          if (!wantsScreen) {
-            await stop()
-            return false
-          }
+        cameraStream = await acquireCamera()
+        if (!cameraStream) {
+          // A missing camera no longer aborts: without a meeting type there is
+          // no "camera-only meeting" that would be left with a black rectangle.
+          // The host can start one anyway and turn the camera on later.
+          error.value = i18n.global.t(cameraErrorKey(lastCameraError))
         }
       }
 
-      if (wantsVideo) {
-        const screenTrack = displayStream?.getVideoTracks()[0] ?? null
-        const cameraTrack = cameraStream?.getVideoTracks()[0] ?? null
-        // The main picture: the screen when there is one, the camera otherwise.
-        outVideoTrack = screenTrack ?? cameraTrack
-        if (!outVideoTrack) {
-          fail('no video track captured')
-          await stop()
-          return false
-        }
-        // Only a screen+camera meeting sends the camera on the tile m-line. A
-        // camera-only meeting already carries it as the main picture; sending
-        // it twice would render the same face full-screen and in a corner.
-        outCameraTrack = screenTrack ? cameraTrack : null
-        cameraEnabled.value = Boolean(cameraTrack)
-        previewStream.value = displayStream
-        previewCameraStream.value = cameraStream
-        // The user can also end the share from the browser's own capture banner.
-        outVideoTrack.addEventListener('ended', () => {
-          void stop()
-        })
-      }
+      const screenTrack = displayStream?.getVideoTracks()[0] ?? null
+      const cameraTrack = cameraStream?.getVideoTracks()[0] ?? null
+      // The main picture: the screen when there is one, the camera otherwise.
+      outVideoTrack = screenTrack ?? cameraTrack
+      // Only a screen+camera picture sends the camera on the tile m-line. A
+      // camera-only picture already carries it as the main one; sending it
+      // twice would render the same face full-screen and in a corner.
+      outCameraTrack = screenTrack ? cameraTrack : null
+      cameraEnabled.value = Boolean(cameraTrack)
+      previewStream.value = displayStream
+      previewCameraStream.value = cameraStream
+      videoEnabled.value = Boolean(screenTrack) || cameraEnabled.value
+      // The user can also end the share from the browser's own capture banner.
+      // It stops the SCREEN, not the meeting: the meeting is no longer a screen
+      // share, so losing the picture is not a reason to end the call.
+      screenTrack?.addEventListener('ended', () => {
+        void stopScreen()
+      })
 
       if (opts.microphone) {
         try {
@@ -556,18 +669,20 @@ export function useLiveShare() {
         }
       }
 
-      // 3. Room. There is a picture to publish now, so ask for a token. A
-      //    failure here must release the capture: otherwise the browser's
-      //    "sharing" indicator stays lit with no room to publish to.
+      // 3. Room. Ask for a token. A failure here must release the capture:
+      //    otherwise the browser's "sharing" indicator stays lit with no room
+      //    to publish to.
       const resp = await fetch('/api/live-share', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: opts.shareTitle ?? '',
           notes: Boolean(opts.notes),
-          video: wantsVideo,
-          camera: wantsCamera,
-          screen: wantsScreen,
+          // The room's initial picture state. It is not a meeting type: any of
+          // these can change a second later through `set-picture`.
+          video: videoEnabled.value,
+          camera: cameraEnabled.value,
+          screen: Boolean(displayStream),
         }),
       })
       if (!resp.ok) {
@@ -641,31 +756,6 @@ export function useLiveShare() {
     micStream?.getAudioTracks().forEach((track) => {
       track.enabled = on
     })
-  }
-
-  /** Mute / unmute system loopback audio. A screen share has none. */
-  function setSystemAudioEnabled(on: boolean): void {
-    if (captureKind.value === null) return
-    systemAudioEnabled.value = on
-    displayStream?.getAudioTracks().forEach((track) => {
-      track.enabled = on
-    })
-  }
-
-  /**
-   * Turn the camera on or off for the rest of the meeting.
-   *
-   * The track stays in the peer connection (`enabled` is toggled, nothing is
-   * removed), so no renegotiation happens. Viewers are told through the server
-   * because a muted track still arrives — without the frame they would keep
-   * rendering the last image forever.
-   */
-  function setCameraEnabled(on: boolean): void {
-    cameraEnabled.value = on
-    cameraStream?.getVideoTracks().forEach((track) => {
-      track.enabled = on
-    })
-    send({ type: 'set-camera-enabled', enabled: on })
   }
 
   /**
@@ -999,66 +1089,40 @@ export function useLiveShare() {
   /**
    * Swap the shared window/screen without ending the session.
    *
-   * Only the video track changes: the audio graph, the viewers' connections and
-   * the room all stay up. `replaceTrack` is what makes this invisible — adding
-   * a new track would force a renegotiation on every peer.
+   * Only the video track changes: the viewers' connections and the room stay
+   * up. `replaceTrack` is what makes this invisible — adding a new track would
+   * force a renegotiation on every peer.
+   *
+   * The new capture also carries system audio, so the mixer is rewired to it.
+   * A source without an audio track (a single window on some platforms) keeps
+   * the previous one: switching the picture must not silently mute the meeting.
    */
   async function switchSource(sourceId: string): Promise<boolean> {
-    if (state.value !== 'publishing') return false
-    const bridge = getNative()
-    const declare = bridge?.setPendingCaptureSource
-    // A browser re-opens its own picker on every call, which is exactly the
-    // interaction "switch source" means there — `sourceId` is unused.
-    const capture = navigator.mediaDevices?.getDisplayMedia
-    if (!capture) {
-      fail('screen capture is unavailable on this host')
-      return false
-    }
-    try {
-      if (declare && bridge) await declare.call(bridge, sourceId, systemAudioWanted)
-      const next = await capture.call(navigator.mediaDevices, {
-        video: true,
-        // Audio stays with the original capture: switching the picture must not
-        // silently change what the meeting hears.
-        audio: false,
-      })
-      const track = next.getVideoTracks()[0]
-      if (!track) {
-        fail('no video track captured')
-        return false
-      }
-      captureKind.value = declare
-        ? sourceId.startsWith('screen:') ? 'screen' : 'window'
-        : captureKindOf(next)
-      const previousStream = displayStream
-      const previous = outVideoTrack
-      outVideoTrack = track
-      // The stream must be the one resetSession() stops later; keeping the
-      // original here would leave the new capture running after "end share"
-      // (the OS capture indicator stays on).
-      displayStream = next
-      previewStream.value = next
-      for (const peer of peers.values()) {
-        await peer.videoTx?.sender.replaceTrack(track)
-      }
-      previous?.stop()
-      // Stop any leftover audio track from the old capture too.
-      for (const t of previousStream?.getTracks() ?? []) {
-        if (t !== previous) t.stop()
-      }
-      track.addEventListener('ended', () => {
-        void stop()
-      })
-      return true
-    } catch (e) {
-      appLog.w(TAG, 'switch source failed', e)
-      // The declaration is one-shot; leaving it armed would let the NEXT
-      // getDisplayMedia (e.g. a viewer starting a share) capture this source
-      // without a picker.
-      void bridge?.setPendingCaptureSource?.('', false)
+    if (state.value !== 'publishing' || !displayStream) return false
+    const previous = displayStream
+    const next = await captureScreen(sourceId)
+    if (!next) {
       fail('switch source failed')
       return false
     }
+    if (next.getAudioTracks().length === 0) {
+      for (const track of previous.getAudioTracks()) next.addTrack(track)
+    }
+    displayStream = next
+    previewStream.value = next
+    mixer?.setSystemStream(next)
+    await applyPicture()
+    next.getVideoTracks()[0]?.addEventListener('ended', () => {
+      void stopScreen()
+    })
+    // Everything the new capture does not carry is ours to release. The
+    // stream must be the one resetSession() stops later; keeping the original
+    // here would leave the new capture running after the meeting ends (the OS
+    // capture indicator stays on).
+    for (const track of previous.getTracks()) {
+      if (!next.getTracks().includes(track)) track.stop()
+    }
+    return true
   }
 
   // ── Control bus ──────────────────────────────────────────────────────────
@@ -1310,10 +1374,10 @@ export function useLiveShare() {
     videoEnabled,
     cameraEnabled,
     micEnabled,
-    systemAudioEnabled,
     setMicEnabled,
-    setSystemAudioEnabled,
     setCameraEnabled,
+    startScreen,
+    stopScreen,
     startNotes,
     stopNotes,
   }

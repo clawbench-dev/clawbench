@@ -210,7 +210,7 @@ getDisplayMedia
 
   发布端接受**三或四条** m-line：三条是旧缓存页面，只是没有小窗，主画面照常——拒绝会让整场共享对那个观众失效。
 
-  摄像头开关只切 `track.enabled`（不重协商），并通过 `set-camera-enabled` → `camera-state` 告诉观众：轨道仍在，没有这一帧观众会一直停在最后一帧画面上。
+  摄像头开关只切 `track.enabled`（不重协商）；画面本身可以随时开关——开始/停止共享屏幕、开/关摄像头都只是对已协商的 m-line 做 `replaceTrack`，**从不重新协商**。三种状态（有没有画面 / 摄像头开着吗 / 画面是屏幕吗）打包成一帧 `set-picture` → `picture-state` 发给观众：分开发会让观众短暂渲染出一个从未存在过的组合。
 
 ### 权限
 
@@ -238,7 +238,7 @@ getDisplayMedia
 |---|---|---|
 | 选择共享源 | 先列出屏幕/窗口（带缩略图），再 `setPendingCaptureSource` 声明 | 无列表：`getDisplayMedia` 自带系统选择器 |
 | 中途切换共享源 | 源网格里选一个 | 再调一次 `getDisplayMedia`（等于再弹一次选择器） |
-| 系统声音 | 原生探测 `getAudioCaptureSupport()` | 由选择器决定（Chrome 只在标签页/整个屏幕时提供），开关默认按「支持」显示 |
+| 系统声音 | 采集屏幕时一律请求 `audio: true` | 同左（Chrome 只在标签页/整个屏幕时提供；没有就是纯视频流）。**没有开关**：系统声音跟着画面走，用户不需要选 |
 | 窗口最小化 | `setPublishingActive` 保活，编码不降频 | 无等价物，标签页被隐藏时可能掉帧 |
 | 被观众远程控制 | Windows 可注入 | ✗（浏览器没有输入注入能力，按钮显示为不支持） |
 
@@ -307,12 +307,12 @@ MediaProjection ─▶ VirtualDisplay ─▶ ImageReader ─▶ 缩放 + JPEG
 
 ## 界面位置
 
-桌面共享不再是顶栏的一个弹窗，而是**左栏 Dock 的一个页签「视频会议」**（在「端口映射」前面）。一个页签，五个视图：
+桌面共享不再是顶栏的一个弹窗，而是**左栏 Dock 的一个页签「会议」**（在「端口映射」前面）。一个页签，五个视图：
 
 | 视图 | 内容 |
 |---|---|
 | 会议记录（默认） | 本项目的会议列表（数据库记录，永久）；footer 两个入口：加入会议 / 创建会议 |
-| 创建会议 | 会议名称（选填）→ 选择共享内容（**不共享屏幕** / 各屏幕 / 窗口）→ 声音与听记 |
+| 创建会议 | 会议名称（选填）→ 画面（共享屏幕 + 源 / 摄像头）→ 声音与听记 |
 | 加入会议 | 昵称（必填）+ 链接；桌面端在独立窗口打开 |
 | 会议中 | 基础 / 转写 / 聊天三个页签 + 结束会议 |
 | 记录详情 | 纪要 / 转写 / 聊天 + 产物路径 + 打开文件 / 复制 / 删除 |
@@ -320,11 +320,15 @@ MediaProjection ─▶ VirtualDisplay ─▶ ImageReader ─▶ 缩放 + JPEG
 - **结束会议直接落到记录详情**，没有单独的「会后纪要」界面：生成中、生成失败、无产物都在详情里表达。
 - **返回**：创建 / 加入 / 记录详情 / 会议中四个子页都支持屏幕左右边缘内划返回（Android 物理返回键同一条链路），一律回到会议记录列表。会议中的返回**不结束会议**，列表里那条「进行中」的记录点开会回到会议中。
 - 会议进行中页签右上角挂**主题色圆点**（`.dock-badge--live`，无数字）。不再用红色区分「录音中」——红色只留给错误。
-- 页签**恒显示**：记录永远可读，语音会议只需要麦克风；宿主不能采集屏幕时，创建页里说明缺什么。
+- 页签**恒显示**：记录永远可读；宿主不能采集屏幕时，创建页里说明缺什么。
 - **观众端（分享页）先过昵称门**：填了昵称才建立信令连接（不占观众名额），昵称记在 `localStorage`，发布端观众列表与聊天署名都用它。
-- **语音会议**（不共享屏幕）与屏幕会议共用房间、信令、聊天、听记、纪要；差别只是没有视频轨——观众端据 `video: false` 渲染「语音会议」占位，标注/切源/远程控制/成员共享屏幕不出现。
-- **会议类型是「语音 / 视频」两个选项**，画面来源在视频会议下再选：摄像头、屏幕，或两者同时（摄像头渲染成叠在屏幕右下角的画中画）。创建页默认共享屏幕、摄像头为**显式勾选**（不该因为打开表单就点亮别人的摄像头）；没有任何屏幕可共享时才默认打开摄像头。视频会议至少要有一路画面，否则「开始」不可点。
-- **`hostScreen` 决定桌面类能力**：标注、切源、远程控制、系统回环声音都只在「画面是屏幕」时可用；摄像头画面没有桌面坐标可映射。`video`（有没有画面）、`camera`（摄像头开着吗）、`hostScreen`（画面是屏幕吗）是三个正交标志。
+- **会议没有类型**。「语音会议 / 视频会议」这个概念不存在：一场会议从头到尾是同一种东西，画面只是它此刻的状态。
+  - 创建页是**一组独立勾选**：共享屏幕（+ 源）、摄像头、麦克风、AI 听记。全都不勾也允许开始——那就是一场只有链接、观众和聊天的会议。
+  - **会议中随时可切**：基础页有「共享屏幕」和「摄像头」两个开关，走 `startScreen` / `stopScreen` / `setCameraEnabled`，只对已协商的 m-line 做 `replaceTrack`，观众无需重连。
+  - 观众端据 `picture-state` 的 `video` 渲染/移除「暂未共享画面」占位；`video`（有没有画面）、`camera`（摄像头开着吗）、`hostScreen`（画面是屏幕吗）是三个正交标志，一帧全带。
+  - **关掉屏幕时摄像头自动转主画面**；两者都没有时回到占位。摄像头在会议开始时没采、中途打开也能用（那时才 `getUserMedia`）。
+- **`hostScreen` 决定桌面类能力**：标注、切源、远程控制只在「画面是屏幕」时可用；摄像头画面没有桌面坐标可映射。这些入口跟着当前画面出现/消失，而不是跟着创建时的选择。
+- **系统声音没有开关**：它只能随屏幕采集一起来（`getDisplayMedia({audio:true})`），所以一律请求；源不带音频就没有，用户不需要知道这件事。
 - 顶栏没有听记入口：Dock 页签是唯一入口（`headerClusterSpacing.test.ts` 钉住顶栏只有「主题 → 服务器」）。
 - **四个子页的底部动作条与定时任务一致**：药丸按钮 `.fbtn`（`--primary` / `--danger`），条本身 `padding: var(--space-3) var(--space-4)` + `background: var(--bg-primary)` + 顶部发丝线，不再各写一份 `.meeting-btn`；窄面板放不下时 `flex-wrap: wrap` 换行。规范与理由见 `docs/spec/client/design-guide.md` §按钮，守卫 `components/live/__tests__/meetingFooterButtons.test.ts`。正文里的行内小动作（产物行的「复制路径」）仍用小号局部类。
 
@@ -465,17 +469,17 @@ viewer:<id> 每个观众的麦克风，一人一条
 | `web/src/composables/useLiveNotes.ts` | 听记响应式状态、上传与纪要轮询 |
 | `web/src/components/live/MeetingPanel.vue` | 会议页签外壳：列表 / 创建 / 加入 / 会议中 / 详情 五视图状态机 |
 | `web/src/components/live/MeetingList.vue` | 会议记录列表（拖拽引用、删除、footer 两个入口） |
-| `web/src/components/live/MeetingCreate.vue` | 创建会议：名称、共享内容（含「不共享屏幕」）、声音与听记 |
+| `web/src/components/live/MeetingCreate.vue` | 创建会议：名称、画面（共享屏幕 + 源 / 摄像头）、声音与听记；没有会议类型 |
 | `web/src/components/live/MeetingJoin.vue` | 加入会议：昵称（必填）+ 链接 |
-| `web/src/components/live/MeetingStage.vue` | 会议中：基础 / 转写 / 聊天，运行时声音与听记开关 |
+| `web/src/components/live/MeetingStage.vue` | 会议中：基础 / 转写 / 聊天；共享屏幕、摄像头、声音、听记都是运行时开关 |
 | `web/src/components/live/MeetingDetail.vue` | 记录详情：纪要 / 转写 / 聊天 + 产物 + 删除 + 引用 |
 | `web/src/composables/useMeetingHistory.ts` | 记录列表 / 单条 / 产物 / 聊天 / 删除 / 引用载荷 |
 | `web/src/share/LiveJoinGate.vue` | 观众端昵称门（连接之前） |
 | `web/src/share/liveNotesClient.ts` | 观众端听记轮询 |
-| `web/src/composables/useLiveShare.ts` | 发布端：房间、采集（含语音会议的无画面模式）、每观众 PeerConnection、运行时声音/听记开关 |
+| `web/src/composables/useLiveShare.ts` | 发布端：房间、采集、每观众 PeerConnection；画面可随时开关（`startScreen`/`stopScreen`/`setCameraEnabled`，只 `replaceTrack`） |
 | `web/src/utils/screenCaptureSupport.ts` | 浏览器能否采集（`getDisplayMedia` 存在性）与是否非安全上下文，供 Dock 页签门槛与面板提示共用 |
 | `web/src/composables/useLiveMixer.ts` | 混音图（纯逻辑，可单测） |
-| `web/src/share/liveViewer.ts` | 观众端：信令（带昵称）+ 单个 PeerConnection；语音会议以音频轨为接通信号 |
+| `web/src/share/liveViewer.ts` | 观众端：信令（带昵称）+ 单个 PeerConnection；无画面时以音频轨为接通信号，画面随 `picture-state` 出现/消失 |
 | `web/src/share/LiveShareView.vue` | 观众端页面 |
 | `web/src/components/live/LiveShareDialog.vue` | 发布端弹窗（含实时字幕与纪要） |
 | `desktop/src/main/capture.ts` | 捕获源列表、`setDisplayMediaRequestHandler`、节流开关 |

@@ -74,6 +74,9 @@ class FakeStream {
   getAudioTracks() {
     return this.tracks.filter((t) => t.kind === 'audio')
   }
+  addTrack(track: FakeTrack) {
+    if (!this.tracks.includes(track)) this.tracks.push(track)
+  }
 }
 
 class FakeSender {
@@ -363,7 +366,7 @@ afterEach(async () => {
 async function startSharing() {
   const { useLiveShare } = await import('../useLiveShare')
   const share = useLiveShare()
-  const ok = await share.start({ sourceId: 'screen:1:0', systemAudio: true, microphone: true })
+  const ok = await share.start({ sourceId: 'screen:1:0', microphone: true })
   return { share, ok }
 }
 
@@ -537,7 +540,7 @@ describe('start', () => {
 
   it('is a no-op when already publishing', async () => {
     const { share } = await startSharing()
-    const again = await share.start({ sourceId: 'x', systemAudio: false, microphone: false })
+    const again = await share.start({ sourceId: 'x', microphone: false })
 
     expect(again).toBe(false)
     expect(FakeWS.instances).toHaveLength(1)
@@ -794,14 +797,18 @@ describe('stop', () => {
     expect(deletes).toHaveLength(1)
   })
 
-  it('stops when the user ends capture from the browser banner', async () => {
+  it('stops the SCREEN, not the meeting, when the user ends capture from the banner', async () => {
     const { share } = await startSharing()
 
     // The video track ending is what Chromium fires when the user clicks the
-    // "Stop sharing" bar; ignoring it would leave the app publishing a dead feed.
+    // "Stop sharing" bar. Meetings have no type, so losing the picture is not a
+    // reason to hang up — the call continues without one.
     displayStream.getVideoTracks()[0].emitEnded()
 
-    await vi.waitFor(() => expect(share.state.value).toBe('idle'))
+    await vi.waitFor(() => expect(share.captureKind.value).toBeNull())
+    expect(share.state.value).toBe('publishing')
+    expect(share.videoEnabled.value).toBe(false)
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'set-picture', video: false, camera: false, screen: false })
   })
 
   it('stops when the publisher socket closes', async () => {
@@ -854,37 +861,6 @@ describe('listCaptureSources', () => {
     const { listCaptureSources } = await import('../useLiveShare')
 
     expect(await listCaptureSources()).toEqual([])
-    spy.mockRestore()
-  })
-})
-
-describe('getAudioCaptureSupport', () => {
-  it('reports what the host says', async () => {
-    bridge.getAudioCaptureSupport.mockResolvedValueOnce(JSON.stringify({ systemAudio: true }))
-    const { getAudioCaptureSupport } = await import('../useLiveShare')
-
-    expect(await getAudioCaptureSupport()).toBe(true)
-  })
-
-  it('falls back to the browser when the host has no probe', async () => {
-    const native = await import('@/utils/clawbenchNative')
-    const spy = vi.spyOn(native, 'getNative').mockReturnValue({} as never)
-    const { getAudioCaptureSupport } = await import('../useLiveShare')
-
-    // A browser cannot pre-check: what comes with the picture is decided in its
-    // own picker. Reporting false here would disable the toggle on every web
-    // install even though Chrome does share tab/system audio.
-    expect(await getAudioCaptureSupport()).toBe(true)
-    spy.mockRestore()
-  })
-
-  it('reports false when the page cannot capture at all', async () => {
-    const native = await import('@/utils/clawbenchNative')
-    const spy = vi.spyOn(native, 'getNative').mockReturnValue({} as never)
-    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn() } })
-    const { getAudioCaptureSupport } = await import('../useLiveShare')
-
-    expect(await getAudioCaptureSupport()).toBe(false)
     spy.mockRestore()
   })
 })
@@ -1172,15 +1148,13 @@ describe('speaking indicator', () => {
 
 describe('camera', () => {
   /** Start a meeting with an explicit source / camera combination. */
-  async function startMeeting(opts: { sourceId?: string; camera?: boolean; video?: boolean }) {
+  async function startMeeting(opts: { sourceId?: string; camera?: boolean }) {
     const { useLiveShare } = await import('../useLiveShare')
     const share = useLiveShare()
     const ok = await share.start({
       sourceId: opts.sourceId ?? '',
-      systemAudio: false,
       microphone: true,
       camera: opts.camera ?? false,
-      video: opts.video ?? true,
     })
     return { share, ok }
   }
@@ -1251,12 +1225,13 @@ describe('camera', () => {
   it('toggles the camera with track.enabled and tells the viewers', async () => {
     const { share } = await startMeeting({ sourceId: 'screen:1:0', camera: true })
 
-    share.setCameraEnabled(false)
+    await share.setCameraEnabled(false)
     expect(share.cameraEnabled.value).toBe(false)
     expect(cameraStream.getVideoTracks()[0].stopped).toBe(false)
     // Muting, not removing: removing would need a renegotiation, and the
-    // publisher is the answerer.
-    expect(lastWS().sentJSON()).toContainEqual({ type: 'set-camera-enabled', enabled: false })
+    // publisher is the answerer. The screen is still up, so there IS still a
+    // picture — only the camera tile goes away.
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'set-picture', video: true, camera: false, screen: true })
   })
 
   it('leaves the camera alone when the screen source is switched', async () => {
@@ -1287,5 +1262,125 @@ describe('camera', () => {
     expect(cameraStream.getVideoTracks()[0].stopped).toBe(true)
     expect(share.cameraEnabled.value).toBe(false)
     expect(share.previewCameraStream.value).toBeNull()
+  })
+})
+
+describe('picture changes mid-meeting', () => {
+  /** Start with nothing but the microphone. */
+  async function startEmpty() {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    const ok = await share.start({ sourceId: '', microphone: true })
+    return { share, ok }
+  }
+
+  it('adds a screen without renegotiating and tells the room', async () => {
+    const { share, ok } = await startEmpty()
+    expect(ok).toBe(true)
+    expect(share.videoEnabled.value).toBe(false)
+    expect(share.captureKind.value).toBeNull()
+
+    const pc = await joinAndOffer('v1')
+    // No picture yet: the m-line exists (it was negotiated) but carries nothing.
+    expect(pc.transceivers[1].sender.track).toBeNull()
+    const negotiations = pc.setRemoteDescription.mock.calls.length
+
+    expect(await share.startScreen('screen:2:0')).toBe(true)
+
+    // replaceTrack on the already-negotiated m-line: no second offer/answer.
+    expect(pc.setRemoteDescription).toHaveBeenCalledTimes(negotiations)
+    expect(pc.transceivers[1].sender.track?.id).toBe('v1')
+    expect(share.videoEnabled.value).toBe(true)
+    expect(share.captureKind.value).toBe('screen')
+    expect(lastWS().sentJSON()).toContainEqual({
+      type: 'set-picture',
+      video: true,
+      camera: false,
+      screen: true,
+    })
+  })
+
+  it('hands the main picture back to the camera when the screen stops', async () => {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    await share.start({ sourceId: 'screen:1:0', microphone: true, camera: true })
+
+    offerCameraLine = true
+    const pc = await joinAndOffer('v1')
+    expect(pc.transceivers[1].sender.track?.id).toBe('v1')
+    expect(pc.transceivers[3].sender.track?.id).toBe('cam1')
+
+    await share.stopScreen()
+
+    // The screen's m-line falls back to the camera, and the tile m-line is
+    // emptied: one picture, no duplicate face.
+    expect(pc.transceivers[1].sender.track?.id).toBe('cam1')
+    expect(pc.transceivers[3].sender.track).toBeNull()
+    // Still a meeting, still a picture.
+    expect(share.state.value).toBe('publishing')
+    expect(share.videoEnabled.value).toBe(true)
+    expect(share.captureKind.value).toBeNull()
+    expect(displayStream.getVideoTracks()[0].stopped).toBe(true)
+    expect(lastWS().sentJSON()).toContainEqual({
+      type: 'set-picture',
+      video: true,
+      camera: true,
+      screen: false,
+    })
+  })
+
+  it('goes to the no-picture state when the screen stops and no camera is on', async () => {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    await share.start({ sourceId: 'screen:1:0', microphone: true })
+
+    const pc = await joinAndOffer('v1')
+    expect(pc.transceivers[1].sender.track?.id).toBe('v1')
+
+    await share.stopScreen()
+
+    expect(pc.transceivers[1].sender.track).toBeNull()
+    expect(share.state.value).toBe('publishing')
+    expect(share.videoEnabled.value).toBe(false)
+    expect(lastWS().sentJSON()).toContainEqual({
+      type: 'set-picture',
+      video: false,
+      camera: false,
+      screen: false,
+    })
+  })
+
+  it('turns the camera on after the meeting started', async () => {
+    const { share } = await startEmpty()
+
+    offerCameraLine = true
+    const pc = await joinAndOffer('v1')
+    expect(pc.transceivers[1].sender.track).toBeNull()
+
+    expect(await share.setCameraEnabled(true)).toBe(true)
+
+    // No screen: the camera IS the picture, on the main m-line.
+    expect(pc.transceivers[1].sender.track?.id).toBe('cam1')
+    expect(pc.transceivers[3].sender.track).toBeNull()
+    expect(share.videoEnabled.value).toBe(true)
+    expect(share.previewCameraStream.value).toBe(cameraStream)
+    expect(lastWS().sentJSON()).toContainEqual({
+      type: 'set-picture',
+      video: true,
+      camera: true,
+      screen: false,
+    })
+  })
+
+  it('reports a camera that cannot start instead of pretending it is on', async () => {
+    const { share } = await startEmpty()
+    ;(navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      Object.assign(new Error('denied'), { name: 'NotAllowedError' }),
+    )
+
+    expect(await share.setCameraEnabled(true)).toBe(false)
+    expect(share.cameraEnabled.value).toBe(false)
+    expect(share.videoEnabled.value).toBe(false)
+    expect(share.error.value).toBeTruthy()
   })
 })

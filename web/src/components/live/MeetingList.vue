@@ -42,26 +42,11 @@
           @dragend="cleanupDragGhost()"
         >
           <!-- Three tiers, three lines. Name first (largest), the numbers it was
-               measured with second, and what it IS / what is inside it last.
-               Everything used to share one line, so the eye had to read the
-               whole card to find any single fact. -->
+               measured with second, and what is inside it last. Everything used
+               to share one line, so the eye had to read the whole card to find
+               any single fact. -->
           <div class="meeting-row__main">
             <div class="meeting-row__head">
-              <!-- The type sits where an avatar would: left of the name, big
-                   enough to read at a glance, and the ONLY thing on the card
-                   that carries a hue. It answers "could I see them or only
-                   hear them", which no artifact can. Grey = unknown, for
-                   records written before the kind was stored. -->
-              <span
-                class="meeting-kind"
-                :class="`is-${r.kind || 'unknown'}`"
-                :title="r.kindLabel"
-                :aria-label="r.kindLabel"
-              >
-                <Video v-if="r.kind === 'video'" :size="12" />
-                <Mic v-else-if="r.kind === 'voice'" :size="12" />
-                <component v-else :is="MEETING_ICON" :size="12" />
-              </span>
               <span class="meeting-row__title">{{ r.record.title || t('meeting.list.untitled') }}</span>
               <span v-if="r.state.label" class="meeting-pill" :class="r.state.cls">
                 <Check v-if="r.state.icon === 'check'" :size="10" />
@@ -150,10 +135,8 @@ import {
   AlertTriangle,
   Check,
   Link as LinkIcon,
-  Mic,
   Plus,
   Trash2,
-  Video,
 } from 'lucide-vue-next'
 import { MEETING_ICON } from '@/utils/meetingIcon'
 import { formatFullTimestamp, formatRelativeTime, startOfLocalDay } from '@/utils/format'
@@ -296,14 +279,6 @@ const rows = computed(() =>
       record,
       state: rowState(record),
       duration: durationOf(record),
-      // Empty means "unknown" (a record written before the column existed):
-      // no pill is drawn rather than guessing from the artifacts.
-      kind: record.kind === 'voice' || record.kind === 'video' ? record.kind : '',
-      kindLabel: record.kind === 'video'
-        ? t('meeting.list.kindVideo')
-        : record.kind === 'voice'
-          ? t('meeting.list.kindVoice')
-          : t('meeting.list.kindUnknown'),
       speakers: record.speakerCount ?? 0,
       artifacts,
       // Only an ENDED meeting can be "empty"; a running one simply has not
@@ -468,37 +443,6 @@ onMounted(() => {
   gap: var(--space-3, 6px);
   min-width: 0;
 }
-/* The meeting type, drawn as an app-icon badge instead of a pill: it sits where
-   an avatar would, it is the first thing the eye lands on, and it is the only
-   element on the card that carries a hue. Grey means "not recorded" — a record
-   written before the kind was stored — and it keeps the title column aligned
-   with the rows that do know. */
-.meeting-kind {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(22 * var(--dp));
-  height: calc(22 * var(--dp));
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  flex-shrink: 0;
-}
-.meeting-kind.is-video {
-  color: var(--color-info);
-  background: color-mix(in srgb, var(--color-info) 14%, transparent);
-  border-color: color-mix(in srgb, var(--color-info) 38%, transparent);
-}
-.meeting-kind.is-voice {
-  color: var(--color-purple);
-  background: color-mix(in srgb, var(--color-purple) 14%, transparent);
-  border-color: color-mix(in srgb, var(--color-purple) 38%, transparent);
-}
-.meeting-kind.is-unknown {
-  color: var(--text-muted);
-  background: var(--bg-tertiary);
-  border-color: var(--border-color);
-}
-
 .meeting-row__title {
   flex: 1;
   min-width: 0;

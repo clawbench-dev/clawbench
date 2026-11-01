@@ -41,90 +41,47 @@
           @keydown.enter="start"
         />
 
-        <!-- Two meeting types, not a screen picker: "voice" and "video" is the
-             choice people come here to make. What the video is made of (camera,
-             screen, or both) is a detail underneath. -->
-        <div class="meeting-section">{{ t('meeting.create.type') }}</div>
-        <div class="meeting-type-grid">
-          <button
-            class="meeting-type"
-            :class="{ 'meeting-type--on': !isVideo }"
-            type="button"
-            data-type="voice"
-            @click="kind = 'voice'"
-          >
-            <span class="meeting-type__icon"><Mic :size="18" /></span>
-            <span class="meeting-type__text">
-              <span class="meeting-type__name">{{ t('meeting.create.voiceMeeting') }}</span>
-              <span class="meeting-type__note">{{ t('meeting.create.voiceMeetingNote') }}</span>
-            </span>
-          </button>
-          <button
-            class="meeting-type"
-            :class="{ 'meeting-type--on': isVideo }"
-            type="button"
-            data-type="video"
-            @click="kind = 'video'"
-          >
-            <span class="meeting-type__icon"><Video :size="18" /></span>
-            <span class="meeting-type__text">
-              <span class="meeting-type__name">{{ t('meeting.create.videoMeeting') }}</span>
-              <span class="meeting-type__note">{{ t('meeting.create.videoMeetingNote') }}</span>
-            </span>
-          </button>
+        <!-- No meeting type: these checkboxes are what the host sends, and
+             every one of them can be changed again while the meeting runs.
+             Screen and camera are independent — what they produce together is
+             described once, underneath, instead of being a mode to pick. -->
+        <div class="meeting-section">{{ t('meeting.create.picture') }}</div>
+        <label class="meeting-check">
+          <input
+            type="checkbox"
+            :checked="shareScreen"
+            data-role="meeting-screen"
+            @change="shareScreen = ($event.target as HTMLInputElement).checked"
+          />
+          <span class="meeting-check__icon"><Monitor :size="13" /></span>
+          {{ t('meeting.create.shareScreen') }}
+        </label>
+        <label class="meeting-check" :class="{ 'meeting-check--disabled': !cameraAvailable }">
+          <input
+            type="checkbox"
+            :checked="camera && cameraAvailable"
+            :disabled="!cameraAvailable"
+            data-role="meeting-camera"
+            @change="camera = ($event.target as HTMLInputElement).checked"
+          />
+          <span class="meeting-check__icon"><Video :size="13" /></span>
+          {{ t('meeting.create.camera') }}
+        </label>
+        <div class="meeting-hint meeting-hint--indent" data-role="meeting-picture">
+          {{ pictureHint }}
         </div>
 
-        <!-- Camera and screen are independent toggles, but what the picture
-             will be is their COMBINATION. One description underneath both says
-             which of the four states is selected; repeating a line under each
-             toggle said the same thing twice and read as two separate modes. -->
-        <template v-if="isVideo">
-          <label class="meeting-check" :class="{ 'meeting-check--disabled': !cameraAvailable }">
-            <input
-              type="checkbox"
-              :checked="camera && cameraAvailable"
-              :disabled="!cameraAvailable"
-              data-role="meeting-camera"
-              @change="camera = ($event.target as HTMLInputElement).checked"
-            />
-            <span class="meeting-check__icon"><Video :size="13" /></span>
-            {{ t('meeting.create.camera') }}
-          </label>
+        <CaptureSourceGrid
+          v-if="shareScreen"
+          :sources="sources"
+          :selected-id="selected"
+          @select="selected = $event"
+        />
+        <div v-if="shareScreen && sources.length === 0 && !loadingSources" class="meeting-hint">
+          {{ noSourceHint }}
+        </div>
 
-          <label class="meeting-check">
-            <input
-              type="checkbox"
-              :checked="shareScreen"
-              data-role="meeting-screen"
-              @change="shareScreen = ($event.target as HTMLInputElement).checked"
-            />
-            <span class="meeting-check__icon"><Monitor :size="13" /></span>
-            {{ t('meeting.create.shareScreen') }}
-          </label>
-
-          <!-- "Neither" is the only combination that cannot start a video
-               meeting, so it is the only one that reads as a warning. -->
-          <div v-if="!cameraOn && !shareScreen" class="meeting-warn" data-role="meeting-picture">
-            {{ noPictureHint }}
-          </div>
-          <div v-else class="meeting-hint meeting-hint--indent" data-role="meeting-picture">
-            {{ pictureHint }}
-          </div>
-
-          <CaptureSourceGrid
-            v-if="shareScreen"
-            :sources="sources"
-            :selected-id="selected"
-            @select="selected = $event"
-          />
-          <div v-if="shareScreen && sources.length === 0 && !loadingSources" class="meeting-hint">
-            {{ noSourceHint }}
-          </div>
-        </template>
-
-        <!-- These three toggles name themselves; a sentence under each was
-             noise. Only the camera/screen pair needs a description, because
-             what they produce depends on how they combine. -->
+        <!-- These toggles name themselves; a sentence under each was noise. -->
         <div class="meeting-section">{{ t('meeting.create.sound') }}</div>
         <label class="meeting-check">
           <input
@@ -135,16 +92,6 @@
           />
           <span class="meeting-check__icon"><Mic :size="13" /></span>
           {{ t('meeting.create.mic') }}
-        </label>
-        <label class="meeting-check" :class="{ 'meeting-check--disabled': !hasScreen }">
-          <input
-            type="checkbox"
-            :checked="systemAudio && hasScreen"
-            :disabled="!hasScreen"
-            @change="systemAudio = ($event.target as HTMLInputElement).checked"
-          />
-          <span class="meeting-check__icon"><Volume2 :size="13" /></span>
-          {{ t('meeting.create.systemAudio') }}
         </label>
         <label class="meeting-check">
           <input type="checkbox" :checked="notes" @change="notes = ($event.target as HTMLInputElement).checked" />
@@ -163,7 +110,7 @@
         :disabled="!canStart"
         @click="start"
       >
-        {{ starting ? t('meeting.create.starting') : startLabel }}
+        {{ starting ? t('meeting.create.starting') : t('meeting.create.start') }}
       </button>
     </div>
   </div>
@@ -171,25 +118,24 @@
 
 <script setup lang="ts">
 /**
- * 创建会议: name (optional), meeting type, and the capture options.
+ * 创建会议: name (optional) and the capture options.
  *
  * The options are the SAME refs the running meeting edits (useMeetingOptions),
  * so turning 听记 off here means it is off in the meeting too, and vice versa.
  *
- * The type is a first-class choice (voice / video), not a "share nothing" tile
- * hidden in the screen picker: what the video is made of — camera, screen, or
- * both — is a detail underneath it.
+ * There is no meeting type. What the host ticks here is just the starting
+ * state: screen, camera and microphone are independent, every one of them can
+ * be changed again during the meeting, and ticking none of them is allowed.
  */
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Mic, Monitor, NotebookPen, Video, Volume2 } from 'lucide-vue-next'
+import { ArrowLeft, Mic, Monitor, NotebookPen, Video } from 'lucide-vue-next'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import { useToast } from '@/composables/useToast'
 import { useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useMeetingNickname } from '@/composables/useMeetingNickname'
 import { MEETING_NICK_MAX } from '@/share/meetingNickname'
 import {
-  getAudioCaptureSupport,
   hasCameraDevice,
   listCaptureSources,
   useLiveShare,
@@ -205,11 +151,9 @@ const emit = defineEmits<{ back: []; started: [] }>()
 const { t } = useI18n()
 const toast = useToast()
 const share = useLiveShare()
-const { microphone, systemAudio, notes, camera } = useMeetingOptions()
+const { microphone, notes, camera } = useMeetingOptions()
 const { nickname, persist } = useMeetingNickname()
 
-type MeetingKind = 'voice' | 'video'
-const kind = ref<MeetingKind>('video')
 /** Share a screen alongside the camera (or on its own). */
 const shareScreen = ref(false)
 
@@ -218,7 +162,6 @@ const selected = ref('')
 const sources = ref<CaptureSource[]>([])
 const loadingSources = ref(false)
 const starting = ref(false)
-const systemAudioSupported = ref(false)
 /** Whether this machine has a camera at all. */
 const cameraAvailable = ref(true)
 
@@ -229,14 +172,13 @@ const canCapture = computed(() => hasNativeCapture.value || browserCapture)
 const isAndroidCapture = computed(() => Boolean(getNative()?.startScreenCapture))
 
 const supported = computed(() => canCapture.value || isAndroidCapture.value || cameraAvailable.value)
-const isVideo = computed(() => kind.value === 'video')
 /**
  * Whether the user asked for a screen.
  *
  * Not the same as "a source is selected": a plain browser picks its source in
  * the browser's own dialog, so its id list is empty while it still shares.
  */
-const hasScreen = computed(() => isVideo.value && shareScreen.value)
+const hasScreen = computed(() => shareScreen.value)
 
 const unsupportedHint = computed(() => {
   if (isInsecureCaptureContext()) return t('liveShare.insecureContext')
@@ -254,8 +196,8 @@ const cameraOn = computed(() => camera.value && cameraAvailable.value)
  * One line for the camera/screen combination — four states, not two.
  *
  * The toggles are independent, so the picture is their combination: both,
- * camera only, screen only, or neither. "Neither" cannot start a video meeting
- * and is rendered as a warning instead (see `noPictureHint`).
+ * camera only, screen only, or neither. "Neither" is allowed (the meeting still
+ * has the link, the audience and the chat) and says what the audience gets.
  */
 const pictureHint = computed(() => {
   // A machine without a camera can only be in the screen-only states; say so
@@ -264,17 +206,7 @@ const pictureHint = computed(() => {
   if (cameraOn.value) {
     return hasScreen.value ? t('meeting.create.pictureBoth') : t('meeting.create.pictureCamera')
   }
-  return t('meeting.create.pictureScreen')
-})
-
-/** The "neither" state: why it cannot start, and what to do instead. */
-const noPictureHint = computed(() =>
-  cameraAvailable.value ? t('meeting.create.noPicture') : t('meeting.create.noPictureNoCamera'),
-)
-
-const startLabel = computed(() => {
-  if (!isVideo.value) return t('meeting.create.startVoice')
-  return t('meeting.create.startVideo')
+  return hasScreen.value ? t('meeting.create.pictureScreen') : t('meeting.create.noPictureHint')
 })
 
 const canStart = computed(() => {
@@ -282,31 +214,19 @@ const canStart = computed(() => {
   if (!supported.value) return false
   // The nickname is required: viewers see it in chat, and an empty name would
   // fall back to the shared "User" label.
-  if (!nickname.value.trim()) return false
-  if (!isVideo.value) return true
-  // A video meeting must actually have a picture; "video" with no camera and
-  // no screen would start a voice meeting under a false name.
-  return cameraOn.value || hasScreen.value
+  return Boolean(nickname.value.trim())
 })
 
 async function loadSources(): Promise<void> {
   loadingSources.value = true
   try {
-    const [list, sysAudio, hasCamera] = await Promise.all([
-      listCaptureSources(),
-      getAudioCaptureSupport(),
-      hasCameraDevice(),
-    ])
+    const [list, hasCamera] = await Promise.all([listCaptureSources(), hasCameraDevice()])
     // Android has no source list: the consent dialog decides what gets
     // mirrored. One sentinel tile keeps "share my screen" selectable.
     sources.value = isAndroidCapture.value
       ? [{ id: 'android:screen', name: t('liveShare.entireScreen'), kind: 'screen', thumbnail: '' }]
       : list
     cameraAvailable.value = hasCamera
-    systemAudioSupported.value = sysAudio
-    // Seed the toggle from the platform rather than from `false`: on Windows
-    // sharing the system sound is the common case.
-    if (sysAudio && !systemAudio.value) systemAudio.value = true
     if (!selected.value) {
       const screen = list.find((s) => s.kind === 'screen')
       selected.value = screen?.id ?? list[0]?.id ?? ''
@@ -358,15 +278,12 @@ async function start(): Promise<void> {
       toast.show(e instanceof Error ? e.message : String(e), { type: 'error', icon: 'warning' })
       return
     }
-    const voice = !isVideo.value
     const ok = await share.start({
       sourceId: hasScreen.value ? selected.value : '',
       screen: hasScreen.value,
-      systemAudio: hasScreen.value ? systemAudio.value : false,
       microphone: microphone.value,
-      camera: !voice && camera.value && cameraAvailable.value,
+      camera: cameraOn.value,
       notes: notes.value,
-      video: !voice,
       shareTitle: title.value.trim(),
       notesLabel,
     })
@@ -437,36 +354,6 @@ onMounted(() => {
   font-size: var(--font-size-lg); font-family: inherit;
 }
 .meeting-input:focus { outline: none; border-color: var(--accent-color); }
-
-.meeting-type-grid {
-  display: grid; grid-template-columns: 1fr 1fr;
-  gap: var(--space-4); padding: 2px;
-}
-.meeting-type {
-  display: flex; align-items: center; gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
-  border: 1px solid var(--border-color); border-radius: var(--radius-md);
-  background: var(--bg-secondary); text-align: left; cursor: pointer; min-width: 0;
-}
-.meeting-type:hover { border-color: var(--accent-color); }
-.meeting-type--on { border-color: var(--accent-color); box-shadow: 0 0 0 1px var(--accent-color); }
-.meeting-type__icon {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: calc(30 * var(--dp)); height: calc(30 * var(--dp)); flex-shrink: 0;
-  border-radius: var(--radius-sm); background: var(--bg-tertiary); color: var(--text-muted);
-}
-.meeting-type--on .meeting-type__icon {
-  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-  color: var(--accent-color);
-}
-.meeting-type__text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-.meeting-type__name {
-  display: block; font-size: var(--font-size-sm); font-weight: 600; color: var(--text-primary);
-}
-.meeting-type__note {
-  display: block; margin-top: 2px;
-  font-size: var(--font-size-2xs); color: var(--text-muted);
-}
 
 .meeting-check {
   display: flex; align-items: center; gap: var(--space-2);

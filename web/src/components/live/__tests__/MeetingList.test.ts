@@ -245,25 +245,15 @@ describe('MeetingList rows', () => {
     expect(w.find('.meeting-row').attributes('data-state')).toBe('generating')
   })
 
-  it('marks the type with a badge left of the title', () => {
-    sessions.value = [
-      record({ token: 'v', kind: 'video' }),
-      record({ token: 'a', kind: 'voice' }),
-      // A record written before the column existed: a grey badge, no guess.
-      record({ token: 'old', kind: '' }),
-    ]
+  it('draws no meeting-type badge: meetings have no type', () => {
+    // The record no longer carries a kind at all; a badge would have nothing
+    // left to draw, and the title starts the row in the slot it used to take.
+    sessions.value = [record({ token: 'v' }), record({ token: 'a' })]
     const w = mountList()
 
-    const rows = w.findAll('.meeting-row')
-    const badge = (i: number) => rows[i].find('.meeting-kind')
-    expect(badge(0).classes()).toContain('is-video')
-    expect(badge(1).classes()).toContain('is-voice')
-    expect(badge(2).classes()).toContain('is-unknown')
-
-    // It is the FIRST thing in the title row, i.e. where an avatar would be.
-    expect(rows[0].find('.meeting-row__head').element.firstElementChild).toBe(badge(0).element)
-    expect(badge(0).attributes('title')).toBe(enMessages.meeting.list.kindVideo)
-    expect(badge(2).attributes('title')).toBe(enMessages.meeting.list.kindUnknown)
+    expect(w.find('.meeting-kind').exists()).toBe(false)
+    const head = w.findAll('.meeting-row')[0].find('.meeting-row__head')
+    expect(head.element.firstElementChild?.classList.contains('meeting-row__title')).toBe(true)
   })
 
   it('surfaces the revised draft and the compact counts', () => {

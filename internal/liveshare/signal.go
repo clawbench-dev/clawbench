@@ -27,10 +27,6 @@ const (
 	// MsgScreenState reports who is sharing a screen, to the publisher AND to
 	// every viewer. One frame for both sides keeps the two views from drifting.
 	MsgScreenState = "screen-state"
-	// MsgCameraState reports the publisher's camera turning on or off. Sent to
-	// viewers only: the camera is publisher-side, so it never changes without
-	// the publisher knowing first.
-	MsgCameraState = "camera-state"
 )
 
 // Message types on the viewer socket (server → viewer).
@@ -54,6 +50,12 @@ const (
 	// MsgScreenDenied means the viewer asked to share its screen and the room
 	// refused: the switch is off, or somebody else is already sharing.
 	MsgScreenDenied = "screen-denied"
+	// MsgPictureState reports the publisher's picture changing mid-meeting: a
+	// screen starting or stopping, the camera turning on or off. One frame for
+	// all three fields because they always change together from the publisher's
+	// point of view, and because a viewer that applied them separately could
+	// briefly render a layout that never existed.
+	MsgPictureState = "picture-state"
 	// MsgError reports a rejected control frame without closing the socket.
 	MsgError = "error"
 )
@@ -78,10 +80,11 @@ const (
 	// CtrlSetScreenEnabled flips the room-level screen-sharing switch. Turning
 	// it off also stops whoever is sharing.
 	CtrlSetScreenEnabled = "set-screen-enabled"
-	// CtrlSetCameraEnabled reports that the publisher's camera was turned on or
-	// off. The track stays in place (muted) either way, so this only tells
-	// viewers whether to render the camera tile — no renegotiation involved.
-	CtrlSetCameraEnabled = "set-camera-enabled"
+	// CtrlSetPicture replaces the room's picture state (screen / camera /
+	// whether there is one at all). The publisher is the only writer, so the
+	// three flags always travel together — sending them one at a time would let
+	// a viewer render a combination that never happened.
+	CtrlSetPicture = "set-picture"
 	// CtrlScreenRevoke stops one viewer's screen share without disabling the
 	// switch for everyone else.
 	CtrlScreenRevoke = "screen-revoke"
@@ -122,11 +125,6 @@ type PublisherMessage struct {
 	Sharing bool `json:"sharing,omitempty"`
 	// ScreenEnabled is the room-level screen-sharing switch.
 	ScreenEnabled bool `json:"screenEnabled,omitempty"`
-	// CameraEnabled is meaningful only on MsgCameraState: whether the
-	// publisher's camera is on. A pointer, not a plain bool: `omitempty` would
-	// drop the field exactly when the camera is turned OFF, and a viewer that
-	// cannot tell "absent" from "false" keeps rendering the last frame.
-	CameraEnabled *bool `json:"cameraEnabled,omitempty"`
 }
 
 // Reasons carried on talk-revoked / talk-denied. Constants (not literals) so the
@@ -156,19 +154,21 @@ type ViewerMessage struct {
 	// enabling relay later needs no client change.
 	ICEServers  []any `json:"iceServers"`
 	TalkEnabled bool  `json:"talkEnabled,omitempty"`
-	// VideoEnabled tells the viewer whether a picture is coming. A voice meeting
-	// has none, so the page renders a placeholder instead of waiting for a track
-	// that will never arrive. Pointer-to-bool would be needed to distinguish
-	// "absent" from "false"; both mean "no picture", which is the same UI.
+	// VideoEnabled tells the viewer whether a picture is coming RIGHT NOW.
+	// Meetings have no type: a picture can start or stop at any moment, and
+	// MsgPictureState carries every change after `joined`. Without a picture the
+	// page renders a placeholder instead of waiting for a track that may never
+	// arrive. Pointer-to-bool would be needed to distinguish "absent" from
+	// "false"; both mean "no picture", which is the same UI.
 	VideoEnabled bool `json:"video"`
 	// CameraEnabled tells the viewer that the publisher's camera is on, so the
 	// camera tile can be offered at all. It is independent of VideoEnabled: a
-	// video meeting with the camera off and no screen has no picture, while a
 	// screen-only share has a picture but no camera.
 	CameraEnabled bool `json:"camera"`
 	// HostScreen tells the viewer that the publisher's picture IS a screen.
 	// Remote control and annotation only make sense then — injecting pointer
-	// coordinates into a camera image means nothing.
+	// coordinates into a camera image means nothing. It changes mid-meeting
+	// whenever the host switches between a screen and a camera.
 	HostScreen bool `json:"hostScreen"`
 	// NotesEnabled tells the viewer that this share is running AI 听记, so the
 	// transcript panel can be offered at all. It carries no transcript.
@@ -191,6 +191,12 @@ type PublisherControl struct {
 	SDP       string `json:"sdp"`
 	Candidate any    `json:"candidate"`
 	Enabled   bool   `json:"enabled"`
+	// Video / Camera / Screen are meaningful only on CtrlSetPicture: whether a
+	// picture is being sent, whether it contains a camera tile, and whether it
+	// is a screen (as opposed to a camera-only picture).
+	Video  bool `json:"video"`
+	Camera bool `json:"camera"`
+	Screen bool `json:"screen"`
 }
 
 // ViewerControl is a frame received from a viewer.

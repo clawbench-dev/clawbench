@@ -63,18 +63,25 @@
           <ShareAddressList :links="share.shareLinks.value" />
           <div class="live-dialog-hint">{{ t('liveShare.linkHint') }}</div>
 
-          <!-- A voice meeting has no picture: say so instead of leaving the
-               panel looking like a share whose capture failed. -->
-          <div v-if="isVoiceMeeting" class="live-dialog-warn" data-role="voice-meeting">
-            {{ t('meeting.stage.voiceHint') }}
+          <!-- The picture. There is no meeting type: the host can start or stop
+               a screen share and turn the camera on or off at any point, and
+               viewers follow. Both toggles write through useLiveShare, which
+               rewires the already-negotiated m-lines — no renegotiation. -->
+          <div class="live-dialog-section">{{ t('meeting.create.picture') }}</div>
+          <label class="live-check">
+            <input type="checkbox" :checked="screenOn" :disabled="screenBusy" data-role="stage-screen"
+              @change="onToggleScreenShare(($event.target as HTMLInputElement).checked)" />
+            <span class="live-check__icon"><MonitorUp :size="13" /></span>
+            <span>{{ t('meeting.create.shareScreen') }}</span>
+          </label>
+          <div class="live-dialog-hint live-dialog-hint--indent">
+            {{ screenOn ? t('meeting.stage.screenOn') : t('meeting.stage.screenOff') }}
           </div>
 
-          <!-- Camera. A video meeting can run camera-only or screen-only, so
-               this block appears whenever there is a camera at all — not just
-               when a screen is shared. The self-view is mirrored, like every
-               other video tool: you are looking in a mirror, not at a photo. -->
-          <template v-if="share.cameraEnabled.value || hasCameraTrack">
-            <div class="live-dialog-section">{{ t('meeting.create.cameraSection') }}</div>
+          <!-- Camera. Shown whenever the machine has one; a camera the OS cannot
+               provide is not something to offer. The self-view is mirrored, like
+               every other video tool: you are looking in a mirror, not a photo. -->
+          <template v-if="cameraAvailable">
             <div v-if="share.previewCameraStream.value" class="live-camera-self">
               <video
                 ref="selfCameraRef"
@@ -109,16 +116,6 @@
           </label>
           <div class="live-dialog-hint live-dialog-hint--indent">
             {{ micEnabled ? t('meeting.create.micOn') : t('meeting.create.micOff') }}
-          </div>
-          <label class="live-check" :class="{ 'live-check--disabled': !hasScreen }">
-            <input type="checkbox" :checked="systemAudioEnabled && hasScreen" :disabled="!hasScreen"
-              data-role="stage-system-audio"
-              @change="onToggleSystemAudio(($event.target as HTMLInputElement).checked)" />
-            <span class="live-check__icon"><Volume2 :size="13" /></span>
-            <span>{{ t('meeting.create.systemAudio') }}</span>
-          </label>
-          <div class="live-dialog-hint live-dialog-hint--indent">
-            {{ hasScreen ? t('meeting.create.systemAudioHint') : t('meeting.create.systemAudioNoScreen') }}
           </div>
           <label class="live-check">
             <input type="checkbox" :checked="notesOn" data-role="stage-notes"
@@ -257,7 +254,7 @@
           <!-- Audience screen sharing. Off by default: the token is a read
                credential, and a screen is a much bigger thing to hand out than
                a microphone. -->
-          <label v-if="!isVoiceMeeting" class="live-check">
+          <label class="live-check">
             <input
               type="checkbox"
               :checked="share.screenEnabled.value"
@@ -396,19 +393,24 @@
  * instance); this component only drives it and renders state. Leaving the tab
  * does NOT stop the meeting — the dock keeps a "in progress" dot.
  *
- * It is shown for BOTH screen and voice meetings. A voice meeting simply has no
- * video track, so the video-only tools (annotate, switch source, remote
- * control, member screen share) are hidden rather than disabled: a button that
- * can only answer "not available" is worse than no button.
+ * There is no meeting type. The picture can start or stop at any moment, so the
+ * video-only tools (annotate, switch source, remote control, member screen
+ * share) follow the CURRENT screen state rather than a mode chosen at creation:
+ * a button that can only answer "not available" is worse than no button.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Mic, MonitorUp, NotebookPen, Video, Volume2, X } from 'lucide-vue-next'
+import { Mic, MonitorUp, NotebookPen, Video, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import TranscriptList from '@/components/live/TranscriptList.vue'
 import { useToast } from '@/composables/useToast'
-import { listCaptureSources, useLiveShare, type CaptureSource } from '@/composables/useLiveShare'
+import {
+  hasCameraDevice,
+  listCaptureSources,
+  useLiveShare,
+  type CaptureSource,
+} from '@/composables/useLiveShare'
 import { groupNoteSegments, useLiveNotes } from '@/composables/useLiveNotes'
 import { useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useScreenWindow } from '@/composables/useScreenWindow'
@@ -440,25 +442,36 @@ const hostChatName = computed(
   () => resolveUserNickname(serverConfig.value?.user) || t('liveShare.hostName'),
 )
 
-/** True while a capture/publish session is running. */
+/** A capture/publish session is running. */
 const isLive = computed(
   () => share.state.value === 'publishing' || share.state.value === 'capturing',
 )
-/** A voice meeting publishes no picture. */
-const isVoiceMeeting = computed(() => !share.videoEnabled.value)
 /**
- * A SCREEN is being published.
+ * A SCREEN is being published right now.
  *
  * Everything that assumes desktop coordinates — annotation, source switching,
- * remote control, system loopback audio — hangs off this instead of "there is a
- * picture": a camera image has no desktop behind it.
+ * remote control, member screen share — hangs off this instead of "there is a
+ * picture": a camera image has no desktop behind it, and the flag flips while
+ * the meeting runs.
  */
 const hasScreen = computed(() => share.captureKind.value !== null)
-/** Whether a camera track exists at all (off is still "exists"). */
-const hasCameraTrack = computed(() => Boolean(share.previewCameraStream.value))
 const micEnabled = computed(() => share.micEnabled.value)
-const systemAudioEnabled = computed(() => share.systemAudioEnabled.value)
 const notesOn = computed(() => notes.phase.value === 'recording')
+/** Whether this machine has a camera at all, so the toggle is worth showing. */
+const cameraAvailable = ref(true)
+/** Guards the async start/stop of a screen capture (it opens a picker). */
+const screenBusy = ref(false)
+/**
+ * The screen toggle's own state.
+ *
+ * `hasScreen` only becomes true once the capture is live, which is a picker
+ * away — binding the checkbox to it would flip the box back under the user's
+ * finger while the dialog is open. This is optimistic and reverted on failure.
+ */
+const screenOn = ref(share.captureKind.value !== null)
+watch(hasScreen, (on) => {
+  screenOn.value = on
+})
 
 const captureSources = ref<CaptureSource[]>([])
 const selectedSourceId = ref('')
@@ -668,13 +681,14 @@ async function applySwitch(sourceId: string): Promise<void> {
   else switching.value = false
 }
 
-/** Sources are only needed by the mid-meeting swap; enumerating is not free. */
+/** Sources are needed by both the mid-meeting swap and the start toggle. */
 async function loadSources(): Promise<void> {
   loadingSources.value = true
   try {
     captureSources.value = isAndroidCapture.value
       ? [{ id: 'android:screen', name: t('liveShare.entireScreen'), kind: 'screen', thumbnail: '' }]
       : await listCaptureSources()
+    if (!selectedSourceId.value) selectedSourceId.value = defaultSourceId()
   } catch (e) {
     appLog.e('MeetingStage', 'loadSources failed', e)
   } finally {
@@ -746,14 +760,46 @@ function onToggleMic(on: boolean): void {
   share.setMicEnabled(on)
 }
 
-function onToggleSystemAudio(on: boolean): void {
-  options.systemAudio.value = on
-  share.setSystemAudioEnabled(on)
+/** Which source a fresh screen share opens: the remembered one, else the first. */
+function defaultSourceId(): string {
+  if (selectedSourceId.value) return selectedSourceId.value
+  return captureSources.value.find((s) => s.kind === 'screen')?.id ?? captureSources.value[0]?.id ?? ''
 }
 
-function onToggleCamera(on: boolean): void {
+/**
+ * Start or stop the screen mid-meeting.
+ *
+ * Starting opens the picker (or the OS dialog on Android), so the call is
+ * async and guarded — a double click must not open two captures.
+ */
+async function onToggleScreenShare(on: boolean): Promise<void> {
+  if (screenBusy.value) return
+  screenBusy.value = true
+  const previous = screenOn.value
+  screenOn.value = on
+  try {
+    if (!on) {
+      await share.stopScreen()
+      return
+    }
+    const sourceId = defaultSourceId()
+    if (!(await share.startScreen(sourceId))) {
+      screenOn.value = previous
+      toast.show(share.error.value || t('liveShare.shareScreenFailed'), { type: 'error', icon: 'warning' })
+      return
+    }
+    selectedSourceId.value = sourceId
+  } finally {
+    screenBusy.value = false
+  }
+}
+
+async function onToggleCamera(on: boolean): Promise<void> {
   options.camera.value = on
-  share.setCameraEnabled(on)
+  if (await share.setCameraEnabled(on)) return
+  // The toggle must not stay on for a camera that never started.
+  options.camera.value = false
+  toast.show(share.error.value || t('meeting.create.cameraUnavailable'), { type: 'error', icon: 'warning' })
 }
 
 function onToggleNotes(on: boolean): void {
@@ -782,6 +828,13 @@ onMounted(() => {
     controlSupported.value = ok
   })
   if (notes.phase.value === 'recording') void notes.refresh()
+  // Both runtime toggles need this before they are used: the source list so
+  // getDisplayMedia stays inside the click's user activation, the camera probe
+  // so a machine without one does not offer a checkbox that can only fail.
+  void loadSources()
+  void hasCameraDevice().then((ok) => {
+    cameraAvailable.value = ok
+  })
 })
 
 onBeforeUnmount(() => {
@@ -973,15 +1026,6 @@ watch(
   justify-content: center;
   min-height: calc(170 * var(--dp));
   color: var(--text-muted, #656d76);
-}
-
-.live-dialog-warn {
-  padding: var(--space-4, 8px) var(--space-6, 12px);
-  border-radius: var(--radius-md, 6px);
-  background: var(--bg-tertiary, #f6f8fa);
-  color: var(--text-muted, #656d76);
-  font-size: var(--font-size-sm, 13px);
-  line-height: 1.6;
 }
 
 .live-dialog-error {

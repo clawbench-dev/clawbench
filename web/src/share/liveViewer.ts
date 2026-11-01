@@ -346,11 +346,16 @@ export class LiveViewer {
         if (this._screenSharer) this.emitMemberScreen()
         else this.cb.onMemberScreenStream?.(null)
         break
-      case 'camera-state':
-        // The camera track stays live (just muted) on the publisher's side, so
-        // this frame is the ONLY thing that stops the tile: without it the last
-        // frame would freeze on screen and look like a broken stream.
+      case 'picture-state':
+        // Meetings have no type: the host can start or stop a screen share and
+        // turn the camera on or off at any moment. All three flags arrive
+        // together because they describe one picture — applying them one at a
+        // time would render a combination that never existed.
+        this._videoEnabled = Boolean(msg.video)
+        this._hostScreen = Boolean(msg.hostScreen)
         this._cameraEnabled = Boolean(msg.camera)
+        this.cb.onVideoMode?.(this._videoEnabled)
+        this.cb.onHostScreen?.(this._hostScreen)
         this.cb.onCameraMode?.(this._cameraEnabled)
         break
       case 'screen-denied':

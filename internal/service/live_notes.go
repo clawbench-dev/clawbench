@@ -316,23 +316,12 @@ func SetLiveNoteRevise(token string, projectID int64, status, revised, errMsg st
 // it (and delete it). Nothing here expires — deleting the record is the only
 // way these rows go away, apart from deleting the project.
 
-// Meeting kinds. A record stores what the room actually carried, so the list
-// can tell a voice meeting from a video one without the room still existing.
-//
-// Empty is a real value: records written before the column existed, and rows
-// created by a late segment upload, have no kind. The UI shows no type tag for
-// those rather than guessing.
-const (
-	LiveNotesKindVoice = "voice"
-	LiveNotesKindVideo = "video"
-)
-
 // StartLiveNote creates the permanent record for a meeting.
 //
 // ON CONFLICT DO NOTHING, not an update: a publisher that reconnects with the
 // same token (a socket blip) must keep the ORIGINAL start time, otherwise the
 // record's date would drift every time the network hiccups.
-func StartLiveNote(token string, projectID int64, title, kind string, startedAtMS int64) error {
+func StartLiveNote(token string, projectID int64, title string, startedAtMS int64) error {
 	if token == "" {
 		return errors.New("live notes: empty token")
 	}
@@ -340,10 +329,10 @@ func StartLiveNote(token string, projectID int64, title, kind string, startedAtM
 		startedAtMS = time.Now().UnixMilli()
 	}
 	_, err := store.WriteExec(
-		`INSERT INTO live_notes (token, project_id, title, kind, started_at, status, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		`INSERT INTO live_notes (token, project_id, title, started_at, status, updated_at)
+		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		 ON CONFLICT(token) DO NOTHING`,
-		token, projectID, title, kind, startedAtMS, LiveNotesStatusIdle,
+		token, projectID, title, startedAtMS, LiveNotesStatusIdle,
 	)
 	if err != nil {
 		return fmt.Errorf("live notes: start meeting: %w", err)
@@ -513,9 +502,6 @@ type MeetingRecord struct {
 	// Status is the minutes job state (idle/generating/ready/failed). The list
 	// uses it to show "生成中" and to mark a job that died with the process.
 	Status string `json:"status"`
-	// Kind is what the room carried: "voice", "video", or "" for a record that
-	// predates the column (and for rows created by a late segment upload).
-	Kind string `json:"kind"`
 	// SpeakerCount is how many distinct people the transcript heard. Derived
 	// from the segments like the artifact flags, so it disappears with them.
 	SpeakerCount int `json:"speakerCount"`
@@ -529,7 +515,7 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 		limit = 200
 	}
 	rows, err := store.ReadDB().Query(
-		`SELECT token, title, started_at, ended_at, dir_name, status, kind,
+		`SELECT token, title, started_at, ended_at, dir_name, status,
 		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000
 		   FROM live_notes
 		  WHERE project_id = ?
@@ -548,7 +534,7 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 		var dirName string
 		var updatedMS int64
 		if scanErr := rows.Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName,
-			&m.Status, &m.Kind, &updatedMS); scanErr != nil {
+			&m.Status, &updatedMS); scanErr != nil {
 			return nil, fmt.Errorf("live notes: scan meeting: %w", scanErr)
 		}
 		m.UpdatedAt = updatedMS
@@ -584,10 +570,10 @@ func GetMeetingRecord(projectPath string, projectID int64, token string) (Meetin
 	var dirName string
 	var updatedMS int64
 	err := store.ReadDB().QueryRow(
-		`SELECT token, title, started_at, ended_at, dir_name, status, kind,
+		`SELECT token, title, started_at, ended_at, dir_name, status,
 		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000
 		   FROM live_notes WHERE token = ? AND project_id = ?`, token, projectID,
-	).Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName, &m.Status, &m.Kind, &updatedMS)
+	).Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName, &m.Status, &updatedMS)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MeetingRecord{}, false, nil
 	}

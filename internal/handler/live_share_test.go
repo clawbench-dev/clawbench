@@ -506,11 +506,11 @@ func TestLiveWS_ViewerJoinReachesPublisher(t *testing.T) {
 	assert.Equal(t, joined.ViewerID, notice.ViewerID)
 }
 
-// A voice meeting must SAY it has no picture. The flag is a plain bool, so
-// `omitempty` would drop it when false — the viewer would then default to
-// "video expected" and wait for a track that never arrives. This asserts on the
-// raw JSON, because a typed decode cannot tell `false` from absent.
-func TestLiveWS_VoiceRoomSaysThereIsNoVideo(t *testing.T) {
+// A room with no picture must SAY so. The flag is a plain bool, so `omitempty`
+// would drop it when false — the viewer would then default to "picture
+// expected" and wait for a track that may never arrive. This asserts on the raw
+// JSON, because a typed decode cannot tell `false` from absent.
+func TestLiveWS_RoomWithoutPictureSaysSo(t *testing.T) {
 	srv, token := liveWSServer(t)
 	room := liveRegistry.Get(token)
 	require.NotNil(t, room)
@@ -527,7 +527,7 @@ func TestLiveWS_VoiceRoomSaysThereIsNoVideo(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &raw))
 
 	video, present := raw["video"]
-	require.True(t, present, "a voice room must serialize video:false, not omit it")
+	require.True(t, present, "a room without a picture must serialize video:false, not omit it")
 	assert.Equal(t, false, video)
 
 	// The nickname the server accepted travels to the publisher.
@@ -566,23 +566,28 @@ func TestLiveWS_JoinedCarriesCameraAndHostScreen(t *testing.T) {
 	assert.Equal(t, true, hostScreen)
 }
 
-// Turning the camera off mid-meeting has to reach viewers that are already
-// connected AND the room itself: a viewer joining afterwards reads its `joined`
-// frame, and a stale flag there shows a tile for a camera that is off.
-func TestLiveWS_CameraToggleReachesViewersAndSticks(t *testing.T) {
+// A meeting has no type: the picture can start or stop at any moment, and the
+// change has to reach viewers that are already connected AND the room itself —
+// a viewer joining afterwards reads its `joined` frame, and a stale flag there
+// renders a layout that ended minutes ago.
+func TestLiveWS_PictureChangeReachesViewersAndSticks(t *testing.T) {
 	srv, token := liveWSServer(t)
 	room := liveRegistry.Get(token)
 	require.NotNil(t, room)
-	room.SetCameraEnabled(true)
+	room.SetVideoEnabled(true)
+	room.SetHostScreen(true)
 
 	pub := dialPublisher(t, srv, token)
 	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=early")
 	_ = readViewerMsg(t, view) // joined
 	_ = readPublisherMsg(t, pub)
 
+	// The host stopped sharing the screen and has no camera: nothing to show.
 	writeJSONFrame(t, pub, liveshare.PublisherControl{
-		Type:    liveshare.CtrlSetCameraEnabled,
-		Enabled: false,
+		Type:   liveshare.CtrlSetPicture,
+		Video:  false,
+		Camera: false,
+		Screen: false,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -591,18 +596,22 @@ func TestLiveWS_CameraToggleReachesViewersAndSticks(t *testing.T) {
 	require.NoError(t, err)
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(data, &raw))
-	assert.Equal(t, liveshare.MsgCameraState, raw["type"])
-	// `omitempty` on this bool would drop it exactly when it is false, which is
-	// the value the viewer needs.
-	camera, present := raw["camera"]
-	require.True(t, present, "camera-state must serialize camera:false, not omit it")
-	assert.Equal(t, false, camera)
+	assert.Equal(t, liveshare.MsgPictureState, raw["type"])
+	// None of these may be omitted when false: they are exactly the values the
+	// viewer needs in order to hide the picture.
+	for _, key := range []string{"video", "camera", "hostScreen"} {
+		value, present := raw[key]
+		require.True(t, present, "picture-state must serialize %s:false, not omit it", key)
+		assert.Equal(t, false, value, key)
+	}
 
-	assert.False(t, room.CameraEnabled(), "the room must remember the new state")
+	assert.False(t, room.VideoEnabled(), "the room must remember the new state")
+	assert.False(t, room.HostScreen(), "the picture is no longer a screen")
 
 	late := dialWS(t, srv, "/api/share/"+token+"/signal?name=late")
 	joined := readViewerMsg(t, late)
-	assert.False(t, joined.CameraEnabled, "a late viewer must not see a stale camera")
+	assert.False(t, joined.VideoEnabled, "a late viewer must not see a stale picture")
+	assert.False(t, joined.HostScreen, "a late viewer must not see a stale screen flag")
 }
 
 func TestLiveWS_OfferAnswerRoundTrip(t *testing.T) {

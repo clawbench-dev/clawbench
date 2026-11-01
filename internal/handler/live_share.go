@@ -109,18 +109,20 @@ func ServeLiveShareManage(w http.ResponseWriter, r *http.Request) {
 // create request. The title is author-supplied text that ends up on a public
 // page, so it is only ever rendered as text (never as HTML) by the SPA.
 //
-// `video` predates video meetings and means "there is a picture". The newer
-// camera/screen pair says what the picture is made of; a client that sends
-// neither is a legacy one whose picture has always been a screen.
+// The flags describe what the publisher STARTS WITH, not a meeting type: the
+// camera/screen pair can change at any moment afterwards (CtrlSetPicture).
+// `video` is derived from them, and a client that sends neither is a legacy one
+// whose picture has always been a screen.
 func liveShareCreateBody(r *http.Request) (title string, notes, video, camera, hostScreen bool) {
 	var body struct {
 		Title string `json:"title"`
 		Notes bool   `json:"notes"`
-		// Video defaults to true: a client that does not know about voice
-		// meetings is asking for the screen share it has always got.
+		// Video defaults to true: a client that does not know about the
+		// camera/screen split is asking for the screen share it has always got.
 		Video *bool `json:"video"`
-		// Camera and Screen are the video-meeting split. Absent means "this
-		// client does not know about them", not "off" — hence pointers.
+		// Camera and Screen say what the initial picture is made of. Absent
+		// means "this client does not know about them", not "off" — hence
+		// pointers.
 		Camera *bool `json:"camera"`
 		Screen *bool `json:"screen"`
 	}
@@ -311,13 +313,9 @@ func LiveSharePublishWS(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("liveshare: meeting record project id failed", "err", pidErr)
 	}
 	if pidErr == nil {
-		// What the room carries is only known here: the room is gone by the time
-		// anyone browses the record list, so the kind has to be stored.
-		kind := service.LiveNotesKindVoice
-		if room.VideoEnabled() {
-			kind = service.LiveNotesKindVideo
-		}
-		if startErr := service.StartLiveNote(token, projectID, room.Title(), kind, time.Now().UnixMilli()); startErr != nil {
+		// Meetings have no type: what the room happens to carry at this instant
+		// is not a property of the record, and it can change a second later.
+		if startErr := service.StartLiveNote(token, projectID, room.Title(), time.Now().UnixMilli()); startErr != nil {
 			slog.Warn("liveshare: meeting record start failed", "err", startErr)
 		}
 	}
@@ -428,8 +426,8 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 		applySetScreenEnabled(room, ctl.Enabled)
 		return false
 
-	case liveshare.CtrlSetCameraEnabled:
-		applySetCameraEnabled(room, ctl.Enabled)
+	case liveshare.CtrlSetPicture:
+		applySetPicture(room, ctl)
 		return false
 
 	case liveshare.CtrlScreenRevoke:
@@ -618,18 +616,22 @@ func handleViewerControl(room *liveshare.Room, viewer *liveshare.Viewer, ctl liv
 	}
 }
 
-// applySetCameraEnabled records the publisher's camera state and tells every
+// applySetPicture records the publisher's current picture and tells every
 // viewer.
 //
-// Viewers only: the camera is publisher-side, so the publisher already knows.
-// The flag also lives on the room (not just in this frame) so a viewer joining
+// Viewers only: the picture is publisher-side, so the publisher already knows.
+// The flags also live on the room (not just in this frame) so a viewer joining
 // afterwards learns the current state from its `joined` frame instead of
-// showing a tile for a camera that was turned off minutes ago.
-func applySetCameraEnabled(room *liveshare.Room, enabled bool) {
-	room.SetCameraEnabled(enabled)
+// rendering a layout that ended minutes ago.
+func applySetPicture(room *liveshare.Room, ctl liveshare.PublisherControl) {
+	room.SetVideoEnabled(ctl.Video)
+	room.SetCameraEnabled(ctl.Camera)
+	room.SetHostScreen(ctl.Screen)
 	room.BroadcastToViewers(liveshare.ViewerMessage{
-		Type:          liveshare.MsgCameraState,
-		CameraEnabled: enabled,
+		Type:          liveshare.MsgPictureState,
+		VideoEnabled:  ctl.Video,
+		CameraEnabled: ctl.Camera,
+		HostScreen:    ctl.Screen,
 	}, "")
 }
 

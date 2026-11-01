@@ -72,10 +72,10 @@ vi.mock('@/composables/useLiveShare', async () => {
     cameraEnabled: r(false),
     previewCameraStream: sr(null),
     micEnabled: r(true),
-    systemAudioEnabled: r(false),
     setMicEnabled: vi.fn(),
-    setSystemAudioEnabled: vi.fn(),
-    setCameraEnabled: vi.fn(),
+    setCameraEnabled: vi.fn(async () => true),
+    startScreen: vi.fn(async () => true),
+    stopScreen: vi.fn(async () => undefined),
     startNotes: vi.fn(() => true),
     stopNotes: vi.fn(async () => undefined),
     start: vi.fn(async () => true),
@@ -93,7 +93,7 @@ vi.mock('@/composables/useLiveShare', async () => {
   return {
     useLiveShare: () => shareApi,
     listCaptureSources: vi.fn(async () => []),
-    getAudioCaptureSupport: vi.fn(async () => false),
+    hasCameraDevice: vi.fn(async () => true),
   }
 })
 
@@ -319,13 +319,13 @@ describe('MeetingStage tabs', () => {
 })
 
 /**
- * A camera meeting is not a voice meeting and not a screen meeting.
+ * There is no meeting type: the picture is a runtime state.
  *
- * It has a picture (so the "voice meeting" warning must not appear), but the
- * picture is a face, so everything that assumes desktop coordinates — annotate,
- * switch source, remote control — must stay away.
+ * A camera picture has no desktop behind it, so everything that assumes
+ * desktop coordinates — annotate, switch source, remote control — must stay
+ * away; a screen picture brings them back. Both can change mid-meeting.
  */
-describe('MeetingStage camera meeting', () => {
+describe('MeetingStage picture toggles', () => {
   it('offers the camera toggle and self-view, without the screen-only tools', async () => {
     ;(shareApi.captureKind as { value: unknown }).value = null
     ;(shareApi.previewCameraStream as { value: unknown }).value = { id: 'cam' }
@@ -339,7 +339,9 @@ describe('MeetingStage camera meeting', () => {
       // A camera image has no desktop behind it.
       expect(wrapper.find('[data-action="annotate"]').exists()).toBe(false)
       expect(wrapper.find('[data-action="switch-source"]').exists()).toBe(false)
-      expect(wrapper.find('[data-role="voice-meeting"]').exists()).toBe(false)
+      // ...but the audience may still be allowed to share theirs: the two are
+      // independent, and the switch no longer disappears with the picture.
+      expect(wrapper.text()).toContain(enMessages.liveShare.allowScreenShare)
     } finally {
       ;(shareApi.captureKind as { value: unknown }).value = 'screen'
       ;(shareApi.previewCameraStream as { value: unknown }).value = null
@@ -370,6 +372,25 @@ describe('MeetingStage camera meeting', () => {
       ;(shareApi.previewCameraStream as { value: unknown }).value = null
       ;(shareApi.cameraEnabled as { value: boolean }).value = false
     }
+  })
+
+  it('starts and stops the screen from the running meeting', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // Sharing: the toggle is on and stopping it must not end the meeting.
+    const screen = wrapper.find('[data-role="stage-screen"]')
+    expect((screen.element as HTMLInputElement).checked).toBe(true)
+    await screen.setValue(false)
+    expect(shareApi.stopScreen).toHaveBeenCalledTimes(1)
+
+    // Not sharing: turning it on starts a capture with the remembered source.
+    ;(shareApi.captureKind as { value: unknown }).value = null
+    await flushPromises()
+    const off = wrapper.find('[data-role="stage-screen"]')
+    expect((off.element as HTMLInputElement).checked).toBe(false)
+    await off.setValue(true)
+    expect(shareApi.startScreen).toHaveBeenCalledWith('')
   })
 })
 

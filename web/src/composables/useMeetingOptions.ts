@@ -15,21 +15,18 @@ import { ref } from 'vue'
 
 /** Capture the publisher's microphone. */
 const microphone = ref(true)
-/** Capture system loopback audio. Impossible without a screen share. */
-const systemAudio = ref(false)
 /** Run AI 听记 (transcription + minutes) for this meeting. */
 const notes = ref(true)
-/** Capture the publisher's camera (video meetings only). */
+/** Capture the publisher's camera. */
 const camera = ref(false)
 
 export function useMeetingOptions() {
-  return { microphone, systemAudio, notes, camera }
+  return { microphone, notes, camera }
 }
 
 /** @internal Test-only: restore the defaults. */
 export function _resetMeetingOptions(): void {
   microphone.value = true
-  systemAudio.value = false
   notes.value = true
   camera.value = false
 }

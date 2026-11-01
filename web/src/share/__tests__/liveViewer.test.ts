@@ -774,21 +774,42 @@ describe('LiveViewer screen sharing', () => {
     expect(screens).toEqual([true], 'its picture has always been a screen')
   })
 
-  it('hides the camera tile on camera-state, including the false value', () => {
+  it('follows the picture appearing and disappearing mid-meeting', () => {
+    const videoModes: boolean[] = []
     const cameraModes: boolean[] = []
+    const screens: boolean[] = []
     const viewer = new LiveViewer({
       token: 'tok123',
-      callbacks: { onCameraMode: (v) => cameraModes.push(v) },
+      callbacks: {
+        onVideoMode: (v) => videoModes.push(v),
+        onCameraMode: (v) => cameraModes.push(v),
+        onHostScreen: (v) => screens.push(v),
+      },
       wsFactory: (url) => new FakeWS(url) as unknown as WebSocket,
       pcFactory: (cfg) => new FakePC(cfg) as unknown as RTCPeerConnection,
     })
     joinRoom(viewer)
-    lastWS().emit({ type: 'camera-state', camera: false })
+    expect(viewer.videoEnabled).toBe(true)
 
-    // The track stays live but muted on the publisher's side, so without this
-    // frame the last image would freeze and read as a broken stream.
+    // The host stops the screen and has no camera: no picture at all. All three
+    // flags arrive in one frame because they describe one picture.
+    lastWS().emit({ type: 'picture-state', video: false, camera: false, hostScreen: false })
+
+    expect(videoModes.at(-1)).toBe(false)
     expect(cameraModes.at(-1)).toBe(false)
-    expect(viewer.cameraEnabled).toBe(false)
+    expect(screens.at(-1)).toBe(false)
+    expect(viewer.videoEnabled).toBe(false)
+    expect(viewer.hostScreen).toBe(false)
+
+    // ...and a camera turned on later brings the picture back, with no screen
+    // behind it (so remote control and annotation stay off).
+    lastWS().emit({ type: 'picture-state', video: true, camera: true, hostScreen: false })
+
+    expect(videoModes.at(-1)).toBe(true)
+    expect(cameraModes.at(-1)).toBe(true)
+    expect(screens.at(-1)).toBe(false)
+    expect(viewer.videoEnabled).toBe(true)
+    expect(viewer.cameraEnabled).toBe(true)
   })
 
   it('reports who is sharing and the room switch', () => {

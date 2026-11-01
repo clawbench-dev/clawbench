@@ -67,8 +67,8 @@ const i18n = createI18n({
           joinNickPlaceholder: '例如：小明',
           joinNickHint: '昵称会记住，下次加入不用再填。',
           joinEnter: '加入会议',
-          voiceTitle: '语音会议',
-          voiceDesc: '主持人没有共享画面',
+          noPictureTitle: '暂未共享画面',
+          noPictureDesc: '主持人可以随时打开屏幕共享或摄像头',
           statusLive: '直播中',
           fullscreen: '全屏',
           exitFullscreen: '退出全屏',
@@ -87,8 +87,6 @@ const i18n = createI18n({
           screenBusy: '已有成员在共享屏幕',
           screenDisabled: '主持人未开启屏幕共享',
           screenNeedsHttps: '需要 HTTPS',
-          cameraOffTitle: '摄像头已关闭',
-          cameraOffDesc: '主持人暂时关掉了摄像头',
         },
       },
     },
@@ -466,17 +464,28 @@ describe('LiveShareView camera tile', () => {
     w.unmount()
   })
 
-  it('says the camera is off instead of leaving a black rectangle', async () => {
+  it('says there is no picture instead of leaving a black rectangle', async () => {
     const w = mountView()
     await flushPromises()
     const cb = lastViewer?.opts?.callbacks ?? {}
 
+    // Camera-only meeting with the camera switched off: no picture at all. The
+    // placeholder does not name a kind of meeting — it says the host can turn
+    // one on at any moment.
+    cb.onVideoMode?.(false)
     cb.onHostScreen?.(false)
     cb.onCameraMode?.(false)
     await flushPromises()
 
-    expect(w.find('[data-role="camera-off"]').exists()).toBe(true)
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(true)
+    expect(w.find('[data-role="camera-off"]').exists()).toBe(false)
     expect(w.find('[data-role="voice-stage"]').exists()).toBe(false)
+
+    // The picture coming back mid-meeting removes it again.
+    cb.onVideoMode?.(true)
+    cb.onCameraMode?.(true)
+    await flushPromises()
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(false)
 
     w.unmount()
   })

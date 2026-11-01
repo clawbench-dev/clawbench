@@ -65,25 +65,14 @@
         data-role="camera-pip"
       />
 
-      <!-- Camera-only meeting with the camera switched off: there is no picture
-           left, and a black rectangle reads as a broken stream. -->
-      <div
-        v-if="videoEnabled && !hostScreen && !cameraMode"
-        class="live-voice-stage"
-        data-role="camera-off"
-      >
-        <VideoOff :size="34" />
-        <div class="live-voice-stage__title">{{ t('share.live.cameraOffTitle') }}</div>
-        <div class="live-voice-stage__desc">{{ t('share.live.cameraOffDesc') }}</div>
-      </div>
-
-      <!-- Voice meeting: there is no picture to show. A placeholder says what
-           this is, instead of leaving a black rectangle that reads as a broken
-           stream. -->
-      <div v-if="!videoEnabled" class="live-voice-stage" data-role="voice-stage">
+      <!-- No picture right now. Meetings have no type: the host may start a
+           screen share or turn the camera on at any moment, so this says "not
+           yet" instead of naming a kind of meeting. A black rectangle here
+           would read as a broken stream. -->
+      <div v-if="!videoEnabled" class="live-voice-stage" data-role="no-picture">
         <Mic :size="34" />
-        <div class="live-voice-stage__title">{{ t('share.live.voiceTitle') }}</div>
-        <div class="live-voice-stage__desc">{{ t('share.live.voiceDesc') }}</div>
+        <div class="live-voice-stage__title">{{ t('share.live.noPictureTitle') }}</div>
+        <div class="live-voice-stage__desc">{{ t('share.live.noPictureDesc') }}</div>
       </div>
 
       <!-- Connection health. Only shown once there is a reading, and it never

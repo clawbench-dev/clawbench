@@ -27,15 +27,15 @@ test.describe('Meeting tab', () => {
     await expect(page.locator('[data-role="meeting-title"]')).toHaveCount(0)
   })
 
-  test('create is its own page, with the name first and the two meeting types', async ({ page }) => {
+  test('create is its own page, with the name first and the picture toggles', async ({ page }) => {
     await page.locator('[data-action="meeting-create"]').click()
 
     await expect(page.locator('[data-role="meeting-title"]')).toBeVisible()
-    // The choice is voice vs video; what the video is made of is a detail
-    // underneath it, so there is no "voice tile" in the source grid any more.
-    await expect(page.locator('[data-type="voice"]')).toBeVisible()
-    await expect(page.locator('[data-type="video"]')).toBeVisible()
-    await expect(page.locator('[data-type="video"]')).toHaveClass(/meeting-type--on/)
+    // Meetings have no type: the form is a set of independent toggles, and the
+    // screen/camera pair replaces the old voice/video choice.
+    await expect(page.locator('[data-type="voice"]')).toHaveCount(0)
+    await expect(page.locator('[data-role="meeting-screen"]')).toBeVisible()
+    await expect(page.locator('[data-role="meeting-camera"]')).toBeVisible()
 
     // A picture source is pre-selected (a screen when one can be enumerated),
     // so the only thing missing is the required nickname.
@@ -50,8 +50,9 @@ test.describe('Meeting tab', () => {
     await mic.uncheck()
     await expect(mic).not.toBeChecked()
 
-    await page.locator('[data-type="voice"]').click()
-    await expect(page.locator('[data-type="voice"]')).toHaveClass(/meeting-type--on/)
+    // No picture is a normal meeting, not an invalid one: the button stays
+    // usable and the microphone choice survives.
+    await page.locator('[data-role="meeting-screen"]').uncheck()
     await expect(start).toBeEnabled()
     await expect(mic).not.toBeChecked()
 
@@ -108,11 +109,12 @@ test.describe('Meeting tab', () => {
     expect(cameraOnly).not.toBe(both)
     expect(cameraOnly).not.toBe(screenOnly)
 
-    // "Neither" is the only combination that cannot start a video meeting, so
-    // it is the only one that turns into a warning — same line, warning style.
+    // "Neither" is a normal state, not a warning: the line explains what the
+    // audience gets and the meeting can still start.
     await page.locator('[data-role="meeting-camera"]').uncheck()
-    await expect(picture).toHaveClass(/meeting-warn/)
+    await expect(picture).toHaveClass(/meeting-hint/)
     expect(await picture.textContent()).not.toBe(cameraOnly)
+    await expect(page.locator('[data-action="meeting-start"]')).toBeEnabled()
   })
 
   test('join requires a nickname before it can submit', async ({ page }) => {
@@ -221,14 +223,14 @@ test.describe('Meeting back gesture', () => {
  * The whole publisher flow, with no media at all.
  *
  * A denied microphone does NOT abort a meeting (the audience still gets the
- * picture / the room), so headless Chromium can drive this end to end: create a
- * voice meeting, send a chat line, end it, and read that line back from the
- * record the meeting left behind. The transcript stays empty because no STT
- * provider is configured here — which is itself a case worth covering: the
- * record and the chat must not depend on transcription.
+ * room), so headless Chromium can drive this end to end: create a meeting with
+ * no picture and no microphone, send a chat line, end it, and read that line
+ * back from the record the meeting left behind. The transcript stays empty
+ * because no STT provider is configured here — which is itself a case worth
+ * covering: the record and the chat must not depend on transcription.
  */
 test.describe('Meeting flow', () => {
-  test('create a voice meeting, chat, end, and read the chat back from the record', async ({ page }) => {
+  test('create a meeting with no picture, chat, end, and read the chat back', async ({ page }) => {
     await page.goto('/')
     await page.locator('.dock-btn[data-tab="live"]').filter({ visible: true }).first().click()
 
@@ -236,7 +238,10 @@ test.describe('Meeting flow', () => {
     await page.locator('[data-role="meeting-title"]').fill('E2E 语音会议')
     // The nickname is required since it is the account identity viewers see.
     await page.locator('[data-role="meeting-nick"]').fill('E2E 用户')
-    await page.locator('[data-type="voice"]').click()
+    // No meeting type to pick: just turn the picture off (headless Chromium has
+    // no screen to capture).
+    await page.locator('[data-role="meeting-screen"]').uncheck()
+    await page.locator('[data-role="meeting-mic"]').uncheck()
     await page.locator('[data-action="meeting-start"]').click()
 
     // The stage replaces the create page once the room is up.

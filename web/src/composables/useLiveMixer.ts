@@ -49,7 +49,9 @@ export function rmsLevel(bytes: Uint8Array): number {
 
 export class LiveMixer {
   private readonly ctx: AudioContext
-  private readonly systemSource: MediaStreamAudioSourceNode | null
+  private systemSource: MediaStreamAudioSourceNode | null
+  /** The stream `systemSource` was built from, so a repeat call is a no-op. */
+  private systemStream: MediaStream | null
   private readonly micSource: MediaStreamAudioSourceNode | null
   private readonly slots = new Map<string, ViewerSlot>()
   /**
@@ -66,15 +68,43 @@ export class LiveMixer {
     this.ctx = ctx
     // A missing track is normal (no system audio on macOS, or the user turned
     // the microphone off). The graph simply has fewer inputs.
-    this.systemSource =
-      systemStream && systemStream.getAudioTracks().length > 0
-        ? ctx.createMediaStreamSource(systemStream)
-        : null
+    this.systemStream =
+      systemStream && systemStream.getAudioTracks().length > 0 ? systemStream : null
+    this.systemSource = this.systemStream ? ctx.createMediaStreamSource(this.systemStream) : null
     this.micSource =
       micStream && micStream.getAudioTracks().length > 0
         ? ctx.createMediaStreamSource(micStream)
         : null
     if (this.micSource) this.tap('self', this.micSource)
+  }
+
+  /**
+   * Swap the system-audio input mid-meeting.
+   *
+   * Meetings can start or stop a screen share at any time, and the loopback
+   * track arrives with the screen capture — so the input the graph was built
+   * with is not necessarily the one it needs a minute later. Rewiring the
+   * source node is enough: the per-viewer destinations are stable.
+   *
+   * Passing the same stream twice is a no-op, so callers can be liberal.
+   */
+  setSystemStream(stream: MediaStream | null): void {
+    const next = stream && stream.getAudioTracks().length > 0 ? stream : null
+    if (next === this.systemStream) return
+    const previous = this.systemSource
+    this.systemStream = next
+    this.systemSource = next ? this.ctx.createMediaStreamSource(next) : null
+    if (this.systemSource) {
+      for (const slot of this.slots.values()) this.systemSource.connect(slot.dest)
+    }
+    if (previous) {
+      // Drops every edge, including the per-viewer ones just replaced.
+      try {
+        previous.disconnect()
+      } catch {
+        /* already disconnected */
+      }
+    }
   }
 
   /** Tap a node for level metering; a context without analysers is fine. */
