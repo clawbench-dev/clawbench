@@ -17,7 +17,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
+	"time"
 
 	"clawbench/internal/frontend"
 	"clawbench/internal/middleware"
@@ -42,6 +45,10 @@ const shareDocSegment = "doc"
 // the resolver cannot drift apart.
 const shareLocalSegment = "local"
 
+// shareListSegment is the URL path segment that lists a shared directory
+// (see serveShareListing). Only directory shares expose it.
+const shareListSegment = "list"
+
 // shareSessionSegment is the URL path segment that addresses a conversation
 // share payload (see serveShareSessionPayload).
 const shareSessionSegment = "session"
@@ -59,12 +66,13 @@ const shareSignalSegment = "signal"
 // token is the credential.
 const shareNotesSegment = "notes"
 
-// shareKindFile and shareKindSession are the `kind` values the share meta
-// endpoint reports, telling the share SPA which renderer to use. Kept distinct
-// from entryTypeFile, which classifies a directory-search entry rather than a
-// share.
+// shareKindFile, shareKindDir and shareKindSession are the `kind` values the
+// share meta endpoint reports, telling the share SPA which renderer to use.
+// Kept distinct from entryTypeFile, which classifies a directory-search entry
+// rather than a share.
 const (
 	shareKindFile    = "file"
+	shareKindDir     = "dir"
 	shareKindSession = "session"
 	// shareKindLive is a live screen/audio share. Its token resolves from the
 	// in-memory registry rather than a database row (see serveShareMeta).
@@ -119,8 +127,9 @@ func shareRequestPath(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return req.Path, true
 }
 
-// resolveShareTarget validates the requested path and confirms it is a file
-// (directories cannot be shared). Returns the absolute path.
+// resolveShareTarget validates the requested path and confirms it is a regular
+// file or a directory. Devices, sockets and other special files are refused:
+// streaming one would block a public request indefinitely.
 func resolveShareTarget(w http.ResponseWriter, r *http.Request, pathStr string) (string, bool) {
 	absPath, ok := resolveAbsPath(w, r, pathStr)
 	if !ok {
@@ -131,7 +140,7 @@ func resolveShareTarget(w http.ResponseWriter, r *http.Request, pathStr string) 
 		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
 		return "", false
 	}
-	if info.IsDir() {
+	if !info.IsDir() && !info.Mode().IsRegular() {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NotAFile")
 		return "", false
 	}
@@ -144,7 +153,11 @@ func resolveShareTarget(w http.ResponseWriter, r *http.Request, pathStr string) 
 // project cookie — the boundary must be captured here, while the request is
 // still authenticated.
 //
-// A shared file inside the active project gets the project root as its
+// A shared DIRECTORY is its own boundary. The link opens that folder, so the
+// project around it must stay out of reach; widening to the project root would
+// let a token holder read every sibling file.
+//
+// A shared FILE inside the active project gets the project root as its
 // boundary, which is what the share SPA needs: the markdown renderer rewrites
 // media references to ?path=<abs> using the document's own directory, and a
 // reference like ../images/pic.jpg legitimately resolves above that directory
@@ -158,6 +171,10 @@ func resolveShareTarget(w http.ResponseWriter, r *http.Request, pathStr string) 
 // With no cookie we therefore fall back to the shared file's own directory,
 // the only choice that cannot widen what the link exposes.
 func resolveShareRoot(r *http.Request, absPath string) string {
+	if info, err := os.Stat(absPath); err == nil && info.IsDir() {
+		return absPath
+	}
+
 	fileDir := filepath.Dir(absPath)
 
 	projectPath := middleware.GetProjectFromCookie(r)
@@ -251,6 +268,9 @@ type shareListItem struct {
 	Path      string `json:"path"` // display path (project-relative when under project, else absolute)
 	CreatedAt string `json:"createdAt"`
 	Exists    bool   `json:"exists"`
+	// IsDir lets the drawer render a folder icon (the link opens a listing
+	// rather than a file preview).
+	IsDir bool `json:"isDir"`
 }
 
 // ServeShareList lists all active shares (GET) or revokes one by token (DELETE).
@@ -285,7 +305,7 @@ func serveShareList(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]shareListItem, 0, len(shares))
 	for _, s := range shares {
-		_, statErr := os.Stat(s.Path)
+		info, statErr := os.Stat(s.Path)
 		exists := statErr == nil
 
 		display := s.Path
@@ -302,6 +322,7 @@ func serveShareList(w http.ResponseWriter, r *http.Request) {
 			Path:      display,
 			CreatedAt: formatShareTime(s.CreatedAt),
 			Exists:    exists,
+			IsDir:     exists && info.IsDir(),
 		})
 	}
 
@@ -392,16 +413,14 @@ func parseSharePublicPath(urlPath string) (token, rest string, ok bool) {
 //
 // shareRoot is the boundary captured when the share was created (see
 // resolveShareRoot); an empty value (a row predating the column) falls back to
-// the shared file's own directory, the fail-closed direction. Callers write the
-// uniform 404 themselves so the rejection cannot be told apart from "missing".
+// the shared target itself when it is a directory, or to its own directory
+// otherwise — both fail closed. Callers write the uniform 404 themselves so the
+// rejection cannot be told apart from "missing".
 func confineSharePath(queryPath, sharedAbsPath, shareRoot string) (string, bool) {
 	if !strings.HasPrefix(queryPath, "/") && !filepath.IsAbs(queryPath) {
 		return "", false
 	}
-	root := shareRoot
-	if root == "" {
-		root = filepath.Dir(sharedAbsPath)
-	}
+	root := shareScopeRoot(sharedAbsPath, shareRoot)
 	// filepath.Abs only errors for a drive-relative path whose working
 	// directory is gone (Windows); treat that exactly like an out-of-scope
 	// target so there is a single rejection path.
@@ -452,10 +471,14 @@ func serveShareSessionSubpath(w http.ResponseWriter, r *http.Request, token, res
 }
 
 // ServeSharePublic serves the unauthenticated token-scoped data endpoints:
+//   - GET /api/share/{token}             → FileContent JSON (shared file) or the
+//     listing JSON (shared directory)
 //   - GET /api/share/{token}/file        → FileContent JSON (shared file)
+//   - GET /api/share/{token}/list[?path=] → read-only listing of a shared
+//     directory (and of any subdirectory inside it)
 //   - GET /api/share/{token}/content?path= → FileContent JSON for a file the
 //     shared document references (same JSON shape as /file, so the share SPA
-//     can render it in place); directories are refused (no listing endpoint)
+//     can render it in place); directories are refused
 //   - GET /api/share/{token}/download    → raw bytes with Content-Disposition
 //     (?path= downloads a referenced file instead of the shared one)
 //   - GET /api/share/{token}/local/{rel} → raw bytes resolved against the shared
@@ -519,8 +542,19 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 // that function's branch count readable.
 func serveShareFileRoute(w http.ResponseWriter, r *http.Request, rest, absPath, shareRoot string) {
 	switch {
-	case rest == "" || rest == entryTypeFile:
+	case rest == "":
+		// The bare token endpoint is the share's data entry point: a file share
+		// answers with its content, a directory share with its listing (this is
+		// also the URL the discovery block advertises).
+		if shareIsFolderShare(absPath, shareRoot) {
+			serveShareListing(w, r, absPath, shareRoot)
+			return
+		}
 		serveShareFileContent(w, r, absPath)
+	case rest == entryTypeFile:
+		serveShareFileContent(w, r, absPath)
+	case rest == shareListSegment:
+		serveShareListing(w, r, absPath, shareRoot)
 	case rest == "content":
 		// Same JSON payload as /file, but for a path the shared document
 		// references (?path=). The share SPA renders it in place.
@@ -552,6 +586,12 @@ func serveShareFileContent(w http.ResponseWriter, r *http.Request, absPath strin
 	info, err := os.Stat(absPath)
 	if err != nil || info.IsDir() {
 		// Shared file deleted/moved since the link was created → 404.
+		http.NotFound(w, r)
+		return
+	}
+	if !info.Mode().IsRegular() {
+		// A FIFO/device inside a shared folder would block this public request
+		// (os.ReadFile never returns). Same 404 as everything else here.
 		http.NotFound(w, r)
 		return
 	}
@@ -625,6 +665,235 @@ func serveShareFileContent(w http.ResponseWriter, r *http.Request, absPath strin
 	})
 }
 
+// ─── Shared-directory listing ────────────────────────────────────────────────
+
+// shareListEntry is one row of a shared directory's listing. It carries only
+// what the public page renders: the name, whether it is a folder, its size and
+// its mtime. The absolute path is derived by the SPA from the listing's own
+// `path` + the name, so no per-entry path is disclosed.
+type shareListEntry struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"` // shareKindDir | shareKindFile
+	Size     int64  `json:"size,omitempty"`
+	Modified string `json:"modified,omitempty"`
+}
+
+// shareListResponse is the payload of a shared-directory listing.
+//
+// Kind tells the share SPA which renderer to use: "dir" carries `entries`,
+// "file" only identifies the target (the SPA then mounts the normal file view
+// for a deep link such as /share/{token}?path=<file>).
+//
+// Root, Path, Parent and Crumbs are absolute and computed here, so the SPA
+// never has to split or join platform paths itself (Windows separators, drive
+// letters and UNC roots all stay server-side). Parent is null when the target
+// is the share root or sits directly in it — in both cases "up" is the bare
+// share URL.
+type shareListResponse struct {
+	Kind    string            `json:"kind"`
+	Name    string            `json:"name"`
+	Path    string            `json:"path"`
+	Root    string            `json:"root"`
+	Parent  *string           `json:"parent"`
+	AtRoot  bool              `json:"atRoot"`
+	Crumbs  []shareBreadcrumb `json:"crumbs,omitempty"`
+	Entries []shareListEntry  `json:"entries,omitempty"`
+}
+
+// shareBreadcrumb is one clickable step from the share root to the current
+// folder. The first entry is always the share root itself.
+type shareBreadcrumb struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+// serveShareListing serves the read-only listing of a shared DIRECTORY.
+//
+// Listing is only available for directory shares. A FILE share stores the
+// PROJECT root as its confinement root, so listing it would hand a token holder
+// the entire project — the very thing resolveShareRoot keeps out of a folder
+// share's reach. `?path=` selects a subdirectory, or a file inside the share
+// (reported with kind=file so the SPA can open it in the normal preview).
+func serveShareListing(w http.ResponseWriter, r *http.Request, sharedAbsPath, shareRoot string) {
+	if !shareIsFolderShare(sharedAbsPath, shareRoot) {
+		http.NotFound(w, r)
+		return
+	}
+	root := shareScopeRoot(sharedAbsPath, shareRoot)
+
+	target := sharedAbsPath
+	if queryPath := r.URL.Query().Get("path"); queryPath != "" {
+		absTarget, ok := confineSharePath(queryPath, sharedAbsPath, root)
+		if !ok {
+			// Out of scope is indistinguishable from missing: this endpoint is
+			// public, so it must not reveal paths the token does not cover.
+			http.NotFound(w, r)
+			return
+		}
+		target = absTarget
+	}
+
+	info, err := os.Stat(target)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	resp := shareListResponse{
+		Kind:   shareKindFile,
+		Name:   info.Name(),
+		Path:   target,
+		Root:   root,
+		Parent: shareParentDir(target, root),
+		AtRoot: shareSamePath(target, root),
+	}
+	if !info.IsDir() {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	resp.Crumbs = shareBreadcrumbTrail(target, root)
+
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		// Unreadable (permissions, or replaced by a file mid-request): the same
+		// uniform 404 as everything else here.
+		http.NotFound(w, r)
+		return
+	}
+
+	resp.Kind = shareKindDir
+	// Resolve the root ONCE: isPathUnderBase evaluates the root's symlinks, and
+	// doing that per entry turns a large folder (node_modules-sized) into
+	// hundreds of thousands of syscalls for one anonymous request.
+	evalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	resp.Entries = make([]shareListEntry, 0, len(entries))
+	for _, entry := range entries {
+		child := filepath.Join(target, entry.Name())
+		// Lstat first: a non-symlink child of a directory that is already inside
+		// the share cannot escape it, so only links need resolving.
+		childInfo, statErr := entry.Info()
+		if statErr != nil {
+			continue
+		}
+		if childInfo.Mode()&os.ModeSymlink != 0 {
+			resolved, evalErr := filepath.EvalSymlinks(child)
+			if evalErr != nil || !model.IsPathUnderBase(resolved, evalRoot) {
+				// A link pointing outside the share: advertising it would only
+				// produce a 404 on the next request, and the listed name is
+				// itself information the token holder should not get.
+				continue
+			}
+			childInfo, statErr = os.Stat(child)
+			if statErr != nil {
+				continue
+			}
+		}
+		// Devices, sockets and FIFOs are not shareable content: reading one can
+		// block a public request forever. Listing them would also advertise an
+		// entry whose only possible outcome is a failed open.
+		if !childInfo.IsDir() && !childInfo.Mode().IsRegular() {
+			continue
+		}
+		item := shareListEntry{
+			Name:     entry.Name(),
+			Type:     shareKindFile,
+			Size:     childInfo.Size(),
+			Modified: childInfo.ModTime().Format(time.RFC3339),
+		}
+		if childInfo.IsDir() {
+			item.Type = shareKindDir
+			item.Size = 0
+		}
+		resp.Entries = append(resp.Entries, item)
+	}
+
+	// Folders first, then name — the same ordering the in-app file manager uses,
+	// so a shared folder reads the same way as the one it was shared from.
+	sort.SliceStable(resp.Entries, func(i, j int) bool {
+		a, b := resp.Entries[i], resp.Entries[j]
+		if (a.Type == shareKindDir) != (b.Type == shareKindDir) {
+			return a.Type == shareKindDir
+		}
+		return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+	})
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// shareParentDir returns the directory the SPA's "up" action should open, or
+// nil when that is the bare share URL (the target IS the root, or sits directly
+// in it).
+func shareParentDir(target, root string) *string {
+	if shareSamePath(target, root) {
+		return nil
+	}
+	parent := filepath.Dir(target)
+	if shareSamePath(parent, root) || !isPathUnderBase(parent, root) {
+		return nil
+	}
+	return &parent
+}
+
+// shareBreadcrumbTrail builds the root→target trail for a directory listing.
+// The share root is always the first crumb; a target equal to the root yields
+// a single crumb. Segment joining happens here (not in the SPA) so the trail is
+// correct for every platform the server runs on.
+func shareBreadcrumbTrail(target, root string) []shareBreadcrumb {
+	trail := []shareBreadcrumb{{Name: filepath.Base(root), Path: root}}
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == "." || rel == "" {
+		return trail
+	}
+	current := root
+	for _, segment := range strings.Split(filepath.ToSlash(rel), "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			continue
+		}
+		current = filepath.Join(current, segment)
+		trail = append(trail, shareBreadcrumb{Name: segment, Path: current})
+	}
+	return trail
+}
+
+// shareSamePath compares two cleaned paths, case-insensitively on Windows
+// (where the same directory can be reached with different casing).
+func shareSamePath(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// shareTargetIsDir reports whether the share's stored target is a directory.
+func shareTargetIsDir(absPath string) bool {
+	info, err := os.Stat(absPath)
+	return err == nil && info.IsDir()
+}
+
+// shareIsFolderShare reports whether this token was created FOR a directory,
+// i.e. the target is a directory AND it is the share's own confinement root.
+//
+// Both halves are load-bearing. Checking only "is it a directory now" would
+// turn a FILE share whose file was later replaced by a directory into a
+// listing of its stored root — and a file share's root is the PROJECT, so that
+// would hand the token holder the whole project. Folder shares are the only
+// ones that store their own directory as the root.
+func shareIsFolderShare(sharedAbsPath, shareRoot string) bool {
+	if !shareTargetIsDir(sharedAbsPath) {
+		return false
+	}
+	return shareSamePath(sharedAbsPath, shareScopeRoot(sharedAbsPath, shareRoot))
+}
+
 // serveShareRaw streams raw file bytes, optionally with a download disposition.
 func serveShareRaw(w http.ResponseWriter, r *http.Request, absPath, name string, download bool) {
 	info, err := os.Stat(absPath)
@@ -633,6 +902,12 @@ func serveShareRaw(w http.ResponseWriter, r *http.Request, absPath, name string,
 		return
 	}
 	if info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	if !info.Mode().IsRegular() {
+		// Never open a FIFO/device on a public endpoint: the open (or the first
+		// read) can block forever.
 		http.NotFound(w, r)
 		return
 	}
@@ -767,6 +1042,12 @@ func shareScopeRoot(sharedAbsPath, shareRoot string) string {
 	if shareRoot != "" {
 		return shareRoot
 	}
+	// Rows predating the root column: a DIRECTORY share is confined to the
+	// directory itself. Falling back to its parent (the file rule) would widen
+	// the token's reach by exactly one level, so the two cases are kept apart.
+	if shareTargetIsDir(sharedAbsPath) {
+		return sharedAbsPath
+	}
 	return filepath.Dir(sharedAbsPath)
 }
 
@@ -781,6 +1062,12 @@ func shareScopeRoot(sharedAbsPath, shareRoot string) string {
 func serveShareDocFile(w http.ResponseWriter, r *http.Request, absPath string) {
 	info, err := os.Stat(absPath)
 	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	// Same rule as every other public reader: never open a FIFO/device, whose
+	// open or first read can block the request forever.
+	if !info.Mode().IsRegular() {
 		http.NotFound(w, r)
 		return
 	}
@@ -852,9 +1139,10 @@ const shareDocSandboxCSP = "sandbox allow-scripts allow-popups allow-popups-to-e
 	"frame-ancestors 'self'; object-src 'none'"
 
 // serveShareLocal serves a file referenced by the shared document (markdown
-// images etc.). Relative paths resolve against the shared file's directory;
-// absolute paths are accepted via ?path= and confined to the share's scope
-// (see confineSharePath).
+// images etc.). Relative paths resolve against the shared file's directory —
+// or, for a directory share, against the shared directory itself, which is the
+// base every file inside it uses. Absolute paths are accepted via ?path= and
+// confined to the share's scope (see confineSharePath).
 func serveShareLocal(w http.ResponseWriter, r *http.Request, sharedAbsPath, shareRoot, rest string) {
 	// Absolute path via ?path= — referenced outside the shared file's dir.
 	if queryPath := r.URL.Query().Get("path"); queryPath != "" {
@@ -887,6 +1175,11 @@ func serveShareLocal(w http.ResponseWriter, r *http.Request, sharedAbsPath, shar
 	}
 
 	baseDir := filepath.Dir(sharedAbsPath)
+	if shareTargetIsDir(sharedAbsPath) {
+		// A directory share's "document directory" is the shared folder itself,
+		// so `/local/<rel>` addresses a file directly inside it.
+		baseDir = sharedAbsPath
+	}
 	absTarget, valid := model.ValidatePath(baseDir, rel)
 	if !valid {
 		http.NotFound(w, r)
@@ -958,8 +1251,12 @@ func shareDiscoveryFor(token string) (shareDiscovery, bool) {
 			MessageCount: s.MessageCount,
 		}, true
 	}
-	if _, name, _, ok, err := service.GetFileShareByToken(token); err == nil && ok {
-		return shareDiscovery{Token: token, Title: name, Kind: shareKindFile}, true
+	if path, name, root, ok, err := service.GetFileShareByToken(token); err == nil && ok {
+		kind := shareKindFile
+		if shareIsFolderShare(path, root) {
+			kind = shareKindDir
+		}
+		return shareDiscovery{Token: token, Title: name, Kind: kind}, true
 	}
 	return shareDiscovery{}, false
 }

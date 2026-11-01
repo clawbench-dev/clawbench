@@ -173,3 +173,87 @@ test.describe('Shared HTML document', () => {
     }
   })
 })
+
+/**
+ * Shared folder.
+ *
+ * A folder share opens a read-only browser: the listing, in-place navigation
+ * into subfolders, and a hand-off to the normal file preview. The security
+ * boundary is the folder itself — the project around it must stay out of reach
+ * even though the file view legitimately reaches the project root for its own
+ * shares.
+ */
+test.describe('Shared folder', () => {
+  async function shareFolder(page: import('@playwright/test').Page): Promise<{ path: string; token: string }> {
+    return page.evaluate(async () => {
+      const resp = await fetch('/api/share', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: 'web/landing' }),
+      })
+      if (!resp.ok) throw new Error(`share: ${resp.status}`)
+      return (await resp.json()) as { path: string; token: string }
+    })
+  }
+
+  test('lists the folder, browses into a subfolder and opens a file read-only', async ({ page }) => {
+    const shared = await shareFolder(page)
+
+    const anon = await page.context().browser()!.newContext()
+    try {
+      const sharePage = await anon.newPage()
+
+      const meta = await anon.request.get(`/api/share/${shared.token}/meta`)
+      expect(meta.status()).toBe(200)
+      expect(await meta.json()).toMatchObject({ kind: 'dir' })
+
+      await sharePage.goto(shared.path)
+
+      // Root listing: a folder and a file, with the folder first.
+      await expect(sharePage.locator('.dir-row').first()).toBeVisible({ timeout: 15000 })
+      await expect(sharePage.locator('[data-entry-name="index.html"]')).toBeVisible()
+      await expect(sharePage.locator('[data-entry-name="css"]')).toBeVisible()
+      await expect(sharePage.locator('.dir-row').first()).toHaveAttribute('data-entry-type', 'dir')
+
+      // Enter a subfolder in place, then come back through the breadcrumb.
+      await sharePage.locator('[data-entry-name="css"]').click()
+      await expect(sharePage.locator('[data-entry-name="landing.css"]')).toBeVisible()
+      await expect(sharePage.locator('.dir-crumbs')).toContainText('css')
+
+      await sharePage.locator('.dir-crumb').first().click()
+      await expect(sharePage.locator('[data-entry-name="index.html"]')).toBeVisible()
+
+      // Open the file: the normal preview renders, and the URL is a deep link.
+      await sharePage.locator('[data-entry-name="index.html"]').click()
+      await expect(sharePage.locator('iframe.share-html-iframe')).toBeVisible({ timeout: 15000 })
+      expect(new URL(sharePage.url()).searchParams.get('path')).toContain('index.html')
+
+      // Read-only: no chat input anywhere on the page.
+      await expect(sharePage.locator('.chat-textarea')).toHaveCount(0)
+    } finally {
+      await anon.close()
+    }
+  })
+
+  test('does not expose the project around the shared folder', async ({ page }) => {
+    const shared = await shareFolder(page)
+
+    const anon = await page.context().browser()!.newContext()
+    try {
+      const listing = await anon.request.get(`/api/share/${shared.token}/list`)
+      expect(listing.status()).toBe(200)
+      const body = (await listing.json()) as { path: string; root: string }
+      expect(body.root).toBe(body.path)
+
+      // `..` out of the shared folder lands in the project (web/), which the
+      // token must NOT cover — the same 404 as a missing path.
+      const outside = `${body.path}/../package.json`
+      const escaped = await anon.request.get(
+        `/api/share/${shared.token}/list?path=${encodeURIComponent(outside)}`,
+      )
+      expect(escaped.status()).toBe(404)
+    } finally {
+      await anon.close()
+    }
+  })
+})

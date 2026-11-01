@@ -4110,7 +4110,10 @@ paths:
     post:
       tags: [Share]
       summary: 创建分享链接
-      description: 需要目标路径（请求体 `{path}`）。
+      description: |
+        需要目标路径（请求体 `{path}`）。文件与**目录**都可分享：文件链接打开只读预览，
+        目录链接打开可浏览的文件列表（`{token}/list`）。已存在分享时重新生成并旋转 token，
+        旧链接立即失效。
       operationId: shareCreate
       requestBody:
         required: true
@@ -4329,7 +4332,8 @@ paths:
       tags: [Share]
       summary: 公开分享数据（token 即凭证）
       description: |
-        免鉴权。子路径分派：`{token}` 或 `{token}/file`（原文件）、`{token}/content?path=`
+        免鉴权。子路径分派：`{token}`（文件返回 FileContent JSON；**目录返回列举 JSON**）、
+        `{token}/file`（原文件）、`{token}/list[?path=]`（目录列举）、`{token}/content?path=`
         （文档内引用的文件，同样返回 FileContent JSON）、`{token}/download`（强制下载，
         支持 `?path=`）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）、
         `{token}/doc/{dirKey}/{rel}`（HTML 文档及其资源，见下）。token 不存在一律 404，
@@ -4349,8 +4353,17 @@ paths:
         实际以分享范围校验为准（编码 `/` 或项目外目录一律 404）。其余资源类型走
         `.css/.js/.woff2` 等网页资源 MIME；基础表 `mimeTypes` 仍**不得**含 `.html`。
 
-        会话分享走另外两个子路径：`{token}/meta`（返回 `kind` 为 `file` 或
-        `session`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回**实时装配**的
+        **目录分享（`{token}/list`）**返回 `{kind, name, path, root, parent, atRoot,
+        crumbs, entries}`：`kind` 为 `dir` 时 `entries` 是 `{name, type, size, modified}`
+        数组（目录在前，再按名称不区分大小写排序，**不隐藏点文件**），`kind` 为 `file`
+        时只标识目标（`?path=` 指向目录内的文件，分享页据此切换到文件预览）。`root` 是
+        创建时快照的分享根，`parent` 为 `null` 表示上一级就是 `{token}` 本身，`crumbs`
+        是根到当前的绝对路径链（服务端拼接，客户端不处理平台分隔符）。越界路径、越界
+        符号链接（列举时直接略过）与不可读目录一律 404，与「不存在」不可区分。**列举仅
+        对目录分享开放**：文件分享的根是项目根，列举会泄漏整个项目，故返回 404。
+
+        会话分享走另外两个子路径：`{token}/meta`（返回 `kind` 为 `file` / `dir` /
+        `session` / `live`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回**实时装配**的
         会话 JSON）。两者同样免鉴权、token 不存在一律 404。
 
         **直播共享**另有 `{token}/signal`（信令 WebSocket）与 `{token}/notes`
@@ -4390,9 +4403,9 @@ paths:
         降级为下载入口；`{token}/download` 与 `{token}/local/...` 流式返回，无大小上限。
 
         `?path=` 仅接受落在**该分享自身范围**内的绝对路径，范围在创建分享时确定并
-        随分享记录持久化（文件在所选项目内 → 项目根；否则 → 该文件所在目录）。
-        范围之外的路径返回 404，与 `RootPaths` 无关。`{token}/content` 对目录返回 404
-        （token 端点不提供目录列举能力）。
+        随分享记录持久化（目录分享 → 该目录本身；文件在所选项目内 → 项目根；否则 →
+        该文件所在目录）。范围之外的路径返回 404，与 `RootPaths` 无关。`{token}/content`
+        对目录返回 404；目录内容请用 `{token}/list`。
       operationId: sharePublic
       security: []
       responses:

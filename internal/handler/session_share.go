@@ -494,14 +494,23 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 		return
 	}
 
-	_, name, _, fileOK, err := service.GetFileShareByToken(token)
+	path, name, root, fileOK, err := service.GetFileShareByToken(token)
 	if err != nil {
 		slog.Error("share: meta file lookup failed", "err", err)
 		model.WriteError(w, model.Internal(err))
 		return
 	}
 	if fileOK {
-		writeJSON(w, http.StatusOK, shareMetaResponse{Kind: shareKindFile, Title: name})
+		// A share of a directory opens the folder listing; a share of a file
+		// opens its preview. The kind is decided from disk, not stored, so a
+		// path that changed type after the link was created still resolves to
+		// what is actually there — but only a share whose ROOT is the target
+		// counts as a folder share (see shareIsFolderShare).
+		kind := shareKindFile
+		if shareIsFolderShare(path, root) {
+			kind = shareKindDir
+		}
+		writeJSON(w, http.StatusOK, shareMetaResponse{Kind: kind, Title: name})
 		return
 	}
 	http.NotFound(w, r)

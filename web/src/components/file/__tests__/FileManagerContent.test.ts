@@ -325,9 +325,9 @@ vi.mock('@/components/file/JumpDirDialog.vue', () => ({
 // target path, so the stub exposes that as an attribute.
 vi.mock('@/components/file/ShareLinkDialog.vue', () => ({
   default: defineComponent({
-    props: ['open', 'file'],
+    props: ['open', 'file', 'isDir'],
     emits: ['close'],
-    template: '<div v-if="open" class="share-link-dialog-stub" :data-path="file && file.path" />',
+    template: '<div v-if="open" class="share-link-dialog-stub" :data-path="file && file.path" :data-isdir="String(!!isDir)" />',
   }),
 }))
 
@@ -1971,14 +1971,29 @@ describe('FileManagerContent — context menu', () => {
       expect(item).toBeTruthy()
     })
 
-    it('hides the share-link item for a directory (directories cannot be shared)', async () => {
+    it('renders the share-link item for a directory too', async () => {
       const wrapper = mountContent()
       wrapper.vm.ctxMenu.visible = true
       wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
       await nextTick()
 
       const item = wrapper.findAll('.context-menu-item').find(el => el.text().includes('分享链接'))
-      expect(item).toBeFalsy()
+      expect(item).toBeTruthy()
+    })
+
+    it('marks a directory target so the dialog can word itself for a folder', async () => {
+      const wrapper = mountContent()
+      wrapper.vm.ctxMenu.visible = true
+      wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'docs', path: 'docs' }
+      await nextTick()
+
+      wrapper.vm.doShareLink()
+      await nextTick()
+
+      expect(wrapper.vm.shareTarget).toEqual({ name: 'docs', path: 'docs', isDir: true })
+      const dialog = wrapper.find('.share-link-dialog-stub')
+      expect(dialog.exists()).toBe(true)
+      expect(dialog.attributes('data-isdir')).toBe('true')
     })
 
     it('opens the dialog with the context-menu entry, then closes the menu', async () => {
@@ -1994,7 +2009,7 @@ describe('FileManagerContent — context menu', () => {
       expect(wrapper.vm.shareDialogOpen).toBe(true)
       // The menu entry, NOT the currently open file (null here) — sharing must
       // work for a file the user never opened.
-      expect(wrapper.vm.shareTarget).toEqual({ name: 'other.md', path: 'docs/other.md' })
+      expect(wrapper.vm.shareTarget).toEqual({ name: 'other.md', path: 'docs/other.md', isDir: false })
       // …and the dialog really receives it (catches a template binding that
       // passes the wrong object even when the state is right).
       const dialog = wrapper.find('.share-link-dialog-stub')

@@ -303,6 +303,23 @@ interface ShareFile {
 
 const { t } = useI18n()
 
+const props = withDefaults(defineProps<{
+  /** Open this file instead of the one named by ?path=. A folder share hands
+   *  the file the reader clicked straight down, so the view does not have to
+   *  re-derive it from the URL. */
+  initialPath?: string
+  /** Offer a Back affordance that LEAVES this view (emits `back-out`) once no
+   *  in-document history remains. Used when mounted for a file inside a shared
+   *  folder: Back then returns to the folder listing instead of reloading the
+   *  (directory) share target. */
+  canBackOut?: boolean
+}>(), {
+  initialPath: '',
+  canBackOut: false,
+})
+
+const emit = defineEmits<{ (e: 'back-out'): void }>()
+
 // ─── State ───
 const loading = ref(true)
 const error = ref('')
@@ -362,8 +379,9 @@ function handleDownload() {
   downloadUrlWithProgress(downloadUrl.value, file.value.name || 'download')
 }
 
-/** Whether Back should be offered: this view pushed at least one entry. */
-const canGoBack = computed(() => pushedDepth.value > 0)
+/** Whether Back should be offered: this view pushed at least one entry, or the
+ *  host told it Back leaves the view entirely (a file inside a folder share). */
+const canGoBack = computed(() => pushedDepth.value > 0 || props.canBackOut)
 
 /** Full-size token-scoped URL for the single-file image / SVG preview. */
 const shareImageUrl = computed(() => {
@@ -568,6 +586,12 @@ function goBack() {
     history.back()
     return
   }
+  if (props.canBackOut) {
+    // A file opened from a folder listing: Back returns to the folder rather
+    // than loading the (directory) share target, which has no file content.
+    emit('back-out')
+    return
+  }
   // No history entry to unwind (e.g. reloaded directly on a deep link): fall
   // back to the shared file itself.
   void loadFile('')
@@ -689,8 +713,9 @@ onMounted(() => {
     return
   }
   setShareToken(token)
-  // A deep link (?path=) opens straight to a referenced file.
-  void loadFile(targetFromUrl())
+  // A deep link (?path=) opens straight to a referenced file; a folder share
+  // passes the clicked file in as a prop.
+  void loadFile(props.initialPath || targetFromUrl())
   window.addEventListener(SHARE_OPEN_FILE_EVENT, onShareOpenFile)
   window.addEventListener('popstate', onPopState)
 })
