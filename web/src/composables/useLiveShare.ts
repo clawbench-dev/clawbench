@@ -178,7 +178,7 @@ const videoEnabled = ref(false)
  *
  * Distinct from "the camera exists": the track stays in the peer connection
  * while off (`enabled = false`), so flipping it back needs no renegotiation.
- * Viewers learn about the change from a `camera-state` frame.
+ * Viewers learn about the change from the `picture-state` frame.
  */
 const cameraEnabled = ref(false)
 /** The camera capture, exposed so the publisher can see itself. */

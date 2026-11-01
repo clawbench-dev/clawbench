@@ -4518,11 +4518,13 @@ paths:
         服务端以 `screen-state` 广播谁在共享；被拒时回 `screen-denied`（`disabled` / `busy` /
         `revoked`）。屏幕采集要求安全上下文（HTTPS），HTTP 页面里浏览器不提供该 API。
 
-        发布端控制帧另有 `set-camera-enabled`（`{type, enabled}`），服务端以 `camera-state`
-        广播给全部观众：摄像头轨始终挂在第 4 条 m-line 上（开关只切 `track.enabled`，
-        不重协商），这个帧只告诉观众端是否渲染摄像头小窗。观众加入时的 `joined` 帧带
-        `video`（有没有画面）、`camera`（发布端摄像头是否开着）与 `hostScreen`（画面是否为
-        屏幕共享）三个独立标志——远程控制与标注只在 `hostScreen` 为真时有意义。
+        发布端控制帧另有 `set-picture`（`{type, video, camera, screen}`），服务端以
+        `picture-state` 广播给全部观众：会议没有类型，画面可以随时开关，三种状态一次带全。
+        开关共享屏幕、开关摄像头都只对已协商的 m-line 做 `replaceTrack`（不重协商）；摄像头轨
+        在关闭时仍挂在 m-line 上（只切 `track.enabled`），这个帧只告诉观众端该渲染什么。
+        观众加入时的 `joined` 帧同样带 `video`（此刻有没有画面）、`camera`（发布端摄像头是否
+        开着）与 `hostScreen`（画面是否为屏幕共享）三个独立标志，取值是**当前**状态而非创建时；
+        远程控制与标注只在 `hostScreen` 为真时有意义。
 
         会话 JSON 另附身份信息供分享页渲染真实智能体图标：`sessionAgent`（会话级智能体，
         单聊用）、`speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`
