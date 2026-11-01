@@ -3287,7 +3287,7 @@ export default {
       providerAgentsValue: '智能体 {agents}',
       providerAuthAutoShort: '自动认证',
       providerAuthAuto: '认证方式：自动',
-      providerWireLabel: '接口协议（codex）',
+      providerWireLabel: 'Codex 调用方式（仅影响 codex）',
       providerWireResponses: 'Responses API（默认）',
       providerWireChat: 'Chat Completions（只提供 /chat/completions 的网关）',
       providerPresetPlaceholder: '从预设选择供应商（可选）',

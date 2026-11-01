@@ -3291,7 +3291,7 @@ export default {
       providerAgentsValue: 'agents {agents}',
       providerAuthAutoShort: 'auto auth',
       providerAuthAuto: 'Auth: auto',
-      providerWireLabel: 'Wire API (codex)',
+      providerWireLabel: 'Codex wire API (affects codex only)',
       providerWireResponses: 'Responses API (default)',
       providerWireChat: 'Chat Completions (gateways that only serve /chat/completions)',
       providerPresetPlaceholder: 'Pick a provider preset (optional)',

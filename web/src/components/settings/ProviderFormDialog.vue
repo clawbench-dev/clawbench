@@ -67,9 +67,15 @@
       <!-- Only codex reads this: its managed config block tells codex whether
            the endpoint speaks the Responses API or plain chat/completions. A
            gateway that serves only the latter 404s every turn when this says
-           "responses", with nothing in the UI pointing at the cause. -->
-      <span class="provider-models-label">{{ t('settings.items.providerWireLabel') }}</span>
+           "responses", with nothing in the UI pointing at the cause.
+           Codex only accepts the openai protocol (see model.providerEnvTable),
+           so for anthropic/gemini providers this control has no meaning at all
+           and used to look like a fourth, peer-level protocol choice. -->
+      <span v-if="draft.protocol === 'openai'" class="provider-models-label">
+        {{ t('settings.items.providerWireLabel') }}
+      </span>
       <select
+        v-if="draft.protocol === 'openai'"
         v-model="draft.wireApi"
         class="provider-input provider-select provider-select--full"
         data-role="wire-api"

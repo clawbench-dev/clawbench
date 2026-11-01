@@ -115,12 +115,23 @@ describe('ProviderFormDialog', () => {
     expect(wrapper.find('.provider-clear').exists()).toBe(false)
   })
 
-  it('defaults the wire API to responses and follows the provider on edit', () => {
+  it('offers the Codex wire API only for openai providers', async () => {
+    // It is a codex-only sub-option of the openai protocol, not a peer of the
+    // protocol select — showing it for anthropic/gemini providers made it read
+    // as a fourth protocol.
+    const created = mountDialog()
+    expect(created.find('[data-role="wire-api"]').exists()).toBe(false)
+
+    await created.find('.provider-grid select').setValue('openai')
+    const wire = created.find('[data-role="wire-api"]')
+    expect(wire.exists()).toBe(true)
+    expect((wire.element as HTMLSelectElement).value).toBe('responses')
+
+    const anthropic = mountDialog({ provider: { ...existing, protocol: 'anthropic' } })
+    expect(anthropic.find('[data-role="wire-api"]').exists()).toBe(false)
+
     // codex's managed block is rendered from this value; a chat-only gateway
     // that keeps "responses" fails every turn.
-    const created = mountDialog()
-    expect((created.find('[data-role="wire-api"]').element as HTMLSelectElement).value).toBe('responses')
-
     const edited = mountDialog({ provider: { ...existing, wireApi: 'chat' } })
     expect((edited.find('[data-role="wire-api"]').element as HTMLSelectElement).value).toBe('chat')
   })
