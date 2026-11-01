@@ -25,10 +25,15 @@
         {{ t('common.loading') }}
       </div>
       <div v-else-if="error" class="meeting-error">{{ t('meeting.list.loadFailed') }}</div>
-      <div v-else-if="sessions.length === 0" class="meeting-empty">
-        <component :is="MEETING_ICON" :size="28" />
-        <span>{{ t('meeting.list.empty') }}</span>
-      </div>
+      <!-- The empty state speaks the card language the other dock tabs use:
+           a muted glyph, a title, and one line about what lands here. The
+           footer's two buttons are the action, so the card stays text-only. -->
+      <MeetingEmpty
+        v-else-if="sessions.length === 0"
+        :icon="MEETING_ICON"
+        :title="t('meeting.list.empty')"
+        :desc="t('meeting.list.emptyDesc')"
+      />
       <div v-else class="meeting-list">
         <div
           v-for="r in rows"
@@ -104,7 +109,6 @@
           </button>
         </div>
       </div>
-      <div class="meeting-hint">{{ t('meeting.list.hint') }}</div>
     </div>
 
     <!-- Footer actions use the shared .fbtn pills, the same language the task
@@ -142,6 +146,7 @@ import { MEETING_ICON } from '@/utils/meetingIcon'
 import { formatFullTimestamp, formatRelativeTime, startOfLocalDay } from '@/utils/format'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
+import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import {
@@ -587,16 +592,6 @@ onMounted(() => {
   color: var(--color-red);
   font-size: var(--font-size-sm);
 }
-.meeting-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-3, 6px);
-  padding: var(--space-8, 20px) 0;
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-}
-
 .meeting-icon-btn {
   display: inline-flex;
   align-items: center;

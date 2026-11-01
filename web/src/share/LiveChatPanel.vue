@@ -109,7 +109,12 @@ watch(
   padding: 0;
 }
 
+/* Auto margins centre the one line in the otherwise empty list — the same
+   place a reader looks for the first message. Without them it sat in the top
+   corner, which reads as a message that failed to render. */
 .live-chat__empty {
+  margin: auto;
+  text-align: center;
   color: var(--text-muted, #8b949e);
   font-size: var(--font-size-xs, 11px);
 }

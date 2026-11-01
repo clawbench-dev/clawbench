@@ -137,11 +137,22 @@ describe('MeetingResources', () => {
     )
   })
 
-  it('shows the empty hint when there is nothing to list', () => {
-    const wrapper = mountResources({ groups: [], total: 0 })
+  it('shows the empty card when the meeting left nothing at all', () => {
+    const wrapper = mountResources({ groups: [], total: 0, folderPath: '' })
 
     expect(wrapper.find('.res-row').exists()).toBe(false)
+    expect(wrapper.find('.meeting-empty').exists()).toBe(true)
+    expect(wrapper.find('.meeting-empty__title').text()).toBe(enMessages.meeting.resources.emptyTitle)
     expect(wrapper.text()).toContain(enMessages.meeting.resources.empty)
+  })
+
+  it('keeps the small hint when a folder exists but holds nothing', () => {
+    // The header above already states the folder and its zero count, so the
+    // full card would repeat it; the hint is the right weight there.
+    const wrapper = mountResources({ groups: [], total: 0 })
+
+    expect(wrapper.find('.meeting-empty').exists()).toBe(false)
+    expect(wrapper.find('.res-hint').text()).toContain(enMessages.meeting.resources.empty)
   })
 
   it('emits reload from the error state', async () => {

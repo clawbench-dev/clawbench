@@ -28,7 +28,19 @@
         </div>
       </div>
 
-      <div v-if="total === 0" class="res-hint">
+      <!-- Nothing at all: no meeting folder, nothing referenced. A single muted
+           line left at the top of an otherwise blank pane reads as a failure,
+           so the whole-tab case gets the shared empty card. When a folder does
+           exist the header above already explains the zero, and a small hint is
+           the right weight. -->
+      <MeetingEmpty
+        v-if="total === 0 && !folderPath"
+        :icon="FolderOpen"
+        :title="t('meeting.resources.emptyTitle')"
+        :desc="t('meeting.resources.empty')"
+        :fill="false"
+      />
+      <div v-else-if="total === 0" class="res-hint">
         <Info :size="12" />
         {{ t('meeting.resources.empty') }}
       </div>
@@ -132,12 +144,14 @@ import {
   File,
   FileText,
   Folder,
+  FolderOpen,
   Image as ImageIcon,
   Info,
   Link2,
   Paperclip,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import MeetingEmpty from './MeetingEmpty.vue'
 import { useToast } from '@/composables/useToast'
 import type { MeetingResourceGroup, MeetingResourceItem } from '@/composables/useMeetingResources'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation'

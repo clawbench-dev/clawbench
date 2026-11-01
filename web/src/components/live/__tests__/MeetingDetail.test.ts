@@ -14,7 +14,17 @@ import MeetingDetail from '../MeetingDetail.vue'
 
 vi.mock('lucide-vue-next', () => {
   const stub = { render: () => null }
-  return { ArrowLeft: stub, Copy: stub, ExternalLink: stub, MessageSquare: stub, Trash2: stub }
+  return {
+    ArrowLeft: stub,
+    Captions: stub,
+    Copy: stub,
+    ExternalLink: stub,
+    FileQuestion: stub,
+    FileText: stub,
+    MessageSquare: stub,
+    MessagesSquare: stub,
+    Trash2: stub,
+  }
 })
 
 vi.mock('@/utils/appLog', () => ({
@@ -132,6 +142,19 @@ beforeEach(() => {
 })
 
 describe('MeetingDetail', () => {
+  it('draws a card, not a stray sentence, when the record is gone', async () => {
+    getMock.mockResolvedValue(null)
+    const w = mountDetail()
+    await flushPromises()
+
+    const card = w.find('.meeting-empty')
+    expect(card.exists()).toBe(true)
+    expect(card.find('.meeting-empty__title').text()).toBe(enMessages.meeting.detail.notFoundTitle)
+    expect(card.find('.meeting-empty__desc').text()).toBe(enMessages.meeting.detail.notFoundDesc)
+    // No tabs for a record that is not there.
+    expect(w.find('.meeting-tabs').exists()).toBe(false)
+  })
+
   it('renders the minutes through the shared document body', async () => {
     const w = mountDetail()
     await flushPromises()
@@ -196,15 +219,17 @@ describe('MeetingDetail', () => {
     const w = mountDetail()
     await flushPromises()
 
-    expect(w.text()).toContain(enMessages.meeting.detail.noMinutes)
+    expect(w.find('.meeting-empty').exists()).toBe(true)
+    expect(w.text()).toContain(enMessages.meeting.detail.emptyMinutesTitle)
+    expect(w.text()).toContain(enMessages.meeting.detail.emptyMinutesDesc)
     expect(w.findAll('.meeting-file')).toHaveLength(0)
   })
 
-  it('renders only the empty hint when a meeting has no transcript', async () => {
+  it('renders only the empty state when a meeting has no transcript', async () => {
     // The template comment above the transcript <pre> used to contain the
     // two-dash arrow. An HTML comment ends at the first close marker, so the
     // rest of the comment ("` arrows. -->") leaked into the pane as visible
-    // text above the empty hint. Assert the pane contains exactly the hint.
+    // text above the empty state. Assert the pane contains exactly the card.
     getMock.mockResolvedValue(record({ hasTranscript: false }))
     artifactMock.mockImplementation(async (_token: string, kind: string) =>
       kind === 'minutes' ? { content: '# MINUTES', file: 'minutes.md' } : null,
@@ -214,7 +239,13 @@ describe('MeetingDetail', () => {
 
     await w.find('[data-tab="transcript"]').trigger('click')
 
-    expect(w.find('.meeting-body').text().trim()).toBe(enMessages.meeting.detail.noTranscript)
+    const pane = w.find('.meeting-body')
+    expect(pane.find('.meeting-empty').exists()).toBe(true)
+    // `textContent` concatenates the two block elements with no separator; the
+    // exact comparison is what catches a leaked HTML comment.
+    expect(pane.text().trim()).toBe(
+      enMessages.meeting.detail.emptyTranscriptTitle + enMessages.meeting.detail.emptyTranscriptDesc,
+    )
   })
 
   // The stored artifact is a subtitle track. The tab is a reading surface, so
@@ -296,7 +327,7 @@ describe('MeetingDetail', () => {
       expect(getMock).toHaveBeenCalledTimes(2) // the poll really ran
       expect(w.find('.meeting-center').exists()).toBe(false)
       expect(w.find('.meeting-tabs').exists()).toBe(true)
-      expect(w.find('.meeting-body').text()).toContain(enMessages.meeting.detail.noMinutes)
+      expect(w.find('.meeting-body').text()).toContain(enMessages.meeting.detail.emptyMinutesTitle)
 
       releasePoll?.()
       await flushPromises()

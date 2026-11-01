@@ -28,8 +28,12 @@
       <LoadingIndicator size="sm" inline />
       {{ t('common.loading') }}
     </div>
-    <div v-else-if="!record" class="meeting-body meeting-center">
-      <span class="meeting-hint">{{ t('meeting.detail.notFound') }}</span>
+    <div v-else-if="!record" class="meeting-body">
+      <MeetingEmpty
+        :icon="FileQuestion"
+        :title="t('meeting.detail.notFoundTitle')"
+        :desc="t('meeting.detail.notFoundDesc')"
+      />
     </div>
     <template v-else>
       <div class="meeting-meta">
@@ -83,7 +87,12 @@
             :path="minutesPath"
             @copy="copy"
           />
-          <div v-else class="meeting-hint">{{ t('meeting.detail.noMinutes') }}</div>
+          <MeetingEmpty
+            v-else
+            :icon="FileText"
+            :title="t('meeting.detail.emptyMinutesTitle')"
+            :desc="t('meeting.detail.emptyMinutesDesc')"
+          />
         </template>
 
         <template v-else-if="activeTab === 'transcript'">
@@ -97,11 +106,20 @@
             :blocks="transcriptLines"
             data-role="transcript"
           />
-          <div v-else class="meeting-hint">{{ t('meeting.detail.noTranscript') }}</div>
+          <MeetingEmpty
+            v-else
+            :icon="Captions"
+            :title="t('meeting.detail.emptyTranscriptTitle')"
+            :desc="t('meeting.detail.emptyTranscriptDesc')"
+          />
         </template>
 
         <template v-else-if="activeTab === 'chat'">
-          <div v-if="chat.length === 0" class="meeting-hint">{{ t('meeting.detail.noChatMessages') }}</div>
+          <MeetingEmpty
+            v-if="chat.length === 0"
+            :icon="MessagesSquare"
+            :title="t('meeting.detail.emptyChatTitle')"
+          />
           <!-- The same conversation the live panel showed, drawn by the same
                row component: same bubble, same avatar, same timestamp. -->
           <div v-else class="meeting-chat">
@@ -155,11 +173,22 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Copy, ExternalLink, MessageSquare, Trash2 } from 'lucide-vue-next'
+import {
+  ArrowLeft,
+  Captions,
+  Copy,
+  ExternalLink,
+  FileQuestion,
+  FileText,
+  MessageSquare,
+  MessagesSquare,
+  Trash2,
+} from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ChatMessageRow from './ChatMessageRow.vue'
 import TranscriptList from './TranscriptList.vue'
 import MeetingMarkdown from './MeetingMarkdown.vue'
+import MeetingEmpty from './MeetingEmpty.vue'
 import MeetingResources from './MeetingResources.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
@@ -607,7 +636,6 @@ onMounted(() => {
 }
 @keyframes meeting-spin { to { transform: rotate(360deg); } }
 
-.meeting-hint { display: flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-xs); line-height: 1.6; color: var(--text-muted); }
 .meeting-warn {
   padding: var(--space-4) var(--space-5); border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-orange) 10%, transparent);

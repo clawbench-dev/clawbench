@@ -4,6 +4,7 @@ import { createI18n } from 'vue-i18n'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ref } from 'vue'
+import { MonitorUp } from 'lucide-vue-next'
 import enMessages from '@/i18n/locales/en'
 import MeetingList from '../MeetingList.vue'
 
@@ -141,6 +142,28 @@ describe('MeetingList header', () => {
 })
 
 describe('MeetingList', () => {
+  it('draws the shared empty-state card instead of a bare line', () => {
+    // Other dock tabs (git history, forge, tasks) all answer "nothing here yet"
+    // with a centred glyph + title + one line of context. The list used to be a
+    // 28px icon over a sentence, stuck to the top of the scroll area.
+    const w = mountList()
+
+    const card = w.find('.meeting-empty')
+    expect(card.exists()).toBe(true)
+    expect(card.findComponent(MonitorUp).exists()).toBe(true)
+    expect(card.find('.meeting-empty__title').text()).toBe(enMessages.meeting.list.empty)
+    expect(card.find('.meeting-empty__desc').text()).toBe(enMessages.meeting.list.emptyDesc)
+  })
+
+  it('prints no hint line under the list', () => {
+    // The old footer explained where records come from ("this project's meeting
+    // database") on every visit. It told the reader nothing they could act on.
+    sessions.value = [record()]
+    const w = mountList()
+
+    expect(w.find('.meeting-hint').exists()).toBe(false)
+  })
+
   it('lists a record with no artifacts instead of hiding it', () => {
     sessions.value = [record({ token: 'empty', title: '', hasMinutes: false, hasTranscript: false, audioFiles: 0, chatCount: 0 })]
     const w = mountList()
