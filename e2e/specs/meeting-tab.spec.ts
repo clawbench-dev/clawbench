@@ -252,7 +252,7 @@ test.describe('Meeting flow', () => {
     await expect(page.locator('[data-action="meeting-quote"]')).toBeVisible({ timeout: 20000 })
 
     await page.locator('.meeting-tabs [data-tab="chat"]').click()
-    await expect(page.locator('.meeting-chat__text')).toContainText('这是一条会议聊天')
+    await expect(page.locator('.chat-row__text')).toContainText('这是一条会议聊天')
 
     // And the record is in the list, titled as typed.
     await page.locator('[data-action="meeting-back"]').click()

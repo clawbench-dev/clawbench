@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { ref } from 'vue'
 import enMessages from '@/i18n/locales/en'
 import MeetingList from '../MeetingList.vue'
@@ -14,11 +16,14 @@ import MeetingList from '../MeetingList.vue'
 vi.mock('lucide-vue-next', () => {
   const stub = { render: () => null }
   return {
+    AlertTriangle: stub,
     MonitorUp: stub,
     Check: stub,
     CheckCircle2: stub,
-    ChevronRight: stub,
     Link: stub,
+    MessageSquare: stub,
+    Mic: stub,
+    PenLine: stub,
     Plus: stub,
     RefreshCw: stub,
     RotateCw: stub,
@@ -45,15 +50,21 @@ const sessions = ref<unknown[]>([])
 const loading = ref(false)
 const loadMock = vi.hoisted(() => vi.fn(async () => undefined))
 const removeMock = vi.hoisted(() => vi.fn(async () => ({ ok: true })))
-vi.mock('@/composables/useMeetingHistory', () => ({
-  useMeetingHistory: () => ({
-    sessions,
-    loading,
-    error: ref(''),
-    load: loadMock,
-    remove: removeMock,
-  }),
-}))
+vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
+  // Keep the real helpers (isStaleGenerating drives the "interrupted" chip);
+  // only the composable's I/O is stubbed.
+  const actual = await importOriginal<typeof import('@/composables/useMeetingHistory')>()
+  return {
+    ...actual,
+    useMeetingHistory: () => ({
+      sessions,
+      loading,
+      error: ref(''),
+      load: loadMock,
+      remove: removeMock,
+    }),
+  }
+})
 
 function mountList() {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
@@ -184,5 +195,100 @@ describe('MeetingList', () => {
     await flushPromises()
 
     expect(removeMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('MeetingList row status', () => {
+  function chipTexts(w: ReturnType<typeof mountList>): string[] {
+    return w.findAll('.meeting-chip').map((c) => c.text())
+  }
+
+  it('shows one chip per row instead of stacking four tags', () => {
+    sessions.value = [record(), record({ token: 'two', hasMinutes: false, hasTranscript: true })]
+    const w = mountList()
+
+    expect(w.findAll('.meeting-chip')).toHaveLength(2)
+    expect(chipTexts(w)).toEqual([enMessages.meeting.list.hasMinutes, enMessages.meeting.list.onlyTranscript])
+  })
+
+  it('marks a failed minutes job instead of calling it "no artifacts"', () => {
+    // A dead job leaves no minutes, so without this branch the row reads as a
+    // calm empty record — the one reading that is actively wrong.
+    sessions.value = [record({ status: 'failed', hasMinutes: false, hasTranscript: false })]
+    const w = mountList()
+
+    expect(chipTexts(w)).toEqual([enMessages.meeting.list.failed])
+    expect(w.find('.meeting-row').attributes('data-state')).toBe('failed')
+  })
+
+  it('marks a generating job that died with the process as interrupted', () => {
+    sessions.value = [
+      record({ status: 'generating', hasMinutes: false, updatedAt: Date.now() - 11 * 60 * 1000 }),
+    ]
+    const w = mountList()
+
+    expect(chipTexts(w)).toEqual([enMessages.meeting.list.stale])
+    expect(w.find('.meeting-row').attributes('data-state')).toBe('stale')
+  })
+
+  it('keeps "generating" for a job that is actually still running', () => {
+    sessions.value = [record({ status: 'generating', hasMinutes: false, updatedAt: Date.now() })]
+    const w = mountList()
+
+    expect(chipTexts(w)).toEqual([enMessages.meeting.list.generating])
+    expect(w.find('.meeting-row').attributes('data-state')).toBe('generating')
+  })
+
+  it('surfaces the revised draft and the compact counts', () => {
+    sessions.value = [record({ hasRevised: true, audioFiles: 12, chatCount: 4 })]
+    const w = mountList()
+
+    const meta = w.find('.meeting-row__meta').text()
+    expect(meta).toContain('12 clips')
+    expect(meta).toContain('4 msgs')
+    expect(meta).toContain(enMessages.meeting.list.revised)
+    // The long forms survive as tooltips rather than disappearing.
+    expect(w.find('.meeting-row__meta').html()).toContain('12 clips')
+  })
+
+  it('shows one recording instead of a clip count once the audio is merged', () => {
+    sessions.value = [record({ hasMeetingAudio: true, audioFiles: 2 })]
+    const w = mountList()
+
+    const meta = w.find('.meeting-row__meta').text()
+    expect(meta).toContain(enMessages.meeting.list.audioMerged)
+    // "2 clips" would be the channel count, which means nothing to the user.
+    expect(meta).not.toContain('2 clips')
+  })
+
+  it('hides the counts a record does not have', () => {
+    sessions.value = [record({ audioFiles: 0, chatCount: 0, hasRevised: false })]
+    const w = mountList()
+
+    const meta = w.find('.meeting-row__meta').text()
+    expect(meta).not.toContain('clips')
+    expect(meta).not.toContain('msgs')
+    expect(meta).not.toContain(enMessages.meeting.list.revised)
+  })
+})
+
+/**
+ * jsdom applies no stylesheets, so "is the delete button visible" and "did the
+ * chevron go away" cannot be asserted on the DOM. Read the source instead.
+ */
+describe('MeetingList row affordances (source)', () => {
+  const src = readFileSync(join(__dirname, '..', 'MeetingList.vue'), 'utf8')
+
+  it('keeps the delete button visible without hover', () => {
+    const block = src.match(/\.meeting-row__del \{([^}]*)\}/)?.[1] ?? ''
+    expect(block).not.toBe('')
+    // The old rule was `opacity: 0` + `.meeting-row:hover .meeting-row__del`,
+    // which made delete unreachable on a phone.
+    expect(block).not.toContain('opacity')
+    expect(src).not.toMatch(/\.meeting-row:hover \.meeting-row__del\s*\{[^}]*opacity/)
+  })
+
+  it('does not render a chevron next to the row', () => {
+    expect(src).not.toContain('ChevronRight')
   })
 })

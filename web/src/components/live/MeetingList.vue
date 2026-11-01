@@ -31,47 +31,70 @@
       </div>
       <div v-else class="meeting-list">
         <div
-          v-for="s in sessions"
-          :key="s.token"
+          v-for="r in rows"
+          :key="r.record.token"
           class="meeting-row"
-          :data-token="s.token"
+          :data-token="r.record.token"
+          :data-state="r.state.kind"
           draggable="true"
-          @click="emit('open', s.token)"
-          @dragstart="onDragStart($event, s)"
+          @click="emit('open', r.record.token)"
+          @dragstart="onDragStart($event, r.record)"
           @dragend="cleanupDragGhost()"
         >
+          <!-- Title and status share the first line; the meta line underneath
+               carries the numbers. Two lines, one card, no chevron: the whole
+               row is the hit target, an arrow only repeated that fact. -->
           <div class="meeting-row__main">
-            <span class="meeting-row__title">{{ s.title || t('meeting.list.untitled') }}</span>
-            <span class="meeting-row__meta">
-              <span>{{ formatWhen(s.startedAt) }}</span>
-              <span v-if="durationOf(s)">{{ durationOf(s) }}</span>
-              <span v-if="s.audioFiles > 0">{{ t('meeting.list.audioCount', { n: s.audioFiles }) }}</span>
-              <span v-if="s.chatCount > 0">{{ t('meeting.list.chatCount', { n: s.chatCount }) }}</span>
-            </span>
+            <div class="meeting-row__line">
+              <span class="meeting-row__title">{{ r.record.title || t('meeting.list.untitled') }}</span>
+              <span class="meeting-chip" :class="r.state.cls">
+                <Check v-if="r.state.icon === 'check'" :size="10" />
+                <AlertTriangle v-else-if="r.state.icon === 'alert'" :size="10" />
+                <span v-if="r.state.dot" class="meeting-chip__dot" />
+                {{ r.state.label }}
+              </span>
+            </div>
+            <div class="meeting-row__meta">
+              <span class="meeting-row__m">{{ formatWhen(r.record.startedAt) }}</span>
+              <template v-if="r.duration">
+                <span class="meeting-row__sep">·</span>
+                <span class="meeting-row__m" :class="{ 'is-accent': !r.record.endedAt }">{{ r.duration }}</span>
+              </template>
+              <template v-if="r.record.hasMeetingAudio">
+                <span class="meeting-row__sep">·</span>
+                <span class="meeting-row__m" :title="t('meeting.list.audioMerged')">
+                  <Mic :size="11" />{{ t('meeting.list.audioMerged') }}
+                </span>
+              </template>
+              <template v-else-if="r.record.audioFiles > 0">
+                <span class="meeting-row__sep">·</span>
+                <span class="meeting-row__m" :title="t('meeting.list.audioCount', { n: r.record.audioFiles })">
+                  <Mic :size="11" />{{ t('meeting.list.audioShort', { n: r.record.audioFiles }) }}
+                </span>
+              </template>
+              <template v-if="r.record.chatCount > 0">
+                <span class="meeting-row__sep">·</span>
+                <span class="meeting-row__m" :title="t('meeting.list.chatCount', { n: r.record.chatCount })">
+                  <MessageSquare :size="11" />{{ t('meeting.list.chatShort', { n: r.record.chatCount }) }}
+                </span>
+              </template>
+              <template v-if="r.record.hasRevised">
+                <span class="meeting-row__sep">·</span>
+                <span class="meeting-row__m"><PenLine :size="11" />{{ t('meeting.list.revised') }}</span>
+              </template>
+            </div>
           </div>
-          <div class="meeting-row__tags">
-            <span v-if="!s.endedAt" class="meeting-chip meeting-chip--accent">{{ t('meeting.list.running') }}</span>
-            <span v-else-if="s.status === 'generating'" class="meeting-chip meeting-chip--accent">
-              {{ t('meeting.list.generating') }}
-            </span>
-            <span v-else-if="s.hasMinutes" class="meeting-chip meeting-chip--ok">
-              <Check :size="10" />{{ t('meeting.list.hasMinutes') }}
-            </span>
-            <span v-else-if="s.hasTranscript" class="meeting-chip meeting-chip--warn">
-              {{ t('meeting.list.onlyTranscript') }}
-            </span>
-            <span v-else class="meeting-chip meeting-chip--muted">{{ t('meeting.list.noArtifacts') }}</span>
-          </div>
+          <!-- Always visible, never hover-only: a phone has no hover, so the
+               delete affordance used to be unreachable there. -->
           <button
-            class="meeting-icon-btn meeting-row__del"
+            class="meeting-row__del"
             type="button"
             :title="t('meeting.list.delete')"
-            :data-action="`meeting-delete-${s.token}`"
-            @click.stop="askDelete(s)"
+            :data-action="`meeting-delete-${r.record.token}`"
+            @click.stop="askDelete(r.record)"
           >
-            <Trash2 :size="14" />
+            <Trash2 :size="13" />
           </button>
-          <ChevronRight :size="14" class="meeting-row__chev" />
         </div>
       </div>
       <div class="meeting-hint">{{ t('meeting.list.hint') }}</div>
@@ -99,15 +122,29 @@
  * opens its detail; dragging one stages a quote in the chat (the same gesture
  * git history and the forge lists use).
  */
-import { computed, onMounted, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronRight, Link as LinkIcon, Plus, Trash2 } from 'lucide-vue-next'
+import {
+  AlertTriangle,
+  Check,
+  Link as LinkIcon,
+  MessageSquare,
+  Mic,
+  PenLine,
+  Plus,
+  Trash2,
+} from 'lucide-vue-next'
 import { MEETING_ICON } from '@/utils/meetingIcon'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
-import { meetingQuoteLabel, useMeetingHistory, type MeetingRecord } from '@/composables/useMeetingHistory'
+import {
+  isStaleGenerating,
+  meetingQuoteLabel,
+  useMeetingHistory,
+  type MeetingRecord,
+} from '@/composables/useMeetingHistory'
 import { meetingDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 import { appLog } from '@/utils/appLog'
@@ -128,10 +165,7 @@ const sessions = computed(() => history.sessions.value)
 const loading = computed(() => history.loading.value)
 const error = computed(() => history.error.value)
 
-function reload(): void {
-  void history.load()
-}
-
+/** `11/01 17:35` — the list's own stamp; the detail spells it out in full. */
 function formatWhen(ms: number): string {
   if (!ms) return ''
   const d = new Date(ms)
@@ -144,11 +178,96 @@ function formatWhen(ms: number): string {
   })
 }
 
-/** `48 分钟` — only when the meeting actually ended. */
+/**
+ * A live meeting's clock ticks, so the row has to be able to re-render without
+ * a reload. Only running rows read it, and the timer only exists while at least
+ * one row is running.
+ */
+const now = ref(Date.now())
+let clock: ReturnType<typeof setInterval> | null = null
+const anyRunning = computed(() => sessions.value.some((s) => !s.endedAt && s.startedAt > 0))
+
+watch(
+  anyRunning,
+  (running) => {
+    if (running && !clock) {
+      clock = setInterval(() => { now.value = Date.now() }, 30_000)
+    } else if (!running && clock) {
+      clearInterval(clock)
+      clock = null
+    }
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => {
+  if (clock) clearInterval(clock)
+  clock = null
+})
+
+/**
+ * `48 分钟` — measured to the end for a finished meeting, to the clock for a
+ * running one. A record still marked live a day later is a leftover from a
+ * crash, not a meeting: showing "1440 分钟" would invent a fact.
+ */
 function durationOf(s: MeetingRecord): string {
-  if (!s.endedAt || !s.startedAt || s.endedAt <= s.startedAt) return ''
-  const minutes = Math.max(1, Math.round((s.endedAt - s.startedAt) / 60000))
+  if (!s.startedAt) return ''
+  const end = s.endedAt || now.value
+  if (end <= s.startedAt) return ''
+  if (!s.endedAt && end - s.startedAt > 86_400_000) return ''
+  const minutes = Math.max(1, Math.round((end - s.startedAt) / 60000))
   return t('meeting.list.duration', { n: minutes })
+}
+
+interface RowState {
+  /** Drives the 2px edge stripe — only states that need attention get one. */
+  kind: '' | 'running' | 'generating' | 'stale' | 'failed'
+  cls: string
+  label: string
+  icon?: 'check' | 'alert'
+  dot?: boolean
+}
+
+/**
+ * One chip, not four stacked tags: at a glance the user needs to know whether
+ * this record is worth opening (minutes? only a transcript? nothing?) and
+ * whether it needs attention (still running, generating, or broken).
+ *
+ * The failed/interrupted branches sit above the artifact branches on purpose:
+ * a job that died leaves no minutes, so without them it renders as a calm
+ * "no artifacts" — the one reading that is actively wrong.
+ */
+function rowState(s: MeetingRecord): RowState {
+  if (!s.endedAt) {
+    return { kind: 'running', cls: 'is-accent', label: t('meeting.list.running'), dot: true }
+  }
+  if (s.status === 'failed') {
+    return { kind: 'failed', cls: 'is-danger', label: t('meeting.list.failed'), icon: 'alert' }
+  }
+  if (isStaleGenerating(s)) {
+    return { kind: 'stale', cls: 'is-warn', label: t('meeting.list.stale'), icon: 'alert' }
+  }
+  if (s.status === 'generating') {
+    return { kind: 'generating', cls: 'is-accent', label: t('meeting.list.generating') }
+  }
+  if (s.hasMinutes) {
+    return { kind: '', cls: 'is-ok', label: t('meeting.list.hasMinutes'), icon: 'check' }
+  }
+  if (s.hasTranscript) {
+    return { kind: '', cls: 'is-warn', label: t('meeting.list.onlyTranscript') }
+  }
+  return { kind: '', cls: 'is-muted', label: t('meeting.list.noArtifacts') }
+}
+
+const rows = computed(() =>
+  sessions.value.map((record) => ({
+    record,
+    state: rowState(record),
+    duration: durationOf(record),
+  })),
+)
+
+function reload(): void {
+  void history.load()
 }
 
 function onDragStart(e: DragEvent, s: MeetingRecord): void {
@@ -239,27 +358,68 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-5, 10px);
-  padding: var(--space-6, 12px) var(--space-7, 16px);
+  padding: var(--space-4, 8px) var(--space-5, 10px) var(--space-6, 12px);
 }
 
-.meeting-list { display: flex; flex-direction: column; gap: var(--space-2, 4px); }
+.meeting-list { display: flex; flex-direction: column; gap: var(--space-4, 8px); }
 
+/* Square card, hairline border, 8px gap — the task tab's row language. */
 .meeting-row {
   position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-4, 8px);
-  padding: var(--space-4, 8px) var(--space-5, 10px);
-  border: 1px solid transparent;
-  border-radius: var(--radius-md, 10px);
+  padding: var(--space-3, 6px) var(--space-4, 8px) var(--space-3, 6px) var(--space-5, 10px);
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: 0;
   background: var(--bg-secondary, #f8f9fa);
   cursor: pointer;
+  transition: background var(--duration-base) ease, border-color var(--duration-base) ease,
+    box-shadow var(--duration-base) ease;
 }
-.meeting-row:hover { border-color: var(--accent-color, #4a90d9); }
-.meeting-row__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-1, 2px); }
+@media (hover: hover) {
+  .meeting-row:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-color, #4a90d9);
+    box-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) rgba(0, 0, 0, 0.06);
+  }
+}
+.meeting-row:active { background: var(--bg-tertiary); }
+
+/* The stripe overlays the card's own left border so it costs no layout shift. */
+.meeting-row::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  background: transparent;
+}
+.meeting-row[data-state="running"]::before { background: var(--accent-color); }
+.meeting-row[data-state="generating"]::before { background: var(--color-info); }
+.meeting-row[data-state="stale"]::before { background: var(--color-orange); }
+.meeting-row[data-state="failed"]::before { background: var(--color-red); }
+
+.meeting-row__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.meeting-row__line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 6px);
+  min-width: 0;
+}
 .meeting-row__title {
+  flex: 1;
+  min-width: 0;
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
+  line-height: calc(16 * var(--dp));
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -267,32 +427,104 @@ onMounted(() => {
 }
 .meeting-row__meta {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
-  gap: var(--space-3, 6px);
+  row-gap: 1px;
   font-size: var(--font-size-xs);
+  line-height: calc(15 * var(--dp));
   color: var(--text-muted);
+  /* Times and counts line up column-to-column instead of jittering. */
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
 }
-.meeting-row__tags { display: flex; align-items: center; gap: var(--space-2, 4px); flex-shrink: 0; }
-.meeting-row__del { opacity: 0; transition: opacity 0.12s ease; }
-.meeting-row:hover .meeting-row__del { opacity: 1; }
-.meeting-row__chev { color: var(--text-hint); flex-shrink: 0; }
+.meeting-row__m {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(3 * var(--dp));
+  white-space: nowrap;
+}
+.meeting-row__m svg { flex-shrink: 0; opacity: 0.85; }
+.meeting-row__m.is-accent { color: var(--accent-color); }
+.meeting-row__sep { padding: 0 var(--space-2, 4px); color: var(--text-hint); }
 
+/* Square, uppercase-ish, one per row. Colour is a secondary cue: the label
+   carries the meaning. */
 .meeting-chip {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1, 2px);
-  height: calc(18 * var(--dp));
+  gap: calc(3 * var(--dp));
+  height: calc(17 * var(--dp));
   padding: 0 var(--space-3, 6px);
-  border-radius: var(--radius-xs, 3px);
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
+  border: 1px solid transparent;
+  border-radius: 0;
   font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.02em;
   white-space: nowrap;
+  flex-shrink: 0;
 }
-.meeting-chip--ok { background: color-mix(in srgb, var(--color-green) 12%, transparent); color: var(--color-green); }
-.meeting-chip--warn { background: color-mix(in srgb, var(--color-orange) 12%, transparent); color: var(--color-orange); }
-.meeting-chip--muted { color: var(--text-muted); }
-.meeting-chip--accent { background: color-mix(in srgb, var(--accent-color) 12%, transparent); color: var(--accent-color); }
+.meeting-chip.is-ok {
+  color: var(--color-green);
+  background: color-mix(in srgb, var(--color-green) 13%, transparent);
+  border-color: color-mix(in srgb, var(--color-green) 38%, transparent);
+}
+.meeting-chip.is-warn {
+  color: var(--color-orange);
+  background: color-mix(in srgb, var(--color-orange) 13%, transparent);
+  border-color: color-mix(in srgb, var(--color-orange) 38%, transparent);
+}
+.meeting-chip.is-danger {
+  color: var(--color-red);
+  background: color-mix(in srgb, var(--color-red) 13%, transparent);
+  border-color: color-mix(in srgb, var(--color-red) 38%, transparent);
+}
+.meeting-chip.is-accent {
+  color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 13%, transparent);
+  border-color: color-mix(in srgb, var(--accent-color) 40%, transparent);
+}
+.meeting-chip.is-muted {
+  color: var(--text-muted);
+  border-color: var(--border-color);
+}
+.meeting-chip__dot {
+  width: calc(5 * var(--dp));
+  height: calc(5 * var(--dp));
+  border-radius: 50%;
+  background: currentColor;
+  animation: meeting-chip-pulse 1.4s ease-in-out infinite;
+}
+@keyframes meeting-chip-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+/* Always visible (a phone has no hover); only the colour waits for hover. */
+.meeting-row__del {
+  width: calc(26 * var(--dp));
+  height: calc(26 * var(--dp));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color var(--duration-base) ease, background var(--duration-base) ease,
+    border-color var(--duration-base) ease;
+}
+@media (hover: hover) {
+  .meeting-row:hover .meeting-row__del { color: var(--text-secondary); }
+  .meeting-row__del:hover {
+    color: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-red) 35%, transparent);
+  }
+}
+.meeting-row__del:active { transform: scale(0.92); }
 
 .meeting-hint {
   display: flex;
@@ -326,7 +558,7 @@ onMounted(() => {
   width: calc(26 * var(--dp));
   height: calc(26 * var(--dp));
   border: none;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: 0;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
