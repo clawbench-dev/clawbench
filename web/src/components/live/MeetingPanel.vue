@@ -14,9 +14,10 @@
       v-else
       :key="detailToken"
       :token="detailToken"
+      :initial-tab="detailTab"
       @back="view = 'list'"
       @quote="(token: string) => emit('quote', token)"
-      @open-file="(path: string) => emit('open-file', path)"
+      @tab-change="detailTab = $event"
     />
   </div>
 </template>
@@ -44,13 +45,15 @@ import MeetingStage from './MeetingStage.vue'
 import MeetingDetail from './MeetingDetail.vue'
 import { useLiveShare } from '@/composables/useLiveShare'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
+import { takeMeetingReturn, clearMeetingView, type MeetingDetailTab } from '@/composables/useMeetingViewState'
 
 const props = defineProps<{ active?: boolean }>()
-const emit = defineEmits<{ quote: [token: string]; 'open-file': [path: string] }>()
+const emit = defineEmits<{ quote: [token: string] }>()
 
 type View = 'list' | 'create' | 'join' | 'meeting' | 'detail'
 const view = ref<View>('list')
 const detailToken = ref('')
+const detailTab = ref<MeetingDetailTab>('minutes')
 const share = useLiveShare()
 
 function openDetail(token: string): void {
@@ -62,6 +65,9 @@ function openDetail(token: string): void {
     return
   }
   detailToken.value = token
+  // A record opened from the list starts at the minutes, not at whatever tab
+  // the previous record happened to be on.
+  detailTab.value = 'minutes'
   view.value = 'detail'
 }
 
@@ -104,10 +110,26 @@ watch(
 
 // The panel is kept alive by TabPanel, so `active` is the only "entered the tab"
 // signal: a meeting in progress returns to the stage, anything else to the list.
+// Leaving the detail (back to the list) drops the view the coordinator would
+// otherwise use as a return target for a later file jump.
+watch(view, (next) => {
+  if (next === 'list') clearMeetingView()
+})
+
 watch(
   () => props.active,
   (active) => {
     if (!active) return
+    // Returning from a file/resource opened inside a meeting: restore the
+    // record and the tab. The coordinator parks this because the origin itself
+    // is consumed synchronously, before this watcher runs.
+    const pending = takeMeetingReturn()
+    if (pending?.token) {
+      detailToken.value = pending.token
+      detailTab.value = pending.tab
+      view.value = 'detail'
+      return
+    }
     view.value = share.state.value === 'publishing' ? 'meeting' : 'list'
   },
 )

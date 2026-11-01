@@ -52,8 +52,8 @@
           <!-- The badge counts what is actually loaded, not the server's
                total: a badge that disagrees with the list below it is worse
                than no badge. -->
-          <span v-if="tab.key === 'chat' && chat.length > 0" class="meeting-tab__count">
-            {{ chat.length > 99 ? '99+' : chat.length }}
+          <span v-if="tab.count" class="meeting-tab__count">
+            {{ tab.count > 99 ? '99+' : tab.count }}
           </span>
         </button>
       </div>
@@ -63,7 +63,6 @@
         :data-quote-source="quoteSource"
         :data-quote-language="activeTab === 'chat' ? 'chat' : 'meeting'"
         :data-quote-meeting-token="record?.token || ''"
-        @click="onBodyClick"
       >
         <template v-if="activeTab === 'minutes'">
           <div v-if="generating" class="meeting-generating">
@@ -74,17 +73,17 @@
             <button class="meeting-link" type="button" @click="regenerate">{{ t('common.retry') }}</button>
           </div>
           <div v-else-if="minutesFailed" class="meeting-error">{{ t('liveShare.notes.generateFailed') }}</div>
-          <div v-else-if="minutesHtml" class="meeting-md markdown-body" v-html="minutesHtml" />
+          <!-- The minutes are rendered by the SAME pipeline/interactions as the
+               file preview. Do NOT go back to v-html + renderMarkdownHtml:
+               that drops detectedPaths, never verifies the path chips, and
+               resolves relative links against the project root. -->
+          <MeetingMarkdown
+            v-else-if="minutesText"
+            :content="minutesText"
+            :path="minutesPath"
+            @copy="copy"
+          />
           <div v-else class="meeting-hint">{{ t('meeting.detail.noMinutes') }}</div>
-
-          <div v-if="artifactRows.length" class="meeting-artifacts">
-            <div class="meeting-artifacts__label">{{ t('liveShare.notes.savedTo') }}</div>
-            <div v-for="row in artifactRows" :key="row.key" class="meeting-file">
-              <span class="meeting-file__label">{{ row.label }}</span>
-              <span class="meeting-file__path" :title="row.path">{{ row.path }}</span>
-              <button class="meeting-btn" type="button" @click="copy(row.path)">{{ t('liveShare.notes.copyPath') }}</button>
-            </div>
-          </div>
         </template>
 
         <template v-else-if="activeTab === 'transcript'">
@@ -101,7 +100,7 @@
           <div v-else class="meeting-hint">{{ t('meeting.detail.noTranscript') }}</div>
         </template>
 
-        <template v-else>
+        <template v-else-if="activeTab === 'chat'">
           <div v-if="chat.length === 0" class="meeting-hint">{{ t('meeting.detail.noChatMessages') }}</div>
           <!-- The same conversation the live panel showed, drawn by the same
                row component: same bubble, same avatar, same timestamp. -->
@@ -115,6 +114,17 @@
             />
           </div>
         </template>
+
+        <template v-else>
+          <MeetingResources
+            :groups="resourceGroups"
+            :loading="resourcesLoading"
+            :error="resourcesError"
+            :total="resourceTotal"
+            :folder-path="resourceDir"
+            @reload="reloadResources"
+          />
+        </template>
       </div>
 
       <div class="meeting-footer">
@@ -122,10 +132,10 @@
           <Trash2 :size="14" />{{ t('meeting.detail.delete') }}
         </button>
         <span class="meeting-header__spacer" />
-        <button v-if="activeTab !== 'chat'" class="fbtn" type="button" :disabled="!currentText" @click="openFile">
-          <ExternalLink :size="14" />{{ t('liveShare.history.openInEditor') }}
+        <button v-if="activeTab !== 'chat'" class="fbtn" type="button" :disabled="!canOpen" @click="openFile">
+          <ExternalLink :size="14" />{{ openLabel }}
         </button>
-        <button class="fbtn" type="button" :disabled="!copyText" @click="copy(copyText)">
+        <button v-if="activeTab !== 'resources'" class="fbtn" type="button" :disabled="!copyText" @click="copy(copyText)">
           <Copy :size="14" />{{ activeTab === 'chat' ? t('meeting.detail.copyAll') : t('liveShare.notes.copy') }}
         </button>
       </div>
@@ -148,9 +158,11 @@ import { ArrowLeft, Copy, ExternalLink, MessageSquare, Trash2 } from 'lucide-vue
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ChatMessageRow from './ChatMessageRow.vue'
 import TranscriptList from './TranscriptList.vue'
+import MeetingMarkdown from './MeetingMarkdown.vue'
+import MeetingResources from './MeetingResources.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
-import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
+import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation'
 import {
   isStaleGenerating,
   meetingQuoteLabel,
@@ -158,24 +170,33 @@ import {
   type MeetingChatMessage,
   type MeetingRecord,
 } from '@/composables/useMeetingHistory'
+import { useMeetingResources } from '@/composables/useMeetingResources'
+import {
+  setMeetingView,
+  clearMeetingView,
+  type MeetingDetailTab,
+} from '@/composables/useMeetingViewState'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 import { formatClockTime } from '@/utils/format'
 import { meetingDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
 import { parseVttCues, vttToPlainText, type VttCue } from '@/utils/vtt'
 import { groupNoteSegments, type NoteBlock } from '@/composables/liveNotes'
+import { normalizeSlashes, toProjectRelative } from '@/utils/path'
+import { store } from '@/stores/app'
 import { appLog } from '@/utils/appLog'
 import '@/assets/modal-footer-btn.css'
 
-const props = defineProps<{ token: string }>()
-const emit = defineEmits<{ back: []; quote: [token: string]; 'open-file': [path: string] }>()
+const props = defineProps<{ token: string; initialTab?: MeetingDetailTab }>()
+const emit = defineEmits<{ back: []; quote: [token: string]; 'tab-change': [tab: MeetingDetailTab] }>()
 
 const { t, locale } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
 const history = useMeetingHistory()
+const { openFilePath } = useFilePathAnnotation()
 
-type Tab = 'minutes' | 'transcript' | 'chat'
-const activeTab = ref<Tab>('minutes')
+type Tab = MeetingDetailTab
+const activeTab = ref<Tab>(props.initialTab ?? 'minutes')
 const record = ref<MeetingRecord | null>(null)
 const loading = ref(true)
 const minutesText = ref('')
@@ -185,17 +206,47 @@ const transcriptCues = ref<VttCue[]>([])
 const transcriptFile = ref('')
 const chat = ref<MeetingChatMessage[]>([])
 
+/** Join inside a meeting folder without assuming a separator style. */
+function meetingPath(dir: string, ...parts: string[]): string {
+  const sep = dir.includes('\\') ? '\\' : '/'
+  return [dir.replace(/[\\/]+$/, ''), ...parts].join(sep)
+}
+
+const minutesPath = computed(() => (record.value?.dirPath ? meetingPath(record.value.dirPath, 'minutes.md') : ''))
+const transcriptPath = computed(() => (
+  record.value?.dirPath
+    ? meetingPath(record.value.dirPath, transcriptFile.value || 'transcript.vtt')
+    : ''
+))
+/** Project-relative folder, used by the resource header and footer action. */
+const resourceDir = computed(() => (
+  record.value?.dirPath
+    ? normalizeSlashes(toProjectRelative(record.value.dirPath, store.state.projectRoot ?? ''))
+    : ''
+))
+
+const {
+  groups: resourceGroups,
+  loading: resourcesLoading,
+  error: resourcesError,
+  total: resourceTotal,
+  reload: reloadResources,
+} = useMeetingResources({
+  record: () => record.value,
+  minutesText: () => minutesText.value,
+  minutesPath: () => minutesPath.value,
+})
+
 const tabs = computed(() => [
-  { key: 'minutes' as Tab, label: t('meeting.detail.tabMinutes') },
-  { key: 'transcript' as Tab, label: t('meeting.detail.tabTranscript') },
-  { key: 'chat' as Tab, label: t('meeting.detail.tabChat') },
+  { key: 'minutes' as Tab, label: t('meeting.detail.tabMinutes'), count: 0 },
+  { key: 'transcript' as Tab, label: t('meeting.detail.tabTranscript'), count: 0 },
+  { key: 'chat' as Tab, label: t('meeting.detail.tabChat'), count: chat.value.length },
+  { key: 'resources' as Tab, label: t('meeting.detail.tabResources'), count: resourceTotal.value },
 ])
 
 const generating = computed(() => record.value?.status === 'generating' && !isStaleGenerating(record.value))
 const staleGenerating = computed(() => (record.value ? isStaleGenerating(record.value) : false))
 const minutesFailed = computed(() => record.value?.status === 'failed')
-
-const minutesHtml = computed(() => (minutesText.value ? renderMarkdownHtml(minutesText.value) : ''))
 
 /**
  * The stored cues as speaker turns.
@@ -233,37 +284,11 @@ const durationLabel = computed(() => {
   return t('meeting.list.duration', { n: minutes })
 })
 
-/** Files this meeting actually left on disk, in reading order. */
-const artifactRows = computed(() => {
-  const r = record.value
-  if (!r?.dirPath) return []
-  const sep = r.dirPath.includes('\\') ? '\\' : '/'
-  const rows: Array<{ key: string; label: string; path: string }> = []
-  if (r.hasMinutes) rows.push({ key: 'minutes', label: t('liveShare.notes.artifactMinutes'), path: `${r.dirPath}${sep}minutes.md` })
-  if (r.hasTranscript) {
-    rows.push({
-      key: 'transcript',
-      label: t('liveShare.notes.artifactTranscript'),
-      path: `${r.dirPath}${sep}${transcriptFile.value || 'transcript.vtt'}`,
-    })
-  }
-  if (r.hasRevised) rows.push({ key: 'revised', label: t('liveShare.notes.artifactRevised'), path: `${r.dirPath}${sep}transcript-revised.md` })
-  // The merged recording is the one the user opens; the folder is only worth a
-  // row when the meeting still holds its original segments.
-  if (r.hasMeetingAudio) {
-    rows.push({
-      key: 'audio',
-      label: t('liveShare.notes.artifactAudioMerged'),
-      path: `${r.dirPath}${sep}audio${sep}meeting.webm`,
-    })
-  } else if (r.audioFiles > 0) {
-    rows.push({ key: 'audio', label: t('liveShare.notes.artifactAudio', { n: r.audioFiles }), path: `${r.dirPath}${sep}audio` })
-  }
-  return rows
-})
-
 const currentText = computed(() => (activeTab.value === 'transcript' ? transcriptText.value : minutesText.value))
 const copyText = computed(() => {
+  // The resource tab has no single text body; its copy affordances live on
+  // each row (path) and in the header (folder path).
+  if (activeTab.value === 'resources') return ''
   if (activeTab.value === 'chat') {
     return chat.value
       .map((m) =>
@@ -277,6 +302,19 @@ const copyText = computed(() => {
   }
   return currentText.value
 })
+
+const canOpen = computed(() => {
+  if (activeTab.value === 'minutes') return Boolean(record.value?.hasMinutes && minutesPath.value)
+  if (activeTab.value === 'transcript') return Boolean(record.value?.hasTranscript && transcriptPath.value)
+  if (activeTab.value === 'resources') return Boolean(resourceDir.value)
+  return false
+})
+
+const openLabel = computed(() => (
+  activeTab.value === 'resources'
+    ? t('meeting.detail.openResources')
+    : t('liveShare.history.openInEditor')
+))
 
 function formatWhen(ms: number): string {
   if (!ms) return ''
@@ -340,6 +378,7 @@ function shouldPoll(r: MeetingRecord | null): boolean {
 
 function selectTab(tab: Tab): void {
   activeTab.value = tab
+  emit('tab-change', tab)
 }
 
 function onDragStart(e: DragEvent): void {
@@ -353,14 +392,6 @@ function onQuote(): void {
   if (record.value) emit('quote', record.value.token)
 }
 
-/** Double-click a block copies it — same affordance as the markdown preview. */
-function onBodyClick(e: MouseEvent): void {
-  if (e.detail !== 2) return
-  const target = e.target as HTMLElement | null
-  const text = target?.innerText?.trim()
-  if (text) void copy(text)
-}
-
 async function copy(text: string): Promise<void> {
   if (!text) return
   try {
@@ -371,18 +402,20 @@ async function copy(text: string): Promise<void> {
   }
 }
 
+/**
+ * Open the current tab's file through the shared pipeline.
+ *
+ * `'live'` is the navigation source: it records the meeting + tab as the
+ * return target, so Back from the viewer lands back here instead of the
+ * meeting list (or, before this change, the task tab).
+ */
 function openFile(): void {
-  const r = record.value
-  if (!r) return
-  if (activeTab.value === 'minutes' && r.hasMinutes) {
-    const sep = r.dirPath?.includes('\\') ? '\\' : '/'
-    emit('open-file', `${r.dirPath}${sep}minutes.md`)
-    return
-  }
-  if (activeTab.value === 'transcript' && r.hasTranscript) {
-    const sep = r.dirPath?.includes('\\') ? '\\' : '/'
-    emit('open-file', `${r.dirPath}${sep}${transcriptFile.value || 'transcript.vtt'}`)
-  }
+  const target = activeTab.value === 'resources'
+    ? resourceDir.value
+    : activeTab.value === 'transcript'
+      ? transcriptPath.value
+      : minutesPath.value
+  if (target) void openFilePath(target, undefined, undefined, 'live')
 }
 
 async function regenerate(): Promise<void> {
@@ -419,6 +452,9 @@ function pollMinutes(): void {
 onBeforeUnmount(() => {
   if (pollTimer) clearTimeout(pollTimer)
   pollTimer = null
+  // The panel is unmounted on project switch / teardown; a stale view would
+  // otherwise be used as a return target by a later file jump.
+  clearMeetingView()
 })
 
 async function askDelete(): Promise<void> {
@@ -443,9 +479,29 @@ async function askDelete(): Promise<void> {
 watch(
   () => props.token,
   () => {
-    activeTab.value = 'minutes'
+    activeTab.value = props.initialTab ?? 'minutes'
     void load()
   },
+)
+
+// Returning from a file restores the tab the user was on; the panel is kept
+// alive, so the prop (not a remount) is what changes.
+watch(
+  () => props.initialTab,
+  (tab) => {
+    if (tab) activeTab.value = tab
+  },
+)
+
+// Hand the current view to the navigation coordinator. It builds the return
+// target when a file/resource is opened from this panel.
+watch(
+  [() => record.value?.token, activeTab],
+  () => {
+    const token = record.value?.token
+    if (token) setMeetingView(token, activeTab.value)
+  },
+  { immediate: true },
 )
 
 onMounted(() => {
@@ -515,19 +571,6 @@ onMounted(() => {
 }
 .meeting-md :deep(h3) { margin: var(--space-5) 0 var(--space-2); font-size: var(--font-size-sm); }
 
-.meeting-artifacts { display: flex; flex-direction: column; gap: var(--space-2); }
-.meeting-artifacts__label { font-size: var(--font-size-xs); color: var(--text-muted); }
-.meeting-file {
-  display: flex; align-items: center; gap: var(--space-3); min-width: 0;
-  padding: var(--space-3) var(--space-5); border-radius: var(--radius-sm);
-  background: var(--bg-tertiary); font-size: var(--font-size-xs);
-}
-.meeting-file__label { flex: 0 0 calc(76 * var(--dp)); color: var(--text-muted); white-space: nowrap; }
-.meeting-file__path {
-  flex: 1; min-width: 0; font-family: var(--font-mono);
-  color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-
 /* The archived chat is the SAME conversation the live panel showed, so the row
    itself is the same component (`ChatMessageRow.vue`) — bubble, avatar and
    timestamp have exactly one implementation. This container only owns the
@@ -567,15 +610,4 @@ onMounted(() => {
   border-top: 1px solid var(--border-color); background: var(--bg-primary); flex-shrink: 0;
   overflow-x: auto; overflow-y: hidden;
 }
-/* In-body small action only (the artifact row's 复制路径). Footer actions use
-   the shared .fbtn pills — see design-guide §按钮. */
-.meeting-btn {
-  display: inline-flex; align-items: center; gap: var(--space-2);
-  height: calc(24 * var(--dp)); padding: 0 var(--space-4);
-  border: 1px solid var(--border-color); border-radius: var(--radius-sm);
-  background: var(--bg-primary); color: var(--text-primary);
-  font-size: var(--font-size-xs); cursor: pointer;
-}
-.meeting-btn:hover:not(:disabled) { border-color: var(--accent-color); color: var(--accent-color); }
-.meeting-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>

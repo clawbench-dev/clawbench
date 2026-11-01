@@ -229,7 +229,6 @@
                   <MeetingPanel
                     :active="panelIsActive('live')"
                     @quote="handleMeetingQuote"
-                    @open-file="handleTaskOpenFile"
                   />
                 </TabPanel>
 

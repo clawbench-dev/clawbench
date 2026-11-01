@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { nextTick, ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import enMessages from '@/i18n/locales/en'
 import MeetingDetail from '../MeetingDetail.vue'
@@ -27,6 +27,17 @@ vi.mock('@/utils/attachDrag', () => ({
 }))
 
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ show: vi.fn() }) }))
+// The resource list is its own composable with its own test; here it only
+// needs to exist (the detail reads its count for the tab badge).
+vi.mock('@/composables/useMeetingResources', () => ({
+  useMeetingResources: () => ({
+    groups: ref([]),
+    loading: ref(false),
+    error: ref(''),
+    total: ref(0),
+    reload: vi.fn(),
+  }),
+}))
 vi.mock('@/composables/useMarkdownRenderer', () => ({
   renderMarkdownHtml: (text: string) => `<p>${text}</p>`,
 }))
@@ -60,6 +71,12 @@ function mountDetail() {
       stubs: {
         LoadingIndicator: true,
         SpeakerAvatar: { props: ['name'], template: '<span class="sa" :data-name="name" />' },
+        // The real body mounts TableRowModal/CodeLinkPreview and the full
+        // markdown pipeline; that wiring is covered by MeetingMarkdown.test.ts.
+        MeetingMarkdown: { props: ['content', 'path'], template: '<div class="meeting-md">{{ content }}</div>' },
+        MeetingResources: { props: ['groups', 'loading', 'error', 'total', 'folderPath'], template: '<div class="meeting-resources-stub" />' },
+        TableRowModal: true,
+        CodeLinkPreview: true,
       },
     },
   })
@@ -108,37 +125,24 @@ beforeEach(() => {
 })
 
 describe('MeetingDetail', () => {
-  it('renders the minutes and the artifacts that exist', async () => {
+  it('renders the minutes through the shared document body', async () => {
     const w = mountDetail()
     await flushPromises()
 
     expect(w.find('.meeting-md').html()).toContain('MINUTES')
-    const files = w.findAll('.meeting-file')
-    expect(files).toHaveLength(3) // minutes + transcript + audio, no revised
-    expect(w.text()).toContain('minutes.md')
-    expect(w.text()).toContain('transcript.vtt')
+    // The minutes tab no longer duplicates the artifact list: that moved to
+    // the resources tab.
+    expect(w.findAll('.meeting-file')).toHaveLength(0)
   })
 
-  it('points the recording row at the merged file', async () => {
-    getMock.mockResolvedValue(
-      record({ hasMeetingAudio: true, audioFiles: 2 }),
-    )
+  it('adds a resources tab alongside minutes, transcript and chat', async () => {
     const w = mountDetail()
     await flushPromises()
 
-    // One row, one file: the per-channel files are the source it was built
-    // from, not something the user should have to pick between.
-    expect(w.text()).toContain('Meeting recording')
-    expect(w.text()).toContain('audio/meeting.webm')
-    expect(w.text()).not.toContain('clips')
-  })
-
-  it('falls back to the audio folder for a recording that was never merged', async () => {
-    getMock.mockResolvedValue(record({ hasMeetingAudio: false, audioFiles: 12 }))
-    const w = mountDetail()
-    await flushPromises()
-
-    expect(w.text()).toContain('Recording (12 clips)')
+    const tabs = w.findAll('.meeting-tab').map((tab) => tab.attributes('data-tab'))
+    expect(tabs).toEqual(['minutes', 'transcript', 'chat', 'resources'])
+    await w.find('[data-tab="resources"]').trigger('click')
+    expect(w.find('.meeting-resources-stub').exists()).toBe(true)
   })
 
   it('reads chat from the database and offers copy-all', async () => {

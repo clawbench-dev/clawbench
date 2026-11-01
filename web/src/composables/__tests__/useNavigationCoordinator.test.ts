@@ -8,6 +8,11 @@ import { useDirectoryReturn, _resetForTesting as resetDirectoryReturn } from '..
 import { useNavigationCoordinator } from '../useNavigationCoordinator'
 import { PANE_LEFT, PANE_RIGHT, type ActivePane } from '../useWideScreenLayout'
 import { setFileScroll } from '@/utils/fileScrollCache'
+import {
+  setMeetingView,
+  takeMeetingReturn,
+  _resetMeetingViewForTesting,
+} from '../useMeetingViewState'
 import { gt } from '@/composables/useLocale'
 
 describe('useNavigationCoordinator', () => {
@@ -95,6 +100,7 @@ describe('useNavigationCoordinator', () => {
     fakeStore.navigateToDir.mockResolvedValue(true)
     fakeStore.navigateToParentDir.mockResolvedValue(true)
     navigation.resetForTesting()
+    _resetMeetingViewForTesting()
     resetFileNavStack()
     resetDirectoryReturn()
     browseFileSession.value = false
@@ -158,6 +164,24 @@ describe('useNavigationCoordinator', () => {
   })
 
   describe('handleOpenFileOverlay', () => {
+    it('records a live origin and parks the meeting tab for the return', () => {
+      activeTab.value = 'live'
+      setMeetingView('tok-1', 'resources')
+      const coord = createCoordinator()
+
+      coord.handleOpenFileOverlay({
+        detail: { path: '.clawbench/notes/x/minutes.md', source: 'live' },
+      } as any)
+
+      expect(navigation.origin.value?.surface).toBe('live')
+      expect(navigation.origin.value?.tab).toBe('live')
+      expect(navigation.origin.value?.meetingToken).toBe('tok-1')
+      expect(navigation.origin.value?.meetingTab).toBe('resources')
+      // The panel's active watcher runs a tick after switchTab, so the return
+      // target must survive the origin being consumed.
+      expect(takeMeetingReturn()).toEqual({ token: 'tok-1', tab: 'resources' })
+    })
+
     it('starts origin and opens file from chat on wide screen', () => {
       isWideScreen.value = true
       activePane.value = PANE_RIGHT
