@@ -295,20 +295,34 @@ MediaProjection ─▶ VirtualDisplay ─▶ ImageReader ─▶ 缩放 + JPEG
 | 中途切换共享源 | ✓ | ✗（只有一个源，按钮不显示） |
 | 系统声音 | Windows | Android 10+，且只限允许录制的声音 |
 | 被观众远程控制 | Windows 可注入 | ✗（需要无障碍服务，不做） |
-| AI 听记 | ✓ | ✓（与听记页签同一条链路） |
+| AI 听记 | ✓ | ✓（与会议页签同一条链路） |
 | 分辨率 / 帧率 | 原始分辨率 | 最长边 1280、10 fps（桥接 + 二次编码的成本上限） |
 
 ## 界面位置
 
-桌面共享不再是顶栏的一个弹窗，而是**左栏 Dock 的一个页签**（在「端口映射」前面）：链接、观众、发言授权、成员共享、实时转写、会后纪要都在这一个面板里，切走再切回不中断共享。共享期间页签右上角挂一个**主题色角标点**（`.dock-badge--live`，无数字——共享是状态不是未读数），面板头部有同色的「共享中」标记，所以离开页签也看得出还在直播。**不用红色**：红色在本 UI 里表示错误/录音中，而共享是正常进行中的活动；红色只留给旁边的「停止共享」按钮。
+桌面共享不再是顶栏的一个弹窗，而是**左栏 Dock 的一个页签「会议」**（在「端口映射」前面）。一个页签，五个视图：
 
-**AI 听记**同样是 Dock 的一个页签（在「桌面共享」前面），不是一个弹窗：上面是录音区（标题、开始/停止、实时转写、会后纪要），下面是**历史纪要**。切走再切回不中断录音，页签在录音期间标红。
+| 视图 | 内容 |
+|---|---|
+| 会议记录（默认） | 本项目的会议列表（数据库记录，永久）；footer 两个入口：加入会议 / 创建会议 |
+| 创建会议 | 会议名称（选填）→ 选择共享内容（**不共享屏幕** / 各屏幕 / 窗口）→ 声音与听记 |
+| 加入会议 | 昵称（必填）+ 链接；桌面端在独立窗口打开 |
+| 会议中 | 基础 / 转写 / 聊天三个页签 + 结束会议 |
+| 记录详情 | 纪要 / 转写 / 聊天 + 产物路径 + 打开文件 / 复制 / 删除 |
 
-顶栏**没有**听记入口：Dock 页签是唯一入口。共享按钮当初从顶栏搬进 Dock 时留下了一个麦克风按钮占位，后来又被改成「快捷入口」，结果是顶栏出现两个同款按钮、间距被 `margin-left: auto` 平分。现在两个按钮都只在 Dock 里，顶栏右侧回到「主题 → 服务器」这一对（`headerClusterSpacing.test.ts` 钉住这条）。
+- **结束会议直接落到记录详情**，没有单独的「会后纪要」界面：生成中、生成失败、无产物都在详情里表达。
+- 会议进行中页签右上角挂**主题色圆点**（`.dock-badge--live`，无数字）。不再用红色区分「录音中」——红色只留给错误。
+- 页签**恒显示**：记录永远可读，语音会议只需要麦克风；宿主不能采集屏幕时，创建页里说明缺什么。
+- **观众端（分享页）先过昵称门**：填了昵称才建立信令连接（不占观众名额），昵称记在 `localStorage`，发布端观众列表与聊天署名都用它。
+- **语音会议**（不共享屏幕）与屏幕会议共用房间、信令、聊天、听记、纪要；差别只是没有视频轨——观众端据 `video: false` 渲染「语音会议」占位，标注/切源/远程控制/成员共享屏幕不出现。
+- 顶栏没有听记入口：Dock 页签是唯一入口（`headerClusterSpacing.test.ts` 钉住顶栏只有「主题 → 服务器」）。
 
-听记页签的可见性与共享页签**不同**：它只需要 `getUserMedia`，浏览器标签页、桌面端和 **Android App 都能用**（安卓壳已声明 `RECORD_AUDIO` 并在 `onPermissionRequest` 里只授权 `AUDIO_CAPTURE`，与输入框的语音转写同一条权限链）。共享页签在桌面端、**Android App** 和**安全上下文里的桌面浏览器**出现：前两者是原生采集（安卓走 MediaProjection），浏览器走 `getDisplayMedia`（见「浏览器发起共享」）；非安全上下文（HTTP 访问）下浏览器没有采集能力，页签不出现。
+### 会议记录
 
-**单人听记**与会议听记共用这个页签和同一条流水线：不建房间、不生成链接，服务端只生成一个 token 并写入 `live_notes`，之后的分段上传、上下文校对、纪要与产物落盘全部照旧，鉴权依据是那一行而不是房间。
+- 一条记录 = `live_notes` 表的一行，**身份是 token**。发布端连上信令时创建、断开时收尾，与「有没有录到东西」无关。
+- **永久保留**：转写分段、聊天、磁盘目录都不按天清理；删除记录（或删除项目）是唯一的删除路径。
+- 产物目录（`.clawbench/notes/<场次>/`）是**可选**的：第一次要写录音、聊天归档或纪要时才创建。项目改名不影响（记录里存的是目录**名**）。
+- 记录可以拖进聊天作为引用（与 git 提交 / issue 一致）；详情顶部也有引用按钮，正文支持选中文字引用。
 
 ## AI 听记
 
@@ -337,15 +351,16 @@ viewer:<id> 每个观众的麦克风，一人一条
 - 停止时先停录音机、等最后一段真正产出（`onstop` 才生成 blob）再关 `AudioContext`，然后等队列排空（最长 3 分钟）才生成纪要；排不空就明确提示「纪要可能缺少结尾」。
 - 回声去重：发布端用扬声器外放时，观众的声音会被自己的麦克风再次采到，同一句话可能出现在两条信道。合并时若两条信道在 **±5s** 内出现**归一化后完全相同**的文本，只保留较早的那条。真正的同时说话用词不同，不受影响。
 
-### 产物：录音 + 三份 Markdown（永久）
+### 产物：录音 + 三份 Markdown + 聊天（永久）
 
-停止共享后，这场会落成一个目录。**数据库行 7 天后清掉，目录不清**：
+会议结束时，这场会落成一个目录（第一次真正要写东西时才创建）。**记录与目录都是永久的**，只有删除记录（或删除项目）才会消失：
 
 ```
 <项目>/.clawbench/notes/2026-10-31-1430-周会-a1b2c3/
     minutes.md               纪要（末尾链接同目录的另外两份）
     transcript.srt           原始转写（STT 原样输出，SubRip 字幕；老会议仍是 transcript.md）
     transcript-revised.md    修订版转写（结合项目上下文校对）
+    chat.md                  聊天归档（会议结束时写入；详情读的是数据库）
     audio/                   录音，一段一个 WebM
         1700000000123-system.webm
         1700000004123-mic.webm
@@ -378,24 +393,30 @@ viewer:<id> 每个观众的麦克风，一人一条
         ←─ { id, text }                     服务端用 STT provider 同步转写后落库
 观众    ── GET /api/share/{token}/notes?since=<maxId>   （公开，token 即凭证，面板展开时才轮询）
 发布端  ── POST /api/live-share/notes/minutes           （异步生成，轮询 GET 取状态）
-发布端  ── GET  /api/live-share/notes/sessions          （历史：磁盘上的会议目录）
-发布端  ── GET  /api/live-share/notes/sessions/artifact （历史：读某个目录的 Markdown）
+发布端  ── POST /api/live-share/notes/chat              （每条聊天即时落库，按消息 id 幂等）
+发布端  ── GET  /api/live-share/notes/sessions          （会议记录列表；?token= 取单条）
+发布端  ── GET  /api/live-share/notes/sessions/artifact （按 token 读产物）
+发布端  ── GET  /api/live-share/notes/sessions/chat     （按 token 读聊天）
+发布端  ── DELETE /api/live-share/notes/sessions?token= （删除记录 + 目录）
 ```
 
-- **鉴权**：发布端三个端点需登录 + 项目 cookie。token 归属判定接受两种来源：房间还在（`room.ProjectKey() == 项目`），或**已有本项目的听记行**——后者让「结束共享」瞬间的最后一段上传与纪要请求仍能落地（房间随发布端断开立刻销毁）。
+- **鉴权**：发布端端点需登录 + 项目 cookie，token 必须属于本项目。归属依据是**会议记录行**（发布端连上信令时就已创建），所以「结束共享」瞬间的最后一段上传与聊天仍能落地。
 - **公开读**：`{token}/notes` 只在房间存活期间可读。共享结束后 token 立即失效，不会留下可长期读取的转写。
-- **保留期**：数据库里的转写与纪要按 token 保留 **7 天**，由房间回收器每小时顺带清理；磁盘上的会议目录**永久保留**，只能由用户删除。
+- **保留期**：**没有**。记录、转写分段、聊天、磁盘目录都永久保留；删除记录（或删除项目）是唯一的删除路径。
 - **纪要生成**：修订版转写超过 6000 字时先分段提取要点，再合并成纪要（map-reduce），避免整段塞进模型窗口被截断。
 - **落盘**：见上面的「产物」一节。纪要生成后写 `minutes.md`，同时把两份转写和录音留在同一目录；同一场共享重新生成会覆盖同名文件而不是堆副本。
 
-### 历史纪要（页签下半部分）
+### 会议记录列表与详情
 
-历史读的是**磁盘上的会议目录**，不是 `live_notes` 表：表行 7 天后清理，目录永久保留。页签要列的是用户还拥有的东西，不是数据库还记得的东西。
+列表读的是**数据库**（`live_notes`，一条 = 一场会），不是磁盘：记录在发布端连上信令时就存在，与「有没有录到东西」无关；没开听记、全程静音的会议同样列出，标「无产物」。
 
-- `GET /api/live-share/notes/sessions` 扫描 `<项目>/.clawbench/notes/`，按会议开始时间倒序。只认 `<YYYY-MM-DD-HHMM>[-<标题>]-<token6>` 形状的目录；标题从目录名解析（尾部 token 剥掉），没有标题时显示「未命名听记」。目录从第一段录音就存在，所以「有录音但还没有纪要」是正常状态，行上会标出来。
-- `GET /api/live-share/notes/sessions/artifact?dir=&kind=` 读 `minutes.md` / `transcript.srt`（老会议回退 `transcript.md`）/ `transcript-revised.md`，响应里的 `file` 是实际读到的文件名。`dir` 是目录**名**不是路径，服务端按目录名形状校验，越权取值一律 404，读不到 notes 根目录之外的文件。
+- `GET /api/live-share/notes/sessions` 按 `started_at` 倒序取 200 条；带 `?token=` 时返回单条 `{session}`。
+- `GET /api/live-share/notes/sessions/artifact?token=&kind=` 读 `minutes.md` / `transcript.srt`（老会议回退 `transcript.md`）/ `transcript-revised.md` / `chat.md`。目录由服务端从记录行解析，**客户端不传任何路径**。记录没有任何产物时 404。
+- `GET /api/live-share/notes/sessions/chat?token=` 读落库的聊天（按服务端行 id 升序）。
+- `DELETE /api/live-share/notes/sessions?token=` 删除记录：**先删目录、再删行**；房间仍在发布、或纪要/校对任务正在运行时返回 409。
 - 「在编辑器中打开」走前端已有的文件查看器，传目录里那个文件的绝对路径。
-- 每次切到页签、以及录音结束后都会重读一次，另有手动刷新按钮。
+- 每次切到页签、以及会议结束后都会重读一次，另有手动刷新按钮。
+- **结束会议直接进入记录详情**，没有单独的「会后纪要」界面；生成中 / 生成失败 / 无产物都在详情里表达。
 
 ### 隐私
 
@@ -420,16 +441,23 @@ viewer:<id> 每个观众的麦克风，一人一条
 | `internal/liveshare/talk.go` | 发言授权状态机 |
 | `internal/liveshare/signal.go` | 协议结构体（与前端镜像） |
 | `internal/handler/live_share.go` | HTTP/WS 绑定、鉴权切分、信令转发 |
-| `internal/handler/live_notes.go` | 听记上传 / 读取 / 纪要端点、历史列表与产物读取、STT 并发闸门 |
-| `internal/service/live_notes.go` | 听记落库、时间线重排与去重、产物落盘、历史目录扫描、上下文修订、纪要生成 |
+| `internal/handler/live_notes.go` | 听记上传 / 读取 / 纪要端点、会议记录列表 / 单条 / 删除、聊天落库与读取、产物读取、STT 并发闸门 |
+| `internal/service/live_notes.go` | 会议记录生命周期（开始 / 收尾 / 列表 / 删除）、听记落库、时间线重排与去重、产物落盘、聊天归档、上下文修订、纪要生成 |
 | `web/src/composables/liveNotes.ts` | 分信道录音（纯逻辑，可单测） |
 | `web/src/composables/useLiveNotes.ts` | 听记响应式状态、上传与纪要轮询 |
-| `web/src/components/live/NotesPanel.vue` | 听记页签：录音区 + 实时转写 + 纪要 + 历史纪要列表 |
+| `web/src/components/live/MeetingPanel.vue` | 会议页签外壳：列表 / 创建 / 加入 / 会议中 / 详情 五视图状态机 |
+| `web/src/components/live/MeetingList.vue` | 会议记录列表（拖拽引用、删除、footer 两个入口） |
+| `web/src/components/live/MeetingCreate.vue` | 创建会议：名称、共享内容（含「不共享屏幕」）、声音与听记 |
+| `web/src/components/live/MeetingJoin.vue` | 加入会议：昵称（必填）+ 链接 |
+| `web/src/components/live/MeetingStage.vue` | 会议中：基础 / 转写 / 聊天，运行时声音与听记开关 |
+| `web/src/components/live/MeetingDetail.vue` | 记录详情：纪要 / 转写 / 聊天 + 产物 + 删除 + 引用 |
+| `web/src/composables/useMeetingHistory.ts` | 记录列表 / 单条 / 产物 / 聊天 / 删除 / 引用载荷 |
+| `web/src/share/LiveJoinGate.vue` | 观众端昵称门（连接之前） |
 | `web/src/share/liveNotesClient.ts` | 观众端听记轮询 |
-| `web/src/composables/useLiveShare.ts` | 发布端：房间、采集、每观众 PeerConnection |
+| `web/src/composables/useLiveShare.ts` | 发布端：房间、采集（含语音会议的无画面模式）、每观众 PeerConnection、运行时声音/听记开关 |
 | `web/src/utils/screenCaptureSupport.ts` | 浏览器能否采集（`getDisplayMedia` 存在性）与是否非安全上下文，供 Dock 页签门槛与面板提示共用 |
 | `web/src/composables/useLiveMixer.ts` | 混音图（纯逻辑，可单测） |
-| `web/src/share/liveViewer.ts` | 观众端：信令 + 单个 PeerConnection |
+| `web/src/share/liveViewer.ts` | 观众端：信令（带昵称）+ 单个 PeerConnection；语音会议以音频轨为接通信号 |
 | `web/src/share/LiveShareView.vue` | 观众端页面 |
 | `web/src/components/live/LiveShareDialog.vue` | 发布端弹窗（含实时字幕与纪要） |
 | `desktop/src/main/capture.ts` | 捕获源列表、`setDisplayMediaRequestHandler`、节流开关 |
@@ -438,4 +466,4 @@ viewer:<id> 每个观众的麦克风，一人一条
 | `android/.../ScreenShareOptions.java` | 桥传来的采集参数解析与钳制（fps / 最长边 / 质量） |
 | `web/src/composables/androidScreenCapture.ts` | 安卓采集适配：状态轮询、帧解码、PCM 抖动缓冲、`VideoTrackGenerator`/canvas 兜底 |
 
-设计文档：[docs/plans/2026-10-28-desktop-screen-audio-share-design.md](../../plans/2026-10-28-desktop-screen-audio-share-design.md)
+设计文档：[docs/plans/2026-10-28-desktop-screen-audio-share-design.md](../../plans/2026-10-28-desktop-screen-audio-share-design.md)、[2026-11-01 会议页签](../../plans/2026-11-01-meeting-tab-design.md)

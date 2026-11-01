@@ -54,6 +54,11 @@ test.describe('Live share viewer', () => {
         const viewer = await anon.newPage()
         await viewer.goto(room.path)
 
+        // The nickname gate comes first: no name, no connection.
+        await expect(viewer.locator('.join-gate')).toBeVisible({ timeout: 15000 })
+        await viewer.locator('[data-role="join-nick"]').fill('E2E 观众')
+        await viewer.locator('[data-action="join-meeting"]').click()
+
         // The live viewer owns the stage, not the file/session renderers.
         await expect(viewer.locator('.live-share-view')).toBeVisible({ timeout: 15000 })
         await expect(viewer.locator('.share-view')).toHaveCount(0)
@@ -85,7 +90,7 @@ test.describe('Live share viewer', () => {
         })
         pub.send(JSON.stringify({ type: 'publish', title: 'e2e' }))
 
-        const view = new WebSocket(`${proto}://${location.host}/api/share/${token}/signal`)
+        const view = new WebSocket(`${proto}://${location.host}/api/share/${token}/signal?name=e2e`)
         const first = await new Promise<Record<string, unknown>>((resolve, reject) => {
           const timer = setTimeout(() => reject(new Error('no joined frame')), 10000)
           view.onmessage = (ev) => {

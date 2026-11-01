@@ -407,23 +407,49 @@ UNIQUE：`(session_id, tag_id)`
 | duration_ms | INTEGER | NOT NULL | 0 | 段长 |
 | text | TEXT | NOT NULL | — | 转写文本（静音段不落库） |
 
-索引：`idx_live_note_segments_token(token, started_at)`。保留 7 天，由房间回收器每小时清理。
+索引：`idx_live_note_segments_token(token, started_at)`。**永久保留**：随会议记录一起删除（删除记录或删除项目时）。
 
-### live_notes（直播共享的会议纪要）
+### live_notes（会议记录 + 纪要内容）
+
+**一条 = 一场会议**，身份是 token。发布端连上信令时创建，断开时收尾；与「有没有录到东西」无关——没开听记、全程静音的会议同样有一行。**永久保留**，删除记录（或删除项目）是唯一的删除路径。
 
 | 列名 | 类型 | 约束 | 默认值 | 说明 |
 |---|---|---|---|---|
-| token | TEXT | PRIMARY KEY | — | 分享 token |
+| token | TEXT | PRIMARY KEY | — | 会议 token（房间在内存里，故无外键） |
 | project_id | INTEGER | NOT NULL | 0 | 发布端项目 |
 | title | TEXT | NOT NULL | `''` | 会议标题 |
 | status | TEXT | NOT NULL | `idle` | `idle` / `generating` / `ready` / `failed` |
 | minutes | TEXT | NOT NULL | `''` | 生成的 Markdown 纪要 |
 | error | TEXT | NOT NULL | `''` | 失败原因（仅 `failed`） |
-| file_path | TEXT | NOT NULL | `''` | 纪要 Markdown 在项目内的落盘路径（`<项目>/.clawbench/notes/…`）；项目不可用时为空 |
+| file_path | TEXT | NOT NULL | `''` | 纪要 Markdown 在项目内的落盘路径 |
+| dir_path | TEXT | NOT NULL | `''` | **已停用**：绝对路径，项目改名后失效；目录改由 `dir_name` 表达 |
+| revised | TEXT | NOT NULL | `''` | 修订版转写（结合项目上下文校对） |
+| revise_status | TEXT | NOT NULL | `idle` | 校对阶段状态 |
+| revise_error | TEXT | NOT NULL | `''` | 校对失败原因 |
+| started_at | INTEGER | NOT NULL | 0 | 会议开始（Unix 毫秒，**服务端时钟**） |
+| ended_at | INTEGER | NOT NULL | 0 | 会议结束；0 表示还在进行 |
+| dir_name | TEXT | NOT NULL | `''` | 会议目录**名**（不是路径）；空表示还没有产物 |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | |
-| updated_at | DATETIME | | CURRENT_TIMESTAMP | 保留期判定依据 |
+| updated_at | DATETIME | | CURRENT_TIMESTAMP | |
 
-索引：`idx_live_notes_updated(updated_at)`。
+索引：`idx_live_notes_updated(updated_at)`、`idx_live_notes_project_started(project_id, started_at)`。
+
+### live_notes_chat（会议聊天，永久）
+
+发布端是唯一写入点（观众的消息经它中转，它自己的消息也走同一条路径）。`client_msg_id` 是幂等键：重试不会产生重复行。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | 服务端顺序（读取与排序依据；客户端时钟可能偏） |
+| token | TEXT | NOT NULL | — | 会议 token |
+| project_id | INTEGER | NOT NULL | 0 | 发布端项目 |
+| client_msg_id | TEXT | NOT NULL | — | 客户端消息 id（聊天帧自带），`UNIQUE(token, client_msg_id)` |
+| speaker | TEXT | NOT NULL | `''` | 服务端认定的昵称（发布端用 viewerId → 昵称覆盖自报值） |
+| viewer_id | TEXT | NOT NULL | `''` | 观众 id；发布端自己发的为空 |
+| text | TEXT | NOT NULL | — | 单条 ≤ 2000 字 |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | |
+
+索引：`idx_live_note_chat_token(token, id)`。永久保留；会议结束时另存一份 `chat.md` 到会议目录。
 
 ### project_forges（项目↔代码托管绑定）
 
