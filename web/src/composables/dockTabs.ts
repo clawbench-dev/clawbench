@@ -82,8 +82,8 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
   { id: 'tasks', titleKey: 'nav.tasks' },
   { id: 'terminal', titleKey: 'terminal.title' },
   { id: 'stats', titleKey: 'nav.stats' },
-  // 会议: the meeting records, and the meeting itself — screen share or voice
-  // only. It used to be two tabs (听记 and 桌面共享) even though both drove the
+  // 视频会议: the meeting records, and the meeting itself — screen/camera or
+  // voice. It used to be two tabs (听记 and 桌面共享) even though both drove the
   // same recorder, the same endpoints and the same artifact folder; a record
   // can be either kind, so one tab is the honest shape.
   { id: 'live', titleKey: 'nav.meeting' },

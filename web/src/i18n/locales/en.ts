@@ -82,7 +82,7 @@ export default {
     forgeGitlab: 'GitLab Integration',
     tasks: 'Tasks',
     notifications: 'Notification Center',
-    meeting: 'Meetings',
+    meeting: 'Video Meetings',
     portForward: 'Port Mapping',
 
     refresh: 'Refresh',
@@ -3970,7 +3970,7 @@ export default {
     },
   },
   meeting: {
-    title: 'Meetings',
+    title: 'Video Meetings',
     quote: {
       label: 'Meeting · {title} · {time}',
       labelNoTime: 'Meeting · {title}',

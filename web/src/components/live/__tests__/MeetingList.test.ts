@@ -14,7 +14,7 @@ import MeetingList from '../MeetingList.vue'
 vi.mock('lucide-vue-next', () => {
   const stub = { render: () => null }
   return {
-    Users: stub,
+    MonitorUp: stub,
     Check: stub,
     ChevronRight: stub,
     Link: stub,

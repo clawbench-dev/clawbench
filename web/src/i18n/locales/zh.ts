@@ -82,7 +82,7 @@ export default {
     forgeGitlab: 'GitLab 集成',
     tasks: '任务',
     notifications: '通知中心',
-    meeting: '会议',
+    meeting: '视频会议',
     portForward: '端口映射',
 
     refresh: '刷新',
@@ -3964,7 +3964,7 @@ export default {
     },
   },
   meeting: {
-    title: '会议',
+    title: '视频会议',
     quote: {
       label: '会议 · {title} · {time}',
       labelNoTime: '会议 · {title}',

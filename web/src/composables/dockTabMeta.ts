@@ -35,9 +35,9 @@ const DOCK_TAB_ICONS: Record<DockTabId, Component> = {
   // and imply the unread state the log deliberately does not have.
   notifications: Inbox,
   terminal: TerminalIcon,
-  // A group of people, not a calendar: the tab's job is starting/joining a
-  // meeting, and a camera would promise video the product does not offer. See
-  // utils/meetingIcon.ts — the list header and the quote chip share it.
+  // A monitor with an outgoing arrow: the picture half of a meeting. See
+  // utils/meetingIcon.ts — the list header, the quote chip and this tab share
+  // one constant so they cannot drift apart.
   live: MEETING_ICON,
   proxy: Network,
   stats: BarChart3,

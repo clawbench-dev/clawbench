@@ -88,7 +88,7 @@
 
 <script setup lang="ts">
 /**
- * The 会议 tab's landing view: the project's meeting records.
+ * The 视频会议 tab's landing view: the project's meeting records.
  *
  * A record is a database row keyed by token, created when the publisher
  * attaches — so a meeting that recorded nothing is still listed. Clicking a row
