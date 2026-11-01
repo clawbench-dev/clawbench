@@ -36,13 +36,14 @@
  * separate "post-meeting" screen, so the minutes, the transcript, the chat and
  * the delete button live in exactly one place.
  */
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import MeetingList from './MeetingList.vue'
 import MeetingCreate from './MeetingCreate.vue'
 import MeetingJoin from './MeetingJoin.vue'
 import MeetingStage from './MeetingStage.vue'
 import MeetingDetail from './MeetingDetail.vue'
 import { useLiveShare } from '@/composables/useLiveShare'
+import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 
 const props = defineProps<{ active?: boolean }>()
 const emit = defineEmits<{ quote: [token: string]; 'open-file': [path: string] }>()
@@ -54,6 +55,12 @@ const share = useLiveShare()
 
 function openDetail(token: string): void {
   if (!token) return
+  // A running meeting's "record" IS the meeting: opening it returns to the
+  // stage, not to a detail page that has no minutes and no transcript yet.
+  if (share.state.value === 'publishing' && token === share.token.value) {
+    view.value = 'meeting'
+    return
+  }
   detailToken.value = token
   view.value = 'detail'
 }
@@ -103,6 +110,31 @@ watch(
     if (!active) return
     view.value = share.state.value === 'publishing' ? 'meeting' : 'list'
   },
+)
+
+/**
+ * Back inside the tab (edge swipe or the Android hardware button): every
+ * subpage returns to the list.
+ *
+ * Gated on `active` like every other panel — an inactive tab must never
+ * intercept a back press, or the gesture would be swallowed by a panel the
+ * user cannot even see.
+ *
+ * The stage is included. It reads as a session rather than a page, but leaving
+ * it costs nothing: the room lives in `useLiveShare`, not in this component, so
+ * the meeting keeps running and its row (see `openDetail`) leads straight back.
+ * What back must NOT do is END the meeting — that is destructive, and the stage
+ * keeps it behind an explicit 结束会议 button.
+ */
+const canGoBack = computed(() => !!props.active && view.value !== 'list')
+
+useFeatureBackHandler(
+  'meeting',
+  () => canGoBack.value,
+  () => {
+    view.value = 'list'
+  },
+  PRIORITY_PAGE,
 )
 
 /**

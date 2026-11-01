@@ -15,6 +15,15 @@ vi.mock('@/composables/useLiveShare', () => ({
   useLiveShare: () => ({ state: shareState, token: shareToken }),
 }))
 
+/** The back handler the shell registers via useFeatureBackHandler. */
+let backHandler: { enabled: () => boolean; goBack: () => void } | null = null
+vi.mock('@/composables/useEdgeSwipeBack', () => ({
+  useFeatureBackHandler: vi.fn((_id: string, enabled: () => boolean, goBack: () => void) => {
+    backHandler = { enabled, goBack }
+  }),
+  PRIORITY_PAGE: 100,
+}))
+
 const ListStub = {
   name: 'MeetingList',
   template: `<div data-view="list">
@@ -56,6 +65,7 @@ function mountPanel(props: { active?: boolean } = { active: true }) {
 beforeEach(() => {
   shareState.value = 'idle'
   shareToken.value = ''
+  backHandler = null
 })
 
 describe('MeetingPanel state machine', () => {
@@ -117,5 +127,80 @@ describe('MeetingPanel state machine', () => {
     await w.setProps({ active: true })
     await nextTick()
     expect(w.find('[data-view="meeting"]').exists()).toBe(true)
+  })
+})
+
+describe('MeetingPanel back navigation', () => {
+  it('returns from every subpage to the list', async () => {
+    // create
+    let w = mountPanel()
+    await w.find('[data-stub="create"]').trigger('click')
+    expect(backHandler?.enabled()).toBe(true)
+    backHandler?.goBack()
+    await nextTick()
+    expect(w.find('[data-view="list"]').exists()).toBe(true)
+    w.unmount()
+
+    // join
+    w = mountPanel()
+    await w.find('[data-stub="join"]').trigger('click')
+    expect(backHandler?.enabled()).toBe(true)
+    backHandler?.goBack()
+    await nextTick()
+    expect(w.find('[data-view="list"]').exists()).toBe(true)
+    w.unmount()
+
+    // detail
+    w = mountPanel()
+    await w.find('[data-stub="open"]').trigger('click')
+    expect(backHandler?.enabled()).toBe(true)
+    backHandler?.goBack()
+    await nextTick()
+    expect(w.find('[data-view="list"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('leaves a running meeting without ending it', async () => {
+    shareState.value = 'publishing'
+    shareToken.value = 'tok-live'
+    const w = mountPanel()
+    await nextTick()
+    expect(w.find('[data-view="meeting"]').exists()).toBe(true)
+
+    expect(backHandler?.enabled()).toBe(true)
+    backHandler?.goBack()
+    await nextTick()
+
+    // Back leaves the stage but does not stop the meeting: the state machine
+    // still knows it is publishing.
+    expect(w.find('[data-view="list"]').exists()).toBe(true)
+    expect(shareState.value).toBe('publishing')
+  })
+
+  it('reopens the stage from the running record, so back is not a trapdoor', async () => {
+    shareState.value = 'publishing'
+    shareToken.value = 'tok-1'
+    const w = mountPanel()
+    await nextTick()
+
+    backHandler?.goBack()
+    await nextTick()
+    expect(w.find('[data-view="list"]').exists()).toBe(true)
+
+    await w.find('[data-stub="open"]').trigger('click')
+
+    expect(w.find('[data-view="meeting"]').exists()).toBe(true)
+  })
+
+  it('does not intercept back on the list itself', () => {
+    mountPanel()
+    expect(backHandler?.enabled()).toBe(false)
+  })
+
+  it('does not intercept back while the tab is inactive', async () => {
+    const w = mountPanel({ active: false })
+    await w.find('[data-stub="open"]').trigger('click')
+    // A hidden panel must never swallow the gesture meant for what is on screen.
+    expect(backHandler?.enabled()).toBe(false)
   })
 })

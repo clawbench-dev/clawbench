@@ -144,6 +144,9 @@ stateDiagram-v2
 
 - **`meeting → detail` 不经过任何中间态，也不依赖目录**：停止时手上就有 token，直接按 token 打开详情。「上传未排空 / 纪要生成中 / 校对中 / 生成失败」全部由详情自己表达。
 - `create` / `join` 是**页面**而不是弹窗或区块：它们各自有 header（返回箭头 + 标题）与 footer（取消 + 主操作）。
+- **返回**：`create` / `join` / `detail` / `meeting` 四个子页都注册 `PRIORITY_PAGE` 返回处理器（`id: 'meeting'`，门 `active`），屏幕左右边缘内划与 Android 物理返回键都回到 `list`。
+  - **`meeting` 的返回不结束会议**：房间在 `useLiveShare` 里而不是组件里，离开只是换视图；结束必须点「结束会议」（破坏性动作不能交给手势）。
+  - 为了让返回不是单向门，列表里**运行中**的那条记录点开会回到 `meeting` 而不是详情（运行中的记录还没有可看的纪要/转写）。
 - `MeetingPanel` 被 `TabPanel` 以 `v-if="everOpened"` + `v-show` 保活，**不会卸载**；切走再切回靠 `active` 属性复位到 `list`（会议进行中则回到 `meeting`），不能指望 `onMounted`。
 
 ## 6. 视图设计

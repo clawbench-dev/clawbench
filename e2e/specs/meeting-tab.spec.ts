@@ -1,4 +1,4 @@
-import { test, expect } from '../fixtures'
+import { test, expect, type Page } from '../fixtures'
 
 /**
  * The 会议 tab — the parts a browser can drive without media capture.
@@ -53,6 +53,91 @@ test.describe('Meeting tab', () => {
     await page.locator('[data-role="meeting-nick"]').fill('E2E 用户')
     await page.locator('[data-role="meeting-link"]').fill('http://example.test/share/abc')
     await expect(submit).toBeEnabled()
+  })
+})
+
+/**
+ * Swipe inward from a screen edge, the way the phone shell delivers the back
+ * gesture.
+ *
+ * Dispatched as real `TouchEvent`s on the panel rather than with
+ * `page.touchscreen` (the desktop projects have no touch device): the app's
+ * listener is on `document` and only reads coordinates, so a synthetic event is
+ * the same input it sees on a phone. This exercises the whole chain — gesture →
+ * `clawbench-back-press` → back handler → view change — which no unit test can
+ * cover, because each link is mocked there.
+ */
+async function edgeSwipe(page: Page, from: 'left' | 'right', target: string): Promise<void> {
+  await page.evaluate(
+    ({ from, target }) => {
+      const el = document.querySelector(target)
+      if (!el) throw new Error(`swipe target missing: ${target}`)
+      const width = window.innerWidth
+      const y = Math.round(window.innerHeight / 2)
+      const startX = from === 'left' ? 4 : width - 4
+      const endX = from === 'left' ? 180 : width - 180
+      const touch = (x: number) =>
+        new Touch({ identifier: 1, target: el, clientX: x, clientY: y })
+      const fire = (type: string, x: number, live: boolean) => {
+        const t = touch(x)
+        el.dispatchEvent(
+          new TouchEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            touches: live ? [t] : [],
+            targetTouches: live ? [t] : [],
+            changedTouches: [t],
+          }),
+        )
+      }
+      fire('touchstart', startX, true)
+      fire('touchend', endX, false)
+    },
+    { from, target },
+  )
+}
+
+test.describe('Meeting back gesture', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/')
+    await page.locator('.dock-btn[data-tab="live"]').filter({ visible: true }).first().click()
+  })
+
+  test('an edge swipe returns from the create page to the list', async ({ page }) => {
+    await page.locator('[data-action="meeting-create"]').click()
+    await expect(page.locator('[data-role="meeting-title"]')).toBeVisible()
+
+    await edgeSwipe(page, 'left', '.meeting-shell')
+
+    await expect(page.locator('[data-action="meeting-create"]')).toBeVisible()
+    await expect(page.locator('[data-role="meeting-title"]')).toHaveCount(0)
+  })
+
+  test('the right edge works too, and a record returns to the list', async ({ page }) => {
+    // Any row: the flow spec leaves records behind, and this file creates one
+    // itself in the worst case (an empty list still renders the footer).
+    const row = page.locator('.meeting-row').first()
+    if (await row.count()) {
+      await row.click()
+      await expect(page.locator('[data-action="meeting-quote"]')).toBeVisible()
+      await edgeSwipe(page, 'right', '.meeting-shell')
+      await expect(page.locator('[data-action="meeting-create"]')).toBeVisible()
+      return
+    }
+
+    await page.locator('[data-action="meeting-join"]').click()
+    await expect(page.locator('[data-role="meeting-nick"]')).toBeVisible()
+    await edgeSwipe(page, 'right', '.meeting-shell')
+    await expect(page.locator('[data-action="meeting-create"]')).toBeVisible()
+  })
+
+  test('the list itself does not consume the gesture', async ({ page }) => {
+    // No subpage is open, so the press must fall through to the shell instead
+    // of being swallowed here. The shell's "swipe again to exit" hint is the
+    // observable proof that it got the press.
+    await edgeSwipe(page, 'left', '.meeting-shell')
+    await expect(page.locator('.toast-text')).toContainText(/退出|exit/i)
+    await expect(page.locator('[data-action="meeting-create"]')).toBeVisible()
   })
 })
 
