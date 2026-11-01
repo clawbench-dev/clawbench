@@ -41,19 +41,21 @@
           @dragstart="onDragStart($event, r.record)"
           @dragend="cleanupDragGhost()"
         >
-          <!-- Title and status share the first line; the meta line underneath
-               carries the numbers. Two lines, one card, no chevron: the whole
-               row is the hit target, an arrow only repeated that fact. -->
+          <!-- Three tiers, three lines. Name first (largest), the numbers it was
+               measured with second, and what it IS / what is inside it last.
+               Everything used to share one line, so the eye had to read the
+               whole card to find any single fact. -->
           <div class="meeting-row__main">
-            <div class="meeting-row__line">
+            <div class="meeting-row__head">
               <span class="meeting-row__title">{{ r.record.title || t('meeting.list.untitled') }}</span>
-              <span class="meeting-chip" :class="r.state.cls">
+              <span v-if="r.state.label" class="meeting-pill" :class="r.state.cls">
                 <Check v-if="r.state.icon === 'check'" :size="10" />
                 <AlertTriangle v-else-if="r.state.icon === 'alert'" :size="10" />
-                <span v-if="r.state.dot" class="meeting-chip__dot" />
+                <span v-if="r.state.dot" class="meeting-pill__dot" />
                 {{ r.state.label }}
               </span>
             </div>
+
             <div class="meeting-row__meta">
               <span class="meeting-row__m">{{ formatWhen(r.record.startedAt) }}</span>
               <template v-if="r.duration">
@@ -62,26 +64,33 @@
               </template>
               <template v-if="r.record.hasMeetingAudio">
                 <span class="meeting-row__sep">·</span>
-                <span class="meeting-row__m" :title="t('meeting.list.audioMerged')">
-                  <Mic :size="11" />{{ t('meeting.list.audioMerged') }}
-                </span>
+                <span class="meeting-row__m">{{ t('meeting.list.audioMerged') }}</span>
               </template>
               <template v-else-if="r.record.audioFiles > 0">
                 <span class="meeting-row__sep">·</span>
-                <span class="meeting-row__m" :title="t('meeting.list.audioCount', { n: r.record.audioFiles })">
-                  <Mic :size="11" />{{ t('meeting.list.audioShort', { n: r.record.audioFiles }) }}
-                </span>
+                <span class="meeting-row__m">{{ t('meeting.list.audioShort', { n: r.record.audioFiles }) }}</span>
               </template>
               <template v-if="r.record.chatCount > 0">
                 <span class="meeting-row__sep">·</span>
-                <span class="meeting-row__m" :title="t('meeting.list.chatCount', { n: r.record.chatCount })">
-                  <MessageSquare :size="11" />{{ t('meeting.list.chatShort', { n: r.record.chatCount }) }}
-                </span>
+                <span class="meeting-row__m">{{ t('meeting.list.chatShort', { n: r.record.chatCount }) }}</span>
               </template>
-              <template v-if="r.record.hasRevised">
+              <template v-if="r.speakers > 0">
                 <span class="meeting-row__sep">·</span>
-                <span class="meeting-row__m"><PenLine :size="11" />{{ t('meeting.list.revised') }}</span>
+                <span class="meeting-row__m">{{ t('meeting.list.speakers', { n: r.speakers }) }}</span>
               </template>
+            </div>
+
+            <!-- Type and contents. The type pill is the only coloured one: it
+                 answers "was this a call I could see or only hear", which the
+                 artifacts cannot. -->
+            <div class="meeting-row__tags">
+              <span v-if="r.kind" class="meeting-pill" :class="r.kind === 'video' ? 'is-video' : 'is-voice'">
+                <Video v-if="r.kind === 'video'" :size="10" />
+                <Mic v-else :size="10" />
+                {{ r.kind === 'video' ? t('meeting.list.kindVideo') : t('meeting.list.kindVoice') }}
+              </span>
+              <span v-for="label in r.artifacts" :key="label" class="meeting-pill is-soft">{{ label }}</span>
+              <span v-if="r.showEmpty" class="meeting-pill is-empty">{{ t('meeting.list.noArtifacts') }}</span>
             </div>
           </div>
           <!-- Always visible, never hover-only: a phone has no hover, so the
@@ -128,11 +137,10 @@ import {
   AlertTriangle,
   Check,
   Link as LinkIcon,
-  MessageSquare,
   Mic,
-  PenLine,
   Plus,
   Trash2,
+  Video,
 } from 'lucide-vue-next'
 import { MEETING_ICON } from '@/utils/meetingIcon'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -222,19 +230,21 @@ interface RowState {
   /** Drives the 2px edge stripe — only states that need attention get one. */
   kind: '' | 'running' | 'generating' | 'stale' | 'failed'
   cls: string
+  /** Empty for a meeting that simply ended: there is no lifecycle left to
+   *  report, and the artifacts on the third line already say what it holds. */
   label: string
   icon?: 'check' | 'alert'
   dot?: boolean
 }
 
 /**
- * One chip, not four stacked tags: at a glance the user needs to know whether
- * this record is worth opening (minutes? only a transcript? nothing?) and
- * whether it needs attention (still running, generating, or broken).
+ * The lifecycle of a record, and nothing else.
  *
- * The failed/interrupted branches sit above the artifact branches on purpose:
- * a job that died leaves no minutes, so without them it renders as a calm
- * "no artifacts" — the one reading that is actively wrong.
+ * This used to also carry "有纪要 / 仅转写 / 无产物", which forced a choice
+ * between two independent facts (is the job healthy? what did it produce?) and
+ * put the artifacts where the reader looked for status. The artifacts are now
+ * their own line; this one only speaks up when the meeting is still running,
+ * still generating, or broken.
  */
 function rowState(s: MeetingRecord): RowState {
   if (!s.endedAt) {
@@ -249,21 +259,35 @@ function rowState(s: MeetingRecord): RowState {
   if (s.status === 'generating') {
     return { kind: 'generating', cls: 'is-accent', label: t('meeting.list.generating') }
   }
-  if (s.hasMinutes) {
-    return { kind: '', cls: 'is-ok', label: t('meeting.list.hasMinutes'), icon: 'check' }
-  }
-  if (s.hasTranscript) {
-    return { kind: '', cls: 'is-warn', label: t('meeting.list.onlyTranscript') }
-  }
-  return { kind: '', cls: 'is-muted', label: t('meeting.list.noArtifacts') }
+  return { kind: '', cls: '', label: '' }
+}
+
+/** What a meeting produced, as pills, in reading order. */
+function artifactsOf(s: MeetingRecord): string[] {
+  const out: string[] = []
+  if (s.hasMinutes) out.push(t('meeting.list.pillMinutes'))
+  if (s.hasTranscript) out.push(t('meeting.list.pillTranscript'))
+  if (s.hasRevised) out.push(t('meeting.list.pillRevised'))
+  return out
 }
 
 const rows = computed(() =>
-  sessions.value.map((record) => ({
-    record,
-    state: rowState(record),
-    duration: durationOf(record),
-  })),
+  sessions.value.map((record) => {
+    const artifacts = artifactsOf(record)
+    return {
+      record,
+      state: rowState(record),
+      duration: durationOf(record),
+      // Empty means "unknown" (a record written before the column existed):
+      // no pill is drawn rather than guessing from the artifacts.
+      kind: record.kind === 'voice' || record.kind === 'video' ? record.kind : '',
+      speakers: record.speakerCount ?? 0,
+      artifacts,
+      // Only an ENDED meeting can be "empty"; a running one simply has not
+      // produced anything yet.
+      showEmpty: artifacts.length === 0 && record.endedAt > 0,
+    }
+  }),
 )
 
 function reload(): void {
@@ -363,13 +387,15 @@ onMounted(() => {
 
 .meeting-list { display: flex; flex-direction: column; gap: var(--space-4, 8px); }
 
-/* Square card, hairline border, 8px gap — the task tab's row language. */
+/* Square card, hairline border, 8px gap — the task tab's row language. The
+   card stays sharp while its labels are pills: the container is structure, the
+   pills are metadata. */
 .meeting-row {
   position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-4, 8px);
-  padding: var(--space-3, 6px) var(--space-4, 8px) var(--space-3, 6px) var(--space-5, 10px);
+  padding: var(--space-4, 8px) var(--space-4, 8px) var(--space-4, 8px) var(--space-5, 10px);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: 0;
   background: var(--bg-secondary, #f8f9fa);
@@ -401,14 +427,16 @@ onMounted(() => {
 .meeting-row[data-state="stale"]::before { background: var(--color-orange); }
 .meeting-row[data-state="failed"]::before { background: var(--color-red); }
 
+/* Three tiers. The gaps are what make the tiers readable: 6px between name and
+   numbers, 6px between numbers and tags, and nothing tighter than that. */
 .meeting-row__main {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--space-3, 6px);
 }
-.meeting-row__line {
+.meeting-row__head {
   display: flex;
   align-items: center;
   gap: var(--space-3, 6px);
@@ -417,9 +445,9 @@ onMounted(() => {
 .meeting-row__title {
   flex: 1;
   min-width: 0;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  line-height: calc(16 * var(--dp));
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  line-height: calc(18 * var(--dp));
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -437,64 +465,81 @@ onMounted(() => {
   font-variant-numeric: tabular-nums;
   min-width: 0;
 }
-.meeting-row__m {
-  display: inline-flex;
-  align-items: center;
-  gap: calc(3 * var(--dp));
-  white-space: nowrap;
-}
-.meeting-row__m svg { flex-shrink: 0; opacity: 0.85; }
+.meeting-row__m { white-space: nowrap; }
 .meeting-row__m.is-accent { color: var(--accent-color); }
 .meeting-row__sep { padding: 0 var(--space-2, 4px); color: var(--text-hint); }
 
-/* Square, uppercase-ish, one per row. Colour is a secondary cue: the label
-   carries the meaning. */
-.meeting-chip {
+.meeting-row__tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2, 4px);
+  min-width: 0;
+}
+
+/* Pills: the app's badge language (radius-full, tinted fill, matching border).
+   Colour is a secondary cue — the label always carries the meaning. */
+.meeting-pill {
   display: inline-flex;
   align-items: center;
   gap: calc(3 * var(--dp));
-  height: calc(17 * var(--dp));
-  padding: 0 var(--space-3, 6px);
+  height: calc(18 * var(--dp));
+  padding: 0 var(--space-3, 6px) 0 var(--space-3, 6px);
   border: 1px solid transparent;
-  border-radius: 0;
+  border-radius: var(--radius-full);
   font-size: var(--font-size-2xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: 0.02em;
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
   white-space: nowrap;
   flex-shrink: 0;
 }
-.meeting-chip.is-ok {
-  color: var(--color-green);
-  background: color-mix(in srgb, var(--color-green) 13%, transparent);
-  border-color: color-mix(in srgb, var(--color-green) 38%, transparent);
+.meeting-pill svg { flex-shrink: 0; opacity: 0.9; }
+
+/* What is inside the meeting: neutral, because it is an attribute and not a
+   state. The type pill is the one that gets a hue. */
+.meeting-pill.is-soft {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-color: var(--border-color);
 }
-.meeting-chip.is-warn {
-  color: var(--color-orange);
-  background: color-mix(in srgb, var(--color-orange) 13%, transparent);
-  border-color: color-mix(in srgb, var(--color-orange) 38%, transparent);
+.meeting-pill.is-video {
+  color: var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 13%, transparent);
+  border-color: color-mix(in srgb, var(--color-info) 38%, transparent);
 }
-.meeting-chip.is-danger {
-  color: var(--color-red);
-  background: color-mix(in srgb, var(--color-red) 13%, transparent);
-  border-color: color-mix(in srgb, var(--color-red) 38%, transparent);
+.meeting-pill.is-voice {
+  color: var(--color-purple);
+  background: color-mix(in srgb, var(--color-purple) 13%, transparent);
+  border-color: color-mix(in srgb, var(--color-purple) 38%, transparent);
 }
-.meeting-chip.is-accent {
+.meeting-pill.is-empty {
+  background: transparent;
+  border: 1px dashed var(--border-color);
+  color: var(--text-muted);
+}
+.meeting-pill.is-accent {
   color: var(--accent-color);
   background: color-mix(in srgb, var(--accent-color) 13%, transparent);
   border-color: color-mix(in srgb, var(--accent-color) 40%, transparent);
 }
-.meeting-chip.is-muted {
-  color: var(--text-muted);
-  border-color: var(--border-color);
+.meeting-pill.is-warn {
+  color: var(--color-orange);
+  background: color-mix(in srgb, var(--color-orange) 13%, transparent);
+  border-color: color-mix(in srgb, var(--color-orange) 38%, transparent);
 }
-.meeting-chip__dot {
+.meeting-pill.is-danger {
+  color: var(--color-red);
+  background: color-mix(in srgb, var(--color-red) 13%, transparent);
+  border-color: color-mix(in srgb, var(--color-red) 38%, transparent);
+}
+.meeting-pill__dot {
   width: calc(5 * var(--dp));
   height: calc(5 * var(--dp));
   border-radius: 50%;
   background: currentColor;
-  animation: meeting-chip-pulse 1.4s ease-in-out infinite;
+  animation: meeting-pill-pulse 1.4s ease-in-out infinite;
 }
-@keyframes meeting-chip-pulse {
+@keyframes meeting-pill-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.25; }
 }

@@ -567,7 +567,7 @@ func TestServeLiveShareNoteSegment_RecordOwnershipAuthorizesUpload(t *testing.T)
 	pid, err := store.ProjectIDForPath(project)
 	require.NoError(t, err)
 	token := "0123456789abcdef0123456789abcdef"
-	require.NoError(t, service.StartLiveNote(token, pid, "口述", time.Now().UnixMilli()))
+	require.NoError(t, service.StartLiveNote(token, pid, "口述", service.LiveNotesKindVideo, time.Now().UnixMilli()))
 
 	prev := GetSTTProvider()
 	SetSTTProvider(&stubSTT{text: "你好"})
@@ -1210,7 +1210,7 @@ func TestServeLiveNotesSessions_ListsTheProjectsRecords(t *testing.T) {
 	require.NoError(t, err)
 
 	token := "0123456789abcdef0123456789abcdef"
-	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", service.LiveNotesKindVideo, 1_700_000_000_000))
 	paths, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(paths.Minutes, []byte("MINUTES"), 0o644))
@@ -1237,7 +1237,7 @@ func TestServeLiveNotesSessions_ListsMeetingsWithoutArtifacts(t *testing.T) {
 	project := t.TempDir()
 	pid, err := store.ProjectIDForPath(project)
 	require.NoError(t, err)
-	require.NoError(t, service.StartLiveNote("0123456789abcdef0123456789abcdef", pid, "空会", 1_700_000_000_000))
+	require.NoError(t, service.StartLiveNote("0123456789abcdef0123456789abcdef", pid, "空会", service.LiveNotesKindVideo, 1_700_000_000_000))
 
 	rec := httptest.NewRecorder()
 	ServeLiveNotesSessions(rec, liveNotesProjectRequest(t, "/api/live-share/notes/sessions", project))
@@ -1259,7 +1259,7 @@ func TestServeLiveNotesArtifact_ServesByTokenAndRejectsUnknown(t *testing.T) {
 	pid, err := store.ProjectIDForPath(project)
 	require.NoError(t, err)
 	token := "0123456789abcdef0123456789abcdef"
-	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", service.LiveNotesKindVideo, 1_700_000_000_000))
 	paths, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(paths.Minutes, []byte("MINUTES"), 0o644))
@@ -1296,7 +1296,7 @@ func TestServeLiveNotesDelete_RemovesRecordAndFolder(t *testing.T) {
 	pid, err := store.ProjectIDForPath(project)
 	require.NoError(t, err)
 	token := "0123456789abcdef0123456789abcdef"
-	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", service.LiveNotesKindVideo, 1_700_000_000_000))
 	paths, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(paths.Minutes, []byte("MINUTES"), 0o644))
@@ -1322,14 +1322,14 @@ func TestServeLiveNotesDelete_RefusesWhilePublishingOrGenerating(t *testing.T) {
 	pid, err := store.ProjectIDForPath(project)
 	require.NoError(t, err)
 	token := "0123456789abcdef0123456789abcdef"
-	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", service.LiveNotesKindVideo, 1_700_000_000_000))
 
 	// A live room wins over everything: the meeting is still happening.
 	room, err := liveRegistry.Create(projPath(project), "周会")
 	require.NoError(t, err)
 	t.Cleanup(func() { liveRegistry.Delete(room.Token()) })
 	_ = room
-	require.NoError(t, service.StartLiveNote(room.Token(), pid, "周会", 1_700_000_000_000))
+	require.NoError(t, service.StartLiveNote(room.Token(), pid, "周会", service.LiveNotesKindVideo, 1_700_000_000_000))
 
 	req := liveNotesProjectRequest(t, "/api/live-share/notes/sessions?token="+room.Token(), project)
 	req.Method = http.MethodDelete
@@ -1354,7 +1354,7 @@ func TestServeLiveShareNoteChat_IsIdempotentAndReadable(t *testing.T) {
 	pid, err := store.ProjectIDForPath(project)
 	require.NoError(t, err)
 	token := "0123456789abcdef0123456789abcdef"
-	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", service.LiveNotesKindVideo, 1_700_000_000_000))
 
 	for i := 0; i < 2; i++ {
 		rec := httptest.NewRecorder()

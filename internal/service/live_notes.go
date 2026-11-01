@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS live_notes (
 	started_at INTEGER NOT NULL DEFAULT 0,
 	ended_at INTEGER NOT NULL DEFAULT 0,
 	dir_name TEXT NOT NULL DEFAULT '',
+	kind TEXT NOT NULL DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -315,12 +316,23 @@ func SetLiveNoteRevise(token string, projectID int64, status, revised, errMsg st
 // it (and delete it). Nothing here expires — deleting the record is the only
 // way these rows go away, apart from deleting the project.
 
+// Meeting kinds. A record stores what the room actually carried, so the list
+// can tell a voice meeting from a video one without the room still existing.
+//
+// Empty is a real value: records written before the column existed, and rows
+// created by a late segment upload, have no kind. The UI shows no type tag for
+// those rather than guessing.
+const (
+	LiveNotesKindVoice = "voice"
+	LiveNotesKindVideo = "video"
+)
+
 // StartLiveNote creates the permanent record for a meeting.
 //
 // ON CONFLICT DO NOTHING, not an update: a publisher that reconnects with the
 // same token (a socket blip) must keep the ORIGINAL start time, otherwise the
 // record's date would drift every time the network hiccups.
-func StartLiveNote(token string, projectID int64, title string, startedAtMS int64) error {
+func StartLiveNote(token string, projectID int64, title, kind string, startedAtMS int64) error {
 	if token == "" {
 		return errors.New("live notes: empty token")
 	}
@@ -328,10 +340,10 @@ func StartLiveNote(token string, projectID int64, title string, startedAtMS int6
 		startedAtMS = time.Now().UnixMilli()
 	}
 	_, err := store.WriteExec(
-		`INSERT INTO live_notes (token, project_id, title, started_at, status, updated_at)
-		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		`INSERT INTO live_notes (token, project_id, title, kind, started_at, status, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		 ON CONFLICT(token) DO NOTHING`,
-		token, projectID, title, startedAtMS, LiveNotesStatusIdle,
+		token, projectID, title, kind, startedAtMS, LiveNotesStatusIdle,
 	)
 	if err != nil {
 		return fmt.Errorf("live notes: start meeting: %w", err)
@@ -501,6 +513,12 @@ type MeetingRecord struct {
 	// Status is the minutes job state (idle/generating/ready/failed). The list
 	// uses it to show "生成中" and to mark a job that died with the process.
 	Status string `json:"status"`
+	// Kind is what the room carried: "voice", "video", or "" for a record that
+	// predates the column (and for rows created by a late segment upload).
+	Kind string `json:"kind"`
+	// SpeakerCount is how many distinct people the transcript heard. Derived
+	// from the segments like the artifact flags, so it disappears with them.
+	SpeakerCount int `json:"speakerCount"`
 	// UpdatedAt is the row's last write, used to detect a stuck "generating".
 	UpdatedAt int64 `json:"updatedAt"`
 }
@@ -511,7 +529,7 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 		limit = 200
 	}
 	rows, err := store.ReadDB().Query(
-		`SELECT token, title, started_at, ended_at, dir_name, status,
+		`SELECT token, title, started_at, ended_at, dir_name, status, kind,
 		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000
 		   FROM live_notes
 		  WHERE project_id = ?
@@ -530,7 +548,7 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 		var dirName string
 		var updatedMS int64
 		if scanErr := rows.Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName,
-			&m.Status, &updatedMS); scanErr != nil {
+			&m.Status, &m.Kind, &updatedMS); scanErr != nil {
 			return nil, fmt.Errorf("live notes: scan meeting: %w", scanErr)
 		}
 		m.UpdatedAt = updatedMS
@@ -549,8 +567,13 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 	if err != nil {
 		return nil, err
 	}
+	speakers, err := liveNoteSpeakerCounts(projectID)
+	if err != nil {
+		return nil, err
+	}
 	for i := range out {
 		out[i].ChatCount = counts[out[i].Token]
+		out[i].SpeakerCount = speakers[out[i].Token]
 	}
 	return out, nil
 }
@@ -561,10 +584,10 @@ func GetMeetingRecord(projectPath string, projectID int64, token string) (Meetin
 	var dirName string
 	var updatedMS int64
 	err := store.ReadDB().QueryRow(
-		`SELECT token, title, started_at, ended_at, dir_name, status,
+		`SELECT token, title, started_at, ended_at, dir_name, status, kind,
 		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000
 		   FROM live_notes WHERE token = ? AND project_id = ?`, token, projectID,
-	).Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName, &m.Status, &updatedMS)
+	).Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName, &m.Status, &m.Kind, &updatedMS)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MeetingRecord{}, false, nil
 	}
@@ -582,7 +605,38 @@ func GetMeetingRecord(projectPath string, projectID int64, token string) (Meetin
 		return MeetingRecord{}, false, err
 	}
 	m.ChatCount = counts[token]
+	speakers, err := liveNoteSpeakerCounts(projectID)
+	if err != nil {
+		return MeetingRecord{}, false, err
+	}
+	m.SpeakerCount = speakers[token]
 	return m, true, nil
+}
+
+// liveNoteSpeakerCounts returns how many distinct speakers each transcript
+// heard, per token.
+//
+// Empty labels are skipped: a segment uploaded before the client knew the
+// speaker would otherwise count as a person.
+func liveNoteSpeakerCounts(projectID int64) (map[string]int, error) {
+	rows, err := store.ReadDB().Query(
+		`SELECT token, COUNT(DISTINCT speaker) FROM live_notes_segments
+		  WHERE project_id = ? AND speaker <> '' GROUP BY token`, projectID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("live notes: speaker counts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]int, 16)
+	for rows.Next() {
+		var token string
+		var n int
+		if scanErr := rows.Scan(&token, &n); scanErr != nil {
+			return nil, fmt.Errorf("live notes: scan speaker count: %w", scanErr)
+		}
+		out[token] = n
+	}
+	return out, rows.Err()
 }
 
 // liveNoteChatCounts returns message counts per token for one project.

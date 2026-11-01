@@ -35,6 +35,14 @@ export interface MeetingRecord {
   audioFiles: number
   chatCount: number
   status: 'idle' | 'generating' | 'ready' | 'failed'
+  /**
+   * What the room carried. Empty means "unknown": records written before the
+   * column existed, and rows created by a late segment upload, have no kind —
+   * the list draws no type pill for those rather than guessing.
+   */
+  kind?: 'voice' | 'video' | ''
+  /** Distinct speakers the transcript heard; 0 when there is no transcript. */
+  speakerCount?: number
   updatedAt: number
 }
 

@@ -311,7 +311,13 @@ func LiveSharePublishWS(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("liveshare: meeting record project id failed", "err", pidErr)
 	}
 	if pidErr == nil {
-		if startErr := service.StartLiveNote(token, projectID, room.Title(), time.Now().UnixMilli()); startErr != nil {
+		// What the room carries is only known here: the room is gone by the time
+		// anyone browses the record list, so the kind has to be stored.
+		kind := service.LiveNotesKindVoice
+		if room.VideoEnabled() {
+			kind = service.LiveNotesKindVideo
+		}
+		if startErr := service.StartLiveNote(token, projectID, room.Title(), kind, time.Now().UnixMilli()); startErr != nil {
 			slog.Warn("liveshare: meeting record start failed", "err", startErr)
 		}
 	}

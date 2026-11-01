@@ -21,10 +21,9 @@ vi.mock('lucide-vue-next', () => {
     Check: stub,
     CheckCircle2: stub,
     Link: stub,
-    MessageSquare: stub,
     Mic: stub,
-    PenLine: stub,
     Plus: stub,
+    Video: stub,
     RefreshCw: stub,
     RotateCw: stub,
     RotateCcw: stub,
@@ -86,6 +85,8 @@ function record(over: Record<string, unknown> = {}) {
     audioFiles: 12,
     chatCount: 4,
     status: 'ready',
+    kind: 'video',
+    speakerCount: 2,
     updatedAt: 1_700_002_880_000,
     ...over,
   }
@@ -198,17 +199,23 @@ describe('MeetingList', () => {
   })
 })
 
-describe('MeetingList row status', () => {
-  function chipTexts(w: ReturnType<typeof mountList>): string[] {
-    return w.findAll('.meeting-chip').map((c) => c.text())
+describe('MeetingList rows', () => {
+  function pillTexts(w: ReturnType<typeof mountList>): string[] {
+    return w.findAll('.meeting-pill').map((p) => p.text())
   }
 
-  it('shows one chip per row instead of stacking four tags', () => {
-    sessions.value = [record(), record({ token: 'two', hasMinutes: false, hasTranscript: true })]
+  it('separates the lifecycle from the artifacts', () => {
+    // An ended meeting has no lifecycle left to report, so the only pills are
+    // what it produced. The old single chip forced the two facts to compete.
+    sessions.value = [record()]
     const w = mountList()
 
-    expect(w.findAll('.meeting-chip')).toHaveLength(2)
-    expect(chipTexts(w)).toEqual([enMessages.meeting.list.hasMinutes, enMessages.meeting.list.onlyTranscript])
+    expect(pillTexts(w)).toEqual([
+      enMessages.meeting.list.kindVideo,
+      enMessages.meeting.list.pillMinutes,
+      enMessages.meeting.list.pillTranscript,
+    ])
+    expect(w.find('.meeting-row').attributes('data-state')).toBe('')
   })
 
   it('marks a failed minutes job instead of calling it "no artifacts"', () => {
@@ -217,7 +224,7 @@ describe('MeetingList row status', () => {
     sessions.value = [record({ status: 'failed', hasMinutes: false, hasTranscript: false })]
     const w = mountList()
 
-    expect(chipTexts(w)).toEqual([enMessages.meeting.list.failed])
+    expect(pillTexts(w)).toContain(enMessages.meeting.list.failed)
     expect(w.find('.meeting-row').attributes('data-state')).toBe('failed')
   })
 
@@ -227,7 +234,7 @@ describe('MeetingList row status', () => {
     ]
     const w = mountList()
 
-    expect(chipTexts(w)).toEqual([enMessages.meeting.list.stale])
+    expect(pillTexts(w)).toContain(enMessages.meeting.list.stale)
     expect(w.find('.meeting-row').attributes('data-state')).toBe('stale')
   })
 
@@ -235,20 +242,40 @@ describe('MeetingList row status', () => {
     sessions.value = [record({ status: 'generating', hasMinutes: false, updatedAt: Date.now() })]
     const w = mountList()
 
-    expect(chipTexts(w)).toEqual([enMessages.meeting.list.generating])
+    expect(pillTexts(w)).toContain(enMessages.meeting.list.generating)
     expect(w.find('.meeting-row').attributes('data-state')).toBe('generating')
   })
 
+  it('tells a voice meeting from a video one', () => {
+    sessions.value = [
+      record({ token: 'v', kind: 'video' }),
+      record({ token: 'a', kind: 'voice' }),
+      // A record written before the column existed: no pill, no guess.
+      record({ token: 'old', kind: '' }),
+    ]
+    const w = mountList()
+
+    const kinds = w.findAll('.meeting-row').map((r) => r.find('.meeting-pill').text())
+    expect(kinds).toEqual([
+      enMessages.meeting.list.kindVideo,
+      enMessages.meeting.list.kindVoice,
+      // The "old" row falls through to its first artifact pill.
+      enMessages.meeting.list.pillMinutes,
+    ])
+    expect(w.findAll('.meeting-row')[0].find('.meeting-pill').classes()).toContain('is-video')
+    expect(w.findAll('.meeting-row')[1].find('.meeting-pill').classes()).toContain('is-voice')
+  })
+
   it('surfaces the revised draft and the compact counts', () => {
-    sessions.value = [record({ hasRevised: true, audioFiles: 12, chatCount: 4 })]
+    sessions.value = [record({ hasRevised: true, audioFiles: 12, chatCount: 4, speakerCount: 3 })]
     const w = mountList()
 
     const meta = w.find('.meeting-row__meta').text()
     expect(meta).toContain('12 clips')
     expect(meta).toContain('4 msgs')
-    expect(meta).toContain(enMessages.meeting.list.revised)
-    // The long forms survive as tooltips rather than disappearing.
-    expect(w.find('.meeting-row__meta').html()).toContain('12 clips')
+    expect(meta).toContain('3 people')
+    // Revised is an artifact, not a number, so it is a pill on the third line.
+    expect(pillTexts(w)).toContain(enMessages.meeting.list.pillRevised)
   })
 
   it('shows one recording instead of a clip count once the audio is merged', () => {
@@ -262,13 +289,27 @@ describe('MeetingList row status', () => {
   })
 
   it('hides the counts a record does not have', () => {
-    sessions.value = [record({ audioFiles: 0, chatCount: 0, hasRevised: false })]
+    sessions.value = [record({ audioFiles: 0, chatCount: 0, speakerCount: 0, hasRevised: false })]
     const w = mountList()
 
     const meta = w.find('.meeting-row__meta').text()
     expect(meta).not.toContain('clips')
     expect(meta).not.toContain('msgs')
-    expect(meta).not.toContain(enMessages.meeting.list.revised)
+    expect(meta).not.toContain('people')
+    expect(pillTexts(w)).not.toContain(enMessages.meeting.list.pillRevised)
+  })
+
+  it('says "no artifacts" only for a meeting that has ENDED empty', () => {
+    // A running meeting has simply not produced anything yet.
+    sessions.value = [
+      record({ token: 'ended', hasMinutes: false, hasTranscript: false, hasRevised: false }),
+      record({ token: 'live', endedAt: 0, hasMinutes: false, hasTranscript: false, hasRevised: false }),
+    ]
+    const w = mountList()
+
+    const rows = w.findAll('.meeting-row')
+    expect(rows[0].text()).toContain(enMessages.meeting.list.noArtifacts)
+    expect(rows[1].text()).not.toContain(enMessages.meeting.list.noArtifacts)
   })
 })
 

@@ -996,6 +996,10 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		"started_at": "ALTER TABLE live_notes ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0",
 		"ended_at":   "ALTER TABLE live_notes ADD COLUMN ended_at INTEGER NOT NULL DEFAULT 0",
 		"dir_name":   "ALTER TABLE live_notes ADD COLUMN dir_name TEXT NOT NULL DEFAULT ''",
+		// What the room carried ("voice"/"video"). Empty on records written
+		// before the column existed — the UI shows no type tag for those rather
+		// than guessing from the artifacts.
+		"kind": "ALTER TABLE live_notes ADD COLUMN kind TEXT NOT NULL DEFAULT ''",
 	} {
 		var present int
 		_ = store.ReadDB().QueryRow(

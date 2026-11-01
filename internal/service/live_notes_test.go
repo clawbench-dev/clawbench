@@ -943,8 +943,8 @@ func TestStartLiveNote_IsIdempotentAndKeepsTheOriginalStart(t *testing.T) {
 	pid, err := store.ProjectIDForPath("/proj/a")
 	require.NoError(t, err)
 
-	require.NoError(t, StartLiveNote("tok", pid, "周会", 1_700_000_000_000))
-	require.NoError(t, StartLiveNote("tok", pid, "改名了", 1_700_000_999_000))
+	require.NoError(t, StartLiveNote("tok", pid, "周会", LiveNotesKindVideo, 1_700_000_000_000))
+	require.NoError(t, StartLiveNote("tok", pid, "改名了", LiveNotesKindVideo, 1_700_000_999_000))
 
 	note, exists, err := GetLiveNote("tok")
 	require.NoError(t, err)
@@ -959,7 +959,7 @@ func TestEndLiveNote_StampsOnce(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	pid, err := store.ProjectIDForPath("/proj/a")
 	require.NoError(t, err)
-	require.NoError(t, StartLiveNote("tok", pid, "周会", 1_700_000_000_000))
+	require.NoError(t, StartLiveNote("tok", pid, "周会", LiveNotesKindVideo, 1_700_000_000_000))
 
 	require.NoError(t, EndLiveNote("tok", 1_700_000_060_000))
 	require.NoError(t, EndLiveNote("tok", 1_700_000_999_000))
@@ -974,9 +974,9 @@ func TestCloseStaleLiveNotes_OnlyClosesOldOpenRecords(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	pid, err := store.ProjectIDForPath("/proj/a")
 	require.NoError(t, err)
-	require.NoError(t, StartLiveNote("old", pid, "旧会", 1_700_000_000_000))
-	require.NoError(t, StartLiveNote("fresh", pid, "新会", 1_700_000_000_000))
-	require.NoError(t, StartLiveNote("closed", pid, "已结束", 1_700_000_000_000))
+	require.NoError(t, StartLiveNote("old", pid, "旧会", LiveNotesKindVideo, 1_700_000_000_000))
+	require.NoError(t, StartLiveNote("fresh", pid, "新会", LiveNotesKindVideo, 1_700_000_000_000))
+	require.NoError(t, StartLiveNote("closed", pid, "已结束", LiveNotesKindVideo, 1_700_000_000_000))
 	require.NoError(t, EndLiveNote("closed", 1_700_000_001_000))
 	_, err = store.WriteExec(`UPDATE live_notes SET updated_at = '2000-01-01 00:00:00' WHERE token IN ('old','closed')`)
 	require.NoError(t, err)
@@ -1001,7 +1001,7 @@ func TestEnsureMeetingDir_IsStableAndKeepsAudioOutOfGit(t *testing.T) {
 
 	project := t.TempDir()
 	started := time.Date(2026, 10, 30, 14, 30, 0, 0, time.Local).UnixMilli()
-	require.NoError(t, StartLiveNote("abcdef123456", pid, "季度/规划", started))
+	require.NoError(t, StartLiveNote("abcdef123456", pid, "季度/规划", LiveNotesKindVideo, started))
 
 	paths, err := EnsureMeetingDir("abcdef123456", pid, project, "季度/规划", started)
 	require.NoError(t, err)
@@ -1034,8 +1034,8 @@ func TestListMeetingRecords_NewestFirstWithArtifacts(t *testing.T) {
 	require.NoError(t, err)
 	project := t.TempDir()
 
-	require.NoError(t, StartLiveNote("older", pid, "晨会", 1_700_000_000_000))
-	require.NoError(t, StartLiveNote("newer", pid, "周会", 1_700_000_500_000))
+	require.NoError(t, StartLiveNote("older", pid, "晨会", LiveNotesKindVideo, 1_700_000_000_000))
+	require.NoError(t, StartLiveNote("newer", pid, "周会", LiveNotesKindVideo, 1_700_000_500_000))
 	paths, err := EnsureMeetingDir("newer", pid, project, "周会", 1_700_000_500_000)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(paths.Minutes, []byte("MINUTES"), 0o644))
@@ -1061,6 +1061,43 @@ func TestListMeetingRecords_NewestFirstWithArtifacts(t *testing.T) {
 	assert.False(t, records[1].HasMinutes)
 }
 
+// A record carries what the room WAS (voice vs video) and how many people the
+// transcript heard. Both are what the record list needs to say something about
+// a meeting it cannot otherwise describe.
+func TestMeetingRecords_CarryKindAndSpeakerCount(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	project := t.TempDir()
+
+	require.NoError(t, StartLiveNote("voice", pid, "语音", LiveNotesKindVoice, 1_700_000_000_000))
+	require.NoError(t, StartLiveNote("video", pid, "视频", LiveNotesKindVideo, 1_700_000_500_000))
+	// Three segments, two people: the count must be DISTINCT speakers.
+	for _, sg := range []LiveNoteSegment{
+		seg(0, "mic", "我", 1_700_000_000_000, "开始"),
+		seg(1, "system", "小明", 1_700_000_001_000, "收到"),
+		seg(2, "mic", "我", 1_700_000_002_000, "继续"),
+	} {
+		_, appendErr := AppendLiveNoteSegment(context.Background(), "voice", pid, sg)
+		require.NoError(t, appendErr)
+	}
+
+	records, err := ListMeetingRecords(project, pid, 200)
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+	assert.Equal(t, LiveNotesKindVideo, records[0].Kind)
+	assert.Equal(t, LiveNotesKindVoice, records[1].Kind)
+	assert.Equal(t, 2, records[1].SpeakerCount)
+	assert.Equal(t, 0, records[0].SpeakerCount, "no transcript, no speakers")
+
+	one, ok, err := GetMeetingRecord(project, pid, "voice")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, LiveNotesKindVoice, one.Kind)
+	assert.Equal(t, 2, one.SpeakerCount)
+}
+
 func TestDeleteMeetingRecord_RemovesFolderRowsAndChat(t *testing.T) {
 	db := setupTestDBForLiveNotes(t)
 	defer func() { _ = db.Close() }()
@@ -1068,7 +1105,7 @@ func TestDeleteMeetingRecord_RemovesFolderRowsAndChat(t *testing.T) {
 	require.NoError(t, err)
 	project := t.TempDir()
 
-	require.NoError(t, StartLiveNote("tok", pid, "周会", 1_700_000_000_000))
+	require.NoError(t, StartLiveNote("tok", pid, "周会", LiveNotesKindVideo, 1_700_000_000_000))
 	paths, err := EnsureMeetingDir("tok", pid, project, "周会", 1_700_000_000_000)
 	require.NoError(t, err)
 	_, err = AppendLiveNoteSegment(context.Background(), "tok", pid, seg(0, "mic", "我", 1, "内容"))
@@ -1103,7 +1140,7 @@ func TestAppendLiveNoteChat_IsIdempotentAndOrdered(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	pid, err := store.ProjectIDForPath("/proj/a")
 	require.NoError(t, err)
-	require.NoError(t, StartLiveNote("tok", pid, "周会", 1_700_000_000_000))
+	require.NoError(t, StartLiveNote("tok", pid, "周会", LiveNotesKindVideo, 1_700_000_000_000))
 
 	first, err := AppendLiveNoteChat("tok", pid, LiveNoteChatMessage{ClientID: "c1", Speaker: "小明", Text: "一"})
 	require.NoError(t, err)
