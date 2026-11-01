@@ -432,7 +432,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 - `GET /api/live-share/notes/sessions/artifact?token=&kind=` 读 `minutes.md` / `transcript.vtt` / `transcript-revised.md` / `chat.md`。目录由服务端从记录行解析，**客户端不传任何路径**。记录没有任何产物时 404。
 - `GET /api/live-share/notes/sessions/chat?token=` 读落库的聊天（按服务端行 id 升序）。
 - `DELETE /api/live-share/notes/sessions?token=` 删除记录：**先删目录、再删行**；房间仍在发布、或纪要/校对任务正在运行时返回 409。
-- 「在编辑器中打开」走前端已有的文件查看器，传目录里那个文件的绝对路径。
+- 「打开」走前端已有的文件查看器，传目录里那个文件的绝对路径。
 - 每次切到页签、以及会议结束后都会重读一次，另有手动刷新按钮。
 - **结束会议直接进入记录详情**，没有单独的「会后纪要」界面；生成中 / 生成失败 / 无产物都在详情里表达。
 

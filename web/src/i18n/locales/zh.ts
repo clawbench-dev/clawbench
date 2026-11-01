@@ -4214,7 +4214,7 @@ export default {
       back: '返回',
       noMinutes: '这次听记还没有生成纪要。',
       noTranscript: '这次听记没有留下转写。',
-      openInEditor: '在编辑器中打开',
+      open: '打开',
       copy: '复制',
       audioCount: '录音 {n} 段',
       viewMinutes: '纪要',

@@ -330,7 +330,7 @@ const canOpen = computed(() => {
 const openLabel = computed(() => (
   activeTab.value === 'resources'
     ? t('meeting.detail.openResources')
-    : t('liveShare.history.openInEditor')
+    : t('liveShare.history.open')
 ))
 
 function formatWhen(ms: number): string {

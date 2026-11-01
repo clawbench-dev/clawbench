@@ -4224,7 +4224,7 @@ export default {
       back: 'Back',
       noMinutes: 'This note has no minutes yet.',
       noTranscript: 'This note left no transcript.',
-      openInEditor: 'Open in editor',
+      open: 'Open',
       copy: 'Copy',
       audioCount: 'Clips: {n}',
       viewMinutes: 'Minutes',
