@@ -13,6 +13,7 @@ import (
 
 	"clawbench/internal/liveshare"
 	"clawbench/internal/model"
+	"clawbench/internal/service"
 
 	"github.com/coder/websocket"
 	"github.com/stretchr/testify/assert"
@@ -116,7 +117,11 @@ func TestLiveShareCreate_SeparateProjectsGetSeparateRooms(t *testing.T) {
 	assert.Equal(t, 2, liveShareRoomCountForTest())
 }
 
-func TestLiveShareCreate_TitleFallsBackToProjectBaseName(t *testing.T) {
+// An unnamed meeting is dated, not named after the project. The project's name
+// used to stand in here, which made every meeting in a project look identical
+// in the record list; the summary model replaces the placeholder once the
+// minutes exist.
+func TestLiveShareCreate_TitleFallsBackToTheStartTime(t *testing.T) {
 	resetLiveRegistry(t)
 
 	w := httptest.NewRecorder()
@@ -127,7 +132,8 @@ func TestLiveShareCreate_TitleFallsBackToProjectBaseName(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	room := liveRegistry.Get(resp.Token)
 	require.NotNil(t, room)
-	assert.Equal(t, "myproj", room.Title())
+	assert.True(t, service.IsPlaceholderMeetingTitle(room.Title()), "got %q", room.Title())
+	assert.NotEqual(t, "myproj", room.Title())
 }
 
 // The create body has two shapes: legacy `video` ("is there a picture") and the
@@ -362,11 +368,23 @@ func TestTruncateRunes(t *testing.T) {
 	assert.Equal(t, "屏幕…", truncateRunes("屏幕共享测试", 2))
 }
 
-func TestLastPathSegment(t *testing.T) {
-	assert.Equal(t, "proj", lastPathSegment("/a/b/proj"))
-	assert.Equal(t, "proj", lastPathSegment(`C:\a\b\proj`))
-	assert.Equal(t, "proj", lastPathSegment("proj"))
-	assert.Equal(t, "", lastPathSegment("/a/b/"))
+func TestLiveShareCreateBody_UnnamedMeetingGetsADate(t *testing.T) {
+	rec := httptest.NewRequest(http.MethodPost, "/api/live-share/create", strings.NewReader(`{}`))
+	title, _, _, _, _ := liveShareCreateBody(rec)
+
+	// The project's own name used to stand in here, which made every meeting in
+	// a project carry the identical title ("clawbench").
+	assert.True(t, service.IsPlaceholderMeetingTitle(title), "got %q", title)
+	assert.NotEqual(t, "ClawBench", title)
+}
+
+func TestLiveShareCreateBody_KeepsTheTitleTheUserTyped(t *testing.T) {
+	rec := httptest.NewRequest(http.MethodPost, "/api/live-share/create",
+		strings.NewReader(`{"title":"  发版评审  "}`))
+	title, _, _, _, _ := liveShareCreateBody(rec)
+
+	assert.Equal(t, "发版评审", title)
+	assert.False(t, service.IsPlaceholderMeetingTitle(title))
 }
 
 // ── WebSocket end-to-end ─────────────────────────────────────────────────────

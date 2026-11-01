@@ -689,6 +689,12 @@ func generateLiveNotesArtifacts(token string, projectID int64, projectPath, titl
 	defer cancel()
 
 	startedAt := liveNotesStartTime(segments)
+	// The row is the authority on the title: a client's copy can be stale (a
+	// second device, a page that never re-read the record), and the rename
+	// below has to inspect what is actually stored.
+	if row, ok, err := service.GetLiveNote(token); err == nil && ok && strings.TrimSpace(row.Title) != "" {
+		title = row.Title
+	}
 	paths, dirErr := service.EnsureMeetingDir(token, projectID, projectPath, title, startedAt.UnixMilli())
 	if dirErr != nil {
 		// The transcript and the minutes still go into the database; only the
@@ -731,6 +737,12 @@ func generateLiveNotesArtifacts(token string, projectID int64, projectPath, titl
 		return
 	}
 
+	// Now that the meeting has been summarized there is something to name it
+	// after. Only a placeholder is replaced — a title the user typed is theirs.
+	// Done before the file is written so the minutes.md heading carries the
+	// real name instead of "11-01 17:35".
+	title = nameMeetingFromMinutes(ctx, title, minutes, service.GenerateLiveNotesTitle)
+
 	// A failed write must not lose the minutes: they are still stored below, and
 	// the UI simply shows no file path.
 	filePath := ""
@@ -740,6 +752,27 @@ func generateLiveNotesArtifacts(token string, projectID int64, projectPath, titl
 	if err := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusReady, minutes, "", filePath); err != nil {
 		slog.Error("live notes: persist minutes failed", "err", err)
 	}
+}
+
+// nameMeetingFromMinutes replaces a placeholder title with one the summary
+// model derived from the minutes, and returns the title to use from here on.
+//
+// `generate` is a parameter rather than a direct call so the decision — is this
+// still a placeholder, and what happens when the model fails — is testable
+// without a model.
+func nameMeetingFromMinutes(ctx context.Context, title, minutes string, generate func(context.Context, string) (string, error)) string {
+	if !service.IsPlaceholderMeetingTitle(title) {
+		return title
+	}
+	named, err := generate(ctx, minutes)
+	if err != nil {
+		slog.Warn("live notes: title generation failed", "err", err)
+		return title
+	}
+	if named = strings.TrimSpace(named); named == "" {
+		return title
+	}
+	return named
 }
 
 // proofreadLiveNotesTranscript runs stage 2 and returns the text to summarize.

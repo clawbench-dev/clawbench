@@ -339,6 +339,39 @@ func StartLiveNote(token string, projectID int64, title string, startedAtMS int6
 	return nil
 }
 
+// placeholderTitleLayout is how an unnamed meeting is dated. It matches the
+// list's own timestamp column, so a record the user never named still reads as
+// "when this happened" rather than as a name.
+const placeholderTitleLayout = "01-02 15:04"
+
+// PlaceholderMeetingTitle is the name a meeting gets when the user gave none.
+//
+// It used to be the project's own name, which made every meeting in a project
+// carry the identical title ("clawbench") and told the reader nothing. The
+// summary model replaces this placeholder once the minutes exist
+// (GenerateLiveNotesTitle), so it only has to be readable until then.
+func PlaceholderMeetingTitle(at time.Time) string {
+	return at.Format(placeholderTitleLayout)
+}
+
+// IsPlaceholderMeetingTitle reports whether title is still the untouched
+// fallback — i.e. nobody has named this meeting yet, so a generated title may
+// replace it.
+//
+// Format-based rather than compared against started_at on purpose: the title is
+// stamped when the ROOM is created and started_at when the publisher ATTACHES,
+// and those two can straddle a minute boundary. The only false positive is a
+// user who types something shaped exactly like "11-01 17:35", which is not
+// worth a schema column to rule out.
+func IsPlaceholderMeetingTitle(title string) bool {
+	title = strings.TrimSpace(title)
+	if len(title) != len(placeholderTitleLayout) {
+		return false
+	}
+	_, err := time.Parse(placeholderTitleLayout, title)
+	return err == nil
+}
+
 // EndLiveNote stamps the end time once. A second call is a no-op so a
 // double-close (explicit end + socket teardown) cannot move the finish line.
 func EndLiveNote(token string, endedAtMS int64) error {
@@ -1246,15 +1279,42 @@ func GenerateLiveNotesMinutes(ctx context.Context, title, transcript string, sel
 		contextBlock = strings.Join(partials, "\n\n")
 	}
 
-	question := "请根据以上内容生成会议纪要。"
-	if title != "" {
-		question = "会议标题：" + title + "\n请根据以上内容生成会议纪要。"
-	}
+	question := liveNotesMinutesQuestion(title)
 	minutes, err := summarize.AskAboutContext(ctx, summarizer, self.withPrompt(liveNotesMinutesPrompt), contextBlock, question, 3000)
 	if err != nil {
 		return "", fmt.Errorf("live notes: minutes: %w", err)
 	}
 	return strings.TrimSpace(minutes), nil
+}
+
+// liveNotesMinutesQuestion frames the summary request.
+//
+// A placeholder title ("11-01 17:35") is not a name: handing it to the
+// summarizer as "会议标题：" only invites a meeting about timestamps.
+func liveNotesMinutesQuestion(title string) string {
+	if title == "" || IsPlaceholderMeetingTitle(title) {
+		return "请根据以上内容生成会议纪要。"
+	}
+	return "会议标题：" + title + "\n请根据以上内容生成会议纪要。"
+}
+
+// GenerateLiveNotesTitle names a meeting from its minutes.
+//
+// This is the second half of "the record is not called clawbench": the meeting
+// is created before anyone knows what it was about, so the title starts as a
+// date placeholder and is replaced here, once there is something to name it
+// after. The minutes (not the transcript) are the input — they already hold the
+// summary, and they are a fraction of the size.
+func GenerateLiveNotesTitle(ctx context.Context, minutes string) (string, error) {
+	summarizer := summarize.NewAISummarizer(model.ConfigInstance.AISummary)
+	if summarizer == nil {
+		return "", ErrSummaryModelNotConfigured
+	}
+	title, err := summarize.GenerateMeetingTitle(ctx, summarizer, minutes)
+	if err != nil {
+		return "", fmt.Errorf("live notes: title: %w", err)
+	}
+	return title, nil
 }
 
 // splitRunes splits s into chunks of at most n runes, preferring a line break

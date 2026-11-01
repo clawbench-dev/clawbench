@@ -112,7 +112,7 @@ func ServeLiveShareManage(w http.ResponseWriter, r *http.Request) {
 // `video` predates video meetings and means "there is a picture". The newer
 // camera/screen pair says what the picture is made of; a client that sends
 // neither is a legacy one whose picture has always been a screen.
-func liveShareCreateBody(r *http.Request, projectPath string) (title string, notes, video, camera, hostScreen bool) {
+func liveShareCreateBody(r *http.Request) (title string, notes, video, camera, hostScreen bool) {
 	var body struct {
 		Title string `json:"title"`
 		Notes bool   `json:"notes"`
@@ -140,13 +140,15 @@ func liveShareCreateBody(r *http.Request, projectPath string) (title string, not
 	} else {
 		hostScreen = video
 	}
-	title = body.Title
+	title = strings.TrimSpace(body.Title)
 	if title != "" {
 		title = truncateRunes(title, 80)
-	} else if base := lastPathSegment(projectPath); base != "" {
-		title = base
 	} else {
-		title = "ClawBench"
+		// Unnamed. The project's own name used to stand in here, which made
+		// every meeting in a project carry the identical title and told the
+		// reader nothing. Date it instead; the summary model replaces this
+		// placeholder once the minutes exist (service.GenerateLiveNotesTitle).
+		title = service.PlaceholderMeetingTitle(time.Now())
 	}
 	return title, body.Notes, video, camera, hostScreen
 }
@@ -157,7 +159,7 @@ func liveShareCreateBody(r *http.Request, projectPath string) (title string, not
 var liveShareReuseGrace = 10 * time.Second
 
 func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath string) {
-	title, notes, video, camera, hostScreen := liveShareCreateBody(r, projectPath)
+	title, notes, video, camera, hostScreen := liveShareCreateBody(r)
 	room, err := createLiveShareRoom(projectPath, title)
 	if err != nil {
 		if errors.Is(err, liveshare.ErrTooManyRooms) {
@@ -719,18 +721,6 @@ func truncateRunes(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "…"
-}
-
-// lastPathSegment returns the final component of a slash-separated path,
-// handling both POSIX and Windows separators (the project path arrives from a
-// cookie and may be either).
-func lastPathSegment(p string) string {
-	for i := len(p) - 1; i >= 0; i-- {
-		if p[i] == '/' || p[i] == '\\' {
-			return p[i+1:]
-		}
-	}
-	return p
 }
 
 // liveShareRoomCountForTest exposes the registry size to tests without

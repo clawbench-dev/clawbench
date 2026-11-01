@@ -3797,7 +3797,9 @@ paths:
               properties:
                 title:
                   type: string
-                  description: 会议标题；省略时取项目目录名
+                  description: |
+                    会议标题。省略时用会议开始时间（`MM-DD HH:mm`）占位，
+                    纪要生成后由摘要模型据此改写；用户填写的标题不会被覆盖。
                 notes:
                   type: boolean
                   description: 是否开启 AI 听记（观众据此显示转写入口）
