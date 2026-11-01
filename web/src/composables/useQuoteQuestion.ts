@@ -21,7 +21,14 @@ const TAG = 'QuoteQuestion'
  *
  * Exactly one attachment source is expected:
  * - `url` + `label`  — an external address (issue/PR), attached as a URL entry;
- * - `filePath`       — a local file, attached as a file entry.
+ * - `filePath`       — a local file, attached as a file entry;
+ * - `quote`          — a payload the caller already built.
+ *
+ * `quote` exists because a meeting record has no locator the card can carry:
+ * its content lives behind a token and has to be FETCHED (minutes, else
+ * transcript) before the card means anything. `buildComposerQuote` is
+ * synchronous, so the caller that can await does the fetch and hands the
+ * finished payload over instead of a path/address.
  *
  * There is no `onAdd` navigation callback any more: committing always goes
  * through the session picker, whose "add and open" button is what reveals the
@@ -31,6 +38,7 @@ const TAG = 'QuoteQuestion'
 export interface QuoteComposerContext {
   url?: string
   filePath?: string
+  quote?: QuoteData
   label: string
 }
 
@@ -39,7 +47,7 @@ export interface QuoteComposerContext {
  * bar. It is deliberately not part of the chat context yet — see openComposer.
  */
 export interface ComposerAttachment {
-  kind: 'url' | 'file'
+  kind: 'url' | 'file' | 'quote'
   label: string
   url?: string
   path?: string
@@ -122,6 +130,7 @@ const composerAttachment = computed<ComposerAttachment | null>(() => {
   if (!ctx) return null
   if (ctx.url) return { kind: 'url', label: ctx.label, url: ctx.url }
   if (ctx.filePath) return { kind: 'file', label: ctx.label, path: ctx.filePath }
+  if (ctx.quote) return { kind: 'quote', label: ctx.label }
   return null
 })
 
@@ -704,7 +713,7 @@ export function useQuoteQuestion() {
    * bar leaves the chat input untouched.
    */
   function openComposer(ctx: QuoteComposerContext) {
-    if (!ctx?.url && !ctx?.filePath) return
+    if (!ctx?.url && !ctx?.filePath && !ctx?.quote) return
     composerContext.value = ctx
     // A live selection carries over (select-then-click); otherwise start empty
     // so the full body is never quoted by default.
@@ -746,6 +755,9 @@ export function useQuoteQuestion() {
       // it already carries the source label/lines/address.
       return { ...selection, note, id: '' }
     }
+    // A payload the caller built ahead of time (meeting records: the content
+    // has to be fetched, which this function cannot do).
+    if (ctx.quote) return { ...ctx.quote, note, id: '' }
     // No selection: reference the whole object.
     return {
       text: '',

@@ -79,6 +79,21 @@ import type { QuoteData } from '../useChatContext.ts'
 import { cancelTarget, usePendingTarget } from '../useConversationTarget.ts'
 import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 
+/**
+ * A meeting record's quote payload, as `useMeetingHistory().buildQuote` produces
+ * it: the card names the record and carries its text, with the token as the
+ * jump target. It exists because a meeting has no path or URL to reference.
+ */
+const MEETING_QUOTE: QuoteData = {
+  text: '决策：下周一发布',
+  filePath: 'Meeting · Standup · 11-01 09:00',
+  language: 'meeting',
+  startLine: 0,
+  endLine: 0,
+  sourceKind: 'meeting',
+  meetingToken: 'tok-1',
+}
+
 describe('useQuoteQuestion', () => {
   let ctx: ReturnType<typeof useChatContext>
 
@@ -546,6 +561,23 @@ describe('useQuoteQuestion', () => {
       expect(ctx.attachedFiles.value).toHaveLength(0)
     })
 
+    it('previews a pre-built payload when the composer is opened with one', () => {
+      // A meeting record is addressed by token, so the card's content has to be
+      // fetched before the bar can exist. The caller that awaited the fetch
+      // hands the finished payload over; the bar still previews it as a chip and
+      // still quotes nothing until the user commits.
+      const qq = useQuoteQuestion()
+      qq.openComposer({ quote: MEETING_QUOTE, label: 'Meeting · Standup · 11-01 09:00' })
+
+      expect(qq.composerMode.value).toBe(true)
+      expect(qq.visible.value).toBe(true)
+      expect(qq.composerAttachment.value).toEqual({
+        kind: 'quote', label: 'Meeting · Standup · 11-01 09:00',
+      })
+      expect(ctx.quoteData.value).toBeNull()
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+    })
+
     it('drops the previewed attachment when the composer is dismissed', () => {
       // Closing the bar must not leave anything in the chat input — that is the
       // regression this whole pending-attachment indirection exists to prevent.
@@ -786,6 +818,43 @@ describe('useQuoteQuestion', () => {
           filePath: '/proj/src/main.ts', sourceKind: 'file', text: '',
         })
         expect(ctx.attachedFiles.value).toHaveLength(0)
+      })
+
+      it('carries a pre-built payload through as the card, note included', () => {
+        // The meeting case: the payload is built by the caller (its text comes
+        // from the record, not from a selection), so committing must keep it
+        // verbatim — losing the text would send a card that says nothing.
+        const qq = useQuoteQuestion()
+        qq.openComposer({ quote: MEETING_QUOTE, label: 'Meeting · Standup · 11-01 09:00' })
+
+        qq.addToConversation('  summarise the decisions  ')
+
+        const { pending } = usePendingTarget()
+        expect(pending.value?.quotes).toHaveLength(1)
+        expect(pending.value?.quotes[0]).toMatchObject({
+          ...MEETING_QUOTE,
+          note: 'summarise the decisions',
+        })
+        // Still a card in the chat, never a separate attachment.
+        expect(ctx.attachedFiles.value).toHaveLength(0)
+        expect(qq.composerAttachment.value).toBeNull()
+      })
+
+      it('prefers a live selection over the pre-built payload', () => {
+        // Select-then-click: the snippet the user picked is what they mean,
+        // exactly as with the file / issue entry points.
+        const qq = useQuoteQuestion()
+        qq.openComposer({ quote: MEETING_QUOTE, label: 'Meeting · Standup · 11-01 09:00' })
+        ctx.setQuoteData({
+          text: 'picked line', filePath: 'Meeting · Standup · 11-01 09:00',
+          language: 'meeting', startLine: 0, endLine: 0, meetingToken: 'tok-1',
+        })
+
+        qq.addToConversation('')
+
+        expect(usePendingTarget().pending.value?.quotes[0]).toMatchObject({
+          text: 'picked line', meetingToken: 'tok-1',
+        })
       })
     })
 

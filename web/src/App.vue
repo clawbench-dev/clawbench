@@ -228,7 +228,7 @@
                 <TabPanel tabId="live" :activeTab="leftPanelActive" :noHeader="true">
                   <MeetingPanel
                     :active="panelIsActive('live')"
-                    @quote="handleMeetingQuote"
+                    @quote="handleMeetingQuoteButton"
                   />
                 </TabPanel>
 
@@ -3516,22 +3516,18 @@ const { forgeUnreadCount, refresh: refreshForgeUnread } = useForgeUnread()
 // The forge dock icon reflects the bound platform (GitHub vs GitLab).
 const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
 
-// "Quote in chat" from the issue/PR detail header. Opens the shared quote bar in
-// composer mode: the issue/PR URL is previewed as a chip in the bar and NO body
-// text is quoted by default — the user selects the part they care about, then
-// types their message. The attachment only reaches a chat input when the user
-// commits (send / add), so dismissing the bar leaves the input untouched.
-// The bar is global (position: fixed), so no tab switch is needed on open;
-// committing goes through the session picker, whose "add and open" reveals chat.
 const meetingHistory = useMeetingHistory()
 
 /**
- * Quote a meeting into the chat.
+ * Stage a meeting quote straight into the chat draft — the DRAG path.
  *
- * The payload only carries the token: the meeting's text is fetched here, so
- * the list-row drag and the detail page's quote button produce an identical
- * card. A meeting with nothing written yet produces no card at all — a quote
- * with only a title would spend a prompt slot saying nothing.
+ * Dropping a row on the chat already means "put this in the conversation", so
+ * there is no composer detour asking for a note; the card can still be
+ * annotated afterwards, while it is staged. The payload only carries the token:
+ * the meeting's text is fetched here, so the list-row drag and the detail
+ * header's quote button produce an identical card. A meeting with nothing
+ * written yet produces no card at all — a quote with only a title would spend a
+ * prompt slot saying nothing.
  */
 async function handleMeetingQuote(token: string): Promise<void> {
   if (!token) return
@@ -3551,6 +3547,40 @@ async function handleMeetingQuote(token: string): Promise<void> {
   })
 }
 
+/**
+ * "Quote in chat" from the meeting detail header — the SAME interaction as the
+ * issue/PR detail header: the shared quote bar opens in composer mode with the
+ * meeting previewed as a chip and nothing quoted yet. The user annotates it (or
+ * selects part of the minutes, which then becomes the quoted content), and the
+ * card only reaches a chat input when they commit.
+ *
+ * Staging on click — what this used to do — read as "attach this", with no
+ * place to say why, and it also jumped the user to the chat tab while the bar
+ * had a destination row of its own.
+ *
+ * The content has to be fetched before the bar opens (a meeting is addressed by
+ * token, not a path), which is why the quote is built here and handed to the
+ * composer instead of the composer deriving it from a locator.
+ */
+async function handleMeetingQuoteButton(token: string): Promise<void> {
+  if (!token) return
+  const record = await meetingHistory.get(token)
+  if (!record) return
+  const quote = await meetingHistory.buildQuote(record)
+  if (!quote) {
+    toast.show(t('meeting.quote.unavailable'), { type: 'error', icon: 'warning' })
+    return
+  }
+  quoteQuestion.openComposer({ quote, label: quote.filePath })
+}
+
+// "Quote in chat" from the issue/PR detail header. Opens the shared quote bar in
+// composer mode: the issue/PR URL is previewed as a chip in the bar and NO body
+// text is quoted by default — the user selects the part they care about, then
+// types their message. The attachment only reaches a chat input when the user
+// commits (send / add), so dismissing the bar leaves the input untouched.
+// The bar is global (position: fixed), so no tab switch is needed on open;
+// committing goes through the session picker, whose "add and open" reveals chat.
 function handleForgeQuote(payload: { item?: { url?: string; slug?: string; number?: number; label?: string } } | null) {
   const it = payload?.item
   if (!it) return
