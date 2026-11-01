@@ -105,16 +105,24 @@ func ServeLiveShareManage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// liveShareCreateBody derives the share title and the AI 听记 flag from the
+// liveShareCreateBody derives the share title and the capture flags from the
 // create request. The title is author-supplied text that ends up on a public
 // page, so it is only ever rendered as text (never as HTML) by the SPA.
-func liveShareCreateBody(r *http.Request, projectPath string) (title string, notes, video bool) {
+//
+// `video` predates video meetings and means "there is a picture". The newer
+// camera/screen pair says what the picture is made of; a client that sends
+// neither is a legacy one whose picture has always been a screen.
+func liveShareCreateBody(r *http.Request, projectPath string) (title string, notes, video, camera, hostScreen bool) {
 	var body struct {
 		Title string `json:"title"`
 		Notes bool   `json:"notes"`
 		// Video defaults to true: a client that does not know about voice
 		// meetings is asking for the screen share it has always got.
 		Video *bool `json:"video"`
+		// Camera and Screen are the video-meeting split. Absent means "this
+		// client does not know about them", not "off" — hence pointers.
+		Camera *bool `json:"camera"`
+		Screen *bool `json:"screen"`
 	}
 	video = true
 	if r.Body != nil {
@@ -122,6 +130,15 @@ func liveShareCreateBody(r *http.Request, projectPath string) (title string, not
 	}
 	if body.Video != nil {
 		video = *body.Video
+	}
+	if body.Camera != nil || body.Screen != nil {
+		camera = body.Camera != nil && *body.Camera
+		hostScreen = body.Screen != nil && *body.Screen
+		// Derived, never trusted: a client claiming "video" with neither source
+		// would leave viewers waiting for a picture that does not exist.
+		video = camera || hostScreen
+	} else {
+		hostScreen = video
 	}
 	title = body.Title
 	if title != "" {
@@ -131,7 +148,7 @@ func liveShareCreateBody(r *http.Request, projectPath string) (title string, not
 	} else {
 		title = "ClawBench"
 	}
-	return title, body.Notes, video
+	return title, body.Notes, video, camera, hostScreen
 }
 
 // liveShareReuseGrace is how long a publisher-less room is still treated as
@@ -140,7 +157,7 @@ func liveShareCreateBody(r *http.Request, projectPath string) (title string, not
 var liveShareReuseGrace = 10 * time.Second
 
 func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath string) {
-	title, notes, video := liveShareCreateBody(r, projectPath)
+	title, notes, video, camera, hostScreen := liveShareCreateBody(r, projectPath)
 	room, err := createLiveShareRoom(projectPath, title)
 	if err != nil {
 		if errors.Is(err, liveshare.ErrTooManyRooms) {
@@ -156,6 +173,8 @@ func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath st
 	// whether 听记 is on.
 	room.SetNotesEnabled(notes)
 	room.SetVideoEnabled(video)
+	room.SetCameraEnabled(camera)
+	room.SetHostScreen(hostScreen)
 
 	writeJSON(w, http.StatusOK, liveShareManageResponse{
 		Token: room.Token(),
@@ -401,6 +420,10 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 		applySetScreenEnabled(room, ctl.Enabled)
 		return false
 
+	case liveshare.CtrlSetCameraEnabled:
+		applySetCameraEnabled(room, ctl.Enabled)
+		return false
+
 	case liveshare.CtrlScreenRevoke:
 		applyScreenRevoke(room, ctl.ViewerID)
 		return false
@@ -500,6 +523,8 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 		TalkEnabled:   room.TalkEnabled(),
 		NotesEnabled:  room.NotesEnabled(),
 		VideoEnabled:  room.VideoEnabled(),
+		CameraEnabled: room.CameraEnabled(),
+		HostScreen:    room.HostScreen(),
 		ScreenEnabled: room.ScreenEnabled(),
 		ScreenSharer:  room.ScreenSharer(),
 	}); err != nil {
@@ -583,6 +608,21 @@ func handleViewerControl(room *liveshare.Room, viewer *liveshare.Viewer, ctl liv
 			broadcastScreenState(room)
 		}
 	}
+}
+
+// applySetCameraEnabled records the publisher's camera state and tells every
+// viewer.
+//
+// Viewers only: the camera is publisher-side, so the publisher already knows.
+// The flag also lives on the room (not just in this frame) so a viewer joining
+// afterwards learns the current state from its `joined` frame instead of
+// showing a tile for a camera that was turned off minutes ago.
+func applySetCameraEnabled(room *liveshare.Room, enabled bool) {
+	room.SetCameraEnabled(enabled)
+	room.BroadcastToViewers(liveshare.ViewerMessage{
+		Type:          liveshare.MsgCameraState,
+		CameraEnabled: enabled,
+	}, "")
 }
 
 // applySetScreenEnabled flips the room switch and stops the current sharer.

@@ -3807,6 +3807,19 @@ paths:
                   description: |
                     `false` = 语音会议（不共享屏幕）。观众端据此渲染「语音会议」占位，
                     而不是等一条永远不会到达的视频轨。省略时按 `true` 处理。
+                    若同时传了 `camera` / `screen`，该字段由服务端按两者推导，传什么都不作数。
+                camera:
+                  type: boolean
+                  description: |
+                    视频会议是否采集发布端摄像头。摄像头作为第二条视频轨发送，
+                    观众端渲染成叠在主画面上的小窗。
+                screen:
+                  type: boolean
+                  description: |
+                    发布端是否共享屏幕。与 `camera` 正交：两者都为 `true` 即「摄像头 + 屏幕」
+                    同时在线（摄像头小窗叠在屏幕画面上）。观众端据此决定是否提供
+                    标注与远程控制——这两项对摄像头画面没有意义。
+                    省略 `camera` 与 `screen` 时按老客户端处理：`screen = video`、`camera = false`。
       responses:
         "200":
           description: 房间 token 与分享路径
@@ -4454,6 +4467,12 @@ paths:
         `screen-start` / `screen-stop`（共享自己的屏幕，需房间开关已打开且当前无人共享）。
         服务端以 `screen-state` 广播谁在共享；被拒时回 `screen-denied`（`disabled` / `busy` /
         `revoked`）。屏幕采集要求安全上下文（HTTPS），HTTP 页面里浏览器不提供该 API。
+
+        发布端控制帧另有 `set-camera-enabled`（`{type, enabled}`），服务端以 `camera-state`
+        广播给全部观众：摄像头轨始终挂在第 4 条 m-line 上（开关只切 `track.enabled`，
+        不重协商），这个帧只告诉观众端是否渲染摄像头小窗。观众加入时的 `joined` 帧带
+        `video`（有没有画面）、`camera`（发布端摄像头是否开着）与 `hostScreen`（画面是否为
+        屏幕共享）三个独立标志——远程控制与标注只在 `hostScreen` 为真时有意义。
 
         会话 JSON 另附身份信息供分享页渲染真实智能体图标：`sessionAgent`（会话级智能体，
         单聊用）、`speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`

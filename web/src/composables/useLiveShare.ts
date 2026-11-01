@@ -92,6 +92,15 @@ interface PublisherPeer {
   channel: RTCDataChannel | null
   /** The m-line carrying our picture; kept so a source switch can swap it. */
   videoTx: RTCRtpTransceiver | null
+  /**
+   * The m-line carrying our CAMERA, present only on viewers that offered a
+   * fourth m-line and only while the meeting shares a screen as well.
+   *
+   * The camera travels on its own m-line so it can be a picture-in-picture
+   * tile next to the screen. When the meeting has no screen the camera IS the
+   * main picture and rides on `videoTx` instead — one picture, no tile.
+   */
+  cameraTx: RTCRtpTransceiver | null
   /** This viewer's audio mix, wired into the m-lines when its offer arrives. */
   mixedTrack: MediaStreamTrack | null
   /**
@@ -126,6 +135,16 @@ let micStream: MediaStream | null = null
 let androidCapture: AndroidCaptureHandle | null = null
 /** The mixed track sent to viewers (video + mixed audio). */
 let outVideoTrack: MediaStreamTrack | null = null
+/** The camera capture, kept apart from `displayStream` so neither owns the other. */
+let cameraStream: MediaStream | null = null
+/**
+ * The camera track sent on the dedicated m-line, or null when there is none.
+ *
+ * Null in two very different cases, both correct: no camera at all, and a
+ * camera-only meeting (where the camera is the MAIN picture and must not also
+ * arrive on the tile m-line, or the viewer would render it twice).
+ */
+let outCameraTrack: MediaStreamTrack | null = null
 /** The track a viewer is sharing, relayed to every other viewer. */
 let remoteScreenTrack: MediaStreamTrack | null = null
 /** UI subscribers for control frames coming from viewers. */
@@ -149,6 +168,16 @@ const previewStream = shallowRef<MediaStream | null>(null)
 const captureKind = ref<'screen' | 'window' | null>('screen')
 /** Whether the running meeting publishes a picture (false = voice meeting). */
 const videoEnabled = ref(true)
+/**
+ * Whether the publisher's camera is on right now.
+ *
+ * Distinct from "the camera exists": the track stays in the peer connection
+ * while off (`enabled = false`), so flipping it back needs no renegotiation.
+ * Viewers learn about the change from a `camera-state` frame.
+ */
+const cameraEnabled = ref(false)
+/** The camera capture, exposed so the publisher can see itself. */
+const previewCameraStream = shallowRef<MediaStream | null>(null)
 /** Whether the publisher's microphone is currently being sent. */
 const micEnabled = ref(true)
 /** Whether system loopback audio is currently being sent. */
@@ -200,7 +229,7 @@ function resetSession(): void {
     void audioCtx.close().catch(() => undefined)
     audioCtx = null
   }
-  for (const s of [displayStream, micStream]) {
+  for (const s of [displayStream, micStream, cameraStream]) {
     s?.getTracks().forEach((t) => t.stop())
   }
   // Ends the native projection as well; stopping the tracks alone would leave
@@ -211,7 +240,11 @@ function resetSession(): void {
   displayStream = null
   previewStream.value = null
   micStream = null
+  cameraStream = null
+  previewCameraStream.value = null
+  cameraEnabled.value = false
   outVideoTrack = null
+  outCameraTrack = null
   remoteScreenTrack = null
   remoteScreenStream.value = null
   screenSharer.value = ''
@@ -297,6 +330,38 @@ function captureKindOf(stream: MediaStream): 'screen' | 'window' {
   return settings?.displaySurface === 'monitor' ? 'screen' : 'window'
 }
 
+/**
+ * Which message a failed camera capture deserves.
+ *
+ * `NotAllowedError` means the user (or an OS privacy switch) refused, which
+ * needs a different fix from "the device is busy or missing". Telling somebody
+ * to grant permission when the camera is held by another app sends them to the
+ * wrong place, so the two never share a message.
+ */
+function cameraErrorKey(e: unknown): string {
+  const name = (e as { name?: string } | null)?.name
+  return name === 'NotAllowedError' ? 'meeting.create.cameraDenied' : 'meeting.create.cameraUnavailable'
+}
+
+/**
+ * Whether this host has a camera to offer.
+ *
+ * Kinds are visible without permission (only labels need it), so this answers
+ * "should the camera option be selectable at all" without prompting. Any
+ * failure answers true: guessing "no camera" would hide the feature from a
+ * machine that has one.
+ */
+export async function hasCameraDevice(): Promise<boolean> {
+  const md = navigator.mediaDevices
+  if (!md?.getUserMedia || !md.enumerateDevices) return false
+  try {
+    const devices = await md.enumerateDevices()
+    return devices.some((d) => d.kind === 'videoinput')
+  } catch {
+    return true
+  }
+}
+
 export function useLiveShare() {
   /**
    * Create (or reuse) the room, capture the screen and start publishing.
@@ -305,7 +370,22 @@ export function useLiveShare() {
    * getDisplayMedia call and clears it immediately.
    */
   async function start(opts: {
+    /**
+     * Which screen/window to share, or '' for none.
+     *
+     * Empty is a normal value: a voice meeting shares no screen, a camera-only
+     * video meeting shares no screen either, and a plain browser has no list to
+     * pick from — its own picker decides (see `screen`).
+     */
     sourceId: string
+    /**
+     * Whether a screen should be captured at all.
+     *
+     * Separate from `sourceId` because a browser's source is chosen in ITS
+     * picker, not by us: it has an empty id and still shares a screen. When
+     * omitted, a non-empty `sourceId` implies a screen (the desktop path).
+     */
+    screen?: boolean
     systemAudio: boolean
     microphone: boolean
     /**
@@ -316,6 +396,8 @@ export function useLiveShare() {
      * placeholder instead of waiting for a picture.
      */
     video?: boolean
+    /** Capture the publisher's camera (video meetings only). */
+    camera?: boolean
     shareTitle?: string
     /** Enable AI 听记 (transcription + minutes) for this share. */
     notes?: boolean
@@ -349,15 +431,22 @@ export function useLiveShare() {
       //    identical for all three.
       const bridge = getNative()
       const wantsVideo = opts.video !== false
+      // "Is there a picture" and "what is the picture" are separate questions.
+      // The screen is optional (a camera-only call), the camera is optional
+      // (screen-only sharing is the original feature), and both together is the
+      // picture-in-picture case.
+      const wantsScreen = wantsVideo && (opts.screen ?? Boolean(opts.sourceId))
+      const wantsCamera = wantsVideo && Boolean(opts.camera)
       videoEnabled.value = wantsVideo
       micEnabled.value = Boolean(opts.microphone)
-      systemAudioEnabled.value = wantsVideo && Boolean(opts.systemAudio)
+      systemAudioEnabled.value = wantsScreen && Boolean(opts.systemAudio)
       notesLabelFn = opts.notesLabel
-      systemAudioWanted = wantsVideo && opts.systemAudio
-      if (!wantsVideo) {
-        // Nothing to capture: leave the preview and the capture kind empty so
-        // every video-only affordance (annotate, switch source, remote control)
-        // stays hidden, and skip straight to the microphone.
+      systemAudioWanted = wantsScreen && opts.systemAudio
+      if (!wantsScreen) {
+        // Nothing to capture: a voice meeting, or a video meeting whose only
+        // source is the camera. Leave the preview and the capture kind empty so
+        // every screen-only affordance (annotate, switch source, remote
+        // control) stays hidden.
         displayStream = null
         previewStream.value = null
         captureKind.value = null
@@ -400,14 +489,52 @@ export function useLiveShare() {
         })
         if (!declare) captureKind.value = captureKindOf(displayStream)
       }
-      if (wantsVideo && displayStream) {
-        previewStream.value = displayStream
-        outVideoTrack = displayStream.getVideoTracks()[0] ?? null
+      if (wantsCamera) {
+        try {
+          const gum = navigator.mediaDevices?.getUserMedia
+          if (!gum) throw new Error('getUserMedia is unavailable on this host')
+          cameraStream = await gum.call(navigator.mediaDevices, {
+            // Small and slow on purpose: this is a picture-in-picture tile, and
+            // each viewer costs the publisher another upload of it. 640×480 at
+            // 15 fps is plenty for a face and a fraction of a 1080p screen.
+            video: {
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+              frameRate: { ideal: 15, max: 20 },
+            },
+            audio: false,
+          })
+        } catch (e) {
+          appLog.w(TAG, `camera unavailable: ${describeMicError(e)}`)
+          cameraStream = null
+          // A camera-only meeting has no other picture: starting it would put
+          // every viewer in front of a black rectangle. With a screen to fall
+          // back on, degrade instead — the meeting is still worth having.
+          error.value = i18n.global.t(cameraErrorKey(e))
+          if (!wantsScreen) {
+            await stop()
+            return false
+          }
+        }
+      }
+
+      if (wantsVideo) {
+        const screenTrack = displayStream?.getVideoTracks()[0] ?? null
+        const cameraTrack = cameraStream?.getVideoTracks()[0] ?? null
+        // The main picture: the screen when there is one, the camera otherwise.
+        outVideoTrack = screenTrack ?? cameraTrack
         if (!outVideoTrack) {
           fail('no video track captured')
           await stop()
           return false
         }
+        // Only a screen+camera meeting sends the camera on the tile m-line. A
+        // camera-only meeting already carries it as the main picture; sending
+        // it twice would render the same face full-screen and in a corner.
+        outCameraTrack = screenTrack ? cameraTrack : null
+        cameraEnabled.value = Boolean(cameraTrack)
+        previewStream.value = displayStream
+        previewCameraStream.value = cameraStream
         // The user can also end the share from the browser's own capture banner.
         outVideoTrack.addEventListener('ended', () => {
           void stop()
@@ -439,6 +566,8 @@ export function useLiveShare() {
           title: opts.shareTitle ?? '',
           notes: Boolean(opts.notes),
           video: wantsVideo,
+          camera: wantsCamera,
+          screen: wantsScreen,
         }),
       })
       if (!resp.ok) {
@@ -514,13 +643,29 @@ export function useLiveShare() {
     })
   }
 
-  /** Mute / unmute system loopback audio. A voice meeting has none. */
+  /** Mute / unmute system loopback audio. A screen share has none. */
   function setSystemAudioEnabled(on: boolean): void {
-    if (!videoEnabled.value) return
+    if (captureKind.value === null) return
     systemAudioEnabled.value = on
     displayStream?.getAudioTracks().forEach((track) => {
       track.enabled = on
     })
+  }
+
+  /**
+   * Turn the camera on or off for the rest of the meeting.
+   *
+   * The track stays in the peer connection (`enabled` is toggled, nothing is
+   * removed), so no renegotiation happens. Viewers are told through the server
+   * because a muted track still arrives — without the frame they would keep
+   * rendering the last image forever.
+   */
+  function setCameraEnabled(on: boolean): void {
+    cameraEnabled.value = on
+    cameraStream?.getVideoTracks().forEach((track) => {
+      track.enabled = on
+    })
+    send({ type: 'set-camera-enabled', enabled: on })
   }
 
   /**
@@ -644,6 +789,7 @@ export function useLiveShare() {
       screenTrack: null,
       channel: null,
       videoTx: null,
+      cameraTx: null,
       mixedTrack,
       attached: false,
       pendingIce: [],
@@ -696,10 +842,15 @@ export function useLiveShare() {
   /**
    * Wire our media into the m-lines the viewer's offer just created.
    *
-   * THREE m-lines, in this exact order (a contract with liveViewer.ts):
+   * THREE OR FOUR m-lines, in this exact order (a contract with liveViewer.ts):
    *   1 audio  — our mix down, the viewer's microphone up
-   *   2 video  — our picture down, the viewer's shared screen up
+   *   2 video  — our main picture down, the viewer's shared screen up
    *   3 video  — another viewer's screen, relayed down
+   *   4 video  — our camera, down only (only sent when m2 is a screen)
+   *
+   * Four is what current viewers offer; three is a page served from an older
+   * bundle, which simply gets no camera tile. Refusing three would break a
+   * share for anybody with a stale tab, and the main picture works either way.
    *
    * They are reused rather than reserved: `setRemoteDescription(offer)` is what
    * associates a transceiver with an m-line, and only associated transceivers
@@ -713,11 +864,17 @@ export function useLiveShare() {
   async function attachPeerMedia(peer: PublisherPeer): Promise<boolean> {
     const txs = peer.pc.getTransceivers()
     const kinds = txs.map((t) => t.receiver.track?.kind ?? '?')
-    if (txs.length !== 3 || kinds[0] !== 'audio' || kinds[1] !== 'video' || kinds[2] !== 'video') {
+    const known =
+      (txs.length === 3 || txs.length === 4) &&
+      kinds[0] === 'audio' &&
+      kinds[1] === 'video' &&
+      kinds[2] === 'video' &&
+      (txs.length === 3 || kinds[3] === 'video')
+    if (!known) {
       appLog.e(TAG, 'viewer offered an unexpected m-line layout', peer.viewerId, kinds)
       return false
     }
-    const [audioTx, videoTx, relayTx] = txs
+    const [audioTx, videoTx, relayTx, cameraTx] = txs
 
     // Both tracks MUST share one MediaStream: the viewer assigns `srcObject`
     // per received stream, so two streams means the second assignment replaces
@@ -739,8 +896,19 @@ export function useLiveShare() {
     relayTx.direction = 'sendonly'
     if (remoteScreenTrack) await relayTx.sender.replaceTrack(remoteScreenTrack)
 
+    if (cameraTx) {
+      cameraTx.direction = 'sendonly'
+      if (outCameraTrack) {
+        await cameraTx.sender.replaceTrack(outCameraTrack)
+        // Its OWN stream: sharing `outgoing` would make the viewer attach the
+        // camera to the main <video> and lose the screen.
+        cameraTx.sender.setStreams?.(new MediaStream([outCameraTrack]))
+      }
+    }
+
     peer.videoTx = videoTx
     peer.relayTx = relayTx
+    peer.cameraTx = cameraTx ?? null
     return true
   }
 
@@ -1132,12 +1300,15 @@ export function useLiveShare() {
     levels,
     switchSource,
     previewStream,
+    previewCameraStream,
     captureKind,
     videoEnabled,
+    cameraEnabled,
     micEnabled,
     systemAudioEnabled,
     setMicEnabled,
     setSystemAudioEnabled,
+    setCameraEnabled,
     startNotes,
     stopNotes,
   }
@@ -1153,5 +1324,6 @@ export function _resetLiveShareForTest(): void {
   shareUrl.value = ''
   viewers.value = []
   talkEnabled.value = false
+  screenEnabled.value = false
   error.value = ''
 }

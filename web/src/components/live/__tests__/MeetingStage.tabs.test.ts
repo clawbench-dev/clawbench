@@ -21,6 +21,7 @@ vi.mock('lucide-vue-next', () => ({
   MonitorUp: { name: 'MonitorUpIcon', render: () => null },
   Mic: { name: 'MicIcon', render: () => null },
   NotebookPen: { name: 'NotebookPenIcon', render: () => null },
+  Video: { name: 'VideoIcon', render: () => null },
   Volume2: { name: 'Volume2Icon', render: () => null },
   X: { name: 'XIcon', render: () => null },
 }))
@@ -67,10 +68,13 @@ vi.mock('@/composables/useLiveShare', async () => {
     previewStream: sr(null),
     captureKind: r('screen'),
     videoEnabled: r(true),
+    cameraEnabled: r(false),
+    previewCameraStream: sr(null),
     micEnabled: r(true),
     systemAudioEnabled: r(false),
     setMicEnabled: vi.fn(),
     setSystemAudioEnabled: vi.fn(),
+    setCameraEnabled: vi.fn(),
     startNotes: vi.fn(() => true),
     stopNotes: vi.fn(async () => undefined),
     start: vi.fn(async () => true),
@@ -307,5 +311,60 @@ describe('MeetingStage tabs', () => {
     // change removes, so both halves are asserted.
     expect(wrapper.find('.live-panel__footer').exists()).toBe(false)
     expect(wrapper.find('.fbtn').exists()).toBe(false)
+  })
+})
+
+/**
+ * A camera meeting is not a voice meeting and not a screen meeting.
+ *
+ * It has a picture (so the "voice meeting" warning must not appear), but the
+ * picture is a face, so everything that assumes desktop coordinates — annotate,
+ * switch source, remote control — must stay away.
+ */
+describe('MeetingStage camera meeting', () => {
+  it('offers the camera toggle and self-view, without the screen-only tools', async () => {
+    ;(shareApi.captureKind as { value: unknown }).value = null
+    ;(shareApi.previewCameraStream as { value: unknown }).value = { id: 'cam' }
+    ;(shareApi.cameraEnabled as { value: boolean }).value = true
+    try {
+      const wrapper = mountPanel()
+      await flushPromises()
+
+      expect(wrapper.find('[data-role="stage-camera"]').exists()).toBe(true)
+      expect(wrapper.find('[data-role="camera-self"]').exists()).toBe(true)
+      // A camera image has no desktop behind it.
+      expect(wrapper.find('[data-action="annotate"]').exists()).toBe(false)
+      expect(wrapper.find('[data-action="switch-source"]').exists()).toBe(false)
+      expect(wrapper.find('[data-role="voice-meeting"]').exists()).toBe(false)
+    } finally {
+      ;(shareApi.captureKind as { value: unknown }).value = 'screen'
+      ;(shareApi.previewCameraStream as { value: unknown }).value = null
+      ;(shareApi.cameraEnabled as { value: boolean }).value = false
+    }
+  })
+
+  it('keeps the screen-only tools for a screen meeting', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // Positive control for the test above: same mount, screen capture kind.
+    expect(wrapper.find('[data-action="annotate"]').exists()).toBe(true)
+  })
+
+  it('turns the camera off through the shared options ref', async () => {
+    ;(shareApi.captureKind as { value: unknown }).value = null
+    ;(shareApi.previewCameraStream as { value: unknown }).value = { id: 'cam' }
+    ;(shareApi.cameraEnabled as { value: boolean }).value = true
+    try {
+      const wrapper = mountPanel()
+      await flushPromises()
+
+      await wrapper.find('[data-role="stage-camera"]').setValue(false)
+      expect(shareApi.setCameraEnabled).toHaveBeenCalledWith(false)
+    } finally {
+      ;(shareApi.captureKind as { value: unknown }).value = 'screen'
+      ;(shareApi.previewCameraStream as { value: unknown }).value = null
+      ;(shareApi.cameraEnabled as { value: boolean }).value = false
+    }
   })
 })

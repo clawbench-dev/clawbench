@@ -24,7 +24,13 @@ class FakeTransceiver {
 
 class FakePC {
   static instances: FakePC[] = []
-  ontrack: ((ev: { streams: MediaStream[]; track: MediaStreamTrack }) => void) | null = null
+  ontrack:
+    | ((ev: {
+        streams: MediaStream[]
+        track: MediaStreamTrack
+        transceiver?: FakeTransceiver
+      }) => void)
+    | null = null
   onicecandidate: ((ev: { candidate: { toJSON: () => RTCIceCandidateInit } | null }) => void) | null = null
   onconnectionstatechange: (() => void) | null = null
   connectionState = 'new'
@@ -272,19 +278,48 @@ describe('LiveViewer connection', () => {
     expect(lastPC().config.iceServers).toEqual([{ urls: 'stun:example.org' }])
   })
 
-  it('reserves three m-lines in the agreed order', () => {
+  it('reserves four m-lines in the agreed order', () => {
     const { viewer } = setup()
     joinRoom(viewer)
 
     const kinds = lastPC().transceivers.map((t) => t.direction)
     // 1 audio (mic up / mix down), 2 video (host picture down / our screen up),
-    // 3 video (another viewer's screen down). The publisher adds the same three
-    // in the same order — this ordering IS the contract.
-    expect(kinds).toEqual(['sendrecv', 'sendrecv', 'recvonly'])
+    // 3 video (another viewer's screen down), 4 video (the host's camera tile
+    // down). The publisher wires the same lines in the same order — this
+    // ordering IS the contract.
+    expect(kinds).toEqual(['sendrecv', 'sendrecv', 'recvonly', 'recvonly'])
     // Every sender starts empty: tracks are attached with replaceTrack, which
     // does not renegotiate.
     expect(lastPC().transceivers[0].sender.track).toBeNull()
     expect(lastPC().transceivers[1].sender.track).toBeNull()
+  })
+
+  it('routes the camera m-line to its own callback, not the main picture', () => {
+    const cameraStreams: (MediaStream | null)[] = []
+    const mainStreams: MediaStream[] = []
+    const viewer = new LiveViewer({
+      token: 'tok123',
+      callbacks: {
+        onStream: (s) => mainStreams.push(s),
+        onCameraStream: (s) => cameraStreams.push(s),
+      },
+      wsFactory: (url) => new FakeWS(url) as unknown as WebSocket,
+      pcFactory: (cfg) => new FakePC(cfg) as unknown as RTCPeerConnection,
+    })
+    joinRoom(viewer)
+
+    const cameraStream = { id: 'cam' } as unknown as MediaStream
+    lastPC().ontrack?.({
+      streams: [cameraStream],
+      track: makeTrack('video'),
+      transceiver: lastPC().transceivers[3],
+    })
+
+    // The tile gets the stream; the main <video> must NOT — assigning the
+    // camera there would replace the screen, and its lack of audio would also
+    // clear the "tap to unmute" prompt.
+    expect(cameraStreams).toEqual([cameraStream])
+    expect(mainStreams).toEqual([])
   })
 
   it('reports playing when the remote track arrives', () => {
@@ -696,6 +731,64 @@ describe('LiveViewer screen sharing', () => {
     expect(viewer.isSharingScreen).toBe(false)
     expect(track.stop).toHaveBeenCalled()
     expect(denied).toEqual(['busy'])
+  })
+
+  it('reads the camera and host-screen flags from joined', () => {
+    const cameraModes: boolean[] = []
+    const screens: boolean[] = []
+    const viewer = new LiveViewer({
+      token: 'tok123',
+      callbacks: {
+        onCameraMode: (v) => cameraModes.push(v),
+        onHostScreen: (v) => screens.push(v),
+      },
+      wsFactory: (url) => new FakeWS(url) as unknown as WebSocket,
+      pcFactory: (cfg) => new FakePC(cfg) as unknown as RTCPeerConnection,
+    })
+    viewer.connect()
+    lastWS().emit({ type: 'joined', viewerId: 'v1', video: true, camera: true, hostScreen: true })
+
+    expect(cameraModes).toEqual([true])
+    expect(screens).toEqual([true])
+    expect(viewer.cameraEnabled).toBe(true)
+    expect(viewer.hostScreen).toBe(true)
+  })
+
+  it('treats an older publisher as a screen share with no camera', () => {
+    const cameraModes: boolean[] = []
+    const screens: boolean[] = []
+    const viewer = new LiveViewer({
+      token: 'tok123',
+      callbacks: {
+        onCameraMode: (v) => cameraModes.push(v),
+        onHostScreen: (v) => screens.push(v),
+      },
+      wsFactory: (url) => new FakeWS(url) as unknown as WebSocket,
+      pcFactory: (cfg) => new FakePC(cfg) as unknown as RTCPeerConnection,
+    })
+    viewer.connect()
+    // A frame from before video meetings existed: neither flag is present.
+    lastWS().emit({ type: 'joined', viewerId: 'v1', video: true })
+
+    expect(cameraModes).toEqual([false])
+    expect(screens).toEqual([true], 'its picture has always been a screen')
+  })
+
+  it('hides the camera tile on camera-state, including the false value', () => {
+    const cameraModes: boolean[] = []
+    const viewer = new LiveViewer({
+      token: 'tok123',
+      callbacks: { onCameraMode: (v) => cameraModes.push(v) },
+      wsFactory: (url) => new FakeWS(url) as unknown as WebSocket,
+      pcFactory: (cfg) => new FakePC(cfg) as unknown as RTCPeerConnection,
+    })
+    joinRoom(viewer)
+    lastWS().emit({ type: 'camera-state', camera: false })
+
+    // The track stays live but muted on the publisher's side, so without this
+    // frame the last image would freeze and read as a broken stream.
+    expect(cameraModes.at(-1)).toBe(false)
+    expect(viewer.cameraEnabled).toBe(false)
   })
 
   it('reports who is sharing and the room switch', () => {

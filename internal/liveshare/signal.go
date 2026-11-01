@@ -27,6 +27,10 @@ const (
 	// MsgScreenState reports who is sharing a screen, to the publisher AND to
 	// every viewer. One frame for both sides keeps the two views from drifting.
 	MsgScreenState = "screen-state"
+	// MsgCameraState reports the publisher's camera turning on or off. Sent to
+	// viewers only: the camera is publisher-side, so it never changes without
+	// the publisher knowing first.
+	MsgCameraState = "camera-state"
 )
 
 // Message types on the viewer socket (server → viewer).
@@ -74,6 +78,10 @@ const (
 	// CtrlSetScreenEnabled flips the room-level screen-sharing switch. Turning
 	// it off also stops whoever is sharing.
 	CtrlSetScreenEnabled = "set-screen-enabled"
+	// CtrlSetCameraEnabled reports that the publisher's camera was turned on or
+	// off. The track stays in place (muted) either way, so this only tells
+	// viewers whether to render the camera tile — no renegotiation involved.
+	CtrlSetCameraEnabled = "set-camera-enabled"
 	// CtrlScreenRevoke stops one viewer's screen share without disabling the
 	// switch for everyone else.
 	CtrlScreenRevoke = "screen-revoke"
@@ -114,6 +122,11 @@ type PublisherMessage struct {
 	Sharing bool `json:"sharing,omitempty"`
 	// ScreenEnabled is the room-level screen-sharing switch.
 	ScreenEnabled bool `json:"screenEnabled,omitempty"`
+	// CameraEnabled is meaningful only on MsgCameraState: whether the
+	// publisher's camera is on. A pointer, not a plain bool: `omitempty` would
+	// drop the field exactly when the camera is turned OFF, and a viewer that
+	// cannot tell "absent" from "false" keeps rendering the last frame.
+	CameraEnabled *bool `json:"cameraEnabled,omitempty"`
 }
 
 // Reasons carried on talk-revoked / talk-denied. Constants (not literals) so the
@@ -148,6 +161,15 @@ type ViewerMessage struct {
 	// that will never arrive. Pointer-to-bool would be needed to distinguish
 	// "absent" from "false"; both mean "no picture", which is the same UI.
 	VideoEnabled bool `json:"video"`
+	// CameraEnabled tells the viewer that the publisher's camera is on, so the
+	// camera tile can be offered at all. It is independent of VideoEnabled: a
+	// video meeting with the camera off and no screen has no picture, while a
+	// screen-only share has a picture but no camera.
+	CameraEnabled bool `json:"camera"`
+	// HostScreen tells the viewer that the publisher's picture IS a screen.
+	// Remote control and annotation only make sense then — injecting pointer
+	// coordinates into a camera image means nothing.
+	HostScreen bool `json:"hostScreen"`
 	// NotesEnabled tells the viewer that this share is running AI 听记, so the
 	// transcript panel can be offered at all. It carries no transcript.
 	NotesEnabled bool `json:"notesEnabled,omitempty"`

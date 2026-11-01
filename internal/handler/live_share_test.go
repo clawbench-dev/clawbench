@@ -130,6 +130,68 @@ func TestLiveShareCreate_TitleFallsBackToProjectBaseName(t *testing.T) {
 	assert.Equal(t, "myproj", room.Title())
 }
 
+// The create body has two shapes: legacy `video` ("is there a picture") and the
+// video-meeting pair `camera`/`screen` ("what is the picture"). Getting this
+// wrong is invisible in the UI — it shows up as a viewer waiting for a track
+// that will never arrive, or as remote control offered on a camera image.
+func TestLiveShareCreate_DerivesCameraScreenAndVideo(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    map[string]any
+		video   bool
+		camera  bool
+		screen  bool
+		explain string
+	}{
+		{
+			name: "legacy client with no flags", body: nil,
+			video: true, camera: false, screen: true,
+			explain: "an old client gets the screen share it has always got",
+		},
+		{
+			name: "legacy voice meeting", body: map[string]any{"video": false},
+			video: false, camera: false, screen: false,
+			explain: "voice is no picture at all, and it never was a screen",
+		},
+		{
+			name: "camera only", body: map[string]any{"camera": true, "screen": false},
+			video: true, camera: true, screen: false,
+			explain: "a camera-only meeting has a picture but no screen to control",
+		},
+		{
+			name: "screen only", body: map[string]any{"camera": false, "screen": true},
+			video: true, camera: false, screen: true,
+		},
+		{
+			name: "camera and screen", body: map[string]any{"camera": true, "screen": true},
+			video: true, camera: true, screen: true,
+			explain: "the picture-in-picture case: both sources are live",
+		},
+		{
+			name: "video flag is derived, not trusted", body: map[string]any{"video": true, "camera": false, "screen": false},
+			video: false, camera: false, screen: false,
+			explain: "a client claiming video with no source would strand every viewer",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetLiveRegistry(t)
+			w := httptest.NewRecorder()
+			ServeLiveShareManage(w, liveReq(t, http.MethodPost, "/api/live-share", projPath("/proj/a"), tc.body))
+			require.Equal(t, http.StatusOK, w.Code)
+
+			var resp liveShareManageResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			room := liveRegistry.Get(resp.Token)
+			require.NotNil(t, room)
+
+			assert.Equal(t, tc.video, room.VideoEnabled(), "video: %s", tc.explain)
+			assert.Equal(t, tc.camera, room.CameraEnabled(), "camera: %s", tc.explain)
+			assert.Equal(t, tc.screen, room.HostScreen(), "screen: %s", tc.explain)
+		})
+	}
+}
+
 func TestLiveShareCreate_RejectsWhenRoomCeilingReached(t *testing.T) {
 	resetLiveRegistry(t)
 	for i := range maxLiveRooms {
@@ -438,6 +500,75 @@ func TestLiveWS_VoiceRoomSaysThereIsNoVideo(t *testing.T) {
 	notice := readPublisherMsg(t, pub)
 	assert.Equal(t, liveshare.MsgViewerJoin, notice.Type)
 	assert.Equal(t, "voice-viewer", notice.Name)
+}
+
+// A video meeting must say BOTH what the picture is made of (camera? screen?)
+// and that there is one. `camera` and `hostScreen` are plain bools for the same
+// reason as `video`: absent must never be read as "off" by a viewer that would
+// then hide a tile the publisher is actually sending.
+func TestLiveWS_JoinedCarriesCameraAndHostScreen(t *testing.T) {
+	srv, token := liveWSServer(t)
+	room := liveRegistry.Get(token)
+	require.NotNil(t, room)
+	room.SetVideoEnabled(true)
+	room.SetCameraEnabled(true)
+	room.SetHostScreen(true)
+
+	_ = dialPublisher(t, srv, token)
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=video-viewer")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, data, err := view.Read(ctx)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(data, &raw))
+
+	camera, present := raw["camera"]
+	require.True(t, present, "joined must serialize camera, not omit it")
+	assert.Equal(t, true, camera)
+	hostScreen, present := raw["hostScreen"]
+	require.True(t, present, "joined must serialize hostScreen, not omit it")
+	assert.Equal(t, true, hostScreen)
+}
+
+// Turning the camera off mid-meeting has to reach viewers that are already
+// connected AND the room itself: a viewer joining afterwards reads its `joined`
+// frame, and a stale flag there shows a tile for a camera that is off.
+func TestLiveWS_CameraToggleReachesViewersAndSticks(t *testing.T) {
+	srv, token := liveWSServer(t)
+	room := liveRegistry.Get(token)
+	require.NotNil(t, room)
+	room.SetCameraEnabled(true)
+
+	pub := dialPublisher(t, srv, token)
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=early")
+	_ = readViewerMsg(t, view) // joined
+	_ = readPublisherMsg(t, pub)
+
+	writeJSONFrame(t, pub, liveshare.PublisherControl{
+		Type:    liveshare.CtrlSetCameraEnabled,
+		Enabled: false,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, data, err := view.Read(ctx)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(data, &raw))
+	assert.Equal(t, liveshare.MsgCameraState, raw["type"])
+	// `omitempty` on this bool would drop it exactly when it is false, which is
+	// the value the viewer needs.
+	camera, present := raw["camera"]
+	require.True(t, present, "camera-state must serialize camera:false, not omit it")
+	assert.Equal(t, false, camera)
+
+	assert.False(t, room.CameraEnabled(), "the room must remember the new state")
+
+	late := dialWS(t, srv, "/api/share/"+token+"/signal?name=late")
+	joined := readViewerMsg(t, late)
+	assert.False(t, joined.CameraEnabled, "a late viewer must not see a stale camera")
 }
 
 func TestLiveWS_OfferAnswerRoundTrip(t *testing.T) {

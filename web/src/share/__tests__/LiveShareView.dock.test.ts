@@ -87,6 +87,8 @@ const i18n = createI18n({
           screenBusy: '已有成员在共享屏幕',
           screenDisabled: '主持人未开启屏幕共享',
           screenNeedsHttps: '需要 HTTPS',
+          cameraOffTitle: '摄像头已关闭',
+          cameraOffDesc: '主持人暂时关掉了摄像头',
         },
       },
     },
@@ -407,6 +409,74 @@ describe('LiveShareView control dock', () => {
     expect(btn.exists()).toBe(true)
     expect(btn.attributes('disabled')).toBeUndefined()
     expect(btn.attributes('title')).toBe('点击打开麦克风发言')
+
+    w.unmount()
+  })
+})
+
+/**
+ * The publisher's camera as a picture-in-picture tile.
+ *
+ * The tile only exists when the meeting shows a screen AND a camera; a
+ * camera-only meeting puts the camera on the main picture instead, and a
+ * camera image must not offer remote control — there is no desktop behind it.
+ */
+describe('LiveShareView camera tile', () => {
+  it('shows the camera tile next to a screen, and hides it when the camera goes off', async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+
+    // Default state: screen share, no camera — the element is mounted but not
+    // shown, so a later stream needs no re-render to attach.
+    expect(w.find('[data-role="camera-pip"]').attributes('style')).toContain('display: none')
+
+    cb.onHostScreen?.(true)
+    cb.onCameraMode?.(true)
+    cb.onCameraStream?.({ id: 'cam' } as unknown as MediaStream)
+    await flushPromises()
+
+    expect(w.find('[data-role="camera-pip"]').attributes('style') ?? '').not.toContain('display: none')
+    // The camera must never take over the main <video>: that element carries
+    // the screen and the mixed audio.
+    expect((w.find('video.live-video').element as HTMLVideoElement).srcObject).toBeFalsy()
+
+    cb.onCameraMode?.(false)
+    await flushPromises()
+    expect(w.find('[data-role="camera-pip"]').attributes('style')).toContain('display: none')
+
+    w.unmount()
+  })
+
+  it('keeps remote control off a camera-only meeting', async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+
+    cb.onHostScreen?.(false)
+    await flushPromises()
+    // A pointer mapped onto a camera image would inject clicks at nonsense
+    // coordinates, so the button is not offered at all.
+    expect(w.find('[data-action="request-control"]').exists()).toBe(false)
+
+    cb.onHostScreen?.(true)
+    await flushPromises()
+    expect(w.find('[data-action="request-control"]').exists()).toBe(true)
+
+    w.unmount()
+  })
+
+  it('says the camera is off instead of leaving a black rectangle', async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+
+    cb.onHostScreen?.(false)
+    cb.onCameraMode?.(false)
+    await flushPromises()
+
+    expect(w.find('[data-role="camera-off"]').exists()).toBe(true)
+    expect(w.find('[data-role="voice-stage"]').exists()).toBe(false)
 
     w.unmount()
   })

@@ -168,7 +168,8 @@ class FakePC {
     // this fake has to be able to reproduce.
     if ((d as { type?: string } | null)?.type === 'offer') {
       if (this.transceivers.length === 0) {
-        for (const kind of ['audio', 'video', 'video']) {
+        const kinds = offerCameraLine ? ['audio', 'video', 'video', 'video'] : ['audio', 'video', 'video']
+        for (const kind of kinds) {
           const tx = new FakeTransceiver('recvonly')
           tx.receiver.track = new FakeTrack(kind, `rx-${kind}`)
           this.transceivers.push(tx)
@@ -271,6 +272,15 @@ class FakeAudioCtx {
  */
 let displayStream: FakeStream
 let micStream: FakeStream
+let cameraStream: FakeStream
+/**
+ * Whether the simulated viewer offers the fourth (camera) m-line.
+ *
+ * A page served from an older bundle offers three; the publisher has to keep
+ * answering it. Default false so every pre-existing test keeps asserting that
+ * path.
+ */
+let offerCameraLine = false
 
 /** jsdom's MediaStream rejects plain objects; the code only wraps tracks. */
 class FakeMediaStream {
@@ -305,10 +315,15 @@ function installGlobals() {
   vi.stubGlobal('MediaStream', FakeMediaStream as unknown as typeof MediaStream)
   displayStream = new FakeStream([new FakeTrack('video', 'v1'), new FakeTrack('audio', 'sys1')])
   micStream = new FakeStream([new FakeTrack('audio', 'mic1')])
+  cameraStream = new FakeStream([new FakeTrack('video', 'cam1')])
+  offerCameraLine = false
   vi.stubGlobal('navigator', {
     mediaDevices: {
       getDisplayMedia: vi.fn(async () => displayStream),
-      getUserMedia: vi.fn(async () => micStream),
+      getUserMedia: vi.fn(async (constraints?: { video?: unknown }) =>
+        constraints?.video ? cameraStream : micStream,
+      ),
+      enumerateDevices: vi.fn(async () => [{ kind: 'videoinput', deviceId: 'cam1' }]),
     },
   })
 }
@@ -1152,5 +1167,125 @@ describe('speaking indicator', () => {
         ),
       { timeout: 2000 },
     )
+  })
+})
+
+describe('camera', () => {
+  /** Start a meeting with an explicit source / camera combination. */
+  async function startMeeting(opts: { sourceId?: string; camera?: boolean; video?: boolean }) {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    const ok = await share.start({
+      sourceId: opts.sourceId ?? '',
+      systemAudio: false,
+      microphone: true,
+      camera: opts.camera ?? false,
+      video: opts.video ?? true,
+    })
+    return { share, ok }
+  }
+
+  it('captures the camera and reports it to the room', async () => {
+    const { share, ok } = await startMeeting({ sourceId: 'screen:1:0', camera: true })
+
+    expect(ok).toBe(true)
+    expect(share.cameraEnabled.value).toBe(true)
+    expect(share.previewCameraStream.value).toBe(cameraStream)
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as { body?: string }).body))
+    expect(body).toMatchObject({ video: true, camera: true, screen: true })
+  })
+
+  it('puts the camera on the main picture when there is no screen', async () => {
+    const { share, ok } = await startMeeting({ sourceId: '', camera: true })
+
+    expect(ok).toBe(true)
+    // No screen: the camera IS the picture. captureKind stays null so annotate,
+    // switch-source and remote control stay hidden.
+    expect(share.captureKind.value).toBeNull()
+    expect(share.videoEnabled.value).toBe(true)
+
+    offerCameraLine = true
+    const pc = await joinAndOffer('v1')
+    // Main picture carries the camera; the tile m-line carries nothing, or the
+    // viewer would render the same face twice.
+    expect(pc.transceivers[1].sender.track?.id).toBe('cam1')
+    expect(pc.transceivers[3].sender.track).toBeNull()
+  })
+
+  it('sends the camera on its own m-line and stream when a screen is shared', async () => {
+    await startMeeting({ sourceId: 'screen:1:0', camera: true })
+
+    offerCameraLine = true
+    const pc = await joinAndOffer('v1')
+
+    expect(pc.transceivers.map((t) => t.direction)).toEqual([
+      'sendrecv',
+      'sendrecv',
+      'sendonly',
+      'sendonly',
+    ])
+    expect(pc.transceivers[1].sender.track?.id).toBe('v1')
+    expect(pc.transceivers[3].sender.track?.id).toBe('cam1')
+
+    // CRITICAL: the camera must NOT share the main stream. The viewer assigns
+    // `srcObject` per received stream, so the camera would replace the screen.
+    const mainStreams = pc.transceivers[1].sender.streams
+    const cameraStreams = pc.transceivers[3].sender.streams
+    expect(cameraStreams).toHaveLength(1)
+    expect(cameraStreams[0]).not.toBe(mainStreams[0])
+    expect((cameraStreams[0] as unknown as FakeMediaStream).getTracks().map((t) => t.id)).toEqual(['cam1'])
+  })
+
+  it('still answers a viewer that offers only three m-lines', async () => {
+    await startMeeting({ sourceId: 'screen:1:0', camera: true })
+
+    // A stale bundle: no camera m-line offered. Refusing would break the whole
+    // share for that viewer; it simply gets no tile.
+    const pc = await joinAndOffer('v1')
+
+    expect(pc.transceivers).toHaveLength(3)
+    expect(lastWS().sentJSON().some((m) => m.type === 'answer')).toBe(true)
+  })
+
+  it('toggles the camera with track.enabled and tells the viewers', async () => {
+    const { share } = await startMeeting({ sourceId: 'screen:1:0', camera: true })
+
+    share.setCameraEnabled(false)
+    expect(share.cameraEnabled.value).toBe(false)
+    expect(cameraStream.getVideoTracks()[0].stopped).toBe(false)
+    // Muting, not removing: removing would need a renegotiation, and the
+    // publisher is the answerer.
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'set-camera-enabled', enabled: false })
+  })
+
+  it('leaves the camera alone when the screen source is switched', async () => {
+    const { share } = await startMeeting({ sourceId: 'screen:1:0', camera: true })
+    offerCameraLine = true
+    const pc = await joinAndOffer('v1')
+    expect(pc.transceivers[3].sender.track?.id).toBe('cam1')
+
+    const next = new FakeStream([new FakeTrack('video', 'v2')])
+    ;(navigator.mediaDevices.getDisplayMedia as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(next)
+    await share.switchSource('screen:1:1')
+
+    expect(pc.transceivers[1].sender.track?.id).toBe('v2')
+    // The camera must survive a source swap: it is a different m-line, and
+    // stopping it here would silently kill the tile.
+    expect(pc.transceivers[3].sender.track?.id).toBe('cam1')
+    expect(cameraStream.getVideoTracks()[0].stopped).toBe(false)
+  })
+
+  it('releases the camera on stop()', async () => {
+    const { share } = await startMeeting({ sourceId: 'screen:1:0', camera: true })
+    expect(share.cameraEnabled.value).toBe(true)
+
+    await share.stop()
+
+    // A camera left running is a privacy problem, not just a leak: the
+    // indicator light stays on with nobody receiving the frames.
+    expect(cameraStream.getVideoTracks()[0].stopped).toBe(true)
+    expect(share.cameraEnabled.value).toBe(false)
+    expect(share.previewCameraStream.value).toBeNull()
   })
 })

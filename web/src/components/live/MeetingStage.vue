@@ -69,6 +69,34 @@
             {{ t('meeting.stage.voiceHint') }}
           </div>
 
+          <!-- Camera. A video meeting can run camera-only or screen-only, so
+               this block appears whenever there is a camera at all — not just
+               when a screen is shared. The self-view is mirrored, like every
+               other video tool: you are looking in a mirror, not at a photo. -->
+          <template v-if="share.cameraEnabled.value || hasCameraTrack">
+            <div class="live-dialog-section">{{ t('meeting.create.cameraSection') }}</div>
+            <div v-if="share.previewCameraStream.value" class="live-camera-self">
+              <video
+                ref="selfCameraRef"
+                class="live-camera-self__video"
+                :class="{ 'live-camera-self__video--off': !share.cameraEnabled.value }"
+                autoplay
+                playsinline
+                muted
+                data-role="camera-self"
+              />
+            </div>
+            <label class="live-check">
+              <input type="checkbox" :checked="share.cameraEnabled.value" data-role="stage-camera"
+                @change="onToggleCamera(($event.target as HTMLInputElement).checked)" />
+              <span class="live-check__icon"><Video :size="13" /></span>
+              <span>{{ t('meeting.create.camera') }}</span>
+            </label>
+            <div class="live-dialog-hint live-dialog-hint--indent">
+              {{ share.cameraEnabled.value ? t('meeting.create.cameraOn') : t('meeting.create.cameraOff') }}
+            </div>
+          </template>
+
           <!-- Sound and 听记 are adjustable WHILE the meeting runs: the same
                refs the create page wrote, so the two screens can never
                disagree. -->
@@ -82,15 +110,15 @@
           <div class="live-dialog-hint live-dialog-hint--indent">
             {{ micEnabled ? t('meeting.create.micOn') : t('meeting.create.micOff') }}
           </div>
-          <label class="live-check" :class="{ 'live-check--disabled': isVoiceMeeting }">
-            <input type="checkbox" :checked="systemAudioEnabled && !isVoiceMeeting" :disabled="isVoiceMeeting"
+          <label class="live-check" :class="{ 'live-check--disabled': !hasScreen }">
+            <input type="checkbox" :checked="systemAudioEnabled && hasScreen" :disabled="!hasScreen"
               data-role="stage-system-audio"
               @change="onToggleSystemAudio(($event.target as HTMLInputElement).checked)" />
             <span class="live-check__icon"><Volume2 :size="13" /></span>
             <span>{{ t('meeting.create.systemAudio') }}</span>
           </label>
           <div class="live-dialog-hint live-dialog-hint--indent">
-            {{ isVoiceMeeting ? t('meeting.create.systemAudioVoice') : t('meeting.create.systemAudioHint') }}
+            {{ hasScreen ? t('meeting.create.systemAudioHint') : t('meeting.create.systemAudioNoScreen') }}
           </div>
           <label class="live-check">
             <input type="checkbox" :checked="notesOn" data-role="stage-notes"
@@ -102,11 +130,12 @@
             {{ notesOn ? t('meeting.create.notesOn') : t('meeting.create.notesOff') }}
           </div>
 
-          <!-- Tools that only make sense while publishing: annotate the shared
-               screen or swap which window is being shared. Chat is a tab of its
-               own, so it is not offered again here. -->
-          <div v-if="!isVoiceMeeting" class="live-dialog-section">{{ t('liveShare.toolsSection') }}</div>
-          <div v-if="!isVoiceMeeting" class="live-tools">
+          <!-- Tools that only make sense while publishing a SCREEN: annotate it
+               or swap which window is being shared. A camera picture has no
+               desktop coordinates to draw on or click through, so these stay
+               hidden for camera-only meetings. -->
+          <div v-if="hasScreen" class="live-dialog-section">{{ t('liveShare.toolsSection') }}</div>
+          <div v-if="hasScreen" class="live-tools">
             <button
               class="live-btn"
               :class="{ 'live-btn--on': isAnnotating }"
@@ -387,7 +416,7 @@
  * can only answer "not available" is worse than no button.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Mic, MonitorUp, NotebookPen, Volume2, X } from 'lucide-vue-next'
+import { Mic, MonitorUp, NotebookPen, Video, Volume2, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import { useToast } from '@/composables/useToast'
@@ -429,6 +458,16 @@ const isLive = computed(
 )
 /** A voice meeting publishes no picture. */
 const isVoiceMeeting = computed(() => !share.videoEnabled.value)
+/**
+ * A SCREEN is being published.
+ *
+ * Everything that assumes desktop coordinates — annotation, source switching,
+ * remote control, system loopback audio — hangs off this instead of "there is a
+ * picture": a camera image has no desktop behind it.
+ */
+const hasScreen = computed(() => share.captureKind.value !== null)
+/** Whether a camera track exists at all (off is still "exists"). */
+const hasCameraTrack = computed(() => Boolean(share.previewCameraStream.value))
 const micEnabled = computed(() => share.micEnabled.value)
 const systemAudioEnabled = computed(() => share.systemAudioEnabled.value)
 const notesOn = computed(() => notes.phase.value === 'recording')
@@ -445,6 +484,8 @@ const isAndroidCapture = computed(() => Boolean(getNative()?.startScreenCapture)
 
 const notesListRef = ref<HTMLElement | null>(null)
 const remoteScreenRef = ref<HTMLVideoElement | null>(null)
+/** The publisher's own camera picture (mirrored by CSS). */
+const selfCameraRef = ref<HTMLVideoElement | null>(null)
 const fullscreenVideoRef = ref<HTMLVideoElement | null>(null)
 const screenFullscreen = ref(false)
 const screenWindow = useScreenWindow()
@@ -598,7 +639,11 @@ function onControl(msg: ControlMessage): void {
 }
 
 function grantControl(viewerId: string): void {
-  if (share.captureKind.value === 'window') {
+  // Only a whole-screen capture has a desktop to map the pointer onto: a window
+  // capture puts every click at the wrong place, and a camera picture has no
+  // desktop at all. A viewer's request can still arrive from a stale page whose
+  // button was hidden, so the refusal lives here and not only in the UI.
+  if (share.captureKind.value !== 'screen') {
     toast.show(t('liveShare.controlWindowUnsupported'), { type: 'error', icon: 'warning' })
     return
   }
@@ -717,6 +762,11 @@ function onToggleMic(on: boolean): void {
 function onToggleSystemAudio(on: boolean): void {
   options.systemAudio.value = on
   share.setSystemAudioEnabled(on)
+}
+
+function onToggleCamera(on: boolean): void {
+  options.camera.value = on
+  share.setCameraEnabled(on)
 }
 
 function onToggleNotes(on: boolean): void {
@@ -850,6 +900,21 @@ watch(screenFullscreen, async (open) => {
     fullscreenVideoRef.value.srcObject = share.remoteScreenStream.value
   }
 })
+
+// The self-view element is inside a v-if, so it appears AFTER the stream does
+// (and disappears with it). Watching both is the only way to catch the case
+// where the stream is already there when the element mounts.
+watch(
+  [() => share.previewCameraStream.value, selfCameraRef],
+  async ([stream]) => {
+    await nextTick()
+    const el = selfCameraRef.value
+    if (!el) return
+    if (el.srcObject !== stream) el.srcObject = stream
+    if (stream) void el.play().catch((e) => appLog.w('MeetingStage', 'camera self-view play failed', e))
+  },
+  { immediate: true },
+)
 
 watch(
   () => noteBlocks.value.length,
@@ -1633,5 +1698,29 @@ watch(
   animation: live-panel-pulse 1.4s ease-in-out infinite;
   flex-shrink: 0;
 }
+
+/* The publisher's own camera. Mirrored: people expect their self-view to move
+   like a mirror, and an un-mirrored preview makes every gesture feel wrong.
+   Viewers see the un-mirrored track, which is what a camera should look like. */
+.live-camera-self {
+  width: calc(200 * var(--dp));
+  max-width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-tertiary, #21262d);
+  overflow: hidden;
+  border: 1px solid var(--border-color, rgb(255 255 255 / 10%));
+}
+.live-camera-self__video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+/* Camera off: the track is still live but disabled, so the element shows a
+   frozen last frame or black. Dimming says "this is off" without pretending
+   the picture is still going out. */
+.live-camera-self__video--off { opacity: 0.35; }
 
 </style>

@@ -641,6 +641,40 @@ func TestRoom_ReleaseScreenUnknownSharerIsNoop(t *testing.T) {
 	}
 }
 
+// The camera and host-screen flags say WHAT the picture is made of, so they are
+// independent of each other and of the video flag. A reused room must take the
+// new meeting's values, not the previous meeting's.
+func TestRoom_CameraAndHostScreenFlags(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/proj/a", "A")
+
+	// Defaults mirror the pre-video-meeting world: the picture was a screen and
+	// there was no camera.
+	if !room.HostScreen() {
+		t.Fatal("a legacy room's picture must be a screen")
+	}
+	if room.CameraEnabled() {
+		t.Fatal("a legacy room must not claim a camera")
+	}
+
+	room.SetCameraEnabled(true)
+	room.SetHostScreen(false)
+	if !room.CameraEnabled() {
+		t.Fatal("SetCameraEnabled(true) must be observable")
+	}
+	if room.HostScreen() {
+		t.Fatal("SetHostScreen(false) must be observable")
+	}
+
+	// Both off is a real state: a video meeting whose camera was switched off
+	// and which shares no screen. The video flag is what says there is no
+	// picture, not these two.
+	room.SetCameraEnabled(false)
+	if room.CameraEnabled() {
+		t.Fatal("SetCameraEnabled(false) must be observable")
+	}
+}
+
 func TestRoom_NotesSwitch(t *testing.T) {
 	g := newTestRegistry(t)
 	room, _ := g.Create("/proj/a", "A")

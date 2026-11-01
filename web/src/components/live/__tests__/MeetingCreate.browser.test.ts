@@ -19,6 +19,7 @@ vi.mock('lucide-vue-next', () => ({
   Mic: { name: 'MicIcon', render: () => null },
   Monitor: { name: 'MonitorIcon', render: () => null },
   NotebookPen: { name: 'NotebookPenIcon', render: () => null },
+  Video: { name: 'VideoIcon', render: () => null },
   Volume2: { name: 'Volume2Icon', render: () => null },
 }))
 
@@ -55,6 +56,9 @@ vi.mock('@/composables/useSettingsConfig', () => ({
   }),
 }))
 
+/** Whether this machine reports a camera; several tests flip it. */
+const cameraDevice = vi.hoisted(() => ({ has: true }))
+
 const shareApi = vi.hoisted(() => ({} as Record<string, unknown>))
 vi.mock('@/composables/useLiveShare', async () => {
   const { ref: r, shallowRef: sr } = await import('vue')
@@ -89,6 +93,7 @@ vi.mock('@/composables/useLiveShare', async () => {
     useLiveShare: () => shareApi,
     listCaptureSources: vi.fn(async () => []),
     getAudioCaptureSupport: vi.fn(async () => true),
+    hasCameraDevice: vi.fn(async () => cameraDevice.has),
   }
 })
 
@@ -147,6 +152,7 @@ beforeEach(() => {
   settingsApi.setServerValue.mockReset()
   settingsApi.setServerValue.mockResolvedValue({ needsRestart: false, changedColdFields: [], warnings: [] })
   ;(shareApi.state as { value: string }).value = 'idle'
+  cameraDevice.has = true
 })
 
 afterEach(() => {
@@ -154,21 +160,87 @@ afterEach(() => {
 })
 
 describe('MeetingCreate in a browser', () => {
-  it('offers the voice tile and a usable start button when there is no source list', async () => {
+  it('offers both meeting types and keeps start usable with no source list', async () => {
     stubCaptureApi(true)
     const wrapper = mountPanel()
     await flushPromises()
 
     // A browser's own picker IS the source choice, so an empty list is not a
-    // problem: only the voice tile is rendered, and it is selected by default.
-    expect(wrapper.findAll('.meeting-source')).toHaveLength(1)
-    expect(wrapper.find('[data-source="voice"]').exists()).toBe(true)
+    // problem: video is selected by default and falls back to the camera.
+    expect(wrapper.find('[data-type="voice"]').exists()).toBe(true)
+    expect(wrapper.find('[data-type="video"]').exists()).toBe(true)
+    expect(wrapper.find('.meeting-type--on').attributes('data-type')).toBe('video')
 
     const start = wrapper.find('[data-action="meeting-start"]')
     expect(start.exists()).toBe(true)
     // The nickname is required, so fill it before checking the start button.
     await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
     expect(start.attributes('disabled')).toBeUndefined()
+  })
+
+  it('refuses a video meeting with no camera and no screen', async () => {
+    stubCaptureApi(true)
+    cameraDevice.has = false
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
+    const start = wrapper.find('[data-action="meeting-start"]')
+    // Screen sharing is on by default and a browser can always pick one, so
+    // the invalid state has to be reached explicitly.
+    expect(start.attributes('disabled')).toBeUndefined()
+
+    await wrapper.find('[data-role="meeting-screen"]').setValue(false)
+    // "Video meeting" with nothing to show would start a voice meeting under a
+    // false name, so it is blocked with an explanation rather than silently
+    // downgraded.
+    expect(start.attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.meeting-warn').text()).toBe(enMessages.meeting.create.noPicture)
+
+    // A voice meeting needs no picture at all.
+    await wrapper.find('[data-type="voice"]').trigger('click')
+    expect(start.attributes('disabled')).toBeUndefined()
+  })
+
+  it('starts a voice meeting with no video flag and no screen source', async () => {
+    stubCaptureApi(true)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-type="voice"]').trigger('click')
+    await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
+    await wrapper.find('[data-action="meeting-start"]').trigger('click')
+    await flushPromises()
+
+    expect(shareApi.start).toHaveBeenCalledWith(
+      expect.objectContaining({ video: false, camera: false, sourceId: '' }),
+    )
+  })
+
+  it('sends the camera flag for a video meeting', async () => {
+    stubCaptureApi(true)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
+    await wrapper.find('[data-role="meeting-camera"]').setValue(true)
+    await wrapper.find('[data-action="meeting-start"]').trigger('click')
+    await flushPromises()
+
+    expect(shareApi.start).toHaveBeenCalledWith(
+      expect.objectContaining({ video: true, camera: true }),
+    )
+  })
+
+  it('disables the camera option when the machine has none', async () => {
+    stubCaptureApi(true)
+    cameraDevice.has = false
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const camera = wrapper.find('[data-role="meeting-camera"]')
+    expect(camera.attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain(enMessages.meeting.create.cameraNoDevice)
   })
 
   it('cannot start without a nickname', async () => {
@@ -203,6 +275,9 @@ describe('MeetingCreate in a browser', () => {
 
   it('explains an insecure origin instead of blaming the client', async () => {
     stubCaptureApi(false)
+    // Neither capture API exists on an insecure origin, camera included — the
+    // probe goes through the same `navigator.mediaDevices`.
+    cameraDevice.has = false
     const original = Object.getOwnPropertyDescriptor(window, 'isSecureContext')
     Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true })
     try {

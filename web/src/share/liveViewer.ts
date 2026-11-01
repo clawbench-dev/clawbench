@@ -47,6 +47,10 @@ interface ServerMessage {
   notesEnabled?: boolean
   /** Whether the publisher sends a picture (false = voice meeting). */
   video?: boolean
+  /** Whether the publisher's camera is on (video meetings). */
+  camera?: boolean
+  /** Whether the publisher's picture is a screen share (not a camera). */
+  hostScreen?: boolean
   /** Room-level switch for audience screen sharing. */
   screenEnabled?: boolean
   /** Viewer id currently sharing a screen ('' when nobody is). */
@@ -72,6 +76,15 @@ export interface LiveViewerCallbacks {
    * arrive — and must not offer the remote-control button.
    */
   onVideoMode?: (video: boolean) => void
+  /**
+   * Whether the publisher's picture is a SCREEN. Remote control and annotation
+   * only make sense then — a camera image has no desktop to inject into.
+   */
+  onHostScreen?: (screen: boolean) => void
+  /** Whether the publisher's camera tile should be shown. */
+  onCameraMode?: (camera: boolean) => void
+  /** The publisher's camera picture (the picture-in-picture tile). */
+  onCameraStream?: (stream: MediaStream | null) => void
   /** The room-level screen-sharing switch changed. */
   onScreenEnabled?: (enabled: boolean) => void
   /** Who is sharing a screen ('' = nobody). */
@@ -135,6 +148,14 @@ export class LiveViewer {
   private screenTx: RTCRtpTransceiver | null = null
   /** Video m-line carrying ANOTHER viewer's screen, forwarded by the host. */
   private relayRxTx: RTCRtpTransceiver | null = null
+  /**
+   * Video m-line carrying the host's CAMERA (the picture-in-picture tile).
+   *
+   * Only present while the host shares a screen AND a camera. A camera-only
+   * meeting puts the camera on `screenTx` instead, so this line carries
+   * nothing and no tile is rendered.
+   */
+  private cameraRxTx: RTCRtpTransceiver | null = null
 
   private _state: LiveViewerState = 'idle'
   private _talkEnabled = false
@@ -165,6 +186,10 @@ export class LiveViewer {
    * flag (or an older server) keeps behaving exactly as before.
    */
   private _videoEnabled = true
+  /** Whether the host's picture is a screen (remote control / annotation). */
+  private _hostScreen = false
+  /** Whether the host's camera tile should be shown. */
+  private _cameraEnabled = false
 
   constructor(opts: LiveViewerOptions) {
     this.opts = opts
@@ -178,6 +203,16 @@ export class LiveViewer {
   /** Whether a picture is expected from the publisher. */
   get videoEnabled(): boolean {
     return this._videoEnabled
+  }
+
+  /** Whether the publisher's picture is a screen share. */
+  get hostScreen(): boolean {
+    return this._hostScreen
+  }
+
+  /** Whether the publisher's camera tile should be shown. */
+  get cameraEnabled(): boolean {
+    return this._cameraEnabled
   }
 
   get talkEnabled(): boolean {
@@ -311,6 +346,13 @@ export class LiveViewer {
         if (this._screenSharer) this.emitMemberScreen()
         else this.cb.onMemberScreenStream?.(null)
         break
+      case 'camera-state':
+        // The camera track stays live (just muted) on the publisher's side, so
+        // this frame is the ONLY thing that stops the tile: without it the last
+        // frame would freeze on screen and look like a broken stream.
+        this._cameraEnabled = Boolean(msg.camera)
+        this.cb.onCameraMode?.(this._cameraEnabled)
+        break
       case 'screen-denied':
         // The room refused: either the switch is off or somebody else got
         // there first. Release the local capture immediately — leaving it live
@@ -330,6 +372,12 @@ export class LiveViewer {
     this._talkEnabled = Boolean(msg.talkEnabled)
     this._videoEnabled = msg.video !== false
     this.cb.onVideoMode?.(this._videoEnabled)
+    // Absent means "an older publisher": its picture was always a screen, and
+    // it never had a camera. Both defaults keep such a share fully usable.
+    this._hostScreen = msg.hostScreen !== false
+    this.cb.onHostScreen?.(this._hostScreen)
+    this._cameraEnabled = Boolean(msg.camera)
+    this.cb.onCameraMode?.(this._cameraEnabled)
     this.cb.onTalkEnabled?.(this._talkEnabled)
     this._viewerId = msg.viewerId ?? ''
     this._notesEnabled = Boolean(msg.notesEnabled)
@@ -372,6 +420,14 @@ export class LiveViewer {
       // viewer's screen forwarded by the host. They are told apart by the
       // transceiver, not by kind.
       const stream = ev.streams[0] ?? new MediaStream([ev.track])
+      if (ev.transceiver === this.cameraRxTx) {
+        // The picture-in-picture tile. It must NOT reach onStream: that assigns
+        // the main <video>, so the camera would replace the screen — and it
+        // carries no audio, which would also clear the "tap to unmute" prompt.
+        this.cb.onCameraStream?.(stream)
+        ev.track.addEventListener('ended', () => this.cb.onCameraStream?.(null))
+        return
+      }
       if (ev.transceiver === this.relayRxTx) {
         this.relayTrack = ev.track
         ev.track.addEventListener('ended', () => {
@@ -412,11 +468,16 @@ export class LiveViewer {
     // transceiver later would require a second offer.
     this.talkTx = pc.addTransceiver('audio', { direction: 'sendrecv' })
 
-    // m-line order is a contract with the publisher (it adds the same three in
+    // m-line order is a contract with the publisher (it wires the same lines in
     // the same order): 1 audio, 2 video (host picture down + our screen up),
-    // 3 video (a forwarded member screen, down only).
+    // 3 video (a forwarded member screen, down only), 4 video (the host's
+    // camera tile, down only).
     this.screenTx = pc.addTransceiver('video', { direction: 'sendrecv' })
     this.relayRxTx = pc.addTransceiver('video', { direction: 'recvonly' })
+    // Added here, at join, and never later: a transceiver created mid-call
+    // needs a second offer, and the publisher is the answerer. An older
+    // publisher simply ignores the extra line.
+    this.cameraRxTx = pc.addTransceiver('video', { direction: 'recvonly' })
 
     void this.sendOffer()
   }
@@ -698,6 +759,7 @@ export class LiveViewer {
     this.talkTx = null
     this.screenTx = null
     this.relayRxTx = null
+    this.cameraRxTx = null
     if (this.ws) {
       try {
         this.ws.close()

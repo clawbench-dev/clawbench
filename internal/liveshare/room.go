@@ -126,6 +126,17 @@ type Room struct {
 	// video track, and a viewer must not sit on "connecting" waiting for one.
 	videoEnabled bool
 
+	// cameraEnabled and hostScreen split "there is a picture" into the two
+	// things it can be made of. They are orthogonal: a video meeting may run
+	// camera + screen at once (the camera goes out as a second video track and
+	// renders as a picture-in-picture tile), a screen-only share has hostScreen
+	// but no camera, and a voice meeting has neither.
+	//
+	// hostScreen is NOT the same as screenEnabled above: that one is the
+	// audience's permission to share, this one is what the publisher is showing.
+	cameraEnabled bool
+	hostScreen    bool
+
 	// notesEnabled tells viewers whether the publisher is running AI 听记.
 	// Purely informational: the transcript itself never passes through the room
 	// (it is uploaded over HTTP), but a viewer must not show a "听记" control for
@@ -244,6 +255,39 @@ func (r *Room) VideoEnabled() bool {
 func (r *Room) SetVideoEnabled(on bool) {
 	r.mu.Lock()
 	r.videoEnabled = on
+	r.mu.Unlock()
+	r.touch()
+}
+
+// CameraEnabled reports whether the publisher's camera is on.
+func (r *Room) CameraEnabled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cameraEnabled
+}
+
+// SetCameraEnabled flips the camera flag. Written on create and again whenever
+// the publisher toggles the camera mid-meeting, so a viewer joining late sees
+// the current state in its `joined` frame rather than the state at creation.
+func (r *Room) SetCameraEnabled(on bool) {
+	r.mu.Lock()
+	r.cameraEnabled = on
+	r.mu.Unlock()
+	r.touch()
+}
+
+// HostScreen reports whether the publisher's picture is a screen share.
+func (r *Room) HostScreen() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.hostScreen
+}
+
+// SetHostScreen records whether the publisher shares a screen. Set on every
+// create call for the same reason as the video flag.
+func (r *Room) SetHostScreen(on bool) {
+	r.mu.Lock()
+	r.hostScreen = on
 	r.mu.Unlock()
 	r.touch()
 }
@@ -575,9 +619,13 @@ func (g *Registry) Create(projectKey, title string) (*Room, error) {
 		// Default true: a room created by an older client (or by a test) still
 		// means "screen share", which is what every room did before voice mode.
 		videoEnabled: true,
-		maxViewers:   g.maxViewers,
-		idleTimeout:  g.idleTimeout,
-		lastActive:   time.Now(),
+		// Same reasoning: before video meetings existed the picture WAS a
+		// screen, and there was no camera. Both are overwritten by the create
+		// call on every share, including a reused room.
+		hostScreen:  true,
+		maxViewers:  g.maxViewers,
+		idleTimeout: g.idleTimeout,
+		lastActive:  time.Now(),
 	}
 	g.rooms[token] = room
 	g.byProject[projectKey] = token

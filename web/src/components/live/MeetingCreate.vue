@@ -41,40 +41,90 @@
           @keydown.enter="start"
         />
 
-        <div class="meeting-section">{{ t('meeting.create.source') }}</div>
-        <div class="meeting-source-grid">
-          <!-- Voice first: it is the option people look for, and it is the one
-               that needs no permission. -->
+        <!-- Two meeting types, not a screen picker: "voice" and "video" is the
+             choice people come here to make. What the video is made of (camera,
+             screen, or both) is a detail underneath. -->
+        <div class="meeting-section">{{ t('meeting.create.type') }}</div>
+        <div class="meeting-type-grid">
           <button
-            class="meeting-source"
-            :class="{ 'meeting-source--on': selected === VOICE }"
+            class="meeting-type"
+            :class="{ 'meeting-type--on': !isVideo }"
             type="button"
-            data-source="voice"
-            @click="selected = VOICE"
+            data-type="voice"
+            @click="kind = 'voice'"
           >
-            <span class="meeting-source__thumb meeting-source__thumb--voice"><Mic :size="20" /></span>
-            <span class="meeting-source__name">{{ t('meeting.create.voice') }}</span>
-            <span class="meeting-source__note">{{ t('meeting.create.voiceNote') }}</span>
+            <span class="meeting-type__icon"><Mic :size="18" /></span>
+            <span class="meeting-type__text">
+              <span class="meeting-type__name">{{ t('meeting.create.voiceMeeting') }}</span>
+              <span class="meeting-type__note">{{ t('meeting.create.voiceMeetingNote') }}</span>
+            </span>
           </button>
           <button
-            v-for="src in sources"
-            :key="src.id"
-            class="meeting-source"
-            :class="{ 'meeting-source--on': selected === src.id }"
+            class="meeting-type"
+            :class="{ 'meeting-type--on': isVideo }"
             type="button"
-            :data-source="src.id"
-            @click="selected = src.id"
+            data-type="video"
+            @click="kind = 'video'"
           >
-            <span class="meeting-source__thumb">
-              <img v-if="src.thumbnail" :src="src.thumbnail" :alt="src.name" />
-              <Monitor v-else :size="20" />
+            <span class="meeting-type__icon"><Video :size="18" /></span>
+            <span class="meeting-type__text">
+              <span class="meeting-type__name">{{ t('meeting.create.videoMeeting') }}</span>
+              <span class="meeting-type__note">{{ t('meeting.create.videoMeetingNote') }}</span>
             </span>
-            <span class="meeting-source__name" :title="src.name">{{ src.name }}</span>
-            <span class="meeting-source__note">{{ src.kind === 'window' ? t('meeting.create.window') : t('meeting.create.screen') }}</span>
           </button>
         </div>
-        <div v-if="isVoice" class="meeting-hint">{{ t('meeting.create.voiceHint') }}</div>
-        <div v-else-if="sources.length === 0 && !loadingSources" class="meeting-hint">{{ noSourceHint }}</div>
+
+        <template v-if="isVideo">
+          <label class="meeting-check" :class="{ 'meeting-check--disabled': !cameraAvailable }">
+            <input
+              type="checkbox"
+              :checked="camera && cameraAvailable"
+              :disabled="!cameraAvailable"
+              data-role="meeting-camera"
+              @change="camera = ($event.target as HTMLInputElement).checked"
+            />
+            <span class="meeting-check__icon"><Video :size="13" /></span>
+            {{ t('meeting.create.camera') }}
+          </label>
+          <div class="meeting-hint meeting-hint--indent">
+            {{ cameraHint }}
+          </div>
+
+          <label class="meeting-check">
+            <input
+              type="checkbox"
+              :checked="shareScreen"
+              data-role="meeting-screen"
+              @change="shareScreen = ($event.target as HTMLInputElement).checked"
+            />
+            <span class="meeting-check__icon"><Monitor :size="13" /></span>
+            {{ t('meeting.create.shareScreen') }}
+          </label>
+          <div class="meeting-hint meeting-hint--indent">{{ screenHint }}</div>
+
+          <div v-if="shareScreen" class="meeting-source-grid">
+            <button
+              v-for="src in sources"
+              :key="src.id"
+              class="meeting-source"
+              :class="{ 'meeting-source--on': selected === src.id }"
+              type="button"
+              :data-source="src.id"
+              @click="selected = src.id"
+            >
+              <span class="meeting-source__thumb">
+                <img v-if="src.thumbnail" :src="src.thumbnail" :alt="src.name" />
+                <Monitor v-else :size="20" />
+              </span>
+              <span class="meeting-source__name" :title="src.name">{{ src.name }}</span>
+              <span class="meeting-source__note">{{ src.kind === 'window' ? t('meeting.create.window') : t('meeting.create.screen') }}</span>
+            </button>
+          </div>
+          <div v-if="shareScreen && sources.length === 0 && !loadingSources" class="meeting-hint">
+            {{ noSourceHint }}
+          </div>
+          <div v-if="!camera && !shareScreen" class="meeting-warn">{{ t('meeting.create.noPicture') }}</div>
+        </template>
 
         <div class="meeting-section">{{ t('meeting.create.sound') }}</div>
         <label class="meeting-check">
@@ -85,18 +135,18 @@
         <div class="meeting-hint meeting-hint--indent">
           {{ microphone ? t('meeting.create.micOn') : t('meeting.create.micOff') }}
         </div>
-        <label class="meeting-check" :class="{ 'meeting-check--disabled': isVoice }">
+        <label class="meeting-check" :class="{ 'meeting-check--disabled': !hasScreen }">
           <input
             type="checkbox"
-            :checked="systemAudio && !isVoice"
-            :disabled="isVoice"
+            :checked="systemAudio && hasScreen"
+            :disabled="!hasScreen"
             @change="systemAudio = ($event.target as HTMLInputElement).checked"
           />
           <span class="meeting-check__icon"><Volume2 :size="13" /></span>
           {{ t('meeting.create.systemAudio') }}
         </label>
         <div class="meeting-hint meeting-hint--indent">
-          {{ isVoice ? t('meeting.create.systemAudioVoice') : t('meeting.create.systemAudioHint') }}
+          {{ hasScreen ? t('meeting.create.systemAudioHint') : t('meeting.create.systemAudioNoScreen') }}
         </div>
         <label class="meeting-check">
           <input type="checkbox" :checked="notes" @change="notes = ($event.target as HTMLInputElement).checked" />
@@ -126,23 +176,25 @@
 
 <script setup lang="ts">
 /**
- * 创建会议: name (optional), what to share, and the three capture options.
+ * 创建会议: name (optional), meeting type, and the capture options.
  *
  * The options are the SAME refs the running meeting edits (useMeetingOptions),
  * so turning 听记 off here means it is off in the meeting too, and vice versa.
  *
- * The source grid's first tile is "不共享屏幕" — a voice meeting is a first-class
- * choice, not a checkbox hidden under the screen picker.
+ * The type is a first-class choice (voice / video), not a "share nothing" tile
+ * hidden in the screen picker: what the video is made of — camera, screen, or
+ * both — is a detail underneath it.
  */
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Mic, Monitor, NotebookPen, Volume2 } from 'lucide-vue-next'
+import { ArrowLeft, Mic, Monitor, NotebookPen, Video, Volume2 } from 'lucide-vue-next'
 import { useToast } from '@/composables/useToast'
 import { useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useMeetingNickname } from '@/composables/useMeetingNickname'
 import { MEETING_NICK_MAX } from '@/share/meetingNickname'
 import {
   getAudioCaptureSupport,
+  hasCameraDevice,
   listCaptureSources,
   useLiveShare,
   type CaptureSource,
@@ -157,11 +209,13 @@ const emit = defineEmits<{ back: []; started: [] }>()
 const { t } = useI18n()
 const toast = useToast()
 const share = useLiveShare()
-const { microphone, systemAudio, notes } = useMeetingOptions()
+const { microphone, systemAudio, notes, camera } = useMeetingOptions()
 const { nickname, persist } = useMeetingNickname()
 
-/** Sentinel source id for the voice meeting (no screen at all). */
-const VOICE = 'voice'
+type MeetingKind = 'voice' | 'video'
+const kind = ref<MeetingKind>('video')
+/** Share a screen alongside the camera (or on its own). */
+const shareScreen = ref(false)
 
 const title = ref('')
 const selected = ref('')
@@ -169,6 +223,8 @@ const sources = ref<CaptureSource[]>([])
 const loadingSources = ref(false)
 const starting = ref(false)
 const systemAudioSupported = ref(false)
+/** Whether this machine has a camera at all. */
+const cameraAvailable = ref(true)
 
 const hasNativeCapture = computed(() => Boolean(getNative()?.listCaptureSources))
 const browserCapture = browserScreenCaptureAvailable()
@@ -176,8 +232,15 @@ const canCapture = computed(() => hasNativeCapture.value || browserCapture)
 /** Android has no source list: the system dialog decides what is mirrored. */
 const isAndroidCapture = computed(() => Boolean(getNative()?.startScreenCapture))
 
-const supported = computed(() => canCapture.value || isAndroidCapture.value)
-const isVoice = computed(() => selected.value === VOICE)
+const supported = computed(() => canCapture.value || isAndroidCapture.value || cameraAvailable.value)
+const isVideo = computed(() => kind.value === 'video')
+/**
+ * Whether the user asked for a screen.
+ *
+ * Not the same as "a source is selected": a plain browser picks its source in
+ * the browser's own dialog, so its id list is empty while it still shares.
+ */
+const hasScreen = computed(() => isVideo.value && shareScreen.value)
 
 const unsupportedHint = computed(() => {
   if (isInsecureCaptureContext()) return t('liveShare.insecureContext')
@@ -188,9 +251,18 @@ const noSourceHint = computed(() =>
   browserCapture ? t('liveShare.browserCaptureHint') : t('liveShare.noSources'),
 )
 
+const cameraHint = computed(() => {
+  if (!cameraAvailable.value) return t('meeting.create.cameraNoDevice')
+  return camera.value ? t('meeting.create.cameraOn') : t('meeting.create.cameraOff')
+})
+
+const screenHint = computed(() =>
+  shareScreen.value ? t('meeting.create.shareScreenOn') : t('meeting.create.shareScreenOff'),
+)
+
 const startLabel = computed(() => {
-  if (isVoice.value) return t('meeting.create.startVoice')
-  return selected.value ? t('meeting.create.startShare') : t('meeting.create.start')
+  if (!isVideo.value) return t('meeting.create.startVoice')
+  return t('meeting.create.startVideo')
 })
 
 const canStart = computed(() => {
@@ -198,27 +270,45 @@ const canStart = computed(() => {
   if (!supported.value) return false
   // The nickname is required: viewers see it in chat, and an empty name would
   // fall back to the shared "User" label.
-  return Boolean(selected.value) && Boolean(nickname.value.trim())
+  if (!nickname.value.trim()) return false
+  if (!isVideo.value) return true
+  // A video meeting must actually have a picture; "video" with no camera and
+  // no screen would start a voice meeting under a false name.
+  const cameraOn = camera.value && cameraAvailable.value
+  return cameraOn || hasScreen.value
 })
 
 async function loadSources(): Promise<void> {
   loadingSources.value = true
   try {
-    const [list, sysAudio] = await Promise.all([listCaptureSources(), getAudioCaptureSupport()])
+    const [list, sysAudio, hasCamera] = await Promise.all([
+      listCaptureSources(),
+      getAudioCaptureSupport(),
+      hasCameraDevice(),
+    ])
     // Android has no source list: the consent dialog decides what gets
     // mirrored. One sentinel tile keeps "share my screen" selectable.
     sources.value = isAndroidCapture.value
       ? [{ id: 'android:screen', name: t('liveShare.entireScreen'), kind: 'screen', thumbnail: '' }]
       : list
+    cameraAvailable.value = hasCamera
     systemAudioSupported.value = sysAudio
     // Seed the toggle from the platform rather than from `false`: on Windows
     // sharing the system sound is the common case.
     if (sysAudio && !systemAudio.value) systemAudio.value = true
     if (!selected.value) {
       const screen = list.find((s) => s.kind === 'screen')
-      // Default to voice only when there is nothing to share.
-      selected.value = screen?.id ?? list[0]?.id ?? VOICE
+      selected.value = screen?.id ?? list[0]?.id ?? ''
     }
+    // Screen sharing stays the default (it is what this feature has always
+    // been), including in a plain browser, where the id list is empty because
+    // the browser's own picker chooses the source. The camera is opt-IN —
+    // turning somebody's camera on because they opened a form is exactly the
+    // kind of surprise this setting must not give — unless there is no screen
+    // capture at all, where it is the only picture left.
+    const canPickScreen = sources.value.length > 0 || (browserCapture && !hasNativeCapture.value)
+    shareScreen.value = canPickScreen
+    if (!canPickScreen) camera.value = hasCamera
   } catch (e) {
     appLog.e('MeetingCreate', 'loadSources failed', e)
   } finally {
@@ -248,17 +338,22 @@ async function start(): Promise<void> {
       toast.show(e instanceof Error ? e.message : String(e), { type: 'error', icon: 'warning' })
       return
     }
-    const voice = isVoice.value
+    const voice = !isVideo.value
     const ok = await share.start({
-      sourceId: voice ? '' : selected.value,
-      systemAudio: voice ? false : systemAudio.value,
+      sourceId: hasScreen.value ? selected.value : '',
+      screen: hasScreen.value,
+      systemAudio: hasScreen.value ? systemAudio.value : false,
       microphone: microphone.value,
+      camera: !voice && camera.value && cameraAvailable.value,
       notes: notes.value,
       video: !voice,
       shareTitle: title.value.trim(),
       notesLabel,
     })
     if (ok) {
+      // A camera that failed while the screen still works does not fail the
+      // meeting, so the error is surfaced here rather than by a false return.
+      if (share.error.value) toast.show(share.error.value, { type: 'error', icon: 'warning' })
       emit('started')
       return
     }
@@ -312,6 +407,36 @@ onMounted(() => {
 }
 .meeting-input:focus { outline: none; border-color: var(--accent-color); }
 
+.meeting-type-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: var(--space-4); padding: 2px;
+}
+.meeting-type {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border-color); border-radius: var(--radius-md);
+  background: var(--bg-secondary); text-align: left; cursor: pointer; min-width: 0;
+}
+.meeting-type:hover { border-color: var(--accent-color); }
+.meeting-type--on { border-color: var(--accent-color); box-shadow: 0 0 0 1px var(--accent-color); }
+.meeting-type__icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: calc(30 * var(--dp)); height: calc(30 * var(--dp)); flex-shrink: 0;
+  border-radius: var(--radius-sm); background: var(--bg-tertiary); color: var(--text-muted);
+}
+.meeting-type--on .meeting-type__icon {
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  color: var(--accent-color);
+}
+.meeting-type__text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.meeting-type__name {
+  display: block; font-size: var(--font-size-sm); font-weight: 600; color: var(--text-primary);
+}
+.meeting-type__note {
+  display: block; margin-top: 2px;
+  font-size: var(--font-size-2xs); color: var(--text-muted);
+}
+
 .meeting-source-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(150 * var(--dp)), 1fr));
   gap: var(--space-4); padding: 2px;
@@ -331,7 +456,6 @@ onMounted(() => {
   overflow: hidden;
 }
 .meeting-source__thumb img { width: 100%; height: 100%; object-fit: cover; }
-.meeting-source__thumb--voice { background: color-mix(in srgb, var(--accent-color) 10%, transparent); color: var(--accent-color); }
 .meeting-source__name {
   font-size: var(--font-size-xs); color: var(--text-secondary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

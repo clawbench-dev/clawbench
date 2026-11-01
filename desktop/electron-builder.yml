@@ -65,6 +65,7 @@ mac:
   extendInfo:
     NSMicrophoneUsageDescription: ClawBench uses the microphone for voice input and live audio sharing.
     NSScreenCaptureUsageDescription: ClawBench captures your screen when you start a live share.
+    NSCameraUsageDescription: ClawBench uses the camera when you start a video meeting.
 linux:
   target: dir
   icon: build/icon.png

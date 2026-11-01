@@ -27,20 +27,25 @@ test.describe('Meeting tab', () => {
     await expect(page.locator('[data-role="meeting-title"]')).toHaveCount(0)
   })
 
-  test('create is its own page, with the name first and the voice tile', async ({ page }) => {
+  test('create is its own page, with the name first and the two meeting types', async ({ page }) => {
     await page.locator('[data-action="meeting-create"]').click()
 
     await expect(page.locator('[data-role="meeting-title"]')).toBeVisible()
-    await expect(page.locator('[data-source="voice"]')).toBeVisible()
+    // The choice is voice vs video; what the video is made of is a detail
+    // underneath it, so there is no "voice tile" in the source grid any more.
+    await expect(page.locator('[data-type="voice"]')).toBeVisible()
+    await expect(page.locator('[data-type="video"]')).toBeVisible()
+    await expect(page.locator('[data-type="video"]')).toHaveClass(/meeting-type--on/)
 
-    // A source is pre-selected (voice when there is no screen to enumerate), so
-    // the primary action is live immediately — the user is never forced to
-    // re-choose the obvious default.
+    // A picture source is pre-selected (a screen when one can be enumerated),
+    // so the only thing missing is the required nickname.
     const start = page.locator('[data-action="meeting-start"]')
+    await page.locator('[data-role="meeting-nick"]').fill('E2E 用户')
     await expect(start).toBeEnabled()
 
-    await page.locator('[data-source="voice"]').click()
-    await expect(page.locator('[data-source="voice"]')).toHaveClass(/meeting-source--on/)
+    await page.locator('[data-type="voice"]').click()
+    await expect(page.locator('[data-type="voice"]')).toHaveClass(/meeting-type--on/)
+    await expect(start).toBeEnabled()
   })
 
   test('join requires a nickname before it can submit', async ({ page }) => {
@@ -158,7 +163,9 @@ test.describe('Meeting flow', () => {
 
     await page.locator('[data-action="meeting-create"]').click()
     await page.locator('[data-role="meeting-title"]').fill('E2E 语音会议')
-    await page.locator('[data-source="voice"]').click()
+    // The nickname is required since it is the account identity viewers see.
+    await page.locator('[data-role="meeting-nick"]').fill('E2E 用户')
+    await page.locator('[data-type="voice"]').click()
     await page.locator('[data-action="meeting-start"]').click()
 
     // The stage replaces the create page once the room is up.

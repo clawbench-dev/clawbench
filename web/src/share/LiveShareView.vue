@@ -45,10 +45,36 @@
         />
 
         <!-- Ink covers exactly the picture, not the letterbox: a stroke drawn
-             at 0.5/0.5 must land in the middle of the CONTENT on every screen. -->
-        <div v-if="videoEnabled" class="live-ink-wrap" :style="inkWrapStyle">
+             at 0.5/0.5 must land in the middle of the CONTENT on every screen.
+             Screens only: a stroke over a camera image has nothing to annotate. -->
+        <div v-if="hostScreen" class="live-ink-wrap" :style="inkWrapStyle">
           <LiveInkLayer :strokes="board.strokes.value" :laser="board.laser.value" />
         </div>
+      </div>
+
+      <!-- The publisher's camera, when the meeting shows a screen AND a camera.
+           Outside the zoom wrapper on purpose: the screen may be zoomed and
+           panned, the face must not be. -->
+      <video
+        v-show="hostScreen && cameraMode && cameraStream"
+        ref="cameraVideoRef"
+        class="live-camera-pip"
+        autoplay
+        playsinline
+        muted
+        data-role="camera-pip"
+      />
+
+      <!-- Camera-only meeting with the camera switched off: there is no picture
+           left, and a black rectangle reads as a broken stream. -->
+      <div
+        v-if="videoEnabled && !hostScreen && !cameraMode"
+        class="live-voice-stage"
+        data-role="camera-off"
+      >
+        <VideoOff :size="34" />
+        <div class="live-voice-stage__title">{{ t('share.live.cameraOffTitle') }}</div>
+        <div class="live-voice-stage__desc">{{ t('share.live.cameraOffDesc') }}</div>
       </div>
 
       <!-- Voice meeting: there is no picture to show. A placeholder says what
@@ -282,7 +308,7 @@
            capture: hiding it entirely leaves a member wondering why the button
            their colleague sees is missing. Disabled + a title explains it. -->
       <button
-        v-if="controlState === 'none' && videoEnabled"
+        v-if="controlState === 'none' && hostScreen"
         class="live-dock-btn"
         type="button"
         :aria-label="t('share.live.requestControl')"
@@ -413,12 +439,26 @@ const { t } = useI18n()
 
 const rootRef = ref<HTMLElement | null>(null)
 const videoRef = ref<HTMLVideoElement | null>(null)
+/** The picture-in-picture tile carrying the publisher's camera. */
+const cameraVideoRef = ref<HTMLVideoElement | null>(null)
 const state = ref<LiveViewerState>('connecting')
 /** The nickname gate has been passed; only then is a socket opened. */
 const joined = ref(false)
 const nick = ref('')
 /** Whether the publisher sends a picture (false = voice meeting). */
 const videoEnabled = ref(true)
+/**
+ * Whether that picture is a screen (vs a camera).
+ *
+ * Remote control and annotation hang off this, not off `videoEnabled`: a
+ * camera image has no desktop behind it, so a pointer mapped onto it would
+ * inject clicks at nonsense coordinates.
+ */
+const hostScreen = ref(true)
+/** Whether the publisher's camera tile should be shown. */
+const cameraMode = ref(false)
+/** The publisher's camera picture (picture-in-picture tile). */
+const cameraStream = ref<MediaStream | null>(null)
 const title = ref('')
 const failReason = ref('')
 const talkEnabled = ref(false)
@@ -1097,6 +1137,22 @@ function unlockSound(): void {
   void el.play().catch((e) => appLog.w(TAG, 'unmuted play failed', e))
 }
 
+/**
+ * Attach the publisher's camera to its own element.
+ *
+ * Deliberately separate from `attachStream`: the camera is a tile, so it must
+ * never touch the main <video> (which would replace the screen) nor the sound
+ * unlock state (the camera carries no audio, and clearing the prompt would
+ * leave a muted meeting with no way to unmute it).
+ */
+function attachCamera(stream: MediaStream | null): void {
+  cameraStream.value = stream
+  const el = cameraVideoRef.value
+  if (!el) return
+  el.srcObject = stream
+  if (stream) void el.play().catch((e) => appLog.w(TAG, 'camera play failed', e))
+}
+
 /** Gate callback: remember the name and connect. */
 function onJoin(name: string): void {
   nick.value = name
@@ -1126,6 +1182,13 @@ function start(): void {
       onVideoMode: (video) => {
         videoEnabled.value = video
       },
+      onHostScreen: (screen) => {
+        hostScreen.value = screen
+      },
+      onCameraMode: (on) => {
+        cameraMode.value = on
+      },
+      onCameraStream: attachCamera,
       onStateChange: (s, detail) => {
         state.value = s
         if (detail?.reason) failReason.value = detail.reason
@@ -1319,6 +1382,7 @@ onBeforeUnmount(() => {
   board.dispose()
   document.removeEventListener('fullscreenchange', syncFullscreen)
   attachMember(null)
+  attachCamera(null)
   closeNotes()
   viewer?.close()
   viewer = null
@@ -1356,6 +1420,25 @@ onBeforeUnmount(() => {
 
 .live-video--hidden {
   visibility: hidden;
+}
+
+/* The publisher's camera, as a picture-in-picture tile over the screen.
+   Bottom-right on purpose: the dock sits bottom-centre and the quality chip
+   top-right, so this corner is the only one that never covers a control. */
+.live-camera-pip {
+  position: absolute;
+  right: calc(12 * var(--dp));
+  bottom: calc(12 * var(--dp));
+  width: min(calc(180 * var(--dp)), 38%);
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: #000;
+  border: 1px solid var(--border-color, rgb(255 255 255 / 12%));
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 45%);
+  /* A tile, not a control: taps and drags belong to the stage underneath. */
+  pointer-events: none;
+  z-index: 2;
 }
 
 .live-overlay {

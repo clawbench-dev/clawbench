@@ -78,6 +78,7 @@ import java.security.cert.X509Certificate;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -216,22 +217,30 @@ public class MainActivity extends AppCompatActivity {
                 }
             });
 
-    // Microphone permission launcher — the WebView only asks us (via
+    // Media permission launcher — the WebView only asks us (via
     // onPermissionRequest) once a page calls getUserMedia, and the OS grant has
     // to happen first. The pending request is held so the answer can be relayed
     // back to the page instead of leaving it hanging.
+    //
+    // One slot for both audio and video: the page awaits its getUserMedia call,
+    // so a second request while the dialog is up means the first one is already
+    // dead. Requesting them together also matters — a mixed {audio,video}
+    // request that only gets the microphone granted fails as a whole.
     private PermissionRequest pendingMicRequest;
 
-    private final ActivityResultLauncher<String> micPermissionLauncher =
-            registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
+    private final ActivityResultLauncher<String[]> micPermissionLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), granted -> {
                 PermissionRequest request = pendingMicRequest;
                 pendingMicRequest = null;
                 if (request == null) return;
-                String[] grantable = MicPermissionPolicy.grantableResources(request.getResources());
-                if (isGranted && grantable.length > 0) {
+                String[] grantable = MicPermissionPolicy.grantableResources(
+                        request.getResources(),
+                        holdsPermission(Manifest.permission.RECORD_AUDIO),
+                        holdsPermission(Manifest.permission.CAMERA));
+                if (grantable.length > 0) {
                     request.grant(grantable);
                 } else {
-                    AppLog.w(TAG, "RECORD_AUDIO denied — voice input unavailable");
+                    AppLog.w(TAG, "media capture denied — voice input and camera unavailable");
                     request.deny();
                 }
             });
@@ -281,6 +290,17 @@ public class MainActivity extends AppCompatActivity {
      * kilobyte frames out of an evaluated script string and gives the WebView
      * natural backpressure: a frame it never takes is simply overwritten.
      */
+    /**
+     * Whether an OS runtime permission is currently held.
+     *
+     * A single place for the check so the WebView grant path cannot ask for one
+     * permission and test another — the pair has to agree or getUserMedia is
+     * granted a resource the OS will refuse.
+     */
+    private boolean holdsPermission(String permission) {
+        return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
     private void installScreenShareTickListener() {
         ScreenShareStatus.setTickListener(() -> {
             WebView view = webView;
@@ -957,17 +977,34 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onPermissionRequest(PermissionRequest request) {
-                // Voice input (getUserMedia) is denied by default in a WebView:
-                // the page gets NotAllowedError unless this callback grants the
-                // resource AND the app holds the matching OS permission.
-                String[] grantable = MicPermissionPolicy.grantableResources(request.getResources());
-                if (grantable.length == 0) {
-                    AppLog.w(TAG, "WebView permission request denied (not audio capture)");
+                // getUserMedia is denied by default in a WebView: the page gets
+                // NotAllowedError unless this callback grants the resource AND
+                // the app holds the matching OS permission. Voice input needs
+                // the microphone, a video meeting's camera needs the camera.
+                String[] requested = request.getResources();
+                if (!MicPermissionPolicy.wantsAudio(requested)
+                        && !MicPermissionPolicy.wantsVideo(requested)) {
+                    AppLog.w(TAG, "WebView permission request denied (no audio or video capture)");
                     request.deny();
                     return;
                 }
-                if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
-                        == PackageManager.PERMISSION_GRANTED) {
+                String[] grantable = MicPermissionPolicy.grantableResources(
+                        requested,
+                        holdsPermission(Manifest.permission.RECORD_AUDIO),
+                        holdsPermission(Manifest.permission.CAMERA));
+                // Ask for exactly the missing OS permissions, together: a mixed
+                // {audio,video} request granted only half of it fails as a whole,
+                // and two stacked dialogs would be worse than one.
+                List<String> missing = new ArrayList<>();
+                if (MicPermissionPolicy.wantsAudio(requested)
+                        && !holdsPermission(Manifest.permission.RECORD_AUDIO)) {
+                    missing.add(Manifest.permission.RECORD_AUDIO);
+                }
+                if (MicPermissionPolicy.wantsVideo(requested)
+                        && !holdsPermission(Manifest.permission.CAMERA)) {
+                    missing.add(Manifest.permission.CAMERA);
+                }
+                if (missing.isEmpty()) {
                     request.grant(grantable);
                     return;
                 }
@@ -977,7 +1014,7 @@ public class MainActivity extends AppCompatActivity {
                     pendingMicRequest.deny();
                 }
                 pendingMicRequest = request;
-                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO);
+                micPermissionLauncher.launch(missing.toArray(new String[0]));
             }
 
             @Override
