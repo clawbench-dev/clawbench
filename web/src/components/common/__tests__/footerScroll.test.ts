@@ -50,4 +50,13 @@ describe('footer action bars scroll instead of wrapping', () => {
   it('keeps pills at their intrinsic width so the row overflows and scrolls', () => {
     expect(declsAt('web/src/assets/modal-footer-btn.css', '.fbtn {')['flex-shrink']).toBe('0')
   })
+
+  it('hides the scrollbar itself on the footer bars', () => {
+    // A footer is one row of pills; a painted scrollbar steals height and reads
+    // as an unrelated control. The standard property covers Chromium/Firefox,
+    // the ::-webkit- rule covers WebKit (which ignores scrollbar-width).
+    const css = 'web/src/assets/modal-footer-btn.css'
+    expect(declsAt(css, '.modal-footer,')['scrollbar-width']).toBe('none')
+    expect(declsAt(css, '.meeting-footer::-webkit-scrollbar')['display']).toBe('none')
+  })
 })

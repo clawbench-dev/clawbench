@@ -147,3 +147,43 @@
 [data-theme-base="dark"] .fbtn-success:hover {
   color: #bbf7d0;
 }
+
+/* ── Footer action bars: scroll without a visible scrollbar ──
+   Every footer bar is one row of pills that scrolls horizontally when it does
+   not fit (the bar itself sets flex-wrap: nowrap + overflow-x: auto). The bar
+   itself must not be painted: a classic 15px scrollbar steals height from the
+   footer and reads as an unrelated second control. `scrollbar-width: none`
+   covers Chromium/Firefox; the ::-webkit- rule covers WebKit, where the
+   standard property is unsupported. Keep this selector list in sync with the
+   bars — footerScroll.test.ts guards it. */
+.modal-footer,
+.bs-footer,
+.meeting-footer,
+.detail-actions,
+.exec-detail-actions,
+.form-footer,
+.settings-page__footer,
+.dlg-actions,
+.kcd-footer,
+.ad-footer-actions,
+.ug-footer,
+.detail-footer-row,
+.queued-bar-footer {
+  scrollbar-width: none;
+}
+
+.modal-footer::-webkit-scrollbar,
+.bs-footer::-webkit-scrollbar,
+.meeting-footer::-webkit-scrollbar,
+.detail-actions::-webkit-scrollbar,
+.exec-detail-actions::-webkit-scrollbar,
+.form-footer::-webkit-scrollbar,
+.settings-page__footer::-webkit-scrollbar,
+.dlg-actions::-webkit-scrollbar,
+.kcd-footer::-webkit-scrollbar,
+.ad-footer-actions::-webkit-scrollbar,
+.ug-footer::-webkit-scrollbar,
+.detail-footer-row::-webkit-scrollbar,
+.queued-bar-footer::-webkit-scrollbar {
+  display: none;
+}
