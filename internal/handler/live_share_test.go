@@ -255,6 +255,10 @@ func TestLiveShareStatus_ReportsViewerCount(t *testing.T) {
 }
 
 func TestLiveShareEnd_RemovesRoom(t *testing.T) {
+	// Ending a share resolves the project id, so the record tables must exist:
+	// without them the handler runs against whatever DB a previous test left
+	// behind (a closed one, on a partial run) and panics.
+	setupLiveNotesDB(t)
 	resetLiveRegistry(t)
 	room, err := liveRegistry.Create(projPath("/proj/a"), "A")
 	require.NoError(t, err)
@@ -269,6 +273,10 @@ func TestLiveShareEnd_RemovesRoom(t *testing.T) {
 }
 
 func TestLiveShareEnd_RejectsForeignProject(t *testing.T) {
+	// Ending a share resolves the project id, so the record tables must exist:
+	// without them the handler runs against whatever DB a previous test left
+	// behind (a closed one, on a partial run) and panics.
+	setupLiveNotesDB(t)
 	resetLiveRegistry(t)
 	room, err := liveRegistry.Create(projPath("/proj/owner"), "A")
 	require.NoError(t, err)
@@ -285,6 +293,10 @@ func TestLiveShareEnd_RejectsForeignProject(t *testing.T) {
 }
 
 func TestLiveShareEnd_UnknownTokenIsOk(t *testing.T) {
+	// Ending a share resolves the project id, so the record tables must exist:
+	// without them the handler runs against whatever DB a previous test left
+	// behind (a closed one, on a partial run) and panics.
+	setupLiveNotesDB(t)
 	resetLiveRegistry(t)
 
 	// Ending twice must not surface an error: the publisher's UI may retry, and
@@ -296,6 +308,10 @@ func TestLiveShareEnd_UnknownTokenIsOk(t *testing.T) {
 }
 
 func TestLiveShareEnd_RequiresToken(t *testing.T) {
+	// Ending a share resolves the project id, so the record tables must exist:
+	// without them the handler runs against whatever DB a previous test left
+	// behind (a closed one, on a partial run) and panics.
+	setupLiveNotesDB(t)
 	resetLiveRegistry(t)
 
 	w := httptest.NewRecorder()

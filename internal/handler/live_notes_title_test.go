@@ -3,9 +3,20 @@ package handler
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"clawbench/internal/service"
+	"clawbench/internal/store"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 /**
@@ -60,4 +71,89 @@ func TestNameMeetingFromMinutes(t *testing.T) {
 
 		assert.Equal(t, placeholder, nameMeetingFromMinutes(ctx, placeholder, "## 概要", generate))
 	})
+}
+
+// ── End to end: the minutes job renames the record ──────────────────────────
+
+// meetingTitleServer answers the three summary passes the job makes
+// (proofread → minutes → title) and reports whether the title pass ran.
+func meetingTitleServer(t *testing.T, title string) (*httptest.Server, *bool) {
+	t.Helper()
+	asked := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		req := string(body)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(req, "会议标题生成器"):
+			asked = true
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"` + title + `"}}]}`))
+		case strings.Contains(req, "待修订转写"):
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[00:00] 我：确认发版计划"}}]}`))
+		default:
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要\n\n确认发版计划。"}}]}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &asked
+}
+
+// runMinutesJob creates a meeting under `title`, runs the detached minutes job
+// to completion, and returns the stored record.
+func runMinutesJob(t *testing.T, title string) (project string, note service.LiveNote) {
+	t.Helper()
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project = t.TempDir()
+	room, err := liveRegistry.Create(projPath(project), title)
+	require.NoError(t, err)
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	_, err = service.AppendLiveNoteSegment(context.Background(), room.Token(), pid, service.LiveNoteSegment{
+		Channel: "mic", Speaker: "我", StartedAt: 1_700_000_000_000, Text: "确认发版计划",
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNotesMinutes(w, liveReq(t, http.MethodPost, "/api/live-share/notes/minutes", project,
+		map[string]any{"token": room.Token(), "title": title}))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	require.Eventually(t, func() bool {
+		n, ok, err := service.GetLiveNote(room.Token())
+		return err == nil && ok && n.Status == service.LiveNotesStatusReady
+	}, 10*time.Second, 20*time.Millisecond, "the background job must finish")
+
+	note, ok, err := service.GetLiveNote(room.Token())
+	require.NoError(t, err)
+	require.True(t, ok)
+	return project, note
+}
+
+func TestMinutesJobNamesAnUnnamedMeeting(t *testing.T) {
+	srv, titleAsked := meetingTitleServer(t, "发版评审：上线前的取舍")
+	withSummaryModel(t, srv.URL)
+
+	placeholder := service.PlaceholderMeetingTitle(time.Now())
+	project, note := runMinutesJob(t, placeholder)
+
+	assert.True(t, *titleAsked, "the summary model must be asked for a name")
+	assert.Equal(t, "发版评审：上线前的取舍", note.Title)
+
+	// The minutes file is written AFTER the rename, so its heading carries the
+	// real name rather than "11-01 17:35".
+	raw, err := os.ReadFile(filepath.Join(service.MeetingDirPath(project, note.DirName), "minutes.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "# 发版评审：上线前的取舍")
+}
+
+func TestMinutesJobKeepsATitleTheUserTyped(t *testing.T) {
+	srv, titleAsked := meetingTitleServer(t, "模型起的名字")
+	withSummaryModel(t, srv.URL)
+
+	_, note := runMinutesJob(t, "发版评审")
+
+	assert.Equal(t, "发版评审", note.Title)
+	assert.False(t, *titleAsked, "a name the user typed must not even be re-asked")
 }
