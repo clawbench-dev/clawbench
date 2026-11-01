@@ -2967,7 +2967,7 @@ export default {
       archiveRetentionDaysDesc: '归档会话保留天数，到期后自动删除（0 = 永久保留）',
       identitySection: '我的身份',
       userNickname: '我的昵称',
-      userNicknameDesc: '智能体在群聊里这样称呼你，加入会议时也用它作为你的显示名。留空则使用默认名 User；不能与任何智能体同名，且不能包含引号、尖括号、逗号或控制字符',
+      userNicknameDesc: '智能体在对话里这样称呼你，加入会议时也用它作为你的显示名。留空则使用默认名 User；不能与任何智能体同名，且不能包含引号、尖括号、逗号或控制字符',
       userProfile: '身份介绍',
       userProfileDesc: '介绍一下你自己：角色、擅长领域、偏好或工作习惯。这段内容会注入到每个智能体的系统提示词，让它们更懂你（最多 4000 字）',
       groupMaxSpeeches: '智能体讨论次数上限',
