@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import enMessages from '@/i18n/locales/en'
@@ -148,5 +150,19 @@ describe('MeetingResources', () => {
     await wrapper.find('.meeting-link').trigger('click')
 
     expect(wrapper.emitted('reload')).toHaveLength(1)
+  })
+})
+
+/**
+ * jsdom applies no stylesheets, so a leftover chevron rule cannot be asserted on
+ * the DOM. Read the source instead — the row already reads as clickable (hover,
+ * cursor, and the two action buttons), so the arrow was pure noise.
+ */
+describe('MeetingResources row affordances (source)', () => {
+  const src = readFileSync(join(__dirname, '..', 'MeetingResources.vue'), 'utf8')
+
+  it('does not render a chevron at the end of the row', () => {
+    expect(src).not.toContain('ChevronRight')
+    expect(src).not.toContain('res-chevron')
   })
 })

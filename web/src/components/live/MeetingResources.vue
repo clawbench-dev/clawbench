@@ -93,7 +93,6 @@
               <Copy :size="13" />
             </button>
           </span>
-          <ChevronRight class="res-chevron" :size="13" />
         </div>
 
         <div v-if="group.hint" class="res-hint res-hint--group">
@@ -127,7 +126,6 @@ import { useI18n } from 'vue-i18n'
 import {
   AudioLines,
   Captions,
-  ChevronRight,
   Code2,
   Copy,
   ExternalLink,
@@ -382,7 +380,6 @@ function metaFor(item: MeetingResourceItem): string {
 }
 .res-act:hover { background: var(--bg-active); color: var(--accent-color); }
 .res-act--attach:hover { color: var(--color-green); }
-.res-chevron { flex-shrink: 0; color: var(--text-hint); }
 
 .res-hint {
   display: flex;
