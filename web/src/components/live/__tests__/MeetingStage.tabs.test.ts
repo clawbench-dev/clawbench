@@ -156,6 +156,21 @@ beforeEach(() => {
 })
 
 describe('MeetingStage tabs', () => {
+  // A plain `<template>` in a Vue template is a NATIVE inert template element,
+  // not a fragment: everything inside it lands in `content` and is never laid
+  // out. Wrapping the tab panes in one left the whole stage body blank while
+  // every DOM query still found the nodes — jsdom has no layout, so only an
+  // assertion about the DOM tree catches it.
+  it('renders the tab panes into the layout, not inside an inert template', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+    await tab(wrapper, 'chat').trigger('click')
+
+    const pane = wrapper.find('[data-role="chat-pane"]')
+    expect(pane.exists()).toBe(true)
+    expect(pane.element.closest('template')).toBeNull()
+  })
+
   it('opens on the setup tab and shows neither the transcript nor the chat', async () => {
     const wrapper = mountPanel()
     await flushPromises()

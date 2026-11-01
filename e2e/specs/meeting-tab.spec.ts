@@ -55,3 +55,44 @@ test.describe('Meeting tab', () => {
     await expect(submit).toBeEnabled()
   })
 })
+
+/**
+ * The whole publisher flow, with no media at all.
+ *
+ * A denied microphone does NOT abort a meeting (the audience still gets the
+ * picture / the room), so headless Chromium can drive this end to end: create a
+ * voice meeting, send a chat line, end it, and read that line back from the
+ * record the meeting left behind. The transcript stays empty because no STT
+ * provider is configured here — which is itself a case worth covering: the
+ * record and the chat must not depend on transcription.
+ */
+test.describe('Meeting flow', () => {
+  test('create a voice meeting, chat, end, and read the chat back from the record', async ({ page }) => {
+    await page.goto('/')
+    await page.locator('.dock-btn[data-tab="live"]').filter({ visible: true }).first().click()
+
+    await page.locator('[data-action="meeting-create"]').click()
+    await page.locator('[data-role="meeting-title"]').fill('E2E 语音会议')
+    await page.locator('[data-source="voice"]').click()
+    await page.locator('[data-action="meeting-start"]').click()
+
+    // The stage replaces the create page once the room is up.
+    await expect(page.locator('[data-live-tab="basic"]')).toBeVisible({ timeout: 20000 })
+
+    await page.locator('[data-live-tab="chat"]').click()
+    const input = page.locator('[data-role="chat-input"]').first()
+    await input.fill('这是一条会议聊天')
+    await input.press('Enter')
+
+    // Ending goes straight to the record, not to a separate report screen.
+    await page.locator('[data-action="panel-stop"]').click()
+    await expect(page.locator('[data-action="meeting-quote"]')).toBeVisible({ timeout: 20000 })
+
+    await page.locator('.meeting-tabs [data-tab="chat"]').click()
+    await expect(page.locator('.meeting-chat__text')).toContainText('这是一条会议聊天')
+
+    // And the record is in the list, titled as typed.
+    await page.locator('[data-action="meeting-back"]').click()
+    await expect(page.locator('.meeting-row__title').first()).toHaveText('E2E 语音会议')
+  })
+})

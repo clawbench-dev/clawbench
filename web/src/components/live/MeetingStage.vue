@@ -56,7 +56,6 @@
       <!-- Publishing: three surfaces. 基础配置 holds what is set up once and
            then glanced at (link, tools, audience, permissions); the transcript
            and the chat get their own tabs so each can use the panel's height. -->
-      <template>
         <template v-if="activeTab === 'basic'">
           <!-- Every address the server is reachable on, primary first. A
                machine with Wi-Fi + Ethernet + Docker needs this: the address
@@ -297,7 +296,6 @@
         <!-- An error belongs to the share, not to a tab: it stays visible
              whichever one is open. -->
         <div v-if="share.error.value" class="live-dialog-error">{{ share.error.value }}</div>
-      </template>
 
       <!-- Drawing surface in its own window, so the ink and the shared picture
            are never squeezed into the panel. Hosts without Document PiP fall
