@@ -194,7 +194,7 @@ type Config struct {
 		MaxCount int `yaml:"max_count"` // Maximum number of recent projects to keep (default: 10)
 	} `yaml:"recent_projects"`
 	TTS struct {
-		Engine            string          `yaml:"engine"`              // TTS engine: "edge" (default), "piper", "kokoro", "moss-nano", "openai"
+		Engine            string          `yaml:"engine"`              // TTS engine: "edge" (default) or "openai"
 		TTSModel          string          `yaml:"tts_model"`           // TTS model for speech synthesis (default: "Speech-2.8-Turbo")
 		Voice             string          `yaml:"voice"`               // Voice ID for TTS (default: "female-chengshu")
 		Speed             float64         `yaml:"speed"`               // Speech speed multiplier (default: 1.0)
@@ -202,9 +202,6 @@ type Config struct {
 		InlineCodeMaxLen  int             `yaml:"inline_code_max_len"` // Max inline code content length (runes) to preserve for TTS; longer code is removed (default: 100)
 		MaxSummarizeRunes int             `yaml:"max_summarize_runes"` // Max runes for summarization input; longer text is truncated (default: 10000, simple mode: 1000)
 		MaxCacheFiles     int             `yaml:"max_cache_files"`     // Max cached TTS audio files to keep; oldest are auto-deleted (0=unlimited, default: 100)
-		Piper             PiperConfig     `yaml:"piper"`               // Piper-specific configuration (only used when engine: "piper")
-		Kokoro            KokoroConfig    `yaml:"kokoro"`              // Kokoro-specific configuration (only used when engine: "kokoro")
-		MossNano          MossNanoConfig  `yaml:"moss_nano"`           // MOSS-TTS-Nano-specific configuration (only used when engine: "moss-nano")
 		OpenAI            OpenAITTSConfig `yaml:"openai"`              // OpenAI-compatible /v1/audio/speech configuration (only used when engine: "openai")
 	} `yaml:"tts"`
 	STT         STTConfig         `yaml:"stt"`          // Speech-to-text (voice input) configuration
@@ -523,32 +520,9 @@ type RAGConfig struct {
 	RetentionDays  int    `yaml:"retention_days"`   // Archived data retention days (0=keep forever, default: 90)
 }
 
-// PiperConfig holds configuration for the Piper TTS engine.
-type PiperConfig struct {
-	ModelPath       string  `yaml:"model_path"`       // Path to .onnx model file (empty = models/piper-models/<voice>.onnx)
-	NoiseScale      float64 `yaml:"noise_scale"`      // Noise scale for sampling (default: 0.667)
-	LengthScale     float64 `yaml:"length_scale"`     // Length scale for speech rate (default: 1.0)
-	SentenceSilence float64 `yaml:"sentence_silence"` // Silence between sentences in seconds (default: 0.2)
-}
-
-// KokoroConfig holds configuration for the Kokoro TTS engine.
-type KokoroConfig struct {
-	ModelPath  string `yaml:"model_path"`  // Path to kokoro .onnx model file (empty = models/kokoro-models/kokoro-v1.0.onnx)
-	VoicesPath string `yaml:"voices_path"` // Path to voices .bin file (empty = models/kokoro-models/voices-v1.0.bin)
-	Lang       string `yaml:"lang"`        // espeak language code for phonemization (default: "cmn" for Mandarin Chinese)
-}
-
-// MossNanoConfig holds configuration for the MOSS-TTS-Nano TTS engine.
-type MossNanoConfig struct {
-	ModelDir string `yaml:"model_dir"` // Directory for ONNX model files (empty = models/moss-nano-models; CLI auto-downloads if missing)
-	Backend  string `yaml:"backend"`   // Inference backend: "onnx" (default, CPU) or "pytorch" (requires GPU)
-	// Voice is not stored here — moss-nano reuses the shared cfg.TTS.Voice field.
-}
-
 // OpenAITTSConfig holds configuration for the OpenAI-compatible TTS engine.
 //
-// Unlike the other engines, this one is a remote HTTP API rather than a local
-// CLI, so it carries its own endpoint and credential — reusing ai_summary.api
+// This engine carries its own endpoint and credential — reusing ai_summary.api
 // would force the speech endpoint and the summarization endpoint to be the
 // same service, which they need not be.
 //

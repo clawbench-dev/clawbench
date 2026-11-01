@@ -104,9 +104,7 @@ func TestServeConfig_Get(t *testing.T) {
 
 	// When engine=edge, engine-specific sub-configs should NOT be present
 	tts, _ := resp["tts"].(map[string]any)
-	assert.NotContains(t, tts, "piper")
-	assert.NotContains(t, tts, "kokoro")
-	assert.NotContains(t, tts, "moss_nano")
+	assert.NotContains(t, tts, "openai")
 	// TTS response no longer contains summarize_backend, summarize_model, or api
 	assert.NotContains(t, tts, "summarize_backend")
 	assert.NotContains(t, tts, "summarize_model")
@@ -136,98 +134,6 @@ func TestServeConfig_Get(t *testing.T) {
 	// Verify port_forward doesn't expose host_key
 	pf, _ := resp["port_forward"].(map[string]any)
 	assert.NotContains(t, pf, "host_key")
-}
-
-func TestServeConfig_Get_ConditionalPiperSubConfig(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "piper"
-	cfg.TTS.Piper.ModelPath = "/path/to/model.onnx"
-	cfg.TTS.Piper.NoiseScale = 0.667
-	cfg.TTS.Piper.LengthScale = 1.0
-	cfg.TTS.Piper.SentenceSilence = 0.2
-	model.ConfigInstance = cfg
-
-	req := newRequest(t, http.MethodGet, "/api/config", nil)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-
-	tts, _ := resp["tts"].(map[string]any)
-	assert.Contains(t, tts, "piper")
-	// Kokoro/MossNano should not be present
-	assert.NotContains(t, tts, "kokoro")
-	assert.NotContains(t, tts, "moss_nano")
-
-	piper, _ := tts["piper"].(map[string]any)
-	assert.Equal(t, "/path/to/model.onnx", piper["model_path"])
-	assert.Equal(t, 0.667, piper["noise_scale"])
-}
-
-func TestServeConfig_Get_ConditionalKokoroSubConfig(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "kokoro"
-	cfg.TTS.Kokoro.ModelPath = "/path/to/kokoro.onnx"
-	cfg.TTS.Kokoro.VoicesPath = "/path/to/voices.bin"
-	cfg.TTS.Kokoro.Lang = "cmn"
-	model.ConfigInstance = cfg
-
-	req := newRequest(t, http.MethodGet, "/api/config", nil)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-
-	tts, _ := resp["tts"].(map[string]any)
-	assert.Contains(t, tts, "kokoro")
-	assert.NotContains(t, tts, "piper")
-	assert.NotContains(t, tts, "moss_nano")
-
-	kokoro, _ := tts["kokoro"].(map[string]any)
-	assert.Equal(t, "cmn", kokoro["lang"])
-}
-
-func TestServeConfig_Get_ConditionalMossNanoSubConfig(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "moss-nano"
-	cfg.TTS.MossNano.ModelDir = "/path/to/models"
-	cfg.TTS.Voice = "Junhao"
-	cfg.TTS.MossNano.Backend = "onnx"
-	model.ConfigInstance = cfg
-
-	req := newRequest(t, http.MethodGet, "/api/config", nil)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-
-	tts, _ := resp["tts"].(map[string]any)
-	assert.Contains(t, tts, "moss_nano")
-	assert.NotContains(t, tts, "piper")
-	assert.NotContains(t, tts, "kokoro")
-
-	mossNano, _ := tts["moss_nano"].(map[string]any)
-	assert.Equal(t, "onnx", mossNano["backend"])
-	// voice is now the shared tts.voice field, not moss_nano.voice
-	assert.Equal(t, "Junhao", tts["voice"])
 }
 
 func TestServeConfig_Get_MethodNotAllowed(t *testing.T) {
@@ -283,27 +189,6 @@ func TestServeConfig_Patch_Success(t *testing.T) {
 
 	assert.Equal(t, 20, model.ConfigInstance.Chat.SystemPromptInterval)
 	assert.Equal(t, 50, model.ConfigInstance.Upload.MaxSizeMB)
-}
-
-func TestServeConfig_Patch_PiperSubConfig(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "piper"
-	cfg.TTS.Piper.ModelPath = "/path/to/model.onnx" // required when engine=piper
-	model.ConfigInstance = cfg
-
-	body := `{"tts":{"piper":{"noise_scale":0.5,"length_scale":1.2,"sentence_silence":0.3}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, 0.5, model.ConfigInstance.TTS.Piper.NoiseScale)
-	assert.Equal(t, 1.2, model.ConfigInstance.TTS.Piper.LengthScale)
-	assert.Equal(t, 0.3, model.ConfigInstance.TTS.Piper.SentenceSilence)
 }
 
 // The auto-continue toggle and its retry count must survive a PATCH round trip:
@@ -812,22 +697,6 @@ func TestServeConfig_Patch_InvalidLanguage(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestServeConfig_Patch_MossNanoInvalidBackend(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"tts":{"moss_nano":{"backend":"invalid"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestServeConfig_Patch_ForbiddenField_Password(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
@@ -1047,129 +916,8 @@ func TestServeConfig_Patch_DefaultAgent(t *testing.T) {
 	assert.Equal(t, "claude", model.DefaultAgentID)
 }
 
-func TestServeConfig_Patch_PiperEngineWithoutModelPath(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "edge"
-	cfg.TTS.Piper.ModelPath = ""
-	model.ConfigInstance = cfg
-
-	// Switching engine without sub-config should succeed — user fills sub-config later
-	body := `{"tts":{"engine":"piper"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "piper", model.ConfigInstance.TTS.Engine)
-}
-
-func TestServeConfig_Patch_PiperSubConfigWithoutModelPath(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "piper"
-	cfg.TTS.Piper.ModelPath = ""
-	model.ConfigInstance = cfg
-
-	// Saving sub-config when engine is already piper but model_path is empty should fail
-	body := `{"tts":{"piper":{"noise_scale":0.5}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "piper.model_path is required")
-}
-
-func TestServeConfig_Patch_KokoroEngineWithoutPaths(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "edge"
-	model.ConfigInstance = cfg
-
-	// Switching engine without sub-config should succeed — user fills sub-config later
-	body := `{"tts":{"engine":"kokoro"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "kokoro", model.ConfigInstance.TTS.Engine)
-}
-
-func TestServeConfig_Patch_KokoroSubConfigWithoutPaths(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "kokoro"
-	cfg.TTS.Kokoro.ModelPath = ""
-	cfg.TTS.Kokoro.VoicesPath = ""
-	model.ConfigInstance = cfg
-
-	// Saving sub-config when engine is already kokoro but paths are empty should fail
-	body := `{"tts":{"kokoro":{"lang":"en"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "kokoro.model_path is required")
-}
-
-func TestServeConfig_Patch_MossNanoEngineWithoutModelDir(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "edge"
-	model.ConfigInstance = cfg
-
-	// Switching engine without sub-config should succeed — user fills sub-config later
-	body := `{"tts":{"engine":"moss-nano"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "moss-nano", model.ConfigInstance.TTS.Engine)
-}
-
-func TestServeConfig_Patch_MossNanoSubConfigWithoutModelDir(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "moss-nano"
-	cfg.TTS.MossNano.ModelDir = ""
-	model.ConfigInstance = cfg
-
-	// Saving voice when engine is already moss-nano should succeed
-	// (voice is now the shared tts.voice field)
-	body := `{"tts":{"voice":"Junhao"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "Junhao", model.ConfigInstance.TTS.Voice)
-}
-
 // Switching to the OpenAI engine must be accepted without sub-config (the user
-// fills it in one field at a time), matching the piper / kokoro / moss-nano
-// behavior.
+// fills it in one field at a time).
 func TestServeConfig_Patch_OpenAIEngineWithoutConfig(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
@@ -1643,108 +1391,6 @@ func TestServeConfig_Patch_TTSSpeedTooHigh(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "tts.speed must be between 0.5 and 3.0")
 }
 
-func TestServeConfig_Patch_PiperNoiseScaleInvalid(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"tts":{"piper":{"noise_scale":1.5}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "tts.piper.noise_scale must be between 0 and 1")
-}
-
-func TestServeConfig_Patch_PiperNoiseScaleNegative(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"tts":{"piper":{"noise_scale":-0.1}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "tts.piper.noise_scale must be between 0 and 1")
-}
-
-func TestServeConfig_Patch_PiperLengthScaleZero(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"tts":{"piper":{"length_scale":0}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "tts.piper.length_scale must be positive")
-}
-
-func TestServeConfig_Patch_PiperLengthScaleNegative(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"tts":{"piper":{"length_scale":-1}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "tts.piper.length_scale must be positive")
-}
-
-func TestServeConfig_Patch_PiperSentenceSilenceNegative(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"tts":{"piper":{"sentence_silence":-0.5}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "tts.piper.sentence_silence must be non-negative")
-}
-
-func TestServeConfig_Patch_KokoroEmptyLang(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"tts":{"kokoro":{"lang":""}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "tts.kokoro.lang must not be empty")
-}
-
 func TestServeConfig_Patch_SessionNegativeMaxCount(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
@@ -1811,89 +1457,6 @@ func TestServeConfig_Patch_ChatNegativeSystemPromptInterval(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "chat.system_prompt_interval must be non-negative")
-}
-
-// --- Cross-field: piper engine with model_path in same patch ---
-
-func TestServeConfig_Patch_PiperEngineWithModelPathInPatch(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "edge"
-	cfg.TTS.Piper.ModelPath = ""
-	model.ConfigInstance = cfg
-
-	// Engine=piper with model_path provided in same patch
-	body := `{"tts":{"engine":"piper","piper":{"model_path":"/path/to/model.onnx"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "piper", model.ConfigInstance.TTS.Engine)
-	assert.Equal(t, "/path/to/model.onnx", model.ConfigInstance.TTS.Piper.ModelPath)
-}
-
-// --- Cross-field: kokoro engine with both paths in same patch ---
-
-func TestServeConfig_Patch_KokoroEngineWithPathsInPatch(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "edge"
-	model.ConfigInstance = cfg
-
-	body := `{"tts":{"engine":"kokoro","kokoro":{"model_path":"/path/to/kokoro.onnx","voices_path":"/path/to/voices.bin"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "kokoro", model.ConfigInstance.TTS.Engine)
-}
-
-func TestServeConfig_Patch_KokoroEngineWithoutVoicesPath(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "edge"
-	cfg.TTS.Kokoro.ModelPath = "/path/to/kokoro.onnx"
-	model.ConfigInstance = cfg
-
-	// Engine switch should succeed even without voices_path — user fills sub-config later
-	body := `{"tts":{"engine":"kokoro"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "kokoro", model.ConfigInstance.TTS.Engine)
-}
-
-// --- Cross-field: moss-nano engine with model_dir in same patch ---
-
-func TestServeConfig_Patch_MossNanoEngineWithModelDirInPatch(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "edge"
-	model.ConfigInstance = cfg
-
-	body := `{"tts":{"engine":"moss-nano","moss_nano":{"model_dir":"/path/to/models"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "moss-nano", model.ConfigInstance.TTS.Engine)
 }
 
 // --- ServeConfigRestart with a wired restartFunc ---
@@ -2097,54 +1660,6 @@ func TestServeConfig_Patch_RecentProjectsMaxCount_NegativeRejected(t *testing.T)
 	assert.Contains(t, w.Body.String(), "recent_projects.max_count must be at least 1")
 }
 
-// --- Additional coverage: Kokoro with model_path in patch ---
-
-func TestServeConfig_Patch_KokoroModelPathInPatch(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "kokoro"
-	cfg.TTS.Kokoro.ModelPath = ""
-	cfg.TTS.Kokoro.VoicesPath = ""
-	model.ConfigInstance = cfg
-
-	// Patch model_path and voices_path together when engine is already kokoro
-	body := `{"tts":{"kokoro":{"model_path":"/path/to/kokoro.onnx","voices_path":"/path/to/voices.bin","lang":"en"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "/path/to/kokoro.onnx", model.ConfigInstance.TTS.Kokoro.ModelPath)
-	assert.Equal(t, "/path/to/voices.bin", model.ConfigInstance.TTS.Kokoro.VoicesPath)
-	assert.Equal(t, "en", model.ConfigInstance.TTS.Kokoro.Lang)
-}
-
-// --- MossNano with model_dir in patch (already set engine) ---
-
-func TestServeConfig_Patch_MossNanoModelDirInPatch(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "moss-nano"
-	cfg.TTS.MossNano.ModelDir = ""
-	model.ConfigInstance = cfg
-
-	// Patch model_dir when engine is already moss-nano
-	body := `{"tts":{"moss_nano":{"model_dir":"/path/to/models","backend":"onnx"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "/path/to/models", model.ConfigInstance.TTS.MossNano.ModelDir)
-	assert.Equal(t, "onnx", model.ConfigInstance.TTS.MossNano.Backend)
-}
-
 // --- mergePatchIntoRaw: new nested map creation ---
 
 func TestMergePatchIntoRaw_NewNestedKey(t *testing.T) {
@@ -2252,48 +1767,6 @@ func TestServeConfigPatch_WriteConfigYAMLError(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.Contains(t, w.Body.String(), "write_failed")
-}
-
-// --- kokoro without voices_path (empty existing) ---
-
-func TestServeConfig_Patch_KokoroWithoutVoicesPath(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "kokoro"
-	cfg.TTS.Kokoro.ModelPath = "/path/to/model.onnx"
-	cfg.TTS.Kokoro.VoicesPath = ""
-	model.ConfigInstance = cfg
-
-	body := `{"tts":{"kokoro":{"lang":"en"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "kokoro.voices_path is required")
-}
-
-func TestServeConfig_Patch_KokoroWithVoicesPathInPatch(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "kokoro"
-	cfg.TTS.Kokoro.ModelPath = "/path/to/model.onnx"
-	cfg.TTS.Kokoro.VoicesPath = ""
-	model.ConfigInstance = cfg
-
-	body := `{"tts":{"kokoro":{"voices_path":"/path/to/voices.bin","lang":"en"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "/path/to/voices.bin", model.ConfigInstance.TTS.Kokoro.VoicesPath)
 }
 
 // --- writeConfigYAML: no existing file ---
@@ -2756,20 +2229,6 @@ func TestApplyHotReloadGlobals_TTSVoice_EdgeTTS(t *testing.T) {
 	assert.Equal(t, "new-voice", p.Voice)
 }
 
-func TestApplyHotReloadGlobals_TTSVoice_Kokoro(t *testing.T) {
-	origProvider := GetSpeechProvider()
-	defer SetSpeechProvider(origProvider)
-
-	SetSpeechProvider(&speech.KokoroProvider{Voice: "original-voice"})
-	model.ConfigInstance.TTS.Voice = "new-kokoro-voice"
-	model.ConfigInstance.TTS.Speed = 0
-
-	applyHotReloadGlobals()
-
-	p := GetSpeechProvider().(*speech.KokoroProvider)
-	assert.Equal(t, "new-kokoro-voice", p.Voice)
-}
-
 func TestApplyHotReloadGlobals_TTSSpeed_EdgeTTS(t *testing.T) {
 	origProvider := GetSpeechProvider()
 	defer SetSpeechProvider(origProvider)
@@ -2796,35 +2255,6 @@ func TestApplyHotReloadGlobals_TTSSlow_EdgeTTS(t *testing.T) {
 
 	p := GetSpeechProvider().(*speech.EdgeTTSProvider)
 	assert.Equal(t, "-50%", p.Rate)
-}
-
-func TestApplyHotReloadGlobals_TTSSpeed_Kokoro(t *testing.T) {
-	origProvider := GetSpeechProvider()
-	defer SetSpeechProvider(origProvider)
-
-	SetSpeechProvider(&speech.KokoroProvider{Speed: 1.0})
-	model.ConfigInstance.TTS.Voice = ""
-	model.ConfigInstance.TTS.Speed = 1.2
-
-	applyHotReloadGlobals()
-
-	p := GetSpeechProvider().(*speech.KokoroProvider)
-	assert.Equal(t, 1.2, p.Speed)
-}
-
-func TestApplyHotReloadGlobals_TTSSpeed_Piper(t *testing.T) {
-	origProvider := GetSpeechProvider()
-	defer SetSpeechProvider(origProvider)
-
-	SetSpeechProvider(&speech.PiperProvider{LengthScale: 1.0})
-	model.ConfigInstance.TTS.Voice = ""
-	model.ConfigInstance.TTS.Speed = 2.0
-	model.ConfigInstance.TTS.Piper.LengthScale = 0 // not explicitly set
-
-	applyHotReloadGlobals()
-
-	p := GetSpeechProvider().(*speech.PiperProvider)
-	assert.InDelta(t, 0.5, p.LengthScale, 0.01)
 }
 
 // --- SetReconfigureFunc and reconfigureOnHotReload ---

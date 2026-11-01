@@ -121,9 +121,9 @@ describe('settingsFieldMap', () => {
   it('includes TTS sub-config keys', () => {
     const map = getServerFieldToLabelKey()
 
-    expect(map['tts.piper.model_path']).toBeTruthy()
-    expect(map['tts.kokoro.model_path']).toBeTruthy()
-    expect(map['tts.moss_nano.model_dir']).toBeTruthy()
+    expect(map['tts.openai.base_url']).toBeTruthy()
+    expect(map['tts.openai.model']).toBeTruthy()
+    expect(map['tts.openai.voice']).toBeTruthy()
   })
 
   it('includes previously missing rag.search_pool_size', () => {
@@ -388,23 +388,10 @@ describe('settingsFieldMap', () => {
     expect(cfg.entrySelector).toBeDefined()
     expect(cfg.entrySelector!.key).toBe('tts.engine')
     expect(cfg.entrySelector!.type).toBe('select')
-    expect(cfg.entrySelector!.options!.length).toBe(5)
-    expect(cfg.entrySelector!.options!.map(o => o.value)).toContain('openai')
+    expect(cfg.entrySelector!.options!.length).toBe(2)
+    expect(cfg.entrySelector!.options!.map(o => o.value)).toEqual(['edge', 'openai'])
     expect(cfg.commonFields.length).toBe(3)
-    expect(cfg.optionSubFields!.length).toBe(4)
-
-    const piperSub = cfg.optionSubFields!.find(osf => osf.when === 'piper')
-    expect(piperSub).toBeDefined()
-    expect(piperSub!.fields.length).toBe(4)
-    expect(piperSub!.fields[0].key).toBe('tts.piper.model_path')
-
-    const kokoroSub = cfg.optionSubFields!.find(osf => osf.when === 'kokoro')
-    expect(kokoroSub).toBeDefined()
-    expect(kokoroSub!.fields.length).toBe(3)
-
-    const mossNanoSub = cfg.optionSubFields!.find(osf => osf.when === 'moss-nano')
-    expect(mossNanoSub).toBeDefined()
-    expect(mossNanoSub!.fields.length).toBe(2)
+    expect(cfg.optionSubFields!.length).toBe(1)
 
     const openaiSub = cfg.optionSubFields!.find(osf => osf.when === 'openai')
     expect(openaiSub).toBeDefined()
@@ -427,9 +414,6 @@ describe('settingsFieldMap', () => {
     expect(streamField.options!.map(o => o.value)).toEqual(['auto', 'sse', 'audio'])
 
     expect(cfg.requiredFields).toEqual([
-      'tts.piper.model_path',
-      'tts.kokoro.model_path',
-      'tts.kokoro.voices_path',
       'tts.openai.base_url',
       'tts.openai.model',
       'tts.openai.voice',
@@ -447,12 +431,11 @@ describe('settingsFieldMap', () => {
 
     expect(voiceField.dependsOn).toEqual({
       key: 'tts.engine',
-      values: ['edge', 'piper', 'kokoro', 'moss-nano'],
+      value: 'edge',
     })
 
     const getValue = (engine: string) => (key: string) => (key === 'tts.engine' ? engine : undefined)
     expect(isDependsOnMet(voiceField.dependsOn, getValue('edge'))).toBe(true)
-    expect(isDependsOnMet(voiceField.dependsOn, getValue('moss-nano'))).toBe(true)
     expect(isDependsOnMet(voiceField.dependsOn, getValue('openai'))).toBe(false)
   })
 

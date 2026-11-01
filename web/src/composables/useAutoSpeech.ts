@@ -419,7 +419,7 @@ export function useAutoSpeech() {
     }
   }
 
-  // --- Internal: connect to SSE for non-streaming TTS (Piper/Kokoro/MOSS-Nano) ---
+  // --- Internal: connect to SSE for a non-streaming TTS job ---
   function connectSSE(jobId: string) {
     const controller = abortController
     const es = new EventSource(`/api/tts/stream/${jobId}`)
@@ -550,7 +550,7 @@ export function useAutoSpeech() {
         return
       }
 
-      // Non-streaming fallback (Piper/Kokoro/MOSS-Nano)
+      // Non-streaming fallback
       state.value = 'summarizing'
 
       if (!data.jobId) throw new Error(gt('autoSpeech.noResult'))

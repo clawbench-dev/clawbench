@@ -264,8 +264,8 @@ func TestPersist_TTSEngine(t *testing.T) {
 
 	model.ConfigInstance = model.Config{}
 
-	cfg := patchAndReadConfig(t, `{"tts":{"engine":"piper","piper":{"model_path":"/tmp/test.onnx"}}}`)
-	assert.Equal(t, "piper", getNestedValue(cfg, "tts.engine"))
+	cfg := patchAndReadConfig(t, `{"tts":{"engine":"edge"}}`)
+	assert.Equal(t, "edge", getNestedValue(cfg, "tts.engine"))
 }
 
 func TestPersist_TTSVoice(t *testing.T) {
@@ -336,102 +336,6 @@ func TestPersist_TTSMaxCacheFiles(t *testing.T) {
 
 	cfg := patchAndReadConfig(t, `{"tts":{"max_cache_files":200}}`)
 	assert.Equal(t, 200, getNestedValue(cfg, "tts.max_cache_files"))
-}
-
-// ─── TTS Piper sub-config ──────────────────────────────────────
-
-func TestPersist_PiperModelPath(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"piper":{"model_path":"/path/to/model.onnx"}}}`)
-	assert.Equal(t, "/path/to/model.onnx", getNestedValue(cfg, "tts.piper.model_path"))
-}
-
-func TestPersist_PiperNoiseScale(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"piper":{"noise_scale":0.5}}}`)
-	assert.Equal(t, 0.5, getNestedValue(cfg, "tts.piper.noise_scale"))
-}
-
-func TestPersist_PiperLengthScale(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"piper":{"length_scale":1.2}}}`)
-	assert.Equal(t, 1.2, getNestedValue(cfg, "tts.piper.length_scale"))
-}
-
-func TestPersist_PiperSentenceSilence(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"piper":{"sentence_silence":0.3}}}`)
-	assert.Equal(t, 0.3, getNestedValue(cfg, "tts.piper.sentence_silence"))
-}
-
-// ─── TTS Kokoro sub-config ──────────────────────────────────────
-
-func TestPersist_KokoroModelPath(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"kokoro":{"model_path":"/path/to/kokoro.onnx"}}}`)
-	assert.Equal(t, "/path/to/kokoro.onnx", getNestedValue(cfg, "tts.kokoro.model_path"))
-}
-
-func TestPersist_KokoroVoicesPath(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"kokoro":{"voices_path":"/path/to/voices.bin"}}}`)
-	assert.Equal(t, "/path/to/voices.bin", getNestedValue(cfg, "tts.kokoro.voices_path"))
-}
-
-func TestPersist_KokoroLang(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"kokoro":{"lang":"en"}}}`)
-	assert.Equal(t, "en", getNestedValue(cfg, "tts.kokoro.lang"))
-}
-
-// ─── TTS MossNano sub-config ──────────────────────────────────────
-
-func TestPersist_MossNanoModelDir(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"moss_nano":{"model_dir":"/path/to/models"}}}`)
-	assert.Equal(t, "/path/to/models", getNestedValue(cfg, "tts.moss_nano.model_dir"))
-}
-
-func TestPersist_MossNanoBackend(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"moss_nano":{"backend":"pytorch"}}}`)
-	assert.Equal(t, "pytorch", getNestedValue(cfg, "tts.moss_nano.backend"))
 }
 
 // The OpenAI TTS sub-config must survive a round trip through config.yaml.

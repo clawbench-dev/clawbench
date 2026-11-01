@@ -226,25 +226,6 @@ func TestServeConfig_DeleteReturns405(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
-// --- applyHotReloadGlobals: Piper with explicit length_scale ---
-
-func TestApplyHotReloadGlobals_PiperExplicitLength(t *testing.T) {
-	origProvider := GetSpeechProvider()
-	defer SetSpeechProvider(origProvider)
-
-	SetSpeechProvider(&speech.PiperProvider{LengthScale: 1.0})
-	model.ConfigInstance.TTS.Voice = ""
-	model.ConfigInstance.TTS.Speed = 2.0
-	model.ConfigInstance.TTS.Piper.LengthScale = 1.5
-
-	applyHotReloadGlobals()
-
-	p := GetSpeechProvider().(*speech.PiperProvider)
-	// When explicit length_scale > 0 is set, speed should NOT override it
-	// The provider's LengthScale stays at its original value (not overridden by speed)
-	assert.Equal(t, 1.0, p.LengthScale, "explicit length_scale should prevent speed override")
-}
-
 // --- applyHotReloadGlobals: EdgeTTS speed exactly 1.0 ---
 
 func TestApplyHotReloadGlobals_EdgeTTS_RateZero(t *testing.T) {

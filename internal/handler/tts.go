@@ -217,18 +217,10 @@ func ttsRunJob(
 	}()
 }
 
-// audioExtForProvider returns the audio file extension for the given provider.
-// Piper, Kokoro, and MOSS-Nano produce WAV; Edge TTS and OpenAI TTS produce MP3.
-// Keep this in sync with each provider's response_format / output encoding —
-// the extension feeds the playback URL, so a mismatch yields a silent failure.
-func audioExtForProvider(p speech.SpeechProvider) string {
-	switch p.(type) {
-	case *speech.PiperProvider, *speech.KokoroProvider, *speech.MossNanoProvider:
-		return ".wav"
-	default:
-		return ".mp3"
-	}
-}
+// ttsAudioExt is the audio file extension of the synthesized output. Both
+// supported providers (Edge TTS, OpenAI-compatible) produce MP3; the extension
+// feeds the playback URL, so a mismatch would yield a silent failure.
+const ttsAudioExt = ".mp3"
 
 // TTSGenerate handles POST /api/tts/generate.
 // It validates input, checks cache, and either returns cached audio immediately
@@ -293,10 +285,8 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) {
 	// are folded into the key).
 	cacheKey, speakerPrefix := ttsCacheKeyAndPrefix(req.Text, req.SpeakerName, req.Language, ttsProviderCacheIdentity(curProvider))
 
-	// Determine audio file extension based on TTS engine
-	audioExt := audioExtForProvider(curProvider)
 	// Project-relative path (not server DataDir)
-	relAudioPath := filepath.Join(".clawbench", "generated", "tts", cacheKey+audioExt)
+	relAudioPath := filepath.Join(".clawbench", "generated", "tts", cacheKey+ttsAudioExt)
 
 	// Validate the output path (defense-in-depth)
 	absAudioPath, ok := validateAndResolvePath(w, r, projectPath, relAudioPath)

@@ -10,9 +10,6 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -35,9 +32,6 @@ type ConnectivityTestResult struct {
 // JSON key constants for goconst compliance.
 const (
 	strMessages = "messages"
-	strPiper    = "piper"
-	strKokoro   = "kokoro"
-	strMossNano = "moss-nano"
 	strOpenAI   = "openai"
 	strReqError = "error"
 )
@@ -668,12 +662,6 @@ func testTTS(ctx context.Context, values map[string]any) ConnectivityTestResult 
 	switch engine {
 	case "edge":
 		return testTTSEdge(ctx, values)
-	case strPiper:
-		return testTTSPiper(values)
-	case strKokoro:
-		return testTTSKokoro(values)
-	case strMossNano:
-		return testTTSNano(values)
 	case strOpenAI:
 		return testTTSOpenAI(ctx, values)
 	default:
@@ -693,93 +681,6 @@ func testTTSEdge(ctx context.Context, _ map[string]any) ConnectivityTestResult {
 	}
 	_ = conn.Close()
 	return ConnectivityTestResult{Success: true, Message: "Edge TTS service reachable"}
-}
-
-func testTTSPiper(values map[string]any) ConnectivityTestResult {
-	// Check piper binary
-	piperPath := resolvePiperBinary()
-	if piperPath == "" {
-		return ConnectivityTestResult{Success: false, Message: "Piper binary not found (checked .venv/bin/piper and $PATH)"}
-	}
-
-	// Check model file
-	voice := resolveStringValue(values, "tts.voice", model.ConfigInstance.TTS.Voice)
-	modelPath := resolveStringValue(values, "tts.piper.model_path", model.ConfigInstance.TTS.Piper.ModelPath)
-	resolvedModel := speech.ResolveModelPath(voice, modelPath)
-	if resolvedModel == "" {
-		return ConnectivityTestResult{Success: false, Message: "Piper model path not configured and voice not set"}
-	}
-	if _, err := os.Stat(resolvedModel); err != nil {
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Piper model file not found: %s", resolvedModel)}
-	}
-
-	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("Piper ready (binary: %s, model: %s)", piperPath, resolvedModel)}
-}
-
-func testTTSKokoro(values map[string]any) ConnectivityTestResult {
-	modelPath := resolveStringValue(values, "tts.kokoro.model_path", model.ConfigInstance.TTS.Kokoro.ModelPath)
-	voicesPath := resolveStringValue(values, "tts.kokoro.voices_path", model.ConfigInstance.TTS.Kokoro.VoicesPath)
-
-	resolvedModel, resolvedVoices := speech.ResolveKokoroPaths(modelPath, voicesPath)
-
-	var errors []string
-
-	// Check Python interpreter
-	pythonPath := resolveKokoroPython()
-	if pythonPath == "" {
-		errors = append(errors, "Python interpreter not found (checked .venv/bin/python3)")
-	}
-
-	// Check model file
-	if resolvedModel == "" {
-		errors = append(errors, "Kokoro model path not configured")
-	} else if _, err := os.Stat(resolvedModel); err != nil {
-		errors = append(errors, fmt.Sprintf("Kokoro model file not found: %s", resolvedModel))
-	}
-
-	// Check voices file
-	if resolvedVoices == "" {
-		errors = append(errors, "Kokoro voices path not configured")
-	} else if _, err := os.Stat(resolvedVoices); err != nil {
-		errors = append(errors, fmt.Sprintf("Kokoro voices file not found: %s", resolvedVoices))
-	}
-
-	if len(errors) > 0 {
-		return ConnectivityTestResult{Success: false, Message: strings.Join(errors, "; ")}
-	}
-
-	return ConnectivityTestResult{Success: true, Message: "Kokoro ready (Python found, model and voices files exist)"}
-}
-
-func testTTSNano(values map[string]any) ConnectivityTestResult {
-	modelDir := resolveStringValue(values, "tts.moss_nano.model_dir", model.ConfigInstance.TTS.MossNano.ModelDir)
-	resolvedDir := speech.ResolveMossNanoModelDir(modelDir)
-
-	// Check binary
-	binPath, _ := exec.LookPath("moss-tts-nano")
-	if binPath == "" {
-		// Try relative to executable
-		if exePath, err := os.Executable(); err == nil {
-			candidate := filepath.Join(filepath.Dir(exePath), ".venv/bin/moss-tts-nano")
-			if _, err := os.Stat(candidate); err == nil {
-				binPath = candidate
-			}
-		}
-	}
-	if binPath == "" {
-		return ConnectivityTestResult{Success: false, Message: "MOSS-Nano binary not found (checked .venv/bin/moss-tts-nano and $PATH)"}
-	}
-
-	// Check model dir
-	if resolvedDir != "" {
-		if info, err := os.Stat(resolvedDir); err != nil || !info.IsDir() {
-			return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("MOSS-Nano model directory not found: %s", resolvedDir)}
-		}
-		return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("MOSS-Nano ready (binary: %s, model dir: %s)", binPath, resolvedDir)}
-	}
-
-	// No model dir configured but binary found — MOSS-Nano can auto-download
-	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("MOSS-Nano binary found (%s), model will auto-download on first use", binPath)}
 }
 
 // testTTSOpenAI probes an OpenAI-compatible /v1/audio/speech endpoint.
@@ -855,40 +756,6 @@ func testTTSOpenAI(ctx context.Context, values map[string]any) ConnectivityTestR
 		Success: true,
 		Message: fmt.Sprintf("OpenAI TTS ready (model: %s, voice: %s)", ttsModel, voice),
 	}
-}
-
-// resolvePiperBinary finds the piper binary path.
-func resolvePiperBinary() string {
-	// Check relative to executable first
-	if exePath, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(exePath), piperCmd)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	// Check $PATH
-	if p, err := exec.LookPath(strPiper); err == nil {
-		return p
-	}
-	return ""
-}
-
-const piperCmd = ".venv/bin/piper"
-
-// resolveKokoroPython finds the Python interpreter for Kokoro.
-func resolveKokoroPython() string {
-	// Check relative to executable first
-	if exePath, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(exePath), ".venv/bin/python3")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	// Check $PATH
-	if p, err := exec.LookPath("python3"); err == nil {
-		return p
-	}
-	return ""
 }
 
 // testMCP probes one MCP server: it performs the real MCP handshake and lists

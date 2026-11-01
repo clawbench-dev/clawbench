@@ -993,71 +993,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			slog.String("voice", p.Voice),
 			slog.String("rate", p.Rate),
 		)
-	case "piper":
-		p := speech.NewPiperProvider()
-		// Resolve model path: explicit config > voice-based path
-		p.ModelPath = speech.ResolveModelPath(cfg.TTS.Voice, cfg.TTS.Piper.ModelPath)
-		if cfg.TTS.Piper.NoiseScale > 0 {
-			p.NoiseScale = cfg.TTS.Piper.NoiseScale
-		}
-		// LengthScale: explicit piper.length_scale takes priority;
-		// otherwise convert speed multiplier (length_scale = 1/speed)
-		if cfg.TTS.Piper.LengthScale > 0 {
-			p.LengthScale = cfg.TTS.Piper.LengthScale
-		} else if cfg.TTS.Speed > 0 {
-			p.LengthScale = 1.0 / cfg.TTS.Speed
-		}
-		if cfg.TTS.Piper.SentenceSilence > 0 {
-			p.SentenceSilence = cfg.TTS.Piper.SentenceSilence
-		}
-		ttsProvider = p
-		slog.Info(
-			"tts provider configured",
-			slog.String("engine", "piper"),
-			slog.String("model_path", p.ModelPath),
-			slog.Float64("noise_scale", p.NoiseScale),
-			slog.Float64("length_scale", p.LengthScale),
-			slog.Float64("sentence_silence", p.SentenceSilence),
-		)
-	case "kokoro":
-		k := speech.NewKokoroProvider()
-		if cfg.TTS.Voice != "" {
-			k.Voice = cfg.TTS.Voice
-		}
-		if cfg.TTS.Speed > 0 {
-			k.Speed = cfg.TTS.Speed
-		}
-		if cfg.TTS.Kokoro.Lang != "" {
-			k.Lang = cfg.TTS.Kokoro.Lang
-		}
-		k.ModelPath, k.VoicesPath = speech.ResolveKokoroPaths(cfg.TTS.Kokoro.ModelPath, cfg.TTS.Kokoro.VoicesPath)
-		ttsProvider = k
-		slog.Info(
-			"tts provider configured",
-			slog.String("engine", "kokoro"),
-			slog.String("model_path", k.ModelPath),
-			slog.String("voices_path", k.VoicesPath),
-			slog.String("voice", k.Voice),
-			slog.String("lang", k.Lang),
-			slog.Float64("speed", k.Speed),
-		)
-	case "moss-nano":
-		m := speech.NewMossNanoProvider()
-		if cfg.TTS.MossNano.Backend != "" {
-			m.Backend = cfg.TTS.MossNano.Backend
-		}
-		m.ModelDir = speech.ResolveMossNanoModelDir(cfg.TTS.MossNano.ModelDir)
-		if cfg.TTS.Voice != "" {
-			m.Voice = cfg.TTS.Voice
-		}
-		ttsProvider = m
-		slog.Info(
-			"tts provider configured",
-			slog.String("engine", "moss-nano"),
-			slog.String("backend", m.Backend),
-			slog.String("model_dir", m.ModelDir),
-			slog.String("voice", m.Voice),
-		)
 	case strOpenAI:
 		o := newOpenAITTSProvider(cfg)
 		ttsProvider = o
@@ -2252,12 +2187,6 @@ func newTTSProvider(cfg model.Config) speech.SpeechProvider {
 	switch cfg.TTS.Engine {
 	case "edge":
 		return newEdgeTTSProvider(cfg)
-	case "piper":
-		return newPiperTTSProvider(cfg)
-	case "kokoro":
-		return newKokoroTTSProvider(cfg)
-	case "moss-nano":
-		return newMossNanoTTSProvider(cfg)
 	case strOpenAI:
 		return newOpenAITTSProvider(cfg)
 	default:
@@ -2279,50 +2208,6 @@ func newEdgeTTSProvider(cfg model.Config) *speech.EdgeTTSProvider {
 		}
 	}
 	return p
-}
-
-func newPiperTTSProvider(cfg model.Config) *speech.PiperProvider {
-	p := speech.NewPiperProvider()
-	p.ModelPath = speech.ResolveModelPath(cfg.TTS.Voice, cfg.TTS.Piper.ModelPath)
-	if cfg.TTS.Piper.NoiseScale > 0 {
-		p.NoiseScale = cfg.TTS.Piper.NoiseScale
-	}
-	if cfg.TTS.Piper.LengthScale > 0 {
-		p.LengthScale = cfg.TTS.Piper.LengthScale
-	} else if cfg.TTS.Speed > 0 {
-		p.LengthScale = 1.0 / cfg.TTS.Speed
-	}
-	if cfg.TTS.Piper.SentenceSilence > 0 {
-		p.SentenceSilence = cfg.TTS.Piper.SentenceSilence
-	}
-	return p
-}
-
-func newKokoroTTSProvider(cfg model.Config) *speech.KokoroProvider {
-	k := speech.NewKokoroProvider()
-	if cfg.TTS.Voice != "" {
-		k.Voice = cfg.TTS.Voice
-	}
-	if cfg.TTS.Speed > 0 {
-		k.Speed = cfg.TTS.Speed
-	}
-	if cfg.TTS.Kokoro.Lang != "" {
-		k.Lang = cfg.TTS.Kokoro.Lang
-	}
-	k.ModelPath, k.VoicesPath = speech.ResolveKokoroPaths(cfg.TTS.Kokoro.ModelPath, cfg.TTS.Kokoro.VoicesPath)
-	return k
-}
-
-func newMossNanoTTSProvider(cfg model.Config) *speech.MossNanoProvider {
-	m := speech.NewMossNanoProvider()
-	if cfg.TTS.MossNano.Backend != "" {
-		m.Backend = cfg.TTS.MossNano.Backend
-	}
-	m.ModelDir = speech.ResolveMossNanoModelDir(cfg.TTS.MossNano.ModelDir)
-	if cfg.TTS.Voice != "" {
-		m.Voice = cfg.TTS.Voice
-	}
-	return m
 }
 
 // newOpenAITTSProvider builds the OpenAI-compatible TTS provider. Every field

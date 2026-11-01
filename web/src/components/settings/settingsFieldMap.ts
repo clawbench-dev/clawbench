@@ -619,47 +619,17 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       panelId: 'tts',
       entrySelector: { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'tts.engine', type: 'select', source: 'server', options: [
         { labelKey: 'settings.items.ttsEngineEdge', value: 'edge' },
-        { labelKey: 'settings.items.ttsEnginePiper', value: 'piper' },
-        { labelKey: 'settings.items.ttsEngineKokoro', value: 'kokoro' },
-        { labelKey: 'settings.items.ttsEngineMossNano', value: 'moss-nano' },
         { labelKey: 'settings.items.ttsEngineOpenAI', value: 'openai' },
       ]},
       commonFields: [
         // The shared voice row is a fixed dropdown per engine, so it is hidden
         // for "openai": that engine takes a free-text voice name (or a custom
         // voice id) in its own tts.openai.voice row below.
-        { labelKey: 'settings.items.ttsVoice', descriptionKey: 'settings.items.ttsVoiceDesc', key: 'tts.voice', type: 'select', source: 'server', dependsOn: { key: 'tts.engine', values: ['edge', 'piper', 'kokoro', 'moss-nano'] } },
+        { labelKey: 'settings.items.ttsVoice', descriptionKey: 'settings.items.ttsVoiceDesc', key: 'tts.voice', type: 'select', source: 'server', dependsOn: { key: 'tts.engine', value: 'edge' } },
         { labelKey: 'settings.items.ttsSpeed', descriptionKey: 'settings.items.ttsSpeedDesc', key: 'tts.speed', type: 'slider', source: 'server', min: 0.5, max: 3, step: 0.1 },
         { labelKey: 'settings.items.ttsMaxCacheFiles', descriptionKey: 'settings.items.ttsMaxCacheFilesDesc', key: 'tts.max_cache_files', type: 'number', source: 'server' },
       ],
       optionSubFields: [
-        {
-          when: 'piper',
-          fields: [
-            { labelKey: 'settings.items.piperModelPath', descriptionKey: 'settings.items.piperModelPathDesc', key: 'tts.piper.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsPiperHeader' },
-            { labelKey: 'settings.items.piperNoiseScale', descriptionKey: 'settings.items.piperNoiseScaleDesc', key: 'tts.piper.noise_scale', type: 'number', source: 'server', min: 0, max: 1, step: 0.001 },
-            { labelKey: 'settings.items.piperLengthScale', descriptionKey: 'settings.items.piperLengthScaleDesc', key: 'tts.piper.length_scale', type: 'number', source: 'server', min: 0.1, max: 5, step: 0.1 },
-            { labelKey: 'settings.items.piperSentenceSilence', descriptionKey: 'settings.items.piperSentenceSilenceDesc', key: 'tts.piper.sentence_silence', type: 'number', source: 'server', min: 0, max: 5, step: 0.1 },
-          ],
-        },
-        {
-          when: 'kokoro',
-          fields: [
-            { labelKey: 'settings.items.kokoroModelPath', descriptionKey: 'settings.items.kokoroModelPathDesc', key: 'tts.kokoro.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsKokoroHeader' },
-            { labelKey: 'settings.items.kokoroVoicesPath', descriptionKey: 'settings.items.kokoroVoicesPathDesc', key: 'tts.kokoro.voices_path', type: 'text', source: 'server' },
-            { labelKey: 'settings.items.kokoroLang', descriptionKey: 'settings.items.kokoroLangDesc', key: 'tts.kokoro.lang', type: 'text', source: 'server' },
-          ],
-        },
-        {
-          when: 'moss-nano',
-          fields: [
-            { labelKey: 'settings.items.mossNanoModelDir', descriptionKey: 'settings.items.mossNanoModelDirDesc', key: 'tts.moss_nano.model_dir', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsMossNanoHeader' },
-            { labelKey: 'settings.items.mossNanoBackend', descriptionKey: 'settings.items.mossNanoBackendDesc', key: 'tts.moss_nano.backend', type: 'select', source: 'server', options: [
-              { labelKey: 'settings.items.mossNanoBackendOnnx', value: 'onnx' },
-              { labelKey: 'settings.items.mossNanoBackendPytorch', value: 'pytorch' },
-            ]},
-          ],
-        },
         {
           when: 'openai',
           fields: [
@@ -681,7 +651,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
           ],
         },
       ],
-      requiredFields: ['tts.piper.model_path', 'tts.kokoro.model_path', 'tts.kokoro.voices_path', 'tts.openai.base_url', 'tts.openai.model', 'tts.openai.voice'],
+      requiredFields: ['tts.openai.base_url', 'tts.openai.model', 'tts.openai.voice'],
       hasConnectivityTest: true,
       getTestCategories: (values) => [{ category: 'tts', values }],
       needsVoiceReset: true,
@@ -875,48 +845,5 @@ export const engineVoiceOptions: Record<string, { labelKey: string; value: strin
     { labelKey: 'settings.items.voiceEdgeGuy', value: 'en-US-GuyNeural' },
     { labelKey: 'settings.items.voiceEdgeAria', value: 'en-US-AriaNeural' },
     { labelKey: 'settings.items.voiceEdgeDavis', value: 'en-US-DavisNeural' },
-  ],
-  piper: [
-    { labelKey: 'settings.items.voicePiperHuayanMedium', value: 'zh_CN-huayan-medium' },
-    { labelKey: 'settings.items.voicePiperHuayanXLow', value: 'zh_CN-huayan-x_low' },
-    { labelKey: 'settings.items.voicePiperChaowenMedium', value: 'zh_CN-chaowen-medium' },
-    { labelKey: 'settings.items.voicePiperLessacMedium', value: 'en_US-lessac-medium' },
-    { labelKey: 'settings.items.voicePiperLibrittsHigh', value: 'en_US-libritts-high' },
-  ],
-  kokoro: [
-    { labelKey: 'settings.items.voiceKokoroZf001', value: 'zf_001' },
-    { labelKey: 'settings.items.voiceKokoroZf002', value: 'zf_002' },
-    { labelKey: 'settings.items.voiceKokoroZf003', value: 'zf_003' },
-    { labelKey: 'settings.items.voiceKokoroZf004', value: 'zf_004' },
-    { labelKey: 'settings.items.voiceKokoroZf005', value: 'zf_005' },
-    { labelKey: 'settings.items.voiceKokoroZf006', value: 'zf_006' },
-    { labelKey: 'settings.items.voiceKokoroZf007', value: 'zf_007' },
-    { labelKey: 'settings.items.voiceKokoroZf008', value: 'zf_008' },
-    { labelKey: 'settings.items.voiceKokoroZm009', value: 'zm_009' },
-    { labelKey: 'settings.items.voiceKokoroZm010', value: 'zm_010' },
-    { labelKey: 'settings.items.voiceKokoroZm011', value: 'zm_011' },
-    { labelKey: 'settings.items.voiceKokoroZfXiaobei', value: 'zf_xiaobei' },
-    { labelKey: 'settings.items.voiceKokoroZfShanshan', value: 'zf_shanshan' },
-    { labelKey: 'settings.items.voiceKokoroZfXiaoyi', value: 'zf_xiaoyi' },
-    { labelKey: 'settings.items.voiceKokoroZmYunxi', value: 'zm_yunxi' },
-    { labelKey: 'settings.items.voiceKokoroZmYunjian', value: 'zm_yunjian' },
-  ],
-  'moss-nano': [
-    { labelKey: 'settings.items.voiceMossJunhao', value: 'Junhao' },
-    { labelKey: 'settings.items.voiceMossZhiming', value: 'Zhiming' },
-    { labelKey: 'settings.items.voiceMossWeiguo', value: 'Weiguo' },
-    { labelKey: 'settings.items.voiceMossXiaoyu', value: 'Xiaoyu' },
-    { labelKey: 'settings.items.voiceMossYuewen', value: 'Yuewen' },
-    { labelKey: 'settings.items.voiceMossLingyu', value: 'Lingyu' },
-    { labelKey: 'settings.items.voiceMossTrump', value: 'Trump' },
-    { labelKey: 'settings.items.voiceMossAva', value: 'Ava' },
-    { labelKey: 'settings.items.voiceMossBella', value: 'Bella' },
-    { labelKey: 'settings.items.voiceMossAdam', value: 'Adam' },
-    { labelKey: 'settings.items.voiceMossNathan', value: 'Nathan' },
-    { labelKey: 'settings.items.voiceMossSakura', value: 'Sakura' },
-    { labelKey: 'settings.items.voiceMossYui', value: 'Yui' },
-    { labelKey: 'settings.items.voiceMossAoi', value: 'Aoi' },
-    { labelKey: 'settings.items.voiceMossHina', value: 'Hina' },
-    { labelKey: 'settings.items.voiceMossMei', value: 'Mei' },
   ],
 }

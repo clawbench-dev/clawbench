@@ -31,8 +31,6 @@ ai_summary:
     base_url: "http://localhost:11434/v1/chat/completions"
 ```
 
-TTS 引擎本身也支持本地离线方案（piper / kokoro / moss-nano），两者搭配可实现完全离线的语音朗读。其中 moss-nano 支持多语言和音色克隆，48kHz 高音质输出。
-
 **Q: 可以同时运行多个 ClawBench 实例吗？**
 
 A: 可以。每个实例使用独立的 `--data-dir` 指定不同的数据目录，并用 `--port`（或配置文件里的 `port`）给出不同端口即可。默认数据目录为 `~/.clawbench/`，同一用户下的多实例需要显式指定不同的 `--data-dir` 以实现数据隔离。

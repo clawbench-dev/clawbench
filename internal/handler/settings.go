@@ -97,15 +97,6 @@ var hotReloadFields = map[string]bool{
 	"tts.engine":                 true,
 	"tts.tts_model":              true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
 	"tts.format":                 true, // forward-compatible: audio format override (no-op, inferred from engine)
-	"tts.piper.model_path":       true,
-	"tts.piper.noise_scale":      true,
-	"tts.piper.length_scale":     true,
-	"tts.piper.sentence_silence": true,
-	"tts.kokoro.model_path":      true,
-	"tts.kokoro.voices_path":     true,
-	"tts.kokoro.lang":            true,
-	"tts.moss_nano.model_dir":    true,
-	"tts.moss_nano.backend":      true,
 	"tts.openai.base_url":        true,
 	"tts.openai.api_key":         true,
 	"tts.openai.model":           true,
@@ -459,9 +450,6 @@ type configTTS struct {
 	Speed         float64          `json:"speed"`
 	Voice         string           `json:"voice"`
 	MaxCacheFiles int              `json:"max_cache_files"`
-	Piper         *configPiper     `json:"piper,omitempty"`
-	Kokoro        *configKokoro    `json:"kokoro,omitempty"`
-	MossNano      *configMossNano  `json:"moss_nano,omitempty"`
 	OpenAI        *configOpenAITTS `json:"openai,omitempty"`
 }
 
@@ -471,24 +459,6 @@ type configOpenAITTS struct {
 	Model      string `json:"model"`
 	Voice      string `json:"voice"`
 	StreamMode string `json:"stream_mode"`
-}
-
-type configPiper struct {
-	ModelPath       string  `json:"model_path"`
-	NoiseScale      float64 `json:"noise_scale"`
-	LengthScale     float64 `json:"length_scale"`
-	SentenceSilence float64 `json:"sentence_silence"`
-}
-
-type configKokoro struct {
-	ModelPath  string `json:"model_path"`
-	VoicesPath string `json:"voices_path"`
-	Lang       string `json:"lang"`
-}
-
-type configMossNano struct {
-	ModelDir string `json:"model_dir"`
-	Backend  string `json:"backend"`
 }
 
 type configAPI struct {
@@ -887,15 +857,6 @@ var PatchableConfigPaths = map[string]bool{
 	"tts.speed":                          true,
 	"tts.voice":                          true,
 	"tts.max_cache_files":                true,
-	"tts.piper.model_path":               true,
-	"tts.piper.noise_scale":              true,
-	"tts.piper.length_scale":             true,
-	"tts.piper.sentence_silence":         true,
-	"tts.kokoro.model_path":              true,
-	"tts.kokoro.voices_path":             true,
-	"tts.kokoro.lang":                    true,
-	"tts.moss_nano.model_dir":            true,
-	"tts.moss_nano.backend":              true,
 	"tts.openai.base_url":                true,
 	"tts.openai.api_key":                 true,
 	"tts.openai.model":                   true,
@@ -976,7 +937,7 @@ var PatchableConfigPaths = map[string]bool{
 
 // validTTSEngines is the set of valid TTS engine values.
 var validTTSEngines = map[string]bool{
-	"edge": true, "piper": true, "kokoro": true, "moss-nano": true, strOpenAI: true,
+	"edge": true, strOpenAI: true,
 }
 
 // validSTTProviders is the set of valid STT engine values. An unknown value
@@ -1002,11 +963,6 @@ var validSummarizeBackends = map[string]bool{
 // Empty string is accepted separately (means "use default"), not as a format value.
 var validTTSFormats = map[string]bool{
 	"mp3": true, "wav": true, "pcm": true,
-}
-
-// validMossNanoBackends is the set of valid MOSS-Nano inference backend values.
-var validMossNanoBackends = map[string]bool{
-	"onnx": true, "pytorch": true,
 }
 
 // validOpenAIStreamModes is the set of valid OpenAI TTS stream modes.
@@ -1184,24 +1140,6 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 
 	// Conditionally populate engine-specific sub-configs
 	switch cfg.TTS.Engine {
-	case "piper":
-		resp.TTS.Piper = &configPiper{
-			ModelPath:       cfg.TTS.Piper.ModelPath,
-			NoiseScale:      cfg.TTS.Piper.NoiseScale,
-			LengthScale:     cfg.TTS.Piper.LengthScale,
-			SentenceSilence: cfg.TTS.Piper.SentenceSilence,
-		}
-	case "kokoro":
-		resp.TTS.Kokoro = &configKokoro{
-			ModelPath:  cfg.TTS.Kokoro.ModelPath,
-			VoicesPath: cfg.TTS.Kokoro.VoicesPath,
-			Lang:       cfg.TTS.Kokoro.Lang,
-		}
-	case "moss-nano":
-		resp.TTS.MossNano = &configMossNano{
-			ModelDir: cfg.TTS.MossNano.ModelDir,
-			Backend:  cfg.TTS.MossNano.Backend,
-		}
 	case strOpenAI:
 		resp.TTS.OpenAI = &configOpenAITTS{
 			BaseURL:    cfg.TTS.OpenAI.BaseURL,
@@ -1621,7 +1559,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if ok {
 		if engine, ok := tts["engine"].(string); ok {
 			if !validTTSEngines[engine] {
-				return fmt.Errorf("tts.engine must be one of: edge,piper,kokoro,moss-nano,openai")
+				return fmt.Errorf("tts.engine must be one of: edge,openai")
 			}
 		}
 		if format, ok := tts["format"].(string); ok {
@@ -1635,29 +1573,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			}
 		}
 		// Validate engine-specific sub-configs
-		if piper, ok := tts["piper"].(map[string]any); ok {
-			if v, ok := piper["noise_scale"].(float64); ok && (v < 0 || v > 1) {
-				return fmt.Errorf("tts.piper.noise_scale must be between 0 and 1")
-			}
-			if v, ok := piper["length_scale"].(float64); ok && v <= 0 {
-				return fmt.Errorf("tts.piper.length_scale must be positive")
-			}
-			if v, ok := piper["sentence_silence"].(float64); ok && v < 0 {
-				return fmt.Errorf("tts.piper.sentence_silence must be non-negative")
-			}
-		}
-		if kokoro, ok := tts["kokoro"].(map[string]any); ok {
-			if v, ok := kokoro["lang"].(string); ok && v == "" {
-				return fmt.Errorf("tts.kokoro.lang must not be empty")
-			}
-		}
-		if mossNano, ok := tts["moss_nano"].(map[string]any); ok {
-			if v, ok := mossNano["backend"].(string); ok {
-				if !validMossNanoBackends[v] {
-					return fmt.Errorf("tts.moss_nano.backend must be one of: onnx,pytorch")
-				}
-			}
-		}
 		if openai, ok := tts["openai"].(map[string]any); ok {
 			if v, ok := openai["base_url"].(string); ok && v != "" {
 				if _, err := url.ParseRequestURI(v); err != nil {
@@ -1910,49 +1825,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 	switch effectiveEngine {
-	case "piper":
-		if engineSwitched {
-			break // will be validated after user fills in sub-config
-		}
-		effectiveModelPath := cfg.TTS.Piper.ModelPath
-		if tts, ok := patch["tts"].(map[string]any); ok {
-			if piper, ok := tts["piper"].(map[string]any); ok {
-				if v, ok := piper["model_path"].(string); ok {
-					effectiveModelPath = v
-				}
-			}
-		}
-		if effectiveModelPath == "" {
-			return fmt.Errorf("tts.piper.model_path is required when tts.engine is \"piper\"")
-		}
-	case "kokoro":
-		if engineSwitched {
-			break // will be validated after user fills in sub-config
-		}
-		effectiveKokoroModel := cfg.TTS.Kokoro.ModelPath
-		effectiveVoicesPath := cfg.TTS.Kokoro.VoicesPath
-		if tts, ok := patch["tts"].(map[string]any); ok {
-			if kokoro, ok := tts["kokoro"].(map[string]any); ok {
-				if v, ok := kokoro["model_path"].(string); ok {
-					effectiveKokoroModel = v
-				}
-				if v, ok := kokoro["voices_path"].(string); ok {
-					effectiveVoicesPath = v
-				}
-			}
-		}
-		if effectiveKokoroModel == "" {
-			return fmt.Errorf("tts.kokoro.model_path is required when tts.engine is \"kokoro\"")
-		}
-		if effectiveVoicesPath == "" {
-			return fmt.Errorf("tts.kokoro.voices_path is required when tts.engine is \"kokoro\"")
-		}
-	case "moss-nano":
-		if engineSwitched {
-			break // will be validated after user fills in sub-config
-		}
-		// model_dir is optional — empty value is valid (ResolveMossNanoModelDir
-		// auto-detects the default dir or lets the CLI auto-download models).
 	case strOpenAI:
 		if engineSwitched {
 			break // will be validated after user fills in sub-config
@@ -2355,42 +2227,6 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := tts["max_cache_files"].(float64); ok {
 			cfg.TTS.MaxCacheFiles = int(v)
 		}
-		// Piper sub-config
-		if piper, ok := tts["piper"].(map[string]any); ok {
-			if v, ok := piper["model_path"].(string); ok {
-				cfg.TTS.Piper.ModelPath = v
-			}
-			if v, ok := piper["noise_scale"].(float64); ok {
-				cfg.TTS.Piper.NoiseScale = v
-			}
-			if v, ok := piper["length_scale"].(float64); ok {
-				cfg.TTS.Piper.LengthScale = v
-			}
-			if v, ok := piper["sentence_silence"].(float64); ok {
-				cfg.TTS.Piper.SentenceSilence = v
-			}
-		}
-		// Kokoro sub-config
-		if kokoro, ok := tts["kokoro"].(map[string]any); ok {
-			if v, ok := kokoro["model_path"].(string); ok {
-				cfg.TTS.Kokoro.ModelPath = v
-			}
-			if v, ok := kokoro["voices_path"].(string); ok {
-				cfg.TTS.Kokoro.VoicesPath = v
-			}
-			if v, ok := kokoro["lang"].(string); ok {
-				cfg.TTS.Kokoro.Lang = v
-			}
-		}
-		// MossNano sub-config
-		if mossNano, ok := tts["moss_nano"].(map[string]any); ok {
-			if v, ok := mossNano["model_dir"].(string); ok {
-				cfg.TTS.MossNano.ModelDir = v
-			}
-			if v, ok := mossNano["backend"].(string); ok {
-				cfg.TTS.MossNano.Backend = v
-			}
-		}
 		// OpenAI TTS sub-config
 		if openai, ok := tts["openai"].(map[string]any); ok {
 			if v, ok := openai["base_url"].(string); ok {
@@ -2744,11 +2580,6 @@ func applyHotReloadGlobals() {
 		if p, ok := curProvider.(*speech.EdgeTTSProvider); ok {
 			p.Voice = cfg.TTS.Voice
 		}
-		if p, ok := curProvider.(*speech.KokoroProvider); ok {
-			p.Voice = cfg.TTS.Voice
-		}
-		// Piper: voice is embedded in model_path, not a standalone field
-		// MOSS-Nano: uses tts.voice (shared with Edge/Kokoro)
 		// OpenAI: uses its own tts.openai.voice, applied below
 	}
 	if p, ok := curProvider.(*speech.OpenAITTSProvider); ok {
@@ -2769,19 +2600,9 @@ func applyHotReloadGlobals() {
 				p.Rate = "+0%"
 			}
 		}
-		if p, ok := curProvider.(*speech.KokoroProvider); ok {
-			p.Speed = cfg.TTS.Speed
-		}
-		if p, ok := curProvider.(*speech.PiperProvider); ok {
-			// Only update if no explicit length_scale is set
-			if cfg.TTS.Piper.LengthScale <= 0 {
-				p.LengthScale = 1.0 / cfg.TTS.Speed
-			}
-		}
 		if p, ok := curProvider.(*speech.OpenAITTSProvider); ok {
 			p.Speed = cfg.TTS.Speed
 		}
-		// MOSS-Nano: speed not supported
 	}
 
 	// Reconfigure subsystems (TTS engine swap, summarize reconstruction,
