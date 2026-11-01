@@ -3969,6 +3969,7 @@ export default {
       micOff: 'Mic off',
       micOnHint: 'Others can hear you',
       micOffHint: 'Tap to turn your microphone on',
+      micNeedsHttps: 'The microphone needs HTTPS (this page is plain HTTP)',
       fullscreen: 'Fullscreen',
       exitFullscreen: 'Exit fullscreen',
       requestControl: 'Request control',
@@ -4029,7 +4030,7 @@ export default {
     pickSource: 'What to share',
     entireScreen: 'Entire screen (chosen by the system)',
     noSources:
-      'No screen or window available. Make sure screen recording is allowed (Linux/Wayland needs xdg-desktop-portal).',
+      'No screen or window available. Make sure screen recording is allowed: on macOS tick this app under System Settings → Privacy & Security → Screen Recording, and Linux/Wayland needs xdg-desktop-portal.',
     captureNeedsClient:
       'This client cannot capture the screen — update the desktop app, or open this page in it.',
     insecureContext:

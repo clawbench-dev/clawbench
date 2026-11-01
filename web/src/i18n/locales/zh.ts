@@ -3964,6 +3964,7 @@ export default {
       micOff: '麦克风已关',
       micOnHint: '其他人可以听到你说话',
       micOffHint: '点击打开麦克风发言',
+      micNeedsHttps: '需要 HTTPS 才能使用麦克风（当前是 HTTP）',
       fullscreen: '全屏',
       exitFullscreen: '退出全屏',
       requestControl: '请求控制',
@@ -4022,7 +4023,7 @@ export default {
     unsupported: '当前环境不支持屏幕共享。请使用桌面客户端。',
     pickSource: '选择要共享的内容',
     entireScreen: '整个屏幕（由系统选择）',
-    noSources: '没有可共享的屏幕或窗口。请确认系统已授权屏幕录制（Linux/Wayland 需要 xdg-desktop-portal）。',
+    noSources: '没有可共享的屏幕或窗口。请确认系统已授权屏幕录制：macOS 需在「系统设置 → 隐私与安全性 → 屏幕录制」里勾选本应用，Linux/Wayland 需要 xdg-desktop-portal。',
     captureNeedsClient: '当前客户端不支持屏幕共享。请更新桌面客户端，或在客户端中打开本页面。',
     insecureContext:
       '当前地址不是安全上下文，浏览器不会提供屏幕采集能力。请改用 HTTPS 或 localhost 打开，或使用桌面客户端。',

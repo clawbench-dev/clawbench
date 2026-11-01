@@ -91,11 +91,23 @@ beforeEach(() => {
     writable: true,
     value: vi.fn(async () => undefined),
   })
+  // The microphone switch is gated on getUserMedia being reachable, so these
+  // tests need a viewer that can actually talk. The gate itself is covered by
+  // LiveShareView.dock.test.ts; here it would only stop every mic test from
+  // reaching the state machine they are about.
+  Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true })
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: { getUserMedia: vi.fn() },
+  })
 })
 
 afterEach(() => {
   // @ts-expect-error -- jsdom has no real implementation to restore to.
   delete HTMLMediaElement.prototype.play
+  // Undo the microphone-capability override from the talking-state test: a
+  // leftover `mediaDevices` would decide the gate for every later test here.
+  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined })
 })
 
 function mountView() {

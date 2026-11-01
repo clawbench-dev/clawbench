@@ -249,7 +249,14 @@
         role="switch"
         :aria-checked="talking"
         :aria-label="t('share.live.micToggle')"
-        :title="talking ? t('share.live.micOnHint') : t('share.live.micOffHint')"
+        :disabled="!canTalk"
+        :title="
+          !canTalk
+            ? t('share.live.micNeedsHttps')
+            : talking
+              ? t('share.live.micOnHint')
+              : t('share.live.micOffHint')
+        "
         data-action="mic-toggle"
         @click="toggleMic"
       >
@@ -854,6 +861,22 @@ const canShareScreen = computed(
     // is what makes capture work over plain HTTP without that switch.
     (clientMode.value || window.isSecureContext) &&
     !!navigator.mediaDevices?.getDisplayMedia,
+)
+
+/**
+ * Talking needs `getUserMedia` — the same secure-context gate as screen
+ * capture, on a different API. Without this check the switch looks usable on a
+ * plain http://LAN page and does nothing when pressed: `startTalking()` cannot
+ * reach `mediaDevices`, returns false, and the switch silently flips back.
+ *
+ * Gated on the method rather than the room switch: `talkEnabled` says the host
+ * allows speech, this says this browser can produce any.
+ */
+const canTalk = computed(
+  () =>
+    typeof window !== 'undefined' &&
+    (clientMode.value || window.isSecureContext) &&
+    !!navigator.mediaDevices?.getUserMedia,
 )
 
 const screenBanner = computed(() => {

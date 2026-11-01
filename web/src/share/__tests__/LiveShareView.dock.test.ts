@@ -59,6 +59,7 @@ const i18n = createI18n({
           micOff: '麦克风已关',
           micOnHint: '其他人可以听到你说话',
           micOffHint: '点击打开麦克风发言',
+          micNeedsHttps: '需要 HTTPS 才能使用麦克风',
           statusConnecting: '连接中…',
           statusLive: '直播中',
           fullscreen: '全屏',
@@ -126,6 +127,10 @@ afterEach(() => {
     configurable: true,
     get: () => null,
   })
+  // The microphone tests override both probes; leaving them overridden would
+  // decide the gate for every later test in the file.
+  Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true })
+  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined })
 })
 
 function mountView() {
@@ -355,6 +360,43 @@ describe('LiveShareView control dock', () => {
 
     // A refusal must not leave the UI claiming to be fullscreen.
     expect(w.find('[data-action="fullscreen"]').text()).toContain('全屏')
+
+    w.unmount()
+  })
+
+  it('disables the microphone switch when the page cannot reach getUserMedia', async () => {
+    // A plain http://LAN page: `navigator.mediaDevices` does not exist, so
+    // startTalking() can only fail. A live-looking switch that silently flips
+    // back is worse than a disabled one that says why.
+    Object.defineProperty(window, 'isSecureContext', { configurable: true, value: false })
+    const w = mountView()
+    await flushPromises()
+    lastViewer?.opts?.callbacks?.onTalkEnabled?.(true)
+    await flushPromises()
+
+    const btn = w.find('[data-action="mic-toggle"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.attributes('title')).toContain('HTTPS')
+
+    w.unmount()
+  })
+
+  it('enables the microphone switch on a secure origin', async () => {
+    Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true })
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: vi.fn() },
+    })
+    const w = mountView()
+    await flushPromises()
+    lastViewer?.opts?.callbacks?.onTalkEnabled?.(true)
+    await flushPromises()
+
+    const btn = w.find('[data-action="mic-toggle"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('disabled')).toBeUndefined()
+    expect(btn.attributes('title')).toBe('点击打开麦克风发言')
 
     w.unmount()
   })

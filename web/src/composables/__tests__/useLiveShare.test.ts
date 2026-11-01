@@ -261,8 +261,16 @@ class FakeAudioCtx {
   }
 }
 
-const displayStream = new FakeStream([new FakeTrack('video', 'v1'), new FakeTrack('audio', 'sys1')])
-const micStream = new FakeStream([new FakeTrack('audio', 'mic1')])
+/**
+ * Fresh streams for every test.
+ *
+ * These used to be module-level singletons, which quietly made "stop() stops
+ * the tracks" unfalsifiable: once any earlier test had stopped them the flag
+ * stayed true for the rest of the file, so the assertion passed even if stop()
+ * did nothing.
+ */
+let displayStream: FakeStream
+let micStream: FakeStream
 
 /** jsdom's MediaStream rejects plain objects; the code only wraps tracks. */
 class FakeMediaStream {
@@ -295,6 +303,8 @@ function installGlobals() {
   // `new MediaStream([track])` runs on every viewer join; without this stub it
   // throws and silently aborts the rest of that handler (no ICE, no state hook).
   vi.stubGlobal('MediaStream', FakeMediaStream as unknown as typeof MediaStream)
+  displayStream = new FakeStream([new FakeTrack('video', 'v1'), new FakeTrack('audio', 'sys1')])
+  micStream = new FakeStream([new FakeTrack('audio', 'mic1')])
   vi.stubGlobal('navigator', {
     mediaDevices: {
       getDisplayMedia: vi.fn(async () => displayStream),
@@ -325,7 +335,12 @@ beforeEach(async () => {
   mod._resetLiveShareForTest()
 })
 
-afterEach(() => {
+afterEach(async () => {
+  // Tear the module down too, not just the globals: a test that starts a share
+  // without stopping it leaves the level-metering interval running, which
+  // vitest reports as an async leak at the end of the file.
+  const mod = await import('../useLiveShare')
+  mod._resetLiveShareForTest()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -412,14 +427,41 @@ describe('start', () => {
     expect(stopAndroid).toHaveBeenCalled()
   })
 
-  it('fails cleanly when the room cannot be created', async () => {
+  it('captures before it asks the server for a room', async () => {
+    // getDisplayMedia needs a transient user activation, which a slow round
+    // trip can outlive — the browser then refuses a request the user did make.
+    // Reversing these two steps is a real regression on Firefox and Safari, not
+    // a style choice, so the order itself is what gets asserted.
+    const order: string[] = []
+    const gdm = (navigator as unknown as { mediaDevices: { getDisplayMedia: ReturnType<typeof vi.fn> } })
+      .mediaDevices.getDisplayMedia
+    gdm.mockImplementationOnce(async () => {
+      order.push('capture')
+      return displayStream
+    })
+    fetchMock.mockImplementation(async (url: string, init?: { method?: string }) => {
+      if (url === '/api/live-share' && init?.method === 'POST') order.push('room')
+      return { ok: true, json: async () => ({ token: 'tok-1', path: '/share/tok-1' }) }
+    })
+
+    const { ok } = await startSharing()
+
+    expect(ok).toBe(true)
+    expect(order).toEqual(['capture', 'room'])
+  })
+
+  it('releases the capture when the room cannot be created', async () => {
     fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) })
     const { share, ok } = await startSharing()
 
     expect(ok).toBe(false)
     expect(share.state.value).toBe('idle')
-    // No real source was ever declared (the teardown path clears with '').
-    expect(bridge.setPendingCaptureSource).not.toHaveBeenCalledWith('screen:1:0', expect.anything())
+    // The picture is already live by the time the room request fails. Leaving
+    // it on would keep the browser's "sharing" indicator lit with nowhere to
+    // publish, and the mic would stay open.
+    expect(displayStream.tracks.every((t) => t.stopped)).toBe(true)
+    expect(micStream.tracks.every((t) => t.stopped)).toBe(true)
+    expect(FakeWS.instances).toHaveLength(0)
   })
 
   it('captures through the browser picker when the host has no capture bridge', async () => {

@@ -311,33 +311,18 @@ export function useLiveShare() {
     state.value = 'capturing'
 
     try {
-      // 1. Room first: without a token there is nothing to publish to, and a
-      //    failed capture would otherwise leave an orphaned room behind.
-      const resp = await fetch('/api/live-share', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: opts.shareTitle ?? '', notes: Boolean(opts.notes) }),
-      })
-      if (!resp.ok) {
-        fail(`create room failed: ${resp.status}`)
-        state.value = 'idle'
-        return false
-      }
-      const data = (await resp.json()) as { token?: string; path?: string }
-      if (!data.token) {
-        fail('create room returned no token')
-        state.value = 'idle'
-        return false
-      }
-      token.value = data.token
-      // Build from the server's address list, not window.location.origin: the
-      // browser only knows the one address it used, which may not be reachable
-      // from a colleague's subnet.
-      shareLinks.value = await buildShareLinks(data.path ?? `/share/${data.token}`)
-      shareUrl.value = shareLinks.value[0]?.url ?? window.location.origin + `/share/${data.token}`
-      title.value = opts.shareTitle ?? ''
-
-      // 2. Capture. Three hosts, two mechanisms:
+      // 1. Capture before the room.
+      //
+      //    `getDisplayMedia` requires a transient user activation, which lapses
+      //    a few seconds after the click. The room POST plus the address lookup
+      //    are two network round trips, and on a slow link they can outlive it —
+      //    the browser then rejects a request the user really did make. Firefox
+      //    and Safari are the strictest about the window. Nothing the capture
+      //    needs is remote (the native source declaration is IPC), so going
+      //    first costs nothing, and a cancelled picker no longer leaves a room
+      //    behind that has to be deleted again.
+      //
+      //    Three hosts, two mechanisms:
       //    - Electron declares a source and answers getDisplayMedia with it.
       //    - Android has no getDisplayMedia at all, so it runs a native
       //      MediaProjection session and hands back a stream built from its
@@ -370,9 +355,9 @@ export function useLiveShare() {
         const capture = navigator.mediaDevices?.getDisplayMedia
         if (!capture) {
           fail('screen capture is unavailable on this host')
-          // The room already exists at this point. Leaving it behind would burn a
-          // slot in maxLiveRooms forever (nothing else deletes a room that never
-          // got a publisher), so end it explicitly.
+          // stop() rather than a bare `state = 'idle'`: it also clears the
+          // one-shot source declaration, which would otherwise stay armed for
+          // whatever calls getDisplayMedia next.
           await stop()
           return false
         }
@@ -413,6 +398,33 @@ export function useLiveShare() {
           micStream = null
         }
       }
+
+      // 3. Room. There is a picture to publish now, so ask for a token. A
+      //    failure here must release the capture: otherwise the browser's
+      //    "sharing" indicator stays lit with no room to publish to.
+      const resp = await fetch('/api/live-share', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: opts.shareTitle ?? '', notes: Boolean(opts.notes) }),
+      })
+      if (!resp.ok) {
+        fail(`create room failed: ${resp.status}`)
+        await stop()
+        return false
+      }
+      const data = (await resp.json()) as { token?: string; path?: string }
+      if (!data.token) {
+        fail('create room returned no token')
+        await stop()
+        return false
+      }
+      token.value = data.token
+      // Build from the server's address list, not window.location.origin: the
+      // browser only knows the one address it used, which may not be reachable
+      // from a colleague's subnet.
+      shareLinks.value = await buildShareLinks(data.path ?? `/share/${data.token}`)
+      shareUrl.value = shareLinks.value[0]?.url ?? window.location.origin + `/share/${data.token}`
+      title.value = opts.shareTitle ?? ''
 
       // 4. Build the mixing graph. One destination per viewer is created as
       //    viewers arrive (see onViewerJoin).
