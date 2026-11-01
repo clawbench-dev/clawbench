@@ -2557,7 +2557,7 @@ export default {
   settings: {
     categories: {
       basic: 'Other',
-      identity: 'Identity',
+      identity: 'Identity & Preferences',
       appearance: 'Appearance',
       project: 'Project',
       files: 'Files',
@@ -2972,7 +2972,7 @@ export default {
       identitySection: 'My Identity',
       userNickname: 'My Nickname',
       userNicknameDesc: 'The name agents call you in conversation, and the display name used when you join a meeting. Leave empty to use the default "User". Must not match any agent name, and cannot contain quotes, angle brackets, commas or control characters',
-      userProfile: 'About Me',
+      userProfile: 'Identity & Preferences',
       userProfileDesc: 'Describe yourself: role, expertise, preferences or working style. Injected into the system prompt of every agent so they understand you better (max 4000 characters)',
       groupMaxSpeeches: 'Agent discussion limit',
       groupMaxSpeechesDesc: 'How many times the agents may speak to each other before the floor returns to you (default 100). Same meaning in host and free mode, counting member speeches only; reaching it stops the AI discussion',

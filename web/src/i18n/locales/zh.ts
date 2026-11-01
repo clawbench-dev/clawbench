@@ -2552,7 +2552,7 @@ export default {
   settings: {
     categories: {
       basic: '其他',
-      identity: '身份',
+      identity: '身份与偏好',
       appearance: '外观',
       project: '项目',
       files: '文件',
@@ -2968,7 +2968,7 @@ export default {
       identitySection: '我的身份',
       userNickname: '我的昵称',
       userNicknameDesc: '智能体在对话里这样称呼你，加入会议时也用它作为你的显示名。留空则使用默认名 User；不能与任何智能体同名，且不能包含引号、尖括号、逗号或控制字符',
-      userProfile: '身份介绍',
+      userProfile: '身份与偏好',
       userProfileDesc: '介绍一下你自己：角色、擅长领域、偏好或工作习惯。这段内容会注入到每个智能体的系统提示词，让它们更懂你（最多 4000 字）',
       groupMaxSpeeches: '智能体讨论次数上限',
       groupMaxSpeechesDesc: '轮到用户发言前，智能体之间最多发言多少次（默认 100）。主持人模式与自由模式含义相同，只计成员发言；达到上限后停止 AI 讨论，把发言权交回给你',
