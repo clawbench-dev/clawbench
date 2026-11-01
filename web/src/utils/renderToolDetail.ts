@@ -5,6 +5,7 @@
 import { highlightCode } from './globals.ts'
 import { escapeHtml } from './html.ts'
 import { detectLang, highlightLine } from './diff.ts'
+import { buildThumbUrl, isThumbExtension, THUMB_DEFAULT_WIDTH } from '@/utils/chatRenderUtils.ts'
 import { resolveFilePath, fileOpenButtonHtml } from '@/composables/useFilePathAnnotation.ts'
 import { localhostOpenButtonHtml, parseLocalhostUrl } from '@/composables/useLocalhostAnnotation.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
@@ -299,6 +300,131 @@ function renderWritePreview(input: ToolInput): string {
   html += '</div></div>'
 
   return html
+}
+
+/**
+ * Served URL for a local image, mirroring the markdown pipeline's rules
+ * (chatRenderUtils.resolveMediaSrc): a project-relative path uses the
+ * `/api/fs/raw/<rel>` form, an absolute one the `?target=` form, which the same
+ * endpoint resolves against the allowed roots — so screenshots outside the
+ * project (`/tmp/...`) still load.
+ */
+function localImageSrc(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  if (/^(?:[a-zA-Z]:)?\//.test(normalized)) {
+    return `/api/fs/raw/?target=${encodeURIComponent(normalized)}`
+  }
+  return `/api/fs/raw/${encodeImagePath(normalized)}`
+}
+
+/** Segment-encode a path so it survives both a URL path and a query value. */
+function encodeImagePath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/')
+}
+
+/**
+ * Preview URL for the drawer. Raster formats go through the thumbnail endpoint
+ * exactly like inline markdown images — a full-size phone screenshot is
+ * megabytes, and the drawer only ever shows it a few hundred dp wide. Other
+ * formats (svg/gif/webp) have no thumbnail path and keep the original.
+ */
+function imagePreviewSrc(path: string): string {
+  if (isThumbExtension(path)) return buildThumbUrl(encodeImagePath(path.replace(/\\/g, '/')), THUMB_DEFAULT_WIDTH)
+  return localImageSrc(path)
+}
+
+/** ViewImage input keys that carry the image path, in priority order. */
+const VIEW_IMAGE_PATH_KEYS = ['image_path', 'file_path', 'path', 'imagePath']
+
+function viewImagePath(input: ToolInput): string {
+  for (const key of VIEW_IMAGE_PATH_KEYS) {
+    const value = str(input[key])
+    if (value) return value
+  }
+  return ''
+}
+
+/**
+ * Render the ViewImage (CodeBuddy) tool call: the file it was asked to look at,
+ * an inline preview, and the question it was asked about that file.
+ *
+ * The tool's RESULT is the image itself — the backend returns
+ * `[{"type":"image_url","image_url":{"url":"data:image/…;base64,…"}}]` — but the
+ * payload is clipped at the 50 KB tool-output cap, and every real screenshot
+ * exceeds it, so the base64 arrives cut mid-stream and cannot be decoded. The
+ * preview therefore comes from `image_path` (the file the tool read) rather than
+ * from the output, and the output renderer drops the unusable base64 dump
+ * (see renderViewImageOutput).
+ */
+function renderViewImage(input: ToolInput): string {
+  const imagePath = viewImagePath(input)
+  const query = str(input.query) || str(input.prompt)
+
+  if (!imagePath && !query) return renderJsonFallback(input)
+
+  const projectRoot = store.state.projectRoot || ''
+  const homeDir = store.state.homeDir || ''
+  const resolvedPath = imagePath ? resolveFilePath(imagePath, projectRoot, homeDir) : null
+  const displayPath = resolvedPath || imagePath.replace(/^\.\//, '')
+
+  let html = '<div class="image-view-view">'
+
+  if (imagePath) {
+    // Same header as Read/Write: path + open button (the file viewer is where
+    // the image can be zoomed).
+    html += `<div class="tool-file-header" ${ANNOTATION_SKIP_ATTR}>`
+    html += `<span class="tool-file-path">${escapeHtml(displayPath)}</span>`
+    if (resolvedPath) html += fileOpenButtonHtml(resolvedPath)
+    html += '</div>'
+
+    // A plain <img>, deliberately NOT the markdown `.lightbox-img` marker: the
+    // lightbox only reacts to a click in touch mode (on desktop it needs its own
+    // view button), while here a click routes through the tool action handler to
+    // the file viewer on every platform.
+    html += '<div class="image-view-preview">'
+    html += `<img class="image-view-img" src="${escapeHtml(imagePreviewSrc(resolvedPath || imagePath))}"`
+    html += ` data-file-path="${escapeHtml(resolvedPath || imagePath)}" alt="" loading="lazy">`
+    html += '</div>'
+  }
+
+  if (query) {
+    html += '<div class="image-view-query">'
+    html += `<span class="image-view-label">${escapeHtml(gt('tool.viewImage.query'))}</span>`
+    html += `<div class="image-view-query-text">${escapeHtml(query)}</div>`
+    html += '</div>'
+  }
+
+  html += '</div>'
+  return html
+}
+
+/**
+ * Whether a tool output is an image content-block payload — either the JSON
+ * array/object CodeBuddy returns or a bare data URL.
+ *
+ * The test must survive TRUNCATION: the payload is capped at 50 KB, so
+ * `JSON.parse` fails on every real call and the closing brackets never arrive.
+ */
+function isImagePayload(text: string): boolean {
+  if (/^data:image\//i.test(text)) return true
+  if (!/^[[{]/.test(text)) return false
+  return /"type"\s*:\s*"image(?:_url)?"/.test(text) || /"url"\s*:\s*"data:image\//i.test(text)
+}
+
+/**
+ * Render the ViewImage result.
+ *
+ * The image payload IS the tool result, so there is nothing to print: the
+ * preview above already shows the picture, and dumping 50 KB of clipped base64
+ * buries it. Returning '' removes the whole output section (the drawer renders
+ * it only when this is non-empty). Anything else — an argument-validation error,
+ * "file not found" — is the one part the user can act on, so it stays visible.
+ */
+function renderViewImageOutput(output: string): string {
+  const trimmed = output.trim()
+  if (!trimmed) return ''
+  if (isImagePayload(trimmed)) return ''
+  return renderStatusOutput(trimmed)
 }
 
 /**
@@ -1804,6 +1930,9 @@ registerToolOutputRenderer('todowrite', renderStatusOutput)
 registerToolOutputRenderer('todoread', renderCodeOutput)
 registerToolOutputRenderer('deepthink', renderDeepThinkOutput)
 
+// ViewImage's output is the image payload itself (see renderViewImageOutput)
+registerToolOutputRenderer('viewimage', renderViewImageOutput)
+
 // ── Tool registrations ──
 
 // Core file/code tools
@@ -1864,12 +1993,26 @@ registerToolRenderer('ImageGen', renderImageGen)
 registerToolRenderer('Monitor', renderMonitor)
 registerToolRenderer('LSP', renderLSP)
 registerToolRenderer('Git', renderGit)
+registerToolRenderer('ViewImage', renderViewImage)
 
 // Terminal alias
 registerToolRenderer('PowerShell', renderBashTerminal)
 
 TOOL_AUTO_EXPAND.add('askuserquestion')
 TOOL_AUTO_EXPAND.add('permissionapproval')
+
+// ── ViewImage action handler ──
+
+// Clicking the preview opens the same file the header's open button does, so
+// the image can be zoomed in the file viewer. The path rides on the <img>
+// because the drawer body is rebuilt from an HTML string (no component refs).
+registerToolActionHandler('ViewImage', (event, emit) => {
+  const img = (event.target as HTMLElement).closest('.image-view-img') as HTMLElement | null
+  if (!img) return false
+  const filePath = img.getAttribute('data-file-path')
+  if (filePath) emit('file-open', { path: filePath })
+  return true
+})
 
 // ── AskUserQuestion action handler ──
 

@@ -2461,6 +2461,9 @@ export default {
     webFetch: {
       url: 'URL',
     },
+    viewImage: {
+      query: '提问',
+    },
     todoRead: {
       label: '读取待办列表',
     },

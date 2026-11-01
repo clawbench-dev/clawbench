@@ -6,6 +6,8 @@ import {
   FileText, Compass, CheckCircle2, FolderSync, Monitor,
   Users, MessageSquare, Send, Save, Camera, Wrench,
   ShieldAlert, GitBranch,
+  // `Image` shadows the DOM constructor inside this module — alias it.
+  Image as ImageIcon,
   // Fallback
   Wrench as WrenchFallback,
   // Thinking
@@ -44,6 +46,7 @@ export const TOOL_ICONS: Record<string, { icon: typeof Wrench; category: string 
   'TodoWrite':         { icon: ListTodo,         category: 'task' },
   'LSP':               { icon: Sparkles,         category: 'skill' },
   'ImageGen':          { icon: Camera,           category: 'skill' },
+  'ViewImage':         { icon: ImageIcon,        category: 'file' },
   'EnterWorktree':     { icon: FolderSync,       category: 'plan' },
   'LeaveWorktree':     { icon: FolderSync,       category: 'plan' },
   'ComputerUse':       { icon: Monitor,          category: 'agent' },

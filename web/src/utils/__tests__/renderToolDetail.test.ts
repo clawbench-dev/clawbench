@@ -448,6 +448,24 @@ describe('handleToolAction', () => {
     const emit = vi.fn() as any
     expect(handleToolAction('UnknownTool', event, emit)).toBe(false)
   })
+
+  it('opens the file viewer when the ViewImage preview is clicked', () => {
+    const img = document.createElement('img')
+    img.className = 'image-view-img'
+    img.setAttribute('data-file-path', '/tmp/shot.png')
+    const event = { target: img } as unknown as Event
+    const emit = vi.fn() as any
+    expect(handleToolAction('ViewImage', event, emit)).toBe(true)
+    expect(emit).toHaveBeenCalledWith('file-open', { path: '/tmp/shot.png' })
+  })
+
+  it('leaves non-preview clicks inside a ViewImage body alone', () => {
+    const span = document.createElement('span')
+    const event = { target: span } as unknown as Event
+    const emit = vi.fn() as any
+    expect(handleToolAction('ViewImage', event, emit)).toBe(false)
+    expect(emit).not.toHaveBeenCalled()
+  })
 })
 
 // ────────────────────────────────────────────────────────────
@@ -738,6 +756,81 @@ describe('Read renderer (deep)', () => {
   it('renders content with limit but no offset', () => {
     const html = formatToolInput({ file_path: 'test.go', limit: 20, content: 'x' }, 'Read')
     expect(html).toContain('file-preview-view')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// ViewImage renderer
+// ────────────────────────────────────────────────────────────
+
+describe('ViewImage renderer', () => {
+  const INPUT = { image_path: '/tmp/shot.png', query: 'Is the header balanced?' }
+
+  it('renders the image path with an open-file button', () => {
+    const html = formatToolInput(INPUT, 'ViewImage')
+    expect(html).toContain('image-view-view')
+    expect(html).toContain('tool-file-path')
+    expect(html).toContain('/tmp/shot.png')
+    expect(html).toContain('chat-file-open-btn')
+  })
+
+  it('renders an inline preview served from the image path', () => {
+    const html = formatToolInput(INPUT, 'ViewImage')
+    expect(html).toContain('image-view-img')
+    // Raster formats go through the thumbnail endpoint, exactly like inline
+    // markdown images — a full-size screenshot is megabytes.
+    expect(html).toContain('src="/api/fs/thumb?target=/tmp/shot.png&amp;w=1200"')
+    expect(html).toContain('data-file-path="/tmp/shot.png"')
+  })
+
+  it('serves a project-relative path through the path form', () => {
+    const html = formatToolInput({ image_path: 'shots/a b.png' }, 'ViewImage')
+    expect(html).toContain('target=shots/a%20b.png')
+  })
+
+  it('keeps the raw endpoint for formats the thumbnailer cannot decode', () => {
+    const html = formatToolInput({ image_path: '/tmp/shot.webp' }, 'ViewImage')
+    expect(html).toContain('src="/api/fs/raw/?target=%2Ftmp%2Fshot.webp"')
+  })
+
+  it('renders the question the model asked about the image', () => {
+    const html = formatToolInput(INPUT, 'ViewImage')
+    expect(html).toContain('image-view-label')
+    expect(html).toContain('Is the header balanced?')
+  })
+
+  it('omits the query block when the call carries no question', () => {
+    const html = formatToolInput({ image_path: '/tmp/shot.png' }, 'ViewImage')
+    expect(html).toContain('image-view-img')
+    expect(html).not.toContain('image-view-query')
+  })
+
+  it('falls back to the path fields a model may send by mistake', () => {
+    // CodeBuddy requires image_path; a wrong key returns "missing required
+    // parameter", but the drawer must still show what was attempted.
+    expect(formatToolInput({ file_path: '/tmp/a.png' }, 'ViewImage')).toContain('target=/tmp/a.png')
+    expect(formatToolInput({ path: '/tmp/b.png' }, 'ViewImage')).toContain('target=/tmp/b.png')
+  })
+
+  it('falls back to JSON for an input carrying neither a path nor a query', () => {
+    const html = formatToolInput({}, 'ViewImage')
+    expect(html).toContain('tool-json-body')
+    expect(html).not.toContain('image-view-view')
+  })
+
+  it('drops the base64 image payload instead of dumping it', () => {
+    const payload = '[{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUg'
+    const html = formatToolOutput(payload, 'ViewImage')
+    expect(html).toBe('')
+  })
+
+  it('drops a bare data URL output too', () => {
+    expect(formatToolOutput('data:image/jpeg;base64,/9j/4AAQSkZJRg', 'ViewImage')).toBe('')
+  })
+
+  it('keeps an error output visible', () => {
+    const html = formatToolOutput('Error: Invalid arguments for ViewImage: missing required parameter image_path', 'ViewImage')
+    expect(html).toContain('Error: Invalid arguments for ViewImage')
   })
 })
 

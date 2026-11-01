@@ -2465,6 +2465,9 @@ export default {
     webFetch: {
       url: 'URL',
     },
+    viewImage: {
+      query: 'Query',
+    },
     todoRead: {
       label: 'Read todo list',
     },
