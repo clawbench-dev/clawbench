@@ -67,6 +67,14 @@ describe('live chat is compact and flat', () => {
     expect(inline['border-radius']).toBeUndefined()
   })
 
+  it('does not clip the composer in the tab', () => {
+    // In the tab the wrapper hugs the chat, so its bottom edge is the chat's
+    // bottom edge — the composer's bottom line. A clip there cut the focused
+    // input's ring (drawn 1px outside the box) in half, and the field read as
+    // if it ran into the panel edge. Only the fixed-height card needs the clip.
+    expect(ruleDecls(stage, '.live-chat-inline--fill').overflow).toBe('visible')
+  })
+
   it('leaves the inset to the pane instead of adding a second one', () => {
     expect(ruleDecls(chat, '.live-chat__list')).toMatchObject({ padding: '0' })
     const compose = ruleDecls(chat, '.live-chat__compose')

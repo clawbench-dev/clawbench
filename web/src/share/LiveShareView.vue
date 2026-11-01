@@ -233,7 +233,9 @@
           <X :size="16" />
         </button>
       </div>
-      <LiveChatPanel :messages="chatMessages" @send="sendChat" />
+      <div class="live-chat-panel__body">
+        <LiveChatPanel :messages="chatMessages" @send="sendChat" />
+      </div>
     </div>
 
     <!-- Who is speaking. The publisher measures every microphone (it is the
@@ -1745,6 +1747,21 @@ onBeforeUnmount(() => {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
   z-index: 6;
   overflow: hidden;
+}
+
+/*
+ * The chat body carries no inset of its own: it is flat so it can sit on a
+ * pane that already insets its content (the meeting panel does). This overlay
+ * has no such pane — it is a floating card — so the inset has to be supplied
+ * here, otherwise the bubbles, the input and the send button run into the
+ * border.
+ */
+.live-chat-panel__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-4, 8px) var(--space-5, 10px);
 }
 
 /* Unread counter on the dock button. */

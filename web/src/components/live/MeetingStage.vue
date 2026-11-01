@@ -1184,10 +1184,16 @@ watch(
   overflow: hidden;
 }
 
+/* In the tab the wrapper hugs the chat exactly, so the chat's bottom edge IS
+   the wrapper's bottom edge. Clipping there cut the focused input's ring (drawn
+   1px outside its box) in half — the field looked like it was bleeding into the
+   panel edge. The fixed-height card above is the only variant that needs the
+   clip. */
 .live-chat-inline--fill {
   flex: 1 1 auto;
   min-height: 0;
   height: auto;
+  overflow: visible;
 }
 
 /* ── Member screen window (Document PiP) ────────────────────────────────────
