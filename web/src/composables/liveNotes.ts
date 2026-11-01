@@ -72,6 +72,16 @@ export const NOTES_RETRY_DELAYS_MS = [1_000, 3_000, 9_000]
 
 export const NOTES_MIME = 'audio/webm;codecs=opus'
 
+/**
+ * Channel name of the archive-only mix track.
+ *
+ * Every per-channel recorder feeds the same mix bus, so this one track holds
+ * the whole meeting — all participants at once, at their real timing. It is
+ * never transcribed (it has no single speaker); it exists so the meeting can be
+ * listened to as one file instead of N simultaneous ones.
+ */
+export const NOTES_MIX_CHANNEL = 'mix'
+
 /** 32 kbps mono Opus is transparent for speech and keeps a 10s segment ~40 KB,
  *  which keeps both the upload and the STT round-trip short. */
 export const NOTES_AUDIO_BITRATE = 32_000
@@ -158,6 +168,11 @@ export interface LiveNotesCaptureOptions {
   minSegmentMs?: number
   maxPending?: number
   mimeType?: string
+  /**
+   * Uploader for the archive-only mix track. Supplying it turns the mix on: the
+   * capture then also records every channel mixed together into one file.
+   */
+  archiveUpload?: NotesUploader
   /** Called when a segment is lost after exhausting its retries. */
   onSegmentLost?: (channel: string, reason: string) => void
   /** Called when the memory guard drops a segment (backend down for ~30 min). */
@@ -205,6 +220,8 @@ class ChannelRecorder {
     private readonly speaker: () => string,
     private readonly upload: NotesUploader,
     opts: LiveNotesCaptureOptions,
+    /** Shared mix bus this channel should also feed (null for the mix itself). */
+    mixDest: MediaStreamAudioDestinationNode | null = null,
   ) {
     this.opts = opts
     this.segmentMs = opts.segmentMs ?? NOTES_SEGMENT_MS
@@ -216,6 +233,9 @@ class ChannelRecorder {
     this.source = ctx.createMediaStreamSource(stream)
     this.dest = ctx.createMediaStreamDestination()
     this.source.connect(this.dest)
+    // ...and the mix bus is what makes the meeting listenable as one file. The
+    // mix recorder itself passes null here: feeding it back would loop.
+    if (mixDest) this.source.connect(mixDest)
 
     // Level metering for pause detection. The analyser is pulled through a
     // muted gain so it keeps being processed without being heard (the
@@ -475,12 +495,24 @@ export class LiveNotesCapture {
   /** Recorders that are no longer live but may still have uploads queued. */
   private readonly retired: ChannelRecorder[] = []
   private stopped = false
+  /** Every channel also feeds this bus; the mix recorder captures it. */
+  private readonly mixDest: MediaStreamAudioDestinationNode | null
 
   constructor(
     private readonly ctx: AudioContext,
     private readonly upload: NotesUploader,
     private readonly opts: LiveNotesCaptureOptions = {},
-  ) {}
+  ) {
+    this.mixDest =
+      opts.archiveUpload && typeof ctx.createMediaStreamDestination === 'function'
+        ? ctx.createMediaStreamDestination()
+        : null
+    if (this.mixDest && opts.archiveUpload) {
+      const mix = new ChannelRecorder(ctx, this.mixDest.stream, NOTES_MIX_CHANNEL, () => '', opts.archiveUpload, opts)
+      this.channels.set(NOTES_MIX_CHANNEL, mix)
+      mix.start()
+    }
+  }
 
   get size(): number {
     return this.channels.size
@@ -499,7 +531,7 @@ export class LiveNotesCapture {
   addChannel(channel: string, speaker: () => string, stream: MediaStream | null): void {
     if (this.stopped || !stream || stream.getAudioTracks().length === 0) return
     this.removeChannel(channel)
-    const rec = new ChannelRecorder(this.ctx, stream, channel, speaker, this.upload, this.opts)
+    const rec = new ChannelRecorder(this.ctx, stream, channel, speaker, this.upload, this.opts, this.mixDest)
     this.channels.set(channel, rec)
     rec.start()
   }

@@ -17,6 +17,7 @@ import {
   mergeNoteSegments,
   type LiveNoteSegment,
   type NoteBlock,
+  type NotesUploadArgs,
   type NotesUploader,
 } from './liveNotes'
 
@@ -37,6 +38,8 @@ export interface NotesArtifacts {
   transcript?: string
   revised?: string
   audio?: string
+  /** The merged whole-meeting recording (`audio/meeting.webm`). */
+  audioMeeting?: string
   audioFiles?: number
 }
 
@@ -91,20 +94,32 @@ let sessionTitle = ''
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let labelFor: (channel: string) => string = (channel) => channel
 
+/**
+ * Builds the multipart body every segment upload shares.
+ *
+ * The title travels with every segment: the server creates the meeting folder
+ * on the FIRST one (audio is written as it arrives), and it needs a name before
+ * the minutes request ever happens.
+ */
+function segmentForm(token: string, args: NotesUploadArgs, archive: boolean): FormData {
+  const form = new FormData()
+  form.append('token', token)
+  if (sessionTitle) form.append('title', sessionTitle)
+  form.append('channel', args.channel)
+  form.append('speaker', args.speaker)
+  form.append('startedAt', String(args.startedAt))
+  form.append('durationMs', String(args.durationMs))
+  if (archive) form.append('archive', '1')
+  form.append('file', args.blob, 'segment.webm')
+  return form
+}
+
 function uploadSegment(token: string): NotesUploader {
   return async (args) => {
-    const form = new FormData()
-    form.append('token', token)
-    // The title travels with every segment: the server creates the meeting
-    // folder on the FIRST one (audio is written as it arrives), and it needs a
-    // name before the minutes request ever happens.
-    if (sessionTitle) form.append('title', sessionTitle)
-    form.append('channel', args.channel)
-    form.append('speaker', args.speaker)
-    form.append('startedAt', String(args.startedAt))
-    form.append('durationMs', String(args.durationMs))
-    form.append('file', args.blob, 'segment.webm')
-    const resp = await fetch('/api/live-share/notes/segment', { method: 'POST', body: form })
+    const resp = await fetch('/api/live-share/notes/segment', {
+      method: 'POST',
+      body: segmentForm(token, args, false),
+    })
     if (!resp.ok) throw new Error(`segment upload failed: ${resp.status}`)
     const data = (await resp.json()) as LiveNoteSegment & { id: number }
     if (!data.id || !data.text) return null
@@ -118,6 +133,23 @@ function uploadSegment(token: string): NotesUploader {
     }
     segments.value = mergeNoteSegments(segments.value, [seg])
     return seg
+  }
+}
+
+/**
+ * Uploads one chunk of the archive-only mix track.
+ *
+ * Archive, not transcription: the mix has no single speaker, so the server
+ * stores it without calling the STT provider. It never yields a transcript line.
+ */
+function uploadArchiveSegment(token: string): NotesUploader {
+  return async (args) => {
+    const resp = await fetch('/api/live-share/notes/segment', {
+      method: 'POST',
+      body: segmentForm(token, args, true),
+    })
+    if (!resp.ok) throw new Error(`archive upload failed: ${resp.status}`)
+    return null
   }
 }
 
@@ -140,6 +172,9 @@ export function useLiveNotes() {
     sessionTitle = opts.title ?? ''
     labelFor = opts.label ?? ((channel) => channel)
     capture = new LiveNotesCapture(opts.ctx, uploadSegment(opts.token), {
+      // The mix track is the file the user actually listens to: one recording
+      // of the whole meeting instead of one per participant.
+      archiveUpload: uploadArchiveSegment(opts.token),
       // Losing a segment is a permanent hole in the transcript, so the count is
       // surfaced instead of being logged and forgotten.
       onSegmentLost: () => {
@@ -175,8 +210,16 @@ export function useLiveNotes() {
     await capture.stopAndFlush(2000)
   }
 
-  /** Flushes queued uploads, then asks for the minutes. */
-  async function finishUploads(): Promise<void> {
+  /**
+   * Flushes queued uploads, then asks for the minutes.
+   *
+   * `merge` is false when the recording is only being PAUSED: turning 听记 off
+   * mid-meeting drains the queue, but folding the audio now would leave the
+   * rest of the meeting (recorded after the toggle) as loose segments beside a
+   * merged file that no longer covers it. The merge waits for the meeting to
+   * end, when nothing more is coming.
+   */
+  async function finishUploads(merge = true): Promise<void> {
     const cap = capture
     if (!cap) return
     const gen = sessionGen
@@ -203,7 +246,34 @@ export function useLiveNotes() {
     // The dialog may have been closed and another meeting started while the
     // backlog drained; its state is not ours to touch.
     if (gen !== sessionGen) return
+    // Merge BEFORE the minutes: only now is "no more audio is coming" true, and
+    // the minutes link to the recording.
+    if (merge) await mergeAudio()
+    if (gen !== sessionGen) return
     if (segments.value.length > 0) await generateMinutes()
+  }
+
+  /**
+   * Folds the meeting's audio segments into one file per channel plus the
+   * whole-meeting mix.
+   *
+   * Failure is logged, not surfaced: the segments stay on disk and the minutes
+   * are still worth generating.
+   */
+  async function mergeAudio(): Promise<void> {
+    if (!sessionToken) return
+    try {
+      const resp = await fetch('/api/live-share/notes/audio/merge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: sessionToken }),
+      })
+      if (!resp.ok) throw new Error(`audio merge failed: ${resp.status}`)
+      const data = (await resp.json()) as { artifacts?: NotesArtifacts }
+      if (data.artifacts) artifacts.value = data.artifacts
+    } catch (e) {
+      appLog.w(TAG, 'merge meeting audio failed', e)
+    }
   }
 
   /** Convenience for callers with nothing else to tear down. */
@@ -379,6 +449,7 @@ export function useLiveNotes() {
     finishUploads,
     finish,
     generateMinutes,
+    mergeAudio,
     refresh,
     reset,
   }

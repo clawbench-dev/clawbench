@@ -201,7 +201,7 @@ func TestWriteLiveNotesMinutesFile_LinksSiblingsInsteadOfInlining(t *testing.T) 
 	paths := LiveNotesPathsIn(filepath.Join(t.TempDir(), "2026-10-30-1430-季度规划-abc123"))
 	started := time.Date(2026, 10, 30, 14, 30, 0, 0, time.Local)
 
-	written, err := WriteLiveNotesMinutesFile(paths, "季度规划", started, "## 概要\n\n发布计划确认。", 7)
+	written, err := WriteLiveNotesMinutesFile(paths, "季度规划", started, "## 概要\n\n发布计划确认。", 7, true)
 	require.NoError(t, err)
 	assert.Equal(t, paths.Minutes, written)
 
@@ -215,14 +215,17 @@ func TestWriteLiveNotesMinutesFile_LinksSiblingsInsteadOfInlining(t *testing.T) 
 	assert.NotContains(t, text, "## 附：完整转写")
 	assert.Contains(t, text, "[transcript.vtt](transcript.vtt)")
 	assert.Contains(t, text, "[transcript-revised.md](transcript-revised.md)")
-	assert.Contains(t, text, "`audio/`（7 段）")
+	// The merged recording is the one to listen to; the per-channel files are
+	// the source it was built from.
+	assert.Contains(t, text, "[meeting.webm](audio/meeting.webm)")
+	assert.Contains(t, text, "`audio/`（7 个文件）")
 }
 
 func TestWriteLiveNotesMinutesFile_RequiresDirAndMinutes(t *testing.T) {
-	_, err := WriteLiveNotesMinutesFile(LiveNotesPathsIn(""), "t", time.Now(), "m", 0)
+	_, err := WriteLiveNotesMinutesFile(LiveNotesPathsIn(""), "t", time.Now(), "m", 0, false)
 	assert.Error(t, err)
 
-	_, err = WriteLiveNotesMinutesFile(LiveNotesPathsIn(t.TempDir()), "t", time.Now(), "   ", 0)
+	_, err = WriteLiveNotesMinutesFile(LiveNotesPathsIn(t.TempDir()), "t", time.Now(), "   ", 0, false)
 	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
 }
 
@@ -695,7 +698,7 @@ func TestWriteLiveNotesMinutesFile_UntitledMeetingUsesDefaultHeading(t *testing.
 	paths := LiveNotesPathsIn(t.TempDir())
 	started := time.Date(2026, 10, 30, 8, 0, 0, 0, time.Local)
 
-	written, err := WriteLiveNotesMinutesFile(paths, "   ", started, "## 概要", 0)
+	written, err := WriteLiveNotesMinutesFile(paths, "   ", started, "## 概要", 0, false)
 	require.NoError(t, err)
 
 	body, err := os.ReadFile(written)

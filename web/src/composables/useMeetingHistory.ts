@@ -30,6 +30,8 @@ export interface MeetingRecord {
   hasMinutes: boolean
   hasTranscript: boolean
   hasRevised: boolean
+  /** True once the recording has been merged into `audio/meeting.webm`. */
+  hasMeetingAudio: boolean
   audioFiles: number
   chatCount: number
   status: 'idle' | 'generating' | 'ready' | 'failed'

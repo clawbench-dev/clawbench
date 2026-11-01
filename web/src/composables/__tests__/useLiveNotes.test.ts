@@ -152,6 +152,55 @@ describe('useLiveNotes — recording', () => {
 })
 
 describe('useLiveNotes — finishing', () => {
+  it('merges the recording before asking for the minutes', async () => {
+    const notes = useLiveNotes()
+    notes.start({ token: 'tok', ctx, micStream: null })
+    notes.segments.value = [{ id: 1, channel: 'mic', speaker: '我', startedAt: 1, durationMs: 1, text: '内容' }]
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ok: true, artifacts: { dir: '/p/.clawbench/notes/x', audioMeeting: '/p/.clawbench/notes/x/audio/meeting.webm' } }),
+    )
+
+    await notes.finishUploads()
+
+    // Order matters: the merge is only correct once nothing is still uploading,
+    // and the minutes link to the recording it produces.
+    const urls = fetchMock.mock.calls.map(([url]) => String(url))
+    expect(urls).toEqual(['/api/live-share/notes/audio/merge', '/api/live-share/notes/minutes'])
+    expect(notes.artifacts.value.audioMeeting).toBe('/p/.clawbench/notes/x/audio/meeting.webm')
+  })
+
+  it('drains without merging when the recording is only paused', async () => {
+    const notes = useLiveNotes()
+    notes.start({ token: 'tok', ctx, micStream: null })
+    notes.segments.value = [{ id: 1, channel: 'mic', speaker: '我', startedAt: 1, durationMs: 1, text: '内容' }]
+    fetchMock.mockResolvedValue(jsonResponse({ status: 'idle' }))
+
+    await notes.finishUploads(false)
+
+    // Turning 听记 off mid-meeting must not fold the audio: whatever is
+    // recorded after the toggle would end up as loose segments beside a merged
+    // file that no longer covers the meeting.
+    const urls = fetchMock.mock.calls.map(([url]) => String(url))
+    expect(urls).toEqual(['/api/live-share/notes/minutes'])
+    expect(lastCapture().drainCalls).toBe(1)
+  })
+
+  it('uploads the mix track as archive-only so it is never transcribed', async () => {
+    const notes = useLiveNotes()
+    notes.start({ token: 'tok', ctx, micStream: null })
+    const archive = lastCapture().opts.archiveUpload as (args: unknown) => Promise<unknown>
+    expect(typeof archive).toBe('function')
+
+    fetchMock.mockResolvedValue(jsonResponse({ id: 0, text: '' }))
+    await archive({ channel: 'mix', speaker: '', startedAt: 1, durationMs: 1, blob: new Blob(['x']) })
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/live-share/notes/segment')
+    const form = init.body as FormData
+    expect(form.get('channel')).toBe('mix')
+    expect(form.get('archive')).toBe('1')
+  })
+
   it('drains the backlog, then asks for the minutes', async () => {
     const notes = useLiveNotes()
     notes.start({ token: 'tok', ctx, micStream: null })
@@ -176,7 +225,11 @@ describe('useLiveNotes — finishing', () => {
     await notes.finishUploads()
 
     expect(notes.truncated.value).toBe(true)
-    expect(fetchMock).not.toHaveBeenCalled()
+    // The tail is missing, but what did land is still merged into one file.
+    // The minutes are NOT requested: summarizing a transcript with a hole in it
+    // would present the gap as the meeting's end.
+    const urls = fetchMock.mock.calls.map(([url]) => String(url))
+    expect(urls).toEqual(['/api/live-share/notes/audio/merge'])
   })
 
   it('does nothing when there is no capture', async () => {

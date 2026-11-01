@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -99,7 +100,10 @@ type liveNotesArtifacts struct {
 	Transcript string `json:"transcript,omitempty"`
 	Revised    string `json:"revised,omitempty"`
 	Audio      string `json:"audio,omitempty"`
-	AudioFiles int    `json:"audioFiles,omitempty"`
+	// AudioMeeting is the merged whole-meeting file. Empty until the merge has
+	// run (or for a recording that predates it).
+	AudioMeeting string `json:"audioMeeting,omitempty"`
+	AudioFiles   int    `json:"audioFiles,omitempty"`
 }
 
 // ServeLiveNotesSessions handles GET /api/live-share/notes/sessions
@@ -411,16 +415,27 @@ func liveNoteArtifactsOf(dir string) liveNotesArtifacts {
 			*f.into = f.target
 		}
 	}
-	// Count only real segments: the folder also holds the .gitignore that keeps
-	// the binary audio out of the repository.
+	// Count only the channel recordings: the folder also holds the .gitignore
+	// that keeps the binary audio out of the repository, and the merged
+	// whole-meeting file is not a channel.
 	if entries, err := os.ReadDir(paths.Audio); err == nil {
 		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".webm") {
-				out.AudioFiles++
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".webm") || e.Name() == service.LiveNoteMeetingAudioFile {
+				continue
 			}
+			out.AudioFiles++
 		}
 	}
+	if meeting := filepath.Join(paths.Audio, service.LiveNoteMeetingAudioFile); fileExists(meeting) {
+		out.AudioMeeting = meeting
+	}
 	return out
+}
+
+// fileExists reports whether path is a regular file.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // ServeLiveShareNoteSegment handles POST /api/live-share/notes/segment
@@ -487,6 +502,14 @@ func ServeLiveShareNoteSegment(w http.ResponseWriter, r *http.Request) {
 
 	persistLiveNoteAudio(token, projectID, projectPath, r.FormValue("title"), channel, startedAt, audio)
 
+	// Archive-only: the whole-meeting mix track exists to be listened to, not
+	// transcribed. It has no single speaker, so a transcript of it would be a
+	// duplicate of the per-channel lines with the labels lost.
+	if r.FormValue("archive") != "" {
+		writeJSON(w, http.StatusOK, map[string]any{"id": 0, liveNoteTextKey: ""})
+		return
+	}
+
 	text, err := transcribeLiveNoteSegment(r.Context(), audio)
 	if err != nil {
 		slog.Warn("live notes: transcribe failed", "channel", channel, "err", err)
@@ -525,6 +548,54 @@ func ServeLiveShareNoteSegment(w http.ResponseWriter, r *http.Request) {
 		"startedAt":     seg.StartedAt,
 		"durationMs":    seg.DurationMS,
 	})
+}
+
+// ServeLiveNotesAudioMerge handles POST /api/live-share/notes/audio/merge
+// (authenticated, project-scoped). Body: {"token":"..."}.
+//
+// Folds the meeting's audio segments into one file per channel plus the
+// whole-meeting mix, and removes the segments. The publisher calls this once
+// its upload queue has drained — that is the only moment at which "no more
+// audio is coming" is actually true.
+func ServeLiveNotesAudioMerge(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if !validShareToken(body.Token) || !liveNotesOwnedByProject(body.Token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	dirName, err := service.MeetingDirName(body.Token)
+	if err != nil {
+		slog.Error("live notes: merge dir lookup failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if dirName == "" {
+		// Nothing was recorded (notes off, or every segment was silence).
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "artifacts": liveNotesArtifacts{}})
+		return
+	}
+	dir := service.MeetingDirPath(projectPath, dirName)
+	merged, err := service.MergeLiveNoteAudio(service.LiveNotesPathsIn(dir))
+	if err != nil {
+		slog.Warn("live notes: merge audio failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	slog.Info("live notes: merged meeting audio",
+		"segments", merged.Segments, "channels", len(merged.Channels), "meeting", merged.Meeting != "")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "artifacts": liveNoteArtifactsOf(dir)})
 }
 
 // ServeLiveShareNotesMinutes handles POST /api/live-share/notes/minutes
@@ -627,6 +698,18 @@ func generateLiveNotesArtifacts(token string, projectID int64, projectPath, titl
 	}
 	onDisk := dirErr == nil
 
+	// Fold the segments into one recording per channel before anything else
+	// reads the folder: the minutes link to the audio, and the user opens the
+	// meeting expecting one file rather than forty. This is also the retry path
+	// for a publisher whose merge request never arrived.
+	if onDisk {
+		if merged, mergeErr := service.MergeLiveNoteAudio(paths); mergeErr != nil {
+			slog.Warn("live notes: merge audio failed", "err", mergeErr)
+		} else if merged.Segments > 0 {
+			slog.Info("live notes: merged meeting audio", "segments", merged.Segments)
+		}
+	}
+
 	raw := service.BuildLiveNotesTranscript(segments)
 	if onDisk {
 		writeLiveNotesArtifact("transcript", func() (string, error) {
@@ -704,12 +787,14 @@ func writeLiveNotesMinutes(paths service.LiveNotesPaths, title string, startedAt
 	audioFiles := 0
 	if entries, err := os.ReadDir(paths.Audio); err == nil {
 		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".webm") {
-				audioFiles++
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".webm") || e.Name() == service.LiveNoteMeetingAudioFile {
+				continue
 			}
+			audioFiles++
 		}
 	}
-	written, err := service.WriteLiveNotesMinutesFile(paths, title, startedAt, minutes, audioFiles)
+	hasMeeting := fileExists(filepath.Join(paths.Audio, service.LiveNoteMeetingAudioFile))
+	written, err := service.WriteLiveNotesMinutesFile(paths, title, startedAt, minutes, audioFiles, hasMeeting)
 	if err != nil {
 		slog.Warn("live notes: write minutes file failed", "err", err)
 		return ""
@@ -819,10 +904,11 @@ func liveNotesOwnedByProject(token, projectPath string, projectID int64) bool {
 	return exists && pid == projectID
 }
 
-// validLiveNoteChannel accepts "system", "mic" or "viewer:<id>".
+// validLiveNoteChannel accepts "system", "mic", the synthetic "mix" archive
+// track, or "viewer:<id>".
 func validLiveNoteChannel(ch string) bool {
 	switch ch {
-	case "system", "mic":
+	case "system", "mic", service.LiveNoteMixChannel:
 		return true
 	}
 	id, ok := strings.CutPrefix(ch, "viewer:")

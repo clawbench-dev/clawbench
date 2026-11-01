@@ -248,7 +248,17 @@ const artifactRows = computed(() => {
     })
   }
   if (r.hasRevised) rows.push({ key: 'revised', label: t('liveShare.notes.artifactRevised'), path: `${r.dirPath}${sep}transcript-revised.md` })
-  if (r.audioFiles > 0) rows.push({ key: 'audio', label: t('liveShare.notes.artifactAudio', { n: r.audioFiles }), path: `${r.dirPath}${sep}audio` })
+  // The merged recording is the one the user opens; the folder is only worth a
+  // row when the meeting still holds its original segments.
+  if (r.hasMeetingAudio) {
+    rows.push({
+      key: 'audio',
+      label: t('liveShare.notes.artifactAudioMerged'),
+      path: `${r.dirPath}${sep}audio${sep}meeting.webm`,
+    })
+  } else if (r.audioFiles > 0) {
+    rows.push({ key: 'audio', label: t('liveShare.notes.artifactAudio', { n: r.audioFiles }), path: `${r.dirPath}${sep}audio` })
+  }
   return rows
 })
 

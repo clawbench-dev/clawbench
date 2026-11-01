@@ -688,12 +688,14 @@ export function useLiveShare() {
     return true
   }
 
-  /** Turn AI 听记 off mid-meeting: stop recording and drain the upload queue. */
+  /** Turn AI 听记 off mid-meeting: stop recording and drain the upload queue.
+   *  The audio is NOT merged yet — the meeting may still be running, and a
+   *  merge now would leave whatever comes after the toggle as loose segments. */
   async function stopNotes(): Promise<void> {
     const notes = useLiveNotes()
     if (notes.phase.value !== 'recording') return
     await notes.stopCapture()
-    await notes.finishUploads()
+    await notes.finishUploads(false)
   }
 
   async function openSocket(): Promise<void> {
@@ -1263,6 +1265,9 @@ export function useLiveShare() {
     // Uploads and minutes generation continue in the background; the dialog
     // watches the notes state, not this promise.
     if (hadNotes) void notes.finishUploads()
+    // Notes were turned off earlier in the meeting, so the recorders are gone
+    // but the segments they left still need folding into one recording.
+    else void notes.mergeAudio()
 
     if (tok && mayDelete) {
       try {

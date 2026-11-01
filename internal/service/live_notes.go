@@ -459,8 +459,12 @@ type MeetingRecord struct {
 	HasMinutes    bool   `json:"hasMinutes"`
 	HasTranscript bool   `json:"hasTranscript"`
 	HasRevised    bool   `json:"hasRevised"`
-	AudioFiles    int    `json:"audioFiles"`
-	ChatCount     int    `json:"chatCount"`
+	// HasMeetingAudio reports the merged whole-meeting file. False for a
+	// recording that is still split into segments (meetings recorded before the
+	// merge existed), which the SPA shows as "N clips" instead.
+	HasMeetingAudio bool `json:"hasMeetingAudio"`
+	AudioFiles      int  `json:"audioFiles"`
+	ChatCount       int  `json:"chatCount"`
 	// Status is the minutes job state (idle/generating/ready/failed). The list
 	// uses it to show "生成中" and to mark a job that died with the process.
 	Status string `json:"status"`
@@ -500,7 +504,7 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 		if dirName != "" {
 			m.Dir = dirName
 			m.DirPath = MeetingDirPath(projectPath, dirName)
-			m.HasMinutes, m.HasTranscript, m.HasRevised, m.AudioFiles = liveNoteArtifactFlags(m.DirPath)
+			applyLiveNoteArtifactFlags(&m, liveNoteArtifactFlags(m.DirPath))
 		}
 		out = append(out, m)
 	}
@@ -538,7 +542,7 @@ func GetMeetingRecord(projectPath string, projectID int64, token string) (Meetin
 	if dirName != "" {
 		m.Dir = dirName
 		m.DirPath = MeetingDirPath(projectPath, dirName)
-		m.HasMinutes, m.HasTranscript, m.HasRevised, m.AudioFiles = liveNoteArtifactFlags(m.DirPath)
+		applyLiveNoteArtifactFlags(&m, liveNoteArtifactFlags(m.DirPath))
 	}
 	counts, err := liveNoteChatCounts(projectID)
 	if err != nil {
@@ -570,22 +574,50 @@ func liveNoteChatCounts(projectID int64) (map[string]int, error) {
 }
 
 // liveNoteArtifactFlags probes one meeting folder.
-func liveNoteArtifactFlags(dirPath string) (hasMinutes, hasTranscript, hasRevised bool, audio int) {
+func liveNoteArtifactFlags(dirPath string) liveNoteArtifactState {
+	var st liveNoteArtifactState
 	if dirPath == "" {
-		return false, false, false, 0
+		return st
 	}
 	paths := liveNotesPathsFor(dirPath)
-	hasMinutes = fileExists(paths.Minutes)
-	hasTranscript = fileExists(paths.Transcript)
-	hasRevised = fileExists(paths.Revised)
+	st.hasMinutes = fileExists(paths.Minutes)
+	st.hasTranscript = fileExists(paths.Transcript)
+	st.hasRevised = fileExists(paths.Revised)
+	st.hasMeetingAudio = fileExists(filepath.Join(paths.Audio, LiveNoteMeetingAudioFile))
 	if entries, err := os.ReadDir(paths.Audio); err == nil {
 		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".webm") {
-				audio++
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".webm") {
+				continue
 			}
+			// The merged whole-meeting file is not a channel recording; counting
+			// it would make "2 段录音" mean one microphone and one mix.
+			if e.Name() == LiveNoteMeetingAudioFile {
+				continue
+			}
+			st.audioFiles++
 		}
 	}
-	return hasMinutes, hasTranscript, hasRevised, audio
+	return st
+}
+
+// applyLiveNoteArtifactFlags copies a folder probe onto a record.
+func applyLiveNoteArtifactFlags(m *MeetingRecord, st liveNoteArtifactState) {
+	m.HasMinutes = st.hasMinutes
+	m.HasTranscript = st.hasTranscript
+	m.HasRevised = st.hasRevised
+	m.HasMeetingAudio = st.hasMeetingAudio
+	m.AudioFiles = st.audioFiles
+}
+
+// liveNoteArtifactState is what one meeting folder actually holds. A struct
+// rather than a return list because the set keeps growing and a positional call
+// site would silently mix up two bools.
+type liveNoteArtifactState struct {
+	hasMinutes      bool
+	hasTranscript   bool
+	hasRevised      bool
+	hasMeetingAudio bool
+	audioFiles      int
 }
 
 // ErrMeetingNotFound is returned when a record does not exist (or belongs to
@@ -1383,7 +1415,7 @@ func liveNotesChannelSlug(channel string) string {
 //
 // The transcript is NOT appended any more: it has its own file, and a copy here
 // would go stale the moment somebody edits it. A link keeps one source of truth.
-func WriteLiveNotesMinutesFile(paths LiveNotesPaths, title string, startedAt time.Time, minutes string, audioSegments int) (string, error) {
+func WriteLiveNotesMinutesFile(paths LiveNotesPaths, title string, startedAt time.Time, minutes string, audioFiles int, hasMeetingAudio bool) (string, error) {
 	if strings.TrimSpace(paths.Dir) == "" {
 		return "", errors.New("live notes: no project path")
 	}
@@ -1405,8 +1437,13 @@ func WriteLiveNotesMinutesFile(paths LiveNotesPaths, title string, startedAt tim
 	b.WriteString("\n\n---\n\n## 本次产物\n\n")
 	b.WriteString("- 转写：[transcript.vtt](transcript.vtt)\n")
 	b.WriteString("- 修订版转写：[transcript-revised.md](transcript-revised.md)\n")
-	if audioSegments > 0 {
-		fmt.Fprintf(&b, "- 录音：`audio/`（%d 段）\n", audioSegments)
+	if hasMeetingAudio {
+		// The merged track is what somebody actually listens to; the
+		// per-channel files are the source it was built from.
+		fmt.Fprintf(&b, "- 录音：[%s](audio/%s)\n", LiveNoteMeetingAudioFile, LiveNoteMeetingAudioFile)
+	}
+	if audioFiles > 0 {
+		fmt.Fprintf(&b, "- 分声道录音：`audio/`（%d 个文件）\n", audioFiles)
 	}
 
 	if err := os.WriteFile(paths.Minutes, []byte(b.String()), 0o644); err != nil {

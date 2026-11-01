@@ -119,6 +119,28 @@ describe('MeetingDetail', () => {
     expect(w.text()).toContain('transcript.vtt')
   })
 
+  it('points the recording row at the merged file', async () => {
+    getMock.mockResolvedValue(
+      record({ hasMeetingAudio: true, audioFiles: 2 }),
+    )
+    const w = mountDetail()
+    await flushPromises()
+
+    // One row, one file: the per-channel files are the source it was built
+    // from, not something the user should have to pick between.
+    expect(w.text()).toContain('Meeting recording')
+    expect(w.text()).toContain('audio/meeting.webm')
+    expect(w.text()).not.toContain('clips')
+  })
+
+  it('falls back to the audio folder for a recording that was never merged', async () => {
+    getMock.mockResolvedValue(record({ hasMeetingAudio: false, audioFiles: 12 }))
+    const w = mountDetail()
+    await flushPromises()
+
+    expect(w.text()).toContain('Recording (12 clips)')
+  })
+
   it('reads chat from the database and offers copy-all', async () => {
     const w = mountDetail()
     await flushPromises()

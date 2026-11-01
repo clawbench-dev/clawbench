@@ -92,15 +92,24 @@ function fakeStream(): MediaStream {
 /** Current loudness fed to the fake analyser (0 = silence, 1 = speech). */
 let fakeLevel = 0
 
+/** Every source node handed out, so a test can inspect the routing. */
+let fakeSources: Array<{ connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }> = []
+/** Every destination node handed out, in creation order. */
+let fakeDests: Array<{ stream: MediaStream; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }> = []
+
 function fakeCtx(): AudioContext {
   return {
     destination: {},
-    createMediaStreamSource: () => ({ connect: vi.fn(), disconnect: vi.fn() }),
-    createMediaStreamDestination: () => ({
-      stream: fakeStream(),
-      connect: vi.fn(),
-      disconnect: vi.fn(),
-    }),
+    createMediaStreamSource: () => {
+      const node = { connect: vi.fn(), disconnect: vi.fn() }
+      fakeSources.push(node)
+      return node
+    },
+    createMediaStreamDestination: () => {
+      const node = { stream: fakeStream(), connect: vi.fn(), disconnect: vi.fn() }
+      fakeDests.push(node)
+      return node
+    },
     createAnalyser: () => ({
       fftSize: 512,
       connect: vi.fn(),
@@ -121,6 +130,8 @@ describe('LiveNotesCapture', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     FakeRecorder.instances = []
+    fakeSources = []
+    fakeDests = []
     fakeLevel = 1
     vi.stubGlobal('MediaRecorder', FakeRecorder)
   })
@@ -128,6 +139,61 @@ describe('LiveNotesCapture', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+  it('records the whole meeting on a shared mix bus', async () => {
+    const uploads: NotesUploadArgs[] = []
+    const archives: NotesUploadArgs[] = []
+    const capture = new LiveNotesCapture(
+      fakeCtx(),
+      async (args) => {
+        uploads.push(args)
+        return null
+      },
+      {
+        segmentMs: 1000,
+        archiveUpload: async (args) => {
+          archives.push(args)
+          return null
+        },
+      },
+    )
+
+    capture.addChannel('mic', () => '我', fakeStream())
+    await vi.advanceTimersByTimeAsync(1000)
+
+    // Every channel keeps its own track (that is where the speaker label comes
+    // from) AND feeds the mix, which is the file the user listens to.
+    expect(uploads.map((u) => u.channel)).toEqual(['mic'])
+    expect(archives.map((u) => u.channel)).toEqual(['mix'])
+    expect(archives[0].speaker).toBe('')
+
+    // The mix recorder's own source must not be wired back into the bus, or the
+    // mix would feed itself. The bus is the first destination created: the
+    // capture makes it before it builds any recorder.
+    const mixBus = fakeDests[0]
+    expect(fakeSources[0].connect).not.toHaveBeenCalledWith(mixBus)
+    expect(fakeSources[1].connect).toHaveBeenCalledWith(mixBus)
+
+    capture.stop()
+    await capture.drainUploads(1000)
+  })
+
+  it('records no mix track when no archive uploader is given', async () => {
+    const uploads: NotesUploadArgs[] = []
+    const capture = new LiveNotesCapture(fakeCtx(), async (args) => {
+      uploads.push(args)
+      return null
+    }, { segmentMs: 1000 })
+
+    capture.addChannel('mic', () => '我', fakeStream())
+    expect(FakeRecorder.instances).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(uploads.map((u) => u.channel)).toEqual(['mic'])
+    expect(fakeDests).toHaveLength(1)
+    capture.stop()
+    await capture.drainUploads(1000)
   })
 
   it('uploads a segment per interval and flushes the last one on stop', async () => {

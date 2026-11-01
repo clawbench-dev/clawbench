@@ -151,6 +151,115 @@ func TestServeLiveShareNoteSegment_SilenceIsNotStored(t *testing.T) {
 	assert.Equal(t, float64(0), resp["id"])
 }
 
+func TestServeLiveShareNoteSegment_ArchiveSkipsTranscription(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := projPath(t.TempDir())
+	room, err := liveRegistry.Create(project, "会议")
+	require.NoError(t, err)
+
+	stub := &stubSTT{text: "不该被调用"}
+	prev := GetSTTProvider()
+	SetSTTProvider(stub)
+	t.Cleanup(func() { SetSTTProvider(prev) })
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteSegment(w, notesUpload(t, project, map[string]string{
+		"token":     room.Token(),
+		"channel":   service.LiveNoteMixChannel,
+		"startedAt": "1700000000000",
+		"archive":   "1",
+	}, []byte("audio")))
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	// The mix track has no single speaker: transcribing it would only produce a
+	// duplicate of the per-channel lines with the labels lost.
+	assert.Equal(t, 0, stub.calls)
+
+	dirName, err := service.MeetingDirName(room.Token())
+	require.NoError(t, err)
+	audioDir := service.LiveNotesPathsIn(service.MeetingDirPath(project, dirName)).Audio
+	entries, err := os.ReadDir(audioDir)
+	require.NoError(t, err)
+	// .gitignore keeps the binary audio out of the repository; the segment is
+	// the only recording so far.
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	assert.Contains(t, names, "1700000000000-mix.webm")
+}
+
+func TestServeLiveNotesAudioMerge_PublishesMergedFiles(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := projPath(t.TempDir())
+	room, err := liveRegistry.Create(project, "会议")
+	require.NoError(t, err)
+	room.SetNotesEnabled(true)
+
+	prev := GetSTTProvider()
+	SetSTTProvider(&stubSTT{text: "大家好"})
+	t.Cleanup(func() { SetSTTProvider(prev) })
+
+	upload := func(channel, startedAt string, archive bool) {
+		t.Helper()
+		fields := map[string]string{
+			"token":     room.Token(),
+			"channel":   channel,
+			"startedAt": startedAt,
+		}
+		if archive {
+			fields["archive"] = "1"
+		}
+		w := httptest.NewRecorder()
+		ServeLiveShareNoteSegment(w, notesUpload(t, project, fields, []byte("audio-"+channel)))
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	}
+	upload("mic", "1700000000000", false)
+	upload(service.LiveNoteMixChannel, "1700000000000", true)
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesAudioMerge(w, liveReq(t, http.MethodPost, "/api/live-share/notes/audio/merge", project,
+		map[string]string{"token": room.Token()}))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	dirName, err := service.MeetingDirName(room.Token())
+	require.NoError(t, err)
+	dir := service.MeetingDirPath(project, dirName)
+	assert.FileExists(t, filepath.Join(dir, "audio", "mic.webm"))
+	assert.FileExists(t, filepath.Join(dir, "audio", service.LiveNoteMeetingAudioFile))
+
+	var resp struct {
+		OK        bool               `json:"ok"`
+		Artifacts liveNotesArtifacts `json:"artifacts"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.OK)
+	assert.Equal(t, filepath.Join(dir, "audio", service.LiveNoteMeetingAudioFile), resp.Artifacts.AudioMeeting)
+	// The segments are gone: the user opens one recording, not a folder of them.
+	// The count is the channel recordings — the merged file is not a channel.
+	assert.Equal(t, 1, resp.Artifacts.AudioFiles)
+}
+
+func TestServeLiveNotesAudioMerge_OtherProjectIs404(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := projPath(t.TempDir())
+	room, err := liveRegistry.Create(project, "会议")
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesAudioMerge(w, liveReq(t, http.MethodPost, "/api/live-share/notes/audio/merge", projPath(t.TempDir()),
+		map[string]string{"token": room.Token()}))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
 func TestServeLiveShareNoteSegment_RejectsUnknownChannel(t *testing.T) {
 	setupLiveNotesDB(t)
 	resetLiveRegistry(t)

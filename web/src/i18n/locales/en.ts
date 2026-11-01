@@ -3991,6 +3991,7 @@ export default {
       audioCount: '{n} clips',
       chatCount: '{n} messages',
       audioShort: '{n} clips',
+      audioMerged: 'Recording',
       chatShort: '{n} msgs',
       revised: 'Revised',
       duration: '{n} min',
@@ -4188,6 +4189,7 @@ export default {
       artifactTranscript: 'Transcript',
       artifactRevised: 'Revised transcript',
       artifactAudio: 'Recording ({n} clips)',
+      artifactAudioMerged: 'Meeting recording',
       copyPath: 'Copy path',
     },
     history: {

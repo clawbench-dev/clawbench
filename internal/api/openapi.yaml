@@ -3945,8 +3945,8 @@ paths:
       summary: 上传一段音频并转写
       description: |
         发布端按**信道**分别上传：`system`（系统声音）、`mic`（发布端麦克风）、
-        `viewer:<id>`（某个观众的麦克风）。服务端用配置的 STT provider 同步转写后落库，
-        返回文本供发布端即时显示字幕。
+        `viewer:<id>`（某个观众的麦克风）、`mix`（整场会议的混音轨，仅存档）。
+        服务端用配置的 STT provider 同步转写后落库，返回文本供发布端即时显示字幕。
 
         信道分离是说话人标注的来源：发布端物理上持有每个参与者独立的音轨，
         不需要说话人分离模型。静音段（转写结果为空）返回 `id: 0`，不落库。
@@ -3954,6 +3954,9 @@ paths:
         **音频在转写之前就写进项目目录**（`<项目>/.clawbench/notes/<场次>/audio/`），
         因为录音是唯一无法再生的产物：转写失败仍可用它重跑。落盘失败只记日志，
         不影响本次转写。`title` 只在第一段时用于给会议目录命名，后续忽略。
+
+        传 `archive=1` 时只存档、不转写（`mix` 轨就是这样上传的：它没有单一
+        说话人，转写只会得到一份丢失说话人标注的重复文本）。
 
         鉴权依据是**会议记录行**（发布端连上信令时就已创建），因此共享刚结束那几秒
         的在途上传仍然落地。
@@ -3970,7 +3973,7 @@ paths:
                   type: string
                 channel:
                   type: string
-                  description: "`system` | `mic` | `viewer:<id>`"
+                  description: "`system` | `mic` | `mix` | `viewer:<id>`"
                 speaker:
                   type: string
                   description: 展示用说话人标签（发布端已本地化）
@@ -3984,18 +3987,63 @@ paths:
                 durationMs:
                   type: integer
                   format: int64
+                archive:
+                  type: string
+                  description: 传 `1` 时只写盘、不转写（混音轨用）
                 file:
                   type: string
                   format: binary
       responses:
         "200":
-          description: "转写结果（`id: 0` 表示静音，未落库）"
+          description: "转写结果（`id: 0` 表示静音或仅存档，未落库）"
         "400":
           $ref: "#/components/responses/Error"
         "404":
           description: token 不存在或不属于当前项目
         "502":
           description: STT 转写失败（该段留空，不影响共享）
+
+  /api/live-share/notes/audio/merge:
+    post:
+      tags: [LiveShare]
+      summary: 把会议录音合并成整场文件
+      description: |
+        把 `audio/` 里的分段按信道分组，重封装成每信道一个文件，混音轨写成
+        `audio/meeting.webm`（整场会议），然后删除分段文件。
+
+        这是**容器重封装而不是转码**：同一信道的分段来自同一套编码参数，把各段的
+        cluster 复制进一个 Segment、并把时间码平移到会议时间轴上即可，音频数据一个
+        字节都不改。平移同时保留了静音间隔（时间码留空档，而不是补静音音频）。
+
+        幂等：已经合并过的信道直接跳过，所以重试不会产出只含残余分段的不完整文件。
+
+        由发布端在**上传队列排空之后**调用——那是唯一能确定「不会再有音频」的时刻。
+      operationId: liveShareNotesAudioMerge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        "200":
+          description: 合并后的产物列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  artifacts:
+                    $ref: "#/components/schemas/LiveNotesArtifacts"
+        "404":
+          description: token 不存在或不属于当前项目
+        "500":
+          $ref: "#/components/responses/Error"
 
   /api/live-share/notes/minutes:
     post:
@@ -7571,16 +7619,25 @@ components:
             error: { type: string }
           required: [status]
         artifacts:
-          type: object
-          description: 这场会留在项目目录里的文件（仅发布端，未生成时为空）
-          properties:
-            dir: { type: string }
-            minutes: { type: string }
-            transcript: { type: string }
-            revised: { type: string }
-            audio: { type: string }
-            audioFiles: { type: integer }
+          $ref: "#/components/schemas/LiveNotesArtifacts"
       required: [status]
+
+    LiveNotesArtifacts:
+      type: object
+      description: |
+        这场会留在项目目录里的文件（仅发布端，未生成时为空）。
+
+        `audioMeeting` 是合并后的**整场会议**录音（`audio/meeting.webm`），
+        `audio` 是分声道录音所在的目录、`audioFiles` 是其中的文件数。
+        合并没有跑过的旧会议只有 `audio` + `audioFiles`（一堆分段）。
+      properties:
+        dir: { type: string }
+        minutes: { type: string }
+        transcript: { type: string }
+        revised: { type: string }
+        audio: { type: string }
+        audioMeeting: { type: string }
+        audioFiles: { type: integer }
 
     MeetingRecord:
       type: object
@@ -7589,7 +7646,8 @@ components:
         时创建，与「有没有录到东西」无关。`dir` 只在第一次写出产物（录音 /
         聊天归档 / 纪要）后才存在，此时 `dirPath` 才有值。
         `hasMinutes` / `hasTranscript` / `hasRevised` / `audioFiles` 直接反映文件
-        是否存在——目录探测的结果，不是缓存。
+        是否存在——目录探测的结果，不是缓存。`hasMeetingAudio` 表示录音已经合并成
+        `audio/meeting.webm`；为 false 而 `audioFiles > 0` 说明还是一次性的分段录音。
       properties:
         token: { type: string }
         title: { type: string }
@@ -7600,6 +7658,7 @@ components:
         hasMinutes: { type: boolean }
         hasTranscript: { type: boolean }
         hasRevised: { type: boolean }
+        hasMeetingAudio: { type: boolean }
         audioFiles: { type: integer }
         chatCount: { type: integer }
         status:

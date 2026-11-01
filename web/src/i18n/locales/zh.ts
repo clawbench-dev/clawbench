@@ -3985,6 +3985,7 @@ export default {
       audioCount: '{n} 段录音',
       chatCount: '{n} 条聊天',
       audioShort: '{n} 段',
+      audioMerged: '录音',
       chatShort: '{n} 条',
       revised: '修订',
       duration: '{n} 分钟',
@@ -4176,6 +4177,7 @@ export default {
       artifactTranscript: '转写',
       artifactRevised: '修订版转写',
       artifactAudio: '录音（{n} 段）',
+      artifactAudioMerged: '整场录音',
       copyPath: '复制路径',
     },
     history: {
