@@ -397,3 +397,280 @@ func TestServeConfigPatch_SummaryModelMustBeServed(t *testing.T) {
 	})
 	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
+
+// ── Per-model test ───────────────────────────────────────────
+
+type modelTestResponse struct {
+	OK        bool   `json:"ok"`
+	Model     string `json:"model"`
+	Status    int    `json:"status"`
+	LatencyMS int64  `json:"latencyMs"`
+	Reply     string `json:"reply"`
+	Error     string `json:"error"`
+}
+
+func runModelTest(t *testing.T, providerID int64, body map[string]any) modelTestResponse {
+	t.Helper()
+	if body == nil {
+		body = map[string]any{}
+	}
+	body["id"] = providerID
+	rec := doProviderRequest(t, ServeProviderSubRoutes, http.MethodPost, "/api/providers/test", body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var out modelTestResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	return out
+}
+
+// A model test has to be a real chat call: a /models listing can succeed for a
+// model the endpoint cannot actually serve.
+func TestProvidersAPI_TestModelSendsChatRequest(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	var gotPath, gotAuth, gotModel string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		var payload struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		gotModel = payload.Model
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	p, err := service.CreateProvider(model.Provider{
+		Name: "Chat", Protocol: model.ProviderProtocolOpenAI, BaseURL: srv.URL + "/v1", APIKey: "sk-chat",
+	})
+	require.NoError(t, err)
+
+	out := runModelTest(t, p.ID, map[string]any{"model": "gpt-x"})
+	assert.True(t, out.OK, out.Error)
+	assert.Equal(t, "/v1/chat/completions", gotPath)
+	assert.Equal(t, "Bearer sk-chat", gotAuth)
+	assert.Equal(t, "gpt-x", gotModel)
+	assert.Equal(t, "gpt-x", out.Model)
+	assert.Equal(t, http.StatusOK, out.Status)
+	assert.Equal(t, "ok", out.Reply)
+}
+
+func TestProvidersAPI_TestModelReportsUpstreamError(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":{"message":"The model does not exist"}}`))
+	}))
+	defer srv.Close()
+
+	p, err := service.CreateProvider(model.Provider{
+		Name: "Broken", Protocol: model.ProviderProtocolOpenAI, BaseURL: srv.URL, APIKey: "k",
+	})
+	require.NoError(t, err)
+
+	out := runModelTest(t, p.ID, map[string]any{"model": "ghost-model"})
+	assert.False(t, out.OK)
+	assert.Equal(t, http.StatusNotFound, out.Status)
+	assert.Contains(t, out.Error, "The model does not exist",
+		"the vendor message is the whole point of the test")
+}
+
+// The dialog tests what is typed, not what was saved — otherwise a wrong key
+// has to be persisted before the user can find out it is wrong.
+func TestProvidersAPI_TestModelUsesDraftOverrides(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	var gotPath, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	p, err := service.CreateProvider(model.Provider{
+		Name: "Draft", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://saved.example/v1", APIKey: "sk-saved",
+	})
+	require.NoError(t, err)
+
+	out := runModelTest(t, p.ID, map[string]any{
+		"model": "m", "baseUrl": srv.URL + "/v1", "apiKey": "sk-draft",
+	})
+	assert.True(t, out.OK, out.Error)
+	assert.Equal(t, "/v1/chat/completions", gotPath)
+	assert.Equal(t, "Bearer sk-draft", gotAuth)
+
+	// The saved row is untouched by the probe.
+	saved, err := service.GetProvider(p.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "https://saved.example/v1", saved.BaseURL)
+	assert.Equal(t, "sk-saved", saved.APIKey)
+}
+
+// Anthropic-compatible gateways disagree about the header: auto means
+// x-api-key, bearer means Authorization. The probe has to follow the saved mode.
+func TestProvidersAPI_TestModelAnthropicAuthMode(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	type captured struct{ apiKey, auth, version string }
+	cases := []struct {
+		name    string
+		mode    string
+		wantKey string
+		wantHdr string
+	}{
+		{name: "auto uses x-api-key", mode: model.ProviderAuthAuto, wantKey: "sk-a"},
+		{name: "bearer uses Authorization", mode: model.ProviderAuthBearer, wantHdr: "Bearer sk-a"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := captured{}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = captured{
+					apiKey:  r.Header.Get("x-api-key"),
+					auth:    r.Header.Get("Authorization"),
+					version: r.Header.Get("anthropic-version"),
+				}
+				_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+			}))
+			defer srv.Close()
+
+			p, err := service.CreateProvider(model.Provider{
+				Name: "Anthropic " + tc.mode, Protocol: model.ProviderProtocolAnthropic,
+				BaseURL: srv.URL, APIKey: "sk-a", AuthMode: tc.mode,
+			})
+			require.NoError(t, err)
+
+			out := runModelTest(t, p.ID, map[string]any{"model": "claude-x"})
+			assert.True(t, out.OK, out.Error)
+			assert.Equal(t, tc.wantKey, got.apiKey)
+			assert.Equal(t, tc.wantHdr, got.auth)
+			assert.Equal(t, "2023-06-01", got.version)
+			assert.Equal(t, "ok", out.Reply)
+		})
+	}
+}
+
+// Gemini carries the model in the path, so the probe cannot reuse the fixed
+// endpoint builder the other protocols share.
+func TestProvidersAPI_TestModelGeminiPath(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	var gotPath, gotKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotKey = r.Header.Get("x-goog-api-key")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}`))
+	}))
+	defer srv.Close()
+
+	p, err := service.CreateProvider(model.Provider{
+		Name: "Gem", Protocol: model.ProviderProtocolGemini, BaseURL: srv.URL, APIKey: "g-key",
+	})
+	require.NoError(t, err)
+
+	out := runModelTest(t, p.ID, map[string]any{"model": "gemini-2.0-flash"})
+	assert.True(t, out.OK, out.Error)
+	assert.Equal(t, "/v1beta/models/gemini-2.0-flash:generateContent", gotPath)
+	assert.Equal(t, "g-key", gotKey)
+	assert.Equal(t, "ok", out.Reply)
+}
+
+// Without a model the endpoint keeps its old meaning: probe the catalog.
+func TestProvidersAPI_TestWithoutModelStillProbesCatalog(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("catalog probe must stay a GET, got %s", r.Method)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"a"}]}`))
+	}))
+	defer srv.Close()
+
+	p, err := service.CreateProvider(model.Provider{
+		Name: "Catalog", Protocol: model.ProviderProtocolOpenAI, BaseURL: srv.URL, APIKey: "k",
+	})
+	require.NoError(t, err)
+
+	rec := doProviderRequest(t, ServeProviderSubRoutes, http.MethodPost, "/api/providers/test",
+		map[string]any{"id": p.ID})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var out struct {
+		OK     bool     `json:"ok"`
+		Models []string `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	assert.True(t, out.OK)
+	assert.Equal(t, []string{"a"}, out.Models)
+}
+
+func TestProvidersAPI_TestModelRejectsUnknownProtocolOverride(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	p, err := service.CreateProvider(model.Provider{
+		Name: "P", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://x/v1", APIKey: "k",
+	})
+	require.NoError(t, err)
+
+	rec := doProviderRequest(t, ServeProviderSubRoutes, http.MethodPost, "/api/providers/test",
+		map[string]any{"id": p.ID, "model": "m", "protocol": "cohere"})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "ProviderInvalid")
+}
+
+// Gemini is the one protocol whose endpoint carries the model, so its URL
+// builder has to handle every base shape the other protocols get from
+// summarize.BuildEndpointURL.
+func TestGeminiGenerateURL(t *testing.T) {
+	cases := []struct{ base, want string }{
+		{"", ""},
+		{
+			"https://generativelanguage.googleapis.com",
+			"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+		},
+		{
+			"https://gw.example/v1beta/",
+			"https://gw.example/v1beta/models/gemini-2.0-flash:generateContent",
+		},
+		{
+			// A full endpoint keeps its address but must test the clicked model.
+			"https://gw.example/v1beta/models/old-model:generateContent",
+			"https://gw.example/v1beta/models/gemini-2.0-flash:generateContent",
+		},
+		{
+			"https://gw.example/gemini",
+			"https://gw.example/gemini/v1beta/models/gemini-2.0-flash:generateContent",
+		},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, geminiGenerateURL(tc.base, "gemini-2.0-flash"), tc.base)
+	}
+}
+
+// Every vendor wraps the reason differently, and the reason is what the user
+// needs to see — an opaque "HTTP 401" sends them hunting for the wrong bug.
+func TestProviderProbeErrorShapes(t *testing.T) {
+	cases := []struct {
+		status int
+		body   string
+		want   string
+	}{
+		{http.StatusUnauthorized, `{"error":{"message":"bad key"}}`, "HTTP 401: bad key"},
+		{http.StatusBadGateway, `{"error":"gateway down"}`, "HTTP 502: gateway down"},
+		{http.StatusBadRequest, `{"message":"nope"}`, "HTTP 400: nope"},
+		{http.StatusInternalServerError, "<html>oops</html>", "HTTP 500: <html>oops</html>"},
+		{http.StatusServiceUnavailable, "", "HTTP 503: Service Unavailable"},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, providerProbeError(tc.status, []byte(tc.body)).Error(), tc.body)
+	}
+}
+
+func TestClipProbeText(t *testing.T) {
+	assert.Equal(t, "a b", clipProbeText("  a\n b  ", 10))
+	assert.Equal(t, "aaaa…", clipProbeText("aaaa bbbb", 4))
+	assert.Equal(t, "short", clipProbeText("short", 5))
+}

@@ -5527,15 +5527,30 @@ paths:
   /api/providers/test:
     post:
       tags: [Providers]
-      summary: 探测提供商端点
+      summary: 探测提供商端点，或实测某个模型
       description: |
-        body：`{id}`。对已保存的提供商发起一次 `GET {baseUrl}/models`（必要时
-        补 `/v1`），返回 `{ok, status, models?|error?}`。**只是诊断**：部分网关
-        不暴露模型列表，失败不代表聊天不可用；不会修改任何状态。
+        body：`{id, model?, protocol?, baseUrl?, apiKey?, authMode?}`。**只是诊断**，
+        不修改任何状态。
+
+        - 不带 `model`：对提供商发起一次 `GET {baseUrl}/models`（必要时补 `/v1`），
+          返回 `{ok, status, models?|error?}`。部分网关不暴露模型列表，失败不代表聊天不可用。
+        - 带 `model`：按该提供商的协议真实发送一次最小对话请求（openai →
+          `/chat/completions`，anthropic → `/messages`，gemini →
+          `/v1beta/models/{model}:generateContent`），返回
+          `{ok, model, status, latencyMs, reply?|error?}`。这是唯一能回答
+          「这个模型在这套端点 + 密钥下能不能用」的方式：网关可能列出了却服务不了，
+          也可能服务得了却没列出。
+
+        `protocol`/`baseUrl`/`apiKey`/`authMode` 为可选的未保存值，用于编辑弹窗
+        「保存前先测」；为空时取已保存的配置。`protocol`/`authMode` 取值非法时返回 `400`。
       operationId: providersTest
       responses:
         "200":
           description: 探测结果
+        "400":
+          description: 覆盖字段非法（`ProviderInvalid`）
+        "404":
+          description: 不存在（`ProviderNotFound`）
 
   /api/providers/{id}:
     get:

@@ -97,10 +97,40 @@
           {{ t('settings.items.providerModelsNone') }}
         </div>
         <div v-else class="provider-models-chips">
-          <span v-for="id in draft.models" :key="id" class="provider-model-chip">
-            {{ id }}
+          <span
+            v-for="id in draft.models"
+            :key="id"
+            class="provider-model-chip"
+            :class="chipClass(id)"
+          >
+            <span class="provider-model-chip-id">{{ id }}</span>
+            <!-- The only honest way to know a model works: ask it. A listed id
+                 can still be rejected by the endpoint, and a gateway can serve
+                 a model it never lists. -->
+            <button
+              type="button"
+              class="provider-model-chip-test"
+              :disabled="testingModel !== null"
+              :title="t('settings.items.providerModelTestHint')"
+              :aria-label="t('settings.items.providerModelTestHint')"
+              :data-model-test="id"
+              @click="testModel(id)"
+            >
+              <component :is="testIcon(id)" :size="12" :class="{ 'provider-spin': testingModel === id }" />
+            </button>
             <button type="button" class="provider-model-chip-x" @click="removeModel(id)">×</button>
           </span>
+        </div>
+        <div v-if="visibleModelResults.length > 0" class="provider-model-results">
+          <div
+            v-for="r in visibleModelResults"
+            :key="r.model"
+            class="provider-model-result"
+            :class="r.ok ? 'provider-model-result--ok' : 'provider-model-result--fail'"
+          >
+            <component :is="r.ok ? CheckCircle2 : AlertCircle" :size="13" />
+            <span>{{ r.text }}</span>
+          </div>
         </div>
         <div v-if="draft.models.length > 0" class="provider-models-default">
           <span>{{ t('settings.items.providerDefaultModel') }}</span>
@@ -147,9 +177,9 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, ChevronsUpDown, Eye, EyeOff, Layers } from 'lucide-vue-next'
+import { AlertCircle, CheckCircle2, ChevronsUpDown, Eye, EyeOff, Layers, Loader2, Play } from 'lucide-vue-next'
 import '@/assets/modal-footer-btn.css'
-import { apiGet } from '@/utils/api'
+import { apiGet, apiPost } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -230,6 +260,99 @@ const draft = reactive({
 
 const canSave = computed(() => draft.name.trim() !== '')
 
+/** Per-model probe state. `testingModel` is the id currently in flight; one at
+ *  a time keeps the results readable and the endpoint unhammered. */
+const testingModel = ref<string | null>(null)
+const modelResults = ref<Record<string, ModelTestResult>>({})
+
+interface ModelTestResult {
+  model: string
+  ok: boolean
+  text: string
+}
+
+/** Results are shown only for models still in the set: removing a chip must
+ *  take its verdict with it, or the list would describe a model that is no
+ *  longer configured. */
+const visibleModelResults = computed(() =>
+  draft.models
+    .map((id) => modelResults.value[id])
+    .filter((r): r is ModelTestResult => r !== undefined),
+)
+
+function testIcon(id: string) {
+  if (testingModel.value === id) return Loader2
+  const r = modelResults.value[id]
+  if (!r) return Play
+  return r.ok ? CheckCircle2 : AlertCircle
+}
+
+function chipClass(id: string): Record<string, boolean> {
+  const r = modelResults.value[id]
+  return {
+    'provider-model-chip--ok': r?.ok === true,
+    'provider-model-chip--fail': r?.ok === false,
+  }
+}
+
+/** Sends one minimal chat request for this model. Draft values ride along so a
+ *  key or endpoint that has not been saved can still be tested — saving a
+ *  wrong key first would be the only way to find out it is wrong. */
+async function testModel(id: string) {
+  const p = props.provider
+  if (!p || testingModel.value !== null) return
+  testingModel.value = id
+  const next = { ...modelResults.value }
+  delete next[id]
+  modelResults.value = next
+  try {
+    const res = await apiPost<{ ok: boolean; status?: number; latencyMs?: number; error?: string }>(
+      '/api/providers/test',
+      {
+        id: p.id,
+        model: id,
+        protocol: draft.protocol,
+        baseUrl: draft.baseUrl.trim(),
+        apiKey: draft.apiKey,
+        authMode: draft.authMode,
+      },
+      // A generated token is slower than the default 10s budget.
+      { timeoutMs: 45_000 },
+    )
+    modelResults.value = {
+      ...modelResults.value,
+      [id]: res.ok
+        ? {
+            model: id,
+            ok: true,
+            text: t('settings.items.providerModelTestOk', { model: id, ms: res.latencyMs ?? 0 }),
+          }
+        : {
+            model: id,
+            ok: false,
+            text: t('settings.items.providerModelTestFail', {
+              model: id,
+              reason: res.error || t('settings.items.providerTestFailed'),
+            }),
+          },
+    }
+  } catch (err) {
+    modelResults.value = {
+      ...modelResults.value,
+      [id]: {
+        model: id,
+        ok: false,
+        text: t('settings.items.providerModelTestFail', {
+          model: id,
+          reason: err instanceof Error ? err.message : String(err),
+        }),
+      },
+    }
+  } finally {
+    testingModel.value = null
+  }
+}
+
 /** The chosen catalogue entry, for the trigger row (icon + name). */
 const selectedPreset = computed<PresetOption | undefined>(() =>
   props.presets.find((p) => p.id === presetId.value),
@@ -244,6 +367,8 @@ function resetFromProvider() {
   keyLoaded.value = false
   keyLoading.value = false
   keyError.value = ''
+  testingModel.value = null
+  modelResults.value = {}
   presetId.value = p?.presetId ?? ''
   draft.name = p?.name ?? ''
   draft.protocol = p?.protocol ?? 'anthropic'
@@ -315,6 +440,11 @@ function onModelsSelected(ids: string[]) {
 
 function removeModel(id: string) {
   onModelsSelected(draft.models.filter((m) => m !== id))
+  if (modelResults.value[id]) {
+    const next = { ...modelResults.value }
+    delete next[id]
+    modelResults.value = next
+  }
 }
 
 function submit() {
@@ -509,6 +639,81 @@ function close() {
   font-size: var(--font-size-md);
   line-height: 1;
   padding: 0;
+}
+/* A model id can be long; truncate it instead of stretching the chip past the
+   dialog and pushing the buttons out of reach. */
+.provider-model-chip-id {
+  max-width: calc(220 * var(--dp));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.provider-model-chip-test {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Bigger than the 12dp glyph: this is the only tappable target on the chip
+     besides the remove button, and a bare icon is unusable on a phone. */
+  width: calc(18 * var(--dp));
+  height: calc(18 * var(--dp));
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+}
+.provider-model-chip-test:hover:not(:disabled) {
+  color: var(--accent-color);
+}
+.provider-model-chip-test:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+/* The chip itself carries the verdict, so a tested set reads at a glance. */
+.provider-model-chip--ok {
+  border-color: color-mix(in srgb, var(--color-green) 55%, transparent);
+}
+.provider-model-chip--ok .provider-model-chip-test {
+  color: var(--color-green);
+}
+.provider-model-chip--fail {
+  border-color: color-mix(in srgb, var(--color-red) 55%, transparent);
+}
+.provider-model-chip--fail .provider-model-chip-test {
+  color: var(--color-red);
+}
+.provider-model-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.provider-model-result {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  overflow-wrap: anywhere;
+}
+.provider-model-result--ok {
+  color: var(--color-green);
+}
+.provider-model-result--fail {
+  color: var(--color-red);
+}
+.provider-spin {
+  animation: provider-spin 1s linear infinite;
+}
+@keyframes provider-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .provider-spin {
+    animation-duration: 3s;
+  }
 }
 .provider-models-default {
   display: flex;

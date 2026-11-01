@@ -102,6 +102,8 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 
 **手填模型**：列表永远不是封闭的。摘要模型与「绑定了提供商的智能体」都保留「自定义…」入口，可输入列表之外的 id（网关的私有模型、刚上线还没进目录的模型）。绑定提供商时后端接受任意非空模型 id；未绑定时仍按发现列表校验，避免把拼写错误存成一个跑不起来的模型。
 
+**模型实测**：编辑弹窗里每个模型 chip 都能单独测试。测试按该提供商的协议真实发送一次最小对话请求（openai → `/chat/completions`，anthropic → `/messages`，gemini → `/v1beta/models/{model}:generateContent`），返回 `{ok, model, status, latencyMs, reply?|error?}`。这是唯一能回答「这个模型在这套端点 + 密钥下能不能用」的方式——网关可能列出了却服务不了，也可能服务得了却没列出，所以 `/models` 探活不能替代它。请求会带上弹窗里未保存的 `protocol` / `baseUrl` / `apiKey` / `authMode`，因此可以先测再保存；为空则用已保存的行。认证头与真实调用共用 `applyProviderAuth`，两边不会各写一套。
+
 **优先级**：ACP 上报的模型 > 目录。目录只在两个地方出现：
 
 1. 提供商 `/models` 探测失败或返回空时，`GET /api/providers/{id}/models` 用目录兜底（响应 `source: "catalog"`）
@@ -129,13 +131,13 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 | GET | `/api/providers` | 列表 + `hasKey` + `agentCount` |
 | POST | `/api/providers` | 新建 |
 | GET | `/api/providers/presets` | 内置预设（models.dev 快照，209 家） |
-| POST | `/api/providers/test` | `GET {base}/models` 探活（诊断，不改状态） |
+| POST | `/api/providers/test` | 不带 `model`：`GET {base}/models` 探活；带 `model`：按协议真实发一次最小对话请求（诊断，不改状态） |
 | GET/PUT/DELETE | `/api/providers/{id}` | 详情 / 更新（`apiKey` 空=不变，`clearApiKey`）/ 删除（被引用 409） |
 | PATCH | `/api/agents` | 新增 `provider_id`（null 清除） |
 
 ## 前端
 
-- 设置 → AI 与对话 → **模型提供商**：列表 + 内联表单（预设下拉、协议、端点、密钥、认证方式），每行可测试/编辑/删除。
+- 设置 → AI 与对话 → **模型提供商**：列表 + 内联表单（预设下拉、协议、端点、密钥、认证方式），每行可测试/编辑/删除；编辑弹窗里每个模型 chip 可单独实测（显示耗时或上游原因）。
 - 智能体详情 → 偏好设置 → **模型提供商**：仅列出该后端支持的协议；配置文件后端选中后弹确认框。
 - 预设来自 `internal/model/provider_presets.json`（由 `scripts/gen-provider-presets.mjs` 从 models.dev 生成），只预填名称/协议/端点。
 

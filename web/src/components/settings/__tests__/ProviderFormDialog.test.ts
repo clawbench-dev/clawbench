@@ -3,9 +3,11 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 
 const mockGet = vi.fn()
+const mockPost = vi.fn()
 
 vi.mock('@/utils/api', () => ({
   apiGet: (...args: unknown[]) => mockGet(...args),
+  apiPost: (...args: unknown[]) => mockPost(...args),
 }))
 
 vi.mock('@/utils/appLog', () => ({
@@ -45,6 +47,10 @@ const i18n = createI18n({
           providerWireLabel: '接口协议',
           providerWireResponses: 'Responses API',
           providerWireChat: 'Chat Completions',
+          providerTestFailed: '连接失败',
+          providerModelTestHint: '测试该模型',
+          providerModelTestOk: '{model} · {ms} 毫秒',
+          providerModelTestFail: '{model}：{reason}',
         },
       },
     },
@@ -272,5 +278,71 @@ describe('ProviderFormDialog', () => {
     const cancel = wrapper.findAll('.mock-dialog .fbtn').find(b => b.text().includes('取消'))
     await cancel!.trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('tests one model with the draft values and reports how fast it answered', async () => {
+    mockPost.mockResolvedValue({ ok: true, status: 200, latencyMs: 320, reply: 'ok' })
+    const wrapper = mountDialog({ provider: existing })
+
+    await wrapper.find('[data-model-test="m-a"]').trigger('click')
+    await flushPromises()
+
+    // The unsaved draft rides along: the endpoint/key being tested is the one
+    // on screen, not necessarily the one already stored.
+    expect(mockPost).toHaveBeenCalledWith(
+      '/api/providers/test',
+      expect.objectContaining({
+        id: 7,
+        model: 'm-a',
+        protocol: 'openai',
+        baseUrl: 'https://x/v1',
+        authMode: 'bearer',
+      }),
+      expect.objectContaining({ timeoutMs: 45_000 }),
+    )
+    const result = wrapper.find('.provider-model-result--ok')
+    expect(result.text()).toContain('m-a')
+    expect(result.text()).toContain('320')
+    expect(wrapper.findAll('.provider-model-chip')[0].classes()).toContain('provider-model-chip--ok')
+  })
+
+  it('shows the upstream reason when a model test fails', async () => {
+    mockPost.mockResolvedValue({ ok: false, status: 404, error: 'HTTP 404: model not found' })
+    const wrapper = mountDialog({ provider: existing })
+
+    await wrapper.find('[data-model-test="m-b"]').trigger('click')
+    await flushPromises()
+
+    const result = wrapper.find('.provider-model-result--fail')
+    expect(result.text()).toContain('m-b')
+    expect(result.text()).toContain('model not found')
+    expect(wrapper.findAll('.provider-model-chip')[1].classes()).toContain('provider-model-chip--fail')
+  })
+
+  it('drops a model verdict when that model is removed', async () => {
+    mockPost.mockResolvedValue({ ok: true, status: 200, latencyMs: 12 })
+    const wrapper = mountDialog({ provider: existing })
+
+    await wrapper.find('[data-model-test="m-a"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.provider-model-result').exists()).toBe(true)
+
+    await wrapper.findAll('.provider-model-chip')[0].find('.provider-model-chip-x').trigger('click')
+    expect(wrapper.find('.provider-model-result').exists()).toBe(false)
+  })
+
+  it('clears model verdicts on reopen (a stale result cannot describe a new draft)', async () => {
+    mockPost.mockResolvedValue({ ok: true, status: 200, latencyMs: 12 })
+    const wrapper = mountDialog({ provider: existing })
+
+    await wrapper.find('[data-model-test="m-a"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.provider-model-result').exists()).toBe(true)
+
+    await wrapper.setProps({ open: false })
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+
+    expect(wrapper.find('.provider-model-result').exists()).toBe(false)
   })
 })
