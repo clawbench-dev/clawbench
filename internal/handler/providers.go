@@ -686,9 +686,16 @@ func parseProviderModelIDs(body []byte) []string {
 }
 
 // serveProviderModels returns the model ids a saved provider advertises. It is
-// the data source for the summary-model picker, so a gateway that does not
-// publish /models yields an empty list plus the reason — the caller falls back
-// to a free-text input rather than blocking configuration.
+// the data source for the model pickers, so a gateway that does not publish
+// /models yields an empty list plus the reason — the caller falls back to a
+// free-text input rather than blocking configuration.
+//
+// The advertised list is returned even when the provider already has a curated
+// subset (`curated`), because the two answer different questions: the probe
+// says what the endpoint serves, the curated list says what the user saved.
+// Returning only the curated set made the picker collapse to the current
+// selection the second time it was opened — there was no way left to add a
+// model the user had not already picked.
 func serveProviderModels(w http.ResponseWriter, r *http.Request, id int64) {
 	if r.Method != http.MethodGet {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -699,14 +706,13 @@ func serveProviderModels(w http.ResponseWriter, r *http.Request, id int64) {
 		writeProviderError(w, r, err)
 		return
 	}
-	if len(p.Models) > 0 {
-		// The provider curates its own list; it wins over the probe so the
-		// picker cannot drift from what the user saved.
-		writeJSON(w, http.StatusOK, map[string]any{jsonKeyModels: p.Models, "source": "curated", jsonKeyStatus: http.StatusOK})
-		return
+	curated := p.Models
+	if curated == nil {
+		curated = []string{}
 	}
+	result := map[string]any{jsonKeyModels: []string{}, "curated": curated, "source": "", jsonKeyStatus: http.StatusOK}
 	if p.BaseURL == "" {
-		writeJSON(w, http.StatusOK, map[string]any{jsonKeyModels: []string{}})
+		writeJSON(w, http.StatusOK, result)
 		return
 	}
 	models, status, probeErr := probeProviderModels(r.Context(), p)
@@ -724,7 +730,12 @@ func serveProviderModels(w http.ResponseWriter, r *http.Request, id int64) {
 			}
 		}
 	}
-	result := map[string]any{jsonKeyModels: models, jsonKeyStatus: status, "source": source}
+	if models == nil {
+		models = []string{}
+	}
+	result[jsonKeyModels] = models
+	result[jsonKeyStatus] = status
+	result["source"] = source
 	if probeErr != nil && len(models) == 0 {
 		result[watchMsgError] = probeErr.Error()
 	}

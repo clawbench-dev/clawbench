@@ -5615,9 +5615,10 @@ paths:
       tags: [Providers]
       summary: 提供商的模型列表
       description: |
-        返回该提供商可用的模型。已配置 `models` 时直接返回该清单（`source: "curated"`）；
-        否则请求 `/models`（必要时补 `/v1`），失败再用权威目录兜底
-        （`source: "live" | "catalog"`）。返回 `{models:[...], source, status?, error?}`。
+        返回该提供商可用的模型。始终以端点实测为准（必要时补 `/v1`），失败再用权威目录兜底
+        （`source: "live" | "catalog"`）；同时返回用户已保存的清单 `curated`。
+        返回 `{models:[...], curated:[...], source, status?, error?}`。
+        已保存清单不覆盖实测列表——它只表示「用户选了哪些」，选择器要靠实测列表才能继续添加模型；
         网关不暴露列表时返回空数组与原因，前端退化为手动输入，不阻塞配置。
       operationId: providersModels
       parameters:

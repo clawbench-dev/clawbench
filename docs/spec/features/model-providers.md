@@ -86,6 +86,7 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 `providers.models`（有序 JSON 数组）+ `providers.default_model`。
 
 - 提供商编辑页可「选择模型」：从实测 `/models` 拉取，失败用权威目录兜底，也可手填；保存后即为该端点的模型集合
+- **清单不遮挡实测列表**：`GET /api/providers/{id}/models` 恒返回端点实测（或目录兜底）的 `models`，另用 `curated` 单独返回已保存清单。否则选择过一次并保存后，再打开选择器就只剩已选项，无法继续添加（实测缺陷）
 - 绑定该提供商的智能体直接继承这份清单（CLI 与 ACP 未上报时都适用），模型下拉不会再出现端点跑不了的 id
 - 默认模型：`preferred_model` 在清单内 → 用它；否则用 `default_model`；再否则用清单第一个
 - **ACP 上报后仍以 ACP 为准**；清单为空时退回原来的发现逻辑
@@ -122,7 +123,7 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 - **迁移**：启动时 `MigrateAISummaryProvider` 把旧的 `ai_summary.api.base_url/key` 建成一条 provider（名称 `AI Summary`，协议按旧 `format` 或 URL 推断），重写 `config.yaml` 并清掉旧字段。迁移失败时旧的读取路径仍然生效，下次启动重试。
 - **协议限制**：摘要器只会说 OpenAI / Anthropic 两种线格式；绑定 Gemini 提供商在 PATCH 时 400，运行时也视为未配置。
 - **引用守卫**：摘要正在使用的 provider 不能删除（`ProviderUsedBySummary`），也不能把协议改成 Gemini。
-- **模型列表**：`GET /api/providers/{id}/models` 返回该提供商声明的模型；网关不暴露列表时返回空数组与原因，设置页退化为手填。
+- **模型列表**：`GET /api/providers/{id}/models` 返回该端点实测（或目录兜底）的模型，另带已保存清单 `curated`；网关不暴露列表时返回空数组与原因，设置页退化为手填。
 
 ## API
 

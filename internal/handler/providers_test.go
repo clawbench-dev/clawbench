@@ -279,6 +279,38 @@ func TestProvidersAPI_ModelList(t *testing.T) {
 	assert.NotZero(t, p.ID)
 }
 
+// A saved selection must not hide the rest of the catalog: the picker's list is
+// what the endpoint advertises, with the curated subset reported separately.
+// Regression: the second open of the picker showed exactly what was saved, so
+// there was no way left to add another model.
+func TestProvidersAPI_ModelListStillProbesAfterCuration(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"model-a"},{"id":"model-b"}]}`))
+	}))
+	defer srv.Close()
+
+	_, err := service.CreateProvider(model.Provider{
+		Name: "Curated", Protocol: model.ProviderProtocolOpenAI, BaseURL: srv.URL + "/v1", APIKey: "k",
+		Models: []string{"model-a"},
+	})
+	require.NoError(t, err)
+
+	rec := doProviderRequest(t, ServeProviderSubRoutes, http.MethodGet, "/api/providers/1/models", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		Models  []string `json:"models"`
+		Curated []string `json:"curated"`
+		Source  string   `json:"source"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, []string{"model-a", "model-b"}, body.Models)
+	assert.Equal(t, []string{"model-a"}, body.Curated)
+	assert.Equal(t, "live", body.Source)
+}
+
 func TestProvidersAPI_ModelListUnreachableReturnsEmpty(t *testing.T) {
 	setupProvidersHandlerTest(t)
 
