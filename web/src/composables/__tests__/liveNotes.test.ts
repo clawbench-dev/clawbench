@@ -137,7 +137,7 @@ describe('LiveNotesCapture', () => {
       return null
     }, { segmentMs: 1000 })
 
-    capture.addChannel('mic', '我', fakeStream())
+    capture.addChannel('mic', () => '我', fakeStream())
     expect(FakeRecorder.instances).toHaveLength(1)
 
     await vi.advanceTimersByTimeAsync(1000)
@@ -151,6 +151,29 @@ describe('LiveNotesCapture', () => {
     expect(uploads).toHaveLength(2)
   })
 
+  // A viewer's nickname arrives with the join frame, which can land after its
+  // first audio track. Resolving the label per segment is what lets the stored
+  // transcript (and the minutes) carry the real name.
+  it('resolves the speaker label per segment, not once per channel', async () => {
+    const uploads: NotesUploadArgs[] = []
+    let name = ''
+    const capture = new LiveNotesCapture(fakeCtx(), async (args) => {
+      uploads.push(args)
+      return null
+    }, { segmentMs: 1000 })
+
+    capture.addChannel('viewer:v1', () => name || '观众 1', fakeStream())
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(uploads[0].speaker).toBe('观众 1')
+
+    name = '张三'
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(uploads[1].speaker).toBe('张三')
+
+    capture.stop()
+    await capture.drainUploads(1000)
+  })
+
   it('cuts a segment at a pause instead of on a fixed clock', async () => {
     const uploads: NotesUploadArgs[] = []
     const capture = new LiveNotesCapture(fakeCtx(), async (args) => {
@@ -158,7 +181,7 @@ describe('LiveNotesCapture', () => {
       return null
     }, { segmentMs: 20_000, minSegmentMs: 1_000 })
 
-    capture.addChannel('mic', '我', fakeStream())
+    capture.addChannel('mic', () => '我', fakeStream())
     // Still speaking well past the minimum: the segment must stay open.
     await vi.advanceTimersByTimeAsync(2_000)
     expect(uploads).toHaveLength(0)
@@ -183,7 +206,7 @@ describe('LiveNotesCapture', () => {
       return null
     }, { segmentMs: 5_000, minSegmentMs: 1_000 })
 
-    capture.addChannel('mic', '我', fakeStream())
+    capture.addChannel('mic', () => '我', fakeStream())
     await vi.advanceTimersByTimeAsync(3_000)
     // Silence is pure overhead: nothing to transcribe, so nothing is uploaded
     // while the channel stays quiet (it still cycles its recorders).
@@ -199,7 +222,7 @@ describe('LiveNotesCapture', () => {
 
   it('ignores channels with no audio track', () => {
     const capture = new LiveNotesCapture(fakeCtx(), async () => null, { segmentMs: 1000 })
-    capture.addChannel('system', '系统声音', { getAudioTracks: () => [] } as unknown as MediaStream)
+    capture.addChannel('system', () => '系统声音', { getAudioTracks: () => [] } as unknown as MediaStream)
     expect(capture.size).toBe(0)
     expect(FakeRecorder.instances).toHaveLength(0)
   })
@@ -221,7 +244,7 @@ describe('LiveNotesCapture', () => {
       return null
     }, { segmentMs: 1000, maxPending: 1 })
 
-    capture.addChannel('mic', '我', fakeStream())
+    capture.addChannel('mic', () => '我', fakeStream())
     // Three segments: the first is in flight, the second queues, the third is
     // dropped (backlog = 1).
     await vi.advanceTimersByTimeAsync(1000)
@@ -243,7 +266,7 @@ describe('LiveNotesCapture', () => {
       return null
     }, { segmentMs: 60_000 })
 
-    capture.addChannel('mic', '我', fakeStream())
+    capture.addChannel('mic', () => '我', fakeStream())
     // The only segment is produced when the recorder stops.
     await capture.stopAndFlush(1000)
     expect(attempts).toBe(1)
@@ -262,7 +285,7 @@ describe('LiveNotesCapture', () => {
       throw new Error('backend down')
     }, { segmentMs: 60_000, onSegmentLost: (channel) => lost.push(channel) })
 
-    capture.addChannel('mic', '我', fakeStream())
+    capture.addChannel('mic', () => '我', fakeStream())
     await capture.stopAndFlush(1000)
     await vi.advanceTimersByTimeAsync(14_000)
     await capture.drainUploads(1000)
@@ -277,7 +300,7 @@ describe('LiveNotesCapture', () => {
       return null
     }, { segmentMs: 1000 })
 
-    capture.addChannel('viewer:v1', '观众 1', fakeStream())
+    capture.addChannel('viewer:v1', () => '观众 1', fakeStream())
     await vi.advanceTimersByTimeAsync(1000)
     capture.removeChannel('viewer:v1')
     await capture.drainUploads(1000)

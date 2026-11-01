@@ -369,7 +369,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 ```
 <项目>/.clawbench/notes/2026-10-31-1430-周会-a1b2c3/
     minutes.md               纪要（末尾链接同目录的另外两份）
-    transcript.srt           原始转写（STT 原样输出，SubRip 字幕；老会议仍是 transcript.md）
+    transcript.vtt           原始转写（STT 原样输出，WebVTT 字幕；cue id = 信道，正文 <v 昵称>）
     transcript-revised.md    修订版转写（结合项目上下文校对）
     chat.md                  聊天归档（会议结束时写入；详情读的是数据库）
     audio/                   录音，一段一个 WebM
@@ -378,6 +378,7 @@ viewer:<id> 每个观众的麦克风，一人一条
         1700000007123-viewer-2.webm
 ```
 
+- **转写用 WebVTT 而不是 SRT**：cue id 承载**信道**（`mic` / `viewer:<id>`）——显示名会被改名、复用、本地化，只有信道是稳定身份，文件里丢了它就再也对不上人；正文的 `<v 昵称>` 承载播放器要显示的名字。浏览器也只支持 VTT 的 `<track>`，SRT 得自己写解析器才能播。详情页读这个文件时会把头、cue id 和时间轴剥掉，只显示「说话人：内容」。
 - **录音在转写之前落盘**：STT 挂了要重转、模型升级要复跑、某句听错要复核——都需要原始音频，而它是唯一无法再生的产物。写盘失败只记警告，不阻断转写。
 - **文件名带 token 后缀**：同一分钟、同一标题的两场会不能共用目录，否则录音会交错、纪要会互相覆盖。
 - **`audio/.gitignore` 内容为 `*`**：录音是二进制，一小时约 14MB/信道；同目录的 Markdown 仍然可以进 git。
@@ -415,6 +416,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 - **公开读**：`{token}/notes` 只在房间存活期间可读。共享结束后 token 立即失效，不会留下可长期读取的转写。
 - **保留期**：**没有**。记录、转写分段、聊天、磁盘目录都永久保留；删除记录（或删除项目）是唯一的删除路径。
 - **纪要生成**：修订版转写超过 6000 字时先分段提取要点，再合并成纪要（map-reduce），避免整段塞进模型窗口被截断。
+- **纪要里用昵称指代「我」**：转写中发布端自己的信道标注是**客户端本地化**的「我 / Me」，模型无从知道那是谁，而纪要要给没参会的人看。生成时把 `user.nickname` 与该信道的实际标注一起写进提示词（分段提取与最终合并两处都注入），纪要里指代本人时写昵称。未配置昵称（仍是占位 `User`）或本人全程没说话时不注入。
 - **落盘**：见上面的「产物」一节。纪要生成后写 `minutes.md`，同时把两份转写和录音留在同一目录；同一场共享重新生成会覆盖同名文件而不是堆副本。
 
 ### 会议记录列表与详情
@@ -422,7 +424,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 列表读的是**数据库**（`live_notes`，一条 = 一场会），不是磁盘：记录在发布端连上信令时就存在，与「有没有录到东西」无关；没开听记、全程静音的会议同样列出，标「无产物」。
 
 - `GET /api/live-share/notes/sessions` 按 `started_at` 倒序取 200 条；带 `?token=` 时返回单条 `{session}`。
-- `GET /api/live-share/notes/sessions/artifact?token=&kind=` 读 `minutes.md` / `transcript.srt`（老会议回退 `transcript.md`）/ `transcript-revised.md` / `chat.md`。目录由服务端从记录行解析，**客户端不传任何路径**。记录没有任何产物时 404。
+- `GET /api/live-share/notes/sessions/artifact?token=&kind=` 读 `minutes.md` / `transcript.vtt` / `transcript-revised.md` / `chat.md`。目录由服务端从记录行解析，**客户端不传任何路径**。记录没有任何产物时 404。
 - `GET /api/live-share/notes/sessions/chat?token=` 读落库的聊天（按服务端行 id 升序）。
 - `DELETE /api/live-share/notes/sessions?token=` 删除记录：**先删目录、再删行**；房间仍在发布、或纪要/校对任务正在运行时返回 409。
 - 「在编辑器中打开」走前端已有的文件查看器，传目录里那个文件的绝对路径。

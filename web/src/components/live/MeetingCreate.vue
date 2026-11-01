@@ -338,10 +338,19 @@ async function loadSources(): Promise<void> {
   }
 }
 
-/** Speaker labels for the transcript channels (publisher-side, localized). */
+/**
+ * Speaker labels for the transcript channels (publisher-side, localized).
+ *
+ * A viewer's real nickname is used when the join frame has delivered it, so the
+ * transcript — and the minutes generated from it — name people instead of
+ * numbering them. Called once per uploaded segment, not once per channel: the
+ * name can arrive after that viewer's first audio track.
+ */
 function notesLabel(channel: string): string {
   if (channel === 'mic') return t('liveShare.notes.speakerMe')
   const id = channel.startsWith('viewer:') ? channel.slice('viewer:'.length) : ''
+  const name = share.viewers.value.find((v) => v.id === id)?.name.trim()
+  if (name) return name
   const n = Number(id.replace(/^v/, '')) || 0
   return t('liveShare.notes.speakerViewer', { n })
 }

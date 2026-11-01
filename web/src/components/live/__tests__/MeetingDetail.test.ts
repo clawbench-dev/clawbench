@@ -77,12 +77,20 @@ function record(over: Record<string, unknown> = {}) {
   }
 }
 
+/** One stored transcript, exactly as the server writes it. */
+const VTT = `WEBVTT
+
+mic
+00:00:00.000 --> 00:00:01.000
+<v 我>hi
+`
+
 beforeEach(() => {
   vi.clearAllMocks()
   getMock.mockResolvedValue(record())
   artifactMock.mockImplementation(async (_token: string, kind: string) => {
     if (kind === 'minutes') return { content: '# MINUTES', file: 'minutes.md' }
-    if (kind === 'transcript') return { content: '1\n00:00 --> 00:01\nhi', file: 'transcript.srt' }
+    if (kind === 'transcript') return { content: VTT, file: 'transcript.vtt' }
     return null
   })
   chatMock.mockResolvedValue({
@@ -102,6 +110,7 @@ describe('MeetingDetail', () => {
     const files = w.findAll('.meeting-file')
     expect(files).toHaveLength(3) // minutes + transcript + audio, no revised
     expect(w.text()).toContain('minutes.md')
+    expect(w.text()).toContain('transcript.vtt')
   })
 
   it('reads chat from the database and offers copy-all', async () => {
@@ -162,6 +171,21 @@ describe('MeetingDetail', () => {
     expect(w.find('.meeting-body').text().trim()).toBe(enMessages.meeting.detail.noTranscript)
   })
 
+  // The stored artifact is a subtitle track. The tab is a reading surface, so
+  // the header, cue ids and timestamps must not reach it.
+  it('shows the transcript as a conversation, not as subtitle markup', async () => {
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-tab="transcript"]').trigger('click')
+
+    const pane = w.find('[data-role="transcript"]')
+    expect(pane.text()).toBe('我：hi')
+    expect(pane.text()).not.toContain('WEBVTT')
+    expect(pane.text()).not.toContain('<v')
+    expect(pane.text()).not.toContain('00:00:00')
+  })
+
   it('asks before deleting and then leaves the view', async () => {
     const w = mountDetail()
     await flushPromises()
@@ -204,7 +228,7 @@ describe('MeetingDetail', () => {
           }),
       )
     artifactMock.mockImplementation(async (_token: string, kind: string) =>
-      kind === 'transcript' ? { content: 'SRT', file: 'transcript.srt' } : null,
+      kind === 'transcript' ? { content: VTT, file: 'transcript.vtt' } : null,
     )
 
     const w = mountDetail()

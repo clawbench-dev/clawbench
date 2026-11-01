@@ -213,7 +213,7 @@ func TestWriteLiveNotesMinutesFile_LinksSiblingsInsteadOfInlining(t *testing.T) 
 	// The transcript has its own file now. A copy here would go stale the moment
 	// somebody edits it, and it is the transcript that must never be lost.
 	assert.NotContains(t, text, "## 附：完整转写")
-	assert.Contains(t, text, "[transcript.srt](transcript.srt)")
+	assert.Contains(t, text, "[transcript.vtt](transcript.vtt)")
 	assert.Contains(t, text, "[transcript-revised.md](transcript-revised.md)")
 	assert.Contains(t, text, "`audio/`（7 段）")
 }
@@ -248,12 +248,12 @@ func TestWriteLiveNotesTranscriptFile_KeepsHeadingNoteAndLines(t *testing.T) {
 	rawBody, err := os.ReadFile(raw)
 	require.NoError(t, err)
 	assert.Equal(t, paths.Transcript, raw)
-	assert.True(t, strings.HasSuffix(raw, "transcript.srt"), "raw transcript is SRT, got %q", raw)
-	// A subtitle track starts with a cue index, not a Markdown heading.
-	assert.True(t, strings.HasPrefix(string(rawBody), "1\n"), "want an SRT cue, got %q", string(rawBody))
+	assert.True(t, strings.HasSuffix(raw, "transcript.vtt"), "raw transcript is WebVTT, got %q", raw)
+	// A subtitle track starts with the format header, not a Markdown heading.
+	assert.True(t, strings.HasPrefix(string(rawBody), "WEBVTT\n\n"), "want a WebVTT header, got %q", string(rawBody))
 	assert.NotContains(t, string(rawBody), "# 转写")
-	assert.Contains(t, string(rawBody), "00:00:00,000 --> 00:00:01,500")
-	assert.Contains(t, string(rawBody), "我：原样")
+	assert.Contains(t, string(rawBody), "00:00:00.000 --> 00:00:01.500")
+	assert.Contains(t, string(rawBody), "<v 我>原样")
 
 	_, err = WriteLiveNotesRawTranscript(paths, nil)
 	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
@@ -415,14 +415,14 @@ func withAISummary(t *testing.T, baseURL string) {
 }
 
 func TestGenerateLiveNotesMinutes_EmptyTranscript(t *testing.T) {
-	_, err := GenerateLiveNotesMinutes(context.Background(), "标题", "")
+	_, err := GenerateLiveNotesMinutes(context.Background(), "标题", "", LiveNotesSpeaker{})
 	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
 }
 
 func TestGenerateLiveNotesMinutes_NoSummaryModel(t *testing.T) {
 	withAISummary(t, "")
 
-	_, err := GenerateLiveNotesMinutes(context.Background(), "标题", "[00:00] 我：内容")
+	_, err := GenerateLiveNotesMinutes(context.Background(), "标题", "[00:00] 我：内容", LiveNotesSpeaker{})
 	assert.ErrorIs(t, err, ErrSummaryModelNotConfigured)
 }
 
@@ -430,9 +430,141 @@ func TestGenerateLiveNotesMinutes_SingleChunk(t *testing.T) {
 	srv := aiSummaryServer(t, "## 概要\n\n发布计划已确认。")
 	withAISummary(t, srv.URL)
 
-	got, err := GenerateLiveNotesMinutes(context.Background(), "季度会", "[00:00] 我：先确认时间")
+	got, err := GenerateLiveNotesMinutes(context.Background(), "季度会", "[00:00] 我：先确认时间", LiveNotesSpeaker{})
 	require.NoError(t, err)
 	assert.Equal(t, "## 概要\n\n发布计划已确认。", got)
+}
+
+// captureSummaryBodies serves a canned reply per call and records every request
+// body, so a test can assert on what the summarizer was actually told.
+func captureSummaryBodies(t *testing.T, replies ...string) func() []string {
+	t.Helper()
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(body))
+		idx := len(bodies) - 1
+		mu.Unlock()
+		if idx >= len(replies) {
+			idx = len(replies) - 1
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + strconvQuote(replies[idx]) + `}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	withAISummary(t, srv.URL)
+	return func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), bodies...)
+	}
+}
+
+// The transcript labels the publisher's own channel with a localized "我" (or
+// "Me"), which means nothing to a reader of the minutes. The nickname has to
+// reach the prompt, otherwise the summary says "我负责发版" to somebody who
+// was not in the meeting.
+func TestGenerateLiveNotesMinutes_NamesTheUserBehindTheSelfLabel(t *testing.T) {
+	bodies := captureSummaryBodies(t, "## 概要\n\n发布计划已确认。")
+
+	_, err := GenerateLiveNotesMinutes(context.Background(), "季度会", "[00:00] 我：先确认时间",
+		LiveNotesSpeaker{Label: "我", Name: "泷泽"})
+	require.NoError(t, err)
+
+	got := bodies()
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0], "泷泽", "the nickname must reach the model")
+	assert.Contains(t, got[0], "「我」", "the label must be named, not assumed")
+	assert.Contains(t, got[0], "补充说明")
+}
+
+// A long meeting is map-reduced, and the chunk summaries are what the final
+// pass reads — so the identity has to be in BOTH prompts, or the condensed
+// text still says "我".
+func TestGenerateLiveNotesMinutes_ChunkPassAlsoKnowsTheUser(t *testing.T) {
+	long := strings.Repeat("很长的发言内容。", 400)
+	transcript := BuildLiveNotesTranscript([]LiveNoteSegment{
+		seg(int64(1), "mic", "我", 0, long),
+		seg(int64(2), "mic", "我", 60_000, long),
+		seg(int64(3), "mic", "我", 120_000, long),
+	})
+	require.Greater(t, len([]rune(transcript)), liveNotesChunkRunes,
+		"fixture must exceed one chunk or the chunk pass is not exercised")
+
+	bodies := captureSummaryBodies(t, "要点", "要点", "## 概要\n\n合并后的纪要")
+	_, err := GenerateLiveNotesMinutes(context.Background(), "", transcript,
+		LiveNotesSpeaker{Label: "我", Name: "泷泽"})
+	require.NoError(t, err)
+
+	got := bodies()
+	require.Len(t, got, 3, "two chunk passes plus one final pass")
+	for i, body := range got {
+		assert.Containsf(t, body, "泷泽", "pass %d must know who 「我」 is", i)
+	}
+}
+
+// Nothing is injected when there is nothing to resolve: no nickname configured,
+// only the placeholder, or the user never spoke.
+func TestGenerateLiveNotesMinutes_NoSpeakerNoteWhenUnresolvable(t *testing.T) {
+	cases := []struct {
+		name string
+		self LiveNotesSpeaker
+	}{
+		{"no label", LiveNotesSpeaker{Name: "泷泽"}},
+		{"no name", LiveNotesSpeaker{Label: "我"}},
+		{"placeholder name", LiveNotesSpeaker{Label: "我", Name: model.DefaultUserNickname}},
+		{"whitespace", LiveNotesSpeaker{Label: "  ", Name: "  "}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bodies := captureSummaryBodies(t, "## 概要")
+			_, err := GenerateLiveNotesMinutes(context.Background(), "", "[00:00] 我：内容", tc.self)
+			require.NoError(t, err)
+
+			got := bodies()
+			require.Len(t, got, 1)
+			assert.NotContains(t, got[0], "补充说明")
+			assert.NotContains(t, got[0], "昵称是「"+model.DefaultUserNickname+"」",
+				"the placeholder nickname must never be presented as a real name")
+		})
+	}
+}
+
+// The self label is data, not a constant: the client localizes it ("我" / "Me"),
+// and the `mic` channel is the only one that is the publisher.
+func TestLiveNotesSelfLabel(t *testing.T) {
+	cases := []struct {
+		name     string
+		segments []LiveNoteSegment
+		want     string
+	}{
+		{
+			"mic label wins over viewers",
+			[]LiveNoteSegment{
+				{Channel: "viewer:v1", Speaker: "观众 1"},
+				{Channel: "mic", Speaker: "Me"},
+			},
+			"Me",
+		},
+		{
+			"no mic channel means the user never spoke",
+			[]LiveNoteSegment{{Channel: "viewer:v1", Speaker: "观众 1"}},
+			"",
+		},
+		{
+			"unlabelled mic falls back to the channel name, as the transcript does",
+			[]LiveNoteSegment{{Channel: "mic", Speaker: "  "}},
+			"mic",
+		},
+		{"no segments", nil, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, LiveNotesSelfLabel(tc.segments))
+		})
+	}
 }
 
 // A meeting longer than the chunk budget is map-reduced: every chunk is
@@ -464,7 +596,7 @@ func TestGenerateLiveNotesMinutes_LongMeetingIsMapReduced(t *testing.T) {
 	defer srv.Close()
 	withAISummary(t, srv.URL)
 
-	got, err := GenerateLiveNotesMinutes(context.Background(), "", BuildLiveNotesTranscript(segments))
+	got, err := GenerateLiveNotesMinutes(context.Background(), "", BuildLiveNotesTranscript(segments), LiveNotesSpeaker{})
 	require.NoError(t, err)
 	assert.Equal(t, "## 概要\n\n合并后的纪要", got)
 
@@ -484,7 +616,7 @@ func TestGenerateLiveNotesMinutes_ProviderError(t *testing.T) {
 	defer srv.Close()
 	withAISummary(t, srv.URL)
 
-	_, err := GenerateLiveNotesMinutes(context.Background(), "", "[00:00] 我：内容")
+	_, err := GenerateLiveNotesMinutes(context.Background(), "", "[00:00] 我：内容", LiveNotesSpeaker{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "live notes: minutes")
 }
@@ -687,7 +819,7 @@ func TestReadLiveNoteArtifact_ReturnsEachKind(t *testing.T) {
 	project := t.TempDir()
 	writeMeetingFolder(t, project, "2026-10-31-1732-周会-a1b2c3", map[string]string{
 		"minutes.md":            "MINUTES",
-		"transcript.md":         "RAW",
+		"transcript.vtt":        "RAW",
 		"transcript-revised.md": "REVISED",
 	})
 
@@ -725,65 +857,79 @@ func TestReadLiveNoteArtifact_RejectsOversizedFile(t *testing.T) {
 	assert.ErrorIs(t, err, ErrLiveNoteArtifactTooLarge)
 }
 
-// ── SRT transcript ──────────────────────────────────────────────────────────
+// ── WebVTT transcript ───────────────────────────────────────────────────────
 
-func TestBuildLiveNotesSRT(t *testing.T) {
+// The cue identifier is the CHANNEL — the only stable speaker identity here —
+// and the voice span is the name a player shows.
+func TestBuildLiveNotesVTT_CarriesChannelAndSpeaker(t *testing.T) {
 	base := time.Date(2026, 10, 30, 14, 30, 0, 0, time.Local).UnixMilli()
-	got := BuildLiveNotesSRT([]LiveNoteSegment{
-		{Speaker: "张三", StartedAt: base, DurationMS: 1500, Text: "第一句"},
-		// No duration: SRT still needs an end, so a floor applies.
-		{Speaker: "李四", StartedAt: base + 2000, DurationMS: 0, Text: "第二句  有空格"},
+	got := BuildLiveNotesVTT([]LiveNoteSegment{
+		{Channel: "mic", Speaker: "我", StartedAt: base, DurationMS: 1500, Text: "第一句"},
+		// No duration: a cue still needs an end, so a floor applies.
+		{Channel: "viewer:v1", Speaker: "张三", StartedAt: base + 2000, DurationMS: 0, Text: "第二句  有空格"},
 		// No speaker: fall back to the channel label.
-		{Speaker: "", Channel: "mic", StartedAt: base + 5000, DurationMS: 1000, Text: "第三句"},
+		{Channel: "system", Speaker: "", StartedAt: base + 5000, DurationMS: 1000, Text: "第三句"},
 		// Blank text must not produce a cue.
-		{Speaker: "张三", StartedAt: base + 6000, DurationMS: 1000, Text: "   "},
+		{Channel: "mic", Speaker: "我", StartedAt: base + 6000, DurationMS: 1000, Text: "   "},
 	})
 
-	assert.Contains(t, got, "1\n00:00:00,000 --> 00:00:01,500\n张三：第一句\n")
-	assert.Contains(t, got, "2\n00:00:02,000 --> 00:00:04,000\n李四：第二句 有空格\n")
-	assert.Contains(t, got, "3\n00:00:05,000 --> 00:00:06,000\nmic：第三句\n")
-	assert.NotContains(t, got, "4\n", "a blank utterance produces no cue")
+	assert.True(t, strings.HasPrefix(got, "WEBVTT\n\n"))
+	assert.Contains(t, got, "mic\n00:00:00.000 --> 00:00:01.500\n<v 我>第一句\n")
+	assert.Contains(t, got, "viewer:v1\n00:00:02.000 --> 00:00:04.000\n<v 张三>第二句 有空格\n")
+	assert.Contains(t, got, "system\n00:00:05.000 --> 00:00:06.000\n<v system>第三句\n")
+	assert.Equal(t, 3, strings.Count(got, "-->"), "a blank utterance produces no cue")
 }
 
-func TestBuildLiveNotesSRT_UntimedSegmentsChainForward(t *testing.T) {
-	got := BuildLiveNotesSRT([]LiveNoteSegment{
-		{Speaker: "我", Text: "没有时间戳"},
-		{Speaker: "我", Text: "也没有"},
+func TestBuildLiveNotesVTT_UntimedSegmentsChainForward(t *testing.T) {
+	got := BuildLiveNotesVTT([]LiveNoteSegment{
+		{Channel: "mic", Speaker: "我", Text: "没有时间戳"},
+		{Channel: "mic", Speaker: "我", Text: "也没有"},
 	})
 	// Unknown timing chains from the previous cue instead of inventing an
 	// epoch offset (which would show up as thousands of hours).
-	assert.Contains(t, got, "1\n00:00:00,000 --> 00:00:02,000\n我：没有时间戳\n")
-	assert.Contains(t, got, "2\n00:00:02,000 --> 00:00:04,000\n我：也没有\n")
+	assert.Contains(t, got, "mic\n00:00:00.000 --> 00:00:02.000\n<v 我>没有时间戳\n")
+	assert.Contains(t, got, "mic\n00:00:02.000 --> 00:00:04.000\n<v 我>也没有\n")
 }
 
-func TestBuildLiveNotesSRT_Empty(t *testing.T) {
-	assert.Empty(t, BuildLiveNotesSRT(nil))
-	assert.Empty(t, BuildLiveNotesSRT([]LiveNoteSegment{{Speaker: "我", Text: "  "}}))
+// Cue text is text, not markup: "&" and "<" must survive as characters instead
+// of being parsed as an entity or a tag. The speaker label is client input, so
+// a ">" in it must not close the voice span early.
+func TestBuildLiveNotesVTT_EscapesMarkup(t *testing.T) {
+	got := BuildLiveNotesVTT([]LiveNoteSegment{
+		{Channel: "viewer:v1", Speaker: "A<B>C", Text: "a < b & c > d"},
+	})
+	assert.Contains(t, got, "<v ABC>a &lt; b &amp; c &gt; d\n")
 }
 
-func TestReadLiveNoteArtifactWithName_PrefersSRT(t *testing.T) {
+func TestBuildLiveNotesVTT_Empty(t *testing.T) {
+	assert.Empty(t, BuildLiveNotesVTT(nil))
+	assert.Empty(t, BuildLiveNotesVTT([]LiveNoteSegment{{Speaker: "我", Text: "  "}}))
+}
+
+// The transcript artifact is WebVTT and nothing else: no fallback to the
+// SubRip or Markdown files older builds wrote.
+func TestReadLiveNoteArtifactWithName_TranscriptIsVTT(t *testing.T) {
 	project := t.TempDir()
 	writeMeetingFolder(t, project, "2026-10-31-1732-周会-a1b2c3", map[string]string{
-		"transcript.srt": "1\n00:00:00,000 --> 00:00:01,000\n我：新\n",
-		"transcript.md":  "OLD MARKDOWN",
+		"transcript.vtt": "WEBVTT\n\nmic\n00:00:00.000 --> 00:00:01.000\n<v 我>新\n",
+		"transcript.srt": "1\n00:00:00,000 --> 00:00:01,000\n我：旧\n",
 	})
 
 	body, file, err := ReadLiveNoteArtifactWithName(project, "2026-10-31-1732-周会-a1b2c3", "transcript")
 	require.NoError(t, err)
-	assert.Equal(t, "transcript.srt", file)
-	assert.Contains(t, body, "00:00:00,000 --> 00:00:01,000")
+	assert.Equal(t, "transcript.vtt", file)
+	assert.Contains(t, body, "<v 我>新")
 }
 
-func TestReadLiveNoteArtifactWithName_FallsBackToMarkdown(t *testing.T) {
+func TestReadLiveNoteArtifactWithName_IgnoresLegacyTranscripts(t *testing.T) {
 	project := t.TempDir()
 	writeMeetingFolder(t, project, "2026-10-31-1732-周会-a1b2c3", map[string]string{
-		"transcript.md": "# 转写 · 旧会议\n",
+		"transcript.srt": "1\n00:00:00,000 --> 00:00:01,000\n我：旧\n",
+		"transcript.md":  "# 转写 · 旧会议\n",
 	})
 
-	body, file, err := ReadLiveNoteArtifactWithName(project, "2026-10-31-1732-周会-a1b2c3", "transcript")
-	require.NoError(t, err)
-	assert.Equal(t, "transcript.md", file, "meetings recorded before SRT keep their file")
-	assert.Contains(t, body, "旧会议")
+	_, _, err := ReadLiveNoteArtifactWithName(project, "2026-10-31-1732-周会-a1b2c3", "transcript")
+	assert.ErrorIs(t, err, ErrLiveNoteSessionNotFound, "no compatibility layer for pre-VTT meetings")
 }
 
 // ── Meeting records ─────────────────────────────────────────────────────────

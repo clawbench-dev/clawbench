@@ -43,8 +43,10 @@ const h = vi.hoisted(() => {
       instances.push(this)
     }
 
-    addChannel(channel: string, speaker: string, stream: unknown): void {
-      this.channels.push({ channel, speaker, stream })
+    addChannel(channel: string, speaker: () => string, stream: unknown): void {
+      // The real capture resolves the label per uploaded segment; the fake
+      // resolves it here so an assertion reads as "what will the lines say".
+      this.channels.push({ channel, speaker: speaker(), stream })
     }
 
     removeChannel(channel: string): void {
@@ -275,7 +277,7 @@ describe('useLiveNotes — artifacts', () => {
         artifacts: {
           dir: '/p/notes/m',
           minutes: '/p/notes/m/minutes.md',
-          transcript: '/p/notes/m/transcript.md',
+          transcript: '/p/notes/m/transcript.vtt',
           revised: '/p/notes/m/transcript-revised.md',
           audio: '/p/notes/m/audio',
           audioFiles: 12,
@@ -286,7 +288,7 @@ describe('useLiveNotes — artifacts', () => {
     await notes.generateMinutes()
 
     expect(notes.revisePhase.value).toBe('ready')
-    expect(notes.artifacts.value.transcript).toBe('/p/notes/m/transcript.md')
+    expect(notes.artifacts.value.transcript).toBe('/p/notes/m/transcript.vtt')
     expect(notes.artifacts.value.audioFiles).toBe(12)
   })
 
@@ -322,7 +324,7 @@ describe('useLiveNotes — artifacts', () => {
         status: 'ready',
         markdown: '## 概要',
         revise: { status: 'ready' },
-        artifacts: { dir: '/p/notes/m', transcript: '/p/notes/m/transcript.md' },
+        artifacts: { dir: '/p/notes/m', transcript: '/p/notes/m/transcript.vtt' },
       }),
     )
     await notes.generateMinutes()

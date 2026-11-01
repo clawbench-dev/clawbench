@@ -576,7 +576,7 @@ func liveNoteArtifactFlags(dirPath string) (hasMinutes, hasTranscript, hasRevise
 	}
 	paths := liveNotesPathsFor(dirPath)
 	hasMinutes = fileExists(paths.Minutes)
-	hasTranscript = fileExists(paths.Transcript) || fileExists(filepath.Join(dirPath, liveNoteTranscriptLegacyMD))
+	hasTranscript = fileExists(paths.Transcript)
 	hasRevised = fileExists(paths.Revised)
 	if entries, err := os.ReadDir(paths.Audio); err == nil {
 		for _, e := range entries {
@@ -903,26 +903,34 @@ func mergedLiveNoteTimeline(segments []LiveNoteSegment) ([]LiveNoteSegment, int6
 	return merged, base
 }
 
-// srtFallbackCueMS is the cue length used when a segment carries no duration.
-// SRT requires an end after the start, so a missing duration cannot be written
-// as-is.
-const srtFallbackCueMS = 2000
+// liveNoteFallbackCueMS is the cue length used when a segment carries no
+// duration. A subtitle cue needs an end after its start, so a missing duration
+// cannot be written as-is.
+const liveNoteFallbackCueMS = 2000
 
-// BuildLiveNotesSRT renders the merged timeline as SubRip subtitles.
+// BuildLiveNotesVTT renders the merged timeline as WebVTT.
 //
-// The raw transcript is stored as SRT rather than Markdown because it is a
-// subtitle track: Markdown collapses consecutive lines into one paragraph, so
-// every utterance ran together when the file was previewed. SRT also keeps the
-// timing, which makes the file usable in a player next to the recording.
-func BuildLiveNotesSRT(segments []LiveNoteSegment) string {
+// The raw transcript is a subtitle track rather than Markdown because Markdown
+// collapses consecutive lines into one paragraph — every utterance ran together
+// when the file was previewed — and because the timing is what makes the file
+// usable next to the recording.
+//
+// WebVTT rather than SubRip for two reasons. The cue identifier carries the
+// CHANNEL (`mic` / `viewer:<id>`), which is the only stable speaker identity
+// here: display names get renamed, reused and localized, so a file that keeps
+// nothing but "观众 1" cannot be attributed afterwards. The voice span
+// (`<v 名字>`) carries the name a player shows next to the line. Browsers also
+// only support VTT in <track>, so SRT could not be played without a JS parser.
+func BuildLiveNotesVTT(segments []LiveNoteSegment) string {
 	merged, base := mergedLiveNoteTimeline(segments)
 	if len(merged) == 0 {
 		return ""
 	}
 
 	var b strings.Builder
+	b.WriteString("WEBVTT\n\n")
 	cursor := int64(0) // end of the previous cue
-	index := 0
+	cues := 0
 	for _, s := range merged {
 		text := strings.Join(strings.Fields(s.Text), " ")
 		if text == "" {
@@ -933,7 +941,7 @@ func BuildLiveNotesSRT(segments []LiveNoteSegment) string {
 			speaker = s.Channel
 		}
 
-		start, end := cursor, cursor+srtFallbackCueMS
+		start, end := cursor, cursor+liveNoteFallbackCueMS
 		if s.StartedAt > 0 && base > 0 {
 			start = s.StartedAt - base
 			if start < 0 {
@@ -941,31 +949,135 @@ func BuildLiveNotesSRT(segments []LiveNoteSegment) string {
 			}
 			end = start + s.DurationMS
 			if end <= start {
-				end = start + srtFallbackCueMS
+				end = start + liveNoteFallbackCueMS
 			}
 		}
 		cursor = end
 
-		index++
-		fmt.Fprintf(&b, "%d\n%s --> %s\n%s：%s\n\n",
-			index, srtTimestamp(start), srtTimestamp(end), speaker, text)
+		if id := vttCueID(s.Channel); id != "" {
+			b.WriteString(id)
+			b.WriteString("\n")
+		}
+		if name := vttVoiceName(speaker); name != "" {
+			fmt.Fprintf(&b, "%s --> %s\n<v %s>%s\n\n",
+				vttTimestamp(start), vttTimestamp(end), name, vttEscape(text))
+		} else {
+			fmt.Fprintf(&b, "%s --> %s\n%s\n\n",
+				vttTimestamp(start), vttTimestamp(end), vttEscape(text))
+		}
+		cues++
 	}
-	if index == 0 {
+	if cues == 0 {
 		return ""
 	}
 	return b.String()
 }
 
-// srtTimestamp formats milliseconds as SubRip's HH:MM:SS,mmm.
-func srtTimestamp(ms int64) string {
+// vttCueID sanitizes a channel for use as a cue identifier. A cue id may not
+// contain "-->" or a line break; channels are validated on upload, so this only
+// guards a hand-edited database. "" means "write this cue without an id".
+func vttCueID(channel string) string {
+	id := strings.TrimSpace(channel)
+	if id == "" || strings.Contains(id, "-->") || strings.ContainsAny(id, "\r\n") {
+		return ""
+	}
+	return id
+}
+
+// vttVoiceName sanitizes a speaker label for a voice span. The label comes from
+// the client (a viewer types it), and an unescaped ">" would end the span early
+// — turning the rest of the line into markup.
+func vttVoiceName(speaker string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '<', '>', '\r', '\n':
+			return -1
+		}
+		return r
+	}, speaker)
+}
+
+// vttEscape escapes the three characters WebVTT treats as markup. Without it a
+// line containing "&" or "<" is parsed as an entity or a tag and the text
+// silently loses characters.
+func vttEscape(text string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)
+}
+
+// vttTimestamp formats milliseconds as WebVTT's HH:MM:SS.mmm.
+func vttTimestamp(ms int64) string {
 	if ms < 0 {
 		ms = 0
 	}
-	return fmt.Sprintf("%02d:%02d:%02d,%03d",
+	return fmt.Sprintf("%02d:%02d:%02d.%03d",
 		ms/3600000, (ms%3600000)/60000, (ms%60000)/1000, ms%1000)
 }
 
 // ── Minutes generation ──────────────────────────────────────────────────────
+
+// LiveNotesSpeaker is who the transcript's first person refers to.
+//
+// The publisher's own channel is labeled by the CLIENT ("我" / "Me" — it is
+// localized in the UI), so nothing in the transcript says whose voice that is.
+// Minutes outlive the meeting and are read by people who were not in it, so a
+// line like "我负责发版" has to be resolved to a name at generation time.
+type LiveNotesSpeaker struct {
+	// Label is the speaker label the transcript uses for the user's own
+	// channel. Empty when the user never spoke — there is nothing to resolve.
+	Label string
+	// Name is the user's nickname (user.nickname).
+	Name string
+}
+
+// note renders the clarification appended to a summarisation prompt, or ""
+// when there is nothing worth saying.
+//
+// The default nickname is skipped for the same reason BuildUserIdentitySection
+// skips it: "User" is a placeholder, and telling the model that "我" is called
+// "User" is worse than leaving the pronoun alone.
+func (s LiveNotesSpeaker) note() string {
+	label := strings.TrimSpace(s.Label)
+	name := strings.TrimSpace(s.Name)
+	if label == "" || name == "" || name == model.DefaultUserNickname {
+		return ""
+	}
+	return fmt.Sprintf(
+		"补充说明：转写里说话人标注为「%s」的那一路，是正在使用本系统的用户本人（本次会议的发起人），昵称是「%s」。"+
+			"纪要里指代这个人时写「%s」，不要照抄转写里的说话人标注。",
+		label, name, name,
+	)
+}
+
+// withPrompt appends the clarification to a system prompt. A no-op when there
+// is nothing to inject, so callers can wire it unconditionally.
+func (s LiveNotesSpeaker) withPrompt(prompt string) string {
+	if note := s.note(); note != "" {
+		return prompt + "\n\n" + note
+	}
+	return prompt
+}
+
+// LiveNotesSelfLabel returns the speaker label the transcript uses for the
+// user's own voice.
+//
+// The `mic` channel IS the publisher by construction — the client records its
+// own microphone there (web/src/composables/useLiveNotes.ts) — but the label
+// itself is localized on the client, so it has to be read from the data rather
+// than assumed. Empty when the user never spoke.
+func LiveNotesSelfLabel(segments []LiveNoteSegment) string {
+	for _, s := range segments {
+		if s.Channel != "mic" {
+			continue
+		}
+		// Same fallback BuildLiveNotesTranscript uses, so the label quoted in
+		// the prompt is the one the model actually sees.
+		if label := strings.TrimSpace(s.Speaker); label != "" {
+			return label
+		}
+		return s.Channel
+	}
+	return ""
+}
 
 const liveNotesMinutesPrompt = `你是一名专业的会议记录员。根据下面这场会议的实时转写（每行是「时间 说话人：内容」，不同说话人的语音来自不同信道，已按时间重排），生成结构化的会议纪要。
 
@@ -1067,13 +1179,15 @@ func ReviseLiveNotesTranscript(ctx context.Context, projectPath, title string, s
 // GenerateLiveNotesMinutes turns a transcript into Markdown minutes.
 //
 // It takes the transcript as text (not segments) because the caller decides
-// which variant to summarize — normally the proofread one.
+// which variant to summarize — normally the proofread one. `self` is the one
+// thing about the transcript that is NOT in its text: who the speaker labeled
+// "我" actually is.
 //
 // Long meetings are map-reduced: each chunk is condensed to bullet points, then
 // the bullet points are merged into the final minutes. Sending the whole
 // transcript in one request would either overflow the model window or be
 // silently truncated by the provider.
-func GenerateLiveNotesMinutes(ctx context.Context, title, transcript string) (string, error) {
+func GenerateLiveNotesMinutes(ctx context.Context, title, transcript string, self LiveNotesSpeaker) (string, error) {
 	if strings.TrimSpace(transcript) == "" {
 		return "", ErrLiveNotesEmpty
 	}
@@ -1088,7 +1202,7 @@ func GenerateLiveNotesMinutes(ctx context.Context, title, transcript string) (st
 		partials := make([]string, 0, len(chunks))
 		for i, chunk := range chunks {
 			out, err := summarize.AskAboutContext(
-				ctx, summarizer, liveNotesChunkPrompt,
+				ctx, summarizer, self.withPrompt(liveNotesChunkPrompt),
 				fmt.Sprintf("第 %d/%d 段：\n%s", i+1, len(chunks), chunk),
 				"请提取这一段的关键信息。", 1200,
 			)
@@ -1104,7 +1218,7 @@ func GenerateLiveNotesMinutes(ctx context.Context, title, transcript string) (st
 	if title != "" {
 		question = "会议标题：" + title + "\n请根据以上内容生成会议纪要。"
 	}
-	minutes, err := summarize.AskAboutContext(ctx, summarizer, liveNotesMinutesPrompt, contextBlock, question, 3000)
+	minutes, err := summarize.AskAboutContext(ctx, summarizer, self.withPrompt(liveNotesMinutesPrompt), contextBlock, question, 3000)
 	if err != nil {
 		return "", fmt.Errorf("live notes: minutes: %w", err)
 	}
@@ -1161,7 +1275,7 @@ type LiveNotesPaths struct {
 	Dir string
 	// Minutes is `<dir>/minutes.md` — the generated summary.
 	Minutes string
-	// Transcript is `<dir>/transcript.srt` — the raw ASR output, as SubRip.
+	// Transcript is `<dir>/transcript.vtt` — the raw ASR output, as WebVTT.
 	Transcript string
 	// Revised is `<dir>/transcript-revised.md` — proofread against the project's
 	// own vocabulary. This is what the minutes are generated from.
@@ -1171,11 +1285,8 @@ type LiveNotesPaths struct {
 }
 
 const (
-	// liveNoteTranscriptSRT is the raw transcript artifact.
-	liveNoteTranscriptSRT = "transcript.srt"
-	// liveNoteTranscriptLegacyMD is the Markdown transcript written before the
-	// artifact switched to SRT. Meetings recorded earlier keep it on disk.
-	liveNoteTranscriptLegacyMD = "transcript.md"
+	// liveNoteTranscriptVTT is the raw transcript artifact.
+	liveNoteTranscriptVTT = "transcript.vtt"
 )
 
 // LiveNotesPathsIn returns the artifact paths for a meeting folder.
@@ -1185,7 +1296,7 @@ func liveNotesPathsFor(dir string) LiveNotesPaths {
 	return LiveNotesPaths{
 		Dir:        dir,
 		Minutes:    filepath.Join(dir, "minutes.md"),
-		Transcript: filepath.Join(dir, liveNoteTranscriptSRT),
+		Transcript: filepath.Join(dir, liveNoteTranscriptVTT),
 		Revised:    filepath.Join(dir, "transcript-revised.md"),
 		Audio:      filepath.Join(dir, "audio"),
 	}
@@ -1292,7 +1403,7 @@ func WriteLiveNotesMinutesFile(paths LiveNotesPaths, title string, startedAt tim
 	}
 	b.WriteString(strings.TrimSpace(minutes))
 	b.WriteString("\n\n---\n\n## 本次产物\n\n")
-	b.WriteString("- 转写：[transcript.srt](transcript.srt)\n")
+	b.WriteString("- 转写：[transcript.vtt](transcript.vtt)\n")
 	b.WriteString("- 修订版转写：[transcript-revised.md](transcript-revised.md)\n")
 	if audioSegments > 0 {
 		fmt.Fprintf(&b, "- 录音：`audio/`（%d 段）\n", audioSegments)
@@ -1304,7 +1415,7 @@ func WriteLiveNotesMinutesFile(paths LiveNotesPaths, title string, startedAt tim
 	return paths.Minutes, nil
 }
 
-// WriteLiveNotesRawTranscript writes transcript.srt: exactly what the ASR heard.
+// WriteLiveNotesRawTranscript writes transcript.vtt: exactly what the ASR heard.
 //
 // No Markdown heading: the file is a subtitle track, and a `# 转写 · …` line
 // would make every player show it as the first cue.
@@ -1312,7 +1423,7 @@ func WriteLiveNotesRawTranscript(paths LiveNotesPaths, segments []LiveNoteSegmen
 	if strings.TrimSpace(paths.Dir) == "" {
 		return "", errors.New("live notes: no project path")
 	}
-	body := BuildLiveNotesSRT(segments)
+	body := BuildLiveNotesVTT(segments)
 	if strings.TrimSpace(body) == "" {
 		return "", ErrLiveNotesEmpty
 	}
@@ -1329,7 +1440,7 @@ func WriteLiveNotesRawTranscript(paths LiveNotesPaths, segments []LiveNoteSegmen
 // variant the minutes are generated from.
 //
 // The blockquote is not decoration: months later nobody remembers why this file
-// differs from transcript.srt, and "the timestamps were not touched" is the one
+// differs from transcript.vtt, and "the timestamps were not touched" is the one
 // thing that makes it comparable.
 func WriteLiveNotesRevisedTranscript(paths LiveNotesPaths, title string, startedAt time.Time, body string) (string, error) {
 	return writeLiveNotesTranscript(paths, paths.Revised, "修订版转写",
@@ -1402,49 +1513,48 @@ func ReadLiveNoteArtifact(projectPath, dir, kind string) (string, error) {
 }
 
 // ReadLiveNoteArtifactWithName is ReadLiveNoteArtifact plus the file name that
-// was actually read — the UI opens the artifact in the file viewer and needs
-// the resolved name (a transcript may still be the pre-SRT Markdown file).
+// was read — the UI opens the artifact in the file viewer and needs it.
+//
+// One file per kind, no fallback list: the format is whatever this build
+// writes, and a folder holding a transcript this build cannot read is reported
+// as missing rather than silently served in a stale format.
 func ReadLiveNoteArtifactWithName(projectPath, dir, kind string) (string, string, error) {
 	if !validLiveNoteDirName(dir) {
 		return "", "", ErrLiveNoteSessionNotFound
 	}
-	var candidates []string
+	var name string
 	switch kind {
 	case "minutes":
-		candidates = []string{"minutes.md"}
+		name = "minutes.md"
 	case "transcript":
-		// SRT is the current artifact; older meetings only have the Markdown one.
-		candidates = []string{liveNoteTranscriptSRT, liveNoteTranscriptLegacyMD}
+		name = liveNoteTranscriptVTT
 	case "revised":
-		candidates = []string{"transcript-revised.md"}
+		name = "transcript-revised.md"
 	case "chat":
-		candidates = []string{"chat.md"}
+		name = "chat.md"
 	default:
 		return "", "", ErrLiveNoteArtifactKind
 	}
 
-	for _, name := range candidates {
-		full := filepath.Join(liveNotesRoot(projectPath), dir, name)
-		info, err := os.Stat(full)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return "", "", fmt.Errorf("live notes: stat artifact: %w", err)
-		}
-		if info.IsDir() {
-			continue
-		}
-		if info.Size() > liveNoteArtifactMaxBytes {
-			return "", "", ErrLiveNoteArtifactTooLarge
-		}
-		body, err := os.ReadFile(full)
-		if err != nil {
-			return "", "", fmt.Errorf("live notes: read artifact: %w", err)
-		}
-		return string(body), name, nil
+	full := filepath.Join(liveNotesRoot(projectPath), dir, name)
+	info, err := os.Stat(full)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", "", ErrLiveNoteSessionNotFound
 	}
-	return "", "", ErrLiveNoteSessionNotFound
+	if err != nil {
+		return "", "", fmt.Errorf("live notes: stat artifact: %w", err)
+	}
+	if info.IsDir() {
+		return "", "", ErrLiveNoteSessionNotFound
+	}
+	if info.Size() > liveNoteArtifactMaxBytes {
+		return "", "", ErrLiveNoteArtifactTooLarge
+	}
+	body, err := os.ReadFile(full)
+	if err != nil {
+		return "", "", fmt.Errorf("live notes: read artifact: %w", err)
+	}
+	return string(body), name, nil
 }
 
 // liveNotesRoot is the per-project folder holding every meeting.

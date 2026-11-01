@@ -88,11 +88,12 @@
         </template>
 
         <template v-else-if="activeTab === 'transcript'">
-          <!-- SRT is plain text: running it through the Markdown renderer turns
-               cue numbers into headings and swallows the arrow in a timestamp
-               line. Do NOT write that arrow as its two-dash form here: an HTML
-               comment ends at the first close marker, so the rest of this
-               comment would leak into the pane as visible text. -->
+          <!-- The artifact is WebVTT and is converted to plain text in the
+               script, so this pane never sees the header, a cue id or a
+               timestamp line. Do NOT write the timing arrow as its two-dash
+               form here: an HTML comment ends at the first close marker, so
+               the rest of this comment would leak into the pane as visible
+               text. -->
           <pre v-if="transcriptText" class="meeting-transcript" data-role="transcript">{{ transcriptText }}</pre>
           <div v-else class="meeting-hint">{{ t('meeting.detail.noTranscript') }}</div>
         </template>
@@ -152,6 +153,7 @@ import {
 } from '@/composables/useMeetingHistory'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 import { meetingDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
+import { vttToPlainText } from '@/utils/vtt'
 import { appLog } from '@/utils/appLog'
 import '@/assets/modal-footer-btn.css'
 
@@ -211,7 +213,7 @@ const artifactRows = computed(() => {
     rows.push({
       key: 'transcript',
       label: t('liveShare.notes.artifactTranscript'),
-      path: `${r.dirPath}${sep}${transcriptFile.value || 'transcript.srt'}`,
+      path: `${r.dirPath}${sep}${transcriptFile.value || 'transcript.vtt'}`,
     })
   }
   if (r.hasRevised) rows.push({ key: 'revised', label: t('liveShare.notes.artifactRevised'), path: `${r.dirPath}${sep}transcript-revised.md` })
@@ -270,7 +272,9 @@ async function load(silent = false): Promise<void> {
       history.artifact(props.token, 'transcript'),
     ])
     minutesText.value = minutes?.content ?? ''
-    transcriptText.value = transcript?.content ?? ''
+    // The artifact is WebVTT; the tab is a reading surface, so the markup is
+    // stripped here rather than in the file.
+    transcriptText.value = vttToPlainText(transcript?.content ?? '')
     transcriptFile.value = transcript?.file ?? ''
     const messages = await history.chat(props.token)
     chat.value = messages.messages
@@ -341,7 +345,7 @@ function openFile(): void {
   }
   if (activeTab.value === 'transcript' && r.hasTranscript) {
     const sep = r.dirPath?.includes('\\') ? '\\' : '/'
-    emit('open-file', `${r.dirPath}${sep}${transcriptFile.value || 'transcript.srt'}`)
+    emit('open-file', `${r.dirPath}${sep}${transcriptFile.value || 'transcript.vtt'}`)
   }
 }
 

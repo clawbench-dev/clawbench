@@ -157,6 +157,7 @@ beforeEach(() => {
   settingsApi.setServerValue.mockReset()
   settingsApi.setServerValue.mockResolvedValue({ needsRestart: false, changedColdFields: [], warnings: [] })
   ;(shareApi.state as { value: string }).value = 'idle'
+  ;(shareApi.viewers as { value: unknown[] }).value = []
   cameraDevice.has = true
 })
 
@@ -308,6 +309,30 @@ describe('MeetingCreate in a browser', () => {
     expect(shareApi.start).toHaveBeenCalledWith(
       expect.objectContaining({ video: true, camera: true }),
     )
+  })
+
+  // The transcript labels a viewer by nickname once the join frame has
+  // delivered it, so the stored lines (and the minutes built from them) name
+  // people instead of numbering them.
+  it('labels viewer channels with the nickname once it is known', async () => {
+    stubCaptureApi(true)
+    ;(shareApi.viewers as { value: Array<{ id: string; name: string; talk: string }> }).value = [
+      { id: 'v1', name: '张三', talk: 'muted' },
+      { id: 'v2', name: '  ', talk: 'muted' },
+    ]
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
+    await wrapper.find('[data-action="meeting-start"]').trigger('click')
+    await flushPromises()
+
+    const args = (shareApi.start as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    const label = args.notesLabel as (channel: string) => string
+    expect(label('mic')).toBe(enMessages.liveShare.notes.speakerMe)
+    expect(label('viewer:v1')).toBe('张三')
+    // No nickname yet: the ordinal keeps the line attributable.
+    expect(label('viewer:v2')).toBe('Viewer 2')
   })
 
   it('disables the camera option when the machine has none', async () => {

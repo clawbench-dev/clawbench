@@ -636,6 +636,48 @@ func TestGenerateLiveNotesMinutes_BackgroundFailureMarksFailed(t *testing.T) {
 	assert.NotEmpty(t, note.Error)
 }
 
+// The account nickname is read at generation time and handed to the summariser
+// together with the transcript's own speaker label: the minutes must name the
+// user instead of repeating the transcript's first-person "我".
+func TestGenerateLiveNotesArtifacts_NamesTheUser(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+
+	orig := model.UserNickname
+	model.UserNickname = "泷泽"
+	t.Cleanup(func() { model.UserNickname = orig })
+
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(body))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要\n\n确认。"}}]}`))
+	}))
+	defer srv.Close()
+	withSummaryModel(t, srv.URL)
+
+	pid, err := store.ProjectIDForPath("/proj/nick")
+	require.NoError(t, err)
+	require.NoError(t, service.SetLiveNoteMinutes("tok-nick", pid, "", service.LiveNotesStatusGenerating, "", "", ""))
+
+	generateLiveNotesArtifacts("tok-nick", pid, t.TempDir(), "", []service.LiveNoteSegment{
+		{Channel: "mic", Speaker: "我", StartedAt: 1_000, Text: "我来负责发版"},
+		{Channel: "viewer:v1", Speaker: "观众 1", StartedAt: 2_000, Text: "好的"},
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, bodies)
+	assert.Contains(t, bodies[len(bodies)-1], "泷泽",
+		"the minutes pass must know who the transcript's 「我」 is")
+	assert.Contains(t, bodies[len(bodies)-1], "「我」",
+		"the label comes from the segment data, not a hard-coded string")
+}
+
 // ── Public viewer endpoint ─────────────────────────────────────────────────
 
 func TestServeShareLiveNotes_RejectsWrongMethod(t *testing.T) {
@@ -669,12 +711,12 @@ func TestLiveNoteArtifactsOf_OnlyListsFilesThatExist(t *testing.T) {
 	assert.Empty(t, empty.Transcript)
 	assert.Empty(t, empty.Revised)
 
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "transcript.srt"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "transcript.vtt"), []byte("WEBVTT\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "audio", "1-mic.webm"), []byte("a"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "audio", ".gitignore"), []byte("*\n"), 0o644))
 
 	got := liveNoteArtifactsOf(dir)
-	assert.Equal(t, filepath.Join(dir, "transcript.srt"), got.Transcript)
+	assert.Equal(t, filepath.Join(dir, "transcript.vtt"), got.Transcript)
 	assert.Empty(t, got.Minutes, "minutes.md is only listed once it exists")
 	assert.Equal(t, 1, got.AudioFiles, "the .gitignore is not a recording")
 }
@@ -767,10 +809,11 @@ func TestServeLiveShareNotesMinutes_WritesThreeArtifactsAndSummarisesTheProofrea
 	assert.Equal(t, "[00:00] 我：确认 ClawBench 发布计划", note.Revised)
 	require.NotEmpty(t, note.DirName)
 
-	raw, err := os.ReadFile(filepath.Join(service.MeetingDirPath(project, note.DirName), "transcript.srt"))
+	raw, err := os.ReadFile(filepath.Join(service.MeetingDirPath(project, note.DirName), "transcript.vtt"))
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "确认科劳本奇发布计划", "the raw transcript keeps what the ASR heard")
-	assert.Contains(t, string(raw), "--> ", "the raw transcript is SubRip, not Markdown")
+	assert.True(t, strings.HasPrefix(string(raw), "WEBVTT\n"), "the raw transcript is WebVTT, not Markdown")
+	assert.Contains(t, string(raw), "<v 我>", "the voice span carries the speaker")
 
 	revised, err := os.ReadFile(filepath.Join(service.MeetingDirPath(project, note.DirName), "transcript-revised.md"))
 	require.NoError(t, err)

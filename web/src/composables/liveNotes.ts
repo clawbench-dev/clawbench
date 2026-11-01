@@ -202,7 +202,7 @@ class ChannelRecorder {
     ctx: AudioContext,
     stream: MediaStream,
     private readonly channel: string,
-    private readonly speaker: string,
+    private readonly speaker: () => string,
     private readonly upload: NotesUploader,
     opts: LiveNotesCaptureOptions,
   ) {
@@ -442,7 +442,10 @@ class ChannelRecorder {
   private async uploadWithRetry(seg: QueuedSegment): Promise<void> {
     const args = {
       channel: this.channel,
-      speaker: this.speaker,
+      // Resolved per segment, not when the channel was created: a viewer's
+      // nickname arrives with the join frame, which can land after the first
+      // audio track (the publisher's own label is constant, so nothing is lost).
+      speaker: this.speaker(),
       startedAt: seg.startedAt,
       durationMs: seg.durationMs,
       blob: seg.blob,
@@ -493,7 +496,7 @@ export class LiveNotesCapture {
 
   /** Adds (or replaces) a channel. A null/empty stream is ignored: a muted
    *  microphone is normal and must not create a silent recorder. */
-  addChannel(channel: string, speaker: string, stream: MediaStream | null): void {
+  addChannel(channel: string, speaker: () => string, stream: MediaStream | null): void {
     if (this.stopped || !stream || stream.getAudioTracks().length === 0) return
     this.removeChannel(channel)
     const rec = new ChannelRecorder(this.ctx, stream, channel, speaker, this.upload, this.opts)

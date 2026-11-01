@@ -149,14 +149,14 @@ export function useLiveNotes() {
         lost.value += 1
       },
     })
-    capture.addChannel('mic', labelFor('mic'), opts.micStream)
+    capture.addChannel('mic', () => labelFor('mic'), opts.micStream)
     phase.value = 'recording'
   }
 
   /** Adds one viewer's microphone as its own channel. */
   function addViewer(viewerId: string, stream: MediaStream | null): void {
     if (!capture || !viewerId) return
-    capture.addChannel(`viewer:${viewerId}`, labelFor(`viewer:${viewerId}`), stream)
+    capture.addChannel(`viewer:${viewerId}`, () => labelFor(`viewer:${viewerId}`), stream)
   }
 
   function removeViewer(viewerId: string): void {

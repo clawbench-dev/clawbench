@@ -285,6 +285,9 @@ func TestNoNewHardcodedUserVisibleCJKFrontend(t *testing.T) {
 		"utils/groupRouting.ts":     "mention-tag parser (mirrors internal/grouprouting)",
 		"utils/fontConfig.ts":       "CJK font-availability probe text",
 		"utils/doubleClickUtils.ts": "leading-marker stripper regex (CJK numerals/punctuation)",
+		// Not copy: the separator between a speaker and their line, kept exactly
+		// as the stored transcript has always written it.
+		"utils/vtt.ts": "speaker separator in the transcript view (名字：内容)",
 		// Pre-existing ad-hoc bilingual strings: each already branches on the
 		// locale (zh ? '…' : '…'), so neither language is stuck with the other's
 		// text. Not the "Chinese-only, no English path" defect this guard

@@ -601,7 +601,7 @@ func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 //
 // It runs three stages in order, and each one has its own durable output:
 //
-//  1. transcript.srt         raw ASR, exactly as recognized (SubRip cues)
+//  1. transcript.vtt         raw ASR, exactly as recognized (WebVTT cues)
 //  2. transcript-revised.md  proofread against the project's own vocabulary
 //  3. minutes.md             summary generated FROM the proofread transcript
 //
@@ -636,7 +636,10 @@ func generateLiveNotesArtifacts(token string, projectID int64, projectPath, titl
 
 	transcript := proofreadLiveNotesTranscript(ctx, token, projectID, projectPath, title, segments, raw, paths, onDisk, startedAt)
 
-	minutes, err := service.GenerateLiveNotesMinutes(ctx, title, transcript)
+	minutes, err := service.GenerateLiveNotesMinutes(ctx, title, transcript, service.LiveNotesSpeaker{
+		Label: service.LiveNotesSelfLabel(segments),
+		Name:  model.UserNickname,
+	})
 	if err != nil {
 		slog.Warn("live notes: minutes generation failed", "err", err)
 		if serr := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusFailed, "", err.Error(), ""); serr != nil {
