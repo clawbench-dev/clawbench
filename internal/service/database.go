@@ -963,7 +963,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	}
 	// AI 听记 transcripts and generated minutes for live shares. Defined in
 	// live_notes.go so the handler tests can create the same schema.
-	if _, err := store.WriteExec(LiveNotesDDL); err != nil {
+	//
+	// Tables first, indexes after the column migration below: one of the
+	// indexes covers started_at, a column an upgraded database only gains from
+	// that migration. Creating it here would fail on every existing install.
+	if _, err := store.WriteExec(LiveNotesTablesDDL); err != nil {
 		return fmt.Errorf("failed to create live_notes tables: %w", err)
 	}
 	// Migrate: live_notes grew the artifact columns. CREATE TABLE IF NOT EXISTS
@@ -1016,6 +1020,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		if _, err := store.WriteExec(`DELETE FROM live_notes WHERE started_at = 0`); err != nil {
 			return fmt.Errorf("failed to drop pre-record live_notes rows: %w", err)
 		}
+	}
+	// Only now are every indexed column guaranteed to exist, on both a fresh
+	// database and one upgraded by the ALTERs above.
+	if _, err := store.WriteExec(LiveNotesIndexesDDL); err != nil {
+		return fmt.Errorf("failed to create live_notes indexes: %w", err)
 	}
 
 	// Migrate: session shares no longer freeze a JSON snapshot. The DDL above is

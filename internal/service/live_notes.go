@@ -43,7 +43,15 @@ import (
 // live_notes holds one row per share: the generated minutes plus their status.
 // Minutes are produced asynchronously (a long meeting takes tens of seconds to
 // summarize), so status is polled rather than returned inline.
-const LiveNotesDDL = `
+//
+// The tables and the indexes are two constants because they are applied at
+// different points of the upgrade: idx_live_notes_project_started references
+// started_at, which only the ALTER TABLE migration adds on a database created
+// before the meeting-record model. CREATE TABLE IF NOT EXISTS is a no-op there,
+// so creating the index in the same batch fails with "no such column:
+// started_at" and takes the whole startup down with it. LiveNotesDDL (tables +
+// indexes, for fresh databases and tests) is just the two concatenated.
+const LiveNotesTablesDDL = `
 CREATE TABLE IF NOT EXISTS live_notes_segments (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	token TEXT NOT NULL,
@@ -55,7 +63,6 @@ CREATE TABLE IF NOT EXISTS live_notes_segments (
 	text TEXT NOT NULL,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_live_note_segments_token ON live_notes_segments(token, started_at);
 
 CREATE TABLE IF NOT EXISTS live_notes (
 	token TEXT PRIMARY KEY,
@@ -75,8 +82,6 @@ CREATE TABLE IF NOT EXISTS live_notes (
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_live_notes_updated ON live_notes(updated_at);
-CREATE INDEX IF NOT EXISTS idx_live_notes_project_started ON live_notes(project_id, started_at);
 
 CREATE TABLE IF NOT EXISTS live_notes_chat (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,9 +94,22 @@ CREATE TABLE IF NOT EXISTS live_notes_chat (
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	UNIQUE(token, client_msg_id)
 );
+`
+
+// LiveNotesIndexesDDL creates the indexes. Applied by InitDB *after* the
+// column migration, never together with the tables — see the comment on
+// LiveNotesTablesDDL.
+const LiveNotesIndexesDDL = `
+CREATE INDEX IF NOT EXISTS idx_live_note_segments_token ON live_notes_segments(token, started_at);
+CREATE INDEX IF NOT EXISTS idx_live_notes_updated ON live_notes(updated_at);
+CREATE INDEX IF NOT EXISTS idx_live_notes_project_started ON live_notes(project_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_live_note_chat_token ON live_notes_chat(token, id);
 CREATE INDEX IF NOT EXISTS idx_live_note_chat_project ON live_notes_chat(project_id, token);
 `
+
+// LiveNotesDDL is the full schema for a fresh database (tables then indexes).
+// Tests use it as their fixture; InitDB applies the two halves separately.
+const LiveNotesDDL = LiveNotesTablesDDL + LiveNotesIndexesDDL
 
 // Live note minutes statuses. Kept as constants so the handler, the SPA and the
 // tests cannot drift on spelling.
