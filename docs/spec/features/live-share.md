@@ -317,6 +317,7 @@ MediaProjection ─▶ VirtualDisplay ─▶ ImageReader ─▶ 缩放 + JPEG
 - **观众端（分享页）先过昵称门**：填了昵称才建立信令连接（不占观众名额），昵称记在 `localStorage`，发布端观众列表与聊天署名都用它。
 - **语音会议**（不共享屏幕）与屏幕会议共用房间、信令、聊天、听记、纪要；差别只是没有视频轨——观众端据 `video: false` 渲染「语音会议」占位，标注/切源/远程控制/成员共享屏幕不出现。
 - 顶栏没有听记入口：Dock 页签是唯一入口（`headerClusterSpacing.test.ts` 钉住顶栏只有「主题 → 服务器」）。
+- **四个子页的底部动作条与定时任务一致**：药丸按钮 `.fbtn`（`--primary` / `--danger`），条本身 `padding: var(--space-3) var(--space-4)` + `background: var(--bg-primary)` + 顶部发丝线，不再各写一份 `.meeting-btn`；窄面板放不下时 `flex-wrap: wrap` 换行。规范与理由见 `docs/spec/client/design-guide.md` §按钮，守卫 `components/live/__tests__/meetingFooterButtons.test.ts`。正文里的行内小动作（产物行的「复制路径」）仍用小号局部类。
 
 ### 会议记录
 

@@ -110,9 +110,9 @@
     </div>
 
     <div class="meeting-footer">
-      <button class="meeting-btn" type="button" @click="emit('back')">{{ t('common.cancel') }}</button>
+      <button class="fbtn" type="button" @click="emit('back')">{{ t('common.cancel') }}</button>
       <button
-        class="meeting-btn meeting-btn--primary"
+        class="fbtn fbtn-primary"
         type="button"
         data-action="meeting-start"
         :disabled="!canStart"
@@ -150,6 +150,7 @@ import {
 import { getNative } from '@/utils/clawbenchNative'
 import { browserScreenCaptureAvailable, isInsecureCaptureContext } from '@/utils/screenCaptureSupport'
 import { appLog } from '@/utils/appLog'
+import '@/assets/modal-footer-btn.css'
 
 const emit = defineEmits<{ back: []; started: [] }>()
 
@@ -360,19 +361,8 @@ onMounted(() => {
 }
 
 .meeting-footer {
-  display: flex; justify-content: flex-end; gap: var(--space-3);
-  padding: var(--space-4) var(--space-6);
-  border-top: 1px solid var(--border-color); background: var(--bg-secondary); flex-shrink: 0;
+  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-color); background: var(--bg-primary); flex-shrink: 0;
 }
-.meeting-btn {
-  display: inline-flex; align-items: center; gap: var(--space-2);
-  height: calc(28 * var(--dp)); padding: 0 var(--space-6);
-  border: 1px solid var(--border-color); border-radius: var(--radius-sm);
-  background: var(--bg-primary); color: var(--text-primary);
-  font-size: var(--font-size-sm); cursor: pointer;
-}
-.meeting-btn:hover:not(:disabled) { border-color: var(--accent-color); color: var(--accent-color); }
-.meeting-btn--primary { border-color: var(--accent-color); background: var(--accent-color); color: #fff; }
-.meeting-btn--primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); color: #fff; }
-.meeting-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>

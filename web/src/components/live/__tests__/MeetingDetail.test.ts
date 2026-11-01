@@ -110,7 +110,7 @@ describe('MeetingDetail', () => {
     await w.find('[data-tab="chat"]').trigger('click')
     expect(w.text()).toContain('hello')
     expect(w.find('[data-tab="chat"]').text()).toContain('1')
-    expect(w.findAll('.meeting-btn').some((b) => b.text() === enMessages.meeting.detail.copyAll)).toBe(true)
+    expect(w.findAll('.meeting-footer .fbtn').some((b) => b.text() === enMessages.meeting.detail.copyAll)).toBe(true)
   })
 
   it('says the job was interrupted instead of spinning forever', async () => {

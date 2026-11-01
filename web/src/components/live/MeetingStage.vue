@@ -404,7 +404,6 @@ import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
 import { parseControlMessage, toInjectorEvent, type ControlMessage } from '@/share/liveControl'
 import { chunkChatHistory } from '@/share/chatHistory'
 import { appLog } from '@/utils/appLog'
-import '@/assets/modal-footer-btn.css'
 
 const emit = defineEmits<{ ended: [token: string] }>()
 
@@ -1633,16 +1632,6 @@ watch(
   background: var(--accent-color, #4a90d9);
   animation: live-panel-pulse 1.4s ease-in-out infinite;
   flex-shrink: 0;
-}
-
-.live-panel__footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-3, 6px);
-  flex-shrink: 0;
-  padding: var(--space-4, 8px) var(--space-6, 12px);
-  border-top: 1px solid var(--border-color, #e5e5e5);
-  background: var(--bg-secondary, #f6f8fa);
 }
 
 </style>

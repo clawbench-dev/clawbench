@@ -82,7 +82,7 @@
             <div v-for="row in artifactRows" :key="row.key" class="meeting-file">
               <span class="meeting-file__label">{{ row.label }}</span>
               <span class="meeting-file__path" :title="row.path">{{ row.path }}</span>
-              <button class="meeting-btn meeting-btn--sm" type="button" @click="copy(row.path)">{{ t('liveShare.notes.copyPath') }}</button>
+              <button class="meeting-btn" type="button" @click="copy(row.path)">{{ t('liveShare.notes.copyPath') }}</button>
             </div>
           </div>
         </template>
@@ -112,15 +112,15 @@
       </div>
 
       <div class="meeting-footer">
-        <button class="meeting-btn meeting-btn--danger" type="button" data-action="meeting-delete" @click="askDelete">
-          <Trash2 :size="13" />{{ t('meeting.detail.delete') }}
+        <button class="fbtn fbtn-danger" type="button" data-action="meeting-delete" @click="askDelete">
+          <Trash2 :size="14" />{{ t('meeting.detail.delete') }}
         </button>
         <span class="meeting-header__spacer" />
-        <button v-if="activeTab !== 'chat'" class="meeting-btn" type="button" :disabled="!currentText" @click="openFile">
-          <ExternalLink :size="13" />{{ t('liveShare.history.openInEditor') }}
+        <button v-if="activeTab !== 'chat'" class="fbtn" type="button" :disabled="!currentText" @click="openFile">
+          <ExternalLink :size="14" />{{ t('liveShare.history.openInEditor') }}
         </button>
-        <button class="meeting-btn" type="button" :disabled="!copyText" @click="copy(copyText)">
-          <Copy :size="13" />{{ activeTab === 'chat' ? t('meeting.detail.copyAll') : t('liveShare.notes.copy') }}
+        <button class="fbtn" type="button" :disabled="!copyText" @click="copy(copyText)">
+          <Copy :size="14" />{{ activeTab === 'chat' ? t('meeting.detail.copyAll') : t('liveShare.notes.copy') }}
         </button>
       </div>
     </template>
@@ -153,6 +153,7 @@ import {
 import { cleanupDragGhost } from '@/utils/attachDrag'
 import { meetingDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
 import { appLog } from '@/utils/appLog'
+import '@/assets/modal-footer-btn.css'
 
 const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ back: []; quote: [token: string]; 'open-file': [path: string] }>()
@@ -536,24 +537,19 @@ onMounted(() => {
 .meeting-link { border: none; background: none; color: var(--accent-color); cursor: pointer; font-size: inherit; padding: 0; }
 
 .meeting-footer {
-  display: flex; align-items: center; justify-content: flex-end; gap: var(--space-3);
-  padding: var(--space-4) var(--space-6);
-  border-top: 1px solid var(--border-color); background: var(--bg-secondary); flex-shrink: 0;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-color); background: var(--bg-primary); flex-shrink: 0;
 }
+/* In-body small action only (the artifact row's 复制路径). Footer actions use
+   the shared .fbtn pills — see design-guide §按钮. */
 .meeting-btn {
   display: inline-flex; align-items: center; gap: var(--space-2);
-  height: calc(28 * var(--dp)); padding: 0 var(--space-6);
+  height: calc(24 * var(--dp)); padding: 0 var(--space-4);
   border: 1px solid var(--border-color); border-radius: var(--radius-sm);
   background: var(--bg-primary); color: var(--text-primary);
-  font-size: var(--font-size-sm); cursor: pointer;
+  font-size: var(--font-size-xs); cursor: pointer;
 }
 .meeting-btn:hover:not(:disabled) { border-color: var(--accent-color); color: var(--accent-color); }
 .meeting-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.meeting-btn--sm { height: calc(24 * var(--dp)); padding: 0 var(--space-4); font-size: var(--font-size-xs); }
-.meeting-btn--danger {
-  border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
-  background: color-mix(in srgb, var(--color-red) 8%, transparent);
-  color: var(--color-red);
-}
-.meeting-btn--danger:hover:not(:disabled) { color: var(--color-red); border-color: color-mix(in srgb, var(--color-red) 60%, transparent); }
 </style>

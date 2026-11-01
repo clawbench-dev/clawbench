@@ -73,12 +73,14 @@
       <div class="meeting-hint">{{ t('meeting.list.hint') }}</div>
     </div>
 
+    <!-- Footer actions use the shared .fbtn pills, the same language the task
+         tab's action bar uses — see design-guide §按钮. -->
     <div class="meeting-footer">
-      <button class="meeting-btn" type="button" data-action="meeting-join" @click="emit('join')">
-        <LinkIcon :size="13" />{{ t('meeting.list.join') }}
+      <button class="fbtn" type="button" data-action="meeting-join" @click="emit('join')">
+        <LinkIcon :size="14" />{{ t('meeting.list.join') }}
       </button>
-      <button class="meeting-btn meeting-btn--primary" type="button" data-action="meeting-create" @click="emit('create')">
-        <Plus :size="13" />{{ t('meeting.list.create') }}
+      <button class="fbtn fbtn-primary" type="button" data-action="meeting-create" @click="emit('create')">
+        <Plus :size="14" />{{ t('meeting.list.create') }}
       </button>
     </div>
   </div>
@@ -104,6 +106,7 @@ import { meetingQuoteLabel, useMeetingHistory, type MeetingRecord } from '@/comp
 import { meetingDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 import { appLog } from '@/utils/appLog'
+import '@/assets/modal-footer-btn.css'
 
 const props = defineProps<{ active?: boolean }>()
 const emit = defineEmits<{
@@ -326,29 +329,12 @@ onMounted(() => {
 
 .meeting-footer {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--space-3, 6px);
-  padding: var(--space-4, 8px) var(--space-6, 12px);
+  padding: var(--space-3, 6px) var(--space-4, 8px);
   border-top: 1px solid var(--border-color);
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   flex-shrink: 0;
 }
-
-.meeting-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2, 4px);
-  height: calc(28 * var(--dp));
-  padding: 0 var(--space-6, 12px);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm, 6px);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-}
-.meeting-btn:hover:not(:disabled) { border-color: var(--accent-color); color: var(--accent-color); }
-.meeting-btn--primary { border-color: var(--accent-color); background: var(--accent-color); color: #fff; }
-.meeting-btn--primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); color: #fff; }
-.meeting-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>

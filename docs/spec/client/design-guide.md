@@ -316,6 +316,16 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
   **组件若独立使用 `.fbtn`（而非经 ModalDialog 继承），必须自己 `import '@/assets/modal-footer-btn.css'`**，
   不能依赖祖先恰好导入过。
 
+**页签/面板底部的动作条（`*.vue` 里的 footer 动作区）也是同一套药丸按钮**，不要为某个页签另造按钮形状。定时任务的任务详情动作条（`.detail-actions`）与任务表单页脚（`.form-footer`）是基准，会议页签的列表 / 创建 / 加入 / 详情四个页脚照此办理。
+
+- **条本身**：`display: flex` + `gap: var(--space-3)` + `padding: var(--space-3) var(--space-4)` + `border-top: 1px solid var(--border-color)` + `background: var(--bg-primary)` + `flex-shrink: 0`。
+  底色**跟面板一致**（`--bg-primary`），不要铺 `--bg-secondary`：页脚是被一条发丝线分开的操作区，不是第二种底色（会议页签曾铺 `--bg-secondary`，看起来像另一块面板）。
+  对齐方式由页签自己定：左对齐（任务详情，动作按重要性排列）、右对齐（表单类，取消在左、确认在右）、或用 spacer 两端分列（会议详情，删除在左、复制/打开在右）。
+  **放不下时换行，不要溢出**：加 `flex-wrap: wrap`（左栏最窄 320px，三个药丸按钮就放不下了）。右对齐的条不要用 `overflow-x: auto` 兜底——`justify-content: flex-end` 溢出的一侧在滚动起点之外，最左边那个按钮会永久不可达。
+- **按钮**：主操作 `.fbtn fbtn-primary`、破坏性 `.fbtn fbtn-danger`、其余 `.fbtn`；页脚按钮里的图标用 14px。**不要新建 `.xxx-btn` 局部类**——会议页签曾各写一份 28px / 圆角 6 的 `.meeting-btn`，和任务页签的药丸按钮并排就是两套语言。
+- **只有正文里的行内小动作**才允许更小的局部类（会议详情的「复制路径」、共享面板的「静音」）：**页脚里不放小按钮，正文里不放 `.fbtn` 大按钮**。
+- 守卫：`components/live/__tests__/meetingFooterButtons.test.ts`（页脚条逐声明对比任务动作条、页脚里只能是 `.fbtn`、组件自己 import 样式表）。
+
 ### 设置面板控件（`.settings-item__switch` / `__slider*`）
 
 开关、滑块、滑块重置按钮的**形状只定义一次**，在全局 `web/css/components.css` 的
@@ -673,6 +683,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/common/__tests__/wrapCheck.css.test.ts` | 菜单「该项当前是开的」勾选 `.wrap-check` 全局唯一、两个菜单共用同一 class |
 | `components/chat/__tests__/quickSendMenuStickyTitle.css.test.ts` | 快捷发送 / 快捷指令弹层标题 `.quick-send-title` 在 `components.css` 全局声明（sticky + 不透明 `--bg-secondary` + `z-index`），两个宿主不得各自重声明，且两个菜单的 `:max-height` 一致且 ≥400 |
 | `components/common/__tests__/modalFooterBtn.theme.css.test.ts` | `.fbtn` 深色主题前景提亮 |
+| `components/live/__tests__/meetingFooterButtons.test.ts` | 会议页脚动作条与任务动作条逐声明一致（`padding` / `background` / `border-top` / `flex-shrink`）、页脚里只能用 `.fbtn`（不得回退 `.meeting-btn`）、每个组件自己 import `modal-footer-btn.css` |
 | `assets/__tests__/modalWidth.css.test.ts` | **宽度只有两档**：`--modal-width-narrow/wide` 各一份且窄 < 宽、`modal-card.css` 只把修饰类映射到 token、全仓组件**不得**自设 `--modal-max-width` 或给弹窗外壳写裸 `max-width` 数字 |
 | `components/common/__tests__/wallpaperSurfaceTransparency.css.test.ts` | 壁纸开启后各表面透明度不叠乘 |
 | `components/common/__tests__/wallpaperBlurCost.css.test.ts` | 壁纸模糊不留 `will-change` |
