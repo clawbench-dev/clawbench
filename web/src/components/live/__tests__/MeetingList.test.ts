@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { readFileSync } from 'node:fs'
@@ -310,6 +310,56 @@ describe('MeetingList rows', () => {
     const rows = w.findAll('.meeting-row')
     expect(rows[0].text()).toContain(enMessages.meeting.list.noArtifacts)
     expect(rows[1].text()).not.toContain(enMessages.meeting.list.noArtifacts)
+  })
+})
+
+/**
+ * The meta line's first item used to be a raw `11/01 17:35`. It now speaks the
+ * app's relative language, with one exception: past a day the shared formatter
+ * says "1 day ago", and yesterday is a thing the reader can name.
+ *
+ * The clock is pinned — every expectation below is a calendar claim (is this
+ * yesterday, or two days ago?), so a real `Date.now()` would make the result
+ * depend on what time of day the suite happens to run.
+ */
+describe('MeetingList time column', () => {
+  const NOON = new Date(2026, 10, 1, 10, 0, 0) // Nov 1 2026, 10:00 local
+
+  beforeEach(() => {
+    // Only the clock is faked, so nothing else in the component's lifecycle
+    // (its own interval, vue-i18n's handshake) changes behaviour.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOON)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function timeOf(over: Record<string, unknown>) {
+    sessions.value = [record(over)]
+    return mountList().find('.meeting-row__m')
+  }
+
+  it('counts minutes and hours inside the day', () => {
+    expect(timeOf({ startedAt: NOON.getTime() - 5 * 60_000 }).text()).toBe('5 min ago')
+    expect(timeOf({ startedAt: NOON.getTime() - 3 * 3_600_000 }).text()).toBe('3 hr ago')
+  })
+
+  it('names yesterday instead of "1 day ago"', () => {
+    expect(timeOf({ startedAt: new Date(2026, 9, 31, 9, 0).getTime() }).text()).toBe('Yesterday')
+  })
+
+  it('counts days up to a week, then falls back to the date', () => {
+    expect(timeOf({ startedAt: new Date(2026, 9, 30, 9, 0).getTime() }).text()).toBe('2 days ago')
+    // Ten days out the shared formatter has run out of relative words.
+    expect(timeOf({ startedAt: new Date(2026, 9, 22, 9, 0).getTime() }).text()).toBe('10/22/2026')
+  })
+
+  it('keeps the exact clock reachable as a tooltip', () => {
+    // The visible label no longer carries the hour, so the tooltip is the only
+    // place left that can answer "when exactly was this meeting?".
+    expect(timeOf({ startedAt: new Date(2026, 9, 30, 9, 0).getTime() }).attributes('title'))
+      .toBe('2026-10-30 09:00:00')
   })
 })
 

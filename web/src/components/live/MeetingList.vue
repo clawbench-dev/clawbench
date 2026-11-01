@@ -72,7 +72,10 @@
             </div>
 
             <div class="meeting-row__meta">
-              <span class="meeting-row__m">{{ formatWhen(r.record.startedAt) }}</span>
+              <span
+                class="meeting-row__m"
+                :title="formatFullTimestamp(new Date(r.record.startedAt))"
+              >{{ formatWhen(r.record.startedAt) }}</span>
               <template v-if="r.duration">
                 <span class="meeting-row__sep">·</span>
                 <span class="meeting-row__m" :class="{ 'is-accent': !r.record.endedAt }">{{ r.duration }}</span>
@@ -153,6 +156,7 @@ import {
   Video,
 } from 'lucide-vue-next'
 import { MEETING_ICON } from '@/utils/meetingIcon'
+import { formatFullTimestamp, formatRelativeTime, startOfLocalDay } from '@/utils/format'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { useDialog } from '@/composables/useDialog'
@@ -175,7 +179,7 @@ const emit = defineEmits<{
   open: [token: string]
 }>()
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const dialog = useDialog()
 const toast = useToast()
 const history = useMeetingHistory()
@@ -183,17 +187,21 @@ const sessions = computed(() => history.sessions.value)
 const loading = computed(() => history.loading.value)
 const error = computed(() => history.error.value)
 
-/** `11/01 17:35` — the list's own stamp; the detail spells it out in full. */
+/** `3小时前` / `昨天` / `2天前` — the list's own stamp; the detail spells the
+ *  exact date and clock out in full, and the tooltip keeps it reachable here. */
 function formatWhen(ms: number): string {
   if (!ms) return ''
   const d = new Date(ms)
-  if (Number.isNaN(d.getTime())) return ''
-  return d.toLocaleString(locale.value, {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  if (!Number.isFinite(d.getTime())) return ''
+  // Past a day the shared formatter says "1天前", which is a worse word for
+  // something the reader can name exactly. Only that bucket is special-cased;
+  // newer records keep the relative wording, older ones "N天前" then the date.
+  if (Date.now() - ms >= 86_400_000) {
+    // Round, not floor: a DST day is 23 or 25 hours long.
+    const days = Math.round((startOfLocalDay(new Date()) - startOfLocalDay(d)) / 86_400_000)
+    if (days === 1) return t('time.yesterday')
+  }
+  return formatRelativeTime(d)
 }
 
 /**
