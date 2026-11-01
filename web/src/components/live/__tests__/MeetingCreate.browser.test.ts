@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import enMessages from '@/i18n/locales/en'
+import { _resetMeetingOptions, useMeetingOptions } from '@/composables/useMeetingOptions'
 import MeetingCreate from '../MeetingCreate.vue'
 
 /**
@@ -148,6 +149,10 @@ function stubCaptureApi(available: boolean): void {
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  // The capture options are module-level singletons shared with the running
+  // meeting; a test that flips the camera would otherwise leak into the next
+  // one and make the expectations order-dependent.
+  _resetMeetingOptions()
   settingsApi.serverConfig.value = {}
   settingsApi.setServerValue.mockReset()
   settingsApi.setServerValue.mockResolvedValue({ needsRestart: false, changedColdFields: [], warnings: [] })
@@ -180,7 +185,6 @@ describe('MeetingCreate in a browser', () => {
 
   it('refuses a video meeting with no camera and no screen', async () => {
     stubCaptureApi(true)
-    cameraDevice.has = false
     const wrapper = mountPanel()
     await flushPromises()
 
@@ -200,6 +204,80 @@ describe('MeetingCreate in a browser', () => {
     // A voice meeting needs no picture at all.
     await wrapper.find('[data-type="voice"]').trigger('click')
     expect(start.attributes('disabled')).toBeUndefined()
+  })
+
+  it('describes the camera/screen combination in one line, four states', async () => {
+    stubCaptureApi(true)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const picture = () => wrapper.find('[data-role="meeting-picture"]')
+    // Screen sharing is on by default (the browser's own picker picks it) and
+    // the camera is opt-in, so the form opens on "screen only".
+    expect(picture().classes()).toContain('meeting-hint')
+    expect(picture().text()).toBe(enMessages.meeting.create.pictureScreen)
+
+    await wrapper.find('[data-role="meeting-camera"]').setValue(true)
+    expect(picture().text()).toBe(enMessages.meeting.create.pictureBoth)
+
+    await wrapper.find('[data-role="meeting-screen"]').setValue(false)
+    expect(picture().text()).toBe(enMessages.meeting.create.pictureCamera)
+
+    // "Neither" is the only combination that cannot start, so it is the only
+    // one that turns into a warning — the state and the warning are one line,
+    // not two.
+    await wrapper.find('[data-role="meeting-camera"]').setValue(false)
+    expect(picture().classes()).toContain('meeting-warn')
+    expect(picture().text()).toBe(enMessages.meeting.create.noPicture)
+  })
+
+  it('does not repeat a description under each simple toggle', async () => {
+    stubCaptureApi(true)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // Only the camera/screen pair needs explaining (their combination decides
+    // the picture); the rest name themselves.
+    expect(wrapper.findAll('[data-role="meeting-picture"]')).toHaveLength(1)
+    const text = wrapper.text()
+    const dropped = [
+      'cameraOn',
+      'cameraOff',
+      'micOn',
+      'micOff',
+      'systemAudioHint',
+      'notesOn',
+      'notesOff',
+    ] as const
+    for (const key of dropped) {
+      expect(text, `meeting.create.${key} should not be rendered`).not.toContain(
+        enMessages.meeting.create[key],
+      )
+    }
+  })
+
+  it('opens with the microphone on, and leaves it editable', async () => {
+    stubCaptureApi(true)
+    // The option is a singleton shared with the running stage, so a previous
+    // meeting may have left it muted. The form must still open with it ON: the
+    // host wants to be heard without having to remember to tick a box.
+    const { microphone } = useMeetingOptions()
+    microphone.value = false
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const mic = wrapper.find('[data-role="meeting-mic"]')
+    expect((mic.element as HTMLInputElement).checked).toBe(true)
+    // A default, not a lock: it can still be turned off, before and during.
+    expect(mic.attributes('disabled')).toBeUndefined()
+    await mic.setValue(false)
+    expect((mic.element as HTMLInputElement).checked).toBe(false)
+
+    // ...and switching to a voice meeting does not force it back on.
+    await wrapper.find('[data-type="voice"]').trigger('click')
+    await flushPromises()
+    expect((mic.element as HTMLInputElement).checked).toBe(false)
   })
 
   it('starts a voice meeting with no video flag and no screen source', async () => {
@@ -240,7 +318,18 @@ describe('MeetingCreate in a browser', () => {
 
     const camera = wrapper.find('[data-role="meeting-camera"]')
     expect(camera.attributes('disabled')).toBeDefined()
-    expect(wrapper.text()).toContain(enMessages.meeting.create.cameraNoDevice)
+    // The single description line carries the reason instead of a hint under
+    // the disabled checkbox.
+    expect(wrapper.find('[data-role="meeting-picture"]').text()).toBe(
+      enMessages.meeting.create.cameraNoDevice,
+    )
+
+    // With no camera the only way to a picture is a screen, and "neither" says
+    // exactly that rather than telling the user to turn on a camera they lack.
+    await wrapper.find('[data-role="meeting-screen"]').setValue(false)
+    expect(wrapper.find('.meeting-warn').text()).toBe(
+      enMessages.meeting.create.noPictureNoCamera,
+    )
   })
 
   it('cannot start without a nickname', async () => {

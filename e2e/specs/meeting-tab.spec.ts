@@ -43,9 +43,76 @@ test.describe('Meeting tab', () => {
     await page.locator('[data-role="meeting-nick"]').fill('E2E 用户')
     await expect(start).toBeEnabled()
 
+    // Turning the mic off is the host's call — but the form opens with it on,
+    // every time, including after a previous meeting muted it.
+    const mic = page.locator('[data-role="meeting-mic"]')
+    await expect(mic).toBeChecked()
+    await mic.uncheck()
+    await expect(mic).not.toBeChecked()
+
     await page.locator('[data-type="voice"]').click()
     await expect(page.locator('[data-type="voice"]')).toHaveClass(/meeting-type--on/)
     await expect(start).toBeEnabled()
+    await expect(mic).not.toBeChecked()
+
+    // Re-opening the form starts from the default again (the option is a
+    // singleton shared with the stage, so "off" would otherwise stick).
+    await page.locator('[data-action="meeting-create-back"]').click()
+    await page.locator('[data-action="meeting-create"]').click()
+    await expect(page.locator('[data-role="meeting-mic"]')).toBeChecked()
+  })
+
+  /**
+   * The create form on a phone.
+   *
+   * The body is a scrolling flex column (`flex: 1; min-height: 0; overflow-y:
+   * auto`), so once its content is taller than the panel every child is shrunk
+   * before the panel scrolls. Non-replaced children keep their content height;
+   * an `<input>` is a replaced element with an automatic minimum of 0, so the
+   * two text fields were the only things that collapsed — they rendered at
+   * roughly half height. Measured here rather than in jsdom, which has no
+   * layout at all; `meetingFormInput.css.test.ts` pins the declaration.
+   */
+  test('keeps both fields full height on a phone, and describes the picture once', async ({ page }) => {
+    await page.locator('[data-action="meeting-create"]').click()
+    await expect(page.locator('[data-role="meeting-title"]')).toBeVisible()
+
+    // Resize with the form open: this is the phone case the fields collapsed in.
+    await page.setViewportSize({ width: 393, height: 600 })
+
+    const body = page.locator('.meeting-body')
+    await expect
+      .poll(() => body.evaluate((el) => el.scrollHeight > el.clientHeight), { timeout: 5000 })
+      .toBe(true)
+
+    for (const role of ['meeting-nick', 'meeting-title']) {
+      const field = page.locator(`[data-role="${role}"]`)
+      await expect(field).toBeVisible()
+      const box = await field.boundingBox()
+      expect(box!.height, `${role} must not be squashed by the flex column`).toBeGreaterThanOrEqual(36)
+    }
+
+    // One description for the camera/screen pair, and it follows their
+    // combination instead of repeating a line under each toggle.
+    const picture = page.locator('[data-role="meeting-picture"]')
+    await expect(picture).toHaveCount(1)
+    await expect(picture).toHaveClass(/meeting-hint/)
+    const screenOnly = await picture.textContent()
+
+    await page.locator('[data-role="meeting-camera"]').check()
+    const both = await picture.textContent()
+    expect(both).not.toBe(screenOnly)
+
+    await page.locator('[data-role="meeting-screen"]').uncheck()
+    const cameraOnly = await picture.textContent()
+    expect(cameraOnly).not.toBe(both)
+    expect(cameraOnly).not.toBe(screenOnly)
+
+    // "Neither" is the only combination that cannot start a video meeting, so
+    // it is the only one that turns into a warning — same line, warning style.
+    await page.locator('[data-role="meeting-camera"]').uncheck()
+    await expect(picture).toHaveClass(/meeting-warn/)
+    expect(await picture.textContent()).not.toBe(cameraOnly)
   })
 
   test('join requires a nickname before it can submit', async ({ page }) => {
@@ -106,6 +173,10 @@ test.describe('Meeting back gesture', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     await page.locator('.dock-btn[data-tab="live"]').filter({ visible: true }).first().click()
+    // The panel is a lazy chunk: without waiting for it, `edgeSwipe`'s
+    // querySelector runs against a DOM that has no `.meeting-shell` yet and
+    // throws "swipe target missing" (a race, not a behaviour).
+    await expect(page.locator('.meeting-shell')).toBeVisible()
   })
 
   test('an edge swipe returns from the create page to the list', async ({ page }) => {

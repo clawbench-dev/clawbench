@@ -1,7 +1,7 @@
 <template>
   <div class="meeting-panel">
     <div class="meeting-header">
-      <button class="meeting-icon-btn" type="button" :title="t('common.back')" @click="emit('back')">
+      <button class="meeting-icon-btn" type="button" :title="t('common.back')" data-action="meeting-create-back" @click="emit('back')">
         <ArrowLeft :size="14" />
       </button>
       <span class="meeting-header__title">{{ t('meeting.create.title') }}</span>
@@ -74,6 +74,10 @@
           </button>
         </div>
 
+        <!-- Camera and screen are independent toggles, but what the picture
+             will be is their COMBINATION. One description underneath both says
+             which of the four states is selected; repeating a line under each
+             toggle said the same thing twice and read as two separate modes. -->
         <template v-if="isVideo">
           <label class="meeting-check" :class="{ 'meeting-check--disabled': !cameraAvailable }">
             <input
@@ -86,9 +90,6 @@
             <span class="meeting-check__icon"><Video :size="13" /></span>
             {{ t('meeting.create.camera') }}
           </label>
-          <div class="meeting-hint meeting-hint--indent">
-            {{ cameraHint }}
-          </div>
 
           <label class="meeting-check">
             <input
@@ -100,7 +101,15 @@
             <span class="meeting-check__icon"><Monitor :size="13" /></span>
             {{ t('meeting.create.shareScreen') }}
           </label>
-          <div class="meeting-hint meeting-hint--indent">{{ screenHint }}</div>
+
+          <!-- "Neither" is the only combination that cannot start a video
+               meeting, so it is the only one that reads as a warning. -->
+          <div v-if="!cameraOn && !shareScreen" class="meeting-warn" data-role="meeting-picture">
+            {{ noPictureHint }}
+          </div>
+          <div v-else class="meeting-hint meeting-hint--indent" data-role="meeting-picture">
+            {{ pictureHint }}
+          </div>
 
           <div v-if="shareScreen" class="meeting-source-grid">
             <button
@@ -123,18 +132,22 @@
           <div v-if="shareScreen && sources.length === 0 && !loadingSources" class="meeting-hint">
             {{ noSourceHint }}
           </div>
-          <div v-if="!camera && !shareScreen" class="meeting-warn">{{ t('meeting.create.noPicture') }}</div>
         </template>
 
+        <!-- These three toggles name themselves; a sentence under each was
+             noise. Only the camera/screen pair needs a description, because
+             what they produce depends on how they combine. -->
         <div class="meeting-section">{{ t('meeting.create.sound') }}</div>
         <label class="meeting-check">
-          <input type="checkbox" :checked="microphone" @change="microphone = ($event.target as HTMLInputElement).checked" />
+          <input
+            type="checkbox"
+            :checked="microphone"
+            data-role="meeting-mic"
+            @change="microphone = ($event.target as HTMLInputElement).checked"
+          />
           <span class="meeting-check__icon"><Mic :size="13" /></span>
           {{ t('meeting.create.mic') }}
         </label>
-        <div class="meeting-hint meeting-hint--indent">
-          {{ microphone ? t('meeting.create.micOn') : t('meeting.create.micOff') }}
-        </div>
         <label class="meeting-check" :class="{ 'meeting-check--disabled': !hasScreen }">
           <input
             type="checkbox"
@@ -145,17 +158,11 @@
           <span class="meeting-check__icon"><Volume2 :size="13" /></span>
           {{ t('meeting.create.systemAudio') }}
         </label>
-        <div class="meeting-hint meeting-hint--indent">
-          {{ hasScreen ? t('meeting.create.systemAudioHint') : t('meeting.create.systemAudioNoScreen') }}
-        </div>
         <label class="meeting-check">
           <input type="checkbox" :checked="notes" @change="notes = ($event.target as HTMLInputElement).checked" />
           <span class="meeting-check__icon"><NotebookPen :size="13" /></span>
           {{ t('meeting.create.notes') }}
         </label>
-        <div class="meeting-hint meeting-hint--indent">
-          {{ notes ? t('meeting.create.notesOn') : t('meeting.create.notesOff') }}
-        </div>
       </template>
     </div>
 
@@ -251,13 +258,29 @@ const noSourceHint = computed(() =>
   browserCapture ? t('liveShare.browserCaptureHint') : t('liveShare.noSources'),
 )
 
-const cameraHint = computed(() => {
+/** Camera on AND usable — a camera the OS cannot provide is not a picture. */
+const cameraOn = computed(() => camera.value && cameraAvailable.value)
+
+/**
+ * One line for the camera/screen combination — four states, not two.
+ *
+ * The toggles are independent, so the picture is their combination: both,
+ * camera only, screen only, or neither. "Neither" cannot start a video meeting
+ * and is rendered as a warning instead (see `noPictureHint`).
+ */
+const pictureHint = computed(() => {
+  // A machine without a camera can only be in the screen-only states; say so
+  // once here rather than under a permanently disabled checkbox.
   if (!cameraAvailable.value) return t('meeting.create.cameraNoDevice')
-  return camera.value ? t('meeting.create.cameraOn') : t('meeting.create.cameraOff')
+  if (cameraOn.value) {
+    return hasScreen.value ? t('meeting.create.pictureBoth') : t('meeting.create.pictureCamera')
+  }
+  return t('meeting.create.pictureScreen')
 })
 
-const screenHint = computed(() =>
-  shareScreen.value ? t('meeting.create.shareScreenOn') : t('meeting.create.shareScreenOff'),
+/** The "neither" state: why it cannot start, and what to do instead. */
+const noPictureHint = computed(() =>
+  cameraAvailable.value ? t('meeting.create.noPicture') : t('meeting.create.noPictureNoCamera'),
 )
 
 const startLabel = computed(() => {
@@ -274,8 +297,7 @@ const canStart = computed(() => {
   if (!isVideo.value) return true
   // A video meeting must actually have a picture; "video" with no camera and
   // no screen would start a voice meeting under a false name.
-  const cameraOn = camera.value && cameraAvailable.value
-  return cameraOn || hasScreen.value
+  return cameraOn.value || hasScreen.value
 })
 
 async function loadSources(): Promise<void> {
@@ -364,6 +386,12 @@ async function start(): Promise<void> {
 }
 
 onMounted(() => {
+  // The host always starts with the microphone on. The option is a shared
+  // singleton (the running stage mutes/unmutes the same ref), so a previous
+  // meeting — or a previous visit to this form — may have left it off. It is a
+  // DEFAULT, not a lock: the host can still uncheck it here, and mute later in
+  // the meeting.
+  microphone.value = true
   if (supported.value) void loadSources()
 })
 </script>
@@ -399,11 +427,16 @@ onMounted(() => {
   border-top: 1px solid var(--border-color);
 }
 .meeting-input {
-  width: 100%; height: calc(32 * var(--dp));
-  padding: 0 var(--space-5);
+  width: 100%; height: calc(38 * var(--dp));
+  /* The body is a scrolling flex column, and an input is a replaced element
+     with no content-derived minimum — without this it is the ONLY child that
+     shrinks when the form overflows, which squashed both fields to about half
+     height on a phone. */
+  flex-shrink: 0;
+  padding: 0 var(--space-6);
   border: 1px solid var(--border-color); border-radius: var(--radius-sm);
   background: var(--bg-secondary); color: var(--text-primary);
-  font-size: var(--font-size-sm); font-family: inherit;
+  font-size: var(--font-size-lg); font-family: inherit;
 }
 .meeting-input:focus { outline: none; border-color: var(--accent-color); }
 

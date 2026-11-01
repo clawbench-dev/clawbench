@@ -136,11 +136,14 @@ async function join(): Promise<void> {
   border-top: 1px solid var(--border-color);
 }
 .meeting-input {
-  width: 100%; height: calc(32 * var(--dp));
-  padding: 0 var(--space-5);
+  width: 100%; height: calc(38 * var(--dp));
+  /* Same reason as the create form: this body is a scrolling flex column and a
+     replaced element shrinks before anything else does. */
+  flex-shrink: 0;
+  padding: 0 var(--space-6);
   border: 1px solid var(--border-color); border-radius: var(--radius-sm);
   background: var(--bg-secondary); color: var(--text-primary);
-  font-size: var(--font-size-sm); font-family: inherit;
+  font-size: var(--font-size-lg); font-family: inherit;
 }
 .meeting-input:focus { outline: none; border-color: var(--accent-color); }
 .meeting-hint { font-size: var(--font-size-xs); line-height: 1.6; color: var(--text-muted); }
