@@ -445,24 +445,20 @@ func TestServeLiveShareNoteSegment_TranscriptionFailureIsBadGateway(t *testing.T
 	assert.Equal(t, http.StatusBadGateway, w.Code)
 }
 
-// ── Solo (room-less) sessions ──────────────────────────────────────────────
+// ── Ownership by meeting record ───────────────────────────────────────────
 
-// A solo dictation has no room: the notes row is what authorizes the upload.
-func TestServeLiveShareNotesSession_MintsATokenThatAuthorizesUploads(t *testing.T) {
+// The meeting record exists from the moment the publisher attaches, so an
+// upload is authorised by the row rather than by a live room.
+func TestServeLiveShareNoteSegment_RecordOwnershipAuthorizesUpload(t *testing.T) {
 	db := setupLiveNotesDB(t)
 	defer func() { _ = db.Close() }()
 	resetLiveRegistry(t)
 
 	project := t.TempDir()
-	w := httptest.NewRecorder()
-	ServeLiveShareNotesSession(w, liveReq(t, http.MethodPost, "/api/live-share/notes/session", project,
-		map[string]any{"title": "口述"}))
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-
-	var resp map[string]string
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	require.NotEmpty(t, resp["token"])
-	assert.Nil(t, liveRegistry.Get(resp["token"]), "a solo session has no room")
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "口述", time.Now().UnixMilli()))
 
 	prev := GetSTTProvider()
 	SetSTTProvider(&stubSTT{text: "你好"})
@@ -470,31 +466,31 @@ func TestServeLiveShareNotesSession_MintsATokenThatAuthorizesUploads(t *testing.
 
 	rec := httptest.NewRecorder()
 	ServeLiveShareNoteSegment(rec, notesUpload(t, project, map[string]string{
-		"token":     resp["token"],
+		"token":     token,
 		"channel":   "mic",
 		"title":     "口述",
 		"startedAt": "1700000000000",
 	}, []byte("audio")))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
-	segments, err := service.ListLiveNoteSegments(resp["token"], 0)
+	segments, err := service.ListLiveNoteSegments(token, 0)
 	require.NoError(t, err)
 	require.Len(t, segments, 1)
 	assert.Equal(t, "你好", segments[0].Text)
 }
 
-func TestServeLiveShareNotesSession_RequiresProjectAndPost(t *testing.T) {
-	setupLiveNotesDB(t)
+func TestServeLiveShareNoteSegment_UnknownRecordIs404(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
 	resetLiveRegistry(t)
 
-	w := httptest.NewRecorder()
-	ServeLiveShareNotesSession(w, httptest.NewRequest(http.MethodGet, "/api/live-share/notes/session", http.NoBody))
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-
-	w = httptest.NewRecorder()
-	ServeLiveShareNotesSession(w, liveReq(t, http.MethodPost, "/api/live-share/notes/session", "",
-		map[string]any{"title": "x"}))
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	project := t.TempDir()
+	rec := httptest.NewRecorder()
+	ServeLiveShareNoteSegment(rec, notesUpload(t, project, map[string]string{
+		"token":   "ffffffffffffffffffffffffffffffff",
+		"channel": "mic",
+	}, []byte("audio")))
+	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 // ── Minutes endpoint ───────────────────────────────────────────────────────
@@ -769,18 +765,18 @@ func TestServeLiveShareNotesMinutes_WritesThreeArtifactsAndSummarisesTheProofrea
 	require.NoError(t, err)
 	assert.Equal(t, service.LiveNotesStatusReady, note.ReviseStatus)
 	assert.Equal(t, "[00:00] 我：确认 ClawBench 发布计划", note.Revised)
-	require.NotEmpty(t, note.DirPath)
+	require.NotEmpty(t, note.DirName)
 
-	raw, err := os.ReadFile(filepath.Join(note.DirPath, "transcript.srt"))
+	raw, err := os.ReadFile(filepath.Join(service.MeetingDirPath(project, note.DirName), "transcript.srt"))
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "确认科劳本奇发布计划", "the raw transcript keeps what the ASR heard")
 	assert.Contains(t, string(raw), "--> ", "the raw transcript is SubRip, not Markdown")
 
-	revised, err := os.ReadFile(filepath.Join(note.DirPath, "transcript-revised.md"))
+	revised, err := os.ReadFile(filepath.Join(service.MeetingDirPath(project, note.DirName), "transcript-revised.md"))
 	require.NoError(t, err)
 	assert.Contains(t, string(revised), "ClawBench")
 
-	minutes, err := os.ReadFile(filepath.Join(note.DirPath, "minutes.md"))
+	minutes, err := os.ReadFile(filepath.Join(service.MeetingDirPath(project, note.DirName), "minutes.md"))
 	require.NoError(t, err)
 	assert.Contains(t, string(minutes), "## 概要")
 	assert.Contains(t, string(minutes), "[transcript-revised.md](transcript-revised.md)")
@@ -838,7 +834,7 @@ func TestServeLiveShareNotesMinutes_ProofreadFailureFallsBackToRaw(t *testing.T)
 	assert.NotEmpty(t, note.ReviseError)
 	assert.Contains(t, note.Minutes, "## 概要")
 
-	_, err = os.Stat(filepath.Join(note.DirPath, "transcript-revised.md"))
+	_, err = os.Stat(filepath.Join(service.MeetingDirPath(project, note.DirName), "transcript-revised.md"))
 	assert.True(t, os.IsNotExist(err), "a failed proofread writes no revised file")
 }
 
@@ -1054,52 +1050,178 @@ func liveNotesProjectRequest(t *testing.T, target, project string) *http.Request
 	return req
 }
 
-func TestServeLiveNotesSessions_ListsTheProjectsFolders(t *testing.T) {
-	setupLiveNotesDB(t)
+func TestServeLiveNotesSessions_ListsTheProjectsRecords(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
 	project := t.TempDir()
-	dir := filepath.Join(project, filepath.FromSlash(service.LiveNotesDir), "2026-10-31-1732-周会-a1b2c3")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "minutes.md"), []byte("MINUTES"), 0o644))
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	paths, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(paths.Minutes, []byte("MINUTES"), 0o644))
+
+	rec := httptest.NewRecorder()
+	ServeLiveNotesSessions(rec, liveNotesProjectRequest(t, "/api/live-share/notes/sessions", project))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var body struct {
+		Sessions []service.MeetingRecord `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Sessions, 1)
+	assert.Equal(t, token, body.Sessions[0].Token)
+	assert.Equal(t, "周会", body.Sessions[0].Title)
+	assert.True(t, body.Sessions[0].HasMinutes)
+}
+
+// A meeting that recorded nothing is still a record: no folder, no artifacts,
+// but it must be listed (and deletable) like any other.
+func TestServeLiveNotesSessions_ListsMeetingsWithoutArtifacts(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	project := t.TempDir()
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	require.NoError(t, service.StartLiveNote("0123456789abcdef0123456789abcdef", pid, "空会", 1_700_000_000_000))
 
 	rec := httptest.NewRecorder()
 	ServeLiveNotesSessions(rec, liveNotesProjectRequest(t, "/api/live-share/notes/sessions", project))
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var body struct {
-		Sessions []service.LiveNoteSession `json:"sessions"`
+		Sessions []service.MeetingRecord `json:"sessions"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body.Sessions, 1)
-	assert.Equal(t, "周会", body.Sessions[0].Title)
-	assert.True(t, body.Sessions[0].HasMinutes)
+	assert.Empty(t, body.Sessions[0].Dir)
+	assert.False(t, body.Sessions[0].HasMinutes)
 }
 
-func TestServeLiveNotesArtifact_ServesMinutesAndRejectsEscape(t *testing.T) {
-	setupLiveNotesDB(t)
+func TestServeLiveNotesArtifact_ServesByTokenAndRejectsUnknown(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
 	project := t.TempDir()
-	dirName := "2026-10-31-1732-周会-a1b2c3"
-	dir := filepath.Join(project, filepath.FromSlash(service.LiveNotesDir), dirName)
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "minutes.md"), []byte("MINUTES"), 0o644))
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	paths, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(paths.Minutes, []byte("MINUTES"), 0o644))
 
 	rec := httptest.NewRecorder()
 	ServeLiveNotesArtifact(rec, liveNotesProjectRequest(t,
-		"/api/live-share/notes/sessions/artifact?dir="+url.QueryEscape(dirName), project))
-	require.Equal(t, http.StatusOK, rec.Code)
+		"/api/live-share/notes/sessions/artifact?token="+token, project))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var body map[string]string
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "minutes", body["kind"], "an omitted kind defaults to the minutes")
 	assert.Equal(t, "MINUTES", body["content"])
 
-	// A folder name is not a path: a traversal attempt is answered as "not
-	// found" rather than by reading something outside the notes root.
+	// No client-supplied path any more: an unknown token is the whole attack
+	// surface, and it is answered as "not found".
 	rec = httptest.NewRecorder()
 	ServeLiveNotesArtifact(rec, liveNotesProjectRequest(t,
-		"/api/live-share/notes/sessions/artifact?dir=..%2F..%2Fetc", project))
+		"/api/live-share/notes/sessions/artifact?token=ffffffffffffffffffffffffffffffff", project))
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 
 	rec = httptest.NewRecorder()
 	ServeLiveNotesArtifact(rec, liveNotesProjectRequest(t,
-		"/api/live-share/notes/sessions/artifact?dir="+url.QueryEscape(dirName)+"&kind=audio", project))
+		"/api/live-share/notes/sessions/artifact?token="+token+"&kind=audio", project))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// ── Delete + chat ──────────────────────────────────────────────────────────
+
+func TestServeLiveNotesDelete_RemovesRecordAndFolder(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+	project := t.TempDir()
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	paths, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(paths.Minutes, []byte("MINUTES"), 0o644))
+
+	req := liveNotesProjectRequest(t, "/api/live-share/notes/sessions?token="+token, project)
+	req.Method = http.MethodDelete
+	rec := httptest.NewRecorder()
+	ServeLiveNotesSessions(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	_, err = os.Stat(paths.Dir)
+	assert.True(t, os.IsNotExist(err), "the folder goes with the record")
+	_, exists, err := service.GetLiveNote(token)
+	require.NoError(t, err)
+	assert.False(t, exists)
+}
+
+func TestServeLiveNotesDelete_RefusesWhilePublishingOrGenerating(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+	project := t.TempDir()
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+
+	// A live room wins over everything: the meeting is still happening.
+	room, err := liveRegistry.Create(projPath(project), "周会")
+	require.NoError(t, err)
+	t.Cleanup(func() { liveRegistry.Delete(room.Token()) })
+	_ = room
+	require.NoError(t, service.StartLiveNote(room.Token(), pid, "周会", 1_700_000_000_000))
+
+	req := liveNotesProjectRequest(t, "/api/live-share/notes/sessions?token="+room.Token(), project)
+	req.Method = http.MethodDelete
+	rec := httptest.NewRecorder()
+	ServeLiveNotesSessions(rec, req)
+	assert.Equal(t, http.StatusConflict, rec.Code)
+
+	// A running minutes job would recreate the folder seconds later.
+	require.NoError(t, service.SetLiveNoteMinutes(token, pid, "周会", service.LiveNotesStatusGenerating, "", "", ""))
+	req = liveNotesProjectRequest(t, "/api/live-share/notes/sessions?token="+token, project)
+	req.Method = http.MethodDelete
+	rec = httptest.NewRecorder()
+	ServeLiveNotesSessions(rec, req)
+	assert.Equal(t, http.StatusConflict, rec.Code)
+}
+
+func TestServeLiveShareNoteChat_IsIdempotentAndReadable(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+	project := t.TempDir()
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		ServeLiveShareNoteChat(rec, liveReq(t, http.MethodPost, "/api/live-share/notes/chat", project,
+			map[string]any{"token": token, "id": "m1", "speaker": "小明", "text": "收到"}))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	rec := httptest.NewRecorder()
+	ServeLiveNotesChat(rec, liveNotesProjectRequest(t,
+		"/api/live-share/notes/sessions/chat?token="+token, project))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		Messages []service.LiveNoteChatMessage `json:"messages"`
+		Count    int                           `json:"count"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Messages, 1, "a retried message must not duplicate")
+	assert.Equal(t, 1, body.Count)
+	assert.Equal(t, "小明", body.Messages[0].Speaker)
+	assert.Equal(t, "收到", body.Messages[0].Text)
 }

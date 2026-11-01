@@ -17,12 +17,14 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"clawbench/internal/liveshare"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/store"
 
 	"github.com/coder/websocket"
 )
@@ -106,13 +108,20 @@ func ServeLiveShareManage(w http.ResponseWriter, r *http.Request) {
 // liveShareCreateBody derives the share title and the AI 听记 flag from the
 // create request. The title is author-supplied text that ends up on a public
 // page, so it is only ever rendered as text (never as HTML) by the SPA.
-func liveShareCreateBody(r *http.Request, projectPath string) (title string, notes bool) {
+func liveShareCreateBody(r *http.Request, projectPath string) (title string, notes, video bool) {
 	var body struct {
 		Title string `json:"title"`
 		Notes bool   `json:"notes"`
+		// Video defaults to true: a client that does not know about voice
+		// meetings is asking for the screen share it has always got.
+		Video *bool `json:"video"`
 	}
+	video = true
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	if body.Video != nil {
+		video = *body.Video
 	}
 	title = body.Title
 	if title != "" {
@@ -122,7 +131,7 @@ func liveShareCreateBody(r *http.Request, projectPath string) (title string, not
 	} else {
 		title = "ClawBench"
 	}
-	return title, body.Notes
+	return title, body.Notes, video
 }
 
 // liveShareReuseGrace is how long a publisher-less room is still treated as
@@ -131,7 +140,7 @@ func liveShareCreateBody(r *http.Request, projectPath string) (title string, not
 var liveShareReuseGrace = 10 * time.Second
 
 func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath string) {
-	title, notes := liveShareCreateBody(r, projectPath)
+	title, notes, video := liveShareCreateBody(r, projectPath)
 	room, err := createLiveShareRoom(projectPath, title)
 	if err != nil {
 		if errors.Is(err, liveshare.ErrTooManyRooms) {
@@ -146,6 +155,7 @@ func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath st
 	// project, so a retry (or a second device) may be the one that knows
 	// whether 听记 is on.
 	room.SetNotesEnabled(notes)
+	room.SetVideoEnabled(video)
 
 	writeJSON(w, http.StatusOK, liveShareManageResponse{
 		Token: room.Token(),
@@ -217,6 +227,9 @@ func serveLiveShareEnd(w http.ResponseWriter, r *http.Request, projectPath strin
 	// the share" rather than a bare socket close.
 	room.BroadcastToViewers(liveshare.ViewerMessage{Type: liveshare.MsgPublisherGone, Reason: "ended"}, "")
 	liveRegistry.Delete(token)
+	if projectID, err := store.ProjectIDForPath(projectPath); err == nil {
+		finalizeLiveNotes(token, projectID, projectPath)
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -269,6 +282,19 @@ func LiveSharePublishWS(w http.ResponseWriter, r *http.Request) {
 	room.AttachPublisher(sink)
 	reserved = false
 
+	// The meeting record starts here, not when the folder is first written: a
+	// meeting that recorded nothing still happened, and must appear in the list
+	// (and be deletable) like any other.
+	projectID, pidErr := store.ProjectIDForPath(projectPath)
+	if pidErr != nil {
+		slog.Warn("liveshare: meeting record project id failed", "err", pidErr)
+	}
+	if pidErr == nil {
+		if startErr := service.StartLiveNote(token, projectID, room.Title(), time.Now().UnixMilli()); startErr != nil {
+			slog.Warn("liveshare: meeting record start failed", "err", startErr)
+		}
+	}
+
 	// The publisher owns the room's lifetime: when this socket goes away the
 	// share is over, and every viewer must be told rather than left hanging.
 	//
@@ -280,6 +306,9 @@ func LiveSharePublishWS(w http.ResponseWriter, r *http.Request) {
 		}
 		room.BroadcastToViewers(liveshare.ViewerMessage{Type: liveshare.MsgPublisherGone, Reason: "ended"}, "")
 		liveRegistry.Delete(token)
+		// Close the record and archive the chat while the project path is still
+		// known. Best effort: losing the archive must not keep the meeting open.
+		finalizeLiveNotes(token, projectID, projectPath)
 	}()
 
 	ctx, cancel := context.WithCancel(r.Context())
@@ -408,6 +437,14 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// The nickname is required. Validated BEFORE the upgrade so a bad name is a
+	// real 400 the SPA can explain, instead of a socket that opens and then dies
+	// — which the share page can only report as "connection failed".
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" || len([]rune(name)) > liveViewerNameMaxRunes {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return
+	}
 
 	conn, err := acceptLiveWS(w, r)
 	if err != nil {
@@ -419,7 +456,7 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 	var writeMu sync.Mutex
 	sink := &liveSink{conn: conn, mu: &writeMu}
 
-	viewer, err := room.AddViewer("", sink)
+	viewer, err := room.AddViewer(name, sink)
 	if err != nil {
 		if errors.Is(err, liveshare.ErrRoomFull) {
 			_ = sink.Send(liveshare.ViewerMessage{Type: liveshare.MsgFull})
@@ -453,6 +490,7 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 	room.SendToPublisher(liveshare.PublisherMessage{
 		Type:     liveshare.MsgViewerJoin,
 		ViewerID: viewer.ID,
+		Name:     viewer.Name,
 	})
 	if err := sink.Send(liveshare.ViewerMessage{
 		Type:          liveshare.MsgJoined,
@@ -461,6 +499,7 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 		ICEServers:    []any{}, // reserved for a future TURN; see signal.go
 		TalkEnabled:   room.TalkEnabled(),
 		NotesEnabled:  room.NotesEnabled(),
+		VideoEnabled:  room.VideoEnabled(),
 		ScreenEnabled: room.ScreenEnabled(),
 		ScreenSharer:  room.ScreenSharer(),
 	}); err != nil {
@@ -660,6 +699,42 @@ func liveShareRoomCountForTest() int {
 	return liveRegistry.Len()
 }
 
+// liveViewerNameMaxRunes bounds a viewer's nickname. Mirrors the SPA's input
+// limit; the server cap exists so a hand-written URL cannot bloat the room.
+const liveViewerNameMaxRunes = 24
+
+// finalizeLiveNotes closes a meeting record and archives its chat.
+//
+// The archive is the same bargain the minutes and the transcripts get: a copy
+// on disk that survives the app. It is written at the END of the meeting (not
+// on every message) because the file is a readable artifact, not a write-ahead
+// log — the database is the live copy.
+func finalizeLiveNotes(token string, projectID int64, projectPath string) {
+	if err := service.EndLiveNote(token, time.Now().UnixMilli()); err != nil {
+		slog.Warn("liveshare: close meeting record failed", "err", err)
+	}
+	messages, err := service.ListLiveNoteChat(token, 0)
+	if err != nil || len(messages) == 0 {
+		return
+	}
+	note, exists, err := service.GetLiveNote(token)
+	if err != nil || !exists {
+		return
+	}
+	startedAt := note.StartedAt
+	if startedAt <= 0 {
+		startedAt = time.Now().UnixMilli()
+	}
+	paths, err := service.EnsureMeetingDir(token, projectID, projectPath, note.Title, startedAt)
+	if err != nil {
+		slog.Warn("liveshare: chat archive folder unavailable", "err", err)
+		return
+	}
+	if _, err := service.WriteLiveNoteChatFile(paths, messages); err != nil {
+		slog.Warn("liveshare: write chat archive failed", "err", err)
+	}
+}
+
 // ── Idle-room reaper ────────────────────────────────────────────────────────
 
 // liveReapInterval is how often the reaper scans. Rooms are reaped after
@@ -667,13 +742,15 @@ func liveShareRoomCountForTest() int {
 // irrelevant to the outcome but keeps the scan cheap.
 const liveReapInterval = time.Minute
 
-// liveNotesCleanupInterval is how often expired transcripts are swept. Notes are
-// kept for liveNotesRetention after their last update; an hourly sweep is
-// plenty for a 7-day retention window.
-const (
-	liveNotesCleanupInterval = time.Hour
-	liveNotesRetention       = 7 * 24 * time.Hour
-)
+// liveMeetingSweepInterval is how often stale meeting records are closed.
+// Meeting rows are permanent; the only thing swept is the END time of a record
+// whose publisher vanished without a clean close (crash, killed app). Without
+// it the list would show a meeting that never finishes.
+const liveMeetingSweepInterval = time.Hour
+
+// liveMeetingStaleAfter is how long a record may stay open before the sweep
+// closes it. Long enough that a genuinely running meeting is never touched.
+const liveMeetingStaleAfter = 12 * time.Hour
 
 // StartLiveShareReaper drops rooms that have had no viewers past the idle
 // timeout. Without it a room whose publisher vanished without a clean close
@@ -685,9 +762,9 @@ func StartLiveShareReaper() func() {
 	go func() {
 		t := time.NewTicker(liveReapInterval)
 		defer t.Stop()
-		// Notes retention runs on its own, much slower cadence: the scan is a
-		// table sweep and nothing about it is time-critical.
-		lastNotesCleanup := time.Now()
+		// Closing stale meetings runs on its own, much slower cadence: the scan
+		// is a table sweep and nothing about it is time-critical.
+		lastMeetingSweep := time.Now()
 		for {
 			select {
 			case <-stop:
@@ -703,13 +780,13 @@ func StartLiveShareReaper() func() {
 					room.SetPublisher(nil)
 					slog.Info("liveshare: reaped idle room", "token", room.Token())
 				}
-				if now.Sub(lastNotesCleanup) >= liveNotesCleanupInterval {
-					lastNotesCleanup = now
-					removed, err := service.CleanupLiveNotes(context.Background(), now.Add(-liveNotesRetention))
+				if now.Sub(lastMeetingSweep) >= liveMeetingSweepInterval {
+					lastMeetingSweep = now
+					closed, err := service.CloseStaleLiveNotes(now.Add(-liveMeetingStaleAfter).UnixMilli())
 					if err != nil {
-						slog.Warn("liveshare: notes cleanup failed", "err", err)
-					} else if removed > 0 {
-						slog.Info("liveshare: cleaned up expired notes", "shares", removed)
+						slog.Warn("liveshare: close stale meetings failed", "err", err)
+					} else if closed > 0 {
+						slog.Info("liveshare: closed stale meetings", "meetings", closed)
 					}
 				}
 			}

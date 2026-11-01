@@ -3796,7 +3796,16 @@ paths:
               properties:
                 title:
                   type: string
-                  description: 分享页标题；省略时取项目目录名
+                  description: 会议标题；省略时取项目目录名
+                notes:
+                  type: boolean
+                  description: 是否开启 AI 听记（观众据此显示转写入口）
+                video:
+                  type: boolean
+                  default: true
+                  description: |
+                    `false` = 语音会议（不共享屏幕）。观众端据此渲染「语音会议」占位，
+                    而不是等一条永远不会到达的视频轨。省略时按 `true` 处理。
       responses:
         "200":
           description: 房间 token 与分享路径
@@ -3874,41 +3883,6 @@ paths:
         "409":
           description: 已有发布端在共享
 
-  /api/live-share/notes/session:
-    post:
-      tags: [LiveShare]
-      summary: 开启单人语音听记
-      description: |
-        只录麦克风的听写：**不建房间、不生成分享链接、没有观众**。服务端生成一个
-        token 并写入 `live_notes`（带项目归属），之后的分段上传、纪要、产物端点都
-        照常工作——它们的鉴权依据是这一行，而不是一个存活的房间。
-
-        返回的 token 与分享 token 同格式，但 `/api/share/{token}/...` 一律 404
-        （没有房间）。
-      operationId: liveShareNotesSession
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                title:
-                  type: string
-                  description: 记录标题，用于命名会议目录与纪要文件
-      responses:
-        "200":
-          description: 会话 token
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  token: { type: string }
-              required: [token]
-        "403":
-          description: 缺少项目上下文
-
   /api/live-share/notes:
     get:
       tags: [LiveShare]
@@ -3918,7 +3892,7 @@ paths:
         `id`）：转写完成顺序与说话顺序不同，晚到的分段可能带更早的 `startedAt`，
         客户端拿到后按 `startedAt` 重排即可。
 
-        房间结束后仍可读：转写行按 token 持久化（保留 7 天），鉴权只校验项目归属。
+        房间结束后仍可读：记录与分段都是永久的，鉴权只校验项目归属。
       operationId: liveShareNotes
       parameters:
         - name: token
@@ -3966,6 +3940,9 @@ paths:
         **音频在转写之前就写进项目目录**（`<项目>/.clawbench/notes/<场次>/audio/`），
         因为录音是唯一无法再生的产物：转写失败仍可用它重跑。落盘失败只记日志，
         不影响本次转写。`title` 只在第一段时用于给会议目录命名，后续忽略。
+
+        鉴权依据是**会议记录行**（发布端连上信令时就已创建），因此共享刚结束那几秒
+        的在途上传仍然落地。
       operationId: liveShareNoteSegment
       requestBody:
         required: true
@@ -4014,6 +3991,8 @@ paths:
         异步生成：立即返回 `status: generating`，调用方轮询
         `GET /api/live-share/notes` 取结果。已生成或生成中时幂等返回当前状态，
         传 `regenerate: true` 才重新生成。转写为空时返回 `status: idle`。
+
+        生成成功后把纪要写进会议目录（`minutes.md`），并把聊天归档成 `chat.md`。
       operationId: liveShareNotesMinutes
       requestBody:
         required: true
@@ -4039,23 +4018,63 @@ paths:
         "404":
           description: token 不存在或不属于当前项目
 
+  /api/live-share/notes/chat:
+    post:
+      tags: [LiveShare]
+      summary: 落库一条会议聊天
+      description: |
+        发布端是唯一的写入点：观众的消息经它中转，它自己的消息也走这里。
+        `id` 是聊天帧自带的 id，作为**幂等键**——重试不会产生重复行。
+        返回服务端行 id（重复提交返回既有行 id）。
+      operationId: liveShareNoteChat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, id, text]
+              properties:
+                token: { type: string }
+                id:
+                  type: string
+                  description: 客户端消息 id（幂等键，≤64 字）
+                speaker:
+                  type: string
+                  description: 服务端认定的昵称（发布端用 viewerId → 昵称覆盖）
+                viewerId:
+                  type: string
+                text:
+                  type: string
+                  description: 单条 ≤ 2000 字
+      responses:
+        "200":
+          description: 行 id
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer, format: int64 }
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
+
   /api/live-share/notes/sessions:
     get:
       tags: [LiveShare]
-      summary: 列出项目里的听记历史
+      summary: 列出项目的会议记录
       description: |
-        扫描 `<项目>/.clawbench/notes/` 下的会议目录，按会议开始时间倒序返回。
+        按会议开始时间倒序返回，最多 200 条。
 
-        **数据源是磁盘而不是 `live_notes` 表**：数据库行 7 天后清理，而目录
-        （录音、两份转写、纪要）永久保留。听记页签要列的是用户还拥有的东西，
-        不是数据库还记得的东西。没有目录时返回空数组，不是错误。
-
-        目录名形如 `<YYYY-MM-DD-HHMM>[-<标题>]-<token6>`；标题从目录名解析，
-        尾部 token 会被剥掉。不符合该形状的目录一律忽略。
+        **数据源是数据库**：记录在发布端连上信令时创建，与「有没有录到东西」无关——
+        没开听记、全程静音的会议同样在列表里。记录与其转写、聊天同生共死，
+        只有删除记录（或删除项目）才会消失。
       operationId: liveShareNotesSessions
       responses:
         "200":
-          description: 会议目录列表（最新在前）
+          description: 会议列表（最新在前）
           content:
             application/json:
               schema:
@@ -4064,32 +4083,54 @@ paths:
                   sessions:
                     type: array
                     items:
-                      $ref: "#/components/schemas/LiveNoteSession"
+                      $ref: "#/components/schemas/MeetingRecord"
         "403":
           description: 缺少项目上下文
-
-  /api/live-share/notes/sessions/artifact:
-    get:
+    delete:
       tags: [LiveShare]
-      summary: 读取一次听记的文本产物
+      summary: 删除一场会议
       description: |
-        `dir` 是目录**名**（不是路径）：服务端按目录名形状校验，任何越权取值
-        都按「不存在」返回 404，读不到 notes 根目录之外的文件。
-        `kind` 为 `minutes`（默认）/ `transcript` / `revised`。
-      operationId: liveShareNotesArtifact
+        删除记录行、转写分段、聊天，以及会议目录（纪要 / 转写 / 录音 / 聊天归档）。
+        **不可恢复**。
+
+        两种 409：房间仍在发布（先结束会议），或纪要/校对任务正在运行
+        （它的后台 goroutine 会把目录和行重建出来）。
+      operationId: liveShareNotesDelete
       parameters:
-        - name: dir
+        - name: token
           in: query
           required: true
           schema:
             type: string
-          description: 会议目录名（来自列表接口的 `dir` 字段）
+      responses:
+        "200":
+          description: 已删除
+        "404":
+          description: token 不存在或不属于当前项目
+        "409":
+          description: 会议仍在进行，或纪要正在生成
+
+  /api/live-share/notes/sessions/artifact:
+    get:
+      tags: [LiveShare]
+      summary: 读取一场会议的文本产物
+      description: |
+        按 **token** 寻址：目录名由服务端从记录行解析，客户端不传任何路径。
+        `kind` 为 `minutes`（默认）/ `transcript` / `revised` / `chat`。
+        会议没有任何产物（`dir` 为空）时返回 404。
+      operationId: liveShareNotesArtifact
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
         - name: kind
           in: query
           required: false
           schema:
             type: string
-            enum: [minutes, transcript, revised]
+            enum: [minutes, transcript, revised, chat]
       responses:
         "200":
           description: 产物正文
@@ -4100,10 +4141,48 @@ paths:
                 properties:
                   kind: { type: string }
                   content: { type: string }
+                  file: { type: string }
         "400":
           $ref: "#/components/responses/Error"
         "404":
-          description: 目录或该产物不存在
+          description: 会议或该产物不存在
+
+  /api/live-share/notes/sessions/chat:
+    get:
+      tags: [LiveShare]
+      summary: 读取一场会议的聊天
+      description: |
+        按服务端行 id 升序返回（不按客户端时间排序：观众的时钟可能偏）。
+        `since` 是增量游标。
+      operationId: liveShareNotesChat
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: 聊天消息与总数
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LiveNoteChatMessage"
+                  count:
+                    type: integer
+        "404":
+          description: token 不存在或不属于当前项目
 
   # ── Share ─────────────────────────────────────────────────────────────────
   /api/share:
@@ -4339,6 +4418,15 @@ paths:
         `{token}/doc/{dirKey}/{rel}`（HTML 文档及其资源，见下）。token 不存在一律 404，
         零信息暴露。
 
+        **目录分享（`{token}/list`）**返回 `{kind, name, path, root, parent, atRoot,
+        crumbs, entries}`：`kind` 为 `dir` 时 `entries` 是 `{name, type, size, modified}`
+        数组（目录在前，再按名称不区分大小写排序，**不隐藏点文件**），`kind` 为 `file`
+        时只标识目标（`?path=` 指向目录内的文件，分享页据此切换到文件预览）。`root` 是
+        创建时快照的分享根，`parent` 为 `null` 表示上一级就是 `{token}` 本身，`crumbs`
+        是根到当前的绝对路径链（服务端拼接，客户端不处理平台分隔符）。越界路径、越界
+        符号链接（列举时直接略过）与不可读目录一律 404，与「不存在」不可区分。**列举仅
+        对目录分享开放**：文件分享的根是项目根，列举会泄漏整个项目，故返回 404。
+
         **`{token}/doc/{dirKey}/{rel}` 是唯一会返回 `text/html` 的公开端点**，供分享页
         在 iframe 里以**真实 URL** 渲染被分享的 HTML：`{dirKey}` 是文档所在**目录**的
         base64url（无填充），`{rel}` 是相对该目录的资源路径。这样浏览器能直接推导出
@@ -4352,15 +4440,6 @@ paths:
         父页面，与原先 iframe 的 `sandbox="allow-scripts"` 等价。`{dirKey}` 只是提示，
         实际以分享范围校验为准（编码 `/` 或项目外目录一律 404）。其余资源类型走
         `.css/.js/.woff2` 等网页资源 MIME；基础表 `mimeTypes` 仍**不得**含 `.html`。
-
-        **目录分享（`{token}/list`）**返回 `{kind, name, path, root, parent, atRoot,
-        crumbs, entries}`：`kind` 为 `dir` 时 `entries` 是 `{name, type, size, modified}`
-        数组（目录在前，再按名称不区分大小写排序，**不隐藏点文件**），`kind` 为 `file`
-        时只标识目标（`?path=` 指向目录内的文件，分享页据此切换到文件预览）。`root` 是
-        创建时快照的分享根，`parent` 为 `null` 表示上一级就是 `{token}` 本身，`crumbs`
-        是根到当前的绝对路径链（服务端拼接，客户端不处理平台分隔符）。越界路径、越界
-        符号链接（列举时直接略过）与不可读目录一律 404，与「不存在」不可区分。**列举仅
-        对目录分享开放**：文件分享的根是项目根，列举会泄漏整个项目，故返回 404。
 
         会话分享走另外两个子路径：`{token}/meta`（返回 `kind` 为 `file` / `dir` /
         `session` / `live`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回**实时装配**的
@@ -7467,24 +7546,44 @@ components:
             audioFiles: { type: integer }
       required: [status]
 
-    LiveNoteSession:
+    MeetingRecord:
       type: object
       description: |
-        项目里的一场听记（磁盘上的会议目录）。`dir` 是目录名，也是列表与产物
-        接口之间的唯一标识；`dirPath` 是绝对路径，只对发布端有意义。
-        `hasMinutes` / `hasTranscript` / `hasRevised` 直接反映文件是否存在——
-        目录从第一段录音就存在，纪要要等会后任务跑完才有。
+        一场会议。**身份是 token**（数据库记录），不是目录：记录在发布端连上信令
+        时创建，与「有没有录到东西」无关。`dir` 只在第一次写出产物（录音 /
+        聊天归档 / 纪要）后才存在，此时 `dirPath` 才有值。
+        `hasMinutes` / `hasTranscript` / `hasRevised` / `audioFiles` 直接反映文件
+        是否存在——目录探测的结果，不是缓存。
       properties:
-        dir: { type: string }
-        dirPath: { type: string }
+        token: { type: string }
         title: { type: string }
-        startedAt: { type: integer, format: int64, description: Unix 毫秒（来自目录名） }
-        updatedAt: { type: integer, format: int64, description: 目录最后写入时间，Unix 毫秒 }
+        startedAt: { type: integer, format: int64, description: Unix 毫秒（服务端时钟） }
+        endedAt: { type: integer, format: int64, description: Unix 毫秒；0 表示还在进行 }
+        dir: { type: string, description: 目录名；空表示没有产物 }
+        dirPath: { type: string, description: 绝对路径，仅发布端使用 }
         hasMinutes: { type: boolean }
         hasTranscript: { type: boolean }
         hasRevised: { type: boolean }
         audioFiles: { type: integer }
-      required: [dir, title, hasMinutes, hasTranscript, hasRevised, audioFiles]
+        chatCount: { type: integer }
+        status:
+          type: string
+          enum: [idle, generating, ready, failed]
+          description: 纪要生成状态
+        updatedAt: { type: integer, format: int64, description: 记录最后写入时间，Unix 毫秒 }
+      required: [token, title, startedAt, endedAt, hasMinutes, hasTranscript, hasRevised, audioFiles, chatCount, status, updatedAt]
+
+    LiveNoteChatMessage:
+      type: object
+      description: 一条落库的会议聊天。`id` 是服务端行 id（排序依据），`clientId` 是客户端消息 id（幂等键）。
+      properties:
+        id: { type: integer, format: int64 }
+        clientId: { type: string }
+        speaker: { type: string }
+        viewerId: { type: string }
+        text: { type: string }
+        at: { type: integer, format: int64, description: 服务端落库时间，Unix 毫秒 }
+      required: [id, clientId, speaker, text, at]
 
     WeChatLogin:
       type: object

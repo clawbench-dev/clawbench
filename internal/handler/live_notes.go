@@ -24,7 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"clawbench/internal/liveshare"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"clawbench/internal/store"
@@ -41,6 +40,11 @@ const (
 	liveNoteTextMaxRunes = 2000
 	// liveNoteSpeakerMaxRunes bounds the display label supplied by the client.
 	liveNoteSpeakerMaxRunes = 40
+	// liveNoteChatMaxRunes bounds one chat line, mirroring CHAT_MAX_CHARS in
+	// web/src/share/liveControl.ts.
+	liveNoteChatMaxRunes = 2000
+	// liveNoteClientIDMaxRunes bounds the client message id used for idempotency.
+	liveNoteClientIDMaxRunes = 64
 	// liveNoteTextKey is the JSON key carrying one transcript line.
 	liveNoteTextKey = "text"
 	// liveNoteSTTConcurrency is how many segment transcriptions may run at once
@@ -98,57 +102,49 @@ type liveNotesArtifacts struct {
 	AudioFiles int    `json:"audioFiles,omitempty"`
 }
 
-// ServeLiveShareNotesSession starts a microphone-only notes session.
+// ServeLiveNotesSessions handles GET /api/live-share/notes/sessions
+// (authenticated, project-scoped): the project's meeting records.
 //
-// A solo dictation is not a share: no room, no link, no viewer. All it needs
-// from the share machinery is a token to key the notes rows on, so this mints
-// one and records it in live_notes — every other endpoint (segment upload,
-// minutes, artifacts) then works unchanged, because ownership is proven by that
-// row rather than by a live room.
-func ServeLiveShareNotesSession(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodPost) {
-		return
+// The record is the database row, not the folder. A meeting exists from the
+// moment the publisher attaches — including one that recorded nothing, or whose
+// AI 听记 was off — and the folder is only created once there is something to
+// put in it. Listing folders instead would silently drop exactly those
+// meetings, and would lose the record entirely once the folder is deleted.
+func ServeLiveNotesSessions(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		serveLiveNotesList(w, r)
+	case http.MethodDelete:
+		serveLiveNotesDelete(w, r)
+	default:
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 	}
-	_, projectID, ok := liveNotesProject(w, r)
-	if !ok {
-		return
-	}
-	var body struct {
-		Title string `json:"title"`
-	}
-	if !decodeJSON(w, r, &body) {
-		return
-	}
-	token, err := liveshare.NewToken()
-	if err != nil {
-		model.WriteError(w, model.Internal(err))
-		return
-	}
-	title := truncateRunes(strings.TrimSpace(body.Title), 80)
-	if err := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusIdle, "", "", ""); err != nil {
-		slog.Error("live notes: create solo session failed", "err", err)
-		model.WriteError(w, model.Internal(err))
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
-// ServeLiveNotesSessions handles GET /api/live-share/notes/sessions
-// (authenticated, project-scoped): the project's meeting folders on disk.
-//
-// History is read from the filesystem rather than from `live_notes`: those rows
-// expire with the retention window, while the folders — audio, both transcripts
-// and the minutes — are permanent. The notes tab lists what the user still has,
-// not what the database still remembers.
-func ServeLiveNotesSessions(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodGet) {
-		return
-	}
-	projectPath, _, ok := liveNotesProject(w, r)
+func serveLiveNotesList(w http.ResponseWriter, r *http.Request) {
+	projectPath, projectID, ok := liveNotesProject(w, r)
 	if !ok {
 		return
 	}
-	sessions, err := service.ListLiveNoteSessions(projectPath)
+	if token := r.URL.Query().Get("token"); token != "" {
+		if !validShareToken(token) {
+			http.NotFound(w, r)
+			return
+		}
+		record, exists, err := service.GetMeetingRecord(projectPath, projectID, token)
+		if err != nil {
+			slog.Error("live notes: get session failed", "err", err)
+			model.WriteError(w, model.Internal(err))
+			return
+		}
+		if !exists {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"session": record})
+		return
+	}
+	sessions, err := service.ListMeetingRecords(projectPath, projectID, 200)
 	if err != nil {
 		slog.Error("live notes: list sessions failed", "err", err)
 		model.WriteError(w, model.Internal(err))
@@ -158,25 +154,43 @@ func ServeLiveNotesSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 // ServeLiveNotesArtifact handles
-// GET /api/live-share/notes/sessions/artifact?dir=&kind= (authenticated,
+// GET /api/live-share/notes/sessions/artifact?token=&kind= (authenticated,
 // project-scoped).
 //
-// `dir` is a folder name, not a path; the service validates it against the
-// shape the writer produces, so no value can escape the project's notes root.
-// `kind` is one of minutes / transcript / revised (default minutes).
+// The caller addresses the meeting by TOKEN, never by a path: the folder name
+// comes from our own row. That removes the whole class of "validate the client
+// supplied directory name" problems — there is no client supplied path.
+// `kind` is one of minutes / transcript / revised / chat (default minutes).
 func ServeLiveNotesArtifact(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
-	projectPath, _, ok := liveNotesProject(w, r)
+	projectPath, projectID, ok := liveNotesProject(w, r)
 	if !ok {
+		return
+	}
+	token := r.URL.Query().Get("token")
+	if !validShareToken(token) || !liveNotesOwnedByProject(token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	dirName, err := service.MeetingDirName(token)
+	if err != nil {
+		slog.Error("live notes: artifact dir lookup failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if dirName == "" {
+		// The meeting produced no artifacts (notes off, silence, chat-only
+		// before the archive was written).
+		http.NotFound(w, r)
 		return
 	}
 	kind := r.URL.Query().Get("kind")
 	if kind == "" {
 		kind = "minutes"
 	}
-	content, file, err := service.ReadLiveNoteArtifactWithName(projectPath, r.URL.Query().Get("dir"), kind)
+	content, file, err := service.ReadLiveNoteArtifactWithName(projectPath, dirName, kind)
 	switch {
 	case errors.Is(err, service.ErrLiveNoteSessionNotFound):
 		http.NotFound(w, r)
@@ -228,22 +242,148 @@ func ServeLiveShareNotes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, liveNotesResponse{
 		Title:    note.Title,
 		Segments: segments,
-		Minutes:  liveNotesPayload(note),
+		Minutes:  liveNotesPayload(projectPath, note),
 	})
+}
+
+// serveLiveNotesDelete handles DELETE /api/live-share/notes/sessions?token=
+// (authenticated, project-scoped).
+//
+// Two refusals, both 409 rather than 400: the request is well-formed, the
+// meeting simply cannot be deleted right now.
+//   - the room is still publishing (the user should end the meeting first);
+//   - the minutes/proofread job is running — its detached goroutine would
+//     recreate the folder and re-upsert the row seconds after the delete.
+func serveLiveNotesDelete(w http.ResponseWriter, r *http.Request) {
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	token := r.URL.Query().Get("token")
+	if !validShareToken(token) || !liveNotesOwnedByProject(token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	if liveRegistry.Get(token) != nil {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "Conflict")
+		return
+	}
+	note, exists, err := service.GetLiveNote(token)
+	if err != nil {
+		slog.Error("live notes: delete lookup failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if !exists {
+		http.NotFound(w, r)
+		return
+	}
+	if note.Status == service.LiveNotesStatusGenerating || note.ReviseStatus == service.LiveNotesStatusGenerating {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "Conflict")
+		return
+	}
+	if err := service.DeleteMeetingRecord(projectPath, projectID, token); err != nil {
+		if errors.Is(err, service.ErrMeetingNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		slog.Error("live notes: delete failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ServeLiveNotesChat handles GET /api/live-share/notes/sessions/chat?token=&since=
+// (authenticated, project-scoped): the meeting's chat, oldest first.
+func ServeLiveNotesChat(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	token := r.URL.Query().Get("token")
+	if !validShareToken(token) || !liveNotesOwnedByProject(token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
+	messages, err := service.ListLiveNoteChat(token, since)
+	if err != nil {
+		slog.Error("live notes: list chat failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	count, err := service.CountLiveNoteChat(token)
+	if err != nil {
+		slog.Error("live notes: count chat failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "count": count})
+}
+
+// ServeLiveShareNoteChat handles POST /api/live-share/notes/chat
+// (authenticated, project-scoped): the publisher persists one chat line.
+//
+// Body: {"token","id","speaker","viewerId","text"}. `id` is the chat frame's own
+// id and is the idempotency key — the publisher retries on failure, and a retry
+// whose response was lost must not duplicate the line.
+func ServeLiveShareNoteChat(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Token    string `json:"token"`
+		ID       string `json:"id"`
+		Speaker  string `json:"speaker"`
+		ViewerID string `json:"viewerId"`
+		Text     string `json:"text"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if !validShareToken(body.Token) || !liveNotesOwnedByProject(body.Token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	text := strings.TrimSpace(body.Text)
+	if text == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return
+	}
+	id, err := service.AppendLiveNoteChat(body.Token, projectID, service.LiveNoteChatMessage{
+		ClientID: truncateRunes(strings.TrimSpace(body.ID), liveNoteClientIDMaxRunes),
+		Speaker:  truncateRunes(strings.TrimSpace(body.Speaker), liveNoteSpeakerMaxRunes),
+		ViewerID: truncateRunes(strings.TrimSpace(body.ViewerID), 32),
+		Text:     truncateRunes(text, liveNoteChatMaxRunes),
+	})
+	if err != nil {
+		slog.Error("live notes: append chat failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
 }
 
 // liveNotesPayload turns a stored row into the publisher-facing payload.
 //
 // Artifacts are resolved here rather than stored as four columns: the folder is
 // the single fact, and the file names inside it are a convention.
-func liveNotesPayload(note service.LiveNote) liveNotesMinutesPayload {
+func liveNotesPayload(projectPath string, note service.LiveNote) liveNotesMinutesPayload {
 	return liveNotesMinutesPayload{
 		Status:    note.Status,
 		Markdown:  note.Minutes,
 		Error:     note.Error,
 		FilePath:  note.FilePath,
 		Revise:    liveNotesRevisePayload{Status: note.ReviseStatus, Error: note.ReviseError},
-		Artifacts: liveNoteArtifactsOf(note.DirPath),
+		Artifacts: liveNoteArtifactsOf(service.MeetingDirPath(projectPath, note.DirName)),
 	}
 }
 
@@ -427,7 +567,7 @@ func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 	// Idempotent unless explicitly asked to regenerate: a double-click on
 	// "生成纪要" must not queue two summarisation runs over the same transcript.
 	if !body.Regenerate && (note.Status == service.LiveNotesStatusGenerating || note.Status == service.LiveNotesStatusReady) {
-		writeJSON(w, http.StatusOK, liveNotesPayload(note))
+		writeJSON(w, http.StatusOK, liveNotesPayload(projectPath, note))
 		return
 	}
 
@@ -453,7 +593,7 @@ func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, liveNotesMinutesPayload{
 		Status:    service.LiveNotesStatusGenerating,
 		Revise:    liveNotesRevisePayload{Status: service.LiveNotesStatusGenerating},
-		Artifacts: liveNoteArtifactsOf(note.DirPath),
+		Artifacts: liveNoteArtifactsOf(service.MeetingDirPath(projectPath, note.DirName)),
 	})
 }
 
@@ -471,14 +611,14 @@ func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 // summary of an imperfect transcript beats no summary at all.
 //
 // Everything is written into the meeting folder that already holds the audio,
-// so the three artifacts plus the recording stay together. The database rows
-// expire after the retention window; these files do not.
+// so the three artifacts plus the recording stay together. Both the row and the
+// folder are permanent; deleting the record removes both.
 func generateLiveNotesArtifacts(token string, projectID int64, projectPath, title string, segments []service.LiveNoteSegment) {
 	ctx, cancel := context.WithTimeout(context.Background(), liveNoteMinutesTimeout)
 	defer cancel()
 
 	startedAt := liveNotesStartTime(segments)
-	paths, dirErr := service.EnsureLiveNotesDir(token, projectID, projectPath, title, startedAt.UnixMilli())
+	paths, dirErr := service.EnsureMeetingDir(token, projectID, projectPath, title, startedAt.UnixMilli())
 	if dirErr != nil {
 		// The transcript and the minutes still go into the database; only the
 		// durable copies are lost, which is worth a warning rather than a
@@ -701,7 +841,7 @@ func validLiveNoteChannel(ch string) bool {
 // file", which needs the file. A write failure is logged and ignored — losing
 // the transcript because the disk was read-only would be the worse trade.
 func persistLiveNoteAudio(token string, projectID int64, projectPath, title, channel string, startedAt int64, audio []byte) {
-	paths, err := service.EnsureLiveNotesDir(token, projectID, projectPath, title, startedAt)
+	paths, err := service.EnsureMeetingDir(token, projectID, projectPath, title, startedAt)
 	if err != nil {
 		slog.Warn("live notes: meeting folder unavailable", "err", err)
 		return

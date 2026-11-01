@@ -183,26 +183,6 @@ func TestLiveNote_ProjectScopedLookupAndMinutesUpsert(t *testing.T) {
 	assert.Equal(t, "/p/notes.md", note.FilePath)
 }
 
-func TestCleanupLiveNotes_RemovesSegmentsWithTheShare(t *testing.T) {
-	db := setupTestDBForLiveNotes(t)
-	defer func() { _ = db.Close() }()
-
-	pid, err := store.ProjectIDForPath("/proj/a")
-	require.NoError(t, err)
-	_, err = AppendLiveNoteSegment(context.Background(), "old", pid, seg(0, "mic", "我", 1_000, "旧"))
-	require.NoError(t, err)
-	_, err = AppendLiveNoteSegment(context.Background(), "new", pid, seg(0, "mic", "我", 2_000, "新"))
-	require.NoError(t, err)
-
-	removed, err := CleanupLiveNotes(context.Background(), time.Now().Add(time.Minute))
-	require.NoError(t, err)
-	assert.Equal(t, 2, removed)
-
-	rows, err := ListLiveNoteSegments("old", 0)
-	require.NoError(t, err)
-	assert.Empty(t, rows)
-}
-
 func TestSplitRunes_PrefersLineBoundary(t *testing.T) {
 	text := "aaa\nbbb\nccc"
 	chunks := splitRunes(text, 8)
@@ -284,38 +264,6 @@ func TestWriteLiveNotesTranscriptFile_KeepsHeadingNoteAndLines(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// The folder is created while the meeting is still running, so it must be
-// stable: every later segment (and the minutes job) has to land in it even
-// though the title may have changed in between.
-func TestEnsureLiveNotesDir_IsStableAndKeepsAudioOutOfGit(t *testing.T) {
-	db := setupTestDBForLiveNotes(t)
-	defer func() { _ = db.Close() }()
-
-	project := t.TempDir()
-	started := time.Date(2026, 10, 30, 14, 30, 0, 0, time.Local).UnixMilli()
-
-	paths, err := EnsureLiveNotesDir("abcdef123456", 0, project, "季度/规划", started)
-	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(project, ".clawbench", "notes", "2026-10-30-1430-季度规划-abcdef"), paths.Dir)
-
-	info, err := os.Stat(paths.Audio)
-	require.NoError(t, err)
-	assert.True(t, info.IsDir())
-
-	ignore, err := os.ReadFile(filepath.Join(paths.Audio, ".gitignore"))
-	require.NoError(t, err)
-	assert.Equal(t, "*\n", string(ignore), "binary audio must not be committed by default")
-
-	again, err := EnsureLiveNotesDir("abcdef123456", 0, project, "改名了", started)
-	require.NoError(t, err)
-	assert.Equal(t, paths.Dir, again.Dir, "the recorded folder wins over the new title")
-}
-
-func TestEnsureLiveNotesDir_RequiresProjectPath(t *testing.T) {
-	_, err := EnsureLiveNotesDir("tok", 0, "  ", "t", 1)
-	assert.Error(t, err)
-}
-
 func TestSaveLiveNoteAudio_NamesByStartTimeAndChannel(t *testing.T) {
 	paths := LiveNotesPathsIn(t.TempDir())
 
@@ -358,26 +306,6 @@ func TestGetLiveNote_MissingShareIsNotAnError(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, exists)
 	assert.Zero(t, pid)
-}
-
-// Cleanup with nothing old enough must be a no-op rather than an empty
-// transaction, and it must not touch fresh rows.
-func TestCleanupLiveNotes_NothingToDelete(t *testing.T) {
-	db := setupTestDBForLiveNotes(t)
-	defer func() { _ = db.Close() }()
-
-	pid, err := store.ProjectIDForPath("/proj/a")
-	require.NoError(t, err)
-	_, err = AppendLiveNoteSegment(context.Background(), "fresh", pid, seg(0, "mic", "我", 1, "内容"))
-	require.NoError(t, err)
-
-	removed, err := CleanupLiveNotes(context.Background(), time.Now().Add(-time.Hour))
-	require.NoError(t, err)
-	assert.Zero(t, removed)
-
-	rows, err := ListLiveNoteSegments("fresh", 0)
-	require.NoError(t, err)
-	assert.Len(t, rows, 1)
 }
 
 // ── Edge cases: timeline assembly ───────────────────────────────────────────
@@ -741,26 +669,6 @@ func TestAppendLiveNoteSegment_RefreshesUpdatedAt(t *testing.T) {
 	assert.NotEqual(t, "2000-01-01 00:00:00", updated, "a new segment must refresh updated_at")
 }
 
-// A share refreshed between the cleanup scan and the delete must survive.
-func TestCleanupLiveNotes_SkipsShareRefreshedAfterTheScan(t *testing.T) {
-	db := setupTestDBForLiveNotes(t)
-	defer func() { _ = db.Close() }()
-
-	pid, err := store.ProjectIDForPath("/proj/a")
-	require.NoError(t, err)
-	_, err = AppendLiveNoteSegment(context.Background(), "tok", pid, seg(0, "mic", "我", 1, "内容"))
-	require.NoError(t, err)
-
-	// The row looks old to the caller, but its updated_at is "now", i.e. it was
-	// refreshed after the SELECT the caller would have done.
-	removed, err := CleanupLiveNotes(context.Background(), time.Now().Add(-time.Hour))
-	require.NoError(t, err)
-	assert.Zero(t, removed)
-	rows, err := ListLiveNoteSegments("tok", 0)
-	require.NoError(t, err)
-	assert.Len(t, rows, 1)
-}
-
 // ── History ─────────────────────────────────────────────────────────────────
 
 // writeMeetingFolder lays out one meeting folder the way the writer does, so
@@ -773,64 +681,6 @@ func writeMeetingFolder(t *testing.T, project, name string, files map[string]str
 		require.NoError(t, os.WriteFile(filepath.Join(dir, file), []byte(body), 0o644))
 	}
 	return dir
-}
-
-func TestListLiveNoteSessions_NewestFirstWithTitleAndArtifacts(t *testing.T) {
-	project := t.TempDir()
-	writeMeetingFolder(t, project, "2026-10-30-0900-晨会-111111", map[string]string{
-		"minutes.md": "# 晨会 · 2026-10-30 09:00\n",
-	})
-	writeMeetingFolder(t, project, "2026-10-31-1732-周会-a1b2c3", map[string]string{
-		"minutes.md":            "# 周会 · 2026-10-31 17:32\n",
-		"transcript.md":         "# 转写 · 周会\n",
-		"transcript-revised.md": "# 修订版转写 · 周会\n",
-	})
-	require.NoError(t, os.WriteFile(
-		filepath.Join(project, filepath.FromSlash(LiveNotesDir), "2026-10-31-1732-周会-a1b2c3", "audio", "001-mic.webm"),
-		[]byte("x"), 0o644,
-	))
-
-	sessions, err := ListLiveNoteSessions(project)
-	require.NoError(t, err)
-	require.Len(t, sessions, 2)
-
-	newest := sessions[0]
-	assert.Equal(t, "2026-10-31-1732-周会-a1b2c3", newest.Dir)
-	// The share token is stripped: the user typed "周会", not "周会-a1b2c3".
-	assert.Equal(t, "周会", newest.Title)
-	assert.True(t, newest.HasMinutes)
-	assert.True(t, newest.HasTranscript)
-	assert.True(t, newest.HasRevised)
-	assert.Equal(t, 1, newest.AudioFiles)
-	assert.Positive(t, newest.StartedAt)
-	assert.True(t, filepath.IsAbs(newest.DirPath))
-
-	older := sessions[1]
-	assert.Equal(t, "晨会", older.Title)
-	assert.True(t, older.HasMinutes)
-	assert.False(t, older.HasTranscript)
-	assert.Zero(t, older.AudioFiles)
-	// Sorted by meeting start, not by name: "1" sorts before "2" as text.
-	assert.Greater(t, newest.sortKey(), older.sortKey())
-}
-
-func TestListLiveNoteSessions_NoRootIsEmptyNotAnError(t *testing.T) {
-	sessions, err := ListLiveNoteSessions(t.TempDir())
-	require.NoError(t, err)
-	assert.Empty(t, sessions)
-}
-
-func TestListLiveNoteSessions_IgnoresFoldersItDidNotCreate(t *testing.T) {
-	project := t.TempDir()
-	root := filepath.Join(project, filepath.FromSlash(LiveNotesDir))
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "scratch"), 0o755))
-	writeMeetingFolder(t, project, "2026-10-31-1732-a1b2c3", nil) // no title: token only
-
-	sessions, err := ListLiveNoteSessions(project)
-	require.NoError(t, err)
-	require.Len(t, sessions, 1)
-	assert.Empty(t, sessions[0].Title, "a folder with no slug has no title to show")
-	assert.False(t, sessions[0].HasMinutes)
 }
 
 func TestReadLiveNoteArtifact_ReturnsEachKind(t *testing.T) {
@@ -860,19 +710,6 @@ func TestReadLiveNoteArtifact_RejectsTraversalAndUnknownKinds(t *testing.T) {
 	assert.ErrorIs(t, err, ErrLiveNoteArtifactKind)
 	_, err = ReadLiveNoteArtifact(project, "2026-10-31-1732-周会-a1b2c3", "transcript")
 	assert.ErrorIs(t, err, ErrLiveNoteSessionNotFound, "the file was never written")
-}
-
-func TestListLiveNoteSessions_FallsBackToModTimeWhenNameHasNoTimestamp(t *testing.T) {
-	project := t.TempDir()
-	// The shape is right but the date is impossible, so the prefix cannot be
-	// parsed. The row must still appear, ordered by its last write.
-	writeMeetingFolder(t, project, "2026-99-99-9999-坏名字-abcdef", nil)
-
-	sessions, err := ListLiveNoteSessions(project)
-	require.NoError(t, err)
-	require.Len(t, sessions, 1)
-	assert.Zero(t, sessions[0].StartedAt)
-	assert.Positive(t, sessions[0].sortKey(), "falls back to the folder mtime")
 }
 
 func TestReadLiveNoteArtifact_RejectsOversizedFile(t *testing.T) {
@@ -947,4 +784,211 @@ func TestReadLiveNoteArtifactWithName_FallsBackToMarkdown(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "transcript.md", file, "meetings recorded before SRT keep their file")
 	assert.Contains(t, body, "旧会议")
+}
+
+// ── Meeting records ─────────────────────────────────────────────────────────
+
+func TestStartLiveNote_IsIdempotentAndKeepsTheOriginalStart(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+
+	require.NoError(t, StartLiveNote("tok", pid, "周会", 1_700_000_000_000))
+	require.NoError(t, StartLiveNote("tok", pid, "改名了", 1_700_000_999_000))
+
+	note, exists, err := GetLiveNote("tok")
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(t, int64(1_700_000_000_000), note.StartedAt, "a reconnect must not move the start")
+	assert.Equal(t, "周会", note.Title, "the original title wins over the retry")
+	assert.Zero(t, note.EndedAt)
+}
+
+func TestEndLiveNote_StampsOnce(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	require.NoError(t, StartLiveNote("tok", pid, "周会", 1_700_000_000_000))
+
+	require.NoError(t, EndLiveNote("tok", 1_700_000_060_000))
+	require.NoError(t, EndLiveNote("tok", 1_700_000_999_000))
+
+	note, _, err := GetLiveNote("tok")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1_700_000_060_000), note.EndedAt, "a second close must not move the finish line")
+}
+
+func TestCloseStaleLiveNotes_OnlyClosesOldOpenRecords(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	require.NoError(t, StartLiveNote("old", pid, "旧会", 1_700_000_000_000))
+	require.NoError(t, StartLiveNote("fresh", pid, "新会", 1_700_000_000_000))
+	require.NoError(t, StartLiveNote("closed", pid, "已结束", 1_700_000_000_000))
+	require.NoError(t, EndLiveNote("closed", 1_700_000_001_000))
+	_, err = store.WriteExec(`UPDATE live_notes SET updated_at = '2000-01-01 00:00:00' WHERE token IN ('old','closed')`)
+	require.NoError(t, err)
+
+	closed, err := CloseStaleLiveNotes(time.Now().Add(-12 * time.Hour).UnixMilli())
+	require.NoError(t, err)
+	assert.Equal(t, 1, closed)
+
+	old, _, err := GetLiveNote("old")
+	require.NoError(t, err)
+	assert.NotZero(t, old.EndedAt)
+	fresh, _, err := GetLiveNote("fresh")
+	require.NoError(t, err)
+	assert.Zero(t, fresh.EndedAt)
+}
+
+func TestEnsureMeetingDir_IsStableAndKeepsAudioOutOfGit(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+
+	project := t.TempDir()
+	started := time.Date(2026, 10, 30, 14, 30, 0, 0, time.Local).UnixMilli()
+	require.NoError(t, StartLiveNote("abcdef123456", pid, "季度/规划", started))
+
+	paths, err := EnsureMeetingDir("abcdef123456", pid, project, "季度/规划", started)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(project, ".clawbench", "notes", "2026-10-30-1430-季度规划-abcdef"), paths.Dir)
+
+	info, err := os.Stat(paths.Audio)
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
+
+	ignore, err := os.ReadFile(filepath.Join(paths.Audio, ".gitignore"))
+	require.NoError(t, err)
+	assert.Equal(t, "*\n", string(ignore), "binary audio must not be committed by default")
+
+	again, err := EnsureMeetingDir("abcdef123456", pid, project, "改名了", started)
+	require.NoError(t, err)
+	assert.Equal(t, paths.Dir, again.Dir, "the recorded folder wins over the new title")
+}
+
+func TestEnsureMeetingDir_RequiresProjectPath(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	_, err := EnsureMeetingDir("tok", 0, "  ", "t", 1)
+	assert.Error(t, err)
+}
+
+func TestListMeetingRecords_NewestFirstWithArtifacts(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	project := t.TempDir()
+
+	require.NoError(t, StartLiveNote("older", pid, "晨会", 1_700_000_000_000))
+	require.NoError(t, StartLiveNote("newer", pid, "周会", 1_700_000_500_000))
+	paths, err := EnsureMeetingDir("newer", pid, project, "周会", 1_700_000_500_000)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(paths.Minutes, []byte("MINUTES"), 0o644))
+	require.NoError(t, os.WriteFile(paths.Revised, []byte("REVISED"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(paths.Audio, "001-mic.webm"), []byte("x"), 0o644))
+	_, err = AppendLiveNoteChat("newer", pid, LiveNoteChatMessage{ClientID: "c1", Speaker: "小明", Text: "你好"})
+	require.NoError(t, err)
+
+	records, err := ListMeetingRecords(project, pid, 200)
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+	assert.Equal(t, "newer", records[0].Token)
+	assert.Equal(t, "周会", records[0].Title)
+	assert.True(t, records[0].HasMinutes)
+	assert.True(t, records[0].HasRevised)
+	assert.False(t, records[0].HasTranscript)
+	assert.Equal(t, 1, records[0].AudioFiles)
+	assert.Equal(t, 1, records[0].ChatCount)
+	assert.NotEmpty(t, records[0].DirPath)
+
+	assert.Equal(t, "older", records[1].Token)
+	assert.Empty(t, records[1].Dir, "a meeting with no artifacts has no folder")
+	assert.False(t, records[1].HasMinutes)
+}
+
+func TestDeleteMeetingRecord_RemovesFolderRowsAndChat(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	project := t.TempDir()
+
+	require.NoError(t, StartLiveNote("tok", pid, "周会", 1_700_000_000_000))
+	paths, err := EnsureMeetingDir("tok", pid, project, "周会", 1_700_000_000_000)
+	require.NoError(t, err)
+	_, err = AppendLiveNoteSegment(context.Background(), "tok", pid, seg(0, "mic", "我", 1, "内容"))
+	require.NoError(t, err)
+	_, err = AppendLiveNoteChat("tok", pid, LiveNoteChatMessage{ClientID: "c1", Speaker: "我", Text: "你好"})
+	require.NoError(t, err)
+
+	require.NoError(t, DeleteMeetingRecord(project, pid, "tok"))
+
+	_, err = os.Stat(paths.Dir)
+	assert.True(t, os.IsNotExist(err), "the folder goes with the record")
+	_, exists, err := GetLiveNote("tok")
+	require.NoError(t, err)
+	assert.False(t, exists)
+	segs, err := ListLiveNoteSegments("tok", 0)
+	require.NoError(t, err)
+	assert.Empty(t, segs)
+	msgs, err := ListLiveNoteChat("tok", 0)
+	require.NoError(t, err)
+	assert.Empty(t, msgs)
+}
+
+func TestDeleteMeetingRecord_UnknownToken(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	err := DeleteMeetingRecord(t.TempDir(), 0, "nope")
+	assert.ErrorIs(t, err, ErrMeetingNotFound)
+}
+
+func TestAppendLiveNoteChat_IsIdempotentAndOrdered(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	require.NoError(t, StartLiveNote("tok", pid, "周会", 1_700_000_000_000))
+
+	first, err := AppendLiveNoteChat("tok", pid, LiveNoteChatMessage{ClientID: "c1", Speaker: "小明", Text: "一"})
+	require.NoError(t, err)
+	again, err := AppendLiveNoteChat("tok", pid, LiveNoteChatMessage{ClientID: "c1", Speaker: "小明", Text: "一"})
+	require.NoError(t, err)
+	assert.Equal(t, first, again, "a retried message keeps its row")
+	_, err = AppendLiveNoteChat("tok", pid, LiveNoteChatMessage{ClientID: "c2", Speaker: "小红", Text: "二"})
+	require.NoError(t, err)
+
+	msgs, err := ListLiveNoteChat("tok", 0)
+	require.NoError(t, err)
+	require.Len(t, msgs, 2)
+	assert.Equal(t, "一", msgs[0].Text)
+	assert.Equal(t, "二", msgs[1].Text)
+	assert.Equal(t, 2, mustChatCount(t, "tok"))
+}
+
+func TestWriteLiveNoteChatFile_WritesReadableArchive(t *testing.T) {
+	paths := LiveNotesPathsIn(t.TempDir())
+	require.NoError(t, os.MkdirAll(paths.Dir, 0o755))
+	_, err := WriteLiveNoteChatFile(paths, []LiveNoteChatMessage{
+		{Speaker: "小明", Text: "第一句", At: 1_700_000_000_000},
+		{Speaker: "", Text: "第二句"},
+	})
+	require.NoError(t, err)
+	body, err := os.ReadFile(filepath.Join(paths.Dir, "chat.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "小明：第一句")
+	assert.Contains(t, string(body), "匿名：第二句")
+}
+
+func mustChatCount(t *testing.T, token string) int {
+	t.Helper()
+	n, err := CountLiveNoteChat(token)
+	require.NoError(t, err)
+	return n
 }

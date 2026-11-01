@@ -121,6 +121,11 @@ type Room struct {
 	screenEnabled bool
 	screenSharer  string
 
+	// videoEnabled tells viewers whether the publisher is sending a picture.
+	// Voice meetings keep the same room, signaling and chat; they simply have no
+	// video track, and a viewer must not sit on "connecting" waiting for one.
+	videoEnabled bool
+
 	// notesEnabled tells viewers whether the publisher is running AI 听记.
 	// Purely informational: the transcript itself never passes through the room
 	// (it is uploaded over HTTP), but a viewer must not show a "听记" control for
@@ -224,6 +229,23 @@ func (r *Room) ReleaseScreen(viewerID string) bool {
 	r.mu.Unlock()
 	r.touch()
 	return true
+}
+
+// VideoEnabled reports whether the publisher is sending video for this room.
+func (r *Room) VideoEnabled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.videoEnabled
+}
+
+// SetVideoEnabled flips the video flag. Set on every create call, like the
+// notes flag: a room reused inside the grace window must not inherit the
+// previous meeting's mode.
+func (r *Room) SetVideoEnabled(on bool) {
+	r.mu.Lock()
+	r.videoEnabled = on
+	r.mu.Unlock()
+	r.touch()
 }
 
 // NotesEnabled reports whether the publisher is running AI 听记 for this room.
@@ -545,14 +567,17 @@ func (g *Registry) Create(projectKey, title string) (*Room, error) {
 		return nil, err
 	}
 	room := &Room{
-		token:       token,
-		projectKey:  projectKey,
-		title:       title,
-		createdAt:   time.Now(),
-		viewers:     make(map[string]*Viewer),
-		maxViewers:  g.maxViewers,
-		idleTimeout: g.idleTimeout,
-		lastActive:  time.Now(),
+		token:      token,
+		projectKey: projectKey,
+		title:      title,
+		createdAt:  time.Now(),
+		viewers:    make(map[string]*Viewer),
+		// Default true: a room created by an older client (or by a test) still
+		// means "screen share", which is what every room did before voice mode.
+		videoEnabled: true,
+		maxViewers:   g.maxViewers,
+		idleTimeout:  g.idleTimeout,
+		lastActive:   time.Now(),
 	}
 	g.rooms[token] = room
 	g.byProject[projectKey] = token

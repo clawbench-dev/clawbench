@@ -143,6 +143,11 @@ type ViewerMessage struct {
 	// enabling relay later needs no client change.
 	ICEServers  []any `json:"iceServers"`
 	TalkEnabled bool  `json:"talkEnabled,omitempty"`
+	// VideoEnabled tells the viewer whether a picture is coming. A voice meeting
+	// has none, so the page renders a placeholder instead of waiting for a track
+	// that will never arrive. Pointer-to-bool would be needed to distinguish
+	// "absent" from "false"; both mean "no picture", which is the same UI.
+	VideoEnabled bool `json:"video"`
 	// NotesEnabled tells the viewer that this share is running AI 听记, so the
 	// transcript panel can be offered at all. It carries no transcript.
 	NotesEnabled bool `json:"notesEnabled,omitempty"`

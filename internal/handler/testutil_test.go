@@ -79,6 +79,11 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	if err != nil {
 		t.Fatalf("failed to create projects table: %v", err)
 	}
+	// Meeting records are project-scoped and deleted with the project, so the
+	// schema has to exist here even for tests that never touch a meeting.
+	if _, err = db.Exec(service.LiveNotesDDL); err != nil {
+		t.Fatalf("failed to create live notes tables: %v", err)
+	}
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

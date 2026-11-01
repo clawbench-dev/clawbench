@@ -455,6 +455,9 @@ type shareMetaResponse struct {
 	// NotesEnabled is live-share only: whether the publisher is running AI 听记.
 	// The share page uses it to decide whether to offer the transcript panel.
 	NotesEnabled bool `json:"notesEnabled,omitempty"`
+	// Video is live-share only: false means a voice meeting. The share page
+	// renders a placeholder instead of waiting for a picture that never comes.
+	Video bool `json:"video"`
 }
 
 // serveShareMeta reports whether a token is a file share or a session share.
@@ -475,6 +478,7 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 			Kind:         shareKindLive,
 			Title:        room.Title(),
 			NotesEnabled: room.NotesEnabled(),
+			Video:        room.VideoEnabled(),
 		})
 		return
 	}

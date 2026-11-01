@@ -69,10 +69,28 @@ CREATE TABLE IF NOT EXISTS live_notes (
 	revised TEXT NOT NULL DEFAULT '',
 	revise_status TEXT NOT NULL DEFAULT 'idle',
 	revise_error TEXT NOT NULL DEFAULT '',
+	started_at INTEGER NOT NULL DEFAULT 0,
+	ended_at INTEGER NOT NULL DEFAULT 0,
+	dir_name TEXT NOT NULL DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_live_notes_updated ON live_notes(updated_at);
+CREATE INDEX IF NOT EXISTS idx_live_notes_project_started ON live_notes(project_id, started_at);
+
+CREATE TABLE IF NOT EXISTS live_notes_chat (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	token TEXT NOT NULL,
+	project_id INTEGER NOT NULL DEFAULT 0,
+	client_msg_id TEXT NOT NULL,
+	speaker TEXT NOT NULL DEFAULT '',
+	viewer_id TEXT NOT NULL DEFAULT '',
+	text TEXT NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(token, client_msg_id)
+);
+CREATE INDEX IF NOT EXISTS idx_live_note_chat_token ON live_notes_chat(token, id);
+CREATE INDEX IF NOT EXISTS idx_live_note_chat_project ON live_notes_chat(project_id, token);
 `
 
 // Live note minutes statuses. Kept as constants so the handler, the SPA and the
@@ -108,10 +126,14 @@ type LiveNote struct {
 	// FilePath is the Markdown file the minutes were written to, inside the
 	// project. Empty when the project directory was unavailable.
 	FilePath string `json:"filePath"`
-	// DirPath is the meeting folder holding every artifact (minutes, both
-	// transcripts, audio). Empty until the first segment or the minutes job
-	// creates it.
-	DirPath string `json:"dirPath"`
+	// DirName is the meeting folder NAME inside the project's notes root (not a
+	// path: the project can be renamed or moved, the folder name cannot). Empty
+	// until the first artifact — audio, chat archive or minutes — is written.
+	DirName string `json:"dirName"`
+	// StartedAt / EndedAt are unix milliseconds, stamped by the SERVER when the
+	// publisher attaches and detaches. 0 means "unknown" / "still running".
+	StartedAt int64 `json:"startedAt"`
+	EndedAt   int64 `json:"endedAt"`
 	// Revised is the proofread transcript the minutes were generated from.
 	Revised string `json:"revised"`
 	// ReviseStatus / ReviseError track the proofreading stage separately from
@@ -137,9 +159,9 @@ func AppendLiveNoteSegment(ctx context.Context, token string, projectID int64, s
 
 	if _, execErr := tx.ExecContext(
 		ctx,
-		`INSERT INTO live_notes (token, project_id, status) VALUES (?, ?, ?)
+		`INSERT INTO live_notes (token, project_id, status, started_at) VALUES (?, ?, ?, ?)
 		 ON CONFLICT(token) DO UPDATE SET updated_at = CURRENT_TIMESTAMP`,
-		token, projectID, LiveNotesStatusIdle,
+		token, projectID, LiveNotesStatusIdle, time.Now().UnixMilli(),
 	); execErr != nil {
 		return 0, fmt.Errorf("live notes: ensure row: %w", execErr)
 	}
@@ -197,10 +219,11 @@ func ListLiveNoteSegments(token string, sinceID int64) ([]LiveNoteSegment, error
 func GetLiveNote(token string) (LiveNote, bool, error) {
 	var n LiveNote
 	err := store.ReadDB().QueryRow(
-		`SELECT token, title, status, minutes, error, file_path, dir_path, revised, revise_status, revise_error
+		`SELECT token, title, status, minutes, error, file_path, dir_name, revised,
+		        revise_status, revise_error, started_at, ended_at
 		   FROM live_notes WHERE token = ?`, token,
 	).Scan(&n.Token, &n.Title, &n.Status, &n.Minutes, &n.Error, &n.FilePath,
-		&n.DirPath, &n.Revised, &n.ReviseStatus, &n.ReviseError)
+		&n.DirName, &n.Revised, &n.ReviseStatus, &n.ReviseError, &n.StartedAt, &n.EndedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return LiveNote{}, false, nil
 	}
@@ -227,8 +250,8 @@ func LiveNoteProjectID(token string) (int64, bool, error) {
 // SetLiveNoteMinutes records the minutes status/output for a share.
 func SetLiveNoteMinutes(token string, projectID int64, title, status, minutes, errMsg, filePath string) error {
 	_, err := store.WriteExec(
-		`INSERT INTO live_notes (token, project_id, title, status, minutes, error, file_path, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		`INSERT INTO live_notes (token, project_id, title, status, minutes, error, file_path, started_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		 ON CONFLICT(token) DO UPDATE SET
 		   status = excluded.status,
 		   minutes = excluded.minutes,
@@ -236,7 +259,7 @@ func SetLiveNoteMinutes(token string, projectID int64, title, status, minutes, e
 		   file_path = excluded.file_path,
 		   title = CASE WHEN excluded.title <> '' THEN excluded.title ELSE live_notes.title END,
 		   updated_at = CURRENT_TIMESTAMP`,
-		token, projectID, title, status, minutes, errMsg, filePath,
+		token, projectID, title, status, minutes, errMsg, filePath, time.Now().UnixMilli(),
 	)
 	if err != nil {
 		return fmt.Errorf("live notes: set minutes: %w", err)
@@ -251,14 +274,14 @@ func SetLiveNoteMinutes(token string, projectID int64, title, status, minutes, e
 // (which is then generated from the raw transcript).
 func SetLiveNoteRevise(token string, projectID int64, status, revised, errMsg string) error {
 	_, err := store.WriteExec(
-		`INSERT INTO live_notes (token, project_id, revise_status, revised, revise_error, updated_at)
-		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		`INSERT INTO live_notes (token, project_id, revise_status, revised, revise_error, started_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		 ON CONFLICT(token) DO UPDATE SET
 		   revise_status = excluded.revise_status,
 		   revised = excluded.revised,
 		   revise_error = excluded.revise_error,
 		   updated_at = CURRENT_TIMESTAMP`,
-		token, projectID, status, revised, errMsg,
+		token, projectID, status, revised, errMsg, time.Now().UnixMilli(),
 	)
 	if err != nil {
 		return fmt.Errorf("live notes: set revise: %w", err)
@@ -266,67 +289,455 @@ func SetLiveNoteRevise(token string, projectID int64, status, revised, errMsg st
 	return nil
 }
 
-// CleanupLiveNotes deletes notes (and their segments) last updated before the
-// cutoff. Returns the number of shares removed.
-func CleanupLiveNotes(ctx context.Context, before time.Time) (int, error) {
-	var tokens []string
-	rows, err := store.ReadDB().QueryContext(
-		ctx,
-		`SELECT token FROM live_notes WHERE updated_at < ?`, before.UTC().Format("2006-01-02 15:04:05"),
+// ── Meeting record lifecycle ────────────────────────────────────────────────
+//
+// A meeting is a row in `live_notes`, created when the publisher attaches and
+// closed when it detaches. It exists whether or not anything was recorded: a
+// silent meeting with 听记 off still happened, and the user must be able to see
+// it (and delete it). Nothing here expires — deleting the record is the only
+// way these rows go away, apart from deleting the project.
+
+// StartLiveNote creates the permanent record for a meeting.
+//
+// ON CONFLICT DO NOTHING, not an update: a publisher that reconnects with the
+// same token (a socket blip) must keep the ORIGINAL start time, otherwise the
+// record's date would drift every time the network hiccups.
+func StartLiveNote(token string, projectID int64, title string, startedAtMS int64) error {
+	if token == "" {
+		return errors.New("live notes: empty token")
+	}
+	if startedAtMS <= 0 {
+		startedAtMS = time.Now().UnixMilli()
+	}
+	_, err := store.WriteExec(
+		`INSERT INTO live_notes (token, project_id, title, started_at, status, updated_at)
+		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		 ON CONFLICT(token) DO NOTHING`,
+		token, projectID, title, startedAtMS, LiveNotesStatusIdle,
 	)
 	if err != nil {
-		return 0, fmt.Errorf("live notes: cleanup select: %w", err)
+		return fmt.Errorf("live notes: start meeting: %w", err)
+	}
+	return nil
+}
+
+// EndLiveNote stamps the end time once. A second call is a no-op so a
+// double-close (explicit end + socket teardown) cannot move the finish line.
+func EndLiveNote(token string, endedAtMS int64) error {
+	if token == "" {
+		return nil
+	}
+	if endedAtMS <= 0 {
+		endedAtMS = time.Now().UnixMilli()
+	}
+	_, err := store.WriteExec(
+		`UPDATE live_notes SET ended_at = ?, updated_at = CURRENT_TIMESTAMP
+		  WHERE token = ? AND ended_at = 0`,
+		endedAtMS, token,
+	)
+	if err != nil {
+		return fmt.Errorf("live notes: end meeting: %w", err)
+	}
+	return nil
+}
+
+// CloseStaleLiveNotes closes records whose publisher never reported a clean
+// end (process crash, killed app). Without this the list would show meetings
+// that never finish, and the delete guard would refuse to remove them.
+//
+// `beforeMS` is the cutoff on updated_at; the reaper passes "now - 12h".
+func CloseStaleLiveNotes(beforeMS int64) (int, error) {
+	if beforeMS <= 0 {
+		return 0, nil
+	}
+	cutoff := time.UnixMilli(beforeMS).UTC().Format("2006-01-02 15:04:05")
+	res, err := store.WriteExec(
+		`UPDATE live_notes SET ended_at = started_at, updated_at = CURRENT_TIMESTAMP
+		  WHERE ended_at = 0 AND updated_at < ?`, cutoff,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("live notes: close stale meetings: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// MeetingDirName returns the folder name recorded for a meeting, or "".
+func MeetingDirName(token string) (string, error) {
+	var name string
+	err := store.ReadDB().QueryRow(`SELECT dir_name FROM live_notes WHERE token = ?`, token).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("live notes: dir lookup: %w", err)
+	}
+	return name, nil
+}
+
+// MeetingDirPath joins a folder name onto the project's notes root.
+//
+// The row stores the NAME, never the absolute path: a project can be renamed or
+// moved, and a stale absolute path would silently point at nothing.
+func MeetingDirPath(projectPath, dirName string) string {
+	if strings.TrimSpace(projectPath) == "" || strings.TrimSpace(dirName) == "" {
+		return ""
+	}
+	return filepath.Join(liveNotesRoot(projectPath), dirName)
+}
+
+// EnsureMeetingDir creates the meeting folder on first use and returns its
+// paths. Idempotent: later calls reuse the recorded name even if the title
+// changed since.
+func EnsureMeetingDir(token string, projectID int64, projectPath, title string, startedAtMS int64) (LiveNotesPaths, error) {
+	if strings.TrimSpace(projectPath) == "" {
+		return LiveNotesPaths{}, errors.New("live notes: no project path")
+	}
+	if name, err := MeetingDirName(token); err != nil {
+		return LiveNotesPaths{}, err
+	} else if name != "" {
+		return ensureLiveNotesDirs(MeetingDirPath(projectPath, name))
+	}
+
+	startedAt := time.UnixMilli(startedAtMS)
+	if startedAtMS <= 0 {
+		startedAt = time.Now()
+	}
+	name := liveNotesMeetingDirName(startedAt, title, token)
+	paths, err := ensureLiveNotesDirs(MeetingDirPath(projectPath, name))
+	if err != nil {
+		return LiveNotesPaths{}, err
+	}
+	// CASE, not excluded: a concurrent caller (the minutes job, a chat archive)
+	// may have recorded a folder between the lookup above and this write.
+	if _, err := store.WriteExec(
+		`INSERT INTO live_notes (token, project_id, dir_name, started_at, updated_at)
+		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+		 ON CONFLICT(token) DO UPDATE SET
+		   dir_name = CASE WHEN live_notes.dir_name = '' THEN excluded.dir_name ELSE live_notes.dir_name END,
+		   started_at = CASE WHEN live_notes.started_at = 0 THEN excluded.started_at ELSE live_notes.started_at END,
+		   updated_at = CURRENT_TIMESTAMP`,
+		token, projectID, name, startedAt.UnixMilli(),
+	); err != nil {
+		return LiveNotesPaths{}, fmt.Errorf("live notes: record dir: %w", err)
+	}
+	return paths, nil
+}
+
+// MeetingRecord is one row of the meeting list.
+//
+// The record is the database row (permanent); the artifact flags are derived by
+// probing the folder, because the folder — not the row — is where those files
+// live and a stale flag would send the user looking for a file that is gone.
+type MeetingRecord struct {
+	Token     string `json:"token"`
+	Title     string `json:"title"`
+	StartedAt int64  `json:"startedAt"`
+	EndedAt   int64  `json:"endedAt"`
+	// Dir is the folder NAME; empty when the meeting produced no artifacts.
+	Dir string `json:"dir,omitempty"`
+	// DirPath is the absolute folder path (publisher only).
+	DirPath       string `json:"dirPath,omitempty"`
+	HasMinutes    bool   `json:"hasMinutes"`
+	HasTranscript bool   `json:"hasTranscript"`
+	HasRevised    bool   `json:"hasRevised"`
+	AudioFiles    int    `json:"audioFiles"`
+	ChatCount     int    `json:"chatCount"`
+	// Status is the minutes job state (idle/generating/ready/failed). The list
+	// uses it to show "生成中" and to mark a job that died with the process.
+	Status string `json:"status"`
+	// UpdatedAt is the row's last write, used to detect a stuck "generating".
+	UpdatedAt int64 `json:"updatedAt"`
+}
+
+// ListMeetingRecords returns a project's meetings, newest first.
+func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]MeetingRecord, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := store.ReadDB().Query(
+		`SELECT token, title, started_at, ended_at, dir_name, status,
+		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000
+		   FROM live_notes
+		  WHERE project_id = ?
+		  ORDER BY started_at DESC, token DESC
+		  LIMIT ?`,
+		projectID, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("live notes: list meetings: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+
+	out := make([]MeetingRecord, 0, 16)
 	for rows.Next() {
-		var t string
-		if scanErr := rows.Scan(&t); scanErr != nil {
-			return 0, fmt.Errorf("live notes: cleanup scan: %w", scanErr)
+		var m MeetingRecord
+		var dirName string
+		var updatedMS int64
+		if scanErr := rows.Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName,
+			&m.Status, &updatedMS); scanErr != nil {
+			return nil, fmt.Errorf("live notes: scan meeting: %w", scanErr)
 		}
-		tokens = append(tokens, t)
+		m.UpdatedAt = updatedMS
+		if dirName != "" {
+			m.Dir = dirName
+			m.DirPath = MeetingDirPath(projectPath, dirName)
+			m.HasMinutes, m.HasTranscript, m.HasRevised, m.AudioFiles = liveNoteArtifactFlags(m.DirPath)
+		}
+		out = append(out, m)
 	}
-	if rowsErr := rows.Err(); rowsErr != nil {
-		return 0, fmt.Errorf("live notes: cleanup iterate: %w", rowsErr)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("live notes: iterate meetings: %w", err)
 	}
-	if len(tokens) == 0 {
-		return 0, nil
+
+	counts, err := liveNoteChatCounts(projectID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].ChatCount = counts[out[i].Token]
+	}
+	return out, nil
+}
+
+// GetMeetingRecord returns one record by token, scoped to the project.
+func GetMeetingRecord(projectPath string, projectID int64, token string) (MeetingRecord, bool, error) {
+	var m MeetingRecord
+	var dirName string
+	var updatedMS int64
+	err := store.ReadDB().QueryRow(
+		`SELECT token, title, started_at, ended_at, dir_name, status,
+		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000
+		   FROM live_notes WHERE token = ? AND project_id = ?`, token, projectID,
+	).Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName, &m.Status, &updatedMS)
+	if errors.Is(err, sql.ErrNoRows) {
+		return MeetingRecord{}, false, nil
+	}
+	if err != nil {
+		return MeetingRecord{}, false, fmt.Errorf("live notes: get meeting: %w", err)
+	}
+	m.UpdatedAt = updatedMS
+	if dirName != "" {
+		m.Dir = dirName
+		m.DirPath = MeetingDirPath(projectPath, dirName)
+		m.HasMinutes, m.HasTranscript, m.HasRevised, m.AudioFiles = liveNoteArtifactFlags(m.DirPath)
+	}
+	counts, err := liveNoteChatCounts(projectID)
+	if err != nil {
+		return MeetingRecord{}, false, err
+	}
+	m.ChatCount = counts[token]
+	return m, true, nil
+}
+
+// liveNoteChatCounts returns message counts per token for one project.
+func liveNoteChatCounts(projectID int64) (map[string]int, error) {
+	rows, err := store.ReadDB().Query(
+		`SELECT token, COUNT(*) FROM live_notes_chat WHERE project_id = ? GROUP BY token`, projectID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("live notes: chat counts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]int, 16)
+	for rows.Next() {
+		var token string
+		var n int
+		if scanErr := rows.Scan(&token, &n); scanErr != nil {
+			return nil, fmt.Errorf("live notes: scan chat count: %w", scanErr)
+		}
+		out[token] = n
+	}
+	return out, rows.Err()
+}
+
+// liveNoteArtifactFlags probes one meeting folder.
+func liveNoteArtifactFlags(dirPath string) (hasMinutes, hasTranscript, hasRevised bool, audio int) {
+	if dirPath == "" {
+		return false, false, false, 0
+	}
+	paths := liveNotesPathsFor(dirPath)
+	hasMinutes = fileExists(paths.Minutes)
+	hasTranscript = fileExists(paths.Transcript) || fileExists(filepath.Join(dirPath, liveNoteTranscriptLegacyMD))
+	hasRevised = fileExists(paths.Revised)
+	if entries, err := os.ReadDir(paths.Audio); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".webm") {
+				audio++
+			}
+		}
+	}
+	return hasMinutes, hasTranscript, hasRevised, audio
+}
+
+// ErrMeetingNotFound is returned when a record does not exist (or belongs to
+// another project).
+var ErrMeetingNotFound = errors.New("live notes: meeting not found")
+
+// DeleteMeetingRecord removes one meeting: its folder first, then its rows.
+//
+// Order matters. If the folder cannot be removed (permissions, a file in use)
+// the rows are left untouched and the caller can retry — nothing is lost. If
+// the rows fail after the folder is gone, the record remains pointing at a
+// missing folder (the detail shows "no artifacts") and deleting again finishes
+// the job. Both halves are recoverable; the reverse order would orphan files
+// with no record left to find them from.
+func DeleteMeetingRecord(projectPath string, projectID int64, token string) error {
+	if token == "" {
+		return ErrMeetingNotFound
+	}
+	var dirName string
+	err := store.ReadDB().QueryRow(
+		`SELECT dir_name FROM live_notes WHERE token = ? AND project_id = ?`, token, projectID,
+	).Scan(&dirName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrMeetingNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("live notes: delete lookup: %w", err)
+	}
+
+	if dirName != "" {
+		root := liveNotesRoot(projectPath)
+		full := filepath.Join(root, dirName)
+		// Defence in depth: the name is generated by us, but a corrupted row
+		// must not be able to point outside the project's notes root.
+		if !strings.HasPrefix(filepath.Clean(full)+string(os.PathSeparator),
+			filepath.Clean(root)+string(os.PathSeparator)) {
+			return fmt.Errorf("live notes: refusing to delete outside notes root")
+		}
+		if rmErr := os.RemoveAll(full); rmErr != nil {
+			return fmt.Errorf("live notes: remove meeting folder: %w", rmErr)
+		}
 	}
 
 	tx, err := store.WriteBegin()
 	if err != nil {
-		return 0, fmt.Errorf("live notes: cleanup begin: %w", err)
+		return fmt.Errorf("live notes: delete begin: %w", err)
 	}
 	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
-	removed := 0
-	for _, t := range tokens {
-		// Re-check updated_at inside the write transaction: the share may have
-		// been refreshed (a late segment, a minutes request) between the SELECT
-		// above and this DELETE, and deleting then would destroy a live meeting.
-		res, execErr := tx.ExecContext(
-			ctx,
-			`DELETE FROM live_notes WHERE token = ? AND updated_at < ?`,
-			t, before.UTC().Format("2006-01-02 15:04:05"),
-		)
-		if execErr != nil {
-			return 0, fmt.Errorf("live notes: cleanup notes: %w", execErr)
+	for _, stmt := range []string{
+		`DELETE FROM live_notes_chat WHERE token = ?`,
+		`DELETE FROM live_notes_segments WHERE token = ?`,
+		`DELETE FROM live_notes WHERE token = ? AND project_id = ?`,
+	} {
+		args := []any{token}
+		if strings.Contains(stmt, "project_id") {
+			args = append(args, projectID)
 		}
-		affected, affErr := res.RowsAffected()
-		if affErr != nil {
-			return 0, fmt.Errorf("live notes: cleanup count: %w", affErr)
-		}
-		if affected == 0 {
-			continue // refreshed since the scan: keep the segments too
-		}
-		removed += int(affected)
-		if _, execErr := tx.ExecContext(ctx, `DELETE FROM live_notes_segments WHERE token = ?`, t); execErr != nil {
-			return 0, fmt.Errorf("live notes: cleanup segments: %w", execErr)
+		if _, execErr := tx.Exec(stmt, args...); execErr != nil {
+			return fmt.Errorf("live notes: delete meeting rows: %w", execErr)
 		}
 	}
 	if commitErr := tx.Commit(); commitErr != nil {
-		return 0, fmt.Errorf("live notes: cleanup commit: %w", commitErr)
+		return fmt.Errorf("live notes: delete commit: %w", commitErr)
 	}
-	return removed, nil
+	return nil
+}
+
+// ── Chat ────────────────────────────────────────────────────────────────────
+
+// LiveNoteChatMessage is one persisted chat line.
+type LiveNoteChatMessage struct {
+	ID       int64  `json:"id"`
+	ClientID string `json:"clientId"`
+	Speaker  string `json:"speaker"`
+	ViewerID string `json:"viewerId,omitempty"`
+	Text     string `json:"text"`
+	At       int64  `json:"at"`
+}
+
+// AppendLiveNoteChat stores one message. Duplicate client ids are ignored
+// (returns the existing row's id), so the publisher's retry cannot duplicate a
+// line.
+func AppendLiveNoteChat(token string, projectID int64, msg LiveNoteChatMessage) (int64, error) {
+	if token == "" || strings.TrimSpace(msg.Text) == "" || strings.TrimSpace(msg.ClientID) == "" {
+		return 0, errors.New("live notes: invalid chat message")
+	}
+	res, err := store.WriteExec(
+		`INSERT INTO live_notes_chat (token, project_id, client_msg_id, speaker, viewer_id, text)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(token, client_msg_id) DO NOTHING`,
+		token, projectID, msg.ClientID, msg.Speaker, msg.ViewerID, msg.Text,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("live notes: append chat: %w", err)
+	}
+	if id, idErr := res.LastInsertId(); idErr == nil && id > 0 {
+		return id, nil
+	}
+	var existing int64
+	if scanErr := store.ReadDB().QueryRow(
+		`SELECT id FROM live_notes_chat WHERE token = ? AND client_msg_id = ?`, token, msg.ClientID,
+	).Scan(&existing); scanErr != nil {
+		return 0, fmt.Errorf("live notes: chat id lookup: %w", scanErr)
+	}
+	return existing, nil
+}
+
+// ListLiveNoteChat returns a meeting's messages in arrival order (id), which is
+// the server's own clock order — the sender's `at` may be skewed.
+func ListLiveNoteChat(token string, sinceID int64) ([]LiveNoteChatMessage, error) {
+	rows, err := store.ReadDB().Query(
+		`SELECT id, client_msg_id, speaker, viewer_id, text,
+		        CAST(strftime('%s', created_at) AS INTEGER) * 1000
+		   FROM live_notes_chat
+		  WHERE token = ? AND id > ?
+		  ORDER BY id`,
+		token, sinceID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("live notes: list chat: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]LiveNoteChatMessage, 0, 32)
+	for rows.Next() {
+		var m LiveNoteChatMessage
+		if scanErr := rows.Scan(&m.ID, &m.ClientID, &m.Speaker, &m.ViewerID, &m.Text, &m.At); scanErr != nil {
+			return nil, fmt.Errorf("live notes: scan chat: %w", scanErr)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// CountLiveNoteChat returns how many messages a meeting has.
+func CountLiveNoteChat(token string) (int, error) {
+	var n int
+	if err := store.ReadDB().QueryRow(`SELECT COUNT(*) FROM live_notes_chat WHERE token = ?`, token).Scan(&n); err != nil {
+		return 0, fmt.Errorf("live notes: count chat: %w", err)
+	}
+	return n, nil
+}
+
+// WriteLiveNoteChatFile writes the human-readable archive of a meeting's chat.
+//
+// This is not a fallback for expired rows (there are none any more): it is the
+// same bargain the minutes and the transcripts get — a copy on disk that can be
+// read, diffed and committed without the app.
+func WriteLiveNoteChatFile(paths LiveNotesPaths, msgs []LiveNoteChatMessage) (string, error) {
+	if len(msgs) == 0 {
+		return "", nil
+	}
+	var b strings.Builder
+	b.WriteString("# 会议聊天记录\n\n")
+	for _, m := range msgs {
+		speaker := m.Speaker
+		if speaker == "" {
+			speaker = "匿名"
+		}
+		when := ""
+		if m.At > 0 {
+			when = "[" + time.UnixMilli(m.At).Format("15:04") + "] "
+		}
+		b.WriteString(when + speaker + "：" + strings.ReplaceAll(m.Text, "\n", " ") + "\n\n")
+	}
+	path := filepath.Join(paths.Dir, "chat.md")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return "", fmt.Errorf("live notes: write chat archive: %w", err)
+	}
+	return path, nil
 }
 
 // ── Timeline assembly ───────────────────────────────────────────────────────
@@ -724,10 +1135,9 @@ const liveNotesNameMaxRunes = 40
 
 // LiveNotesPaths are the files one meeting leaves behind.
 //
-// Every one of them is permanent: the database rows expire after the retention
-// window, but the folder stays until the user deletes it. That is why audio is
-// written as it arrives rather than at the end — a crash mid-meeting must not
-// cost the recording.
+// Every one of them is permanent: the folder stays until the user deletes the
+// meeting. That is why audio is written as it arrives rather than at the end —
+// a crash mid-meeting must not cost the recording.
 type LiveNotesPaths struct {
 	// Dir is the meeting folder.
 	Dir string
@@ -781,59 +1191,6 @@ func liveNotesMeetingDirName(startedAt time.Time, title, token string) string {
 		name += "-" + suffix
 	}
 	return name
-}
-
-// LiveNotesDirFor returns the folder already recorded for a share, or "".
-func LiveNotesDirFor(token string) (string, error) {
-	var dir string
-	err := store.ReadDB().QueryRow(`SELECT dir_path FROM live_notes WHERE token = ?`, token).Scan(&dir)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("live notes: dir lookup: %w", err)
-	}
-	return dir, nil
-}
-
-// EnsureLiveNotesDir creates the meeting folder (once) and returns its paths.
-//
-// Called from the segment uploader, i.e. while the meeting is still running, so
-// audio has somewhere to go before anything is summarized. Idempotent: the
-// first caller records the folder, every later one reuses it even if the title
-// changed since.
-func EnsureLiveNotesDir(token string, projectID int64, projectPath, title string, startedAtMS int64) (LiveNotesPaths, error) {
-	if strings.TrimSpace(projectPath) == "" {
-		return LiveNotesPaths{}, errors.New("live notes: no project path")
-	}
-	if dir, err := LiveNotesDirFor(token); err != nil {
-		return LiveNotesPaths{}, err
-	} else if dir != "" {
-		return ensureLiveNotesDirs(dir)
-	}
-
-	startedAt := time.UnixMilli(startedAtMS)
-	if startedAtMS <= 0 {
-		startedAt = time.Now()
-	}
-	dir := filepath.Join(projectPath, filepath.FromSlash(LiveNotesDir), liveNotesMeetingDirName(startedAt, title, token))
-	paths, err := ensureLiveNotesDirs(dir)
-	if err != nil {
-		return LiveNotesPaths{}, err
-	}
-	// CASE, not excluded.dir_path: a concurrent caller (or the minutes job) may
-	// have recorded a folder between the lookup above and this write.
-	if _, err := store.WriteExec(
-		`INSERT INTO live_notes (token, project_id, dir_path, updated_at)
-		 VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-		 ON CONFLICT(token) DO UPDATE SET
-		   dir_path = CASE WHEN live_notes.dir_path = '' THEN excluded.dir_path ELSE live_notes.dir_path END,
-		   updated_at = CURRENT_TIMESTAMP`,
-		token, projectID, dir,
-	); err != nil {
-		return LiveNotesPaths{}, fmt.Errorf("live notes: record dir: %w", err)
-	}
-	return paths, nil
 }
 
 func ensureLiveNotesDirs(dir string) (LiveNotesPaths, error) {
@@ -1017,88 +1374,6 @@ const liveNoteArtifactMaxBytes = 4 << 20
 // somebody else's directory and is left alone.
 var liveNoteDirPattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}-\d{4}(?:-.+)?$`)
 
-// liveNoteTokenSuffix matches the trailing share-token fragment. The token is
-// hex (liveshare.NewToken), and only its first six characters are kept.
-var liveNoteTokenSuffix = regexp.MustCompile(`-[0-9a-f]{6}$`)
-
-// liveNoteStartedAtPattern is the timestamp prefix of a folder name.
-const liveNoteStartedAtPattern = "2006-01-02-1504"
-
-// LiveNoteSession is one meeting folder found on disk.
-//
-// The database rows expire after the retention window; the folders do not. That
-// is why history is read from disk: it is the copy the user actually owns, and
-// it is the only one that survives a cleanup.
-type LiveNoteSession struct {
-	// Dir is the folder name inside the notes root. It is the session's id.
-	Dir string `json:"dir"`
-	// DirPath is the absolute folder path (publisher only: it is a path on the
-	// publisher's disk, and only the publisher's UI opens files from it).
-	DirPath string `json:"dirPath"`
-	// Title is the slug embedded in the folder name, with the share token
-	// stripped. Empty when the meeting was recorded without a title.
-	Title string `json:"title"`
-	// StartedAt is the meeting start encoded in the folder name, in unix
-	// milliseconds. 0 when the name does not parse (a hand-made folder).
-	StartedAt int64 `json:"startedAt"`
-	// UpdatedAt is the folder's mtime: the last time anything was written.
-	UpdatedAt     int64 `json:"updatedAt"`
-	HasMinutes    bool  `json:"hasMinutes"`
-	HasTranscript bool  `json:"hasTranscript"`
-	HasRevised    bool  `json:"hasRevised"`
-	// AudioFiles counts the recorded segments, so the list can say "12 段录音"
-	// without opening the folder.
-	AudioFiles int `json:"audioFiles"`
-}
-
-// ListLiveNoteSessions returns the meeting folders of a project, newest first.
-//
-// A missing notes root is not an error: a project that has never recorded
-// anything simply has no history.
-func ListLiveNoteSessions(projectPath string) ([]LiveNoteSession, error) {
-	out := make([]LiveNoteSession, 0, 8)
-	if strings.TrimSpace(projectPath) == "" {
-		return out, nil
-	}
-	root := liveNotesRoot(projectPath)
-	entries, err := os.ReadDir(root)
-	if errors.Is(err, os.ErrNotExist) {
-		return out, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("live notes: list history: %w", err)
-	}
-	for _, e := range entries {
-		if !e.IsDir() || !liveNoteDirPattern.MatchString(e.Name()) {
-			continue
-		}
-		session, statErr := liveNoteSessionOf(root, e.Name())
-		if statErr != nil {
-			// The folder vanished between ReadDir and Stat (or is unreadable).
-			// One bad entry must not hide the rest of the history.
-			continue
-		}
-		out = append(out, session)
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		left, right := out[i].sortKey(), out[j].sortKey()
-		if left != right {
-			return left > right
-		}
-		return out[i].Dir > out[j].Dir
-	})
-	return out, nil
-}
-
-// sortKey is the ordering timestamp: the meeting start when the folder name
-// carries one, else the last write.
-func (s LiveNoteSession) sortKey() int64 {
-	if s.StartedAt > 0 {
-		return s.StartedAt
-	}
-	return s.UpdatedAt
-}
-
 // ReadLiveNoteArtifact returns one text artifact of a meeting folder.
 //
 // `dir` is a folder NAME, never a path: it is validated against the pattern the
@@ -1124,6 +1399,8 @@ func ReadLiveNoteArtifactWithName(projectPath, dir, kind string) (string, string
 		candidates = []string{liveNoteTranscriptSRT, liveNoteTranscriptLegacyMD}
 	case "revised":
 		candidates = []string{"transcript-revised.md"}
+	case "chat":
+		candidates = []string{"chat.md"}
 	default:
 		return "", "", ErrLiveNoteArtifactKind
 	}
@@ -1166,81 +1443,10 @@ func validLiveNoteDirName(dir string) bool {
 	return liveNoteDirPattern.MatchString(dir)
 }
 
-// liveNoteSessionOf stats one folder and derives its metadata.
-func liveNoteSessionOf(root, dir string) (LiveNoteSession, error) {
-	full := filepath.Join(root, dir)
-	info, err := os.Stat(full)
-	if err != nil {
-		return LiveNoteSession{}, err
-	}
-	session := LiveNoteSession{
-		Dir:       dir,
-		DirPath:   full,
-		Title:     liveNoteTitleFromDirName(dir),
-		StartedAt: liveNoteStartedAt(dir),
-		UpdatedAt: info.ModTime().UnixMilli(),
-	}
-	paths := liveNotesPathsFor(full)
-	session.HasMinutes = fileExists(paths.Minutes)
-	session.HasTranscript = fileExists(paths.Transcript) ||
-		fileExists(filepath.Join(paths.Dir, liveNoteTranscriptLegacyMD))
-	session.HasRevised = fileExists(paths.Revised)
-	session.AudioFiles = countLiveNoteAudio(paths.Audio)
-	return session, nil
-}
-
-// liveNoteTitleFromDirName recovers the title from `<date>[-<slug>]-<token6>`.
-//
-// The slug is the sanitized title (see liveNotesFileSlug), so it is what the
-// user typed minus characters that cannot live in a path element. The trailing
-// token is stripped; a title that itself ends in six hex characters loses them,
-// which is a cosmetic loss on a display label only.
-func liveNoteTitleFromDirName(dir string) string {
-	rest := dir
-	if len(rest) > len(liveNoteStartedAtPattern) {
-		rest = rest[len(liveNoteStartedAtPattern):]
-	} else {
-		rest = ""
-	}
-	// Order matters: the token suffix is stripped first, because a folder with
-	// no slug is `<date>-<token6>` — trimming the leading dash first would eat
-	// the separator the suffix pattern needs.
-	rest = liveNoteTokenSuffix.ReplaceAllString(rest, "")
-	rest = strings.TrimPrefix(rest, "-")
-	return strings.TrimSpace(rest)
-}
-
-// liveNoteStartedAt parses the timestamp prefix of a folder name.
-func liveNoteStartedAt(dir string) int64 {
-	if len(dir) < len(liveNoteStartedAtPattern) {
-		return 0
-	}
-	started, err := time.ParseInLocation(liveNoteStartedAtPattern, dir[:len(liveNoteStartedAtPattern)], time.Local)
-	if err != nil {
-		return 0
-	}
-	return started.UnixMilli()
-}
-
 // fileExists reports whether path is a regular file.
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
-}
-
-// countLiveNoteAudio counts the recorded segments in one meeting folder.
-func countLiveNoteAudio(audioDir string) int {
-	entries, err := os.ReadDir(audioDir)
-	if err != nil {
-		return 0
-	}
-	n := 0
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".webm") {
-			n++
-		}
-	}
-	return n
 }
 
 // liveNotesFileSlug turns a share title into a safe single path element.

@@ -970,7 +970,29 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// is a no-op on an existing table, so a database that ran an earlier build
 	// only gets them from here. Probed one by one (rather than recording a
 	// schema_migrations row) because a column probe is self-healing.
-	for _, col := range []string{"file_path", "dir_path", "revised", "revise_status", "revise_error"} {
+	// Remember whether this database predates the meeting-record columns: the
+	// one-time cleanup below must run exactly once, on the upgrade that adds
+	// them. A row without a start time is a pre-record-model row — invisible to
+	// the list, never cleaned by anything else, so it would linger forever.
+	var hadStartedAt int
+	_ = store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('live_notes') WHERE name = 'started_at'",
+	).Scan(&hadStartedAt)
+
+	for col, stmt := range map[string]string{
+		"file_path": "ALTER TABLE live_notes ADD COLUMN file_path TEXT NOT NULL DEFAULT ''",
+		"dir_path":  "ALTER TABLE live_notes ADD COLUMN dir_path TEXT NOT NULL DEFAULT ''",
+		"revised":   "ALTER TABLE live_notes ADD COLUMN revised TEXT NOT NULL DEFAULT ''",
+		// Matches the DDL default: an untouched share has never been proofread.
+		"revise_status": "ALTER TABLE live_notes ADD COLUMN revise_status TEXT NOT NULL DEFAULT 'idle'",
+		"revise_error":  "ALTER TABLE live_notes ADD COLUMN revise_error TEXT NOT NULL DEFAULT ''",
+		// The meeting-record columns. INTEGER, not TEXT: these are epoch
+		// milliseconds and SQLite would happily store "0" as text, which then
+		// breaks every comparison against a bound integer.
+		"started_at": "ALTER TABLE live_notes ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0",
+		"ended_at":   "ALTER TABLE live_notes ADD COLUMN ended_at INTEGER NOT NULL DEFAULT 0",
+		"dir_name":   "ALTER TABLE live_notes ADD COLUMN dir_name TEXT NOT NULL DEFAULT ''",
+	} {
 		var present int
 		_ = store.ReadDB().QueryRow(
 			"SELECT COUNT(*) FROM pragma_table_info('live_notes') WHERE name = ?", col,
@@ -978,15 +1000,24 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		if present > 0 {
 			continue
 		}
-		stmt := "ALTER TABLE live_notes ADD COLUMN " + col + " TEXT NOT NULL DEFAULT ''"
-		if col == "revise_status" {
-			// Matches the DDL default: an untouched share has never been proofread.
-			stmt = "ALTER TABLE live_notes ADD COLUMN revise_status TEXT NOT NULL DEFAULT 'idle'"
-		}
 		if _, err := store.WriteExec(stmt); err != nil {
 			return fmt.Errorf("failed to add live_notes.%s column: %w", col, err)
 		}
 	}
+	if hadStartedAt == 0 {
+		// Old rows and their segments belong to meetings that will never appear
+		// in the list. The folders on disk are untouched — they are the copy the
+		// user owns.
+		if _, err := store.WriteExec(
+			`DELETE FROM live_notes_segments WHERE token IN (SELECT token FROM live_notes WHERE started_at = 0)`,
+		); err != nil {
+			return fmt.Errorf("failed to drop pre-record live_notes segments: %w", err)
+		}
+		if _, err := store.WriteExec(`DELETE FROM live_notes WHERE started_at = 0`); err != nil {
+			return fmt.Errorf("failed to drop pre-record live_notes rows: %w", err)
+		}
+	}
+
 	// Migrate: session shares no longer freeze a JSON snapshot. The DDL above is
 	// a no-op on an existing database, so the probe has to run AFTER it — the
 	// table is guaranteed to exist by this point, and the rebuild below is the

@@ -34,6 +34,12 @@ var projectScopedDeleteTables = []string{
 	tableSessionTags,
 	"scheduled_tasks",
 	tableTerminalQuickCommands,
+	// Meeting records and everything hanging off them. Without these the rows
+	// become unreachable orphans: project_id no longer resolves after the
+	// project is gone, so nothing can list or delete them again.
+	"live_notes",
+	"live_notes_segments",
+	"live_notes_chat",
 }
 
 // sessionLinkedDeleteTables carry BOTH session_id and project_id. They are

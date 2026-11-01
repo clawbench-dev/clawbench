@@ -688,15 +688,16 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// AI 听记: the publisher uploads one audio segment per channel, reads the
 	// merged timeline back, and asks for the minutes once the share ends.
 	register("/api/live-share/notes", ServeLiveShareNotes)
-	// Microphone-only notes with no room behind them (solo dictation). Creates
-	// the notes row that makes every other notes endpoint authorize.
-	register("/api/live-share/notes/session", ServeLiveShareNotesSession)
 	register("/api/live-share/notes/segment", ServeLiveShareNoteSegment)
 	register("/api/live-share/notes/minutes", ServeLiveShareNotesMinutes)
-	// Meeting history: the folders left in the project (permanent) rather than
-	// the database rows (which expire), plus their Markdown artifacts.
+	// Chat is persisted as it happens (the publisher is the only writer): the
+	// meeting record keeps it after the room is gone.
+	register("/api/live-share/notes/chat", ServeLiveShareNoteChat)
+	// Meeting records: GET lists the project's meetings (the database row is the
+	// record, permanent), DELETE removes one with its folder.
 	register("/api/live-share/notes/sessions", ServeLiveNotesSessions)
 	register("/api/live-share/notes/sessions/artifact", ServeLiveNotesArtifact)
+	register("/api/live-share/notes/sessions/chat", ServeLiveNotesChat)
 	registerPublic("/api/share/", ServeSharePublic)
 	registerPublic("/share/", ServeSharePage)
 	register("/api/dir", ListDir)

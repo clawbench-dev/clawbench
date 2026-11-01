@@ -313,6 +313,9 @@ func TestLastPathSegment(t *testing.T) {
 func liveWSServer(t *testing.T) (*httptest.Server, string) {
 	t.Helper()
 	resetLiveRegistry(t)
+	// Attaching a publisher now also creates the meeting record, which needs the
+	// notes schema. A nil DB would panic inside the handler.
+	setupLiveNotesDB(t)
 	room, err := liveRegistry.Create(projPath("/proj/a"), "测试共享")
 	require.NoError(t, err)
 
@@ -393,7 +396,7 @@ func TestLiveWS_ViewerJoinReachesPublisher(t *testing.T) {
 	srv, token := liveWSServer(t)
 
 	pub := dialPublisher(t, srv, token)
-	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 
 	joined := readViewerMsg(t, view)
 	assert.Equal(t, liveshare.MsgJoined, joined.Type)
@@ -407,11 +410,41 @@ func TestLiveWS_ViewerJoinReachesPublisher(t *testing.T) {
 	assert.Equal(t, joined.ViewerID, notice.ViewerID)
 }
 
+// A voice meeting must SAY it has no picture. The flag is a plain bool, so
+// `omitempty` would drop it when false — the viewer would then default to
+// "video expected" and wait for a track that never arrives. This asserts on the
+// raw JSON, because a typed decode cannot tell `false` from absent.
+func TestLiveWS_VoiceRoomSaysThereIsNoVideo(t *testing.T) {
+	srv, token := liveWSServer(t)
+	room := liveRegistry.Get(token)
+	require.NotNil(t, room)
+	room.SetVideoEnabled(false)
+
+	pub := dialPublisher(t, srv, token)
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=voice-viewer")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, data, err := view.Read(ctx)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(data, &raw))
+
+	video, present := raw["video"]
+	require.True(t, present, "a voice room must serialize video:false, not omit it")
+	assert.Equal(t, false, video)
+
+	// The nickname the server accepted travels to the publisher.
+	notice := readPublisherMsg(t, pub)
+	assert.Equal(t, liveshare.MsgViewerJoin, notice.Type)
+	assert.Equal(t, "voice-viewer", notice.Name)
+}
+
 func TestLiveWS_OfferAnswerRoundTrip(t *testing.T) {
 	srv, token := liveWSServer(t)
 
 	pub := dialPublisher(t, srv, token)
-	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 
 	joined := readViewerMsg(t, view)
 	_ = readPublisherMsg(t, pub) // viewer-join
@@ -438,7 +471,7 @@ func TestLiveWS_ICEIsForwardedBothWays(t *testing.T) {
 	srv, token := liveWSServer(t)
 
 	pub := dialPublisher(t, srv, token)
-	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 
 	joined := readViewerMsg(t, view)
 	_ = readPublisherMsg(t, pub)
@@ -461,7 +494,7 @@ func TestLiveWS_TalkStartRefusedWhenRoomDisabled(t *testing.T) {
 	srv, token := liveWSServer(t)
 
 	pub := dialPublisher(t, srv, token)
-	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 
 	_ = readViewerMsg(t, view)
 	_ = readPublisherMsg(t, pub)
@@ -480,7 +513,7 @@ func TestLiveWS_TalkToggleFlow(t *testing.T) {
 	srv, token := liveWSServer(t)
 
 	pub := dialPublisher(t, srv, token)
-	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 
 	joined := readViewerMsg(t, view)
 	_ = readPublisherMsg(t, pub)
@@ -508,7 +541,7 @@ func TestLiveWS_PublisherMuteReachesViewer(t *testing.T) {
 	srv, token := liveWSServer(t)
 
 	pub := dialPublisher(t, srv, token)
-	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 
 	joined := readViewerMsg(t, view)
 	_ = readPublisherMsg(t, pub)
@@ -533,7 +566,7 @@ func TestLiveWS_DisablingRoomMutesEveryViewer(t *testing.T) {
 	srv, token := liveWSServer(t)
 
 	pub := dialPublisher(t, srv, token)
-	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 
 	joined := readViewerMsg(t, view)
 	_ = readPublisherMsg(t, pub)
@@ -560,7 +593,7 @@ func TestLiveWS_MuteAllReachesSpeakingViewer(t *testing.T) {
 	srv, token := liveWSServer(t)
 
 	pub := dialPublisher(t, srv, token)
-	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 
 	_ = readViewerMsg(t, view)
 	_ = readPublisherMsg(t, pub)
@@ -585,7 +618,7 @@ func TestLiveWS_PublisherGoneOnViewer(t *testing.T) {
 	srv, token := liveWSServer(t)
 
 	pub := dialPublisher(t, srv, token)
-	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 
 	_ = readViewerMsg(t, view)
 	_ = readPublisherMsg(t, pub)
@@ -600,7 +633,7 @@ func TestLiveWS_EndControlClosesRoom(t *testing.T) {
 	srv, token := liveWSServer(t)
 
 	pub := dialPublisher(t, srv, token)
-	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 
 	_ = readViewerMsg(t, view)
 	_ = readPublisherMsg(t, pub)
@@ -973,7 +1006,7 @@ func TestLiveShareReap_KeepsRoomWithPublisher(t *testing.T) {
 func TestLiveWS_ScreenStartDeniedWhenSwitchIsOff(t *testing.T) {
 	srv, token := liveWSServer(t)
 	pub := dialPublisher(t, srv, token)
-	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 	_ = readViewerMsg(t, view) // joined
 	_ = readPublisherMsg(t, pub)
 
@@ -987,7 +1020,7 @@ func TestLiveWS_ScreenStartDeniedWhenSwitchIsOff(t *testing.T) {
 func TestLiveWS_ScreenStartBroadcastsWhoIsSharing(t *testing.T) {
 	srv, token := liveWSServer(t)
 	pub := dialPublisher(t, srv, token)
-	view1 := dialWS(t, srv, "/api/share/"+token+"/signal")
+	view1 := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 	joined1 := readViewerMsg(t, view1)
 	_ = readPublisherMsg(t, pub)
 
@@ -1017,10 +1050,10 @@ func TestLiveWS_ScreenStartBroadcastsWhoIsSharing(t *testing.T) {
 func TestLiveWS_SecondSharerIsRefused(t *testing.T) {
 	srv, token := liveWSServer(t)
 	pub := dialPublisher(t, srv, token)
-	view1 := dialWS(t, srv, "/api/share/"+token+"/signal")
+	view1 := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 	_ = readViewerMsg(t, view1)
 	_ = readPublisherMsg(t, pub)
-	view2 := dialWS(t, srv, "/api/share/"+token+"/signal")
+	view2 := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 	_ = readViewerMsg(t, view2)
 	_ = readPublisherMsg(t, pub)
 
@@ -1044,7 +1077,7 @@ func TestLiveWS_SecondSharerIsRefused(t *testing.T) {
 func TestLiveWS_RevokeStopsOneSharerAndDisablingStopsTheRoom(t *testing.T) {
 	srv, token := liveWSServer(t)
 	pub := dialPublisher(t, srv, token)
-	view := dialWS(t, srv, "/api/share/"+token+"/signal")
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 	joined := readViewerMsg(t, view)
 	_ = readPublisherMsg(t, pub)
 
