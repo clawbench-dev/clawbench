@@ -486,7 +486,10 @@ watch(visible, (v) => {
 .ug-footer {
   padding: var(--space-4) var(--space-7) calc(14 * var(--dp));
   display: flex;
+  flex-wrap: nowrap;
   gap: var(--space-4);
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 /* Layout only — visual styles come from the shared .fbtn pills. */

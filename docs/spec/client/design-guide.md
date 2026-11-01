@@ -321,7 +321,7 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - **条本身**：`display: flex` + `gap: var(--space-3)` + `padding: var(--space-3) var(--space-4)` + `border-top: 1px solid var(--border-color)` + `background: var(--bg-primary)` + `flex-shrink: 0`。
   底色**跟面板一致**（`--bg-primary`），不要铺 `--bg-secondary`：页脚是被一条发丝线分开的操作区，不是第二种底色（会议页签曾铺 `--bg-secondary`，看起来像另一块面板）。
   对齐方式由页签自己定：左对齐（任务详情，动作按重要性排列）、右对齐（表单类，取消在左、确认在右）、或用 spacer 两端分列（会议详情，删除在左、复制/打开在右）。
-  **放不下时换行，不要溢出**：加 `flex-wrap: wrap`（左栏最窄 320px，三个药丸按钮就放不下了）。右对齐的条不要用 `overflow-x: auto` 兜底——`justify-content: flex-end` 溢出的一侧在滚动起点之外，最左边那个按钮会永久不可达。
+  **放不下时左右滚动，不要换行**：`flex-wrap: nowrap` + `overflow-x: auto`（左栏最窄 320px，三个药丸按钮就放不下了）。右对齐的条用 `justify-content: safe flex-end`：放得下时贴右，溢出时自动退回起点，最左边那个按钮仍能滚动到；只写 `flex-end` 会让溢出的一侧落在滚动起点之外，最左按钮永久不可达。`.fbtn` 自带 `flex-shrink: 0`，按钮保持自身宽度，由条来滚。
 - **按钮**：主操作 `.fbtn fbtn-primary`、破坏性 `.fbtn fbtn-danger`、其余 `.fbtn`；页脚按钮里的图标用 14px。**不要新建 `.xxx-btn` 局部类**——会议页签曾各写一份 28px / 圆角 6 的 `.meeting-btn`，和任务页签的药丸按钮并排就是两套语言。
 - **只有正文里的行内小动作**才允许更小的局部类（会议详情的「复制路径」、共享面板的「静音」）：**页脚里不放小按钮，正文里不放 `.fbtn` 大按钮**。
 - 守卫：`components/live/__tests__/meetingFooterButtons.test.ts`（页脚条逐声明对比任务动作条、页脚里只能是 `.fbtn`、组件自己 import 样式表）。

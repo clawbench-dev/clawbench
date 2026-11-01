@@ -537,9 +537,11 @@ onMounted(() => {
 .meeting-link { border: none; background: none; color: var(--accent-color); cursor: pointer; font-size: inherit; padding: 0; }
 
 .meeting-footer {
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-3);
+  display: flex; flex-wrap: nowrap; align-items: center; justify-content: flex-end;
+  justify-content: safe flex-end; gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--border-color); background: var(--bg-primary); flex-shrink: 0;
+  overflow-x: auto; overflow-y: hidden;
 }
 /* In-body small action only (the artifact row's 复制路径). Footer actions use
    the shared .fbtn pills — see design-guide §按钮. */

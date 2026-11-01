@@ -1186,8 +1186,12 @@ defineExpose({ activeTab, handleFileDrop })
 }
 .ad-footer-actions {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-end;
+  justify-content: safe flex-end;
   gap: var(--space-4);
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 </style>

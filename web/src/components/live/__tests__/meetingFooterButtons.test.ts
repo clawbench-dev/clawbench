@@ -90,12 +90,16 @@ describe('meeting footer actions use the shared .fbtn language', () => {
     })
   })
 
-  it.each(MEETING_SCREENS)('%s wraps instead of overflowing a narrow panel', (file) => {
+  it.each(MEETING_SCREENS)('%s scrolls instead of wrapping a narrow panel', (file) => {
     // The left dock column can be dragged down to 320px. Three 30px pills plus
-    // a 复制全部 label do not fit there, and a footer with neither wrap nor
-    // scroll clips its leftmost button (删除) out of reach — flex-end + overflow
-    // would hide it on the unreachable side.
-    expect(ruleDecls(meetingStyleOf(file), '.meeting-footer')['flex-wrap']).toBe('wrap')
+    // a 复制全部 label do not fit there, so the row scrolls horizontally. It
+    // must not wrap (the footer would grow into the content) and it must not
+    // clip: `safe flex-end` falls back to the start when the row overflows, so
+    // the leftmost action (删除) stays reachable.
+    const footer = ruleDecls(meetingStyleOf(file), '.meeting-footer')
+    expect(footer['flex-wrap']).toBe('nowrap')
+    expect(footer['overflow-x']).toBe('auto')
+    expect(footer['justify-content']).toBe('safe flex-end')
   })
 
   it.each(MEETING_SCREENS)('%s puts only .fbtn pills in the footer', (file) => {

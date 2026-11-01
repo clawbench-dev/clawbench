@@ -287,9 +287,14 @@ onBeforeUnmount(() => {
 
 .dlg-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--space-4);
   justify-content: flex-end;
+  /* Same rule as every footer bar: scroll when the actions do not fit, and
+     fall back to the start on overflow so the leftmost action stays reachable. */
+  justify-content: safe flex-end;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 /* Button visuals come from the shared .fbtn pill language

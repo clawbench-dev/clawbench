@@ -485,8 +485,10 @@ onMounted(() => {
 }
 
 .meeting-footer {
-  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3);
+  display: flex; flex-wrap: nowrap; justify-content: flex-end;
+  justify-content: safe flex-end; gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--border-color); background: var(--bg-primary); flex-shrink: 0;
+  overflow-x: auto; overflow-y: hidden;
 }
 </style>

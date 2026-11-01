@@ -365,8 +365,12 @@ function plainFiles(msg) {
    horizontal inset so it lines up with the row text above it. */
 .queued-bar-footer {
   display: flex;
+  flex-wrap: nowrap;
   justify-content: flex-end;
+  justify-content: safe flex-end;
   padding: 0 var(--space-5) var(--space-4);
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .queued-bar-action {

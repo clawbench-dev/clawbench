@@ -32,6 +32,9 @@
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
+  /* Footer bars scroll horizontally instead of wrapping; a pill must keep its
+     intrinsic width so the row overflows rather than squashing the label. */
+  flex-shrink: 0;
   cursor: pointer;
   box-sizing: border-box;
   user-select: none;
