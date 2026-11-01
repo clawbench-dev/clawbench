@@ -251,9 +251,17 @@ function formatClock(ms: number): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-async function load(): Promise<void> {
+/**
+ * Fetch the record and its artifacts.
+ *
+ * `silent` is for the minutes poll. Toggling `loading` on every tick swaps the
+ * whole panel below the header — meta, tabs, body, footer — for a centered
+ * spinner, which reads as "the screen refreshes itself every few seconds".
+ * Only the first paint of a token may show that state.
+ */
+async function load(silent = false): Promise<void> {
   if (!props.token) return
-  loading.value = true
+  if (!silent) loading.value = true
   try {
     record.value = await history.get(props.token)
     if (!record.value) return
@@ -271,7 +279,7 @@ async function load(): Promise<void> {
     // until the user navigated away and back.
     if (shouldPoll(record.value)) pollMinutes()
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -359,7 +367,7 @@ function pollMinutes(): void {
   if (pollTimer) clearTimeout(pollTimer)
   pollTimer = setTimeout(() => {
     void (async () => {
-      await load()
+      await load(true)
       if (!shouldPoll(record.value)) {
         if (pollTimer) clearTimeout(pollTimer)
         pollTimer = null

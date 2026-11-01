@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import enMessages from '@/i18n/locales/en'
 import MeetingDetail from '../MeetingDetail.vue'
@@ -179,5 +180,56 @@ describe('MeetingDetail', () => {
 
     await w.find('[data-action="meeting-quote"]').trigger('click')
     expect(w.emitted('quote')?.[0]).toEqual(['tok-1'])
+  })
+
+  it('polls a just-ended meeting without blanking the panel', async () => {
+    // The minutes job is requested by the host after its upload queue drains,
+    // so a freshly ended record sits at `idle` for a while and this view polls
+    // it. Each tick used to set `loading`, replacing the whole panel below the
+    // header with a centered spinner — the reported "it refreshes itself every
+    // few seconds". Polling must be silent; only the first paint may show it.
+    vi.useFakeTimers()
+    const now = Date.now()
+    const rec = record({ status: 'idle', hasMinutes: false, endedAt: now - 60_000, updatedAt: now })
+    // The poll's own request is held open so the assertion lands WHILE it is in
+    // flight: `loading` only lives for a microtask, so checking after the tick
+    // settles passes either way.
+    let releasePoll: (() => void) | null = null
+    getMock
+      .mockImplementationOnce(async () => rec)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releasePoll = () => resolve(rec)
+          }),
+      )
+    artifactMock.mockImplementation(async (_token: string, kind: string) =>
+      kind === 'transcript' ? { content: 'SRT', file: 'transcript.srt' } : null,
+    )
+
+    const w = mountDetail()
+    try {
+      expect(w.find('.meeting-center').exists()).toBe(true) // first paint shows loading
+
+      await flushPromises()
+      expect(w.find('.meeting-center').exists()).toBe(false)
+      expect(getMock).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(2500)
+      await nextTick()
+
+      expect(getMock).toHaveBeenCalledTimes(2) // the poll really ran
+      expect(w.find('.meeting-center').exists()).toBe(false)
+      expect(w.find('.meeting-tabs').exists()).toBe(true)
+      expect(w.find('.meeting-body').text()).toContain(enMessages.meeting.detail.noMinutes)
+
+      releasePoll?.()
+      await flushPromises()
+      expect(w.find('.meeting-center').exists()).toBe(false)
+      expect(w.find('.meeting-tabs').exists()).toBe(true)
+    } finally {
+      w.unmount()
+      vi.useRealTimers()
+    }
   })
 })
