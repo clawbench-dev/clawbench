@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -139,8 +140,8 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.Chat.PageSize != 20 {
 		t.Errorf("Chat.PageSize = %d, want 20", cfg.Chat.PageSize)
 	}
-	if cfg.Chat.UserNickname != "User" {
-		t.Errorf("Chat.UserNickname = %q, want %q", cfg.Chat.UserNickname, "User")
+	if cfg.User.Nickname != "User" {
+		t.Errorf("User.Nickname = %q, want %q", cfg.User.Nickname, "User")
 	}
 	if cfg.Chat.GroupMaxSpeeches != 100 {
 		t.Errorf("Chat.GroupMaxSpeeches = %d, want 100", cfg.Chat.GroupMaxSpeeches)
@@ -1534,5 +1535,24 @@ func TestApplyDefaults_WeChatDoesNotDerivePushMode(t *testing.T) {
 
 	if cfg.PushMode != "native" {
 		t.Errorf("expected push_mode=native, got %q", cfg.PushMode)
+	}
+}
+
+// A hand-edited config bypasses the PATCH validation, so ApplyDefaults is the
+// last line of defence for the two identity fields: the nickname must never be
+// blank (it is a routing target) and the profile must stay bounded (it is
+// injected into every agent system prompt).
+func TestApplyDefaults_UserIdentity(t *testing.T) {
+	cfg := &Config{}
+	cfg.User.Nickname = "   "
+	cfg.User.Profile = "  " + strings.Repeat("字", MaxUserProfileRunes+10) + "  "
+
+	ApplyDefaults(cfg, nil)
+
+	if cfg.User.Nickname != DefaultUserNickname {
+		t.Errorf("User.Nickname = %q, want the default %q", cfg.User.Nickname, DefaultUserNickname)
+	}
+	if got := len([]rune(cfg.User.Profile)); got != MaxUserProfileRunes {
+		t.Errorf("User.Profile rune length = %d, want the cap %d", got, MaxUserProfileRunes)
 	}
 }

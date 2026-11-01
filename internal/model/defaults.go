@@ -243,15 +243,22 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if !presence["chat.auto_rename_enabled"] {
 		cfg.Chat.AutoRenameEnabled = true
 	}
-	// UserNickname: the reserved display name of the human user in group chat.
-	// An empty value is never valid (it would be an unaddressable participant),
-	// so empty always falls back to the default — no presence map needed. The
-	// value is trimmed here too: a hand-edited config.yaml bypasses the PATCH
-	// path's normalization, and the mention parser trims each target, so an
-	// untrimmed nickname would be unreachable.
-	cfg.Chat.UserNickname = strings.TrimSpace(cfg.Chat.UserNickname)
-	if cfg.Chat.UserNickname == "" {
-		cfg.Chat.UserNickname = "User"
+	// --- User identity ---
+	// An empty nickname is never valid (it would be an unaddressable group
+	// participant), so it always falls back to the default — no presence map
+	// needed. Trimming here also covers a hand-edited config.yaml, which
+	// bypasses the PATCH path's normalization; the mention parser trims each
+	// target, so an untrimmed nickname would be unreachable.
+	cfg.User.Nickname = strings.TrimSpace(cfg.User.Nickname)
+	if cfg.User.Nickname == "" {
+		cfg.User.Nickname = DefaultUserNickname
+	}
+	// The profile is injected into every agent system prompt, so a hand-edited
+	// value is clamped rather than allowed to grow without bound. The PATCH
+	// path rejects an over-long value with a 400 instead of silently trimming.
+	cfg.User.Profile = strings.TrimSpace(cfg.User.Profile)
+	if runes := []rune(cfg.User.Profile); len(runes) > MaxUserProfileRunes {
+		cfg.User.Profile = string(runes[:MaxUserProfileRunes])
 	}
 	// GroupMaxSpeeches: the member-to-member speech cap for a group turn.
 	// A non-positive value is nonsensical (it would stop the discussion before

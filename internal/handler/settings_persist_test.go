@@ -967,3 +967,34 @@ func TestPersist_AutoPasswordStrippedFromBackupToo(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
 		"backup must not be more permissive than config.yaml")
 }
+
+// The nickname moved from chat.user_nickname to the first-class user section.
+// The write path merges into the existing file, so without an explicit cleanup
+// the old key would survive forever and a hand-edit of it would look effective
+// while being ignored. The new value wins when both are present.
+func TestWriteConfigYAML_MigratesLegacyNicknameKey(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+
+	configPath := filepath.Join(model.DataDir, "config", "config.yaml")
+	require.NoError(t, os.WriteFile(configPath,
+		[]byte("chat:\n  user_nickname: 老板\n  page_size: 20\n"), 0o600))
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.User.Nickname = "老板"
+	model.ConfigInstance.Chat.PageSize = 20
+
+	require.NoError(t, writeConfigYAML(map[string]any{"chat": map[string]any{"page_size": 20}}))
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, yaml.Unmarshal(data, &raw))
+
+	assert.Equal(t, "老板", getNestedValue(raw, "user.nickname"),
+		"the legacy value must move into the new section")
+	assert.Nil(t, getNestedValue(raw, "chat.user_nickname"),
+		"the legacy key must be removed so it cannot be edited into a no-op")
+	assert.EqualValues(t, 20, getNestedValue(raw, "chat.page_size"),
+		"unrelated keys must be untouched")
+}

@@ -61,6 +61,37 @@ const DefaultRestartResumeWindowMinutes = 60
 // deterministic failure cannot spin forever.
 const AutoContinueUnlimited = -1
 
+// User-identity limits. They are exported because the settings PATCH handler
+// validates against the same numbers the frontend and the prompt builder use.
+const (
+	// DefaultUserNickname is what an unconfigured install shows. It is also the
+	// name the group-chat routing parser reserves for the human user, so an
+	// agent named "User" is rejected.
+	DefaultUserNickname = "User"
+	// MaxUserNicknameRunes bounds the nickname. It is written verbatim into the
+	// group-routing tag's targets attribute and shown in routing chips, so it
+	// must stay short; 32 leaves generous room for CJK names. It also matches
+	// the live-share viewer-name cap, so a nickname that is valid here is valid
+	// when joining a meeting.
+	MaxUserNicknameRunes = 32
+	// MaxUserProfileRunes bounds the free-form self-description. It is injected
+	// into EVERY agent system prompt, so an unbounded value would be a
+	// per-turn cost the user cannot see. 4000 runes is a few paragraphs.
+	MaxUserProfileRunes = 4000
+)
+
+// UserConfig is the human user's identity (config.yaml `user` section).
+type UserConfig struct {
+	// Nickname is how agents address the user and how other meeting viewers see
+	// them. It must not collide with any agent name and must not contain the
+	// group-routing protocol's reserved characters (", <, >, comma).
+	Nickname string `yaml:"nickname"`
+	// Profile is a free-form self-description ("I am a backend engineer, prefer
+	// concise answers…"). Injected into every agent's system prompt so the
+	// agent understands the user's role, expertise and preferences.
+	Profile string `yaml:"profile"`
+}
+
 // Config holds the application configuration.
 type Config struct {
 	Port         int    `yaml:"port"`
@@ -103,6 +134,12 @@ type Config struct {
 		// RetentionEnabled=false, not by 0.
 		RetentionDays int `yaml:"retention_days"`
 	} `yaml:"upload"`
+	// User is the human user's identity. It is a first-class section rather
+	// than a field under chat because it is not chat behavior: the nickname is
+	// how agents address the user (single chat, group chat and meetings), and
+	// the profile is injected into every agent's system prompt so an agent can
+	// understand who it is working with.
+	User UserConfig `yaml:"user"`
 	Chat struct {
 		InitialMessages          int  `yaml:"initial_messages"`           // Number of messages to load initially (default: 20)
 		PageSize                 int  `yaml:"page_size"`                  // Number of messages per lazy-load batch (default: 20)
@@ -135,12 +172,6 @@ type Config struct {
 		// the call fails — which is why it can default ON: without the model it
 		// is simply inert. (default: true)
 		AutoRenameEnabled bool `yaml:"auto_rename_enabled"`
-		// UserNickname is the reserved display name of the HUMAN user as a group
-		// participant. Agents address the user with this exact name
-		// (<clawbench-mention targets="...">), so it must not collide with any
-		// agent's name and must not contain the protocol's reserved characters
-		// (", <, >, comma). Default "User". (default: "User")
-		UserNickname string `yaml:"user_nickname"`
 		// GroupMaxSpeeches caps how many times the AGENTS may speak to each
 		// other in a group before the discussion is forced to stop and the
 		// floor returns to the human. It counts MEMBER speeches only — the
@@ -585,10 +616,15 @@ var (
 	// ChatAutoRenameEnabled switches on the AI summary rename of a session at
 	// the moment its local title is written. Read by internal/service.
 	ChatAutoRenameEnabled bool
-	// ChatUserNickname is the reserved display name of the human user in group
-	// chat (default "User"). Read by internal/service at request time so a
-	// rename takes effect without a restart.
-	ChatUserNickname string
+	// UserNickname is the human user's display name (default "User"). Read by
+	// internal/service at request time so a rename takes effect without a
+	// restart. Group chat uses it as the routing target; single chat uses it
+	// only to address the user.
+	UserNickname string
+	// UserProfile is the user's free-form self-description, injected into every
+	// agent system prompt (see service.BuildUserIdentitySection). Read at
+	// request time for the same reason.
+	UserProfile string
 	// ChatGroupMaxSpeeches caps member-to-member speeches in a group before
 	// the discussion is forced to stop (default 100). Read by internal/service
 	// at turn time so a change takes effect without a restart.

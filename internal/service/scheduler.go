@@ -1078,6 +1078,9 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	if projectPath != "" {
 		systemPrompt = strings.ReplaceAll(systemPrompt, "{{PROJECT_PATH}}", projectPath)
 	}
+	// The human user's identity (nickname + self-description), same as a chat
+	// turn: a scheduled task should know who it is working for.
+	systemPrompt = AppendUserIdentitySection(systemPrompt)
 
 	// Respect user's global model preference (from most recent session).
 	// Falls back to agent defaults when no user preference exists.

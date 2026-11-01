@@ -302,7 +302,7 @@ const props = defineProps({
    *  to show: the two modes route completely differently, so a single hint would
    *  describe one mode and mislead in the other. */
   groupMode: { type: String, default: 'host' },
-  /** The configured group-chat user nickname (chat.user_nickname); forwarded to
+  /** The configured user nickname (user.nickname); forwarded to
    *  ChatMessageItem so @-chips render the human target correctly. Defaults to
    *  the built-in reserved name so the item's own default is never overridden
    *  with an empty string. */

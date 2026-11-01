@@ -838,8 +838,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	var cfg model.Config
 	var presence map[string]bool
 	// Legacy values extracted from the raw map for migration (summarize.tts_model
-	// / tts_api were removed from the typed struct).
+	// / tts_api were removed from the typed struct; chat.user_nickname moved to
+	// the first-class user section).
 	var legacySummaryBaseURL, legacySummaryKey, legacySummaryModel, legacySummaryFormat string
+	var legacyUserNickname string
 
 	// Search for config in priority order:
 	// 1. <DataDir>/config/config.yaml (data directory)
@@ -874,6 +876,16 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			}
 		}
 
+		// Capture the legacy chat.user_nickname for migration into the
+		// first-class user section. It was a chat field until the nickname
+		// became the human user's identity, used by meetings and injected into
+		// agent prompts as well.
+		if chatMap, ok := raw["chat"].(map[string]any); ok {
+			if n, ok := chatMap["user_nickname"].(string); ok && strings.TrimSpace(n) != "" {
+				legacyUserNickname = n
+			}
+		}
+
 		// Parse into typed config struct
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to parse %s: %v\n", configPath, err)
@@ -889,6 +901,13 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Migrate legacy TTS summary model config (summarize.tts_model / tts_api)
 	// into the new shared ai_summary section so existing configs keep working.
 	applyLegacySummaryFallback(&cfg, legacySummaryBaseURL, legacySummaryKey, legacySummaryModel, legacySummaryFormat)
+
+	// Migrate legacy chat.user_nickname into user.nickname. The new value wins
+	// when both are present (a user who already edited the new key must not be
+	// overwritten by the stale one); ApplyDefaults then fills the default.
+	if strings.TrimSpace(cfg.User.Nickname) == "" && legacyUserNickname != "" {
+		cfg.User.Nickname = legacyUserNickname
+	}
 
 	// Apply all defaults (returns auto-generated password if created)
 	autoPassword := model.ApplyDefaults(&cfg, presence)
@@ -927,7 +946,8 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.ChatAutoContinueMaxRetries = cfg.Chat.AutoContinueMaxRetries
 	model.ChatRestartResumeWindowMinutes = cfg.Chat.RestartResumeWindowMinutes
 	model.ChatAutoRenameEnabled = cfg.Chat.AutoRenameEnabled
-	model.ChatUserNickname = cfg.Chat.UserNickname
+	model.UserNickname = cfg.User.Nickname
+	model.UserProfile = cfg.User.Profile
 	model.ChatGroupMaxSpeeches = cfg.Chat.GroupMaxSpeeches
 	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount

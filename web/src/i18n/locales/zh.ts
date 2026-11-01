@@ -2552,6 +2552,7 @@ export default {
   settings: {
     categories: {
       basic: '其他',
+      identity: '身份',
       appearance: '外观',
       project: '项目',
       files: '文件',
@@ -2964,8 +2965,11 @@ export default {
       archiveRetentionEnabledDesc: '归档会话到期后自动物理删除',
       archiveRetentionDays: '留存天数',
       archiveRetentionDaysDesc: '归档会话保留天数，到期后自动删除（0 = 永久保留）',
-      groupUserNickname: '用户昵称',
-      groupUserNicknameDesc: '群聊中智能体称呼你的名字（默认 User）。不能与任何智能体同名，且不能包含引号、尖括号、逗号或控制字符',
+      identitySection: '我的身份',
+      userNickname: '我的昵称',
+      userNicknameDesc: '智能体在群聊里这样称呼你，加入会议时也用它作为你的显示名（默认 User）。不能与任何智能体同名，且不能包含引号、尖括号、逗号或控制字符',
+      userProfile: '身份介绍',
+      userProfileDesc: '介绍一下你自己：角色、擅长领域、偏好或工作习惯。这段内容会注入到每个智能体的系统提示词，让它们更懂你（最多 4000 字）',
       groupMaxSpeeches: '智能体讨论次数上限',
       groupMaxSpeechesDesc: '轮到用户发言前，智能体之间最多发言多少次（默认 100）。主持人模式与自由模式含义相同，只计成员发言；达到上限后停止 AI 讨论，把发言权交回给你',
       recentProjectsMaxCount: '最近项目数量',
@@ -4079,9 +4083,9 @@ export default {
     },
     join: {
       title: '加入会议',
-      nick: '你的昵称',
+      nick: '我的昵称',
       nickPlaceholder: '其他人会看到这个名字',
-      nickHint: '必填。发布端与其他观众用这个名字称呼你，下次会自动填好。',
+      nickHint: '这个名字同时用于群聊（智能体这样称呼你），发布端与其他观众也会看到它。下次会自动填好。',
       nickRequired: '请先填写昵称。',
       link: '会议链接',
       linkPlaceholder: 'http://192.168.1.5:20000/share/xxxx',

@@ -10,9 +10,9 @@ import {
   Settings,
   Github,
   Inbox,
-  CalendarDays,
 } from 'lucide-vue-next'
 import { DOCK_TABS, type DockTabId, type DockTabDescriptor } from '@/composables/dockTabs'
+import { MEETING_ICON } from '@/utils/meetingIcon'
 
 /**
  * Icon half of the dock tab registry.
@@ -35,9 +35,10 @@ const DOCK_TAB_ICONS: Record<DockTabId, Component> = {
   // and imply the unread state the log deliberately does not have.
   notifications: Inbox,
   terminal: TerminalIcon,
-  // A calendar, not a monitor: the tab's landing view is the archive of past
-  // meetings, and only some of them shared a screen.
-  live: CalendarDays,
+  // A group of people, not a calendar: the tab's job is starting/joining a
+  // meeting, and a camera would promise video the product does not offer. See
+  // utils/meetingIcon.ts — the list header and the quote chip share it.
+  live: MEETING_ICON,
   proxy: Network,
   stats: BarChart3,
   settings: Settings,

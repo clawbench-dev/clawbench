@@ -1,7 +1,7 @@
 <template>
   <div class="meeting-panel">
     <div class="meeting-header">
-      <span class="meeting-header__icon"><CalendarDays :size="14" /></span>
+      <span class="meeting-header__icon"><component :is="MEETING_ICON" :size="14" /></span>
       <span class="meeting-header__title">{{ t('meeting.title') }}</span>
       <span class="meeting-header__spacer" />
     </div>
@@ -22,7 +22,7 @@
       </div>
       <div v-else-if="error" class="meeting-error">{{ t('meeting.list.loadFailed') }}</div>
       <div v-else-if="sessions.length === 0" class="meeting-empty">
-        <CalendarDays :size="28" />
+        <component :is="MEETING_ICON" :size="28" />
         <span>{{ t('meeting.list.empty') }}</span>
       </div>
       <div v-else class="meeting-list">
@@ -95,7 +95,8 @@
  */
 import { computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { CalendarDays, Check, ChevronRight, Link as LinkIcon, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { Check, ChevronRight, Link as LinkIcon, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { MEETING_ICON } from '@/utils/meetingIcon'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'

@@ -856,13 +856,13 @@ async function jumpToQuoteSource(q) {
 
 const { planEntries, planCollapsed, planHasUpdate, togglePlanCollapse } = usePlanProgress()
 
-// The configured group-chat user nickname (chat.user_nickname, default "User").
-// Server-side and global, so it is read from the shared serverConfig singleton
-// rather than threaded through props. Falls back to the built-in reserved name
-// before config loads so @-chips never render blank.
+// The configured user nickname (user.nickname, default "User"). Server-side and
+// global, so it is read from the shared serverConfig singleton rather than
+// threaded through props. Falls back to the built-in reserved name before config
+// loads so @-chips never render blank.
 const userNickname = computed(() => {
-  const chat = serverConfig.value?.chat
-  const v = chat && typeof chat === 'object' ? chat.user_nickname : undefined
+  const user = serverConfig.value?.user
+  const v = user && typeof user === 'object' ? user.nickname : undefined
   return typeof v === 'string' && v !== '' ? v : GROUP_USER_TARGET_NAME
 })
 

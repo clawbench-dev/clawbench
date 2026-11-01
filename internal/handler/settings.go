@@ -72,7 +72,8 @@ var hotReloadFields = map[string]bool{
 	"chat.auto_continue_max_retries":     true,
 	"chat.restart_resume_window_minutes": true,
 	"chat.auto_rename_enabled":           true,
-	"chat.user_nickname":                 true,
+	"user.nickname":                      true,
+	"user.profile":                       true,
 	"chat.group_max_speeches":            true,
 	"language":                           true,
 	"session.max_count":                  true,
@@ -283,6 +284,7 @@ type configResponse struct {
 	Version        string               `json:"version"`
 	HasPassword    bool                 `json:"has_password"` // true when a password is configured
 	DefaultAgent   string               `json:"default_agent"`
+	User           configUser           `json:"user"`
 	Chat           configChat           `json:"chat"`
 	Session        configSession        `json:"session"`
 	RecentProjects configRecentProjects `json:"recent_projects"`
@@ -405,18 +407,25 @@ type configUsageMeter struct {
 }
 
 type configChat struct {
-	InitialMessages          int    `json:"initial_messages"`
-	PageSize                 int    `json:"page_size"`
-	SystemPromptInterval     int    `json:"system_prompt_interval"`
-	RecommendEnabled         bool   `json:"recommend_enabled"`
-	RecommendContextMessages int    `json:"recommend_context_messages"`
-	ForkContextBudget        int    `json:"fork_context_budget"`
-	AutoContinueEnabled      bool   `json:"auto_continue_enabled"`
-	AutoContinueMaxRetries   int    `json:"auto_continue_max_retries"`
-	RestartResumeWindowMin   int    `json:"restart_resume_window_minutes"`
-	AutoRenameEnabled        bool   `json:"auto_rename_enabled"`
-	UserNickname             string `json:"user_nickname"`
-	GroupMaxSpeeches         int    `json:"group_max_speeches"`
+	InitialMessages          int  `json:"initial_messages"`
+	PageSize                 int  `json:"page_size"`
+	SystemPromptInterval     int  `json:"system_prompt_interval"`
+	RecommendEnabled         bool `json:"recommend_enabled"`
+	RecommendContextMessages int  `json:"recommend_context_messages"`
+	ForkContextBudget        int  `json:"fork_context_budget"`
+	AutoContinueEnabled      bool `json:"auto_continue_enabled"`
+	AutoContinueMaxRetries   int  `json:"auto_continue_max_retries"`
+	RestartResumeWindowMin   int  `json:"restart_resume_window_minutes"`
+	AutoRenameEnabled        bool `json:"auto_rename_enabled"`
+	GroupMaxSpeeches         int  `json:"group_max_speeches"`
+}
+
+// configUser is the human user's identity as sent to the client. It is a
+// top-level section (not under chat): the nickname is also the meeting display
+// name and the profile is injected into every agent prompt.
+type configUser struct {
+	Nickname string `json:"nickname"`
+	Profile  string `json:"profile"`
 }
 
 type configSession struct {
@@ -856,7 +865,8 @@ var PatchableConfigPaths = map[string]bool{
 	"chat.auto_continue_max_retries":     true,
 	"chat.restart_resume_window_minutes": true,
 	"chat.auto_rename_enabled":           true,
-	"chat.user_nickname":                 true,
+	"user.nickname":                      true,
+	"user.profile":                       true,
 	"chat.group_max_speeches":            true,
 	"language":                           true,
 	"session.max_count":                  true,
@@ -1031,6 +1041,10 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Version:      getBuildVersion(),
 		HasPassword:  model.SessionToken != "",
 		DefaultAgent: cfg.DefaultAgent,
+		User: configUser{
+			Nickname: cfg.User.Nickname,
+			Profile:  cfg.User.Profile,
+		},
 		Chat: configChat{
 			InitialMessages:          cfg.Chat.InitialMessages,
 			PageSize:                 cfg.Chat.PageSize,
@@ -1042,7 +1056,6 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			AutoContinueMaxRetries:   cfg.Chat.AutoContinueMaxRetries,
 			RestartResumeWindowMin:   cfg.Chat.RestartResumeWindowMinutes,
 			AutoRenameEnabled:        cfg.Chat.AutoRenameEnabled,
-			UserNickname:             cfg.Chat.UserNickname,
 			GroupMaxSpeeches:         cfg.Chat.GroupMaxSpeeches,
 		},
 		Session: configSession{
@@ -1227,11 +1240,11 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Normalize the nickname BEFORE validation so the validated value, the
-	// stored value and the YAML write all see the same (trimmed) string. This
-	// is a mutation of the request patch, so it must happen before the rollback
-	// snapshot/apply below.
-	normalizeUserNicknameInPatch(patch)
+	// Normalize the identity strings BEFORE validation so the validated value,
+	// the stored value and the YAML write all see the same (trimmed) string.
+	// This is a mutation of the request patch, so it must happen before the
+	// rollback snapshot/apply below.
+	normalizeUserIdentityInPatch(patch)
 
 	if err := validatePatchValues(patch); err != nil {
 		writePatchValueError(w, r, err)
@@ -1425,12 +1438,12 @@ func hasPatchableDescendant(path string) bool {
 	return false
 }
 
-// errUserNicknameTaken is the sentinel for a chat.user_nickname that collides
+// errUserNicknameTaken is the sentinel for a user.nickname that collides
 // with an existing agent's name. serveConfigPatch maps it to 409 (a conflict),
 // unlike a malformed value which stays a 400.
 var errUserNicknameTaken = errors.New("user nickname is already used by an agent")
 
-// errInvalidUserNickname is the sentinel for a chat.user_nickname that fails the
+// errInvalidUserNickname is the sentinel for a user.nickname that fails the
 // format check. serveConfigPatch maps it to a localized 400 (InvalidUserNickname)
 // rather than echoing the raw English message.
 var errInvalidUserNickname = errors.New("invalid user nickname")
@@ -1467,35 +1480,33 @@ func (e *configValueError) templateData() map[string]any {
 	return out
 }
 
-// normalizeUserNicknameInPatch trims the nickname IN PLACE, before validation,
-// storage and the YAML write. The nickname is a routing target and the parser
-// trims each target, so a value like "  User  " would key the byName map
-// differently from how it is looked up — the user would become unaddressable.
-// Trimming here makes the validated value, the stored value, the on-disk value
-// and the frontend all agree. An all-whitespace value trims to "" and is then
-// rejected by validUserNickname.
-func normalizeUserNicknameInPatch(patch map[string]any) {
-	chat, ok := patch["chat"].(map[string]any)
+// normalizeUserIdentityInPatch trims the identity strings IN PLACE, before
+// validation, storage and the YAML write. The nickname is a routing target and
+// the parser trims each target, so a value like "  User  " would key the byName
+// map differently from how it is looked up — the user would become
+// unaddressable. Trimming here makes the validated value, the stored value, the
+// on-disk value and the frontend all agree. An all-whitespace nickname trims to
+// "" and is then rejected by validUserNickname.
+func normalizeUserIdentityInPatch(patch map[string]any) {
+	user, ok := patch["user"].(map[string]any)
 	if !ok {
 		return
 	}
-	if v, ok := chat["user_nickname"].(string); ok {
-		chat["user_nickname"] = strings.TrimSpace(v)
+	if v, ok := user["nickname"].(string); ok {
+		user["nickname"] = strings.TrimSpace(v)
+	}
+	if v, ok := user["profile"].(string); ok {
+		user["profile"] = strings.TrimSpace(v)
 	}
 }
 
-// maxUserNicknameRunes bounds the group-chat user nickname. It is written into
-// <clawbench-mention targets="..."> and shown in routing chips, so it must stay
-// short; 32 leaves generous room for CJK names.
-const maxUserNicknameRunes = 32
-
-// validUserNickname reports whether s is a usable group-chat user nickname. It
-// is written verbatim into the routing tag's targets attribute, so the protocol
+// validUserNickname reports whether s is a usable user nickname. It is written
+// verbatim into the group-routing tag's targets attribute, so the protocol
 // delimiters (double quote, angle brackets, comma) and control characters are
 // rejected — the parser splits targets on commas and closes the attribute on a
 // quote. Internal spaces are allowed.
 func validUserNickname(s string) bool {
-	if strings.TrimSpace(s) == "" || utf8.RuneCountInString(s) > maxUserNicknameRunes {
+	if strings.TrimSpace(s) == "" || utf8.RuneCountInString(s) > model.MaxUserNicknameRunes {
 		return false
 	}
 	for _, r := range s {
@@ -1504,6 +1515,12 @@ func validUserNickname(s string) bool {
 		}
 	}
 	return true
+}
+
+// validUserProfile reports whether s fits the prompt-injection budget. The
+// profile is optional, so an empty value is valid.
+func validUserProfile(s string) bool {
+	return utf8.RuneCountInString(strings.TrimSpace(s)) <= model.MaxUserProfileRunes
 }
 
 // validateUsageMeterRule checks a usage-meter rule that has already been merged
@@ -1570,19 +1587,28 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			return fmt.Errorf("language must be one of: zh,en")
 		}
 	}
-	if chat, ok := patch["chat"].(map[string]any); ok {
-		if v, ok := chat["user_nickname"].(string); ok {
+	if user, ok := patch["user"].(map[string]any); ok {
+		if v, ok := user["nickname"].(string); ok {
 			if !validUserNickname(v) {
 				return errInvalidUserNickname
 			}
 			// Bidirectional uniqueness: the nickname must not shadow an existing
 			// agent (the agent-side guard rejects the reverse). Exact match, to
 			// mirror AgentNameTaken. v is already trimmed by
-			// normalizeUserNicknameInPatch.
+			// normalizeUserIdentityInPatch.
 			if service.AgentNameTaken(v, "") {
 				return errUserNicknameTaken
 			}
 		}
+		if v, ok := user["profile"].(string); ok && !validUserProfile(v) {
+			return &configValueError{
+				MsgKey: "InvalidUserProfile",
+				Field:  "user.profile",
+				Data:   map[string]any{"Max": model.MaxUserProfileRunes},
+			}
+		}
+	}
+	if chat, ok := patch["chat"].(map[string]any); ok {
 		if v, ok := chat["group_max_speeches"].(float64); ok && v < 1 {
 			return fmt.Errorf("chat.group_max_speeches must be a positive integer")
 		}
@@ -2197,6 +2223,22 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 	}
 
+	if user, ok := patch["user"].(map[string]any); ok {
+		if v, ok := user["nickname"].(string); ok {
+			// The group's pending private notes are keyed by the user's name;
+			// migrate them so a rename does not orphan an undelivered note
+			// (delivered on the target's next turn). Old value is the one still
+			// in memory before this assignment.
+			if old := model.UserNickname; old != "" && old != v {
+				service.RenameUserPendingBcc(old, v)
+			}
+			cfg.User.Nickname = v
+		}
+		if v, ok := user["profile"].(string); ok {
+			cfg.User.Profile = v
+		}
+	}
+
 	if chat, ok := patch["chat"].(map[string]any); ok {
 		if v, ok := chat["initial_messages"].(float64); ok {
 			cfg.Chat.InitialMessages = int(v)
@@ -2227,16 +2269,6 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := chat["auto_rename_enabled"].(bool); ok {
 			cfg.Chat.AutoRenameEnabled = v
-		}
-		if v, ok := chat["user_nickname"].(string); ok {
-			// The group's pending private notes are keyed by the user's name;
-			// migrate them so a rename does not orphan an undelivered note
-			// (delivered on the target's next turn). Old value is the one still
-			// in memory before this assignment.
-			if old := model.ChatUserNickname; old != "" && old != v {
-				service.RenameUserPendingBcc(old, v)
-			}
-			cfg.Chat.UserNickname = v
 		}
 		if v, ok := chat["group_max_speeches"].(float64); ok {
 			cfg.Chat.GroupMaxSpeeches = int(v)
@@ -2678,7 +2710,8 @@ func applyHotReloadGlobals() {
 	model.ChatAutoContinueMaxRetries = cfg.Chat.AutoContinueMaxRetries
 	model.ChatRestartResumeWindowMinutes = cfg.Chat.RestartResumeWindowMinutes
 	model.ChatAutoRenameEnabled = cfg.Chat.AutoRenameEnabled
-	model.ChatUserNickname = cfg.Chat.UserNickname
+	model.UserNickname = cfg.User.Nickname
+	model.UserProfile = cfg.User.Profile
 	model.ChatGroupMaxSpeeches = cfg.Chat.GroupMaxSpeeches
 	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
@@ -2802,6 +2835,24 @@ func writeConfigYAML(patch map[string]any) error {
 
 	// Merge patch into raw map (only touched fields are modified)
 	mergePatchIntoRaw(raw, patch)
+
+	// One-time cleanup of the legacy chat.user_nickname key. The value was
+	// migrated into user.nickname at startup, but the write path merges into the
+	// existing file, so without this the old key would survive forever and a
+	// hand-edit of it would look effective while being ignored.
+	if chatMap, ok := raw["chat"].(map[string]any); ok {
+		if legacy, exists := chatMap["user_nickname"]; exists {
+			userMap, _ := raw["user"].(map[string]any)
+			if userMap == nil {
+				userMap = make(map[string]any, 2)
+				raw["user"] = userMap
+			}
+			if _, hasNew := userMap["nickname"]; !hasNew {
+				userMap["nickname"] = legacy
+			}
+			delete(chatMap, "user_nickname")
+		}
+	}
 
 	data, err := yaml.Marshal(raw)
 	if err != nil {

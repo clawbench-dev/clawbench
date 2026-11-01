@@ -114,6 +114,8 @@ export interface ItemSpec {
   /** Gray out (disable) this field when the condition is NOT met, but keep it visible. */
   disableUnless?: DependsOn | DependsOn[]
   sectionHeader?: string
+  /** Hard input limit for text/textarea editors (mirrors the server-side cap). */
+  maxLength?: number
   /** Transform raw value for display (e.g., 0 → 'auto' for port_forward.port) */
   displayTransform?: (value: unknown) => unknown
   defaultValue?: unknown
@@ -194,6 +196,13 @@ export type CategoryEntry =
  * Each entry is either a flat instant-save item or a group panel with batch save.
  */
 export const categoryItems: Record<string, CategoryEntry[]> = {
+  // The human user's identity. A first-class category rather than a row under
+  // 群聊: the nickname is also the meeting display name, and the profile is
+  // injected into every agent's system prompt — neither is group-chat-specific.
+  identity: [
+    { type: 'item', spec: { labelKey: 'settings.items.userNickname', descriptionKey: 'settings.items.userNicknameDesc', key: 'user.nickname', type: 'text', source: 'server', sectionHeader: 'settings.items.identitySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.userProfile', descriptionKey: 'settings.items.userProfileDesc', key: 'user.profile', type: 'textarea', source: 'server', maxLength: 4000, sectionHeader: 'settings.items.identitySection' } },
+  ],
   appearance: [
     { type: 'item', spec: { labelKey: 'settings.items.theme', descriptionKey: 'settings.items.themeDesc', key: 'theme', type: 'select', source: 'local', sectionHeader: 'settings.items.themeSection', options: [
       { labelKey: 'settings.items.themeAuto', value: 'auto' },
@@ -302,11 +311,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.summaryModelRow', descriptionKey: 'settings.items.summaryModelRowDesc', key: 'summaryModel', type: 'summaryModel', source: 'local', disableUnless: { key: 'chat.auto_rename_enabled', value: true }, showSummaryModelStatus: true, sectionHeader: 'settings.items.autoRenameSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionEnabled', descriptionKey: 'settings.items.archiveRetentionEnabledDesc', key: 'session.archive_retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionDays', descriptionKey: 'settings.items.archiveRetentionDaysDesc', key: 'session.archive_retention_days', type: 'number', source: 'server', min: 0, disableUnless: { key: 'session.archive_retention_enabled', value: true }, sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
-    // Group chat: the reserved display name of the human user, and the cap on
-    // how many times the agents may speak to each other before the floor
-    // returns to the user. Both are global server settings (same value on every
-    // device); the lone sectionHeader forms their own card.
-    { type: 'item', spec: { labelKey: 'settings.items.groupUserNickname', descriptionKey: 'settings.items.groupUserNicknameDesc', key: 'chat.user_nickname', type: 'text', source: 'server', sectionHeader: 'settings.items.groupChatSectionHeader' } },
+    // Group chat: the cap on how many times the agents may speak to each other
+    // before the floor returns to the user. A global server setting (same value
+    // on every device). The user nickname now lives in the 身份 category — it
+    // is not group-chat-specific.
     { type: 'item', spec: { labelKey: 'settings.items.groupMaxSpeeches', descriptionKey: 'settings.items.groupMaxSpeechesDesc', key: 'chat.group_max_speeches', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.groupChatSectionHeader' } },
   ],
   project: [

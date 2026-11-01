@@ -172,7 +172,7 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		prompt = BuildCruiseSingleAddendum() + "\n\n" + prompt
 	}
 
-	return ai.ChatRequest{
+	req := ai.ChatRequest{
 		Prompt:                 prompt,
 		SessionID:              effectiveSessionID,
 		WorkDir:                fileDir,
@@ -189,6 +189,12 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		ForkContext:            forkContext,
 		Compacted:              compacted,
 	}
+
+	// The identity section rides the system prompt; on a resumed turn (which
+	// does not re-send it) the helper moves it into the prompt instead. See
+	// EnsureUserIdentityInPrompt for why the two paths are exclusive.
+	EnsureUserIdentityInPrompt(&req)
+	return req
 }
 
 // applySessionOverrides fills each empty override from the session's persisted
@@ -269,6 +275,9 @@ func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, thi
 	if projectPath != "" {
 		systemPrompt = strings.ReplaceAll(systemPrompt, "{{PROJECT_PATH}}", projectPath)
 	}
+	// The human user's identity (nickname + self-description). Appended last so
+	// the user's own text is never subject to the placeholder replacement above.
+	systemPrompt = AppendUserIdentitySection(systemPrompt)
 	if modelOverride != "" {
 		agentModel = modelOverride
 	} else if !isACP || ai.HasConfirmedACPModels(agentID) {

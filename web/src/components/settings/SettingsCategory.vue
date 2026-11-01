@@ -137,6 +137,7 @@
             :reveal-on-select="item.key === 'theme'"
             :min="item.min"
             :max="getItemMax(item)"
+            :max-length="item.maxLength"
             :step="item.step"
             :needs-restart="item.needsRestart"
             :summary-model-status="resolveSummaryModelStatus(item)"

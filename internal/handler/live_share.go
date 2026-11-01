@@ -699,9 +699,11 @@ func liveShareRoomCountForTest() int {
 	return liveRegistry.Len()
 }
 
-// liveViewerNameMaxRunes bounds a viewer's nickname. Mirrors the SPA's input
-// limit; the server cap exists so a hand-written URL cannot bloat the room.
-const liveViewerNameMaxRunes = 24
+// liveViewerNameMaxRunes bounds a viewer's nickname. Kept equal to
+// model.MaxUserNicknameRunes so the account nickname (which the desktop join
+// page forwards) is always accepted. The cap exists so a hand-written URL
+// cannot bloat the room.
+const liveViewerNameMaxRunes = model.MaxUserNicknameRunes
 
 // finalizeLiveNotes closes a meeting record and archives its chat.
 //

@@ -129,7 +129,7 @@ type SessionShareSession struct {
 	// cannot tell which speaker is the chair.
 	HostMemberID string `json:"hostMemberId,omitempty"`
 	// UserNickname is the reserved display name of the human user in this group
-	// (chat.user_nickname), read live so the viewer can render @-mention chips
+	// (user.nickname), read live so the viewer can render @-mention chips
 	// for the user without reading the authenticated /api/config.
 	UserNickname string `json:"userNickname,omitempty"`
 	// SessionType is the chat_sessions.session_type value ("chat" / "group" /

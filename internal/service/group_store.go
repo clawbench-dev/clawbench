@@ -45,8 +45,8 @@ const (
 	// defaultGroupUserTarget is the fallback display name of the HUMAN user as a
 	// group participant when no nickname is configured. Agents address the user
 	// with this exact name (<clawbench-mention targets="User">...). The live
-	// value is groupUserTarget() (config-driven, chat.user_nickname).
-	defaultGroupUserTarget = "User"
+	// value is groupUserTarget() (config-driven, user.nickname).
+	defaultGroupUserTarget = model.DefaultUserNickname
 	// groupUserTargetID is a sentinel member row id for the user. It is not a
 	// chat_sessions row: the user has no backend connection and no AI turn.
 	// "__user__" cannot collide with a UUID member row id.
@@ -54,16 +54,16 @@ const (
 )
 
 // groupUserTarget is the reserved display name of the HUMAN user as a group
-// participant. It is config-driven (chat.user_nickname, default "User") so the
-// user can pick a less jarring name than the language-neutral default; it must
-// stay in sync with the frontend's userNickname and must never collide with a
-// real member name (enforced bidirectionally — see IsUserNickname).
+// participant. It is config-driven (user.nickname, default "User") so the user
+// can pick a less jarring name than the language-neutral default; it must stay
+// in sync with the frontend's userNickname and must never collide with a real
+// member name (enforced bidirectionally — see IsUserNickname).
 //
 // The value is trimmed defensively: the PATCH path normalizes it, but a
 // hand-edited config.yaml bypasses that, and the mention parser trims each
 // target before lookup — so an untrimmed nickname would be unreachable.
 func groupUserTarget() string {
-	if n := strings.TrimSpace(model.ChatUserNickname); n != "" {
+	if n := strings.TrimSpace(model.UserNickname); n != "" {
 		return n
 	}
 	return defaultGroupUserTarget
@@ -791,7 +791,7 @@ func deletePendingBccForTarget(groupID, targetName string) {
 // RenameUserPendingBcc migrates every pending private note addressed to the
 // human user from oldName to newName, so a nickname change does not orphan an
 // undelivered note (notes are keyed by target name and delivered on that
-// target's next turn). Called when chat.user_nickname changes; a no-op when the
+// target's next turn). Called when user.nickname changes; a no-op when the
 // names match or either is empty.
 func RenameUserPendingBcc(oldName, newName string) {
 	oldT := strings.TrimSpace(oldName)

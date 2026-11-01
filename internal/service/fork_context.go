@@ -92,7 +92,7 @@ type ForkContextMessage struct {
 	// IsUser marks this entry as authored by the human user. The budget
 	// selection treats user entries as high priority, and it must NOT infer that
 	// from Role: a group timeline labels entries with MEMBER DISPLAY NAMES, and
-	// the human's label is the configurable nickname (chat.user_nickname), which
+	// the human's label is the configurable nickname (user.nickname), which
 	// no case-insensitive comparison against "user" can recognize. Leaving this
 	// false falls back to the role comparison, so single-chat entries (labeled
 	// "user"/"User") keep working without setting it.

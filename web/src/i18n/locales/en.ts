@@ -2557,6 +2557,7 @@ export default {
   settings: {
     categories: {
       basic: 'Other',
+      identity: 'Identity',
       appearance: 'Appearance',
       project: 'Project',
       files: 'Files',
@@ -2968,8 +2969,11 @@ export default {
       archiveRetentionEnabledDesc: 'Automatically delete archived sessions after the retention period expires',
       archiveRetentionDays: 'Retention Days',
       archiveRetentionDaysDesc: 'Days to keep archived sessions before auto-purge (0 = keep forever)',
-      groupUserNickname: 'User Nickname',
-      groupUserNicknameDesc: 'The name agents call you in group chat (default "User"). Must not match any agent name, and cannot contain quotes, angle brackets, commas or control characters',
+      identitySection: 'My Identity',
+      userNickname: 'My Nickname',
+      userNicknameDesc: 'The name agents call you in group chat, and the display name used when you join a meeting (default "User"). Must not match any agent name, and cannot contain quotes, angle brackets, commas or control characters',
+      userProfile: 'About Me',
+      userProfileDesc: 'Describe yourself: role, expertise, preferences or working style. Injected into the system prompt of every agent so they understand you better (max 4000 characters)',
       groupMaxSpeeches: 'Agent discussion limit',
       groupMaxSpeechesDesc: 'How many times the agents may speak to each other before the floor returns to you (default 100). Same meaning in host and free mode, counting member speeches only; reaching it stops the AI discussion',
       recentProjectsMaxCount: 'Recent Projects Count',
@@ -4085,9 +4089,9 @@ export default {
     },
     join: {
       title: 'Join meeting',
-      nick: 'Your name',
+      nick: 'My name',
       nickPlaceholder: 'Others will see this name',
-      nickHint: 'Required. The host and other viewers use this name; it is remembered next time.',
+      nickHint: 'This name is shared with group chat (agents call you by it), and the host and other viewers see it too. It is remembered next time.',
       nickRequired: 'Please enter a name first.',
       link: 'Meeting link',
       linkPlaceholder: 'http://192.168.1.5:20000/share/xxxx',

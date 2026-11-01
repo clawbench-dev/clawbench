@@ -14,10 +14,9 @@
         v-model="nickname"
         class="meeting-input"
         type="text"
-        maxlength="24"
+        :maxlength="MEETING_NICK_MAX"
         data-role="meeting-nick"
         :placeholder="t('meeting.join.nickPlaceholder')"
-        @input="rememberNick"
       />
       <div class="meeting-hint">{{ t('meeting.join.nickHint') }}</div>
 
@@ -45,45 +44,55 @@
 
 <script setup lang="ts">
 /**
- * 加入会议: a nickname (required) and a share link.
+ * 加入会议: the user's nickname (required) and a share link.
  *
- * The nickname is written to the SAME localStorage key the share page's gate
- * reads, so opening the link does not ask for it twice — the gate comes up
- * pre-filled and the user only confirms.
+ * The nickname is NOT a meeting-local field: it is the account identity
+ * (user.nickname), the same value group chat uses. Reading it from the server
+ * config and writing it back through the settings API is what makes "one
+ * nickname" true — the page used to keep its own localStorage copy, which
+ * drifted from the group-chat name and was lost on another device.
+ *
+ * The value is still mirrored into localStorage before the link opens, so the
+ * share page's gate (which is unauthenticated and cannot read the server
+ * config) comes up pre-filled on the same device/origin.
  */
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft } from 'lucide-vue-next'
 import { getNative } from '@/utils/clawbenchNative'
 import { useToast } from '@/composables/useToast'
-import { MEETING_NICK_KEY } from '@/share/meetingNickname'
+import { useSettingsConfig } from '@/composables/useSettingsConfig'
+import { MEETING_NICK_MAX, readMeetingNick, saveMeetingNick } from '@/share/meetingNickname'
 
 const emit = defineEmits<{ back: [] }>()
 
 const { t } = useI18n()
 const toast = useToast()
-const nickname = ref(readNick())
+const { serverConfig, setServerValue } = useSettingsConfig()
 const url = ref('')
 const error = ref('')
 
+/** The account nickname from /api/config, or '' before it loads. */
+function configuredNickname(): string {
+  const user = serverConfig.value?.user
+  const v = user && typeof user === 'object' ? (user as Record<string, unknown>).nickname : undefined
+  return typeof v === 'string' ? v.trim() : ''
+}
+
+/**
+ * Local edit override. `null` means "follow the server value", so a late
+ * /api/config load still fills the field; once the user types, their text wins
+ * and is not clobbered by the config arriving.
+ */
+const edited = ref<string | null>(null)
+const nickname = computed({
+  get: () => edited.value ?? (configuredNickname() || readMeetingNick()),
+  set: (v: string) => {
+    edited.value = v
+  },
+})
+
 const canJoin = computed(() => Boolean(nickname.value.trim()) && Boolean(url.value.trim()))
-
-function readNick(): string {
-  try {
-    return localStorage.getItem(MEETING_NICK_KEY) ?? ''
-  } catch {
-    return ''
-  }
-}
-
-function rememberNick(): void {
-  error.value = ''
-  try {
-    localStorage.setItem(MEETING_NICK_KEY, nickname.value)
-  } catch {
-    /* private mode: the name simply is not remembered */
-  }
-}
 
 async function join(): Promise<void> {
   const nick = nickname.value.trim()
@@ -96,7 +105,18 @@ async function join(): Promise<void> {
     error.value = t('meeting.join.invalidLink')
     return
   }
-  rememberNick()
+  error.value = ''
+  // Editing the name here edits the same setting group chat uses. Only PATCH
+  // when it actually changed, so an untouched field costs nothing.
+  if (nick !== configuredNickname()) {
+    try {
+      await setServerValue('user.nickname', nick)
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e)
+      return
+    }
+  }
+  saveMeetingNick(nick)
   const bridge = getNative()
   if (bridge?.openShareLink) {
     const ok = await bridge.openShareLink(link)

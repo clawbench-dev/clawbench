@@ -44,6 +44,7 @@ import {
   Boxes,
   ChevronRight,
   Github,
+  UserRound,
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsCard from './SettingsCard.vue'
@@ -74,6 +75,9 @@ const groupDefs = [
   {
     id: 'aiChat',
     items: [
+      // 身份 first: the nickname and self-description are the context every
+      // agent sees, and they are not specific to chat or group chat.
+      { id: 'identity', icon: UserRound },
       { id: 'chat', icon: MessageSquare },
       { id: 'agents', icon: Bot },
       { id: 'providers', icon: Boxes },

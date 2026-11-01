@@ -369,20 +369,20 @@ func TestServeConfig_Patch_UserNickname(t *testing.T) {
 	defer teardown()
 
 	model.ConfigInstance = model.Config{}
-	model.ChatUserNickname = "User"
-	t.Cleanup(func() { model.ChatUserNickname = "" })
+	model.UserNickname = "User"
+	t.Cleanup(func() { model.UserNickname = "" })
 
-	body := `{"chat":{"user_nickname":"老板"}}`
+	body := `{"user":{"nickname":"老板"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "老板", model.ConfigInstance.Chat.UserNickname,
-		"user_nickname must be applied to ConfigInstance")
-	assert.Equal(t, "老板", model.ChatUserNickname,
-		"applyHotReloadGlobals must sync model.ChatUserNickname")
+	assert.Equal(t, "老板", model.ConfigInstance.User.Nickname,
+		"user.nickname must be applied to ConfigInstance")
+	assert.Equal(t, "老板", model.UserNickname,
+		"applyHotReloadGlobals must sync model.UserNickname")
 	assert.NotContains(t, w.Body.String(), `"needs_restart":true`)
 }
 
@@ -395,29 +395,70 @@ func TestServeConfig_Patch_UserNicknameTrimsWhitespace(t *testing.T) {
 	defer teardown()
 
 	model.ConfigInstance = model.Config{}
-	model.ChatUserNickname = "User"
-	t.Cleanup(func() { model.ChatUserNickname = "" })
+	model.UserNickname = "User"
+	t.Cleanup(func() { model.UserNickname = "" })
 
-	body, _ := json.Marshal(map[string]any{"chat": map[string]any{"user_nickname": "  老板  "}})
+	body, _ := json.Marshal(map[string]any{"user": map[string]any{"nickname": "  老板  "}})
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "老板", model.ConfigInstance.Chat.UserNickname, "surrounding whitespace must be stripped")
-	assert.Equal(t, "老板", model.ChatUserNickname, "the model global must hold the trimmed value")
+	assert.Equal(t, "老板", model.ConfigInstance.User.Nickname, "surrounding whitespace must be stripped")
+	assert.Equal(t, "老板", model.UserNickname, "the model global must hold the trimmed value")
 
 	// An all-whitespace nickname trims to empty and is rejected (it would be an
 	// unaddressable participant), not silently stored as the default.
-	model.ConfigInstance.Chat.UserNickname = "老板"
-	blank, _ := json.Marshal(map[string]any{"chat": map[string]any{"user_nickname": "   "}})
+	model.ConfigInstance.User.Nickname = "老板"
+	blank, _ := json.Marshal(map[string]any{"user": map[string]any{"nickname": "   "}})
 	req = httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(blank)))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w = callHandler(ServeConfig, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code, "an all-whitespace nickname must be rejected")
-	assert.Equal(t, "老板", model.ConfigInstance.Chat.UserNickname, "a rejected value must not be stored")
+	assert.Equal(t, "老板", model.ConfigInstance.User.Nickname, "a rejected value must not be stored")
+}
+
+// The user profile is the free-form half of the identity: optional, trimmed,
+// hot-reloaded into the model global, and bounded because it is injected into
+// every agent system prompt.
+func TestServeConfig_Patch_UserProfile(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	origProfile := model.UserProfile
+	t.Cleanup(func() { model.UserProfile = origProfile })
+
+	body, _ := json.Marshal(map[string]any{"user": map[string]any{"profile": "  做后端，偏好简洁回答  "}})
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "做后端，偏好简洁回答", model.ConfigInstance.User.Profile,
+		"the profile must be trimmed and stored")
+	assert.Equal(t, "做后端，偏好简洁回答", model.UserProfile,
+		"applyHotReloadGlobals must sync model.UserProfile")
+	assert.NotContains(t, w.Body.String(), `"needs_restart":true`,
+		"the profile is injected per request, so no restart is needed")
+
+	// An over-long profile is rejected rather than silently truncated, and the
+	// stored value is left untouched.
+	model.ConfigInstance.User.Profile = "做后端"
+	long, _ := json.Marshal(map[string]any{"user": map[string]any{
+		"profile": strings.Repeat("字", model.MaxUserProfileRunes+1),
+	}})
+	req = httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(long)))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w = callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "InvalidUserProfile")
+	assert.Equal(t, "做后端", model.ConfigInstance.User.Profile, "a rejected value must not be stored")
 }
 
 // A malformed nickname answers 400 with the localized InvalidUserNickname key,
@@ -427,10 +468,10 @@ func TestServeConfig_Patch_UserNicknameInvalidIsLocalized(t *testing.T) {
 	defer teardown()
 
 	cfg := model.Config{}
-	cfg.Chat.UserNickname = "User"
+	cfg.User.Nickname = "User"
 	model.ConfigInstance = cfg
 
-	body := `{"chat":{"user_nickname":"a,b"}}`
+	body := `{"user":{"nickname":"a,b"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -439,7 +480,7 @@ func TestServeConfig_Patch_UserNicknameInvalidIsLocalized(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "InvalidUserNickname",
 		"the 400 must carry the localized msgKey, not the raw English message")
-	assert.NotContains(t, w.Body.String(), "chat.user_nickname must be",
+	assert.NotContains(t, w.Body.String(), "user.nickname must be",
 		"the raw validation string must not leak into the response")
 }
 
@@ -452,15 +493,15 @@ func TestServeConfig_Patch_UserNicknameRejectsInvalidChars(t *testing.T) {
 
 	for _, bad := range []string{`a"b`, `a<b`, `a>b`, `a,b`, "a\nb"} {
 		cfg := model.Config{}
-		cfg.Chat.UserNickname = "User"
+		cfg.User.Nickname = "User"
 		model.ConfigInstance = cfg
-		body, _ := json.Marshal(map[string]any{"chat": map[string]any{"user_nickname": bad}})
+		body, _ := json.Marshal(map[string]any{"user": map[string]any{"nickname": bad}})
 		req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(body)))
 		req.Header.Set("Content-Type", "application/json")
 		withAuthCookie(req, model.SessionToken)
 		w := callHandler(ServeConfig, req)
 		assert.Equal(t, http.StatusBadRequest, w.Code, "nickname %q must be rejected", bad)
-		assert.Equal(t, "User", model.ConfigInstance.Chat.UserNickname, "a rejected value must not be stored")
+		assert.Equal(t, "User", model.ConfigInstance.User.Nickname, "a rejected value must not be stored")
 	}
 }
 
@@ -510,11 +551,11 @@ func TestServeConfig_Patch_UserNicknameCollidesWithAgent(t *testing.T) {
 	defer teardown()
 
 	cfg := model.Config{}
-	cfg.Chat.UserNickname = "User"
+	cfg.User.Nickname = "User"
 	model.ConfigInstance = cfg
 	require.NoError(t, service.SaveAgent(store.WriteDB(), &model.Agent{ID: "claude", Name: "老板", Backend: "claude"}))
 
-	body := `{"chat":{"user_nickname":"老板"}}`
+	body := `{"user":{"nickname":"老板"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -522,7 +563,7 @@ func TestServeConfig_Patch_UserNicknameCollidesWithAgent(t *testing.T) {
 
 	assert.Equal(t, http.StatusConflict, w.Code)
 	assert.Contains(t, w.Body.String(), "UserNicknameTaken")
-	assert.Equal(t, "User", model.ConfigInstance.Chat.UserNickname, "a rejected nickname must not be stored")
+	assert.Equal(t, "User", model.ConfigInstance.User.Nickname, "a rejected nickname must not be stored")
 }
 
 // Retry counts below the -1 sentinel are unrepresentable and must be rejected

@@ -10,7 +10,7 @@
         v-model="nick"
         class="join-gate__input"
         type="text"
-        maxlength="24"
+        :maxlength="MEETING_NICK_MAX"
         autocomplete="nickname"
         data-role="join-nick"
         :placeholder="t('share.live.joinNickPlaceholder')"
@@ -42,7 +42,7 @@
  */
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { isValidMeetingNick, readMeetingNick, saveMeetingNick } from './meetingNickname'
+import { MEETING_NICK_MAX, isValidMeetingNick, readMeetingNick, saveMeetingNick } from './meetingNickname'
 
 defineProps<{ title?: string }>()
 const emit = defineEmits<{ join: [name: string] }>()

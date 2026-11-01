@@ -24,7 +24,7 @@ import (
 var ErrAgentNameTaken = errors.New("agent name already taken")
 
 // ErrAgentNameReserved is returned when an agent name collides with the
-// configured group-chat user nickname (chat.user_nickname). The nickname is a
+// configured user nickname (user.nickname). The nickname is a
 // routing target, so an agent sharing it would be unreachable (and would shadow
 // the human in group routing). The collision is rejected in BOTH directions —
 // this sentinel covers the agent side; the config side rejects a nickname that

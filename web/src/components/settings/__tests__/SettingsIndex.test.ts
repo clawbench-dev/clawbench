@@ -13,6 +13,7 @@ const i18n = createI18n({
           appearance: '外观',
           project: '项目',
           files: '文件',
+          identity: '身份',
           chat: '聊天',
           agents: 'Agent偏好',
           terminal: '终端',
@@ -43,6 +44,7 @@ const globalStubs = {
   'lucide-chevron-right': true,
   'lucide-palette': true,
   'lucide-folder-tree': true,
+  'lucide-user-round': true,
   'lucide-message-square': true,
   'lucide-bot': true,
   'lucide-terminal': true,
@@ -63,11 +65,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 19 category rows', () => {
+  it('renders 20 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(19)
+    expect(rows.length).toBe(20)
   })
 
   it('renders category labels', () => {
@@ -77,6 +79,7 @@ describe('SettingsIndex', () => {
     expect(labels).toContain('项目')
     expect(labels).toContain('外观')
     expect(labels).toContain('文件')
+    expect(labels).toContain('身份')
     expect(labels).toContain('聊天')
     expect(labels).toContain('端口映射')
     expect(labels).toContain('用量')
@@ -103,11 +106,12 @@ describe('SettingsIndex', () => {
     )
     // 通知与安全 holds three rows: 推送通知, 用量, 安全. The usage meter sits
     // beside push notifications rather than inside that category.
-    // AI 与对话 gained MCP 服务 (7 → 8) and 模型提供商 (8 → 9); the standalone
-    // AI 摘要 category was removed (9 → 8) once the model is picked where it is
+    // AI 与对话 gained 身份 (8 → 9): the user's nickname and self-description
+    // are agent context, not chat behavior, so they lead the group.
+    // AI 摘要 was removed (9 → 8) once the model is picked where it is
     // referenced.
-    expect(perCard).toEqual([3, 8, 3, 3, 2])
-    expect(perCard.reduce((a, b) => a + b, 0)).toBe(19)
+    expect(perCard).toEqual([3, 9, 3, 3, 2])
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(20)
   })
 
   it('emits navigate with categoryId when row clicked', async () => {
@@ -125,7 +129,7 @@ describe('SettingsIndex', () => {
 
     const expectedIds = [
       'project', 'appearance', 'files',
-      'chat', 'agents', 'providers', 'skills', 'mcp', 'rag', 'tts', 'stt',
+      'identity', 'chat', 'agents', 'providers', 'skills', 'mcp', 'rag', 'tts', 'stt',
       'terminal', 'portForward', 'forgeIntegration',
       'notification', 'usageMeter', 'security',
       'debug', 'about',

@@ -206,6 +206,7 @@
           class="settings-item__textarea-input"
           :value="editValue as string | number | readonly string[] | null | undefined"
           :placeholder="placeholder"
+          :maxlength="maxLength"
           rows="6"
           @input="editValue = ($event.target as HTMLTextAreaElement).value"
         ></textarea>
@@ -399,6 +400,9 @@ interface Props {
   min?: number
   max?: number
   step?: number
+  /** Hard input limit for text/textarea editors (server-enforced limits are
+   *  surfaced here so the user cannot type a value that will be rejected). */
+  maxLength?: number
   placeholder?: string
   needsRestart?: boolean
   disabled?: boolean

@@ -30,6 +30,32 @@ describe('settingsFieldMap', () => {
     }
   })
 
+  // The user's identity is a first-class settings category, not a row under
+  // 群聊: the nickname is also the meeting display name and the profile is
+  // injected into every agent prompt. Guard both halves of the extraction so a
+  // later refactor cannot silently put the nickname back under chat.
+  it('identity category owns the user nickname and profile', () => {
+    const identity = categoryItems['identity']
+    expect(identity).toBeDefined()
+
+    const nick = identity.find(e => e.type === 'item' && e.spec.key === 'user.nickname')
+    expect(nick).toBeDefined()
+    if (nick!.type !== 'item') throw new Error('expected item entry for user.nickname')
+    expect(nick!.spec.type).toBe('text')
+    expect(nick!.spec.source).toBe('server')
+
+    const profile = identity.find(e => e.type === 'item' && e.spec.key === 'user.profile')
+    expect(profile).toBeDefined()
+    if (profile!.type !== 'item') throw new Error('expected item entry for user.profile')
+    expect(profile!.spec.type).toBe('textarea')
+    expect(profile!.spec.source).toBe('server')
+
+    const chatKeys = categoryItems['chat']
+      .filter(e => e.type === 'item')
+      .map(e => (e as { spec: { key: string } }).spec.key)
+    expect(chatKeys).not.toContain('chat.user_nickname')
+  })
+
   it('does not map local-only settings', () => {
     const map = getServerFieldToLabelKey()
 
