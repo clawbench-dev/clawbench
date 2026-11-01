@@ -34,11 +34,13 @@
       <input v-model="draft.baseUrl" class="provider-input" :placeholder="t('settings.items.providerBaseUrl')" />
       <div class="provider-key-field">
         <input
-          v-model="draft.apiKey"
+          :value="keyValue"
           :type="showKey ? 'text' : 'password'"
           autocomplete="off"
           class="provider-input provider-key-input"
           :placeholder="provider ? t('settings.items.providerKeyKeep') : t('settings.items.providerKey')"
+          @input="onKeyInput"
+          @focus="onKeyFocus"
         />
         <!-- The stored key is never sent with the list; the eye asks for it
              explicitly, so a plaintext key only travels when someone is
@@ -252,6 +254,19 @@ const keyLoaded = ref(false)
 const keyLoading = ref(false)
 const keyError = ref('')
 
+/** Dots standing in for a stored key that has not been revealed. The value is
+ *  never fetched just to fill the field (see toggleKeyVisibility), so without
+ *  it the box looks empty and "a key is saved" is indistinguishable from "no
+ *  key yet". `draft.apiKey` stays empty while the mask is shown: an empty
+ *  apiKey on submit means "keep the stored one", and the mask must never be
+ *  sent as if it were the key. */
+const KEY_MASK_CHAR = '•'
+const KEY_MASK = KEY_MASK_CHAR.repeat(12)
+const keyMasked = ref(false)
+/** Hidden once "clear the stored key" is ticked: the dots would otherwise claim
+ *  a secret is still configured while the save is about to remove it. */
+const keyValue = computed(() => (keyMasked.value && !clearKey.value ? KEY_MASK : draft.apiKey))
+
 const draft = reactive({
   name: '',
   protocol: 'anthropic',
@@ -373,6 +388,7 @@ function resetFromProvider() {
   keyLoaded.value = false
   keyLoading.value = false
   keyError.value = ''
+  keyMasked.value = p?.hasKey === true
   testingModel.value = null
   modelResults.value = {}
   presetId.value = p?.presetId ?? ''
@@ -408,6 +424,7 @@ async function toggleKeyVisibility() {
       if (!data.apiKey) throw new Error(t('settings.items.providerKeyRevealFailed'))
       draft.apiKey = data.apiKey
       keyLoaded.value = true
+      keyMasked.value = false
     } catch (err) {
       keyError.value = err instanceof Error ? err.message : String(err)
       appLog.w('ProviderFormDialog', 'reveal provider key failed', keyError.value)
@@ -417,6 +434,28 @@ async function toggleKeyVisibility() {
     }
   }
   showKey.value = true
+}
+
+/** Select the mask on focus so the first keystroke replaces it instead of
+ *  landing in the middle of a run of bullets. */
+function onKeyFocus(event: FocusEvent) {
+  if (!keyMasked.value) return
+  const el = event.target as HTMLInputElement | null
+  el?.select()
+}
+
+function onKeyInput(event: Event) {
+  const el = event.target as HTMLInputElement
+  let next = el.value
+  if (keyMasked.value) {
+    keyMasked.value = false
+    // Clicking into the mask without selecting it leaves bullets in the box;
+    // strip them instead of storing them as part of the key.
+    next = next.split(KEY_MASK_CHAR).join('')
+  }
+  draft.apiKey = next
+  // Keep the DOM in sync when the mask prefix was removed.
+  if (el.value !== next) el.value = next
 }
 
 // Re-seed on every open so a cancelled edit never leaks into the next create.

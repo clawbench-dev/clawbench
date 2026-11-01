@@ -140,11 +140,31 @@ describe('ProviderFormDialog', () => {
     const wrapper = mountDialog({ provider: existing })
     expect(wrapper.find('.mock-title').text()).toBe('编辑模型提供商')
     expect((inputs(wrapper)[0].element as HTMLInputElement).value).toBe('Existing')
-    expect((inputs(wrapper)[2].element as HTMLInputElement).value).toBe('')
+    // A stored key reads as dots, not as an empty box: an empty field looks
+    // like the key was lost, and the value is never fetched just to fill it.
+    expect((inputs(wrapper)[2].element as HTMLInputElement).value).toMatch(/^•+$/)
     expect(inputs(wrapper)[2].attributes('type')).toBe('password')
     expect(mockGet).not.toHaveBeenCalled()
     expect(wrapper.find('.provider-models').exists()).toBe(true)
     expect(wrapper.text()).toContain('m-a')
+  })
+
+  it('submits an empty apiKey while the mask is untouched, so the stored key is kept', async () => {
+    const wrapper = mountDialog({ provider: existing })
+    await wrapper.find('.mock-dialog .fbtn-primary').trigger('click')
+    expect(wrapper.emitted('submit')?.[0]).toEqual([expect.objectContaining({ apiKey: '' })])
+  })
+
+  it('replaces the mask with what the user types instead of appending to it', async () => {
+    // Typing over the mask (the field selects it on focus).
+    const typed = mountDialog({ provider: existing })
+    await inputs(typed)[2].setValue('sk-new')
+    expect((inputs(typed)[2].element as HTMLInputElement).value).toBe('sk-new')
+
+    // Clicking into the end of the mask and typing there.
+    const appended = mountDialog({ provider: existing })
+    await inputs(appended)[2].setValue('••••••••••••tail')
+    expect((inputs(appended)[2].element as HTMLInputElement).value).toBe('tail')
   })
 
   it('fetches the stored key only when the eye is clicked', async () => {
@@ -246,6 +266,8 @@ describe('ProviderFormDialog', () => {
     expect(wrapper.emitted('submit')?.[0]).toEqual([expect.objectContaining({ clearApiKey: false })])
 
     await box.setValue(true)
+    // The dots must not survive the decision to remove the key.
+    expect((inputs(wrapper)[2].element as HTMLInputElement).value).toBe('')
     await wrapper.find('.mock-dialog .fbtn-primary').trigger('click')
     expect(wrapper.emitted('submit')?.[1]).toEqual([expect.objectContaining({ clearApiKey: true })])
   })
@@ -271,7 +293,8 @@ describe('ProviderFormDialog', () => {
     await flushPromises()
 
     expect((inputs(wrapper)[0].element as HTMLInputElement).value).toBe('Existing')
-    expect((inputs(wrapper)[2].element as HTMLInputElement).value).toBe('')
+    // The key field falls back to the stored-key mask, not to a typed value.
+    expect((inputs(wrapper)[2].element as HTMLInputElement).value).toMatch(/^•+$/)
   })
 
   it('shows the server error passed down by the caller', () => {
