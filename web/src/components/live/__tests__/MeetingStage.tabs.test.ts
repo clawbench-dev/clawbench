@@ -124,7 +124,7 @@ vi.mock('@/composables/useLiveNotes', async (importOriginal) => {
   return { ...actual, useLiveNotes: () => notesApi }
 })
 
-function mountPanel() {
+function mountPanel(opts: { realChat?: boolean } = {}) {
   // A fresh instance per mount: installing the same one twice trips
   // vue-i18n's "already set up" guard.
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
@@ -133,7 +133,9 @@ function mountPanel() {
       plugins: [i18n],
       stubs: {
         ShareAddressList: true,
-        LiveChatPanel: true,
+        // The real panel is mounted by the mirroring test below; everything
+        // else only needs the tab surface to exist.
+        LiveChatPanel: opts.realChat ? false : true,
         LoadingIndicator: true,
         LiveAnnotateOverlay: { template: '<div data-role="annotate-overlay" />' },
         SpeakerAvatar: { props: ['name'], template: '<span class="sa" :data-name="name" />' },
@@ -389,5 +391,27 @@ describe('MeetingStage transcript rows', () => {
     expect(rows[1].find('.sa').attributes('data-name')).toBe('小明')
     expect(rows[0].find('.transcript__speaker').text()).toBe('我')
     expect(rows[0].find('.transcript__text').text()).toBe('第一句')
+  })
+})
+
+describe('MeetingStage chat sides', () => {
+  it('puts the local user’s own message on the other side of the pane', async () => {
+    const wrapper = mountPanel({ realChat: true })
+    await flushPromises()
+    await tab(wrapper, 'chat').trigger('click')
+
+    // Someone else speaks, then we do.
+    controlRelay()({ t: 'chat', id: 'm1', from: 'v1', name: '小明', text: '早', at: 1_700_000_001_000 })
+    await nextTick()
+    const input = wrapper.find('[data-role="chat-input"]')
+    await input.setValue('早啊')
+    await wrapper.find('form').trigger('submit')
+    await nextTick()
+
+    const rows = wrapper.findAll('.chat-row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].classes()).not.toContain('chat-row--self')
+    expect(rows[1].classes()).toContain('chat-row--self')
+    expect(rows[1].find('.chat-row__text').text()).toBe('早啊')
   })
 })

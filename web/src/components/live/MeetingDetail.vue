@@ -111,6 +111,7 @@
               :name="m.speaker || t('meeting.detail.anonymous')"
               :at="m.at"
               :text="m.text"
+              :self="isMine(m)"
             />
           </div>
         </template>
@@ -161,6 +162,7 @@ import TranscriptList from './TranscriptList.vue'
 import MeetingMarkdown from './MeetingMarkdown.vue'
 import MeetingResources from './MeetingResources.vue'
 import { useDialog } from '@/composables/useDialog'
+import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation'
 import {
@@ -178,6 +180,7 @@ import {
 } from '@/composables/useMeetingViewState'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 import { formatClockTime } from '@/utils/format'
+import { resolveUserNickname } from '@/utils/userNickname'
 import { meetingDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
 import { parseVttCues, vttToPlainText, type VttCue } from '@/utils/vtt'
 import { groupNoteSegments, type NoteBlock } from '@/composables/liveNotes'
@@ -193,6 +196,20 @@ const { t, locale } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
 const history = useMeetingHistory()
+const { serverConfig } = useSettingsConfig()
+
+/**
+ * The record has no "self" flag — it stores the speaker NAME the sender used.
+ * Matching it against the local nickname is what puts our own lines on the
+ * right, the way every other chat does. No nickname configured means we cannot
+ * tell, and then nothing is mirrored rather than guessing wrong.
+ */
+const myName = computed(() => resolveUserNickname(serverConfig.value?.user))
+
+function isMine(m: MeetingChatMessage): boolean {
+  return myName.value !== '' && m.speaker === myName.value
+}
+
 const { openFilePath } = useFilePathAnnotation()
 
 type Tab = MeetingDetailTab

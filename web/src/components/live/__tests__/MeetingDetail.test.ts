@@ -27,6 +27,13 @@ vi.mock('@/utils/attachDrag', () => ({
 }))
 
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ show: vi.fn() }) }))
+// The record mirrors the reader's own lines by matching the stored speaker name
+// against the local nickname; pin that nickname so the test is not dependent on
+// whatever this machine's config says.
+vi.mock('@/composables/useSettingsConfig', () => ({
+  useSettingsConfig: () => ({ serverConfig: { value: { user: { nickname: 'Alex' } } } }),
+}))
+
 // The resource list is its own composable with its own test; here it only
 // needs to exist (the detail reads its count for the tab badge).
 vi.mock('@/composables/useMeetingResources', () => ({
@@ -151,11 +158,13 @@ describe('MeetingDetail', () => {
 
     await w.find('[data-tab="chat"]').trigger('click')
     expect(w.text()).toContain('hello')
-    // Same row component as the live chat: avatar, name/time, bubble.
+    // Same row component as the live chat: avatar, name/time, bubble — and the
+    // reader's own lines are mirrored, like every other chat.
     const rows = w.findAll('.chat-row')
     expect(rows).toHaveLength(1)
     expect(rows[0].find('.sa').attributes('data-name')).toBe('Alex')
     expect(rows[0].find('.chat-row__text').text()).toBe('hello')
+    expect(rows[0].classes()).toContain('chat-row--self')
     expect(w.find('[data-tab="chat"]').text()).toContain('1')
     expect(w.findAll('.meeting-footer .fbtn').some((b) => b.text() === enMessages.meeting.detail.copyAll)).toBe(true)
   })
@@ -297,5 +306,26 @@ describe('MeetingDetail', () => {
       w.unmount()
       vi.useRealTimers()
     }
+  })
+})
+
+describe('MeetingDetail chat sides', () => {
+  it('keeps other people on the left and the reader on the right', async () => {
+    chatMock.mockResolvedValue({
+      messages: [
+        { id: 1, clientId: 'c1', speaker: '小明', text: '早', at: 1_700_000_001_000 },
+        { id: 2, clientId: 'c2', speaker: 'Alex', text: '早啊', at: 1_700_000_002_000 },
+      ],
+      count: 2,
+    })
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-tab="chat"]').trigger('click')
+
+    const rows = w.findAll('.chat-row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].classes()).not.toContain('chat-row--self')
+    expect(rows[1].classes()).toContain('chat-row--self')
   })
 })
