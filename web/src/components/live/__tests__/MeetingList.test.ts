@@ -16,10 +16,13 @@ vi.mock('lucide-vue-next', () => {
   return {
     MonitorUp: stub,
     Check: stub,
+    CheckCircle2: stub,
     ChevronRight: stub,
     Link: stub,
     Plus: stub,
     RefreshCw: stub,
+    RotateCw: stub,
+    RotateCcw: stub,
     Trash2: stub,
   }
 })
@@ -39,13 +42,15 @@ vi.mock('@/composables/useDialog', () => ({
 }))
 
 const sessions = ref<unknown[]>([])
+const loading = ref(false)
+const loadMock = vi.hoisted(() => vi.fn(async () => undefined))
 const removeMock = vi.hoisted(() => vi.fn(async () => ({ ok: true })))
 vi.mock('@/composables/useMeetingHistory', () => ({
   useMeetingHistory: () => ({
     sessions,
-    loading: ref(false),
+    loading,
     error: ref(''),
-    load: vi.fn(async () => undefined),
+    load: loadMock,
     remove: removeMock,
   }),
 }))
@@ -78,6 +83,49 @@ function record(over: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks()
   sessions.value = []
+  loading.value = false
+})
+
+describe('MeetingList header', () => {
+  it('draws the title, count and refresh in a single bar', () => {
+    sessions.value = [record(), record({ token: 'two' })]
+    const w = mountList()
+
+    expect(w.findAll('.meeting-header')).toHaveLength(1)
+    // The second bar was the bug: the tab title and the list title stacked.
+    expect(w.find('.meeting-toolbar').exists()).toBe(false)
+    const header = w.find('.meeting-header')
+    expect(header.find('.meeting-header__title').text()).toBe(enMessages.meeting.list.title)
+    expect(header.find('.meeting-header__count').text()).toBe('2 total')
+    expect(header.find('[data-action="meeting-refresh"]').exists()).toBe(true)
+  })
+
+  it('reloads through the shared refresh button', async () => {
+    const w = mountList()
+    loadMock.mockClear()
+
+    await w.find('[data-action="meeting-refresh"]').trigger('click')
+
+    expect(loadMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('spins and blocks re-entry while a reload is in flight', async () => {
+    const w = mountList()
+    const btn = () => w.find('[data-action="meeting-refresh"]')
+
+    expect(btn().classes()).not.toContain('refresh-spin--active')
+
+    loading.value = true
+    await flushPromises()
+
+    // The spin is the feedback the old bare icon button never gave.
+    expect(btn().classes()).toContain('refresh-spin--active')
+    expect(btn().attributes('disabled')).toBeDefined()
+
+    loading.value = false
+    await flushPromises()
+    expect(btn().classes()).not.toContain('refresh-spin--active')
+  })
 })
 
 describe('MeetingList', () => {

@@ -1,18 +1,22 @@
 <template>
   <div class="meeting-panel">
+    <!-- One bar, not two: the tab title and the list's own title said the same
+         thing stacked 36px apart. The record count rides next to the title and
+         the refresh control closes the row, the way every other panel header
+         does it (git history, forge, file manager). -->
     <div class="meeting-header">
       <span class="meeting-header__icon"><component :is="MEETING_ICON" :size="14" /></span>
-      <span class="meeting-header__title">{{ t('meeting.title') }}</span>
+      <span class="meeting-header__title">{{ t('meeting.list.title') }}</span>
+      <span class="meeting-header__count count-badge">{{ t('meeting.list.count', { n: sessions.length }) }}</span>
       <span class="meeting-header__spacer" />
-    </div>
-
-    <div class="meeting-toolbar">
-      <span class="meeting-toolbar__title">{{ t('meeting.list.title') }}</span>
-      <span class="meeting-toolbar__count">{{ t('meeting.list.count', { n: sessions.length }) }}</span>
-      <span class="meeting-toolbar__spacer" />
-      <button class="meeting-icon-btn" type="button" :title="t('meeting.list.refresh')" :disabled="loading" @click="reload">
-        <RefreshCw :size="14" />
-      </button>
+      <RefreshButton
+        class="meeting-icon-btn meeting-refresh-btn"
+        :loading="loading"
+        :disabled="loading"
+        :title="t('meeting.list.refresh')"
+        data-action="meeting-refresh"
+        @click="reload"
+      />
     </div>
 
     <div class="meeting-body">
@@ -97,9 +101,10 @@
  */
 import { computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronRight, Link as LinkIcon, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { Check, ChevronRight, Link as LinkIcon, Plus, Trash2 } from 'lucide-vue-next'
 import { MEETING_ICON } from '@/utils/meetingIcon'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import { meetingQuoteLabel, useMeetingHistory, type MeetingRecord } from '@/composables/useMeetingHistory'
@@ -210,19 +215,22 @@ onMounted(() => {
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
 }
-.meeting-header__spacer { flex: 1; }
-
-.meeting-toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3, 6px);
-  padding: var(--space-5, 10px) var(--space-6, 12px);
-  border-bottom: 1px solid var(--border-color, #e5e5e5);
-  flex-shrink: 0;
+/* Shape and geometry come from the shared .count-badge; only the colour is
+   local so the pill matches this tab's muted header. */
+.meeting-header__count {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-weight: var(--font-weight-bold);
 }
-.meeting-toolbar__title { font-size: var(--font-size-sm); font-weight: 600; }
-.meeting-toolbar__count { font-size: var(--font-size-xs); color: var(--text-muted); }
-.meeting-toolbar__spacer { flex: 1; }
+.meeting-header__spacer { flex: 1; }
+/* Press feedback matches the other panel headers' refresh buttons (the shared
+   .drilldown-refresh-btn / .forge-header-btn scale). The spin + green check
+   come from RefreshButton itself. */
+.meeting-refresh-btn {
+  transition: transform var(--duration-slow) ease, background var(--duration-slow) ease,
+    color var(--duration-slow) ease;
+}
+.meeting-refresh-btn:active:not(:disabled) { transform: scale(0.9); }
 
 .meeting-body {
   flex: 1;
