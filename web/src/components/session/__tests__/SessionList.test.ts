@@ -113,7 +113,7 @@ vi.mock('vue-draggable-plus', () => ({
     // Declared (not left to fallthrough) so the "prop is absent" assertions are
     // meaningful: an undeclared prop would land in attrs and read undefined even
     // when the component set it.
-    props: ['modelValue', 'handle', 'tag', 'animation', 'delay', 'delayOnTouchOnly', 'filter', 'preventOnFilter', 'onMove', 'draggable'],
+    props: ['modelValue', 'handle', 'tag', 'animation', 'delay', 'delayOnTouchOnly', 'filter', 'preventOnFilter', 'onMove', 'draggable', 'fallbackTolerance'],
     emits: ['update:modelValue', 'start', 'end'],
     setup(props, { slots, emit }) {
       mockDraggable.emit = emit
@@ -1641,6 +1641,73 @@ describe('SessionList', () => {
 
       expect(mockDraggable.props?.filter).toBe('.session-row.pinned')
       expect(mockDraggable.props?.preventOnFilter).toBe(false)
+    })
+
+    it('tolerates finger wobble on the ⋮ button so a tap still opens the menu', async () => {
+      // Reported on Android: tapping the ⋮ several times does nothing, the row
+      // flickers, and only a tap that happens to be perfectly still opens the
+      // menu.
+      //
+      // Cause: the ⋮ button is BOTH the menu opener and Sortable's drag handle.
+      // With the default `fallbackTolerance: 0`, the FIRST touchmove of any
+      // size — a real finger always produces 1–3px before lifting — promotes
+      // the press to a drag: the row gains .sortable-chosen/.sortable-ghost
+      // (the flicker the user sees) and Sortable's global capture-phase click
+      // swallows the click, so the menu never opens. A perfectly still tap is
+      // the only one that survives, which is exactly the "aim precisely above
+      // the dots and it still usually fails" behaviour reported.
+      //
+      // A non-zero tolerance makes Sortable ignore movement below the
+      // threshold, so a wobbling tap stays a click. A deliberate drag still
+      // exceeds it immediately (the row is ~44dp tall).
+      //
+      // Scope of this test: it pins the WIRING — the component must hand the
+      // library a tolerance large enough to absorb a finger wobble. It cannot
+      // simulate the gesture: jsdom never mounts Sortable (the library needs a
+      // real root element and throws before the component's template exists).
+      // The behaviour itself is covered end-to-end by
+      // e2e/specs/session-row-menu-touch.spec.ts, which drives the real library
+      // with a deliberately wobbling touch and is verified to fail with the
+      // tolerance left at its default.
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const tolerance = mockDraggable.props?.fallbackTolerance
+      expect(
+        tolerance,
+        'the ⋮ drag handle must set a non-zero fallbackTolerance, or any tap with a 1px wobble becomes a drag',
+      ).toBeTypeOf('number')
+      expect(tolerance as number).toBeGreaterThanOrEqual(8)
+      // Must stay well under the row's touch target, or a deliberate drag would
+      // need a visible lurch before it starts.
+      expect(tolerance as number).toBeLessThanOrEqual(16)
+    })
+
+    it('still opens the row menu from the ⋮ button that doubles as the drag handle', async () => {
+      // Regression guard for the Android report: the ⋮ button is BOTH the menu
+      // opener and the drag handle, so anything that makes Sortable claim the
+      // press early (a zero tolerance, a `handle` that also matches the row,
+      // a `delay` that eats the tap) silently breaks the menu. This asserts the
+      // two roles coexist: the same element opens the menu AND is the only
+      // element Sortable will start a drag from.
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      // 1. The drag must start from the ⋮ button, not the row body — the row
+      //    body has to stay free for scrolling (touch) and text selection
+      //    (desktop).
+      expect(mockDraggable.props?.handle).toBe('.session-more-btn')
+      expect(mockDraggable.props?.delay).toBeUndefined()
+      expect(mockDraggable.props?.delayOnTouchOnly).toBeUndefined()
+
+      // 2. The same button must still deliver a plain click to the menu.
+      await openRowMenu(wrapper, 's1')
+      const menus = document.body.querySelectorAll('.context-menu.visible')
+      expect(menus.length, 'a click on the ⋮ button must open exactly one row menu').toBe(1)
     })
 
     it('keeps the ⋮ menu icon on the button, including while dragging', async () => {
