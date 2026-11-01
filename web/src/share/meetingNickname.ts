@@ -1,3 +1,5 @@
+import { GROUP_USER_TARGET_NAME } from '@/utils/groupRouting'
+
 /**
  * The viewer's nickname on the public share page.
  *
@@ -19,10 +21,19 @@ export const MEETING_NICK_KEY = 'clawbench_meeting_nick'
  */
 export const MEETING_NICK_MAX = 32
 
-/** Read the remembered nickname, or '' when storage is unavailable. */
+/**
+ * Read the remembered nickname, or '' when storage is unavailable.
+ *
+ * A remembered value equal to the fallback literal is treated as unset: that
+ * literal is not an identity, and pre-filling it would make every viewer who
+ * never configured a name show up as "User" — indistinguishable in the
+ * publisher's audience list. A guest may still TYPE it deliberately; only the
+ * automatic pre-fill refuses to invent a shared name.
+ */
 export function readMeetingNick(): string {
   try {
-    return localStorage.getItem(MEETING_NICK_KEY) ?? ''
+    const v = localStorage.getItem(MEETING_NICK_KEY) ?? ''
+    return v.trim() === GROUP_USER_TARGET_NAME ? '' : v
   } catch {
     return ''
   }

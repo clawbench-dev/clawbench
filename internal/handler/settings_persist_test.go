@@ -998,3 +998,31 @@ func TestWriteConfigYAML_MigratesLegacyNicknameKey(t *testing.T) {
 	assert.EqualValues(t, 20, getNestedValue(raw, "chat.page_size"),
 		"unrelated keys must be untouched")
 }
+
+// The old ApplyDefaults wrote the fallback literal into every config. Migrating
+// it would make an unconfigured install look configured (and pre-fill "User" in
+// the meeting UI), so a legacy value equal to the fallback is dropped: empty
+// now means "not configured".
+func TestWriteConfigYAML_DropsLegacyFallbackNickname(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+
+	configPath := filepath.Join(model.DataDir, "config", "config.yaml")
+	require.NoError(t, os.WriteFile(configPath,
+		[]byte("chat:\n  user_nickname: User\n  page_size: 20\n"), 0o600))
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.Chat.PageSize = 20
+
+	require.NoError(t, writeConfigYAML(map[string]any{"chat": map[string]any{"page_size": 20}}))
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, yaml.Unmarshal(data, &raw))
+
+	assert.Nil(t, getNestedValue(raw, "user.nickname"),
+		"the fallback literal must not be carried into the config")
+	assert.Nil(t, getNestedValue(raw, "chat.user_nickname"),
+		"the legacy key must still be removed")
+}

@@ -64,9 +64,13 @@ const AutoContinueUnlimited = -1
 // User-identity limits. They are exported because the settings PATCH handler
 // validates against the same numbers the frontend and the prompt builder use.
 const (
-	// DefaultUserNickname is what an unconfigured install shows. It is also the
-	// name the group-chat routing parser reserves for the human user, so an
-	// agent named "User" is rejected.
+	// DefaultUserNickname is the fallback display name applied where the
+	// nickname is USED (group routing, the settings/meeting UI) when the user
+	// never configured one. It is deliberately NOT written into the config: an
+	// empty stored value means "not configured", which is distinguishable from
+	// a user who explicitly chose this word. It is also the name the
+	// group-chat routing parser reserves for the human user, so an agent named
+	// "User" is rejected.
 	DefaultUserNickname = "User"
 	// MaxUserNicknameRunes bounds the nickname. It is written verbatim into the
 	// group-routing tag's targets attribute and shown in routing chips, so it

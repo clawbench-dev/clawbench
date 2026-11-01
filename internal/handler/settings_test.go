@@ -408,16 +408,19 @@ func TestServeConfig_Patch_UserNicknameTrimsWhitespace(t *testing.T) {
 	assert.Equal(t, "老板", model.ConfigInstance.User.Nickname, "surrounding whitespace must be stripped")
 	assert.Equal(t, "老板", model.UserNickname, "the model global must hold the trimmed value")
 
-	// An all-whitespace nickname trims to empty and is rejected (it would be an
-	// unaddressable participant), not silently stored as the default.
+	// An all-whitespace nickname trims to empty, which is a VALID value meaning
+	// "not configured" — the fallback literal is applied where the name is
+	// used, never stored. This is what makes "user set this" distinguishable
+	// from "the user has no name".
 	model.ConfigInstance.User.Nickname = "老板"
 	blank, _ := json.Marshal(map[string]any{"user": map[string]any{"nickname": "   "}})
 	req = httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(blank)))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w = callHandler(ServeConfig, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code, "an all-whitespace nickname must be rejected")
-	assert.Equal(t, "老板", model.ConfigInstance.User.Nickname, "a rejected value must not be stored")
+	assert.Equal(t, http.StatusOK, w.Code, "clearing the nickname must be allowed")
+	assert.Equal(t, "", model.ConfigInstance.User.Nickname, "the cleared value must be stored as empty")
+	assert.Equal(t, "", model.UserNickname, "the model global must hold the cleared value")
 }
 
 // The user profile is the free-form half of the identity: optional, trimmed,

@@ -80,6 +80,23 @@ describe('MeetingJoin', () => {
     expect((w.find('[data-role="meeting-nick"]').element as HTMLInputElement).value).toBe('老板')
   })
 
+  it('does not pre-fill when the account has no nickname', () => {
+    mocks.serverConfig.value = { user: { nickname: '' } }
+    const w = mountJoin()
+    expect((w.find('[data-role="meeting-nick"]').element as HTMLInputElement).value).toBe('')
+    expect(w.find('[data-action="meeting-join-submit"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('does not pre-fill the fallback literal', () => {
+    // "User" is the fallback applied when the account never configured a name.
+    // Pre-filling it would make every unconfigured viewer join as "User" and
+    // become indistinguishable in the publisher's audience list.
+    mocks.serverConfig.value = { user: { nickname: 'User' } }
+    const w = mountJoin()
+    expect((w.find('[data-role="meeting-nick"]').element as HTMLInputElement).value).toBe('')
+    expect(w.find('[data-action="meeting-join-submit"]').attributes('disabled')).toBeDefined()
+  })
+
   it('falls back to the remembered guest name when the account has none', () => {
     localStorage.setItem(MEETING_NICK_KEY, 'Alex')
     const w = mountJoin()

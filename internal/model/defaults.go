@@ -244,15 +244,14 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.Chat.AutoRenameEnabled = true
 	}
 	// --- User identity ---
-	// An empty nickname is never valid (it would be an unaddressable group
-	// participant), so it always falls back to the default — no presence map
-	// needed. Trimming here also covers a hand-edited config.yaml, which
-	// bypasses the PATCH path's normalization; the mention parser trims each
-	// target, so an untrimmed nickname would be unreachable.
+	// The nickname is NOT defaulted to "User" here. The literal is a fallback
+	// applied where the name is actually used (group routing's
+	// groupUserTarget(), the settings/meeting UI), so an empty stored value
+	// means "the user never configured one" — which is distinguishable from a
+	// user who explicitly chose the word "User". Trimming covers a hand-edited
+	// config.yaml; the mention parser trims each target, so an untrimmed
+	// nickname would be unreachable.
 	cfg.User.Nickname = strings.TrimSpace(cfg.User.Nickname)
-	if cfg.User.Nickname == "" {
-		cfg.User.Nickname = DefaultUserNickname
-	}
 	// The profile is injected into every agent system prompt, so a hand-edited
 	// value is clamped rather than allowed to grow without bound. The PATCH
 	// path rejects an over-long value with a 400 instead of silently trimming.

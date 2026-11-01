@@ -591,7 +591,9 @@ const serverDefaults: Record<string, unknown> = {
   'chat.auto_continue_max_retries': 3,
   'chat.restart_resume_window_minutes': 60,
   'chat.auto_rename_enabled': true,
-  'user.nickname': 'User',
+  // Empty = not configured. The literal "User" is a fallback applied where the
+  // name is used, so an unconfigured install must not look configured here.
+  'user.nickname': '',
   'user.profile': '',
   'chat.group_max_speeches': 100,
   'session.max_count': 15,

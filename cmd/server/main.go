@@ -904,9 +904,15 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Migrate legacy chat.user_nickname into user.nickname. The new value wins
 	// when both are present (a user who already edited the new key must not be
-	// overwritten by the stale one); ApplyDefaults then fills the default.
-	if strings.TrimSpace(cfg.User.Nickname) == "" && legacyUserNickname != "" {
-		cfg.User.Nickname = legacyUserNickname
+	// overwritten by the stale one). A legacy value equal to the fallback
+	// literal is DROPPED: the old ApplyDefaults materialized "User" into every
+	// config, so keeping it would make an unconfigured install look configured
+	// (and would pre-fill "User" in the meeting UI). An empty value now means
+	// "not configured", and the literal is applied at use time.
+	if strings.TrimSpace(cfg.User.Nickname) == "" {
+		if legacy := strings.TrimSpace(legacyUserNickname); legacy != "" && legacy != model.DefaultUserNickname {
+			cfg.User.Nickname = legacy
+		}
 	}
 
 	// Apply all defaults (returns auto-generated password if created)

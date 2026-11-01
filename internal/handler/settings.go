@@ -1500,13 +1500,15 @@ func normalizeUserIdentityInPatch(patch map[string]any) {
 	}
 }
 
-// validUserNickname reports whether s is a usable user nickname. It is written
+// validUserNickname reports whether s is a usable user nickname. An EMPTY
+// value is valid: it means "not configured", and the fallback literal is
+// applied where the name is used (group routing / UI). The rest is written
 // verbatim into the group-routing tag's targets attribute, so the protocol
 // delimiters (double quote, angle brackets, comma) and control characters are
 // rejected — the parser splits targets on commas and closes the attribute on a
 // quote. Internal spaces are allowed.
 func validUserNickname(s string) bool {
-	if strings.TrimSpace(s) == "" || utf8.RuneCountInString(s) > model.MaxUserNicknameRunes {
+	if utf8.RuneCountInString(s) > model.MaxUserNicknameRunes {
 		return false
 	}
 	for _, r := range s {
@@ -1595,8 +1597,10 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			// Bidirectional uniqueness: the nickname must not shadow an existing
 			// agent (the agent-side guard rejects the reverse). Exact match, to
 			// mirror AgentNameTaken. v is already trimmed by
-			// normalizeUserIdentityInPatch.
-			if service.AgentNameTaken(v, "") {
+			// normalizeUserIdentityInPatch. An empty value means "use the
+			// fallback", which is the reserved "User" name — no collision check
+			// is needed for the empty string itself.
+			if v != "" && service.AgentNameTaken(v, "") {
 				return errUserNicknameTaken
 			}
 		}
@@ -2225,12 +2229,21 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 
 	if user, ok := patch["user"].(map[string]any); ok {
 		if v, ok := user["nickname"].(string); ok {
-			// The group's pending private notes are keyed by the user's name;
-			// migrate them so a rename does not orphan an undelivered note
-			// (delivered on the target's next turn). Old value is the one still
-			// in memory before this assignment.
-			if old := model.UserNickname; old != "" && old != v {
-				service.RenameUserPendingBcc(old, v)
+			// Pending private notes are keyed by the user's ADDRESSABLE name,
+			// which is the fallback literal when the config is empty. Compare
+			// those effective targets, not the raw strings: clearing a nickname
+			// changes the target from the old name to "User" (and setting one
+			// changes it from "User" to the new name).
+			oldTarget := model.UserNickname
+			if oldTarget == "" {
+				oldTarget = model.DefaultUserNickname
+			}
+			newTarget := v
+			if newTarget == "" {
+				newTarget = model.DefaultUserNickname
+			}
+			if oldTarget != newTarget {
+				service.RenameUserPendingBcc(oldTarget, newTarget)
 			}
 			cfg.User.Nickname = v
 		}
@@ -2848,7 +2861,14 @@ func writeConfigYAML(patch map[string]any) error {
 				raw["user"] = userMap
 			}
 			if _, hasNew := userMap["nickname"]; !hasNew {
-				userMap["nickname"] = legacy
+				// The old ApplyDefaults materialized the fallback literal into
+				// every config. Carrying that over would make an unconfigured
+				// install look configured, so it is dropped instead: empty now
+				// means "not configured".
+				legacyStr, _ := legacy.(string)
+				if strings.TrimSpace(legacyStr) != model.DefaultUserNickname {
+					userMap["nickname"] = legacy
+				}
 			}
 			delete(chatMap, "user_nickname")
 		}

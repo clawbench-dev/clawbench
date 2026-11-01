@@ -51,6 +51,17 @@ describe('LiveJoinGate', () => {
     expect(w.find('[data-action="join-meeting"]').attributes('disabled')).toBeUndefined()
   })
 
+  it('does not pre-fill the fallback literal', () => {
+    // "User" is a fallback applied when nobody configured a name, not an
+    // identity. Pre-filling it would make every such viewer indistinguishable
+    // in the publisher's audience list.
+    localStorage.setItem(MEETING_NICK_KEY, 'User')
+    const w = mountGate()
+
+    expect((w.find('[data-role="join-nick"]').element as HTMLInputElement).value).toBe('')
+    expect(w.find('[data-action="join-meeting"]').attributes('disabled')).toBeDefined()
+  })
+
   it('shows the meeting title the share page resolved', () => {
     const w = mountGate()
     expect(w.text()).toContain('Release review')

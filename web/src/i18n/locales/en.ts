@@ -2971,7 +2971,7 @@ export default {
       archiveRetentionDaysDesc: 'Days to keep archived sessions before auto-purge (0 = keep forever)',
       identitySection: 'My Identity',
       userNickname: 'My Nickname',
-      userNicknameDesc: 'The name agents call you in group chat, and the display name used when you join a meeting (default "User"). Must not match any agent name, and cannot contain quotes, angle brackets, commas or control characters',
+      userNicknameDesc: 'The name agents call you in group chat, and the display name used when you join a meeting. Leave empty to use the default "User". Must not match any agent name, and cannot contain quotes, angle brackets, commas or control characters',
       userProfile: 'About Me',
       userProfileDesc: 'Describe yourself: role, expertise, preferences or working style. Injected into the system prompt of every agent so they understand you better (max 4000 characters)',
       groupMaxSpeeches: 'Agent discussion limit',

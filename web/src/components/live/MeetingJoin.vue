@@ -63,6 +63,7 @@ import { getNative } from '@/utils/clawbenchNative'
 import { useToast } from '@/composables/useToast'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { MEETING_NICK_MAX, readMeetingNick, saveMeetingNick } from '@/share/meetingNickname'
+import { GROUP_USER_TARGET_NAME } from '@/utils/groupRouting'
 
 const emit = defineEmits<{ back: [] }>()
 
@@ -72,11 +73,15 @@ const { serverConfig, setServerValue } = useSettingsConfig()
 const url = ref('')
 const error = ref('')
 
-/** The account nickname from /api/config, or '' before it loads. */
+/** The account nickname from /api/config, or '' when unset/not loaded. */
 function configuredNickname(): string {
   const user = serverConfig.value?.user
   const v = user && typeof user === 'object' ? (user as Record<string, unknown>).nickname : undefined
-  return typeof v === 'string' ? v.trim() : ''
+  const name = typeof v === 'string' ? v.trim() : ''
+  // The fallback literal is not an identity: never pre-fill it. Otherwise every
+  // account that never configured a name joins as "User", and the publisher's
+  // audience list cannot tell those viewers apart.
+  return name === GROUP_USER_TARGET_NAME ? '' : name
 }
 
 /**
