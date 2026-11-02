@@ -64,6 +64,15 @@ describe('MemberScreenSurface', () => {
     expect(withNotes.find('[data-panel="notes"] .transcript__row').exists()).toBe(true)
   })
 
+  it('labels the 听记 button with a sentence, never a raw key', () => {
+    // It shipped as the literal "liveShare.notes": that path resolves to the
+    // notes SUB-NAMESPACE (an object), so vue-i18n rendered the key itself.
+    const w = mountSurface({ noteBlocks: BLOCKS, notesEnabled: true })
+    const label = w.find('[data-action="screen-notes"]').text()
+    expect(label).toBe(enMessages.share.live.notes)
+    expect(label).not.toContain('liveShare')
+  })
+
   it('asks the caller to open the panel when 听记 is pressed while it is closed', async () => {
     const w = mountSurface({ chatOpen: false, noteBlocks: BLOCKS, notesEnabled: true })
     await w.find('[data-action="screen-notes"]').trigger('click')

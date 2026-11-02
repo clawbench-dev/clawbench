@@ -40,13 +40,13 @@
         v-if="notesAvailable"
         :live="tab === 'notes' && chatOpen"
         :aria-pressed="tab === 'notes' && chatOpen"
-        :aria-label="t('liveShare.notes')"
-        :title="t('liveShare.notesTitle')"
+        :aria-label="t('share.live.notesTitle')"
+        :title="t('share.live.notesTitle')"
         data-action="screen-notes"
         @click="onNotesButton"
       >
         <template #icon><FileText :size="16" /></template>
-        {{ t('liveShare.notes') }}
+        {{ t('share.live.notes') }}
       </LiveDockButton>
       <LiveDockButton
         v-if="canSwitch"

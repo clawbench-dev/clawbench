@@ -92,6 +92,38 @@ describe('i18n literal keys', () => {
     ).toEqual([])
   })
 
+  /**
+   * The ternary form: `t(flag ? 'a.b' : 'c.d')`.
+   *
+   * The scan above only sees a quoted key directly after `t(`, so this shape
+   * slipped through — and it shipped: the host's member-screen dock rendered
+   * the raw "liveShare.notes" because that key resolves to an OBJECT (the
+   * notes sub-namespace), which `isPresent` rejects but nothing ever asked it.
+   */
+  it('resolves keys chosen by a ternary', () => {
+    const root = webSrcRoot()
+    const missing: string[] = []
+
+    for (const file of sourceFiles(root)) {
+      const src = readFileSync(file, 'utf8')
+      // Dotted keys only: a single-segment key is a locally-scoped one
+      // (`useScope: 'local'`), which the global locale does not own.
+      for (const m of src.matchAll(/\bt\(\s*[^()]*?\?\s*'([a-zA-Z][\w]*(?:\.[\w]+)+)'\s*:\s*'([a-zA-Z][\w]*(?:\.[\w]+)+)'/g)) {
+        for (const key of [m[1], m[2]]) {
+          const path = key.split('.')
+          if (!isPresent(lookup(en, path)) || !isPresent(lookup(zh, path))) {
+            missing.push(`${key}  (${file.replace(root + '/', '')})`)
+          }
+        }
+      }
+    }
+
+    expect(
+      missing,
+      `these conditional t() keys do not resolve to a string and would render as the raw key:\n${missing.join('\n')}`,
+    ).toEqual([])
+  })
+
   // The scan is only meaningful if it actually reads the tree and finds keys —
   // a broken glob would report "0 missing" forever and silently stop guarding.
   it('actually scans the tree (guard is not vacuous)', () => {
