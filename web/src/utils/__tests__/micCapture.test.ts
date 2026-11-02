@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { acquireMic, classifyMicError, describeMicError, microphonePermission } from '../micCapture'
+import { acquireMic, classifyMicError, describeMicError, mediaPermission, microphonePermission } from '../micCapture'
 
 describe('microphonePermission', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -14,6 +14,14 @@ describe('microphonePermission', () => {
       permissions: { query: vi.fn(async () => ({ state: 'denied' })) },
     })
     expect(await microphonePermission()).toBe('denied')
+  })
+
+  it('asks about the camera by its own name', async () => {
+    const query = vi.fn(async () => ({ state: 'granted' }))
+    vi.stubGlobal('navigator', { permissions: { query } })
+
+    expect(await mediaPermission('camera')).toBe('granted')
+    expect(query).toHaveBeenCalledWith({ name: 'camera' })
   })
 
   it('answers "unknown" where the API cannot be asked', async () => {

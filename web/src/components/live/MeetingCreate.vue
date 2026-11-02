@@ -61,28 +61,31 @@
           {{ sourceHint }}
         </div>
 
+        <!-- Camera and microphone are card choices too, with the off state as
+             the first card: one control per decision instead of a checkbox plus
+             a list underneath. -->
+        <DeviceChoiceGrid
+          v-if="cameraAvailable"
+          kind="video"
+          :label="t('meeting.create.cameraDevices')"
+          :off-label="t('meeting.create.cameraOffCard')"
+          :selected-id="cameraChoice"
+          @select="cameraChoice = $event"
+        />
+
+        <div class="meeting-hint" data-role="meeting-picture">
+          {{ pictureHint }}
+        </div>
+
+        <DeviceChoiceGrid
+          kind="audio"
+          :label="t('meeting.create.micDevices')"
+          :off-label="t('meeting.create.micOffCard')"
+          :selected-id="micChoice"
+          @select="micChoice = $event"
+        />
+
         <div class="meeting-checks">
-          <label class="meeting-check" :class="{ 'meeting-check--disabled': !cameraAvailable }">
-            <input
-              type="checkbox"
-              :checked="camera && cameraAvailable"
-              :disabled="!cameraAvailable"
-              data-role="meeting-camera"
-              @change="camera = ($event.target as HTMLInputElement).checked"
-            />
-            <span class="meeting-check__icon"><Video :size="13" /></span>
-            {{ t('meeting.create.camera') }}
-          </label>
-          <label class="meeting-check">
-            <input
-              type="checkbox"
-              :checked="microphone"
-              data-role="meeting-mic"
-              @change="microphone = ($event.target as HTMLInputElement).checked"
-            />
-            <span class="meeting-check__icon"><Mic :size="13" /></span>
-            {{ t('meeting.create.mic') }}
-          </label>
           <label class="meeting-check">
             <input
               type="checkbox"
@@ -94,19 +97,6 @@
             {{ t('meeting.create.notes') }}
           </label>
         </div>
-
-        <div class="meeting-hint meeting-hint--indent" data-role="meeting-picture">
-          {{ pictureHint }}
-        </div>
-
-        <!-- Which input, not how many: a meeting publishes ONE microphone, so
-             this is a single choice that replaces the previous one. Hidden when
-             there is nothing to choose between. -->
-        <MicDeviceList
-          v-if="microphone"
-          :selected-id="micDeviceId"
-          @select="micDeviceId = $event"
-        />
       </template>
     </div>
 
@@ -139,11 +129,11 @@
  */
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Mic, NotebookPen, Video } from 'lucide-vue-next'
+import { ArrowLeft, NotebookPen } from 'lucide-vue-next'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
-import MicDeviceList from '@/components/live/MicDeviceList.vue'
+import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
 import { useToast } from '@/composables/useToast'
-import { useMeetingOptions } from '@/composables/useMeetingOptions'
+import { DEFAULT_DEVICE, useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useMeetingNickname } from '@/composables/useMeetingNickname'
 import { MEETING_NICK_MAX } from '@/share/meetingNickname'
 import {
@@ -162,7 +152,7 @@ const emit = defineEmits<{ back: []; started: [] }>()
 const { t } = useI18n()
 const toast = useToast()
 const share = useLiveShare()
-const { microphone, notes, camera, micDeviceId } = useMeetingOptions()
+const { micChoice, cameraChoice, notes } = useMeetingOptions()
 const { nickname, persist } = useMeetingNickname()
 
 /**
@@ -225,7 +215,7 @@ const unsupportedHint = computed(() => {
 })
 
 /** Camera on AND usable — a camera the OS cannot provide is not a picture. */
-const cameraOn = computed(() => camera.value && cameraAvailable.value)
+const cameraOn = computed(() => cameraChoice.value !== '' && cameraAvailable.value)
 
 /**
  * One line for the camera/screen combination — four states, not two.
@@ -288,7 +278,10 @@ async function loadSources(): Promise<void> {
       const screen = sources.value.find((s) => s.kind === 'screen')
       screenChoice.value = screen?.id ?? sources.value[0]?.id ?? ''
     }
-    if (sources.value.length === 0) camera.value = hasCamera
+    // No screen to share: the camera is the only picture left, so it starts on.
+    if (sources.value.length === 0 && hasCamera && cameraChoice.value === '') {
+      cameraChoice.value = DEFAULT_DEVICE
+    }
     await nextTick()
     measureOverflow()
   } catch (e) {
@@ -338,9 +331,9 @@ async function start(): Promise<void> {
     const ok = await share.start({
       sourceId: selectedSourceId.value,
       screen: hasScreen.value,
-      microphone: microphone.value,
-      micDeviceId: microphone.value ? micDeviceId.value : '',
-      camera: cameraOn.value,
+      microphone: micChoice.value !== '',
+      micDeviceId: micChoice.value === DEFAULT_DEVICE ? '' : micChoice.value,
+      cameraDeviceId: cameraOn.value ? cameraChoice.value : '',
       notes: notes.value,
       shareTitle: title.value.trim(),
       notesLabel,
@@ -361,12 +354,12 @@ async function start(): Promise<void> {
 watch(sources, () => void nextTick(measureOverflow))
 
 onMounted(() => {
-  // The host always starts with the microphone on. The option is a shared
+  // The host always starts with the microphone on. The choice is a shared
   // singleton (the running stage mutes/unmutes the same ref), so a previous
-  // meeting — or a previous visit to this form — may have left it off. It is a
-  // DEFAULT, not a lock: the host can still uncheck it here, and mute later in
-  // the meeting.
-  microphone.value = true
+  // meeting — or a previous visit to this form — may have left it muted. A
+  // chosen DEVICE is kept; only "muted" is reset. It stays a default, not a
+  // lock: the mute card is right there.
+  if (micChoice.value === '') micChoice.value = DEFAULT_DEVICE
   if (supported.value) {
     void loadSources()
   }

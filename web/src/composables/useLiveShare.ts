@@ -21,6 +21,7 @@ import {
   type ControlMessage,
 } from '@/share/liveControl'
 import { useLiveNotes } from './useLiveNotes'
+import { startMeetingFileTracking, stopMeetingFileTracking, _resetMeetingFileTrackerForTest } from '@/utils/meetingFileTracker'
 import { acquireMic, describeMicError, logMicEnv } from '@/utils/micCapture'
 import { startAndroidScreenCapture, type AndroidCaptureHandle } from './androidScreenCapture'
 
@@ -192,6 +193,14 @@ const cameraEnabled = ref(false)
 const previewCameraStream = shallowRef<MediaStream | null>(null)
 /** Whether the publisher's microphone is currently being sent. */
 const micEnabled = ref(true)
+/**
+ * The device the live microphone came from ('' = the system default).
+ *
+ * Tracked because the UI's cards and the captured stream must agree: selecting
+ * a card re-opens the device only when it is actually a different one, and
+ * "unmute" has to know whether the stream still matches the chosen card.
+ */
+const activeMicDevice = ref('')
 /** Speaker label fn from `start()`, reused when 听记 is switched on mid-meeting. */
 let notesLabelFn: ((channel: string) => string) | undefined
 const peers = new Map<string, PublisherPeer>()
@@ -386,18 +395,30 @@ function micConstraints(deviceId: string): MediaTrackConstraints {
  * meeting onwards).
  */
 export async function listAudioInputs(): Promise<AudioInputDevice[]> {
+  return listInputs('audioinput', 'meeting.create.micDeviceN')
+}
+
+/** The cameras this machine can publish from. Same rules as the microphones. */
+export async function listVideoInputs(): Promise<AudioInputDevice[]> {
+  return listInputs('videoinput', 'meeting.create.cameraDeviceN')
+}
+
+async function listInputs(
+  kind: 'audioinput' | 'videoinput',
+  fallbackKey: string,
+): Promise<AudioInputDevice[]> {
   const md = navigator.mediaDevices
   if (!md?.enumerateDevices) return []
   try {
     const devices = await md.enumerateDevices()
     return devices
-      .filter((d) => d.kind === 'audioinput')
+      .filter((d) => d.kind === kind)
       .map((d, i) => ({
         id: d.deviceId,
-        name: d.label || i18n.global.t('meeting.create.micDeviceN', { n: i + 1 }),
+        name: d.label || i18n.global.t(fallbackKey, { n: i + 1 }),
       }))
   } catch (e) {
-    appLog.w(TAG, 'listAudioInputs failed', e)
+    appLog.w(TAG, `list ${kind} failed`, e)
     return []
   }
 }
@@ -409,7 +430,7 @@ export async function listAudioInputs(): Promise<AudioInputDevice[]> {
  * camera-only call), and each viewer costs the publisher another upload of it.
  * 640×480 at 15 fps is plenty.
  */
-async function acquireCamera(): Promise<MediaStream | null> {
+async function acquireCamera(deviceId = ''): Promise<MediaStream | null> {
   const gum = navigator.mediaDevices?.getUserMedia
   if (!gum) {
     lastCameraError = new Error('getUserMedia is unavailable on this host')
@@ -422,6 +443,9 @@ async function acquireCamera(): Promise<MediaStream | null> {
         width: { ideal: 640 },
         height: { ideal: 480 },
         frameRate: { ideal: 15, max: 20 },
+        // A chosen camera wins; empty means the system default. `{exact: ''}`
+        // would fail everywhere, which is why this is conditional.
+        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
       },
       audio: false,
     })
@@ -430,6 +454,12 @@ async function acquireCamera(): Promise<MediaStream | null> {
     lastCameraError = e
     return null
   }
+}
+
+/** The device a live camera stream came from, as the browser reports it. */
+function cameraDeviceOf(stream: MediaStream | null): string {
+  const track = stream?.getVideoTracks()[0] as { getSettings?: () => { deviceId?: string } } | undefined
+  return track?.getSettings?.().deviceId ?? ''
 }
 
 /**
@@ -579,32 +609,42 @@ async function stopScreen(): Promise<void> {
 }
 
 /**
- * Turn the camera on or off for the rest of the meeting.
+ * Turn the camera on, off, or onto a different device.
  *
- * Turning it on after the meeting started acquires the device now: the m-lines
- * already exist, so only the track has to be attached. Turning it off keeps the
- * track (muted) so turning it back on is instant.
+ * `''` turns it off; `'default'` turns it on with whatever the system picks;
+ * anything else is a `deviceId`. Turning it off keeps the track (muted) so
+ * turning it back on is instant; switching devices opens the new one and
+ * releases the old, and the m-lines are rewired without renegotiating.
  */
-async function setCameraEnabled(on: boolean): Promise<boolean> {
-  if (on) {
-    if (!cameraStream) {
-      cameraStream = await acquireCamera()
-      if (!cameraStream) {
-        error.value = i18n.global.t(cameraErrorKey(lastCameraError))
-        return false
-      }
-      previewCameraStream.value = cameraStream
-    }
-    cameraEnabled.value = true
-    cameraStream.getVideoTracks().forEach((track) => {
-      track.enabled = true
-    })
-  } else {
+async function setCameraDevice(choice: string): Promise<boolean> {
+  if (!choice) {
     cameraEnabled.value = false
     cameraStream?.getVideoTracks().forEach((track) => {
       track.enabled = false
     })
+    await applyPicture()
+    publishPicture()
+    return true
   }
+  const wanted = choice === 'default' ? '' : choice
+  // "System default" with a stream already open means "on": re-opening it would
+  // blink the self-view for no reason. A named device only counts as the same
+  // one when the live stream reports that id.
+  const sameDevice = Boolean(cameraStream) && (wanted === '' || cameraDeviceOf(cameraStream) === wanted)
+  if (!sameDevice) {
+    const next = await acquireCamera(wanted)
+    if (!next) {
+      error.value = i18n.global.t(cameraErrorKey(lastCameraError))
+      return false
+    }
+    cameraStream?.getTracks().forEach((track) => track.stop())
+    cameraStream = next
+    previewCameraStream.value = next
+  }
+  cameraEnabled.value = true
+  cameraStream?.getVideoTracks().forEach((track) => {
+    track.enabled = true
+  })
   await applyPicture()
   publishPicture()
   return true
@@ -617,7 +657,7 @@ export function useLiveShare() {
    *
    * There is no meeting type. The checkboxes are independent — screen, camera,
    * microphone — and every one of them can be flipped again while the meeting
-   * runs (`startScreen` / `stopScreen` / `setCameraEnabled`).
+   * runs (`startScreen` / `stopScreen` / `setCameraDevice`).
    *
    * `sourceId` comes from listCaptureSources(); the host consumes it on the next
    * getDisplayMedia call and clears it immediately.
@@ -649,8 +689,11 @@ export function useLiveShare() {
      * degrades to "no local channel" instead of aborting the meeting.
      */
     micDeviceId?: string
-    /** Capture the publisher's camera as well. */
-    camera?: boolean
+    /**
+     * Which camera to publish: `''` for none, `'default'` for the system
+     * default, otherwise a `deviceId`.
+     */
+    cameraDeviceId?: string
     shareTitle?: string
     /** Enable AI 听记 (transcription + minutes) for this share. */
     notes?: boolean
@@ -674,7 +717,7 @@ export function useLiveShare() {
       //    behind that has to be deleted again.
       const bridge = getNative()
       const wantsScreen = opts.screen ?? Boolean(opts.sourceId)
-      const wantsCamera = Boolean(opts.camera)
+      const wantsCamera = Boolean(opts.cameraDeviceId)
       micEnabled.value = Boolean(opts.microphone)
       notesLabelFn = opts.notesLabel
       if (wantsScreen) {
@@ -687,7 +730,9 @@ export function useLiveShare() {
         }
       }
       if (wantsCamera) {
-        cameraStream = await acquireCamera()
+        cameraStream = await acquireCamera(
+          opts.cameraDeviceId === 'default' ? '' : (opts.cameraDeviceId ?? ''),
+        )
         if (!cameraStream) {
           // A missing camera no longer aborts: without a meeting type there is
           // no "camera-only meeting" that would be left with a black rectangle.
@@ -718,6 +763,7 @@ export function useLiveShare() {
       if (opts.microphone) {
         try {
           micStream = await acquireMic({ audio: micConstraints(opts.micDeviceId ?? '') })
+          activeMicDevice.value = opts.micDeviceId ?? ''
         } catch (e) {
           // A denied microphone must not abort the share: the audience still
           // gets the screen and (possibly) system audio. The notes channel is
@@ -793,6 +839,10 @@ export function useLiveShare() {
       void bridge?.setPublishingActive?.(true)
 
       state.value = 'publishing'
+      // File opens are recorded for the whole meeting, not just while AI 听记
+      // is on: the record answers "what did we look at", which is exactly what
+      // a later summary needs even when nobody recorded audio.
+      startMeetingFileTracking({ token: token.value })
       return true
     } catch (e) {
       appLog.e(TAG, 'start failed', e)
@@ -842,11 +892,33 @@ export function useLiveShare() {
     }
     micStream?.getAudioTracks().forEach((track) => track.stop())
     micStream = next
+    activeMicDevice.value = deviceId
     next.getAudioTracks().forEach((track) => {
       track.enabled = micEnabled.value
     })
     mixer?.setMicStream(next)
     useLiveNotes().setMicStream(next)
+    return true
+  }
+
+  /**
+   * The UI's microphone choice: `''` mutes, `'default'` is the system default,
+   * anything else is a device id.
+   *
+   * One entry point for both halves of the decision, so "pick a device" and
+   * "unmute" can never disagree — picking a card means "publish from this
+   * device", and the device is only re-opened when it actually changed.
+   */
+  async function setMicChoice(choice: string): Promise<boolean> {
+    if (!choice) {
+      setMicEnabled(false)
+      return true
+    }
+    const device = choice === 'default' ? '' : choice
+    if (device !== activeMicDevice.value) {
+      if (!(await switchMicDevice(device))) return false
+    }
+    setMicEnabled(true)
     return true
   }
 
@@ -1406,6 +1478,11 @@ export function useLiveShare() {
     const hadNotes = notes.phase.value !== 'idle'
     if (hadNotes) await notes.stopCapture()
 
+    // Close the file timeline BEFORE the socket goes away: the server stamps
+    // every still-open interval when the publisher detaches, and an interval we
+    // are still holding would be stored with that moment as its end.
+    await stopMeetingFileTracking()
+
     send({ type: 'end' })
     resetSession()
     state.value = 'idle'
@@ -1468,7 +1545,9 @@ export function useLiveShare() {
     micEnabled,
     setMicEnabled,
     switchMicDevice,
-    setCameraEnabled,
+    setMicChoice,
+    activeMicDevice,
+    setCameraDevice,
     startScreen,
     stopScreen,
     startNotes,
@@ -1481,6 +1560,7 @@ export function _resetLiveShareForTest(): void {
   resetSession()
   controlHandlers.clear()
   useLiveNotes().reset()
+  _resetMeetingFileTrackerForTest()
   state.value = 'idle'
   token.value = ''
   shareUrl.value = ''

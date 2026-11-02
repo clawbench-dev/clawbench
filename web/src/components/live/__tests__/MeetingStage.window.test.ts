@@ -78,8 +78,9 @@ vi.mock('@/composables/useLiveShare', async () => {
     previewCameraStream: sr(null),
     micEnabled: r(true),
     setMicEnabled: vi.fn(),
-    switchMicDevice: vi.fn(async () => true),
-    setCameraEnabled: vi.fn(async () => true),
+    setMicChoice: vi.fn(async () => true),
+    activeMicDevice: r(''),
+    setCameraDevice: vi.fn(async () => true),
     startScreen: vi.fn(async () => true),
     stopScreen: vi.fn(async () => undefined),
     startNotes: vi.fn(() => true),
@@ -101,6 +102,7 @@ vi.mock('@/composables/useLiveShare', async () => {
     listCaptureSources: vi.fn(async () => []),
     hasCameraDevice: vi.fn(async () => true),
     listAudioInputs: vi.fn(async () => []),
+    listVideoInputs: vi.fn(async () => []),
   }
 })
 

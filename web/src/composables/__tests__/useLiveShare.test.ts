@@ -933,6 +933,27 @@ describe('listAudioInputs', () => {
   })
 })
 
+describe('listVideoInputs', () => {
+  it('returns only the cameras, numbered when the browser hides their names', async () => {
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        enumerateDevices: vi.fn(async () => [
+          { kind: 'audioinput', deviceId: 'mic-a', label: 'Built-in Microphone' },
+          { kind: 'videoinput', deviceId: 'cam-a', label: '' },
+          { kind: 'videoinput', deviceId: 'cam-b', label: 'USB Camera' },
+        ]),
+      },
+    })
+    const { listVideoInputs } = await import('../useLiveShare')
+
+    const list = await listVideoInputs()
+
+    expect(list.map((d) => d.id)).toEqual(['cam-a', 'cam-b'])
+    expect(list[0].name).toBe('Camera 1')
+    expect(list[1].name).toBe('USB Camera')
+  })
+})
+
 describe('listCaptureSources', () => {
   it('parses the host JSON', async () => {
     bridge.listCaptureSources.mockResolvedValueOnce(
@@ -1260,13 +1281,13 @@ describe('speaking indicator', () => {
 
 describe('camera', () => {
   /** Start a meeting with an explicit source / camera combination. */
-  async function startMeeting(opts: { sourceId?: string; camera?: boolean }) {
+  async function startMeeting(opts: { sourceId?: string; camera?: boolean; cameraDeviceId?: string }) {
     const { useLiveShare } = await import('../useLiveShare')
     const share = useLiveShare()
     const ok = await share.start({
       sourceId: opts.sourceId ?? '',
       microphone: true,
-      camera: opts.camera ?? false,
+      cameraDeviceId: opts.cameraDeviceId ?? (opts.camera ? 'default' : ''),
     })
     return { share, ok }
   }
@@ -1337,7 +1358,7 @@ describe('camera', () => {
   it('toggles the camera with track.enabled and tells the viewers', async () => {
     const { share } = await startMeeting({ sourceId: 'screen:1:0', camera: true })
 
-    await share.setCameraEnabled(false)
+    await share.setCameraDevice('')
     expect(share.cameraEnabled.value).toBe(false)
     expect(cameraStream.getVideoTracks()[0].stopped).toBe(false)
     // Muting, not removing: removing would need a renegotiation, and the
@@ -1415,7 +1436,7 @@ describe('picture changes mid-meeting', () => {
   it('hands the main picture back to the camera when the screen stops', async () => {
     const { useLiveShare } = await import('../useLiveShare')
     const share = useLiveShare()
-    await share.start({ sourceId: 'screen:1:0', microphone: true, camera: true })
+    await share.start({ sourceId: 'screen:1:0', microphone: true, cameraDeviceId: 'default' })
 
     offerCameraLine = true
     const pc = await joinAndOffer('v1')
@@ -1469,7 +1490,7 @@ describe('picture changes mid-meeting', () => {
     const pc = await joinAndOffer('v1')
     expect(pc.transceivers[1].sender.track).toBeNull()
 
-    expect(await share.setCameraEnabled(true)).toBe(true)
+    expect(await share.setCameraDevice('default')).toBe(true)
 
     // No screen: the camera IS the picture, on the main m-line.
     expect(pc.transceivers[1].sender.track?.id).toBe('cam1')
@@ -1484,13 +1505,45 @@ describe('picture changes mid-meeting', () => {
     })
   })
 
+  // One entry point for "mute" and "pick a device", so the card the host sees
+  // and the stream being published cannot disagree.
+  it('mutes and unmutes through the same choice, without reopening the device', async () => {
+    const { share } = await startSharing()
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    const callsAfterStart = gum.mock.calls.length
+
+    expect(await share.setMicChoice('')).toBe(true)
+    expect(share.micEnabled.value).toBe(false)
+    expect(await share.setMicChoice('default')).toBe(true)
+    expect(share.micEnabled.value).toBe(true)
+    // Same device as the live stream: unmuting must not churn the capture.
+    expect(gum.mock.calls.length).toBe(callsAfterStart)
+  })
+
+  it('moves the camera to another device mid-meeting', async () => {
+    const { share } = await startEmpty()
+    expect(await share.setCameraDevice('default')).toBe(true)
+    const oldTrack = cameraStream.getVideoTracks()[0]
+    const next = new FakeStream([new FakeTrack('video', 'cam2')])
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    gum.mockImplementationOnce(async () => next)
+
+    expect(await share.setCameraDevice('cam-b')).toBe(true)
+
+    // The old device is released, and the self-view follows the new stream.
+    expect(oldTrack.stopped).toBe(true)
+    expect(share.previewCameraStream.value).toBe(next)
+    const video = gum.mock.calls[gum.mock.calls.length - 1][0].video
+    expect(video).toMatchObject({ deviceId: { exact: 'cam-b' } })
+  })
+
   it('reports a camera that cannot start instead of pretending it is on', async () => {
     const { share } = await startEmpty()
     ;(navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       Object.assign(new Error('denied'), { name: 'NotAllowedError' }),
     )
 
-    expect(await share.setCameraEnabled(true)).toBe(false)
+    expect(await share.setCameraDevice('default')).toBe(false)
     expect(share.cameraEnabled.value).toBe(false)
     expect(share.videoEnabled.value).toBe(false)
     expect(share.error.value).toBeTruthy()

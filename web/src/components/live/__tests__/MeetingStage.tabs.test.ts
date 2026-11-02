@@ -86,8 +86,9 @@ vi.mock('@/composables/useLiveShare', async () => {
     previewCameraStream: sr(null),
     micEnabled: r(true),
     setMicEnabled: vi.fn(),
-    switchMicDevice: vi.fn(async () => true),
-    setCameraEnabled: vi.fn(async () => true),
+    setMicChoice: vi.fn(async () => true),
+    activeMicDevice: r(''),
+    setCameraDevice: vi.fn(async () => true),
     startScreen: vi.fn(async () => true),
     stopScreen: vi.fn(async () => undefined),
     startNotes: vi.fn(() => true),
@@ -109,6 +110,7 @@ vi.mock('@/composables/useLiveShare', async () => {
     listCaptureSources: vi.fn(async () => []),
     hasCameraDevice: vi.fn(async () => true),
     listAudioInputs: vi.fn(async () => []),
+    listVideoInputs: vi.fn(async () => []),
   }
 })
 
@@ -177,7 +179,7 @@ beforeEach(() => {
   ;(notesApi.phase as { value: string }).value = 'idle'
   ;(notesApi.segments as { value: unknown[] }).value = []
   // The chosen input is a module singleton shared with the create form.
-  useMeetingOptions().micDeviceId.value = ''
+  useMeetingOptions().micChoice.value = 'default'
 })
 
 describe('MeetingStage tabs', () => {
@@ -351,7 +353,7 @@ describe('MeetingStage picture toggles', () => {
       const wrapper = mountPanel()
       await flushPromises()
 
-      expect(wrapper.find('[data-role="stage-camera"]').exists()).toBe(true)
+      expect(wrapper.find('[data-role="device-choice"][data-kind="video"]').exists()).toBe(true)
       expect(wrapper.find('[data-role="camera-self"]').exists()).toBe(true)
       // A camera image has no desktop behind it.
       expect(wrapper.find('[data-action="annotate"]').exists()).toBe(false)
@@ -374,7 +376,7 @@ describe('MeetingStage picture toggles', () => {
     expect(wrapper.find('[data-action="annotate"]').exists()).toBe(true)
   })
 
-  it('turns the camera off through the shared options ref', async () => {
+  it('turns the camera off through the mute card', async () => {
     ;(shareApi.captureKind as { value: unknown }).value = null
     ;(shareApi.previewCameraStream as { value: unknown }).value = { id: 'cam' }
     ;(shareApi.cameraEnabled as { value: boolean }).value = true
@@ -382,8 +384,9 @@ describe('MeetingStage picture toggles', () => {
       const wrapper = mountPanel()
       await flushPromises()
 
-      await wrapper.find('[data-role="stage-camera"]').setValue(false)
-      expect(shareApi.setCameraEnabled).toHaveBeenCalledWith(false)
+      await wrapper.find('[data-role="device-choice"][data-kind="video"] [data-device="__off__"]').trigger('click')
+      await flushPromises()
+      expect(shareApi.setCameraDevice).toHaveBeenCalledWith('')
     } finally {
       ;(shareApi.captureKind as { value: unknown }).value = 'screen'
       ;(shareApi.previewCameraStream as { value: unknown }).value = null
@@ -439,43 +442,46 @@ describe('MeetingStage microphone input', () => {
     { id: 'mic-b', name: 'Headset Microphone' },
   ]
 
-  it('moves the capture to the device that was clicked, and remembers it', async () => {
+  it('moves the capture to the card that was clicked, and remembers it', async () => {
     ;(listAudioInputs as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(devices)
     const wrapper = mountPanel()
     await flushPromises()
 
-    // System default + the two real inputs.
-    expect(wrapper.findAll('.meeting-device')).toHaveLength(3)
-    await wrapper.find('[data-device="mic-b"]').trigger('click')
+    // Mute card + system default + the two real inputs.
+    const cards = wrapper.findAll('[data-role="device-choice"][data-kind="audio"] .device-choice__card')
+    expect(cards).toHaveLength(4)
+    await wrapper.find('[data-role="device-choice"][data-kind="audio"] [data-device="mic-b"]').trigger('click')
     await flushPromises()
 
-    expect(shareApi.switchMicDevice).toHaveBeenCalledWith('mic-b')
-    expect(useMeetingOptions().micDeviceId.value).toBe('mic-b')
+    expect(shareApi.setMicChoice).toHaveBeenCalledWith('mic-b')
+    expect(useMeetingOptions().micChoice.value).toBe('mic-b')
   })
 
   it('keeps the previous device when the switch fails', async () => {
     ;(listAudioInputs as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(devices)
-    ;(shareApi.switchMicDevice as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false)
+    ;(shareApi.setMicChoice as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false)
     const wrapper = mountPanel()
     await flushPromises()
 
-    await wrapper.find('[data-device="mic-b"]').trigger('click')
+    await wrapper.find('[data-role="device-choice"][data-kind="audio"] [data-device="mic-b"]').trigger('click')
     await flushPromises()
 
     // A device that refuses to open must not be remembered as the choice: the
     // meeting is still capturing from the old one.
-    expect(useMeetingOptions().micDeviceId.value).toBe('')
+    expect(useMeetingOptions().micChoice.value).toBe('default')
   })
 
-  it('hides the list while the microphone is off', async () => {
+  it('shows the mute card as selected while the microphone is off', async () => {
     ;(listAudioInputs as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(devices)
     ;(shareApi.micEnabled as { value: boolean }).value = false
     const wrapper = mountPanel()
     await flushPromises()
 
-    // Switching opens a real device; a host who muted the mic would not expect
-    // that. The create form hides the list for the same reason.
-    expect(wrapper.find('[data-role="meeting-mic-devices"]').exists()).toBe(false)
+    // Muting is a CARD now, so the group stays on screen and says which state
+    // it is in — hiding it would leave no way back.
+    const grid = wrapper.find('[data-role="device-choice"][data-kind="audio"]')
+    expect(grid.exists()).toBe(true)
+    expect(grid.find('[data-device="__off__"]').classes()).toContain('device-choice__card--on')
     ;(shareApi.micEnabled as { value: boolean }).value = true
   })
 })

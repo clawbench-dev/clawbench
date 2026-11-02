@@ -16,17 +16,26 @@ import MeetingCreate from '../MeetingCreate.vue'
  * telling the user to update theirs sends them looking in the wrong place.
  */
 
-vi.mock('lucide-vue-next', () => ({
-  ArrowLeft: { name: 'ArrowLeftIcon', render: () => null },
-  Check: { name: 'CheckIcon', render: () => null },
-  Mic: { name: 'MicIcon', render: () => null },
-  Monitor: { name: 'MonitorIcon', render: () => null },
-  MonitorOff: { name: 'MonitorOffIcon', render: () => null },
-  NotebookPen: { name: 'NotebookPenIcon', render: () => null },
-  Plus: { name: 'PlusIcon', render: () => null },
-  Video: { name: 'VideoIcon', render: () => null },
-  Volume2: { name: 'Volume2Icon', render: () => null },
-}))
+vi.mock('lucide-vue-next', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('lucide-vue-next')>()
+  const stub = (name: string) => ({ name, props: { size: Number }, render: () => null })
+  // Spread the real module: a narrow mock turns any icon a shared child adds
+  // into `undefined` and the whole form fails to render.
+  return {
+    ...actual,
+    ArrowLeft: stub('ArrowLeft'),
+    Check: stub('Check'),
+    Mic: stub('Mic'),
+    MicOff: stub('MicOff'),
+    Monitor: stub('Monitor'),
+    MonitorOff: stub('MonitorOff'),
+    NotebookPen: stub('NotebookPen'),
+    Plus: stub('Plus'),
+    Video: stub('Video'),
+    VideoOff: stub('VideoOff'),
+    Volume2: stub('Volume2'),
+  }
+})
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -72,6 +81,7 @@ const cameraDevice = vi.hoisted(() => ({ has: true }))
 
 /** The microphones this machine reports; several tests set it. */
 const audioDevices = vi.hoisted(() => ({ list: [] as Array<{ id: string; name: string }> }))
+const videoDevices = vi.hoisted(() => ({ list: [] as Array<{ id: string; name: string }> }))
 
 const shareApi = vi.hoisted(() => ({} as Record<string, unknown>))
 vi.mock('@/composables/useLiveShare', async () => {
@@ -107,6 +117,7 @@ vi.mock('@/composables/useLiveShare', async () => {
     useLiveShare: () => shareApi,
     listCaptureSources: vi.fn(async () => []),
     listAudioInputs: vi.fn(async () => audioDevices.list),
+    listVideoInputs: vi.fn(async () => videoDevices.list),
     getAudioCaptureSupport: vi.fn(async () => true),
     hasCameraDevice: vi.fn(async () => cameraDevice.has),
   }
@@ -139,6 +150,16 @@ vi.mock('@/composables/useLiveNotes', async (importOriginal) => {
   })
   return { ...actual, useLiveNotes: () => notesApi }
 })
+
+/** The cards of one device axis, in order. */
+function cards(wrapper: ReturnType<typeof mountPanel>, kind: 'audio' | 'video') {
+  return wrapper.findAll(`[data-role="device-choice"][data-kind="${kind}"] .device-choice__card`)
+}
+
+/** One card of one axis; `id` is a device id, `'default'` or `'__off__'`. */
+function card(wrapper: ReturnType<typeof mountPanel>, kind: 'audio' | 'video', id: string) {
+  return wrapper.find(`[data-role="device-choice"][data-kind="${kind}"] [data-device="${id}"]`)
+}
 
 function mountPanel() {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
@@ -175,6 +196,7 @@ beforeEach(() => {
   cameraDevice.has = true
   nativeApi.value = null
   audioDevices.list = []
+  videoDevices.list = []
 })
 
 afterEach(() => {
@@ -196,9 +218,10 @@ describe('MeetingCreate in a browser', () => {
     const browserTile = wrapper.find('[data-source="browser:screen"]')
     expect(browserTile.exists()).toBe(true)
     expect(browserTile.text()).toContain(enMessages.meeting.create.browserSource)
-    // Screen sharing stays the default; the camera is opt-in.
+    // Screen sharing stays the default; the camera is opt-in, which the
+    // selected "off" card says without a checkbox.
     expect(browserTile.classes()).toContain('capture-source--on')
-    expect((wrapper.find('[data-role="meeting-camera"]').element as HTMLInputElement).checked).toBe(false)
+    expect(card(wrapper, 'video', '__off__').classes()).toContain('device-choice__card--on')
     expect(wrapper.find('[data-role="meeting-screen"]').exists()).toBe(false)
 
     const start = wrapper.find('[data-action="meeting-start"]')
@@ -230,6 +253,7 @@ describe('MeetingCreate in a browser', () => {
 
   it('describes the camera/screen combination in one line, four states', async () => {
     stubCaptureApi(true)
+    videoDevices.list = [{ id: 'cam-a', name: 'FaceTime HD' }]
     const wrapper = mountPanel()
     await flushPromises()
 
@@ -239,14 +263,14 @@ describe('MeetingCreate in a browser', () => {
     expect(picture().classes()).toContain('meeting-hint')
     expect(picture().text()).toBe(enMessages.meeting.create.pictureScreen)
 
-    await wrapper.find('[data-role="meeting-camera"]').setValue(true)
+    await card(wrapper, 'video', 'cam-a').trigger('click')
     expect(picture().text()).toBe(enMessages.meeting.create.pictureBoth)
 
     await wrapper.find('[data-source="__off__"]').trigger('click')
     expect(picture().text()).toBe(enMessages.meeting.create.pictureCamera)
 
     // "Neither" is allowed; the line explains what the audience gets.
-    await wrapper.find('[data-role="meeting-camera"]').setValue(false)
+    await card(wrapper, 'video', '__off__').trigger('click')
     expect(picture().classes()).toContain('meeting-hint')
     expect(picture().text()).toBe(enMessages.meeting.create.noPictureHint)
   })
@@ -264,19 +288,18 @@ describe('MeetingCreate in a browser', () => {
     expect(wrapper.find('[data-source="browser:screen"]').classes()).toContain('capture-source--on')
   })
 
-  it('puts camera, microphone and 听记 in one group with no separate sound heading', async () => {
+  it('offers every axis as cards, leaving 听记 as the only checkbox', async () => {
     stubCaptureApi(true)
     const wrapper = mountPanel()
     await flushPromises()
 
-    // The three switches are all "what the host sends"; the old form split them
-    // under a "sound and notes" heading that only repeated the word sound.
+    // The old form split "what the host sends" under a heading that only
+    // repeated the word sound, and put a checkbox above each device list. The
+    // checkboxes are gone: the off state is a card now.
     expect(wrapper.text()).not.toContain(enMessages.meeting.create.sound)
     expect(wrapper.text()).toContain(enMessages.meeting.create.av)
-    const checks = wrapper.findAll('.meeting-check')
-    expect(checks.map((c) => c.find('input').attributes('data-role'))).toEqual([
-      'meeting-camera',
-      'meeting-mic',
+    expect(wrapper.findAll('[data-role="device-choice"]')).toHaveLength(2)
+    expect(wrapper.findAll('.meeting-check input').map((i) => i.attributes('data-role'))).toEqual([
       'meeting-notes',
     ])
   })
@@ -305,28 +328,25 @@ describe('MeetingCreate in a browser', () => {
     }
   })
 
-  it('opens with the microphone on, and leaves it editable', async () => {
+  it('opens with the microphone on, and mutes through the card', async () => {
     stubCaptureApi(true)
-    // The option is a singleton shared with the running stage, so a previous
+    // The choice is a singleton shared with the running stage, so a previous
     // meeting may have left it muted. The form must still open with it ON: the
-    // host wants to be heard without having to remember to tick a box.
-    const { microphone } = useMeetingOptions()
-    microphone.value = false
+    // host wants to be heard without having to remember to pick a card.
+    useMeetingOptions().micChoice.value = ''
 
     const wrapper = mountPanel()
     await flushPromises()
 
-    const mic = wrapper.find('[data-role="meeting-mic"]')
-    expect((mic.element as HTMLInputElement).checked).toBe(true)
-    // A default, not a lock: it can still be turned off, before and during.
-    expect(mic.attributes('disabled')).toBeUndefined()
-    await mic.setValue(false)
-    expect((mic.element as HTMLInputElement).checked).toBe(false)
+    expect(card(wrapper, 'audio', 'default').classes()).toContain('device-choice__card--on')
+    // A default, not a lock: muting is one click, before and during.
+    await card(wrapper, 'audio', '__off__').trigger('click')
+    expect(card(wrapper, 'audio', '__off__').classes()).toContain('device-choice__card--on')
 
     // ...and turning the picture off does not force it back on.
     await wrapper.find('[data-source="__off__"]').trigger('click')
     await flushPromises()
-    expect((mic.element as HTMLInputElement).checked).toBe(false)
+    expect(card(wrapper, 'audio', '__off__').classes()).toContain('device-choice__card--on')
   })
 
   it('starts a meeting with nothing ticked and no video flag', async () => {
@@ -340,23 +360,24 @@ describe('MeetingCreate in a browser', () => {
     await flushPromises()
 
     const args = (shareApi.start as ReturnType<typeof vi.fn>).mock.calls[0][0]
-    expect(args).toMatchObject({ screen: false, camera: false, sourceId: '' })
+    expect(args).toMatchObject({ screen: false, cameraDeviceId: '', sourceId: '' })
     // There is no meeting type, so no `video` flag is sent at all.
     expect(args).not.toHaveProperty('video')
   })
 
-  it('sends the camera and screen flags it was given', async () => {
+  it('sends the camera and screen choices it was given', async () => {
     stubCaptureApi(true)
+    videoDevices.list = [{ id: 'cam-a', name: 'FaceTime HD' }]
     const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
-    await wrapper.find('[data-role="meeting-camera"]').setValue(true)
+    await card(wrapper, 'video', 'default').trigger('click')
     await wrapper.find('[data-action="meeting-start"]').trigger('click')
     await flushPromises()
 
     expect(shareApi.start).toHaveBeenCalledWith(
-      expect.objectContaining({ screen: true, camera: true }),
+      expect.objectContaining({ screen: true, cameraDeviceId: 'default' }),
     )
   })
 
@@ -384,16 +405,15 @@ describe('MeetingCreate in a browser', () => {
     expect(label('viewer:v2')).toBe('Viewer 2')
   })
 
-  it('disables the camera option when the machine has none', async () => {
+  it('leaves the camera group out when the machine has none', async () => {
     stubCaptureApi(true)
     cameraDevice.has = false
     const wrapper = mountPanel()
     await flushPromises()
 
-    const camera = wrapper.find('[data-role="meeting-camera"]')
-    expect(camera.attributes('disabled')).toBeDefined()
-    // The single description line carries the reason instead of a hint under
-    // the disabled checkbox.
+    // No cards at all: a list whose only entry is "off" is not a choice.
+    expect(wrapper.find('[data-role="device-choice"][data-kind="video"]').exists()).toBe(false)
+    // The single description line carries the reason.
     expect(wrapper.find('[data-role="meeting-picture"]').text()).toBe(
       enMessages.meeting.create.cameraNoDevice,
     )
@@ -418,21 +438,21 @@ describe('MeetingCreate in a browser', () => {
     const wrapper = mountPanel()
     await flushPromises()
 
-    const tiles = wrapper.findAll('.meeting-device')
-    expect(tiles).toHaveLength(3)
-    expect(tiles[0].text()).toContain(enMessages.meeting.create.micDefault)
-    expect(tiles[1].text()).toContain('Built-in Microphone')
+    // Mute card + system default + the two real inputs.
+    expect(cards(wrapper, 'audio')).toHaveLength(4)
+    expect(card(wrapper, 'audio', 'default').text()).toContain(enMessages.meeting.create.deviceDefault)
+    expect(card(wrapper, 'audio', 'mic-a').text()).toContain('Built-in Microphone')
     // Nothing pinned yet: the system default is the choice, and it is shown.
-    expect(tiles[0].classes()).toContain('meeting-device--on')
+    expect(card(wrapper, 'audio', 'default').classes()).toContain('device-choice__card--on')
 
-    await tiles[2].trigger('click')
-    expect(wrapper.findAll('.meeting-device--on')).toHaveLength(1)
-    expect(wrapper.find('[data-device="mic-b"]').classes()).toContain('meeting-device--on')
+    await card(wrapper, 'audio', 'mic-b').trigger('click')
+    expect(wrapper.findAll('[data-role="device-choice"][data-kind="audio"] .device-choice__card--on')).toHaveLength(1)
+    expect(card(wrapper, 'audio', 'mic-b').classes()).toContain('device-choice__card--on')
 
     // Picking another REPLACES it — the meeting never captures two inputs.
-    await wrapper.find('[data-device="mic-a"]').trigger('click')
-    expect(wrapper.findAll('.meeting-device--on')).toHaveLength(1)
-    expect(wrapper.find('[data-device="mic-a"]').classes()).toContain('meeting-device--on')
+    await card(wrapper, 'audio', 'mic-a').trigger('click')
+    expect(wrapper.findAll('[data-role="device-choice"][data-kind="audio"] .device-choice__card--on')).toHaveLength(1)
+    expect(card(wrapper, 'audio', 'mic-a').classes()).toContain('device-choice__card--on')
   })
 
   it('sends the chosen microphone and drops it when the microphone is off', async () => {
@@ -445,7 +465,7 @@ describe('MeetingCreate in a browser', () => {
     await flushPromises()
 
     await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
-    await wrapper.find('[data-device="mic-b"]').trigger('click')
+    await card(wrapper, 'audio', 'mic-b').trigger('click')
     await wrapper.find('[data-action="meeting-start"]').trigger('click')
     await flushPromises()
     expect((shareApi.start as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
@@ -454,7 +474,7 @@ describe('MeetingCreate in a browser', () => {
     })
 
     ;(shareApi.start as ReturnType<typeof vi.fn>).mockClear()
-    await wrapper.find('[data-role="meeting-mic"]').setValue(false)
+    await card(wrapper, 'audio', '__off__').trigger('click')
     await wrapper.find('[data-action="meeting-start"]').trigger('click')
     await flushPromises()
     // A device for a microphone that is off would be a constraint nobody asked
@@ -465,13 +485,15 @@ describe('MeetingCreate in a browser', () => {
     })
   })
 
-  it('hides the device list when there is nothing to choose between', async () => {
+  it('still offers the mute and default cards on a one-microphone machine', async () => {
     stubCaptureApi(true)
     audioDevices.list = [{ id: 'mic-a', name: 'Built-in Microphone' }]
     const wrapper = mountPanel()
     await flushPromises()
 
-    expect(wrapper.find('[data-role="meeting-mic-devices"]').exists()).toBe(false)
+    // Mute + system default + the one device. Hiding the group would hide the
+    // mute control with it.
+    expect(cards(wrapper, 'audio')).toHaveLength(3)
   })
 
   // Before the page has microphone access, enumerateDevices answers with ONE
@@ -487,10 +509,9 @@ describe('MeetingCreate in a browser', () => {
     const wrapper = mountPanel()
     await flushPromises()
 
-    expect(wrapper.find('[data-role="meeting-mic-devices"]').exists()).toBe(true)
-    const ask = wrapper.find('[data-action="mic-list-devices"]')
+    const ask = wrapper.find('[data-role="device-choice"][data-kind="audio"] [data-action="device-list-ask"]')
     expect(ask.exists()).toBe(true)
-    expect(ask.text()).toContain(enMessages.meeting.create.micListDevices)
+    expect(ask.text()).toContain(enMessages.meeting.create.listDevices)
 
     // Granting releases the names; the row turns into the real list.
     audioDevices.list = [
@@ -503,8 +524,11 @@ describe('MeetingCreate in a browser', () => {
     expect(gum).toHaveBeenCalledTimes(1)
     // ...and the track is released: this is about permission, not capturing.
     expect(stop).toHaveBeenCalled()
-    expect(wrapper.findAll('.meeting-device')).toHaveLength(3)
-    expect(wrapper.find('[data-action="mic-list-devices"]').exists()).toBe(false)
+    expect(cards(wrapper, 'audio')).toHaveLength(4)
+    // Scoped to this axis: the camera group has its own (still unnamed) list.
+    expect(
+      wrapper.find('[data-role="device-choice"][data-kind="audio"] [data-action="device-list-ask"]').exists(),
+    ).toBe(false)
   })
 
   it('does not ask again when microphone access was denied', async () => {
@@ -517,8 +541,9 @@ describe('MeetingCreate in a browser', () => {
     await flushPromises()
 
     // A button that can only fail is worse than no button.
-    expect(wrapper.find('[data-action="mic-list-devices"]').exists()).toBe(false)
-    expect(wrapper.find('[data-role="meeting-mic-devices"]').exists()).toBe(false)
+    expect(
+      wrapper.find('[data-role="device-choice"][data-kind="audio"] [data-action="device-list-ask"]').exists(),
+    ).toBe(false)
   })
 
   it('drops the browser pseudo-devices that duplicate the system default', async () => {
@@ -531,22 +556,10 @@ describe('MeetingCreate in a browser', () => {
     const wrapper = mountPanel()
     await flushPromises()
 
-    // One real input is left, so there is still nothing to choose between.
-    expect(wrapper.find('[data-role="meeting-mic-devices"]').exists()).toBe(false)
-  })
-
-  it('hides the device list while the microphone is off', async () => {
-    stubCaptureApi(true)
-    audioDevices.list = [
-      { id: 'mic-a', name: 'Built-in Microphone' },
-      { id: 'mic-b', name: 'Headset Microphone' },
-    ]
-    const wrapper = mountPanel()
-    await flushPromises()
-
-    expect(wrapper.find('[data-role="meeting-mic-devices"]').exists()).toBe(true)
-    await wrapper.find('[data-role="meeting-mic"]').setValue(false)
-    expect(wrapper.find('[data-role="meeting-mic-devices"]').exists()).toBe(false)
+    // One real input is left, and "system default" appears exactly once (the
+    // browser's own `default` entry is dropped, not merged into it).
+    expect(cards(wrapper, 'audio')).toHaveLength(3)
+    expect(wrapper.findAll('[data-role="device-choice"][data-kind="audio"] [data-device="default"]')).toHaveLength(1)
   })
 
   // A desktop host that has not handed over a list yet (macOS screen recording

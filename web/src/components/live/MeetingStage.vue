@@ -80,7 +80,9 @@
 
           <!-- Camera. Shown whenever the machine has one; a camera the OS cannot
                provide is not something to offer. The self-view is mirrored, like
-               every other video tool: you are looking in a mirror, not a photo. -->
+               every other video tool: you are looking in a mirror, not a photo.
+               Same cards as the create form — the off state is a card, so there
+               is no separate checkbox to keep in sync with the device choice. -->
           <template v-if="cameraAvailable">
             <div v-if="share.previewCameraStream.value" class="live-camera-self">
               <video
@@ -93,38 +95,28 @@
                 data-role="camera-self"
               />
             </div>
-            <label class="live-check">
-              <input type="checkbox" :checked="share.cameraEnabled.value" data-role="stage-camera"
-                @change="onToggleCamera(($event.target as HTMLInputElement).checked)" />
-              <span class="live-check__icon"><Video :size="13" /></span>
-              <span>{{ t('meeting.create.camera') }}</span>
-            </label>
-            <div class="live-dialog-hint live-dialog-hint--indent">
-              {{ share.cameraEnabled.value ? t('meeting.create.cameraOn') : t('meeting.create.cameraOff') }}
-            </div>
+            <DeviceChoiceGrid
+              kind="video"
+              :label="t('meeting.create.cameraDevices')"
+              :off-label="t('meeting.create.cameraOffCard')"
+              :selected-id="cameraSelected"
+              @select="onSelectCamera"
+            />
           </template>
 
           <!-- Sound and 听记 are adjustable WHILE the meeting runs: the same
                refs the create page wrote, so the two screens can never
                disagree. -->
           <div class="live-dialog-section">{{ t('meeting.create.sound') }}</div>
-          <label class="live-check">
-            <input type="checkbox" :checked="micEnabled" data-role="stage-mic"
-              @change="onToggleMic(($event.target as HTMLInputElement).checked)" />
-            <span class="live-check__icon"><Mic :size="13" /></span>
-            <span>{{ t('meeting.create.mic') }}</span>
-          </label>
-          <div class="live-dialog-hint live-dialog-hint--indent">
-            {{ micEnabled ? t('meeting.create.micOn') : t('meeting.create.micOff') }}
-          </div>
-          <!-- Same list as the create form, live: putting a headset on mid-call
-               should not require ending the meeting. Only while the microphone
-               is on — switching opens a real device, and a host who muted it
-               would not expect that. -->
-          <MicDeviceList
-            v-if="micEnabled"
-            :selected-id="micDeviceId"
-            @select="onSelectMicDevice"
+          <!-- Same cards as the create form, live: putting a headset on mid-call
+               should not require ending the meeting, and muting is the first
+               card rather than a checkbox above the list. -->
+          <DeviceChoiceGrid
+            kind="audio"
+            :label="t('meeting.create.micDevices')"
+            :off-label="t('meeting.create.micOffCard')"
+            :selected-id="micSelected"
+            @select="onSelectMic"
           />
           <label class="live-check">
             <input type="checkbox" :checked="notesOn" data-role="stage-notes"
@@ -408,10 +400,10 @@
  * a button that can only answer "not available" is worse than no button.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Mic, MonitorUp, NotebookPen, Video, X } from 'lucide-vue-next'
+import { MonitorUp, NotebookPen, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
-import MicDeviceList from '@/components/live/MicDeviceList.vue'
+import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import TranscriptList from '@/components/live/TranscriptList.vue'
 import { useToast } from '@/composables/useToast'
@@ -422,7 +414,7 @@ import {
   type CaptureSource,
 } from '@/composables/useLiveShare'
 import { groupNoteSegments, useLiveNotes } from '@/composables/useLiveNotes'
-import { useMeetingOptions } from '@/composables/useMeetingOptions'
+import { DEFAULT_DEVICE, useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useScreenWindow } from '@/composables/useScreenWindow'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { getNative } from '@/utils/clawbenchNative'
@@ -465,9 +457,14 @@ const isLive = computed(
  * the meeting runs.
  */
 const hasScreen = computed(() => share.captureKind.value !== null)
-const micEnabled = computed(() => share.micEnabled.value)
-/** The chosen input device; a plain object of refs, so unwrap it once here. */
-const micDeviceId = computed(() => options.micDeviceId.value)
+/** What the microphone cards show: muted is a choice, not a missing device. */
+const micSelected = computed(() =>
+  share.micEnabled.value ? options.micChoice.value || DEFAULT_DEVICE : '',
+)
+/** Same for the camera: the cards follow the LIVE state, not the stored one. */
+const cameraSelected = computed(() =>
+  share.cameraEnabled.value ? options.cameraChoice.value || DEFAULT_DEVICE : '',
+)
 const notesOn = computed(() => notes.phase.value === 'recording')
 /** Whether this machine has a camera at all, so the toggle is worth showing. */
 const cameraAvailable = ref(true)
@@ -767,26 +764,19 @@ function talkLabel(talk: string): string {
 }
 
 // ── Runtime capture switches ────────────────────────────────────────────────
-function onToggleMic(on: boolean): void {
-  options.microphone.value = on
-  share.setMicEnabled(on)
-}
-
 /**
- * Switch the capture device mid-meeting.
+ * Mute, unmute, or publish from another input.
  *
  * The preference is only written after the capture actually moved: a device
  * that fails to open must leave both the running stream and the stored choice
  * on the microphone that still works.
  */
-async function onSelectMicDevice(id: string): Promise<void> {
-  if (id === micDeviceId.value) return
-  const ok = await share.switchMicDevice(id)
-  if (!ok) {
+async function onSelectMic(choice: string): Promise<void> {
+  if (!(await share.setMicChoice(choice))) {
     toast.show(share.error.value || t('liveShare.micSwitchFailed'), { type: 'error', icon: 'warning' })
     return
   }
-  options.micDeviceId.value = id
+  options.micChoice.value = choice
 }
 
 /** Which source a fresh screen share opens: the remembered one, else the first. */
@@ -823,11 +813,15 @@ async function onToggleScreenShare(on: boolean): Promise<void> {
   }
 }
 
-async function onToggleCamera(on: boolean): Promise<void> {
-  options.camera.value = on
-  if (await share.setCameraEnabled(on)) return
-  // The toggle must not stay on for a camera that never started.
-  options.camera.value = false
+/** Turn the camera on, off, or onto another one. */
+async function onSelectCamera(choice: string): Promise<void> {
+  const previous = options.cameraChoice.value
+  if (await share.setCameraDevice(choice)) {
+    options.cameraChoice.value = choice
+    return
+  }
+  // A card must not stay selected for a camera that never started.
+  options.cameraChoice.value = previous
   toast.show(share.error.value || t('meeting.create.cameraUnavailable'), { type: 'error', icon: 'warning' })
 }
 

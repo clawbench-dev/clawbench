@@ -63,13 +63,20 @@ export async function acquireMic(constraints: MediaStreamConstraints = { audio: 
  * helpers, because a DOM type assertion inside a `.vue` file trips the
  * `no-undef` lint rule.
  */
-export async function microphonePermission(): Promise<'granted' | 'denied' | 'unknown'> {
+export async function mediaPermission(
+  name: 'microphone' | 'camera',
+): Promise<'granted' | 'denied' | 'unknown'> {
   try {
-    const status = await navigator.permissions?.query({ name: 'microphone' as PermissionName })
+    const status = await navigator.permissions?.query({ name: name as PermissionName })
     return (status?.state as 'granted' | 'denied' | undefined) ?? 'unknown'
   } catch {
     return 'unknown'
   }
+}
+
+/** @see mediaPermission */
+export function microphonePermission(): Promise<'granted' | 'denied' | 'unknown'> {
+  return mediaPermission('microphone')
 }
 
 /**
