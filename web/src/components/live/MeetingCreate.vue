@@ -73,7 +73,7 @@
           @select="cameraChoice = $event"
         />
 
-        <div class="meeting-hint" data-role="meeting-picture">
+        <div v-if="pictureHint" class="meeting-hint" data-role="meeting-picture">
           {{ pictureHint }}
         </div>
 
@@ -218,20 +218,17 @@ const unsupportedHint = computed(() => {
 const cameraOn = computed(() => cameraChoice.value !== '' && cameraAvailable.value)
 
 /**
- * One line for the camera/screen combination — four states, not two.
+ * The one line under the picture, when — and only when — it says something the
+ * cards do not.
  *
- * The toggles are independent, so the picture is their combination: both,
- * camera only, screen only, or neither. "Neither" is allowed (the meeting still
- * has the link, the audience and the chat) and says what the audience gets.
+ * The two card groups already show what is being sent, so "screen only" or
+ * "camera only" would just repeat the selection back. What they cannot show is
+ * the LAYOUT (the camera sits in the corner of the screen) and the reason the
+ * camera group is missing altogether.
  */
 const pictureHint = computed(() => {
-  // A machine without a camera can only be in the screen-only states; say so
-  // once here rather than under a permanently disabled checkbox.
   if (!cameraAvailable.value) return t('meeting.create.cameraNoDevice')
-  if (cameraOn.value) {
-    return hasScreen.value ? t('meeting.create.pictureBoth') : t('meeting.create.pictureCamera')
-  }
-  return hasScreen.value ? t('meeting.create.pictureScreen') : t('meeting.create.noPictureHint')
+  return cameraOn.value && hasScreen.value ? t('meeting.create.pictureBoth') : ''
 })
 
 const canStart = computed(() => {

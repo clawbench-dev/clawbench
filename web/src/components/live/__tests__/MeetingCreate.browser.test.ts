@@ -241,38 +241,35 @@ describe('MeetingCreate in a browser', () => {
 
     await wrapper.find('[data-source="__off__"]').trigger('click')
     // No type means no invalid combination: a meeting with neither a screen nor
-    // a camera is a normal meeting, and the hint says what attendees get.
+    // a camera is a normal meeting, and the form does not editorialise about it.
     expect(start.attributes('disabled')).toBeUndefined()
-    expect(wrapper.find('[data-role="meeting-picture"]').text()).toBe(
-      enMessages.meeting.create.noPictureHint,
-    )
+    expect(wrapper.find('[data-role="meeting-picture"]').exists()).toBe(false)
     // The choice moved to the "share nothing" frame, and only that one.
     expect(wrapper.find('[data-source="__off__"]').classes()).toContain('capture-source--on')
     expect(wrapper.find('[data-source="browser:screen"]').classes()).not.toContain('capture-source--on')
   })
 
-  it('describes the camera/screen combination in one line, four states', async () => {
+  // The card groups already show what is being sent. Only two things are
+  // invisible there: the layout, and why the camera group is missing entirely.
+  it('says only what the cards cannot, and stays silent otherwise', async () => {
     stubCaptureApi(true)
     videoDevices.list = [{ id: 'cam-a', name: 'FaceTime HD' }]
     const wrapper = mountPanel()
     await flushPromises()
 
     const picture = () => wrapper.find('[data-role="meeting-picture"]')
-    // Screen sharing is on by default (the browser's own picker picks it) and
-    // the camera is opt-in, so the form opens on "screen only".
-    expect(picture().classes()).toContain('meeting-hint')
-    expect(picture().text()).toBe(enMessages.meeting.create.pictureScreen)
+    // Screen only — repeating the selection back was noise.
+    expect(picture().exists()).toBe(false)
 
     await card(wrapper, 'video', 'cam-a').trigger('click')
+    // Both: where the camera goes is the part the cards cannot say.
     expect(picture().text()).toBe(enMessages.meeting.create.pictureBoth)
 
     await wrapper.find('[data-source="__off__"]').trigger('click')
-    expect(picture().text()).toBe(enMessages.meeting.create.pictureCamera)
+    expect(picture().exists()).toBe(false) // camera only
 
-    // "Neither" is allowed; the line explains what the audience gets.
     await card(wrapper, 'video', '__off__').trigger('click')
-    expect(picture().classes()).toContain('meeting-hint')
-    expect(picture().text()).toBe(enMessages.meeting.create.noPictureHint)
+    expect(picture().exists()).toBe(false) // neither
   })
 
   it('keeps the picture choice on one tile at a time', async () => {
@@ -304,14 +301,13 @@ describe('MeetingCreate in a browser', () => {
     ])
   })
 
-  it('does not repeat a description under each simple toggle', async () => {
+  it('does not repeat a description under each simple choice', async () => {
     stubCaptureApi(true)
     const wrapper = mountPanel()
     await flushPromises()
 
-    // Only the camera/screen pair needs explaining (their combination decides
-    // the picture); the rest name themselves.
-    expect(wrapper.findAll('[data-role="meeting-picture"]')).toHaveLength(1)
+    // Nothing to explain in the default state (screen only): the cards say it.
+    expect(wrapper.findAll('[data-role="meeting-picture"]')).toHaveLength(0)
     const text = wrapper.text()
     const dropped = [
       'cameraOn',
