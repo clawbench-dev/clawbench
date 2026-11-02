@@ -64,6 +64,8 @@ import { useToast } from '@/composables/useToast'
 import { useMeetingNickname } from '@/composables/useMeetingNickname'
 import { MEETING_NICK_MAX, saveMeetingNick } from '@/share/meetingNickname'
 import '@/assets/modal-footer-btn.css'
+// Same section / field / hint primitives as 创建会议 and the running meeting.
+import '@/assets/meeting-form.css'
 
 const emit = defineEmits<{ back: [] }>()
 
@@ -130,23 +132,8 @@ async function join(): Promise<void> {
   display: flex; flex-direction: column; gap: var(--space-4);
   padding: var(--space-6) var(--space-7);
 }
-.meeting-section { font-size: var(--font-size-sm); font-weight: 600; color: var(--text-primary); }
-.meeting-section:not(:first-child) {
-  margin-top: var(--space-3); padding-top: var(--space-5);
-  border-top: 1px solid var(--border-color);
-}
-.meeting-input {
-  width: 100%; height: calc(38 * var(--dp));
-  /* Same reason as the create form: this body is a scrolling flex column and a
-     replaced element shrinks before anything else does. */
-  flex-shrink: 0;
-  padding: 0 var(--space-6);
-  border: 1px solid var(--border-color); border-radius: var(--radius-sm);
-  background: var(--bg-secondary); color: var(--text-primary);
-  font-size: var(--font-size-lg); font-family: inherit;
-}
-.meeting-input:focus { outline: none; border-color: var(--accent-color); }
-.meeting-hint { font-size: var(--font-size-xs); line-height: 1.6; color: var(--text-muted); }
+/* .meeting-section / .meeting-input / .meeting-hint live in
+   assets/meeting-form.css, shared with 创建会议 and the running meeting. */
 .meeting-error {
   padding: var(--space-4) var(--space-5); border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-red) 10%, transparent);

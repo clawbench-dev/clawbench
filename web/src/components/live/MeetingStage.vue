@@ -61,21 +61,33 @@
                machine with Wi-Fi + Ethernet + Docker needs this: the address
                this browser used is not necessarily one a colleague can reach. -->
           <ShareAddressList :links="share.shareLinks.value" />
-          <div class="live-dialog-hint">{{ t('liveShare.linkHint') }}</div>
+          <div class="meeting-hint">{{ t('liveShare.linkHint') }}</div>
 
-          <!-- The picture. There is no meeting type: the host can start or stop
-               a screen share and turn the camera on or off at any point, and
-               viewers follow. Both toggles write through useLiveShare, which
-               rewires the already-negotiated m-lines — no renegotiation. -->
-          <div class="live-dialog-section">{{ t('meeting.create.picture') }}</div>
-          <label class="live-check">
-            <input type="checkbox" :checked="screenOn" :disabled="screenBusy" data-role="stage-screen"
-              @change="onToggleScreenShare(($event.target as HTMLInputElement).checked)" />
-            <span class="live-check__icon"><MonitorUp :size="13" /></span>
-            <span>{{ t('meeting.create.shareScreen') }}</span>
-          </label>
-          <div class="live-dialog-hint live-dialog-hint--indent">
-            {{ screenOn ? t('meeting.stage.screenOn') : t('meeting.stage.screenOff') }}
+          <!-- 画面与声音: the SAME heading and the SAME controls as 创建会议.
+               The picture is a choice between "nothing" and the actual
+               screens/windows — clicking a tile starts or swaps the capture,
+               clicking 不共享 stops it. The checkbox that used to live here was
+               the same decision split into two controls, and the "切换共享源"
+               button opened a second copy of a grid the create page shows
+               outright. -->
+          <div class="meeting-section">{{ t('meeting.create.av') }}</div>
+          <CaptureSourceGrid
+            ref="gridRef"
+            compact
+            allow-off
+            :sources="captureSources"
+            :selected-id="screenSelected"
+            :pick-label="pickLabel"
+            :pick-busy="loadingSources"
+            :disabled="screenBusy"
+            @select="onSelectSource"
+            @pick="loadSources"
+          />
+          <div v-if="sourceHint" class="meeting-hint" data-role="stage-sources">
+            {{ sourceHint }}
+          </div>
+          <div v-if="screenHint" class="meeting-hint" data-role="stage-screen-hint">
+            {{ screenHint }}
           </div>
 
           <!-- Camera. Shown whenever the machine has one; a camera the OS cannot
@@ -103,11 +115,10 @@
               @select="onSelectCamera"
             />
           </template>
+          <div v-if="pictureHint" class="meeting-hint" data-role="stage-picture">
+            {{ pictureHint }}
+          </div>
 
-          <!-- Sound and 听记 are adjustable WHILE the meeting runs: the same
-               refs the create page wrote, so the two screens can never
-               disagree. -->
-          <div class="live-dialog-section">{{ t('meeting.create.sound') }}</div>
           <!-- Same cards as the create form, live: putting a headset on mid-call
                should not require ending the meeting, and muting is the first
                card rather than a checkbox above the list. -->
@@ -118,57 +129,43 @@
             :selected-id="micSelected"
             @select="onSelectMic"
           />
-          <label class="live-check">
-            <input type="checkbox" :checked="notesOn" data-role="stage-notes"
-              @change="onToggleNotes(($event.target as HTMLInputElement).checked)" />
-            <span class="live-check__icon"><NotebookPen :size="13" /></span>
-            <span>{{ t('meeting.create.notes') }}</span>
-          </label>
-          <div class="live-dialog-hint live-dialog-hint--indent">
+
+          <div class="meeting-checks">
+            <label class="meeting-check">
+              <input type="checkbox" :checked="notesOn" data-role="stage-notes"
+                @change="onToggleNotes(($event.target as HTMLInputElement).checked)" />
+              <span class="meeting-check__icon"><NotebookPen :size="13" /></span>
+              {{ t('meeting.create.notes') }}
+            </label>
+          </div>
+          <div class="meeting-hint meeting-hint--indent">
             {{ notesOn ? t('meeting.create.notesOn') : t('meeting.create.notesOff') }}
           </div>
 
-          <!-- Tools that only make sense while publishing a SCREEN: annotate it
-               or swap which window is being shared. A camera picture has no
-               desktop coordinates to draw on or click through, so these stay
-               hidden for camera-only meetings. -->
-          <div v-if="hasScreen" class="live-dialog-section">{{ t('liveShare.toolsSection') }}</div>
-          <div v-if="hasScreen" class="live-tools">
-            <button
-              class="live-btn"
-              :class="{ 'live-btn--on': isAnnotating }"
-              type="button"
-              data-action="annotate"
-              @click="openAnnotate"
-            >
-              {{ t('liveShare.annotate') }}
-            </button>
-            <button
-              v-if="!isAndroidCapture"
-              class="live-btn"
-              type="button"
-              data-action="switch-source"
-              @click="openSwitch"
-            >
-              {{ t('liveShare.switchSource') }}
-            </button>
-          </div>
+          <!-- Tools that only make sense while publishing a SCREEN: annotate
+               it. A camera picture has no desktop coordinates to draw on, so
+               this stays hidden for camera-only meetings. Swapping the shared
+               source is the picture grid above — one picker, not a second one
+               behind a button. -->
+          <template v-if="hasScreen">
+            <div class="meeting-section">{{ t('liveShare.toolsSection') }}</div>
+            <div class="live-tools">
+              <button
+                class="live-btn"
+                :class="{ 'live-btn--on': isAnnotating }"
+                type="button"
+                data-action="annotate"
+                @click="openAnnotate"
+              >
+                {{ t('liveShare.annotate') }}
+              </button>
+            </div>
+          </template>
 
-          <!-- Source picker for a mid-share swap. Hidden until asked for: the
-               panel is already dense, and switching is rare. -->
-          <CaptureSourceGrid
-            v-if="switching"
-            compact
-            :sources="captureSources"
-            :selected-id="selectedSourceId"
-            :disabled="switchingBusy"
-            @select="applySwitch"
-          />
-
-          <div class="live-dialog-section">
+          <div class="meeting-section">
             {{ t('liveShare.audienceCount', { count: share.viewers.value.length }) }}
           </div>
-          <div v-if="share.viewers.value.length === 0" class="live-dialog-hint">
+          <div v-if="share.viewers.value.length === 0" class="meeting-hint">
             {{ t('liveShare.noViewers') }}
           </div>
           <ul v-else class="live-viewer-list">
@@ -226,21 +223,24 @@
             </li>
           </ul>
 
-          <label class="live-check">
-            <input
-              type="checkbox"
-              :checked="share.talkEnabled.value"
-              @change="onToggleTalk(($event.target as HTMLInputElement).checked)"
-            />
-            <span>{{ t('liveShare.allowTalking') }}</span>
-          </label>
-          <div class="live-dialog-hint live-dialog-hint--indent">
+          <div class="meeting-checks">
+            <label class="meeting-check">
+              <input
+                type="checkbox"
+                :checked="share.talkEnabled.value"
+                @change="onToggleTalk(($event.target as HTMLInputElement).checked)"
+              />
+              <span class="meeting-check__icon"><Mic :size="13" /></span>
+              {{ t('liveShare.allowTalking') }}
+            </label>
+          </div>
+          <div class="meeting-hint meeting-hint--indent">
             {{ t('liveShare.allowTalkingHint') }}
           </div>
           <!-- The publisher hears viewers through its speakers, so its own
                microphone can pick that up and send it back (twice). AEC covers
                part of it; headphones are the only reliable fix. -->
-          <div v-if="share.talkEnabled.value" class="live-dialog-hint live-dialog-hint--indent">
+          <div v-if="share.talkEnabled.value" class="meeting-hint meeting-hint--indent">
             {{ t('liveShare.headphoneHint') }}
           </div>
           <button
@@ -255,20 +255,23 @@
           <!-- Audience screen sharing. Off by default: the token is a read
                credential, and a screen is a much bigger thing to hand out than
                a microphone. -->
-          <label class="live-check">
-            <input
-              type="checkbox"
-              :checked="share.screenEnabled.value"
-              @change="onToggleScreen(($event.target as HTMLInputElement).checked)"
-            />
-            <span>{{ t('liveShare.allowScreenShare') }}</span>
-          </label>
-          <div class="live-dialog-hint live-dialog-hint--indent">
+          <div class="meeting-checks">
+            <label class="meeting-check">
+              <input
+                type="checkbox"
+                :checked="share.screenEnabled.value"
+                @change="onToggleScreen(($event.target as HTMLInputElement).checked)"
+              />
+              <span class="meeting-check__icon"><MonitorUp :size="13" /></span>
+              {{ t('liveShare.allowScreenShare') }}
+            </label>
+          </div>
+          <div class="meeting-hint meeting-hint--indent">
             {{ t('liveShare.allowScreenShareHint') }}
           </div>
 
           <template v-if="share.screenSharer.value">
-            <div class="live-dialog-section">
+            <div class="meeting-section">
               {{ t('liveShare.memberSharing', { id: share.screenSharer.value }) }}
             </div>
             <div class="live-screen-preview">
@@ -293,11 +296,11 @@
              recorded separately and merged by timestamp, so a remote
              participant and the publisher appear as different speakers. -->
         <div v-else-if="activeTab === 'notes'" class="live-tab-pane" data-role="notes-pane">
-          <div v-if="notes.phase.value !== 'recording'" class="live-dialog-hint">
+          <div v-if="notes.phase.value !== 'recording'" class="meeting-hint">
             {{ t('liveShare.notes.notEnabled') }}
           </div>
           <template v-else>
-            <div v-if="noteBlocks.length === 0" class="live-dialog-hint">
+            <div v-if="noteBlocks.length === 0" class="meeting-hint">
               {{ t('liveShare.notes.listening') }}
             </div>
             <TranscriptList v-else :blocks="noteBlocks" fill />
@@ -395,12 +398,12 @@
  * does NOT stop the meeting — the dock keeps a "in progress" dot.
  *
  * There is no meeting type. The picture can start or stop at any moment, so the
- * video-only tools (annotate, switch source, remote control, member screen
- * share) follow the CURRENT screen state rather than a mode chosen at creation:
- * a button that can only answer "not available" is worse than no button.
+ * video-only tools (annotate, remote control, member screen share) follow the
+ * CURRENT screen state rather than a mode chosen at creation: a button that can
+ * only answer "not available" is worse than no button.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { MonitorUp, NotebookPen, X } from 'lucide-vue-next'
+import { Mic, MonitorUp, NotebookPen, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
@@ -421,11 +424,20 @@ import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { getNative } from '@/utils/clawbenchNative'
 import { resolveUserNickname } from '@/utils/userNickname'
 import { resolveRemoteControlSupport } from '@/utils/remoteControlSupport'
+import { browserScreenCaptureAvailable } from '@/utils/screenCaptureSupport'
+import {
+  ANDROID_CAPTURE_SOURCE,
+  BROWSER_CAPTURE_SOURCE,
+  buildCaptureChoices,
+  captureSourceIdOf,
+} from '@/utils/captureSourceChoices'
 import LiveAnnotateOverlay from '@/share/LiveAnnotateOverlay.vue'
 import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
 import { parseControlMessage, toInjectorEvent, type ControlMessage } from '@/share/liveControl'
 import { chunkChatHistory } from '@/share/chatHistory'
 import { appLog } from '@/utils/appLog'
+// The same section / hint / checkbox primitives the create form uses.
+import '@/assets/meeting-form.css'
 
 const emit = defineEmits<{ ended: [token: string] }>()
 
@@ -452,10 +464,10 @@ const isLive = computed(
 /**
  * A SCREEN is being published right now.
  *
- * Everything that assumes desktop coordinates — annotation, source switching,
- * remote control, member screen share — hangs off this instead of "there is a
- * picture": a camera image has no desktop behind it, and the flag flips while
- * the meeting runs.
+ * Everything that assumes desktop coordinates — annotation, remote control,
+ * member screen share — hangs off this instead of "there is a picture": a
+ * camera image has no desktop behind it, and the flag flips while the meeting
+ * runs.
  */
 const hasScreen = computed(() => share.captureKind.value !== null)
 /** What the microphone cards show: muted is a choice, not a missing device. */
@@ -467,31 +479,79 @@ const cameraSelected = computed(() =>
   share.cameraEnabled.value ? options.cameraChoice.value || DEFAULT_DEVICE : '',
 )
 const notesOn = computed(() => notes.phase.value === 'recording')
-/** Whether this machine has a camera at all, so the toggle is worth showing. */
+/** Whether this machine has a camera at all, so the group is worth showing. */
 const cameraAvailable = ref(true)
 /** Guards the async start/stop of a screen capture (it opens a picker). */
 const screenBusy = ref(false)
-/**
- * The screen toggle's own state.
- *
- * `hasScreen` only becomes true once the capture is live, which is a picker
- * away — binding the checkbox to it would flip the box back under the user's
- * finger while the dialog is open. This is optimistic and reverted on failure.
- */
-const screenOn = ref(share.captureKind.value !== null)
-watch(hasScreen, (on) => {
-  screenOn.value = on
-})
 
 const captureSources = ref<CaptureSource[]>([])
-const selectedSourceId = ref('')
 const loadingSources = ref(false)
-const switching = ref(false)
-const switchingBusy = ref(false)
-const hasNativeCapture = computed(() =>
-  Boolean(getNative()?.listCaptureSources || getNative()?.startScreenCapture),
-)
+/** The tile area scrolls once there are more than two rows of frames. */
+const gridOverflow = ref(false)
+const gridRef = ref<InstanceType<typeof CaptureSourceGrid> | null>(null)
+
+/** A native host that can enumerate screens and windows. */
+const hasNativeCapture = computed(() => Boolean(getNative()?.listCaptureSources))
+/** Android mirrors through its own consent dialog: no list, one sentinel tile. */
 const isAndroidCapture = computed(() => Boolean(getNative()?.startScreenCapture))
+/** A plain browser's own picker IS the source choice. */
+const browserCapture = browserScreenCaptureAvailable()
+const canCapture = computed(() => hasNativeCapture.value || browserCapture)
+
+/**
+ * Which tile is on the wire.
+ *
+ * Read from the live capture rather than from a local "what did I click": the
+ * meeting may have been started on the create page, and the grid must mark the
+ * picture that is actually going out. The browser and Android hosts have no
+ * source id, so their synthetic tile stands in.
+ */
+const screenSelected = computed(() => {
+  if (!hasScreen.value) return ''
+  const id = share.captureSourceId.value
+  if (id) return id
+  if (isAndroidCapture.value) return ANDROID_CAPTURE_SOURCE
+  if (browserCapture && !hasNativeCapture.value) return BROWSER_CAPTURE_SOURCE
+  return ''
+})
+
+/**
+ * The tile that asks a host for a list it has not given yet.
+ *
+ * Only a native host can be in this state: a browser has the synthetic tile
+ * above, and Android always has its one sentinel. Clicking re-runs the probe,
+ * which is what makes the OS raise its own permission dialog (macOS screen
+ * recording, Wayland portal).
+ */
+const pickLabel = computed(() => {
+  if (captureSources.value.length > 0 || !canCapture.value) return ''
+  return loadingSources.value ? t('meeting.create.picking') : t('meeting.create.pickSource')
+})
+
+const sourceHint = computed(() => {
+  if (captureSources.value.length === 0 && canCapture.value && !loadingSources.value) {
+    return t('liveShare.noSources')
+  }
+  if (gridOverflow.value) return t('meeting.create.sourceOverflow', { count: captureSources.value.length })
+  return ''
+})
+
+/** What the tiles cannot say: whether a screen is going out at all. */
+const screenHint = computed(() => {
+  if (captureSources.value.length === 0) return ''
+  return hasScreen.value ? t('meeting.stage.screenOn') : t('meeting.stage.screenOff')
+})
+
+/**
+ * The one line under the picture, when — and only when — it says something the
+ * cards do not: the LAYOUT (the camera sits in the corner of the screen) and
+ * the reason the camera group is missing altogether. Same rule as the create
+ * form; "screen only" or "camera only" would just repeat the selection back.
+ */
+const pictureHint = computed(() => {
+  if (!cameraAvailable.value) return t('meeting.create.cameraNoDevice')
+  return share.cameraEnabled.value && hasScreen.value ? t('meeting.create.pictureBoth') : ''
+})
 
 const remoteScreenRef = ref<HTMLVideoElement | null>(null)
 /** The publisher's own camera picture (mirrored by CSS). */
@@ -670,40 +730,39 @@ function revokeControl(viewerId: string): void {
   void getNative()?.remoteControlRevoke?.()
 }
 
-async function openSwitch(): Promise<void> {
-  if (!hasNativeCapture.value) {
-    switchingBusy.value = true
-    const ok = await share.switchSource('')
-    switchingBusy.value = false
-    if (!ok) toast.show(t('liveShare.switchSourceFailed'), { type: 'error', icon: 'warning' })
-    return
-  }
-  switching.value = !switching.value
-  if (switching.value && captureSources.value.length === 0) await loadSources()
-}
-
-async function applySwitch(sourceId: string): Promise<void> {
-  switchingBusy.value = true
-  selectedSourceId.value = sourceId
-  const ok = await share.switchSource(sourceId)
-  switchingBusy.value = false
-  if (!ok) toast.show(t('liveShare.switchSourceFailed'), { type: 'error', icon: 'warning' })
-  else switching.value = false
-}
-
-/** Sources are needed by both the mid-meeting swap and the start toggle. */
+/**
+ * Load the tiles the picture grid offers.
+ *
+ * Same builder as the create form, so the two screens cannot disagree about
+ * what a host with no source list should see. The camera probe rides along:
+ * it answers the same "what can this machine send" question.
+ */
 async function loadSources(): Promise<void> {
+  if (loadingSources.value) return
   loadingSources.value = true
   try {
-    captureSources.value = isAndroidCapture.value
-      ? [{ id: 'android:screen', name: t('liveShare.entireScreen'), kind: 'screen', thumbnail: '' }]
-      : await listCaptureSources()
-    if (!selectedSourceId.value) selectedSourceId.value = defaultSourceId()
+    const [list, hasCamera] = await Promise.all([listCaptureSources(), hasCameraDevice()])
+    cameraAvailable.value = hasCamera
+    captureSources.value = buildCaptureChoices({
+      list,
+      android: isAndroidCapture.value,
+      browser: browserCapture && !hasNativeCapture.value,
+      entireScreen: t('liveShare.entireScreen'),
+      browserSource: t('meeting.create.browserSource'),
+    })
+    await nextTick()
+    measureOverflow()
   } catch (e) {
     appLog.e('MeetingStage', 'loadSources failed', e)
   } finally {
     loadingSources.value = false
   }
+}
+
+/** Whether the frames overflow their box, so the hint can say they scroll. */
+function measureOverflow(): void {
+  const el = (gridRef.value?.$el as HTMLElement | undefined) ?? null
+  gridOverflow.value = Boolean(el && el.scrollHeight > el.clientHeight + 2)
 }
 
 const hasTalkers = computed(() => share.viewers.value.some((v) => v.talk === 'talking'))
@@ -785,35 +844,37 @@ async function onSelectMic(choice: string): Promise<void> {
   options.micChoice.value = choice
 }
 
-/** Which source a fresh screen share opens: the remembered one, else the first. */
-function defaultSourceId(): string {
-  if (selectedSourceId.value) return selectedSourceId.value
-  return captureSources.value.find((s) => s.kind === 'screen')?.id ?? captureSources.value[0]?.id ?? ''
-}
-
 /**
- * Start or stop the screen mid-meeting.
+ * One tile, one action — the same grid the create form draws, except that here
+ * a click takes effect immediately: a source tile starts or swaps the capture,
+ * 不共享 stops it.
  *
- * Starting opens the picker (or the OS dialog on Android), so the call is
- * async and guarded — a double click must not open two captures.
+ * Clicking the tile that is already live is a no-op, EXCEPT for the browser's
+ * synthetic tile: its source was chosen in the browser's own dialog, so asking
+ * for "that one again" is the only way to pick a different tab or window. That
+ * is what the old 切换共享源 button did.
  */
-async function onToggleScreenShare(on: boolean): Promise<void> {
+async function onSelectSource(id: string): Promise<void> {
   if (screenBusy.value) return
+  if (id === screenSelected.value && id !== BROWSER_CAPTURE_SOURCE) return
   screenBusy.value = true
-  const previous = screenOn.value
-  screenOn.value = on
+  const swapping = hasScreen.value
   try {
-    if (!on) {
+    if (id === '') {
       await share.stopScreen()
       return
     }
-    const sourceId = defaultSourceId()
-    if (!(await share.startScreen(sourceId))) {
-      screenOn.value = previous
-      toast.show(share.error.value || t('liveShare.shareScreenFailed'), { type: 'error', icon: 'warning' })
-      return
+    const sourceId = captureSourceIdOf(id)
+    const ok = swapping
+      ? await share.switchSource(sourceId)
+      : await share.startScreen(sourceId)
+    if (!ok) {
+      toast.show(
+        share.error.value ||
+          (swapping ? t('liveShare.switchSourceFailed') : t('liveShare.shareScreenFailed')),
+        { type: 'error', icon: 'warning' },
+      )
     }
-    selectedSourceId.value = sourceId
   } finally {
     screenBusy.value = false
   }
@@ -861,13 +922,10 @@ onMounted(() => {
     share.setControlSupported(ok)
   })
   if (notes.phase.value === 'recording') void notes.refresh()
-  // Both runtime toggles need this before they are used: the source list so
-  // getDisplayMedia stays inside the click's user activation, the camera probe
-  // so a machine without one does not offer a checkbox that can only fail.
+  // The source list is what the picture grid draws; the camera probe rides
+  // along in the same call, so a machine without a camera does not offer a
+  // group that can only fail.
   void loadSources()
-  void hasCameraDevice().then((ok) => {
-    cameraAvailable.value = ok
-  })
 })
 
 onBeforeUnmount(() => {
@@ -1003,52 +1061,25 @@ watch(
 /*
  * The shared .modal-body is padding-free by design (modal-card.css) — each
  * dialog supplies its own. This one did not, so the link field and the source
- * grid sat flush against the card edges. The values match SessionShareDialog so
- * the two share dialogs line up when opened side by side.
+ * grid sat flush against the card edges.
+ *
+ * No max-width: the panel is a workspace, and the user asked for the tab pages
+ * to use whatever width the dock gives them. A 760px column left the rest of a
+ * wide dock empty while the source tiles scrolled inside their own box.
  */
 .live-dialog {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5, 10px);
+  gap: var(--space-4);
   min-width: 0;
-  padding: var(--space-6, 12px) var(--space-7, 16px);
+  padding: var(--space-6) var(--space-7);
   /* A floor on the height keeps the card from jumping when the body switches
      between "pick a source" and the (shorter) publishing view. */
   min-height: calc(210 * var(--dp));
 }
 
-.live-dialog-section {
-  font-size: var(--font-size-sm, 13px);
-  font-weight: 600;
-  color: var(--text-primary, #1f2328);
-  /* Air above a heading only: the flex gap already separates it from the
-     content it introduces. */
-  margin-top: var(--space-2, 4px);
-}
-
-/* A hairline above every section except the first turns a flat list of lines
-   into blocks. The first one is skipped because a rule directly under the
-   dialog's top padding reads as a stray border. */
-.live-dialog-section:not(:first-child) {
-  margin-top: var(--space-3, 6px);
-  padding-top: var(--space-5, 10px);
-  border-top: 1px solid var(--border-color, #e5e5e5);
-}
-
-.live-dialog-hint {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2, 4px);
-  font-size: var(--font-size-xs, 11px);
-  color: var(--text-muted, #656d76);
-  line-height: 1.6;
-}
-
-/* Indented hints belong to the checkbox above them. The indent matches the
-   checkbox box plus its gap so the text starts under the label, not the box. */
-.live-dialog-hint--indent {
-  padding-left: calc(16 * var(--dp));
-}
+/* Section headings, hints and checkbox rows are the meeting form primitives —
+   assets/meeting-form.css, shared with 创建会议. */
 
 /* A blocking "please wait" state gets the whole card, centred. The dialog
    already reserves a min-height, so this only has to claim that space. */
@@ -1070,25 +1101,6 @@ watch(
   /* overflow-wrap (not the deprecated word-break: break-word) so a long error
      message wraps instead of stretching the dialog. */
   overflow-wrap: anywhere;
-}
-
-/* ── Checkbox rows ─────────────────────────────────────────────────────── */
-
-.live-check {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2, 4px);
-  font-size: var(--font-size-sm, 13px);
-  color: var(--text-primary, #1f2328);
-  cursor: pointer;
-  /* The checkbox is the click target; the label is part of it. Padding gives
-     the row a comfortable hit area without shifting the text off the grid. */
-  padding: var(--space-1, 2px) 0;
-}
-
-.live-check input[type='checkbox'] {
-  margin: 0;
-  flex-shrink: 0;
 }
 
 /* ── Audience ──────────────────────────────────────────────────────────── */
@@ -1587,14 +1599,11 @@ watch(
   min-height: 0;
 }
 
-/* The dialog body used to be centred in a card; in a tab the content is a
-   column, and a max width keeps long lines (transcripts, paths) readable on a
-   wide dock panel. */
+/* Full width on purpose: the meeting tabs are a workspace, and a centred
+   760px column left the rest of a wide dock empty while the transcript and the
+   source tiles scrolled inside it. The panel's own padding is the only inset. */
 .live-panel__body.live-dialog {
-  padding: var(--space-6, 12px) var(--space-7, 16px);
-  max-width: 760px;
-  width: 100%;
-  margin: 0 auto;
+  padding: var(--space-6) var(--space-7);
   min-height: 0;
 }
 

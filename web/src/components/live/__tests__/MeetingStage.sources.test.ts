@@ -75,6 +75,7 @@ vi.mock('@/composables/useLiveShare', async () => {
     levels: r({}),
     previewStream: sr({ id: 'preview' }),
     captureKind: r('screen'),
+    captureSourceId: r('screen:0:0'),
     videoEnabled: r(true),
     cameraEnabled: r(false),
     previewCameraStream: sr(null),
@@ -155,9 +156,9 @@ function mountPanel() {
 }
 
 async function openPicker() {
+  // The grid IS the picker now — the create page's control, always on screen —
+  // so there is no button to press before the tiles exist.
   const wrapper = mountPanel()
-  await flushPromises()
-  await wrapper.find('[data-action="switch-source"]').trigger('click')
   await flushPromises()
   return wrapper
 }
@@ -173,7 +174,7 @@ beforeEach(() => {
 })
 
 describe('MeetingStage source picker', () => {
-  it('opens the shared source grid and swaps to the tile that was clicked', async () => {
+  it('draws the shared source grid and swaps to the tile that was clicked', async () => {
     listSources.mockResolvedValueOnce([
       { id: 'screen:0:0', name: 'Entire Screen', kind: 'screen', thumbnail: 'data:image/png;base64,AAA' },
       { id: 'window:1:0', name: 'Terminal', kind: 'window', thumbnail: '' },
@@ -182,17 +183,19 @@ describe('MeetingStage source picker', () => {
     const wrapper = await openPicker()
     const tiles = wrapper.findAll('.capture-source')
 
-    expect(tiles).toHaveLength(2)
+    // The "不共享" tile first, then the two sources — the same three choices the
+    // create page offered one screen earlier.
+    expect(tiles).toHaveLength(3)
     // The still frame is what makes the pick possible at all: two windows of
     // the same app are indistinguishable by name.
-    expect(tiles[0].find('.capture-source__thumb img').attributes('src')).toBe('data:image/png;base64,AAA')
-    expect(tiles[1].find('.capture-source__name').text()).toBe('Terminal')
+    expect(tiles[1].find('.capture-source__thumb img').attributes('src')).toBe('data:image/png;base64,AAA')
+    expect(tiles[2].find('.capture-source__name').text()).toBe('Terminal')
 
-    await tiles[1].trigger('click')
+    await tiles[2].trigger('click')
     await flushPromises()
 
     expect(shareApi.switchSource).toHaveBeenCalledWith('window:1:0')
-    // A successful swap closes the picker again.
-    expect(wrapper.find('.capture-source').exists()).toBe(false)
+    // The grid stays: it is the live picture state, not a popup that closes.
+    expect(wrapper.find('.capture-source').exists()).toBe(true)
   })
 })

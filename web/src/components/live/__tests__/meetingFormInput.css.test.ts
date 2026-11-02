@@ -17,8 +17,10 @@ import { join } from 'node:path'
  * That is the "扁的要死" report: the fields, not the panel, looked wrong. The
  * fix is `flex-shrink: 0` — the body then scrolls, as it is meant to.
  *
- * jsdom has no CSS engine (and no layout), so this reads the SFC styles and
- * pins the declaration, following `settingsRowTypography.css.test.ts`.
+ * The rule now lives in `assets/meeting-form.css`, shared with the running
+ * meeting's form so one field has one definition. jsdom has no CSS engine (and
+ * no layout), so this reads the sources and pins both halves: the declaration
+ * itself, and the fact that each form actually loads the sheet.
  */
 
 function readWebFile(relPath: string): string {
@@ -36,33 +38,41 @@ function stripComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, '')
 }
 
+const SHARED = 'src/assets/meeting-form.css'
+const FORMS = ['MeetingCreate.vue', 'MeetingJoin.vue']
+
 /** The declaration block of the first rule that targets `.meeting-input`. */
-function inputRule(file: string): string {
-  const css = stripComments(readWebFile(`src/components/live/${file}`))
+function inputRule(): string {
+  const css = stripComments(readWebFile(SHARED))
   const m = css.match(/\.meeting-input\s*\{([^}]*)\}/)
-  expect(m, `${file} must style .meeting-input`).not.toBeNull()
+  expect(m, `${SHARED} must style .meeting-input`).not.toBeNull()
   return m![1]
 }
 
-const FILES = ['MeetingCreate.vue', 'MeetingJoin.vue']
-
 describe('meeting form inputs', () => {
-  it.each(FILES)('%s opts out of flex shrinking', (file) => {
+  it('opts out of flex shrinking', () => {
     // Without this the field collapses to roughly half height on a phone; the
     // panel is a column flex container and an input has no content minimum.
-    expect(inputRule(file)).toMatch(/flex-shrink:\s*0\b/)
+    expect(inputRule()).toMatch(/flex-shrink:\s*0\b/)
   })
 
-  it.each(FILES)('%s keeps a comfortable field height', (file) => {
+  it('keeps a comfortable field height', () => {
     // A floor, so "it fits" cannot be bought back by shrinking the box again.
-    const height = inputRule(file).match(/height:\s*calc\((\d+)\s*\*\s*var\(--dp\)\)/)
-    expect(height, `${file} .meeting-input height must use the --dp scale`).not.toBeNull()
+    const height = inputRule().match(/height:\s*calc\((\d+)\s*\*\s*var\(--dp\)\)/)
+    expect(height, `.meeting-input height must use the --dp scale`).not.toBeNull()
     expect(Number(height![1])).toBeGreaterThanOrEqual(36)
   })
 
-  it.each(FILES)('%s sizes the typed value above the field label', (file) => {
+  it('sizes the typed value above the field label', () => {
     // Same rule the settings form follows: a value never renders smaller than
     // the label naming it (labels here are --font-size-sm).
-    expect(inputRule(file)).not.toMatch(/font-size:\s*var\(--font-size-(2xs|xs|sm)\)/)
+    expect(inputRule()).not.toMatch(/font-size:\s*var\(--font-size-(2xs|xs|sm)\)/)
+  })
+
+  it.each(FORMS)('%s loads the shared form stylesheet', (file) => {
+    // A component that renders .meeting-input without the sheet has no rule at
+    // all — the styles are global, and "an ancestor happened to import it" is
+    // not a contract.
+    expect(readWebFile(`src/components/live/${file}`)).toContain("import '@/assets/meeting-form.css'")
   })
 })

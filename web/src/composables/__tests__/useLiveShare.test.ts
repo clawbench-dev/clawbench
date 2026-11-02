@@ -1230,6 +1230,8 @@ describe('switchSource', () => {
     // The new stream must become the session's stream, otherwise resetSession()
     // never stops it and the capture indicator stays on after "end share".
     expect(share.captureKind.value).toBe('window')
+    // The live picker marks the tile that is actually on the wire.
+    expect(share.captureSourceId.value).toBe('window:2:0')
   })
 
   it('re-opens the browser picker when there is no source list to choose from', async () => {
@@ -1254,6 +1256,9 @@ describe('switchSource', () => {
     expect(bridge.setPendingCaptureSource).not.toHaveBeenCalled()
     expect(FakePC.instances[0].transceivers[1].sender.replaceTrack).toHaveBeenCalledWith(nextTrack)
     expect(share.captureKind.value).toBe('window')
+    // A browser pick has no id of its own; the panel maps the empty id onto its
+    // synthetic "共享屏幕" tile.
+    expect(share.captureSourceId.value).toBe('')
     spy.mockRestore()
   })
 
@@ -1449,6 +1454,7 @@ describe('picture changes mid-meeting', () => {
     expect(pc.transceivers[1].sender.track?.id).toBe('v1')
     expect(share.videoEnabled.value).toBe(true)
     expect(share.captureKind.value).toBe('screen')
+    expect(share.captureSourceId.value).toBe('screen:2:0')
     expect(lastWS().sentJSON()).toContainEqual({
       type: 'set-picture',
       video: true,
@@ -1477,6 +1483,8 @@ describe('picture changes mid-meeting', () => {
     expect(share.state.value).toBe('publishing')
     expect(share.videoEnabled.value).toBe(true)
     expect(share.captureKind.value).toBeNull()
+    // Nothing is on the wire, so no tile is selected either.
+    expect(share.captureSourceId.value).toBe('')
     expect(displayStream.getVideoTracks()[0].stopped).toBe(true)
     expect(lastWS().sentJSON()).toContainEqual({
       type: 'set-picture',

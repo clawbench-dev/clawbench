@@ -73,6 +73,7 @@ vi.mock('@/composables/useLiveShare', async () => {
     levels: r({}),
     previewStream: sr({ id: 'preview' }),
     captureKind: r('screen'),
+    captureSourceId: r(''),
     videoEnabled: r(true),
     cameraEnabled: r(false),
     previewCameraStream: sr(null),

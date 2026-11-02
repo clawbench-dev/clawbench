@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick, ref, shallowRef } from 'vue'
 import enMessages from '@/i18n/locales/en'
-import { listAudioInputs } from '@/composables/useLiveShare'
+import { listAudioInputs, listCaptureSources } from '@/composables/useLiveShare'
 import { useMeetingOptions } from '@/composables/useMeetingOptions'
 import MeetingStage from '../MeetingStage.vue'
 
@@ -52,8 +52,9 @@ vi.mock('@/composables/useMarkdownRenderer', () => ({
   renderMarkdownHtml: (text: string) => `<p>${text}</p>`,
 }))
 
+const nativeBridge = vi.hoisted(() => ({ current: null as unknown }))
 vi.mock('@/utils/clawbenchNative', () => ({
-  getNative: () => null,
+  getNative: () => nativeBridge.current,
 }))
 
 /** What the native injector probe answers; tests flip it to prove the panel
@@ -85,6 +86,7 @@ vi.mock('@/composables/useLiveShare', async () => {
     levels: r({}),
     previewStream: sr(null),
     captureKind: r('screen'),
+    captureSourceId: r(''),
     videoEnabled: r(true),
     cameraEnabled: r(false),
     previewCameraStream: sr(null),
@@ -181,8 +183,11 @@ function tab(wrapper: ReturnType<typeof mountPanel>, key: string) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  nativeBridge.current = null
   ;(shareApi.state as { value: string }).value = 'publishing'
   ;(shareApi.screenSharer as { value: string }).value = ''
+  ;(shareApi.captureKind as { value: string }).value = 'screen'
+  ;(shareApi.captureSourceId as { value: string }).value = ''
   ;(notesApi.phase as { value: string }).value = 'idle'
   ;(notesApi.segments as { value: unknown[] }).value = []
   // The chosen input is a module singleton shared with the create form.
@@ -376,8 +381,10 @@ describe('MeetingStage picture toggles', () => {
       expect(wrapper.find('[data-role="camera-self"]').exists()).toBe(true)
       // A camera image has no desktop behind it.
       expect(wrapper.find('[data-action="annotate"]').exists()).toBe(false)
-      expect(wrapper.find('[data-action="switch-source"]').exists()).toBe(false)
-      // ...but the audience may still be allowed to share theirs: the two are
+      // ...but the picture grid stays: it is how a camera-only meeting adds a
+      // screen back, not a screen-only tool.
+      expect(wrapper.find('.capture-sources').exists()).toBe(true)
+      // The audience may still be allowed to share theirs: the two are
       // independent, and the switch no longer disappears with the picture.
       expect(wrapper.text()).toContain(enMessages.liveShare.allowScreenShare)
     } finally {
@@ -413,23 +420,53 @@ describe('MeetingStage picture toggles', () => {
     }
   })
 
-  it('starts and stops the screen from the running meeting', async () => {
+  it('starts and stops the screen from the same picture grid the create form uses', async () => {
+    nativeBridge.current = { listCaptureSources: vi.fn() }
+    ;(listCaptureSources as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { id: 'screen:0:0', name: 'Entire Screen', kind: 'screen', thumbnail: '' },
+      { id: 'window:1:0', name: 'Terminal', kind: 'window', thumbnail: '' },
+    ])
+    ;(shareApi.captureSourceId as { value: string }).value = 'screen:0:0'
     const wrapper = mountPanel()
     await flushPromises()
 
-    // Sharing: the toggle is on and stopping it must not end the meeting.
-    const screen = wrapper.find('[data-role="stage-screen"]')
-    expect((screen.element as HTMLInputElement).checked).toBe(true)
-    await screen.setValue(false)
+    // Sharing: the live tile is the selected one, not the "off" tile.
+    expect(wrapper.find('[data-source="screen:0:0"]').classes()).toContain('capture-source--on')
+    expect(wrapper.find('[data-source="__off__"]').classes()).not.toContain('capture-source--on')
+
+    // 不共享 is a tile, and clicking it stops the picture without ending the
+    // meeting — the same control the create form draws.
+    await wrapper.find('[data-source="__off__"]').trigger('click')
     expect(shareApi.stopScreen).toHaveBeenCalledTimes(1)
 
-    // Not sharing: turning it on starts a capture with the remembered source.
+    // Not sharing: picking a tile starts the capture with THAT id.
     ;(shareApi.captureKind as { value: unknown }).value = null
+    ;(shareApi.captureSourceId as { value: string }).value = ''
     await flushPromises()
-    const off = wrapper.find('[data-role="stage-screen"]')
-    expect((off.element as HTMLInputElement).checked).toBe(false)
-    await off.setValue(true)
-    expect(shareApi.startScreen).toHaveBeenCalledWith('')
+    expect(wrapper.find('[data-source="__off__"]').classes()).toContain('capture-source--on')
+
+    await wrapper.find('[data-source="window:1:0"]').trigger('click')
+    await flushPromises()
+    expect(shareApi.startScreen).toHaveBeenCalledWith('window:1:0')
+  })
+
+  it('swaps to another tile without stopping the meeting', async () => {
+    nativeBridge.current = { listCaptureSources: vi.fn() }
+    ;(listCaptureSources as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { id: 'screen:0:0', name: 'Entire Screen', kind: 'screen', thumbnail: '' },
+      { id: 'window:1:0', name: 'Terminal', kind: 'window', thumbnail: '' },
+    ])
+    ;(shareApi.captureSourceId as { value: string }).value = 'screen:0:0'
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-source="window:1:0"]').trigger('click')
+    await flushPromises()
+
+    // A different tile while a screen is live is a swap, not a restart: the
+    // viewers' connections stay up.
+    expect(shareApi.switchSource).toHaveBeenCalledWith('window:1:0')
+    expect(shareApi.stopScreen).not.toHaveBeenCalled()
   })
 })
 

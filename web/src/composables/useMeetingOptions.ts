@@ -2,7 +2,7 @@
  * The capture options a meeting shares between its two surfaces.
  *
  * They are adjustable BEFORE the meeting (create page) and DURING it (the
- * "声音与听记" block in the stage's basic tab), and both places must show the
+ * 画面与声音 block in the stage's 基础配置 tab), and both places must show the
  * same values — a choice that resets when you walk from one screen to the other
  * is worse than having only one of them.
  *

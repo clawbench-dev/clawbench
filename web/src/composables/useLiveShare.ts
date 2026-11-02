@@ -174,6 +174,16 @@ const previewStream = shallowRef<MediaStream | null>(null)
  */
 const captureKind = ref<'screen' | 'window' | null>('screen')
 /**
+ * Which tile of the source list is on the wire, as an id from
+ * `listCaptureSources()`.
+ *
+ * The running meeting draws the same picker the create page draws, so it has
+ * to know which tile to mark as selected. `captureKind` cannot answer that —
+ * it says screen vs window, not which one — and the browser/Android hosts have
+ * no id at all, so their panels map an empty id onto their synthetic tile.
+ */
+const captureSourceId = ref('')
+/**
  * Whether this host can inject input at all (the shell's `input-helper`, Windows
  * only). Probed by the share panel, which owns the native bridge and also needs
  * the answer for its own "allow control" row.
@@ -269,6 +279,7 @@ function resetSession(): void {
   displayStream = null
   previewStream.value = null
   captureKind.value = null
+  captureSourceId.value = ''
   controlSupported.value = false
   controlEnabled.value = false
   videoEnabled.value = false
@@ -507,6 +518,7 @@ async function captureScreen(sourceId: string): Promise<MediaStream | null> {
       },
     })
     captureKind.value = 'screen'
+    captureSourceId.value = sourceId
     return androidCapture.stream
   }
 
@@ -526,6 +538,9 @@ async function captureScreen(sourceId: string): Promise<MediaStream | null> {
       audio: true,
     })
     if (!declare) captureKind.value = captureKindOf(stream)
+    // Remember which tile this is so the live picker can mark it. A browser
+    // pick has no id (its dialog chose), which the panel maps to its own tile.
+    captureSourceId.value = sourceId
     return stream
   } catch (e) {
     appLog.w(TAG, 'screen capture unavailable', e)
@@ -642,6 +657,7 @@ async function stopScreen(): Promise<void> {
   displayStream = null
   previewStream.value = null
   captureKind.value = null
+  captureSourceId.value = ''
   androidCapture?.stop()
   androidCapture = null
   for (const track of stream.getTracks()) track.stop()
@@ -1645,6 +1661,7 @@ export function useLiveShare() {
     previewStream,
     previewCameraStream,
     captureKind,
+    captureSourceId,
     controlSupported,
     controlEnabled,
     setControlSupported,

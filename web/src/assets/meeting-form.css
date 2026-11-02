@@ -1,0 +1,102 @@
+/**
+ * The meeting form primitives: a section heading, a field, a hint line and a
+ * checkbox row.
+ *
+ * 创建会议 / 加入会议 / 会中「基础配置」 are three screens of one form language.
+ * They used to be two scoped copies (`.meeting-*` on the create page,
+ * `.live-dialog-*` on the stage) and had already drifted: the stage's hints
+ * lost the icon gutter and its checkboxes carried no icon, so the same "AI
+ * 听记" switch read as two different controls on two screens.
+ *
+ * Global, not scoped, for the reason the design guide gives: a scoped rule
+ * compiles to `.foo[data-v-x]` (0,2,0) and silently out-ranks a shared single
+ * class, so any geometry left in a component would win without a trace. The
+ * components keep layout only.
+ */
+
+/* ── Section heading ───────────────────────────────────────────────────────
+   A hairline above every section except the first turns a flat column of
+   controls into blocks; the first one is skipped because a rule directly
+   under the panel's top padding reads as a stray border. */
+.meeting-section {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-top: var(--space-2);
+}
+.meeting-section:not(:first-child) {
+  margin-top: var(--space-3);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-color);
+}
+
+/* ── Text field ────────────────────────────────────────────────────────────
+   The body is a scrolling flex column and an input is a replaced element with
+   no content-derived minimum, so without `flex-shrink: 0` it is the ONLY
+   child that shrinks when the form overflows — measured at 393×700 a 32px
+   field rendered 16px tall. */
+.meeting-input {
+  width: 100%;
+  height: calc(38 * var(--dp));
+  flex-shrink: 0;
+  padding: 0 var(--space-6);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  /* A value never renders smaller than the label naming it (--font-size-sm). */
+  font-size: var(--font-size-lg);
+  font-family: inherit;
+}
+.meeting-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+
+/* ── Hint ──────────────────────────────────────────────────────────────────
+   Indented hints belong to the checkbox above them; the indent matches the
+   checkbox box plus its gap so the text starts under the label, not the box. */
+.meeting-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.meeting-hint--indent {
+  padding-left: calc(16 * var(--dp));
+}
+/* A blocked field, not a validation error: the line explains the disabled
+   footer button instead of waiting for a failed submit. */
+.meeting-hint--required {
+  color: var(--color-red);
+}
+
+/* ── Checkbox row ──────────────────────────────────────────────────────────
+   The icon is part of the row, not decoration: it is what tells "AI 听记" from
+   "允许观众发言" when several rows sit one under another. */
+.meeting-checks {
+  display: flex;
+  flex-direction: column;
+}
+.meeting-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.meeting-check input {
+  margin: 0;
+  accent-color: var(--accent-color);
+}
+.meeting-check__icon {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+.meeting-check input:checked + .meeting-check__icon {
+  color: var(--accent-color);
+}

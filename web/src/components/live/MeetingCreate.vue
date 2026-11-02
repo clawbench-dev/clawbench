@@ -160,8 +160,12 @@ import {
 } from '@/composables/useLiveShare'
 import { getNative } from '@/utils/clawbenchNative'
 import { browserScreenCaptureAvailable, isInsecureCaptureContext } from '@/utils/screenCaptureSupport'
+import { buildCaptureChoices, captureSourceIdOf } from '@/utils/captureSourceChoices'
 import { appLog } from '@/utils/appLog'
 import '@/assets/modal-footer-btn.css'
+// The section / field / hint / checkbox primitives, shared with the running
+// meeting's 基础配置 tab so one form has one look.
+import '@/assets/meeting-form.css'
 
 const emit = defineEmits<{ back: []; started: [] }>()
 
@@ -172,14 +176,7 @@ const { micChoice, cameraChoice, notes } = useMeetingOptions()
 const { nickname, persist } = useMeetingNickname()
 
 /**
- * A plain browser has no source list: its own picker IS the source choice.
- * This synthetic id keeps that "share a screen, the browser asks which" case a
- * tile in the grid like any other, instead of a separate control.
- */
-const BROWSER_SOURCE = 'browser:screen'
-
-/**
- * What the host chose: '' for no picture, BROWSER_SOURCE for "let the browser
+ * What the host chose: '' for no picture, the browser tile for "let the browser
  * ask", otherwise a source id from the list.
  */
 const screenChoice = ref('')
@@ -258,7 +255,7 @@ const canStart = computed(() => {
 })
 
 /** Which id to publish: a browser pick has no id, the dialog decides. */
-const selectedSourceId = computed(() => (screenChoice.value === BROWSER_SOURCE ? '' : screenChoice.value))
+const selectedSourceId = computed(() => captureSourceIdOf(screenChoice.value))
 
 async function loadSources(): Promise<void> {
   if (loadingSources.value) return
@@ -268,19 +265,13 @@ async function loadSources(): Promise<void> {
     cameraAvailable.value = hasCamera
     // Android has no source list: the consent dialog decides what gets
     // mirrored. One sentinel tile keeps "share my screen" selectable.
-    if (isAndroidCapture.value) {
-      sources.value = [{ id: 'android:screen', name: t('liveShare.entireScreen'), kind: 'screen', thumbnail: '' }]
-    } else if (list.length > 0) {
-      sources.value = list
-    } else if (browserCapture && !hasNativeCapture.value) {
-      // No list to show, but the browser can still capture: one tile that hands
-      // the choice to the browser's own picker.
-      sources.value = [
-        { id: BROWSER_SOURCE, name: t('meeting.create.browserSource'), kind: 'screen', thumbnail: '' },
-      ]
-    } else {
-      sources.value = []
-    }
+    sources.value = buildCaptureChoices({
+      list,
+      android: isAndroidCapture.value,
+      browser: browserCapture && !hasNativeCapture.value,
+      entireScreen: t('liveShare.entireScreen'),
+      browserSource: t('meeting.create.browserSource'),
+    })
 
     // Keep the current choice when it still exists; otherwise default to the
     // first screen. Screen sharing stays the default (it is what this feature
@@ -420,51 +411,9 @@ onMounted(() => {
   display: flex; flex-direction: column; gap: var(--space-4);
   padding: var(--space-6) var(--space-7);
 }
-.meeting-section {
-  font-size: var(--font-size-sm); font-weight: 600; color: var(--text-primary);
-  margin-top: var(--space-2);
-}
-.meeting-section:not(:first-child) {
-  margin-top: var(--space-3); padding-top: var(--space-5);
-  border-top: 1px solid var(--border-color);
-}
-.meeting-input {
-  width: 100%; height: calc(38 * var(--dp));
-  /* The body is a scrolling flex column, and an input is a replaced element
-     with no content-derived minimum — without this it is the ONLY child that
-     shrinks when the form overflows, which squashed both fields to about half
-     height on a phone. */
-  flex-shrink: 0;
-  padding: 0 var(--space-6);
-  border: 1px solid var(--border-color); border-radius: var(--radius-sm);
-  background: var(--bg-secondary); color: var(--text-primary);
-  font-size: var(--font-size-lg); font-family: inherit;
-}
-.meeting-input:focus { outline: none; border-color: var(--accent-color); }
-
-/* Camera, microphone and 听记 are one group of independent switches: they are
-   all "what the host sends", and they were previously split by a heading that
-   only repeated the word "sound". */
-.meeting-checks { display: flex; flex-direction: column; }
-.meeting-check {
-  display: flex; align-items: center; gap: var(--space-2);
-  padding: var(--space-1) 0;
-  font-size: var(--font-size-sm); color: var(--text-primary); cursor: pointer;
-}
-.meeting-check input { margin: 0; accent-color: var(--accent-color); }
-.meeting-check__icon { display: inline-flex; color: var(--text-muted); }
-.meeting-check input:checked + .meeting-check__icon { color: var(--accent-color); }
-.meeting-check--disabled { color: var(--text-hint); cursor: not-allowed; }
-.meeting-check--disabled .meeting-check__icon { color: var(--text-hint); }
-
-.meeting-hint {
-  display: flex; align-items: center; gap: var(--space-2);
-  font-size: var(--font-size-xs); line-height: 1.6; color: var(--text-muted);
-}
-.meeting-hint--indent { padding-left: calc(16 * var(--dp)); }
-/* A blocked field, not a validation error: the line explains the disabled
-   footer button instead of waiting for a failed submit. */
-.meeting-hint--required { color: var(--color-red); }
+/* .meeting-section / .meeting-input / .meeting-hint / .meeting-check live in
+   assets/meeting-form.css — the running meeting's 基础配置 tab draws the same
+   controls and must not grow a second copy. */
 .meeting-warn {
   padding: var(--space-4) var(--space-5); border-radius: var(--radius-md);
   background: var(--bg-tertiary); color: var(--text-muted);
