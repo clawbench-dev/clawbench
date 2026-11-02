@@ -1914,14 +1914,23 @@ function onContainerLongPress(e) {
 // The name label is `width: 100%` inside the info column, so the blank stretch
 // beside a short name is inside `.file-name` and therefore still part of the
 // entry; only the strip of the info column outside the label (and everything
-// else in the row) is background.
+// else in the row) is background. Search results opt out of this split — see
+// `resolveCtxEntry`.
 const CTX_ENTRY_ZONE_SELECTOR = '.file-icon-wrap, .grid-thumb, .file-name, .grid-name'
 
 /** The row/tile under `el`, or null when `el` is not in the entry's hit zone. */
 function resolveCtxEntry(el) {
     const zone = el?.closest?.(CTX_ENTRY_ZONE_SELECTOR)
-    if (!zone) return null
-    return zone.closest('.file-item, .grid-item') || null
+    if (zone) return zone.closest('.file-item, .grid-item') || null
+    // The narrow hit zone exists so the rest of a row falls through to the
+    // empty-area menu (paste / new file / new folder), matching Explorer. In
+    // search results there is no such menu — it targets the browsed directory,
+    // which the results view does not have — so a fall-through means the click
+    // is swallowed and nothing happens. Search rows therefore belong to the
+    // entry in full, including the parent-directory line, the size/meta column
+    // and the "reveal in directory" button, none of which are in the zone.
+    if (searchHasQuery.value) return el?.closest?.('.file-item, .grid-item') || null
+    return null
 }
 
 function handleCtxMenu(e) {

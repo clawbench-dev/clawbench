@@ -561,6 +561,13 @@ beforeEach(() => {
   mockLocalConfig.filePreviewMode = false
 })
 
+// A dragstart without a matching dragend leaves the drag ghost (and its 5s
+// safety timer) alive in `document.body`. The timer then fires while a LATER
+// test — or no test at all — owns the DOM, which surfaces as an unhandled error
+// attributed to whatever ran last. Clearing after every case keeps that timer
+// inside the case that created it.
+afterEach(() => { cleanupDragGhost() })
+
 // ── Rendering ──
 
 
@@ -1609,6 +1616,58 @@ describe('FileManagerContent — resident search', () => {
     await wrapper.find('.file-item .file-name').trigger('contextmenu')
     expect(wrapper.find('.context-menu').exists()).toBe(true)
     expect(wrapper.vm.ctxMenu.entry.path).toBe('cmd/main.go')
+  })
+
+  // Search results have no browsed-directory background: the empty-area menu
+  // (paste / new file / new folder) is suppressed there, so any pixel that is
+  // not part of the entry falls through to nothing at all. The whole row must
+  // therefore open the entry menu — the parent-directory line, the size column
+  // and the reveal button included.
+  it('right-clicking anywhere on a search result row opens the entry menu', async () => {
+    searchState.query = 'main'
+    searchState.scope = 'global'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    for (const sel of ['.file-parent-dir', '.file-meta', '.fs-result-dir-btn']) {
+      wrapper.vm.closeCtxMenu()
+      await nextTick()
+      const target = wrapper.find(`.file-item ${sel}`)
+      expect(target.exists(), sel).toBe(true)
+      await target.trigger('contextmenu')
+      await nextTick()
+      expect(wrapper.vm.ctxMenu.visible, sel).toBe(true)
+      expect(wrapper.vm.ctxMenu.entry?.path, sel).toBe('cmd/main.go')
+    }
+  })
+
+  it('right-clicking a grid search result outside the name opens the entry menu', async () => {
+    searchState.query = 'main'
+    searchState.scope = 'global'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    wrapper.vm._setViewMode('grid')
+    await nextTick()
+    await wrapper.find('.grid-item .grid-parent-dir').trigger('contextmenu')
+    await nextTick()
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry?.path).toBe('cmd/main.go')
+  })
+
+  it('still shows no menu when right-clicking empty space in the search results', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    await wrapper.find('.file-list').trigger('contextmenu')
+    await nextTick()
+    expect(wrapper.vm.ctxMenu.visible).toBe(false)
   })
 
   it('Escape clears the query and returns to the listing', async () => {
