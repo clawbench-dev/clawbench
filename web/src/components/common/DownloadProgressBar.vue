@@ -2,6 +2,7 @@
   <TransferProgressBar
     :visible="visible"
     :label="fileName"
+    :detail="speedLabel"
     :value="indeterminate ? sizeLabel : pct + '%'"
     :percent="pct"
     :indeterminate="indeterminate"
@@ -16,7 +17,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import TransferProgressBar from '@/components/common/TransferProgressBar.vue'
-import { formatFileSize } from '@/utils/fileType'
+import { formatByteRate, formatFileSize } from '@/utils/fileType'
 
 /**
  * Adapter: in-product progress for a single file download.
@@ -26,6 +27,9 @@ import { formatFileSize } from '@/utils/fileType'
  * server sent no Content-Length (the streamed archive endpoint) and the bar
  * animates indeterminately, showing the received bytes instead of a percentage.
  *
+ * The transfer rate sits between the two as `detail`. It is omitted while the
+ * rate is still unknown (0), so a just-started bar does not flash "0 B/s".
+ *
  * All visuals come from `TransferProgressBar`, which uploads use too.
  */
 const props = defineProps<{
@@ -33,6 +37,8 @@ const props = defineProps<{
   fileName: string
   received: number
   total: number
+  /** Bytes per second, as measured by `useDownloadProgress`. */
+  speed: number
 }>()
 
 const emit = defineEmits<{
@@ -53,4 +59,6 @@ const sizeLabel = computed(() => {
   if (props.total <= 0) return formatFileSize(props.received)
   return `${formatFileSize(props.received)} / ${formatFileSize(props.total)}`
 })
+
+const speedLabel = computed(() => (props.speed > 0 ? formatByteRate(props.speed) : ''))
 </script>

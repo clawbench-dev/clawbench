@@ -263,3 +263,12 @@ export function formatFileSize(bytes: number): string {
     if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
     return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
 }
+
+/** Format a transfer rate, e.g. "1.2 MB/s". */
+export function formatByteRate(bytesPerSecond: number): string {
+    if (!Number.isFinite(bytesPerSecond) || bytesPerSecond < 1) return '0 B/s'
+    if (bytesPerSecond < 1024) return Math.round(bytesPerSecond) + ' B/s'
+    if (bytesPerSecond < 1024 * 1024) return (bytesPerSecond / 1024).toFixed(1) + ' KB/s'
+    if (bytesPerSecond < 1024 * 1024 * 1024) return (bytesPerSecond / (1024 * 1024)).toFixed(1) + ' MB/s'
+    return (bytesPerSecond / (1024 * 1024 * 1024)).toFixed(1) + ' GB/s'
+}

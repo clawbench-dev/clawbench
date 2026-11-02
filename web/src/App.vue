@@ -59,6 +59,7 @@
         :file-name="downloadFileName"
         :received="downloadReceived"
         :total="downloadTotal"
+        :speed="downloadSpeed"
         @cancel="cancelDownload"
       />
 
@@ -1655,7 +1656,7 @@ const markdownViewMode = ref('rendered')
 const toast = useToast()
 provide('toast', toast)
 
-const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, cancelDownload } = useDownloadProgress()
+const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, downloadSpeed, cancelDownload } = useDownloadProgress()
 
 const sessionIdentity = useSessionIdentity()
 const { getAgentBackend, getAgentName, getAgentAvatar } = useAgents()

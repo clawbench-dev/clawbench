@@ -43,6 +43,7 @@
       :file-name="downloadFileName"
       :received="downloadReceived"
       :total="downloadTotal"
+      :speed="downloadSpeed"
       :style="{ '--transfer-progress-top': 'calc(44px + var(--space-2, 4px))' }"
       @cancel="cancelDownload"
     />
@@ -71,7 +72,7 @@ import { useDownloadProgress } from '@/composables/useDownloadProgress'
 
 const { t } = useI18n()
 
-const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, cancelDownload } = useDownloadProgress()
+const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, downloadSpeed, cancelDownload } = useDownloadProgress()
 
 const loading = ref(true)
 const error = ref('')

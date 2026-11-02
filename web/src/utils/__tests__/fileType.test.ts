@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getFileType, formatFileSize } from '@/utils/fileType.ts'
+import { getFileType, formatFileSize, formatByteRate } from '@/utils/fileType.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
 
 describe('getFileType', () => {
@@ -145,6 +145,26 @@ describe('formatFileSize', () => {
 
   it('formats megabytes', () => {
     expect(formatFileSize(2 * 1024 * 1024)).toBe('2.0 MB')
+  })
+})
+
+describe('formatByteRate', () => {
+  it('formats bytes per second', () => {
+    expect(formatByteRate(512)).toBe('512 B/s')
+  })
+
+  it('formats kilobytes per second', () => {
+    expect(formatByteRate(2048)).toBe('2.0 KB/s')
+  })
+
+  it('formats megabytes per second', () => {
+    expect(formatByteRate(1.5 * 1024 * 1024)).toBe('1.5 MB/s')
+  })
+
+  it('never prints a negative or non-finite rate', () => {
+    expect(formatByteRate(0)).toBe('0 B/s')
+    expect(formatByteRate(-5)).toBe('0 B/s')
+    expect(formatByteRate(Number.NaN)).toBe('0 B/s')
   })
 })
 

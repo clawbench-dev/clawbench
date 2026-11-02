@@ -16,6 +16,7 @@ function mountBar(props: Record<string, unknown> = {}) {
       fileName: 'report.pdf',
       received: 0,
       total: 0,
+      speed: 0,
       ...props,
     },
     global: { plugins: [i18n] },
@@ -53,6 +54,16 @@ describe('DownloadProgressBar', () => {
   it('clamps the percentage at 100 when more bytes than declared arrive', () => {
     const wrapper = mountBar({ received: 4096, total: 2048 })
     expect(wrapper.find('.transfer-progress-value').text()).toBe('100%')
+  })
+
+  it('shows the transfer rate between the file name and the percentage', () => {
+    const wrapper = mountBar({ received: 512, total: 2048, speed: 1.5 * 1024 * 1024 })
+    expect(wrapper.find('.transfer-progress-detail').text()).toBe('1.5 MB/s')
+  })
+
+  it('omits the rate until it is known', () => {
+    const wrapper = mountBar({ received: 512, total: 2048, speed: 0 })
+    expect(wrapper.find('.transfer-progress-detail').exists()).toBe(false)
   })
 
   it('floats under the header so it never disturbs the layout', () => {
