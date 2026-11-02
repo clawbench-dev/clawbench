@@ -14,6 +14,7 @@ import (
 	"clawbench/internal/liveshare"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/store"
 
 	"github.com/coder/websocket"
 	"github.com/stretchr/testify/assert"
@@ -1449,4 +1450,22 @@ func TestCreateLiveShareRoom_KeepsTokenWithinGrace(t *testing.T) {
 	second, err := createLiveShareRoom(project, "会议")
 	require.NoError(t, err)
 	assert.Equal(t, first.Token(), second.Token())
+}
+
+// The restart path: a record the previous process left open cannot belong to a
+// running meeting (rooms are in-memory), so starting the reaper must close it
+// right away instead of waiting for the hourly sweep's 12h staleness cutoff.
+func TestStartLiveShareReaper_ClosesMeetingsLeftOpenByThePreviousRun(t *testing.T) {
+	setupLiveNotesDB(t)
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	require.NoError(t, service.StartLiveNote("orphan", pid, "崩溃的会", time.Now().Add(-time.Hour).UnixMilli()))
+
+	stop := StartLiveShareReaper()
+	defer stop()
+
+	note, exists, err := service.GetLiveNote("orphan")
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.NotZero(t, note.EndedAt, "a record orphaned by a crash must be closed at startup")
 }

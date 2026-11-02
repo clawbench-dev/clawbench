@@ -1138,6 +1138,64 @@ func TestCloseStaleLiveNotes_OnlyClosesOldOpenRecords(t *testing.T) {
 	assert.Zero(t, fresh.EndedAt)
 }
 
+// A restart is the only caller: rooms live in memory, so every record still
+// marked open belongs to a process that is gone. Closing them is what stops the
+// list from showing 进行中 for the next 12 hours.
+func TestCloseOrphanedLiveNotes_ClosesWhatTheCrashedProcessLeftOpen(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	require.NoError(t, StartLiveNote("crashed", pid, "崩溃的会", 1_700_000_000_000))
+	// Last write ten minutes in: the closest thing to "when it really stopped".
+	_, err = store.WriteExec(
+		`UPDATE live_notes SET updated_at = '2023-11-14 22:23:20' WHERE token = 'crashed'`)
+	require.NoError(t, err)
+	require.NoError(t, StartLiveNote("done", pid, "已结束", 1_700_000_000_000))
+	require.NoError(t, EndLiveNote("done", 1_700_000_030_000))
+
+	closed, err := CloseOrphanedLiveNotes(1_700_009_999_000)
+	require.NoError(t, err)
+	assert.Equal(t, 1, closed)
+
+	crashed, _, err := GetLiveNote("crashed")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1_700_000_600_000), crashed.EndedAt,
+		"the finish line is the last write, not the restart time")
+
+	done, _, err := GetLiveNote("done")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1_700_000_030_000), done.EndedAt, "a closed record must not move")
+}
+
+// The finish line is clamped to the meeting's own window: a row written before
+// it started (or one whose clock ran ahead) must not produce a negative
+// duration or an end time in the future.
+func TestCloseOrphanedLiveNotes_ClampsTheFinishLineToTheMeetingWindow(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	require.NoError(t, StartLiveNote("backdated", pid, "倒挂", 1_700_000_500_000))
+	_, err = store.WriteExec(
+		`UPDATE live_notes SET updated_at = '2023-11-14 22:13:20' WHERE token = 'backdated'`)
+	require.NoError(t, err)
+	require.NoError(t, StartLiveNote("ahead", pid, "时钟超前", 1_700_000_000_000))
+	_, err = store.WriteExec(
+		`UPDATE live_notes SET updated_at = '2030-01-01 00:00:00' WHERE token = 'ahead'`)
+	require.NoError(t, err)
+
+	_, err = CloseOrphanedLiveNotes(1_700_009_999_000)
+	require.NoError(t, err)
+
+	backdated, _, err := GetLiveNote("backdated")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1_700_000_500_000), backdated.EndedAt, "never before the start")
+	ahead, _, err := GetLiveNote("ahead")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1_700_009_999_000), ahead.EndedAt, "never after the restart")
+}
+
 func TestEnsureMeetingDir_IsStableAndKeepsAudioOutOfGit(t *testing.T) {
 	db := setupTestDBForLiveNotes(t)
 	defer func() { _ = db.Close() }()

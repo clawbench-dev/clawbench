@@ -851,8 +851,19 @@ const liveMeetingStaleAfter = 12 * time.Hour
 // timeout. Without it a room whose publisher vanished without a clean close
 // would occupy one of the maxLiveRooms slots forever.
 //
+// It also closes the meeting records the PREVIOUS process left open, before the
+// loop starts: rooms live only in memory, so at this instant no open record can
+// belong to a running meeting. That has to happen here rather than on the
+// hourly tick — waiting for the 12h staleness cutoff leaves a crashed meeting
+// showing "进行中" for most of a day.
+//
 // Returns a stop function for tests and shutdown.
 func StartLiveShareReaper() func() {
+	if closed, err := service.CloseOrphanedLiveNotes(time.Now().UnixMilli()); err != nil {
+		slog.Warn("liveshare: close orphaned meetings failed", "err", err)
+	} else if closed > 0 {
+		slog.Info("liveshare: closed meetings orphaned by the previous run", "meetings", closed)
+	}
 	stop := make(chan struct{})
 	go func() {
 		t := time.NewTicker(liveReapInterval)

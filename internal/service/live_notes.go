@@ -719,11 +719,47 @@ func EndLiveNote(token string, endedAtMS int64) error {
 	return nil
 }
 
+// CloseOrphanedLiveNotes closes every record still marked as running and
+// reports how many it closed.
+//
+// Called ONCE at process start, before any room can exist. Live rooms are
+// in-memory only, so after a restart no open record can belong to a running
+// meeting: the process that owned it is gone (crash, SIGKILL, OOM kill, a
+// reboot), and its socket teardown — the only thing that stamps the finish
+// line — never ran. Without this the list keeps showing 进行中 (and ticking a
+// clock) until the hourly sweep's 12h staleness cutoff.
+//
+// The finish line is the row's LAST WRITE rather than "now": a server that was
+// down overnight must not stretch a 20-minute meeting across the downtime.
+// Clamped to [started_at, nowMS] so the duration can neither go negative nor
+// point into the future.
+func CloseOrphanedLiveNotes(nowMS int64) (int, error) {
+	if nowMS <= 0 {
+		nowMS = time.Now().UnixMilli()
+	}
+	res, err := store.WriteExec(
+		`UPDATE live_notes
+		    SET ended_at = MIN(?, MAX(started_at,
+		          COALESCE(CAST(strftime('%s', updated_at) AS INTEGER) * 1000, 0))),
+		        updated_at = CURRENT_TIMESTAMP
+		  WHERE ended_at = 0`,
+		nowMS,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("live notes: close orphaned meetings: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // CloseStaleLiveNotes closes records whose publisher never reported a clean
 // end (process crash, killed app). Without this the list would show meetings
 // that never finish, and the delete guard would refuse to remove them.
 //
-// `beforeMS` is the cutoff on updated_at; the reaper passes "now - 12h".
+// This is the BACKSTOP: a restart closes the records it orphaned immediately
+// (CloseOrphanedLiveNotes), so what is left here are rows whose writer vanished
+// while the process stayed up — a late upload recreating a deleted meeting, for
+// one. `beforeMS` is the cutoff on updated_at; the reaper passes "now - 12h".
 func CloseStaleLiveNotes(beforeMS int64) (int, error) {
 	if beforeMS <= 0 {
 		return 0, nil
