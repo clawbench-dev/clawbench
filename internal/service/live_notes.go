@@ -1544,28 +1544,42 @@ func vttTimestamp(ms int64) string {
 
 // LiveNotesSpeaker is who the transcript's first person refers to.
 //
-// The publisher's own channel is labeled by the CLIENT ("我" / "Me" — it is
-// localized in the UI), so nothing in the transcript says whose voice that is.
-// Minutes outlive the meeting and are read by people who were not in it, so a
-// line like "我负责发版" has to be resolved to a name at generation time.
+// New transcripts label the publisher with their own 称谓, so nothing has to be
+// resolved: the line already reads `[00:08] 泷泽：…`. Older ones — recorded
+// while the label was the localized pronoun 「我」 / 「Me」 — carry no name at
+// all, and a line like "我负责发版" is unreadable to anyone who was not in the
+// meeting. Minutes are generated from those transcripts too (regeneration is a
+// supported action), so the mapping stays: it simply turns itself off when the
+// label already is the name.
 type LiveNotesSpeaker struct {
 	// Label is the speaker label the transcript uses for the user's own
 	// channel. Empty when the user never spoke — there is nothing to resolve.
 	Label string
-	// Name is the user's nickname (user.nickname).
+	// Name is the user's 称谓 (user.nickname): the name the room shows and the
+	// name both model stages should use for them.
 	Name string
 }
 
-// note renders the clarification appended to a summarisation prompt, or ""
-// when there is nothing worth saying.
+// resolved reports whether a clarification is needed at all: a label, a real
+// name, and a label that is not already that name.
 //
 // The default nickname is skipped for the same reason BuildUserIdentitySection
 // skips it: "User" is a placeholder, and telling the model that "我" is called
 // "User" is worse than leaving the pronoun alone.
+func (s LiveNotesSpeaker) resolved() (label, name string, ok bool) {
+	label = strings.TrimSpace(s.Label)
+	name = strings.TrimSpace(s.Name)
+	if label == "" || name == "" || name == model.DefaultUserNickname || label == name {
+		return "", "", false
+	}
+	return label, name, true
+}
+
+// note renders the clarification appended to a summarisation prompt, or ""
+// when there is nothing worth saying.
 func (s LiveNotesSpeaker) note() string {
-	label := strings.TrimSpace(s.Label)
-	name := strings.TrimSpace(s.Name)
-	if label == "" || name == "" || name == model.DefaultUserNickname {
+	label, name, ok := s.resolved()
+	if !ok {
 		return ""
 	}
 	return fmt.Sprintf(
@@ -1584,13 +1598,46 @@ func (s LiveNotesSpeaker) withPrompt(prompt string) string {
 	return prompt
 }
 
+// reviseNote renders the initiator clarification for the PROOFREADER.
+//
+// Same two facts as note(), a different consequence. The minutes may refer to
+// the initiator by name; the proofreader may only substitute spellings, so what
+// it needs is exactly that — the correct spelling of a participant whose label
+// is a pronoun and therefore cannot be checked against anything else in the
+// transcript. That is the legacy shape only (see LiveNotesSpeaker); with the
+// 称谓 as the label, rule 3 already covers it and nothing is injected.
+//
+// The label is optional. When the initiator never spoke there is no 「我」 line
+// to bind the name to, but a viewer naming them in the body is still the case
+// this exists for, so the name alone is worth injecting.
+func (s LiveNotesSpeaker) reviseNote() string {
+	name := strings.TrimSpace(s.Name)
+	if name == "" || name == model.DefaultUserNickname {
+		return ""
+	}
+	label := strings.TrimSpace(s.Label)
+	if label == "" {
+		return fmt.Sprintf(
+			"补充说明：本次会议的发起人，称谓是「%s」。正文里明显指这个人的近音写法改成「%s」；"+
+				"拿不准是不是指这个人时保持原样。", name, name)
+	}
+	if label == name {
+		// The label already is the name: rule 3 has everything it needs.
+		return ""
+	}
+	return fmt.Sprintf(
+		"补充说明（优先于第 4 条）：转写里说话人标注为「%s」的那一路，是本次会议的发起人本人，称谓是「%s」。"+
+			"正文里明显指这个人的近音写法改成「%s」；「%s」这个标注本身不要动，也不要把别的说话人当成这个人。",
+		label, name, name, label)
+}
+
 // LiveNotesSelfLabel returns the speaker label the transcript uses for the
 // user's own voice.
 //
 // The `mic` channel IS the publisher by construction — the client records its
 // own microphone there (web/src/composables/useLiveNotes.ts) — but the label
-// itself is localized on the client, so it has to be read from the data rather
-// than assumed. Empty when the user never spoke.
+// itself comes from the client, so it has to be read from the data rather than
+// assumed. Empty when the user never spoke.
 func LiveNotesSelfLabel(segments []LiveNoteSegment) string {
 	for _, s := range segments {
 		if s.Channel != "mic" {
@@ -1641,15 +1688,28 @@ const liveNotesReviseMaxTokens = 4000
 // model thinks should have been said. Only substitutions are allowed here —
 // every timestamp, speaker and line must survive unchanged so the result is
 // still a transcript and not an essay.
+//
+// People are the one place where the transcript carries its own vocabulary:
+// each line is prefixed with the speaker label, and that label is the 称谓 the
+// person entered — the publisher's included (web/src/components/live/
+// MeetingCreate.vue). So a name mangled in the body can be checked against the
+// labels without any extra input. Legacy transcripts still carry a pronoun or
+// an ordinal there (「我」/「Me」/「观众 3」), which is why rule 4 forbids
+// inventing a name from a label that has none. Forms of address get their own
+// rule because "王总" and "王小明" are the same person in two registers: the
+// surname is correctable, the honorific is not the model's to rewrite.
 const liveNotesRevisePrompt = `你是一名会议转写校对员。输入是语音识别的会议转写，每行格式为「[mm:ss] 说话人：内容」。
 
 你的任务只有一件：修正听写错误。
 
-1. 只改明显的同音/近音错字、专有名词、产品名、技术术语、人名与缩写。
+1. 只改明显的同音/近音错字、专有名词、产品名、技术术语、人名、称呼与缩写。
 2. 「项目背景」里出现过的写法是唯一正确写法：转写里与之接近的一律改成它（例如把同音词改成项目里的真实名字）。
-3. 不要润色、不要改写句式、不要合并或拆分句子、不要补全没听清的内容。
-4. 不要删除任何信息（口头语也保留），不要改变时间戳、说话人、行数和顺序。
-5. 听不清且无法确定的，保持原样，不要猜测。
+3. 行首的说话人标签就是本人的称谓，是人名的权威写法：正文里明显指同一个人的近音写法，改成标签里的名字。标签本身不要动。
+4. 行首标签若是代词或占位（「我」「Me」「观众 3」这类），它不含姓名信息：不要据此推断或改写正文，也不要为任何说话人补上转写里没有的名字。
+5. 称呼（「王总」「李工」「张老师」这类）保留称谓本身，只按第 3 条校正其中的姓或名；不要把称呼整体换成姓名，也不要把姓名改成称呼。
+6. 不要润色、不要改写句式、不要合并或拆分句子、不要补全没听清的内容。
+7. 不要删除任何信息（口头语也保留），不要改变时间戳、说话人、行数和顺序。
+8. 听不清且无法确定的，保持原样，不要猜测；拿不准正文里的人名是不是行首那个人时，同样保持原样。
 
 直接输出修订后的转写，不要任何解释、不要加代码块。`
 
@@ -1666,7 +1726,13 @@ const liveNotesReviseQuestion = "请输出这一段修订后的转写。"
 //
 // Chunked for the same reason the minutes are: a one-hour meeting does not fit
 // in one request. Chunks are cut on line boundaries so a line is never split.
-func ReviseLiveNotesTranscript(ctx context.Context, projectPath, title string, segments []LiveNoteSegment) (string, error) {
+//
+// `self` says who the meeting's initiator is. It is the only identity the
+// transcript cannot supply (see reviseNote), so it is passed in rather than
+// read from config here — the caller already resolves it for the minutes.
+func ReviseLiveNotesTranscript(
+	ctx context.Context, projectPath, title string, segments []LiveNoteSegment, self LiveNotesSpeaker,
+) (string, error) {
 	transcript := BuildLiveNotesTranscript(segments)
 	if strings.TrimSpace(transcript) == "" {
 		return "", ErrLiveNotesEmpty
@@ -1677,6 +1743,12 @@ func ReviseLiveNotesTranscript(ctx context.Context, projectPath, title string, s
 	}
 
 	background := strings.Join(projectContext(projectPath), "\n\n")
+	// Resolved once: every chunk gets the same initiator, and a chunk that
+	// happens to contain no 「我」 line still needs to recognise the name.
+	systemPrompt := liveNotesRevisePrompt
+	if note := self.reviseNote(); note != "" {
+		systemPrompt += "\n\n" + note
+	}
 	chunks := splitRunes(transcript, liveNotesChunkRunes)
 	out := make([]string, 0, len(chunks))
 	for i, chunk := range chunks {
@@ -1692,7 +1764,7 @@ func ReviseLiveNotesTranscript(ctx context.Context, projectPath, title string, s
 		if len(chunks) > 1 {
 			question = fmt.Sprintf("这是第 %d/%d 段。%s", i+1, len(chunks), liveNotesReviseQuestion)
 		}
-		revised, err := summarize.AskAboutContext(ctx, summarizer, liveNotesRevisePrompt, block, question, liveNotesReviseMaxTokens)
+		revised, err := summarize.AskAboutContext(ctx, summarizer, systemPrompt, block, question, liveNotesReviseMaxTokens)
 		if err != nil {
 			return "", fmt.Errorf("live notes: revise chunk %d: %w", i+1, err)
 		}

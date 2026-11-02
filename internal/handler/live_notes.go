@@ -826,13 +826,17 @@ func generateLiveNotesArtifacts(token string, projectID int64, projectPath, titl
 		})
 	}
 
-	transcript := proofreadLiveNotesTranscript(ctx, token, projectID, projectPath, title, segments, files, raw, paths, onDisk, startedAt)
+	// Who the meeting's initiator is, resolved once and shared by both model
+	// stages: the proofreader needs the spelling, the minutes need the name.
+	self := service.LiveNotesSpeaker{
+		Label: service.LiveNotesSelfLabel(segments),
+		Name:  model.UserNickname,
+	}
+
+	transcript := proofreadLiveNotesTranscript(ctx, token, projectID, projectPath, title, segments, files, raw, paths, onDisk, startedAt, self)
 
 	minutes, err := service.GenerateLiveNotesMinutes(ctx, title, transcript,
-		service.LiveNoteFilesPromptSection(files, startedAt, projectPath), service.LiveNotesSpeaker{
-			Label: service.LiveNotesSelfLabel(segments),
-			Name:  model.UserNickname,
-		})
+		service.LiveNoteFilesPromptSection(files, startedAt, projectPath), self)
 	if err != nil {
 		slog.Warn("live notes: minutes generation failed", "err", err)
 		if serr := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusFailed, "", err.Error(), ""); serr != nil {
@@ -887,12 +891,12 @@ func nameMeetingFromMinutes(ctx context.Context, title, minutes string, generate
 func proofreadLiveNotesTranscript(
 	ctx context.Context, token string, projectID int64, projectPath, title string,
 	segments []service.LiveNoteSegment, files []service.LiveNoteFile, raw string,
-	paths service.LiveNotesPaths, onDisk bool, startedAt time.Time,
+	paths service.LiveNotesPaths, onDisk bool, startedAt time.Time, self service.LiveNotesSpeaker,
 ) string {
 	if err := service.SetLiveNoteRevise(token, projectID, service.LiveNotesStatusGenerating, "", ""); err != nil {
 		slog.Warn("live notes: mark revising failed", "err", err)
 	}
-	revised, err := service.ReviseLiveNotesTranscript(ctx, projectPath, title, segments)
+	revised, err := service.ReviseLiveNotesTranscript(ctx, projectPath, title, segments, self)
 	if err != nil {
 		slog.Warn("live notes: proofread failed", "err", err)
 		if serr := service.SetLiveNoteRevise(token, projectID, service.LiveNotesStatusFailed, "", err.Error()); serr != nil {

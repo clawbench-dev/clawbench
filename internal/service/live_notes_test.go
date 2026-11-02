@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -509,7 +510,8 @@ func TestGenerateLiveNotesMinutes_ChunkPassAlsoKnowsTheUser(t *testing.T) {
 }
 
 // Nothing is injected when there is nothing to resolve: no nickname configured,
-// only the placeholder, or the user never spoke.
+// only the placeholder, the user never spoke, or — the normal case now — the
+// transcript already labels them with their 称谓.
 func TestGenerateLiveNotesMinutes_NoSpeakerNoteWhenUnresolvable(t *testing.T) {
 	cases := []struct {
 		name string
@@ -519,6 +521,7 @@ func TestGenerateLiveNotesMinutes_NoSpeakerNoteWhenUnresolvable(t *testing.T) {
 		{"no name", LiveNotesSpeaker{Label: "我"}},
 		{"placeholder name", LiveNotesSpeaker{Label: "我", Name: model.DefaultUserNickname}},
 		{"whitespace", LiveNotesSpeaker{Label: "  ", Name: "  "}},
+		{"label already is the 称谓", LiveNotesSpeaker{Label: "泷泽", Name: "泷泽"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -649,7 +652,7 @@ func TestReviseLiveNotesTranscript_UsesProjectContextAndKeepsTheTimeline(t *test
 
 	got, err := ReviseLiveNotesTranscript(context.Background(), project, "周会", []LiveNoteSegment{
 		seg(1, "mic", "我", 1_000, "确认科劳本奇的 a c p 计划"),
-	})
+	}, LiveNotesSpeaker{})
 	require.NoError(t, err)
 	assert.Equal(t, "[00:00] 我：确认 ClawBench 的 ACP 计划", got)
 
@@ -660,8 +663,150 @@ func TestReviseLiveNotesTranscript_UsesProjectContextAndKeepsTheTimeline(t *test
 	assert.Contains(t, bodies[0], "确认科劳本奇的 a c p 计划", "and so must the raw line")
 }
 
+// People are the only vocabulary the transcript carries itself: the line prefix
+// is the speaker's 称谓, so a mangled name in the body has something to be
+// checked against. A prefix that is only a pronoun or a placeholder carries no
+// name, and a form of address must keep its honorific — all three are
+// prompt-level contracts, and the prompt is the whole implementation of this
+// stage.
+func TestReviseLiveNotesTranscript_PromptCoversNamesAndAddress(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(body))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[00:00] 我：好"}}]}`))
+	}))
+	defer srv.Close()
+	withAISummary(t, srv.URL)
+
+	_, err := ReviseLiveNotesTranscript(context.Background(), t.TempDir(), "", []LiveNoteSegment{
+		seg(1, "mic", "我", 1_000, "好"),
+	}, LiveNotesSpeaker{})
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, bodies, 1)
+	prompt := bodies[0]
+
+	assert.Contains(t, prompt, "行首的说话人标签就是本人的称谓",
+		"the speaker label is the only name vocabulary in a transcript")
+	assert.Contains(t, prompt, "称呼",
+		"forms of address need their own rule, not just 「人名」")
+	assert.Contains(t, prompt, "不要把称呼整体换成姓名",
+		"「王总」 must not become 「王小明」: the honorific is not the model's to rewrite")
+	assert.Contains(t, prompt, "「我」",
+		"a pronoun label must be named explicitly, or the model will read it as a name")
+	assert.Contains(t, prompt, "不要为任何说话人补上转写里没有的名字",
+		"the pronoun rule applies to every speaker, not to one privileged role")
+	assert.NotContains(t, prompt, "主持人",
+		"no role may be singled out: the publisher is only a label like any other")
+	assert.Contains(t, prompt, "标签本身不要动",
+		"rule 3 corrects the body, never the label")
+	assert.Contains(t, prompt, "不要改变时间戳、说话人",
+		"the timeline lock must survive the new rules")
+}
+
+// LEGACY transcripts label the publisher with a pronoun, so nothing in the text
+// says who they are; the name is passed in and goes into the SYSTEM prompt so
+// that every chunk sees it (a chunk can mention them without containing a
+// single 「我」 line). New transcripts label them with their 称谓, which rule 3
+// already covers — hence the "label already is the 称谓" case below, where
+// nothing may be injected.
+func TestReviseLiveNotesTranscript_InjectsTheInitiator(t *testing.T) {
+	cases := []struct {
+		name string
+		self LiveNotesSpeaker
+		want string
+	}{
+		{
+			name: "legacy 我 label",
+			self: LiveNotesSpeaker{Label: "我", Name: "泷泽"},
+			want: "转写里说话人标注为「我」的那一路，是本次会议的发起人本人，称谓是「泷泽」",
+		},
+		{
+			name: "称谓 only, the initiator never spoke",
+			self: LiveNotesSpeaker{Name: "泷泽"},
+			want: "本次会议的发起人，称谓是「泷泽」",
+		},
+		{
+			name: "the default placeholder is not a name",
+			self: LiveNotesSpeaker{Label: "我", Name: model.DefaultUserNickname},
+			want: "",
+		},
+		{
+			name: "label already is the 称谓",
+			self: LiveNotesSpeaker{Label: "泷泽", Name: "泷泽"},
+			want: "",
+		},
+		{
+			name: "nothing configured",
+			self: LiveNotesSpeaker{Label: "我"},
+			want: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var bodies []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				mu.Lock()
+				bodies = append(bodies, string(body))
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[00:00] 我：好"}}]}`))
+			}))
+			defer srv.Close()
+			withAISummary(t, srv.URL)
+
+			_, err := ReviseLiveNotesTranscript(context.Background(), t.TempDir(), "", []LiveNoteSegment{
+				seg(1, "mic", "我", 1_000, "好"),
+			}, tc.self)
+			require.NoError(t, err)
+
+			mu.Lock()
+			defer mu.Unlock()
+			require.Len(t, bodies, 1)
+
+			var req struct {
+				Messages []struct {
+					Role    string `json:"role"`
+					Content string `json:"content"`
+				} `json:"messages"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(bodies[0]), &req))
+
+			var system string
+			for _, m := range req.Messages {
+				if m.Role == "system" {
+					system = m.Content
+					continue
+				}
+				// The note must NOT ride along with the chunk: it belongs to the
+				// instructions, which is what makes it apply to every chunk.
+				assert.NotContains(t, m.Content, "发起人", "the initiator belongs in the system prompt")
+			}
+
+			if tc.want == "" {
+				assert.NotContains(t, system, "发起人", "nothing to say when the 称谓 is a placeholder")
+				return
+			}
+			assert.Contains(t, system, tc.want)
+			if tc.self.Label != "" {
+				assert.Contains(t, system, "不要动", "the label itself must survive the substitution")
+			}
+		})
+	}
+}
+
 func TestReviseLiveNotesTranscript_EmptyTranscript(t *testing.T) {
-	_, err := ReviseLiveNotesTranscript(context.Background(), t.TempDir(), "", nil)
+	_, err := ReviseLiveNotesTranscript(context.Background(), t.TempDir(), "", nil, LiveNotesSpeaker{})
 	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
 }
 
@@ -669,7 +814,7 @@ func TestReviseLiveNotesTranscript_NoSummaryModel(t *testing.T) {
 	withAISummary(t, "")
 	_, err := ReviseLiveNotesTranscript(context.Background(), t.TempDir(), "", []LiveNoteSegment{
 		seg(1, "mic", "我", 1_000, "内容"),
-	})
+	}, LiveNotesSpeaker{})
 	assert.ErrorIs(t, err, ErrSummaryModelNotConfigured)
 }
 

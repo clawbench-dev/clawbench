@@ -4205,7 +4205,6 @@ export default {
       listening: 'Listening…',
       notEnabled: 'AI notes were off for this share. Tick "AI notes" before the next one starts to get a live transcript.',
       speakerSystem: 'System audio',
-      speakerMe: 'Me',
       speakerViewer: 'Viewer {n}',
       minutesTitle: 'AI notes · meeting minutes',
       uploading: 'Uploading and transcribing {n} remaining segment(s)…',

@@ -313,15 +313,29 @@ function measureOverflow(): void {
 }
 
 /**
+ * The publisher's own label, frozen when the meeting starts.
+ *
+ * Read live from the account instead and a rename mid-meeting (this account
+ * edited on another device) would split one person into two speakers, which the
+ * transcript then merges as if they were different people.
+ */
+let hostLabel = ''
+
+/**
  * Speaker labels for the transcript channels (publisher-side, localized).
  *
- * A viewer's real nickname is used when the join frame has delivered it, so the
- * transcript — and the minutes generated from it — name people instead of
- * numbering them. Called once per uploaded segment, not once per channel: the
- * name can arrive after that viewer's first audio track.
+ * Every channel is labelled with the 称谓 the person entered, the publisher's
+ * own included. A line like `[00:08] 泷泽：…` needs no separate explanation of
+ * who "我" is, and the 称谓 is the spelling viewers use when they address the
+ * host in the body — so the proofreader has something to check it against.
+ *
+ * A viewer's name is only known once the join frame has delivered it, hence the
+ * ordinal fallback: an unattributable line is still better than a mislabelled
+ * one. Called once per uploaded segment, not once per channel, so a name that
+ * arrives after that viewer's first audio track still applies to the next one.
  */
 function notesLabel(channel: string): string {
-  if (channel === 'mic') return t('liveShare.notes.speakerMe')
+  if (channel === 'mic') return hostLabel
   const id = channel.startsWith('viewer:') ? channel.slice('viewer:'.length) : ''
   const name = share.viewers.value.find((v) => v.id === id)?.name.trim()
   if (name) return name
@@ -343,6 +357,9 @@ async function start(): Promise<void> {
       toast.show(e instanceof Error ? e.message : String(e), { type: 'error', icon: 'warning' })
       return
     }
+    // Freeze the label now: `persist()` has just made it the account's name, and
+    // every segment of this meeting must carry the same one.
+    hostLabel = nickname.value.trim()
     const ok = await share.start({
       sourceId: selectedSourceId.value,
       screen: hasScreen.value,

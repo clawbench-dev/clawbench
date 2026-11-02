@@ -398,10 +398,15 @@ describe('MeetingCreate in a browser', () => {
 
     const args = (shareApi.start as ReturnType<typeof vi.fn>).mock.calls[0][0]
     const label = args.notesLabel as (channel: string) => string
-    expect(label('mic')).toBe(enMessages.liveShare.notes.speakerMe)
+    // The publisher is labelled with their own 称谓, not the pronoun 「我」.
+    expect(label('mic')).toBe('Alex')
     expect(label('viewer:v1')).toBe('张三')
     // No nickname yet: the ordinal keeps the line attributable.
     expect(label('viewer:v2')).toBe('Viewer 2')
+
+    // Frozen at start: renaming mid-meeting must not split one speaker in two.
+    await wrapper.find('[data-role="meeting-nick"]').setValue('Bob')
+    expect(label('mic')).toBe('Alex')
   })
 
   it('leaves the camera group out when the machine has none', async () => {

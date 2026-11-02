@@ -4194,7 +4194,6 @@ export default {
       listening: '正在听…',
       notEnabled: '本次共享没有开启 AI 听记。下次开始共享前勾选「AI 听记」即可实时转写。',
       speakerSystem: '系统声音',
-      speakerMe: '我',
       speakerViewer: '观众 {n}',
       minutesTitle: 'AI 听记 · 会议纪要',
       uploading: '正在上传并转写剩余 {n} 段音频…',
