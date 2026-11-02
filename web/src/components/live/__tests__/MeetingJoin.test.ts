@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('lucide-vue-next', () => ({ ArrowLeft: { render: () => null } }))
-vi.mock('@/utils/clawbenchNative', () => ({ getNative: () => null }))
+vi.mock('@/utils/clawbenchNative', () => ({ getNative: () => null, isDesktopApp: () => false }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ show: vi.fn() }) }))
 vi.mock('@/composables/useSettingsConfig', () => ({
   useSettingsConfig: () => ({

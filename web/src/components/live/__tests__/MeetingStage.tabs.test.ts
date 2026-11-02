@@ -55,6 +55,8 @@ vi.mock('@/composables/useMarkdownRenderer', () => ({
 const nativeBridge = vi.hoisted(() => ({ current: null as unknown }))
 vi.mock('@/utils/clawbenchNative', () => ({
   getNative: () => nativeBridge.current,
+  // These tests run in a browser, not the desktop shell: no popup window.
+  isDesktopApp: () => false,
 }))
 
 /** What the native injector probe answers; tests flip it to prove the panel

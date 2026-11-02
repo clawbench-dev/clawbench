@@ -4196,6 +4196,7 @@ export default {
     fullscreen: '全屏显示',
     viewScreen: '查看画面',
     screenInWindow: '画面在独立窗口中播放，停止共享也在那个窗口里。',
+    screenWindowFailed: '当前环境打不开独立窗口，画面留在全屏里。',
     stopScreenShare: '停止共享',
     notes: {
       enable: 'AI 听记',

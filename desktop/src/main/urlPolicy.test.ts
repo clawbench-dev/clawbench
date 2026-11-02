@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { classifyUrl } from './urlPolicy'
+import { classifyUrl, isAppPopup } from './urlPolicy'
 
 describe('classifyUrl', () => {
   it('treats http links as external when outside the server origin', () => {
@@ -41,5 +41,19 @@ describe('classifyUrl', () => {
 
   it('blocks unparseable URLs', () => {
     expect(classifyUrl('not a url', 'https://clawbench.local')).toBe('block')
+  })
+})
+describe('isAppPopup', () => {
+  it('recognises the app\'s own about:blank popup', () => {
+    // `window.open('')` — the member's screen in a window of its own.
+    expect(isAppPopup('')).toBe(true)
+    expect(isAppPopup('about:blank')).toBe(true)
+  })
+
+  it('does not exempt anything that could navigate somewhere', () => {
+    expect(isAppPopup('about:blank#x')).toBe(false)
+    expect(isAppPopup('https://example.com/')).toBe(false)
+    expect(isAppPopup('file:///etc/passwd')).toBe(false)
+    expect(isAppPopup('javascript:alert(1)')).toBe(false)
   })
 })

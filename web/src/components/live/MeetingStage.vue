@@ -447,7 +447,7 @@ import { meetingFileEntries, meetingFilesVersion } from '@/utils/meetingFileTrac
 import { DEFAULT_DEVICE, useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useScreenWindow } from '@/composables/useScreenWindow'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
-import { getNative } from '@/utils/clawbenchNative'
+import { getNative, isDesktopApp } from '@/utils/clawbenchNative'
 import { resolveUserNickname } from '@/utils/userNickname'
 import { resolveRemoteControlSupport } from '@/utils/remoteControlSupport'
 import { browserScreenCaptureAvailable } from '@/utils/screenCaptureSupport'
@@ -948,10 +948,14 @@ function onToggleNotes(on: boolean): void {
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 onMounted(() => {
-  screenWindowAvailable.value = Boolean(
-    (globalThis as unknown as { documentPictureInPicture?: { requestWindow?: unknown } })
-      .documentPictureInPicture?.requestWindow,
-  )
+  // The desktop shell can always give the picture a real window (a popup is an
+  // Electron BrowserWindow); browsers need Document PiP for it.
+  screenWindowAvailable.value =
+    isDesktopApp() ||
+    Boolean(
+      (globalThis as unknown as { documentPictureInPicture?: { requestWindow?: unknown } })
+        .documentPictureInPicture?.requestWindow,
+    )
   unsubscribeControl = share.onControl(onControl)
   unsubscribeInk = getNative()?.onAnnotateInk?.((msg) => {
     const parsed = parseControlMessage(msg)
@@ -1020,8 +1024,9 @@ async function openScreenWindow(): Promise<void> {
   if (!share.remoteScreenStream.value) return
   const result = await screenWindow.open()
   if (result !== 'opened') {
-    // No window API, or a blocked popup: the fullscreen picture is where the
-    // host already is, so there is nothing to switch to.
+    // Say so instead of leaving a button that appears to do nothing: the
+    // picture stays fullscreen, which is where the host already is.
+    toast.show(t('liveShare.screenWindowFailed'), { type: 'error', icon: 'warning' })
     openScreenFullscreen()
   }
 }

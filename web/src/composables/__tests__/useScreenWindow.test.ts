@@ -5,6 +5,12 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
+/** Which host the code under test believes it is running in. */
+const host = vi.hoisted(() => ({ desktop: false }))
+vi.mock('@/utils/clawbenchNative', () => ({
+  isDesktopApp: () => host.desktop,
+}))
+
 interface FakeWindow extends Window {
   firePagehide: () => void
   close: ReturnType<typeof vi.fn>
@@ -32,6 +38,7 @@ function installApi(requestWindow: ReturnType<typeof vi.fn>) {
 }
 
 beforeEach(() => {
+  host.desktop = false
   // A stylesheet must exist for the copy to have anything to move.
   const style = document.createElement('style')
   style.textContent = '.from-app { color: red }'
@@ -52,10 +59,59 @@ afterEach(() => {
 })
 
 describe('useScreenWindow', () => {
-  it('reports unsupported instead of throwing when the API is absent', async () => {
+  it('falls back to a popup window when the host has no Document PiP', async () => {
+    const popup = fakeWindow()
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
     const { target, open } = useScreenWindow()
-    expect(await open()).toBe('unsupported')
+
+    expect(await open()).toBe('opened')
+    expect(openSpy).toHaveBeenCalledTimes(1)
+    // Same contract as PiP: the caller Teleports into this body.
+    expect(target.value).toBe(popup.document.body)
+    expect(popup.document.title).toBe('ClawBench')
+    openSpy.mockRestore()
+  })
+
+  it('opens a real window in the desktop shell even when Document PiP exists', async () => {
+    const popup = fakeWindow()
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    const requestWindow = vi.fn(async () => fakeWindow() as unknown as Window)
+    installApi(requestWindow)
+    host.desktop = true
+    const { target, open } = useScreenWindow()
+
+    // The desktop shell gives the host a window of the app, not a floating PiP
+    // pane: that is what "open in a window" means there.
+    expect(await open()).toBe('opened')
+    expect(openSpy).toHaveBeenCalledTimes(1)
+    expect(requestWindow).not.toHaveBeenCalled()
+    expect(target.value).toBe(popup.document.body)
+    openSpy.mockRestore()
+  })
+
+  it('reports failure when neither a popup nor a PiP window can be opened', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    const { target, open } = useScreenWindow()
+    expect(await open()).toBe('failed')
     expect(target.value).toBeNull()
+    openSpy.mockRestore()
+  })
+
+  it('forgets a popup the user closed', async () => {
+    vi.useFakeTimers()
+    const popup = fakeWindow()
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    const { target, open } = useScreenWindow()
+    await open()
+    expect(target.value).not.toBeNull()
+
+    // A popup reports its own close only through `closed`; there is no event
+    // in the opener.
+    Object.defineProperty(popup, 'closed', { value: true, configurable: true })
+    vi.advanceTimersByTime(500)
+    expect(target.value).toBeNull()
+    openSpy.mockRestore()
+    vi.useRealTimers()
   })
 
   it('renders into a new document that carries the app styles and theme', async () => {

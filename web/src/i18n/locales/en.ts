@@ -4208,6 +4208,7 @@ export default {
     fullscreen: 'Full screen',
     viewScreen: 'View the screen',
     screenInWindow: 'The picture is in its own window; stop sharing from there.',
+    screenWindowFailed: 'This host cannot open a separate window; the picture stays full screen.',
     stopScreenShare: 'Stop sharing',
     notes: {
       enable: 'AI notes',

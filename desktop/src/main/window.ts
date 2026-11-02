@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { getStore } from './store'
 import { contextMenuLabels } from './contextMenu'
 import { resolveNativeLanguage } from './labels'
-import { classifyUrl } from './urlPolicy'
+import { classifyUrl, isAppPopup } from './urlPolicy'
 import { markRendererLoading } from './navReady'
 import { handleShortcut } from './shortcuts'
 import { shouldFallBackToLogin, buildConnectErrorScript } from './loadFailure'
@@ -501,6 +501,23 @@ export function createMainWindow(): BrowserWindow {
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+    // One popup is the app's own: the member's shared screen in a window of its
+    // own. It is `about:blank` on purpose (see isAppPopup) — a second document
+    // in the same renderer, which is the only way it can receive the live
+    // MediaStream. Everything else keeps the "never open a second window" rule.
+    if (isAppPopup(target)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 1024,
+          height: 640,
+          minWidth: 480,
+          minHeight: 320,
+          backgroundColor: '#000000',
+          autoHideMenuBar: true,
+        },
+      }
+    }
     if (classifyUrl(target, getStore().get('serverUrl')) === 'external') {
       void shell.openExternal(target)
     }
