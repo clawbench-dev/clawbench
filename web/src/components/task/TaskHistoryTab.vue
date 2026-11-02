@@ -4,7 +4,7 @@
       <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
     </div>
     <div v-else-if="allExecutions.length === 0" class="history-empty">
-      <History class="empty-icon" :size="32" />
+      <History class="empty-icon empty-state__icon" />
       <span>{{ t('task.exec.noExecutions') }}</span>
     </div>
     <div v-else class="history-list">
@@ -386,9 +386,7 @@ defineExpose({
   padding: var(--space-2) 0;
 }
 
-.empty-icon {
-  opacity: var(--opacity-muted);
-}
+/* Size, stroke and colour come from the global `.empty-state__icon` rule. */
 
 /* ── Execution items ── */
 .history-list {

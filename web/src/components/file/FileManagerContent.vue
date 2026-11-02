@@ -268,7 +268,7 @@
       <template v-if="searchHasQuery">
         <PanelSkeleton v-if="search.state.searching && search.state.results.length === 0" variant="list" :rows="8" :meta="false" :label="t('file.search.searching')" />
         <div v-else-if="search.state.results.length === 0 && !search.state.searching" class="empty-state fs-search-empty">
-          <FileX :size="56" class="fs-search-empty-icon" />
+          <FileX class="fs-search-empty-icon empty-state__icon" />
           <p class="fs-search-empty-text">{{ t('file.search.noResults') }}</p>
         </div>
       </template>
@@ -278,7 +278,7 @@
            swapping them for grey blocks would read as a navigation). -->
       <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
       <div v-else-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
-        <FileIcon path="" :is-dir="true" :size="48" />
+        <FileIcon path="" :is-dir="true" size="var(--empty-icon-size)" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
       </div>
 
@@ -345,13 +345,13 @@
       <template v-if="searchHasQuery">
         <PanelSkeleton v-if="search.state.searching && search.state.results.length === 0" class="file-grid-skeleton" variant="grid" :rows="12" :label="t('file.search.searching')" />
         <div v-else-if="search.state.results.length === 0 && !search.state.searching" class="empty-state fs-search-empty">
-          <FileX :size="56" class="fs-search-empty-icon" />
+          <FileX class="fs-search-empty-icon empty-state__icon" />
           <p class="fs-search-empty-text">{{ t('file.search.noResults') }}</p>
         </div>
       </template>
       <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" class="file-grid-skeleton" variant="grid" :rows="12" :label="t('common.loading')" />
       <div v-else-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
-        <FileIcon path="" :is-dir="true" :size="48" />
+        <FileIcon path="" :is-dir="true" size="var(--empty-icon-size)" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
       </div>
 
@@ -3513,12 +3513,11 @@ function scrollSelectedIntoView(path) {
     color: var(--text-muted, #999);
 }
 
+/* The glyph's size/opacity come from `FileIcon`'s `--empty-icon-size` and the
+   global `.empty-state__icon` rule; only the gap above the text is local. */
 .empty-state .file-type-icon,
 .empty-state svg {
-    width: calc(48 * var(--dp));
-    height: calc(48 * var(--dp));
     margin-bottom: var(--space-6);
-    opacity: var(--opacity-muted);
 }
 
 /* Truncate hint */
@@ -3837,11 +3836,6 @@ function scrollSelectedIntoView(path) {
     gap: var(--space-5);
     padding: calc(40 * var(--dp)) calc(24 * var(--dp));
     text-align: center;
-}
-
-.fs-search-empty-icon {
-    color: var(--text-muted, #999);
-    opacity: var(--opacity-muted);
 }
 
 .fs-search-empty-text {

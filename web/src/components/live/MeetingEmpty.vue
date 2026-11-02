@@ -1,6 +1,6 @@
 <template>
   <div class="meeting-empty" :class="{ 'is-fill': fill }">
-    <component :is="icon" :size="36" :stroke-width="1.5" class="meeting-empty__icon" />
+    <component :is="icon" class="meeting-empty__icon empty-state__icon" />
     <div class="meeting-empty__title">{{ title }}</div>
     <div v-if="desc" class="meeting-empty__desc">{{ desc }}</div>
   </div>
@@ -52,10 +52,9 @@ withDefaults(
   flex: 1;
   justify-content: center;
 }
-.meeting-empty__icon {
-  color: var(--text-muted);
-  opacity: var(--opacity-muted);
-}
+/* The glyph's size, stroke and colour come from the global
+   `.empty-state__icon` rule (css/components.css) — the same one every other
+   empty state in the app uses. Nothing local to declare here. */
 .meeting-empty__title {
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-medium);

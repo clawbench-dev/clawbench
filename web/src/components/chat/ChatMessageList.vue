@@ -30,7 +30,7 @@
       />
       <div v-else-if="messages.length === 0" class="chat-empty">
       <template v-if="agents && agents.length === 0">
-        <Bot :size="40" class="no-agents-icon" />
+        <Bot class="no-agents-icon empty-state__icon" />
         <span class="no-agents-title">{{ t('chat.messageList.noAgentsTitle') }}</span>
         <span class="no-agents-desc">{{ t('chat.messageList.noAgentsDesc') }}</span>
         <button class="no-agents-btn" @click="openWelcome">
@@ -2195,11 +2195,6 @@ defineExpose({
 }
 
 /* No agents empty state */
-.no-agents-icon {
-  color: var(--text-muted);
-  opacity: var(--opacity-muted);
-}
-
 .no-agents-title {
   font-size: var(--font-size-xl);
   font-weight: var(--font-weight-semibold);

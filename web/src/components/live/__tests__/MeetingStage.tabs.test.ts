@@ -314,7 +314,28 @@ describe('MeetingStage tabs', () => {
     await flushPromises()
     await tab(wrapper, 'notes').trigger('click')
 
-    expect(wrapper.find('[data-role="notes-pane"]').text()).toContain('AI notes were off')
+    const pane = wrapper.find('[data-role="notes-pane"]')
+    expect(pane.text()).toContain('AI notes were off')
+    // The same centred card the record's tabs draw, not a muted line in the
+    // corner — that read as a pane that failed to render.
+    expect(pane.find('[data-role="notes-off"]').classes()).toContain('meeting-empty')
+  })
+
+  it('draws the listening card while 听记 runs but nothing was transcribed yet', async () => {
+    ;(notesApi.phase as { value: string }).value = 'recording'
+
+    const wrapper = mountPanel()
+    await flushPromises()
+    await tab(wrapper, 'notes').trigger('click')
+
+    const pane = wrapper.find('[data-role="notes-pane"]')
+    const card = pane.find('[data-role="notes-listening"]')
+    expect(card.exists()).toBe(true)
+    expect(card.classes()).toContain('meeting-empty')
+    expect(card.text()).toContain('Listening')
+    // Not the "it was off" copy: the recorder is running, the lines just have
+    // not arrived.
+    expect(pane.text()).not.toContain('AI notes were off')
   })
 
   it('renders the live transcript in its own tab while recording', async () => {

@@ -182,7 +182,7 @@
 
           <!-- Empty state -->
           <div v-else class="proxy-empty">
-            <NetworkIcon :size="40" class="proxy-empty-icon" />
+            <NetworkIcon class="proxy-empty-icon empty-state__icon" />
             <div class="proxy-empty-text">{{ t('proxy.noPorts') }}</div>
             <div class="proxy-empty-hint">{{ t('proxy.emptyHint') }}</div>
           </div>
@@ -232,7 +232,7 @@
             </div>
 
             <div v-else class="port-scan-empty">
-              <Search :size="24" />
+              <Search class="empty-state__icon" />
               <span>{{ t('proxy.scanNoResults') }}</span>
             </div>
           </template>
@@ -812,11 +812,6 @@ async function handleRetryTunnel() {
   align-items: center;
   justify-content: center;
   gap: var(--space-4);
-}
-
-.proxy-empty-icon {
-  color: var(--text-muted, #999);
-  opacity: var(--opacity-muted);
 }
 
 .proxy-empty-hint {

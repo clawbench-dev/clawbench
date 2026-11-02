@@ -315,13 +315,26 @@
              recorded separately and merged by timestamp, so a remote
              participant and the publisher appear as different speakers. -->
         <div v-else-if="activeTab === 'notes'" class="live-tab-pane" data-role="notes-pane">
-          <div v-if="notes.phase.value !== 'recording'" class="meeting-hint">
-            {{ t('liveShare.notes.notEnabled') }}
-          </div>
+          <!-- Two different empty states, both drawn as the shared card (the
+               same `MeetingEmpty` the record's tabs and the viewer's panel use):
+               "听记 is off" is a setting to change before the next share, while
+               "listening" is a live state that fills itself. As one muted line
+               in the corner they both read as a pane that failed to render. -->
+          <MeetingEmpty
+            v-if="notes.phase.value !== 'recording'"
+            :icon="Captions"
+            :title="t('liveShare.notes.notEnabledTitle')"
+            :desc="t('liveShare.notes.notEnabled')"
+            data-role="notes-off"
+          />
           <template v-else>
-            <div v-if="noteBlocks.length === 0" class="meeting-hint">
-              {{ t('liveShare.notes.listening') }}
-            </div>
+            <MeetingEmpty
+              v-if="noteBlocks.length === 0"
+              :icon="Captions"
+              :title="t('liveShare.notes.listening')"
+              :desc="t('liveShare.notes.listeningHint')"
+              data-role="notes-listening"
+            />
             <TranscriptList v-else :blocks="noteBlocks" fill />
           </template>
         </div>
@@ -414,12 +427,13 @@
  * only answer "not available" is worse than no button.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Mic, MonitorUp, NotebookPen } from 'lucide-vue-next'
+import { Captions, Mic, MonitorUp, NotebookPen } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import TranscriptList from '@/components/live/TranscriptList.vue'
+import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
 import { useToast } from '@/composables/useToast'
 import {
   hasCameraDevice,

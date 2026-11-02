@@ -106,6 +106,24 @@
             :blocks="transcriptLines"
             data-role="transcript"
           />
+          <!-- An empty transcript has three different causes and the old single
+               sentence ("听记没有开启") was only right for one of them: it also
+               claimed that while the file was still being uploaded right after
+               a meeting, and when the file exists but could not be read. -->
+          <MeetingEmpty
+            v-else-if="transcriptPending"
+            :icon="Captions"
+            :title="t('meeting.detail.transcriptPendingTitle')"
+            :desc="t('meeting.detail.transcriptPendingDesc')"
+            data-role="transcript-pending"
+          />
+          <MeetingEmpty
+            v-else-if="transcriptUnreadable"
+            :icon="Captions"
+            :title="t('meeting.detail.transcriptUnreadableTitle')"
+            :desc="t('meeting.detail.transcriptUnreadableDesc')"
+            data-role="transcript-unreadable"
+          />
           <MeetingEmpty
             v-else
             :icon="Captions"
@@ -314,6 +332,37 @@ const transcriptLines = computed<NoteBlock[]>(() =>
       ...(cue.kind ? { kind: cue.kind } : {}),
     })),
   ),
+)
+
+/**
+ * How long after the end of a meeting an absent transcript is still "on its
+ * way" rather than "never existed".
+ *
+ * The publisher writes `transcript.vtt` only after it has drained its upload
+ * queue, and that drain may take up to 3 minutes (`FINISH_UPLOAD_TIMEOUT_MS`);
+ * the merge and the write follow. Without this grace the tab told the reader
+ * "听记没有开启" for the first minutes after every meeting — the one moment they
+ * are most likely to open it.
+ *
+ * `Date.now()` is not reactive on its own, but the record is re-fetched every
+ * 2.5s while the meeting is still settling (`shouldPoll`), so the sentence
+ * flips on the next tick after the window closes.
+ */
+const TRANSCRIPT_GRACE_MS = 4 * 60 * 1000
+
+const transcriptPending = computed(() => {
+  const r = record.value
+  if (!r || r.hasTranscript || !r.endedAt) return false
+  return Date.now() - r.endedAt < TRANSCRIPT_GRACE_MS
+})
+
+/**
+ * The transcript FILE exists but this list could not draw anything from it —
+ * the artifact request failed, or the file carries no cue we can show. Saying
+ * "听记没有开启" here sends the reader looking for a setting that was on.
+ */
+const transcriptUnreadable = computed(
+  () => Boolean(record.value?.hasTranscript) && transcriptLines.value.length === 0,
 )
 
 const quoteSource = computed(() => {

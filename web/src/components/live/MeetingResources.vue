@@ -30,7 +30,8 @@
 
       <!-- Nothing at all: no meeting folder, nothing referenced. A single muted
            line left at the top of an otherwise blank pane reads as a failure,
-           so the whole-tab case gets the shared empty card. When a folder does
+           so the whole-tab case gets the shared empty card — filled, so it
+           centres like the other three tabs' empty states. When a folder does
            exist the header above already explains the zero, and a small hint is
            the right weight. -->
       <MeetingEmpty
@@ -38,7 +39,6 @@
         :icon="FolderOpen"
         :title="t('meeting.resources.emptyTitle')"
         :desc="t('meeting.resources.empty')"
-        :fill="false"
       />
       <div v-else-if="total === 0" class="res-hint">
         <Info :size="12" />
@@ -238,6 +238,11 @@ function metaFor(item: MeetingResourceItem): string {
 .meeting-resources {
   display: flex;
   flex-direction: column;
+  /* Fills the tab body so the empty card can centre in it (the card is a
+     `flex: 1` block). `auto` basis, not `0`: with rows present the content must
+     keep its natural height and let the body scroll. */
+  flex: 1 1 auto;
+  min-height: 0;
   gap: var(--space-5);
   min-width: 0;
 }

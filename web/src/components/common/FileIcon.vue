@@ -5,8 +5,12 @@ import { getFileIconUrl, getFolderIconUrl } from '@/utils/materialIcons'
 const props = withDefaults(defineProps<{
   /** File path or file name */
   path: string
-  /** Icon size in pixels */
-  size?: number
+  /**
+   * Icon size: a number of CSS px, or any CSS length (a `var(--token)` string).
+   * The length form exists so the empty-state glyph can be driven by
+   * `--empty-icon-size` instead of a second copy of the number.
+   */
+  size?: number | string
   /** Whether this is a directory */
   isDir?: boolean
   /** Whether the directory is open (expanded) */
@@ -32,10 +36,10 @@ watchEffect(async () => {
   }
 })
 
-const sizeStyle = computed(() => ({
-  width: `${props.size}px`,
-  height: `${props.size}px`,
-}))
+const sizeStyle = computed(() => {
+  const value = typeof props.size === 'number' ? `${props.size}px` : props.size
+  return { width: value, height: value }
+})
 
 const alt = computed(() => props.isDir ? `folder: ${props.path}` : `file: ${props.path}`)
 </script>

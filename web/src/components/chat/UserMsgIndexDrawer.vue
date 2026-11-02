@@ -8,9 +8,7 @@
     <PanelSkeleton v-if="loading" class="msg-index-skeleton" variant="list" :rows="8" :meta="false" :label="t('chat.messageList.loadingMore')" />
     <LoadingIndicator v-else-if="jumping" size="md" :label="t('chat.messageList.loadingMore')" />
     <div v-else-if="messages.length === 0" class="panel-empty">
-      <span class="panel-empty-icon-wrap">
-        <MessagesSquare :size="26" class="panel-empty-icon" />
-      </span>
+      <MessagesSquare class="empty-state__icon" />
       <span class="panel-empty-text">{{ t('chat.messageList.noUserMessages') }}</span>
       <span class="panel-empty-hint">{{ t('chat.messageList.noUserMessagesHint') }}</span>
     </div>
@@ -26,9 +24,7 @@
         />
       </div>
       <div v-if="isSearching && filteredMessages.length === 0" class="panel-empty">
-        <span class="panel-empty-icon-wrap">
-          <MessagesSquare :size="26" class="panel-empty-icon" />
-        </span>
+        <MessagesSquare class="empty-state__icon" />
         <span class="panel-empty-text">{{ t('chat.messageList.conversationIndexNoResults') }}</span>
       </div>
       <template v-else>
@@ -247,22 +243,6 @@ onUnmounted(() => {
   min-height: 36vh;
   padding: calc(24 * var(--dp)) calc(28 * var(--dp));
   text-align: center;
-}
-
-.panel-empty-icon-wrap {
-  width: calc(52 * var(--dp));
-  height: calc(52 * var(--dp));
-  border-radius: var(--radius-lg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
-  margin-bottom: var(--space-2);
-}
-
-.panel-empty-icon {
-  color: var(--text-muted);
-  opacity: var(--opacity-hover);
 }
 
 .panel-empty-text {

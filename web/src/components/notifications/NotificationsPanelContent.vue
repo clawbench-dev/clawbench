@@ -93,7 +93,7 @@
       </div>
 
       <div v-else-if="items.length === 0" class="notif-state">
-        <Inbox :size="30" />
+        <Inbox class="empty-state__icon" />
         <span>{{ isFiltered ? t('notifications.emptyFiltered') : t('notifications.empty') }}</span>
         <span v-if="!isFiltered" class="notif-state-hint">{{ t('notifications.emptyHint') }}</span>
       </div>

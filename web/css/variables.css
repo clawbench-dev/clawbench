@@ -173,6 +173,16 @@
     --space-9: calc(24 * var(--dp));
     --space-10: calc(28 * var(--dp));
 
+    /* ── The empty-state glyph. Every "nothing here yet" surface in the app —
+       the dock tabs, the meeting tabs, the drawers and search dialogs — draws
+       the same centred glyph, so its size and stroke live here instead of at
+       ~20 call sites (they had drifted to 24/26/30/32/34/36/40/48/56).
+       Applied by the global `.empty-state__icon` rule in css/components.css;
+       a call site may NOT size its own empty glyph. Stroke is a unitless
+       number because `stroke-width` is not a length. ── */
+    --empty-icon-size: calc(56 * var(--dp));
+    --empty-icon-stroke: 1.25;
+
     /* ── Scrollbar track fill. The thumb is themed per palette, but no theme
        tints the track, so this lives once here as the shared default. It is
        consumed (with this same value as a literal fallback) by

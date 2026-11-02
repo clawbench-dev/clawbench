@@ -54,14 +54,14 @@
 
       <!-- Not a git repository -->
       <div v-else-if="!isGit" class="stats-empty">
-        <GitBranch :size="34" class="stats-empty-icon" />
+        <GitBranch class="stats-empty-icon empty-state__icon" />
         <span>{{ t('gitStats.notGitRepo') }}</span>
       </div>
 
       <template v-else>
         <!-- Empty state: git repo but no commits in range -->
         <div v-if="!totalsPresent" class="stats-empty">
-          <Code2 :size="34" class="stats-empty-icon" />
+          <Code2 class="stats-empty-icon empty-state__icon" />
           <span>{{ t('gitStats.noData') }}</span>
         </div>
 
@@ -644,10 +644,6 @@ onMounted(() => {
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
 }
-.stats-empty-icon {
-  opacity: var(--opacity-muted);
-}
-
 /* ── Detail table ── */
 .stats-table-wrap {
   overflow-x: auto;

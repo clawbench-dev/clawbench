@@ -248,6 +248,68 @@ describe('MeetingDetail', () => {
     )
   })
 
+  it('says the transcript is still coming right after a meeting ends', async () => {
+    // The publisher writes transcript.vtt only after draining its upload queue
+    // (up to 3 minutes), so for a while the file legitimately does not exist.
+    // "听记没有开启" was a lie in exactly the window a reader opens this tab.
+    getMock.mockResolvedValue(
+      record({ hasTranscript: false, hasMinutes: false, status: 'idle', endedAt: Date.now() - 60_000 }),
+    )
+    artifactMock.mockResolvedValue(null)
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-tab="transcript"]').trigger('click')
+    await flushPromises()
+
+    const card = w.find('[data-role="transcript-pending"]')
+    expect(card.exists()).toBe(true)
+    expect(card.find('.meeting-empty__title').text()).toBe(enMessages.meeting.detail.transcriptPendingTitle)
+    expect(card.find('.meeting-empty__desc').text()).toBe(enMessages.meeting.detail.transcriptPendingDesc)
+    // It must not also claim the notes were off.
+    expect(w.text()).not.toContain(enMessages.meeting.detail.emptyTranscriptDesc)
+
+    w.unmount()
+  })
+
+  it('falls back to "no transcript" once the settling window has passed', async () => {
+    // Same absent file, but the meeting ended long ago: nothing is coming.
+    getMock.mockResolvedValue(record({ hasTranscript: false }))
+    artifactMock.mockResolvedValue(null)
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-tab="transcript"]').trigger('click')
+    await flushPromises()
+
+    expect(w.find('[data-role="transcript-pending"]').exists()).toBe(false)
+    expect(w.text()).toContain(enMessages.meeting.detail.emptyTranscriptTitle)
+
+    w.unmount()
+  })
+
+  it('does not blame the setting when the transcript file exists but cannot be read', async () => {
+    // `hasTranscript` comes from probing the folder, so the file IS there; an
+    // empty list means the artifact request failed (or the file has no cue we
+    // can draw). Telling the reader AI notes were off sends them to a setting
+    // that was on.
+    artifactMock.mockImplementation(async (_token: string, kind: string) =>
+      kind === 'minutes' ? { content: '# MINUTES', file: 'minutes.md' } : { content: '', file: 'transcript.vtt' },
+    )
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-tab="transcript"]').trigger('click')
+    await flushPromises()
+
+    const card = w.find('[data-role="transcript-unreadable"]')
+    expect(card.exists()).toBe(true)
+    expect(card.find('.meeting-empty__title').text()).toBe(enMessages.meeting.detail.transcriptUnreadableTitle)
+    expect(w.text()).not.toContain(enMessages.meeting.detail.emptyTranscriptDesc)
+
+    w.unmount()
+  })
+
   // The stored artifact is a subtitle track. The tab is a reading surface, so
   // the header, cue ids and timestamps must not reach it — and it is drawn as
   // the same speaker rows the live panel used, not as flattened text.

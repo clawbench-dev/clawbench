@@ -3,13 +3,13 @@
 
     <!-- Platform unsupported state (top priority) -->
     <div v-if="platformUnsupported" class="terminal-empty-state terminal-platform-unsupported">
-      <TerminalIcon :size="40" class="terminal-empty-icon" />
+      <TerminalIcon class="terminal-empty-icon empty-state__icon" />
       <p class="terminal-empty-text">{{ t('terminal.platformUnsupported') }}</p>
     </div>
 
     <!-- Empty state when all tabs are closed -->
     <div v-else-if="tabs.length === 0" class="terminal-empty-state">
-      <TerminalIcon :size="40" class="terminal-empty-icon" />
+      <TerminalIcon class="terminal-empty-icon empty-state__icon" />
       <p class="terminal-empty-text">{{ t('terminal.noSessions') }}</p>
       <button class="terminal-empty-create-btn" @click="handleCreateTab">
         <PlusIcon :size="16" />
@@ -1530,11 +1530,6 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   height: 100%;
   gap: var(--space-6);
   padding: calc(32 * var(--dp));
-}
-
-.terminal-empty-icon {
-  color: var(--text-muted);
-  opacity: var(--opacity-muted);
 }
 
 .terminal-empty-text {

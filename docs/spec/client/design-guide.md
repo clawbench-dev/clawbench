@@ -181,6 +181,7 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - 用户气泡：`--user-msg-color`
 - 阴影：`--shadow-sm` / `--shadow-md` / `--shadow-lg`（**每套主题都必须定义全三档**，`designTokens.css.test.ts:176` 钉死）
 - 字号以外还有 `--font-ui` / `--font-mono`（用户可在设置里改，运行时覆盖到 `<html>` 内联样式）
+- 空状态图标：`--empty-icon-size`（56 设计 px）/ `--empty-icon-stroke`（1.25）。**全站空状态只用一个字形尺寸**，由全局 `.empty-state__icon`（`css/components.css`）消费——调用方只加这个类，**不得再传 `:size`**（曾经漂到 24/26/30/32/34/36/40/48/56 九个尺寸）。守卫：`components/common/__tests__/emptyStateIcon.test.ts`（含全站空状态清单）。
 
 ---
 

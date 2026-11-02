@@ -30,7 +30,7 @@
 
       <!-- Empty -->
       <div v-else-if="items.length === 0" class="shared-files-hint">
-        <ScreenShare :size="32" class="shared-files-empty-icon" />
+        <ScreenShare class="shared-files-empty-icon empty-state__icon" />
         <span>{{ t('sharedFiles.empty') }}</span>
       </div>
 
@@ -244,11 +244,6 @@ defineExpose({ open: openDrawer })
 /* First load: rows in place of a centred spinner. */
 .shared-files-skeleton {
   padding: var(--space-2) 0;
-}
-
-.shared-files-empty-icon {
-  color: var(--text-muted, #656d76);
-  opacity: var(--opacity-muted);
 }
 
 .shared-files-error { color: #cf222e; }

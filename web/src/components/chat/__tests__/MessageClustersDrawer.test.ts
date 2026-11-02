@@ -671,6 +671,9 @@ describe('MessageClustersDrawer — empty state', () => {
     const wrapper = mountDrawer()
     expect(wrapper.find('.mc-empty-title').text()).toContain('No analysis results yet')
     expect(wrapper.find('.mc-empty-hint').text().length).toBeGreaterThan(0)
-    expect(wrapper.find('.mc-empty-icon').exists()).toBe(true)
+    // The glyph is stubbed to render nothing in this file, so assert the
+    // component itself; the shared `empty-state__icon` class is pinned by
+    // common/__tests__/emptyStateIcon.test.ts.
+    expect(wrapper.findComponent({ name: 'SparklesIcon' }).exists()).toBe(true)
   })
 })

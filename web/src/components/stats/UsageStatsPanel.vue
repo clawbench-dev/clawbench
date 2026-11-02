@@ -168,7 +168,7 @@
           v-if="!hasContent && !error"
           class="stats-empty"
         >
-          <BarChart3 :size="34" class="stats-empty-icon" />
+          <BarChart3 class="stats-empty-icon empty-state__icon" />
           <span>{{ t('stats.noData') }}</span>
         </div>
 
@@ -859,10 +859,6 @@ onMounted(() => {
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
 }
-.stats-empty-icon {
-  opacity: var(--opacity-muted);
-}
-
 /* ── Detail table ── */
 .stats-table-wrap {
   overflow-x: auto;

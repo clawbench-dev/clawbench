@@ -141,7 +141,11 @@ describe('MeetingResources', () => {
     const wrapper = mountResources({ groups: [], total: 0, folderPath: '' })
 
     expect(wrapper.find('.res-row').exists()).toBe(false)
-    expect(wrapper.find('.meeting-empty').exists()).toBe(true)
+    const card = wrapper.find('.meeting-empty')
+    expect(card.exists()).toBe(true)
+    // Filled, so it centres in the tab body like the other three tabs' empty
+    // states instead of hugging the top edge.
+    expect(card.classes()).toContain('is-fill')
     expect(wrapper.find('.meeting-empty__title').text()).toBe(enMessages.meeting.resources.emptyTitle)
     expect(wrapper.text()).toContain(enMessages.meeting.resources.empty)
   })

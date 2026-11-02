@@ -30,7 +30,7 @@
 
       <!-- Empty -->
       <div v-else-if="items.length === 0" class="shared-sessions-hint">
-        <MessageSquareShare :size="32" class="shared-sessions-empty-icon" />
+        <MessageSquareShare class="shared-sessions-empty-icon empty-state__icon" />
         <span>{{ t('sharedSessions.empty') }}</span>
       </div>
 
@@ -251,11 +251,6 @@ defineExpose({ open: openDrawer })
 /* First load: rows in place of a centred spinner. */
 .shared-sessions-skeleton {
   padding: var(--space-2) 0;
-}
-
-.shared-sessions-empty-icon {
-  color: var(--text-muted, #656d76);
-  opacity: var(--opacity-muted);
 }
 
 .shared-sessions-error { color: #cf222e; }

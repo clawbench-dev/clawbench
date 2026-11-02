@@ -184,9 +184,7 @@
             <div class="forge-empty-card">
               <component
                 :is="tabIcon('pipeline')"
-                :size="34"
-                :stroke-width="1.5"
-                class="forge-empty-icon"
+                class="forge-empty-icon empty-state__icon"
               />
               <div class="forge-empty-title">{{ t('forge.pipeline.emptyList') }}</div>
             </div>
@@ -280,9 +278,7 @@
           <div class="forge-empty-card">
             <component
               :is="tabIcon(items.type.value)"
-              :size="34"
-              :stroke-width="1.5"
-              class="forge-empty-icon"
+              class="forge-empty-icon empty-state__icon"
             />
             <div class="forge-empty-title">{{ t('forge.emptyList') }}</div>
           </div>
