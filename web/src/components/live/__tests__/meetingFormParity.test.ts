@@ -104,6 +104,33 @@ describe('one meeting form language', () => {
     }
   })
 
+  it('heads the link and the room switches like every other section', () => {
+    // 会议管理 opens on the link, and the three room-level switches sit under
+    // their own heading instead of trailing the device grids unlabelled.
+    const stage = sourceOf(STAGE)
+    expect(stage).toMatch(
+      /t\('meeting\.create\.link'\)[\s\S]{0,80}?<ShareAddressList/,
+    )
+    for (const file of [CREATE, STAGE]) {
+      expect(sourceOf(file), `${file} must head the switches`).toMatch(
+        /t\('meeting\.create\.other'\)[\s\S]{0,120}?class="meeting-checks"/,
+      )
+    }
+  })
+
+  it('heads every block inside 画面与声音', () => {
+    // 成员分享 / 画面 / 摄像头 / 麦克风 are one level below the section heading:
+    // same label, one step smaller. The two device grids draw their own.
+    for (const file of [CREATE, STAGE]) {
+      expect(sourceOf(file), `${file} must head the picture grid`).toMatch(
+        /meeting-subsection[^>]*>\{\{ t\('meeting\.create\.picture'\) \}\}/,
+      )
+    }
+    expect(sourceOf('web/src/components/live/DeviceChoiceGrid.vue')).toMatch(
+      /class="meeting-subsection device-choice__label"/,
+    )
+  })
+
   it('draws the 听记 switch with the shared checkbox row', () => {
     const stage = sourceOf(STAGE)
     expect(stage).toMatch(/class="meeting-check"[\s\S]*?data-role="stage-notes"/)
@@ -118,7 +145,7 @@ describe('one meeting form language', () => {
     // automatic minimum size (an `overflow` other than visible zeroes it), so
     // the flex body could squash the whole grid. The panel body is the only
     // scroll container.
-    const css = styleOf('web/src/components/live/CaptureSourceGrid.vue')
+    const css = sourceOf('web/src/assets/capture-sources.css')
     const compact = ruleDecls(css, '.capture-sources--compact')
     expect(compact['max-height']).toBeUndefined()
     expect(compact.overflow).toBeUndefined()

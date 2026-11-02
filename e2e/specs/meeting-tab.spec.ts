@@ -27,40 +27,44 @@ test.describe('Meeting tab', () => {
     await expect(page.locator('[data-role="meeting-title"]')).toHaveCount(0)
   })
 
-  test('create is its own page, with the name first and the picture toggles', async ({ page }) => {
+  test('create is its own page, with the name first and the picture as cards', async ({ page }) => {
     await page.locator('[data-action="meeting-create"]').click()
 
     await expect(page.locator('[data-role="meeting-title"]')).toBeVisible()
-    // Meetings have no type: the form is a set of independent toggles, and the
-    // screen/camera pair replaces the old voice/video choice.
+    // Meetings have no type: the picture is a grid of frames with "share
+    // nothing" as one of them, and each device axis is its own row of cards
+    // (the off state is a card, not a checkbox).
     await expect(page.locator('[data-type="voice"]')).toHaveCount(0)
-    await expect(page.locator('[data-role="meeting-screen"]')).toBeVisible()
-    await expect(page.locator('[data-role="meeting-camera"]')).toBeVisible()
+    await expect(page.locator('[data-source="__off__"]')).toBeVisible()
+    const mic = page.locator('[data-role="device-choice"][data-kind="audio"] [data-device="default"]')
+    const micOff = page.locator('[data-role="device-choice"][data-kind="audio"] [data-device="__off__"]')
 
     // A picture source is pre-selected (a screen when one can be enumerated),
     // so the only thing missing is the required nickname.
     const start = page.locator('[data-action="meeting-start"]')
+    await expect(start).toBeDisabled()
     await page.locator('[data-role="meeting-nick"]').fill('E2E 用户')
     await expect(start).toBeEnabled()
 
     // Turning the mic off is the host's call — but the form opens with it on,
     // every time, including after a previous meeting muted it.
-    const mic = page.locator('[data-role="meeting-mic"]')
-    await expect(mic).toBeChecked()
-    await mic.uncheck()
-    await expect(mic).not.toBeChecked()
+    await expect(mic).toHaveClass(/device-choice__card--on/)
+    await micOff.click()
+    await expect(mic).not.toHaveClass(/device-choice__card--on/)
 
     // No picture is a normal meeting, not an invalid one: the button stays
     // usable and the microphone choice survives.
-    await page.locator('[data-role="meeting-screen"]').uncheck()
+    await page.locator('[data-source="__off__"]').click()
     await expect(start).toBeEnabled()
-    await expect(mic).not.toBeChecked()
+    await expect(mic).not.toHaveClass(/device-choice__card--on/)
 
     // Re-opening the form starts from the default again (the option is a
     // singleton shared with the stage, so "off" would otherwise stick).
     await page.locator('[data-action="meeting-create-back"]').click()
     await page.locator('[data-action="meeting-create"]').click()
-    await expect(page.locator('[data-role="meeting-mic"]')).toBeChecked()
+    await expect(
+      page.locator('[data-role="device-choice"][data-kind="audio"] [data-device="default"]'),
+    ).toHaveClass(/device-choice__card--on/)
   })
 
   /**
@@ -74,7 +78,7 @@ test.describe('Meeting tab', () => {
    * roughly half height. Measured here rather than in jsdom, which has no
    * layout at all; `meetingFormInput.css.test.ts` pins the declaration.
    */
-  test('keeps both fields full height on a phone, and describes the picture once', async ({ page }) => {
+  test('keeps both fields full height on a phone, and narrates nothing', async ({ page }) => {
     await page.locator('[data-action="meeting-create"]').click()
     await expect(page.locator('[data-role="meeting-title"]')).toBeVisible()
 
@@ -93,27 +97,16 @@ test.describe('Meeting tab', () => {
       expect(box!.height, `${role} must not be squashed by the flex column`).toBeGreaterThanOrEqual(36)
     }
 
-    // One description for the camera/screen pair, and it follows their
-    // combination instead of repeating a line under each toggle.
-    const picture = page.locator('[data-role="meeting-picture"]')
-    await expect(picture).toHaveCount(1)
-    await expect(picture).toHaveClass(/meeting-hint/)
-    const screenOnly = await picture.textContent()
+    // Nothing narrates the picture: the card grids show what is being sent.
+    // The camera grid is always on screen — 「不共享摄像头」 is an answer even on a
+    // machine with no camera — and the only line under it is that reason.
+    const cameraGrid = page.locator('[data-role="device-choice"][data-kind="video"]')
+    await expect(cameraGrid).toBeVisible()
+    await expect(cameraGrid.locator('[data-device="__off__"]')).toBeVisible()
 
-    await page.locator('[data-role="meeting-camera"]').check()
-    const both = await picture.textContent()
-    expect(both).not.toBe(screenOnly)
-
-    await page.locator('[data-role="meeting-screen"]').uncheck()
-    const cameraOnly = await picture.textContent()
-    expect(cameraOnly).not.toBe(both)
-    expect(cameraOnly).not.toBe(screenOnly)
-
-    // "Neither" is a normal state, not a warning: the line explains what the
-    // audience gets and the meeting can still start.
-    await page.locator('[data-role="meeting-camera"]').uncheck()
-    await expect(picture).toHaveClass(/meeting-hint/)
-    expect(await picture.textContent()).not.toBe(cameraOnly)
+    // "Share no screen" is a normal state, not a warning: the meeting still starts.
+    await page.locator('[data-role="meeting-nick"]').fill('E2E 用户')
+    await page.locator('[data-source="__off__"]').click()
     await expect(page.locator('[data-action="meeting-start"]')).toBeEnabled()
   })
 
@@ -239,9 +232,10 @@ test.describe('Meeting flow', () => {
     // The nickname is required since it is the account identity viewers see.
     await page.locator('[data-role="meeting-nick"]').fill('E2E 用户')
     // No meeting type to pick: just turn the picture off (headless Chromium has
-    // no screen to capture).
-    await page.locator('[data-role="meeting-screen"]').uncheck()
-    await page.locator('[data-role="meeting-mic"]').uncheck()
+    // no screen to capture) and mute the microphone, so the room comes up with
+    // no media at all.
+    await page.locator('[data-source="__off__"]').click()
+    await page.locator('[data-role="device-choice"][data-kind="audio"] [data-device="__off__"]').click()
     await page.locator('[data-action="meeting-start"]').click()
 
     // The stage replaces the create page once the room is up.

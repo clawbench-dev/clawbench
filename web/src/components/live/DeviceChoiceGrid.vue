@@ -5,7 +5,7 @@
     :data-kind="kind"
     :data-variant="variant"
   >
-    <div class="device-choice__label">{{ label }}</div>
+    <div class="meeting-subsection device-choice__label">{{ label }}</div>
 
     <!-- Frames, for the camera. A camera is a PICTURE source, so it is drawn
          with the same 16:9 cards as the screens next to it: one look for every
@@ -151,6 +151,8 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+// The sub-heading style is shared with the sections around this grid.
+import '@/assets/meeting-form.css'
 import { Check, Mic, MicOff, Video, VideoOff } from 'lucide-vue-next'
 import { listAudioInputs, listVideoInputs, type AudioInputDevice } from '@/composables/useLiveShare'
 import { mediaPermission } from '@/utils/micCapture'
@@ -256,7 +258,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .device-choice { display: flex; flex-direction: column; gap: var(--space-2); }
-.device-choice__label { font-size: var(--font-size-2xs); color: var(--text-muted); }
+/* The label is a section sub-heading (meeting-subsection); only the spacing is
+   local, so it sits 8px above the cards like every other sub-heading. */
+.device-choice__label { margin-bottom: var(--space-2); }
 .device-choice__grid {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3);
 }

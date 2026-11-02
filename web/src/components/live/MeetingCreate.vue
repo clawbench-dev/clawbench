@@ -43,18 +43,15 @@
           :placeholder="t('meeting.join.nickPlaceholder')"
           :aria-invalid="!nicknameValid"
         />
+        <!-- The only line the field needs: why the footer button is disabled.
+             Nothing explains what a 称谓 is — the placeholder already does, and
+             a filled-in field needs no commentary at all. -->
         <div
-          class="meeting-hint"
-          :class="{ 'meeting-hint--required': !nicknameValid }"
+          v-if="!nicknameValid"
+          class="meeting-hint meeting-hint--required"
           data-role="meeting-nick-hint"
         >
-          {{ nicknameValid ? t('meeting.create.nickHint') : t('meeting.create.nickRequired') }}
-        </div>
-        <!-- Always visible, including while the field is still empty (the red
-             line above replaces the hint in that state): the advice is about
-             choosing the name, so it must come before typing, not after. -->
-        <div class="meeting-hint" data-role="meeting-nick-advice">
-          {{ t('meeting.create.nickAdvice') }}
+          {{ t('meeting.create.nickRequired') }}
         </div>
 
         <!-- No meeting type: the picture is a CHOICE between "nothing" and the
@@ -62,6 +59,7 @@
              checkbox followed by a list. Camera, microphone and 听记 are the
              independent parts of the same setup and share one group. -->
         <div class="meeting-section">{{ t('meeting.create.av') }}</div>
+        <div class="meeting-subsection">{{ t('meeting.create.picture') }}</div>
         <CaptureSourceGrid
           compact
           allow-off
@@ -105,6 +103,10 @@
           @select="micChoice = $event"
         />
 
+        <!-- The room-level switches, under their own heading: they are not
+             part of "which picture / which microphone", they are what the
+             meeting allows. -->
+        <div class="meeting-section">{{ t('meeting.create.other') }}</div>
         <div class="meeting-checks">
           <label class="meeting-check">
             <input
@@ -276,14 +278,13 @@ const cameraOn = computed(() => cameraChoice.value !== '' && cameraAvailable.val
  * The one line under the picture, when — and only when — it says something the
  * cards do not.
  *
- * The two card groups already show what is being sent, so "screen only" or
- * "camera only" would just repeat the selection back. What they cannot show is
- * the LAYOUT (the camera sits in the corner of the screen) and the reason the
- * camera group is missing altogether.
+ * The two card groups already show what is being sent, so "screen only",
+ * "camera only" or "camera in the corner" would just repeat the selection back.
+ * What they cannot show is why the camera group is missing altogether.
  */
 const pictureHint = computed(() => {
   if (!cameraAvailable.value) return t('meeting.create.cameraNoDevice')
-  return cameraOn.value && hasScreen.value ? t('meeting.create.pictureBoth') : ''
+  return ''
 })
 
 /** The one required field: viewers see it in chat, and an empty name would fall

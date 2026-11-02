@@ -30,6 +30,19 @@
   border-top: 1px solid var(--border-color);
 }
 
+/* ── Sub-heading ───────────────────────────────────────────────────────────
+   A heading INSIDE a section. 画面与声音 is the bold one that groups the blocks;
+   this labels one block under it (成员分享 / 画面 / 摄像头 / 麦克风), so it is a
+   step smaller and muted, and carries no rule of its own — a second hairline
+   per block would chop the panel into too many pieces. Spacing comes from the
+   host's flex gap; the device grids add their own 4px so their label sits the
+   same 8px above the cards as a standalone heading does. */
+.meeting-subsection {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
 /* ── Text field ────────────────────────────────────────────────────────────
    The body is a scrolling flex column and an input is a replaced element with
    no content-derived minimum, so without `flex-shrink: 0` it is the ONLY
@@ -54,8 +67,9 @@
 }
 
 /* ── Hint ──────────────────────────────────────────────────────────────────
-   Indented hints belong to the checkbox above them; the indent matches the
-   checkbox box plus its gap so the text starts under the label, not the box. */
+   Only for what the controls cannot say themselves: a blocked field, an empty
+   device list, a permission the platform withholds. Never a restatement of the
+   choice that is already ticked. */
 .meeting-hint {
   display: flex;
   align-items: center;
@@ -63,9 +77,6 @@
   font-size: var(--font-size-xs);
   line-height: 1.6;
   color: var(--text-muted);
-}
-.meeting-hint--indent {
-  padding-left: calc(16 * var(--dp));
 }
 /* A blocked field, not a validation error: the line explains the disabled
    footer button instead of waiting for a failed submit. */

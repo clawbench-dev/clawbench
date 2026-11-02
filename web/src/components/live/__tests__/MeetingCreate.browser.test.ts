@@ -254,8 +254,9 @@ describe('MeetingCreate in a browser', () => {
     expect(wrapper.find('[data-source="browser:screen"]').classes()).not.toContain('capture-source--on')
   })
 
-  // The card groups already show what is being sent. Only two things are
-  // invisible there: the layout, and why the camera group is missing entirely.
+  // The card groups already show what is being sent. The only thing invisible
+  // there is why the camera group is missing entirely — the combination itself
+  // is never narrated back.
   it('says only what the cards cannot, and stays silent otherwise', async () => {
     stubCaptureApi(true)
     videoDevices.list = [{ id: 'cam-a', name: 'FaceTime HD' }]
@@ -267,8 +268,8 @@ describe('MeetingCreate in a browser', () => {
     expect(picture().exists()).toBe(false)
 
     await card(wrapper, 'video', 'cam-a').trigger('click')
-    // Both: where the camera goes is the part the cards cannot say.
-    expect(picture().text()).toBe(enMessages.meeting.create.pictureBoth)
+    // Both — the layout used to be narrated here; the cards are enough.
+    expect(picture().exists()).toBe(false)
 
     await wrapper.find('[data-source="__off__"]').trigger('click')
     expect(picture().exists()).toBe(false) // camera only
@@ -357,14 +358,7 @@ describe('MeetingCreate in a browser', () => {
     // Nothing to explain in the default state (screen only): the cards say it.
     expect(wrapper.findAll('[data-role="meeting-picture"]')).toHaveLength(0)
     const text = wrapper.text()
-    const dropped = [
-      'cameraOn',
-      'cameraOff',
-      'micOn',
-      'micOff',
-      'notesOn',
-      'notesOff',
-    ] as const
+    const dropped = ['cameraOn', 'cameraOff', 'micOn', 'micOff'] as const
     for (const key of dropped) {
       expect(text, `meeting.create.${key} should not be rendered`).not.toContain(
         enMessages.meeting.create[key],
@@ -685,18 +679,13 @@ describe('MeetingCreate in a browser', () => {
     expect(hint().classes()).toContain('meeting-hint--required')
     expect(wrapper.find('[data-role="meeting-nick"]').attributes('aria-invalid')).toBe('true')
 
-    // The naming advice sits outside that state-dependent line: it is about
-    // choosing the name, so it must be readable while the field is still empty.
-    const advice = () => wrapper.find('[data-role="meeting-nick-advice"]')
-    expect(advice().text()).toBe(enMessages.meeting.create.nickAdvice)
-    expect(advice().classes()).not.toContain('meeting-hint--required')
-
+    // Nothing narrates a filled-in name: the line is a blocked-state message,
+    // not a permanent caption, and the old "what a 称谓 is" / "how to pick one"
+    // paragraphs are gone.
     await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
     expect(start.attributes('disabled')).toBeUndefined()
-    // ...and the line goes back to explaining what the name is for.
-    expect(hint().text()).toBe(enMessages.meeting.create.nickHint)
-    expect(hint().classes()).not.toContain('meeting-hint--required')
-    expect(advice().text()).toBe(enMessages.meeting.create.nickAdvice)
+    expect(hint().exists()).toBe(false)
+    expect(wrapper.find('[data-role="meeting-nick-advice"]').exists()).toBe(false)
 
     // Whitespace is not a name.
     await wrapper.find('[data-role="meeting-nick"]').setValue('   ')

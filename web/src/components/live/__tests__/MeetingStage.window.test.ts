@@ -359,8 +359,11 @@ describe('MeetingStage windows', () => {
     expect(full?.querySelector('.member-screen__video')).not.toBeNull()
     // ...over the whole app, not inside the dock tab it belongs to.
     expect(wrapper.element.contains(full)).toBe(false)
-    // ...and the panel never draws a preview of it.
-    expect(wrapper.find('video').exists()).toBe(false)
+    // The panel keeps its own small preview of the same track (the card), which
+    // is not the full-screen surface.
+    const preview = wrapper.find('[data-role="member-screen-card"] video')
+    expect(preview.exists()).toBe(true)
+    expect(full?.contains(preview.element)).toBe(false)
     // The picture arrives full screen; the window is opt-in from its dock.
     expect(requestWindow).not.toHaveBeenCalled()
     expect(full?.querySelector('[data-action="screen-switch"]')?.textContent).toContain(
@@ -419,15 +422,34 @@ describe('MeetingStage windows', () => {
     ;(document.querySelector('[data-action="screen-close"]') as HTMLElement).click()
     await flushPromises()
 
-    // Closing it was a decision; it does not come back on its own, but the
-    // panel offers both frames again — and still no inline picture.
+    // Closing it was a decision; it does not come back on its own. The panel
+    // keeps the card (with the picture previewed inline) and the way back to
+    // the full screen.
     expect(document.querySelector('[data-role="screen-fullscreen"]')).toBeNull()
-    expect(wrapper.find('video').exists()).toBe(false)
-    expect(wrapper.find('[data-role="screen-actions"]').exists()).toBe(true)
+    expect(wrapper.find('[data-role="member-screen-card"]').exists()).toBe(true)
+    expect(wrapper.find('[data-role="member-screen-card"] video').exists()).toBe(true)
 
     await wrapper.find('[data-action="show-screen-fullscreen"]').trigger('click')
     await flushPromises()
     expect(document.querySelector('[data-role="screen-fullscreen"]')).not.toBeNull()
+  })
+
+  it('heads the member picture only while someone is sharing', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // Nobody sharing: no card, and no heading either — an empty 「成员分享」
+    // block would ask the host to look at nothing.
+    expect(wrapper.text()).not.toContain('Member sharing')
+    expect(wrapper.find('[data-role="member-screen-card"]').exists()).toBe(false)
+
+    ;(shareApi.screenSharer as { value: string }).value = 'v1'
+    ;(shareApi.remoteScreenStream as { value: unknown }).value = { id: 'screen' }
+    await flushPromises()
+
+    const headings = wrapper.findAll('.meeting-subsection').map((n) => n.text())
+    expect(headings).toContain('Member sharing')
+    expect(wrapper.find('[data-role="member-screen-card"]').exists()).toBe(true)
   })
 
   it('does not offer a window the host cannot open', async () => {

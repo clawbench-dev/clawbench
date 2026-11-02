@@ -59,8 +59,8 @@
           <!-- Every address the server is reachable on, primary first. A
                machine with Wi-Fi + Ethernet + Docker needs this: the address
                this browser used is not necessarily one a colleague can reach. -->
+          <div class="meeting-section">{{ t('meeting.create.link') }}</div>
           <ShareAddressList :links="share.shareLinks.value" />
-          <div class="meeting-hint">{{ t('liveShare.linkHint') }}</div>
 
           <!-- 画面与声音: the SAME heading and the SAME controls as 创建会议.
                The picture is a choice between "nothing" and the actual
@@ -70,6 +70,31 @@
                button opened a second copy of a grid the create page shows
                outright. -->
           <div class="meeting-section">{{ t('meeting.create.av') }}</div>
+          <!-- A member's picture owns a row of its own, above the grid: it is
+               not one of the host's sources, it is what is already going out.
+               No selected state on it — the accent ring belongs to the host's
+               own choice below, and two highlighted boxes would fight. -->
+          <div v-if="share.screenSharer.value" class="meeting-subsection">
+            {{ t('meeting.create.memberShare') }}
+          </div>
+          <MemberScreenCard
+            v-if="share.screenSharer.value"
+            :name="sharerName"
+            :stream="share.remoteScreenStream.value"
+            :window-available="screenWindowAvailable"
+            :window-open="screenWindowOpen"
+            @fullscreen="openScreenFullscreen"
+            @window="openScreenWindow"
+            @stop="share.revokeScreen(share.screenSharer.value)"
+          />
+          <div
+            v-if="share.screenSharer.value && screenWindowOpen"
+            class="meeting-hint"
+            data-role="screen-in-window"
+          >
+            {{ t('liveShare.screenInWindow') }}
+          </div>
+          <div class="meeting-subsection">{{ t('meeting.create.picture') }}</div>
           <CaptureSourceGrid
             compact
             allow-off
@@ -83,9 +108,6 @@
           />
           <div v-if="sourceHint" class="meeting-hint" data-role="stage-sources">
             {{ sourceHint }}
-          </div>
-          <div v-if="screenHint" class="meeting-hint" data-role="stage-screen-hint">
-            {{ screenHint }}
           </div>
 
           <!-- Camera. The self-view is mirrored, like every other video tool:
@@ -131,6 +153,7 @@
                audience screen sharing are the same kind of decision ("what may
                happen in this meeting"), so they sit together instead of being
                scattered between the device grids and the audience list. -->
+          <div class="meeting-section">{{ t('meeting.create.other') }}</div>
           <div class="meeting-checks">
             <label class="meeting-check">
               <input type="checkbox" :checked="notesOn" data-role="stage-notes"
@@ -161,18 +184,6 @@
               {{ t('liveShare.allowScreenShare') }}
             </label>
           </div>
-          <div class="meeting-hint meeting-hint--indent">
-            {{ notesOn ? t('meeting.create.notesOn') : t('meeting.create.notesOff') }}
-          </div>
-          <div class="meeting-hint meeting-hint--indent">
-            {{ t('liveShare.allowTalkingHint') }}
-          </div>
-          <!-- The publisher hears viewers through its speakers, so its own
-               microphone can pick that up and send it back (twice). AEC covers
-               part of it; headphones are the only reliable fix. -->
-          <div v-if="share.talkEnabled.value" class="meeting-hint meeting-hint--indent">
-            {{ t('liveShare.headphoneHint') }}
-          </div>
           <button
             v-if="share.talkEnabled.value && hasTalkers"
             class="live-btn live-btn--danger"
@@ -181,50 +192,6 @@
           >
             {{ t('liveShare.muteAll') }}
           </button>
-          <div class="meeting-hint meeting-hint--indent">
-            {{ t('liveShare.allowScreenShareHint') }}
-          </div>
-
-          <!-- A member's screen gets its OWN surface (openScreenWindow): never
-               an inline preview. It fills the screen by default, and the host
-               can detach it into a window from that dock. The panel keeps only
-               the name, plus the ways back once the host closed the picture —
-               the stop button belongs next to the picture it stops. -->
-          <template v-if="share.screenSharer.value">
-            <div class="meeting-section">
-              {{ t('liveShare.memberSharing', { id: share.screenSharer.value }) }}
-            </div>
-            <div v-if="screenWindowOpen" class="meeting-hint" data-role="screen-in-window">
-              {{ t('liveShare.screenInWindow') }}
-            </div>
-            <div v-else class="live-screen-actions" data-role="screen-actions">
-              <button
-                class="live-btn"
-                type="button"
-                data-action="show-screen-fullscreen"
-                @click="openScreenFullscreen"
-              >
-                {{ t('liveShare.viewScreen') }}
-              </button>
-              <button
-                v-if="screenWindowAvailable"
-                class="live-btn"
-                type="button"
-                data-action="open-screen-window"
-                @click="openScreenWindow"
-              >
-                {{ t('liveShare.openInWindow') }}
-              </button>
-              <button
-                class="live-btn live-btn--danger"
-                type="button"
-                data-action="stop-screen-share"
-                @click="share.revokeScreen(share.screenSharer.value)"
-              >
-                {{ t('liveShare.stopScreenShare') }}
-              </button>
-            </div>
-          </template>
         </template>
 
         <!-- 参会者: managing people is a different task from setting the meeting
@@ -404,6 +371,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Captions, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
+import MemberScreenCard from '@/components/live/MemberScreenCard.vue'
 import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import TranscriptList from '@/components/live/TranscriptList.vue'
@@ -437,6 +405,7 @@ import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
 import MemberScreenSurface from './MemberScreenSurface.vue'
 import { parseControlMessage, toInjectorEvent, type ControlMessage } from '@/share/liveControl'
 import { chunkChatHistory } from '@/share/chatHistory'
+import { viewerLabel } from '@/components/live/viewerLabels'
 import { appLog } from '@/utils/appLog'
 // The same section / hint / checkbox primitives the create form uses.
 import '@/assets/meeting-form.css'
@@ -461,6 +430,15 @@ const { serverConfig } = useSettingsConfig()
  */
 const hostChatName = computed(
   () => resolveUserNickname(serverConfig.value?.user) || t('liveShare.hostName'),
+)
+
+/**
+ * Who is sharing, named the way the participant list names them — including the
+ * `#2` suffix when two viewers picked the same nickname. The raw viewer id is
+ * the fallback: the sharer can already be gone from the roster.
+ */
+const sharerName = computed(() =>
+  viewerLabel(share.viewers.value, share.screenSharer.value),
 )
 
 /** A capture/publish session is running. */
@@ -545,21 +523,16 @@ const sourceHint = computed(() => {
   return ''
 })
 
-/** What the tiles cannot say: whether a screen is going out at all. */
-const screenHint = computed(() => {
-  if (captureSources.value.length === 0) return ''
-  return hasScreen.value ? t('meeting.stage.screenOn') : t('meeting.stage.screenOff')
-})
-
 /**
  * The one line under the picture, when — and only when — it says something the
- * cards do not: the LAYOUT (the camera sits in the corner of the screen) and
- * the reason the camera group is missing altogether. Same rule as the create
- * form; "screen only" or "camera only" would just repeat the selection back.
+ * cards do not.
+ *
+ * Same rule as the create form: the card groups already show what is being
+ * sent, so only the reason a whole group is missing is worth a line.
  */
 const pictureHint = computed(() => {
   if (!cameraAvailable.value) return t('meeting.create.cameraNoDevice')
-  return share.cameraEnabled.value && hasScreen.value ? t('meeting.create.pictureBoth') : ''
+  return ''
 })
 
 /** The publisher's own camera picture (mirrored by CSS). */
@@ -1279,12 +1252,8 @@ watch(
 /* ── Member screen ───────────────────────────────────────────────────────── */
 
 /* The picture itself is MemberScreenSurface — the same component fills the
-   screen and the detached window. What stays here is the panel's row of
-   actions, shown only while no picture is on screen. */
-.live-screen-actions {
-  display: flex;
-  gap: var(--space-3, 6px);
-}
+   screen and the detached window. The panel's handle on it is
+   MemberScreenCard, which draws its own row above the source grid. */
 
 /* Fullscreen frame for the shared picture: the whole viewport, above the app.
    Teleported to <body> because a dock tab is hidden the moment the host

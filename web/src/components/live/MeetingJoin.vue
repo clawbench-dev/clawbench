@@ -18,7 +18,6 @@
         data-role="meeting-nick"
         :placeholder="t('meeting.join.nickPlaceholder')"
       />
-      <div class="meeting-hint">{{ t('meeting.join.nickHint') }}</div>
 
       <div class="meeting-section">{{ t('meeting.join.link') }}</div>
       <input
@@ -29,7 +28,6 @@
         :placeholder="t('meeting.join.linkPlaceholder')"
         @keydown.enter="join"
       />
-      <div class="meeting-hint">{{ t('meeting.join.linkHint') }}</div>
       <div v-if="error" class="meeting-error">{{ error }}</div>
     </div>
 

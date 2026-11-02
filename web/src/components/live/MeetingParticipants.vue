@@ -167,6 +167,7 @@ import { useI18n } from 'vue-i18n'
 import { Mic, MicOff, MonitorOff, UserX } from 'lucide-vue-next'
 import SpeakerAvatar from '@/components/common/SpeakerAvatar.vue'
 import type { LiveViewerInfo } from '@/composables/useLiveShare'
+import { viewerLabels } from './viewerLabels'
 
 const props = defineProps<{
   /** The host's own nickname (already resolved from the account). */
@@ -194,24 +195,9 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-/**
- * Display name per viewer, with a `#2` suffix for duplicates.
- *
- * Nicknames are not unique (the server does not reserve them): two people may
- * both be "Alex". The list is keyed by viewerId, so the suffix only affects
- * what is shown, never who is who.
- */
-const labels = computed(() => {
-  const counts = new Map<string, number>()
-  const out: Record<string, string> = {}
-  for (const v of props.viewers) {
-    const base = v.name || v.id
-    const n = (counts.get(base) ?? 0) + 1
-    counts.set(base, n)
-    out[v.id] = n > 1 ? `${base} #${n}` : base
-  }
-  return out
-})
+/* The `#2` suffix for duplicate nicknames lives in viewerLabels: the member
+   screen card names the same person and must not say something else. */
+const labels = computed(() => viewerLabels(props.viewers))
 
 function label(v: LiveViewerInfo): string {
   return labels.value[v.id] || v.name || v.id
