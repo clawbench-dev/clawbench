@@ -22,6 +22,9 @@ import { join } from 'node:path'
 /** Repo root: this file lives at web/src/share/__tests__/. */
 const ROOT = join(__dirname, '..', '..', '..', '..')
 const VIEW = 'web/src/share/LiveShareView.vue'
+/** The pane itself lives in the shared layout (the host's member-screen view
+ *  renders the same one), so the wrapper is asserted there. */
+const LAYOUT = 'web/src/share/LiveStageLayout.vue'
 
 function read(rel: string): string {
   return readFileSync(join(ROOT, rel), 'utf8')
@@ -68,25 +71,28 @@ function styleOf(src: string): string {
 }
 
 describe('share viewer chat pane insets its content', () => {
-  const src = read(VIEW)
+  const layout = read(LAYOUT)
+  const view = read(VIEW)
 
   it('wraps the chat in the inset element, inside the side panel', () => {
     // Anchored on the side panel so the class cannot be parked on an unrelated
     // div — the pane only insets anything if it is the one hosting the chat.
-    const asideStart = src.indexOf('data-panel="side"')
+    const asideStart = layout.indexOf('data-panel="side"')
     expect(asideStart).toBeGreaterThan(0)
-    const asideEnd = src.indexOf('</aside>', asideStart)
+    const asideEnd = layout.indexOf('</aside>', asideStart)
     expect(asideEnd).toBeGreaterThan(asideStart)
-    const aside = src.slice(asideStart, asideEnd)
+    const aside = layout.slice(asideStart, asideEnd)
 
     const at = aside.indexOf('class="live-chat-panel__body"')
     expect(at).toBeGreaterThan(0)
     const pane = aside.slice(at, aside.indexOf('</div>', at))
-    expect(pane).toContain('<LiveChatPanel')
+    // The pane renders a slot; the chat is what the caller fills it with.
+    expect(pane).toContain('<slot name="chat"')
+    expect(view).toMatch(/<template #chat>\s*<LiveChatPanel/)
   })
 
   it('gives that wrapper a non-zero padding on both axes', () => {
-    const padding = ruleDecls(styleOf(src), '.live-chat-panel__body').padding
+    const padding = ruleDecls(styleOf(layout), '.live-chat-panel__body').padding
     expect(padding).toBeDefined()
     // `1` = all sides, `2` = vertical horizontal, `4` = t r b l.
     const parts = padding.split(' ')

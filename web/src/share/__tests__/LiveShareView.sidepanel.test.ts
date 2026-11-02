@@ -167,8 +167,10 @@ describe('LiveShareView side panel', () => {
     await flushPromises()
 
     // The squeeze is structural: the panel and the picture column are siblings
-    // inside the row shell, so no absolute positioning is involved.
-    expect(w.find('.live-shell > .live-share-view > .live-stage').exists()).toBe(true)
+    // inside the row shell, so no absolute positioning is involved. The column
+    // wrapper is the shared layout's (LiveStageLayout), which the host's
+    // member-screen view renders too.
+    expect(w.find('.live-shell > .live-stage-col > .live-share-view > .live-stage').exists()).toBe(true)
     expect(w.find('.live-shell > .live-side').exists()).toBe(true)
     expect(w.find('.live-share-view .live-side').exists()).toBe(false)
 
@@ -493,7 +495,10 @@ describe('LiveShareView side panel resize', () => {
  * assertion above while covering the picture.
  */
 describe('LiveShareView side panel layout', () => {
-  const FILE = 'src/share/LiveShareView.vue'
+  // The shell, the panel and the divider live in the SHARED layout — the host's
+  // view of a member's screen renders the same file, so the promise has to be
+  // pinned there or the two ends can drift apart again.
+  const FILE = 'src/share/LiveStageLayout.vue'
 
   function styleBlock(): string {
     const src = readWebFile(FILE)
@@ -523,7 +528,7 @@ describe('LiveShareView side panel layout', () => {
   it('lets the picture column actually shrink', () => {
     // `min-width: auto` (the flex default) refuses to go below the content and
     // would push the panel off screen instead of shrinking the video.
-    expect(rule(styleBlock(), '.live-share-view')).toMatch(/(^|;)\s*min-width:\s*0/)
+    expect(rule(styleBlock(), '.live-stage-col')).toMatch(/(^|;)\s*min-width:\s*0/)
   })
 
   it('takes the dragged width through a variable, so the narrow layout still wins', () => {

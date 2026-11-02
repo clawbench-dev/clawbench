@@ -374,11 +374,14 @@
             :unread="unread"
             :chat-open="screenChatOpen"
             :messages="chatMessages"
+            :note-blocks="noteBlocks"
+            :notes-enabled="notesOn"
             :can-switch="screenWindowAvailable"
             @switch="openScreenWindowFromFullscreen"
             @stop="share.revokeScreen(share.screenSharer.value)"
             @close="closeScreenFullscreen"
             @toggle-chat="toggleChat"
+            @open-panel="openScreenChat"
             @send-chat="sendChat"
           />
         </div>
@@ -396,11 +399,14 @@
           :unread="unread"
           :chat-open="screenChatOpen"
           :messages="chatMessages"
+          :note-blocks="noteBlocks"
+          :notes-enabled="notesOn"
           :can-switch="screenWindowAvailable"
           @switch="returnScreenToFullscreen"
           @stop="share.revokeScreen(share.screenSharer.value)"
           @close="closeScreenWindow"
           @toggle-chat="toggleChat"
+          @open-panel="openScreenChat"
           @send-chat="sendChat"
         />
       </Teleport>
@@ -636,6 +642,12 @@ let unsubscribeClosed: (() => void) | undefined
 function toggleChat(): void {
   screenChatOpen.value = !screenChatOpen.value
   if (screenChatOpen.value) unread.value = 0
+}
+
+/** A pane button in the member-screen dock asked for the panel (e.g. 听记). */
+function openScreenChat(): void {
+  screenChatOpen.value = true
+  unread.value = 0
 }
 
 /**

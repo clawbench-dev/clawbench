@@ -6,7 +6,16 @@
   <!-- Shell: the picture column plus the side panel, side by side. The panel is
        a SIBLING of the picture, never an overlay: opening it must squeeze the
        stage, so nothing the presenter draws ends up hidden behind it. -->
-  <div v-else ref="rootRef" class="live-shell">
+  <LiveStageLayout
+    v-else
+    ref="layoutRef"
+    :side-open="sideOpen"
+    :active-tab="sideTab"
+    :notes-available="notesAvailable"
+    @update:active-tab="setSideTab"
+    @close="closeSide"
+    @resize="syncInkRect"
+  >
     <div class="live-share-view">
       <div
         ref="stageRef"
@@ -314,129 +323,62 @@
       </LiveDock>
     </div>
 
-    <!-- The same divider the app's split panes use (App.vue, the file manager):
-         one shared implementation of the 1px line, the accent hover, the
-         pointer capture that survives a fast drag off the line, and the touch
-         grab band. Only the geometry of the panes on either side is ours. -->
-    <SplitDivider
-      v-if="sideOpen"
-      class="live-side-divider"
-      orientation="horizontal"
-      @dragmove="onSideDrag"
-    />
+    <template #chat>
+      <LiveChatPanel :messages="chatMessages" @send="sendChat" />
+    </template>
 
-    <!-- Side panel: 聊天 + 听记, full height, on the right.
-         It is a flex SIBLING of the picture, so opening it shrinks the stage
-         instead of covering it — and `v-show` (not `v-if`) keeps the chat list,
-         its scroll position and an unsent draft alive while it is closed. -->
-    <aside
-      v-show="sideOpen"
-      class="live-side"
-      :style="sideWidth > 0 ? { '--live-side-w': `${sideWidth}px` } : undefined"
-      data-panel="side"
-    >
-      <div class="live-side-tabs" role="tablist">
-        <button
-          class="live-side-tab"
-          :class="{ 'live-side-tab--on': sideTab === 'chat' }"
-          type="button"
-          role="tab"
-          :aria-selected="sideTab === 'chat'"
-          data-tab="chat"
-          @click="setSideTab('chat')"
-        >
-          {{ t('share.live.chat') }}
-        </button>
-        <button
-          v-if="notesAvailable"
-          class="live-side-tab"
-          :class="{ 'live-side-tab--on': sideTab === 'notes' }"
-          type="button"
-          role="tab"
-          :aria-selected="sideTab === 'notes'"
-          data-tab="notes"
-          @click="setSideTab('notes')"
-        >
-          {{ t('share.live.notes') }}
-        </button>
-        <span class="live-side-gap" />
-        <button
-          class="live-side-close"
-          type="button"
-          :aria-label="t('common.close')"
-          data-action="side-close"
-          @click="closeSide"
-        >
-          <X :size="16" />
-        </button>
+    <template #notes>
+      <!-- Transcription is over, but the lines it already produced stay. The
+           hint is what stops "nothing new is appearing" from reading as a
+           broken panel. -->
+      <div v-if="!notesEnabled && noteBlocks.length > 0" class="live-notes-stopped" data-role="notes-stopped">
+        {{ t('share.live.notesStoppedHint') }}
       </div>
+      <!-- Same shape as the record's 转写 tab: centred glyph, title, one line
+           of context. "Waiting" only makes sense while 听记 is on; once it is
+           off, the honest line is that nothing was recorded. -->
+      <MeetingEmpty
+        v-if="noteBlocks.length === 0"
+        :icon="Captions"
+        :title="t(notesEnabled ? 'share.live.notesWaiting' : 'share.live.notesOffTitle')"
+        :desc="t(notesEnabled ? 'share.live.notesWaitingDesc' : 'share.live.notesOffDesc')"
+        data-role="notes-empty"
+      />
+      <!-- The same rows the publisher's 转写 tab draws: one implementation. -->
+      <TranscriptList v-else :blocks="noteBlocks" fill />
+    </template>
 
+    <template #overlay>
+  <!-- Client-mode source picker. Electron refuses an undeclared capture
+           source, so the choice has to happen before getDisplayMedia. It is a
+           shell-level modal, not a picture-level one: the choice concerns the
+           whole page, so it must also cover an open side panel. -->
       <div
-        v-show="sideTab === 'chat'"
-        class="live-chat-panel__body"
-        role="tabpanel"
-        data-panel="chat"
+        v-if="pickingSource"
+        class="live-picker"
+        data-role="source-picker"
+        @click.self="pickingSource = false"
       >
-        <LiveChatPanel :messages="chatMessages" @send="sendChat" />
-      </div>
-
-      <div
-        v-if="notesAvailable"
-        v-show="sideTab === 'notes'"
-        class="live-notes-body"
-        role="tabpanel"
-        data-panel="notes"
-      >
-        <!-- Transcription is over, but the lines it already produced stay. The
-             hint is what stops "nothing new is appearing" from reading as a
-             broken panel. -->
-        <div v-if="!notesEnabled && noteBlocks.length > 0" class="live-notes-stopped" data-role="notes-stopped">
-          {{ t('share.live.notesStoppedHint') }}
-        </div>
-        <!-- Same shape as the record's 转写 tab: centred glyph, title, one line
-             of context. "Waiting" only makes sense while 听记 is on; once it is
-             off, the honest line is that nothing was recorded. -->
-        <MeetingEmpty
-          v-if="noteBlocks.length === 0"
-          :icon="Captions"
-          :title="t(notesEnabled ? 'share.live.notesWaiting' : 'share.live.notesOffTitle')"
-          :desc="t(notesEnabled ? 'share.live.notesWaitingDesc' : 'share.live.notesOffDesc')"
-          data-role="notes-empty"
-        />
-        <!-- The same rows the publisher's 转写 tab draws: one implementation. -->
-        <TranscriptList v-else :blocks="noteBlocks" fill />
-      </div>
-    </aside>
-
-    <!-- Client-mode source picker. Electron refuses an undeclared capture
-         source, so the choice has to happen before getDisplayMedia. It is a
-         shell-level modal, not a picture-level one: the choice concerns the
-         whole page, so it must also cover an open side panel. -->
-    <div
-      v-if="pickingSource"
-      class="live-picker"
-      data-role="source-picker"
-      @click.self="pickingSource = false"
-    >
-      <div class="live-picker__card">
-        <div class="live-picker__title">{{ t('share.live.pickSource') }}</div>
-        <div class="live-picker__list">
-          <button
-            v-for="src in clientSources"
-            :key="src.id"
-            class="live-picker__item"
-            type="button"
-            @click="startClientShare(src.id)"
-          >
-            {{ src.name }}
+        <div class="live-picker__card">
+          <div class="live-picker__title">{{ t('share.live.pickSource') }}</div>
+          <div class="live-picker__list">
+            <button
+              v-for="src in clientSources"
+              :key="src.id"
+              class="live-picker__item"
+              type="button"
+              @click="startClientShare(src.id)"
+            >
+              {{ src.name }}
+            </button>
+          </div>
+          <button class="live-picker__cancel" type="button" @click="pickingSource = false">
+            {{ t('common.cancel') }}
           </button>
         </div>
-        <button class="live-picker__cancel" type="button" @click="pickingSource = false">
-          {{ t('common.cancel') }}
-        </button>
       </div>
-    </div>
-  </div>
+    </template>
+  </LiveStageLayout>
 </template>
 
 <script setup lang="ts">
@@ -462,7 +404,6 @@ import {
   ScreenShareOff,
   VideoOff,
   VolumeX,
-  X,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
@@ -473,7 +414,7 @@ import LiveInkLayer from './LiveInkLayer.vue'
 import LiveChatPanel, { type ChatMessage } from './LiveChatPanel.vue'
 import LiveDock from './LiveDock.vue'
 import LiveDockButton from './LiveDockButton.vue'
-import SplitDivider from '@/components/common/SplitDivider.vue'
+import LiveStageLayout from './LiveStageLayout.vue'
 import { useInkBoard } from './useInkBoard'
 import { contentRectOf, toNormalized, type ContentRect, type ControlMessage } from './liveControl'
 import { mergeChatHistory } from './chatHistory'
@@ -482,13 +423,13 @@ import { getShareToken } from './shareMode'
 import { groupNoteSegments, withMeetingFileEvents, type LiveNoteSegment, type NoteFileEvent } from '@/composables/liveNotes'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
-import { designToCss } from '@/utils/uiScale'
 
 const TAG = 'LiveShareView'
 
 const { t } = useI18n()
 
-const rootRef = ref<HTMLElement | null>(null)
+/** The layout component — its root is the shell, which fullscreen targets. */
+const layoutRef = ref<InstanceType<typeof LiveStageLayout> | null>(null)
 const videoRef = ref<HTMLVideoElement | null>(null)
 /** The picture-in-picture tile carrying the publisher's camera. */
 const cameraVideoRef = ref<HTMLVideoElement | null>(null)
@@ -542,40 +483,6 @@ const sideTab = ref<'chat' | 'notes'>('chat')
 /** Derived, so the dock can keep using the old names for its active tint. */
 const chatOpen = computed(() => sideOpen.value && sideTab.value === 'chat')
 const notesOpen = computed(() => sideOpen.value && sideTab.value === 'notes')
-
-/**
- * Panel width after a drag, in CSS px. `0` = the stylesheet's clamp decides.
- *
- * CSS px (not a ratio) because a side panel is a width, not a share: widening
- * the window must not widen the chat. The stylesheet still caps it — `max-width`
- * keeps the picture above its own minimum when the window shrinks after a wide
- * drag, which is why there is no resize listener here.
- */
-const sideWidth = ref(0)
-
-/** Design-px bounds for the drag. */
-const SIDE_MIN_DP = 260
-/** A very wide window must not turn the chat into half the screen. */
-const SIDE_MAX_DP = 560
-/** The picture keeps at least this much, however far the divider is dragged. */
-const STAGE_MIN_DP = 280
-
-function clampSideWidth(px: number, shellPx: number): number {
-  const min = designToCss(SIDE_MIN_DP)
-  const max = Math.max(min, Math.min(designToCss(SIDE_MAX_DP), shellPx - designToCss(STAGE_MIN_DP)))
-  return Math.min(max, Math.max(min, px))
-}
-
-/**
- * The divider rides the panel's left edge, so the distance from the pointer to
- * the shell's right edge IS the panel's new width — no need to know where the
- * drag started.
- */
-function onSideDrag(clientX: number): void {
-  const rect = rootRef.value?.getBoundingClientRect()
-  if (!rect) return
-  sideWidth.value = clampSideWidth(rect.right - clientX, rect.width)
-}
 
 // ── AI 听记 (viewer side) ────────────────────────────────────────────────────
 /** Whether the publisher is recording 听记 right now. */
@@ -1522,7 +1429,7 @@ async function toggleFullscreen(): Promise<void> {
       await document.exitFullscreen()
       return
     }
-    const el = rootRef.value
+    const el = layoutRef.value?.rootEl
     if (!el) return
     if (typeof el.requestFullscreen === 'function') {
       await el.requestFullscreen()
@@ -1563,15 +1470,6 @@ watch(state, (s) => {
     startStatsPolling()
     onVisibility()
   }
-})
-
-// Opening or closing the side panel changes the stage's WIDTH without a window
-// resize, so `resize` never fires. The ink layer is positioned to the picture's
-// rectangle, and a stale rect puts every stroke half a panel off the pixel it
-// was drawn on. Re-measure after the DOM has taken the new width — and again on
-// every drag step, which moves the edge without changing `sideOpen`.
-watch([sideOpen, sideWidth], () => {
-  void nextTick(syncInkRect)
 })
 
 let statsTimer: ReturnType<typeof setInterval> | null = null
@@ -1639,16 +1537,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* Row shell: the picture column and the side panel share the width.
-   `position: relative` makes it the containing block for the source picker,
-   which is a page-level modal and must cover the open panel too. */
-.live-shell {
-  position: relative;
-  display: flex;
-  height: 100%;
-  background: var(--bg-primary, #0d1117);
-}
-
 /* The picture column. `min-width: 0` is what lets it actually shrink when the
    side panel opens: a flex item's default `min-width: auto` refuses to go below
    its content, and the video would push the panel off the screen instead. */
@@ -1903,106 +1791,9 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-/* ── Side panel: 聊天 + 听记 ─────────────────────────────────────────────── */
-
-/*
- * Full-height column beside the picture. A flex SIBLING of the stage, never an
- * absolutely positioned card: `position: absolute` is exactly what made the old
- * panels cover the presentation. Width is a range so a wide window does not
- * hand the chat half the screen, and a narrow one still gets a readable column.
- */
-.live-side {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  /* `--live-side-w` is written by the divider drag; without a drag the range
-     below decides, so a wide window does not hand the chat half the screen and
-     a narrow one still gets a readable column. */
-  width: var(--live-side-w, clamp(calc(280 * var(--dp)), 26vw, calc(400 * var(--dp))));
-  /* A drag must never starve the picture: the cap is applied by CSS, so a
-     window that shrinks AFTER a wide drag is handled without a resize listener
-     (the inline width would otherwise win and the picture would collapse). */
-  max-width: calc(100% - calc(280 * var(--dp)));
-  min-height: 0;
-  /* No border-left: the divider draws the boundary (and thickens on hover). */
-  background: var(--bg-secondary, #161b22);
-  padding-right: env(safe-area-inset-right, 0);
-  padding-bottom: env(safe-area-inset-bottom, 0);
-}
-
-.live-side-tabs {
-  display: flex;
-  align-items: stretch;
-  flex-shrink: 0;
-  height: calc(38 * var(--dp));
-  border-bottom: 1px solid var(--border-color, #30363d);
-  background: var(--bg-secondary, #161b22);
-}
-
-.live-side-tab {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2, 4px);
-  padding: 0 var(--space-5, 10px);
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--text-secondary, #8b949e);
-  font-size: var(--font-size-sm, 13px);
-  cursor: pointer;
-}
-
-.live-side-tab:hover {
-  color: var(--text-primary, #e6edf3);
-}
-
-.live-side-tab--on {
-  color: var(--accent-color, #4a90d9);
-  border-bottom-color: var(--accent-color, #4a90d9);
-  font-weight: 600;
-}
-
-/* Pushes the close button to the far edge, so the tabs stay left-aligned like
-   every other tab strip in the app. */
-.live-side-gap {
-  flex: 1 1 auto;
-}
-
-.live-side-close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  align-self: center;
-  width: calc(24 * var(--dp));
-  height: calc(24 * var(--dp));
-  margin-right: var(--space-3, 6px);
-  border: none;
-  border-radius: var(--radius-sm, 4px);
-  background: transparent;
-  color: var(--text-secondary, #8b949e);
-  cursor: pointer;
-}
-
-.live-side-close:hover {
-  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
-  color: var(--text-primary, #e6edf3);
-}
-
-/*
- * The chat body carries no inset of its own: it is flat so it can sit on a
- * pane that already insets its content (the meeting panel does). The side
- * panel is not such a pane, so the inset is supplied here, otherwise the
- * bubbles, the input and the send button run into the border.
- */
-.live-chat-panel__body {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: var(--space-4, 8px) var(--space-5, 10px);
-}
-
+/* "Transcription stopped" note above a transcript that outlived it. One muted
+   line, no card: the content below is the subject, this only explains why it
+   stops growing. */
 /* ── Speaking indicator ─────────────────────────────────────────────────── */
 
 .live-speaker {
@@ -2073,25 +1864,6 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-/* ── AI 听记 pane (inside the side panel) ────────────────────────────────── */
-
-/* The pane's own inset; the rows themselves are `TranscriptList` (the same
-   component the publisher's 转写 tab uses), so nothing about the line language
-   is repeated here. */
-.live-notes-body {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: var(--space-4, 8px) var(--space-5, 10px);
-}
-
-/* The empty state is `MeetingEmpty` — the same block the record's tabs draw —
-   so there is no hint styling of its own here. */
-
-/* "Transcription stopped" note above a transcript that outlived it. One muted
-   line, no card: the content below is the subject, this only explains why it
-   stops growing. */
 .live-notes-stopped {
   flex: 0 0 auto;
   padding-bottom: var(--space-3, 6px);
@@ -2120,29 +1892,4 @@ onBeforeUnmount(() => {
 }
 .live-voice-stage__desc { font-size: var(--font-size-xs, 11px); }
 
-/*
- * Narrow windows (a phone, a split-screen tablet): a right-hand column would
- * leave the picture a sliver. Stack instead — the panel keeps a real height by
- * taking the bottom share, and the stage gives up height rather than width.
- * Still a squeeze, still no overlap.
- */
-@media (max-width: 720px) {
-  .live-shell {
-    flex-direction: column;
-  }
-
-  /* A horizontal divider has nothing to separate once the panes are stacked. */
-  .live-side-divider {
-    display: none;
-  }
-
-  .live-side {
-    width: 100%;
-    /* The wide-layout cap would keep the stacked panel narrower than the
-       screen; the drag that wrote `--live-side-w` cannot happen here anyway. */
-    max-width: none;
-    flex: 0 0 46%;
-    border-top: 1px solid var(--border-color, #30363d);
-  }
-}
 </style>
