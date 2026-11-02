@@ -13,16 +13,6 @@
         <span class="live-panel__dot" />
         {{ t('liveShare.live') }}
       </span>
-      <span class="live-panel__spacer" />
-      <button
-        v-if="share.state.value === 'publishing'"
-        class="live-panel__stop"
-        type="button"
-        data-action="panel-stop"
-        @click="onStop"
-      >
-        {{ t('liveShare.stop') }}
-      </button>
     </div>
 
     <!-- While publishing the panel is three surfaces, not one long form: the
@@ -139,26 +129,6 @@
           <div class="meeting-hint meeting-hint--indent">
             {{ notesOn ? t('meeting.create.notesOn') : t('meeting.create.notesOff') }}
           </div>
-
-          <!-- Tools that only make sense while publishing a SCREEN: annotate
-               it. A camera picture has no desktop coordinates to draw on, so
-               this stays hidden for camera-only meetings. Swapping the shared
-               source is the picture grid above — one picker, not a second one
-               behind a button. -->
-          <template v-if="hasScreen">
-            <div class="meeting-section">{{ t('liveShare.toolsSection') }}</div>
-            <div class="live-tools">
-              <button
-                class="live-btn"
-                :class="{ 'live-btn--on': isAnnotating }"
-                type="button"
-                data-action="annotate"
-                @click="openAnnotate"
-              >
-                {{ t('liveShare.annotate') }}
-              </button>
-            </div>
-          </template>
 
           <div class="meeting-section">
             {{ t('liveShare.audienceCount', { count: share.viewers.value.length }) }}
@@ -411,6 +381,33 @@
         />
       </Teleport>
     </div>
+
+    <!-- The running meeting's actions sit in ONE bar at the foot, like every
+         other meeting screen. The header is status only (title + 共享中):
+         结束会议 is destructive and global, and 标注画面 is a tool for the
+         whole meeting rather than a field of the 会议管理 form it used to live
+         in — a host who is presenting should not have to open a setup tab to
+         draw on the picture. -->
+    <div v-if="share.state.value === 'publishing'" class="meeting-footer" data-role="stage-footer">
+      <button class="fbtn fbtn-danger" type="button" data-action="panel-end" @click="onStop">
+        <PhoneOff :size="14" />{{ t('meeting.stage.end') }}
+      </button>
+      <span class="live-panel__spacer" />
+      <!-- Drawing only exists for a SCREEN picture: a camera image has no
+           desktop coordinates to map the ink onto, so the tool follows the
+           current capture rather than a type chosen at creation. -->
+      <button
+        v-if="hasScreen"
+        class="fbtn"
+        :class="{ 'fbtn-primary': isAnnotating }"
+        type="button"
+        data-action="annotate"
+        :aria-pressed="isAnnotating"
+        @click="openAnnotate"
+      >
+        <PenLine :size="14" />{{ t('liveShare.annotate') }}
+      </button>
+    </div>
   </div>
 </template>
 
@@ -428,7 +425,7 @@
  * only answer "not available" is worse than no button.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Captions, Mic, MonitorUp, NotebookPen } from 'lucide-vue-next'
+import { Captions, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
@@ -465,6 +462,9 @@ import { chunkChatHistory } from '@/share/chatHistory'
 import { appLog } from '@/utils/appLog'
 // The same section / hint / checkbox primitives the create form uses.
 import '@/assets/meeting-form.css'
+// The footer's pills: this panel is not inside ModalDialog, so it loads the
+// shared footer-button sheet itself.
+import '@/assets/modal-footer-btn.css'
 
 const emit = defineEmits<{ ended: [token: string] }>()
 
@@ -1284,21 +1284,6 @@ watch(
   font-size: var(--font-size-sm, 13px);
 }
 
-/* ── Tool row ───────────────────────────────────────────────────────────── */
-
-.live-tools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3, 6px);
-}
-
-/* A tool that is currently on (annotation mode is running). */
-.live-btn--on {
-  border-color: color-mix(in srgb, var(--accent-color, #4a90d9) 55%, transparent);
-  color: var(--accent-color, #4a90d9);
-  background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
-}
-
 /* Unread chat count, on the chat tab and in the member's-screen window dock.
    Accent, not red: red means an error or a destructive action in this UI, while
    an unread line is ordinary traffic. */
@@ -1464,8 +1449,8 @@ watch(
 
 /* "On air" marker. A dot plus the word rather than the word alone: the tab is
    scanned, not read. Accent-coloured, NOT red — red in this UI means an error
-   or a destructive action (the Stop button next to it), while a running share
-   is normal ongoing work. */
+   or a destructive action (结束会议 in the footer), while a running share is
+   normal ongoing work. */
 .live-panel__live {
   display: inline-flex;
   align-items: center;
@@ -1505,20 +1490,23 @@ watch(
   flex-shrink: 0;
 }
 
-.live-panel__stop {
-  height: calc(26 * var(--dp));
-  padding: 0 var(--space-5, 10px);
-  border: 1px solid color-mix(in srgb, var(--color-red, #cf222e) 40%, transparent);
-  border-radius: var(--radius-lg, 8px);
-  background: transparent;
-  color: var(--color-red, #cf222e);
-  font-size: var(--font-size-sm, 12px);
-  cursor: pointer;
+/* The running meeting's action bar: the same flat pill bar every other meeting
+   screen uses (design-guide §按钮 — a footer is not a second panel colour).
+   Spacer-separated like 记录详情: the destructive action sits at the left edge,
+   the tool at the right. It scrolls sideways rather than wrapping, because the
+   left dock can be dragged down to 320px. */
+.meeting-footer {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: safe flex-end;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-primary);
   flex-shrink: 0;
-}
-
-.live-panel__stop:hover {
-  background: color-mix(in srgb, var(--color-red, #cf222e) 8%, transparent);
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .live-panel__body {

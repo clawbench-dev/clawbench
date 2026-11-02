@@ -9,14 +9,20 @@ import { join } from 'node:path'
  *
  * jsdom applies no stylesheets, so a component test cannot see this drift —
  * and the drift is invisible to type checking too (both are just class names).
- * This reads the sources instead: the four meeting screens each declare their
+ * This reads the sources instead: the five meeting screens each declare their
  * own scoped `.meeting-footer`, so the bar is compared against the task bar
  * declaration by declaration, and the markup is checked for stray classes.
  */
 
 const ROOT = join(__dirname, '..', '..', '..', '..', '..')
 
-const MEETING_SCREENS = ['MeetingList.vue', 'MeetingCreate.vue', 'MeetingJoin.vue', 'MeetingDetail.vue']
+const MEETING_SCREENS = [
+  'MeetingList.vue',
+  'MeetingCreate.vue',
+  'MeetingJoin.vue',
+  'MeetingStage.vue',
+  'MeetingDetail.vue',
+]
 
 function source(relative: string): string {
   return readFileSync(join(ROOT, relative), 'utf8')
@@ -60,7 +66,9 @@ function meetingStyleOf(file: string): string {
 
 /** The `<div class="meeting-footer">…</div>` block. The footer holds buttons only. */
 function footerBlock(file: string): string {
-  const m = meetingSource(file).match(/<div class="meeting-footer">([\s\S]*?)\n\s*<\/div>/)
+  // `v-if` may precede the class (会议中 only draws its bar while a meeting runs),
+  // so the opening tag is matched loosely; the bar itself is still the same one.
+  const m = meetingSource(file).match(/<div\b[^>]*class="meeting-footer"[^>]*>([\s\S]*?)\n\s*<\/div>/)
   if (!m) throw new Error(`${file} has no .meeting-footer block`)
   return m[1]
 }
@@ -124,5 +132,8 @@ describe('meeting footer actions use the shared .fbtn language', () => {
     expect(footerButtonClasses('MeetingJoin.vue').some((c) => c.includes('fbtn-primary'))).toBe(true)
     // Delete is destructive: the shared red pill, not a hand-mixed tint.
     expect(footerButtonClasses('MeetingDetail.vue').some((c) => c.includes('fbtn-danger'))).toBe(true)
+    // 结束会议 is the same kind of action as 删除: it ends the meeting for
+    // everyone, so it is the red pill too.
+    expect(footerButtonClasses('MeetingStage.vue').some((c) => c.includes('fbtn-danger'))).toBe(true)
   })
 })

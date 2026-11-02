@@ -253,7 +253,7 @@ test.describe('Meeting flow', () => {
     await input.press('Enter')
 
     // Ending goes straight to the record, not to a separate report screen.
-    await page.locator('[data-action="panel-stop"]').click()
+    await page.locator('[data-action="panel-end"]').click()
     await expect(page.locator('[data-action="meeting-quote"]')).toBeVisible({ timeout: 20000 })
 
     await page.locator('.meeting-tabs [data-tab="chat"]').click()

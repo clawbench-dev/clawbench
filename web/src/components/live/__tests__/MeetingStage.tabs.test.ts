@@ -371,16 +371,35 @@ describe('MeetingStage tabs', () => {
     expect(tab(wrapper, 'basic').classes()).toContain('live-tab--active')
   })
 
-  it('drops the footer while a share is running: 结束共享 lives in the header', async () => {
+  it('puts 结束会议 and 标注画面 in the panel footer, not the header or a form tab', async () => {
     const wrapper = mountPanel()
     await flushPromises()
 
-    // Positive control: the header stop button is the one that stays.
-    expect(wrapper.find('[data-action="panel-stop"]').exists()).toBe(true)
-    // No footer bar and none of its buttons — an empty strip is what this
-    // change removes, so both halves are asserted.
-    expect(wrapper.find('.live-panel__footer').exists()).toBe(false)
-    expect(wrapper.find('.fbtn').exists()).toBe(false)
+    const footer = wrapper.find('.meeting-footer')
+    expect(footer.exists()).toBe(true)
+
+    // The destructive action is the shared red pill, and it lives in the bar at
+    // the foot — the header is status only (title + 共享中).
+    const end = footer.find('[data-action="panel-end"]')
+    expect(end.exists()).toBe(true)
+    expect(end.classes()).toContain('fbtn-danger')
+    expect(wrapper.find('.live-panel__header [data-action="panel-end"]').exists()).toBe(false)
+
+    // 标注画面 is a meeting-level tool, reachable from every tab: a host who is
+    // presenting must not have to open 会议管理 to draw on the picture.
+    expect(footer.find('[data-action="annotate"]').exists()).toBe(true)
+    expect(wrapper.find('[data-live-tab="basic"] [data-action="annotate"]').exists()).toBe(false)
+  })
+
+  it('ends the meeting from the footer pill', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-action="panel-end"]').trigger('click')
+    await flushPromises()
+
+    expect(shareApi.stop).toHaveBeenCalled()
+    expect(wrapper.emitted('ended')).toEqual([['tok-1']])
   })
 })
 

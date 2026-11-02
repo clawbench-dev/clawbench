@@ -4068,6 +4068,7 @@ export default {
       opened: '已在新窗口打开',
     },
     stage: {
+      end: '结束会议',
       screenOn: '正在共享屏幕；观众能看到画面，会议中可以随时停止或换一个源。',
       screenOff: '没有共享屏幕。打开后观众立刻看到画面，无需重新连接。',
       notesUnavailable: '听记暂时无法开启，请稍后再试。',
@@ -4155,7 +4156,6 @@ export default {
     headphoneHint: '建议戴耳机：外放时对方会听到自己延迟的声音。',
     mute: '静音',
     muteAll: '全部静音',
-    stop: '结束共享',
     talkMuted: '麦克风关',
     talkTalking: '正在说话',
     controlWindowUnsupported: '共享单个窗口时不支持远程控制，请改为共享整个屏幕',
@@ -4170,7 +4170,6 @@ export default {
     joinAction: '打开',
     joinUnsupported: '当前环境不支持打开分享链接',
     joinInvalid: '链接格式不对，需要形如 /share/<token> 的地址',
-    toolsSection: '工具',
     annotate: '标注画面',
     annotateNeedsWindow: '当前环境打不开独立的标注窗口，无法标注',
     chat: '聊天',

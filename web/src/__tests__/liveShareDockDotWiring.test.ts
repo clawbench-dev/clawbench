@@ -89,9 +89,11 @@ describe('live-share panel header marker', () => {
     expect(body).not.toContain('--color-red')
   })
 
-  it('keeps red for the destructive Stop button beside it', () => {
-    // Red still means "this ends the share", which is exactly the semantic the
-    // status marker must not borrow.
-    expect(ruleBody('.live-panel__stop')).toContain('--color-red')
+  it('keeps the destructive action out of the header', () => {
+    // Red still means "this ends the meeting", which is exactly the semantic
+    // the status marker must not borrow. That action is the footer's shared
+    // danger pill (`.fbtn-danger`) now, so the header carries no red at all.
+    expect(panel).not.toContain('.live-panel__stop')
+    expect(panel).toContain('fbtn fbtn-danger')
   })
 })

@@ -318,7 +318,7 @@ MediaProjection ─▶ VirtualDisplay ─▶ ImageReader ─▶ 缩放 + JPEG
 | 会议记录（默认） | 本项目的会议列表（数据库记录，永久）；footer 两个入口：加入会议 / 创建会议 |
 | 创建会议 | 会议名称（选填）→ 画面（共享屏幕 + 源 / 摄像头）→ 声音与听记 |
 | 加入会议 | 称谓（必填）+ 链接；桌面端在独立窗口打开 |
-| 会议中 | 基础 / 转写 / 聊天三个页签 + 结束会议 |
+| 会议中 | 基础 / 转写 / 聊天三个页签；底部动作条：结束会议（左）+ 标注画面（右，仅屏幕画面） |
 | 记录详情 | 纪要 / 转写 / 聊天 + 产物路径 + 打开文件 / 复制 / 删除 |
 
 - **结束会议直接落到记录详情**，没有单独的「会后纪要」界面：生成中、生成失败、无产物都在详情里表达。
@@ -334,7 +334,8 @@ MediaProjection ─▶ VirtualDisplay ─▶ ImageReader ─▶ 缩放 + JPEG
 - **`hostScreen` 决定桌面类能力**：标注、切源、远程控制只在「画面是屏幕」时可用；摄像头画面没有桌面坐标可映射。这些入口跟着当前画面出现/消失，而不是跟着创建时的选择。
 - **系统声音没有开关**：它只能随屏幕采集一起来（`getDisplayMedia({audio:true})`），所以一律请求；源不带音频就没有，用户不需要知道这件事。
 - 顶栏没有听记入口：Dock 页签是唯一入口（`headerClusterSpacing.test.ts` 钉住顶栏只有「主题 → 服务器」）。
-- **四个子页的底部动作条与定时任务一致**：药丸按钮 `.fbtn`（`--primary` / `--danger`），条本身 `padding: var(--space-3) var(--space-4)` + `background: var(--bg-primary)` + 顶部发丝线，不再各写一份 `.meeting-btn`；窄面板放不下时 `flex-wrap: wrap` 换行。规范与理由见 `docs/spec/client/design-guide.md` §按钮，守卫 `components/live/__tests__/meetingFooterButtons.test.ts`。正文里的行内小动作（产物行的「复制路径」）仍用小号局部类。
+- **五个子页的底部动作条与定时任务一致**：药丸按钮 `.fbtn`（`--primary` / `--danger`），条本身 `padding: var(--space-3) var(--space-4)` + `background: var(--bg-primary)` + 顶部发丝线，不再各写一份 `.meeting-btn`；窄面板放不下时左右滚动（`flex-wrap: nowrap` + `overflow-x: auto`，`justify-content: safe flex-end`）。规范与理由见 `docs/spec/client/design-guide.md` §按钮，守卫 `components/live/__tests__/meetingFooterButtons.test.ts`。正文里的行内小动作（产物行的「复制路径」）仍用小号局部类。
+- **会议中的页脚是常驻的**：结束会议与标注画面不再分居顶栏与「会议管理」表单——顶栏只留状态（标题 + 共享中），标注画面跟着当前画面出现（摄像头画面没有桌面坐标可标注）。
 
 ### 会议记录
 

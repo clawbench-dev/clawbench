@@ -4073,6 +4073,7 @@ export default {
       opened: 'Opened in a new window',
     },
     stage: {
+      end: 'End meeting',
       screenOn: 'The screen is being shared. Viewers see it now, and it can be stopped or swapped at any time.',
       screenOff: 'No screen is being shared. Turning it on shows it to viewers immediately — no reconnect.',
       notesUnavailable: 'Could not start transcription. Please try again.',
@@ -4165,7 +4166,6 @@ export default {
     headphoneHint: 'Headphones recommended: on speakers, others will hear their own delayed voice.',
     mute: 'Mute',
     muteAll: 'Mute all',
-    stop: 'Stop sharing',
     talkMuted: 'Muted',
     talkTalking: 'Speaking',
     controlWindowUnsupported:
@@ -4182,7 +4182,6 @@ export default {
     joinAction: 'Open',
     joinUnsupported: 'This environment cannot open share links',
     joinInvalid: 'That does not look like a share link (…/share/<token>)',
-    toolsSection: 'Tools',
     annotate: 'Annotate',
     annotateNeedsWindow: 'This host cannot open a separate window for annotation.',
     chat: 'Chat',

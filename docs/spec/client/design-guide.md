@@ -317,7 +317,7 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
   **组件若独立使用 `.fbtn`（而非经 ModalDialog 继承），必须自己 `import '@/assets/modal-footer-btn.css'`**，
   不能依赖祖先恰好导入过。
 
-**页签/面板底部的动作条（`*.vue` 里的 footer 动作区）也是同一套药丸按钮**，不要为某个页签另造按钮形状。定时任务的任务详情动作条（`.detail-actions`）与任务表单页脚（`.form-footer`）是基准，会议页签的列表 / 创建 / 加入 / 详情四个页脚照此办理。
+**页签/面板底部的动作条（`*.vue` 里的 footer 动作区）也是同一套药丸按钮**，不要为某个页签另造按钮形状。定时任务的任务详情动作条（`.detail-actions`）与任务表单页脚（`.form-footer`）是基准，会议页签的列表 / 创建 / 加入 / 会议中 / 详情五个页脚照此办理。
 
 - **条本身**：`display: flex` + `gap: var(--space-3)` + `padding: var(--space-3) var(--space-4)` + `border-top: 1px solid var(--border-color)` + `background: var(--bg-primary)` + `flex-shrink: 0`。
   底色**跟面板一致**（`--bg-primary`），不要铺 `--bg-secondary`：页脚是被一条发丝线分开的操作区，不是第二种底色（会议页签曾铺 `--bg-secondary`，看起来像另一块面板）。
