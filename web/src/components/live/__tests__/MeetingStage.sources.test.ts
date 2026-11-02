@@ -38,8 +38,9 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
+const toastShow = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/useToast', () => ({
-  useToast: () => ({ show: vi.fn() }),
+  useToast: () => ({ show: toastShow }),
 }))
 
 vi.mock('@/composables/useMarkdownRenderer', () => ({
@@ -170,6 +171,7 @@ beforeEach(() => {
   nativeBridge.current = { listCaptureSources: vi.fn(async () => '[]') }
   ;(shareApi.state as { value: string }).value = 'publishing'
   ;(shareApi.captureKind as { value: string }).value = 'screen'
+  ;(shareApi.error as { value: string }).value = ''
   ;(notesApi.phase as { value: string }).value = 'idle'
 })
 
@@ -197,5 +199,26 @@ describe('MeetingStage source picker', () => {
     expect(shareApi.switchSource).toHaveBeenCalledWith('window:1:0')
     // The grid stays: it is the live picture state, not a popup that closes.
     expect(wrapper.find('.capture-source').exists()).toBe(true)
+  })
+
+  it('reports a failed swap as a toast, with no inline copy left in the panel', async () => {
+    listSources.mockResolvedValueOnce([
+      { id: 'screen:0:0', name: 'Entire Screen', kind: 'screen', thumbnail: '' },
+      { id: 'window:1:0', name: 'Terminal', kind: 'window', thumbnail: '' },
+    ])
+    ;(shareApi.switchSource as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false)
+    ;(shareApi.error as { value: string }).value = 'Could not switch; keeping the current picture'
+
+    const wrapper = await openPicker()
+    await wrapper.findAll('.capture-source')[2].trigger('click')
+    await flushPromises()
+
+    expect(toastShow).toHaveBeenCalledWith('Could not switch; keeping the current picture', {
+      type: 'error',
+      icon: 'warning',
+    })
+    // The toast is the ONLY surface: a persistent copy under the tabs outlived
+    // the toast and stayed there until the next successful action.
+    expect(wrapper.find('.live-dialog-error').exists()).toBe(false)
   })
 })

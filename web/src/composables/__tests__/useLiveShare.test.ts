@@ -1610,6 +1610,25 @@ describe('picture changes mid-meeting', () => {
     expect(share.error.value).toBe('已拒绝录制屏幕')
     expect(share.captureKind.value).toBeNull()
   })
+
+  it('does not report an earlier failure when the next capture is cancelled', async () => {
+    const { share } = await startEmpty()
+    ;(navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      Object.assign(new Error('denied'), { name: 'NotAllowedError' }),
+    )
+    expect(await share.setCameraDevice('default')).toBe(false)
+    expect(share.error.value).toBeTruthy()
+
+    ;(navigator.mediaDevices.getDisplayMedia as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('cancelled'),
+    )
+    expect(await share.startScreen('screen:2:0')).toBe(false)
+
+    // The toast is the only place a failure is shown now, and it reads this
+    // value: the camera's message must not be offered as the reason the screen
+    // did not start.
+    expect(share.error.value).toBe('')
+  })
 })
 
 /**

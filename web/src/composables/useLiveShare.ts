@@ -647,6 +647,10 @@ function setControlSupported(on: boolean): void {
 /** Start sharing a screen mid-meeting (or after joining with none). */
 async function startScreen(sourceId: string): Promise<boolean> {
   if (state.value !== 'publishing' || displayStream) return false
+  // The message is read by the caller right after this resolves, so it must
+  // describe THIS attempt: a cancelled picker returns null without setting one,
+  // and a leftover from an earlier failure would be reported as its cause.
+  error.value = ''
   let stream: MediaStream | null
   try {
     stream = await captureScreen(sourceId)
@@ -701,6 +705,7 @@ async function stopScreen(): Promise<void> {
  * releases the old, and the m-lines are rewired without renegotiating.
  */
 async function setCameraDevice(choice: string): Promise<boolean> {
+  error.value = ''
   if (!choice) {
     cameraEnabled.value = false
     cameraStream?.getVideoTracks().forEach((track) => {
@@ -1019,6 +1024,7 @@ export function useLiveShare() {
    */
   async function switchMicDevice(deviceId: string): Promise<boolean> {
     if (state.value !== 'publishing') return false
+    error.value = ''
     let next: MediaStream
     try {
       next = await acquireMic({ audio: micConstraints(deviceId) })
@@ -1407,10 +1413,11 @@ export function useLiveShare() {
    */
   async function switchSource(sourceId: string): Promise<boolean> {
     if (state.value !== 'publishing' || !displayStream) return false
+    error.value = ''
     const previous = displayStream
     const next = await captureScreen(sourceId)
     if (!next) {
-      fail('switch source failed')
+      fail(i18n.global.t('liveShare.switchSourceFailed'))
       return false
     }
     if (next.getAudioTracks().length === 0) {

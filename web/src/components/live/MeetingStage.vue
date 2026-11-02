@@ -345,10 +345,6 @@
           </div>
         </div>
 
-        <!-- An error belongs to the share, not to a tab: it stays visible
-             whichever one is open. -->
-        <div v-if="share.error.value" class="live-dialog-error">{{ share.error.value }}</div>
-
       <!-- Drawing surface lives in its OWN window, never in this panel: the
            ink and the shared picture must not be squeezed into the dialog, and
            an in-panel surface is also impossible to draw on while presenting.
@@ -1145,17 +1141,6 @@ watch(
   justify-content: center;
   min-height: calc(170 * var(--dp));
   color: var(--text-muted, #656d76);
-}
-
-.live-dialog-error {
-  padding: var(--space-4, 8px) var(--space-6, 12px);
-  border-radius: var(--radius-md, 6px);
-  background: var(--bg-tertiary, #ffebe9);
-  color: var(--color-red, #cf222e);
-  font-size: var(--font-size-sm, 13px);
-  /* overflow-wrap (not the deprecated word-break: break-word) so a long error
-     message wraps instead of stretching the dialog. */
-  overflow-wrap: anywhere;
 }
 
 /* ── Audience ──────────────────────────────────────────────────────────── */
