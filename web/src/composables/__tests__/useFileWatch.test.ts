@@ -554,4 +554,96 @@ describe('useFileWatch', () => {
     expect(mockWsInstances).toHaveLength(1)
     wrapper.unmount()
   })
+
+  // ── Recovery after a dropped channel ──
+  //
+  // The server keeps no event history: anything that happened while the socket
+  // was down is unrecoverable unless the client re-reads what it is showing.
+  // These cover both halves of that — a reconnect, and an immediate reconnect
+  // on app resume (Android backgrounds the page, so onclose often never fires).
+
+  it('does not re-read the file on the first connect', () => {
+    const { wrapper } = setupWatch({ dir: 'src', file: 'src/a.ts' })
+    connectAndHandshake(latestWs())
+
+    // The panel/file was just loaded from scratch; a catch-up would duplicate
+    // that request on every app start.
+    expect(mockRefreshCurrentFile).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('re-reads the open file after a reconnect', () => {
+    const { wrapper } = setupWatch({ dir: 'src', file: 'src/a.ts' })
+    const first = latestWs()
+    connectAndHandshake(first)
+
+    first.close()
+    vi.advanceTimersByTime(2000)
+    expect(mockWsInstances).toHaveLength(2)
+
+    connectAndHandshake(latestWs())
+    expect(mockRefreshCurrentFile).toHaveBeenCalledTimes(1)
+    expect(mockRefreshCurrentFile).toHaveBeenCalledWith({ clearOnError: true, loadDir: true })
+    wrapper.unmount()
+  })
+
+  it('reloads the directory listing after a reconnect when no file is open', () => {
+    const { wrapper } = setupWatch({ dir: 'src', open: true })
+    const first = latestWs()
+    connectAndHandshake(first)
+
+    first.close()
+    vi.advanceTimersByTime(2000)
+    connectAndHandshake(latestWs())
+
+    expect(mockLoadFiles).toHaveBeenCalledWith('src', false, 0, true)
+    expect(mockRefreshCurrentFile).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('reconnects immediately when the app resumes with a dead socket', () => {
+    const { wrapper } = setupWatch({ dir: 'src', file: 'src/a.ts' })
+    const first = latestWs()
+    connectAndHandshake(first)
+
+    // The server dropped the connection while the app was backgrounded and the
+    // close never reached the page: the socket looks CLOSED to us, but the
+    // periodic stale check would not act for another 15s.
+    first.readyState = MockWebSocket.CLOSED
+
+    // Skip the resume dedupe window (module-level, shared across tests).
+    vi.advanceTimersByTime(5000)
+    ;(window as unknown as { __clawbenchAppResume?: () => void }).__clawbenchAppResume?.()
+
+    // Reconnected synchronously — no timer advance.
+    expect(mockWsInstances).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('leaves a healthy socket alone when the app resumes', () => {
+    const { wrapper } = setupWatch({ dir: 'src', file: 'src/a.ts' })
+    const ws = latestWs()
+    connectAndHandshake(ws)
+
+    vi.advanceTimersByTime(5000)
+    ;(window as unknown as { __clawbenchAppResume?: () => void }).__clawbenchAppResume?.()
+
+    expect(mockWsInstances).toHaveLength(1)
+    expect(ws.readyState).toBe(MockWebSocket.OPEN)
+    wrapper.unmount()
+  })
+
+  it('reconnects on resume when the socket is open but silent past the stale window', () => {
+    const { wrapper } = setupWatch({ dir: 'src', file: 'src/a.ts' })
+    const ws = latestWs()
+    connectAndHandshake(ws)
+
+    // Half-open socket: still OPEN locally, no traffic for longer than the
+    // stale window. A resume must not wait for the 15s check tick.
+    vi.advanceTimersByTime(61000)
+    ;(window as unknown as { __clawbenchAppResume?: () => void }).__clawbenchAppResume?.()
+
+    expect(mockWsInstances).toHaveLength(2)
+    wrapper.unmount()
+  })
 })
