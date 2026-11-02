@@ -1,7 +1,7 @@
 # 会议页签（听记与桌面共享合并）设计
 
 日期：2026-11-01
-状态：已评审（2026-11-01），待实现
+状态：已实现（2026-11-02）
 前置：[2026-10-28 桌面屏幕与声音共享](2026-10-28-desktop-screen-audio-share-design.md)、[2026-10-30 屏幕共享 AI 听记](2026-10-30-live-share-ai-notes-design.md)
 交互 Demo：`.clawbench/generated/meeting_tab_demo.html`
 

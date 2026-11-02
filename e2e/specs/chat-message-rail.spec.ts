@@ -34,7 +34,6 @@ test.describe('chat message rail', () => {
       await chat.waitForReply(30000, before)
     }
     await expect(chat.stopButton).toHaveCount(0, { timeout: 30000 })
-    await page.waitForTimeout(1500)
 
     const railState = () =>
       page.evaluate(() => {
@@ -50,6 +49,36 @@ test.describe('chat message rail', () => {
           gutter: getComputedStyle(scroller).paddingInlineStart,
         }
       })
+
+    // The follow pin lands asynchronously, so wait for the scroll position to
+    // STOP MOVING instead of sleeping a fixed 1500ms. A fixed sleep is both too
+    // short under CPU contention and too forgiving: a position that is merely
+    // passing through looks settled, and "the pin never stops" would be read as
+    // a stable intermediate state.
+    //
+    // Stability alone is not enough: the pin's next frame may not have run yet,
+    // and two samples of the pre-pin position are also "stable". So the poll
+    // also requires the two facts this test is about — we are at the bottom, and
+    // the rail has moved its reading position to the last message. Without that
+    // the assertion below would fail as a misleading false red instead.
+    await expect
+      .poll(
+        async () => {
+          const before = await railState()
+          await page.evaluate(
+            () => new Promise<void>((resolve) => {
+              requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+            }),
+          )
+          const after = await railState()
+          const settled = after.scrollTop === before.scrollTop && after.maxScroll === before.maxScroll
+          const atEnd = after.maxScroll - after.scrollTop <= 1
+          const lastIsActive = after.nodes > 0 && after.active === after.nodes - 1
+          return settled && atEnd && lastIsActive
+        },
+        { timeout: 20000, intervals: [200, 300, 500] },
+      )
+      .toBe(true)
 
     const atBottom = await railState()
     expect(atBottom.maxScroll, 'precondition: the conversation must scroll').toBeGreaterThan(0)

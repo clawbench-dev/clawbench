@@ -224,11 +224,15 @@ test.describe('Meeting back gesture', () => {
  */
 test.describe('Meeting flow', () => {
   test('create a meeting with no picture, chat, end, and read the chat back', async ({ page }) => {
+    // Unique per run: the record is deleted at the end, but a run that was
+    // killed mid-way leaves one behind, and a fixed title would then make
+    // "the first row" ambiguous for the next run.
+    const title = `E2E 语音会议 ${Date.now()}`
     await page.goto('/')
     await page.locator('.dock-btn[data-tab="live"]').filter({ visible: true }).first().click()
 
     await page.locator('[data-action="meeting-create"]').click()
-    await page.locator('[data-role="meeting-title"]').fill('E2E 语音会议')
+    await page.locator('[data-role="meeting-title"]').fill(title)
     // The nickname is required since it is the account identity viewers see.
     await page.locator('[data-role="meeting-nick"]').fill('E2E 用户')
     // No meeting type to pick: just turn the picture off (headless Chromium has
@@ -255,6 +259,22 @@ test.describe('Meeting flow', () => {
 
     // And the record is in the list, titled as typed.
     await page.locator('[data-action="meeting-back"]').click()
-    await expect(page.locator('.meeting-row__title').first()).toHaveText('E2E 语音会议')
+    const row = page.locator('.meeting-row').filter({ hasText: title })
+    await expect(row.locator('.meeting-row__title')).toHaveText(title)
+
+    // Leave nothing behind. Without this every run added a record (and its
+    // artifact folder) to the e2e project, so the list grew forever and any
+    // "first row is the one I just made" assertion depended on run order.
+    const token = await row.getAttribute('data-token')
+    expect(token, 'the row must carry the meeting token for cleanup').toBeTruthy()
+    // 409 means the minutes job is still running and the record cannot be
+    // deleted yet — retry instead of treating it as a failure.
+    await expect
+      .poll(
+        async () =>
+          (await page.request.delete(`/api/live-share/notes/sessions?token=${token}`)).status(),
+        { timeout: 20000, intervals: [500, 1000, 2000] },
+      )
+      .toBe(200)
   })
 })

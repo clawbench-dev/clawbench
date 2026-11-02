@@ -1,6 +1,7 @@
 import { test, expect } from '../fixtures'
 import type { Page } from '@playwright/test'
 import { ChatPage } from '../pages/chat.page'
+import os from 'os'
 import path from 'path'
 import fs from 'fs'
 
@@ -52,7 +53,7 @@ test.describe('Queued message with an image attachment', () => {
     await drawer.locator('input[type="file"]:not([accept])').setInputFiles(filePath)
     // The drawer stays open until OK: the selection is a local draft that only
     // reaches the composer on confirm.
-    await drawer.locator('.ad-footer-actions .fbtn-primary').click()
+    await drawer.locator('[data-action="attach-ok"]').click()
     await expect(drawer).toBeHidden({ timeout: 10000 })
     // The input bar's attachment strip is the surface the user sees while the
     // upload runs; wait until the transfer card is gone (upload finished).
@@ -64,7 +65,11 @@ test.describe('Queued message with an image attachment', () => {
     const run = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
     const first = `qimg-run-${run}`
     const queued = `qimg-image-${run}`
-    const imgPath = path.join(process.cwd(), `e2e-queued-image-${run}.png`)
+    // The source file lives in the OS temp dir, not the repo root: a run killed
+    // by a timeout / SIGKILL skips the `finally` and would otherwise leave an
+    // untracked png in `git status`. The upload copy below is inside the e2e
+    // project's own .clawbench/, which is where the server puts it.
+    const imgPath = path.join(os.tmpdir(), `e2e-queued-image-${run}.png`)
     fs.writeFileSync(imgPath, Buffer.from(PNG_BASE64, 'base64'))
 
     const pageErrors: string[] = []
