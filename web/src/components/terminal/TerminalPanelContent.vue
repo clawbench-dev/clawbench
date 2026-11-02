@@ -88,6 +88,7 @@
       :progress="dirUploadProgress"
       :done="dirUploadDone"
       :total="dirUploadTotal"
+      :speed="dirUploadSpeed"
       @cancel="cancelDirUpload"
     />
 
@@ -374,7 +375,7 @@ const quoteQuestion = useQuoteQuestion()
 const { getServerValueWithDefault } = useSettingsConfig()
 // Aggregate upload progress for files dropped onto the terminal. The state is a
 // module-level singleton inside useFileUpload, so the file manager shares it.
-const { dirUploading, dirUploadProgress, dirUploadDone, dirUploadTotal, cancelDirUpload } = useFileUpload()
+const { dirUploading, dirUploadProgress, dirUploadSpeed, dirUploadDone, dirUploadTotal, cancelDirUpload } = useFileUpload()
 
 // Font size, in DESIGN px: the stored value is the size at 100% UI scale.
 //

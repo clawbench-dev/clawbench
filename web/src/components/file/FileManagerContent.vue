@@ -227,6 +227,7 @@
       :progress="dirUploadProgress"
       :done="dirUploadDone"
       :total="dirUploadTotal"
+      :speed="dirUploadSpeed"
       @cancel="cancelDirUpload"
     />
 
@@ -630,7 +631,7 @@ const { t, locale } = useI18n()
 const TAG = 'FileManager'
 
 // File upload to current directory
-const { dirUploading, dirUploadProgress, dirUploadTotal, dirUploadDone, cancelDirUpload, handleFileSelectToDir, handleFileDropToDir, handleFolderSelect, handleFolderDropExpanded, downloadDirAsTree } = useFileUpload()
+const { dirUploading, dirUploadProgress, dirUploadSpeed, dirUploadTotal, dirUploadDone, cancelDirUpload, handleFileSelectToDir, handleFileDropToDir, handleFolderSelect, handleFolderDropExpanded, downloadDirAsTree } = useFileUpload()
 const uploadInputRef = ref(null)
 const folderInputRef = ref(null)
 

@@ -7,6 +7,7 @@ import { folderRelPath } from '@/utils/fileAttachmentUtils'
 import { expandDataTransfer, type ExpandResult } from '@/utils/dropFolder'
 import { writeFileToTree } from '@/utils/dirHandle'
 import { buildLocalFileUrl } from '@/utils/download'
+import { createTransferSpeedMeter } from '@/utils/transferSpeed'
 
 // ── Module-level singleton state ──
 // pendingFiles MUST be shared across all callers (AttachDrawer, ChatPanelContent,
@@ -56,6 +57,12 @@ const dirUploadProgress = ref(0)
 const dirUploadTotal = ref(0)
 const dirUploadDone = ref(0)
 const dirUploadCancelled = ref(false)
+/**
+ * Bytes per second across the whole batch. Same meter the download bar uses,
+ * fed by the cumulative byte count `reportDirProgress` already receives.
+ */
+const dirUploadSpeedMeter = createTransferSpeedMeter()
+const dirUploadSpeed = dirUploadSpeedMeter.speed
 let activeDirXhr: XMLHttpRequest | null = null
 let activeDownloadAbort: AbortController | null = null
 
@@ -84,6 +91,7 @@ function beginDirProgress(files: Iterable<{ size: number }>, maxSizeBytes: numbe
   dirUploadTotalBytes = total
   dirUploadLoadedBytes = 0
   dirUploadProgress.value = 0
+  dirUploadSpeedMeter.reset()
 }
 
 /**
@@ -95,6 +103,9 @@ function beginDirProgress(files: Iterable<{ size: number }>, maxSizeBytes: numbe
  */
 function reportDirProgress(loaded: number): void {
   if (dirUploadTotalBytes <= 0) return
+  // Sample before the percentage guard: a file large enough to hold the
+  // rounded percentage still moves real bytes, and the rate must see them.
+  dirUploadSpeedMeter.sample(loaded)
   const pct = Math.min(100, Math.round((loaded / dirUploadTotalBytes) * 100))
   if (pct > dirUploadProgress.value) dirUploadProgress.value = pct
 }
@@ -292,6 +303,7 @@ export function useFileUpload() {
   function finishDirUpload(okCount: number, failCount: number) {
     dirUploading.value = false
     dirUploadProgress.value = 0
+    dirUploadSpeedMeter.reset()
     activeDirXhr = null
     const cancelled = dirUploadCancelled.value
     const errs = dirUploadErrorMsgs
@@ -822,6 +834,7 @@ export function useFileUpload() {
     // Directory upload (file manager)
     dirUploading,
     dirUploadProgress,
+    dirUploadSpeed,
     dirUploadTotal,
     dirUploadDone,
     cancelDirUpload,

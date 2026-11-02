@@ -19,54 +19,15 @@
  * so it costs nothing while idle and resets with each transfer.
  */
 import { ref } from 'vue'
+import { createTransferSpeedMeter } from '@/utils/transferSpeed'
 
 const downloadVisible = ref(false)
 const downloadFileName = ref('')
 const downloadReceived = ref(0)
 const downloadTotal = ref(0)
 /** Bytes per second over the recent window; 0 until two samples exist. */
-const downloadSpeed = ref(0)
-
-/**
- * Speed is averaged over a sliding window rather than measured between two
- * consecutive events: both native hosts throttle progress reports to ~1% of
- * the file, so on a slow link two events can be many seconds apart and an
- * instant delta would swing wildly. Keeping one sample older than the window
- * as a baseline means sparse reports still produce a rate instead of 0.
- */
-const SPEED_WINDOW_MS = 3000
-interface SpeedSample {
-  t: number
-  received: number
-}
-let speedSamples: SpeedSample[] = []
-
-function resetSpeed(received = 0): void {
-  speedSamples = [{ t: Date.now(), received }]
-  downloadSpeed.value = 0
-}
-
-function recordSpeedSample(received: number): void {
-  const now = Date.now()
-  // A restarted or re-pointed transfer must not produce a negative rate.
-  if (speedSamples.length > 0 && received < speedSamples[speedSamples.length - 1].received) {
-    speedSamples = []
-  }
-  speedSamples.push({ t: now, received })
-  while (speedSamples.length > 2 && speedSamples[1].t < now - SPEED_WINDOW_MS) {
-    speedSamples.shift()
-  }
-  if (speedSamples.length < 2) {
-    downloadSpeed.value = 0
-    return
-  }
-  const first = speedSamples[0]
-  const last = speedSamples[speedSamples.length - 1]
-  const elapsedSec = (last.t - first.t) / 1000
-  downloadSpeed.value = elapsedSec > 0
-    ? Math.max(0, (last.received - first.received) / elapsedSec)
-    : 0
-}
+const speedMeter = createTransferSpeedMeter()
+const downloadSpeed = speedMeter.speed
 
 /** Monotonic id source; the first download gets 1 (0 means "none"). */
 let downloadSeq = 0
@@ -98,7 +59,7 @@ export function beginDownload(id: number, fileName: string, total: number): bool
   downloadFileName.value = fileName
   downloadReceived.value = 0
   downloadTotal.value = total > 0 ? total : 0
-  resetSpeed()
+  speedMeter.reset()
   downloadVisible.value = true
   return true
 }
@@ -114,7 +75,7 @@ export function reportDownloadProgress(id: number, received: number, total?: num
   if (!isCurrentDownload(id)) return
   if (typeof total === 'number' && total > 0) downloadTotal.value = total
   downloadReceived.value = received
-  recordSpeedSample(received)
+  speedMeter.sample(received)
 }
 
 /** Register the cancellation callback for the in-flight transfer. */
@@ -131,7 +92,7 @@ export function endDownload(id: number): void {
   downloadTotal.value = 0
   downloadFileName.value = ''
   activeCancel = null
-  resetSpeed()
+  speedMeter.reset()
 }
 
 /** Cancel the in-flight download (user pressed the bar's cancel button). */
@@ -143,7 +104,7 @@ export function cancelDownload(): void {
   downloadReceived.value = 0
   downloadTotal.value = 0
   downloadFileName.value = ''
-  resetSpeed()
+  speedMeter.reset()
   try {
     cancel?.()
   } catch {
