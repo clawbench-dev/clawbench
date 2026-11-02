@@ -234,7 +234,7 @@ describe('MeetingStage tabs', () => {
     // The labels are rendered from a key table, so the repo-wide
     // "no literal key is missing" scan cannot see them. A missing key renders
     // as the raw key, which is what this pins.
-    expect(tab(wrapper, 'basic').text()).toBe('Setup')
+    expect(tab(wrapper, 'basic').text()).toBe('Meeting setup')
     expect(tab(wrapper, 'notes').text()).toBe('Transcript')
     expect(tab(wrapper, 'chat').text()).toBe('Chat')
   })

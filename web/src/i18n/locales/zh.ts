@@ -4172,7 +4172,7 @@ export default {
     chat: '聊天',
     // 共享进行中的三个页签。聊天直接复用 liveShare.chat。
     tabs: {
-      basic: '基础配置',
+      basic: '会议配置',
       transcript: '转写',
     },
     switchSourceFailed: '切换失败，已保留原来的画面',

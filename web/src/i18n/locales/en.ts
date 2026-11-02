@@ -4183,7 +4183,7 @@ export default {
     chat: 'Chat',
     // The three tabs while a share is running. The chat tab reuses liveShare.chat.
     tabs: {
-      basic: 'Setup',
+      basic: 'Meeting setup',
       transcript: 'Transcript',
     },
     switchSourceFailed: 'Could not switch; keeping the current picture',

@@ -53,7 +53,7 @@
     </div>
 
     <div class="live-panel__body live-dialog" :class="{ 'live-panel__body--fill': fillTab }">
-      <!-- Publishing: three surfaces. 基础配置 holds what is set up once and
+      <!-- Publishing: three surfaces. 会议配置 holds what is set up once and
            then glanced at (link, tools, audience, permissions); the transcript
            and the chat get their own tabs so each can use the panel's height. -->
         <template v-if="activeTab === 'basic'">
