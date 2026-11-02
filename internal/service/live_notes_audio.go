@@ -115,7 +115,17 @@ func MergeLiveNoteAudio(paths LiveNotesPaths) (LiveNoteAudioMerge, error) {
 	}
 	sort.Strings(channels)
 
+	// A meeting with one participant records the same audio twice: the mix bus
+	// and that participant's channel. Merging both writes two identical files,
+	// which is pure work and disk for a meeting that is listened to as one file.
+	// The mix is kept (it is what the detail page plays) and the duplicate's
+	// segments are dropped once the mix is safely on disk.
+	solo := liveNoteSoloChannel(channels, groups, done)
+
 	for _, ch := range channels {
+		if ch == solo {
+			continue
+		}
 		// An existing output means a previous pass already folded this channel:
 		// rewriting it would drop whatever that pass had that this one does not
 		// (a retry sees fewer segments, never more).
@@ -137,7 +147,42 @@ func MergeLiveNoteAudio(paths LiveNotesPaths) (LiveNoteAudioMerge, error) {
 		}
 		out.record(ch, target, merged)
 	}
+	// Only after the mix landed: a failed mix merge returns above and leaves the
+	// channel's segments as the fallback recording.
+	if solo != "" && out.Meeting != "" {
+		for _, seg := range groups[solo] {
+			if err := os.Remove(seg.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return out, fmt.Errorf("live notes: remove duplicate segment: %w", err)
+			}
+		}
+		out.Segments += len(groups[solo])
+	}
 	return out, nil
+}
+
+// liveNoteSoloChannel returns the single participant channel that duplicates the
+// mix, or "" when the meeting had more than one participant.
+//
+// The conditions are all necessary: exactly two groups (the mix and one channel),
+// the mix actually present (older recordings have no mix at all), and no channel
+// file from an earlier pass (finished work is never deleted).
+func liveNoteSoloChannel(channels []string, groups map[string][]audioSegment, done map[string]string) string {
+	if len(channels) != 2 {
+		return ""
+	}
+	solo := ""
+	for _, ch := range channels {
+		if ch != LiveNoteMixChannel {
+			solo = ch
+		}
+	}
+	if solo == "" || done[solo] != "" {
+		return ""
+	}
+	if len(groups[LiveNoteMixChannel]) == 0 && done[LiveNoteMixChannel] == "" {
+		return ""
+	}
+	return solo
 }
 
 // record files one group's outcome under the right field.

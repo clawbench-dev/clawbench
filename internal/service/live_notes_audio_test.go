@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -93,7 +94,9 @@ func TestMergeLiveNoteAudio_ShiftsClustersOntoOneTimeline(t *testing.T) {
 	assert.Equal(t, []uint64{0, 5000, 8000}, clusterTimecodes(t, merged.Channels[0]))
 }
 
-func TestMergeLiveNoteAudio_MixBecomesTheMeetingFile(t *testing.T) {
+// One participant means the mix and the mic are the same audio: keeping both
+// wrote an identical file twice and doubled the merge work.
+func TestMergeLiveNoteAudio_SoloMeetingKeepsOnlyTheMix(t *testing.T) {
 	paths := audioPaths(t)
 	writeSegment(t, paths, 1_700_000_000_000, "mic", testSegment(t, testCluster{timecode: 0}))
 	writeSegment(t, paths, 1_700_000_000_000, LiveNoteMixChannel, testSegment(t, testCluster{timecode: 0}))
@@ -102,11 +105,60 @@ func TestMergeLiveNoteAudio_MixBecomesTheMeetingFile(t *testing.T) {
 	merged, err := MergeLiveNoteAudio(paths)
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(paths.Audio, LiveNoteMeetingAudioFile), merged.Meeting)
-	assert.Equal(t, filepath.Join(paths.Audio, "mic.webm"), merged.Channels[0])
+	assert.Empty(t, merged.Channels, "the mix already is that participant's audio")
+	assert.Equal(t, 3, merged.Segments)
 
 	// The mix is remuxed even though one of its segments could have been
 	// renamed: two segments mean one file.
 	assert.Equal(t, []uint64{0, 2000}, clusterTimecodes(t, merged.Meeting))
+
+	_, err = os.Stat(filepath.Join(paths.Audio, "mic.webm"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	entries, err := os.ReadDir(paths.Audio)
+	require.NoError(t, err)
+	webm := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".webm") {
+			webm++
+		}
+	}
+	require.Equal(t, 1, webm, "only the meeting file is left behind")
+}
+
+func TestMergeLiveNoteAudio_TwoParticipantsKeepTheirChannelFiles(t *testing.T) {
+	paths := audioPaths(t)
+	writeSegment(t, paths, 1_700_000_000_000, "mic", testSegment(t, testCluster{timecode: 0}))
+	writeSegment(t, paths, 1_700_000_000_000, "viewer:2", testSegment(t, testCluster{timecode: 0}))
+	writeSegment(t, paths, 1_700_000_000_000, LiveNoteMixChannel, testSegment(t, testCluster{timecode: 0}))
+
+	merged, err := MergeLiveNoteAudio(paths)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(paths.Audio, LiveNoteMeetingAudioFile), merged.Meeting)
+	require.Len(t, merged.Channels, 2)
+	assert.Equal(t, filepath.Join(paths.Audio, "mic.webm"), merged.Channels[0])
+	assert.Equal(t, filepath.Join(paths.Audio, "viewer-2.webm"), merged.Channels[1])
+}
+
+// A retry must never delete a channel file an earlier pass finished: the mix is
+// there, but so is the work.
+func TestMergeLiveNoteAudio_SoloRetryKeepsTheExistingChannelFile(t *testing.T) {
+	paths := audioPaths(t)
+	writeSegment(t, paths, 1_700_000_000_000, "mic", testSegment(t, testCluster{timecode: 0}))
+	writeSegment(t, paths, 1_700_000_000_000, LiveNoteMixChannel, testSegment(t, testCluster{timecode: 0}))
+
+	first, err := MergeLiveNoteAudio(paths)
+	require.NoError(t, err)
+	require.Empty(t, first.Channels)
+
+	// Simulate the old layout (both files present) and re-run the merge.
+	require.NoError(t, os.WriteFile(filepath.Join(paths.Audio, "mic.webm"),
+		testSegment(t, testCluster{timecode: 0}), 0o644))
+
+	second, err := MergeLiveNoteAudio(paths)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(paths.Audio, "mic.webm"), second.Channels[0])
+	_, statErr := os.Stat(filepath.Join(paths.Audio, "mic.webm"))
+	assert.NoError(t, statErr)
 }
 
 func TestMergeLiveNoteAudio_SingleSegmentIsRenamedNotRewritten(t *testing.T) {
