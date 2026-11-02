@@ -23,6 +23,7 @@ interface FakeWin {
   show: ReturnType<typeof vi.fn>
   focus: ReturnType<typeof vi.fn>
   close: ReturnType<typeof vi.fn>
+  webContents: { send: ReturnType<typeof vi.fn> }
   isDestroyed: () => boolean
   once: (ev: string, cb: () => void) => void
   on: (ev: string, cb: () => void) => void
@@ -53,6 +54,7 @@ vi.mock('electron', () => ({
     show = vi.fn()
     focus = vi.fn()
     close = vi.fn()
+    webContents = { send: vi.fn() }
     isDestroyed = () => false
     constructor(options: Record<string, unknown>) {
       this.options = options
@@ -176,6 +178,34 @@ describe('openAnnotateOverlay', () => {
     await mod.openAnnotateOverlay()
     expect(state.windows).toHaveLength(1)
     expect(state.windows[0].focus).toHaveBeenCalled()
+  })
+
+  it('asks the open overlay to show its toolbar again', async () => {
+    // The bar fades out where it is part of the picture, and this button is the
+    // host's only control outside the overlay: re-focusing an invisible bar is
+    // indistinguishable from a dead button.
+    const mod = await load()
+    await mod.openAnnotateOverlay()
+    await mod.openAnnotateOverlay()
+    expect(state.windows[0].webContents.send).toHaveBeenCalledWith('annotate:wake')
+  })
+
+  it('lets the toolbar auto-hide where it is part of the shared picture', async () => {
+    const mod = await load('linux')
+    await mod.openAnnotateOverlay()
+    expect(state.windows[0].loadFile).toHaveBeenCalledWith('/res/annotate.html', {
+      query: { hideBar: '1' },
+    })
+  })
+
+  it('keeps the toolbar up where it is excluded from the capture', async () => {
+    const mod = await load('win32')
+    await mod.openAnnotateOverlay()
+    // The audience never sees the bar here, so hiding it would only take the
+    // tool away from the host.
+    expect(state.windows[0].loadFile).toHaveBeenCalledWith('/res/annotate.html', {
+      query: { hideBar: '0' },
+    })
   })
 
   it('reports failure when the document is missing, so the caller can fall back', async () => {

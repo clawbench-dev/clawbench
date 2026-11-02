@@ -16,4 +16,12 @@ contextBridge.exposeInMainWorld('AnnotateHost', {
   close(): void {
     ipcRenderer.send('annotate:close')
   },
+  /**
+   * The host asked for the toolbar again (the meeting footer's 标注画面 button
+   * while the overlay is already open). The page cannot see that click — it
+   * happens in another window — so the main process relays it here.
+   */
+  onWake(cb: () => void): void {
+    ipcRenderer.on('annotate:wake', () => cb())
+  },
 })

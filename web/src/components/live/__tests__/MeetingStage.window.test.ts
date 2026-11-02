@@ -209,6 +209,53 @@ describe('MeetingStage windows', () => {
     expect(wrapper.find('[data-role="annotate-overlay"]').exists()).toBe(false)
   })
 
+  it('brings the drawing surface back after its window went away', async () => {
+    const first = fakeWindow()
+    const second = fakeWindow()
+    const requestWindow = vi
+      .fn()
+      .mockResolvedValueOnce(first as unknown as Window)
+      .mockResolvedValueOnce(second as unknown as Window)
+    vi.stubGlobal('documentPictureInPicture', { requestWindow })
+
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.find('[data-action="annotate"]').trigger('click')
+    await flushPromises()
+    expect(first.document.querySelector('[data-role="annotate-overlay"]')).not.toBeNull()
+
+    // The host closed the surface (or it was dismissed): the button has to
+    // bring a new one up, not answer "already open" for a window that is gone.
+    first.firePagehide()
+    await flushPromises()
+    expect(wrapper.find('[data-role="annotate-overlay"]').exists()).toBe(false)
+
+    await wrapper.find('[data-action="annotate"]').trigger('click')
+    await flushPromises()
+    expect(requestWindow).toHaveBeenCalledTimes(2)
+    expect(second.document.querySelector('[data-role="annotate-overlay"]')).not.toBeNull()
+  })
+
+  it('closes the drawing surface when the picture goes away', async () => {
+    const win = fakeWindow()
+    vi.stubGlobal('documentPictureInPicture', { requestWindow: vi.fn(async () => win as unknown as Window) })
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.find('[data-action="annotate"]').trigger('click')
+    await flushPromises()
+    expect(win.document.querySelector('[data-role="annotate-overlay"]')).not.toBeNull()
+
+    try {
+      // Nothing left to draw on — and the button that could reopen it is hidden
+      // once there is no screen, so an empty window would be a dead end.
+      ;(shareApi.previewStream as { value: unknown }).value = null
+      await flushPromises()
+      expect(win.close).toHaveBeenCalled()
+    } finally {
+      ;(shareApi.previewStream as { value: unknown }).value = { id: 'preview' }
+    }
+  })
+
   it('refuses to annotate inline when the host has no Document PiP', async () => {
     const wrapper = mountPanel()
     await flushPromises()

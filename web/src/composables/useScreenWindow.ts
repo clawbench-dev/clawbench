@@ -32,8 +32,17 @@ function describeError(e: unknown): string {
   return String(e)
 }
 
-/** Window name, so re-opening reuses the same popup instead of stacking. */
-const POPUP_NAME = 'clawbench-screen-window'
+/**
+ * Window name, so re-opening reuses the same popup instead of stacking.
+ *
+ * The name is per SURFACE, not per app: `window.open` returns the existing
+ * window for a name it already knows, so two surfaces sharing one name would
+ * render into the same document — and closing either would take the other one
+ * down with it. Each caller therefore passes its own (the member's picture vs
+ * the drawing surface).
+ */
+export const SCREEN_WINDOW_NAME = 'clawbench-screen-window'
+export const ANNOTATE_WINDOW_NAME = 'clawbench-annotate-window'
 
 /** Result of trying to open the window. */
 export type ScreenWindowOpenResult = 'opened' | 'failed'
@@ -49,7 +58,7 @@ export interface ScreenWindow {
   close: () => void
 }
 
-export function useScreenWindow(): ScreenWindow {
+export function useScreenWindow(name: string = SCREEN_WINDOW_NAME): ScreenWindow {
   const target = shallowRef<HTMLElement | null>(null)
   const win = shallowRef<Window | null>(null)
   /** Popups have no `pagehide` in the opener; poll `closed` instead. */
@@ -65,9 +74,31 @@ export function useScreenWindow(): ScreenWindow {
     // A late event from an already-replaced window must not clear the current
     // one.
     if (win.value !== w) return
+    reset()
+  }
+
+  /** Drop our handle on the window without closing it (it may already be gone). */
+  function reset(): void {
     stopPoll()
     target.value = null
     win.value = null
+  }
+
+  /**
+   * Is the window we think we own still there?
+   *
+   * `target` alone is not an answer: a popup the user closed, or one that
+   * navigated away from the document we rendered into, leaves the ref pointing
+   * at a body that is no longer on screen. Treating that as "already open" made
+   * the caller's button a silent no-op — the surface was gone and nothing could
+   * bring it back short of reloading the app.
+   */
+  function alive(): boolean {
+    const w = win.value
+    const body = target.value
+    if (!w || !body) return false
+    if (w.closed) return false
+    return body.isConnected
   }
 
   /** Point the surface at a second document and start watching for its close. */
@@ -105,7 +136,7 @@ export function useScreenWindow(): ScreenWindow {
 
   function openPopup(width: number, height: number): Window | null {
     try {
-      const w = window.open('', POPUP_NAME, `popup=yes,width=${width},height=${height}`)
+      const w = window.open('', name, `popup=yes,width=${width},height=${height}`)
       // The desktop shell answers `deny` with null (its popup handler), and so
       // does a browser popup blocker.
       if (!w) appLog.w(TAG, 'window.open was blocked')
@@ -118,13 +149,20 @@ export function useScreenWindow(): ScreenWindow {
 
   async function open(opts: { width?: number; height?: number } = {}): Promise<ScreenWindowOpenResult> {
     if (target.value) {
-      // Already open: bring it forward instead of stacking a second one.
-      try {
-        win.value?.focus()
-      } catch {
-        /* the window is going away */
+      if (alive()) {
+        // Already open: bring it forward instead of stacking a second one.
+        try {
+          win.value?.focus()
+        } catch {
+          /* the window is going away */
+        }
+        return 'opened'
       }
-      return 'opened'
+      // The window went away without the close event reaching us (or it left
+      // our document). Forget it and open a fresh one — the alternative is a
+      // button that never works again.
+      appLog.w(TAG, 'previous window is gone, opening a new one')
+      reset()
     }
     const width = opts.width ?? 1024
     const height = opts.height ?? 640
@@ -155,9 +193,7 @@ export function useScreenWindow(): ScreenWindow {
 
   function close(): void {
     const w = win.value
-    stopPoll()
-    target.value = null
-    win.value = null
+    reset()
     try {
       w?.close()
     } catch {

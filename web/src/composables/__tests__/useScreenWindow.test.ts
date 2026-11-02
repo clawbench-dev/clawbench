@@ -163,6 +163,48 @@ describe('useScreenWindow', () => {
     expect(target.value).toBeNull()
   })
 
+  it('reopens instead of answering "opened" when the window is gone', async () => {
+    const first = fakeWindow()
+    const second = fakeWindow()
+    const openSpy = vi
+      .spyOn(window, 'open')
+      .mockReturnValueOnce(first as unknown as Window)
+      .mockReturnValueOnce(second as unknown as Window)
+    const { target, open, close } = useScreenWindow()
+
+    await open()
+    expect(target.value).toBe(first.document.body)
+
+    // The close never reached us: a popup whose poll has not run yet, or one
+    // that navigated away from the document we render into. The ref still
+    // points at it, and treating that as "already open" is what made the
+    // caller's button a silent no-op — the surface was gone for good.
+    Object.defineProperty(first, 'closed', { value: true, configurable: true })
+    expect(await open()).toBe('opened')
+    expect(openSpy).toHaveBeenCalledTimes(2)
+    expect(target.value).toBe(second.document.body)
+
+    close()
+    openSpy.mockRestore()
+  })
+
+  it('gives each surface its own window name', async () => {
+    // Two surfaces sharing one name would be handed the SAME window by
+    // `window.open`: they would render on top of each other and closing either
+    // would take the other one down.
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(fakeWindow() as unknown as Window)
+    const first = useScreenWindow('surface-a')
+    const second = useScreenWindow('surface-b')
+
+    await first.open()
+    await second.open()
+    expect(openSpy.mock.calls.map((call) => call[1])).toEqual(['surface-a', 'surface-b'])
+
+    first.close()
+    second.close()
+    openSpy.mockRestore()
+  })
+
   it('reports failure when the popup is blocked', async () => {
     installApi(vi.fn(async () => Promise.reject(new Error('blocked'))))
     const { target, open } = useScreenWindow()

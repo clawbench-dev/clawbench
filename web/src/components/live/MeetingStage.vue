@@ -442,7 +442,7 @@ import {
 import { groupNoteSegments, useLiveNotes, withMeetingFileEvents } from '@/composables/useLiveNotes'
 import { meetingFileEntries, meetingFilesVersion } from '@/utils/meetingFileTracker'
 import { DEFAULT_DEVICE, useMeetingOptions } from '@/composables/useMeetingOptions'
-import { useScreenWindow } from '@/composables/useScreenWindow'
+import { useScreenWindow, ANNOTATE_WINDOW_NAME, SCREEN_WINDOW_NAME } from '@/composables/useScreenWindow'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { getNative, isDesktopApp } from '@/utils/clawbenchNative'
 import { resolveUserNickname } from '@/utils/userNickname'
@@ -586,7 +586,7 @@ const pictureHint = computed(() => {
 /** The publisher's own camera picture (mirrored by CSS). */
 const selfCameraRef = ref<HTMLVideoElement | null>(null)
 const screenFullscreen = ref(false)
-const screenWindow = useScreenWindow()
+const screenWindow = useScreenWindow(SCREEN_WINDOW_NAME)
 const screenWindowTarget = screenWindow.target
 /** True while the member's screen has a window of its own. */
 const screenWindowOpen = computed(() => Boolean(screenWindowTarget.value))
@@ -605,7 +605,7 @@ const screenWindowAvailable = ref(false)
  * must not get it back on its own — the panel keeps the actions for that.
  */
 let autoOpenedStream: MediaStream | null = null
-const annotateWindow = useScreenWindow()
+const annotateWindow = useScreenWindow(ANNOTATE_WINDOW_NAME)
 const annotateWindowTarget = annotateWindow.target
 const nativeAnnotating = ref(false)
 const isAnnotating = computed(() => annotating.value || nativeAnnotating.value)
@@ -1049,6 +1049,17 @@ function closeScreenWindow(): void {
   screenWindow.close()
 }
 
+/**
+ * Open the drawing surface — or bring it back.
+ *
+ * This button is the host's only handle on a surface that lives outside the
+ * panel (an OS overlay, or the surface's own window), so a click always has to
+ * end with that surface visible. Re-clicking while it is open is therefore not
+ * a no-op: the desktop overlay is asked to show its toolbar again (it hides
+ * itself after a couple of seconds on the platforms that capture it), and the
+ * window is raised. The same call re-opens the window when it was closed behind
+ * our back, instead of returning "already open" for a document that is gone.
+ */
 async function openAnnotate(): Promise<void> {
   const bridge = getNative()
   if (bridge?.openAnnotateOverlay && share.captureKind.value === 'screen') {
@@ -1087,6 +1098,16 @@ function closeAnnotate(): void {
 watch(annotateWindowTarget, (target) => {
   if (!target && annotating.value) annotating.value = false
 })
+
+// The drawing surface has nothing to draw on once the picture is gone: close it
+// instead of leaving an empty window behind (the button that could reopen it is
+// hidden by then, so a blank window would be a dead end).
+watch(
+  () => share.previewStream.value,
+  (stream) => {
+    if (!stream && isAnnotating.value) closeAnnotate()
+  },
+)
 
 watch(
   () => share.remoteScreenStream.value,

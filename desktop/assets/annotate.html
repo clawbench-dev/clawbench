@@ -17,6 +17,14 @@
       main process drops them (forwarding would double every stroke). The page
       does not need to know which — it always reports.
 
+      `?hideBar=0` (set by main/annotateOverlay.ts where the window is excluded
+      from the capture) keeps the toolbar on screen permanently: the audience
+      cannot see it there, so fading it out would only hide the tool from the
+      person using it. On Linux the bar IS part of the shared picture, so it
+      still fades — and any of these brings it back: drawing, moving the pointer
+      near the bottom edge, focusing the window, or clicking 标注画面 again in
+      the meeting footer (relayed as `annotate:wake`).
+
       Self-contained on purpose: no bundler, no fonts, no network. The window
       must paint the instant it is shown.
     -->
@@ -49,7 +57,8 @@
       }
       /* The toolbar floats at the bottom and fades out while the publisher is
          drawing, so it does not sit in the middle of the shared picture (it is
-         visible to the audience on platforms where the window is captured). */
+         visible to the audience on platforms where the window is captured).
+         See the `hideBar` query flag above: where it is NOT captured it stays. */
       #bar {
         position: fixed;
         left: 50%;
@@ -133,6 +142,14 @@
         const ctx = canvas.getContext('2d')
         const bar = document.getElementById('bar')
         const host = window.AnnotateHost || { ink() {}, close() {} }
+        /**
+         * Whether the bar may fade out. False when the overlay is excluded from
+         * the capture: the audience cannot see the bar there, so hiding it only
+         * makes the tool vanish for the host (and a faded bar cannot be
+         * clicked — the window is the whole screen, there is nothing else to
+         * click).
+         */
+        const autoHideBar = new URLSearchParams(location.search).get('hideBar') !== '0'
 
         let mode = 'pen'
         let color = '#ff3b30'
@@ -191,11 +208,13 @@
         }
 
         function hideBarSoon() {
+          if (!autoHideBar) return
           clearTimeout(hideBarSoon.timer)
           hideBarSoon.timer = setTimeout(() => bar.classList.add('hidden'), 2600)
         }
 
         function wake() {
+          clearTimeout(hideBarSoon.timer)
           bar.classList.remove('hidden')
           hideBarSoon()
         }
@@ -298,10 +317,14 @@
         })
 
         // Keep the toolbar reachable without a permanent strip of chrome: any
-        // pointer movement near the bottom edge brings it back.
+        // pointer movement near the bottom edge brings it back. The meeting
+        // footer's 标注画面 button does the same from outside (onWake), and so
+        // does focusing the window — the host may come back from another app.
         document.addEventListener('pointermove', (ev) => {
           if (ev.clientY > window.innerHeight - 120) wake()
         })
+        window.addEventListener('focus', wake)
+        if (typeof host.onWake === 'function') host.onWake(wake)
 
         window.addEventListener('resize', resize)
         resize()

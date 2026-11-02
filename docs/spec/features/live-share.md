@@ -336,6 +336,10 @@ MediaProjection ─▶ VirtualDisplay ─▶ ImageReader ─▶ 缩放 + JPEG
 - 顶栏没有听记入口：Dock 页签是唯一入口（`headerClusterSpacing.test.ts` 钉住顶栏只有「主题 → 服务器」）。
 - **五个子页的底部动作条与定时任务一致**：药丸按钮 `.fbtn`（`--primary` / `--danger`），条本身 `padding: var(--space-3) var(--space-4)` + `background: var(--bg-primary)` + 顶部发丝线，不再各写一份 `.meeting-btn`；窄面板放不下时左右滚动（`flex-wrap: nowrap` + `overflow-x: auto`，`justify-content: safe flex-end`）。规范与理由见 `docs/spec/client/design-guide.md` §按钮，守卫 `components/live/__tests__/meetingFooterButtons.test.ts`。正文里的行内小动作（产物行的「复制路径」）仍用小号局部类。
 - **会议中的页脚是常驻的**：结束会议与标注画面不再分居顶栏与「会议管理」表单——顶栏只留状态（标题 + 共享中），标注画面跟着当前画面出现（摄像头画面没有桌面坐标可标注）。
+- **标注画面按钮是画布的唯一把手，点它必须「看得见」**：画布活在面板之外（桌面透明覆盖层，或它自己的窗口），所以每次点击都要以「画布可见」收尾，不能因为「已经开着」就静默返回。
+  - 桌面覆盖层的工具栏在**会进画面**的平台（Linux）上会淡出——它出现在观众看到的那块屏上；淡出后由「指针移到屏幕底部 120px」「窗口获得焦点」「再点一次标注画面（`annotate:wake` IPC）」唤回。**不会进画面**的平台（Windows/macOS 的 `setContentProtection`）根本不淡出（`?hideBar=0`）：观众看不到它，藏起来只会让主持人找不到工具。
+  - 窗口模式（Document PiP / 桌面壳弹窗）里 `useScreenWindow` 在「已打开」早退之前要验活（`closed` + 目标 body 仍 `isConnected`）：窗口被用户关掉、或导航走导致目标文档作废时，早退会让按钮永久失效，所以这种情况必须重建窗口。
+  - **成员画面与标注面画各用各的窗口名**（`SCREEN_WINDOW_NAME` / `ANNOTATE_WINDOW_NAME`）：`window.open` 对同名窗口返回的是同一个，共用名字会让两个表面叠进同一份文档、关掉任一个另一个也跟着消失。
 
 ### 会议记录
 

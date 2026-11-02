@@ -64,7 +64,12 @@ export interface AnnotateOverlayResult {
 export async function openAnnotateOverlay(): Promise<AnnotateOverlayResult> {
   const inkViaControl = annotateHiddenFromCapture()
   if (win && !win.isDestroyed()) {
+    // Already open: raise it AND ask it to show the toolbar again. The toolbar
+    // fades out on its own where it would be part of the shared picture, and
+    // "标注画面" is the only control the host has outside the overlay — a click
+    // that only re-focuses an invisible bar looks like a dead button.
     win.focus()
+    win.webContents.send('annotate:wake')
     return { opened: true, inkViaControl }
   }
   const b = targetBounds()
@@ -111,7 +116,11 @@ export async function openAnnotateOverlay(): Promise<AnnotateOverlayResult> {
     getMainWindow()?.webContents.send('native:annotate-closed')
   })
   try {
-    await win.loadFile(htmlPath())
+    // The page hides its toolbar by itself so it does not sit in the middle of
+    // the shared picture — but only where the overlay IS the picture (Linux).
+    // Where the window is excluded from the capture the audience never sees the
+    // bar, so hiding it only makes the tool disappear for the host.
+    await win.loadFile(htmlPath(), { query: { hideBar: inkViaControl ? '0' : '1' } })
   } catch (e) {
     // A package without the document (or a dev run, where it is not in
     // resourcesPath) must fall back to the in-app surface instead of leaving
