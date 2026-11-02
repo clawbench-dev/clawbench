@@ -39,6 +39,7 @@ var mimeTypes = map[string]string{
 	".bmp":  "image/bmp",
 	".pdf":  "application/pdf",
 	".mp3":  "audio/mpeg",
+	".pcm":  "audio/L16",
 	".wav":  "audio/wav",
 	".ogg":  "audio/ogg",
 	".m4a":  "audio/mp4",

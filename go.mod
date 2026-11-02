@@ -12,6 +12,7 @@ require (
 	github.com/google/go-github/v85 v85.0.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/hhatto/gocloc v0.7.0
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.9
 	github.com/nicksnyder/go-i18n/v2 v2.6.1

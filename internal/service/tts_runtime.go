@@ -157,7 +157,9 @@ func EvictTTSCache(projectPath string, maxFiles int) {
 		return // directory may not exist yet
 	}
 
-	// Collect audio files only (.mp3, .wav), skip .summary.txt and other files
+	// Collect audio files only (.mp3, .wav, .pcm), skip .summary.txt and other
+	// files. .pcm is the raw stream served to firmware clients; without it the
+	// device cache would grow without bound.
 	var files []cachedTTSFile
 	for _, e := range entries {
 		if e.IsDir() {
@@ -165,7 +167,7 @@ func EvictTTSCache(projectPath string, maxFiles int) {
 		}
 		name := e.Name()
 		ext := filepath.Ext(name)
-		if ext != ".mp3" && ext != ".wav" {
+		if ext != ".mp3" && ext != ".wav" && ext != ".pcm" {
 			continue
 		}
 		info, err := e.Info()

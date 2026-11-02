@@ -5928,6 +5928,53 @@ paths:
         "200":
           description: 音频
 
+  /api/tts/generate/pcm:
+    post:
+      tags: [TTS]
+      summary: 合成裸 PCM 语音（供嵌入式设备）
+      description: |
+        与 `/api/tts/generate` 相同的摘要与缓存链路，但**同步返回音频字节**而不是
+        job id，并且输出无容器头的裸 PCM（16-bit 小端、单声道），供无法解码
+        MP3 的嵌入式设备直接写入 I2S。
+
+        实现方式：先按既有链路合成并缓存 MP3（与网页端共用同一份缓存），再用纯
+        Go 解码器转成 PCM 并缓存为 `.pcm`。采样率跟随源 MP3（Edge TTS 为
+        24 kHz），不做重采样。
+
+        响应 `Content-Type` 为 `audio/L16; rate=<采样率>; channels=<声道数>`，
+        采样位深见 `X-Audio-Bits`。PCM 缓存文件名内嵌采样参数，命中时无需解码。
+      operationId: ttsGeneratePcm
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                language:
+                  type: string
+                  description: 语言代码（如 zh / en），缺省 zh。
+                messageId:
+                  type: integer
+                  description: 关联的 chat_history.id，用于 TTS 摘要缓存。
+                speakerName:
+                  type: string
+                  description: 群聊发言人显示名；设置后朗读音频带「<名>说：」前缀。
+      responses:
+        "200":
+          description: 裸 PCM 音频流
+          content:
+            audio/L16:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: 文本为空或超长
+        "501":
+          description: 当前语音提供方不支持裸 PCM（`PCMUnsupported`）
+
   /api/tts/stream/{jobId}:
     get:
       tags: [TTS]
