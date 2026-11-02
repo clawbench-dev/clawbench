@@ -63,6 +63,7 @@ const i18n = createI18n({
           notes: '听记',
           notesTitle: 'AI 听记',
           notesWaiting: '等待转写…',
+          notesWaitingDesc: '有人说话后，这里会实时出现转写。',
           chat: '聊天',
           chatTitle: '聊天',
           chatEmpty: '还没有消息',

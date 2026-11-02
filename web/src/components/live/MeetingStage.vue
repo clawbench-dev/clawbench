@@ -1237,13 +1237,15 @@ watch(
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
 }
 
-/* Unread chat count, on the chat tab and in the member's-screen window dock. */
+/* Unread chat count, on the chat tab and in the member's-screen window dock.
+   Accent, not red: red means an error or a destructive action in this UI, while
+   an unread line is ordinary traffic. */
 .live-count {
   min-width: 14px;
   padding: 0 3px;
   margin-left: 4px;
   border-radius: var(--radius-full, 999px);
-  background: var(--color-red, #cf222e);
+  background: var(--accent-color, #4a90d9);
   color: #fff;
   /* Scales with the root font size like every other size in the app; there is
      no 10px token, so express it in --dp instead of a literal. */

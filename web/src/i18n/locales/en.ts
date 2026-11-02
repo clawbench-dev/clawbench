@@ -3950,6 +3950,10 @@ export default {
       notes: 'Notes',
       notesTitle: 'AI notes',
       notesWaiting: 'Waiting for the transcript…',
+      notesWaitingDesc: 'Lines appear here as soon as someone speaks.',
+      notesOffTitle: 'Notes are off',
+      notesOffDesc: 'The host turned notes off, so nothing was transcribed.',
+      notesStoppedHint: 'The host turned notes off. What was recorded stays below.',
       pickSource: 'What to share',
       clientHint:
         'A browser can only watch. Sharing a screen, capturing system audio and being remote-controlled need the desktop client.',

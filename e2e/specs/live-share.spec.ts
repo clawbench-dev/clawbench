@@ -75,6 +75,68 @@ test.describe('Live share viewer', () => {
     }
   })
 
+  test('the chat side panel squeezes the picture instead of covering it', async ({ page }) => {
+    const room = await createRoom(page)
+    try {
+      const anon = await page.context().browser()!.newContext()
+      try {
+        const viewer = await anon.newPage()
+        // Wide enough for the right-hand column; a narrow viewport stacks.
+        await viewer.setViewportSize({ width: 1280, height: 800 })
+        await viewer.goto(room.path)
+        await viewer.locator('[data-role="join-nick"]').fill('E2E 观众')
+        await viewer.locator('[data-action="join-meeting"]').click()
+        await expect(viewer.locator('.live-share-view')).toBeVisible({ timeout: 15000 })
+
+        const stage = viewer.locator('.live-stage')
+        const before = await stage.boundingBox()
+        expect(before).not.toBeNull()
+
+        await viewer.locator('[data-action="chat"]').click()
+        const panel = viewer.locator('[data-panel="side"]')
+        await expect(panel).toBeVisible()
+        // The chat pane starts empty and draws the shared empty block (the same
+        // `MeetingEmpty` the record's tabs use), not a bare muted line.
+        await expect(viewer.locator('[data-panel="chat"] [data-role="chat-empty"]')).toBeVisible()
+
+        const after = await stage.boundingBox()
+        const panelBox = await panel.boundingBox()
+        expect(after).not.toBeNull()
+        expect(panelBox).not.toBeNull()
+
+        // The picture really gives up width — an overlay would leave the stage
+        // exactly as wide as before.
+        expect(after!.width).toBeLessThan(before!.width - 100)
+        // ...and the panel starts where the picture ends, so nothing is hidden
+        // behind it.
+        expect(panelBox!.x).toBeGreaterThanOrEqual(after!.x + after!.width - 1)
+        // Full height beside the picture, not a capped floating card.
+        expect(panelBox!.height).toBeGreaterThan(after!.height - 2)
+
+        // The divider resizes the panel for real: drag it left, the chat grows
+        // and the picture gives up the same amount.
+        const divider = viewer.locator('.live-side-divider')
+        const grip = await divider.boundingBox()
+        expect(grip).not.toBeNull()
+        const gripX = grip!.x + grip!.width / 2
+        const gripY = grip!.y + grip!.height / 2
+        await viewer.mouse.move(gripX, gripY)
+        await viewer.mouse.down()
+        await viewer.mouse.move(gripX - 90, gripY, { steps: 6 })
+        await viewer.mouse.up()
+
+        const panelDragged = await panel.boundingBox()
+        const stageDragged = await stage.boundingBox()
+        expect(panelDragged!.width).toBeGreaterThan(panelBox!.width + 60)
+        expect(stageDragged!.width).toBeLessThan(after!.width - 60)
+      } finally {
+        await anon.close()
+      }
+    } finally {
+      await endRoom(page, room.token)
+    }
+  })
+
   test('the signalling socket answers joined for a live token', async ({ page }) => {
     const room = await createRoom(page)
     try {

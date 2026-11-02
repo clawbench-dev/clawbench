@@ -1,9 +1,16 @@
 <template>
   <div class="live-chat">
     <div ref="listRef" class="live-chat__list">
-      <div v-if="messages.length === 0" class="live-chat__empty">
-        {{ t('share.live.chatEmpty') }}
-      </div>
+      <!-- The same empty state every 会议 tab uses: a centred glyph + title
+           instead of one muted sentence in the top corner, which reads as a
+           message that failed to render. No `desc` here on purpose — an empty
+           chat has no cause worth explaining (see MeetingEmpty). -->
+      <MeetingEmpty
+        v-if="messages.length === 0"
+        :icon="MessagesSquare"
+        :title="t('share.live.chatEmpty')"
+        data-role="chat-empty"
+      />
       <ChatMessageRow
         v-for="m in messages"
         :key="m.id"
@@ -46,7 +53,9 @@
  */
 import { nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { MessagesSquare } from 'lucide-vue-next'
 import ChatMessageRow from '@/components/live/ChatMessageRow.vue'
+import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
 import { CHAT_MAX_CHARS } from '@/share/liveControl'
 
 export interface ChatMessage {
@@ -109,15 +118,8 @@ watch(
   padding: 0;
 }
 
-/* Auto margins centre the one line in the otherwise empty list — the same
-   place a reader looks for the first message. Without them it sat in the top
-   corner, which reads as a message that failed to render. */
-.live-chat__empty {
-  margin: auto;
-  text-align: center;
-  color: var(--text-muted, #8b949e);
-  font-size: var(--font-size-xs, 11px);
-}
+/* The empty state is `MeetingEmpty` (centred glyph + title); this list only
+   has to give it the free height. */
 
 /* No rule above the composer: the filled field is the boundary. */
 .live-chat__compose {

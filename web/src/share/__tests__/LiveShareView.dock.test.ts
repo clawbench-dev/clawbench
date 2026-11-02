@@ -75,6 +75,7 @@ const i18n = createI18n({
           notes: '听记',
           notesTitle: 'AI 听记',
           notesWaiting: '等待转写…',
+          notesWaitingDesc: '有人说话后，这里会实时出现转写。',
           shareScreen: '共享屏幕',
           stopSharing: '停止共享',
           shareScreenHint: '把你的屏幕共享给所有人',
@@ -167,10 +168,11 @@ describe('LiveShareView control dock', () => {
     await w.find('[data-action="fullscreen"]').trigger('click')
     await flushPromises()
 
-    // The root, because the dock lives inside it: going fullscreen on the
-    // <video> alone would hide the only way back out.
+    // The shell, because the dock and the side panel live inside it: going
+    // fullscreen on the <video> alone would hide the only way back out, and on
+    // the picture column alone would drop the open chat panel.
     expect(requestFullscreen).toHaveBeenCalledTimes(1)
-    expect((requestFullscreen.mock.contexts[0] as Element).className).toContain('live-share-view')
+    expect((requestFullscreen.mock.contexts[0] as Element).className).toContain('live-shell')
 
     w.unmount()
   })
@@ -306,10 +308,11 @@ describe('LiveShareView control dock', () => {
     await flushPromises()
     expect(w.find('[data-action="notes"]').exists()).toBe(true)
 
-    // Turning it off (or the share ending) removes the button again.
+    // Switching 听记 off mid-meeting stops the transcription but does not take
+    // away what it already wrote: the entry stays reachable.
     lastViewer?.opts?.callbacks?.onNotesEnabled?.(false)
     await flushPromises()
-    expect(w.find('[data-action="notes"]').exists()).toBe(false)
+    expect(w.find('[data-action="notes"]').exists()).toBe(true)
 
     w.unmount()
   })

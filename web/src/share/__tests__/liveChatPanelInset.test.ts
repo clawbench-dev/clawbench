@@ -1,15 +1,15 @@
 /**
- * The viewer's chat overlay must inset its own content.
+ * The viewer's chat pane must inset its own content.
  *
  * `LiveChatPanel` is deliberately flat — no padding of its own — because the
  * meeting panel already insets everything it hosts by 16dp, and a second inset
  * there pushed the chat out of line with the transcript beside it (see
  * `components/live/__tests__/liveChatCompact.test.ts`).
  *
- * The share viewer's overlay has no such pane: it is a floating card over the
- * video. Reusing the flat component there left the bubbles, the input and the
- * send button flush against the border. The inset therefore belongs to the
- * card, and this test pins that pairing: the wrapper exists, it actually wraps
+ * The share viewer's chat lives in the side panel, which is not such an inset
+ * pane: without padding of its own the bubbles, the input and the send button
+ * ran flush against the panel's border. The inset therefore belongs to the
+ * pane, and this test pins that pairing: the wrapper exists, it actually wraps
  * the chat, and its padding is non-zero on both axes.
  *
  * jsdom applies no stylesheets, so this reads the sources — a screenshot alone
@@ -67,16 +67,22 @@ function styleOf(src: string): string {
   return src.slice(start)
 }
 
-describe('share viewer chat overlay insets its content', () => {
+describe('share viewer chat pane insets its content', () => {
   const src = read(VIEW)
 
-  it('wraps the chat in the inset element, inside the chat card', () => {
-    // Anchored on the card so the class cannot be parked on an unrelated div.
-    const card = src.slice(src.indexOf('data-panel="chat"'))
-    const end = card.indexOf('<!-- Who is speaking')
-    expect(end).toBeGreaterThan(0)
-    const body = card.slice(0, end)
-    expect(body).toMatch(/<div class="live-chat-panel__body">\s*<LiveChatPanel/)
+  it('wraps the chat in the inset element, inside the side panel', () => {
+    // Anchored on the side panel so the class cannot be parked on an unrelated
+    // div — the pane only insets anything if it is the one hosting the chat.
+    const asideStart = src.indexOf('data-panel="side"')
+    expect(asideStart).toBeGreaterThan(0)
+    const asideEnd = src.indexOf('</aside>', asideStart)
+    expect(asideEnd).toBeGreaterThan(asideStart)
+    const aside = src.slice(asideStart, asideEnd)
+
+    const at = aside.indexOf('class="live-chat-panel__body"')
+    expect(at).toBeGreaterThan(0)
+    const pane = aside.slice(at, aside.indexOf('</div>', at))
+    expect(pane).toContain('<LiveChatPanel')
   })
 
   it('gives that wrapper a non-zero padding on both axes', () => {

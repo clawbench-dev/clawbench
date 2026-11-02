@@ -345,7 +345,9 @@ MediaProjection ─▶ VirtualDisplay ─▶ ImageReader ─▶ 缩放 + JPEG
 
 ## AI 听记
 
-发布端可选开启「AI 听记」：共享过程中实时转写，停止后生成结构化会议纪要（概要 / 议题与讨论 / 结论与决定 / 待办事项），观众可以展开只读面板跟读。**默认收起**，不挡画面。
+发布端可选开启「AI 听记」：共享过程中实时转写，停止后生成结构化会议纪要（概要 / 议题与讨论 / 结论与决定 / 待办事项），观众可以展开只读面板跟读。**默认收起**；观众端的「聊天 / 听记」是同一块**右侧全高侧边栏**的两个页签，展开时**挤压**画面而不是盖住它（窄屏改为上下堆叠），边界上的分割条可拖动调整宽度——直接复用 `components/common/SplitDivider.vue`（与 App 分栏、文件管理器预览同一套拖拽交互），面板宽度上限由 CSS 兜住，保证画面不被拖到消失。侧边栏只在 听记 页签激活时轮询转写。
+
+**会中关闭听记只停止采集，不隐藏已经转写的内容**：页签的存在与否由「这场会议是否有听记」决定，而不是「此刻是否在录」。关闭后观众端的页签与内容原地保留（顶部加一行「主持人已关闭听记」说明为什么不再增长）；连在关闭之后才加入的观众，也会用一次 `notes?since=0` 探测决定是否给出页签——已经落库的转写不能因为加入得晚就消失。只有确实什么都没录到时才不给入口。
 
 ### 为什么必须在发布端采集
 
@@ -445,7 +447,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 ```
 发布端  ── POST /api/live-share/notes/segment（multipart 音频 + channel + startedAt）
         ←─ { id, text }                     服务端用 STT provider 同步转写后落库
-观众    ── GET /api/share/{token}/notes?since=<maxId>   （公开，token 即凭证，面板展开时才轮询）
+观众    ── GET /api/share/{token}/notes?since=<maxId>   （公开，token 即凭证，听记页签显示时才轮询）
 发布端  ── POST /api/live-share/notes/minutes           （异步生成，轮询 GET 取状态）
 发布端  ── POST /api/live-share/notes/chat              （每条聊天即时落库，按消息 id 幂等）
 发布端  ── POST /api/live-share/notes/files             （打开/关闭区间批量上报，按区间幂等）

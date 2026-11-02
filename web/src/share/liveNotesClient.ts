@@ -40,6 +40,43 @@ export interface ShareNotesFile {
   closedAt: number
 }
 
+/** Shape of the public transcript payload. */
+interface NotesPayload {
+  segments?: LiveNoteSegment[]
+  files?: ShareNotesFile[]
+  minutes?: ShareNotesMinutes
+}
+
+function toSnapshot(data: NotesPayload): ShareNotesSnapshot {
+  return {
+    segments: Array.isArray(data.segments) ? data.segments : [],
+    files: Array.isArray(data.files) ? data.files : [],
+    minutes: data.minutes ?? { status: 'idle' },
+  }
+}
+
+/**
+ * Read the transcript ONCE, without starting the poll.
+ *
+ * The 听记 tab only exists while the publisher has it on — but a viewer may join
+ * after it was turned off, and the lines recorded before that are still on the
+ * server. This answers "did this meeting record anything?" so the tab (and the
+ * content behind it) is not lost for that viewer. `null` means "could not tell"
+ * — a 404, a dropped request — and the caller keeps the tab hidden.
+ */
+export async function fetchNotesSnapshot(
+  fetchImpl: typeof fetch = (input, init) => fetch(input, init),
+): Promise<ShareNotesSnapshot | null> {
+  try {
+    const resp = await fetchImpl(shareApiUrl('notes?since=0'))
+    if (!resp.ok) return null
+    return toSnapshot((await resp.json()) as NotesPayload)
+  } catch (e) {
+    appLog.d(TAG, 'notes probe failed', e)
+    return null
+  }
+}
+
 export class ShareNotesPoller {
   private timer: ReturnType<typeof setTimeout> | null = null
   private stopped = false
