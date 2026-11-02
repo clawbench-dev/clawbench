@@ -64,18 +64,29 @@
     border-radius: 999px;
     background: var(--bg);
     color: var(--text);
-    box-shadow: 0 6px 22px rgba(0, 0, 0, .38), 0 0 0 1px rgba(255, 255, 255, .07) inset;
+    /* Inset ring ONLY — no drop shadow, ever.
+
+       The window is sized to the pill plus a 4px margin (`measure()` reports
+       `scrollWidth + 8`), and a transparent window is still rectangular to the
+       compositor. A shadow with any blur radius therefore cannot fall away: it
+       is clipped at the window edge and paints that 4px ring, which reads as a
+       grey semi-transparent box framing the capsule on anything but a dark
+       wallpaper. The surround must stay fully transparent — the pill's own
+       translucent background is the only thing that should be visible. */
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, .07) inset;
     /* Deliberately NOT `-webkit-app-region: drag`: that hands the surface to the
        OS as a title bar, so right-click opens the Windows system menu instead of
        ours and no DOM click reaches the page. Dragging is driven from the main
        process instead (see main/floating.ts). */
     transition: transform .12s ease, box-shadow .12s ease;
   }
-  body.hover #pill { transform: translateY(-1px); box-shadow: 0 9px 26px rgba(0,0,0,.46), 0 0 0 1px rgba(255,255,255,.12) inset; }
+  /* Feedback without a halo: the lift is kept, the ring just brightens. */
+  body.hover #pill { transform: translateY(-1px); box-shadow: 0 0 0 1px rgba(255, 255, 255, .16) inset; }
   /* Awaiting approval is the one state worth flagging on the frame itself: a
      blocked session is otherwise indistinguishable from a running one at a
-     glance from across the desk. */
-  body.needs-me #pill { box-shadow: 0 6px 22px rgba(0, 0, 0, .38), 0 0 0 1px var(--pending); }
+     glance from across the desk. The 1px ring follows the pill's own outline —
+     unlike a blurred shadow it never paints the margin as a box. */
+  body.needs-me #pill { box-shadow: 0 0 0 1px var(--pending); }
 
   #logo {
     flex: 0 0 auto;
