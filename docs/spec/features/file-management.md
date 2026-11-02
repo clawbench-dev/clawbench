@@ -115,7 +115,7 @@ sequenceDiagram
 - **Sticky Scroll**：代码浏览模式下，将当前视口外层作用域的定义行（函数/类）钉顶显示，最多 5 行。点击钉顶行可平滑滚动到定义位置。基于后端 tree-sitter 符号数据，解决长文件中上下文迷失的问题
 - **文件操作**：创建、复制、移动、重命名、删除、批量删除。所有路径操作都经过 symlink 感知的穿越防护，确保不会访问项目根目录之外的文件——安全是文件操作的底线
 - **文件上传**：支持多文件上传，带进度跟踪。大小和数量由配置限制（`upload.max_size_mb`、`upload.max_files`）
-- **上传/下载产品内进度条**：下载原语原本是 fire-and-forget（浏览器与原生桥只负责把文件落到磁盘），UI 拿不到任何字节信息，用户只能看着界面"没反应"。现在三类传输（Web fetch/XHR、Electron 主进程、Android OkHttp）都按字节回报到同一个 `useDownloadProgress` 单例，由 App.vue 渲染统一的 `TransferProgressBar`（上传与下载共用同一组件，只是薄适配器不同）。**进度必须按累计字节计算**——用当前文件的比例会让 N 个文件各自跑一遍 0→100，观感是"一直在重来"；**Android 桥不支持 `@JavascriptInterface` 重载**，故方法名是独立的 `downloadFileWithProgress`；**原生完成信号两端相反**（Electron 靠 Promise settle、Android 靠 `done` 事件），统一按 Promise 收尾会让进度条在 Android 上瞬间消失，故两种形状都要处理。取消用独立的 `cancelled` 标志区分于失败，不弹错误提示
+- **上传/下载产品内进度条**：下载原语原本是 fire-and-forget（浏览器与原生桥只负责把文件落到磁盘），UI 拿不到任何字节信息，用户只能看着界面"没反应"。现在三类传输（Web fetch/XHR、Electron 主进程、Android OkHttp）都按字节回报到同一个 `useDownloadProgress` 单例，由 App.vue 渲染统一的 `TransferProgressBar`（上传与下载共用同一组件，只是薄适配器不同）。**进度必须按累计字节计算**——用当前文件的比例会让 N 个文件各自跑一遍 0→100，观感是"一直在重来"；**Android 桥不支持 `@JavascriptInterface` 重载**，故方法名是独立的 `downloadFileWithProgress`；**原生完成信号两端相反**（Electron 靠 Promise settle、Android 靠 `done` 事件），统一按 Promise 收尾会让进度条在 Android 上瞬间消失，故两种形状都要处理。取消用独立的 `cancelled` 标志区分于失败，不弹错误提示。**进度条同时显示速率**：下载与目录上传共用同一个滑动窗口计量器（约 3 秒），而不是「总量 ÷ 已用时间」或「相邻两次事件的瞬时差值」——原生宿主把进度回报节流到约 1%，慢链路上两次事件能隔好几秒，瞬时差值会剧烈摆动；窗口外多留一个采样点作基线，稀疏回报也能算出速率而不是掉到 0。计量器没有定时器，只在收到字节时前进
 - **文件夹上传**：支持拖放文件夹上传，保持嵌套目录结构（包括空目录），使用 webkitGetAsEntry 递归遍历。也支持通过文件夹选择器上传
 - **目录树下载**：使用 File System Access API（FileSystemDirectoryHandle）将整个目录下载到本地，保持完整目录结构。后端提供 `ServeListTree` 端点递归列出文件
 - **拖放移动**：文件管理器内拖放文件/目录到目标目录，实现文件移动
