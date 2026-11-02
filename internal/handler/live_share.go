@@ -426,6 +426,10 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 		applySetScreenEnabled(room, ctl.Enabled)
 		return false
 
+	case liveshare.CtrlSetControlEnabled:
+		applySetControlEnabled(room, ctl.Enabled)
+		return false
+
 	case liveshare.CtrlSetPicture:
 		applySetPicture(room, ctl)
 		return false
@@ -533,6 +537,9 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 		HostScreen:    room.HostScreen(),
 		ScreenEnabled: room.ScreenEnabled(),
 		ScreenSharer:  room.ScreenSharer(),
+		// Publisher capability, not a room switch: whether the host can accept
+		// a remote-control request at all (injector + whole-screen picture).
+		ControlEnabled: room.ControlEnabled(),
 	}); err != nil {
 		return
 	}
@@ -650,6 +657,20 @@ func applySetScreenEnabled(room *liveshare.Room, enabled bool) {
 		})
 	}
 	broadcastScreenState(room)
+}
+
+// applySetControlEnabled advertises the publisher's remote-control capability.
+//
+// Split out of the control switch for the same reason as the screen switch: the
+// case stays one line. Every viewer is told, not only the ones that asked — a
+// viewer that joined while the capability was off has no other way to learn it
+// came back.
+func applySetControlEnabled(room *liveshare.Room, enabled bool) {
+	room.SetControlEnabled(enabled)
+	room.BroadcastToViewers(liveshare.ViewerMessage{
+		Type:           liveshare.MsgControlEnabled,
+		ControlEnabled: enabled,
+	}, "")
 }
 
 // applyScreenRevoke stops one viewer's share without touching the switch.

@@ -3933,6 +3933,7 @@ export default {
       exitFullscreen: 'Exit fullscreen',
       requestControl: 'Request control',
       requestControlHint: 'Ask to control the host screen',
+      controlUnavailable: 'The host cannot accept remote control right now',
       controlPending: 'Waiting for the host to approve…',
       controlling: 'You are controlling the host screen',
       controlCancel: 'Cancel request',

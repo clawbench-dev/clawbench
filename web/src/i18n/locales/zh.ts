@@ -3928,6 +3928,7 @@ export default {
       exitFullscreen: '退出全屏',
       requestControl: '请求控制',
       requestControlHint: '请求操作主持人的屏幕',
+      controlUnavailable: '主持人当前无法接受远程控制',
       controlPending: '等待主持人批准…',
       controlling: '你正在控制对方的屏幕',
       controlCancel: '取消请求',

@@ -855,6 +855,10 @@ onMounted(() => {
   })
   void resolveRemoteControlSupport(getNative()).then((ok) => {
     controlSupported.value = ok
+    // The room carries the capability too: viewers grey their "request
+    // control" button on what the publisher advertises (injector present AND
+    // a whole screen), never on their own platform.
+    share.setControlSupported(ok)
   })
   if (notes.phase.value === 'recording') void notes.refresh()
   // Both runtime toggles need this before they are used: the source list so

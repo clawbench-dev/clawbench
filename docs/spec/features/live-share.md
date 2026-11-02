@@ -147,6 +147,8 @@ talking --set-talk-enabled(false)--> none  （房间开关关闭，连带静音�
 | `talk` | 说话电平（发布端 → 观众，0..1，只在跨越阈值或明显变化时发） |
 | `ctrl-req` / `ctrl-grant` / `ctrl-ev` | 远程控制的申请、授权与指针事件 |
 
+信令通道（WebSocket）另有一条与能力相关的状态帧：发布端发 `set-control-enabled` 声明「我能不能被远程控制」（注入器 + 整屏），服务端转发给每个观众 `control-enabled`，并在 `joined` 里带上当前值。观众端据此灰显按钮，见下文「远程控制」。
+
 **坐标系是 0–1 归一化到画面内容**，不是像素：观众 A 是 16:9 带黑边、观众 B 是全屏裁切，同一个像素坐标在两人屏幕上落在不同位置。换算只在 `liveControl.ts` 的 `contentRectOf` / `toNormalized` / `fromNormalized` 里做，绘制层与标注层都走它。
 
 **发布端是这条通道的中转**：观众发来的帧被打上 `from` 后广播给其他观众，所以观众的激光笔别人也能看见，且不需要服务端参与。
@@ -158,6 +160,7 @@ talking --set-talk-enabled(false)--> none  （房间开关关闭，连带静音�
 - **不需要安装任何东西**：注入由随应用分发的 `input-helper.exe` 完成（Go 写的，纯 `syscall` 调 `SendInput`，无 CGO、无原生 npm 模块）。Electron 在首次需要时 spawn 它，用 NDJSON 走 stdin/stdout，一次一个回执。
 - **键盘分两种**：命名键（Enter/方向键/F1–F12/Delete…）按虚拟键码发；单个可打印字符走 `KEYEVENTF_UNICODE`，所以中文、emoji 都能输入，不依赖键盘布局。
 - **只有 Windows 发布端能注入**：`internal/inputinject` 在其它平台是 stub（`Supported()` 恒 false），因为只有 Windows 会发起共享。发布端面板挂载时读一次 `remoteControlSupported()`，不支持时**不显示「允许」按钮**，改成一行说明——让人点了没反应比不给按钮更糟。
+- **能力由发布端广播、观众端据此灰显**：观众能不能申请控制，取决于**发布端**（有没有注入器 + 当前画面是不是整屏），观众端自己算不出来。所以发布端用 `set-control-enabled` 把它告诉房间，服务端在 `joined` 里带给后加入的观众、变更时推 `control-enabled`；观众端只按这个标志决定「请求控制」是可用还是灰显（灰显时 title 说明原因）。观众自己的平台不参与判定：浏览器观众照样能驱动 Windows 发布端，浏览器**当发布端**时才因没有注入器而广播不可用。
 - **`input-helper.exe` 是打包产物**，不在仓库里：`release.yml` 的每个桌面 job 会跑 `desktop/scripts/build-input-helper.mjs`，`build.sh` 也跑一次（否则本地 `npx electron-builder --dir` 出来的包里没有它，远程控制会静默失效）。
 - **Escape 是本地逃生键**：按 Esc 只结束自己的控制，不会转发给对端。
 - 限制：仅 Windows 可注入；对端窗口若以管理员权限运行（UIPI），`SendInput` 会被系统拒绝，界面会收到 `ok:false` 而不是假装成功。

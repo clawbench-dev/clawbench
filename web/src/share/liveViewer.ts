@@ -51,6 +51,8 @@ interface ServerMessage {
   camera?: boolean
   /** Whether the publisher's picture is a screen share (not a camera). */
   hostScreen?: boolean
+  /** Whether the publisher can accept remote-control requests right now. */
+  controlEnabled?: boolean
   /** Room-level switch for audience screen sharing. */
   screenEnabled?: boolean
   /** Viewer id currently sharing a screen ('' when nobody is). */
@@ -81,6 +83,12 @@ export interface LiveViewerCallbacks {
    * only make sense then — a camera image has no desktop to inject into.
    */
   onHostScreen?: (screen: boolean) => void
+  /**
+   * Whether the publisher can accept a remote-control request (it has an input
+   * injector and is sharing a whole screen). The viewer greys its button on
+   * this; asking and being refused is the failure mode it prevents.
+   */
+  onControlEnabled?: (enabled: boolean) => void
   /** Whether the publisher's camera tile should be shown. */
   onCameraMode?: (camera: boolean) => void
   /** The publisher's camera picture (the picture-in-picture tile). */
@@ -188,6 +196,13 @@ export class LiveViewer {
   private _videoEnabled = true
   /** Whether the host's picture is a screen (remote control / annotation). */
   private _hostScreen = false
+  /**
+   * Whether the publisher can be driven (input injector present AND a whole
+   * screen shared). Defaults to false: the capability is the publisher's to
+   * advertise, and a viewer that assumes it offers a button the host can only
+   * refuse.
+   */
+  private _controlEnabled = false
   /** Whether the host's camera tile should be shown. */
   private _cameraEnabled = false
 
@@ -208,6 +223,11 @@ export class LiveViewer {
   /** Whether the publisher's picture is a screen share. */
   get hostScreen(): boolean {
     return this._hostScreen
+  }
+
+  /** Whether the publisher can accept a remote-control request. */
+  get controlEnabled(): boolean {
+    return this._controlEnabled
   }
 
   /** Whether the publisher's camera tile should be shown. */
@@ -358,6 +378,13 @@ export class LiveViewer {
         this.cb.onHostScreen?.(this._hostScreen)
         this.cb.onCameraMode?.(this._cameraEnabled)
         break
+      case 'control-enabled':
+        // The publisher's own capability (injector + whole-screen picture), not
+        // a viewer setting: it flips whenever the host swaps between a screen
+        // and a window, or starts/stops sharing.
+        this._controlEnabled = Boolean(msg.controlEnabled)
+        this.cb.onControlEnabled?.(this._controlEnabled)
+        break
       case 'screen-denied':
         // The room refused: either the switch is off or somebody else got
         // there first. Release the local capture immediately — leaving it live
@@ -383,6 +410,8 @@ export class LiveViewer {
     this.cb.onHostScreen?.(this._hostScreen)
     this._cameraEnabled = Boolean(msg.camera)
     this.cb.onCameraMode?.(this._cameraEnabled)
+    this._controlEnabled = Boolean(msg.controlEnabled)
+    this.cb.onControlEnabled?.(this._controlEnabled)
     this.cb.onTalkEnabled?.(this._talkEnabled)
     this._viewerId = msg.viewerId ?? ''
     this._notesEnabled = Boolean(msg.notesEnabled)

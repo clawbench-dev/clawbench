@@ -293,15 +293,18 @@
         <span class="live-dock-label">{{ talking ? t('share.live.micOn') : t('share.live.micOff') }}</span>
       </button>
 
-      <!-- Shown whenever the host allows it, even when THIS browser cannot
-           capture: hiding it entirely leaves a member wondering why the button
+      <!-- Shown whenever the host shares a screen, even when THIS page cannot
+           drive it: hiding it entirely leaves a member wondering why the button
            their colleague sees is missing. Disabled + a title explains it. -->
       <button
         v-if="controlState === 'none' && hostScreen"
         class="live-dock-btn"
         type="button"
+        :disabled="!canRequestControl"
         :aria-label="t('share.live.requestControl')"
-        :title="t('share.live.requestControlHint')"
+        :title="
+          canRequestControl ? t('share.live.requestControlHint') : t('share.live.controlUnavailable')
+        "
         data-action="request-control"
         @click="requestControl"
       >
@@ -445,6 +448,15 @@ const videoEnabled = ref(true)
  * inject clicks at nonsense coordinates.
  */
 const hostScreen = ref(true)
+/**
+ * Whether the publisher can accept a remote-control request.
+ *
+ * Comes from the server, never from this page's own platform: injection happens
+ * on the host machine, so only the host knows whether it can take the request.
+ * Starts false — a viewer must not offer a button whose press can only be
+ * refused.
+ */
+const controlEnabled = ref(false)
 /** Whether the publisher's camera tile should be shown. */
 const cameraMode = ref(false)
 /** The publisher's camera picture (picture-in-picture tile). */
@@ -947,6 +959,16 @@ const canTalk = computed(
     !!navigator.mediaDevices?.getUserMedia,
 )
 
+/**
+ * Whether this page may ask for control of the host screen.
+ *
+ * Purely the publisher's advertised capability (`control-enabled` / `joined`).
+ * The viewer's own platform is deliberately not part of this: a browser tab can
+ * watch, chat and annotate, and whether a request can be served depends on the
+ * host's injector and on it sharing a whole screen, not on what the viewer runs.
+ */
+const canRequestControl = computed(() => controlEnabled.value)
+
 const screenBanner = computed(() => {
   if (screenError.value) return screenError.value
   if (sharingScreen.value) return t('share.live.youAreSharing')
@@ -1162,6 +1184,9 @@ function start(): void {
       },
       onHostScreen: (screen) => {
         hostScreen.value = screen
+      },
+      onControlEnabled: (v) => {
+        controlEnabled.value = v
       },
       onCameraMode: (on) => {
         cameraMode.value = on
@@ -1534,6 +1559,20 @@ onBeforeUnmount(() => {
   color: var(--text-primary, #e6edf3);
 }
 
+/* Unavailable on this platform (plain-http microphone, browser-side screen
+   capture, remote control outside the client). The button keeps its place —
+   removing it would read as "the host did not allow this" — but must look
+   unusable, otherwise a click that does nothing looks broken. */
+.live-dock-btn:disabled {
+  opacity: var(--opacity-disabled, 0.4);
+  cursor: not-allowed;
+}
+
+.live-dock-btn:disabled:hover {
+  background: transparent;
+  color: var(--text-secondary, #8b949e);
+}
+
 /* Live microphone: tinted rather than a solid green fill, which would shout
    next to the status chip in the header. */
 .live-dock-btn--live {
@@ -1627,7 +1666,16 @@ onBeforeUnmount(() => {
   background: var(--color-red, #cf222e);
 }
 
-.live-control-banner {
+/*
+ * Control state pill, sitting just above the dock instead of at the top.
+ *
+ * The compound selector is required, not stylistic: `.live-screen-banner` is
+ * declared LATER in this file and sets `top`. At equal specificity the later
+ * rule wins, so `top: auto` alone lost and the pill stretched from `top` to
+ * `bottom` — a full-height strip whose flex content landed mid-screen, over
+ * the picture, swallowing pointer events there.
+ */
+.live-screen-banner.live-control-banner {
   top: auto;
   bottom: calc(var(--space-6, 12px) + env(safe-area-inset-bottom, 0px) + calc(52 * var(--dp)));
   border-color: color-mix(in srgb, var(--color-red, #cf222e) 55%, transparent);

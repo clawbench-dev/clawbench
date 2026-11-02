@@ -143,6 +143,12 @@ type Room struct {
 	// a share that has none.
 	notesEnabled bool
 
+	// controlEnabled tells viewers whether they may ask to drive this
+	// publisher's pointer and keyboard. The publisher is the only one that can
+	// answer: injection happens on the host machine (it needs the input
+	// injector) and only a whole-screen capture has a desktop to map onto.
+	controlEnabled bool
+
 	maxViewers  int
 	idleTimeout time.Duration
 	lastActive  time.Time
@@ -297,6 +303,28 @@ func (r *Room) NotesEnabled() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.notesEnabled
+}
+
+// ControlEnabled reports whether viewers may ask to drive the publisher's
+// pointer and keyboard.
+//
+// This is a PUBLISHER capability, not a viewer one: injection happens on the
+// host machine, so only the host knows whether it can accept a request (it needs
+// the input injector and a whole-screen capture). Viewers grey their button on
+// this flag instead of asking and being refused.
+func (r *Room) ControlEnabled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.controlEnabled
+}
+
+// SetControlEnabled advertises whether remote control is available right now.
+// Called by the publisher whenever its capability or its picture kind changes.
+func (r *Room) SetControlEnabled(on bool) {
+	r.mu.Lock()
+	r.controlEnabled = on
+	r.mu.Unlock()
+	r.touch()
 }
 
 // SetNotesEnabled flips the AI 听记 flag. Set from the create call, before the

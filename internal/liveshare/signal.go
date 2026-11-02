@@ -56,6 +56,11 @@ const (
 	// point of view, and because a viewer that applied them separately could
 	// briefly render a layout that never existed.
 	MsgPictureState = "picture-state"
+	// MsgControlEnabled tells a viewer whether it may ask for remote control of
+	// the publisher. Sent at join and on every change: the capability belongs to
+	// the publisher (input injector + a whole-screen picture), so a viewer
+	// cannot work it out and must not offer a button that can only be refused.
+	MsgControlEnabled = "control-enabled"
 	// MsgError reports a rejected control frame without closing the socket.
 	MsgError = "error"
 )
@@ -88,6 +93,10 @@ const (
 	// CtrlScreenRevoke stops one viewer's screen share without disabling the
 	// switch for everyone else.
 	CtrlScreenRevoke = "screen-revoke"
+	// CtrlSetControlEnabled advertises whether this publisher can accept
+	// remote-control requests: it needs the input injector AND a whole-screen
+	// picture. Viewers grey their "request control" button on it.
+	CtrlSetControlEnabled = "set-control-enabled"
 )
 
 // Viewer control messages (client → server).
@@ -173,6 +182,10 @@ type ViewerMessage struct {
 	// NotesEnabled tells the viewer that this share is running AI 听记, so the
 	// transcript panel can be offered at all. It carries no transcript.
 	NotesEnabled bool `json:"notesEnabled,omitempty"`
+	// ControlEnabled tells the viewer that the publisher can be driven right
+	// now (input injector present, whole screen shared). Absent means "cannot":
+	// offering a request the host can only refuse is the bug this prevents.
+	ControlEnabled bool `json:"controlEnabled"`
 	// ScreenEnabled / ScreenSharer are the screen-sharing state at join time.
 	// Later changes arrive as MsgScreenState.
 	ScreenEnabled bool   `json:"screenEnabled,omitempty"`

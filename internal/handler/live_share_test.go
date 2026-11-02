@@ -1352,6 +1352,53 @@ func TestHandleViewerControl_ScreenStopClearsSharer(t *testing.T) {
 	assert.Equal(t, liveshare.MsgScreenState, msg.Type)
 }
 
+// Remote control is a PUBLISHER capability: the injector lives on the host
+// machine and only a whole-screen picture has a desktop to map onto. The viewer
+// learns it from the server instead of guessing from its own platform, so a
+// late joiner must find it in `joined` — the publisher may have advertised it
+// before anyone was in the room.
+func TestLiveWS_JoinedCarriesControlCapability(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetControlEnabled, Enabled: true})
+
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
+	joined := readViewerMsg(t, view)
+	assert.Equal(t, liveshare.MsgJoined, joined.Type)
+	assert.True(t, joined.ControlEnabled, "a viewer joining after the advertisement must see it")
+}
+
+// A viewer that is already in the room learns about a change as it happens —
+// its `joined` frame is long gone, and the host can start or stop a screen (and
+// therefore the capability) at any moment.
+func TestLiveWS_SetControlEnabledReachesEveryViewer(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	view1 := dialWS(t, srv, "/api/share/"+token+"/signal?name=one")
+	_ = readViewerMsg(t, view1)
+	_ = readPublisherMsg(t, pub)
+	view2 := dialWS(t, srv, "/api/share/"+token+"/signal?name=two")
+	_ = readViewerMsg(t, view2)
+	_ = readPublisherMsg(t, pub)
+
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetControlEnabled, Enabled: true})
+	for _, v := range []*websocket.Conn{view1, view2} {
+		msg := readViewerMsg(t, v)
+		assert.Equal(t, liveshare.MsgControlEnabled, msg.Type)
+		assert.True(t, msg.ControlEnabled)
+	}
+
+	// And back off again: a window capture or a revoked share must take the
+	// button away, not leave a stale enabled state.
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetControlEnabled, Enabled: false})
+	for _, v := range []*websocket.Conn{view1, view2} {
+		msg := readViewerMsg(t, v)
+		assert.Equal(t, liveshare.MsgControlEnabled, msg.Type)
+		assert.False(t, msg.ControlEnabled)
+	}
+}
+
 // A room whose publisher vanished (crash, app restart) is a leftover: reusing
 // its token would make the next meeting inherit the previous transcript.
 func TestCreateLiveShareRoom_RotatesStaleToken(t *testing.T) {

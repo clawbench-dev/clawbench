@@ -1549,3 +1549,62 @@ describe('picture changes mid-meeting', () => {
     expect(share.error.value).toBeTruthy()
   })
 })
+
+/**
+ * Remote control is advertised by the PUBLISHER, because only it knows the two
+ * facts that decide it: whether the shell has an input injector, and whether the
+ * picture on the wire is a whole screen (a window capture has no desktop to map
+ * the pointer onto). Viewers grey their button on what the room says.
+ */
+describe('remote control capability', () => {
+  /** The last frame the publisher sent about the capability. */
+  function lastCapability(): Record<string, unknown> | undefined {
+    return lastWS()
+      .sentJSON()
+      .filter((m) => m.type === 'set-control-enabled')
+      .at(-1)
+  }
+
+  it('stays unavailable until the host has a whole screen on the wire', async () => {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    await share.start({ sourceId: '', microphone: true })
+
+    // The injector exists, but there is no screen yet — nothing to drive.
+    share.setControlSupported(true)
+    expect(share.controlEnabled.value).toBe(false)
+
+    expect(await share.startScreen('screen:2:0')).toBe(true)
+    expect(share.controlEnabled.value).toBe(true)
+    expect(lastCapability()).toEqual({ type: 'set-control-enabled', enabled: true })
+
+    // Stopping the screen takes the button away from every viewer, without
+    // ending the meeting.
+    await share.stopScreen()
+    expect(share.controlEnabled.value).toBe(false)
+    expect(lastCapability()).toEqual({ type: 'set-control-enabled', enabled: false })
+  })
+
+  it('never advertises a window capture', async () => {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    await share.start({ sourceId: 'window:7:0', microphone: true })
+    share.setControlSupported(true)
+
+    expect(share.captureKind.value).toBe('window')
+    expect(share.controlEnabled.value).toBe(false)
+    expect(lastCapability()).not.toEqual({ type: 'set-control-enabled', enabled: true })
+  })
+
+  it('withdraws the capability when the injector goes away', async () => {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    await share.start({ sourceId: 'screen:1:0', microphone: true })
+    share.setControlSupported(true)
+    expect(share.controlEnabled.value).toBe(true)
+
+    share.setControlSupported(false)
+    expect(share.controlEnabled.value).toBe(false)
+    expect(lastCapability()).toEqual({ type: 'set-control-enabled', enabled: false })
+  })
+})

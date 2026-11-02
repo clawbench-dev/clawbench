@@ -112,6 +112,9 @@ vi.mock('@/composables/useLiveShare', async () => {
     sendControlTo: vi.fn(),
     onControl: vi.fn(() => () => undefined),
     switchSource: vi.fn(async () => true),
+    // The panel pushes the native injector probe into the room so
+    // viewers can grey their "request control" button.
+    setControlSupported: vi.fn(),
   })
   return {
     useLiveShare: () => shareApi,

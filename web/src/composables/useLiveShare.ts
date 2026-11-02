@@ -174,6 +174,18 @@ const previewStream = shallowRef<MediaStream | null>(null)
  */
 const captureKind = ref<'screen' | 'window' | null>('screen')
 /**
+ * Whether this host can inject input at all (the shell's `input-helper`, Windows
+ * only). Probed by the share panel, which owns the native bridge and also needs
+ * the answer for its own "allow control" row.
+ */
+const controlSupported = ref(false)
+/**
+ * What the room was last told about remote control: injector present AND a
+ * whole screen on the wire. Viewers grey their "request control" button on it,
+ * so it must follow the picture — a switch to a window capture turns it off.
+ */
+const controlEnabled = ref(false)
+/**
  * Whether a picture is being published RIGHT NOW.
  *
  * Meetings have no type: the host can start or stop a screen share and turn the
@@ -257,6 +269,8 @@ function resetSession(): void {
   displayStream = null
   previewStream.value = null
   captureKind.value = null
+  controlSupported.value = false
+  controlEnabled.value = false
   videoEnabled.value = false
   micStream = null
   cameraStream = null
@@ -554,6 +568,9 @@ async function applyPicture(): Promise<void> {
       }
     }
   }
+  // The picture just changed, and remote control depends on what it is: a
+  // window capture or a camera-only meeting must take the viewers' button away.
+  publishControl()
 }
 
 /**
@@ -569,6 +586,31 @@ function publishPicture(): void {
   const camera = cameraEnabled.value && Boolean(cameraStream?.getVideoTracks().length)
   videoEnabled.value = screen || camera
   send({ type: 'set-picture', video: videoEnabled.value, camera, screen })
+}
+
+/**
+ * Advertise whether viewers may ask to drive this publisher.
+ *
+ * The capability is the publisher's alone: it needs the input injector AND a
+ * whole-screen picture (a window capture has no desktop to map the pointer
+ * onto). Viewers cannot work that out, so the room carries it and every change
+ * is pushed — a viewer that joined earlier has no other way to learn.
+ */
+function publishControl(): void {
+  const on =
+    controlSupported.value &&
+    captureKind.value === 'screen' &&
+    Boolean(displayStream?.getVideoTracks().length)
+  if (on === controlEnabled.value) return
+  controlEnabled.value = on
+  send({ type: 'set-control-enabled', enabled: on })
+}
+
+/** The share panel's native probe result. Called once it resolves. */
+function setControlSupported(on: boolean): void {
+  if (controlSupported.value === on) return
+  controlSupported.value = on
+  publishControl()
 }
 
 /** Start sharing a screen mid-meeting (or after joining with none). */
@@ -961,6 +1003,11 @@ export function useLiveShare() {
     await new Promise<void>((resolve, reject) => {
       socket.onopen = () => {
         socket.send(JSON.stringify({ type: 'publish', title: title.value }))
+        // The capability may already have been decided before this socket
+        // existed (the panel probes the injector at mount, and a capture can
+        // start before the room is open), in which case its `send` went
+        // nowhere. The room needs the current value, not just future changes.
+        send({ type: 'set-control-enabled', enabled: controlEnabled.value })
         // The server has claimed the room for us; only now may we delete it.
         ownsRoom = true
         resolve()
@@ -1540,6 +1587,9 @@ export function useLiveShare() {
     previewStream,
     previewCameraStream,
     captureKind,
+    controlSupported,
+    controlEnabled,
+    setControlSupported,
     videoEnabled,
     cameraEnabled,
     micEnabled,
@@ -1567,5 +1617,7 @@ export function _resetLiveShareForTest(): void {
   viewers.value = []
   talkEnabled.value = false
   screenEnabled.value = false
+  controlSupported.value = false
+  controlEnabled.value = false
   error.value = ''
 }

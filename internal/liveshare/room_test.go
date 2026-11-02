@@ -590,6 +590,25 @@ func TestRoom_ScreenSwitchGettersAndSetters(t *testing.T) {
 	}
 }
 
+// Remote control starts UNAVAILABLE: a room nobody advertised for must not let a
+// viewer offer a button whose request the publisher could only refuse.
+func TestRoom_ControlEnabledStartsOffAndFollowsThePublisher(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/proj/a", "A")
+
+	if room.ControlEnabled() {
+		t.Fatal("remote control must start unavailable")
+	}
+	room.SetControlEnabled(true)
+	if !room.ControlEnabled() {
+		t.Fatal("SetControlEnabled(true) must be observable")
+	}
+	room.SetControlEnabled(false)
+	if room.ControlEnabled() {
+		t.Fatal("SetControlEnabled(false) must be observable")
+	}
+}
+
 // Turning the switch off must report the viewer that was sharing so the caller
 // can send it an explicit denial — the browser keeps capturing otherwise.
 func TestRoom_SetScreenEnabledOffStopsSharer(t *testing.T) {

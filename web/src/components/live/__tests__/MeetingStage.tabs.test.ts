@@ -56,8 +56,12 @@ vi.mock('@/utils/clawbenchNative', () => ({
   getNative: () => null,
 }))
 
+/** What the native injector probe answers; tests flip it to prove the panel
+ *  forwards the RESULT (not a constant) into the room. */
+const remoteControlOk = vi.hoisted(() => ({ value: false }))
+
 vi.mock('@/utils/remoteControlSupport', () => ({
-  resolveRemoteControlSupport: async () => false,
+  resolveRemoteControlSupport: async () => remoteControlOk.value,
 }))
 
 /** `onControl` hands the panel its relay callback; the tests feed it messages. */
@@ -104,6 +108,9 @@ vi.mock('@/composables/useLiveShare', async () => {
     sendControlTo: vi.fn(),
     onControl: onControlMock,
     switchSource: vi.fn(async () => true),
+    // The panel pushes the native injector probe into the room so
+    // viewers can grey their "request control" button.
+    setControlSupported: vi.fn(),
   })
   return {
     useLiveShare: () => shareApi,
@@ -196,6 +203,18 @@ describe('MeetingStage tabs', () => {
     const pane = wrapper.find('[data-role="chat-pane"]')
     expect(pane.exists()).toBe(true)
     expect(pane.element.closest('template')).toBeNull()
+  })
+
+  // Remote control is the publisher's capability, and viewers grey their button
+  // on what the room advertises. The panel is the only place that knows whether
+  // the shell has an input injector, so it has to push the probe result through.
+  it('tells the room what the injector probe answered', async () => {
+    remoteControlOk.value = true
+    mountPanel()
+    await flushPromises()
+
+    expect(shareApi.setControlSupported).toHaveBeenCalledWith(true)
+    remoteControlOk.value = false
   })
 
   it('opens on the setup tab and shows neither the transcript nor the chat', async () => {

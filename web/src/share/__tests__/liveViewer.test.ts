@@ -812,6 +812,49 @@ describe('LiveViewer screen sharing', () => {
     expect(viewer.cameraEnabled).toBe(true)
   })
 
+  // Remote control is the PUBLISHER's capability: injection happens on the host
+  // machine and needs a whole-screen picture. A viewer cannot work it out, so it
+  // must arrive from the server — and a viewer that joins after the host
+  // advertised it still has to see it, since its `joined` frame is its only
+  // source of truth.
+  it('learns the remote-control capability from joined and from later changes', () => {
+    const seen: boolean[] = []
+    const viewer = new LiveViewer({
+      token: 'tok123',
+      callbacks: { onControlEnabled: (v) => seen.push(v) },
+      wsFactory: (url) => new FakeWS(url) as unknown as WebSocket,
+      pcFactory: (cfg) => new FakePC(cfg) as unknown as RTCPeerConnection,
+    })
+    viewer.connect()
+    lastWS().emit({ type: 'joined', viewerId: 'v1', video: true, hostScreen: true, controlEnabled: true })
+
+    expect(viewer.controlEnabled).toBe(true)
+    expect(seen).toEqual([true])
+
+    // The host swapped to a window capture (or stopped sharing): the pointer
+    // could no longer be mapped onto a desktop, so the button must go away.
+    lastWS().emit({ type: 'control-enabled', controlEnabled: false })
+    expect(viewer.controlEnabled).toBe(false)
+    expect(seen).toEqual([true, false])
+  })
+
+  it('defaults the capability to unavailable when the publisher never advertises it', () => {
+    const seen: boolean[] = []
+    const viewer = new LiveViewer({
+      token: 'tok123',
+      callbacks: { onControlEnabled: (v) => seen.push(v) },
+      wsFactory: (url) => new FakeWS(url) as unknown as WebSocket,
+      pcFactory: (cfg) => new FakePC(cfg) as unknown as RTCPeerConnection,
+    })
+    viewer.connect()
+    // A frame with no `controlEnabled`: the safe reading is "cannot", because
+    // the alternative is offering a button whose request can only be refused.
+    lastWS().emit({ type: 'joined', viewerId: 'v1', video: true, hostScreen: true })
+
+    expect(viewer.controlEnabled).toBe(false)
+    expect(seen).toEqual([false])
+  })
+
   it('reports who is sharing and the room switch', () => {
     const { viewer, screenStates, sharers } = setupWithScreen()
     joinRoom(viewer)
