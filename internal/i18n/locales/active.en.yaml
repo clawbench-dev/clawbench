@@ -427,3 +427,7 @@ MeetingFilesReasonPermission: permission denied
 MeetingFilesReasonUnreadable: read failed
 MeetingFilesStayWrap: " ({{.Text}})"
 MeetingFilesExcerptHeader: File excerpts (truncated)
+MeetingScreenVoice: Screen
+MeetingScreenStarted: "{{.Name}} started sharing the screen"
+MeetingScreenStopped: "{{.Name}} stopped sharing the screen{{.Stay}}"
+MeetingScreenHost: Host

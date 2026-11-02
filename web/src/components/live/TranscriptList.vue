@@ -9,6 +9,7 @@
       <!-- A file event has no speaker: an avatar with the character 文 would
            read as a participant. The glyph says "this is not a person". -->
       <FileText v-if="b.kind === 'file'" class="transcript__avatar transcript__file-icon" :size="16" aria-hidden="true" />
+      <MonitorUp v-else-if="b.kind === 'screen'" class="transcript__avatar transcript__file-icon" :size="16" aria-hidden="true" />
       <SpeakerAvatar v-else class="transcript__avatar" :name="b.speaker" />
       <span class="transcript__speaker">{{ speakerOf(b) }}</span>
       <span class="transcript__text">{{ textOf(b) }}</span>
@@ -35,7 +36,7 @@
  * panel pads its own body — through `--transcript-inset`.
  */
 import { nextTick, ref, watch } from 'vue'
-import { FileText } from 'lucide-vue-next'
+import { FileText, MonitorUp } from 'lucide-vue-next'
 import i18n from '@/i18n'
 import SpeakerAvatar from '@/components/common/SpeakerAvatar.vue'
 import type { NoteBlock } from '@/composables/liveNotes'

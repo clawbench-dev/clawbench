@@ -1057,6 +1057,30 @@ describe('audience screen relay', () => {
     share.revokeScreen('v1')
     expect(lastWS().sentJSON()).toContainEqual({ type: 'screen-revoke', viewerId: 'v1' })
   })
+
+  it('records the screen-sharer timeline as the sharer changes', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1', '张三')
+
+    const screenCalls = () =>
+      fetchMock.mock.calls
+        .filter(([url]) => url === '/api/live-share/notes/screen')
+        .map(([, init]) => JSON.parse((init as { body: string }).body) as Record<string, unknown>)
+
+    // The host is sharing from the start, so the first transition is "host".
+    await vi.waitFor(() => expect(screenCalls().length).toBeGreaterThan(0))
+    expect(screenCalls()[0]).toMatchObject({ token: 'tok-1', sharer: 'host' })
+
+    // A participant takes the screen: the timeline must follow the change.
+    lastWS().emit({ type: 'screen-state', screenEnabled: true, viewerId: 'v1', sharing: true })
+    await vi.waitFor(() =>
+      expect(screenCalls().at(-1)).toMatchObject({ sharer: 'viewer:v1', sharerName: '张三' }),
+    )
+
+    // Ending the meeting closes the interval while the token is still valid.
+    await share.stop()
+    await vi.waitFor(() => expect(screenCalls().at(-1)).toMatchObject({ sharer: '' }))
+  })
 })
 
 describe('control channel', () => {

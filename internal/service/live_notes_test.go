@@ -247,7 +247,7 @@ func TestWriteLiveNotesTranscriptFile_KeepsHeadingNoteAndLines(t *testing.T) {
 	base := started.UnixMilli()
 	raw, err := WriteLiveNotesRawTranscript(paths, []LiveNoteSegment{
 		{Speaker: "我", StartedAt: base, DurationMS: 1500, Text: "原样"},
-	}, nil)
+	}, nil, nil)
 	require.NoError(t, err)
 	rawBody, err := os.ReadFile(raw)
 	require.NoError(t, err)
@@ -259,12 +259,12 @@ func TestWriteLiveNotesTranscriptFile_KeepsHeadingNoteAndLines(t *testing.T) {
 	assert.Contains(t, string(rawBody), "00:00:00.000 --> 00:00:01.500")
 	assert.Contains(t, string(rawBody), "<v 我>原样")
 
-	_, err = WriteLiveNotesRawTranscript(paths, nil, nil)
+	_, err = WriteLiveNotesRawTranscript(paths, nil, nil, nil)
 	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
 
 	_, err = WriteLiveNotesRawTranscript(LiveNotesPathsIn(""), []LiveNoteSegment{
 		{Speaker: "我", StartedAt: base, DurationMS: 1000, Text: "原样"},
-	}, nil)
+	}, nil, nil)
 	assert.Error(t, err)
 }
 
@@ -1019,7 +1019,7 @@ func TestBuildLiveNotesVTT_CarriesChannelAndSpeaker(t *testing.T) {
 		{Channel: "system", Speaker: "", StartedAt: base + 5000, DurationMS: 1000, Text: "第三句"},
 		// Blank text must not produce a cue.
 		{Channel: "mic", Speaker: "我", StartedAt: base + 6000, DurationMS: 1000, Text: "   "},
-	}, nil)
+	}, nil, nil)
 
 	assert.True(t, strings.HasPrefix(got, "WEBVTT\n\n"))
 	assert.Contains(t, got, "mic\n00:00:00.000 --> 00:00:01.500\n<v 我>第一句\n")
@@ -1032,7 +1032,7 @@ func TestBuildLiveNotesVTT_UntimedSegmentsChainForward(t *testing.T) {
 	got := BuildLiveNotesVTT([]LiveNoteSegment{
 		{Channel: "mic", Speaker: "我", Text: "没有时间戳"},
 		{Channel: "mic", Speaker: "我", Text: "也没有"},
-	}, nil)
+	}, nil, nil)
 	// Unknown timing chains from the previous cue instead of inventing an
 	// epoch offset (which would show up as thousands of hours).
 	assert.Contains(t, got, "mic\n00:00:00.000 --> 00:00:02.000\n<v 我>没有时间戳\n")
@@ -1045,13 +1045,13 @@ func TestBuildLiveNotesVTT_UntimedSegmentsChainForward(t *testing.T) {
 func TestBuildLiveNotesVTT_EscapesMarkup(t *testing.T) {
 	got := BuildLiveNotesVTT([]LiveNoteSegment{
 		{Channel: "viewer:v1", Speaker: "A<B>C", Text: "a < b & c > d"},
-	}, nil)
+	}, nil, nil)
 	assert.Contains(t, got, "<v ABC>a &lt; b &amp; c &gt; d\n")
 }
 
 func TestBuildLiveNotesVTT_Empty(t *testing.T) {
-	assert.Empty(t, BuildLiveNotesVTT(nil, nil))
-	assert.Empty(t, BuildLiveNotesVTT([]LiveNoteSegment{{Speaker: "我", Text: "  "}}, nil))
+	assert.Empty(t, BuildLiveNotesVTT(nil, nil, nil))
+	assert.Empty(t, BuildLiveNotesVTT([]LiveNoteSegment{{Speaker: "我", Text: "  "}}, nil, nil))
 }
 
 // The transcript artifact is WebVTT and nothing else: no fallback to the

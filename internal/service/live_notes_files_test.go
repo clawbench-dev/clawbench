@@ -98,7 +98,7 @@ func TestBuildLiveNotesVTT_CarriesFileEvents(t *testing.T) {
 		{Channel: "mic", Speaker: "我", StartedAt: base, DurationMS: 4000, Text: "看下这个文档"},
 	}, []LiveNoteFile{
 		{Path: "docs/a.md", Name: "a.md", OpenedAt: base + 5000, ClosedAt: base + 65_000},
-	})
+	}, nil)
 
 	assert.Contains(t, got, "file\n00:00:05.000 --> 00:00:07.000\n<v 文件>打开 docs/a.md\n")
 	assert.Contains(t, got, "file\n00:01:05.000 --> 00:01:07.000\n<v 文件>关闭 docs/a.md（1 分钟）\n")
@@ -110,7 +110,7 @@ func TestBuildLiveNotesVTT_OpenFileHasNoCloseCue(t *testing.T) {
 	base := int64(1_700_000_000_000)
 	got := BuildLiveNotesVTT([]LiveNoteSegment{
 		{Channel: "mic", Speaker: "我", StartedAt: base, DurationMS: 1000, Text: "开始"},
-	}, []LiveNoteFile{{Path: "a.md", OpenedAt: base + 2000}})
+	}, []LiveNoteFile{{Path: "a.md", OpenedAt: base + 2000}}, nil)
 
 	assert.Contains(t, got, "打开 a.md")
 	assert.NotContains(t, got, "关闭")
@@ -122,7 +122,7 @@ func TestBuildLiveNotesVTT_OpenFileHasNoCloseCue(t *testing.T) {
 func TestBuildLiveNotesVTT_NoBaseDropsFileEvents(t *testing.T) {
 	got := BuildLiveNotesVTT([]LiveNoteSegment{
 		{Channel: "mic", Speaker: "我", Text: "没有时间戳"},
-	}, []LiveNoteFile{{Path: "a.md", OpenedAt: 1_700_000_000_000}})
+	}, []LiveNoteFile{{Path: "a.md", OpenedAt: 1_700_000_000_000}}, nil)
 
 	assert.Contains(t, got, "没有时间戳")
 	assert.NotContains(t, got, "打开 a.md")
@@ -139,7 +139,7 @@ func TestMergeLiveNoteFileEvents_InsertsByTimestamp(t *testing.T) {
 
 	got := MergeLiveNoteFileEvents(revised, []LiveNoteFile{
 		{Path: "docs/a.md", OpenedAt: base + 30_000, ClosedAt: base + 90_000},
-	}, base)
+	}, nil, base)
 
 	lines := strings.Split(got, "\n")
 	require.Len(t, lines, 4)
@@ -155,7 +155,7 @@ func TestMergeLiveNoteFileEvents_FallsBackToTrailingSection(t *testing.T) {
 	base := int64(1_700_000_000_000)
 	got := MergeLiveNoteFileEvents("我：先看接口文档\n张三：我觉得可以", []LiveNoteFile{
 		{Path: "docs/a.md", OpenedAt: base + 30_000},
-	}, base)
+	}, nil, base)
 
 	assert.Contains(t, got, "我：先看接口文档")
 	assert.Contains(t, got, "## 会议期间打开的文件")
@@ -164,8 +164,8 @@ func TestMergeLiveNoteFileEvents_FallsBackToTrailingSection(t *testing.T) {
 
 func TestMergeLiveNoteFileEvents_NoFilesIsIdentity(t *testing.T) {
 	revised := "[00:00] 我：内容"
-	assert.Equal(t, revised, MergeLiveNoteFileEvents(revised, nil, 1))
-	assert.Equal(t, revised, MergeLiveNoteFileEvents(revised, []LiveNoteFile{{Path: "a.md", OpenedAt: 5}}, 0))
+	assert.Equal(t, revised, MergeLiveNoteFileEvents(revised, nil, nil, 1))
+	assert.Equal(t, revised, MergeLiveNoteFileEvents(revised, []LiveNoteFile{{Path: "a.md", OpenedAt: 5}}, nil, 0))
 }
 
 // The summariser must be told these are things people LOOKED AT, not things

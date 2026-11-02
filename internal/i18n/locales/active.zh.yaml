@@ -418,3 +418,7 @@ MeetingFilesReasonPermission: 没有读取权限
 MeetingFilesReasonUnreadable: 读取失败
 MeetingFilesStayWrap: （{{.Text}}）
 MeetingFilesExcerptHeader: 文件内容摘录（已截断）
+MeetingScreenVoice: 屏幕
+MeetingScreenStarted: "{{.Name}} 开始共享屏幕"
+MeetingScreenStopped: "{{.Name}} 停止共享屏幕{{.Stay}}"
+MeetingScreenHost: 主持人

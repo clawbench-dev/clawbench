@@ -59,6 +59,8 @@ const (
 	// hostile client cannot make the server parse an unbounded array before the
 	// per-batch check runs.
 	liveNoteFilesMaxBodyBytes = 1 << 20
+	// liveNoteSharerMaxRunes bounds the sharer identity ("host" / "viewer:v12").
+	liveNoteSharerMaxRunes = 64
 	// liveNoteTextKey is the JSON key carrying one transcript line.
 	liveNoteTextKey = "text"
 	// liveNoteSTTConcurrency is how many segment transcriptions may run at once
@@ -79,8 +81,11 @@ type liveNotesResponse struct {
 	Segments []service.LiveNoteSegment `json:"segments"`
 	// Files are the open/close events so far. A viewer gets the same rows with
 	// Path blanked — it may know which file, not where the publisher keeps it.
-	Files   []service.LiveNoteFile  `json:"files,omitempty"`
-	Minutes liveNotesMinutesPayload `json:"minutes"`
+	Files []service.LiveNoteFile `json:"files,omitempty"`
+	// Screens are the screen-sharing intervals (who shared, when). No redaction
+	// needed: a nickname is already visible to every viewer in the roster.
+	Screens []service.LiveNoteScreenShare `json:"screens,omitempty"`
+	Minutes liveNotesMinutesPayload       `json:"minutes"`
 }
 
 // liveNotesMinutesPayload carries the generated minutes and their status so the
@@ -259,6 +264,12 @@ func ServeLiveShareNotes(w http.ResponseWriter, r *http.Request) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
+	screens, err := service.ListLiveNoteScreenShares(token)
+	if err != nil {
+		slog.Error("live notes: list screen shares failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
 	note, _, err := service.GetLiveNote(token)
 	if err != nil {
 		slog.Error("live notes: get note failed", "err", err)
@@ -269,6 +280,7 @@ func ServeLiveShareNotes(w http.ResponseWriter, r *http.Request) {
 		Title:    note.Title,
 		Segments: segments,
 		Files:    files,
+		Screens:  screens,
 		Minutes:  liveNotesPayload(projectPath, note),
 	})
 }
@@ -465,6 +477,53 @@ func ServeLiveShareNoteFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := service.RecordLiveNoteFiles(r.Context(), body.Token, projectID, files); err != nil {
 		slog.Error("live notes: record files failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ServeLiveShareNoteScreen handles POST /api/live-share/notes/screen
+// (authenticated, project-scoped): the publisher reports a CHANGE of who is
+// sharing the screen.
+//
+// Body: {"token","sharer","sharerName","at"}. `sharer` is "host", "viewer:<id>",
+// or "" for "nobody is sharing". Transitions rather than state: the server
+// closes the previous interval and opens the next one in one transaction, so
+// the timeline can never show two sharers at once.
+//
+// The publisher reports it because the publisher is the only party that sees
+// every transition: the host's own picture, an audience member claiming the
+// screen, a revocation, and a sharer who disconnects.
+func ServeLiveShareNoteScreen(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Token      string `json:"token"`
+		Sharer     string `json:"sharer"`
+		SharerName string `json:"sharerName"`
+		At         int64  `json:"at"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if !validShareToken(body.Token) || !liveNotesOwnedByProject(body.Token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	sharer := truncateRunes(strings.TrimSpace(body.Sharer), liveNoteSharerMaxRunes)
+	if sharer != "" && sharer != "host" && !strings.HasPrefix(sharer, "viewer:") {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return
+	}
+	if err := service.SetLiveNoteScreenSharer(r.Context(), body.Token, projectID, sharer,
+		truncateRunes(strings.TrimSpace(body.SharerName), liveNoteSpeakerMaxRunes), body.At); err != nil {
+		slog.Error("live notes: record screen sharer failed", "err", err)
 		model.WriteError(w, model.Internal(err))
 		return
 	}
@@ -818,11 +877,16 @@ func generateLiveNotesArtifacts(token string, projectID int64, projectPath, titl
 		slog.Warn("live notes: list files failed", "err", filesErr)
 		files = nil
 	}
+	screens, screensErr := service.ListLiveNoteScreenShares(token)
+	if screensErr != nil {
+		slog.Warn("live notes: list screen shares failed", "err", screensErr)
+		screens = nil
+	}
 
 	raw := service.BuildLiveNotesTranscript(segments)
 	if onDisk {
 		writeLiveNotesArtifact("transcript", func() (string, error) {
-			return service.WriteLiveNotesRawTranscript(paths, segments, files)
+			return service.WriteLiveNotesRawTranscript(paths, segments, files, screens)
 		})
 	}
 
@@ -833,10 +897,19 @@ func generateLiveNotesArtifacts(token string, projectID int64, projectPath, titl
 		Name:  model.UserNickname,
 	}
 
-	transcript := proofreadLiveNotesTranscript(ctx, token, projectID, projectPath, title, segments, files, raw, paths, onDisk, startedAt, self)
+	transcript := proofreadLiveNotesTranscript(ctx, token, projectID, projectPath, title, segments, files, screens, raw, paths, onDisk, startedAt, self)
 
-	minutes, err := service.GenerateLiveNotesMinutes(ctx, title, transcript,
-		service.LiveNoteFilesPromptSection(files, startedAt, projectPath), self)
+	// One background block for both timelines: they answer the same question
+	// ("what were we looking at") and splitting them into two sections only
+	// makes the model treat the second one as an afterthought.
+	timeline := service.LiveNoteFilesPromptSection(files, startedAt, projectPath)
+	if section := service.LiveNoteScreenPromptSection(screens, startedAt); section != "" {
+		if timeline != "" {
+			timeline += "\n\n"
+		}
+		timeline += section
+	}
+	minutes, err := service.GenerateLiveNotesMinutes(ctx, title, transcript, timeline, self)
 	if err != nil {
 		slog.Warn("live notes: minutes generation failed", "err", err)
 		if serr := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusFailed, "", err.Error(), ""); serr != nil {
@@ -890,7 +963,8 @@ func nameMeetingFromMinutes(ctx context.Context, title, minutes string, generate
 // can show it.
 func proofreadLiveNotesTranscript(
 	ctx context.Context, token string, projectID int64, projectPath, title string,
-	segments []service.LiveNoteSegment, files []service.LiveNoteFile, raw string,
+	segments []service.LiveNoteSegment, files []service.LiveNoteFile, screens []service.LiveNoteScreenShare,
+	raw string,
 	paths service.LiveNotesPaths, onDisk bool, startedAt time.Time, self service.LiveNotesSpeaker,
 ) string {
 	if err := service.SetLiveNoteRevise(token, projectID, service.LiveNotesStatusGenerating, "", ""); err != nil {
@@ -911,7 +985,7 @@ func proofreadLiveNotesTranscript(
 		// Merged only into the FILE, never into the DB copy or the minutes
 		// input: the proofread text is speech, and the summariser gets the file
 		// timeline as its own explicitly-framed block.
-		body := service.MergeLiveNoteFileEvents(revised, files, service.LiveNotesTimelineBase(segments))
+		body := service.MergeLiveNoteFileEvents(revised, files, screens, service.LiveNotesTimelineBase(segments))
 		writeLiveNotesArtifact("revised", func() (string, error) {
 			return service.WriteLiveNotesRevisedTranscript(paths, title, startedAt, body)
 		})
@@ -997,6 +1071,12 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
+	screens, err := service.ListLiveNoteScreenShares(token)
+	if err != nil {
+		slog.Error("live notes: public screen shares failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
 	note, _, err := service.GetLiveNote(token)
 	if err != nil {
 		slog.Error("live notes: public get failed", "err", err)
@@ -1006,6 +1086,7 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 	writeJSON(w, http.StatusOK, liveNotesResponse{
 		Segments: segments,
 		Files:    redactLiveNoteFilePaths(files),
+		Screens:  screens,
 		Minutes: liveNotesMinutesPayload{
 			Status:   note.Status,
 			Markdown: note.Minutes,

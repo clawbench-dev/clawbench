@@ -782,6 +782,11 @@ func finalizeLiveNotes(token string, projectID int64, projectPath string) {
 	if err := service.CloseOpenLiveNoteFiles(token, now); err != nil {
 		slog.Warn("liveshare: close open files failed", "err", err)
 	}
+	// Same for the screen: a share that was still running when the publisher
+	// vanished ends with the meeting, not at an invented later time.
+	if err := service.CloseOpenLiveNoteScreenShare(token, now); err != nil {
+		slog.Warn("liveshare: close open screen share failed", "err", err)
+	}
 	note, exists, err := service.GetLiveNote(token)
 	if err != nil || !exists {
 		return

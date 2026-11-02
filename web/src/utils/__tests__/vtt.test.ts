@@ -80,6 +80,15 @@ describe('parseVttCues', () => {
     expect(parseVttCues(sample)[0].kind).toBeUndefined()
   })
 
+  it('marks a cue whose id is `screen` as a screen-sharer event', () => {
+    const cues = parseVttCues(
+      'WEBVTT\n\nscreen\n00:00:05.000 --> 00:00:07.000\n<v 屏幕>张三 开始共享屏幕\n',
+    )
+    expect(cues).toEqual([
+      { speaker: '屏幕', text: '张三 开始共享屏幕', startMs: 5000, endMs: 7000, kind: 'screen' },
+    ])
+  })
+
   it('strips inline markup and unescapes entities, without the speaker prefix', () => {
     expect(parseVttCues('WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n<v 张三>加<b>粗</b>的 &lt;字&gt;</v>')[0]).toMatchObject({
       speaker: '张三',

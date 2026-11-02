@@ -9,7 +9,7 @@
  * Protocol: see internal/liveshare/signal.go. The publisher answers one offer
  * per viewer and forwards ICE both ways; it never parses SDP.
  */
-import { ref, shallowRef } from 'vue'
+import { ref, shallowRef, watch } from 'vue'
 import i18n from '@/i18n'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
@@ -691,6 +691,61 @@ async function setCameraDevice(choice: string): Promise<boolean> {
   publishPicture()
   return true
 }
+
+/**
+ * Who is sharing the screen right now: "" | "host" | "viewer:<id>".
+ *
+ * An audience member wins over the host's own picture: once a participant takes
+ * the screen, the host's camera/screen is no longer what everyone is looking at.
+ * Outside a meeting this is always "", so the watcher below cannot report the
+ * module's initial values.
+ */
+function currentScreenSharer(): string {
+  if (state.value !== 'publishing') return ''
+  if (screenSharer.value) return `viewer:${screenSharer.value}`
+  return captureKind.value ? 'host' : ''
+}
+
+/** The nickname shown in the transcript; empty for the host (localized there). */
+function screenSharerLabel(sharer: string): string {
+  if (!sharer.startsWith('viewer:')) return ''
+  const id = sharer.slice('viewer:'.length)
+  return viewers.value.find((v) => v.id === id)?.name ?? ''
+}
+
+/**
+ * Records a CHANGE of screen sharer into the meeting timeline.
+ *
+ * Best effort: the meeting itself never depends on this landing, and the server
+ * treats a repeated sharer as a no-op rather than a new interval.
+ */
+async function reportScreenSharer(sharer: string): Promise<void> {
+  const tok = token.value
+  if (!tok || state.value !== 'publishing') return
+  try {
+    const resp = await fetch('/api/live-share/notes/screen', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: tok,
+        sharer,
+        sharerName: screenSharerLabel(sharer),
+        at: Date.now(),
+      }),
+    })
+    if (!resp.ok) throw new Error(`status ${resp.status}`)
+  } catch (e) {
+    appLog.w(TAG, 'report screen sharer failed', e)
+  }
+}
+
+// Every transition — the host switching picture, a viewer claiming the screen,
+// a revocation, the sharer disconnecting — ends up here, because all of them
+// are expressed by these two refs changing.
+watch(currentScreenSharer, (next, prev) => {
+  if (next === prev) return
+  void reportScreenSharer(next)
+})
 
 export function useLiveShare() {
   /**
@@ -1529,6 +1584,9 @@ export function useLiveShare() {
     // every still-open interval when the publisher detaches, and an interval we
     // are still holding would be stored with that moment as its end.
     await stopMeetingFileTracking()
+    // Same for the screen: "still sharing at the end" must be closed by us,
+    // while the token and the publishing state are still set.
+    await reportScreenSharer('')
 
     send({ type: 'end' })
     resetSession()

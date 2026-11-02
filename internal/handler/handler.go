@@ -699,6 +699,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// Files opened during the meeting, as intervals. Same reasoning as chat:
 	// the publisher reports them while the room is live, the record keeps them.
 	register("/api/live-share/notes/files", ServeLiveShareNoteFiles)
+	// Who was sharing the screen, as intervals. Recorded as transitions so the
+	// timeline can never show two sharers at once.
+	register("/api/live-share/notes/screen", ServeLiveShareNoteScreen)
 	// Meeting records: GET lists the project's meetings (the database row is the
 	// record, permanent), DELETE removes one with its folder.
 	register("/api/live-share/notes/sessions", ServeLiveNotesSessions)

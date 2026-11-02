@@ -27,7 +27,7 @@ export interface VttCue {
    * internal/service). The payload still carries a voice span — `<v 文件>` — so
    * a plain subtitle player shows something readable.
    */
-  kind?: 'file'
+  kind?: 'file' | 'screen'
 }
 
 /**
@@ -55,7 +55,7 @@ export function parseVttCues(vtt: string): VttCue[] {
       text: renderCue(payload),
       startMs,
       endMs,
-      ...(id === 'file' ? { kind: 'file' as const } : {}),
+      ...(id === 'file' ? { kind: 'file' as const } : id === 'screen' ? { kind: 'screen' as const } : {}),
     })
   }
   return cues

@@ -110,7 +110,7 @@ export interface NoteBlock {
    * it must never be merged into a neighbouring line the way consecutive
    * utterances from one speaker are.
    */
-  kind?: 'file'
+  kind?: 'file' | 'screen'
   /**
    * Which half of the interval this row is. Set only for live rows, whose text
    * is a bare path that the view localizes; a stored transcript already carries
@@ -143,7 +143,7 @@ const BLOCK_MERGE_GAP_MS = 4_000
  * without hiding who said what.
  */
 export function groupNoteSegments(
-  list: Array<LiveNoteSegment & { kind?: 'file'; fileAction?: 'open' | 'close' }>,
+  list: Array<LiveNoteSegment & { kind?: 'file' | 'screen'; fileAction?: 'open' | 'close' }>,
 ): NoteBlock[] {
   const out: NoteBlock[] = []
   let lastEnd = 0

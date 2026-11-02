@@ -59,6 +59,16 @@ describe('TranscriptList', () => {
     expect(row.find('.transcript__text').text()).toBe('打开 docs/a.md')
   })
 
+  it('draws a screen-sharer change as a monitor row, not a speaker', () => {
+    const w = mountList([
+      { key: 'n1', channel: 'screen', speaker: '屏幕', startedAt: 0, text: '张三 开始共享屏幕', kind: 'screen' },
+    ])
+    const row = w.findAll('.transcript__row')[0]
+    expect(row.find('.sa').exists()).toBe(false)
+    expect(row.find('.transcript__file-icon').exists()).toBe(true)
+    expect(row.find('.transcript__text').text()).toBe('张三 开始共享屏幕')
+  })
+
   it('localizes a live file row from its action and path', () => {
     const w = mountList([
       { key: 'n1', channel: 'file', speaker: '', startedAt: 0, text: 'docs/a.md', kind: 'file', fileAction: 'open' },
