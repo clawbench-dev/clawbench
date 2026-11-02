@@ -492,4 +492,31 @@ describe('LiveShareView camera tile', () => {
 
     w.unmount()
   })
+
+  it('stops painting the last frame once the host stops sharing the screen', async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+    const mainVideo = () => w.find('video.live-video')
+
+    // The meeting is running: the <video> is on screen with the host's picture.
+    cb.onStateChange?.('playing')
+    cb.onVideoMode?.(true)
+    await flushPromises()
+    expect(mainVideo().classes()).not.toContain('live-video--hidden')
+
+    // The host stops the screen and has no camera. The m-line stays up (the
+    // meeting goes on with audio) and only stops carrying frames, so the
+    // element would otherwise keep painting the final screen behind the
+    // transparent placeholder.
+    cb.onVideoMode?.(false)
+    cb.onHostScreen?.(false)
+    cb.onCameraMode?.(false)
+    await flushPromises()
+
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(true)
+    expect(mainVideo().classes()).toContain('live-video--hidden')
+
+    w.unmount()
+  })
 })

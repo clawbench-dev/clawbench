@@ -24,11 +24,21 @@
         <div class="live-zoom" :style="zoomStyle">
           <!-- The <video> is always mounted so `srcObject` survives a re-render.
                It is hidden while there is nothing to show, which keeps the error
-               and waiting states from rendering a black rectangle. -->
+               and waiting states from rendering a black rectangle.
+
+               `!videoEnabled` is part of that: the publisher stopping its screen
+               (or turning the camera off) leaves the m-line in place and only
+               stops sending frames, so the element keeps painting its LAST one.
+               The stage is still `playing` — the meeting goes on with audio —
+               so without this the final screen stays behind the transparent
+               "no picture" placeholder. Hiding (not clearing `srcObject`) is
+               deliberate: the same element carries the mixed audio. -->
           <video
             ref="videoRef"
             class="live-video"
-            :class="{ 'live-video--hidden': state !== 'playing' || viewMode === 'member' }"
+            :class="{
+              'live-video--hidden': state !== 'playing' || viewMode === 'member' || !videoEnabled,
+            }"
             autoplay
             playsinline
             muted
