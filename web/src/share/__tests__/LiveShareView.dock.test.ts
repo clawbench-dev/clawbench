@@ -474,7 +474,10 @@ describe('LiveShareView camera tile', () => {
 
     // Camera-only meeting with the camera switched off: no picture at all. The
     // placeholder does not name a kind of meeting — it says the host can turn
-    // one on at any moment.
+    // one on at any moment. It only exists while the meeting is live, so the
+    // fixture has to be live: the placeholder and the status overlay occupy the
+    // same slot and are mutually exclusive.
+    cb.onStateChange?.('playing')
     cb.onVideoMode?.(false)
     cb.onHostScreen?.(false)
     cb.onCameraMode?.(false)

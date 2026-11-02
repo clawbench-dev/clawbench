@@ -91,8 +91,20 @@
         <!-- No picture right now. Meetings have no type: the host may start a
              screen share or turn the camera on at any moment, so this says "not
              yet" instead of naming a kind of meeting. A black rectangle here
-             would read as a broken stream. -->
-        <div v-if="!videoEnabled" class="live-voice-stage" data-role="no-picture">
+             would read as a broken stream.
+
+             Gated on `playing` as well: this and `.live-overlay` below are the
+             SAME slot (both `inset: 0`, centred), so their conditions must be
+             mutually exclusive. "Not sharing yet" only means anything while the
+             meeting is live — the host stopping its picture leaves
+             `videoEnabled` false, and if the room then ends (or the viewer
+             retries and lands in connecting/failed) both blocks would render at
+             once, superimposing two sets of copy. -->
+        <div
+          v-if="!videoEnabled && state === 'playing'"
+          class="live-voice-stage"
+          data-role="no-picture"
+        >
           <Mic :size="34" />
           <div class="live-voice-stage__title">{{ t('share.live.noPictureTitle') }}</div>
           <div class="live-voice-stage__desc">{{ t('share.live.noPictureDesc') }}</div>
@@ -1602,6 +1614,12 @@ onBeforeUnmount(() => {
   padding: var(--space-7, 16px);
   text-align: center;
   color: var(--text-muted, #8b949e);
+  /* Opaque on purpose. This covers the stage, and the stage can hold other
+     absolutely-positioned content in the same slot (the "no picture" placeholder,
+     a stale last frame). A transparent overlay lets that show through and the two
+     texts interleave. Same surface as the column behind it, so nothing changes
+     visually — it just stops being see-through. */
+  background: var(--bg-primary, #0d1117);
 }
 
 .live-overlay-title {

@@ -46,6 +46,7 @@ vi.mock('@/share/shareMode', () => ({ getShareToken: () => shareToken }))
 
 import LiveShareView from '@/share/LiveShareView.vue'
 import { passJoinGate } from './joinGateTestHelper'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 const i18n = createI18n({
   legacy: false,
@@ -235,6 +236,66 @@ describe('LiveShareView overlay states', () => {
     expect(toggle.exists()).toBe(true)
     expect(toggle.attributes('aria-checked')).toBe('false')
     w.unmount()
+  })
+})
+
+/**
+ * The "no picture yet" placeholder and the status overlay are ONE slot: both are
+ * `inset: 0` and centre their content, so whichever pair of conditions is true
+ * renders two sets of copy on top of each other.
+ *
+ * The realistic sequence that produced the bug: the host stops its picture
+ * (`picture-state { video: false }` leaves `videoEnabled` false) and then ends
+ * the meeting. Nothing rolls `videoEnabled` back, so "not sharing yet" and
+ * "sharing has ended" were both true and their titles/descriptions interleaved.
+ */
+describe('LiveShareView overlay slot exclusivity', () => {
+  it('hides the no-picture placeholder whenever a status overlay is up', async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+
+    cb.onStateChange?.('playing')
+    cb.onVideoMode?.(false)
+    await flushPromises()
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(true)
+
+    // Host stops sharing, then the room ends.
+    cb.onStateChange?.('ended')
+    await flushPromises()
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(false)
+    expect(w.find('.live-overlay-title').text()).toContain('直播已结束')
+
+    // Same for a retry that lands back in `connecting`, and for a failure.
+    await w.find('.live-retry').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(false)
+
+    cb.onStateChange?.('failed', { reason: 'ice' })
+    await flushPromises()
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(false)
+
+    // ...and it comes back once the meeting is live again with no picture.
+    cb.onStateChange?.('playing')
+    await flushPromises()
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(true)
+
+    w.unmount()
+  })
+
+  it('paints the status overlay opaquely so nothing underneath can bleed through', () => {
+    // Belt and braces for the same defect: even if some future block lands in
+    // this slot, the overlay must not be see-through. A transparent overlay was
+    // half the bug — the copy interleaved instead of one covering the other.
+    const src = readWebFile('src/share/LiveShareView.vue')
+    const style = src.match(/<style scoped>([\s\S]*)<\/style>/)?.[1]
+    expect(style).toBeTruthy()
+
+    const rule = (style as string)
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .match(/(^|\})\s*\.live-overlay\s*\{([^}]*)\}/)
+    expect(rule).not.toBeNull()
+    expect((rule as RegExpMatchArray)[2]).toMatch(/(^|;)\s*background:\s*var\(--bg-primary/)
   })
 })
 
