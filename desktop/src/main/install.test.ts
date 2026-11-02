@@ -95,6 +95,9 @@ import {
   versionDir,
   downloadFirstAvailable,
   downloadAndInstall,
+  localNpmRegistryBase,
+  npmTarballPath,
+  mirrorFallbackUrls,
   selectStartupVersion,
   handOffToPointedVersion,
   installPayload,
@@ -569,6 +572,101 @@ describe('downloadFirstAvailable', () => {
     } finally {
       download.impl = () => Buffer.alloc(0)
     }
+  })
+})
+
+describe('npm mirror fallback', () => {
+  const NPMJS = 'https://registry.npmjs.org/@xulongzhe/clawbench-desktop-linux-x64-payload'
+  const TARBALL = `${NPMJS}/-/clawbench-desktop-linux-x64-payload-1.2.3.tgz`
+  const MIRROR = 'https://registry.npmmirror.com'
+
+  afterEach(() => {
+    downloadSpy.mockReset()
+    download.impl = () => Buffer.alloc(0)
+  })
+
+  it('re-points the tarball path at the mirror, keeping scope and filename', () => {
+    expect(mirrorFallbackUrls([TARBALL], MIRROR)).toEqual([
+      `${MIRROR}/@xulongzhe/clawbench-desktop-linux-x64-payload/-/clawbench-desktop-linux-x64-payload-1.2.3.tgz`,
+    ])
+  })
+
+  it('does not duplicate a candidate the server already produced', () => {
+    // The common case: server and client are both in mainland China, so the
+    // server's own candidate IS the mirror. Retrying it would download the same
+    // dead tarball twice.
+    const already = `${MIRROR}/@xulongzhe/p/-/p-1.2.3.tgz`
+    expect(mirrorFallbackUrls([already], MIRROR)).toEqual([])
+  })
+
+  it('leaves release zips and their prefix mirrors alone', () => {
+    // Only npm tarballs carry the `/-/` segment; a GitHub zip must never be
+    // re-pointed at a registry host, which would 404 and waste a timeout.
+    const zip = 'https://gh-proxy.example/https://github.com/o/r/releases/download/v1/a.zip'
+    expect(npmTarballPath(zip)).toBe('')
+    expect(mirrorFallbackUrls([zip], MIRROR)).toEqual([])
+  })
+
+  it('leaves a tarball that did not come from a registry alone', () => {
+    // `.../releases/app-1.2.3.tgz` is a .tgz but has no `/-/` marker; retrying
+    // it under a registry prefix would point at a package that does not exist.
+    expect(npmTarballPath('https://example.com/releases/app-1.2.3.tgz')).toBe('')
+    expect(mirrorFallbackUrls(['https://example.com/releases/app-1.2.3.tgz'], MIRROR)).toEqual([])
+  })
+
+  it('retries through the mirror after the server candidate fails', async () => {
+    const body = gzipSync(Buffer.from('payload'))
+    download.impl = (url) => {
+      if (url === TARBALL) throw new Error('ETIMEDOUT')
+      if (url.startsWith(MIRROR)) return body
+      throw new Error(`unexpected url ${url}`)
+    }
+    const buf = await downloadFirstAvailable([TARBALL], MIRROR)
+    expect(buf.equals(body)).toBe(true)
+    expect(downloadSpy).toHaveBeenLastCalledWith(
+      `${MIRROR}/@xulongzhe/clawbench-desktop-linux-x64-payload/-/clawbench-desktop-linux-x64-payload-1.2.3.tgz`,
+    )
+  })
+
+  it('still reports the original failure when the mirror fails too', async () => {
+    download.impl = () => {
+      throw new Error('ECONNREFUSED')
+    }
+    await expect(downloadFirstAvailable([TARBALL], MIRROR)).rejects.toThrow(
+      /registry\.npmjs\.org[\s\S]*registry\.npmmirror\.com/,
+    )
+  })
+
+  it('does not retry at all when no registry is configured', async () => {
+    download.impl = () => {
+      throw new Error('ECONNREFUSED')
+    }
+    await expect(downloadFirstAvailable([TARBALL], '')).rejects.toThrow(/all download sources failed/)
+    expect(downloadSpy).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('localNpmRegistryBase', () => {
+  it('prefers NPM_CONFIG_REGISTRY over the npmrc file', () => {
+    fs.writeFileSync(path.join(tmpRoot, '.npmrc'), 'registry=https://from-file.example/\n')
+    expect(
+      localNpmRegistryBase({ NPM_CONFIG_REGISTRY: 'https://from-env.example/npm/' }, tmpRoot),
+    ).toBe('https://from-env.example/npm')
+  })
+
+  it('falls back to the registry= line in ~/.npmrc', () => {
+    fs.writeFileSync(
+      path.join(tmpRoot, '.npmrc'),
+      '# comment\n; other\n@scope:registry=https://scoped.example/\nregistry=https://mirror.example/\n',
+    )
+    expect(localNpmRegistryBase({}, tmpRoot)).toBe('https://mirror.example')
+  })
+
+  it('rejects non-http values and missing files', () => {
+    // npm allows `registry=default`; that is not a URL and must not become one.
+    fs.writeFileSync(path.join(tmpRoot, '.npmrc'), 'registry=default\n')
+    expect(localNpmRegistryBase({}, tmpRoot)).toBe('')
+    expect(localNpmRegistryBase({ NPM_CONFIG_REGISTRY: 'not a url' }, tmpRoot)).toBe('')
   })
 })
 

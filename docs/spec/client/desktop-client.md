@@ -135,6 +135,8 @@ flowchart TD
 
 每个平台返回**候选 URL 列表**：国内镜像优先、直连 github.com 始终兜底，客户端与前端都按序取首个可用项——一个镜像失效不致命。`tag` 为空表示当前是 dev/未打标签构建（无对应 Release），此时 `downloads` 为空、前端隐藏下载入口——这是正常状态，不是错误。
 
+**npm 镜像源由客户端兜底，不由服务端读取**。服务端拼载荷 URL 时只用 `getRegistryBase()`（按服务端自身区域二选一：npmmirror / npmjs.org），**刻意不读服务端的 `~/.npmrc` / `NPM_CONFIG_REGISTRY`**——那些配置属于服务器这台机器，通常指向客户端不可达的私有源，写进响应等于给每个客户端一个死候选。反过来，服务端在海外而用户在境内的情形，响应里的 `registry.npmjs.org` 会很慢甚至不通，所以客户端在服务端候选全部失败后，再用**本机**的 `NPM_CONFIG_REGISTRY` / `npm_config_registry` / `~/.npmrc` 的 `registry=` 重写同一条 tarball path 重试（`install.ts` 的 `mirrorFallbackUrls`）。三条约束：只对 npm tarball 生效（path 含 `/-/` 且以 `.tgz` 结尾），GitHub Release zip 及其前缀镜像绝不改写到 registry 上；改写结果与已有候选相同时去重（服务端与客户端都在国内时两者本就相同，否则会把同一个死 tarball 下两遍）；全量包不参与此重试，它只有 GitHub 候选。CLI 自升级读的是**本机** npmrc（`internal/service/upgrade.go` 的 `registryCandidates`），两条链路的取值位置因此相反，这不是不一致。
+
 ### 设计要点
 
 - **平台判定只能有一份，且无边框必须配套拖拽区**：无边框窗口默认不可拖动，拖拽要靠 header 的 `-webkit-app-region: drag` 提供——而拖拽豁免（`no-drag`）只能给**控件**，绝不能给会吃掉剩余空间的填空容器（一个 `flex:1` 的容器列进豁免清单会让整条 header 拖不动）。平台判定同样如此：渲染层若自己再写一份"是不是桌面壳/什么系统"的推断，就与主进程的表静默漂移，且 sandboxed preload 拿不到 UA。因此平台相关决策全部落在主进程的纯模块里，渲染层只消费 IPC 结果

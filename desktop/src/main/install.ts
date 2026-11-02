@@ -561,6 +561,124 @@ export async function downloadAndInstall(
 }
 
 /**
+ * The user's own npm registry mirror, or '' when none is configured.
+ *
+ * Mirrors the server-side lookup in internal/service/upgrade.go, so both upgrade
+ * paths honour the same setting: NPM_CONFIG_REGISTRY / npm_config_registry,
+ * then the `registry=` line in the user-level ~/.npmrc.
+ *
+ * The server deliberately does NOT read this file — its own npmrc belongs to a
+ * different machine and is usually a private registry the client cannot reach
+ * (see desktopPayloadNpmURLs). Reading it HERE is what makes a user's mirror
+ * usable for a download that runs on the user's machine.
+ */
+export function localNpmRegistryBase(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+): string {
+  for (const raw of [env.NPM_CONFIG_REGISTRY, env.npm_config_registry]) {
+    const base = normalizeRegistryBase(raw ?? '')
+    if (base) return base
+  }
+  return normalizeRegistryBase(readNpmrcRegistry(home))
+}
+
+/** Trim/validate a registry value into `<scheme>://<host>[:port][/path]`, or ''. */
+function normalizeRegistryBase(raw: string): string {
+  const value = raw.trim()
+  if (!value) return ''
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return ''
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return ''
+  if (!url.host) return ''
+  // Keep any path prefix (private registries are often served under one) but
+  // drop trailing slashes so joining a tarball path cannot produce a `//`.
+  return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, '')}`
+}
+
+/** Read the `registry=` line from the user-level ~/.npmrc, or ''. */
+function readNpmrcRegistry(home: string): string {
+  let data: string
+  try {
+    data = fs.readFileSync(path.join(home, '.npmrc'), 'utf8')
+  } catch {
+    return ''
+  }
+  for (const rawLine of data.split('\n')) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue
+    const eq = line.indexOf('=')
+    if (eq < 0) continue
+    if (line.slice(0, eq).trim() !== 'registry') continue
+    return line.slice(eq + 1).trim()
+  }
+  return ''
+}
+
+/**
+ * The path+query of an npm registry tarball URL, or '' for anything else.
+ *
+ * npm tarballs look like `<base>/<pkg>/-/<name>-<version>.tgz`; the `/-/`
+ * segment is the marker that separates them from a GitHub release zip (and its
+ * prefix mirrors), which must never be re-pointed at an npm registry.
+ */
+export function npmTarballPath(url: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return ''
+  }
+  if (!parsed.pathname.endsWith('.tgz')) return ''
+  if (!parsed.pathname.includes('/-/')) return ''
+  return `${parsed.pathname}${parsed.search}`
+}
+
+/**
+ * Extra candidates obtained by re-pointing the npm tarball URLs at the user's
+ * own mirror, appended after the server's list.
+ *
+ * The server picks its npm base from ITS OWN region (npmmirror in mainland
+ * China, npmjs.org elsewhere), which is the wrong answer when the server runs
+ * abroad and the client does not: the tarball then comes from npmjs.org, which
+ * is slow or unreachable from mainland China. Re-pointing the same path at the
+ * client's configured mirror is exactly the "download failed, retry through my
+ * mirror" step, and it needs no server change.
+ *
+ * Candidates identical to one already in the list are dropped — the common case
+ * (server and client both in China) would otherwise download the same tarball
+ * twice before reporting failure.
+ */
+export function mirrorFallbackUrls(urls: string[], registryBase: string): string[] {
+  if (!registryBase) return []
+  const seen = new Set(urls.map(urlKey))
+  const extra: string[] = []
+  for (const url of urls) {
+    const tarballPath = npmTarballPath(url)
+    if (!tarballPath) continue
+    const candidate = `${registryBase}${tarballPath}`
+    const key = urlKey(candidate)
+    if (seen.has(key)) continue
+    seen.add(key)
+    extra.push(candidate)
+  }
+  return extra
+}
+
+/** Normalised comparison key for de-duplicating candidate URLs. */
+function urlKey(url: string): string {
+  try {
+    return new URL(url).toString()
+  } catch {
+    return url
+  }
+}
+
+/**
  * Try each candidate URL in order, returning the first body that downloads AND
  * looks like an archive.
  *
@@ -570,10 +688,21 @@ export async function downloadAndInstall(
  * and for a payload that failure means falling all the way back to the ~150MB
  * full download instead of simply trying the next candidate. Rejecting the body
  * here keeps the fallback proportional to the problem.
+ *
+ * After the server's candidates are exhausted, npm tarballs are retried through
+ * the local mirror (see mirrorFallbackUrls). `registryBase` is injectable so
+ * tests do not depend on the machine's ~/.npmrc; pass '' to disable the retry.
  */
-export async function downloadFirstAvailable(urls: string[]): Promise<Buffer> {
+export async function downloadFirstAvailable(
+  urls: string[],
+  registryBase?: string,
+): Promise<Buffer> {
+  const base =
+    registryBase ??
+    (urls.some((url) => npmTarballPath(url)) ? localNpmRegistryBase() : '')
+  const candidates = [...urls, ...mirrorFallbackUrls(urls, base)]
   const errs: string[] = []
-  for (const url of urls) {
+  for (const url of candidates) {
     let buf: Buffer
     try {
       buf = await httpGetBuffer(url)
