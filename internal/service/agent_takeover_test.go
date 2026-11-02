@@ -364,3 +364,463 @@ func TestDeleteAgentWithTakeover_ClearsNativeSessionWithTransportOverride(t *tes
 	assert.Empty(t, transport)
 	assert.Zero(t, compacted)
 }
+
+// ---------------------------------------------------------------------------
+// Running-session probe
+// ---------------------------------------------------------------------------
+
+// TestAgentHasRunningSessions_EmptyAgentIsNeverRunning: the empty id is the
+// "no agent" case (an untagged session). It must answer false without touching
+// the database at all.
+func TestAgentHasRunningSessions_EmptyAgentIsNeverRunning(t *testing.T) {
+	setupTakeoverDB(t)
+
+	running, err := service.AgentHasRunningSessions("")
+	require.NoError(t, err)
+	assert.False(t, running)
+}
+
+// TestAgentHasRunningSessions_ChecksEveryRunningSession pins the multi-id
+// query: the placeholder list is built by hand, and a missing comma would turn
+// "agent owns session B" into a SQL syntax error (or a wrong answer) as soon as
+// more than one session is running.
+func TestAgentHasRunningSessions_ChecksEveryRunningSession(t *testing.T) {
+	db := setupTakeoverDB(t)
+
+	_, err := db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type) VALUES
+			('busy-a', 1, 'claude', 'a', 'claude', 'chat'),
+			('busy-b', 1, 'claude', 'b', 'claude', 'chat')`)
+	require.NoError(t, err)
+
+	service.SetSessionRunning("busy-a", true, true)
+	service.SetSessionRunning("busy-b", true, true)
+	t.Cleanup(func() {
+		service.SetSessionRunning("busy-a", false, true)
+		service.SetSessionRunning("busy-b", false, true)
+	})
+
+	running, err := service.AgentHasRunningSessions("claude")
+	require.NoError(t, err)
+	assert.True(t, running, "an agent with two live turns is running")
+
+	running, err = service.AgentHasRunningSessions("codebuddy")
+	require.NoError(t, err)
+	assert.False(t, running, "a running session belongs only to its own agent")
+}
+
+// TestAgentHasRunningSessions_QueryFailureIsAnError: a broken lookup must not
+// be reported as "nothing is running" — that answer authorizes a deletion that
+// would rewrite a live turn's identity.
+func TestAgentHasRunningSessions_QueryFailureIsAnError(t *testing.T) {
+	db := setupTakeoverDB(t)
+
+	service.SetSessionRunning("busy-orphan", true, true)
+	t.Cleanup(func() { service.SetSessionRunning("busy-orphan", false, true) })
+
+	_, err := db.Exec("DROP TABLE chat_sessions")
+	require.NoError(t, err)
+
+	running, err := service.AgentHasRunningSessions("claude")
+	require.Error(t, err, "a failing query is an error, not a false")
+	assert.False(t, running)
+}
+
+// ---------------------------------------------------------------------------
+// Argument validation and transaction atomicity
+// ---------------------------------------------------------------------------
+
+// TestDeleteAgentWithTakeover_RequiresBothAgents: a missing side is a caller
+// bug, reported before anything is written.
+func TestDeleteAgentWithTakeover_RequiresBothAgents(t *testing.T) {
+	db := setupTakeoverDB(t)
+
+	cases := []struct {
+		name string
+		old  *model.Agent
+		repl *model.Agent
+	}{
+		{"nil source", nil, takeoverReplacement()},
+		{"source without id", &model.Agent{Name: "Claude"}, takeoverReplacement()},
+		{"nil replacement", takeoverSource(), nil},
+		{"replacement without id", takeoverSource(), &model.Agent{Name: "Test"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := service.DeleteAgentWithTakeover(tc.old, tc.repl)
+			require.Error(t, err)
+			assert.Zero(t, res.Sessions)
+			assert.Zero(t, res.Groups)
+		})
+	}
+
+	// Nothing was touched: the source agent is still there.
+	var count int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM agents WHERE id = 'claude'").Scan(&count))
+	assert.Equal(t, 1, count)
+}
+
+// takeoverFixtureSession inserts one live chat owned by the agent under test.
+func takeoverFixtureSession(t *testing.T, db *sql.DB, sessionID string) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type)
+		VALUES (?, 1, 'claude', 'chat', 'claude', 'chat')`, sessionID)
+	require.NoError(t, err)
+}
+
+// assertTakeoverRolledBack fails unless the session still names the deleted
+// agent and the agent row itself survived — i.e. the transaction did nothing.
+func assertTakeoverRolledBack(t *testing.T, db *sql.DB, sessionID string) {
+	t.Helper()
+	var agentID string
+	require.NoError(t, db.QueryRow("SELECT agent_id FROM chat_sessions WHERE id = ?", sessionID).Scan(&agentID))
+	assert.Equal(t, "claude", agentID, "a failed takeover must not leave the session half-swapped")
+
+	var agents int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM agents WHERE id = 'claude'").Scan(&agents))
+	assert.Equal(t, 1, agents, "a failed takeover must not delete the agent")
+}
+
+// TestDeleteAgentWithTakeover_RollsBackWhenTaskRewriteFails: the sessions, the
+// tasks and the agent row move in ONE transaction. If the task rewrite fails,
+// the already-rewritten sessions must roll back with it — otherwise the
+// conversations would name an agent that still exists under the old id while
+// their tasks point at the replacement.
+func TestDeleteAgentWithTakeover_RollsBackWhenTaskRewriteFails(t *testing.T) {
+	db := setupTakeoverDB(t)
+	takeoverFixtureSession(t, db, "s-rollback-task")
+
+	_, err := db.Exec("DROP TABLE scheduled_tasks")
+	require.NoError(t, err)
+
+	_, err = service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reassign tasks")
+
+	assertTakeoverRolledBack(t, db, "s-rollback-task")
+}
+
+// TestDeleteAgentWithTakeover_RollsBackWhenAgentDeleteFails: the last statement
+// of the transaction can fail too (a locked/broken agents table). The session
+// rewrite must not survive it.
+func TestDeleteAgentWithTakeover_RollsBackWhenAgentDeleteFails(t *testing.T) {
+	db := setupTakeoverDB(t)
+	takeoverFixtureSession(t, db, "s-rollback-delete")
+
+	_, err := db.Exec("DROP TABLE agents")
+	require.NoError(t, err)
+
+	_, err = service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete agent")
+
+	var agentID string
+	require.NoError(t, db.QueryRow("SELECT agent_id FROM chat_sessions WHERE id = 's-rollback-delete'").Scan(&agentID))
+	assert.Equal(t, "claude", agentID, "the session rewrite must roll back with the failed delete")
+}
+
+// TestDeleteAgentWithTakeover_NoticeFailureDoesNotFailDeletion: the "changed
+// hands" rows are written AFTER the commit and are best-effort. A broken
+// timeline table must not turn a completed takeover into an error the caller
+// would report as "deletion failed" (the rows are already gone by then).
+func TestDeleteAgentWithTakeover_NoticeFailureDoesNotFailDeletion(t *testing.T) {
+	db := setupTakeoverDB(t)
+	takeoverFixtureSession(t, db, "s-notice-fail")
+
+	_, err := db.Exec("DROP TABLE chat_history")
+	require.NoError(t, err)
+
+	res, err := service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.NoError(t, err, "a failed notice must not fail the deletion")
+	assert.Equal(t, 1, res.Sessions)
+
+	var agentID string
+	require.NoError(t, db.QueryRow("SELECT agent_id FROM chat_sessions WHERE id = 's-notice-fail'").Scan(&agentID))
+	assert.Equal(t, "codebuddy", agentID)
+
+	var agents int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM agents WHERE id = 'claude'").Scan(&agents))
+	assert.Zero(t, agents)
+}
+
+// ---------------------------------------------------------------------------
+// Group bookkeeping edge cases
+// ---------------------------------------------------------------------------
+
+// TestDeleteAgentWithTakeover_SkipsMemberWithoutGroup: a member row whose
+// group_id is empty has no timeline to announce on. Announcing on the session
+// id "" would write a row nobody can ever see.
+func TestDeleteAgentWithTakeover_SkipsMemberWithoutGroup(t *testing.T) {
+	db := setupTakeoverDB(t)
+
+	_, err := db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id)
+		VALUES ('m-lone', 1, 'claude', '', 'Claude', 'claude', 'group_member', '')`)
+	require.NoError(t, err)
+
+	res, err := service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.NoError(t, err)
+	assert.Zero(t, res.Groups, "a member with no group contributes no group row")
+
+	var rows int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ''").Scan(&rows))
+	assert.Zero(t, rows, "nothing may be written to the empty session id")
+}
+
+// TestDeleteAgentWithTakeover_ToleratesOrphanGroup: a member can outlive its
+// group row (the group was hard-deleted). Re-deriving the identity of a group
+// that no longer exists must be a no-op, not a failed deletion.
+func TestDeleteAgentWithTakeover_ToleratesOrphanGroup(t *testing.T) {
+	db := setupTakeoverDB(t)
+
+	_, err := db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id)
+		VALUES ('m-orphan', 1, 'claude', '', 'Claude', 'claude', 'group_member', 'ghost-group')`)
+	require.NoError(t, err)
+
+	res, err := service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Groups, "the orphaned group id is still counted as affected")
+
+	var agentID string
+	require.NoError(t, db.QueryRow("SELECT agent_id FROM chat_sessions WHERE id = 'm-orphan'").Scan(&agentID))
+	assert.Equal(t, "codebuddy", agentID)
+}
+
+// TestDeleteAgentWithTakeover_RecomputesGroupFromFirstMember: a group row can
+// name a DIFFERENT agent than its first member (the mirrored member left and a
+// new one was added, or the host changed). The blanket UPDATE only touches rows
+// naming the deleted agent, so such a group is left naming a live-but-wrong
+// agent — recomputeGroupIdentityTx is the only thing that fixes it, and it must
+// actually write.
+func TestDeleteAgentWithTakeover_RecomputesGroupFromFirstMember(t *testing.T) {
+	db := setupTakeoverDB(t)
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend) VALUES ('other', 'Other', 'claude')`)
+	require.NoError(t, err)
+
+	// Free mode (no host pointer). The group row mirrors "other", but the FIRST
+	// member (by rowid) is the agent being deleted.
+	_, err = db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, context_state)
+		VALUES ('g-drift', 1, 'claude', 'group', 'other', 'group', '{"group_mode":"free"}')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id)
+		VALUES ('m-drift-first', 1, 'claude', '', 'Claude', 'claude', 'group_member', 'g-drift')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id)
+		VALUES ('m-drift-second', 1, 'claude', '', 'Other', 'other', 'group_member', 'g-drift')`)
+	require.NoError(t, err)
+
+	res, err := service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Groups)
+
+	var agentID, backend string
+	require.NoError(t, db.QueryRow(
+		"SELECT agent_id, backend FROM chat_sessions WHERE id = 'g-drift'").Scan(&agentID, &backend))
+	assert.Equal(t, "codebuddy", agentID, "the group must follow its first member, not keep naming a stale agent")
+	assert.Equal(t, "codebuddy", backend)
+
+	// The surviving member keeps its own identity.
+	require.NoError(t, db.QueryRow(
+		"SELECT agent_id FROM chat_sessions WHERE id = 'm-drift-second'").Scan(&agentID))
+	assert.Equal(t, "other", agentID)
+}
+
+// TestDeleteAgentWithTakeover_ToleratesVanishedHostMember: a host pointer can
+// dangle (the host member row was removed). That group has no identity to
+// re-derive, so it must be skipped silently — and it already follows the
+// blanket UPDATE.
+func TestDeleteAgentWithTakeover_ToleratesVanishedHostMember(t *testing.T) {
+	db := setupTakeoverDB(t)
+
+	_, err := db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, context_state)
+		VALUES ('g-no-host', 1, 'claude', 'group', 'claude', 'group',
+		        '{"group_mode":"host","host_member_id":"m-gone"}')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id)
+		VALUES ('m-present', 1, 'claude', '', 'Claude', 'claude', 'group_member', 'g-no-host')`)
+	require.NoError(t, err)
+
+	res, err := service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Groups)
+
+	var agentID string
+	require.NoError(t, db.QueryRow("SELECT agent_id FROM chat_sessions WHERE id = 'g-no-host'").Scan(&agentID))
+	assert.Equal(t, "codebuddy", agentID, "the group still moved with the blanket rewrite")
+}
+
+// ---------------------------------------------------------------------------
+// Failure propagation from the transaction's own queries
+// ---------------------------------------------------------------------------
+
+// TestDeleteAgentWithTakeover_RunningCheckFailureIsWrapped: the in-transaction
+// re-check must report a broken query instead of assuming "nothing is running"
+// (the pre-check already passed, so a silent false here would rewrite a live
+// turn).
+func TestDeleteAgentWithTakeover_RunningCheckFailureIsWrapped(t *testing.T) {
+	db := setupTakeoverDB(t)
+
+	service.SetSessionRunning("busy-wrapped", true, true)
+	t.Cleanup(func() { service.SetSessionRunning("busy-wrapped", false, true) })
+
+	_, err := db.Exec("DROP TABLE chat_sessions")
+	require.NoError(t, err)
+
+	_, err = service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "check running sessions")
+}
+
+// TestDeleteAgentWithTakeover_NoticeQueryFailureIsWrapped: with nothing
+// running, the next statement is the notice query. Its failure must abort the
+// transaction (no half-done takeover) and name the step that broke.
+func TestDeleteAgentWithTakeover_NoticeQueryFailureIsWrapped(t *testing.T) {
+	db := setupTakeoverDB(t)
+
+	require.Empty(t, service.GetRunningSessionIDs(), "precondition: no other test left a session running")
+
+	_, err := db.Exec("DROP TABLE chat_sessions")
+	require.NoError(t, err)
+
+	_, err = service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "list takeover notices")
+
+	var agents int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM agents WHERE id = 'claude'").Scan(&agents))
+	assert.Equal(t, 1, agents)
+}
+
+// TestDeleteAgentWithTakeover_SessionRewriteFailureIsWrapped uses a trigger to
+// make the session rewrite fail, which is the one way to reach that branch
+// without a corrupt database. The error must name the step and the transaction
+// must leave everything as it was.
+func TestDeleteAgentWithTakeover_SessionRewriteFailureIsWrapped(t *testing.T) {
+	db := setupTakeoverDB(t)
+	takeoverFixtureSession(t, db, "s-rewrite-fail")
+
+	_, err := db.Exec(`
+		CREATE TRIGGER block_session_rewrite BEFORE UPDATE ON chat_sessions
+		BEGIN SELECT RAISE(ABORT, 'session rewrite blocked'); END`)
+	require.NoError(t, err)
+
+	_, err = service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reassign sessions")
+	assert.Contains(t, err.Error(), "session rewrite blocked")
+
+	assertTakeoverRolledBack(t, db, "s-rewrite-fail")
+}
+
+// TestDeleteAgentWithTakeover_ClosedDatabaseIsAnError: the write lock cannot be
+// taken on a closed handle. That must surface as an error rather than a panic
+// or a "nothing to do" result.
+func TestDeleteAgentWithTakeover_ClosedDatabaseIsAnError(t *testing.T) {
+	db := setupTakeoverDB(t)
+	require.NoError(t, db.Close())
+
+	_, err := service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.Error(t, err)
+}
+
+// TestDeleteAgentWithTakeover_GroupIdentityReadFailureIsWrapped: a group row
+// with an unparseable context_state makes json_extract fail. The takeover must
+// abort (and roll back) instead of leaving the group naming the deleted agent —
+// this is the one failure the user cannot fix from the UI afterwards.
+//
+// The group row names ANOTHER agent on purpose: the blanket rewrite would fail
+// on the same bad JSON first (it calls json_remove), so only a group the
+// blanket UPDATE skips reaches the identity read.
+func TestDeleteAgentWithTakeover_GroupIdentityReadFailureIsWrapped(t *testing.T) {
+	db := setupTakeoverDB(t)
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend) VALUES ('other', 'Other', 'claude')`)
+	require.NoError(t, err)
+
+	_, err = db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, context_state)
+		VALUES ('g-corrupt', 1, 'claude', 'group', 'other', 'group', 'not json')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id)
+		VALUES ('m-corrupt', 1, 'claude', '', 'Claude', 'claude', 'group_member', 'g-corrupt')`)
+	require.NoError(t, err)
+
+	_, err = service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read group g-corrupt identity")
+
+	// Rolled back: the group and its member still belong to the deleted agent.
+	var agentID string
+	require.NoError(t, db.QueryRow("SELECT agent_id FROM chat_sessions WHERE id = 'm-corrupt'").Scan(&agentID))
+	assert.Equal(t, "claude", agentID)
+}
+
+// TestDeleteAgentWithTakeover_GroupIdentityWriteFailureIsWrapped: re-deriving a
+// group's identity is a write inside the takeover transaction, so its failure
+// must roll the whole deletion back (a half-applied takeover would leave the
+// group pointing at an agent that no longer exists).
+func TestDeleteAgentWithTakeover_GroupIdentityWriteFailureIsWrapped(t *testing.T) {
+	db := setupTakeoverDB(t)
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend) VALUES ('other', 'Other', 'claude')`)
+	require.NoError(t, err)
+
+	// The group row names "other" while its first member is the deleted agent,
+	// so recomputeGroupIdentityTx must write.
+	_, err = db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, context_state)
+		VALUES ('g-write', 1, 'claude', 'group', 'other', 'group', '{"group_mode":"free"}')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id)
+		VALUES ('m-write', 1, 'claude', '', 'Claude', 'claude', 'group_member', 'g-write')`)
+	require.NoError(t, err)
+
+	// Block only the identity rewrite: the blanket UPDATE changes
+	// agent_takeover_from, this one does not.
+	_, err = db.Exec(`
+		CREATE TRIGGER block_group_identity BEFORE UPDATE ON chat_sessions
+		WHEN NEW.id = 'g-write' AND NEW.agent_takeover_from IS OLD.agent_takeover_from
+		BEGIN SELECT RAISE(ABORT, 'group identity blocked'); END`)
+	require.NoError(t, err)
+
+	_, err = service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update group g-write identity")
+	assert.Contains(t, err.Error(), "group identity blocked")
+
+	var agentID string
+	require.NoError(t, db.QueryRow("SELECT agent_id FROM chat_sessions WHERE id = 'g-write'").Scan(&agentID))
+	assert.Equal(t, "other", agentID, "the group must roll back with the failed takeover")
+
+	var agents int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM agents WHERE id = 'claude'").Scan(&agents))
+	assert.Equal(t, 1, agents)
+}
+
+// TestDeleteAgentWithTakeover_CorruptArchivedFlagFailsLoudly: the notice query
+// scans `archived` into an int, and SQLite's dynamic typing lets a TEXT value
+// sit in that column. Such a row cannot be classified as live or archived, so
+// the takeover must fail instead of guessing — guessing wrong either skips a
+// notice the user needed or writes to an archived timeline.
+func TestDeleteAgentWithTakeover_CorruptArchivedFlagFailsLoudly(t *testing.T) {
+	db := setupTakeoverDB(t)
+
+	_, err := db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, archived)
+		VALUES ('s-corrupt-flag', 1, 'claude', 'chat', 'claude', 'chat', 'not-a-flag')`)
+	require.NoError(t, err)
+
+	_, err = service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "scan takeover notice")
+
+	assertTakeoverRolledBack(t, db, "s-corrupt-flag")
+}

@@ -42,6 +42,22 @@ func TestParseLine_TruncatesLongText(t *testing.T) {
 	assert.Len(t, []rune(ev.Text), 512)
 }
 
+func TestParseLine_RejectsEmptyPayloads(t *testing.T) {
+	// The helper's own loop skips only truly empty lines, so whitespace still
+	// reaches the parser and must be rejected there.
+	for _, line := range []string{"", "   ", "\t"} {
+		_, err := ParseLine(line)
+		require.Error(t, err, "line %q", line)
+		assert.Contains(t, err.Error(), "empty event", "line %q", line)
+	}
+
+	// A text event with nothing to type would be a no-op; rejecting it makes the
+	// renderer's bug visible instead of silent.
+	_, err := ParseLine(`{"kind":"text","text":""}`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty text")
+}
+
 func TestVirtualKey_MapsNamedAndSingleCharacters(t *testing.T) {
 	cases := map[string]uint16{
 		"enter":  0x0D,

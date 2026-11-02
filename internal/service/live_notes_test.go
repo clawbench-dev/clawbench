@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -1666,4 +1667,1057 @@ func mustChatCount(t *testing.T, token string) int {
 	n, err := CountLiveNoteChat(token)
 	require.NoError(t, err)
 	return n
+}
+
+// ── Timeline origin, durations and rendering edges ──────────────────────────
+
+// Every artifact (transcript, WebVTT, file events) computes its offsets from
+// the same origin, and that origin must skip a segment whose timestamp is
+// missing: 0 sorts first, and using it would turn every real offset into
+// "milliseconds since 1970" — putting the last thing said at the top.
+func TestLiveNotesTimelineBase_IgnoresUntimedSegments(t *testing.T) {
+	base := int64(1_700_000_000_000)
+
+	assert.Zero(t, LiveNotesTimelineBase(nil), "no segments means no origin")
+	assert.Equal(t, base+5_000, LiveNotesTimelineBase([]LiveNoteSegment{
+		{ID: 1, Channel: "mic", StartedAt: 0, Text: "没有时间戳"},
+		{ID: 2, Channel: "mic", StartedAt: base + 20_000, Text: "后一句"},
+		{ID: 3, Channel: "mic", StartedAt: base + 5_000, Text: "前一句"},
+	}))
+}
+
+func TestLiveNoteDurationValue_Buckets(t *testing.T) {
+	withLanguage(t, "zh")
+
+	cases := []struct {
+		name string
+		ms   int64
+		want string
+	}{
+		{"under a second says nothing", 999, ""},
+		{"seconds", 8_400, "8 秒"},
+		{"whole minutes keep the minute form", 8 * 60_000, "8 分钟"},
+		{"minutes and seconds", 8*60_000 + 25_000, "8 分 25 秒"},
+		{"hours drop the seconds", 2*3600_000 + 5*60_000 + 30_000, "2 小时 5 分"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, liveNoteDurationValue(tc.ms))
+		})
+	}
+}
+
+// The stay suffix is only added when there is something to say: a two-second
+// visit must not render as an empty pair of brackets in the manifest.
+func TestLiveNoteDurationSuffix_WrapsOnlyRealDurations(t *testing.T) {
+	withLanguage(t, "zh")
+
+	assert.Empty(t, liveNoteDurationSuffix(500))
+	assert.Equal(t, "（8 分 25 秒）", liveNoteDurationSuffix(8*60_000+25_000))
+}
+
+// A cue offset cannot be negative; a segment stamped before the origin can only
+// come from a clock that moved backwards, and the file must still be valid.
+func TestLiveNoteEventLines_ClampNegativeOffsets(t *testing.T) {
+	withLanguage(t, "zh")
+
+	assert.True(t, strings.HasPrefix(liveNoteFileLine(-500, "打开 a.md"), "[00:00] 文件："))
+	assert.True(t, strings.HasPrefix(liveNoteScreenLine(-1, "开始共享屏幕"), "[00:00] 屏幕："))
+}
+
+func TestVTTTimestamp_ClampsNegativeToZero(t *testing.T) {
+	assert.Equal(t, "00:00:00.000", vttTimestamp(-1))
+	assert.Equal(t, "01:02:03.004", vttTimestamp(3600_000+2*60_000+3000+4))
+}
+
+// An unset UI language must mean the product default, not "English by
+// accident": the minutes are written by a background job with no request in
+// scope, so model.Language is the only signal there is.
+func TestLiveNoteT_UnsetLanguageUsesTheProductDefault(t *testing.T) {
+	prev := model.Language
+	t.Cleanup(func() { model.Language = prev })
+
+	model.Language = ""
+	unset := liveNoteT("MeetingUntitled")
+	model.Language = model.DefaultLanguage
+	assert.Equal(t, liveNoteT("MeetingUntitled"), unset)
+	assert.NotEmpty(t, unset)
+}
+
+// The publisher has the full path; a viewer's copy of the row carries only the
+// base name. Both must render, and an event with neither cannot be shown.
+func TestLiveNoteFileLabel_PathWinsAndNameIsTheFallback(t *testing.T) {
+	assert.Equal(t, "docs/a.md", liveNoteFileLabel(LiveNoteFile{Path: " docs/a.md ", Name: "a.md"}))
+	assert.Equal(t, "a.md", liveNoteFileLabel(LiveNoteFile{Name: "a.md"}))
+	assert.Empty(t, liveNoteFileLabel(LiveNoteFile{}))
+}
+
+func TestMeetingDirPath_NeedsBothHalves(t *testing.T) {
+	assert.Empty(t, MeetingDirPath("", "2026-10-30-1430"))
+	assert.Empty(t, MeetingDirPath("/proj", "  "))
+	assert.Equal(t,
+		filepath.Join("/proj", ".clawbench/notes", "2026-10-30-1430"),
+		MeetingDirPath("/proj", "2026-10-30-1430"))
+}
+
+func TestMeetingDirName_UnknownMeetingIsEmpty(t *testing.T) {
+	setupTestDBForLiveNotes(t)
+
+	name, err := MeetingDirName("nope")
+	require.NoError(t, err)
+	assert.Empty(t, name)
+}
+
+// A channel with no printable ASCII left still has to name a file; an empty
+// element would make SaveLiveNoteAudio write ".webm" for every such channel.
+func TestLiveNotesChannelSlug_UnprintableChannelGetsAPlaceholder(t *testing.T) {
+	assert.Equal(t, "viewer-2", liveNotesChannelSlug("viewer:2"))
+	assert.Equal(t, "channel", liveNotesChannelSlug("观众"), "a slug with no ASCII left still names a file")
+	assert.Equal(t, "channel", liveNotesChannelSlug(""))
+}
+
+// Binary content must never reach the prompt. A NUL in the head is the cheap
+// test; invalid UTF-8 is refused because it cannot be rendered faithfully.
+func TestLiveNoteExcerptText_RejectsBinaryAndCapsRunes(t *testing.T) {
+	assert.Empty(t, liveNoteExcerptText([]byte{0x89, 'P', 'N', 'G', 0x00}, 100))
+	assert.Empty(t, liveNoteExcerptText([]byte{0xff, 0xfe, 'a'}, 100))
+	assert.Equal(t, "abc", liveNoteExcerptText([]byte("  abc \n"), 100))
+	assert.Equal(t, "abc", liveNoteExcerptText([]byte("abcdef"), 3))
+}
+
+// Reading is bounded: a client that reports a thousand files must not turn the
+// prompt into a file dump.
+func TestLiveNoteFileExcerpts_ReadsAtMostFiveFiles(t *testing.T) {
+	project := t.TempDir()
+	files := make([]LiveNoteFile, 0, 6)
+	for i := range 6 {
+		name := "f" + strconv.Itoa(i) + ".md"
+		require.NoError(t, os.WriteFile(filepath.Join(project, name), []byte(name+" 的内容"), 0o644))
+		files = append(files, LiveNoteFile{Path: name, OpenedAt: int64(i + 1)})
+	}
+
+	got := LiveNoteFileExcerpts(project, files)
+	assert.Contains(t, got, "### f4.md")
+	assert.NotContains(t, got, "### f5.md", "only the first five files are read")
+}
+
+// Every reason a file cannot contribute an excerpt must be a skip, not an
+// error: one unreadable file must not cost the meeting its summary.
+func TestLiveNoteFileExcerpts_SkipsUnusableFiles(t *testing.T) {
+	project := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(project, "folder.md"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(project, "bin.md"), []byte("a\x00b"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(project, "big.md"), make([]byte, LiveNoteFileCopyMaxBytes+1), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(project, "ok.md"), []byte("可用内容"), 0o644))
+
+	got := LiveNoteFileExcerpts(project, []LiveNoteFile{
+		{Path: "folder.md", OpenedAt: 1},
+		{Path: "bin.md", OpenedAt: 2},
+		{Path: "big.md", OpenedAt: 3},
+		{Path: "gone.md", OpenedAt: 4},
+		{Path: "ok.md", OpenedAt: 5},
+	})
+	assert.Contains(t, got, "### ok.md")
+	for _, skipped := range []string{"folder.md", "bin.md", "big.md", "gone.md"} {
+		assert.NotContains(t, got, "### "+skipped, "%s must be skipped, not excerpted", skipped)
+	}
+}
+
+func TestResolveLiveNoteFilePath_AcceptsProjectRelativeAndAbsolute(t *testing.T) {
+	abs := filepath.Join(t.TempDir(), "a.md")
+	assert.Equal(t, abs, resolveLiveNoteFilePath("/proj", abs))
+	assert.Equal(t, filepath.Join("/proj", "docs/a.md"), resolveLiveNoteFilePath("/proj", "docs/a.md"))
+	assert.Empty(t, resolveLiveNoteFilePath("", "docs/a.md"), "a relative path with no project cannot be resolved")
+	assert.Empty(t, resolveLiveNoteFilePath("/proj", "  "))
+}
+
+// An entry with no open time, or with nothing to call it, cannot be placed on
+// the timeline — and an empty list of rows must not produce a bare heading.
+func TestLiveNoteFilesPromptSection_AllEntriesUnusable(t *testing.T) {
+	started := time.UnixMilli(1_700_000_000_000)
+
+	assert.Empty(t, LiveNoteFilesPromptSection([]LiveNoteFile{{Path: "a.md"}}, started, ""))
+	assert.Empty(t, LiveNoteFilesPromptSection([]LiveNoteFile{{OpenedAt: started.UnixMilli()}}, started, ""))
+}
+
+// A screen share that never ended says so; an interval with no start cannot be
+// placed at all.
+func TestLiveNoteScreenPromptSection_OpenIntervalAndUnusableRows(t *testing.T) {
+	started := time.UnixMilli(1_700_000_000_000)
+
+	got := LiveNoteScreenPromptSection([]LiveNoteScreenShare{
+		{Sharer: "host", SharerName: "泷泽", StartedAt: started.UnixMilli()},
+	}, started)
+	assert.Contains(t, got, "泷泽 共享屏幕")
+	assert.Contains(t, got, "起", "an interval still running says so instead of inventing an end")
+
+	assert.Empty(t, LiveNoteScreenPromptSection([]LiveNoteScreenShare{{Sharer: "host"}}, started))
+	assert.Empty(t, LiveNoteScreenPromptSection(nil, started))
+}
+
+// File events without a timeline origin are dropped, so a share that has only
+// file events produces no track at all rather than one starting at 1970.
+func TestBuildLiveNotesVTT_NoUsableCues(t *testing.T) {
+	assert.Empty(t, BuildLiveNotesVTT(nil, []LiveNoteFile{
+		{Path: "a.md", OpenedAt: 1_700_000_000_000},
+	}, nil))
+}
+
+// A cue whose channel and speaker are both blank has no voice span to open; it
+// still has to be written as a plain cue instead of an empty <v> tag.
+func TestBuildLiveNotesVTT_UnlabelledCueHasNoVoiceSpan(t *testing.T) {
+	got := BuildLiveNotesVTT([]LiveNoteSegment{
+		{Channel: "", Speaker: "", StartedAt: 1_700_000_000_000, DurationMS: 1000, Text: "没有名字"},
+	}, nil, nil)
+
+	assert.Contains(t, got, "没有名字")
+	assert.NotContains(t, got, "<v", "a blank label must not produce an empty voice span")
+}
+
+// File and screen events with no usable timestamp contribute nothing, which
+// must leave the proofread transcript untouched rather than reflowing it.
+func TestMergeLiveNoteFileEvents_UnusableEventsAreIdentity(t *testing.T) {
+	revised := "[00:00] 我：内容"
+	assert.Equal(t, revised, MergeLiveNoteFileEvents(revised,
+		[]LiveNoteFile{{Path: "a.md"}}, []LiveNoteScreenShare{{Sharer: "host"}}, 1_700_000_000_000))
+}
+
+func TestLiveNoteArtifactFlags_EmptyPathProbesNothing(t *testing.T) {
+	st := liveNoteArtifactFlags("")
+	assert.False(t, st.hasMinutes)
+	assert.False(t, st.hasTranscript)
+	assert.Zero(t, st.audioFiles)
+}
+
+// ── Minutes title ───────────────────────────────────────────────────────────
+
+func TestGenerateLiveNotesTitle_NamesTheMeetingFromTheMinutes(t *testing.T) {
+	srv := aiSummaryServer(t, "季度发布计划评审")
+	withAISummary(t, srv.URL)
+
+	got, err := GenerateLiveNotesTitle(context.Background(), "## 概要\n\n确认了下周发布。")
+	require.NoError(t, err)
+	assert.Equal(t, "季度发布计划评审", got)
+}
+
+func TestGenerateLiveNotesTitle_NoSummaryModel(t *testing.T) {
+	withAISummary(t, "")
+
+	_, err := GenerateLiveNotesTitle(context.Background(), "## 概要")
+	assert.ErrorIs(t, err, ErrSummaryModelNotConfigured)
+}
+
+func TestGenerateLiveNotesTitle_ProviderErrorIsWrapped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	withAISummary(t, srv.URL)
+
+	_, err := GenerateLiveNotesTitle(context.Background(), "## 概要")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "live notes: title")
+}
+
+// ── Storage failures ────────────────────────────────────────────────────────
+
+// Every store-backed operation must surface a storage failure with its own
+// operation name. A silent zero would look like "this meeting has nothing",
+// which is the one answer the caller cannot tell apart from the truth.
+func TestLiveNotes_StoreUnavailableReportsEveryOperation(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	require.NoError(t, db.Close())
+
+	ctx := context.Background()
+	base := int64(1_700_000_000_000)
+	cases := []struct {
+		name string
+		want string
+		call func() error
+	}{
+		{"append segment", "live notes: begin", func() error {
+			_, err := AppendLiveNoteSegment(ctx, "tok", 1, seg(0, "mic", "我", base, "内容"))
+			return err
+		}},
+		{"record files", "live notes: begin", func() error {
+			return RecordLiveNoteFiles(ctx, "tok", 1, []LiveNoteFile{{Path: "a.md", OpenedAt: base}})
+		}},
+		{"set screen sharer", "live notes: begin", func() error {
+			return SetLiveNoteScreenSharer(ctx, "tok", 1, "host", "泷泽", base)
+		}},
+		{"delete meeting", "live notes: delete lookup", func() error {
+			return DeleteMeetingRecord(t.TempDir(), 1, "tok")
+		}},
+		{"close open files", "live notes: close open files", func() error {
+			return CloseOpenLiveNoteFiles("tok", base)
+		}},
+		{"close open screen", "live notes: close open screen share", func() error {
+			return CloseOpenLiveNoteScreenShare("tok", base)
+		}},
+		{"start meeting", "live notes: start meeting", func() error {
+			return StartLiveNote("tok", 1, "标题", base)
+		}},
+		{"end meeting", "live notes: end meeting", func() error {
+			return EndLiveNote("tok", base)
+		}},
+		{"set minutes", "live notes: set minutes", func() error {
+			return SetLiveNoteMinutes("tok", 1, "标题", LiveNotesStatusReady, "纪要", "", "")
+		}},
+		{"set revise", "live notes: set revise", func() error {
+			return SetLiveNoteRevise("tok", 1, LiveNotesStatusReady, "校对稿", "")
+		}},
+		{"reset stale generation", "live notes: reset stale generation", func() error {
+			_, err := ResetStaleLiveNoteGeneration(base)
+			return err
+		}},
+		{"close stale meetings", "live notes: reset stale generation", func() error {
+			_, err := CloseStaleLiveNotes(base)
+			return err
+		}},
+		{"close orphaned meetings", "live notes: reset stale generation", func() error {
+			_, err := CloseOrphanedLiveNotes(base)
+			return err
+		}},
+		{"append chat", "live notes: append chat", func() error {
+			_, err := AppendLiveNoteChat("tok", 1, LiveNoteChatMessage{ClientID: "c1", Text: "内容"})
+			return err
+		}},
+		{"list segments", "live notes: list segments", func() error {
+			_, err := ListLiveNoteSegments("tok", 0)
+			return err
+		}},
+		{"list files", "live notes: list files", func() error {
+			_, err := ListLiveNoteFiles("tok", 0)
+			return err
+		}},
+		{"list screen shares", "live notes: list screen shares", func() error {
+			_, err := ListLiveNoteScreenShares("tok")
+			return err
+		}},
+		{"list chat", "live notes: list chat", func() error {
+			_, err := ListLiveNoteChat("tok", 0)
+			return err
+		}},
+		{"count chat", "live notes: count chat", func() error {
+			_, err := CountLiveNoteChat("tok")
+			return err
+		}},
+		{"get note", "live notes: get", func() error {
+			_, _, err := GetLiveNote("tok")
+			return err
+		}},
+		{"project id", "live notes: project lookup", func() error {
+			_, _, err := LiveNoteProjectID("tok")
+			return err
+		}},
+		{"dir name", "live notes: dir lookup", func() error {
+			_, err := MeetingDirName("tok")
+			return err
+		}},
+		{"generation running", "live notes: generation lookup", func() error {
+			_, err := LiveNoteGenerationRunning("tok", base)
+			return err
+		}},
+		{"list meetings", "live notes: list meetings", func() error {
+			_, err := ListMeetingRecords("/proj", 1, 0)
+			return err
+		}},
+		{"get meeting", "live notes: get meeting", func() error {
+			_, _, err := GetMeetingRecord("/proj", 1, "tok")
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
+// dropLiveNoteTable removes one table so the next statement against it fails
+// while the rest of the schema — and the connection — stays usable.
+func dropLiveNoteTable(t *testing.T, db *sql.DB, table string) {
+	t.Helper()
+	_, err := db.Exec("DROP TABLE " + table)
+	require.NoError(t, err)
+}
+
+// A statement that fails part-way must abort the whole batch instead of
+// committing a partial one: the publisher retries, and half a meeting is worse
+// than a failed upload.
+func TestLiveNotes_PartialSchemaFailuresAbortTheOperation(t *testing.T) {
+	ctx := context.Background()
+	base := int64(1_700_000_000_000)
+
+	t.Run("missing owner row aborts every publisher write", func(t *testing.T) {
+		db := setupTestDBForLiveNotes(t)
+		dropLiveNoteTable(t, db, "live_notes")
+
+		_, err := AppendLiveNoteSegment(ctx, "tok", 1, seg(0, "mic", "我", base, "内容"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "live notes: ensure row")
+
+		err = RecordLiveNoteFiles(ctx, "tok", 1, []LiveNoteFile{{Path: "a.md", OpenedAt: base}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "live notes: ensure row")
+
+		err = SetLiveNoteScreenSharer(ctx, "tok", 1, "host", "", base)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "live notes: ensure row")
+	})
+
+	t.Run("segment insert failure", func(t *testing.T) {
+		db := setupTestDBForLiveNotes(t)
+		dropLiveNoteTable(t, db, "live_notes_segments")
+
+		_, err := AppendLiveNoteSegment(ctx, "tok", 1, seg(0, "mic", "我", base, "内容"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "live notes: insert segment")
+	})
+
+	t.Run("file insert failure", func(t *testing.T) {
+		db := setupTestDBForLiveNotes(t)
+		dropLiveNoteTable(t, db, "live_notes_files")
+
+		err := RecordLiveNoteFiles(ctx, "tok", 1, []LiveNoteFile{{Path: "a.md", OpenedAt: base}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "live notes: insert file")
+	})
+
+	t.Run("unreadable screen table", func(t *testing.T) {
+		db := setupTestDBForLiveNotes(t)
+		dropLiveNoteTable(t, db, "live_notes_screen")
+
+		err := SetLiveNoteScreenSharer(ctx, "tok", 1, "host", "泷泽", base)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "live notes: read open screen share")
+	})
+
+	t.Run("chat insert failure", func(t *testing.T) {
+		db := setupTestDBForLiveNotes(t)
+		dropLiveNoteTable(t, db, "live_notes_chat")
+
+		_, err := AppendLiveNoteChat("tok", 1, LiveNoteChatMessage{ClientID: "c1", Text: "内容"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "live notes: append chat")
+	})
+}
+
+// A row that cannot be decoded is an error, not a silently skipped line: a
+// transcript missing one utterance reads as if nobody said it.
+func TestLiveNotes_UnscannableRowsAreReported(t *testing.T) {
+	cases := []struct {
+		name   string
+		table  string
+		ddl    string
+		insert string
+		want   string
+		call   func() error
+	}{
+		{
+			name:  "segments",
+			table: "live_notes_segments",
+			ddl: `CREATE TABLE live_notes_segments (
+				id TEXT, token TEXT, project_id INTEGER, channel TEXT, speaker TEXT,
+				started_at TEXT, duration_ms TEXT, text TEXT)`,
+			insert: `INSERT INTO live_notes_segments VALUES ('not-a-number','tok',1,'mic','我','0','0','内容')`,
+			want:   "live notes: scan segment",
+			call:   func() error { _, err := ListLiveNoteSegments("tok", 0); return err },
+		},
+		{
+			name:  "files",
+			table: "live_notes_files",
+			ddl: `CREATE TABLE live_notes_files (
+				id INTEGER, token TEXT, project_id INTEGER, owner TEXT, owner_name TEXT, path TEXT,
+				opened_at TEXT, closed_at TEXT, source TEXT)`,
+			insert: `INSERT INTO live_notes_files VALUES (1,'tok',1,'host','','a.md','soon','0','preview')`,
+			want:   "live notes: scan file",
+			call:   func() error { _, err := ListLiveNoteFiles("tok", 0); return err },
+		},
+		{
+			name:  "screen shares",
+			table: "live_notes_screen",
+			ddl: `CREATE TABLE live_notes_screen (
+				id INTEGER, token TEXT, project_id INTEGER, sharer TEXT, sharer_name TEXT,
+				started_at TEXT, ended_at TEXT)`,
+			insert: `INSERT INTO live_notes_screen VALUES (1,'tok',1,'host','泷泽','soon','0')`,
+			want:   "live notes: scan screen share",
+			call:   func() error { _, err := ListLiveNoteScreenShares("tok"); return err },
+		},
+		{
+			name:  "chat",
+			table: "live_notes_chat",
+			ddl: `CREATE TABLE live_notes_chat (
+				id INTEGER, token TEXT, project_id INTEGER, client_msg_id TEXT, speaker TEXT,
+				viewer_id TEXT, text TEXT, created_at TEXT)`,
+			insert: `INSERT INTO live_notes_chat VALUES (1,'tok',1,'c1','我','','内容','not-a-date')`,
+			want:   "live notes: scan chat",
+			call:   func() error { _, err := ListLiveNoteChat("tok", 0); return err },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupTestDBForLiveNotes(t)
+			dropLiveNoteTable(t, db, tc.table)
+			_, err := db.Exec(tc.ddl)
+			require.NoError(t, err)
+			_, err = db.Exec(tc.insert)
+			require.NoError(t, err)
+
+			err = tc.call()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
+// The meeting list is assembled from three queries; a failure in either count
+// query must fail the list rather than render zeros for every meeting.
+func TestMeetingRecords_CountQueryFailuresAreReported(t *testing.T) {
+	base := int64(1_700_000_000_000)
+
+	t.Run("chat counts", func(t *testing.T) {
+		db := setupTestDBForLiveNotes(t)
+		require.NoError(t, StartLiveNote("tok", 1, "标题", base))
+		dropLiveNoteTable(t, db, "live_notes_chat")
+
+		_, err := ListMeetingRecords(t.TempDir(), 1, 0)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "live notes: chat counts")
+
+		_, _, err = GetMeetingRecord(t.TempDir(), 1, "tok")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "live notes: chat counts")
+	})
+
+	t.Run("speaker counts", func(t *testing.T) {
+		db := setupTestDBForLiveNotes(t)
+		require.NoError(t, StartLiveNote("tok", 1, "标题", base))
+		dropLiveNoteTable(t, db, "live_notes_segments")
+
+		_, err := ListMeetingRecords(t.TempDir(), 1, 0)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "live notes: speaker counts")
+
+		_, _, err = GetMeetingRecord(t.TempDir(), 1, "tok")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "live notes: speaker counts")
+	})
+}
+
+func TestListMeetingRecords_ClampsTheLimit(t *testing.T) {
+	setupTestDBForLiveNotes(t)
+	base := int64(1_700_000_000_000)
+	for i := range 205 {
+		require.NoError(t, StartLiveNote("m"+strconv.Itoa(i), 1, "会议", base+int64(i)))
+	}
+
+	// Both an absent limit and an absurd one fall back to the same cap, so the
+	// list cannot be turned into a full-table read by a crafted query string.
+	for _, limit := range []int{0, -1, 501} {
+		rows, err := ListMeetingRecords(t.TempDir(), 1, limit)
+		require.NoError(t, err)
+		assert.Len(t, rows, 200, "limit=%d", limit)
+	}
+
+	rows, err := ListMeetingRecords(t.TempDir(), 1, 3)
+	require.NoError(t, err)
+	assert.Len(t, rows, 3)
+}
+
+// The detail view is the list row plus its artifacts: the flags are probed from
+// the folder, and the counts come from the tables.
+func TestGetMeetingRecord_CarriesArtifactsAndCounts(t *testing.T) {
+	setupTestDBForLiveNotes(t)
+	project := t.TempDir()
+	base := int64(1_700_000_000_000)
+
+	paths, err := EnsureMeetingDir("tok", 1, project, "季度会", base)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(paths.Minutes, []byte("# 纪要"), 0o644))
+	require.NoError(t, os.WriteFile(paths.Transcript, []byte("WEBVTT\n"), 0o644))
+	_, err = AppendLiveNoteChat("tok", 1, LiveNoteChatMessage{ClientID: "c1", Speaker: "我", Text: "内容"})
+	require.NoError(t, err)
+	_, err = AppendLiveNoteSegment(context.Background(), "tok", 1, seg(0, "mic", "我", base, "内容"))
+	require.NoError(t, err)
+
+	rec, ok, err := GetMeetingRecord(project, 1, "tok")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "tok", rec.Token)
+	assert.True(t, rec.HasMinutes)
+	assert.True(t, rec.HasTranscript)
+	assert.False(t, rec.HasRevised)
+	assert.Equal(t, 1, rec.ChatCount)
+	assert.Equal(t, 1, rec.SpeakerCount)
+	assert.Equal(t, MeetingDirPath(project, rec.Dir), rec.DirPath)
+}
+
+// ── Filesystem failures ─────────────────────────────────────────────────────
+
+// A file where a directory belongs: the write cannot succeed, and saying so is
+// the only way the caller can retry instead of believing the artifact exists.
+func TestLiveNotesArtifacts_ReportUnwritableFolders(t *testing.T) {
+	blocked := filepath.Join(t.TempDir(), "meeting")
+	require.NoError(t, os.WriteFile(blocked, []byte("x"), 0o644))
+	blockedPaths := LiveNotesPathsIn(blocked)
+	started := time.UnixMilli(1_700_000_000_000)
+
+	_, err := WriteLiveNotesMinutesFile(blockedPaths, "标题", started, "## 概要", 0, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create notes dir")
+
+	_, err = WriteLiveNotesRawTranscript(blockedPaths, []LiveNoteSegment{{Channel: "mic", StartedAt: 1, Text: "内容"}}, nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create notes dir")
+
+	_, err = WriteLiveNotesRevisedTranscript(blockedPaths, "标题", started, "[00:00] 我：内容")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create notes dir")
+
+	_, err = ensureLiveNotesDirs(filepath.Join(blocked, "meeting"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create notes dir")
+}
+
+// The meeting folder exists but the artifact name is taken by a directory: the
+// write must fail loudly rather than leave a half-written file behind.
+func TestLiveNotesArtifacts_ReportUnwritableTargets(t *testing.T) {
+	started := time.UnixMilli(1_700_000_000_000)
+
+	minutesPaths := LiveNotesPathsIn(t.TempDir())
+	require.NoError(t, os.MkdirAll(minutesPaths.Minutes, 0o755))
+	_, err := WriteLiveNotesMinutesFile(minutesPaths, "标题", started, "## 概要", 0, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "write minutes file")
+
+	rawPaths := LiveNotesPathsIn(t.TempDir())
+	require.NoError(t, os.MkdirAll(rawPaths.Transcript, 0o755))
+	_, err = WriteLiveNotesRawTranscript(rawPaths, []LiveNoteSegment{{Channel: "mic", StartedAt: 1, Text: "内容"}}, nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "write transcript file")
+
+	revisedPaths := LiveNotesPathsIn(t.TempDir())
+	require.NoError(t, os.MkdirAll(revisedPaths.Revised, 0o755))
+	_, err = WriteLiveNotesRevisedTranscript(revisedPaths, "标题", started, "[00:00] 我：内容")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "write transcript file")
+}
+
+// Nothing to write is reported as empty, not as an empty artifact: an empty
+// subtitle track would open as a broken file in the viewer.
+func TestWriteLiveNotesRawTranscript_EmptyTranscript(t *testing.T) {
+	_, err := WriteLiveNotesRawTranscript(LiveNotesPathsIn(t.TempDir()), nil, nil, nil)
+	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
+
+	_, err = WriteLiveNotesRevisedTranscript(LiveNotesPathsIn(t.TempDir()), "标题", time.Now(), "   ")
+	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
+}
+
+// An unnamed meeting keeps a single separator in its heading; an empty title
+// segment ("# 转写 ·  · 2026-10-30") reads as a bug.
+func TestWriteLiveNotesRevisedTranscript_UntitledHeadingHasOneSeparator(t *testing.T) {
+	paths := LiveNotesPathsIn(t.TempDir())
+	path, err := WriteLiveNotesRevisedTranscript(paths, "  ", time.UnixMilli(1_700_000_000_000), "[00:00] 我：内容")
+	require.NoError(t, err)
+
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	heading, _, _ := strings.Cut(string(body), "\n")
+	assert.Equal(t, 1, strings.Count(heading, "·"), "heading: %s", heading)
+}
+
+func TestSaveLiveNoteAudio_RejectsEmptyAndUnwritableTargets(t *testing.T) {
+	paths := LiveNotesPathsIn(t.TempDir())
+	started := int64(1_700_000_000_000)
+
+	_, err := SaveLiveNoteAudio(paths, "mic", started, nil)
+	assert.EqualError(t, err, "live notes: empty audio")
+
+	blocked := filepath.Join(t.TempDir(), "meeting")
+	require.NoError(t, os.WriteFile(blocked, []byte("x"), 0o644))
+	_, err = SaveLiveNoteAudio(LiveNotesPathsIn(blocked), "mic", started, []byte("audio"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create audio dir")
+
+	require.NoError(t, os.MkdirAll(filepath.Join(paths.Audio, strconv.FormatInt(started, 10)+"-mic.webm"), 0o755))
+	_, err = SaveLiveNoteAudio(paths, "mic", started, []byte("audio"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "write audio")
+}
+
+func TestWriteLiveNoteChatFile_EmptyAndUnwritable(t *testing.T) {
+	path, err := WriteLiveNoteChatFile(LiveNotesPathsIn(t.TempDir()), nil)
+	require.NoError(t, err)
+	assert.Empty(t, path, "no messages means no file")
+
+	missing := filepath.Join(t.TempDir(), "gone", "meeting")
+	_, err = WriteLiveNoteChatFile(LiveNotesPathsIn(missing), []LiveNoteChatMessage{{Text: "内容"}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "write chat archive")
+}
+
+func TestReadLiveNoteArtifact_ReportsUnreadableArtifacts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod does not restrict reads on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+
+	project := t.TempDir()
+	dir := "2026-10-30-1430-abc123"
+	folder := filepath.Join(project, ".clawbench", "notes", dir)
+	require.NoError(t, os.MkdirAll(folder, 0o755))
+
+	t.Run("directory instead of artifact", func(t *testing.T) {
+		require.NoError(t, os.MkdirAll(filepath.Join(folder, "minutes.md"), 0o755))
+		_, _, err := ReadLiveNoteArtifactWithName(project, dir, "minutes")
+		assert.ErrorIs(t, err, ErrLiveNoteSessionNotFound)
+	})
+
+	t.Run("unreadable file", func(t *testing.T) {
+		file := filepath.Join(folder, "transcript.vtt")
+		require.NoError(t, os.WriteFile(file, []byte("WEBVTT\n"), 0o644))
+		require.NoError(t, os.Chmod(file, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(file, 0o644) })
+
+		_, _, err := ReadLiveNoteArtifactWithName(project, dir, "transcript")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "read artifact")
+	})
+
+	t.Run("unreadable folder", func(t *testing.T) {
+		unreadable := filepath.Join(project, ".clawbench", "notes", "2026-10-30-1500-def456")
+		require.NoError(t, os.MkdirAll(unreadable, 0o755))
+		require.NoError(t, os.Chmod(unreadable, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(unreadable, 0o755) })
+
+		_, _, err := ReadLiveNoteArtifactWithName(project, "2026-10-30-1500-def456", "revised")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "stat artifact")
+	})
+}
+
+func TestDeleteMeetingRecord_RefusesEmptyTokenAndEscapingFolder(t *testing.T) {
+	setupTestDBForLiveNotes(t)
+	project := t.TempDir()
+
+	assert.ErrorIs(t, DeleteMeetingRecord(project, 1, ""), ErrMeetingNotFound)
+
+	_, err := store.WriteExec(
+		`INSERT INTO live_notes (token, project_id, dir_name, started_at) VALUES ('tok', 1, '../escape', 1)`,
+	)
+	require.NoError(t, err)
+
+	err = DeleteMeetingRecord(project, 1, "tok")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "refusing to delete outside notes root")
+
+	// A refused delete must not half-remove anything: the row is still there.
+	note, ok, getErr := GetLiveNote("tok")
+	require.NoError(t, getErr)
+	require.True(t, ok)
+	assert.Equal(t, "../escape", note.DirName)
+}
+
+func TestDeleteMeetingRecord_ReportsFolderThatCannotBeRemoved(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod does not restrict deletion on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	setupTestDBForLiveNotes(t)
+	project := t.TempDir()
+	dirName := "2026-10-30-1430-abc123"
+	root := filepath.Join(project, ".clawbench", "notes")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, dirName), 0o755))
+	_, err := store.WriteExec(
+		`INSERT INTO live_notes (token, project_id, dir_name, started_at) VALUES ('tok', 1, ?, 1)`, dirName,
+	)
+	require.NoError(t, err)
+	require.NoError(t, os.Chmod(root, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+
+	err = DeleteMeetingRecord(project, 1, "tok")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "remove meeting folder")
+
+	// Rows survive so the user can retry once the permission is fixed.
+	_, ok, getErr := GetLiveNote("tok")
+	require.NoError(t, getErr)
+	assert.True(t, ok)
+}
+
+func TestDeleteMeetingRecord_ReportsRowDeleteFailure(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	require.NoError(t, StartLiveNote("tok", 1, "标题", 1_700_000_000_000))
+	dropLiveNoteTable(t, db, "live_notes_segments")
+
+	err := DeleteMeetingRecord(t.TempDir(), 1, "tok")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete meeting rows")
+
+	// The transaction rolled back: the record is still deletable later.
+	_, ok, getErr := GetLiveNote("tok")
+	require.NoError(t, getErr)
+	assert.True(t, ok)
+}
+
+func TestEnsureMeetingDir_ReportsStorageFailure(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	require.NoError(t, db.Close())
+
+	_, err := EnsureMeetingDir("tok", 1, t.TempDir(), "季度会", 1_700_000_000_000)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "live notes: dir lookup")
+}
+
+// ── Zero-value tolerance ────────────────────────────────────────────────────
+
+// A zero timestamp means "now" everywhere, never 1970: the publisher may omit
+// the clock, and a 1970 record would sort below every real meeting.
+func TestLiveNotes_ZeroTimestampsMeanNow(t *testing.T) {
+	setupTestDBForLiveNotes(t)
+
+	require.NoError(t, EndLiveNote("", 1_000), "no token means nothing to end")
+	require.NoError(t, CloseOpenLiveNoteFiles("", 1_000), "no token means nothing to close")
+	require.NoError(t, CloseOpenLiveNoteScreenShare("", 1_000))
+
+	assert.EqualError(t, StartLiveNote("", 1, "标题", 1), "live notes: empty token")
+
+	before := time.Now().UnixMilli()
+	require.NoError(t, StartLiveNote("tok", 1, "标题", 0))
+	require.NoError(t, EndLiveNote("tok", 0))
+
+	note, ok, err := GetLiveNote("tok")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.GreaterOrEqual(t, note.StartedAt, before)
+	assert.GreaterOrEqual(t, note.EndedAt, note.StartedAt)
+}
+
+func TestCloseOpenLiveNoteFiles_ZeroTimeUsesNow(t *testing.T) {
+	setupTestDBForLiveNotes(t)
+	require.NoError(t, RecordLiveNoteFiles(context.Background(), "tok", 1,
+		[]LiveNoteFile{{Path: "a.md", OpenedAt: 1_000}}))
+
+	before := time.Now().UnixMilli()
+	require.NoError(t, CloseOpenLiveNoteFiles("tok", 0))
+
+	files, err := ListLiveNoteFiles("tok", 0)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.GreaterOrEqual(t, files[0].ClosedAt, before)
+}
+
+func TestLiveNoteGeneration_ZeroTimeMeansNow(t *testing.T) {
+	setupTestDBForLiveNotes(t)
+	require.NoError(t, SetLiveNoteMinutes("tok", 1, "", LiveNotesStatusGenerating, "", "", ""))
+
+	running, err := LiveNoteGenerationRunning("tok", 0)
+	require.NoError(t, err)
+	assert.True(t, running, "a job written just now is still running")
+
+	n, err := ResetStaleLiveNoteGeneration(0)
+	require.NoError(t, err)
+	assert.Zero(t, n, "a fresh job is not abandoned")
+
+	running, err = LiveNoteGenerationRunning("", 0)
+	require.NoError(t, err)
+	assert.False(t, running, "no token means no job to look for")
+
+	closed, err := CloseStaleLiveNotes(0)
+	require.NoError(t, err)
+	assert.Zero(t, closed, "no cutoff means nothing is stale")
+}
+
+// ── Input validation ────────────────────────────────────────────────────────
+
+func TestRecordLiveNoteFiles_EmptyInputIsANoop(t *testing.T) {
+	setupTestDBForLiveNotes(t)
+
+	assert.EqualError(t,
+		RecordLiveNoteFiles(context.Background(), "", 1, []LiveNoteFile{{Path: "a.md", OpenedAt: 1}}),
+		"live notes: empty token")
+	require.NoError(t, RecordLiveNoteFiles(context.Background(), "tok", 1, nil))
+
+	// An empty batch must not register a meeting: nothing happened.
+	_, ok, err := GetLiveNote("tok")
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+func TestAppendLiveNoteChat_RejectsIncompleteMessages(t *testing.T) {
+	setupTestDBForLiveNotes(t)
+
+	for _, msg := range []LiveNoteChatMessage{
+		{ClientID: "c1", Text: "   "},
+		{Text: "内容"},
+	} {
+		_, err := AppendLiveNoteChat("tok", 1, msg)
+		assert.EqualError(t, err, "live notes: invalid chat message")
+	}
+	_, err := AppendLiveNoteChat("", 1, LiveNoteChatMessage{ClientID: "c1", Text: "内容"})
+	assert.EqualError(t, err, "live notes: invalid chat message")
+}
+
+// ── Remaining zero-value and chunking paths ─────────────────────────────────
+
+func TestSplitRunes_CutsOnANewlineNearTheBoundary(t *testing.T) {
+	text := strings.Repeat(strings.Repeat("a", 10)+"\n", 100)
+	chunks := splitRunes(text, 100)
+
+	require.Greater(t, len(chunks), 1)
+	for i, c := range chunks {
+		assert.LessOrEqual(t, len([]rune(c)), 100, "chunk %d must fit the budget", i)
+	}
+	assert.Equal(t, text, strings.Join(chunks, ""), "nothing may be lost")
+}
+
+// A long transcript does not fit in one request: every chunk is proofread on
+// its own, and each request says which part it is.
+func TestReviseLiveNotesTranscript_ChunksALongTranscript(t *testing.T) {
+	long := strings.Repeat("很长的发言内容。", 400)
+	segments := []LiveNoteSegment{
+		seg(1, "mic", "我", 1_700_000_000_000, long),
+		seg(2, "mic", "我", 1_700_000_060_000, long),
+	}
+	require.Greater(t, len([]rune(BuildLiveNotesTranscript(segments))), liveNotesChunkRunes,
+		"fixture must exceed one chunk or the chunk path is not exercised")
+
+	bodies := captureSummaryBodies(t, "[00:00] 我：第一段", "[01:00] 我：第二段")
+	got, err := ReviseLiveNotesTranscript(context.Background(), "", "", segments, LiveNotesSpeaker{})
+	require.NoError(t, err)
+	assert.Equal(t, "[00:00] 我：第一段\n[01:00] 我：第二段", got)
+
+	requests := bodies()
+	require.Len(t, requests, 2)
+	assert.Contains(t, requests[0], "这是第 1/2 段")
+	assert.Contains(t, requests[1], "这是第 2/2 段")
+}
+
+func TestReviseLiveNotesTranscript_ChunkErrorIsReported(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	withAISummary(t, srv.URL)
+
+	long := strings.Repeat("很长的发言内容。", 400)
+	_, err := ReviseLiveNotesTranscript(context.Background(), "", "", []LiveNoteSegment{
+		seg(1, "mic", "我", 1, long),
+		seg(2, "mic", "我", 60_000, long),
+	}, LiveNotesSpeaker{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "live notes: revise chunk")
+}
+
+func TestGenerateLiveNotesMinutes_ChunkErrorIsReported(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	withAISummary(t, srv.URL)
+
+	long := strings.Repeat("很长的发言内容。", 400)
+	_, err := GenerateLiveNotesMinutes(context.Background(), "", BuildLiveNotesTranscript([]LiveNoteSegment{
+		seg(1, "mic", "我", 1, long),
+		seg(2, "mic", "我", 60_000, long),
+	}), "", LiveNotesSpeaker{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "live notes: chunk")
+}
+
+// The file timeline is appended after the map-reduce, never inside it: in a
+// long meeting a section in one chunk would be summarized away.
+func TestGenerateLiveNotesMinutes_AppendsTheFileSection(t *testing.T) {
+	bodies := captureSummaryBodies(t, "## 概要\n\n确认了发布计划。")
+
+	_, err := GenerateLiveNotesMinutes(context.Background(), "季度会", "[00:00] 我：内容",
+		"## 会议期间打开的文件\n\n- 14:30 docs/a.md", LiveNotesSpeaker{})
+	require.NoError(t, err)
+
+	requests := bodies()
+	require.Len(t, requests, 1)
+	assert.Contains(t, requests[0], "docs/a.md")
+}
+
+func TestLiveNoteFilesPromptSection_IncludesExcerpts(t *testing.T) {
+	project := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(project, "a.md"), []byte("# 发布计划"), 0o644))
+	started := time.UnixMilli(1_700_000_000_000)
+
+	got := LiveNoteFilesPromptSection([]LiveNoteFile{
+		{Path: "a.md", OpenedAt: started.UnixMilli()},
+	}, started, project)
+	assert.Contains(t, got, "文件内容摘录")
+	assert.Contains(t, got, "发布计划")
+}
+
+// A file event with no timestamp and no label has nothing to render; it must be
+// dropped from the track rather than produce an empty cue.
+func TestBuildLiveNotesVTT_FileEventWithoutOpenTimeIsSkipped(t *testing.T) {
+	got := BuildLiveNotesVTT([]LiveNoteSegment{
+		{Channel: "mic", Speaker: "我", StartedAt: 1_700_000_000_000, DurationMS: 1000, Text: "开始"},
+	}, []LiveNoteFile{{Path: "a.md"}}, nil)
+
+	assert.Contains(t, got, "开始")
+	assert.NotContains(t, got, "打开")
+}
+
+func TestSaveLiveNoteAudio_ZeroStartUsesNow(t *testing.T) {
+	paths := LiveNotesPathsIn(t.TempDir())
+	before := time.Now().UnixMilli()
+
+	path, err := SaveLiveNoteAudio(paths, "mic", 0, []byte("audio"))
+	require.NoError(t, err)
+
+	ms, err := strconv.ParseInt(strings.SplitN(filepath.Base(path), "-", 2)[0], 10, 64)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, ms, before)
+}
+
+func TestWriteLiveNotesRevisedTranscript_RequiresADir(t *testing.T) {
+	_, err := WriteLiveNotesRevisedTranscript(LiveNotesPathsIn(""), "标题", time.Now(), "[00:00] 我：内容")
+	assert.EqualError(t, err, "live notes: no project path")
+}
+
+func TestEnsureMeetingDir_ZeroStartIsDatedToday(t *testing.T) {
+	setupTestDBForLiveNotes(t)
+
+	paths, err := EnsureMeetingDir("tok", 1, t.TempDir(), "季度会", 0)
+	require.NoError(t, err)
+	assert.DirExists(t, paths.Dir)
+	assert.NotContains(t, filepath.Base(paths.Dir), "1970-01-01",
+		"a missing clock means now, not the epoch")
+}
+
+func TestCloseOrphanedLiveNotes_ZeroTimeMeansNow(t *testing.T) {
+	setupTestDBForLiveNotes(t)
+
+	n, err := CloseOrphanedLiveNotes(0)
+	require.NoError(t, err)
+	assert.Zero(t, n)
+}
+
+func TestReadLiveNoteArtifact_ChatArchive(t *testing.T) {
+	project := t.TempDir()
+	dir := "2026-10-30-1430-abc123"
+	folder := filepath.Join(project, ".clawbench", "notes", dir)
+	require.NoError(t, os.MkdirAll(folder, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(folder, "chat.md"), []byte("# 会议聊天记录\n"), 0o644))
+
+	body, name, err := ReadLiveNoteArtifactWithName(project, dir, "chat")
+	require.NoError(t, err)
+	assert.Equal(t, "chat.md", name)
+	assert.Contains(t, body, "会议聊天记录")
+}
+
+func TestLiveNotesFileSlug_DropsControlCharacters(t *testing.T) {
+	assert.Equal(t, "季度 规划", liveNotesFileSlug("季度\x01 规划"))
+	assert.Equal(t, "a b", liveNotesFileSlug("a\tb"))
 }

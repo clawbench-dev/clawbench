@@ -1441,3 +1441,1076 @@ func TestServeLiveShareNoteChat_IsIdempotentAndReadable(t *testing.T) {
 	assert.Equal(t, "收到", body.Messages[0].Text)
 	assert.Equal(t, second, body.Messages[1].ID)
 }
+
+// ── Failure paths: method / project / token / database ──────────────────────
+//
+// Each guard answers a different status code, and the publisher's uploader
+// branches on them: 404 means "this share is gone, drop the queue", 400 means
+// "retry with a different payload", 500 means "the server is broken, keep the
+// queue and retry". Collapsing them into one "some error" assertion would let a
+// refactor swap 404 for 400 and strand or drop a whole recording unnoticed.
+
+// assertErrorKey pins the status AND the message key. An empty key means the
+// response came from model.WriteError (the un-localized 500), which is a
+// different contract from writeLocalizedErrorf's "InternalError".
+func assertErrorKey(t *testing.T, w *httptest.ResponseRecorder, status int, key string) {
+	t.Helper()
+	require.Equal(t, status, w.Code, w.Body.String())
+	var resp model.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), w.Body.String())
+	assert.Equal(t, key, resp.MsgKey, w.Body.String())
+	if key == "" {
+		assert.Equal(t, "internal server error", resp.Error,
+			"a bare 500 must come from model.WriteError, not a localized key")
+	}
+}
+
+// cacheProjectID registers the project row while the database is still up, so a
+// later failure isolates the call under test: without it, closing the DB fails
+// in liveNotesProject (which every endpoint shares) and the branch below it can
+// never be reached.
+func cacheProjectID(t *testing.T, project string) int64 {
+	t.Helper()
+	id, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	return id
+}
+
+// dropTable removes one table so only the query under test fails. Closing the
+// whole database would trip the earlier, shared lookups instead.
+func dropTable(t *testing.T, name string) {
+	t.Helper()
+	_, err := store.WriteExec(`DROP TABLE ` + name)
+	require.NoError(t, err)
+}
+
+func TestServeLiveNotesSessions_MethodNotAllowed(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesSessions(w, liveReq(t, http.MethodPut, "/api/live-share/notes/sessions", projPath("/proj/a"), nil))
+	assertErrorKey(t, w, http.StatusMethodNotAllowed, "MethodNotAllowed")
+}
+
+func TestServeLiveNotesSessions_RequiresProject(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesSessions(w, newRequest(t, http.MethodGet, "/api/live-share/notes/sessions", nil))
+	assertErrorKey(t, w, http.StatusForbidden, "NoProjectSelected")
+}
+
+func TestServeLiveNotesList_InvalidTokenIs404(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesSessions(w, liveNotesProjectRequest(t,
+		"/api/live-share/notes/sessions?token=not%20a%20token", projPath("/proj/a")))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestServeLiveNotesList_UnknownTokenIs404(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesSessions(w, liveNotesProjectRequest(t,
+		"/api/live-share/notes/sessions?token=ffffffffffffffffffffffffffffffff", projPath("/proj/a")))
+	assert.Equal(t, http.StatusNotFound, w.Code,
+		"a well-formed token with no row is 'not found', not an empty list")
+}
+
+// A single record addressed by token is a different payload shape from the
+// list: the SPA's detail dialog reads `session`, the list reads `sessions`.
+func TestServeLiveNotesList_ServesOneRecordByToken(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	paths, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(paths.Minutes, []byte("MINUTES"), 0o644))
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesSessions(w, liveNotesProjectRequest(t,
+		"/api/live-share/notes/sessions?token="+token, project))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var body struct {
+		Session  service.MeetingRecord   `json:"session"`
+		Sessions []service.MeetingRecord `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, token, body.Session.Token)
+	assert.Equal(t, "周会", body.Session.Title)
+	assert.True(t, body.Session.HasMinutes)
+	assert.Empty(t, body.Sessions, "the token form must not also return the list")
+}
+
+func TestServeLiveNotesList_FailureIs500(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	require.NoError(t, db.Close())
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesSessions(w, liveNotesProjectRequest(t, "/api/live-share/notes/sessions", project))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+func TestServeLiveNotesList_RecordFailureIs500(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	require.NoError(t, db.Close())
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesSessions(w, liveNotesProjectRequest(t,
+		"/api/live-share/notes/sessions?token=0123456789abcdef0123456789abcdef", project))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+func TestServeLiveNotesArtifact_MethodNotAllowed(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesArtifact(w, liveReq(t, http.MethodPost, "/api/live-share/notes/sessions/artifact", projPath("/proj/a"), nil))
+	assertErrorKey(t, w, http.StatusMethodNotAllowed, "MethodNotAllowed")
+}
+
+func TestServeLiveNotesArtifact_RequiresProject(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesArtifact(w, newRequest(t, http.MethodGet, "/api/live-share/notes/sessions/artifact?token=x", nil))
+	assertErrorKey(t, w, http.StatusForbidden, "NoProjectSelected")
+}
+
+// A meeting that recorded nothing has no folder, so there is no artifact to
+// read — but the token is valid and owned, so this is a 404 rather than a
+// permission error.
+func TestServeLiveNotesArtifact_NoFolderIs404(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "空会", 1_700_000_000_000))
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesArtifact(w, liveNotesProjectRequest(t,
+		"/api/live-share/notes/sessions/artifact?token="+token, project))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestServeLiveNotesArtifact_MissingFileIs404(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	// The folder exists (audio was recorded) but the minutes were never written.
+	_, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesArtifact(w, liveNotesProjectRequest(t,
+		"/api/live-share/notes/sessions/artifact?token="+token+"&kind=minutes", project))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestServeLiveNotesArtifact_DirLookupFailureIs500(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	// The room authorizes the request without touching the database, so the
+	// only failing lookup is MeetingDirName.
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesArtifact(w, liveNotesProjectRequest(t,
+		"/api/live-share/notes/sessions/artifact?token="+room.Token(), project))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+// Stat succeeds but the read does not (permissions): that is an outage, not a
+// missing artifact, so it must not masquerade as 404.
+func TestServeLiveNotesArtifact_ReadFailureIs500(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not apply to root")
+	}
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	paths, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(paths.Minutes, []byte("MINUTES"), 0o000))
+	t.Cleanup(func() { _ = os.Chmod(paths.Minutes, 0o644) })
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesArtifact(w, liveNotesProjectRequest(t,
+		"/api/live-share/notes/sessions/artifact?token="+token, project))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+func TestServeLiveShareNotes_FilesLookupFailureIs500(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	dropTable(t, "live_notes_files")
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNotes(w, liveReq(t, http.MethodGet, "/api/live-share/notes?token="+room.Token(), project, nil))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+func TestServeLiveShareNotes_ScreensLookupFailureIs500(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	dropTable(t, "live_notes_screen")
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNotes(w, liveReq(t, http.MethodGet, "/api/live-share/notes?token="+room.Token(), project, nil))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+func TestServeLiveShareNotes_NoteLookupFailureIs500(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	dropTable(t, "live_notes")
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNotes(w, liveReq(t, http.MethodGet, "/api/live-share/notes?token="+room.Token(), project, nil))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+func TestServeLiveNotesDelete_InvalidTokenIs404(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	req := liveReq(t, http.MethodDelete, "/api/live-share/notes/sessions?token=bad%20token", projPath("/proj/a"), nil)
+	w := httptest.NewRecorder()
+	ServeLiveNotesSessions(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// A corrupted row whose folder name points outside the notes root must be
+// refused rather than deleting a sibling directory.
+func TestServeLiveNotesDelete_RefusesEscapingFolderIs500(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	_, err := store.WriteExec(`UPDATE live_notes SET dir_name = ? WHERE token = ?`, "../escape", token)
+	require.NoError(t, err)
+
+	req := liveNotesProjectRequest(t, "/api/live-share/notes/sessions?token="+token, project)
+	req.Method = http.MethodDelete
+	w := httptest.NewRecorder()
+	ServeLiveNotesSessions(w, req)
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+
+	_, exists, err := service.GetLiveNote(token)
+	require.NoError(t, err)
+	assert.True(t, exists, "a refused delete must not remove the record")
+}
+
+func TestServeLiveNotesChat_MethodNotAllowed(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesChat(w, liveReq(t, http.MethodPost, "/api/live-share/notes/sessions/chat", projPath("/proj/a"), nil))
+	assertErrorKey(t, w, http.StatusMethodNotAllowed, "MethodNotAllowed")
+}
+
+func TestServeLiveNotesChat_RequiresProject(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesChat(w, newRequest(t, http.MethodGet, "/api/live-share/notes/sessions/chat?token=x", nil))
+	assertErrorKey(t, w, http.StatusForbidden, "NoProjectSelected")
+}
+
+func TestServeLiveNotesChat_InvalidTokenIs404(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesChat(w, liveNotesProjectRequest(t,
+		"/api/live-share/notes/sessions/chat?token=bad%20token", projPath("/proj/a")))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestServeLiveNotesChat_ListFailureIs500(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	dropTable(t, "live_notes_chat")
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesChat(w, liveNotesProjectRequest(t,
+		"/api/live-share/notes/sessions/chat?token="+room.Token(), project))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+func TestServeLiveShareNoteChat_MethodNotAllowed(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteChat(w, liveReq(t, http.MethodGet, "/api/live-share/notes/chat", projPath("/proj/a"), nil))
+	assertErrorKey(t, w, http.StatusMethodNotAllowed, "MethodNotAllowed")
+}
+
+func TestServeLiveShareNoteChat_RequiresProject(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteChat(w, newRequest(t, http.MethodPost, "/api/live-share/notes/chat", map[string]any{"token": "x"}))
+	assertErrorKey(t, w, http.StatusForbidden, "NoProjectSelected")
+}
+
+func TestServeLiveShareNoteChat_MalformedBodyIs400(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	req := liveReq(t, http.MethodPost, "/api/live-share/notes/chat", projPath("/proj/a"), nil)
+	req.Body = io.NopCloser(strings.NewReader("{not json"))
+	req.ContentLength = int64(len("{not json"))
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteChat(w, req)
+	assertErrorKey(t, w, http.StatusBadRequest, "InvalidRequestBody")
+}
+
+func TestServeLiveShareNoteChat_ForeignTokenIs404(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	room, err := liveRegistry.Create(projPath("/proj/a"), "会议")
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteChat(w, liveReq(t, http.MethodPost, "/api/live-share/notes/chat", projPath("/proj/b"),
+		map[string]any{"token": room.Token(), "id": "m1", "text": "hi"}))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestServeLiveShareNoteChat_EmptyTextIs400(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := projPath("/proj/a")
+	room, err := liveRegistry.Create(project, "会议")
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteChat(w, liveReq(t, http.MethodPost, "/api/live-share/notes/chat", project,
+		map[string]any{"token": room.Token(), "id": "m1", "text": "   "}))
+	assertErrorKey(t, w, http.StatusBadRequest, "BadRequest")
+}
+
+func TestServeLiveShareNoteChat_AppendFailureIs500(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	dropTable(t, "live_notes_chat")
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteChat(w, liveReq(t, http.MethodPost, "/api/live-share/notes/chat", project,
+		map[string]any{"token": room.Token(), "id": "m1", "text": "hi"}))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+func TestServeLiveShareNoteFiles_MalformedBodyIs400(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	req := liveReq(t, http.MethodPost, "/api/live-share/notes/files", projPath("/proj/a"), nil)
+	req.Body = io.NopCloser(strings.NewReader("not json"))
+	req.ContentLength = int64(len("not json"))
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteFiles(w, req)
+	assertErrorKey(t, w, http.StatusBadRequest, "InvalidRequestBody")
+}
+
+func TestServeLiveShareNoteFiles_RecordFailureIs500(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	dropTable(t, "live_notes_files")
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteFiles(w, liveReq(t, http.MethodPost, "/api/live-share/notes/files", project,
+		map[string]any{"token": room.Token(), "files": []map[string]any{
+			{"path": "main.go", "openedAt": 1000},
+		}}))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+// A client that reports a close BEFORE the open (clock skew between two
+// machines, a retry that reordered) must not produce a negative interval: the
+// timeline would render "10:11–10:03".
+func TestServeLiveShareNoteFiles_ClampsClosedAtToOpenedAt(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteFiles(w, liveReq(t, http.MethodPost, "/api/live-share/notes/files", project,
+		map[string]any{"token": room.Token(), "files": []map[string]any{
+			{"path": "main.go", "openedAt": 5000, "closedAt": 1000},
+		}}))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	files, err := service.ListLiveNoteFiles(room.Token(), 0)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.Equal(t, int64(5000), files[0].OpenedAt)
+	assert.Equal(t, int64(5000), files[0].ClosedAt, "a close before the open collapses onto the open")
+	_ = pid
+}
+
+func TestServeLiveShareNoteScreen_MalformedBodyIs400(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	req := liveReq(t, http.MethodPost, "/api/live-share/notes/screen", projPath("/proj/a"), nil)
+	req.Body = io.NopCloser(strings.NewReader("{"))
+	req.ContentLength = 1
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteScreen(w, req)
+	assertErrorKey(t, w, http.StatusBadRequest, "InvalidRequestBody")
+}
+
+func TestServeLiveShareNoteScreen_RecordFailureIs500(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	dropTable(t, "live_notes_screen")
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteScreen(w, liveReq(t, http.MethodPost, "/api/live-share/notes/screen", project,
+		map[string]any{"token": room.Token(), "sharer": "host", "at": 1000}))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+func TestServeLiveNotesAudioMerge_MethodNotAllowed(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesAudioMerge(w, liveReq(t, http.MethodGet, "/api/live-share/notes/audio/merge", projPath("/proj/a"), nil))
+	assertErrorKey(t, w, http.StatusMethodNotAllowed, "MethodNotAllowed")
+}
+
+func TestServeLiveNotesAudioMerge_RequiresProject(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesAudioMerge(w, newRequest(t, http.MethodPost, "/api/live-share/notes/audio/merge", map[string]any{"token": "x"}))
+	assertErrorKey(t, w, http.StatusForbidden, "NoProjectSelected")
+}
+
+func TestServeLiveNotesAudioMerge_MalformedBodyIs400(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	req := liveReq(t, http.MethodPost, "/api/live-share/notes/audio/merge", projPath("/proj/a"), nil)
+	req.Body = io.NopCloser(strings.NewReader("{"))
+	req.ContentLength = 1
+	w := httptest.NewRecorder()
+	ServeLiveNotesAudioMerge(w, req)
+	assertErrorKey(t, w, http.StatusBadRequest, "InvalidRequestBody")
+}
+
+func TestServeLiveNotesAudioMerge_DirLookupFailureIs500(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesAudioMerge(w, liveReq(t, http.MethodPost, "/api/live-share/notes/audio/merge", project,
+		map[string]string{"token": room.Token()}))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+// A meeting whose notes were off has no folder: merging nothing is success, not
+// an error, and the payload still carries the (empty) artifact block so the
+// caller can render the dialog without a second request.
+func TestServeLiveNotesAudioMerge_NothingRecordedIsOK(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "空会", 1_700_000_000_000))
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesAudioMerge(w, liveReq(t, http.MethodPost, "/api/live-share/notes/audio/merge", project,
+		map[string]string{"token": token}))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp struct {
+		OK        bool               `json:"ok"`
+		Artifacts liveNotesArtifacts `json:"artifacts"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.OK)
+	assert.Empty(t, resp.Artifacts.Dir)
+}
+
+// A segment file that is not the WebM the merge expects must fail loudly: the
+// alternative is publishing a corrupt recording as the meeting's audio.
+func TestServeLiveNotesAudioMerge_CorruptSegmentIs500(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	paths, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(paths.Audio, "1700000000000-mic.webm"), []byte("not webm"), 0o644))
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesAudioMerge(w, liveReq(t, http.MethodPost, "/api/live-share/notes/audio/merge", project,
+		map[string]string{"token": token}))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+func TestServeLiveShareNotesMinutes_NoteLookupFailureIs500(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	dropTable(t, "live_notes")
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNotesMinutes(w, liveReq(t, http.MethodPost, "/api/live-share/notes/minutes", project,
+		map[string]any{"token": room.Token()}))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+func TestServeLiveShareNotesMinutes_SegmentLookupFailureIs500(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	dropTable(t, "live_notes_segments")
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNotesMinutes(w, liveReq(t, http.MethodPost, "/api/live-share/notes/minutes", project,
+		map[string]any{"token": token}))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+func TestServeShareLiveNotes_FilesLookupFailureIs500(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	dropTable(t, "live_notes_files")
+
+	w := httptest.NewRecorder()
+	ServeShareLiveNotes(w, httptest.NewRequest(http.MethodGet, "/api/share/x/notes", http.NoBody), room.Token())
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+func TestServeShareLiveNotes_ScreensLookupFailureIs500(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	dropTable(t, "live_notes_screen")
+
+	w := httptest.NewRecorder()
+	ServeShareLiveNotes(w, httptest.NewRequest(http.MethodGet, "/api/share/x/notes", http.NoBody), room.Token())
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+func TestServeShareLiveNotes_NoteLookupFailureIs500(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	dropTable(t, "live_notes")
+
+	w := httptest.NewRecorder()
+	ServeShareLiveNotes(w, httptest.NewRequest(http.MethodGet, "/api/share/x/notes", http.NoBody), room.Token())
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+// The notes row is the second ownership source. When the lookup itself fails we
+// cannot prove ownership, so the answer is "not yours" (404) — never an
+// accidental grant.
+func TestLiveNotesOwnedByProject_LookupFailureIsNotOwned(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	require.NoError(t, db.Close())
+
+	assert.False(t, liveNotesOwnedByProject("0123456789abcdef0123456789abcdef", project, pid))
+}
+
+// The recording is written before transcription, and a failed write is only a
+// warning: losing the transcript because the disk filled up would be the worse
+// trade. The handler must still answer (the STT stub is never reached here).
+func TestPersistLiveNoteAudio_WriteFailureIsSwallowed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not apply to root")
+	}
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	paths, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
+	require.NoError(t, err)
+	// MkdirAll on an existing directory succeeds, so EnsureMeetingDir still
+	// passes; the write inside it is what fails.
+	require.NoError(t, os.Chmod(paths.Audio, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(paths.Audio, 0o755) })
+
+	persistLiveNoteAudio(token, pid, project, "周会", "mic", 1_700_000_000_000, []byte("audio"))
+}
+
+func TestLiveNotesTimeline_ScreenSectionIsAppended(t *testing.T) {
+	started := time.UnixMilli(1_700_000_000_000)
+	screens := []service.LiveNoteScreenShare{{Sharer: "host", SharerName: "主持人", StartedAt: 1_700_000_100_000}}
+
+	// No screens: the file timeline alone, with no trailing separator.
+	files := []service.LiveNoteFile{{Path: "/proj/a/main.go", OpenedAt: 1_700_000_050_000}}
+	onlyFiles := liveNotesTimeline(files, nil, started, "/proj/a")
+	require.NotEmpty(t, onlyFiles)
+	assert.NotContains(t, onlyFiles, "屏幕共享")
+
+	// Both: one block for each, a blank line apart.
+	both := liveNotesTimeline(files, screens, started, "/proj/a")
+	assert.Contains(t, both, "屏幕共享")
+	assert.Contains(t, both, "\n\n", "the two timelines are separate blocks")
+	assert.Greater(t, len(both), len(onlyFiles))
+
+	// Screens only (no files opened): still a usable block.
+	onlyScreens := liveNotesTimeline(nil, screens, started, "/proj/a")
+	assert.Contains(t, onlyScreens, "屏幕共享")
+}
+
+// The minutes file is the human-readable index of the folder: it must count the
+// channel recordings and link the merged track, otherwise the reader has no way
+// to find the audio from the summary.
+func TestWriteLiveNotesMinutes_CountsChannelRecordings(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "audio"), 0o755))
+	for _, name := range []string{"1-mic.webm", "1-viewer-2.webm", service.LiveNoteMeetingAudioFile} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "audio", name), []byte("a"), 0o644))
+	}
+	// Not a recording: the .gitignore keeps the binary audio out of the repo.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "audio", ".gitignore"), []byte("*\n"), 0o644))
+
+	paths := service.LiveNotesPathsIn(dir)
+	written := writeLiveNotesMinutes(paths, "周会", time.UnixMilli(1_700_000_000_000), "## 概要")
+	require.Equal(t, paths.Minutes, written)
+
+	body, err := os.ReadFile(written)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "2", "two channel recordings, not three and not one")
+	assert.Contains(t, string(body), service.LiveNoteMeetingAudioFile, "the merged track is linked")
+}
+
+// A folder that cannot be written must not fail the job: the caller stores the
+// minutes in the database either way and simply reports no path.
+func TestWriteLiveNotesMinutes_UnwritableFolderReturnsEmptyPath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not apply to root")
+	}
+	dir := t.TempDir()
+	paths := service.LiveNotesPathsIn(dir)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.Chmod(dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	assert.Empty(t, writeLiveNotesMinutes(paths, "周会", time.UnixMilli(1_700_000_000_000), "## 概要"))
+}
+
+// breakWrites points the WRITE pool at a closed handle while leaving reads
+// working, so a handler can be driven all the way to its persist step. Closing
+// the whole database would fail the earlier read lookups instead and the write
+// branch would never be reached.
+func breakWrites(t *testing.T, project string) {
+	t.Helper()
+	broken, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	require.NoError(t, broken.Close())
+	t.Cleanup(store.SetDBForTest(broken, store.UnsafeReadDBForTest()))
+	// SetDBForTest clears the id cache, and ProjectIDForPath upserts before it
+	// reads — so the project would 500 on the way in. Warm the cache through
+	// the READ path instead, which is the only lookup left working.
+	_, ok, err := store.ProjectIDByPath(project)
+	require.NoError(t, err)
+	require.True(t, ok, "the project row must exist before writes are broken")
+}
+
+// A read-only project registry is an outage: the handler must say 500 rather
+// than fall through with a zero project id, which would file the meeting under
+// "no project" and hide it from the owner.
+func TestLiveNotesProject_ProjectLookupFailureIs500(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+	require.NoError(t, db.Close())
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesSessions(w, liveNotesProjectRequest(t, "/api/live-share/notes/sessions", t.TempDir()))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+func TestServeLiveShareNotesMinutes_MarkGeneratingFailureIs500(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	_, err := service.AppendLiveNoteSegment(context.Background(), token, pid, service.LiveNoteSegment{
+		Channel: "mic", StartedAt: 1_000, Text: "内容",
+	})
+	require.NoError(t, err)
+	breakWrites(t, project)
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNotesMinutes(w, liveReq(t, http.MethodPost, "/api/live-share/notes/minutes", project,
+		map[string]any{"token": token}))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+// A failed segment write is a server error, but only AFTER the audio is safely
+// on disk: the recording cannot be regenerated, the row can.
+func TestServeLiveShareNoteSegment_AppendFailureIs500(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	// The folder is created first: EnsureMeetingDir reuses the recorded name
+	// without writing, so only the transcription row's write can fail below.
+	_, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
+	require.NoError(t, err)
+
+	prev := GetSTTProvider()
+	SetSTTProvider(&stubSTT{text: "你好"})
+	t.Cleanup(func() { SetSTTProvider(prev) })
+	breakWrites(t, project)
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNoteSegment(w, notesUpload(t, project, map[string]string{
+		"token": token, "channel": "mic", "startedAt": "1700000000000",
+	}, []byte("audio-bytes")))
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+
+	// The audio still landed: only the transcription row failed.
+	notesDir := filepath.Join(project, ".clawbench", "notes")
+	entries, err := os.ReadDir(notesDir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.FileExists(t, filepath.Join(notesDir, entries[0].Name(), "audio", "1700000000000-mic.webm"))
+}
+
+// The durable copies are a convenience, not the source of truth: when the
+// meeting folder cannot be written the job must still produce and store the
+// minutes, and report no path rather than a failed meeting.
+func TestGenerateLiveNotesArtifacts_UnwritableFolderStillStoresMinutes(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not apply to root")
+	}
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要"}}]}`))
+	}))
+	defer srv.Close()
+	withSummaryModel(t, srv.URL)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	paths, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
+	require.NoError(t, err)
+	require.NoError(t, os.Chmod(paths.Dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(paths.Dir, 0o755) })
+
+	generateLiveNotesArtifacts(token, pid, project, "周会", []service.LiveNoteSegment{
+		{Channel: "mic", Speaker: "我", StartedAt: 1_000, Text: "内容"},
+	})
+
+	note, ok, err := service.GetLiveNote(token)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, service.LiveNotesStatusReady, note.Status)
+	assert.Contains(t, note.Minutes, "## 概要")
+	assert.Empty(t, note.FilePath, "no file means no path, not a failed generation")
+	_, statErr := os.Stat(paths.Transcript)
+	assert.True(t, os.IsNotExist(statErr), "the transcript write failed and was only a warning")
+}
+
+// Every durable write failing is still a completed meeting: the status has to
+// move off "generating", or the reader waits forever and the delete guard
+// refuses to remove the row.
+func TestGenerateLiveNotesArtifacts_SurvivesNotesWriteFailure(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要"}}]}`))
+	}))
+	defer srv.Close()
+	withSummaryModel(t, srv.URL)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	breakWrites(t, project)
+
+	// The job must return, not panic or block, on a database that cannot write.
+	generateLiveNotesArtifacts(token, pid, project, "周会", []service.LiveNoteSegment{
+		{Channel: "mic", Speaker: "我", StartedAt: 1_000, Text: "内容"},
+	})
+}
+
+// A failing summariser plus a failing write: the failure still has to be
+// recorded (or at least attempted) rather than silently swallowed.
+func TestGenerateLiveNotesArtifacts_FailedMinutesWithBrokenWrite(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	withSummaryModel(t, srv.URL)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	breakWrites(t, project)
+
+	generateLiveNotesArtifacts(token, pid, project, "周会", []service.LiveNoteSegment{
+		{Channel: "mic", Speaker: "我", StartedAt: 1_000, Text: "内容"},
+	})
+}
+
+func TestServeLiveNotesDelete_ProjectLookupFailureIs500(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+	require.NoError(t, db.Close())
+
+	req := liveNotesProjectRequest(t,
+		"/api/live-share/notes/sessions?token=0123456789abcdef0123456789abcdef", t.TempDir())
+	req.Method = http.MethodDelete
+	w := httptest.NewRecorder()
+	ServeLiveNotesSessions(w, req)
+	assertErrorKey(t, w, http.StatusInternalServerError, "")
+}
+
+// The segments on disk are folded into one recording per channel before the
+// artifacts are written, so the meeting is opened as one file rather than forty.
+func TestGenerateLiveNotesArtifacts_MergesRecordedSegments(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要"}}]}`))
+	}))
+	defer srv.Close()
+	withSummaryModel(t, srv.URL)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	paths, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
+	require.NoError(t, err)
+	// A real MediaRecorder segment starts with the EBML magic; the merge
+	// validates it even on the single-segment (rename) path.
+	segment := filepath.Join(paths.Audio, "1700000000000-mic.webm")
+	require.NoError(t, os.WriteFile(segment, append([]byte{0x1A, 0x45, 0xDF, 0xA3}, []byte("audio")...), 0o644))
+
+	generateLiveNotesArtifacts(token, pid, project, "周会", []service.LiveNoteSegment{
+		{Channel: "mic", Speaker: "我", StartedAt: 1_700_000_000_000, Text: "内容"},
+	})
+
+	assert.FileExists(t, filepath.Join(paths.Audio, "mic.webm"))
+	assert.NoFileExists(t, segment, "the segment is folded into the channel file")
+}
+
+// A corrupt segment must not abort the meeting: the minutes still get produced,
+// the recording is simply left as it was.
+func TestGenerateLiveNotesArtifacts_SurvivesCorruptAudio(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要"}}]}`))
+	}))
+	defer srv.Close()
+	withSummaryModel(t, srv.URL)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	paths, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(paths.Audio, "1700000000000-mic.webm"), []byte("not webm"), 0o644))
+
+	generateLiveNotesArtifacts(token, pid, project, "周会", []service.LiveNoteSegment{
+		{Channel: "mic", Speaker: "我", StartedAt: 1_700_000_000_000, Text: "内容"},
+	})
+
+	note, ok, err := service.GetLiveNote(token)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, service.LiveNotesStatusReady, note.Status)
+}
+
+// The file and screen timelines are context, not content: losing either is a
+// gap in the minutes, never a reason to fail the meeting.
+func TestGenerateLiveNotesArtifacts_SurvivesTimelineLookupFailures(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要"}}]}`))
+	}))
+	defer srv.Close()
+	withSummaryModel(t, srv.URL)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	dropTable(t, "live_notes_files")
+	dropTable(t, "live_notes_screen")
+
+	generateLiveNotesArtifacts(token, pid, project, "周会", []service.LiveNoteSegment{
+		{Channel: "mic", Speaker: "我", StartedAt: 1_700_000_000_000, Text: "内容"},
+	})
+
+	note, ok, err := service.GetLiveNote(token)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, service.LiveNotesStatusReady, note.Status)
+	assert.Contains(t, note.Minutes, "## 概要")
+}

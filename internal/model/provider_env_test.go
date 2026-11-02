@@ -1,6 +1,7 @@
 package model
 
 import (
+	"sort"
 	"strings"
 	"testing"
 )
@@ -299,5 +300,119 @@ func TestProviderEnvVersion_ChangesWithWireAPI(t *testing.T) {
 	ReplaceProviders([]*Provider{{ID: 2, Name: "W", Protocol: ProviderProtocolOpenAI, BaseURL: "https://w", APIKey: "k", AuthMode: ProviderAuthAuto, WireAPI: ProviderWireChat}})
 	if ProviderEnvVersion(agentID) == before {
 		t.Fatal("changing wire_api must change the fingerprint")
+	}
+}
+
+// ProviderEnvBackends feeds the coverage test that keeps the env table and the
+// backend registry in sync, so it must list every entry exactly once, sorted.
+func TestProviderEnvBackends_SortedAndComplete(t *testing.T) {
+	backends := ProviderEnvBackends()
+	if len(backends) != len(providerEnvTable) {
+		t.Fatalf("backends = %d, table = %d", len(backends), len(providerEnvTable))
+	}
+	if !sort.StringsAreSorted(backends) {
+		t.Fatalf("backends must be sorted: %v", backends)
+	}
+	for _, id := range backends {
+		if !HasProviderEnvEntry(id) {
+			t.Errorf("HasProviderEnvEntry(%q) = false for a listed backend", id)
+		}
+	}
+	// An unclassified backend is a real answer ("no provider support"), not an
+	// entry, so it must not be reported.
+	if HasProviderEnvEntry("not-a-backend") {
+		t.Fatal("an unknown backend must not claim a classification")
+	}
+}
+
+func TestProviderEnvSupported_UnknownInputs(t *testing.T) {
+	if ProviderEnvSupported("not-a-backend", ProviderProtocolOpenAI) {
+		t.Fatal("an unclassified backend cannot take a provider")
+	}
+	// A protocol no backend knows is not a protocol anyone supports; the
+	// default arm of supportsProtocol is what answers this.
+	if ProviderEnvSupported("claude", "cohere") {
+		t.Fatal("an unknown protocol must not be reported as supported")
+	}
+	if ProviderEnvSupported("codex", "cohere") {
+		t.Fatal("the config-file protocol list is exhaustive")
+	}
+}
+
+func TestProviderAuthModeError_UnknownBackend(t *testing.T) {
+	err := ProviderAuthModeError("not-a-backend", ProviderProtocolOpenAI, ProviderAuthAuto)
+	if err == nil {
+		t.Fatal("an unclassified backend must be rejected by name")
+	}
+	if !strings.Contains(err.Error(), "not-a-backend") {
+		t.Fatalf("error %q must name the backend", err)
+	}
+}
+
+// A provider with no key cannot be applied at all: starting the process with an
+// empty credential would look applied while every request 401s.
+func TestBuildProviderEnv_RequiresAPIKey(t *testing.T) {
+	p := providerForTest(ProviderProtocolAnthropic, "https://gw.example", "", ProviderAuthAuto)
+	if _, err := BuildProviderEnv("claude", p); err == nil {
+		t.Fatal("expected an error for a provider without a key")
+	} else if !strings.Contains(err.Error(), "no API key") {
+		t.Fatalf("error %q must say the key is missing", err)
+	}
+}
+
+// The protocol reaches the env table as a string from a database row; an
+// unknown one must fail loudly instead of silently producing no variables.
+func TestBuildProviderEnv_UnknownProtocol(t *testing.T) {
+	p := providerForTest("cohere", "https://gw.example", "k", ProviderAuthAuto)
+	_, err := BuildProviderEnv("claude", p)
+	if err == nil {
+		t.Fatal("expected an error for an unknown protocol")
+	}
+	if !strings.Contains(err.Error(), "cohere") {
+		t.Fatalf("error %q must name the protocol", err)
+	}
+}
+
+// Every spawn site uses the one-step resolver; it must agree with
+// BuildProviderEnv and be a no-op for an unbound agent.
+func TestProviderEnvForAgent(t *testing.T) {
+	t.Cleanup(func() {
+		ReplaceProviders(nil)
+		ReplaceAgents(nil, nil)
+	})
+	pid := int64(5)
+	ReplaceProviders([]*Provider{{
+		ID: 5, Name: "GW", Protocol: ProviderProtocolAnthropic,
+		BaseURL: "https://gw.example", APIKey: "sk-5", AuthMode: ProviderAuthAuto,
+	}})
+	ReplaceAgents(
+		map[string]*Agent{
+			"bound":   {ID: "bound", Backend: "claude", ProviderID: &pid},
+			"unbound": {ID: "unbound", Backend: "claude"},
+		},
+		[]*Agent{
+			{ID: "bound", Backend: "claude", ProviderID: &pid},
+			{ID: "unbound", Backend: "claude"},
+		},
+	)
+
+	env, err := ProviderEnvForAgent("bound", "claude")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(env, ",")
+	if !strings.Contains(joined, "ANTHROPIC_API_KEY=sk-5") || !strings.Contains(joined, "ANTHROPIC_BASE_URL=https://gw.example") {
+		t.Fatalf("env = %v", env)
+	}
+
+	env, err = ProviderEnvForAgent("unbound", "claude")
+	if err != nil || env != nil {
+		t.Fatalf("an unbound agent must be a no-op, got %v / %v", env, err)
+	}
+
+	// A binding the backend cannot express is an error, not an empty list.
+	// deepseek only speaks the OpenAI wire protocol.
+	if _, err := ProviderEnvForAgent("bound", "deepseek"); err == nil {
+		t.Fatal("claude's anthropic provider must not be applied to an openai-only backend")
 	}
 }

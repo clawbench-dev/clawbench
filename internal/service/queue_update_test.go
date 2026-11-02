@@ -332,3 +332,40 @@ func TestUpdateQueuedMessage_KeepsQuoteAttachmentsWhenReplacing(t *testing.T) {
 	assert.Equal(t, "func main() {}", updated.Files[0].Text, "the quoted text is the payload and must survive")
 	assert.Equal(t, "why", updated.Files[0].Note)
 }
+
+// TestUpdateQueuedMessage_WriteFailureIsError: the row is read and written in
+// one transaction, and a failing write must surface as an error with nothing
+// changed — both for a text-only edit and for an attachment replacement (they
+// use different statements).
+//
+// A trigger supplies the failure: SQLite has no way to make one UPDATE fail
+// from the outside, and the branch is otherwise unreachable in a unit test.
+func TestUpdateQueuedMessage_WriteFailureIsError(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue Update Broken Write")
+
+	_, err := service.AddQueuedMessage("/project", "claude", sid, "original", nil, "q-1", "")
+	require.NoError(t, err)
+
+	_, err = store.UnsafeDBForTest().Exec(`
+		CREATE TRIGGER block_queue_update BEFORE UPDATE ON queued_messages
+		BEGIN SELECT RAISE(ABORT, 'queue update blocked'); END`)
+	require.NoError(t, err)
+
+	// Text-only edit: the `files` column is left alone.
+	_, ok, err := service.UpdateQueuedMessage(sid, "q-1", "edited", nil)
+	require.Error(t, err, "a failing UPDATE must not be reported as a decline")
+	assert.False(t, ok)
+	assert.Contains(t, err.Error(), "queue update blocked")
+
+	// Attachment replacement: a different UPDATE statement, same contract.
+	_, ok, err = service.UpdateQueuedMessage(sid, "q-1", "edited", []model.FileEntry{{Path: "/project/a.png"}})
+	require.Error(t, err)
+	assert.False(t, ok)
+
+	// Nothing was written.
+	entry := queueEntryByID(t, sid, "q-1")
+	require.NotNil(t, entry)
+	assert.Equal(t, "original", entry.Text)
+	assert.Empty(t, entry.Files)
+}

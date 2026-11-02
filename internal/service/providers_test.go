@@ -407,3 +407,311 @@ func TestProviderValidationErrorNamesField(t *testing.T) {
 		})
 	}
 }
+
+// ── Aggregate queries the settings list uses ──────────────────
+
+// The list page renders a usage badge per row from ONE query, and the names of
+// the agents behind it from another; both must be keyed by provider id and
+// ignore unbound agents.
+func TestProviderUsageCountsAndAgentNamesAll(t *testing.T) {
+	setupProvidersDB(t)
+
+	p1, err := service.CreateProvider(model.Provider{Name: "P1", Protocol: model.ProviderProtocolAnthropic})
+	require.NoError(t, err)
+	p2, err := service.CreateProvider(model.Provider{Name: "P2", Protocol: model.ProviderProtocolAnthropic})
+	require.NoError(t, err)
+	unused, err := service.CreateProvider(model.Provider{Name: "Unused", Protocol: model.ProviderProtocolAnthropic})
+	require.NoError(t, err)
+
+	require.NoError(t, service.SaveAgent(store.WriteDB(), &model.Agent{ID: "a1", Name: "Zeta", Backend: "claude", ProviderID: &p1.ID}))
+	require.NoError(t, service.SaveAgent(store.WriteDB(), &model.Agent{ID: "a2", Name: "Alpha", Backend: "claude", ProviderID: &p1.ID}))
+	require.NoError(t, service.SaveAgent(store.WriteDB(), &model.Agent{ID: "a3", Name: "Solo", Backend: "claude", ProviderID: &p2.ID}))
+	// Unbound agents must not appear anywhere in the aggregates.
+	require.NoError(t, service.SaveAgent(store.WriteDB(), &model.Agent{ID: "a4", Name: "Free", Backend: "claude"}))
+
+	counts, err := service.ProviderUsageCounts()
+	require.NoError(t, err)
+	assert.Equal(t, map[int64]int{p1.ID: 2, p2.ID: 1}, counts)
+	assert.NotContains(t, counts, unused.ID, "a provider with no agents has no entry")
+
+	names, err := service.ProviderAgentNamesAll()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Alpha", "Zeta"}, names[p1.ID], "names must be ordered")
+	assert.Equal(t, []string{"Solo"}, names[p2.ID])
+	assert.NotContains(t, names, unused.ID)
+	for _, list := range names {
+		assert.NotContains(t, list, "Free")
+	}
+
+	// The single-provider variants must agree with the aggregate.
+	one, err := service.ProviderAgentNames(p1.ID)
+	require.NoError(t, err)
+	assert.Equal(t, names[p1.ID], one)
+}
+
+// ── Update/delete edge cases ─────────────────────────────────
+
+func TestUpdateProvider_UnknownID(t *testing.T) {
+	setupProvidersDB(t)
+	name := "x"
+	_, err := service.UpdateProvider(4242, service.ProviderPatch{Name: &name})
+	assert.ErrorIs(t, err, service.ErrProviderNotFound)
+}
+
+// Renaming onto a name another row already holds is the same conflict as
+// creating a duplicate — including the case-insensitive match.
+func TestUpdateProvider_RenameOntoExistingName(t *testing.T) {
+	setupProvidersDB(t)
+
+	first, err := service.CreateProvider(model.Provider{Name: "Taken", Protocol: model.ProviderProtocolOpenAI})
+	require.NoError(t, err)
+	second, err := service.CreateProvider(model.Provider{Name: "Other", Protocol: model.ProviderProtocolOpenAI})
+	require.NoError(t, err)
+
+	dup := "taken"
+	_, err = service.UpdateProvider(second.ID, service.ProviderPatch{Name: &dup})
+	assert.ErrorIs(t, err, service.ErrProviderNameTaken)
+
+	// The rejected update must not have partially applied.
+	stored, err := service.GetProvider(second.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Other", stored.Name)
+	assert.NotEqual(t, first.ID, second.ID)
+
+	// Renaming a row to its own name is not a conflict (the id is excluded).
+	own := "Taken"
+	_, err = service.UpdateProvider(first.ID, service.ProviderPatch{Name: &own})
+	require.NoError(t, err)
+}
+
+func TestDeleteProvider_UnknownID(t *testing.T) {
+	setupProvidersDB(t)
+	assert.ErrorIs(t, service.DeleteProvider(999), service.ErrProviderNotFound)
+}
+
+// presetId links a row back to the catalog and is editable independently of the
+// other fields; a non-empty apiKey replaces the stored secret.
+func TestProviderPatch_PresetIDAndAPIKey(t *testing.T) {
+	setupProvidersDB(t)
+
+	created, err := service.CreateProvider(model.Provider{
+		Name: "GW", Protocol: model.ProviderProtocolOpenAI, APIKey: "sk-old",
+	})
+	require.NoError(t, err)
+	assert.Empty(t, created.PresetID)
+
+	preset := "deepseek"
+	key := "sk-new"
+	updated, err := service.UpdateProvider(created.ID, service.ProviderPatch{PresetID: &preset, APIKey: &key})
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek", updated.PresetID)
+	assert.Equal(t, "sk-new", updated.APIKey)
+
+	stored, err := service.GetProvider(created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek", stored.PresetID)
+	assert.Equal(t, "sk-new", stored.APIKey)
+}
+
+func TestProviderProtocolConflictError_Message(t *testing.T) {
+	err := &service.ProviderProtocolConflictError{AgentNames: []string{"A", "B"}}
+	assert.Equal(t, "provider protocol is not supported by agents: A, B", err.Error())
+}
+
+// ── Rows that predate the JSON column ────────────────────────
+
+// Older rows may carry an empty or corrupt `models` column; the read path must
+// degrade to "not curated" instead of failing the whole list.
+func TestProviderModelsColumn_DegradesOnEmptyOrCorruptJSON(t *testing.T) {
+	setupProvidersDB(t)
+
+	insert := func(name, modelsJSON string) int64 {
+		res, err := store.WriteExec(`INSERT INTO providers
+			(name, protocol, base_url, api_key, auth_mode, preset_id, models, default_model, wire_api)
+			VALUES (?, 'openai', '', '', 'auto', '', ?, '', 'responses')`, name, modelsJSON)
+		require.NoError(t, err)
+		id, err := res.LastInsertId()
+		require.NoError(t, err)
+		return id
+	}
+
+	emptyID := insert("EmptyModels", "")
+	corruptID := insert("CorruptModels", "{not json")
+
+	require.NoError(t, service.LoadProvidersIntoMemory())
+
+	for _, tc := range []struct {
+		name string
+		id   int64
+	}{
+		{"empty column", emptyID},
+		{"corrupt json", corruptID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := service.GetProvider(tc.id)
+			require.NoError(t, err)
+			assert.Nil(t, p.Models, "an unreadable model list must read as 'not curated'")
+
+			// The spawn path reads the same snapshot, so it must agree.
+			cached := model.GetProvider(tc.id)
+			require.NotNil(t, cached)
+			assert.Nil(t, cached.Models)
+		})
+	}
+}
+
+// ── Database failures ────────────────────────────────────────
+
+// The provider tables are read on every spawn, so a broken schema must surface
+// as an error rather than an empty list that silently disables providers.
+func TestProviderReads_ReportSchemaFailures(t *testing.T) {
+	setupProvidersDB(t)
+
+	_, err := service.CreateProvider(model.Provider{Name: "P", Protocol: model.ProviderProtocolOpenAI})
+	require.NoError(t, err)
+	require.NoError(t, service.LoadProvidersIntoMemory())
+
+	_, err = store.WriteExec("DROP TABLE providers")
+	require.NoError(t, err)
+
+	assert.Error(t, service.LoadProvidersIntoMemory())
+	_, err = service.ListProviders()
+	assert.Error(t, err)
+	_, err = service.GetProvider(1)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, service.ErrProviderNotFound,
+		"a schema failure must not be reported as a missing row")
+
+	// The duplicate-name lookup fails closed: refusing a create is the only
+	// safe answer when uniqueness cannot be checked.
+	_, err = service.CreateProvider(model.Provider{Name: "Q", Protocol: model.ProviderProtocolOpenAI})
+	assert.ErrorIs(t, err, service.ErrProviderNameTaken)
+}
+
+func TestProviderAgentQueries_ReportSchemaFailures(t *testing.T) {
+	setupProvidersDB(t)
+
+	p, err := service.CreateProvider(model.Provider{Name: "P", Protocol: model.ProviderProtocolAnthropic})
+	require.NoError(t, err)
+
+	_, err = store.WriteExec("DROP TABLE agents")
+	require.NoError(t, err)
+
+	_, err = service.CountAgentsByProvider(p.ID)
+	assert.Error(t, err)
+
+	_, err = service.ProviderUsageCounts()
+	assert.Error(t, err)
+
+	_, err = service.ProviderAgentNames(p.ID)
+	assert.Error(t, err)
+
+	_, err = service.ProviderAgentNamesAll()
+	assert.Error(t, err)
+
+	// Deleting cannot prove the provider is unused, so it must refuse.
+	assert.Error(t, service.DeleteProvider(p.ID))
+}
+
+// A protocol change consults the bound agents; if that query fails the change
+// must be refused rather than silently dropping the compatibility guard.
+func TestUpdateProviderProtocolChange_FailsWhenAgentsUnreadable(t *testing.T) {
+	setupProvidersDB(t)
+
+	p, err := service.CreateProvider(model.Provider{Name: "P", Protocol: model.ProviderProtocolAnthropic})
+	require.NoError(t, err)
+	_, err = store.WriteExec("DROP TABLE agents")
+	require.NoError(t, err)
+
+	openai := model.ProviderProtocolOpenAI
+	_, err = service.UpdateProvider(p.ID, service.ProviderPatch{Protocol: &openai})
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, service.ErrProviderInvalid)
+
+	// The row is untouched.
+	stored, err := service.GetProvider(p.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ProviderProtocolAnthropic, stored.Protocol)
+}
+
+// The write statements themselves can fail (constraint, disk, schema): each
+// path must report a wrapped error instead of pretending the row was written.
+func TestProviderWrites_ReportStatementFailures(t *testing.T) {
+	setupProvidersDB(t)
+
+	_, err := service.CreateProvider(model.Provider{Name: "Keep", Protocol: model.ProviderProtocolOpenAI})
+	require.NoError(t, err)
+
+	_, err = store.WriteExec(`CREATE TRIGGER reject_provider_insert BEFORE INSERT ON providers
+		BEGIN SELECT RAISE(ABORT, 'insert blocked'); END`)
+	require.NoError(t, err)
+	_, err = service.CreateProvider(model.Provider{Name: "New", Protocol: model.ProviderProtocolOpenAI})
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, service.ErrProviderNameTaken, "a blocked insert is not a name conflict")
+	assert.Contains(t, err.Error(), "insert provider")
+
+	_, err = store.WriteExec("DROP TRIGGER reject_provider_insert")
+	require.NoError(t, err)
+	_, err = store.WriteExec(`CREATE TRIGGER reject_provider_update BEFORE UPDATE ON providers
+		BEGIN SELECT RAISE(ABORT, 'update blocked'); END`)
+	require.NoError(t, err)
+	name := "Renamed"
+	_, err = service.UpdateProvider(1, service.ProviderPatch{Name: &name})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update provider")
+
+	_, err = store.WriteExec("DROP TRIGGER reject_provider_update")
+	require.NoError(t, err)
+	_, err = store.WriteExec(`CREATE TRIGGER reject_provider_delete BEFORE DELETE ON providers
+		BEGIN SELECT RAISE(ABORT, 'delete blocked'); END`)
+	require.NoError(t, err)
+	err = service.DeleteProvider(1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete provider")
+
+	// The row survived every rejected write.
+	stored, err := service.GetProvider(1)
+	require.NoError(t, err)
+	assert.Equal(t, "Keep", stored.Name)
+}
+
+// provider_id is TEXT in a corrupt/hand-edited database; the aggregate query
+// must report the scan failure instead of silently dropping the count.
+func TestProviderUsageCounts_ReportsScanFailure(t *testing.T) {
+	setupProvidersDB(t)
+
+	_, err := store.WriteExec("DROP TABLE agents")
+	require.NoError(t, err)
+	_, err = store.WriteExec("CREATE TABLE agents (id TEXT, name TEXT, backend TEXT, provider_id TEXT)")
+	require.NoError(t, err)
+	_, err = store.WriteExec("INSERT INTO agents (id, name, backend, provider_id) VALUES ('a', 'A', 'claude', 'not-a-number')")
+	require.NoError(t, err)
+
+	_, err = service.ProviderUsageCounts()
+	assert.Error(t, err)
+}
+
+// Two clients can race between the name check and the write. The loser hits the
+// UNIQUE index, and must still get the friendly "name taken" answer instead of
+// a raw driver error the settings dialog cannot explain.
+func TestProviderWrites_TranslateUniqueConstraintRace(t *testing.T) {
+	setupProvidersDB(t)
+
+	_, err := service.CreateProvider(model.Provider{Name: "Keep", Protocol: model.ProviderProtocolOpenAI})
+	require.NoError(t, err)
+
+	_, err = store.WriteExec(`CREATE TRIGGER race_provider_insert BEFORE INSERT ON providers
+		BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: providers.name'); END`)
+	require.NoError(t, err)
+	_, err = service.CreateProvider(model.Provider{Name: "Racer", Protocol: model.ProviderProtocolOpenAI})
+	assert.ErrorIs(t, err, service.ErrProviderNameTaken, "a lost insert race is a name conflict, not a 500")
+
+	_, err = store.WriteExec("DROP TRIGGER race_provider_insert")
+	require.NoError(t, err)
+	_, err = store.WriteExec(`CREATE TRIGGER race_provider_update BEFORE UPDATE ON providers
+		BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: providers.name'); END`)
+	require.NoError(t, err)
+	name := "Racer"
+	_, err = service.UpdateProvider(1, service.ProviderPatch{Name: &name})
+	assert.ErrorIs(t, err, service.ErrProviderNameTaken, "a lost update race is a name conflict, not a 500")
+}

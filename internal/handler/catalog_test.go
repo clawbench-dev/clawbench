@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -180,4 +182,60 @@ func TestAgents_ACPModelsWinOverCatalog(t *testing.T) {
 	require.Len(t, body.Agents[0].Models, 1)
 	assert.Equal(t, "real-model", body.Agents[0].Models[0].ID)
 	assert.Empty(t, body.Agents[0].CatalogModels, "a confirmed ACP list must not be mixed with the catalog")
+}
+
+// A forced refresh that fails upstream must be a 502 with the reason, so the
+// settings page can show it instead of silently keeping a stale list.
+func TestCatalogEndpoint_RefreshFailureIsBadGateway(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	// An already-cancelled request context fails before any network call: the
+	// refresh reports the context error without dialing models.dev.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := httptest.NewRequest(http.MethodPost, "/api/catalog", http.NoBody).WithContext(ctx)
+	w := httptest.NewRecorder()
+	ServeCatalog(w, r)
+
+	require.Equal(t, http.StatusBadGateway, w.Code, w.Body.String())
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Contains(t, body["error"], "context canceled")
+}
+
+func TestCatalogEndpoint_MethodNotAllowed(t *testing.T) {
+	setupProvidersHandlerTest(t)
+	rec := doProviderRequest(t, ServeCatalog, http.MethodDelete, "/api/catalog", nil)
+	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code, rec.Body.String())
+}
+
+// Providers with the same display name are ordered by id, so the settings list
+// does not reshuffle between two identical requests (map iteration order is
+// random, so without the tie-break the order would change every call).
+func TestCatalogEndpoint_OrdersSameNameProvidersByID(t *testing.T) {
+	setupProvidersHandlerTest(t)
+	model.ReplaceCatalog(&model.Catalog{
+		FetchedAt: time.Now(),
+		Source:    "test",
+		Providers: map[string]model.CatalogProvider{
+			"z-last": {ID: "z-last", Name: "Same", Protocol: model.ProviderProtocolOpenAI},
+			"a-mid":  {ID: "a-mid", Name: "Same", Protocol: model.ProviderProtocolOpenAI},
+			"first":  {ID: "first", Name: "Aardvark", Protocol: model.ProviderProtocolOpenAI},
+		},
+	})
+	t.Cleanup(func() { model.ReplaceCatalog(nil) })
+
+	rec := doProviderRequest(t, ServeCatalog, http.MethodGet, "/api/catalog", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		Providers []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"providers"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Providers, 3)
+	assert.Equal(t, []string{"first", "a-mid", "z-last"}, []string{
+		body.Providers[0].ID, body.Providers[1].ID, body.Providers[2].ID,
+	})
 }

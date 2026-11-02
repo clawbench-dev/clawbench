@@ -138,6 +138,26 @@ func TestMeetingEventMessage_CarriesFacts(t *testing.T) {
 	assert.Equal(t, "/proj", payload.ProjectPath)
 }
 
+// The durable log must not depend on a WS manager existing: background jobs run
+// without one, and the row is the record of what happened.
+func TestEmitMeetingEvent_WithWSManagerStillLogsTheEvent(t *testing.T) {
+	cleanup := meetingNotifyTestDB(t)
+	defer cleanup()
+	withLanguage(t, "zh")
+
+	prev := ws.GetManager()
+	t.Cleanup(func() { ws.SetManagerForTest(prev) })
+	ws.SetManagerForTest(ws.NewManagerForTest())
+
+	EmitMeetingEvent("tok-1", "/proj", MeetingEventScreenShare, "", "v3", "张三")
+
+	rows := storedNotifications(t)
+	require.Len(t, rows, 1)
+	assert.Equal(t, MeetingEventScreenShare, rows[0].EventType)
+	assert.Equal(t, "张三 开始共享屏幕", rows[0].Body)
+	assert.Equal(t, "未命名会议", rows[0].Title, "a meeting without a name still needs a readable title")
+}
+
 // TestMarkMissingSources_ProbesLiveNotes pins the meeting presence probe: the
 // in-memory room dies with the meeting, so the RECORD row is what the click
 // opens and what decides staleness.

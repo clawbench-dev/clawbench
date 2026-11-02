@@ -5,18 +5,22 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"clawbench/internal/audio"
+	"clawbench/internal/model"
 	"clawbench/internal/speech"
+	"clawbench/internal/store"
 	"clawbench/internal/summarize"
 
 	"github.com/stretchr/testify/assert"
@@ -409,4 +413,291 @@ func TestTTSPCMGenerate_RejectsNonFrameAlignedDecode(t *testing.T) {
 	matches, err := filepath.Glob(pcmCachePath(env.ProjectDir, "半截解码", format))
 	require.NoError(t, err)
 	assert.Empty(t, matches, "a truncated stream must not be published as a cache entry")
+}
+
+// decodePCMError reads the localized error body so a test can assert WHICH
+// branch answered, not merely that something failed.
+func decodePCMError(t *testing.T, w *httptest.ResponseRecorder) model.ErrorResponse {
+	t.Helper()
+	var body model.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), "error responses are JSON: %s", w.Body.String())
+	return body
+}
+
+func TestTTSPCMGenerate_InvalidJSONBody(t *testing.T) {
+	provider := &mockSpeechProvider{}
+	env, teardown := setupPCMTest(t, provider, &mockSummarizer{})
+	defer teardown()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tts/generate/pcm", strings.NewReader("{not json"))
+	req.Header.Set("Content-Type", "application/json")
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSPCMGenerate(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "InvalidRequestBody", decodePCMError(t, w).MsgKey)
+	assert.False(t, provider.synthesizeCalled)
+}
+
+// TestTTSPCMGenerate_SpeaksConclusionOfReferencedMessage pins the MessageID
+// contract: when the caller names a message, the spoken text is that message's
+// final answer — not the (possibly much longer) text the client sent along.
+// Firmware sends the whole bubble and lets the server pick what to read.
+func TestTTSPCMGenerate_SpeaksConclusionOfReferencedMessage(t *testing.T) {
+	provider := &mockSpeechProvider{}
+	sum := &mockSummarizer{result: "朗读摘要"}
+	stubDecoder(t, []byte("pcm!!!"), audio.Format{SampleRate: 24000, Channels: 1, Bits: 16})
+	env, teardown := setupPCMTest(t, provider, sum)
+	defer teardown()
+
+	res, err := store.UnsafeDBForTest().Exec(`
+		INSERT INTO chat_history (project_id, role, content, session_id, backend)
+		VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"最终结论"}]}', 's-conclusion', 'claude')`)
+	require.NoError(t, err)
+	msgID, err := res.LastInsertId()
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/tts/generate/pcm", map[string]any{
+		"text":      "很长的一段原始回复，本来不该被朗读",
+		"messageId": msgID,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSPCMGenerate(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "最终结论", sum.lastText, "the referenced message's conclusion must replace the request text")
+	assert.Equal(t, "朗读摘要", provider.lastSynthText)
+}
+
+// TestTTSPCMGenerate_TextTooLong: the length ceiling is enforced before any
+// synthesis work is scheduled.
+func TestTTSPCMGenerate_TextTooLong(t *testing.T) {
+	origMax := summarize.MaxTextRunes
+	summarize.MaxTextRunes = 4
+	t.Cleanup(func() { summarize.MaxTextRunes = origMax })
+
+	provider := &mockSpeechProvider{}
+	stubDecoder(t, []byte("pcm!"), audio.Format{SampleRate: 24000, Channels: 1, Bits: 16})
+	env, teardown := setupPCMTest(t, provider, &mockSummarizer{})
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/tts/generate/pcm", map[string]any{"text": "五个字符啊"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSPCMGenerate(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	body := decodePCMError(t, w)
+	assert.Equal(t, "TextTooLong", body.MsgKey)
+	assert.Equal(t, float64(4), body.Detail["MaxChars"], "the ceiling must be reported so the client can trim")
+	assert.False(t, provider.synthesizeCalled)
+}
+
+// TestTTSPCMGenerate_RejectsUnresolvableProject: a cookie naming a directory
+// that no longer exists must be refused before the handler writes anything
+// (otherwise the cache path would be resolved under a nonexistent root).
+func TestTTSPCMGenerate_RejectsUnresolvableProject(t *testing.T) {
+	provider := &mockSpeechProvider{}
+	stubDecoder(t, []byte("pcm!"), audio.Format{SampleRate: 24000, Channels: 1, Bits: 16})
+	env, teardown := setupPCMTest(t, provider, &mockSummarizer{})
+	defer teardown()
+
+	gone := filepath.Join(env.ProjectDir, "deleted-project")
+	req := newRequest(t, http.MethodPost, "/api/tts/generate/pcm", map[string]any{"text": "你好"})
+	req = withProjectCookie(req, gone)
+	w := httptest.NewRecorder()
+
+	TTSPCMGenerate(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, "AccessDenied", decodePCMError(t, w).MsgKey)
+	assert.False(t, provider.synthesizeCalled)
+}
+
+// TestTTSPCMGenerate_DecoderReportsInvalidFormat: a decoder that cannot say
+// what it produced must fail the request instead of publishing a stream whose
+// Content-Type would be nonsense.
+func TestTTSPCMGenerate_DecoderReportsInvalidFormat(t *testing.T) {
+	provider := &mockSpeechProvider{}
+	stubDecoder(t, []byte("pcm bytes"), audio.Format{}) // no rate/channels/bits
+	env, teardown := setupPCMTest(t, provider, &mockSummarizer{})
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/tts/generate/pcm", map[string]any{"text": "格式未知"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSPCMGenerate(w, req)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, "InternalError", decodePCMError(t, w).MsgKey)
+	ttsDir := filepath.Join(env.ProjectDir, ".clawbench", "generated", "tts")
+	assertNoPCMTempFiles(t, ttsDir)
+	matches, err := filepath.Glob(filepath.Join(ttsDir, mp3CacheKey("格式未知")+"-r*.pcm"))
+	require.NoError(t, err)
+	assert.Empty(t, matches, "an invalid format must not be published under any cache name")
+}
+
+// TestTTSPCMGenerate_PublishFailureLeavesNoTempFile: when the final rename
+// fails the request must fail and the intermediate file must be removed —
+// otherwise every later request would see a stray `.decoding` file.
+func TestTTSPCMGenerate_PublishFailureLeavesNoTempFile(t *testing.T) {
+	format := audio.Format{SampleRate: 24000, Channels: 1, Bits: 16}
+
+	var finalPath string
+	orig := decodeMP3ToPCM
+	decodeMP3ToPCM = func(_, dstPath string) (audio.Format, error) {
+		// The rename target is occupied by a DIRECTORY by the time the decoder
+		// finishes: rename(2) then fails with EISDIR. Created here rather than
+		// up front so the pre-decode cache lookup still misses.
+		require.NoError(t, os.MkdirAll(finalPath, 0o755))
+		if err := os.WriteFile(dstPath, []byte("pcm bytes!"), 0o644); err != nil {
+			return audio.Format{}, err
+		}
+		return format, nil
+	}
+	t.Cleanup(func() { decodeMP3ToPCM = orig })
+
+	env, teardown := setupPCMTest(t, &mockSpeechProvider{}, &mockSummarizer{})
+	defer teardown()
+
+	finalPath = pcmCachePath(env.ProjectDir, "无法发布", format)
+	req := newRequest(t, http.MethodPost, "/api/tts/generate/pcm", map[string]any{"text": "无法发布"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSPCMGenerate(w, req)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	assertNoPCMTempFiles(t, filepath.Join(env.ProjectDir, ".clawbench", "generated", "tts"))
+	info, err := os.Stat(finalPath)
+	require.NoError(t, err)
+	assert.True(t, info.IsDir(), "the failed publish must not replace the blocking directory")
+}
+
+// TestTTSPCMGenerate_SummarizeFailureWithoutFallback: when the configured
+// summarizer fails AND the text has no plain-text content to fall back on, the
+// endpoint reports a summarize failure instead of synthesizing an empty phrase.
+func TestTTSPCMGenerate_SummarizeFailureWithoutFallback(t *testing.T) {
+	provider := &mockSpeechProvider{}
+	sum := &mockSummarizer{err: assert.AnError}
+	stubDecoder(t, []byte("pcm!"), audio.Format{SampleRate: 24000, Channels: 1, Bits: 16})
+	env, teardown := setupPCMTest(t, provider, sum)
+	defer teardown()
+
+	// "---" is a horizontal rule: StripMarkdown leaves nothing, so the simple
+	// fallback summarizer returns an empty string.
+	req := newRequest(t, http.MethodPost, "/api/tts/generate/pcm", map[string]any{"text": "---"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSPCMGenerate(w, req)
+
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	assert.Equal(t, "SummarizeFailed", decodePCMError(t, w).MsgKey)
+	assert.True(t, sum.called)
+	assert.False(t, provider.synthesizeCalled, "nothing speakable was produced, so nothing may be synthesized")
+}
+
+// TestTTSPCMGenerate_SkipsUnusableCacheEntries: a cache directory can contain
+// files whose names look like decoded streams but are not (an old naming
+// scheme, a zero-valued parameter, a half-typed name). They must be skipped —
+// not served, and not allowed to shadow the real entry.
+func TestTTSPCMGenerate_SkipsUnusableCacheEntries(t *testing.T) {
+	format := audio.Format{SampleRate: 24000, Channels: 1, Bits: 16}
+	stubDecoder(t, []byte("fresh!!!"), format)
+	env, teardown := setupPCMTest(t, &mockSpeechProvider{}, &mockSummarizer{})
+	defer teardown()
+
+	ttsDir := filepath.Join(env.ProjectDir, ".clawbench", "generated", "tts")
+	require.NoError(t, os.MkdirAll(ttsDir, 0o755))
+	key := mp3CacheKey("跳过坏缓存")
+	strays := []string{
+		key + "-rfoo.pcm",      // unparseable parameters
+		key + "-r0-c1-b16.pcm", // zero sample rate
+	}
+	for _, name := range strays {
+		require.NoError(t, os.WriteFile(filepath.Join(ttsDir, name), []byte("bogus"), 0o644))
+	}
+
+	req := newRequest(t, http.MethodPost, "/api/tts/generate/pcm", map[string]any{"text": "跳过坏缓存"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSPCMGenerate(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "fresh!!!", w.Body.String(), "the real decode must win over the unusable entries")
+	for _, name := range strays {
+		raw, err := os.ReadFile(filepath.Join(ttsDir, name))
+		require.NoError(t, err)
+		assert.Equal(t, "bogus", string(raw), "%s must be left alone", name)
+	}
+}
+
+// TestFindCachedPCM_MalformedPatternIsAMiss: a cache directory whose name
+// contains an unmatched glob metacharacter makes filepath.Glob fail. That must
+// degrade to "no cache entry" rather than failing the request.
+func TestFindCachedPCM_MalformedPatternIsAMiss(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "proj[")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "key-r16000-c1-b16.pcm"), []byte("pcm!"), 0o644))
+
+	path, format, hit := findCachedPCM(dir, "key")
+
+	assert.False(t, hit)
+	assert.Empty(t, path)
+	assert.Zero(t, format.SampleRate)
+}
+
+// TestPCMFileValid pins the validity rule the cache lookup depends on: a file
+// that is not a whole number of frames is a torn decode, never a cache entry.
+func TestPCMFileValid(t *testing.T) {
+	dir := t.TempDir()
+	format := audio.Format{SampleRate: 16000, Channels: 2, Bits: 16} // 4-byte frames
+
+	write := func(name string, body []byte) string {
+		p := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(p, body, 0o644))
+		return p
+	}
+
+	cases := []struct {
+		name   string
+		path   string
+		format audio.Format
+		want   bool
+	}{
+		{"missing file", filepath.Join(dir, "nope.pcm"), format, false},
+		{"empty file", write("empty.pcm", nil), format, false},
+		{"whole frames", write("aligned.pcm", make([]byte, 12)), format, true},
+		{"partial frame", write("torn.pcm", make([]byte, 13)), format, false},
+		// No frame size can be derived from a zero-valued format; the size check
+		// is the only meaningful one left, so a non-empty file passes.
+		{"undecidable frame size", write("unknown.pcm", []byte("x")), audio.Format{}, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, pcmFileValid(tc.path, tc.format))
+		})
+	}
+}
+
+// TestServePCM_MissingFile: the file can disappear between the cache lookup and
+// the open (eviction runs concurrently), which must be a 500 — not an empty 200
+// that the firmware would play as silence.
+func TestServePCM_MissingFile(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/tts/generate/pcm", http.NoBody)
+	w := httptest.NewRecorder()
+
+	servePCM(w, req, filepath.Join(t.TempDir(), "gone.pcm"), audio.Format{SampleRate: 16000, Channels: 1, Bits: 16})
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, "InternalError", decodePCMError(t, w).MsgKey)
 }

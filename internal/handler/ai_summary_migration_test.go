@@ -203,3 +203,98 @@ func mustRead(t *testing.T, path string) []byte {
 	require.NoError(t, err)
 	return data
 }
+
+// A provider row that cannot be created at all (storage failure) must surface:
+// the legacy fields stay usable and the next start retries.
+func TestMigrateAISummaryProvider_ProviderCreationFailure(t *testing.T) {
+	setupMigrationEnv(t)
+	model.ConfigInstance.AISummary.API = model.APIConfig{BaseURL: "https://legacy.example/v1", Key: "sk"}
+
+	// A rejected INSERT is not a name conflict, so the retry loop must give up
+	// immediately instead of trying 50 suffixes.
+	_, err := store.WriteExec(`CREATE TRIGGER reject_provider_insert BEFORE INSERT ON providers
+		BEGIN SELECT RAISE(ABORT, 'insert blocked'); END`)
+	require.NoError(t, err)
+
+	err = MigrateAISummaryProvider()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "migrate ai_summary provider")
+	assert.Nil(t, model.ConfigInstance.AISummary.ProviderID)
+	assert.Equal(t, "https://legacy.example/v1", model.ConfigInstance.AISummary.API.BaseURL)
+
+	providers, listErr := service.ListProviders()
+	require.NoError(t, listErr)
+	assert.Empty(t, providers)
+}
+
+// When the name lookup itself cannot run, every attempt reads as "name taken";
+// the migration must stop with a clear error rather than looping forever.
+func TestMigrateAISummaryProvider_NameLookupFailureIsReported(t *testing.T) {
+	setupMigrationEnv(t)
+	model.ConfigInstance.AISummary.API = model.APIConfig{BaseURL: "https://legacy.example/v1", Key: "sk"}
+
+	_, err := store.WriteExec("DROP TABLE providers")
+	require.NoError(t, err)
+
+	err = MigrateAISummaryProvider()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no free name")
+	assert.Nil(t, model.ConfigInstance.AISummary.ProviderID)
+}
+
+// "AI Summary" is a display name a user may already have taken by hand, so the
+// migration suffixes until it finds a free one instead of failing.
+func TestMigrateAISummaryProvider_SuffixesTakenName(t *testing.T) {
+	path := setupMigrationEnv(t)
+	writeConfigFile(t, path, "ai_summary:\n  model: m\n")
+
+	_, err := service.CreateProvider(model.Provider{Name: "AI Summary", Protocol: model.ProviderProtocolOpenAI})
+	require.NoError(t, err)
+
+	model.ConfigInstance.AISummary.API = model.APIConfig{BaseURL: "https://legacy.example/v1", Key: "sk"}
+	require.NoError(t, MigrateAISummaryProvider())
+
+	provider := model.GetProvider(*model.ConfigInstance.AISummary.ProviderID)
+	require.NotNil(t, provider)
+	assert.Equal(t, "AI Summary 2", provider.Name)
+
+	// And again: the next free suffix is used.
+	model.ConfigInstance.AISummary.ProviderID = nil
+	model.ConfigInstance.AISummary.API = model.APIConfig{BaseURL: "https://legacy.example/v1", Key: "sk"}
+	require.NoError(t, MigrateAISummaryProvider())
+	provider = model.GetProvider(*model.ConfigInstance.AISummary.ProviderID)
+	require.NotNil(t, provider)
+	assert.Equal(t, "AI Summary 3", provider.Name)
+}
+
+// A config.yaml that cannot be parsed must abort the migration: rewriting it
+// from an empty map would drop every other setting.
+func TestMigrateAISummaryProvider_CorruptConfigIsAnError(t *testing.T) {
+	path := setupMigrationEnv(t)
+	writeConfigFile(t, path, "ai_summary: [unclosed\n")
+
+	model.ConfigInstance.AISummary.API = model.APIConfig{BaseURL: "https://legacy.example/v1", Key: "sk"}
+
+	err := MigrateAISummaryProvider()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse config.yaml")
+	assert.Nil(t, model.ConfigInstance.AISummary.ProviderID, "a failed migration must leave the legacy config in charge")
+}
+
+// The rollback itself can fail (the agents table is gone, so "is it in use?"
+// cannot be answered). The original error must still be returned — the orphan
+// is logged, not swallowed into a success.
+func TestMigrateAISummaryProvider_RollbackFailureStillReturnsTheWriteError(t *testing.T) {
+	path := setupMigrationEnv(t)
+	// A directory at the target makes the final rename fail.
+	require.NoError(t, os.Mkdir(path, 0o755))
+	// Dropping agents makes the rollback's DeleteProvider fail too.
+	_, err := store.WriteExec("DROP TABLE agents")
+	require.NoError(t, err)
+
+	model.ConfigInstance.AISummary.API = model.APIConfig{BaseURL: "https://legacy.example/v1", Key: "sk"}
+
+	err = MigrateAISummaryProvider()
+	require.Error(t, err)
+	assert.Nil(t, model.ConfigInstance.AISummary.ProviderID)
+}

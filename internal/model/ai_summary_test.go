@@ -104,3 +104,33 @@ func TestDefaultModelID_PrefersCuratedProviderList(t *testing.T) {
 		t.Fatalf("default = %q, want the CLI default", got)
 	}
 }
+
+// A bound provider with no endpoint is not configured: the summarizer would
+// have a key and nowhere to send it.
+func TestSummaryEndpoint_ProviderWithoutEndpointIsUnconfigured(t *testing.T) {
+	pid := int64(45)
+	ReplaceProviders([]*Provider{{
+		ID: 45, Name: "KeyOnly", Protocol: ProviderProtocolOpenAI,
+		APIKey: "k", AuthMode: ProviderAuthAuto,
+	}})
+	t.Cleanup(func() { ReplaceProviders(nil) })
+
+	cfg := AISummaryConfig{ProviderID: &pid}
+	if _, _, _, ok := cfg.SummaryEndpoint(); ok {
+		t.Fatal("a provider without a base URL must read as unconfigured")
+	}
+	if cfg.SummaryConfigured() {
+		t.Fatal("SummaryConfigured must agree with SummaryEndpoint")
+	}
+}
+
+// The model id is a free-form string: providers expose different catalogs and
+// some gateways publish none, so it is passed through verbatim.
+func TestSummaryModel_ReturnsConfiguredModel(t *testing.T) {
+	if got := (AISummaryConfig{Model: "gpt-4o-mini"}).SummaryModel(); got != "gpt-4o-mini" {
+		t.Fatalf("SummaryModel = %q", got)
+	}
+	if got := (AISummaryConfig{}).SummaryModel(); got != "" {
+		t.Fatalf("SummaryModel = %q, want empty", got)
+	}
+}

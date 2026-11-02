@@ -237,3 +237,173 @@ func TestApplySTTStreamOptions(t *testing.T) {
 	assert.Equal(t, 8, got.Bits)
 	assert.Equal(t, "上下文", got.Context)
 }
+
+// failingStreamProvider fails to open a session, the way the Doubao adapter does
+// when the credentials or the endpoint are wrong.
+type failingStreamProvider struct{ err error }
+
+func (p *failingStreamProvider) Transcribe(context.Context, io.Reader, string) (string, error) {
+	return "", p.err
+}
+
+func (p *failingStreamProvider) OpenStream(context.Context, stt.StreamOptions) (stt.StreamSession, error) {
+	return nil, p.err
+}
+
+// TestSTTTranscribeWS_OpenStreamFailure: an engine that cannot be dialed must
+// reach the client as {"type":"error"} — a silent close looks like a network
+// blip and the recording is lost with no explanation.
+func TestSTTTranscribeWS_OpenStreamFailure(t *testing.T) {
+	old := GetSTTProvider()
+	defer SetSTTProvider(old)
+	SetSTTProvider(&failingStreamProvider{err: errors.New("stt: dial failed: bad key")})
+
+	srv := httptest.NewServer(http.HandlerFunc(STTTranscribeWS))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+
+	// The session is opened lazily on the first audio frame.
+	require.NoError(t, conn.Write(ctx, websocket.MessageBinary, []byte{1, 2, 3, 4}))
+
+	_, data, err := conn.Read(ctx)
+	require.NoError(t, err)
+	var m sttWSServerMsg
+	require.NoError(t, json.Unmarshal(data, &m))
+	assert.Equal(t, sttWSError, m.Type)
+	assert.Contains(t, m.Message, "bad key")
+}
+
+// TestSTTTranscribeWS_IgnoresUnusableControlFrames: a text frame that is not
+// JSON, or JSON with an unknown type, is a client-side mistake. It must be
+// ignored — killing the stream there would drop the audio the user is still
+// speaking.
+func TestSTTTranscribeWS_IgnoresUnusableControlFrames(t *testing.T) {
+	old := GetSTTProvider()
+	defer SetSTTProvider(old)
+
+	session := &fakeStreamSession{
+		results: make(chan stt.StreamResult, 8),
+		finish:  make(chan struct{}),
+	}
+	SetSTTProvider(&fakeStreamProvider{session: session})
+
+	srv := httptest.NewServer(http.HandlerFunc(STTTranscribeWS))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, []byte(`not json at all`)))
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, []byte(`{"type":"resume"}`)))
+	require.NoError(t, conn.Write(ctx, websocket.MessageBinary, []byte{1, 2, 3, 4}))
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, []byte(`{"type":"end"}`)))
+
+	var last sttWSServerMsg
+	for {
+		_, data, rerr := conn.Read(ctx)
+		if rerr != nil {
+			break
+		}
+		var m sttWSServerMsg
+		require.NoError(t, json.Unmarshal(data, &m))
+		last = m
+		if m.Type == sttWSDone {
+			break
+		}
+	}
+
+	assert.Equal(t, sttWSDone, last.Type, "the stream must survive unusable control frames")
+	assert.Equal(t, "部分完整", last.Final)
+	assert.Equal(t, [][]byte{{1, 2, 3, 4}}, session.written(), "audio after a bad control frame is still relayed")
+}
+
+// TestSTTStreamRelay_UnknownMessageType: MessageType is an enum, so the default
+// arm is only reachable with a value the library cannot produce. It must be
+// inert rather than a panic or a closed stream.
+func TestSTTStreamRelay_UnknownMessageType(t *testing.T) {
+	relay := &sttStreamRelay{provider: &fakeStreamProvider{}}
+
+	done, err := relay.handle(context.Background(), websocket.MessageType(99), []byte("x"))
+
+	assert.NoError(t, err)
+	assert.False(t, done)
+	assert.Nil(t, relay.session, "an unknown frame must not open a session")
+}
+
+// TestSTTStreamRelay_AudioLimit: the total audio budget is checked BEFORE the
+// frame reaches the engine, so a runaway client cannot keep the stream (and the
+// engine's billing) alive indefinitely.
+func TestSTTStreamRelay_AudioLimit(t *testing.T) {
+	relay := &sttStreamRelay{
+		provider: &fakeStreamProvider{session: &fakeStreamSession{
+			results: make(chan stt.StreamResult, 1),
+			finish:  make(chan struct{}),
+		}},
+		total: sttWSMaxAudioBytes, // already at the ceiling
+	}
+
+	err := relay.writeAudio(context.Background(), []byte{1})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "audio exceeds limit")
+	assert.Nil(t, relay.session, "the over-budget frame must not be forwarded")
+}
+
+// TestSTTStreamRelay_ForwardResultsStopsOnDeadConnection: once the client is
+// gone, every further write fails. The forwarder must stop on the first failure
+// instead of spinning on a dead socket (and instead of blocking the "end"
+// handler that waits for it).
+func TestSTTStreamRelay_ForwardResultsStopsOnDeadConnection(t *testing.T) {
+	connCh := make(chan *websocket.Conn, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		connCh <- c
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	client, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	require.NoError(t, err)
+	defer func() { _ = client.CloseNow() }()
+
+	serverConn := <-connCh
+	serverConn.CloseNow() // the peer is gone; writes must fail from here on
+
+	results := make(chan stt.StreamResult, 1)
+	results <- stt.StreamResult{Text: "部分"}
+	close(results)
+
+	relay := &sttStreamRelay{
+		conn:    serverConn,
+		session: &fakeStreamSession{results: results, finish: make(chan struct{})},
+	}
+	relay.results.Add(1)
+
+	done := make(chan struct{})
+	go func() {
+		relay.forwardResults()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("forwardResults must return when the connection is gone")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -1023,4 +1024,72 @@ func TestLoadAgentsFromDBRows_MalformedMCPPolicyFallsBackToAll(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, MCPPolicyAll, agents[0].MCPServers.Normalized().Mode)
+}
+
+// A path that exists but cannot be listed (a file where the directory should
+// be) is a real misconfiguration and must be logged rather than treated as
+// "no agents configured".
+func TestLoadYamlAgents_UnreadableDirectoryIsReported(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	configDir := t.TempDir()
+	agentsDir := filepath.Join(configDir, "agents")
+	require.NoError(t, os.WriteFile(agentsDir, []byte("not a directory"), 0o644))
+
+	assert.Empty(t, LoadYamlAgents(db, configDir))
+}
+
+// A YAML entry that cannot be read (a broken symlink still has the .yaml
+// suffix, so it is not filtered by name) is skipped, not fatal.
+func TestLoadYamlAgents_UnreadableFileIsSkipped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	db := setupTestDBForDiscovery(t)
+
+	configDir := t.TempDir()
+	agentsDir := filepath.Join(configDir, "agents")
+	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
+	require.NoError(t, os.Symlink(filepath.Join(agentsDir, "missing-target"), filepath.Join(agentsDir, "dangling.yaml")))
+	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "good.yaml"), []byte("id: good\nbackend: b\n"), 0o644))
+
+	inserted := LoadYamlAgents(db, configDir)
+
+	assert.Equal(t, []string{"good"}, inserted, "the readable entry must still load")
+}
+
+// If the agents table cannot be queried, nothing can be inserted safely: the
+// loader must stop for that file instead of blindly inserting a duplicate.
+func TestLoadYamlAgents_QueryFailureSkipsEntry(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	configDir := t.TempDir()
+	agentsDir := filepath.Join(configDir, "agents")
+	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "a.yaml"), []byte("id: a\nbackend: b\n"), 0o644))
+
+	require.NoError(t, db.Close())
+
+	assert.Empty(t, LoadYamlAgents(db, configDir))
+}
+
+// A failing INSERT must be reported per file and must not abort the rest of the
+// batch: one bad row would otherwise hide every later agent.
+func TestLoadYamlAgents_InsertFailureIsSkipped(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	_, err := db.Exec(`CREATE TRIGGER reject_insert BEFORE INSERT ON agents
+		WHEN NEW.id = 'blocked'
+		BEGIN SELECT RAISE(ABORT, 'insert blocked'); END`)
+	require.NoError(t, err)
+
+	configDir := t.TempDir()
+	agentsDir := filepath.Join(configDir, "agents")
+	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "blocked.yaml"), []byte("id: blocked\nbackend: b\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "ok.yaml"), []byte("id: ok\nbackend: b\n"), 0o644))
+
+	inserted := LoadYamlAgents(db, configDir)
+
+	assert.Equal(t, []string{"ok"}, inserted)
 }

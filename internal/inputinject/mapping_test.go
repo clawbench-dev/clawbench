@@ -80,6 +80,17 @@ func TestAbsolutePointer_RejectsDegenerateInput(t *testing.T) {
 	assert.Error(t, err, "a zero-width display rectangle would divide by zero")
 }
 
+func TestAbsolutePointer_ClampsNegativeOffsetToZero(t *testing.T) {
+	// A captured display sitting left of (and above) the virtual origin yields a
+	// negative offset. The API's range starts at 0, so it must clamp — a negative
+	// value is rejected by the syscall, which reads as "the click did nothing".
+	bounds := &Rect{Left: -1920, Top: -1080, Width: 1920, Height: 1080}
+	dx, dy, err := AbsolutePointer(Event{X: 0, Y: 0, Bounds: bounds}, 0, 0, vdW, vdH)
+	require.NoError(t, err)
+	assert.Equal(t, int32(0), dx)
+	assert.Equal(t, int32(0), dy)
+}
+
 func TestParseLine_AcceptsAndValidatesBounds(t *testing.T) {
 	ev, err := ParseLine(`{"kind":"down","x":0.5,"y":0.5,"bounds":{"left":1920,"top":0,"width":1920,"height":1080}}`)
 	require.NoError(t, err)

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 
 	"clawbench/internal/model"
@@ -149,4 +150,73 @@ func TestCanReuseNativeSession(t *testing.T) {
 			assert.Equal(t, tc.want, canReuseNativeSession(tc.old, tc.repl))
 		})
 	}
+}
+
+// TestCanReuseNativeSession_NilAgents: the predicate is also called with
+// half-built agents (a nil source when the row vanished). A nil side cannot
+// share anything, and dereferencing it would panic inside the deletion
+// transaction.
+func TestCanReuseNativeSession_NilAgents(t *testing.T) {
+	full := &model.Agent{ID: "a", Backend: "codebuddy"}
+
+	assert.False(t, canReuseNativeSession(nil, full))
+	assert.False(t, canReuseNativeSession(full, nil))
+	assert.False(t, canReuseNativeSession(nil, nil))
+}
+
+// TestRecomputeGroupIdentityTx_NoMembersLeft: a group whose member rows are all
+// gone has no identity to copy. It must be skipped, not cleared and not turned
+// into an error.
+func TestRecomputeGroupIdentityTx_NoMembersLeft(t *testing.T) {
+	db, err := InitInMemoryDB()
+	require.NoError(t, err)
+	cleanup := store.SetDBForTest(db, db)
+	t.Cleanup(func() {
+		cleanup()
+		_ = db.Close()
+	})
+
+	_, err = db.Exec(`
+		INSERT INTO chat_sessions (id, agent_id, backend, session_type, context_state)
+		VALUES ('g-empty', 'ghost', 'claude', 'group', '{"group_mode":"free"}')`)
+	require.NoError(t, err)
+
+	tx, err := store.WriteBegin()
+	require.NoError(t, err)
+	defer store.WriteUnlock()
+	defer func() { _ = tx.Rollback() }()
+
+	require.NoError(t, recomputeGroupIdentityTx(context.Background(), tx, "g-empty"))
+
+	var agentID string
+	require.NoError(t, tx.QueryRow("SELECT agent_id FROM chat_sessions WHERE id = 'g-empty'").Scan(&agentID))
+	assert.Equal(t, "ghost", agentID, "a group with no members keeps its identity")
+}
+
+// TestWriteTakeoverNotices_SkipsEmptySessionID: a notice without a timeline has
+// nowhere to go. Writing it would append a system row to session "" — visible
+// to nobody and impossible to clean up. The fixture below accepts such a write,
+// so a missing guard would be caught as a stray row.
+func TestWriteTakeoverNotices_SkipsEmptySessionID(t *testing.T) {
+	db, err := InitInMemoryDB()
+	require.NoError(t, err)
+	cleanup := store.SetDBForTest(db, db)
+	t.Cleanup(func() {
+		cleanup()
+		_ = db.Close()
+	})
+
+	_, err = db.Exec(`
+		CREATE TABLE chat_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_id INTEGER, backend TEXT, session_id TEXT, role TEXT, content TEXT,
+			files TEXT, streaming INTEGER, indexed INTEGER, agent_id TEXT, injected INTEGER
+		)`)
+	require.NoError(t, err)
+
+	writeTakeoverNotices([]takeoverNotice{{SessionID: ""}}, "Old", "New", false)
+
+	var rows int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history").Scan(&rows))
+	assert.Zero(t, rows, "a notice with no session id must not be written")
 }

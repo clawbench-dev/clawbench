@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -2238,4 +2240,337 @@ func TestLiveShareSignalWS_SanitizesTheViewerName(t *testing.T) {
 	rows := waitMeetingNotifications(t, token, service.MeetingEventViewerJoined)
 	assert.NotContains(t, rows[0].Body, "\n", "a newline must not survive into the notification body")
 	assert.Contains(t, rows[0].Body, "主持人")
+}
+
+// ── Socket and teardown guards ──────────────────────────────────────────────
+//
+// These cover the paths a browser reaches only when something is already wrong
+// (a plain HTTP GET on a socket URL, a hand-written control frame, a publisher
+// that vanishes). Each one must degrade to a bounded, observable outcome rather
+// than leaving a reservation or a half-registered viewer behind.
+
+func TestLiveSharePublishWS_RequiresProject(t *testing.T) {
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	LiveSharePublishWS(w, newRequest(t, http.MethodGet, "/api/live-share/publish/ws?token=0123456789abcdef0123456789abcdef", nil))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// The publisher slot is reserved BEFORE the upgrade so a second publisher gets a
+// real 409. A request that never completes the handshake must therefore release
+// it, or the room stays "already publishing" for its whole lifetime.
+func TestLiveSharePublishWS_FailedUpgradeReleasesTheReservation(t *testing.T) {
+	srv, token := liveWSServer(t)
+
+	// A plain GET: websocket.Accept refuses it, after the reservation was taken.
+	resp, err := http.Get(srv.URL + "/api/live-share/publish/ws?token=" + token)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+
+	room := liveRegistry.Get(token)
+	require.NotNil(t, room)
+	require.True(t, room.ReservePublisher(),
+		"a failed upgrade must not leave the publisher slot reserved")
+	room.ReleaseReservation()
+}
+
+// The viewer socket has the same shape: a non-upgrade request is refused without
+// registering a phantom participant in the roster.
+func TestLiveShareSignalWS_FailedUpgradeAddsNoViewer(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	defer closePublisherAndWait(t, pub, token)
+
+	resp, err := http.Get(srv.URL + "/api/share/" + token + "/signal?name=viewer")
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+
+	room := liveRegistry.Get(token)
+	require.NotNil(t, room)
+	assert.Empty(t, room.Viewers())
+}
+
+// A control frame that is not JSON is answered with an error frame and the
+// socket stays open: a client bug must not end the meeting.
+func TestLiveWS_InvalidPublisherFrameIsReported(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	defer closePublisherAndWait(t, pub, token)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, pub.Write(ctx, websocket.MessageText, []byte("not json")))
+
+	msg := readViewerMsg(t, pub)
+	assert.Equal(t, liveshare.MsgError, msg.Type)
+	assert.Equal(t, "invalid control frame", msg.Message)
+
+	// The socket survived: the read loop is still running, so a second bad frame
+	// is answered the same way instead of the connection having been dropped.
+	require.NoError(t, pub.Write(ctx, websocket.MessageText, []byte("still not json")))
+	again := readViewerMsg(t, pub)
+	assert.Equal(t, liveshare.MsgError, again.Type)
+}
+
+func TestLiveWS_InvalidViewerFrameIsReported(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	defer closePublisherAndWait(t, pub, token)
+
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
+	_ = readViewerMsg(t, view) // joined
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, view.Write(ctx, websocket.MessageText, []byte("{oops")))
+
+	msg := readViewerMsg(t, view)
+	assert.Equal(t, liveshare.MsgError, msg.Type)
+	assert.Equal(t, "invalid control frame", msg.Message)
+}
+
+// Muting a viewer id the room does not know is a client bug: it must come back
+// as an error frame naming the reason, not silently do nothing.
+func TestLiveWS_MutingAnUnknownViewerIsReported(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	defer closePublisherAndWait(t, pub, token)
+
+	writeJSONFrame(t, pub, liveshare.PublisherControl{
+		Type: liveshare.CtrlTalkMute, ViewerID: "viewer-does-not-exist", Enabled: true,
+	})
+
+	msg := readPublisherMsg(t, pub)
+	assert.Equal(t, liveshare.MsgError, msg.Type)
+	assert.Equal(t, "viewer-does-not-exist", msg.ViewerID)
+	assert.NotEmpty(t, msg.Name, "the reason must be carried, not just the fact")
+}
+
+// ── Notification dedupe table ───────────────────────────────────────────────
+
+func TestMeetingNotifyLimiter_EvictsExpiredEntries(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	l := &meetingNotifyLimiter{
+		last:   map[meetingNotifyKey]time.Time{},
+		window: 30 * time.Second,
+		now:    func() time.Time { return base },
+	}
+	stale := meetingNotifyKey{token: "t", eventType: "e", actor: "old"}
+	l.last[stale] = base.Add(-time.Minute)
+	l.evictLocked(base)
+
+	assert.NotContains(t, l.last, stale, "an expired entry cannot suppress anything")
+	assert.Empty(t, l.last)
+}
+
+// When the table is full of LIVE entries the cap still holds: the oldest key is
+// dropped. Forgetting one key only costs a possible duplicate notification;
+// growing without bound would cost the notification log itself.
+func TestMeetingNotifyLimiter_EvictsOldestLiveEntryAtTheCap(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	l := &meetingNotifyLimiter{
+		last:   map[meetingNotifyKey]time.Time{},
+		window: time.Hour,
+		now:    func() time.Time { return base },
+	}
+	oldest := meetingNotifyKey{token: "t", eventType: "e", actor: "oldest"}
+	newest := meetingNotifyKey{token: "t", eventType: "e", actor: "newest"}
+	l.last[oldest] = base.Add(-10 * time.Minute)
+	l.last[newest] = base.Add(-time.Minute)
+	// Pad to the cap with entries newer than `oldest`.
+	for i := len(l.last); i < meetingNotifyDedupeMaxEntries; i++ {
+		l.last[meetingNotifyKey{token: "t", eventType: "e", actor: string(rune('a'+i%26)) + strconv.Itoa(i)}] = base.Add(-time.Second)
+	}
+	require.Equal(t, meetingNotifyDedupeMaxEntries, len(l.last))
+
+	l.evictLocked(base)
+
+	assert.NotContains(t, l.last, oldest, "the oldest live entry is the one dropped")
+	assert.Contains(t, l.last, newest)
+	assert.Len(t, l.last, meetingNotifyDedupeMaxEntries-1)
+}
+
+// ── Meeting finalization ────────────────────────────────────────────────────
+
+// finalizeLiveNotes is what turns a finished meeting into files the user keeps:
+// the chat archive and the file index. Both are optional, but when either has
+// content the folder must be created and written.
+func TestFinalizeLiveNotes_ArchivesChatAndFiles(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	// A record whose start time was never recorded: the archive still needs a
+	// timestamp, so "now" is the fallback.
+	_, err := store.WriteExec(`UPDATE live_notes SET started_at = 0 WHERE token = ?`, token)
+	require.NoError(t, err)
+	require.NoError(t, service.RecordLiveNoteFiles(context.Background(), token, pid, []service.LiveNoteFile{
+		{Path: "/proj/a/main.go", OpenedAt: 1_700_000_050_000},
+	}))
+	_, err = service.AppendLiveNoteChat(token, pid, service.LiveNoteChatMessage{
+		ClientID: "m1", Speaker: "我", Text: "开始吧",
+	})
+	require.NoError(t, err)
+
+	finalizeLiveNotes(token, pid, project)
+
+	dirName, err := service.MeetingDirName(token)
+	require.NoError(t, err)
+	require.NotEmpty(t, dirName)
+	dir := service.MeetingDirPath(project, dirName)
+	assert.FileExists(t, filepath.Join(dir, "chat.md"))
+	assert.FileExists(t, filepath.Join(dir, service.LiveNoteFileManifestName))
+}
+
+// A failing file listing loses the index, not the chat: the two archives are
+// independent, and the meeting still has something worth writing.
+func TestFinalizeLiveNotes_SurvivesFileListingFailure(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	_, err := service.AppendLiveNoteChat(token, pid, service.LiveNoteChatMessage{
+		ClientID: "m1", Speaker: "我", Text: "开始吧",
+	})
+	require.NoError(t, err)
+	_, err = store.WriteExec(`DROP TABLE live_notes_files`)
+	require.NoError(t, err)
+
+	finalizeLiveNotes(token, pid, project)
+
+	dirName, err := service.MeetingDirName(token)
+	require.NoError(t, err)
+	require.NotEmpty(t, dirName)
+	assert.FileExists(t, filepath.Join(service.MeetingDirPath(project, dirName), "chat.md"))
+}
+
+// An unusable project directory must not panic the teardown: the meeting is
+// already over, and the database copy is still there.
+func TestFinalizeLiveNotes_UnusableFolderIsSkipped(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	_, err := service.AppendLiveNoteChat(token, pid, service.LiveNoteChatMessage{
+		ClientID: "m1", Speaker: "我", Text: "开始吧",
+	})
+	require.NoError(t, err)
+
+	// A regular file where the project directory should be: MkdirAll fails.
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
+	finalizeLiveNotes(token, pid, blocker)
+
+	note, ok, err := service.GetLiveNote(token)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Empty(t, note.DirName, "no folder was created, and none is recorded")
+}
+
+// The audience cap is a product limit, not an error: the viewer that does not
+// fit is told so (a `full` frame) instead of being dropped silently.
+func TestLiveWS_RoomFullIsReportedToTheNextViewer(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	defer closePublisherAndWait(t, pub, token)
+
+	for i := range liveshare.DefaultMaxViewers {
+		v := dialWS(t, srv, "/api/share/"+token+"/signal?name=v"+strconv.Itoa(i))
+		_ = readViewerMsg(t, v) // joined
+	}
+
+	extra := dialWS(t, srv, "/api/share/"+token+"/signal?name=extra")
+	msg := readViewerMsg(t, extra)
+	assert.Equal(t, liveshare.MsgFull, msg.Type)
+}
+
+// Both archives are optional: when the folder cannot be written the teardown
+// logs and returns, leaving the database copy untouched.
+func TestFinalizeLiveNotes_UnwritableFolderIsOnlyAWarning(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not apply to root")
+	}
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	paths, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
+	require.NoError(t, err)
+	require.NoError(t, service.RecordLiveNoteFiles(context.Background(), token, pid, []service.LiveNoteFile{
+		{Path: filepath.Join(project, "main.go"), OpenedAt: 1_700_000_050_000},
+	}))
+	_, err = service.AppendLiveNoteChat(token, pid, service.LiveNoteChatMessage{
+		ClientID: "m1", Speaker: "我", Text: "开始吧",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.Chmod(paths.Dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(paths.Dir, 0o755) })
+
+	finalizeLiveNotes(token, pid, project)
+
+	assert.NoFileExists(t, filepath.Join(paths.Dir, "chat.md"))
+	assert.NoFileExists(t, filepath.Join(paths.Dir, service.LiveNoteFileManifestName))
+}
+
+// The startup sweep is best-effort: a database that cannot be written must not
+// prevent the reaper from starting, or idle rooms would never be collected.
+func TestStartLiveShareReaper_SurvivesTheStartupSweepFailing(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+	project := t.TempDir()
+	cacheProjectID(t, project)
+	breakWrites(t, project)
+
+	stop := StartLiveShareReaper()
+	require.NotNil(t, stop)
+	stop()
+}
+
+// Kicking the viewer who is sharing a screen must also clear the share for
+// everyone else: KickViewer drops the sharer slot, and without the broadcast the
+// remaining viewers keep waiting for frames from a peer that is gone.
+func TestLiveWS_KickingTheScreenSharerBroadcastsTheScreenState(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	defer closePublisherAndWait(t, pub, token)
+	room := liveRegistry.Get(token)
+	require.NotNil(t, room)
+	room.SetScreenEnabled(true)
+
+	sharer := dialWS(t, srv, "/api/share/"+token+"/signal?name=sharer")
+	sharerJoined := readViewerMsg(t, sharer)
+	watcher := dialWS(t, srv, "/api/share/"+token+"/signal?name=watcher")
+	_ = readViewerMsg(t, watcher)
+	// Two viewer-join frames reach the publisher, in either order.
+	_ = readPublisherMsg(t, pub)
+	_ = readPublisherMsg(t, pub)
+
+	writeJSONFrame(t, sharer, liveshare.ViewerControl{Type: liveshare.CtrlScreenStart})
+	sharing := readViewerMsg(t, watcher)
+	require.Equal(t, liveshare.MsgScreenState, sharing.Type)
+	require.True(t, sharing.Sharing)
+
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlKick, ViewerID: sharerJoined.ViewerID})
+
+	after := readViewerMsg(t, watcher)
+	assert.Equal(t, liveshare.MsgScreenState, after.Type)
+	assert.False(t, after.Sharing, "the kicked sharer's slot must be reported empty")
 }

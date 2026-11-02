@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -263,4 +265,126 @@ func TestLiveNoteFileExcerpts_TruncatesToBudget(t *testing.T) {
 func TestLiveNoteFileExcerpts_NothingReadable(t *testing.T) {
 	assert.Empty(t, LiveNoteFileExcerpts("", nil))
 	assert.Empty(t, LiveNoteFileExcerpts(t.TempDir(), []LiveNoteFile{{Path: "missing.md", OpenedAt: 1}}))
+}
+
+// Archiving is best-effort per file, but the request itself still needs a
+// folder to write into and something to write.
+func TestArchiveLiveNoteFiles_RequiresAFolderAndSomeFiles(t *testing.T) {
+	_, err := ArchiveLiveNoteFiles(LiveNotesPathsIn(""), t.TempDir(),
+		[]LiveNoteFile{{Path: "a.md", OpenedAt: 1}}, time.UnixMilli(1))
+	assert.EqualError(t, err, "live notes: no project path")
+
+	path, err := ArchiveLiveNoteFiles(LiveNotesPathsIn(t.TempDir()), t.TempDir(), nil, time.UnixMilli(1))
+	require.NoError(t, err)
+	assert.Empty(t, path, "no files means no manifest")
+}
+
+func TestArchiveLiveNoteFiles_ReportsUnwritableFolder(t *testing.T) {
+	blocked := filepath.Join(t.TempDir(), "meeting")
+	require.NoError(t, os.WriteFile(blocked, []byte("x"), 0o644))
+	project := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(project, "a.md"), []byte("hello"), 0o644))
+
+	_, err := ArchiveLiveNoteFiles(LiveNotesPathsIn(blocked), project,
+		[]LiveNoteFile{{Path: "a.md", OpenedAt: 1000}}, time.UnixMilli(1000))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create files dir")
+}
+
+// The copies are a convenience; the manifest is the record. A manifest that
+// cannot be written must fail the archive rather than report success.
+func TestArchiveLiveNoteFiles_ReportsUnwritableManifest(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("permissions are not enforced for this user")
+	}
+	project := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(project, "a.md"), []byte("hello"), 0o644))
+
+	paths := LiveNotesPathsIn(t.TempDir())
+	require.NoError(t, os.MkdirAll(filepath.Join(paths.Dir, LiveNoteFileArchiveDir), 0o755))
+	require.NoError(t, os.Chmod(paths.Dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(paths.Dir, 0o755) })
+
+	_, err := ArchiveLiveNoteFiles(paths, project,
+		[]LiveNoteFile{{Path: "a.md", OpenedAt: 1000}}, time.UnixMilli(1000))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "write files manifest")
+}
+
+// Every skip is recorded with its reason: a file silently missing from the
+// manifest would look like nobody opened it.
+func TestArchiveLiveNoteFiles_RecordsEverySkipReason(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("permissions are not enforced for this user")
+	}
+	project := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(project, "folder"), 0o755))
+	secret := filepath.Join(project, "secret.md")
+	require.NoError(t, os.WriteFile(secret, []byte("x"), 0o644))
+	require.NoError(t, os.Chmod(secret, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(secret, 0o644) })
+
+	paths := LiveNotesPathsIn(t.TempDir())
+	manifest, err := ArchiveLiveNoteFiles(paths, project, []LiveNoteFile{
+		{OpenedAt: 1000},                 // a viewer's copy: no path, no name
+		{Path: "folder", OpenedAt: 2000}, // a directory, not a document
+		{Path: "secret.md", OpenedAt: 3000},
+		{Path: "later.md"}, // no open time: not on the timeline
+	}, time.UnixMilli(1000))
+	require.NoError(t, err)
+
+	body, err := os.ReadFile(manifest)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "路径未知")
+	assert.Contains(t, string(body), "读取失败", "a directory is not a regular file")
+	assert.Contains(t, string(body), "没有读取权限")
+	assert.NotContains(t, string(body), "later.md", "an entry with no open time is not part of the timeline")
+}
+
+// A client bug that reports hundreds of files must not copy them all.
+func TestArchiveLiveNoteFiles_CapsTheNumberOfCopies(t *testing.T) {
+	project := t.TempDir()
+	files := make([]LiveNoteFile, 0, LiveNoteFileCopyMaxCount+1)
+	for i := 0; i <= LiveNoteFileCopyMaxCount; i++ {
+		name := "f" + strconv.Itoa(i) + ".md"
+		require.NoError(t, os.WriteFile(filepath.Join(project, name), []byte(name), 0o644))
+		files = append(files, LiveNoteFile{Path: name, OpenedAt: int64(i + 1)})
+	}
+
+	paths := LiveNotesPathsIn(t.TempDir())
+	manifest, err := ArchiveLiveNoteFiles(paths, project, files, time.UnixMilli(1000))
+	require.NoError(t, err)
+
+	entries, err := os.ReadDir(filepath.Join(paths.Dir, LiveNoteFileArchiveDir))
+	require.NoError(t, err)
+	assert.Len(t, entries, LiveNoteFileCopyMaxCount)
+
+	body, err := os.ReadFile(manifest)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "超过单场会议归档数量上限")
+}
+
+// Two files called a.md from different folders is a normal meeting, not an
+// error: the second copy is suffixed instead of overwriting the first.
+func TestArchiveLiveNoteFiles_SuffixesCollidingNames(t *testing.T) {
+	project := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(project, "sub"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(project, "a.md"), []byte("one"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(project, "sub", "a.md"), []byte("two"), 0o644))
+
+	paths := LiveNotesPathsIn(t.TempDir())
+	manifest, err := ArchiveLiveNoteFiles(paths, project, []LiveNoteFile{
+		{Path: "a.md", OpenedAt: 1000},
+		{Path: "sub/a.md", OpenedAt: 2000},
+	}, time.UnixMilli(1000))
+	require.NoError(t, err)
+
+	body, err := os.ReadFile(manifest)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "files/a.md")
+	assert.Contains(t, string(body), "files/a-2.md")
+
+	first, err := os.ReadFile(filepath.Join(paths.Dir, LiveNoteFileArchiveDir, "a.md"))
+	require.NoError(t, err)
+	assert.Equal(t, "one", string(first), "the first copy is never overwritten")
 }

@@ -1572,3 +1572,57 @@ func TestRepairWatches_LeavesHealthyWatchAlone(t *testing.T) {
 	require.Len(t, events, 1)
 	assert.Equal(t, "dir_change", events[0].Type, "a healthy watch still reports exactly one event")
 }
+
+// TestRepairWatches_NoWatchedDirs: the repair tick runs on a timer from
+// process start, long before any client registers a path. It must return
+// immediately rather than iterate an empty map or touch the watcher.
+func TestRepairWatches_NoWatchedDirs(t *testing.T) {
+	fw := setupFileWatcher(t)
+
+	assert.Empty(t, fw.watchedDirs)
+	fw.repairWatches()
+	assert.Empty(t, fw.watchedDirs, "an idle watcher gains no references")
+	assert.Empty(t, fw.watcher.WatchList())
+}
+
+// TestRepairWatches_KeepsReferenceForMissingDir: a directory that no longer
+// exists cannot be watched, but the client still wants it — the reference must
+// be KEPT so the next tick retries and a recreated directory is picked up.
+// Dropping it here would silently stop watching that path forever.
+func TestRepairWatches_KeepsReferenceForMissingDir(t *testing.T) {
+	root := t.TempDir()
+	gone := filepath.Join(root, "will-vanish")
+	require.NoError(t, os.MkdirAll(gone, 0o755))
+
+	fw := setupFileWatcher(t)
+	fw.RegisterClient("c1")
+	fw.UpdateWatch("c1", gone, "")
+	require.Equal(t, 1, fw.watchedDirs[gone], "precondition: the directory is held")
+
+	require.NoError(t, os.RemoveAll(gone))
+	// Wait for inotify to actually drop the watch, otherwise the repair tick
+	// sees a healthy watch and never reaches the Add failure below.
+	require.Eventually(t, func() bool {
+		for _, p := range fw.watcher.WatchList() {
+			if filepath.Clean(p) == filepath.Clean(gone) {
+				return false
+			}
+		}
+		return true
+	}, 2*time.Second, 5*time.Millisecond, "deleting the directory must drop the watch")
+
+	fw.repairWatches()
+
+	assert.Equal(t, 1, fw.watchedDirs[gone], "a failed repair must not release the client's reference")
+
+	// Recreating it makes the next tick succeed again.
+	require.NoError(t, os.MkdirAll(gone, 0o755))
+	fw.repairWatches()
+	watched := false
+	for _, p := range fw.watcher.WatchList() {
+		if filepath.Clean(p) == filepath.Clean(gone) {
+			watched = true
+		}
+	}
+	assert.True(t, watched, "the reference kept by the failed repair is what makes this work")
+}

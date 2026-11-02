@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -1883,4 +1885,316 @@ func TestSharePublic_DocRejectsNonRegularFile(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the public /doc/ endpoint blocked on a FIFO")
 	}
+}
+
+// ── Guard and failure branches ──────────────────────────────────────────────
+//
+// The share endpoints answer 400 / 403 / 404 for very different reasons, and
+// the SPA renders them differently ("no path", "not yours", "the file is
+// gone"). Each guard is pinned separately so a refactor cannot merge two of
+// them silently.
+
+// Devices and FIFOs are refused at share-creation time: streaming one on a
+// public endpoint would block the request forever.
+func TestShareManage_RejectsNonRegularFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mkfifo is unavailable on Windows")
+	}
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	fifo := filepath.Join(env.ProjectDir, "pipe")
+	if err := exec.Command("mkfifo", fifo).Run(); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+
+	req := newRequest(t, http.MethodPost, "/api/share", map[string]string{"path": fifo})
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeShareManage, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	var resp model.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "NotAFile", resp.MsgKey)
+}
+
+func TestShareManage_StatusRequiresPath(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/share", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeShareManage, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	var resp model.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "MissingPath", resp.MsgKey)
+}
+
+func TestShareManage_RevokeRequiresPath(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodDelete, "/api/share", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeShareManage, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	var resp model.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "MissingPath", resp.MsgKey)
+}
+
+// DELETE /api/share with a body is a client that meant to revoke one share by
+// token: a malformed body must be rejected, not silently treated as "revoke
+// everything".
+func TestShareList_RevokeMalformedBodyIs400(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "keep.txt", "keep")
+	absPath := filepath.Join(env.ProjectDir, "keep.txt")
+	createShareViaAPI(t, env, absPath)
+
+	req := newRequest(t, http.MethodDelete, "/api/share", nil)
+	req.Body = io.NopCloser(strings.NewReader("{not json"))
+	req.ContentLength = int64(len("{not json"))
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeShareList, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	var resp model.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "InvalidRequestBody", resp.MsgKey)
+
+	// The share survived: a rejected request must not have revoked anything.
+	req = newRequest(t, http.MethodGet, "/api/share", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeShareList, req)
+	assertOK(t, w)
+	var list struct {
+		Shares []shareListItem `json:"shares"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
+	assert.Len(t, list.Shares, 1)
+}
+
+// A file with an extension the app does not know, holding plain text: it is
+// neither "text by name" nor binary by sniff, so it takes the sanitizing path
+// and is served as text rather than as an opaque blob.
+func TestSharePublic_ContentSanitizesUnknownTextFile(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "data.weird", "hello world")
+	token := createShareViaAPI(t, env, absPath)
+
+	req := newRequest(t, http.MethodGet, "/api/share/"+token, nil)
+	w := callHandler(ServeSharePublic, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp FileContent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "hello world", resp.Content)
+	assert.False(t, resp.IsBinary)
+}
+
+// An OpenAPI document is more useful to the viewer as JSON than as raw YAML:
+// the preview dialog needs the parsed spec.
+func TestSharePublic_ContentConvertsOpenAPISpecToJSON(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "openapi.yaml", "openapi: 3.0.0\ninfo:\n  title: t\n  version: '1'\npaths: {}\n")
+	token := createShareViaAPI(t, env, absPath)
+
+	req := newRequest(t, http.MethodGet, "/api/share/"+token, nil)
+	w := callHandler(ServeSharePublic, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp FileContent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, model.SubtypeOpenAPI, resp.Subtype)
+	require.NotEmpty(t, resp.SpecJSON, "the parsed spec is what the viewer renders")
+	assert.Contains(t, resp.SpecJSON, `"openapi"`)
+}
+
+// An unreadable file is an outage (500), not a missing one: reporting 404 would
+// tell the reader the share is broken.
+func TestSharePublic_ContentUnreadableIs500(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not apply to root")
+	}
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "secret.weird", "hidden")
+	token := createShareViaAPI(t, env, absPath)
+	require.NoError(t, os.Chmod(absPath, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(absPath, 0o644) })
+
+	req := newRequest(t, http.MethodGet, "/api/share/"+token, nil)
+	w := callHandler(ServeSharePublic, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+}
+
+// An unreadable shared folder cannot be listed; the answer is the same uniform
+// 404 as everything else on this public surface (no distinction between "you
+// may not" and "it is gone").
+func TestSharePublic_ListUnreadableDirectoryIs404(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not apply to root")
+	}
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	dir, token := setupSharedDir(t, env)
+	require.NoError(t, os.Chmod(dir, 0o300))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/list", nil)
+	w := callHandler(ServeSharePublic, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// Bare /local resolves to the shared file itself; once that file is gone there
+// is nothing to serve, and the answer is the uniform 404.
+func TestSharePublic_LocalBareTargetDeletedIs404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "doc.md", "# doc")
+	token := createShareViaAPI(t, env, absPath)
+	require.NoError(t, os.Remove(absPath))
+
+	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/local", nil)
+	w := callHandler(ServeSharePublic, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestSharePublic_LocalMissingReferencedFileIs404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "doc.md", "# doc")
+	token := createShareViaAPI(t, env, absPath)
+
+	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/local/nope.png", nil)
+	w := callHandler(ServeSharePublic, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// A path the filesystem refuses outright (a NUL byte survives path.Clean) must
+// be rejected by validation, not handed to os.Stat.
+func TestSharePublic_LocalInvalidPathIs404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "doc.md", "# doc")
+	token := createShareViaAPI(t, env, absPath)
+
+	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/local/a%00b.png", nil)
+	w := callHandler(ServeSharePublic, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// A legacy row with no recorded root: a DIRECTORY share is confined to the
+// directory itself. Falling back to its parent (the file rule) would widen the
+// token's reach by exactly one level.
+func TestShareScopeRoot_LegacyDirectoryShareIsItsOwnRoot(t *testing.T) {
+	dir := t.TempDir()
+	assert.Equal(t, dir, shareScopeRoot(dir, ""))
+}
+
+func TestShareSamePath_EmptyIsNeverEqual(t *testing.T) {
+	assert.False(t, shareSamePath("", ""), "two unknown paths are not the same path")
+	assert.False(t, shareSamePath("", "/tmp/x"))
+	assert.False(t, shareSamePath("/tmp/x", ""))
+	assert.True(t, shareSamePath("/tmp/x/", "/tmp/x"))
+}
+
+// A folder share's page must advertise itself as a collection: an extractor
+// that follows the data URL expects a listing, not a document.
+func TestSharePage_DirectoryShareAdvertisesACollection(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	_, token := setupSharedDir(t, env)
+
+	req := newRequest(t, http.MethodGet, "/share/"+token, nil)
+	w := callHandler(ServeSharePage, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	body := w.Body.String()
+	assert.Contains(t, body, `"@type":"CollectionPage"`)
+	assert.Contains(t, body, "A folder shared from ClawBench.")
+}
+
+// The status/revoke pair resolve the target first: a path that no longer exists
+// is "not found", not "no share".
+func TestShareManage_StatusMissingTargetIs404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/share?path="+url.QueryEscape(filepath.Join(env.ProjectDir, "gone.txt")), nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeShareManage, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestShareManage_RevokeMissingTargetIs404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodDelete, "/api/share?path="+url.QueryEscape(filepath.Join(env.ProjectDir, "gone.txt")), nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeShareManage, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// Download goes through serveShareRaw, which has its own non-regular-file guard
+// (the content endpoint's guard is a different one): a FIFO must be refused
+// without ever being opened.
+func TestSharePublic_DownloadRejectsNonRegularFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mkfifo is unavailable on Windows")
+	}
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	dir, token := setupSharedDir(t, env)
+	fifo := filepath.Join(dir, "pipe")
+	if err := exec.Command("mkfifo", fifo).Run(); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+
+	req := newRequest(t, http.MethodGet,
+		"/api/share/"+token+"/download?path="+url.QueryEscape(fifo), nil)
+	done := make(chan int, 1)
+	go func() { done <- callHandler(ServeSharePublic, req).Code }()
+	select {
+	case code := <-done:
+		assert.Equal(t, http.StatusNotFound, code)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the public download endpoint blocked on a FIFO")
+	}
+}
+
+// An unreadable file is an outage: the download path must say 500, not pretend
+// the file is missing.
+func TestSharePublic_DownloadUnreadableIs500(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not apply to root")
+	}
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "report.pdf", "pdf")
+	token := createShareViaAPI(t, env, absPath)
+	require.NoError(t, os.Chmod(absPath, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(absPath, 0o644) })
+
+	req := newRequest(t, http.MethodGet, "/api/share/"+token+"/download", nil)
+	w := callHandler(ServeSharePublic, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
 }
