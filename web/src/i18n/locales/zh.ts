@@ -4191,6 +4191,7 @@ export default {
     allowScreenShareHint:
       '开启后成员可以把自己的屏幕共享给所有人，一次只能一个人。成员端需要 HTTPS 才能采集屏幕。',
     memberSharing: '成员 {id} 正在共享屏幕',
+    memberScreenTitle: '{name}的共享屏幕',
     openInWindow: '在新窗口打开',
     fullscreen: '全屏显示',
     viewScreen: '查看画面',
