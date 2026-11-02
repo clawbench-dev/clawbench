@@ -14,6 +14,12 @@
  */
 import { appLog } from '@/utils/appLog'
 import { parseControlMessage, type ControlMessage } from './liveControl'
+import {
+  GUEST_SCREEN_BUDGET,
+  applyContentHint,
+  applyEncodeBudget,
+  screenCaptureConstraints,
+} from '@/composables/liveMediaPolicy'
 
 const TAG = 'LiveViewer'
 
@@ -605,7 +611,10 @@ export class LiveViewer {
     if (!gdm) return false
     try {
       const stream = await gdm.call(navigator.mediaDevices, {
-        video: { frameRate: 15 },
+        // Capped for the same reason the host caps its own capture: this picture
+        // is decoded and re-encoded on the host once per other viewer. 15 fps is
+        // the ceiling because a member's screen is a secondary picture here.
+        video: { ...screenCaptureConstraints(), frameRate: { max: 15 } },
         // No audio: the audio m-line already carries our microphone, and a
         // second audio track would need another transceiver (another
         // renegotiation) for a marginal gain.
@@ -617,8 +626,13 @@ export class LiveViewer {
         for (const t of stream.getTracks()) t.stop()
         return false
       }
+      applyContentHint(track, 'text')
       this.screenTrack = track
       await this.screenTx.sender.replaceTrack(track)
+      // The host re-encodes this, so the uplink has to be bounded on the side
+      // that owns the encoder. Best effort: a rejected budget still leaves a
+      // working share.
+      void applyEncodeBudget(this.screenTx.sender, GUEST_SCREEN_BUDGET)
       // The browser's own "stop sharing" bar ends the track without telling us
       // through a socket, so it has to be handled here.
       track.addEventListener('ended', () => {

@@ -82,17 +82,36 @@ class FakeStream {
 class FakeSender {
   track: FakeTrack | null = null
   streams: unknown[] = []
+  /** What getStats() reports. Tests set this to 'cpu' to simulate pressure. */
+  qualityLimitationReason: string | null = 'none'
+  /** The live RTCRtpSendParameters this sender is encoding with. */
+  params: { encodings: Array<Record<string, unknown>>; degradationPreference?: string } = {
+    encodings: [{}],
+  }
   replaceTrack = vi.fn(async (t: FakeTrack | null) => {
     this.track = t
   })
   setStreams = vi.fn((...s: unknown[]) => {
     this.streams = s
   })
+  getParameters = vi.fn(() => this.params as unknown as RTCRtpSendParameters)
+  setParameters = vi.fn(async (p: RTCRtpSendParameters) => {
+    this.params = p as unknown as typeof this.params
+  })
+  getStats = vi.fn(async () => {
+    const report = new Map<string, Record<string, unknown>>()
+    report.set('out-1', {
+      type: 'outbound-rtp',
+      qualityLimitationReason: this.qualityLimitationReason ?? 'none',
+    })
+    return report as unknown as RTCStatsReport
+  })
 }
 
 class FakeTransceiver {
   sender = new FakeSender()
   receiver = { track: null as FakeTrack | null }
+  setCodecPreferences = vi.fn()
   constructor(public direction: string) {}
 }
 
@@ -759,6 +778,105 @@ describe('viewers', () => {
     // A second PeerConnection would double the viewer's video and audio.
     expect(FakePC.instances).toHaveLength(1)
     expect(share.viewers.value).toHaveLength(1)
+  })
+})
+
+describe('encode budget', () => {
+  it('caps the capture instead of taking whatever the display reports', async () => {
+    await startSharing()
+
+    // `video: true` would hand back the display's native surface, which is then
+    // encoded once per viewer. The cap is the only lever that applies before any
+    // encoder runs, so it is asserted on the request itself.
+    const gdm = (navigator as unknown as { mediaDevices: { getDisplayMedia: ReturnType<typeof vi.fn> } })
+      .mediaDevices.getDisplayMedia
+    expect(gdm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        video: { width: { max: 1920 }, height: { max: 1200 }, frameRate: { max: 30 } },
+      }),
+    )
+  })
+
+  it('hints the captured screen as text so the encoder skips static blocks', async () => {
+    await startSharing()
+
+    const track = displayStream.getVideoTracks()[0] as unknown as { contentHint?: string }
+    expect(track.contentHint).toBe('text')
+  })
+
+  it('bounds every video m-line a viewer receives', async () => {
+    await startSharing()
+    const pc = await joinAndOffer('v1')
+
+    // One encoder per m-line, per viewer — the reason four viewers used to pin
+    // every core. Both the picture line and the relay line must be bounded.
+    const picture = pc.transceivers[1].sender.params.encodings[0]
+    // The budget is pushed from a promise chain, so wait for it rather than
+    // assuming the microtask ran before the answer went out.
+    await vi.waitFor(() => expect(picture.maxBitrate).toBe(4_000_000))
+    expect(picture.maxFramerate).toBe(30)
+    expect(picture.scaleResolutionDownBy).toBe(1)
+    expect(pc.transceivers[1].sender.params.degradationPreference).toBe('maintain-resolution')
+
+    const relay = pc.transceivers[2].sender.params.encodings[0]
+    await vi.waitFor(() => expect(relay.maxBitrate).toBe(2_500_000))
+    expect(relay.maxFramerate).toBe(24)
+  })
+
+  it('steps every sender down together when the browser reports cpu pressure', async () => {
+    const mod = await import('../useLiveShare')
+    await startSharing()
+    const pc = await joinAndOffer('v1')
+    const governor = mod._liveGovernorForTest()
+    expect(governor?.size).toBe(2)
+
+    for (const tx of pc.transceivers) tx.sender.qualityLimitationReason = 'cpu'
+    // One sample is not enough: a single busy window (a scroll, a keyframe
+    // burst) would otherwise cost everyone a resolution drop.
+    await governor?.sample()
+    expect(pc.transceivers[1].sender.params.encodings[0].scaleResolutionDownBy).toBe(1)
+
+    await governor?.sample()
+    expect(governor?.currentLevel).toBe(1)
+    expect(pc.transceivers[1].sender.params.encodings[0].scaleResolutionDownBy).toBe(2)
+    expect(pc.transceivers[1].sender.params.encodings[0].maxBitrate).toBe(2_000_000)
+    // The relay m-line is governed by the same level: CPU is machine-wide.
+    expect(pc.transceivers[2].sender.params.encodings[0].scaleResolutionDownBy).toBe(2)
+  })
+
+  it('recovers to full quality after sustained clean samples', async () => {
+    const mod = await import('../useLiveShare')
+    await startSharing()
+    const pc = await joinAndOffer('v1')
+    const governor = mod._liveGovernorForTest()
+
+    for (const tx of pc.transceivers) tx.sender.qualityLimitationReason = 'cpu'
+    await governor?.sample()
+    await governor?.sample()
+    expect(governor?.currentLevel).toBe(1)
+
+    for (const tx of pc.transceivers) tx.sender.qualityLimitationReason = 'none'
+    for (let i = 0; i < 3; i++) await governor?.sample()
+    // Still degraded: recovering on the first clean sample would flap between
+    // levels on a machine hovering at its limit.
+    expect(governor?.currentLevel).toBe(1)
+
+    await governor?.sample()
+    expect(governor?.currentLevel).toBe(0)
+    expect(pc.transceivers[1].sender.params.encodings[0].scaleResolutionDownBy).toBe(1)
+  })
+
+  it('forgets a departed viewer so its encoder cannot hold the room down', async () => {
+    const mod = await import('../useLiveShare')
+    await startSharing()
+    const pc = await joinAndOffer('v1')
+    const governor = mod._liveGovernorForTest()
+    expect(governor?.size).toBe(2)
+
+    pc.connectionState = 'failed'
+    pc.onconnectionstatechange?.()
+
+    expect(governor?.size).toBe(0)
   })
 })
 

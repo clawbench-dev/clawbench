@@ -12,8 +12,17 @@ import { LiveViewer, liveSignalUrl, type LiveViewerState } from '../liveViewer'
 
 class FakeSender {
   track: MediaStreamTrack | null = null
+  params: { encodings: Array<Record<string, unknown>>; degradationPreference?: string } = {
+    encodings: [{}],
+  }
   replaceTrack = vi.fn(async (t: MediaStreamTrack | null) => {
     this.track = t
+  })
+  getParameters() {
+    return this.params
+  }
+  setParameters = vi.fn(async (p: typeof this.params) => {
+    this.params = p
   })
 }
 
@@ -699,6 +708,28 @@ describe('LiveViewer screen sharing', () => {
     expect(lastPC().transceivers[1].sender.replaceTrack).toHaveBeenCalledWith(track)
     expect(lastPC().createOffer.mock.calls.length).toBe(offersBefore)
     expect(lastWS().sentJSON()).toContainEqual({ type: 'screen-start' })
+  })
+
+  it('caps the member capture and bounds its uplink', async () => {
+    const track = makeTrack('video')
+    const gdm = installDisplayMedia(track)
+    const { viewer } = setupWithScreen()
+    joinRoom(viewer)
+    await viewer.startScreenShare()
+
+    // The host decodes this and re-encodes it for everyone else, so the encoder
+    // that has to be bounded is on the member's machine — the host cannot do it
+    // from its side.
+    expect(gdm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        video: { width: { max: 1920 }, height: { max: 1200 }, frameRate: { max: 15 } },
+      }),
+    )
+    expect((track as unknown as { contentHint?: string }).contentHint).toBe('text')
+    await vi.waitFor(() =>
+      expect(lastPC().transceivers[1].sender.params.encodings[0].maxBitrate).toBe(2_500_000),
+    )
+    expect(lastPC().transceivers[1].sender.params.encodings[0].maxFramerate).toBe(15)
   })
 
   it('stops when the browser ends the track (its own "stop sharing" bar)', async () => {

@@ -24,6 +24,16 @@ import { useLiveNotes } from './useLiveNotes'
 import { startMeetingFileTracking, stopMeetingFileTracking, _resetMeetingFileTrackerForTest } from '@/utils/meetingFileTracker'
 import { acquireMic, describeMicError, logMicEnv } from '@/utils/micCapture'
 import { startAndroidScreenCapture, type AndroidCaptureHandle } from './androidScreenCapture'
+import {
+  CAMERA_BUDGET,
+  RELAY_BUDGET,
+  SCREEN_BUDGET,
+  VideoLoadGovernor,
+  applyCodecPreference,
+  applyContentHint,
+  resolvePreferredVideoMime,
+  screenCaptureConstraints,
+} from './liveMediaPolicy'
 
 const TAG = 'LiveShare'
 
@@ -154,6 +164,18 @@ let cameraStream: MediaStream | null = null
 let outCameraTrack: MediaStreamTrack | null = null
 /** The track a viewer is sharing, relayed to every other viewer. */
 let remoteScreenTrack: MediaStreamTrack | null = null
+/**
+ * Machine-wide encoder governor.
+ *
+ * One per session, shared by every sender: CPU pressure is global, and separate
+ * controllers would react to the same saturation at different times and leave
+ * viewers on mismatched quality.
+ */
+let governor: VideoLoadGovernor | null = null
+/** Video codecs this browser advertised, cached for `setCodecPreferences`. */
+let videoCodecs: RTCRtpCodec[] = []
+/** Hardware-accelerated codec to prefer, or null to keep the browser default. */
+let preferredVideoMime: string | null = null
 /** UI subscribers for control frames coming from viewers. */
 const controlHandlers = new Set<(msg: ControlMessage) => void>()
 /**
@@ -261,6 +283,10 @@ function stopTalkMetering(): void {
 
 function resetSession(): void {
   stopTalkMetering()
+  governor?.stop()
+  governor = null
+  videoCodecs = []
+  preferredVideoMime = null
   for (const p of peers.values()) {
     try {
       p.pc.close()
@@ -470,7 +496,7 @@ async function acquireCamera(deviceId = ''): Promise<MediaStream | null> {
   }
   try {
     lastCameraError = null
-    return await gum.call(navigator.mediaDevices, {
+    const stream = await gum.call(navigator.mediaDevices, {
       video: {
         width: { ideal: 640 },
         height: { ideal: 480 },
@@ -481,6 +507,8 @@ async function acquireCamera(deviceId = ''): Promise<MediaStream | null> {
       },
       audio: false,
     })
+    applyContentHint(stream.getVideoTracks()[0], 'motion')
+    return stream
   } catch (e) {
     appLog.w(TAG, `camera unavailable: ${describeMicError(e)}`)
     lastCameraError = e
@@ -492,6 +520,28 @@ async function acquireCamera(deviceId = ''): Promise<MediaStream | null> {
 function cameraDeviceOf(stream: MediaStream | null): string {
   const track = stream?.getVideoTracks()[0] as { getSettings?: () => { deviceId?: string } } | undefined
   return track?.getSettings?.().deviceId ?? ''
+}
+
+/**
+ * Decide once per session which video codec to prefer, and cache it.
+ *
+ * Per-peer decisions are not an option: every answer would name whatever that
+ * peer happened to get, so the publisher would encode H.264 for one viewer and
+ * VP8 for the next — multiplying the encoder work this policy exists to cut.
+ *
+ * A null answer means "no hardware encoder, or cannot tell", and leaves the
+ * browser's own choice alone.
+ */
+async function resolveVideoCodecPreference(): Promise<void> {
+  try {
+    const caps = typeof RTCRtpSender === 'undefined' ? null : RTCRtpSender.getCapabilities?.('video')
+    videoCodecs = caps?.codecs ? [...caps.codecs] : []
+  } catch (e) {
+    appLog.d(TAG, 'video codec capabilities unavailable', e)
+    videoCodecs = []
+  }
+  preferredVideoMime = await resolvePreferredVideoMime()
+  if (preferredVideoMime) appLog.i(TAG, 'hardware video encoder preferred', preferredVideoMime)
 }
 
 /**
@@ -526,6 +576,7 @@ async function captureScreen(sourceId: string): Promise<MediaStream | null> {
     })
     captureKind.value = 'screen'
     captureSourceId.value = sourceId
+    applyContentHint(androidCapture.stream.getVideoTracks()[0], 'text')
     return androidCapture.stream
   }
 
@@ -541,9 +592,13 @@ async function captureScreen(sourceId: string): Promise<MediaStream | null> {
       await declare.call(bridge, sourceId, true)
     }
     const stream = await capture.call(navigator.mediaDevices, {
-      video: true,
+      // A capture cap, not a preference: the publisher encodes this picture once
+      // per viewer, so native 4K multiplies across every connection. See
+      // liveMediaPolicy.ts for the numbers.
+      video: screenCaptureConstraints(),
       audio: true,
     })
+    applyContentHint(stream.getVideoTracks()[0], 'text')
     // Recorded only once the picture is actually here. Setting it before the
     // await (as the source declaration used to) left the meeting believing a
     // screen was on the wire after a cancelled picker, and every later click on
@@ -585,7 +640,11 @@ async function applyPicture(): Promise<void> {
   const tile = screenTrack && cameraEnabled.value ? cameraTrack : null
   outVideoTrack = main
   outCameraTrack = tile
+  // The m-line is the same whether it carries a screen or a camera, but the two
+  // want different encode budgets and different encoder hints.
+  applyContentHint(main, screenTrack ? 'text' : 'motion')
   for (const peer of peers.values()) {
+    governor?.setBudget(`${peer.viewerId}:video`, screenTrack ? SCREEN_BUDGET : CAMERA_BUDGET)
     try {
       await peer.videoTx?.sender.replaceTrack(main)
     } catch (e) {
@@ -999,10 +1058,19 @@ export function useLiveShare() {
         })
       }
 
-      // 5. Open the publisher socket.
+      // 5. Encode policy. One governor for the whole session (CPU is shared by
+      //    every sender) and one codec decision, resolved BEFORE the socket
+      //    opens so the first viewer's offer is answered with it: a codec
+      //    preference only affects negotiation that has not happened yet.
+      governor?.stop()
+      governor = new VideoLoadGovernor()
+      governor.start()
+      await resolveVideoCodecPreference()
+
+      // 6. Open the publisher socket.
       await openSocket()
 
-      // 6. Keep the renderer unthrottled: a minimized window otherwise throttles
+      // 7. Keep the renderer unthrottled: a minimized window otherwise throttles
       //    the encoder and the stream stalls for every viewer. A browser has no
       //    such switch — it also has no window to minimize into the tray.
       void bridge?.setPublishingActive?.(true)
@@ -1337,9 +1405,25 @@ export function useLiveShare() {
       }
     }
 
+    // Codec preference has to be in place BEFORE createAnswer: the answer is
+    // what fixes the codec, and it fixes it for both directions of the m-line —
+    // including a guest's screen coming up to us on `videoTx`.
+    for (const tx of [videoTx, relayTx, cameraTx]) {
+      applyCodecPreference(tx, videoCodecs, preferredVideoMime)
+    }
+
     peer.videoTx = videoTx
     peer.relayTx = relayTx
     peer.cameraTx = cameraTx ?? null
+
+    // Every video m-line this viewer will receive is a separate encoder on this
+    // machine. Registering them with the one governor is what lets CPU pressure
+    // step all of them down together.
+    governor?.register(`${peer.viewerId}:video`, videoTx.sender, SCREEN_BUDGET)
+    governor?.register(`${peer.viewerId}:relay`, relayTx.sender, RELAY_BUDGET)
+    if (peer.cameraTx) {
+      governor?.register(`${peer.viewerId}:camera`, peer.cameraTx.sender, CAMERA_BUDGET)
+    }
     return true
   }
 
@@ -1402,6 +1486,12 @@ export function useLiveShare() {
       }
       peers.delete(viewerId)
     }
+    // A closed PeerConnection's senders still answer getStats() with their last
+    // values; leaving them registered would let a departed viewer's encoder
+    // keep the governor stepped down for everyone still in the room.
+    governor?.unregister(`${viewerId}:video`)
+    governor?.unregister(`${viewerId}:relay`)
+    governor?.unregister(`${viewerId}:camera`)
     mixer?.removeViewer(viewerId)
     useLiveNotes().removeViewer(viewerId)
     if (screenSharer.value === viewerId) clearRemoteScreen()
@@ -1593,6 +1683,9 @@ export function useLiveShare() {
     remoteScreenTrack = track
     remoteScreenStream.value = new MediaStream([track])
     screenSharer.value = viewerId
+    // This track is decoded and re-encoded once per remaining viewer, so the
+    // hint matters more here than on our own capture, not less.
+    applyContentHint(track, 'text')
     track.addEventListener('ended', () => {
       if (remoteScreenTrack === track) clearRemoteScreen()
     })
@@ -1753,4 +1846,15 @@ export function _resetLiveShareForTest(): void {
   controlSupported.value = false
   controlEnabled.value = false
   error.value = ''
+}
+
+/**
+ * The session's encode governor, for tests.
+ *
+ * Its poll timer runs every 3 s, which a unit test must not wait for; exposing
+ * the instance lets a test call `sample()` directly and assert what the
+ * publisher actually pushed onto its senders.
+ */
+export function _liveGovernorForTest(): VideoLoadGovernor | null {
+  return governor
 }
