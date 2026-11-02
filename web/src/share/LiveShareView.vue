@@ -98,14 +98,23 @@
           :class="`live-quality--${quality.level}`"
           :title="quality.detail"
           data-role="quality"
+          data-local-ui
         >
           <span class="live-quality__dot" />
           {{ quality.label }}
         </div>
 
         <!-- Remote control state. Loud on purpose: while it is on, this viewer's
-             pointer is moving someone else's mouse. -->
-        <div v-if="controlState !== 'none'" class="live-screen-banner live-control-banner" data-role="control-banner">
+             pointer is moving someone else's mouse. `data-local-ui` keeps the
+             release button pressable: without it the stage forwards (and
+             captures) the press, so the host receives a click and the viewer
+             never gets one — the mouse is "hijacked" with no way out. -->
+        <div
+          v-if="controlState !== 'none'"
+          class="live-screen-banner live-control-banner"
+          data-role="control-banner"
+          data-local-ui
+        >
           <span>{{ controlState === 'granted' ? t('share.live.controlling') : t('share.live.controlPending') }}</span>
           <button
             class="live-screen-banner-btn"
@@ -119,7 +128,7 @@
 
         <!-- Who is presenting. Without it a viewer cannot tell whose screen this
              is, and "why did the picture change" becomes a support question. -->
-        <div v-if="screenBanner" class="live-screen-banner" data-role="screen-banner">
+        <div v-if="screenBanner" class="live-screen-banner" data-role="screen-banner" data-local-ui>
           <span>{{ screenBanner }}</span>
           <button
             v-if="memberStream"
@@ -132,7 +141,7 @@
           </button>
         </div>
 
-        <div v-if="state !== 'playing'" class="live-overlay">
+        <div v-if="state !== 'playing'" class="live-overlay" data-local-ui>
           <template v-if="state === 'connecting' || state === 'negotiating'">
             <LoadingIndicator />
             <!-- The header used to carry this. A spinner alone does not say
@@ -834,6 +843,39 @@ function onControlComposition(ev: CompositionEvent): void {
  */
 let controlPress: { x: number; y: number; button: number } | null = null
 
+/** The pointer we captured for the open press, so it can be given back. */
+let controlPointerId: number | null = null
+
+/**
+ * Chrome that belongs to the viewer, not to the host's machine.
+ *
+ * Remote control forwards every pointer event to the host and captures the
+ * pointer on the stage. Anything inside the stage that is really UI (the
+ * "结束控制" pill sits there) would then never see its own click — the viewer
+ * drives the host's mouse while being unable to press a single local button.
+ * Every block of chrome carries `data-local-ui`; interactive elements are
+ * covered by the tag selectors so a new button cannot reintroduce the trap.
+ */
+const LOCAL_UI_SELECTOR =
+  '[data-local-ui], button, a, input, textarea, select, label, [role="button"], [role="switch"]'
+
+function isLocalUi(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(LOCAL_UI_SELECTOR) !== null
+}
+
+/** Give the pointer back to the page (a stuck capture swallows every click). */
+function releaseStageCapture(): void {
+  const id = controlPointerId
+  controlPointerId = null
+  if (id === null) return
+  try {
+    const el = stageRef.value
+    if (el?.hasPointerCapture?.(id)) el.releasePointerCapture(id)
+  } catch (e) {
+    appLog.d(TAG, 'releasePointerCapture failed', e)
+  }
+}
+
 /**
  * Close an open press.
  *
@@ -845,6 +887,7 @@ function endControlPress(): void {
   const press = controlPress
   if (!press) return
   controlPress = null
+  releaseStageCapture()
   viewer?.sendControl({ t: 'ctrl-ev', kind: 'up', x: press.x, y: press.y, button: press.button })
 }
 
@@ -860,12 +903,19 @@ function onWindowPointerUp(ev: PointerEvent): void {
   const press = controlPress
   if (!press) return
   controlPress = null
+  releaseStageCapture()
   const p = normalizedPoint(ev) ?? press
   viewer?.sendControl({ t: 'ctrl-ev', kind: 'up', x: p.x, y: p.y, button: press.button })
 }
 
 function onStageDown(ev: PointerEvent): void {
   if (controlState.value === 'granted') {
+    // The page's own chrome wins: a press on the "结束控制" pill (or the dock,
+    // or the retry button) must stay local. Forwarding it would move the host's
+    // mouse instead of pressing the button — and because the stage captures the
+    // pointer, the button would never receive the click either, which is how a
+    // viewer ends up stuck driving someone else's machine with no way out.
+    if (isLocalUi(ev.target)) return
     const p = normalizedPoint(ev)
     if (p) controlPress = { ...p, button: ev.button }
     // Keep the pointer events coming once the cursor leaves the picture, and
@@ -873,6 +923,7 @@ function onStageDown(ev: PointerEvent): void {
     // fallback for a capture that never happened or was lost.
     try {
       stageRef.value?.setPointerCapture?.(ev.pointerId)
+      controlPointerId = ev.pointerId
     } catch (e) {
       appLog.d(TAG, 'setPointerCapture failed', e)
     }
@@ -884,6 +935,9 @@ function onStageDown(ev: PointerEvent): void {
 
 function onStageMove(ev: PointerEvent): void {
   if (controlState.value === 'granted') {
+    // A drag that started on the picture keeps driving the host even across our
+    // chrome; a free move over the chrome is the viewer pointing at OUR UI.
+    if (!controlPress && isLocalUi(ev.target)) return
     sendControlEvent(ev, 'move')
     return
   }
@@ -896,6 +950,7 @@ function onStageUp(ev: PointerEvent): void {
     // flag so one release never produces two `up` frames.
     if (!controlPress) return
     controlPress = null
+    releaseStageCapture()
     sendControlEvent(ev, 'up')
     return
   }
@@ -904,6 +959,8 @@ function onStageUp(ev: PointerEvent): void {
 
 function onStageWheel(ev: WheelEvent): void {
   if (controlState.value === 'granted') {
+    // Scrolling over our own chrome is not scrolling the host's window.
+    if (isLocalUi(ev.target)) return
     sendControlEvent(ev, 'wheel')
     return
   }

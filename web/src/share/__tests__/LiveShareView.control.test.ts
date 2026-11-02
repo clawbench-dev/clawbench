@@ -227,3 +227,115 @@ describe('remote control pointer', () => {
     expect(sent.map((m) => m.kind ?? m.t)).toEqual(['down', 'up', 'ctrl-release'])
   })
 })
+
+describe('remote control escape hatch', () => {
+  it('releases control on Escape and never forwards the key', async () => {
+    await mountControlling()
+
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+
+    // Exactly one frame: `ctrl-release`. A forwarded Escape would land in
+    // whatever the host has focused (closing its dialog, leaving fullscreen).
+    expect(sent).toEqual([{ t: 'ctrl-release' }])
+  })
+
+  it('releases control on Escape even when the chat box has focus', async () => {
+    await mountControlling()
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.focus()
+
+    // Escape is not typing. The editable-target guard exists to keep keystrokes
+    // out of the host's windows, but it must not become the thing that traps the
+    // viewer in control — that was the reported bug ("pressing Esc does nothing").
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+
+    expect(sent).toEqual([{ t: 'ctrl-release' }])
+  })
+
+  it('cancels a pending request on Escape', async () => {
+    const w = mount(LiveShareView, { global: { plugins: [i18n] } })
+    passJoinGate(w)
+    wrapper = w
+    await flushPromises()
+    lastViewer?.opts?.callbacks?.onControlEnabled?.(true)
+    await flushPromises()
+
+    await w.find('[data-action="request-control"]').trigger('click')
+    expect(sent).toEqual([{ t: 'ctrl-req' }])
+
+    // Before the grant arrives the page is in `requested`: Escape has to give up
+    // the request rather than only working once someone approves it.
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+
+    expect(sent).toEqual([{ t: 'ctrl-req' }, { t: 'ctrl-release' }])
+  })
+
+  it('sends one release when Escape is held down', async () => {
+    await mountControlling()
+
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+
+    // Key auto-repeat must not spam the publisher once control is already back.
+    expect(sent).toEqual([{ t: 'ctrl-release' }])
+  })
+})
+
+describe('remote control never swallows the page itself', () => {
+  /** Replace the stage's (jsdom-absent) pointer capture with a spy. */
+  function spyOnCapture(w: Awaited<ReturnType<typeof mountControlling>>) {
+    const stage = w.find('.live-stage').element as HTMLElement
+    const capture = vi.fn()
+    Object.defineProperty(stage, 'setPointerCapture', { configurable: true, value: capture })
+    return capture
+  }
+
+  it('does not forward a press that lands on the release pill', async () => {
+    const w = await mountControlling()
+    const capture = spyOnCapture(w)
+    const btn = w.find('[data-action="control-release"]')
+
+    btn.element.dispatchEvent(
+      new PointerEvent('pointerdown', { pointerId: 11, button: 0, clientX: 30, clientY: 20, bubbles: true }),
+    )
+
+    // The reported bug: pressing the way out moved the HOST's mouse, and the
+    // capture it took meant the button never received its own click either.
+    expect(sent).toEqual([])
+    expect(capture).not.toHaveBeenCalled()
+
+    // …and the click still gets through to the button.
+    await btn.trigger('click')
+    expect(sent).toEqual([{ t: 'ctrl-release' }])
+  })
+
+  it('does not move the host cursor while the pointer is over the page chrome', async () => {
+    const w = await mountControlling()
+    const btn = w.find('[data-action="control-release"]')
+
+    btn.element.dispatchEvent(
+      new PointerEvent('pointermove', { pointerId: 12, clientX: 30, clientY: 20, bubbles: true }),
+    )
+    btn.element.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, clientX: 30, clientY: 20, bubbles: true }))
+
+    expect(sent).toEqual([])
+  })
+
+  it('keeps driving the host when a drag that began on the picture crosses the chrome', async () => {
+    const w = await mountControlling()
+    const stage = w.find('.live-stage').element
+    const btn = w.find('[data-action="control-release"]').element
+
+    stage.dispatchEvent(
+      new PointerEvent('pointerdown', { pointerId: 13, button: 0, clientX: 30, clientY: 20, bubbles: true }),
+    )
+    btn.dispatchEvent(
+      new PointerEvent('pointermove', { pointerId: 13, clientX: 60, clientY: 40, bubbles: true }),
+    )
+
+    // Dragging a window edge past the picture has to keep working; only a press
+    // that STARTS on the chrome belongs to the page.
+    expect(sent.map((m) => m.kind)).toEqual(['down', 'move'])
+  })
+})
