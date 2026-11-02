@@ -225,6 +225,20 @@ describe('control bus', () => {
     expect(seen[0]).toMatchObject({ t: 'chat', text: 'hi' })
   })
 
+  it('also tells the SERVER when control is requested', () => {
+    const { viewer } = setup()
+    joinRoom(viewer)
+
+    viewer.requestControl()
+
+    // Two copies, two audiences: `ctrl-req` (sent by the component, over the
+    // data channel) is what the publisher's UI answers; this WS frame is what
+    // lets the server notify a host who is not looking at the meeting page.
+    // Without it the server never learns the request happened.
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'control-request' })
+    expect(lastPC().channels[0].sentJSON()).toEqual([])
+  })
+
   it('asks for the missed transcript once its channel opens', () => {
     const viewer = new LiveViewer({
       token: 'tok123',

@@ -5,6 +5,8 @@ import { useAppMode } from './useAppMode'
 import { useAppForeground, onAppResume } from './useAppForeground'
 import { showBrowserNotification } from './useNotification'
 import { playNotificationSound } from './useNotificationSound'
+import { useToast, type ToastIconKey, type ToastType } from './useToast'
+import { shouldNotifyMeeting } from '@/utils/meetingVisibility'
 import { gt } from './useLocale'
 import { stripMarkdownPreview } from '@/utils/format'
 import { eventKindLabel, unreadReasonLabel } from '@/utils/forgeEventLabels'
@@ -64,6 +66,13 @@ export interface ServerEvent {
         expected?: number
         quota?: number
         metric?: string
+        // live_event body (ws.MeetingEventData): one thing that happened in a
+        // running meeting. `title` (the meeting name) and `body` (one localized
+        // sentence) are shared with the usage-meter shape above — the producer
+        // renders them server-side for the same reason (no request in scope).
+        token?: string
+        viewer_id?: string
+        viewer_name?: string
     }
 }
 
@@ -474,6 +483,15 @@ function connect() {
                     useForgeUnread().onForgeEvent()
                 }
 
+                // Meeting events (remote-control request, someone joining, a
+                // member starting to share, the minutes finishing). Deliberately
+                // NOT routed through showEventBrowserNotification: its gate is
+                // "is the page focused", while these must reach a host who is
+                // using the app on another tab. See handleMeetingEvent.
+                if (msg.event === 'live_event' && !msg.replayed) {
+                    handleMeetingEvent(msg.data)
+                }
+
                 // Browser notification: when page is not focused, show browser
                 // notification for terminal events (completed/cancelled/failed/
                 // permission_pending). Replayed events are caught-up history
@@ -580,6 +598,77 @@ function stopHeartbeat() {
         clearInterval(heartbeatTimer)
         heartbeatTimer = null
     }
+}
+
+/** How each meeting event is presented in-app: glyph, tone, and whether it is
+ *  worth a sound. Joins and screen shares are ambient (a tone for every one of
+ *  them would make a five-person meeting unlivable); a control request and a
+ *  finished/failed summary are things the host must act on or look at. */
+const MEETING_EVENT_PRESENTATION: Record<string, { icon: ToastIconKey; type: ToastType; sound: boolean }> = {
+    control_request: { icon: 'hand', type: 'info', sound: true },
+    viewer_joined: { icon: 'chat', type: 'info', sound: false },
+    screen_share: { icon: 'eye', type: 'info', sound: false },
+    minutes_ready: { icon: 'file', type: 'success', sound: true },
+    minutes_failed: { icon: 'error', type: 'error', sound: true },
+}
+
+/**
+ * Announce one meeting event to the host.
+ *
+ * Three gates, in order:
+ *
+ *   1. only the HOST is told. The server broadcasts to every client of the
+ *      project — viewers' devices included — and a viewer has nothing to
+ *      answer (their request is the one being announced);
+ *   2. never while the meeting page is on screen: the participants dock already
+ *      shows the request, so anything more is noise;
+ *   3. a hidden document counts as "not looking at the meeting" (that is the
+ *      page-visibility rule), which is exactly when the OS notification is
+ *      wanted.
+ *
+ * Two surfaces, because neither alone covers the cases:
+ *
+ *   - the in-app toast is the only one that survives a FOCUSED window, which is
+ *     precisely the situation this exists for (host using the app on another
+ *     tab);
+ *   - the OS notification is the only one that survives a backgrounded app.
+ *     Its existing gates (page focus / window on screen / app foreground)
+ *     suppress it whenever the app is already in front, so the two never
+ *     double up in practice.
+ */
+function handleMeetingEvent(data: ServerEvent['data']): void {
+    const token = data?.token || ''
+    const body = data?.body || ''
+    if (!token || !body) return
+    if (!shouldNotifyMeeting(token)) return
+
+    const eventType = data?.event_type || ''
+    const presentation = MEETING_EVENT_PRESENTATION[eventType] ?? {
+        icon: 'info' as ToastIconKey,
+        type: 'info' as ToastType,
+        sound: false,
+    }
+    const title = data?.title || gt('nav.meeting')
+    const open = () => {
+        window.dispatchEvent(new CustomEvent('clawbench-open-meeting', {
+            detail: { token, projectPath: data?.project_path },
+        }))
+    }
+
+    useToast().show(`${title} · ${body}`, {
+        icon: presentation.icon,
+        type: presentation.type,
+        duration: 6000,
+        onClick: open,
+    })
+    if (presentation.sound) playNotificationSound()
+
+    showBrowserNotification(title, {
+        body,
+        tag: `clawbench-live-${token}`,
+        onClick: open,
+        nav: { meetingToken: token, projectPath: data?.project_path },
+    })
 }
 
 /**

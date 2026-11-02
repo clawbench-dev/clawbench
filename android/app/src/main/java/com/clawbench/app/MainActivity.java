@@ -2813,8 +2813,9 @@ public class MainActivity extends AppCompatActivity {
         if (pendingNavigation != null && webView != null) {
             AppLog.i(TAG, "MainActivity: onResume - re-dispatching pendingNavigation=" + pendingNavigation.toString());
             final String jsArg = pendingNavigation.toString();
-            // Choose event name based on navigation type: task vs session
-            String eventName = pendingNavigation.has("taskId") ? "clawbench-open-task" : "clawbench-open-session";
+            // Choose event name based on navigation type: meeting vs task vs session.
+            String eventName = pendingNavigation.has("token") ? "clawbench-open-meeting"
+                    : pendingNavigation.has("taskId") ? "clawbench-open-task" : "clawbench-open-session";
             AppLog.i(TAG, "MainActivity: onResume - dispatching " + eventName);
             webView.evaluateJavascript(
                 "window.dispatchEvent(new CustomEvent('" + eventName + "', { detail: " + jsArg + " }))",
@@ -2985,11 +2986,42 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        // Determine navigation type: task notification vs session notification
+        // Determine navigation type: meeting / task / session notification
         boolean isTaskNotification = taskId != null || "task_update".equals(eventType);
         boolean isUsageMeterNotification = "usage_meter".equals(eventType);
+        String meetingToken = intent.getStringExtra("meeting_token");
+        boolean isMeetingNotification = "meeting".equals(eventType)
+                && meetingToken != null && !meetingToken.isEmpty();
 
-        if (isUsageMeterNotification) {
+        if (isMeetingNotification) {
+            // A meeting notification: open that meeting's record. The token is
+            // the meeting's identity — there is no session to fall back to, so
+            // without this branch the tap opens the app and stops there.
+            AppLog.i(TAG, "MainActivity: handleNotificationIntent - meeting notification, dispatching clawbench-open-meeting");
+            try {
+                org.json.JSONObject detail = new org.json.JSONObject();
+                detail.put("token", meetingToken);
+                if (projectPath != null) detail.put("projectPath", projectPath);
+                pendingNavigation = detail;
+                if (webView != null) {
+                    webView.evaluateJavascript(
+                        "window.dispatchEvent(new CustomEvent('clawbench-open-meeting', { detail: " + detail.toString() + " }))",
+                        result -> {
+                            AppLog.i(TAG, "MainActivity: clawbench-open-meeting evaluateJavascript result=" + result);
+                            pendingNavigation = null;
+                        }
+                    );
+                } else {
+                    AppLog.w(TAG, "MainActivity: webView is null, cannot dispatch meeting event (pendingNavigation stored for cold-start)");
+                }
+            } catch (Exception e) {
+                AppLog.w(TAG, "MainActivity: failed to dispatch meeting event from notification", e);
+            }
+            intent.removeExtra("meeting_token");
+            intent.removeExtra("event_type");
+            intent.removeExtra("project_path");
+            AppLog.i(TAG, "MainActivity: cleared intent extras to prevent re-dispatch");
+        } else if (isUsageMeterNotification) {
             // The usage meter is global: there is no session or task to open.
             // Dispatch a dedicated event; the frontend opens the usage popover
             // (wide screen) or the settings entry (narrow screen). Without this

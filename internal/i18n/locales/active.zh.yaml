@@ -422,3 +422,12 @@ MeetingScreenVoice: 屏幕
 MeetingScreenStarted: "{{.Name}} 开始共享屏幕"
 MeetingScreenStopped: "{{.Name}} 停止共享屏幕{{.Stay}}"
 MeetingScreenHost: 主持人
+# 会议推送：通知中心的行文案与系统通知的正文。生产者在服务端（纪要任务没有
+# HTTP 请求），所以按配置的界面语言渲染一次，日志与弹窗共用同一句。
+MeetingUntitled: 未命名会议
+MeetingEventSomeone: 有人
+MeetingEventControlRequest: "{{.Name}} 请求远程控制你的屏幕"
+MeetingEventViewerJoined: "{{.Name}} 加入了会议"
+MeetingEventScreenShare: "{{.Name}} 开始共享屏幕"
+MeetingEventMinutesReady: 会议纪要已生成
+MeetingEventMinutesFailed: 会议纪要生成失败

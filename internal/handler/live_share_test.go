@@ -1525,3 +1525,96 @@ func TestStartLiveShareReaper_ClosesMeetingsLeftOpenByThePreviousRun(t *testing.
 	require.True(t, exists)
 	assert.NotZero(t, note.EndedAt, "a record orphaned by a crash must be closed at startup")
 }
+
+// closePublisherAndWait tears the publisher socket down and waits until its
+// deferred finalize has closed the meeting record.
+//
+// Without this the test returns first and the handler's post-close writes race
+// the DB teardown — the record's finalize then hits a nil handle and panics in
+// a goroutine, which the race detector surfaces as a crash rather than a
+// failure. The record's ended_at is the observable proof the write landed.
+func closePublisherAndWait(t *testing.T, pub *websocket.Conn, token string) {
+	t.Helper()
+	_ = pub.CloseNow()
+	require.Eventually(t, func() bool {
+		note, ok, err := service.GetLiveNote(token)
+		return err == nil && ok && note.EndedAt > 0
+	}, 3*time.Second, 10*time.Millisecond, "publisher teardown never closed the meeting record")
+}
+
+// waitMeetingNotifications polls the log until at least `want` rows of
+// `eventType` for `token` exist. Recording happens on the viewer's read-loop
+// goroutine, so it is not synchronous with the frame we wrote.
+func waitMeetingNotifications(t *testing.T, token, eventType string, want int) []service.Notification {
+	t.Helper()
+	var matched []service.Notification
+	require.Eventually(t, func() bool {
+		all, err := service.ListNotifications(service.NotificationFilter{Kind: service.NotificationKindMeeting})
+		if err != nil {
+			return false
+		}
+		matched = matched[:0]
+		for _, n := range all {
+			if n.MeetingToken == token && n.EventType == eventType {
+				matched = append(matched, n)
+			}
+		}
+		return len(matched) >= want
+	}, 3*time.Second, 10*time.Millisecond, "meeting notification was never recorded")
+	return matched
+}
+
+// TestLiveWS_ViewerJoinIsRecorded: a join is the only signal a host gets when
+// the meeting page is not the thing on screen.
+func TestLiveWS_ViewerJoinIsRecorded(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	viewer := dialWS(t, srv, "/api/share/"+token+"/signal?name=张三")
+	_ = readViewerMsg(t, viewer) // joined
+	defer closePublisherAndWait(t, pub, token)
+
+	rows := waitMeetingNotifications(t, token, service.MeetingEventViewerJoined, 1)
+	assert.Equal(t, "测试共享", rows[0].Title)
+	assert.Contains(t, rows[0].Body, "张三", "the body names who joined")
+}
+
+// TestLiveWS_ControlRequestIsRecorded pins the reason the viewer sends a second
+// copy of its request over the WS: the P2P frame never reaches the server, so
+// without this one the host could not be notified at all.
+func TestLiveWS_ControlRequestIsRecorded(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	viewer := dialWS(t, srv, "/api/share/"+token+"/signal?name=张三")
+	_ = readViewerMsg(t, viewer) // joined
+	defer closePublisherAndWait(t, pub, token)
+
+	writeJSONFrame(t, viewer, map[string]string{"type": liveshare.CtrlControlRequest})
+
+	rows := waitMeetingNotifications(t, token, service.MeetingEventControlRequest, 1)
+	assert.Equal(t, "测试共享", rows[0].Title)
+	assert.Contains(t, rows[0].Body, "张三")
+	assert.NotZero(t, rows[0].ProjectID)
+}
+
+// TestLiveWS_ScreenShareNotifiesOnlyWhenGranted: a refused share changes
+// nothing in the room, so announcing it would be a false alarm.
+func TestLiveWS_ScreenShareNotifiesOnlyWhenGranted(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	room := liveRegistry.Get(token)
+	require.NotNil(t, room)
+	viewer := dialWS(t, srv, "/api/share/"+token+"/signal?name=张三")
+	_ = readViewerMsg(t, viewer) // joined
+	defer closePublisherAndWait(t, pub, token)
+
+	// The switch is off by default: the request is refused.
+	writeJSONFrame(t, viewer, map[string]string{"type": liveshare.CtrlScreenStart})
+	denied := readViewerMsg(t, viewer)
+	assert.Equal(t, liveshare.MsgScreenDenied, denied.Type)
+
+	room.SetScreenEnabled(true)
+	writeJSONFrame(t, viewer, map[string]string{"type": liveshare.CtrlScreenStart})
+
+	rows := waitMeetingNotifications(t, token, service.MeetingEventScreenShare, 1)
+	assert.Contains(t, rows[0].Body, "张三")
+}

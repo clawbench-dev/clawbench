@@ -431,3 +431,13 @@ MeetingScreenVoice: Screen
 MeetingScreenStarted: "{{.Name}} started sharing the screen"
 MeetingScreenStopped: "{{.Name}} stopped sharing the screen{{.Stay}}"
 MeetingScreenHost: Host
+# Meeting notifications: the notification-center row and the OS notification
+# body. Produced server-side (the minutes job has no HTTP request), so they are
+# localized once from the configured UI language.
+MeetingUntitled: Untitled meeting
+MeetingEventSomeone: Someone
+MeetingEventControlRequest: "{{.Name}} asked to control your screen"
+MeetingEventViewerJoined: "{{.Name}} joined the meeting"
+MeetingEventScreenShare: "{{.Name}} started sharing their screen"
+MeetingEventMinutesReady: Meeting minutes are ready
+MeetingEventMinutesFailed: Meeting minutes failed to generate

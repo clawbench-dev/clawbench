@@ -432,6 +432,13 @@ export interface NotificationNav {
    */
   usageMeter?: boolean
   /**
+   * Set for meeting notifications (remote-control request, someone joining, a
+   * member sharing, the minutes finishing). A meeting has no session or task —
+   * its share token IS its identity — so the native shell needs this
+   * discriminator to route the click to the meeting tab.
+   */
+  meetingToken?: string
+  /**
    * The forge item to open, so the click deep-links to the item rather than
    * only raising the tab. Carries the opaque read key because a pipeline's
    * number is always 0 (its identity is the run id).

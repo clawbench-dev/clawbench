@@ -914,6 +914,11 @@ func generateLiveNotesArtifacts(token string, projectID int64, projectPath, titl
 		slog.Warn("live notes: minutes generation failed", "err", err)
 		if serr := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusFailed, "", err.Error(), ""); serr != nil {
 			slog.Error("live notes: persist minutes failure failed", "err", serr)
+		} else {
+			// The job runs detached (up to ten minutes) and the host has almost
+			// certainly left the meeting page by now, so the failure has to
+			// travel to them — polling the record list is not a notification.
+			service.EmitMeetingEvent(token, projectPath, service.MeetingEventMinutesFailed, title, "", "")
 		}
 		return
 	}
@@ -932,7 +937,10 @@ func generateLiveNotesArtifacts(token string, projectID int64, projectPath, titl
 	}
 	if err := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusReady, minutes, "", filePath); err != nil {
 		slog.Error("live notes: persist minutes failed", "err", err)
+		return
 	}
+	// Same reason as the failure path: the job outlives the meeting page.
+	service.EmitMeetingEvent(token, projectPath, service.MeetingEventMinutesReady, title, "", "")
 }
 
 // nameMeetingFromMinutes replaces a placeholder title with one the summary

@@ -113,6 +113,15 @@ const (
 	CtrlScreenStart = "screen-start"
 	// CtrlScreenStop announces that the viewer stopped sharing.
 	CtrlScreenStop = "screen-stop"
+	// CtrlControlRequest reports that the viewer asked the publisher for remote
+	// control. The REQUEST itself still travels over the P2P control channel
+	// (`ctrl-req`), which is what the publisher's UI answers — it must arrive
+	// without a server round trip. This frame is the server's copy: it changes
+	// no room state, it exists only so a notification can be raised for a host
+	// who is not looking at the meeting page. Without it the server never sees
+	// the request at all, and the host learns about it only if they happen to
+	// be on the meeting tab.
+	CtrlControlRequest = "control-request"
 )
 
 // PublisherMessage is a frame sent to the publisher.

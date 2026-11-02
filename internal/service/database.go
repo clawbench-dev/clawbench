@@ -1060,6 +1060,20 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := store.WriteExec(NotificationsDDL); err != nil {
 		return fmt.Errorf("failed to create notifications table: %w", err)
 	}
+	// notifications.meeting_token: the subject of a kind=meeting row (the share
+	// token, i.e. live_notes.token). The CREATE TABLE above is a no-op on an
+	// existing database, so the column would never appear there.
+	var hasMeetingToken int
+	_ = store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('notifications') WHERE name='meeting_token'",
+	).Scan(&hasMeetingToken)
+	if hasMeetingToken == 0 {
+		if _, err := store.WriteExec(
+			"ALTER TABLE notifications ADD COLUMN meeting_token TEXT NOT NULL DEFAULT ''",
+		); err != nil {
+			return fmt.Errorf("failed to add notifications.meeting_token: %w", err)
+		}
+	}
 	// Model providers (endpoint + credential shared by agents). Defined in
 	// providers.go as a constant so tests share one source of truth.
 	if _, err := store.WriteExec(ProvidersDDL); err != nil {

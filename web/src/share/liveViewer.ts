@@ -709,6 +709,20 @@ export class LiveViewer {
     }
   }
 
+  /**
+   * Tell the SERVER that we asked for remote control.
+   *
+   * The request itself travels over the control channel (`ctrl-req`) — that is
+   * what the publisher's UI answers, and it must not wait for a round trip.
+   * This is the server's copy, and it exists for one reason: the server is the
+   * only party that can notify a host who is not looking at the meeting page.
+   * It changes no room state, so it is safe to send even when the host has the
+   * capability switched off (the publisher still sees the request and refuses).
+   */
+  requestControl(): void {
+    this.send({ type: 'control-request' })
+  }
+
   /** Stop sharing and tell the room. */
   async stopScreenShare(): Promise<void> {
     if (!this.screenTrack) return

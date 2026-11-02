@@ -48,6 +48,9 @@ function channelFor(nav: NotificationNav): NavChannel {
   if (nav.forge) return 'clawbench-open-forge'
   // Usage-meter notifications are global: no session/task id to branch on.
   if (nav.usageMeter) return 'clawbench-open-usage-meter'
+  // Meetings are identified by their share token, not by a session: without
+  // this the click would fall through to the session channel and be dropped.
+  if (nav.meetingToken) return 'clawbench-open-meeting'
   if (nav.taskId) return 'clawbench-open-task'
   return 'clawbench-open-session'
 }

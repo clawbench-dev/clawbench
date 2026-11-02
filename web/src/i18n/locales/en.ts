@@ -1418,6 +1418,7 @@ export default {
       task: 'Task',
       forge: 'Repo',
       usage: 'Usage',
+      meeting: 'Meeting',
     },
     range: {
       today: 'Today',
@@ -1440,7 +1441,7 @@ export default {
     loading: 'Loading…',
     loadMore: 'Load more',
     empty: 'No notifications',
-    emptyHint: 'Session, task and repository events will show up here.',
+    emptyHint: 'Session, task, repository and meeting events will show up here.',
     emptyFiltered: 'No notifications match the current filters',
     clear: 'Clear all',
     clearConfirm: 'Clear all notifications? This cannot be undone.',
@@ -1462,6 +1463,11 @@ export default {
       forgePipelineDone: 'Pipeline finished',
       usageOver: 'Above plan',
       usageFull: 'Quota exhausted',
+      meetingControlRequest: 'Remote control requested',
+      meetingViewerJoined: 'Member joined',
+      meetingScreenShare: 'Member sharing screen',
+      meetingMinutesReady: 'Minutes ready',
+      meetingMinutesFailed: 'Minutes failed',
     },
   },
   task: {

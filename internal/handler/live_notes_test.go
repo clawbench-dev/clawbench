@@ -48,6 +48,11 @@ func setupLiveNotesDB(t *testing.T) *sql.DB {
 	require.NoError(t, err)
 	_, err = db.Exec(service.LiveNotesDDL)
 	require.NoError(t, err)
+	// Meeting events are recorded in the notification log (the durable half of
+	// a meeting notification), so the schema has to be there for any test that
+	// drives a meeting socket.
+	_, err = db.Exec(service.NotificationsDDL)
+	require.NoError(t, err)
 	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(cleanup)
 	return db

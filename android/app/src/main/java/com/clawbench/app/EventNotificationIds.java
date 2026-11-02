@@ -55,6 +55,21 @@ public final class EventNotificationIds {
     }
 
     /**
+     * Notification id for a meeting event, keyed by the share token.
+     *
+     * Its own band: a meeting carries neither a session nor a task id, so
+     * {@link #forEvent} would fall back to {@link #BASE} and every meeting in
+     * the shade would replace the previous one — including a session
+     * notification with a blank id.
+     */
+    public static int forMeeting(String meetingToken) {
+        if (meetingToken == null || meetingToken.isEmpty()) {
+            return BASE;
+        }
+        return BASE + 2 * BAND + Math.abs(meetingToken.hashCode() % BAND);
+    }
+
+    /**
      * Notification id for an event, preferring the task id when present (matching
      * the post path's branch order: a task event carries both a task_id and a
      * session_id, and must resolve to the task band).

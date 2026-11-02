@@ -67,6 +67,16 @@ public final class NativeNotificationPolicy {
         if ("usage_meter_update".equals(eventType)) {
             return true;
         }
+        // A meeting event (remote-control request, someone joining, a member
+        // starting to share, the minutes finishing). It carries no status: the
+        // server only emits it for the five occurrences it means to report, so
+        // every occurrence notifies. Whether it SHOULD reach this device is a
+        // different question — the web layer knows who hosts the meeting, the
+        // native service does not, and a viewer's device may see a redundant
+        // one. Accepted: the alternative is a hosting flag on the socket.
+        if ("live_event".equals(eventType)) {
+            return true;
+        }
         return false;
     }
 
@@ -106,6 +116,15 @@ public final class NativeNotificationPolicy {
         // crossing forever.
         if ("usage_meter_update".equals(eventType)) {
             return true;
+        }
+        // live_event is NEVER persisted server-side (a meeting event is only
+        // meaningful while the room is alive, and the room dies with the
+        // publisher's socket). Advancing the cursor to one would leave the
+        // client holding an id GetPendingEvents cannot resolve, which returns an
+        // EMPTY list rather than falling back to the full set — the dead-cursor
+        // trap documented above. The durable copy is the notification center.
+        if ("live_event".equals(eventType)) {
+            return false;
         }
         return false;
     }

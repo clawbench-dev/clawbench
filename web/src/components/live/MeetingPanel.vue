@@ -37,13 +37,14 @@
  * separate "post-meeting" screen, so the minutes, the transcript, the chat and
  * the delete button live in exactly one place.
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import MeetingList from './MeetingList.vue'
 import MeetingCreate from './MeetingCreate.vue'
 import MeetingJoin from './MeetingJoin.vue'
 import MeetingStage from './MeetingStage.vue'
 import MeetingDetail from './MeetingDetail.vue'
 import { useLiveShare } from '@/composables/useLiveShare'
+import { setHostedMeetingToken, setVisibleMeetingToken } from '@/utils/meetingVisibility'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { takeMeetingReturn, clearMeetingView, type MeetingDetailTab } from '@/composables/useMeetingViewState'
 
@@ -176,6 +177,24 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   window.removeEventListener('clawbench-open-meeting', handleOpenMeeting)
+  // The panel is the only writer of these two facts; leaving them behind would
+  // keep suppressing (or worse, keep raising) notifications for a meeting this
+  // client no longer shows.
+  setHostedMeetingToken('')
+  setVisibleMeetingToken('')
+})
+
+// Two facts the global event handler needs (see utils/meetingVisibility):
+// which meeting this client publishes, and whether its stage is what the user
+// is looking at. Derived HERE because this is the only place that knows the
+// tab's active state and the panel's own view at the same time — the stage
+// component alone cannot tell whether the tab is on screen (panels are kept
+// mounted), and the composable alone cannot tell which view is rendered.
+watchEffect(() => {
+  setHostedMeetingToken(share.state.value === 'publishing' ? share.token.value : '')
+})
+watchEffect(() => {
+  setVisibleMeetingToken(props.active && view.value === 'meeting' ? share.token.value : '')
 })
 
 defineExpose({ openDetail })

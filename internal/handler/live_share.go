@@ -562,6 +562,12 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The host wants to know someone arrived: a meeting is often attended while
+	// the host is looking at another tab, and nothing else in the app reports
+	// it. Emitted after `joined` succeeded, so only a viewer that is actually in
+	// the room counts.
+	notifyMeeting(room, service.MeetingEventViewerJoined, viewer)
+
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
@@ -632,13 +638,34 @@ func handleViewerControl(room *liveshare.Room, viewer *liveshare.Viewer, ctl liv
 			})
 			return
 		}
+		notifyMeeting(room, service.MeetingEventScreenShare, viewer)
 		broadcastScreenState(room)
 
 	case liveshare.CtrlScreenStop:
 		if room.ReleaseScreen(viewer.ID) {
 			broadcastScreenState(room)
 		}
+
+	case liveshare.CtrlControlRequest:
+		// The request reached the publisher over the P2P control channel
+		// already; this is the server's copy, used only to notify a host who is
+		// not on the meeting page. No room state changes, so a duplicate or a
+		// request while control is disabled is harmless.
+		notifyMeeting(room, service.MeetingEventControlRequest, viewer)
 	}
+}
+
+// notifyMeeting records one meeting event and pushes it to connected clients.
+//
+// The project path comes from the room: a meeting belongs to the project that
+// created it, and the viewer socket carries no project (its token is the only
+// credential). `viewer` is nil for events that have no actor (the minutes).
+func notifyMeeting(room *liveshare.Room, eventType string, viewer *liveshare.Viewer) {
+	viewerID, name := "", ""
+	if viewer != nil {
+		viewerID, name = viewer.ID, viewer.Name
+	}
+	service.EmitMeetingEvent(room.Token(), room.ProjectKey(), eventType, room.Title(), viewerID, name)
 }
 
 // applySetPicture records the publisher's current picture and tells every

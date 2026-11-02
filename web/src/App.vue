@@ -1605,6 +1605,49 @@ function handleOpenUsageMeter(e?: Event) {
   switchTab('settings')
 }
 
+/**
+ * Payload of the `clawbench-open-meeting` event (meeting notification tap, or
+ * a quote jumping to the meeting it was taken from).
+ */
+interface OpenMeetingDetail { token?: string; projectPath?: string; fromNotificationCenter?: boolean }
+
+/**
+ * Handle clawbench-open-meeting.
+ *
+ * The meeting panel listens to the SAME event and sets its own view (it owns
+ * the list/detail/stage state). This handler does the two things the panel
+ * cannot: switch to the meeting tab, and — for a row from another project —
+ * rebuild that project first. A meeting record is project-scoped, so opening
+ * it against the old project would 404 and land on an empty detail page.
+ */
+function handleOpenMeeting(e: Event) {
+  const detail = (e as CustomEvent<OpenMeetingDetail>).detail
+  if (!detail?.token) {
+    appLog.w(TAG, 'clawbench-open-meeting: no token in detail, ignoring')
+    return
+  }
+  const { token, projectPath } = detail
+  const crossProject = !!projectPath && projectPath !== store.state.projectRoot
+  if (!crossProject) recordNotificationOrigin(detail)
+  if (crossProject) {
+    // The panel already handled the original event, against the OLD project.
+    // Re-dispatch once the switch has landed: the second pass is the one whose
+    // detail fetch can find the record. (Same-project jumps need no second
+    // dispatch — the first one is already correct.)
+    hotSwitchProject(projectPath, null)
+      .then(() => {
+        switchTab('live')
+        window.dispatchEvent(new CustomEvent('clawbench-open-meeting', { detail: { token } }))
+      })
+      .catch(() => {
+        appLog.w(TAG, 'clawbench-open-meeting: project switch failed, opening the current project')
+        switchTab('live')
+      })
+    return
+  }
+  switchTab('live')
+}
+
 // Register browse-scoped drawers with tab-drawer binding
 const detailsDrawer = useTabDrawer('view')
 const tocDrawer = useTabDrawer('view')
@@ -2679,6 +2722,7 @@ function registerAppEventListeners() {
   window.addEventListener('clawbench-open-task', handleOpenTask)
   window.addEventListener('clawbench-open-forge', handleOpenForge)
   window.addEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
+  window.addEventListener('clawbench-open-meeting', handleOpenMeeting)
   window.addEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
   document.addEventListener('click', handleOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', async (e: Event) => {
@@ -4635,6 +4679,7 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-open-task', handleOpenTask)
     window.removeEventListener('clawbench-open-forge', handleOpenForge)
     window.removeEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
+    window.removeEventListener('clawbench-open-meeting', handleOpenMeeting)
     window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
     document.removeEventListener('click', handleOverflowOutsideClick)
     document.removeEventListener('keydown', handleCtrlF)

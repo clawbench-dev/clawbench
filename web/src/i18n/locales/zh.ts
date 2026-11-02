@@ -1422,6 +1422,7 @@ export default {
       task: '任务',
       forge: '仓库',
       usage: '用量',
+      meeting: '会议',
     },
     range: {
       today: '今天',
@@ -1442,7 +1443,7 @@ export default {
     loading: '加载中…',
     loadMore: '加载更多',
     empty: '暂无通知',
-    emptyHint: '会话、任务与仓库事件会显示在这里。',
+    emptyHint: '会话、任务、仓库与会议事件会显示在这里。',
     emptyFiltered: '没有符合当前筛选的通知',
     clear: '清空',
     clearConfirm: '清空全部通知？此操作不可撤销。',
@@ -1464,6 +1465,11 @@ export default {
       forgePipelineDone: '流水线已结束',
       usageOver: '超出计划',
       usageFull: '已用尽',
+      meetingControlRequest: '请求远程控制',
+      meetingViewerJoined: '成员加入',
+      meetingScreenShare: '成员共享屏幕',
+      meetingMinutesReady: '纪要已生成',
+      meetingMinutesFailed: '纪要生成失败',
     },
   },
   task: {

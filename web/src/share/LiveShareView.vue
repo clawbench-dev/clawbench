@@ -601,6 +601,11 @@ function releaseControl(): void {
 function requestControl(): void {
   if (!viewer?.sendControl({ t: 'ctrl-req' })) return
   controlState.value = 'requested'
+  // The server's copy, sent only after the peer accepted the request: it is
+  // what lets the host be notified while they are not on the meeting page.
+  // Sending it first would raise a notification for a request the publisher
+  // never received.
+  viewer.requestControl()
 }
 
 /** Client pixels → normalised picture coordinates (null when there is no stage). */
