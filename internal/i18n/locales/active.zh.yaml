@@ -393,3 +393,28 @@ RestartFailed: 重启失败：{{.Error}}
 RestartUnavailable: 重启功能未初始化，无法重启服务端
 TLSCertNotSelfSigned: 现有证书不是自签名证书（可能来自 CA），重新生成会覆盖它；确认要覆盖请带上 force
 TLSCertGenerateFailed: 生成证书失败：{{.Error}}
+# 会议期间打开的文件：转写 cue、files.md 清单与归档原因。
+MeetingFilesSpeaker: 文件
+MeetingFilesOpened: 打开 {{.Path}}
+MeetingFilesClosed: 关闭 {{.Path}}{{.Stay}}
+MeetingFilesStaySeconds: "{{.N}} 秒"
+MeetingFilesStayMinutes: "{{.N}} 分钟"
+MeetingFilesStayMinSec: "{{.Min}} 分 {{.Sec}} 秒"
+MeetingFilesStayHours: "{{.Hours}} 小时 {{.Min}} 分"
+MeetingFilesManifestTitle: 会议期间打开的文件 · {{.Time}}
+MeetingFilesManifestNote: 按打开时间排序。归档副本在 files/ 下；同一内容的重复文件只保留一份。
+MeetingFilesColumnTime: 时间
+MeetingFilesColumnFile: 文件
+MeetingFilesColumnStay: 停留
+MeetingFilesColumnArchive: 归档
+MeetingFilesSince: 起
+MeetingFilesReasonWrap: （{{.Text}}）
+MeetingFilesReasonUnknownPath: 路径未知
+MeetingFilesReasonTooMany: 超过单场会议归档数量上限
+MeetingFilesReasonDuplicate: 内容与已有文件相同
+MeetingFilesReasonTooBig: 文件超过 5 MB，未归档
+MeetingFilesReasonMissing: 文件已不存在
+MeetingFilesReasonPermission: 没有读取权限
+MeetingFilesReasonUnreadable: 读取失败
+MeetingFilesStayWrap: （{{.Text}}）
+MeetingFilesExcerptHeader: 文件内容摘录（已截断）

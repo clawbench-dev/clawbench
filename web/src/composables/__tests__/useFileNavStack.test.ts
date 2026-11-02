@@ -1,8 +1,15 @@
 import { describe, expect, it, beforeEach } from 'vitest'
 import { useFileNavStack, _resetForTesting } from '@/composables/useFileNavStack'
+import {
+  meetingFileEntries,
+  startMeetingFileTracking,
+  _meetingFileSnapshotForTest,
+  _resetMeetingFileTrackerForTest,
+} from '@/utils/meetingFileTracker'
 
 beforeEach(() => {
   _resetForTesting()
+  _resetMeetingFileTrackerForTest()
 })
 
 describe('useFileNavStack', () => {
@@ -19,6 +26,19 @@ describe('useFileNavStack', () => {
     expect(nav.overlayOpen.value).toBe(true)
     expect(nav.currentFilePath.value).toBe('/src/main.ts')
     expect(nav.canGoBack.value).toBe(false)
+  })
+
+  // This module is the single entry point for every file open (the comment on
+  // openFile says so), which is exactly why the meeting timeline hangs off it.
+  it('feeds the meeting timeline from openFile and closeOverlay', () => {
+    startMeetingFileTracking({ token: 'tok' })
+    const nav = useFileNavStack()
+    nav.openFile('/src/a.ts')
+    expect(meetingFileEntries().map((e) => e.path)).toEqual(['/src/a.ts'])
+    expect(_meetingFileSnapshotForTest().open?.path).toBe('/src/a.ts')
+
+    nav.closeOverlay()
+    expect(_meetingFileSnapshotForTest().open).toBeNull()
   })
 
   it('openFile multiple times: builds navigation stack', () => {

@@ -1,9 +1,17 @@
 <template>
   <div ref="rootRef" class="transcript" :class="{ 'transcript--fill': fill }">
-    <div v-for="b in blocks" :key="b.key" class="transcript__row">
-      <SpeakerAvatar class="transcript__avatar" :name="b.speaker" />
-      <span class="transcript__speaker">{{ b.speaker }}</span>
-      <span class="transcript__text">{{ b.text }}</span>
+    <div
+      v-for="b in blocks"
+      :key="b.key"
+      class="transcript__row"
+      :class="{ 'transcript__row--file': b.kind === 'file' }"
+    >
+      <!-- A file event has no speaker: an avatar with the character 文 would
+           read as a participant. The glyph says "this is not a person". -->
+      <FileText v-if="b.kind === 'file'" class="transcript__avatar transcript__file-icon" :size="16" aria-hidden="true" />
+      <SpeakerAvatar v-else class="transcript__avatar" :name="b.speaker" />
+      <span class="transcript__speaker">{{ speakerOf(b) }}</span>
+      <span class="transcript__text">{{ textOf(b) }}</span>
     </div>
   </div>
 </template>
@@ -27,10 +35,36 @@
  * panel pads its own body — through `--transcript-inset`.
  */
 import { nextTick, ref, watch } from 'vue'
+import { FileText } from 'lucide-vue-next'
+import i18n from '@/i18n'
 import SpeakerAvatar from '@/components/common/SpeakerAvatar.vue'
 import type { NoteBlock } from '@/composables/liveNotes'
 
 const props = withDefaults(defineProps<{ blocks: NoteBlock[]; fill?: boolean }>(), { fill: false })
+
+/**
+ * Localization goes through the global instance rather than `useI18n()`.
+ *
+ * This component is mounted by the public share SPA and by three panels, and
+ * one of the parity tests mounts it without an i18n plugin. Reading
+ * `i18n.global.t` inside a render function still tracks the locale ref, so a
+ * language switch re-renders it like any other translated text.
+ */
+function speakerOf(b: NoteBlock): string {
+  if (b.speaker) return b.speaker
+  return b.kind === 'file' ? i18n.global.t('liveShare.fileSpeaker') : ''
+}
+
+/** A live file row carries a bare path; a stored transcript carries a sentence. */
+function textOf(b: NoteBlock): string {
+  if (b.kind === 'file' && b.fileAction) {
+    return i18n.global.t(
+      b.fileAction === 'open' ? 'liveShare.fileOpened' : 'liveShare.fileClosed',
+      { path: b.text },
+    )
+  }
+  return b.text
+}
 
 const rootRef = ref<HTMLElement | null>(null)
 
@@ -107,5 +141,17 @@ watch(
   line-height: 1.65;
   color: var(--text-primary, #1f2328);
   overflow-wrap: anywhere;
+}
+
+/* A file event is a marker on the timeline, not something somebody said: it
+   sits back so the conversation still reads as the conversation. */
+.transcript__file-icon {
+  color: var(--text-muted, #656d76);
+}
+
+.transcript__row--file .transcript__speaker,
+.transcript__row--file .transcript__text {
+  color: var(--text-muted, #656d76);
+  font-style: italic;
 }
 </style>

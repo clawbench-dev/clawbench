@@ -103,6 +103,20 @@ export interface NoteBlock {
   speaker: string
   startedAt: number
   text: string
+  /**
+   * A file event rather than an utterance.
+   *
+   * It shares the timeline but not the speaker semantics: it has no avatar, and
+   * it must never be merged into a neighbouring line the way consecutive
+   * utterances from one speaker are.
+   */
+  kind?: 'file'
+  /**
+   * Which half of the interval this row is. Set only for live rows, whose text
+   * is a bare path that the view localizes; a stored transcript already carries
+   * a rendered sentence and leaves this undefined.
+   */
+  fileAction?: 'open' | 'close'
 }
 
 /** Merges incoming segments into the timeline, de-duplicated by id. */
@@ -128,13 +142,18 @@ const BLOCK_MERGE_GAP_MS = 4_000
  * segments; merging consecutive same-speaker lines keeps the panel readable
  * without hiding who said what.
  */
-export function groupNoteSegments(list: LiveNoteSegment[]): NoteBlock[] {
+export function groupNoteSegments(
+  list: Array<LiveNoteSegment & { kind?: 'file'; fileAction?: 'open' | 'close' }>,
+): NoteBlock[] {
   const out: NoteBlock[] = []
   let lastEnd = 0
   for (const s of list) {
     if (!s.text.trim()) continue
     const last = out[out.length - 1]
-    if (last && last.channel === s.channel && s.startedAt - lastEnd <= BLOCK_MERGE_GAP_MS) {
+    // File events are timeline markers, not speech: merging two consecutive
+    // ones would produce "打开 a.md 关闭 a.md" as a single line.
+    const mergeable = last && !s.kind && !last.kind
+    if (mergeable && last.channel === s.channel && s.startedAt - lastEnd <= BLOCK_MERGE_GAP_MS) {
       last.text = `${last.text} ${s.text}`.trim()
     } else {
       out.push({
@@ -143,10 +162,69 @@ export function groupNoteSegments(list: LiveNoteSegment[]): NoteBlock[] {
         speaker: s.speaker,
         startedAt: s.startedAt,
         text: s.text,
+        ...(s.kind ? { kind: s.kind } : {}),
+        ...(s.fileAction ? { fileAction: s.fileAction } : {}),
       })
     }
     lastEnd = s.startedAt + Math.max(0, s.durationMs)
   }
+  return out
+}
+
+/** A file interval as the transcript needs it (paths already redacted for viewers). */
+export interface NoteFileEvent {
+  path: string
+  /** Base name. Required for viewers, who never receive the path. */
+  name?: string
+  openedAt: number
+  closedAt: number
+}
+
+/**
+ * Folds file intervals into a segment timeline as `kind: 'file'` rows.
+ *
+ * Both live panels and the stored transcript show the same thing, so the
+ * conversion lives here rather than in each consumer. The rows carry no
+ * duration label: that is a detail of the durable transcript (where the reader
+ * is studying the meeting afterwards), and repeating the formatter on the
+ * client would be a second implementation of the same string.
+ */
+export function withMeetingFileEvents(
+  segments: LiveNoteSegment[],
+  files: NoteFileEvent[],
+): Array<LiveNoteSegment & { kind?: 'file'; fileAction?: 'open' | 'close' }> {
+  if (files.length === 0) return segments
+  const out: Array<LiveNoteSegment & { kind?: 'file'; fileAction?: 'open' | 'close' }> = segments.map((s) => ({
+    ...s,
+  }))
+  let id = -1
+  for (const f of files) {
+    const label = f.path || f.name || ''
+    if (!label || f.openedAt <= 0) continue
+    out.push({
+      id: id--,
+      channel: 'file',
+      speaker: '',
+      startedAt: f.openedAt,
+      durationMs: 0,
+      text: label,
+      kind: 'file',
+      fileAction: 'open',
+    })
+    if (f.closedAt > f.openedAt) {
+      out.push({
+        id: id--,
+        channel: 'file',
+        speaker: '',
+        startedAt: f.closedAt,
+        durationMs: 0,
+        text: label,
+        kind: 'file',
+        fileAction: 'close',
+      })
+    }
+  }
+  out.sort((a, b) => a.startedAt - b.startedAt)
   return out
 }
 

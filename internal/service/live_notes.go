@@ -21,14 +21,17 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
+	"clawbench/internal/i18n"
 	"clawbench/internal/model"
 	"clawbench/internal/store"
 	"clawbench/internal/summarize"
+	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
 )
 
 // LiveNotesDDL creates the two tables behind AI 听记.
@@ -95,6 +98,20 @@ CREATE TABLE IF NOT EXISTS live_notes_chat (
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	UNIQUE(token, client_msg_id)
 );
+
+CREATE TABLE IF NOT EXISTS live_notes_files (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	token TEXT NOT NULL,
+	project_id INTEGER NOT NULL DEFAULT 0,
+	owner TEXT NOT NULL DEFAULT 'host',
+	owner_name TEXT NOT NULL DEFAULT '',
+	path TEXT NOT NULL,
+	opened_at INTEGER NOT NULL,
+	closed_at INTEGER NOT NULL DEFAULT 0,
+	source TEXT NOT NULL DEFAULT '',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(token, owner, path, opened_at)
+);
 `
 
 // LiveNotesIndexesDDL creates the indexes. Applied by InitDB *after* the
@@ -106,6 +123,7 @@ CREATE INDEX IF NOT EXISTS idx_live_notes_updated ON live_notes(updated_at);
 CREATE INDEX IF NOT EXISTS idx_live_notes_project_started ON live_notes(project_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_live_note_chat_token ON live_notes_chat(token, id);
 CREATE INDEX IF NOT EXISTS idx_live_note_chat_project ON live_notes_chat(project_id, token);
+CREATE INDEX IF NOT EXISTS idx_live_note_files_token ON live_notes_files(token, opened_at);
 `
 
 // LiveNotesDDL is the full schema for a fresh database (tables then indexes).
@@ -232,6 +250,153 @@ func ListLiveNoteSegments(token string, sinceID int64) ([]LiveNoteSegment, error
 		return nil, fmt.Errorf("live notes: iterate segments: %w", err)
 	}
 	return out, nil
+}
+
+// LiveNoteFile is one file a participant opened during a meeting.
+//
+// The row carries an interval rather than a timestamp: the transcript has to say
+// "10:03–10:11 opened X", and a bare "opened at" cannot answer when the reader
+// stopped looking. ClosedAt == 0 means the file was still open when the meeting
+// ended; CloseOpenLiveNoteFiles stamps those.
+type LiveNoteFile struct {
+	ID        int64  `json:"id"`
+	Owner     string `json:"owner"`
+	OwnerName string `json:"ownerName"`
+	// Path is the full path as the opener saw it. Empty in viewer responses —
+	// the publisher's directory layout is not theirs to read.
+	Path string `json:"path"`
+	// Name is the file's base name and is always present. Viewers get only
+	// this, which is enough to follow the meeting without exposing the tree.
+	Name     string `json:"name"`
+	OpenedAt int64  `json:"openedAt"`
+	ClosedAt int64  `json:"closedAt"`
+	Source   string `json:"source"`
+}
+
+// RecordLiveNoteFiles stores a batch of open/close events.
+//
+// Upsert on (token, owner, path, opened_at) so a publisher retrying after a
+// flaky response is idempotent. closed_at only ever moves forward: a retried
+// batch that still says "open" must not reopen an interval the server already
+// closed at meeting end.
+//
+// The live_notes row is ensured for the same reason AppendLiveNoteSegment does
+// it: an event that arrives after the room was torn down still needs an owner
+// to check the project against.
+func RecordLiveNoteFiles(ctx context.Context, token string, projectID int64, files []LiveNoteFile) error {
+	if token == "" {
+		return errors.New("live notes: empty token")
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	tx, err := store.WriteBegin()
+	if err != nil {
+		return fmt.Errorf("live notes: begin: %w", err)
+	}
+	defer store.WriteUnlock()
+	defer func() { _ = tx.Rollback() }()
+
+	if _, execErr := tx.ExecContext(
+		ctx,
+		`INSERT INTO live_notes (token, project_id, status, started_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(token) DO UPDATE SET updated_at = CURRENT_TIMESTAMP`,
+		token, projectID, LiveNotesStatusIdle, time.Now().UnixMilli(),
+	); execErr != nil {
+		return fmt.Errorf("live notes: ensure row: %w", execErr)
+	}
+	for _, f := range files {
+		path := strings.TrimSpace(f.Path)
+		if path == "" || f.OpenedAt <= 0 {
+			continue
+		}
+		owner := strings.TrimSpace(f.Owner)
+		if owner == "" {
+			owner = "host"
+		}
+		if _, execErr := tx.ExecContext(
+			ctx,
+			`INSERT INTO live_notes_files (token, project_id, owner, owner_name, path, opened_at, closed_at, source)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(token, owner, path, opened_at) DO UPDATE SET
+				owner_name = excluded.owner_name,
+				closed_at = MAX(live_notes_files.closed_at, excluded.closed_at),
+				source = excluded.source`,
+			token, projectID, owner,
+			truncateRunes(strings.TrimSpace(f.OwnerName), liveNotesNameMaxRunes),
+			path, f.OpenedAt, f.ClosedAt, truncateRunes(strings.TrimSpace(f.Source), 32),
+		); execErr != nil {
+			return fmt.Errorf("live notes: insert file: %w", execErr)
+		}
+	}
+	if commitErr := tx.Commit(); commitErr != nil {
+		return fmt.Errorf("live notes: commit: %w", commitErr)
+	}
+	return nil
+}
+
+// ListLiveNoteFiles returns a share's file events with id > sinceID, ordered by
+// id.
+//
+// Ordering by id (not opened_at) keeps `since` a correct incremental cursor: an
+// event uploaded late can carry an earlier opened_at, so callers sort by time
+// after appending, exactly like ListLiveNoteSegments.
+func ListLiveNoteFiles(token string, sinceID int64) ([]LiveNoteFile, error) {
+	rows, err := store.ReadDB().Query(
+		`SELECT id, owner, owner_name, path, opened_at, closed_at, source
+		   FROM live_notes_files
+		  WHERE token = ? AND id > ?
+		  ORDER BY id`,
+		token, sinceID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("live notes: list files: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]LiveNoteFile, 0, 16)
+	for rows.Next() {
+		var f LiveNoteFile
+		if err := rows.Scan(&f.ID, &f.Owner, &f.OwnerName, &f.Path, &f.OpenedAt, &f.ClosedAt, &f.Source); err != nil {
+			return nil, fmt.Errorf("live notes: scan file: %w", err)
+		}
+		f.Name = liveNoteFileBase(f.Path)
+		out = append(out, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("live notes: iterate files: %w", err)
+	}
+	return out, nil
+}
+
+// CloseOpenLiveNoteFiles stamps every still-open interval with the meeting's
+// end. Idempotent: a second call finds nothing left to close.
+func CloseOpenLiveNoteFiles(token string, atMS int64) error {
+	if token == "" {
+		return nil
+	}
+	if atMS <= 0 {
+		atMS = time.Now().UnixMilli()
+	}
+	_, err := store.WriteExec(
+		`UPDATE live_notes_files SET closed_at = ? WHERE token = ? AND closed_at = 0`,
+		atMS, token,
+	)
+	if err != nil {
+		return fmt.Errorf("live notes: close open files: %w", err)
+	}
+	return nil
+}
+
+// liveNoteFileBase returns the last path element, accepting both separators.
+//
+// filepath.Base is OS-specific, and the path comes from a client that may run on
+// a different platform (a Windows publisher talking to a Linux server).
+func liveNoteFileBase(p string) string {
+	if i := strings.LastIndexAny(p, "/\\"); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }
 
 // GetLiveNote returns the minutes row for a share.
@@ -743,6 +908,7 @@ func DeleteMeetingRecord(projectPath string, projectID int64, token string) erro
 	for _, stmt := range []string{
 		`DELETE FROM live_notes_chat WHERE token = ?`,
 		`DELETE FROM live_notes_segments WHERE token = ?`,
+		`DELETE FROM live_notes_files WHERE token = ?`,
 		`DELETE FROM live_notes WHERE token = ? AND project_id = ?`,
 	} {
 		args := []any{token}
@@ -990,6 +1156,17 @@ func BuildLiveNotesTranscript(segments []LiveNoteSegment) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// LiveNotesTimelineBase is the epoch-ms origin the transcript offsets are
+// relative to.
+//
+// Anything merged into a transcript (file events, for instance) has to use this
+// same origin: a second timeline computed from a different base would put every
+// line at the wrong minute and look plausible while doing it.
+func LiveNotesTimelineBase(segments []LiveNoteSegment) int64 {
+	_, base := mergedLiveNoteTimeline(segments)
+	return base
+}
+
 // mergedLiveNoteTimeline sorts and dedupes the segments and returns the epoch-ms
 // origin used for offsets.
 //
@@ -1026,16 +1203,19 @@ const liveNoteFallbackCueMS = 2000
 // nothing but "观众 1" cannot be attributed afterwards. The voice span
 // (`<v 名字>`) carries the name a player shows next to the line. Browsers also
 // only support VTT in <track>, so SRT could not be played without a JS parser.
-func BuildLiveNotesVTT(segments []LiveNoteSegment) string {
+//
+// File events ride the same track. They are not speech, but they share the one
+// thing a transcript is for — what happened when — and a separate file would
+// leave the reader to correlate two timelines by eye. Their cue id is `file`, so
+// a renderer can draw them differently instead of inventing a speaker avatar.
+func BuildLiveNotesVTT(segments []LiveNoteSegment, files []LiveNoteFile) string {
 	merged, base := mergedLiveNoteTimeline(segments)
-	if len(merged) == 0 {
+	if len(merged) == 0 && len(files) == 0 {
 		return ""
 	}
 
-	var b strings.Builder
-	b.WriteString("WEBVTT\n\n")
-	cursor := int64(0) // end of the previous cue
-	cues := 0
+	var cues []vttCue
+	cursor := int64(0) // end of the previous speech cue
 	for _, s := range merged {
 		text := strings.Join(strings.Fields(s.Text), " ")
 		if text == "" {
@@ -1059,23 +1239,265 @@ func BuildLiveNotesVTT(segments []LiveNoteSegment) string {
 		}
 		cursor = end
 
-		if id := vttCueID(s.Channel); id != "" {
-			b.WriteString(id)
-			b.WriteString("\n")
-		}
-		if name := vttVoiceName(speaker); name != "" {
-			fmt.Fprintf(&b, "%s --> %s\n<v %s>%s\n\n",
-				vttTimestamp(start), vttTimestamp(end), name, vttEscape(text))
-		} else {
-			fmt.Fprintf(&b, "%s --> %s\n%s\n\n",
-				vttTimestamp(start), vttTimestamp(end), vttEscape(text))
-		}
-		cues++
+		cues = append(cues, vttCue{
+			start: start,
+			end:   end,
+			id:    vttCueID(s.Channel),
+			voice: vttVoiceName(speaker),
+			text:  text,
+		})
 	}
-	if cues == 0 {
+	if base <= 0 {
+		// Without a timeline origin an absolute event time would be rendered as
+		// "1970" relative to nothing. Speech still chains forward (above); file
+		// events are dropped rather than placed at an invented moment.
+		files = nil
+	}
+	cues = append(cues, liveNoteFileCues(files, base)...)
+	if len(cues) == 0 {
 		return ""
 	}
+	// Stable so equal timestamps keep speech before the file it triggered.
+	sort.SliceStable(cues, func(i, j int) bool { return cues[i].start < cues[j].start })
+
+	var b strings.Builder
+	b.WriteString("WEBVTT\n\n")
+	for _, c := range cues {
+		if c.id != "" {
+			b.WriteString(c.id)
+			b.WriteString("\n")
+		}
+		if c.voice != "" {
+			fmt.Fprintf(&b, "%s --> %s\n<v %s>%s\n\n",
+				vttTimestamp(c.start), vttTimestamp(c.end), c.voice, vttEscape(c.text))
+			continue
+		}
+		fmt.Fprintf(&b, "%s --> %s\n%s\n\n",
+			vttTimestamp(c.start), vttTimestamp(c.end), vttEscape(c.text))
+	}
 	return b.String()
+}
+
+// vttCue is one cue before rendering, so speech and file events can be merged
+// by start time instead of written as two blocks the reader has to interleave.
+type vttCue struct {
+	start int64
+	end   int64
+	id    string
+	voice string
+	text  string
+}
+
+// LiveNoteFileCueID marks a cue that describes a file event rather than speech.
+// The SPA keys on it to draw a file row instead of a speaker avatar.
+const LiveNoteFileCueID = "file"
+
+// liveNoteLoc is the localizer for meeting artifacts.
+//
+// These are written without an HTTP request (the meeting folder is produced by
+// a background job), so the configured UI language is the only signal. An empty
+// value happens in unit tests and on a zero config; it must mean the product
+// default rather than "English by accident".
+func liveNoteLoc() *goi18n.Localizer {
+	lang := model.Language
+	if lang == "" {
+		lang = model.DefaultLanguage
+	}
+	return i18n.LocalizerForLocale(lang)
+}
+
+// liveNoteT localizes one meeting-artifact string.
+func liveNoteT(key string, data ...map[string]interface{}) string {
+	return i18n.T(liveNoteLoc(), key, data...)
+}
+
+// liveNoteFileCues turns intervals into open/close cues.
+//
+// Two short cues rather than one long one: a cue spanning the whole interval
+// would sit on screen for the entire duration (unusable as a subtitle), while
+// the pair reads exactly like the event log it is.
+func liveNoteFileCues(files []LiveNoteFile, base int64) []vttCue {
+	if len(files) == 0 || base <= 0 {
+		return nil
+	}
+	voice := liveNoteT("MeetingFilesSpeaker")
+	out := make([]vttCue, 0, len(files)*2)
+	for _, f := range files {
+		if f.OpenedAt <= 0 {
+			continue
+		}
+		label := strings.TrimSpace(f.Path)
+		if label == "" {
+			label = f.Name
+		}
+		if label == "" {
+			continue
+		}
+		open := f.OpenedAt - base
+		if open < 0 {
+			open = 0
+		}
+		out = append(out, vttCue{
+			start: open,
+			end:   open + liveNoteFallbackCueMS,
+			id:    LiveNoteFileCueID,
+			voice: voice,
+			text:  liveNoteT("MeetingFilesOpened", map[string]interface{}{"Path": label}),
+		})
+		if f.ClosedAt <= f.OpenedAt {
+			continue
+		}
+		closeAt := f.ClosedAt - base
+		if closeAt < 0 {
+			closeAt = 0
+		}
+		out = append(out, vttCue{
+			start: closeAt,
+			end:   closeAt + liveNoteFallbackCueMS,
+			id:    LiveNoteFileCueID,
+			voice: voice,
+			text: liveNoteT("MeetingFilesClosed", map[string]interface{}{
+				"Path": label,
+				"Stay": liveNoteDurationSuffix(f.ClosedAt - f.OpenedAt),
+			}),
+		})
+	}
+	return out
+}
+
+// liveNoteDurationSuffix renders "（停留 8 分 25 秒）", or "" when the interval is
+// too short to say anything useful.
+func liveNoteDurationSuffix(ms int64) string {
+	value := liveNoteDurationValue(ms)
+	if value == "" {
+		return ""
+	}
+	return liveNoteT("MeetingFilesStayWrap", map[string]interface{}{"Text": value})
+}
+
+// liveNoteDurationValue renders just the duration ("8 分 25 秒"), for tables
+// whose column already says what the number means.
+func liveNoteDurationValue(ms int64) string {
+	if ms < 1000 {
+		return ""
+	}
+	sec := (ms + 500) / 1000
+	switch {
+	case sec < 60:
+		return liveNoteT("MeetingFilesStaySeconds", map[string]interface{}{"N": sec})
+	case sec < 3600:
+		if sec%60 == 0 {
+			return liveNoteT("MeetingFilesStayMinutes", map[string]interface{}{"N": sec / 60})
+		}
+		return liveNoteT("MeetingFilesStayMinSec", map[string]interface{}{"Min": sec / 60, "Sec": sec % 60})
+	default:
+		return liveNoteT("MeetingFilesStayHours", map[string]interface{}{"Hours": sec / 3600, "Min": (sec % 3600) / 60})
+	}
+}
+
+// liveNoteTranscriptLine matches the `[mm:ss]` prefix every proofread line
+// carries. Minutes may exceed 59 (a three-hour meeting), so the left side is
+// not bounded to two digits.
+var liveNoteTranscriptLine = regexp.MustCompile(`^\[(\d+):(\d{2})\]`)
+
+// MergeLiveNoteFileEvents inserts file open/close lines into a proofread
+// transcript, in timeline order.
+//
+// The events cannot ride through the proofreading model call: it is told to
+// rewrite speech, and a line that is not speech gets rewritten into one. They
+// are therefore merged afterwards, keyed on the `[mm:ss]` prefix the revise
+// prompt forbids the model to touch.
+//
+// When no line parses at all (the model changed the format anyway), the events
+// are appended as a trailing section rather than dropped — a transcript that
+// silently loses them is worse than one with a duplicate-looking list at the
+// end.
+func MergeLiveNoteFileEvents(revised string, files []LiveNoteFile, base int64) string {
+	if len(files) == 0 || base <= 0 || strings.TrimSpace(revised) == "" {
+		return revised
+	}
+	type event struct {
+		at   int64
+		line string
+	}
+	events := make([]event, 0, len(files)*2)
+	for _, f := range files {
+		if f.OpenedAt <= 0 {
+			continue
+		}
+		label := strings.TrimSpace(f.Path)
+		if label == "" {
+			label = f.Name
+		}
+		if label == "" {
+			continue
+		}
+		at := f.OpenedAt - base
+		if at < 0 {
+			at = 0
+		}
+		events = append(events, event{at, liveNoteFileLine(at,
+			liveNoteT("MeetingFilesOpened", map[string]interface{}{"Path": label}))})
+		if f.ClosedAt > f.OpenedAt {
+			closed := f.ClosedAt - base
+			if closed < 0 {
+				closed = 0
+			}
+			events = append(events, event{closed, liveNoteFileLine(closed,
+				liveNoteT("MeetingFilesClosed", map[string]interface{}{
+					"Path": label,
+					"Stay": liveNoteDurationSuffix(f.ClosedAt - f.OpenedAt),
+				}))})
+		}
+	}
+	if len(events) == 0 {
+		return revised
+	}
+	sort.SliceStable(events, func(i, j int) bool { return events[i].at < events[j].at })
+
+	lines := strings.Split(revised, "\n")
+	out := make([]string, 0, len(lines)+len(events))
+	next := 0
+	parsed := 0
+	for _, line := range lines {
+		if m := liveNoteTranscriptLine.FindStringSubmatch(line); m != nil {
+			parsed++
+			minutes, _ := strconv.Atoi(m[1])
+			seconds, _ := strconv.Atoi(m[2])
+			offset := int64(minutes)*60_000 + int64(seconds)*1000
+			for next < len(events) && events[next].at <= offset {
+				out = append(out, events[next].line)
+				next++
+			}
+		}
+		out = append(out, line)
+	}
+	if parsed == 0 {
+		var b strings.Builder
+		b.WriteString(strings.TrimRight(revised, "\n"))
+		b.WriteString("\n\n## 会议期间打开的文件\n\n")
+		for _, e := range events {
+			b.WriteString("- ")
+			b.WriteString(e.line)
+			b.WriteString("\n")
+		}
+		return strings.TrimRight(b.String(), "\n")
+	}
+	for next < len(events) {
+		out = append(out, events[next].line)
+		next++
+	}
+	return strings.Join(out, "\n")
+}
+
+// liveNoteFileLine renders one event as a transcript line, matching the shape
+// the proofread pass produced: `[mm:ss] 说话人：内容`.
+func liveNoteFileLine(offsetMS int64, text string) string {
+	if offsetMS < 0 {
+		offsetMS = 0
+	}
+	return fmt.Sprintf("[%02d:%02d] %s：%s", offsetMS/60_000, (offsetMS/1000)%60,
+		liveNoteT("MeetingFilesSpeaker"), text)
 }
 
 // vttCueID sanitizes a channel for use as a cue identifier. A cue id may not
@@ -1281,6 +1703,155 @@ func ReviseLiveNotesTranscript(ctx context.Context, projectPath, title string, s
 	return strings.Join(out, "\n"), nil
 }
 
+// LiveNoteFilesPromptSection renders the meeting's file timeline for the
+// summariser, or "" when nothing was opened.
+//
+// It is a separate block rather than extra transcript lines on purpose: the
+// transcript is map-reduced chunk by chunk, so a section appended to its tail
+// would be summarized away in exactly the long meetings where it matters most.
+// The final pass receives it after the reduction.
+//
+// The wording is defensive. A model handed a list of files will happily write
+// "the team decided to refactor main.go" from the mere fact that main.go was
+// open; the block says explicitly that these are things people LOOKED AT.
+func LiveNoteFilesPromptSection(files []LiveNoteFile, startedAt time.Time, projectPath string) string {
+	if len(files) == 0 || startedAt.IsZero() {
+		return ""
+	}
+	ordered := make([]LiveNoteFile, len(files))
+	copy(ordered, files)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].OpenedAt < ordered[j].OpenedAt })
+
+	var rows []string
+	for _, f := range ordered {
+		if f.OpenedAt <= 0 {
+			continue
+		}
+		label := strings.TrimSpace(f.Path)
+		if label == "" {
+			label = f.Name
+		}
+		if label == "" {
+			continue
+		}
+		span := liveNoteClock(f.OpenedAt)
+		if f.ClosedAt > f.OpenedAt {
+			span += "–" + liveNoteClock(f.ClosedAt)
+		} else {
+			span += " 起（至会议结束）"
+		}
+		row := fmt.Sprintf("- %s %s", span, label)
+		if owner := strings.TrimSpace(f.OwnerName); owner != "" && f.Owner != "host" {
+			row += "（" + owner + "）"
+		}
+		rows = append(rows, row)
+	}
+	if len(rows) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## 会议期间打开的文件\n")
+	b.WriteString("以下是参会人在会议期间查看过的文件（按打开时间排序）。它们可以帮助理解讨论的对象，")
+	b.WriteString("但**不是发言内容**：不要仅凭某个文件被打开就推断结论、决定或待办。\n\n")
+	for _, row := range rows {
+		b.WriteString(row)
+		b.WriteString("\n")
+	}
+	// The timeline alone only says which documents were on screen. The excerpt
+	// is what lets the summary use their vocabulary and subject — which is the
+	// whole reason the meeting recorded the files.
+	if excerpts := LiveNoteFileExcerpts(projectPath, files); excerpts != "" {
+		b.WriteString("\n")
+		b.WriteString(excerpts)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// liveNoteClock renders an epoch-ms instant as wall-clock HH:MM.
+func liveNoteClock(ms int64) string {
+	return time.UnixMilli(ms).Format("15:04")
+}
+
+// LiveNoteFileExcerpts returns a prompt block with the contents of the files the
+// meeting opened, or "" when nothing readable was found.
+//
+// Only the first few files are read, and each is truncated: the point is to give
+// the summariser the vocabulary and subject of the documents, not to paste them.
+// Reading is bounded by a per-file cap AND a total budget, because the files
+// come from the client and a single 5 MB log would otherwise consume the whole
+// prompt.
+func LiveNoteFileExcerpts(projectPath string, files []LiveNoteFile) string {
+	if len(files) == 0 {
+		return ""
+	}
+	ordered := make([]LiveNoteFile, len(files))
+	copy(ordered, files)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].OpenedAt < ordered[j].OpenedAt })
+
+	var b strings.Builder
+	budget := liveNoteFileExcerptBudget
+	count := 0
+	for _, f := range ordered {
+		if count >= liveNoteFileExcerptMaxFiles || budget <= 0 {
+			break
+		}
+		label := strings.TrimSpace(f.Path)
+		if label == "" {
+			label = f.Name
+		}
+		source := resolveLiveNoteFilePath(projectPath, f.Path)
+		if source == "" || label == "" {
+			continue
+		}
+		info, err := os.Stat(source)
+		if err != nil || !info.Mode().IsRegular() || info.Size() > LiveNoteFileCopyMaxBytes {
+			continue
+		}
+		data, err := os.ReadFile(source)
+		if err != nil {
+			continue
+		}
+		text := liveNoteExcerptText(data, liveNoteFileExcerptMaxRunes)
+		if text == "" {
+			continue
+		}
+		if len([]rune(text)) > budget {
+			text = string([]rune(text)[:budget])
+		}
+		budget -= len([]rune(text))
+		count++
+		fmt.Fprintf(&b, "\n### %s\n```\n%s\n```\n", label, text)
+	}
+	if count == 0 {
+		return ""
+	}
+	return "### 文件内容摘录（已截断）\n" + b.String()
+}
+
+// liveNoteExcerptText returns a text excerpt, or "" for binary content.
+//
+// A NUL byte in the first kilobyte is the cheap, reliable "this is not text"
+// test: images and archives always have one, and no source file does.
+func liveNoteExcerptText(data []byte, maxRunes int) string {
+	head := data
+	if len(head) > 1024 {
+		head = head[:1024]
+	}
+	if strings.IndexByte(string(head), 0) >= 0 {
+		return ""
+	}
+	if !utf8.Valid(data) {
+		// Invalid UTF-8 is either binary or a legacy encoding we cannot render
+		// faithfully; both are worse than no excerpt.
+		return ""
+	}
+	runes := []rune(string(data))
+	if len(runes) > maxRunes {
+		runes = runes[:maxRunes]
+	}
+	return strings.TrimSpace(string(runes))
+}
+
 // GenerateLiveNotesMinutes turns a transcript into Markdown minutes.
 //
 // It takes the transcript as text (not segments) because the caller decides
@@ -1292,7 +1863,7 @@ func ReviseLiveNotesTranscript(ctx context.Context, projectPath, title string, s
 // the bullet points are merged into the final minutes. Sending the whole
 // transcript in one request would either overflow the model window or be
 // silently truncated by the provider.
-func GenerateLiveNotesMinutes(ctx context.Context, title, transcript string, self LiveNotesSpeaker) (string, error) {
+func GenerateLiveNotesMinutes(ctx context.Context, title, transcript, filesSection string, self LiveNotesSpeaker) (string, error) {
 	if strings.TrimSpace(transcript) == "" {
 		return "", ErrLiveNotesEmpty
 	}
@@ -1317,6 +1888,12 @@ func GenerateLiveNotesMinutes(ctx context.Context, title, transcript string, sel
 			partials = append(partials, out)
 		}
 		contextBlock = strings.Join(partials, "\n\n")
+	}
+	// After the reduction, never inside it: a file list in the tail of one chunk
+	// would be summarized away exactly when the meeting is long enough to be
+	// chunked at all.
+	if strings.TrimSpace(filesSection) != "" {
+		contextBlock += "\n\n" + filesSection
 	}
 
 	question := liveNotesMinutesQuestion(title)
@@ -1556,11 +2133,11 @@ func WriteLiveNotesMinutesFile(paths LiveNotesPaths, title string, startedAt tim
 //
 // No Markdown heading: the file is a subtitle track, and a `# 转写 · …` line
 // would make every player show it as the first cue.
-func WriteLiveNotesRawTranscript(paths LiveNotesPaths, segments []LiveNoteSegment) (string, error) {
+func WriteLiveNotesRawTranscript(paths LiveNotesPaths, segments []LiveNoteSegment, files []LiveNoteFile) (string, error) {
 	if strings.TrimSpace(paths.Dir) == "" {
 		return "", errors.New("live notes: no project path")
 	}
-	body := BuildLiveNotesVTT(segments)
+	body := BuildLiveNotesVTT(segments, files)
 	if strings.TrimSpace(body) == "" {
 		return "", ErrLiveNotesEmpty
 	}

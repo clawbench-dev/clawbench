@@ -46,6 +46,19 @@ const (
 	liveNoteChatMaxRunes = 2000
 	// liveNoteClientIDMaxRunes bounds the client message id used for idempotency.
 	liveNoteClientIDMaxRunes = 64
+	// liveNoteFilesMaxBatch caps one file-event batch. A meeting opens tens of
+	// files, not thousands; the cap is what stops a looping client from turning
+	// one request into an unbounded transaction.
+	liveNoteFilesMaxBatch = 200
+	// liveNotePathMaxRunes bounds one reported path. Long enough for a deep
+	// project path plus a Windows drive prefix, short enough to keep the row and
+	// the transcript line readable.
+	liveNotePathMaxRunes = 1024
+	// liveNoteFilesMaxBodyBytes bounds one batch body. 200 paths of 1024 runes
+	// plus JSON overhead is well under this; the cap exists so a malformed or
+	// hostile client cannot make the server parse an unbounded array before the
+	// per-batch check runs.
+	liveNoteFilesMaxBodyBytes = 1 << 20
 	// liveNoteTextKey is the JSON key carrying one transcript line.
 	liveNoteTextKey = "text"
 	// liveNoteSTTConcurrency is how many segment transcriptions may run at once
@@ -64,7 +77,10 @@ var liveNoteSTTSlots = make(chan struct{}, liveNoteSTTConcurrency)
 type liveNotesResponse struct {
 	Title    string                    `json:"title,omitempty"`
 	Segments []service.LiveNoteSegment `json:"segments"`
-	Minutes  liveNotesMinutesPayload   `json:"minutes"`
+	// Files are the open/close events so far. A viewer gets the same rows with
+	// Path blanked — it may know which file, not where the publisher keeps it.
+	Files   []service.LiveNoteFile  `json:"files,omitempty"`
+	Minutes liveNotesMinutesPayload `json:"minutes"`
 }
 
 // liveNotesMinutesPayload carries the generated minutes and their status so the
@@ -237,6 +253,12 @@ func ServeLiveShareNotes(w http.ResponseWriter, r *http.Request) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
+	files, err := service.ListLiveNoteFiles(token, 0)
+	if err != nil {
+		slog.Error("live notes: list files failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
 	note, _, err := service.GetLiveNote(token)
 	if err != nil {
 		slog.Error("live notes: get note failed", "err", err)
@@ -246,6 +268,7 @@ func ServeLiveShareNotes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, liveNotesResponse{
 		Title:    note.Title,
 		Segments: segments,
+		Files:    files,
 		Minutes:  liveNotesPayload(projectPath, note),
 	})
 }
@@ -343,6 +366,7 @@ func ServeLiveShareNoteChat(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, liveNoteFilesMaxBodyBytes)
 	var body struct {
 		Token    string `json:"token"`
 		ID       string `json:"id"`
@@ -374,6 +398,77 @@ func ServeLiveShareNoteChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
+}
+
+// ServeLiveShareNoteFiles handles POST /api/live-share/notes/files
+// (authenticated, project-scoped): the publisher reports which files were
+// opened, and when.
+//
+// Body: {"token","files":[{"owner","ownerName","path","openedAt","closedAt","source"}]}.
+// Batched rather than one request per open: a busy meeting switches files a few
+// times a minute, and a request per switch would put the whole event stream on
+// the same connection the audio uploads use.
+//
+// The interval is the payload, not two events: the transcript has to say
+// "10:03–10:11 opened X", and a close that never arrives (crash, killed app) is
+// stamped by CloseOpenLiveNoteFiles when the meeting ends.
+func ServeLiveShareNoteFiles(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Token string `json:"token"`
+		Files []struct {
+			Owner     string `json:"owner"`
+			OwnerName string `json:"ownerName"`
+			Path      string `json:"path"`
+			OpenedAt  int64  `json:"openedAt"`
+			ClosedAt  int64  `json:"closedAt"`
+			Source    string `json:"source"`
+		} `json:"files"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if !validShareToken(body.Token) || !liveNotesOwnedByProject(body.Token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	if len(body.Files) > liveNoteFilesMaxBatch {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return
+	}
+	files := make([]service.LiveNoteFile, 0, len(body.Files))
+	for _, f := range body.Files {
+		path := truncateRunes(strings.TrimSpace(f.Path), liveNotePathMaxRunes)
+		if path == "" || f.OpenedAt <= 0 {
+			// One malformed entry must not discard the batch: the client retries
+			// the whole thing, and dropping the rest would lose real events.
+			continue
+		}
+		closedAt := f.ClosedAt
+		if closedAt > 0 && closedAt < f.OpenedAt {
+			closedAt = f.OpenedAt
+		}
+		files = append(files, service.LiveNoteFile{
+			Owner:     strings.TrimSpace(f.Owner),
+			OwnerName: strings.TrimSpace(f.OwnerName),
+			Path:      path,
+			OpenedAt:  f.OpenedAt,
+			ClosedAt:  closedAt,
+			Source:    strings.TrimSpace(f.Source),
+		})
+	}
+	if err := service.RecordLiveNoteFiles(r.Context(), body.Token, projectID, files); err != nil {
+		slog.Error("live notes: record files failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // liveNotesPayload turns a stored row into the publisher-facing payload.
@@ -716,19 +811,28 @@ func generateLiveNotesArtifacts(token string, projectID int64, projectPath, titl
 		}
 	}
 
+	files, filesErr := service.ListLiveNoteFiles(token, 0)
+	if filesErr != nil {
+		// The transcript and the minutes are worth producing without the file
+		// timeline; losing it is a gap, not a reason to fail the meeting.
+		slog.Warn("live notes: list files failed", "err", filesErr)
+		files = nil
+	}
+
 	raw := service.BuildLiveNotesTranscript(segments)
 	if onDisk {
 		writeLiveNotesArtifact("transcript", func() (string, error) {
-			return service.WriteLiveNotesRawTranscript(paths, segments)
+			return service.WriteLiveNotesRawTranscript(paths, segments, files)
 		})
 	}
 
-	transcript := proofreadLiveNotesTranscript(ctx, token, projectID, projectPath, title, segments, raw, paths, onDisk, startedAt)
+	transcript := proofreadLiveNotesTranscript(ctx, token, projectID, projectPath, title, segments, files, raw, paths, onDisk, startedAt)
 
-	minutes, err := service.GenerateLiveNotesMinutes(ctx, title, transcript, service.LiveNotesSpeaker{
-		Label: service.LiveNotesSelfLabel(segments),
-		Name:  model.UserNickname,
-	})
+	minutes, err := service.GenerateLiveNotesMinutes(ctx, title, transcript,
+		service.LiveNoteFilesPromptSection(files, startedAt, projectPath), service.LiveNotesSpeaker{
+			Label: service.LiveNotesSelfLabel(segments),
+			Name:  model.UserNickname,
+		})
 	if err != nil {
 		slog.Warn("live notes: minutes generation failed", "err", err)
 		if serr := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusFailed, "", err.Error(), ""); serr != nil {
@@ -782,7 +886,8 @@ func nameMeetingFromMinutes(ctx context.Context, title, minutes string, generate
 // can show it.
 func proofreadLiveNotesTranscript(
 	ctx context.Context, token string, projectID int64, projectPath, title string,
-	segments []service.LiveNoteSegment, raw string, paths service.LiveNotesPaths, onDisk bool, startedAt time.Time,
+	segments []service.LiveNoteSegment, files []service.LiveNoteFile, raw string,
+	paths service.LiveNotesPaths, onDisk bool, startedAt time.Time,
 ) string {
 	if err := service.SetLiveNoteRevise(token, projectID, service.LiveNotesStatusGenerating, "", ""); err != nil {
 		slog.Warn("live notes: mark revising failed", "err", err)
@@ -799,8 +904,12 @@ func proofreadLiveNotesTranscript(
 		slog.Error("live notes: persist proofread failed", "err", err)
 	}
 	if onDisk {
+		// Merged only into the FILE, never into the DB copy or the minutes
+		// input: the proofread text is speech, and the summariser gets the file
+		// timeline as its own explicitly-framed block.
+		body := service.MergeLiveNoteFileEvents(revised, files, service.LiveNotesTimelineBase(segments))
 		writeLiveNotesArtifact("revised", func() (string, error) {
-			return service.WriteLiveNotesRevisedTranscript(paths, title, startedAt, revised)
+			return service.WriteLiveNotesRevisedTranscript(paths, title, startedAt, body)
 		})
 	}
 	return revised
@@ -878,6 +987,12 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
+	files, err := service.ListLiveNoteFiles(token, 0)
+	if err != nil {
+		slog.Error("live notes: public files failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
 	note, _, err := service.GetLiveNote(token)
 	if err != nil {
 		slog.Error("live notes: public get failed", "err", err)
@@ -886,6 +1001,7 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 	}
 	writeJSON(w, http.StatusOK, liveNotesResponse{
 		Segments: segments,
+		Files:    redactLiveNoteFilePaths(files),
 		Minutes: liveNotesMinutesPayload{
 			Status:   note.Status,
 			Markdown: note.Minutes,
@@ -898,6 +1014,23 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+// redactLiveNoteFilePaths drops the full path, leaving the base name.
+//
+// A viewer may know WHICH file was opened — that is what makes the transcript
+// followable — but not where the publisher keeps it. The name is what the
+// transcript line renders, so nothing visible is lost.
+func redactLiveNoteFilePaths(files []service.LiveNoteFile) []service.LiveNoteFile {
+	if len(files) == 0 {
+		return nil
+	}
+	out := make([]service.LiveNoteFile, len(files))
+	copy(out, files)
+	for i := range out {
+		out[i].Path = ""
+	}
+	return out
+}
 
 // liveNotesProject resolves the request's project cookie to both its path and
 // its registry id.

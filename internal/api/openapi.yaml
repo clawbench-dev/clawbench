@@ -3936,6 +3936,11 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/LiveNoteSegment"
+                  files:
+                    type: array
+                    description: 会议期间打开的文件区间（发布端含完整 path）
+                    items:
+                      $ref: "#/components/schemas/LiveNoteFile"
                   minutes:
                     $ref: "#/components/schemas/LiveNoteMinutes"
         "404":
@@ -4120,6 +4125,54 @@ paths:
                 type: object
                 properties:
                   id: { type: integer, format: int64 }
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
+
+  /api/live-share/notes/files:
+    post:
+      tags: [LiveShare]
+      summary: 上报会议期间打开的文件
+      description: |
+        发布端批量上报「谁在什么时间打开了哪个文件」。以**区间**为单位：同一
+        (token, owner, path, openedAt) 重复上报是幂等的，`closedAt` 只会向后推进。
+
+        会议结束时服务端会把仍未关闭的区间按结束时间补上，因此客户端崩掉也不会留下
+        一条永远开着的记录。单批最多 200 条；单条缺 `path` 或 `openedAt` 会被跳过，
+        不影响同批其它条目。
+      operationId: liveShareNoteFiles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, files]
+              properties:
+                token: { type: string }
+                files:
+                  type: array
+                  maxItems: 200
+                  items:
+                    type: object
+                    required: [path, openedAt]
+                    properties:
+                      owner: { type: string, description: "默认 host" }
+                      ownerName: { type: string }
+                      path: { type: string, description: 发布端完整路径，≤1024 字 }
+                      openedAt: { type: integer, format: int64, description: Unix 毫秒 }
+                      closedAt: { type: integer, format: int64, description: Unix 毫秒，0 表示仍打开 }
+                      source: { type: string }
+      responses:
+        "200":
+          description: 已入库
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
         "400":
           $ref: "#/components/responses/Error"
         "404":
@@ -7597,6 +7650,25 @@ components:
         durationMs: { type: integer, format: int64 }
         text: { type: string }
       required: [id, channel, startedAt, text]
+
+    LiveNoteFile:
+      type: object
+      description: |
+        会议期间打开过的一个文件，以**区间**表示：`openedAt` 到 `closedAt`。
+        `closedAt` 为 0 表示会议结束时仍开着（服务端在会议收尾时按结束时间补上）。
+
+        `path` 只在发布端响应里有值；观众端拿到的是空 `path` 与始终存在的 `name`，
+        即只知道打开了哪个文件，不知道发布端的目录结构。
+      properties:
+        id: { type: integer, format: int64 }
+        owner: { type: string, description: "host 或参会人标识" }
+        ownerName: { type: string }
+        path: { type: string }
+        name: { type: string, description: 文件名（basename），始终有值 }
+        openedAt: { type: integer, format: int64, description: Unix 毫秒 }
+        closedAt: { type: integer, format: int64, description: Unix 毫秒，0 表示未关闭 }
+        source: { type: string, description: "preview / editor 等来源" }
+      required: [id, owner, path, name, openedAt]
 
     LiveNoteMinutes:
       type: object

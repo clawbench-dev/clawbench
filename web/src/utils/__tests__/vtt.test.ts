@@ -69,6 +69,17 @@ describe('parseVttCues', () => {
     ])
   })
 
+  it('marks a cue whose id is `file` as a file event', () => {
+    const cues = parseVttCues(
+      'WEBVTT\n\nfile\n00:00:05.000 --> 00:00:07.000\n<v 文件>打开 docs/a.md\n',
+    )
+    expect(cues).toEqual([
+      { speaker: '文件', text: '打开 docs/a.md', startMs: 5000, endMs: 7000, kind: 'file' },
+    ])
+    // A speech cue keeps no kind at all, so a caller can test `=== undefined`.
+    expect(parseVttCues(sample)[0].kind).toBeUndefined()
+  })
+
   it('strips inline markup and unescapes entities, without the speaker prefix', () => {
     expect(parseVttCues('WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n<v 张三>加<b>粗</b>的 &lt;字&gt;</v>')[0]).toMatchObject({
       speaker: '张三',

@@ -413,7 +413,8 @@ import {
   useLiveShare,
   type CaptureSource,
 } from '@/composables/useLiveShare'
-import { groupNoteSegments, useLiveNotes } from '@/composables/useLiveNotes'
+import { groupNoteSegments, useLiveNotes, withMeetingFileEvents } from '@/composables/useLiveNotes'
+import { meetingFileEntries, meetingFilesVersion } from '@/utils/meetingFileTracker'
 import { DEFAULT_DEVICE, useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useScreenWindow } from '@/composables/useScreenWindow'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
@@ -757,7 +758,12 @@ watch(
 
 /** Only the tail is rendered: a long meeting would otherwise rebuild thousands
  *  of nodes on every new line. The full transcript still reaches the minutes. */
-const noteBlocks = computed(() => groupNoteSegments(notes.segments.value).slice(-40))
+const noteBlocks = computed(() => {
+  // Read the version unconditionally: the tracker is a plain module, so this is
+  // the only dependency that makes the panel re-render when a file is opened.
+  void meetingFilesVersion.value
+  return groupNoteSegments(withMeetingFileEvents(notes.segments.value, meetingFileEntries())).slice(-40)
+})
 
 function talkLabel(talk: string): string {
   return talk === 'talking' ? t('liveShare.talkTalking') : t('liveShare.talkMuted')

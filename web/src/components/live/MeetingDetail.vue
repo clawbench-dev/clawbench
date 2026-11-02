@@ -311,6 +311,7 @@ const transcriptLines = computed<NoteBlock[]>(() =>
       startedAt: cue.startMs,
       durationMs: Math.max(0, cue.endMs - cue.startMs),
       text: cue.text,
+      ...(cue.kind ? { kind: cue.kind } : {}),
     })),
   ),
 )

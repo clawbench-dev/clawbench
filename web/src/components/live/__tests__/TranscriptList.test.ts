@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import TranscriptList from '../TranscriptList.vue'
+import i18n from '@/i18n'
 import type { NoteBlock } from '@/composables/liveNotes'
 
 vi.mock('@/utils/lazyAvatar', () => ({
@@ -45,6 +46,29 @@ describe('TranscriptList', () => {
     expect(rows[0].find('.transcript__speaker').text()).toBe('我')
     expect(rows[0].find('.transcript__text').text()).toBe('第一句')
     expect(rows[1].find('.transcript__text').text()).toBe('第二句')
+  })
+
+  it('draws a file event as an icon row, not a speaker', () => {
+    const w = mountList([
+      { key: 'n1', channel: 'file', speaker: '文件', startedAt: 0, text: '打开 docs/a.md', kind: 'file' },
+    ])
+    const row = w.findAll('.transcript__row')[0]
+    expect(row.find('.sa').exists()).toBe(false)
+    expect(row.find('.transcript__file-icon').exists()).toBe(true)
+    expect(row.find('.transcript__speaker').text()).toBe('文件')
+    expect(row.find('.transcript__text').text()).toBe('打开 docs/a.md')
+  })
+
+  it('localizes a live file row from its action and path', () => {
+    const w = mountList([
+      { key: 'n1', channel: 'file', speaker: '', startedAt: 0, text: 'docs/a.md', kind: 'file', fileAction: 'open' },
+    ])
+    // The stored transcript carries a rendered sentence; a live row carries the
+    // bare path and lets the view translate it.
+    expect(w.find('.transcript__speaker').text()).toBe(i18n.global.t('liveShare.fileSpeaker'))
+    expect(w.find('.transcript__text').text()).toBe(
+      i18n.global.t('liveShare.fileOpened', { path: 'docs/a.md' }),
+    )
   })
 
   it('is a plain grid until the host asks it to fill the pane', () => {

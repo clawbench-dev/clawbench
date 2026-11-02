@@ -750,12 +750,16 @@ const liveViewerNameMaxRunes = model.MaxUserNicknameRunes
 // on every message) because the file is a readable artifact, not a write-ahead
 // log — the database is the live copy.
 func finalizeLiveNotes(token string, projectID int64, projectPath string) {
-	if err := service.EndLiveNote(token, time.Now().UnixMilli()); err != nil {
+	now := time.Now().UnixMilli()
+	if err := service.EndLiveNote(token, now); err != nil {
 		slog.Warn("liveshare: close meeting record failed", "err", err)
 	}
-	messages, err := service.ListLiveNoteChat(token, 0)
-	if err != nil || len(messages) == 0 {
-		return
+	// Stamp every file interval that never got a close event. The publisher is
+	// gone, so nothing is still open from the reader's point of view, and an
+	// interval with no end would render as "opened at 10:03" with no answer to
+	// "until when" — the one question the timeline exists to answer.
+	if err := service.CloseOpenLiveNoteFiles(token, now); err != nil {
+		slog.Warn("liveshare: close open files failed", "err", err)
 	}
 	note, exists, err := service.GetLiveNote(token)
 	if err != nil || !exists {
@@ -763,15 +767,40 @@ func finalizeLiveNotes(token string, projectID int64, projectPath string) {
 	}
 	startedAt := note.StartedAt
 	if startedAt <= 0 {
-		startedAt = time.Now().UnixMilli()
+		startedAt = now
 	}
-	paths, err := service.EnsureMeetingDir(token, projectID, projectPath, note.Title, startedAt)
-	if err != nil {
-		slog.Warn("liveshare: chat archive folder unavailable", "err", err)
+
+	// Both archives are optional: a meeting may have chat but no files, or
+	// files but no chat (AI 听记 off). The folder is created only when one of
+	// them actually has something to put in it.
+	files, filesErr := service.ListLiveNoteFiles(token, 0)
+	if filesErr != nil {
+		slog.Warn("liveshare: list meeting files failed", "err", filesErr)
+		files = nil
+	}
+	messages, chatErr := service.ListLiveNoteChat(token, 0)
+	if chatErr != nil {
+		slog.Warn("liveshare: list meeting chat failed", "err", chatErr)
+		messages = nil
+	}
+	if len(files) == 0 && len(messages) == 0 {
 		return
 	}
-	if _, err := service.WriteLiveNoteChatFile(paths, messages); err != nil {
-		slog.Warn("liveshare: write chat archive failed", "err", err)
+
+	paths, err := service.EnsureMeetingDir(token, projectID, projectPath, note.Title, startedAt)
+	if err != nil {
+		slog.Warn("liveshare: meeting archive folder unavailable", "err", err)
+		return
+	}
+	if len(files) > 0 {
+		if _, err := service.ArchiveLiveNoteFiles(paths, projectPath, files, time.UnixMilli(startedAt)); err != nil {
+			slog.Warn("liveshare: archive meeting files failed", "err", err)
+		}
+	}
+	if len(messages) > 0 {
+		if _, err := service.WriteLiveNoteChatFile(paths, messages); err != nil {
+			slog.Warn("liveshare: write chat archive failed", "err", err)
+		}
 	}
 }
 

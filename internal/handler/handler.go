@@ -696,6 +696,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// Chat is persisted as it happens (the publisher is the only writer): the
 	// meeting record keeps it after the room is gone.
 	register("/api/live-share/notes/chat", ServeLiveShareNoteChat)
+	// Files opened during the meeting, as intervals. Same reasoning as chat:
+	// the publisher reports them while the room is live, the record keeps them.
+	register("/api/live-share/notes/files", ServeLiveShareNoteFiles)
 	// Meeting records: GET lists the project's meetings (the database row is the
 	// record, permanent), DELETE removes one with its folder.
 	register("/api/live-share/notes/sessions", ServeLiveNotesSessions)

@@ -4110,6 +4110,9 @@ export default {
   },
   liveShare: {
     newShare: '开始新的共享',
+    fileSpeaker: '文件',
+    fileOpened: '打开 {path}',
+    fileClosed: '关闭 {path}',
     button: '共享屏幕',
     live: '共享中',
     dialogTitle: '共享屏幕',

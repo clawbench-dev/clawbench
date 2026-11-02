@@ -4115,6 +4115,9 @@ export default {
   },
   liveShare: {
     newShare: 'Start a new share',
+    fileSpeaker: 'File',
+    fileOpened: 'Opened {path}',
+    fileClosed: 'Closed {path}',
     button: 'Share screen',
     live: 'Sharing',
     dialogTitle: 'Share screen',

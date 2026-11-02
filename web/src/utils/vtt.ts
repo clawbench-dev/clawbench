@@ -20,6 +20,14 @@ export interface VttCue {
   text: string
   startMs: number
   endMs: number
+  /**
+   * Set for a file event rather than speech.
+   *
+   * The writer marks these with the cue id `file` (see LiveNoteFileCueID in
+   * internal/service). The payload still carries a voice span — `<v 文件>` — so
+   * a plain subtitle player shows something readable.
+   */
+  kind?: 'file'
 }
 
 /**
@@ -40,7 +48,15 @@ export function parseVttCues(vtt: string): VttCue[] {
     const payload = lines.slice(timing + 1).join(' ').trim()
     if (!payload) continue
     const [startMs, endMs] = parseTiming(lines[timing])
-    cues.push({ speaker: parseSpeaker(payload), text: renderCue(payload), startMs, endMs })
+    // The line above the timing line is the cue identifier, when there is one.
+    const id = timing > 0 ? lines[timing - 1].trim() : ''
+    cues.push({
+      speaker: parseSpeaker(payload),
+      text: renderCue(payload),
+      startMs,
+      endMs,
+      ...(id === 'file' ? { kind: 'file' as const } : {}),
+    })
   }
   return cues
 }

@@ -24,13 +24,27 @@ export interface ShareNotesMinutes {
 
 export interface ShareNotesSnapshot {
   segments: LiveNoteSegment[]
+  files: ShareNotesFile[]
   minutes: ShareNotesMinutes
+}
+
+/**
+ * A file event as a viewer receives it.
+ *
+ * No path: the server redacts it for the public endpoint. The name is enough to
+ * follow the meeting, and it is all a viewer is entitled to know.
+ */
+export interface ShareNotesFile {
+  name: string
+  openedAt: number
+  closedAt: number
 }
 
 export class ShareNotesPoller {
   private timer: ReturnType<typeof setTimeout> | null = null
   private stopped = false
   private segments: LiveNoteSegment[] = []
+  private files: ShareNotesFile[] = []
 
   constructor(
     private readonly onUpdate: (snapshot: ShareNotesSnapshot) => void,
@@ -64,13 +78,18 @@ export class ShareNotesPoller {
       if (!resp.ok) throw new Error(`notes poll failed: ${resp.status}`)
       const data = (await resp.json()) as {
         segments?: LiveNoteSegment[]
+        files?: ShareNotesFile[]
         minutes?: ShareNotesMinutes
       }
       if (data.segments?.length) {
         this.segments = mergeNoteSegments(this.segments, data.segments)
       }
+      // The public endpoint always returns the whole list (there is no `since`
+      // for files), so this is a replace, not a merge.
+      this.files = Array.isArray(data.files) ? data.files : []
       this.onUpdate({
         segments: this.segments,
+        files: this.files,
         minutes: data.minutes ?? { status: 'idle' },
       })
     } catch (e) {

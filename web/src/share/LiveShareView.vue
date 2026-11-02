@@ -419,7 +419,7 @@ import { contentRectOf, toNormalized, type ContentRect, type ControlMessage } fr
 import { mergeChatHistory } from './chatHistory'
 import { ShareNotesPoller } from './liveNotesClient'
 import { getShareToken } from './shareMode'
-import { groupNoteSegments, type LiveNoteSegment } from '@/composables/liveNotes'
+import { groupNoteSegments, withMeetingFileEvents, type LiveNoteSegment, type NoteFileEvent } from '@/composables/liveNotes'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 
@@ -463,6 +463,8 @@ const notesEnabled = ref(false)
 /** Collapsed by default: the panel overlays the picture. */
 const notesOpen = ref(false)
 const notesSegments = ref<LiveNoteSegment[]>([])
+/** Files the host opened, as the public endpoint reports them (name only). */
+const notesFiles = ref<NoteFileEvent[]>([])
 
 // ── Control channel: ink, chat, quality, presence ───────────────────────────
 const board = useInkBoard()
@@ -1017,7 +1019,9 @@ async function startClientShare(sourceId: string): Promise<void> {
     screenError.value = t('share.live.shareFailed')
   }
 }
-const noteBlocks = computed(() => groupNoteSegments(notesSegments.value).slice(-60))
+const noteBlocks = computed(() =>
+  groupNoteSegments(withMeetingFileEvents(notesSegments.value, notesFiles.value)).slice(-60),
+)
 let notesPoller: ShareNotesPoller | null = null
 
 function openNotes(): void {
@@ -1025,6 +1029,7 @@ function openNotes(): void {
   if (!notesPoller) {
     notesPoller = new ShareNotesPoller((snapshot) => {
       notesSegments.value = snapshot.segments
+      notesFiles.value = snapshot.files.map((f) => ({ path: '', name: f.name, openedAt: f.openedAt, closedAt: f.closedAt }))
     })
   }
   notesPoller.start()

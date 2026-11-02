@@ -377,6 +377,8 @@ viewer:<id> 每个观众的麦克风，一人一条
     transcript.vtt           原始转写（STT 原样输出，WebVTT 字幕；cue id = 信道，正文 <v 昵称>）
     transcript-revised.md    修订版转写（结合项目上下文校对）
     chat.md                  聊天归档（会议结束时写入；详情读的是数据库）
+    files.md                 会议期间打开的文件时间轴（归档结果与跳过原因）
+    files/                   这些文件的归档副本（同一内容只留一份）
     audio/                   录音（会议结束后合并成整场 + 每信道各一份）
         meeting.webm         整场会议（混音轨）——听回放就听这一个
         mic.webm             发布端麦克风
@@ -408,6 +410,20 @@ viewer:<id> 每个观众的麦克风，一人一条
 - **失败不阻断**：校对失败时纪要改用原始转写生成，`revise_status` 记为 `failed`，界面上写明「纪要基于原始转写」。有摘要胜过没摘要。
 - 修订版本身也是文件，可以人工再改；改了不影响已生成的纪要（要重新生成一次纪要才会用上新版本）。
 
+### 会议期间打开的文件（转写里的第二时间轴）
+
+一场会聊了什么，转写有；**看了什么**，转写没有。会议里打开过的文件是纪要最好的背景知识——"我们把 `README.md` 里那段接口说明过了一遍"比一句"讨论了一下文档"有用得多——所以会议期间在 ClawBench 里打开的每个文件都按**区间**记下来，并落进转写与会议目录。
+
+- **只记 ClawBench 内部打开的文件**：文件管理器、聊天里的路径链接、会议资源、编辑器。浏览器/WebView 拿不到"用户在别的软件里打开了什么"，那需要 Windows/macOS/Linux 各写一套系统级前台窗口钩子，是另一件事。
+- **采集点是唯一的**：`useFileNavStack.openFile()` 是全部文件打开的唯一入口（它已经承担了「最近文件」的记录），打开 / 前进后退 / 换文件 / 关闭浮层都在这里进出 `utils/meetingFileTracker.ts`。追踪器是**叶子模块**，`useFileNavStack` 只单向调用它，避免 `fileNav → liveShare → chat` 的环。
+- **区间是推断的**：没有"文件被关闭"的系统事件，只有三个信号——打开另一个文件、关掉预览浮层、会议结束。会议结束时服务端把仍开着的按 `ended_at` 收尾（`CloseOpenLiveNoteFiles`），所以客户端崩溃不会留下一条永远开着的记录。同一文件 30 秒内重开合并成一段，避免前进/后退刷出一堆碎片；不足 1 秒的停留直接丢弃。
+- **落库 `live_notes_files`**：`(token, owner, path, opened_at)` 唯一，重复上报幂等；`closed_at` 只向后推进（重试时带着 `0` 不会把服务端已收尾的区间重新打开）。`owner` 一期恒为 `host`，为将来参会人上报留位。
+- **转写里体现**：`transcript.vtt` 里插入 `cue id = file`、`<v 文件>` 的 open/close 两条短 cue（不是一条长 cue——那会在播放器里挂满整场）。前端 `parseVttCues` 据此标 `kind: 'file'`，`TranscriptList` 画成文件行而不是"文"字头像。文件行**不参与同说话人合并**，否则「打开 a.md」和「关闭 a.md」会粘成一行。
+- **校对阶段不碰它**：`[文件]` 行不能交给校对模型（它会把非语音行改写成语音）。校对只吃语音，文件事件按 `[mm:ss]` 前缀**确定性地**插回 `transcript-revised.md`；模型把时间戳改烂时退化成末尾一节，不丢事件。
+- **纪要单独给一节**：`## 会议期间打开的文件` 按墙钟时间列出区间，并附前 5 个文件的内容摘录（每个 1500 字、总预算 8000 字）。措辞明确"这些是看过的东西，**不是发言内容**"——否则模型会从"打开了 a.go"编出"团队决定重构 a.go"。这一节加在 map-reduce **之后**，否则长会里它会被并进最后一段的要点里消失。
+- **归档**：会议结束时把文件复制进 `files/`（单文件 ≤ 5 MB、单场 ≤ 40 个、sha256 去重，同名加序号），`files.md` 记录时间轴、归档位置与跳过原因（过大 / 已不存在 / 无权限 / 内容重复）。资源页签会自动列出 `files.md` 与 `files/`，不需要额外接线。
+- **观众只看文件名**：公开端点 `GET /api/share/{token}/notes` 返回同样的行但把 `path` 清空，只留 `name`——观众本来就在看共享画面，知道"打开了哪个文件"是连贯的，但主持人的目录结构不是他们的。
+
 ### 数据流
 
 ```
@@ -416,6 +432,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 观众    ── GET /api/share/{token}/notes?since=<maxId>   （公开，token 即凭证，面板展开时才轮询）
 发布端  ── POST /api/live-share/notes/minutes           （异步生成，轮询 GET 取状态）
 发布端  ── POST /api/live-share/notes/chat              （每条聊天即时落库，按消息 id 幂等）
+发布端  ── POST /api/live-share/notes/files             （打开/关闭区间批量上报，按区间幂等）
 发布端  ── GET  /api/live-share/notes/sessions          （会议记录列表；?token= 取单条）
 发布端  ── GET  /api/live-share/notes/sessions/artifact （按 token 读产物）
 发布端  ── GET  /api/live-share/notes/sessions/chat     （按 token 读聊天）

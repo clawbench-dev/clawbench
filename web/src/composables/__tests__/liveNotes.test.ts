@@ -3,6 +3,7 @@ import {
   LiveNotesCapture,
   groupNoteSegments,
   mergeNoteSegments,
+  withMeetingFileEvents,
   type LiveNoteSegment,
   type NotesUploadArgs,
 } from '../liveNotes'
@@ -54,6 +55,38 @@ describe('groupNoteSegments', () => {
 
   it('skips empty text', () => {
     expect(groupNoteSegments([seg(1, 'mic', '我', 1_000, '   ')])).toHaveLength(0)
+  })
+
+  it('never merges two file events into one line', () => {
+    const blocks = groupNoteSegments([
+      { id: -1, channel: 'file', speaker: '文件', startedAt: 1_000, durationMs: 0, text: '打开 a.md', kind: 'file' },
+      { id: -2, channel: 'file', speaker: '文件', startedAt: 2_000, durationMs: 0, text: '关闭 a.md', kind: 'file' },
+    ])
+    expect(blocks).toHaveLength(2)
+    expect(blocks.map((b) => b.text)).toEqual(['打开 a.md', '关闭 a.md'])
+  })
+})
+
+describe('withMeetingFileEvents', () => {
+  it('interleaves open/close rows with the speech by time', () => {
+    const out = withMeetingFileEvents([seg(1, 'mic', '我', 10_000, '先看文档')], [
+      { path: 'docs/a.md', openedAt: 12_000, closedAt: 20_000 },
+    ])
+    expect(out.map((s) => s.text)).toEqual(['先看文档', 'docs/a.md', 'docs/a.md'])
+    expect(out.map((s) => s.fileAction)).toEqual([undefined, 'open', 'close'])
+    expect(out[1].kind).toBe('file')
+  })
+
+  it('uses the redacted name when the viewer has no path', () => {
+    const out = withMeetingFileEvents([], [{ path: '', name: 'a.md', openedAt: 12_000, closedAt: 0 }])
+    expect(out[0].text).toBe('a.md')
+    expect(out[0].fileAction).toBe('open')
+    expect(out).toHaveLength(1) // an open interval has no close row
+  })
+
+  it('returns the original list untouched when nothing was opened', () => {
+    const segments = [seg(1, 'mic', '我', 1_000, '内容')]
+    expect(withMeetingFileEvents(segments, [])).toBe(segments)
   })
 })
 

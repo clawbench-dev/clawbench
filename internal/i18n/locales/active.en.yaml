@@ -401,3 +401,29 @@ RestartFailed: "Restart failed: {{.Error}}"
 RestartUnavailable: Restart is not wired up on this server, cannot restart
 TLSCertNotSelfSigned: "The existing certificate is not self-signed (probably issued by a CA). Regenerating would overwrite it; pass force to confirm"
 TLSCertGenerateFailed: "Could not generate the certificate: {{.Error}}"
+# Files opened during a meeting: transcript cues, the files.md manifest and
+# archive skip reasons.
+MeetingFilesSpeaker: File
+MeetingFilesOpened: Opened {{.Path}}
+MeetingFilesClosed: Closed {{.Path}}{{.Stay}}
+MeetingFilesStaySeconds: "{{.N}}s"
+MeetingFilesStayMinutes: "{{.N}} min"
+MeetingFilesStayMinSec: "{{.Min}} min {{.Sec}}s"
+MeetingFilesStayHours: "{{.Hours}}h {{.Min}}m"
+MeetingFilesManifestTitle: Files opened during the meeting · {{.Time}}
+MeetingFilesManifestNote: Sorted by open time. Copies live under files/; identical content is stored once.
+MeetingFilesColumnTime: Time
+MeetingFilesColumnFile: File
+MeetingFilesColumnStay: Stay
+MeetingFilesColumnArchive: Archive
+MeetingFilesSince: since
+MeetingFilesReasonWrap: " ({{.Text}})"
+MeetingFilesReasonUnknownPath: path unknown
+MeetingFilesReasonTooMany: over the per-meeting archive limit
+MeetingFilesReasonDuplicate: identical to an already-archived file
+MeetingFilesReasonTooBig: over 5 MB, not archived
+MeetingFilesReasonMissing: file no longer exists
+MeetingFilesReasonPermission: permission denied
+MeetingFilesReasonUnreadable: read failed
+MeetingFilesStayWrap: " ({{.Text}})"
+MeetingFilesExcerptHeader: File excerpts (truncated)

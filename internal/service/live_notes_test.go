@@ -246,7 +246,7 @@ func TestWriteLiveNotesTranscriptFile_KeepsHeadingNoteAndLines(t *testing.T) {
 	base := started.UnixMilli()
 	raw, err := WriteLiveNotesRawTranscript(paths, []LiveNoteSegment{
 		{Speaker: "我", StartedAt: base, DurationMS: 1500, Text: "原样"},
-	})
+	}, nil)
 	require.NoError(t, err)
 	rawBody, err := os.ReadFile(raw)
 	require.NoError(t, err)
@@ -258,12 +258,12 @@ func TestWriteLiveNotesTranscriptFile_KeepsHeadingNoteAndLines(t *testing.T) {
 	assert.Contains(t, string(rawBody), "00:00:00.000 --> 00:00:01.500")
 	assert.Contains(t, string(rawBody), "<v 我>原样")
 
-	_, err = WriteLiveNotesRawTranscript(paths, nil)
+	_, err = WriteLiveNotesRawTranscript(paths, nil, nil)
 	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
 
 	_, err = WriteLiveNotesRawTranscript(LiveNotesPathsIn(""), []LiveNoteSegment{
 		{Speaker: "我", StartedAt: base, DurationMS: 1000, Text: "原样"},
-	})
+	}, nil)
 	assert.Error(t, err)
 }
 
@@ -418,14 +418,14 @@ func withAISummary(t *testing.T, baseURL string) {
 }
 
 func TestGenerateLiveNotesMinutes_EmptyTranscript(t *testing.T) {
-	_, err := GenerateLiveNotesMinutes(context.Background(), "标题", "", LiveNotesSpeaker{})
+	_, err := GenerateLiveNotesMinutes(context.Background(), "标题", "", "", LiveNotesSpeaker{})
 	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
 }
 
 func TestGenerateLiveNotesMinutes_NoSummaryModel(t *testing.T) {
 	withAISummary(t, "")
 
-	_, err := GenerateLiveNotesMinutes(context.Background(), "标题", "[00:00] 我：内容", LiveNotesSpeaker{})
+	_, err := GenerateLiveNotesMinutes(context.Background(), "标题", "[00:00] 我：内容", "", LiveNotesSpeaker{})
 	assert.ErrorIs(t, err, ErrSummaryModelNotConfigured)
 }
 
@@ -433,7 +433,7 @@ func TestGenerateLiveNotesMinutes_SingleChunk(t *testing.T) {
 	srv := aiSummaryServer(t, "## 概要\n\n发布计划已确认。")
 	withAISummary(t, srv.URL)
 
-	got, err := GenerateLiveNotesMinutes(context.Background(), "季度会", "[00:00] 我：先确认时间", LiveNotesSpeaker{})
+	got, err := GenerateLiveNotesMinutes(context.Background(), "季度会", "[00:00] 我：先确认时间", "", LiveNotesSpeaker{})
 	require.NoError(t, err)
 	assert.Equal(t, "## 概要\n\n发布计划已确认。", got)
 }
@@ -472,7 +472,7 @@ func captureSummaryBodies(t *testing.T, replies ...string) func() []string {
 func TestGenerateLiveNotesMinutes_NamesTheUserBehindTheSelfLabel(t *testing.T) {
 	bodies := captureSummaryBodies(t, "## 概要\n\n发布计划已确认。")
 
-	_, err := GenerateLiveNotesMinutes(context.Background(), "季度会", "[00:00] 我：先确认时间",
+	_, err := GenerateLiveNotesMinutes(context.Background(), "季度会", "[00:00] 我：先确认时间", "",
 		LiveNotesSpeaker{Label: "我", Name: "泷泽"})
 	require.NoError(t, err)
 
@@ -497,7 +497,7 @@ func TestGenerateLiveNotesMinutes_ChunkPassAlsoKnowsTheUser(t *testing.T) {
 		"fixture must exceed one chunk or the chunk pass is not exercised")
 
 	bodies := captureSummaryBodies(t, "要点", "要点", "## 概要\n\n合并后的纪要")
-	_, err := GenerateLiveNotesMinutes(context.Background(), "", transcript,
+	_, err := GenerateLiveNotesMinutes(context.Background(), "", transcript, "",
 		LiveNotesSpeaker{Label: "我", Name: "泷泽"})
 	require.NoError(t, err)
 
@@ -523,7 +523,7 @@ func TestGenerateLiveNotesMinutes_NoSpeakerNoteWhenUnresolvable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			bodies := captureSummaryBodies(t, "## 概要")
-			_, err := GenerateLiveNotesMinutes(context.Background(), "", "[00:00] 我：内容", tc.self)
+			_, err := GenerateLiveNotesMinutes(context.Background(), "", "[00:00] 我：内容", "", tc.self)
 			require.NoError(t, err)
 
 			got := bodies()
@@ -599,7 +599,7 @@ func TestGenerateLiveNotesMinutes_LongMeetingIsMapReduced(t *testing.T) {
 	defer srv.Close()
 	withAISummary(t, srv.URL)
 
-	got, err := GenerateLiveNotesMinutes(context.Background(), "", BuildLiveNotesTranscript(segments), LiveNotesSpeaker{})
+	got, err := GenerateLiveNotesMinutes(context.Background(), "", BuildLiveNotesTranscript(segments), "", LiveNotesSpeaker{})
 	require.NoError(t, err)
 	assert.Equal(t, "## 概要\n\n合并后的纪要", got)
 
@@ -619,7 +619,7 @@ func TestGenerateLiveNotesMinutes_ProviderError(t *testing.T) {
 	defer srv.Close()
 	withAISummary(t, srv.URL)
 
-	_, err := GenerateLiveNotesMinutes(context.Background(), "", "[00:00] 我：内容", LiveNotesSpeaker{})
+	_, err := GenerateLiveNotesMinutes(context.Background(), "", "[00:00] 我：内容", "", LiveNotesSpeaker{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "live notes: minutes")
 }
@@ -874,7 +874,7 @@ func TestBuildLiveNotesVTT_CarriesChannelAndSpeaker(t *testing.T) {
 		{Channel: "system", Speaker: "", StartedAt: base + 5000, DurationMS: 1000, Text: "第三句"},
 		// Blank text must not produce a cue.
 		{Channel: "mic", Speaker: "我", StartedAt: base + 6000, DurationMS: 1000, Text: "   "},
-	})
+	}, nil)
 
 	assert.True(t, strings.HasPrefix(got, "WEBVTT\n\n"))
 	assert.Contains(t, got, "mic\n00:00:00.000 --> 00:00:01.500\n<v 我>第一句\n")
@@ -887,7 +887,7 @@ func TestBuildLiveNotesVTT_UntimedSegmentsChainForward(t *testing.T) {
 	got := BuildLiveNotesVTT([]LiveNoteSegment{
 		{Channel: "mic", Speaker: "我", Text: "没有时间戳"},
 		{Channel: "mic", Speaker: "我", Text: "也没有"},
-	})
+	}, nil)
 	// Unknown timing chains from the previous cue instead of inventing an
 	// epoch offset (which would show up as thousands of hours).
 	assert.Contains(t, got, "mic\n00:00:00.000 --> 00:00:02.000\n<v 我>没有时间戳\n")
@@ -900,13 +900,13 @@ func TestBuildLiveNotesVTT_UntimedSegmentsChainForward(t *testing.T) {
 func TestBuildLiveNotesVTT_EscapesMarkup(t *testing.T) {
 	got := BuildLiveNotesVTT([]LiveNoteSegment{
 		{Channel: "viewer:v1", Speaker: "A<B>C", Text: "a < b & c > d"},
-	})
+	}, nil)
 	assert.Contains(t, got, "<v ABC>a &lt; b &amp; c &gt; d\n")
 }
 
 func TestBuildLiveNotesVTT_Empty(t *testing.T) {
-	assert.Empty(t, BuildLiveNotesVTT(nil))
-	assert.Empty(t, BuildLiveNotesVTT([]LiveNoteSegment{{Speaker: "我", Text: "  "}}))
+	assert.Empty(t, BuildLiveNotesVTT(nil, nil))
+	assert.Empty(t, BuildLiveNotesVTT([]LiveNoteSegment{{Speaker: "我", Text: "  "}}, nil))
 }
 
 // The transcript artifact is WebVTT and nothing else: no fallback to the
