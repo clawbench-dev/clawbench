@@ -269,20 +269,40 @@
             {{ t('liveShare.allowScreenShareHint') }}
           </div>
 
+          <!-- A member's screen gets its OWN surface (openScreenWindow): never
+               an inline preview. It fills the screen by default, and the host
+               can detach it into a window from that dock. The panel keeps only
+               the name, plus the ways back once the host closed the picture —
+               the stop button belongs next to the picture it stops. -->
           <template v-if="share.screenSharer.value">
             <div class="meeting-section">
               {{ t('liveShare.memberSharing', { id: share.screenSharer.value }) }}
             </div>
-            <div class="live-screen-preview">
-              <video ref="remoteScreenRef" autoplay playsinline muted />
+            <div v-if="screenWindowOpen" class="meeting-hint" data-role="screen-in-window">
+              {{ t('liveShare.screenInWindow') }}
             </div>
-            <div class="live-screen-actions">
-              <button class="live-btn" type="button" data-action="open-screen-window" @click="openScreenWindow">
+            <div v-else class="live-screen-actions" data-role="screen-actions">
+              <button
+                class="live-btn"
+                type="button"
+                data-action="show-screen-fullscreen"
+                @click="openScreenFullscreen"
+              >
+                {{ t('liveShare.viewScreen') }}
+              </button>
+              <button
+                v-if="screenWindowAvailable"
+                class="live-btn"
+                type="button"
+                data-action="open-screen-window"
+                @click="openScreenWindow"
+              >
                 {{ t('liveShare.openInWindow') }}
               </button>
               <button
                 class="live-btn live-btn--danger"
                 type="button"
+                data-action="stop-screen-share"
                 @click="share.revokeScreen(share.screenSharer.value)"
               >
                 {{ t('liveShare.stopScreenShare') }}
@@ -329,60 +349,52 @@
         />
       </Teleport>
 
-      <!-- Fullscreen viewer for the member's screen. Rendered inside the dialog
-           root but fixed to the viewport, so it is not clipped by the card. -->
-      <div
-        v-if="screenFullscreen && share.remoteScreenStream.value"
-        class="live-screen-fullscreen"
-        data-role="screen-fullscreen"
-        @click.self="closeScreenFullscreen"
-      >
-        <video ref="fullscreenVideoRef" autoplay playsinline muted />
-        <button
-          class="live-screen-fullscreen-close"
-          type="button"
-          :aria-label="t('common.close')"
-          @click="closeScreenFullscreen"
+      <!-- The member's screen, full screen. Teleported to <body> rather than
+           rendered inside the dialog: it must cover the whole app, and the
+           dock tab it was opened from is hidden the moment the host switches
+           tabs. -->
+      <Teleport to="body">
+        <div
+          v-if="screenFullscreen && share.remoteScreenStream.value"
+          class="live-screen-fullscreen"
+          data-role="screen-fullscreen"
         >
-          <X :size="18" />
-        </button>
-      </div>
-
-      <!-- The member's screen in its own OS window. Document PiP keeps it in
-           THIS renderer, which is the only way to show a live MediaStream
-           outside the app window: a real BrowserWindow gets a separate JS
-           context and cannot see the track at all. -->
-      <Teleport v-if="screenWindowTarget" :to="screenWindowTarget">
-        <div class="live-window">
-          <video ref="windowVideoRef" class="live-window__video" autoplay playsinline muted />
-          <div class="live-window__dock">
-            <span class="live-window__who" :title="share.screenSharer.value">
-              {{ t('liveShare.memberSharing', { id: share.screenSharer.value }) }}
-            </span>
-            <button class="live-window__btn" type="button" @click="toggleChat">
-              {{ t('liveShare.chat') }}
-              <span v-if="unread > 0" class="live-count">{{ unread > 9 ? '9+' : unread }}</span>
-            </button>
-            <button
-              class="live-window__btn live-window__btn--danger"
-              type="button"
-              @click="share.revokeScreen(share.screenSharer.value)"
-            >
-              {{ t('liveShare.stopScreenShare') }}
-            </button>
-            <button
-              class="live-window__btn live-window__btn--icon"
-              type="button"
-              :aria-label="t('common.close')"
-              @click="closeScreenWindow"
-            >
-              <X :size="14" />
-            </button>
-          </div>
-          <div v-if="windowChatOpen" class="live-window__chat">
-            <LiveChatPanel :messages="chatMessages" @send="sendChat" />
-          </div>
+          <MemberScreenSurface
+            variant="fullscreen"
+            :stream="share.remoteScreenStream.value"
+            :sharer="share.screenSharer.value"
+            :unread="unread"
+            :chat-open="screenChatOpen"
+            :messages="chatMessages"
+            :can-switch="screenWindowAvailable"
+            @switch="openScreenWindowFromFullscreen"
+            @stop="share.revokeScreen(share.screenSharer.value)"
+            @close="closeScreenFullscreen"
+            @toggle-chat="toggleChat"
+            @send-chat="sendChat"
+          />
         </div>
+      </Teleport>
+
+      <!-- The same picture in its own OS window. Document PiP keeps it in THIS
+           renderer, which is the only way to show a live MediaStream outside
+           the app window: a real BrowserWindow gets a separate JS context and
+           cannot see the track at all. -->
+      <Teleport v-if="screenWindowTarget" :to="screenWindowTarget">
+        <MemberScreenSurface
+          variant="window"
+          :stream="share.remoteScreenStream.value"
+          :sharer="share.screenSharer.value"
+          :unread="unread"
+          :chat-open="screenChatOpen"
+          :messages="chatMessages"
+          :can-switch="screenWindowAvailable"
+          @switch="returnScreenToFullscreen"
+          @stop="share.revokeScreen(share.screenSharer.value)"
+          @close="closeScreenWindow"
+          @toggle-chat="toggleChat"
+          @send-chat="sendChat"
+        />
       </Teleport>
     </div>
   </div>
@@ -402,7 +414,7 @@
  * only answer "not available" is worse than no button.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Mic, MonitorUp, NotebookPen, X } from 'lucide-vue-next'
+import { Mic, MonitorUp, NotebookPen } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
@@ -432,6 +444,7 @@ import {
 } from '@/utils/captureSourceChoices'
 import LiveAnnotateOverlay from '@/share/LiveAnnotateOverlay.vue'
 import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
+import MemberScreenSurface from './MemberScreenSurface.vue'
 import { parseControlMessage, toInjectorEvent, type ControlMessage } from '@/share/liveControl'
 import { chunkChatHistory } from '@/share/chatHistory'
 import { appLog } from '@/utils/appLog'
@@ -555,14 +568,28 @@ const pictureHint = computed(() => {
   return share.cameraEnabled.value && hasScreen.value ? t('meeting.create.pictureBoth') : ''
 })
 
-const remoteScreenRef = ref<HTMLVideoElement | null>(null)
 /** The publisher's own camera picture (mirrored by CSS). */
 const selfCameraRef = ref<HTMLVideoElement | null>(null)
-const fullscreenVideoRef = ref<HTMLVideoElement | null>(null)
 const screenFullscreen = ref(false)
 const screenWindow = useScreenWindow()
 const screenWindowTarget = screenWindow.target
-const windowVideoRef = ref<HTMLVideoElement | null>(null)
+/** True while the member's screen has a window of its own. */
+const screenWindowOpen = computed(() => Boolean(screenWindowTarget.value))
+/**
+ * Whether this host can hand the picture to an OS window at all.
+ *
+ * Resolved on mount rather than at import time: the API is a global the host
+ * either has or does not, and a button that silently does nothing is worse than
+ * no button (Android WebView, Firefox).
+ */
+const screenWindowAvailable = ref(false)
+/**
+ * The stream whose picture was opened automatically.
+ *
+ * Auto-opening happens once per share: a host who closed the picture on purpose
+ * must not get it back on its own — the panel keeps the actions for that.
+ */
+let autoOpenedStream: MediaStream | null = null
 const annotateWindow = useScreenWindow()
 const annotateWindowTarget = annotateWindow.target
 const nativeAnnotating = ref(false)
@@ -585,7 +612,7 @@ function selectTab(key: LiveTab): void {
 
 // ── Tools: annotation, chat, source switch, presence ────────────────────────
 const annotating = ref(false)
-const windowChatOpen = ref(false)
+const screenChatOpen = ref(false)
 const unread = ref(0)
 const chatMessages = ref<ChatMessage[]>([])
 const presence = ref<Record<string, boolean>>({})
@@ -598,8 +625,8 @@ let unsubscribeInk: (() => void) | undefined
 let unsubscribeClosed: (() => void) | undefined
 
 function toggleChat(): void {
-  windowChatOpen.value = !windowChatOpen.value
-  if (windowChatOpen.value) unread.value = 0
+  screenChatOpen.value = !screenChatOpen.value
+  if (screenChatOpen.value) unread.value = 0
 }
 
 /**
@@ -670,7 +697,7 @@ function onControl(msg: ControlMessage): void {
         self: false,
       },
     ]
-    if (activeTab.value !== 'chat' && !windowChatOpen.value) unread.value += 1
+    if (activeTab.value !== 'chat' && !screenChatOpen.value) unread.value += 1
     persistChat(msg)
     return
   }
@@ -799,7 +826,7 @@ watch(
     unread.value = 0
     annotating.value = false
     activeTab.value = 'basic'
-    windowChatOpen.value = false
+    screenChatOpen.value = false
     annotateWindow.close()
     if (nativeAnnotating.value) {
       nativeAnnotating.value = false
@@ -900,6 +927,10 @@ function onToggleNotes(on: boolean): void {
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 onMounted(() => {
+  screenWindowAvailable.value = Boolean(
+    (globalThis as unknown as { documentPictureInPicture?: { requestWindow?: unknown } })
+      .documentPictureInPicture?.requestWindow,
+  )
   unsubscribeControl = share.onControl(onControl)
   unsubscribeInk = getNative()?.onAnnotateInk?.((msg) => {
     const parsed = parseControlMessage(msg)
@@ -956,16 +987,36 @@ function closeScreenFullscreen(): void {
   screenFullscreen.value = false
 }
 
+/**
+ * Detach the member's screen into its own OS window.
+ *
+ * Only ever called from a click: `requestWindow` requires transient user
+ * activation, and a member starting to share is not one. When the host cannot
+ * open a window at all, the fullscreen picture (where these buttons live) is
+ * already the fallback, so there is nothing to do.
+ */
 async function openScreenWindow(): Promise<void> {
-  const stream = share.remoteScreenStream.value
-  if (!stream) return
+  if (!share.remoteScreenStream.value) return
   const result = await screenWindow.open()
-  if (result === 'unsupported' || result === 'failed') {
+  if (result !== 'opened') {
+    // No window API, or a blocked popup: the fullscreen picture is where the
+    // host already is, so there is nothing to switch to.
     openScreenFullscreen()
-    return
   }
-  await nextTick()
-  if (windowVideoRef.value) windowVideoRef.value.srcObject = stream
+}
+
+/** The dock's "open in a window": hand the picture over, then drop the overlay. */
+async function openScreenWindowFromFullscreen(): Promise<void> {
+  await openScreenWindow()
+  // openScreenWindow falls back to the overlay when no window came up, so the
+  // overlay only goes away if there is something else showing the picture.
+  if (screenWindowOpen.value) closeScreenFullscreen()
+}
+
+/** The window dock's "full screen": the mirror of the move above. */
+function returnScreenToFullscreen(): void {
+  closeScreenWindow()
+  openScreenFullscreen()
 }
 
 function closeScreenWindow(): void {
@@ -1013,26 +1064,22 @@ watch(annotateWindowTarget, (target) => {
 
 watch(
   () => share.remoteScreenStream.value,
-  async (stream) => {
-    await nextTick()
-    if (remoteScreenRef.value) remoteScreenRef.value.srcObject = stream
-    if (fullscreenVideoRef.value) fullscreenVideoRef.value.srcObject = stream
-    if (windowVideoRef.value) windowVideoRef.value.srcObject = stream
+  (stream) => {
     if (!stream) {
+      autoOpenedStream = null
       screenFullscreen.value = false
       closeScreenWindow()
+      return
     }
+    // The picture comes to the host, not the other way round: fill the screen
+    // as soon as the member starts sharing instead of waiting for a click.
+    if (autoOpenedStream === stream) return
+    autoOpenedStream = stream
+    openScreenFullscreen()
   },
   { immediate: true },
 )
 
-watch(screenFullscreen, async (open) => {
-  if (!open) return
-  await nextTick()
-  if (fullscreenVideoRef.value) {
-    fullscreenVideoRef.value.srcObject = share.remoteScreenStream.value
-  }
-})
 
 // The self-view element is inside a v-if, so it appears AFTER the stream does
 // (and disappears with it). Watching both is the only way to catch the case
@@ -1281,141 +1328,25 @@ watch(
   overflow: visible;
 }
 
-/* ── Member screen window (Document PiP) ────────────────────────────────────
-   Rendered into a second document; the panel's stylesheet is copied there, so
-   these scoped rules apply. Sizes use --dp like the rest of the app. */
-.live-window {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  background: #000;
-}
+/* ── Member screen ───────────────────────────────────────────────────────── */
 
-.live-window__video {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  object-fit: contain;
-  background: #000;
-}
-
-/* Floating dock, mirroring the audience page: it must not eat picture area. */
-.live-window__dock {
-  position: absolute;
-  left: 50%;
-  bottom: calc(14 * var(--dp));
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: calc(6 * var(--dp));
-  padding: calc(5 * var(--dp)) calc(8 * var(--dp));
-  border-radius: var(--radius-full, 999px);
-  background: color-mix(in srgb, #000 62%, transparent);
-  border: 1px solid color-mix(in srgb, #fff 16%, transparent);
-  box-shadow: 0 calc(6 * var(--dp)) calc(20 * var(--dp)) color-mix(in srgb, #000 45%, transparent);
-}
-
-.live-window__who {
-  max-width: calc(220 * var(--dp));
-  padding: 0 calc(6 * var(--dp));
-  color: #fff;
-  font-size: var(--font-size-xs, 11px);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.live-window__btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: calc(4 * var(--dp)) calc(10 * var(--dp));
-  border: none;
-  border-radius: var(--radius-full, 999px);
-  background: color-mix(in srgb, #fff 14%, transparent);
-  color: #fff;
-  font-size: var(--font-size-xs, 11px);
-  cursor: pointer;
-}
-
-.live-window__btn:hover {
-  background: color-mix(in srgb, #fff 24%, transparent);
-}
-
-.live-window__btn--danger {
-  background: color-mix(in srgb, var(--color-red, #cf222e) 80%, transparent);
-}
-
-.live-window__btn--icon {
-  padding: calc(4 * var(--dp));
-}
-
-.live-window__chat {
-  position: absolute;
-  right: calc(14 * var(--dp));
-  bottom: calc(60 * var(--dp));
-  width: calc(280 * var(--dp));
-  height: calc(320 * var(--dp));
-  border-radius: var(--radius-md, 6px);
-  overflow: hidden;
-  background: var(--bg-primary, #fff);
-  box-shadow: 0 calc(8 * var(--dp)) calc(24 * var(--dp)) color-mix(in srgb, #000 45%, transparent);
-}
-
-/* ── Member screen preview ──────────────────────────────────────────────── */
-
-/* 16:9 box so the dialog does not jump when the first frame arrives. */
-.live-screen-preview {
-  aspect-ratio: 16 / 9;
-  border-radius: var(--radius-md, 6px);
-  overflow: hidden;
-  background: #000;
-}
-
-.live-screen-preview video {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
+/* The picture itself is MemberScreenSurface — the same component fills the
+   screen and the detached window. What stays here is the panel's row of
+   actions, shown only while no picture is on screen. */
 .live-screen-actions {
   display: flex;
   gap: var(--space-3, 6px);
 }
 
-/* Fullscreen overlay. Fixed (not absolute): the dialog card is small and would
-   clip it, and the point is to use the whole window. */
+/* Fullscreen frame for the shared picture: the whole viewport, above the app.
+   Teleported to <body> because a dock tab is hidden the moment the host
+   switches tabs, and the picture must survive that. */
 .live-screen-fullscreen {
   position: fixed;
   inset: 0;
   z-index: 3000;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.92);
-}
-
-.live-screen-fullscreen video {
-  max-width: 96vw;
-  max-height: 92vh;
-}
-
-.live-screen-fullscreen-close {
-  position: absolute;
-  top: calc(16 * var(--dp));
-  right: calc(16 * var(--dp));
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(36 * var(--dp));
-  height: calc(36 * var(--dp));
-  border: none;
-  border-radius: var(--radius-full, 999px);
-  background: color-mix(in srgb, var(--bg-secondary, #fff) 20%, transparent);
-  color: #fff;
-  cursor: pointer;
+  background: #000;
 }
 
 .live-notes-minutes {

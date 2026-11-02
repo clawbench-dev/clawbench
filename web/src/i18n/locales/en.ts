@@ -4200,6 +4200,9 @@ export default {
       'Viewers can present their own screen to everyone, one at a time. The viewer side needs HTTPS to capture a screen.',
     memberSharing: 'Viewer {id} is sharing a screen',
     openInWindow: 'Open in a window',
+    fullscreen: 'Full screen',
+    viewScreen: 'View the screen',
+    screenInWindow: 'The picture is in its own window; stop sharing from there.',
     stopScreenShare: 'Stop sharing',
     notes: {
       enable: 'AI notes',

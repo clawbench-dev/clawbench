@@ -1,9 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, shallowRef } from 'vue'
 import enMessages from '@/i18n/locales/en'
 import MeetingStage from '../MeetingStage.vue'
+
+// Every mounted panel keeps watching the share, so a leftover one would open a
+// window of its own as soon as the next test gives the mock a stream.
+enableAutoUnmount(afterEach)
 
 /**
  * The panel is a view: what it owns is WHICH surface each tool opens on.
@@ -140,14 +144,19 @@ interface FakeWindow {
   close: ReturnType<typeof vi.fn>
   focus: ReturnType<typeof vi.fn>
   addEventListener: (type: string, cb: () => void) => void
+  firePagehide: () => void
 }
 
 function fakeWindow(): FakeWindow {
+  const listeners: Array<() => void> = []
   return {
     document: document.implementation.createHTMLDocument('pip'),
     close: vi.fn(),
     focus: vi.fn(),
-    addEventListener: () => undefined,
+    addEventListener: (type: string, cb: () => void) => {
+      if (type === 'pagehide') listeners.push(cb)
+    },
+    firePagehide: () => listeners.forEach((f) => f()),
   }
 }
 
@@ -284,7 +293,31 @@ describe('MeetingStage windows', () => {
     expect(wrapper.find('[data-role="annotate-overlay"]').exists()).toBe(false)
   })
 
-  it("shows the member's screen in its own window with a dock", async () => {
+  it("fills the screen with the member's picture as soon as it arrives", async () => {
+    const requestWindow = vi.fn(async () => fakeWindow() as unknown as Window)
+    vi.stubGlobal('documentPictureInPicture', { requestWindow })
+    ;(shareApi.screenSharer as { value: string }).value = 'v1'
+    ;(shareApi.remoteScreenStream as { value: unknown }).value = { id: 'screen' }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // No click: the host is presenting, so the picture has to come to them.
+    const full = document.querySelector('[data-role="screen-fullscreen"]')
+    expect(full).not.toBeNull()
+    expect(full?.querySelector('.member-screen__video')).not.toBeNull()
+    // ...over the whole app, not inside the dock tab it belongs to.
+    expect(wrapper.element.contains(full)).toBe(false)
+    // ...and the panel never draws a preview of it.
+    expect(wrapper.find('video').exists()).toBe(false)
+    // The picture arrives full screen; the window is opt-in from its dock.
+    expect(requestWindow).not.toHaveBeenCalled()
+    expect(full?.querySelector('[data-action="screen-switch"]')?.textContent).toContain(
+      'Open in a window',
+    )
+  })
+
+  it('moves the picture between the screen and its own window', async () => {
     const win = fakeWindow()
     const requestWindow = vi.fn(async () => win as unknown as Window)
     vi.stubGlobal('documentPictureInPicture', { requestWindow })
@@ -293,13 +326,73 @@ describe('MeetingStage windows', () => {
 
     const wrapper = mountPanel()
     await flushPromises()
-    await wrapper.find('[data-action="open-screen-window"]').trigger('click')
+
+    const switchBtn = document.querySelector('[data-action="screen-switch"]') as HTMLElement
+    switchBtn.click()
     await flushPromises()
 
+    // One surface, two frames: the window gets the very same picture and dock.
     expect(requestWindow).toHaveBeenCalledTimes(1)
-    const dock = win.document.querySelector('.live-window__dock')
-    expect(dock).not.toBeNull()
+    expect(document.querySelector('[data-role="screen-fullscreen"]')).toBeNull()
+    expect(win.document.querySelector('.member-screen__video')).not.toBeNull()
+    const dock = win.document.querySelector('.member-screen__dock')
     expect(dock?.textContent).toContain('Stop sharing')
-    expect(win.document.querySelector('.live-window__video')).not.toBeNull()
+    const back = win.document.querySelector('[data-action="screen-switch"]') as HTMLElement
+    expect(back.textContent).toContain('Full screen')
+
+    // ...and the same button brings it back, so the move is not one-way.
+    back.click()
+    await flushPromises()
+    expect(win.close).toHaveBeenCalled()
+    expect(document.querySelector('[data-role="screen-fullscreen"]')).not.toBeNull()
+  })
+
+  it('stops the share from the picture dock', async () => {
+    ;(shareApi.screenSharer as { value: string }).value = 'v1'
+    ;(shareApi.remoteScreenStream as { value: unknown }).value = { id: 'screen' }
+
+    mountPanel()
+    await flushPromises()
+
+    ;(document.querySelector('[data-action="screen-stop"]') as HTMLElement).click()
+    expect(shareApi.revokeScreen).toHaveBeenCalledWith('v1')
+  })
+
+  it('keeps a way back in the panel once the host closes the picture', async () => {
+    ;(shareApi.screenSharer as { value: string }).value = 'v1'
+    ;(shareApi.remoteScreenStream as { value: unknown }).value = { id: 'screen' }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    ;(document.querySelector('[data-action="screen-close"]') as HTMLElement).click()
+    await flushPromises()
+
+    // Closing it was a decision; it does not come back on its own, but the
+    // panel offers both frames again — and still no inline picture.
+    expect(document.querySelector('[data-role="screen-fullscreen"]')).toBeNull()
+    expect(wrapper.find('video').exists()).toBe(false)
+    expect(wrapper.find('[data-role="screen-actions"]').exists()).toBe(true)
+
+    await wrapper.find('[data-action="show-screen-fullscreen"]').trigger('click')
+    await flushPromises()
+    expect(document.querySelector('[data-role="screen-fullscreen"]')).not.toBeNull()
+  })
+
+  it('does not offer a window the host cannot open', async () => {
+    ;(shareApi.screenSharer as { value: string }).value = 'v1'
+    ;(shareApi.remoteScreenStream as { value: unknown }).value = { id: 'screen' }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // Android WebView / Firefox: no Document PiP, so no switch button anywhere
+    // (a button that cannot do anything is worse than none).
+    expect(document.querySelector('[data-role="screen-fullscreen"]')).not.toBeNull()
+    expect(document.querySelector('[data-action="screen-switch"]')).toBeNull()
+    ;(document.querySelector('[data-action="screen-close"]') as HTMLElement).click()
+    await flushPromises()
+    expect(wrapper.find('[data-action="open-screen-window"]').exists()).toBe(false)
+    expect(wrapper.find('[data-action="show-screen-fullscreen"]').exists()).toBe(true)
   })
 })
