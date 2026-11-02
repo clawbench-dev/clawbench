@@ -38,11 +38,28 @@
        a disc whenever the window is left taller than the content. */
     height: auto;
     padding-top: 5px; padding-bottom: 5px;
-    /* fit-content, not the default block width: the page reports its natural
-       size so the window can hug the capsule, and a box stretched to the window
-       would measure the window instead — the capsule could then grow but never
-       shrink back after the counters drop to zero. */
-    width: fit-content; max-width: 100%;
+    /* max-content + no shrink, NOT `fit-content` and NOT `max-width: 100%`.
+
+       The page reports its natural size so the window can hug the capsule
+       (`measure()` reads `scrollWidth`). Both of those older declarations clamp
+       the pill to the CURRENT window width, and that makes the measurement
+       self-confirming: while the window is too narrow the pill is squeezed, its
+       right padding is eaten by the overflowing row, `scrollWidth` then reports
+       the squeezed width, and the page asks for exactly the width it already
+       has — the capsule can never grow back.
+
+       Measured (Playwright, the bundled Chromium, "执行中 3 · 未读 2"): growing
+       from a 120px window converged on 162px instead of 177px, leaving the last
+       glyph 0.4px past the pill's edge — the text visibly touching / spilling
+       over the capsule wall. With max-content it requests 177px and keeps the
+       documented 15px text gap, and it still shrinks (400 → 88) when the
+       counters drop to zero.
+
+       `flex: 0 0 auto` is the same invariant from the other side: `#pill` is a
+       flex item of `#hit`, so without it the flex base size could still be
+       shrunk and `max-content` would be advisory only. */
+    width: max-content;
+    flex: 0 0 auto;
     display: flex; align-items: center; gap: 7px;
     /* Asymmetric on purpose. Do NOT "fix" this back to symmetric.
 

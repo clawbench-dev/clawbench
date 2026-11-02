@@ -365,3 +365,46 @@ describe('the feature-state read answers about the feature, not the window', () 
     expect(handler![0], 'must not report capsule visibility').not.toContain('isFloatingAlive')
   })
 })
+
+describe('the pill is measured at its natural width', () => {
+  // `measure()` sizes the WINDOW from `#pill.scrollWidth`, so the pill must not
+  // be squeezable by that same window — otherwise the measurement confirms
+  // itself: while the window is too narrow the pill shrinks, its right padding
+  // is eaten by the overflowing row, `scrollWidth` reports the squeezed width,
+  // and the page asks for exactly the width it already has. The capsule then
+  // stays permanently too narrow.
+  //
+  // Measured (Playwright, the bundled Chromium, "执行中 3 · 未读 2"): growing
+  // from a 120px window converged on 162px instead of 177px, leaving the last
+  // glyph 0.4px outside the pill — the user's "文字溢出了". `fit-content` and
+  // `max-width: 100%` were both clamps; the earlier shrink-only test (400 → 88)
+  // could not see it because shrinking never needs to exceed the window.
+  const HTML = 'desktop/assets/floating.html'
+
+  /** Declarations of the `#pill` rule itself, comments stripped. */
+  function pillRule(): string {
+    const src = readRepoFile(HTML).replace(/\/\*[\s\S]*?\*\//g, '')
+    const rule = src.match(/(?:^|\n)\s*#pill\s*\{([\s\S]*?)\n\s*\}/)
+    expect(rule, '#pill rule not found').not.toBeNull()
+    return rule![1]
+  }
+
+  it('nothing clamps the pill to the current window width', () => {
+    const decls = pillRule()
+    expect(decls, 'the pill must size to its content').toMatch(/width:\s*max-content\s*;/)
+    expect(decls, 'max-width caps the pill at the window it is measuring').not.toMatch(/max-width:/)
+    expect(decls, 'fit-content shrinks to the available width — same clamp').not.toContain('fit-content')
+    expect(decls, 'a flex item of #hit must not be shrunk').toMatch(/flex:\s*0 0 auto\s*;/)
+  })
+
+  it('the measurement still comes from the pill, not the window', () => {
+    // The guard above only means something while `measure()` reports the pill's
+    // own size. Switching it to the window's width would restore the deadlock
+    // without tripping anything above.
+    const src = readRepoFile(HTML)
+    const measure = src.match(/function measure\(\) \{([\s\S]*?)\n  \}/)
+    expect(measure, 'measure() not found').not.toBeNull()
+    expect(measure![1]).toContain('els.pill.scrollWidth')
+    expect(measure![1]).not.toContain('innerWidth')
+  })
+})
