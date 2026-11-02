@@ -14,7 +14,7 @@
  * failed to load". Every other dock tab answers the same question with a
  * centred glyph, a title and — only when there is something factual to add — a
  * line of context; this component is that shape, declared once so the record
- * list, the record's four tabs and the resource pane cannot drift apart.
+ * list, the record's tabs and the resource pane cannot drift apart.
  *
  * `desc` is optional on purpose: a chat pane with nothing in it has no cause
  * worth explaining, and inventing one would be the kind of filler hint this

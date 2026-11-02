@@ -23,6 +23,7 @@ vi.mock('lucide-vue-next', () => {
     FileText: stub,
     MessageSquare: stub,
     MessagesSquare: stub,
+    SpellCheck: stub,
     Trash2: stub,
   }
 })
@@ -165,14 +166,71 @@ describe('MeetingDetail', () => {
     expect(w.findAll('.meeting-file')).toHaveLength(0)
   })
 
-  it('adds a resources tab alongside minutes, transcript and chat', async () => {
+  it('adds a resources tab alongside minutes, transcript, proofread and chat', async () => {
     const w = mountDetail()
     await flushPromises()
 
     const tabs = w.findAll('.meeting-tab').map((tab) => tab.attributes('data-tab'))
-    expect(tabs).toEqual(['minutes', 'transcript', 'chat', 'resources'])
+    expect(tabs).toEqual(['minutes', 'transcript', 'revised', 'chat', 'resources'])
     await w.find('[data-tab="resources"]').trigger('click')
     expect(w.find('.meeting-resources-stub').exists()).toBe(true)
+  })
+
+  it('shows the AI proofread transcript in its own tab, next to the transcript', async () => {
+    getMock.mockResolvedValue(record({ hasRevised: true }))
+    artifactMock.mockImplementation(async (_token: string, kind: string) => {
+      if (kind === 'minutes') return { content: '# MINUTES', file: 'minutes.md' }
+      if (kind === 'transcript') return { content: VTT, file: 'transcript.vtt' }
+      if (kind === 'revised') return { content: '# PROOFREAD', file: 'transcript-revised.md' }
+      return null
+    })
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-tab="revised"]').trigger('click')
+    // Rendered by the same document body as the minutes, not flattened text.
+    expect(w.find('.meeting-md').html()).toContain('PROOFREAD')
+    // Copy takes the proofread text — and the button says what it copies
+    // instead of claiming it copies the minutes.
+    const copyBtn = w.findAll('.meeting-footer .fbtn').find((b) => b.text() === enMessages.common.copy)
+    expect(copyBtn).toBeTruthy()
+    await copyBtn!.trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenCalledWith('# PROOFREAD')
+  })
+
+  it('says there is no proofread transcript when the meeting has none', async () => {
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-tab="revised"]').trigger('click')
+
+    const card = w.find('[data-role="revised-empty"]')
+    expect(card.exists()).toBe(true)
+    expect(card.find('.meeting-empty__title').text()).toBe(enMessages.meeting.detail.emptyRevisedTitle)
+    expect(card.find('.meeting-empty__desc').text()).toBe(enMessages.meeting.detail.emptyRevisedDesc)
+  })
+
+  it('already shows the proofread text while the minutes are still generating', async () => {
+    // Proofreading runs BEFORE summarisation, so its file exists while the
+    // minutes are still being written. The tab must show it instead of a
+    // spinner that hides work already done.
+    getMock.mockResolvedValue(record({ status: 'generating', updatedAt: Date.now(), hasRevised: true }))
+    artifactMock.mockImplementation(async (_token: string, kind: string) =>
+      kind === 'revised' ? { content: '# PROOFREAD', file: 'transcript-revised.md' } : null,
+    )
+
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-tab="revised"]').trigger('click')
+    expect(w.find('.meeting-md').html()).toContain('PROOFREAD')
+    expect(w.find('.meeting-generating').exists()).toBe(false)
+
+    w.unmount()
   })
 
   it('reads chat from the database and offers copy-all', async () => {

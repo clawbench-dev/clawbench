@@ -17,7 +17,7 @@
  */
 import { ref } from 'vue'
 
-export type MeetingDetailTab = 'minutes' | 'transcript' | 'chat' | 'resources'
+export type MeetingDetailTab = 'minutes' | 'transcript' | 'revised' | 'chat' | 'resources'
 
 export interface MeetingView {
   token: string

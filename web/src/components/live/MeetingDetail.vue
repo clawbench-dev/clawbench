@@ -132,6 +132,36 @@
           />
         </template>
 
+        <template v-else-if="activeTab === 'revised'">
+          <!-- The proofread transcript is the same lines the 转写 tab shows,
+               after the model fixed dictation errors against the project's own
+               vocabulary. It is Markdown, so it goes through the same document
+               body as the minutes (path chips, relative links, copy). -->
+          <MeetingMarkdown
+            v-if="revisedText"
+            :content="revisedText"
+            :path="revisedPath"
+            @copy="copy"
+          />
+          <div v-else-if="generating" class="meeting-generating">
+            <div class="meeting-generating__row"><span class="meeting-spinner" />{{ t('liveShare.notes.proofreading') }}</div>
+          </div>
+          <div v-else-if="staleGenerating" class="meeting-warn">
+            {{ t('meeting.detail.generatingStale') }}
+            <button class="meeting-link" type="button" @click="regenerate">{{ t('common.retry') }}</button>
+          </div>
+          <!-- Proofreading is allowed to fail without failing the minutes: the
+               summary then comes from the raw transcript, and this tab stays
+               empty. Say so instead of leaving a blank pane. -->
+          <MeetingEmpty
+            v-else
+            :icon="SpellCheck"
+            :title="t('meeting.detail.emptyRevisedTitle')"
+            :desc="t('meeting.detail.emptyRevisedDesc')"
+            data-role="revised-empty"
+          />
+        </template>
+
         <template v-else-if="activeTab === 'chat'">
           <MeetingEmpty
             v-if="chat.length === 0"
@@ -173,7 +203,7 @@
           <ExternalLink :size="14" />{{ openLabel }}
         </button>
         <button v-if="activeTab !== 'resources'" class="fbtn" type="button" :disabled="!copyText" @click="copy(copyText)">
-          <Copy :size="14" />{{ activeTab === 'chat' ? t('meeting.detail.copyAll') : t('liveShare.notes.copy') }}
+          <Copy :size="14" />{{ copyLabel }}
         </button>
       </div>
     </template>
@@ -200,6 +230,7 @@ import {
   FileText,
   MessageSquare,
   MessagesSquare,
+  SpellCheck,
   Trash2,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -265,9 +296,12 @@ const record = ref<MeetingRecord | null>(null)
 const loading = ref(true)
 const minutesText = ref('')
 const transcriptText = ref('')
+/** The proofread transcript (`transcript-revised.md`), Markdown. */
+const revisedText = ref('')
 /** The stored cues, kept structured so the tab can draw speaker rows. */
 const transcriptCues = ref<VttCue[]>([])
 const transcriptFile = ref('')
+const revisedFile = ref('')
 const chat = ref<MeetingChatMessage[]>([])
 
 /** Join inside a meeting folder without assuming a separator style. */
@@ -280,6 +314,11 @@ const minutesPath = computed(() => (record.value?.dirPath ? meetingPath(record.v
 const transcriptPath = computed(() => (
   record.value?.dirPath
     ? meetingPath(record.value.dirPath, transcriptFile.value || 'transcript.vtt')
+    : ''
+))
+const revisedPath = computed(() => (
+  record.value?.dirPath
+    ? meetingPath(record.value.dirPath, revisedFile.value || 'transcript-revised.md')
     : ''
 ))
 /** Project-relative folder, used by the resource header and footer action. */
@@ -304,6 +343,7 @@ const {
 const tabs = computed(() => [
   { key: 'minutes' as Tab, label: t('meeting.detail.tabMinutes'), count: 0 },
   { key: 'transcript' as Tab, label: t('meeting.detail.tabTranscript'), count: 0 },
+  { key: 'revised' as Tab, label: t('meeting.detail.tabRevised'), count: 0 },
   { key: 'chat' as Tab, label: t('meeting.detail.tabChat'), count: chat.value.length },
   { key: 'resources' as Tab, label: t('meeting.detail.tabResources'), count: resourceTotal.value },
 ])
@@ -380,7 +420,11 @@ const durationLabel = computed(() => {
   return t('meeting.list.duration', { n: minutes })
 })
 
-const currentText = computed(() => (activeTab.value === 'transcript' ? transcriptText.value : minutesText.value))
+const currentText = computed(() => {
+  if (activeTab.value === 'transcript') return transcriptText.value
+  if (activeTab.value === 'revised') return revisedText.value
+  return minutesText.value
+})
 const copyText = computed(() => {
   // The resource tab has no single text body; its copy affordances live on
   // each row (path) and in the header (folder path).
@@ -402,8 +446,16 @@ const copyText = computed(() => {
 const canOpen = computed(() => {
   if (activeTab.value === 'minutes') return Boolean(record.value?.hasMinutes && minutesPath.value)
   if (activeTab.value === 'transcript') return Boolean(record.value?.hasTranscript && transcriptPath.value)
+  if (activeTab.value === 'revised') return Boolean(record.value?.hasRevised && revisedPath.value)
   if (activeTab.value === 'resources') return Boolean(resourceDir.value)
   return false
+})
+
+/** The footer's copy action names the text it copies, not just "copy". */
+const copyLabel = computed(() => {
+  if (activeTab.value === 'chat') return t('meeting.detail.copyAll')
+  if (activeTab.value === 'minutes') return t('liveShare.notes.copy')
+  return t('common.copy')
 })
 
 const openLabel = computed(() => (
@@ -436,9 +488,10 @@ async function load(silent = false): Promise<void> {
   try {
     record.value = await history.get(props.token)
     if (!record.value) return
-    const [minutes, transcript] = await Promise.all([
+    const [minutes, transcript, revised] = await Promise.all([
       history.artifact(props.token, 'minutes'),
       history.artifact(props.token, 'transcript'),
+      history.artifact(props.token, 'revised'),
     ])
     minutesText.value = minutes?.content ?? ''
     // The artifact is WebVTT; the tab is a reading surface, so the markup is
@@ -446,6 +499,8 @@ async function load(silent = false): Promise<void> {
     transcriptText.value = vttToPlainText(transcript?.content ?? '')
     transcriptCues.value = parseVttCues(transcript?.content ?? '')
     transcriptFile.value = transcript?.file ?? ''
+    revisedText.value = revised?.content ?? ''
+    revisedFile.value = revised?.file ?? ''
     const messages = await history.chat(props.token)
     chat.value = messages.messages
     // The minutes job starts AFTER stop() resolves, i.e. after this view was
@@ -510,7 +565,9 @@ function openFile(): void {
     ? resourceDir.value
     : activeTab.value === 'transcript'
       ? transcriptPath.value
-      : minutesPath.value
+      : activeTab.value === 'revised'
+        ? revisedPath.value
+        : minutesPath.value
   if (target) void openFilePath(target, undefined, undefined, 'live')
 }
 

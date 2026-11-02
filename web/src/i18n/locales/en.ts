@@ -4100,6 +4100,7 @@ export default {
       noChat: 'No chat',
       tabMinutes: 'Minutes',
       tabTranscript: 'Transcript',
+      tabRevised: 'Proofread',
       tabChat: 'Chat',
       tabResources: 'Resources',
       openResources: 'Open resource folder',
@@ -4107,6 +4108,9 @@ export default {
       emptyMinutesDesc: 'The transcript is saved — the minutes can be generated later.',
       emptyTranscriptTitle: 'No transcript',
       emptyTranscriptDesc: 'AI notes were off, or there was no speech to transcribe.',
+      emptyRevisedTitle: 'No proofread transcript yet',
+      emptyRevisedDesc:
+        'The proofread transcript is the raw transcript with dictation errors fixed against the project. It stays empty when AI notes were off, when proofreading failed, or while it is still being generated.',
       transcriptPendingTitle: 'Transcript not ready yet',
       transcriptPendingDesc:
         'It appears here once the upload and transcription finish. If AI notes were off, it stays empty.',
