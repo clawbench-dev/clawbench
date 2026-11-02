@@ -4,6 +4,7 @@ import { createI18n } from 'vue-i18n'
 import { ref, reactive, nextTick } from 'vue'
 import SettingsCategory from '@/components/settings/SettingsCategory.vue'
 import PasswordChangeDialog from '@/components/settings/PasswordChangeDialog.vue'
+import { rememberProviderNames } from '@/utils/providerNames'
 
 // Mock composables
 const mockSetLocalConfig = vi.fn()
@@ -355,6 +356,7 @@ const i18n = createI18n({
           trustedCerts: '已信任的证书',
           trustedCertsDesc: '清除为自签名服务器记住的证书',
           trustedCertsCleared: '已清除，下次连接会重新确认证书',
+          trustedCertsConfirm: '清除所有已信任的自签名证书？',
           addToHomeScreen: '添加到主屏幕',
           downloadDesktopApp: '下载桌面版',
           downloadDesktopAppDesc: '下载桌面版',
@@ -611,6 +613,24 @@ describe('SettingsCategory', () => {
       for (const row of rows) {
         expect(row.props().summaryModelStatus).toBe('configured')
       }
+    })
+
+    it('labels the row as "provider · model" like the picker does', async () => {
+      // Two providers can serve the same model id; the bare id made a switch
+      // between them look like nothing happened.
+      ;(serverConfig.value as Record<string, unknown>).ai_summary = { provider_id: 4242, model: 'gpt-4o' }
+      const wrapper = mountCategory('chat')
+      const row = () => jumpRows(wrapper)[0]
+      await flushPromises()
+      // Until a screen loads the provider list the row still has to say
+      // something, so it falls back to the bare model id.
+      expect(row().props().modelValue).toBe('gpt-4o')
+
+      // The name arrives later (the providers page / picker publishes it); the
+      // row must pick it up without a re-mount.
+      rememberProviderNames([{ id: 4242, name: 'MiniMax' }])
+      await nextTick()
+      expect(row().props().modelValue).toBe('MiniMax · gpt-4o')
     })
 
     it('leaves rows without the opt-in flag without a status', () => {
@@ -941,15 +961,41 @@ describe('SettingsCategory', () => {
         isDesktopApp: () => true,
         forgetTrustedCerts: forget,
       }
+      mockDialogConfirm.mockResolvedValueOnce(true)
       try {
         const wrapper = mountCategory('security')
         const item = wrapper.findAllComponents({ name: 'SettingsItem' })
           .find(i => i.props().label === '已信任的证书')
         expect(item, 'the desktop shell must expose the undo row').toBeTruthy()
         await item!.vm.$emit('click')
-        await nextTick()
+        await flushPromises()
+        // Every self-signed server has to be re-accepted afterwards, so the row
+        // asks first — like every other destructive action on this page.
+        expect(mockDialogConfirm).toHaveBeenCalled()
         expect(forget).toHaveBeenCalledTimes(1)
         expect(mockToastShow).toHaveBeenCalled()
+      } finally {
+        delete (window as any).ClawBenchNative
+      }
+    })
+
+    it('does not clear remembered certificates when the confirmation is cancelled', async () => {
+      mockIsAppMode.value = true
+      mockIsDesktopApp.value = true
+      const forget = vi.fn().mockResolvedValue(1)
+      ;(window as any).ClawBenchNative = {
+        isNativeApp: () => true,
+        isDesktopApp: () => true,
+        forgetTrustedCerts: forget,
+      }
+      mockDialogConfirm.mockResolvedValueOnce(false)
+      try {
+        const wrapper = mountCategory('security')
+        const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+          .find(i => i.props().label === '已信任的证书')
+        await item!.vm.$emit('click')
+        await flushPromises()
+        expect(forget).not.toHaveBeenCalled()
       } finally {
         delete (window as any).ClawBenchNative
       }

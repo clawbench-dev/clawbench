@@ -1,5 +1,9 @@
 <template>
-  <div class="chat-attachment-tags" :class="{ 'is-readonly': readonly }" @wheel="onHorizontalWheel">
+  <div
+    class="chat-attachment-tags"
+    :class="{ 'is-readonly': readonly, 'is-not-clickable': notClickable }"
+    @wheel="onHorizontalWheel"
+  >
     <!-- Whole-batch terminate, shown while the picker's sequential upload is
          still running.
          The drawer's own terminate button is unreachable in practice: picking
@@ -52,8 +56,8 @@
     <span v-for="fileEntry in fileEntries" :key="'att-' + entryKey(fileEntry)"
       class="chat-file-attachment attachment-ref"
       :class="{ 'attachment-image-only': showsThumb(fileEntry) }"
-      @click="$emit('file-click', fileEntry)"
-      :title="t('chat.attach.openFile')">
+      @click="onFileCardClick(fileEntry)"
+      :title="cardTitle(fileEntry)">
       <img v-if="showsThumb(fileEntry)"
         class="attachment-thumb-img"
         :src="thumbUrl(fileEntry.path)" loading="lazy" @error="onThumbError(fileEntry.path)" />
@@ -91,13 +95,25 @@ const props = withDefaults(defineProps<{
    * queued-message row); removal there is a separate action on the row.
    */
   readonly?: boolean
+  /**
+   * Whether a file card opens the file (`file-click`). Default true.
+   *
+   * Distinct from `readonly`, which removes the "×" as well: the queued-message
+   * edit sheet keeps removal (its own action) but has nothing to open — a card
+   * there emitted `file-click` into the void while still showing the hand
+   * cursor and the "open file" tooltip, i.e. it read as a broken control.
+   * Passing false here drops the handler, the tooltip's promise and the pointer
+   * affordance, and leaves the card otherwise identical.
+   */
+  clickable?: boolean
 }>(), {
   files: () => [],
   pendingFiles: () => [],
   readonly: false,
+  clickable: true,
 })
 
-defineEmits<{
+const emit = defineEmits<{
   'file-click': [entry: FileEntry]
   'remove': [entry: FileEntry]
   'remove-pending': [index: number]
@@ -136,6 +152,38 @@ const fileEntries = computed(() => (props.files ?? []).filter(f => !isUrlEntry(f
 /** Composite key so distinct line-range references of one file stay separate. */
 function entryKey(entry: FileEntry): string {
   return `${entry.path}|${entry.startLine ?? 0}|${entry.endLine ?? 0}`
+}
+
+/**
+ * Whether a card can open anything.
+ *
+ * `readonly` implies it: a display-only strip (the queued ROW) has nothing to
+ * open either, so it must not keep a click handler that emits into the void
+ * just because it did not also pass `clickable: false`.
+ */
+const notClickable = computed(() => !props.clickable || props.readonly)
+
+/**
+ * Open the file behind a card — only when this surface can actually open one.
+ *
+ * A `clickable: false` surface (the queued-message edit sheet) has no viewer to
+ * route to, so the click must be a no-op rather than an event nobody listens
+ * for. The cursor/tooltip are suppressed in the template + CSS for the same
+ * reason: the card must not advertise an action it cannot perform.
+ */
+function onFileCardClick(entry: FileEntry): void {
+  if (notClickable.value) return
+  emit('file-click', entry)
+}
+
+/**
+ * Tooltip for a file card. While clickable it names the ACTION; otherwise it
+ * falls back to the file name, which is the only information an image-only
+ * card would otherwise hide (it renders no filename label).
+ */
+function cardTitle(entry: FileEntry): string | undefined {
+  if (!notClickable.value) return t('chat.attach.openFile')
+  return getFileName(entry.path) || undefined
 }
 
 /** "N" for a single line or "N-M" for a range. */
@@ -278,12 +326,25 @@ watch(() => props.files, (files) => {
   padding-right: var(--space-4);
 }
 
+/* Surfaces with no click handler behind the cards must not advertise
+   interactivity: a hand cursor over a card that does nothing reads as a broken
+   control. Two ways to get there — `is-readonly` (display only, no "×") and
+   `is-not-clickable` (removable but nothing to open, the queued-message edit
+   sheet). URL chips are EXCLUDED — those are real links and keep both the
+   pointer and the hover. */
+.chat-attachment-tags.is-readonly .chat-file-attachment:not(.attachment-url),
+.chat-attachment-tags.is-not-clickable .chat-file-attachment:not(.attachment-url) {
+  cursor: default;
+}
+
 .chat-attachment-tags .attachment-ref .attachment-filename {
   color: var(--accent-color, #0066cc);
 }
 
 @media (hover: hover) {
-  .chat-attachment-tags .attachment-ref:hover {
+  /* Hover tint is a click affordance too, so it is gated on the card actually
+     being clickable rather than overridden back to its resting colour. */
+  .chat-attachment-tags:not(.is-readonly):not(.is-not-clickable) .attachment-ref:hover {
     background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
   }
 }

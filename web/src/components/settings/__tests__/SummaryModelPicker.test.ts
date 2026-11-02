@@ -236,4 +236,68 @@ describe('SummaryModelPicker', () => {
       ai_summary: { provider_id: 6, model: 'gpt-4o-mini' },
     })
   })
+
+  it('reuses a resolved list instead of probing the endpoint again on every open', async () => {
+    // Each probe is a real outbound request with a 10s budget, and this sheet is
+    // reopened constantly; without the cache a gateway with a rate limit starts
+    // answering 429 and the sheet looks broken.
+    routeGet({
+      '/api/providers': { providers: [{ id: 1, name: 'AI Summary', protocol: 'anthropic', baseUrl: 'https://gw.example/v1', models: [] }] },
+      '/api/providers/1/models': { models: ['m1'] },
+    })
+
+    const wrapper = mountPicker()
+    await flushPromises()
+    expect(mockGet).toHaveBeenCalledWith('/api/providers/1/models')
+
+    mockGet.mockClear()
+    await wrapper.setProps({ open: false })
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+
+    // The provider list is re-read (it may have changed), the models are not.
+    expect(mockGet).toHaveBeenCalledWith('/api/providers')
+    expect(mockGet).not.toHaveBeenCalledWith('/api/providers/1/models')
+    expect(wrapper.findAll('.summary-row').map((n) => n.text())).toEqual(['m1'])
+  })
+
+  it('probes at most three providers at a time', async () => {
+    // A burst of every uncatalogued provider at once trips rate limits on the
+    // gateways that publish no /models, and the failures read as "broken".
+    const providers = Array.from({ length: 6 }, (_, i) => ({
+      id: i + 1,
+      name: `P${i + 1}`,
+      protocol: 'anthropic',
+      baseUrl: `https://gw${i + 1}.example/v1`,
+      models: [] as string[],
+    }))
+
+    let inFlight = 0
+    let peak = 0
+    const releases: (() => void)[] = []
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/api/providers') return Promise.resolve({ providers })
+      inFlight++
+      peak = Math.max(peak, inFlight)
+      return new Promise((resolve) => {
+        releases.push(() => {
+          inFlight--
+          resolve({ models: ['m'] })
+        })
+      })
+    })
+
+    mountPicker()
+    await flushPromises()
+
+    // Three started, the rest wait for a slot.
+    expect(peak).toBe(3)
+    expect(releases).toHaveLength(3)
+
+    // Draining one slot admits exactly one more.
+    releases.shift()!()
+    await flushPromises()
+    expect(releases).toHaveLength(3)
+    expect(peak).toBe(3)
+  })
 })

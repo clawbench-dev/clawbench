@@ -271,6 +271,25 @@ const micEnabled = ref(true)
 const activeMicDevice = ref('')
 /** Speaker label fn from `start()`, reused when 听记 is switched on mid-meeting. */
 let notesLabelFn: ((channel: string) => string) | undefined
+/**
+ * Whether 听记 has been started for the CURRENT share.
+ *
+ * A pause has to RESUME the recorder (keeping what was already transcribed),
+ * but a meeting that never had notes must not inherit the previous meeting's
+ * transcript — the notes module is a singleton and keeps its state across
+ * shares. `phase` alone cannot tell the two apart: both are 'idle'.
+ */
+let notesStarted = false
+/**
+ * Bumped by every `resetSession()`.
+ *
+ * Capturing is asynchronous and can take minutes (the OS picker stays open),
+ * and the meeting can end while it is in flight. Every entry point that awaits
+ * a capture compares this afterwards: a late continuation that writes the
+ * stream into the module would re-light the camera/microphone/screen indicator
+ * for a meeting that no longer exists, with no UI left to turn it off.
+ */
+let sessionGen = 0
 const peers = new Map<string, PublisherPeer>()
 
 /**
@@ -299,6 +318,8 @@ function stopTalkMetering(): void {
 }
 
 function resetSession(): void {
+  sessionGen += 1
+  notesStarted = false
   stopTalkMetering()
   governor?.stop()
   governor = null
@@ -577,10 +598,30 @@ async function resolveVideoCodecPreference(): Promise<void> {
  * arrives with the picture or not at all, and a source without one simply
  * yields a video-only stream.
  */
-async function captureScreen(sourceId: string): Promise<MediaStream | null> {
+/**
+ * What one capture attempt produced.
+ *
+ * Returned instead of written into the module by `captureScreen()` itself: a
+ * capture can resolve AFTER the meeting it belonged to is over (the picker
+ * stays open for minutes, a second meeting may already be running), and a
+ * write made inside the capture would have already clobbered the new meeting's
+ * picture before the caller could compare generations. The caller applies these
+ * only once it knows the capture is still wanted.
+ */
+interface CapturedScreen {
+  stream: MediaStream
+  /** What the picture is; the panel routes the next click by this. */
+  kind: 'screen' | 'window'
+  /** Which tile this is, so the live picker can mark it. */
+  sourceId: string
+  /** The native projection, on the Android path only. */
+  android: AndroidCaptureHandle | null
+}
+
+async function captureScreen(sourceId: string): Promise<CapturedScreen | null> {
   const bridge = getNative()
   if (bridge?.startScreenCapture) {
-    androidCapture = await startAndroidScreenCapture({
+    const android = await startAndroidScreenCapture({
       fps: ANDROID_CAPTURE_FPS,
       maxWidth: ANDROID_CAPTURE_MAX_WIDTH,
       quality: ANDROID_CAPTURE_QUALITY,
@@ -592,10 +633,8 @@ async function captureScreen(sourceId: string): Promise<MediaStream | null> {
         void stopScreen()
       },
     })
-    captureKind.value = 'screen'
-    captureSourceId.value = sourceId
-    applyContentHint(androidCapture.stream.getVideoTracks()[0], 'text')
-    return androidCapture.stream
+    applyContentHint(android.stream.getVideoTracks()[0], 'text')
+    return { stream: android.stream, kind: 'screen', sourceId, android }
   }
 
   const capture = navigator.mediaDevices?.getDisplayMedia
@@ -622,15 +661,14 @@ async function captureScreen(sourceId: string): Promise<MediaStream | null> {
     // screen was on the wire after a cancelled picker, and every later click on
     // the grid then went to `switchSource` — which has nothing to swap and can
     // only report "switch failed".
-    captureKind.value = declaresSource
+    const kind: 'screen' | 'window' = declaresSource
       ? sourceId.startsWith('screen:')
         ? 'screen'
         : 'window'
       : captureKindOf(stream)
     // Remember which tile this is so the live picker can mark it. A browser
     // pick has no id (its dialog chose), which the panel maps to its own tile.
-    captureSourceId.value = sourceId
-    return stream
+    return { stream, kind, sourceId, android: null }
   } catch (e) {
     appLog.w(TAG, 'screen capture unavailable', e)
     // The declaration is one-shot; leaving it armed would let the NEXT
@@ -638,6 +676,26 @@ async function captureScreen(sourceId: string): Promise<MediaStream | null> {
     void bridge?.setPendingCaptureSource?.('', false)
     return null
   }
+}
+
+/**
+ * Release a capture that turned out to belong to nobody.
+ *
+ * Nothing else holds a reference to it — `resetSession()` only stops what was
+ * assigned at the time it ran — so this is the only place that can put the
+ * device (and, on Android, the native projection) back down.
+ */
+function discardLateCapture(captured: CapturedScreen | null): void {
+  captured?.stream.getTracks().forEach((track) => track.stop())
+  captured?.android?.stop()
+}
+
+/** Adopt a capture into the module's picture state. */
+function adoptScreen(captured: CapturedScreen): MediaStream {
+  androidCapture = captured.android
+  captureKind.value = captured.kind
+  captureSourceId.value = captured.sourceId
+  return captured.stream
 }
 
 /**
@@ -728,9 +786,10 @@ async function startScreen(sourceId: string): Promise<boolean> {
   // describe THIS attempt: a cancelled picker returns null without setting one,
   // and a leftover from an earlier failure would be reported as its cause.
   error.value = ''
-  let stream: MediaStream | null
+  const gen = sessionGen
+  let captured: CapturedScreen | null
   try {
-    stream = await captureScreen(sourceId)
+    captured = await captureScreen(sourceId)
   } catch (e) {
     // The Android host throws (consent denied, projection failed) where the
     // desktop path returns null. Either way this click has to end with a
@@ -739,7 +798,13 @@ async function startScreen(sourceId: string): Promise<boolean> {
     fail(e instanceof Error ? e.message : String(e))
     return false
   }
-  if (!stream) return false
+  if (gen !== sessionGen) {
+    // The meeting ended (or another one began) while the picker was open.
+    discardLateCapture(captured)
+    return false
+  }
+  if (!captured) return false
+  const stream = adoptScreen(captured)
   displayStream = stream
   previewStream.value = stream
   mixer?.setSystemStream(stream)
@@ -798,7 +863,14 @@ async function setCameraDevice(choice: string): Promise<boolean> {
   // one when the live stream reports that id.
   const sameDevice = Boolean(cameraStream) && (wanted === '' || cameraDeviceOf(cameraStream) === wanted)
   if (!sameDevice) {
+    const gen = sessionGen
     const next = await acquireCamera(wanted)
+    if (gen !== sessionGen) {
+      // The meeting ended while the camera was opening: releasing it here is
+      // the only chance, the camera light would otherwise stay on forever.
+      next?.getTracks().forEach((track) => track.stop())
+      return false
+    }
     if (!next) {
       error.value = i18n.global.t(cameraErrorKey(lastCameraError))
       return false
@@ -958,13 +1030,14 @@ export function useLiveShare() {
       micEnabled.value = Boolean(opts.microphone)
       notesLabelFn = opts.notesLabel
       if (wantsScreen) {
-        displayStream = await captureScreen(opts.sourceId)
-        if (!displayStream) {
+        const captured = await captureScreen(opts.sourceId)
+        if (!captured) {
           // The picker was cancelled or the host cannot capture: there is
           // nothing to publish, and the room does not exist yet.
           await stop()
           return false
         }
+        displayStream = adoptScreen(captured)
       }
       if (wantsCamera) {
         cameraStream = await acquireCamera(
@@ -1073,6 +1146,7 @@ export function useLiveShare() {
       // used to transcribe the meeting. Started before the socket so the first
       // viewer's audio is never missed.
       if (opts.notes) {
+        notesStarted = true
         useLiveNotes().start({
           token: token.value,
           ctx: audioCtx,
@@ -1142,6 +1216,7 @@ export function useLiveShare() {
   async function switchMicDevice(deviceId: string): Promise<boolean> {
     if (state.value !== 'publishing') return false
     error.value = ''
+    const gen = sessionGen
     let next: MediaStream
     try {
       next = await acquireMic({ audio: micConstraints(deviceId) })
@@ -1150,6 +1225,12 @@ export function useLiveShare() {
       // that refuses to open never leaves the meeting without a microphone.
       appLog.w(TAG, `microphone switch failed: ${describeMicError(e)}`)
       fail(i18n.global.t('liveShare.micSwitchFailed'))
+      return false
+    }
+    if (gen !== sessionGen) {
+      // The meeting ended while the device was opening. The old stream is
+      // already stopped by resetSession(); this new one is ours to release.
+      next.getTracks().forEach((track) => track.stop())
       return false
     }
     micStream?.getAudioTracks().forEach((track) => track.stop())
@@ -1190,6 +1271,11 @@ export function useLiveShare() {
    * The recorder needs the AudioContext and the microphone the share already
    * owns, which is why this lives here rather than in the panel. Starting late
    * loses the earlier audio — the transcript begins at the toggle.
+   *
+   * Switching it back on after a pause RESUMES the recorder: the notes module
+   * keeps the meeting's segments (and re-attaches every member already in the
+   * room), so the transcript is not wiped and the members who joined before the
+   * pause are transcribed again.
    */
   function startNotes(): boolean {
     if (!audioCtx || !token.value) return false
@@ -1200,7 +1286,10 @@ export function useLiveShare() {
       micStream,
       title: title.value,
       label: notesLabelFn,
+      resume: notesStarted,
     })
+    notesStarted = true
+    publishNotes(true)
     return true
   }
 
@@ -1211,7 +1300,21 @@ export function useLiveShare() {
     const notes = useLiveNotes()
     if (notes.phase.value !== 'recording') return
     await notes.stopCapture()
+    publishNotes(false)
     await notes.finishUploads(false)
+  }
+
+  /**
+   * Tell the audience that AI 听记 was switched on or off.
+   *
+   * The room's flag used to be write-once at create time, so a viewer that
+   * joined mid-meeting read a stale value: a transcript turned on later never
+   * appeared, and one turned off kept its pane polling a transcript that would
+   * never grow. `enabled` is sent both ways — "off" is the whole point of the
+   * frame, so it cannot be an omitted field.
+   */
+  function publishNotes(on: boolean): void {
+    send({ type: 'set-notes', enabled: on })
   }
 
   async function openSocket(): Promise<void> {
@@ -1228,6 +1331,17 @@ export function useLiveShare() {
         // start before the room is open), in which case its `send` went
         // nowhere. The room needs the current value, not just future changes.
         send({ type: 'set-control-enabled', enabled: controlEnabled.value })
+        // Same reason as the capability above: 听记 can be switched on before
+        // this socket exists (the panel starts recording while the room is
+        // still being created), and that `send` went nowhere.
+        //
+        // The CURRENT state, not "was it ever on": a meeting whose 听记 was
+        // switched off again before the socket opened must not tell the room it
+        // is recording, or every viewer would poll a transcript that will never
+        // grow.
+        if (useLiveNotes().phase.value === 'recording') {
+          send({ type: 'set-notes', enabled: true })
+        }
         // The server has claimed the room for us; only now may we delete it.
         ownsRoom = true
         resolve()
@@ -1449,7 +1563,18 @@ export function useLiveShare() {
     // Every video m-line this viewer will receive is a separate encoder on this
     // machine. Registering them with the one governor is what lets CPU pressure
     // step all of them down together.
-    governor?.register(`${peer.viewerId}:video`, videoTx.sender, SCREEN_BUDGET)
+    //
+    // The main m-line carries the screen when there is one and the camera
+    // otherwise, so its budget has to be chosen HERE: `applyPicture()` corrects
+    // it later, but it only runs when the picture CHANGES, and a camera-only
+    // meeting never changes. Registering at SCREEN_BUDGET meant such a meeting
+    // encoded 4 Mbps/30 fps — about 2.7× the uplink and CPU of the camera
+    // budget — for its whole length.
+    governor?.register(
+      `${peer.viewerId}:video`,
+      videoTx.sender,
+      displayStream ? SCREEN_BUDGET : CAMERA_BUDGET,
+    )
     governor?.register(`${peer.viewerId}:relay`, relayTx.sender, RELAY_BUDGET)
     if (peer.cameraTx) {
       governor?.register(`${peer.viewerId}:camera`, peer.cameraTx.sender, CAMERA_BUDGET)
@@ -1559,12 +1684,23 @@ export function useLiveShare() {
   async function switchSource(sourceId: string): Promise<boolean> {
     if (state.value !== 'publishing' || !displayStream) return false
     error.value = ''
+    const gen = sessionGen
     const previous = displayStream
-    const next = await captureScreen(sourceId)
-    if (!next) {
+    const captured = await captureScreen(sourceId)
+    if (gen !== sessionGen) {
+      // The meeting ended while the picker was open: the new capture belongs to
+      // nobody, and `previous` was already released by resetSession().
+      discardLateCapture(captured)
+      return false
+    }
+    if (!captured) {
       fail(i18n.global.t('liveShare.switchSourceFailed'))
       return false
     }
+    // The projection being replaced must be released: nothing else holds its
+    // handle, and its foreground service would keep capturing forever.
+    androidCapture?.stop()
+    const next = adoptScreen(captured)
     if (next.getAudioTracks().length === 0) {
       for (const track of previous.getAudioTracks()) next.addTrack(track)
     }
@@ -1787,6 +1923,10 @@ export function useLiveShare() {
 
     // Capture ownership before resetSession() clears it.
     const mayDelete = ownsRoom
+    // ...and the same for 听记: whether THIS share ever used it. The notes module
+    // is a singleton, so a meeting without notes must not fold and summarize the
+    // previous meeting's recording when it ends.
+    const usedNotes = notesStarted
 
     // Stop the notes recorders and wait for their last blobs BEFORE the audio
     // context is closed: MediaRecorder produces the final chunk in `onstop`,
@@ -1817,10 +1957,13 @@ export function useLiveShare() {
 
     // Uploads and minutes generation continue in the background; the dialog
     // watches the notes state, not this promise.
-    if (hadNotes) void notes.finishUploads()
-    // Notes were turned off earlier in the meeting, so the recorders are gone
-    // but the segments they left still need folding into one recording.
-    else void notes.mergeAudio()
+    //
+    // Always the same call, whether the recorder is still running or was
+    // switched off earlier: `finishUploads()` with no live capture folds the
+    // recording and generates the minutes from EVERY segment, which is exactly
+    // what a paused recorder needs. Generating them at the toggle instead (the
+    // old behaviour) summarized the first half and never ran again.
+    if (usedNotes) void notes.finishUploads()
 
     if (tok && mayDelete) {
       try {

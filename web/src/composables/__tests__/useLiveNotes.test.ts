@@ -169,6 +169,65 @@ describe('useLiveNotes — recording', () => {
     await notes.stopCapture()
     expect(lastCapture().flushTimeout).toBe(2000)
   })
+
+  /**
+   * 听记 can be switched off for a moment and back on. The transcript of the
+   * first half is the meeting's transcript — wiping it made the pane look like
+   * nothing had ever been recorded — and the members already in the room must
+   * be transcribed again (only a NEW join calls addViewer).
+   */
+  it('keeps the transcript and re-attaches the members when switched back on', async () => {
+    const notes = useLiveNotes()
+    const member = {} as MediaStream
+    notes.start({ token: 'tok', ctx, micStream: null, label: (c) => `L:${c}` })
+    notes.addViewer('v1', member)
+    notes.segments.value = [
+      { id: 1, channel: 'mic', speaker: '我', startedAt: 1, durationMs: 1, text: '一' },
+      { id: 2, channel: 'viewer:v1', speaker: 'L:viewer:v1', startedAt: 2, durationMs: 1, text: '二' },
+      { id: 3, channel: 'mic', speaker: '我', startedAt: 3, durationMs: 1, text: '三' },
+    ]
+    const before = lastCapture()
+
+    await notes.stopCapture()
+    await notes.finishUploads(false)
+    expect(notes.phase.value).toBe('idle')
+
+    notes.start({ token: 'tok', ctx, micStream: null, label: (c) => `L:${c}`, resume: true })
+
+    expect(notes.phase.value).toBe('recording')
+    expect(notes.segments.value.map((s) => s.text)).toEqual(['一', '二', '三'])
+    const after = lastCapture()
+    expect(after).not.toBe(before)
+    expect(after.channels.map((c) => c.channel)).toEqual(['mic', 'viewer:v1'])
+  })
+
+  it('starts clean for another meeting even when a resume is asked for', async () => {
+    const notes = useLiveNotes()
+    notes.start({ token: 'tok-a', ctx, micStream: null })
+    notes.segments.value = [{ id: 1, channel: 'mic', speaker: '我', startedAt: 1, durationMs: 1, text: '上一场' }]
+
+    notes.start({ token: 'tok-b', ctx, micStream: null, resume: true })
+
+    // The module is a singleton: a different meeting must not inherit the
+    // previous one's transcript, whatever the caller believed.
+    expect(notes.segments.value).toEqual([])
+  })
+
+  it('remembers a member who joined while the recorder was off', async () => {
+    const notes = useLiveNotes()
+    notes.start({ token: 'tok', ctx, micStream: null })
+    await notes.stopCapture()
+    await notes.finishUploads(false)
+
+    // 听记 is off: the stream still has to be kept, or switching it back on
+    // would leave this member silent for the rest of the meeting.
+    const member = {} as MediaStream
+    notes.addViewer('v9', member)
+    expect(h.instances).toHaveLength(1)
+
+    notes.start({ token: 'tok', ctx, micStream: null, resume: true })
+    expect(lastCapture().channels).toContainEqual({ channel: 'viewer:v9', speaker: 'viewer:v9', stream: member })
+  })
 })
 
 describe('useLiveNotes — finishing', () => {
@@ -189,7 +248,7 @@ describe('useLiveNotes — finishing', () => {
     expect(notes.artifacts.value.audioMeeting).toBe('/p/.clawbench/notes/x/audio/meeting.webm')
   })
 
-  it('drains without merging when the recording is only paused', async () => {
+  it('drains without merging OR summarizing when the recording is only paused', async () => {
     const notes = useLiveNotes()
     notes.start({ token: 'tok', ctx, micStream: null })
     notes.segments.value = [{ id: 1, channel: 'mic', speaker: '我', startedAt: 1, durationMs: 1, text: '内容' }]
@@ -200,9 +259,34 @@ describe('useLiveNotes — finishing', () => {
     // Turning 听记 off mid-meeting must not fold the audio: whatever is
     // recorded after the toggle would end up as loose segments beside a merged
     // file that no longer covers the meeting.
-    const urls = fetchMock.mock.calls.map(([url]) => String(url))
-    expect(urls).toEqual(['/api/live-share/notes/minutes'])
+    //
+    // It must not summarize either. The minutes request used to fire here, from
+    // the segments collected so far, while the meeting kept going — and nothing
+    // regenerated them at the end, so the record covered only the first half.
+    expect(fetchMock).not.toHaveBeenCalled()
     expect(lastCapture().drainCalls).toBe(1)
+    expect(notes.minutesPhase.value).toBe('idle')
+  })
+
+  it('folds and summarizes the whole meeting once it really ends, after a pause', async () => {
+    const notes = useLiveNotes()
+    notes.start({ token: 'tok', ctx, micStream: null })
+    notes.segments.value = [
+      { id: 1, channel: 'mic', speaker: '我', startedAt: 1, durationMs: 1, text: '前半段' },
+      { id: 2, channel: 'mic', speaker: '我', startedAt: 2, durationMs: 1, text: '后半段' },
+    ]
+    fetchMock.mockResolvedValue(jsonResponse({ status: 'idle' }))
+
+    await notes.finishUploads(false)
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    // The meeting ends with the recorder already gone: no capture, nothing to
+    // drain, but the transcript is the meeting's and the minutes must cover it.
+    await notes.finishUploads()
+
+    const urls = fetchMock.mock.calls.map(([url]) => String(url))
+    expect(urls).toEqual(['/api/live-share/notes/audio/merge', '/api/live-share/notes/minutes'])
+    expect(urls.filter((u) => u.endsWith('/minutes'))).toHaveLength(1)
   })
 
   it('uploads the mix track as archive-only so it is never transcribed', async () => {

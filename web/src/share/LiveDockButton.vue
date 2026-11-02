@@ -32,6 +32,12 @@ withDefaults(defineProps<{ live?: boolean; call?: boolean; badge?: number }>(), 
   align-items: center;
   gap: var(--space-2, 4px);
   padding: var(--space-2, 4px) var(--space-5, 10px);
+  /* Touch target, not decoration: this pill floats over the picture on a phone,
+     where it is the only way to mute, chat or go fullscreen. Below 44dp the
+     mic and the control button next to it are pressed by mistake. The dock's
+     own padding (2 × 4dp) brings the pill to 52dp — the same offset the
+     control banner above it is positioned with. */
+  min-height: calc(44 * var(--dp));
   border: none;
   border-radius: var(--radius-full, 999px);
   background: transparent;
@@ -99,19 +105,22 @@ withDefaults(defineProps<{ live?: boolean; call?: boolean; badge?: number }>(), 
 
   .live-dock-btn {
     padding: var(--space-2, 4px) var(--space-3, 6px);
+    /* Icon only from here on, so the horizontal target collapses with the
+       label unless it is pinned to the same 44dp square. */
+    min-width: calc(44 * var(--dp));
   }
 }
 
 /* Unread counter on the dock button. Accent, not red: red means an error or a
    destructive action in this UI, while an unread line is ordinary traffic. */
 .live-dock-badge {
-  min-width: 16px;
-  padding: 0 4px;
+  min-width: calc(16 * var(--dp));
+  padding: 0 calc(4 * var(--dp));
   border-radius: var(--radius-full, 999px);
   background: var(--accent-color, #4a90d9);
   color: #fff;
   font-size: calc(10 * var(--dp));
-  line-height: 16px;
+  line-height: calc(16 * var(--dp));
   text-align: center;
 }
 </style>

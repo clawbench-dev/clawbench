@@ -3,8 +3,9 @@ import {
   CHAT_HISTORY_FRAME_CHARS,
   CHAT_HISTORY_MAX,
   CHAT_MAX_CHARS,
+  LIVE_CHAT_MAX,
 } from '../liveControl'
-import { chunkChatHistory, mergeChatHistory, toChatWire } from '../chatHistory'
+import { appendChatMessage, chunkChatHistory, mergeChatHistory, toChatWire } from '../chatHistory'
 import type { ChatMessage } from '../LiveChatPanel.vue'
 
 function line(n: number, over: Partial<ChatMessage> = {}): ChatMessage {
@@ -83,5 +84,47 @@ describe('mergeChatHistory', () => {
   it('falls back to the slot label when a replayed line carries no name', () => {
     const merged = mergeChatHistory([], [line(1, { name: '', from: 'v4' })], 'v1', label)
     expect(merged[0].name).toBe('观众 v4')
+  })
+
+  it('trims the merged transcript to the live bound', () => {
+    const existing = Array.from({ length: 400 }, (_, i) => line(i))
+    const incoming = Array.from({ length: 300 }, (_, i) => line(400 + i, { at: 400 + i }))
+    const merged = mergeChatHistory(existing, incoming.map(toChatWire), 'v1', label)
+
+    // The replay is bounded on the wire, but 200 + an existing 400 still
+    // exceeds what the panel is allowed to hold.
+    expect(merged).toHaveLength(LIVE_CHAT_MAX)
+    expect(merged[0].id).toBe('m200')
+    expect(merged[merged.length - 1].id).toBe('m699')
+  })
+})
+
+/**
+ * A meeting's live chat had no upper bound at all: every frame appended and the
+ * panel rendered the whole list, so a long meeting (or one attendee spamming
+ * frames) grew memory and per-frame render cost without limit until a phone
+ * stalled. The bound lives in one place so the three entry points — local echo,
+ * relayed live frame, replay merge — cannot drift apart.
+ */
+describe('appendChatMessage', () => {
+  it('keeps the newest lines once the transcript is full', () => {
+    let all: ChatMessage[] = []
+    for (let i = 0; i < LIVE_CHAT_MAX + 100; i++) all = appendChatMessage(all, line(i))
+
+    expect(all).toHaveLength(LIVE_CHAT_MAX)
+    // The tail, not the head: the reader is following the conversation. 600
+    // lines in, the first 100 are gone.
+    expect(all[0].id).toBe('m100')
+    expect(all[all.length - 1].id).toBe('m599')
+    expect(all.map((m) => m.id)).not.toContain('m0')
+  })
+
+  it('leaves a short transcript untouched', () => {
+    const before = [line(1), line(2)]
+    const after = appendChatMessage(before, line(3))
+    expect(after.map((m) => m.id)).toEqual(['m1', 'm2', 'm3'])
+    // A new array: the panel watches the list, and mutating in place would not
+    // re-render it.
+    expect(after).not.toBe(before)
   })
 })

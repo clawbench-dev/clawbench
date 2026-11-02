@@ -3294,6 +3294,8 @@ export default {
       providerWireLabel: 'Codex 调用方式（仅影响 codex）',
       providerWireResponses: 'Responses API（默认）',
       providerWireChat: 'Chat Completions（只提供 /chat/completions 的网关）',
+      providerWireHint: '只影响 Codex。已连接的 Codex 会话要重新开始会话后才会用新值。',
+      providerAuthUnsupported: '当前鉴权方式「{mode}」不适用于 {protocol} 协议——绑定它的智能体每一轮都会失败。请改为「自动」或 x-api-key。',
       providerPresetPlaceholder: '从预设选择供应商（可选）',
       providerPresetTitle: '选择供应商',
       providerPresetSearch: '搜索名称、id 或端点',
@@ -3541,6 +3543,7 @@ export default {
       trustedCerts: '已信任的证书',
       trustedCertsDesc: '清除为自签名服务器记住的证书（按证书指纹记忆）；下次连接会重新确认',
       trustedCertsCleared: '已清除，下次连接会重新确认证书',
+      trustedCertsConfirm: '清除所有已信任的自签名证书？每台自签名服务器下次连接时都要重新确认。',
       tlsSection: 'HTTPS 证书',
       tlsPanelDesc:
         '开启 HTTPS 后，成员端才能共享屏幕、使用麦克风（浏览器只在安全上下文提供这些能力）。证书会自动覆盖本机所有网卡地址；换网络后重新生成一次即可。',

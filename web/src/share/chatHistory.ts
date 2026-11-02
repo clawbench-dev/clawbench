@@ -10,8 +10,30 @@
  * on one merge rule, and the framing rules can be tested without a peer
  * connection.
  */
-import { CHAT_HISTORY_FRAME_CHARS, CHAT_HISTORY_MAX, type ChatWire } from './liveControl'
+import {
+  CHAT_HISTORY_FRAME_CHARS,
+  CHAT_HISTORY_MAX,
+  LIVE_CHAT_MAX,
+  type ChatWire,
+} from './liveControl'
 import type { ChatMessage } from './LiveChatPanel.vue'
+
+/**
+ * Keep only the newest `LIVE_CHAT_MAX` lines.
+ *
+ * One place decides the bound so the three ways a line can arrive — the local
+ * echo, a relayed live frame, and a replay merged after a rejoin — cannot drift
+ * apart. `slice(-n)` returns the same array when it is already short enough, so
+ * callers can use the result unconditionally.
+ */
+export function trimChat(messages: ChatMessage[]): ChatMessage[] {
+  return messages.length > LIVE_CHAT_MAX ? messages.slice(-LIVE_CHAT_MAX) : messages
+}
+
+/** Append one line, dropping the oldest once the transcript is full. */
+export function appendChatMessage(existing: ChatMessage[], message: ChatMessage): ChatMessage[] {
+  return trimChat([...existing, message])
+}
 
 /** The wire shape of one rendered line. `self` is per-recipient, so it stays here. */
 export function toChatWire(m: ChatMessage): ChatWire {
@@ -75,5 +97,7 @@ export function mergeChatHistory(
   // Same array when nothing is new: the panel watches `messages.length`, and a
   // fresh array on every empty replay would re-render for nothing.
   if (added.length === 0) return existing
-  return [...existing, ...added].sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  return trimChat(
+    [...existing, ...added].sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+  )
 }

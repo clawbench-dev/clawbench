@@ -39,6 +39,37 @@ let audioCtx: AudioContext | null = null
 let pcmNode: AudioWorkletNode | null = null
 let pcmSource: MediaStreamAudioSourceNode | null = null
 
+/**
+ * CJK ideographs, kana, hangul and CJK/fullwidth punctuation.
+ *
+ * Used to decide whether a word separator belongs at a junction: Chinese,
+ * Japanese and Korean do not separate words with spaces, so gluing two CJK
+ * fragments must stay space-free.
+ */
+const CJK_CHAR_RE = /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/
+
+/** Leading characters that already separate themselves from what precedes. */
+const SELF_SEPARATING_LEAD_RE = /[,.!?;:%)\]}，。！？；：、）》」』…—]/
+
+/**
+ * Whether a space must be inserted where a new transcript meets the text
+ * already in the box.
+ *
+ * The two sides are independent utterances (the buffered engine emits one
+ * transcript per audio segment), so joining them verbatim runs English words
+ * together. Nothing is inserted when the junction already carries whitespace,
+ * when the transcript opens with punctuation, or between two CJK fragments.
+ */
+function needsJunctionSpace(prev: string, next: string): boolean {
+  if (!prev || !next) return false
+  const last = prev.slice(-1)
+  const first = next.slice(0, 1)
+  if (/\s/.test(last) || /\s/.test(first)) return false
+  if (SELF_SEPARATING_LEAD_RE.test(first)) return false
+  if (CJK_CHAR_RE.test(last) && CJK_CHAR_RE.test(first)) return false
+  return true
+}
+
 /** PCM rate the streaming engine is told to expect. */
 const PCM_SAMPLE_RATE = 16000
 
@@ -387,14 +418,38 @@ export function useVoiceInput() {
 
   function appendText(text: string) {
     if (!text) return
-    // Concatenate as-is: the transcript continues whatever is already in the
-    // box, and inserting a separator (or trimming the existing text) would
-    // rewrite input the user typed. Recognized text carries its own punctuation.
-    inputText.value += text
+    // Concatenate without rewriting either side: the transcript continues
+    // whatever is already in the box, so nothing is trimmed. A separator is
+    // added only where the junction needs one — joining verbatim glued English
+    // words together ("Please review" + "the diff" → "Please reviewthe diff"),
+    // because the buffered engine emits one transcript per audio segment and
+    // each starts a new utterance.
+    const prev = inputText.value
+    inputText.value = prev + (needsJunctionSpace(prev, text) ? ' ' : '') + text
   }
 
   function setState(s: VoiceInputState) { state.value = s }
   function setInputText(s: string) { inputText.value = s }
+
+  /**
+   * Replace the text this dictation started from.
+   *
+   * `start(prefix)` snapshots the input box in TWO places: `voicePrefix` (the
+   * PCM path rebuilds `voicePrefix + text` on every partial) and `inputText`
+   * (the buffered path appends to it). If the box is emptied while a recording
+   * is still in flight — the message was just sent — that snapshot is stale:
+   * the transcript that lands afterwards would put the sent text back into the
+   * box, and the next tap would send it a second time.
+   *
+   * Callers therefore re-point it at the box's new content (`''` after a send,
+   * the restored text after a failed one). Deliberately not part of `cancel()`:
+   * here the recording finishes normally and its transcript must still arrive —
+   * just without the old text in front of it.
+   */
+  function setStartText(text: string) {
+    voicePrefix = text
+    inputText.value = text
+  }
 
   function reset() {
     cancel()
@@ -415,6 +470,7 @@ export function useVoiceInput() {
     appendText,
     setState,
     setInputText,
+    setStartText,
     shortcutKey,
   }
 }

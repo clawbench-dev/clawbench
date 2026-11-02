@@ -21,7 +21,7 @@ vi.mock('@/composables/useLocale', () => ({
       'task.exec.confirmCancel': 'Cancel this execution?',
       'task.exec.cancelled': 'Execution cancelled',
       'task.exec.alreadyFinished': 'Execution already finished',
-      'task.exec.actionFailedDetail': 'Action failed: {error}',
+      'task.actionFailedDetail': 'Action failed: {error}',
     }
     let s = map[key] ?? key
     if (params) {

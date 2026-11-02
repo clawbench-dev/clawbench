@@ -49,7 +49,7 @@ export async function cancelExecution(options: CancelExecutionOptions): Promise<
     if (msg.includes('404') || msg.includes('TaskExecutionNotFound') || msg.includes('execution not found')) {
       toast.show(gt('task.exec.alreadyFinished'), { icon: 'info', type: 'info' })
     } else {
-      toast.show(gt('task.exec.actionFailedDetail', { error: msg }), { icon: 'warning', type: 'error' })
+      toast.show(gt('task.actionFailedDetail', { error: msg }), { icon: 'warning', type: 'error' })
     }
     return false
   }

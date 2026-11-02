@@ -865,7 +865,7 @@ watch(inputText, (text) => {
 
 // ── Voice input (ASR) ───────────────────────────────
 const voiceInput = useVoiceInput()
-const { state: voiceState, inputText: voiceInputText, toggle: toggleVoice, start: startVoice, stop: stopVoice, shortcutKey: voiceShortcutKey } = voiceInput
+const { state: voiceState, inputText: voiceInputText, toggle: toggleVoice, start: startVoice, stop: stopVoice, setStartText: setVoiceStartText, shortcutKey: voiceShortcutKey } = voiceInput
 
 const VOICE_LONG_PRESS_MS = 500
 let voicePressTimer = null
@@ -873,6 +873,13 @@ let voicePointerDown = false
 let voiceLongPressActive = false
 // Set when a long-press starts recording so the synthetic click fired on release
 // is suppressed in handleSendClick.
+//
+// Only an EMPTY input suppresses it. There the click has nothing to send and
+// would open the quick-send menu instead, so swallowing it is what the user
+// expects. With text present the click MUST still send: the long-press is also
+// the "hold a little too long before letting go" case (hand tremor, a slow
+// device), and eating the send there made the send button look unresponsive —
+// the message only went out on a second tap.
 let voiceJustRecorded = false
 
 function onSendPointerDown() {
@@ -883,7 +890,12 @@ function onSendPointerDown() {
   voicePressTimer = setTimeout(() => {
     if (voicePointerDown) {
       voiceLongPressActive = true
-      voiceJustRecorded = true
+      // Decided from the content at gesture start. `hasInputContent` is exactly
+      // "the release click will do something" (send text / attachments) rather
+      // than open the quick-send menu, so it is the right test: with text in
+      // the box the click is a real send, and any transcript lands in the input
+      // afterwards (see useVoiceInput.start's `prefix`).
+      voiceJustRecorded = !hasInputContent.value
       // Long-press starts dictation regardless of what is already typed; the
       // recognized text is appended to the existing content rather than
       // replacing it (see useVoiceInput.start's `prefix`).
@@ -2074,6 +2086,11 @@ function handleWindowPaste(e) {
 
 function clearInput() {
   inputText.value = ''
+  // A dictation still in flight captured the text we just sent as its start
+  // text; re-point it at the now-empty box. Otherwise the transcript that
+  // arrives after the send rebuilds "sent text + transcript" and drops it back
+  // into the box — the message looks unsent and a second tap sends it twice.
+  setVoiceStartText('')
   // Also clear the draft cache for current session so it doesn't linger
   if (props.currentSessionId) {
     deleteChatDraft(props.currentSessionId)
@@ -2087,6 +2104,10 @@ function clearInput() {
  *  must not silently disappear. */
 function restoreInput(text) {
   inputText.value = text ?? ''
+  // Keep the in-flight dictation's start text in step with the box: a send that
+  // failed cleared it (clearInput), so without this the transcript would
+  // replace the restored message instead of appending to it.
+  setVoiceStartText(text ?? '')
   if (props.currentSessionId && text) {
     setChatDraft(props.currentSessionId, text)
   }

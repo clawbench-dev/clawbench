@@ -48,6 +48,7 @@ const i18n = createI18n({
           providerAgentsValue: '智能体 {agents}',
           providerAuthAutoShort: '自动认证',
           providerAuthAuto: '自动',
+          providerAuthUnsupported: '「{mode}」不适用于 {protocol}',
           providerPresetPlaceholder: '从预设选择',
           providerPresetTitle: '选择供应商',
           providerPresetSearch: '搜索',
@@ -199,11 +200,11 @@ describe('ProviderSetting', () => {
     await flushPromises()
 
     const dialog = wrapper.find('.mock-dialog')
-    const inputs = dialog.findAll('input.provider-input')
-    // [0] name, [1] baseUrl, [2] apiKey (selects are excluded by `input.`)
-    await inputs[0].setValue('My Provider')
-    await inputs[1].setValue('https://api.example.com/v1')
-    await inputs[2].setValue('sk-secret')
+    // Stable hooks: positional indexes silently shift when a field is inserted
+    // (the key would land in the endpoint and the assertion would still pass).
+    await dialog.find('[data-role="name"]').setValue('My Provider')
+    await dialog.find('[data-role="base-url"]').setValue('https://api.example.com/v1')
+    await dialog.find('[data-role="api-key"]').setValue('sk-secret')
 
     await dialogSave(wrapper).trigger('click')
     await flushPromises()
@@ -233,11 +234,11 @@ describe('ProviderSetting', () => {
     await row!.trigger('click')
     await flushPromises()
 
-    const inputs = wrapper.find('.mock-dialog').findAll('input.provider-input')
-    expect((inputs[0].element as HTMLInputElement).value).toBe('Preset One')
-    expect((inputs[1].element as HTMLInputElement).value).toBe('https://p1/v1')
+    const dialog = wrapper.find('.mock-dialog')
+    expect((dialog.find('[data-role="name"]').element as HTMLInputElement).value).toBe('Preset One')
+    expect((dialog.find('[data-role="base-url"]').element as HTMLInputElement).value).toBe('https://p1/v1')
 
-    await inputs[2].setValue('sk-1')
+    await dialog.find('[data-role="api-key"]').setValue('sk-1')
     await dialogSave(wrapper).trigger('click')
     await flushPromises()
     expect(mockPost).toHaveBeenCalledWith('/api/providers', expect.objectContaining({
@@ -254,7 +255,10 @@ describe('ProviderSetting', () => {
     })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('2')
+    // Assert the rendered sentence, not the digit: the date ("2026-…") already
+    // contains a 2, so `toContain('2')` passed even when the count was 0.
+    const catalog = wrapper.find('.provider-catalog-text')
+    expect(catalog.text()).toContain('2 个供应商')
     const refresh = wrapper.findAll('.fbtn').find(b => b.text().includes('刷新目录'))
     expect(refresh).toBeDefined()
 
@@ -276,9 +280,8 @@ describe('ProviderSetting', () => {
     const dialog = wrapper.find('.mock-dialog')
     expect(dialog.exists()).toBe(true)
     expect(dialog.text()).toContain('编辑模型提供商')
-    const inputs = dialog.findAll('input.provider-input')
-    expect((inputs[0].element as HTMLInputElement).value).toBe('Existing')
-    expect((inputs[1].element as HTMLInputElement).value).toBe('https://x/v1')
+    expect((dialog.find('[data-role="name"]').element as HTMLInputElement).value).toBe('Existing')
+    expect((dialog.find('[data-role="base-url"]').element as HTMLInputElement).value).toBe('https://x/v1')
 
     await dialogSave(wrapper).trigger('click')
     await flushPromises()
@@ -296,12 +299,56 @@ describe('ProviderSetting', () => {
     mockPost.mockRejectedValueOnce(new Error('name already exists'))
     await wrapper.find('.provider-toolbar .fbtn-primary').trigger('click')
     await flushPromises()
-    await wrapper.find('.mock-dialog').findAll('input.provider-input')[0].setValue('Dup')
+    await wrapper.find('.mock-dialog').find('[data-role="name"]').setValue('Dup')
     await dialogSave(wrapper).trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.mock-dialog').exists()).toBe(true)
     expect(wrapper.find('.mock-dialog').text()).toContain('name already exists')
+  })
+
+  it('turns a rejected auth mode into the sentence the form already shows', async () => {
+    // The server answers ProviderInvalid + detail.field=authMode for a legacy
+    // row whose mode the protocol cannot express. Its own reason names internal
+    // identifiers, so the form re-words it from the values it already has.
+    const wrapper = mountSetting([
+      { id: 7, name: 'Existing', protocol: 'openai', baseUrl: 'https://x/v1', authMode: 'bearer', hasKey: true, agentCount: 0 },
+    ])
+    await flushPromises()
+    await wrapper.findAll('.fbtn').find((b) => b.text().includes('编辑'))!.trigger('click')
+    await flushPromises()
+
+    mockPut.mockRejectedValueOnce(Object.assign(
+      new Error('模型提供商配置无效：invalid provider: unknown auth mode'),
+      { msgKey: 'ProviderInvalid', detail: { field: 'authMode' } },
+    ))
+    await dialogSave(wrapper).trigger('click')
+    await flushPromises()
+
+    const dialog = wrapper.find('.mock-dialog')
+    expect(dialog.text()).toContain('「bearer」不适用于 openai')
+    expect(dialog.text()).not.toContain('invalid provider')
+  })
+
+  it('drops a provider verdict once its configuration is edited', async () => {
+    // A green "connection OK" that survived an endpoint change is worse than no
+    // verdict at all: it claims the new configuration was tested.
+    const wrapper = mountSetting([
+      { id: 4, name: 'Retested', protocol: 'openai', baseUrl: 'https://x/v1', authMode: 'auto', hasKey: true, agentCount: 0 },
+    ])
+    await flushPromises()
+
+    mockPost.mockResolvedValueOnce({ ok: true, models: ['m1', 'm2'] })
+    await wrapper.findAll('.fbtn').find((b) => b.text().includes('测试'))!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.provider-test-result--ok').exists()).toBe(true)
+
+    await wrapper.findAll('.fbtn').find((b) => b.text().includes('编辑'))!.trigger('click')
+    await flushPromises()
+    await dialogSave(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.provider-test-result--ok').exists()).toBe(false)
   })
 
   it('deletes only after confirmation', async () => {

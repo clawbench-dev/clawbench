@@ -28,6 +28,8 @@ class FakeSender {
 
 class FakeTransceiver {
   sender = new FakeSender()
+  /** The m-line identity, assigned by `addTransceiver` (null before SDP). */
+  mid: string | null = null
   constructor(public direction: string) {}
 }
 
@@ -55,9 +57,16 @@ class FakePC {
 
   addTransceiver(kind: string, init?: { direction: string }) {
     const tx = new FakeTransceiver(init?.direction ?? 'sendrecv')
+    // Chromium numbers the m-lines in creation order; the fake does the same so
+    // a test can tell the picture line from the relay/camera ones.
+    tx.mid = String(this.transceivers.length)
     this.transceivers.push(tx)
     return tx as unknown as RTCRtpTransceiver
   }
+
+  /** What the next `getStats()` returns (tests fill it per case). */
+  statsReport = new Map<string, Record<string, unknown>>()
+  getStats = vi.fn(async () => this.statsReport)
 
   /** Channels the VIEWER created (the offerer owns the control bus). */
   channels: FakeDC[] = []
@@ -134,9 +143,12 @@ class FakeWS {
   }
 }
 
+let trackSeq = 0
+
 function makeTrack(kind = 'audio'): MediaStreamTrack & { fireEnded: () => void } {
   const listeners = new Map<string, Array<() => void>>()
   const track = {
+    id: `track-${++trackSeq}`,
     kind,
     stop: vi.fn(),
     addEventListener: (type: string, cb: () => void) => {
@@ -570,6 +582,27 @@ describe('LiveViewer talk', () => {
     expect(enabled).toEqual([false, true])
   })
 
+  it('learns about AI 听记 being switched on after joining', () => {
+    const states: boolean[] = []
+    const { viewer } = setup({
+      callbacks: { onNotesEnabled: (v: boolean) => states.push(v) },
+    })
+    // Joined while 听记 was off, so the transcript pane is not offered.
+    joinRoom(viewer, { notesEnabled: false })
+    expect(viewer.notesEnabled).toBe(false)
+
+    // The publisher turns it on mid-meeting. `joined` only carries the state at
+    // attach time, so this frame is the only way an earlier viewer finds out.
+    lastWS().emit({ type: 'notes-enabled', notesEnabled: true })
+    expect(viewer.notesEnabled).toBe(true)
+
+    // Switching it off again must reach the pane too — that direction is why
+    // the frame carries an explicit boolean instead of omitting the field.
+    lastWS().emit({ type: 'notes-enabled', notesEnabled: false })
+    expect(viewer.notesEnabled).toBe(false)
+    expect(states).toEqual([false, true, false])
+  })
+
   it('drops the microphone when the connection fails', async () => {
     const micTrack = makeTrack('audio')
     const getUserMedia = vi.fn(async () => ({ getAudioTracks: () => [micTrack] }) as unknown as MediaStream)
@@ -984,6 +1017,35 @@ describe('LiveViewer screen sharing', () => {
   })
 })
 
+// ── AI 听记 toggle ──────────────────────────────────────────────────────────
+
+/**
+ * The one gap the frame's happy-path test (above, "learns about AI 听记 being
+ * switched on after joining") cannot cover: what happens when the key is
+ * absent. The frame's entire meaning is that boolean, so a missing key must read
+ * as "off" — never as "no news, keep what you had".
+ */
+describe('LiveViewer 听记 toggle', () => {
+  it('reads a frame with the key missing as OFF, not as "unchanged"', () => {
+    const seen: boolean[] = []
+    const { viewer } = setup({ callbacks: { onNotesEnabled: (v: boolean) => seen.push(v) } })
+    joinRoom(viewer)
+
+    lastWS().emit({ type: 'notes-enabled', notesEnabled: true })
+    expect(viewer.notesEnabled).toBe(true)
+
+    // The server is supposed to send the key explicitly. If it ever stops doing
+    // so (an `omitempty` creeping onto the Go struct), the honest reading is
+    // "off" — a `msg.notesEnabled ?? this._notesEnabled` shape would instead
+    // keep the pane open forever on a value nobody sent.
+    lastWS().emit({ type: 'notes-enabled' })
+
+    expect(viewer.notesEnabled).toBe(false)
+    // First entry is `joined`'s initial state, as in the happy-path test.
+    expect(seen).toEqual([false, true, false])
+  })
+})
+
 describe('LiveViewer roster', () => {
   it('takes the participant list from the joined frame', () => {
     const seen: unknown[] = []
@@ -1015,5 +1077,71 @@ describe('LiveViewer roster', () => {
     // Full snapshots, not deltas: the new list replaces the old one.
     expect(viewer.roster.map((m) => m.id)).toEqual(['host', 'v2'])
     expect(seen[seen.length - 1]).toHaveLength(2)
+  })
+})
+
+// ── Quality readings ────────────────────────────────────────────────────────
+
+/**
+ * A meeting can carry three video m-lines at once (host picture, a forwarded
+ * member screen, the camera tile). `getStats()` reports one `inbound-rtp` entry
+ * per line, and the old code let whichever came LAST win — so with a camera on,
+ * the badge described the 4:3 thumbnail instead of the picture being watched.
+ */
+describe('LiveViewer quality stats', () => {
+  function videoStat(over: Record<string, unknown>): Record<string, unknown> {
+    return { type: 'inbound-rtp', kind: 'video', ...over }
+  }
+
+  it('reads the host picture, not the camera tile or the relayed screen', async () => {
+    const { viewer } = setup()
+    joinRoom(viewer)
+    const pc = lastPC()
+    const [, screenTx, relayTx, cameraTx] = pc.transceivers
+
+    pc.statsReport = new Map<string, Record<string, unknown>>([
+      ['PAIR', { type: 'candidate-pair', state: 'succeeded', currentRoundTripTime: 0.05 }],
+      ['MAIN', videoStat({ mid: screenTx.mid, bytesReceived: 1_000, packetsReceived: 100, packetsLost: 5, jitter: 0.01 })],
+      ['RELAY', videoStat({ mid: relayTx.mid, bytesReceived: 5_000_000, packetsReceived: 1_000, packetsLost: 300, jitter: 0.2 })],
+      ['CAMERA', videoStat({ mid: cameraTx.mid, bytesReceived: 9_000_000, packetsReceived: 2_000, packetsLost: 1_800, jitter: 0.5 })],
+    ])
+
+    const st = await viewer.getStats()
+
+    // 5 lost of 105 — the picture's own numbers. The camera tile (last in the
+    // report) would read 47.4% loss and 500ms of jitter.
+    expect(st.lossPct).toBe(4.8)
+    expect(st.jitterMs).toBe(10)
+    expect(st.rttMs).toBe(50)
+  })
+
+  it('falls back to the track identity when the report carries no mid', async () => {
+    const { viewer } = setup()
+    joinRoom(viewer)
+    const mainTrack = makeTrack('video')
+    lastPC().ontrack?.({ streams: [{ id: 'main' } as unknown as MediaStream], track: mainTrack })
+
+    lastPC().statsReport = new Map<string, Record<string, unknown>>([
+      ['OTHER', videoStat({ trackIdentifier: 'someone-else', packetsReceived: 10, packetsLost: 90 })],
+      ['MAIN', videoStat({ trackIdentifier: mainTrack.id, packetsReceived: 100, packetsLost: 0 })],
+    ])
+
+    const st = await viewer.getStats()
+    expect(st.lossPct).toBe(0)
+  })
+
+  it('still reports when the browser identifies neither mid nor track', async () => {
+    const { viewer } = setup()
+    joinRoom(viewer)
+    // Older implementations omit both fields. A blank badge is worse than a
+    // reading off the wrong-but-plausible line, so the first entry is used.
+    lastPC().statsReport = new Map<string, Record<string, unknown>>([
+      ['A', videoStat({ packetsReceived: 100, packetsLost: 10, jitter: 0.02 })],
+      ['B', videoStat({ packetsReceived: 100, packetsLost: 90, jitter: 0.9 })],
+    ])
+
+    const st = await viewer.getStats()
+    expect(st.lossPct).toBe(9.1)
+    expect(st.jitterMs).toBe(20)
   })
 })

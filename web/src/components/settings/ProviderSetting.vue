@@ -23,7 +23,7 @@
     </div>
 
     <div class="provider-toolbar">
-      <button class="fbtn fbtn-primary" @click="openCreate">
+      <button class="fbtn fbtn-primary" data-action="provider-add" @click="openCreate">
         <Plus :size="13" />
         {{ t('settings.items.providerAdd') }}
       </button>
@@ -58,6 +58,7 @@
       <div class="provider-actions">
         <button
           class="fbtn"
+          data-action="provider-test"
           :disabled="testingId !== null"
           :title="t('settings.items.providerTestHint')"
           @click="testProvider(p)"
@@ -65,11 +66,11 @@
           <component :is="testingId === p.id ? Loader2 : PlugZap" :size="13" :class="{ 'provider-spin': testingId === p.id }" />
           {{ testingId === p.id ? t('settings.items.providerTesting') : t('settings.items.providerTest') }}
         </button>
-        <button class="fbtn" @click="openEdit(p)">
+        <button class="fbtn" data-action="provider-edit" @click="openEdit(p)">
           <Pencil :size="13" />
           {{ t('settings.items.providerEdit') }}
         </button>
-        <button class="fbtn" @click="removeProvider(p)">
+        <button class="fbtn" data-action="provider-remove" @click="removeProvider(p)">
           <Trash2 :size="13" />
           {{ t('settings.items.providerRemove') }}
         </button>
@@ -103,6 +104,7 @@ import { useDialog } from '@/composables/useDialog'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import ProviderFormDialog, { type ProviderFormValue, type ProviderRow } from './ProviderFormDialog.vue'
 import type { PresetOption } from './ProviderPresetPicker.vue'
+import { rememberProviderNames } from '@/utils/providerNames'
 import { appLog } from '@/utils/appLog'
 
 defineProps<{ description?: string }>()
@@ -137,6 +139,9 @@ async function loadProviders() {
   try {
     const data = await apiGet<{ providers: ProviderRow[] }>('/api/providers')
     providers.value = data.providers ?? []
+    // Publish the names for screens that only hold a provider id (the summary
+    // model row), so it can show "provider · model" without its own request.
+    rememberProviderNames(providers.value)
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
     appLog.w('ProviderSetting', 'load providers failed', error.value)
@@ -225,14 +230,35 @@ async function saveDraft(value: ProviderFormValue) {
       })
     }
     closeForm()
+    // The verdict belonged to the configuration that was just replaced; a green
+    // "connection OK" left over an edited endpoint is worse than no verdict.
+    if (editingProvider.value !== null) delete testResults.value[editingProvider.value.id]
     await loadProviders()
   } catch (err) {
     // Keep the dialog open with the typed values so the user can correct them.
-    formError.value = err instanceof Error ? err.message : String(err)
+    formError.value = providerSaveErrorText(err, value)
     appLog.w('ProviderSetting', 'save provider failed', formError.value)
   } finally {
     saving.value = false
   }
+}
+
+/**
+ * The server localizes `error` itself, so it is usable as-is — except for the
+ * one rejection this form can explain better: an auth mode the protocol cannot
+ * express (`ProviderInvalid` + `detail.field === 'authMode'`). Its raw reason
+ * names internal identifiers; the form already knows both values, so it can say
+ * what to change instead.
+ */
+function providerSaveErrorText(err: unknown, value: ProviderFormValue): string {
+  const typed = err as { msgKey?: string; detail?: { field?: string } } | null
+  if (typed?.msgKey === 'ProviderInvalid' && typed.detail?.field === 'authMode') {
+    return t('settings.items.providerAuthUnsupported', {
+      mode: value.authMode,
+      protocol: value.protocol,
+    })
+  }
+  return err instanceof Error && err.message ? err.message : String(err)
 }
 
 async function removeProvider(p: ProviderRow) {
@@ -260,16 +286,23 @@ async function testProvider(p: ProviderRow) {
     )
     const message = result.ok
       ? t('settings.items.providerTestOk', { count: result.models?.length ?? 0 })
-      : (result.error || t('settings.items.providerTestFailed'))
+      : clipError(result.error || t('settings.items.providerTestFailed'))
     testResults.value = { ...testResults.value, [p.id]: { ok: result.ok, message } }
   } catch (err) {
     testResults.value = {
       ...testResults.value,
-      [p.id]: { ok: false, message: err instanceof Error ? err.message : String(err) },
+      [p.id]: { ok: false, message: clipError(err instanceof Error ? err.message : String(err)) },
     }
   } finally {
     testingId.value = null
   }
+}
+
+/** The /models probe relays the upstream body verbatim (an HTML error page can
+ *  be a megabyte), and this card renders it inline — so clip before display. */
+function clipError(text: string): string {
+  const s = text.trim()
+  return s.length > 300 ? s.slice(0, 300) + '…' : s
 }
 
 async function loadCatalog() {

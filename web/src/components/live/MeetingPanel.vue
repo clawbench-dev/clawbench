@@ -9,9 +9,8 @@
     />
     <MeetingCreate v-else-if="view === 'create'" @back="view = 'list'" @started="view = 'meeting'" />
     <MeetingJoin v-else-if="view === 'join'" @back="view = 'list'" />
-    <MeetingStage v-else-if="view === 'meeting'" @ended="onEnded" />
     <MeetingDetail
-      v-else
+      v-else-if="view === 'detail'"
       :key="detailToken"
       :token="detailToken"
       :initial-tab="detailTab"
@@ -19,6 +18,14 @@
       @quote="(token: string) => emit('quote', token)"
       @tab-change="detailTab = $event"
     />
+    <!-- `v-show`, NOT `v-if`: leaving the stage for the record list must not
+         destroy it. Its chat lines, pending control requests and the viewer it
+         granted control to are component state, and its subscription to the
+         viewers' control channel is torn down on unmount — a member's message
+         sent while the host was reading the list would then be neither shown
+         nor archived. The meeting keeps running either way (the room lives in
+         useLiveShare), so the instance has to as well. -->
+    <MeetingStage v-show="view === 'meeting'" :active="view === 'meeting'" @ended="onEnded" />
   </div>
 </template>
 

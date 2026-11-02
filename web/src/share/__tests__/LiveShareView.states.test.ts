@@ -437,4 +437,93 @@ describe('LiveShareView sound unlock', () => {
     expect(video.muted).toBe(false)
     w.unmount()
   })
+
+  it('does not ask again after a re-attach, when the sound is already on', async () => {
+    const w = mountView()
+    await flushPromises()
+    const audioStream = { getAudioTracks: () => [{}] } as unknown as MediaStream
+    lastViewer?.opts?.callbacks?.onStream?.(audioStream)
+    await flushPromises()
+
+    await w.find('[data-action="enable-sound"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-action="enable-sound"]').exists()).toBe(false)
+
+    // The publisher swapping its picture source re-attaches a stream, and the
+    // prompt used to come back on "this stream has audio" alone — over audio
+    // that is already playing, so pressing it changed nothing.
+    lastViewer?.opts?.callbacks?.onStream?.(audioStream)
+    await flushPromises()
+
+    expect(w.find('[data-action="enable-sound"]').exists()).toBe(false)
+    expect((w.find('video').element as HTMLVideoElement).muted).toBe(false)
+    w.unmount()
+  })
+})
+
+/**
+ * Chat is relayed to everybody and never stored on the viewer's side, so the
+ * only bound on it is this one. Without it a long meeting — or one attendee
+ * sending frames in a loop — grows memory and per-frame render cost until a
+ * phone stalls.
+ */
+describe('LiveShareView chat bounds', () => {
+  // 600 frames each re-render the mounted panel, so this case is deterministic
+  // but heavy: under full-suite load it outran the 5s default and failed with a
+  // timeout that said nothing about the bound it is testing.
+  it('keeps only the newest lines when the meeting floods the chat', { timeout: 30000 }, async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+
+    for (let i = 0; i < 600; i++) {
+      cb.onControl?.({
+        t: 'chat',
+        id: `m${i}`,
+        from: 'v2',
+        name: '小明',
+        text: `第 ${i} 句`,
+        at: i,
+      })
+    }
+    await flushPromises()
+
+    const msgs = (w.vm as unknown as { $: { setupState: { chatMessages: Array<{ id: string }> } } }).$.setupState
+      .chatMessages
+    expect(msgs).toHaveLength(500)
+    // The newest 500, in order: the reader is following the conversation, not
+    // its beginning.
+    expect(msgs[0].id).toBe('m100')
+    expect(msgs[499].id).toBe('m599')
+    w.unmount()
+  })
+})
+
+describe('LiveShareView remote-control grant addressing', () => {
+  it('ignores a grant with no viewer id instead of granting everybody', async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+
+    // A grant is addressed to ONE viewer. An empty id is a malformed frame, not
+    // a broadcast: treating it as one put every viewer into "controlling", and
+    // their keydown handler then swallowed typing in the chat box.
+    cb.onControl?.({ t: 'ctrl-grant', viewerId: '', granted: true })
+    await flushPromises()
+
+    expect(w.find('[data-role="control-banner"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('still honours a grant addressed to this viewer', async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+
+    cb.onControl?.({ t: 'ctrl-grant', viewerId: 'v-test', granted: true })
+    await flushPromises()
+
+    expect(w.find('[data-role="control-banner"]').exists()).toBe(true)
+    w.unmount()
+  })
 })

@@ -218,6 +218,15 @@ export class LiveViewer {
   private memberScreenStream: MediaStream | null = null
   /** Control bus opened by the publisher. */
   private dc: RTCDataChannel | null = null
+  /**
+   * The track carrying the host's picture.
+   *
+   * Up to three video m-lines arrive (host picture, a forwarded member screen,
+   * the camera tile) and `getStats()` reports one `inbound-rtp` entry per line.
+   * Without an identity for the main one the quality badge would read whichever
+   * entry happened to be iterated last — typically the camera tile.
+   */
+  private mainVideoTrack: MediaStreamTrack | null = null
   /** Previous byte counter, for turning cumulative bytes into a bitrate. */
   private lastStats: { at: number; bytes: number } | null = null
   private _closed = false
@@ -440,6 +449,14 @@ export class LiveViewer {
         this._controlEnabled = Boolean(msg.controlEnabled)
         this.cb.onControlEnabled?.(this._controlEnabled)
         break
+      case 'notes-enabled':
+        // The publisher turned AI 听记 on (or off) after we joined. `joined`
+        // only carries the state at attach time, so without this frame a
+        // viewer that arrived earlier would never learn about a mid-meeting
+        // toggle — the transcript pane would stay hidden for the whole meeting.
+        this._notesEnabled = Boolean(msg.notesEnabled)
+        this.cb.onNotesEnabled?.(this._notesEnabled)
+        break
       case 'screen-denied':
         // The room refused: either the switch is off or somebody else got
         // there first. Release the local capture immediately — leaving it live
@@ -539,6 +556,7 @@ export class LiveViewer {
       // The publisher sends video plus one mixed audio track. Wrap whatever
       // arrives into a single stream so the <video> element has one srcObject.
       this.cb.onStream?.(stream)
+      if (ev.track.kind === 'video') this.mainVideoTrack = ev.track
       // A voice meeting never sends video: the audio track IS the connection.
       // Without this the page would sit on "connecting" forever.
       if (ev.track.kind === 'video' || (ev.track.kind === 'audio' && !this._videoEnabled)) {
@@ -708,6 +726,39 @@ export class LiveViewer {
   }
 
   /**
+   * Pick the stat entry that belongs to the host's picture.
+   *
+   * A meeting can carry three video m-lines at once (host picture, a forwarded
+   * member screen, the camera tile), and `getStats()` reports one entry per
+   * line. The badge must describe the picture the viewer is actually watching:
+   * reading the camera tile's numbers would report a stuttering screen as
+   * "good" — or the reverse.
+   *
+   * Matched by `mid` first (the m-line's identity, which we know from the
+   * transceiver we reserved for the picture), then by `trackIdentifier` (the
+   * track `ontrack` handed us). Both are optional in the spec, so a browser
+   * that reports neither falls back to the FIRST entry — arbitrary, but stable,
+   * unlike "last one wins".
+   */
+  private pickMainVideoStat(
+    videos: Array<Record<string, unknown>>,
+  ): Record<string, unknown> | null {
+    if (videos.length === 0) return null
+    if (videos.length === 1) return videos[0]
+    const mid = this.screenTx?.mid
+    if (mid) {
+      const byMid = videos.find((v) => v.mid === mid)
+      if (byMid) return byMid
+    }
+    const trackId = this.mainVideoTrack?.id
+    if (trackId) {
+      const byTrack = videos.find((v) => v.trackIdentifier === trackId)
+      if (byTrack) return byTrack
+    }
+    return videos[0]
+  }
+
+  /**
    * One reading of the connection's health.
    *
    * Bitrate needs two samples, so the first call returns null for it and the
@@ -725,18 +776,22 @@ export class LiveViewer {
       let lost = 0
       let received = 0
 
+      const videos: Array<Record<string, unknown>> = []
       report.forEach((s: Record<string, unknown>) => {
         if (s.type === 'candidate-pair' && s.state === 'succeeded') {
           const rtt = s.currentRoundTripTime
           if (typeof rtt === 'number') rttMs = Math.round(rtt * 1000)
         }
-        if (s.type === 'inbound-rtp' && s.kind === 'video') {
-          if (typeof s.bytesReceived === 'number') bytes = s.bytesReceived
-          if (typeof s.jitter === 'number') jitterMs = Math.round(s.jitter * 1000)
-          if (typeof s.packetsLost === 'number') lost = s.packetsLost
-          if (typeof s.packetsReceived === 'number') received = s.packetsReceived
-        }
+        if (s.type === 'inbound-rtp' && s.kind === 'video') videos.push(s)
       })
+
+      const main = this.pickMainVideoStat(videos)
+      if (main) {
+        if (typeof main.bytesReceived === 'number') bytes = main.bytesReceived
+        if (typeof main.jitter === 'number') jitterMs = Math.round(main.jitter * 1000)
+        if (typeof main.packetsLost === 'number') lost = main.packetsLost
+        if (typeof main.packetsReceived === 'number') received = main.packetsReceived
+      }
 
       if (received + lost > 0) lossPct = Math.round((lost / (received + lost)) * 1000) / 10
 
@@ -861,6 +916,7 @@ export class LiveViewer {
     this.releaseScreenTrack()
     this.dc = null
     this.lastStats = null
+    this.mainVideoTrack = null
     this.relayTrack = null
     this.memberScreenStream = null
     if (this.micTrack) {

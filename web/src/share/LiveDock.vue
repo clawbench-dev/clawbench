@@ -45,6 +45,21 @@ withDefaults(defineProps<{ brand?: boolean; live?: boolean; title?: string }>(),
   transform: translateX(-50%);
   display: flex;
   align-items: center;
+  /* Centred, and allowed to wrap. The dock is a SIBLING of the stage, so the
+     stage's `overflow: hidden` never clips it: once the buttons stopped fitting
+     (7 controls × 44dp on a 320dp phone, and interface scaling multiplies the
+     whole pill) it spilled symmetrically past both edges and the outermost
+     buttons — brand and fullscreen — became untappable. Wrapping turns that
+     into a second row, which is ugly but usable; `justify-content` keeps each
+     row centred instead of left-aligned inside the widest one. */
+  justify-content: center;
+  flex-wrap: wrap;
+  /* `max-content` is what makes the ceiling below reachable. An absolutely
+     positioned box with `left: 50%` sizes into the space REMAINING to its right
+     — half the column — so without this the pill would wrap at 50% width (three
+     or four rows) instead of using the room it actually has. */
+  width: max-content;
+  max-width: calc(100% - 2 * var(--space-3, 6px));
   gap: var(--space-2, 4px);
   padding: var(--space-2, 4px);
   border-radius: var(--radius-full, 999px);
@@ -66,8 +81,8 @@ withDefaults(defineProps<{ brand?: boolean; live?: boolean; title?: string }>(),
 }
 
 .live-dock-logo {
-  width: 20px;
-  height: 20px;
+  width: calc(20 * var(--dp));
+  height: calc(20 * var(--dp));
   border-radius: 50%;
   display: block;
 }
@@ -76,10 +91,10 @@ withDefaults(defineProps<{ brand?: boolean; live?: boolean; title?: string }>(),
   position: absolute;
   right: 1px;
   bottom: 0;
-  width: 7px;
-  height: 7px;
+  width: calc(7 * var(--dp));
+  height: calc(7 * var(--dp));
   border-radius: 50%;
   background: var(--color-success, #3fb950);
-  box-shadow: 0 0 0 2px var(--bg-secondary, #161b22);
+  box-shadow: 0 0 0 calc(2 * var(--dp)) var(--bg-secondary, #161b22);
 }
 </style>

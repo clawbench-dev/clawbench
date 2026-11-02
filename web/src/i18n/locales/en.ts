@@ -3298,6 +3298,8 @@ export default {
       providerWireLabel: 'Codex wire API (affects codex only)',
       providerWireResponses: 'Responses API (default)',
       providerWireChat: 'Chat Completions (gateways that only serve /chat/completions)',
+      providerWireHint: 'Codex only. A Codex session that is already connected keeps the old value until it is restarted.',
+      providerAuthUnsupported: 'The "{mode}" auth mode cannot be used with the {protocol} protocol — every turn of an agent bound to this provider will fail. Switch to "auto" or x-api-key.',
       providerPresetPlaceholder: 'Pick a provider preset (optional)',
       providerPresetTitle: 'Choose a provider',
       providerPresetSearch: 'Search name, id or endpoint',
@@ -3545,6 +3547,7 @@ export default {
       trustedCerts: 'Trusted Certificates',
       trustedCertsDesc: 'Forget the self-signed certificates remembered for a server (bound to the certificate fingerprint). The next connection asks again.',
       trustedCertsCleared: 'Cleared. The next connection will ask again.',
+      trustedCertsConfirm: 'Forget every trusted self-signed certificate? Each such server will ask again on its next connection.',
       tlsSection: 'HTTPS certificate',
       tlsPanelDesc:
         'HTTPS is required before viewers can share a screen or use a microphone — browsers only expose those APIs in a secure context. The certificate covers every address this machine has; regenerate it after changing networks.',

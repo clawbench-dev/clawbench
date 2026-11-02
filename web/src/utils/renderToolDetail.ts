@@ -525,10 +525,10 @@ export function hasRenderableAskQuestions(input: unknown): boolean {
  * easily as "submit". The words match the labels the shortcut help dialog
  * already uses, so the two surfaces agree.
  *
- * Both halves are localized (`tool.askUser.submitHint` = "提交（{key}）" /
- * "Submit ({key})"), so the hint follows the UI language like every other
- * string on the card — a hardcoded English "Submit" would sit next to a
- * Chinese 提交 button.
+ * Both halves are localized (`tool.askUser.submitHint` renders as
+ * "Submit ({key})" in English and as the equivalent Chinese sentence in zh),
+ * so the hint follows the UI language like every other string on the card —
+ * a hardcoded English "Submit" would sit next to a localized button label.
  *
  * Read from the shared platform axis rather than re-deriving "is this a Mac"
  * here: a local copy of that judgement is exactly what drifted when four

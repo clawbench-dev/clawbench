@@ -2153,10 +2153,12 @@ describe('FileManagerContent — context menu hit zone', () => {
     expect(wrapper.vm.ctxMenu.entry).toBeNull()
   })
 
-  it('treats the parent-dir line of a search hit as outside the name zone', async () => {
-    // Search results have no "current directory", so an outside-zone
-    // right-click cannot show the empty-area menu — it dismisses instead of
-    // opening an entry menu for the row it happens to sit on.
+  it('treats the whole search-result row as the entry zone, parent-dir line included', async () => {
+    // Search results have no "current directory", so a right-click that falls
+    // through to the empty-area menu would do nothing at all (that menu targets
+    // the browsed directory). Search rows therefore belong to the entry in
+    // full — the parent-dir line, the meta column and the reveal button
+    // included — so the menu opens for the row the click sits on.
     searchState.query = 'main'
     searchState.recursive = true
     searchState.results = [
@@ -2169,8 +2171,8 @@ describe('FileManagerContent — context menu hit zone', () => {
     expect(target).toBeTruthy()
     await wrapper.vm.handleCtxMenu({ clientX: 10, clientY: 20, target })
     await nextTick()
-    expect(wrapper.vm.ctxMenu.visible).toBe(false)
-    expect(wrapper.vm.ctxMenu.entry).toBeNull()
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry?.path).toBe('cmd/main.go')
   })
 
   it('grid: opens the entry menu on the tile name', async () => {

@@ -193,14 +193,24 @@ function pathFromUrl(): string {
  * target of a `?path=` deep link, or a link followed inside a shared document)
  * hands off to ShareView — the backend reports which one it is, so this view
  * never has to stat anything itself.
+ *
+ * Requests are raced on purpose: clicking into a folder and then pressing Back
+ * (or opening another folder) leaves two fetches in flight, and the network may
+ * answer them in either order. Only the newest one may write, or the listing
+ * shows folder A while the URL says B — which reads as "I clicked the wrong
+ * thing" and survives until a reload.
  */
+let resolveGen = 0
+
 async function resolve(target: string) {
+  const gen = ++resolveGen
   loading.value = true
   error.value = ''
   requestedPath.value = target
   try {
     const query = target ? `?path=${encodeURIComponent(target)}` : ''
     const resp = await fetch(shareApiUrl('list') + query)
+    if (gen !== resolveGen) return
     if (!resp.ok) {
       error.value = t('share.dir.notFound')
       listing.value = null
@@ -208,6 +218,8 @@ async function resolve(target: string) {
       return
     }
     const data = (await resp.json()) as ShareListing
+    // Parsing is async too, so the generation has to be re-checked here.
+    if (gen !== resolveGen) return
     if (data.kind === 'file') {
       mode.value = 'file'
       filePath.value = data.path
@@ -217,11 +229,13 @@ async function resolve(target: string) {
     mode.value = 'listing'
     listing.value = data
   } catch {
+    if (gen !== resolveGen) return
     error.value = t('share.dir.notFound')
     listing.value = null
     mode.value = 'listing'
   } finally {
-    loading.value = false
+    // A superseded request must not clear the spinner the newer one raised.
+    if (gen === resolveGen) loading.value = false
   }
 }
 

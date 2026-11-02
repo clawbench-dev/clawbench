@@ -304,7 +304,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
       })
       toast.show(gt('task.exec.executionDeleted'), { icon: 'success', type: 'success' })
     } catch {
-      toast.show(gt('task.exec.actionFailed'), { icon: 'error', type: 'error' })
+      toast.show(gt('task.actionFailed'), { icon: 'error', type: 'error' })
       return
     }
     await reloadExecutions()
@@ -319,7 +319,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
       })
       toast.show(gt('task.exec.allExecutionsDeleted'), { icon: 'success', type: 'success' })
     } catch {
-      toast.show(gt('task.exec.actionFailed'), { icon: 'error', type: 'error' })
+      toast.show(gt('task.actionFailed'), { icon: 'error', type: 'error' })
       return
     }
     await reloadExecutions()
@@ -342,7 +342,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
     try {
       await apiPut(`/api/tasks/${task.value.id}`, { action: 'read' })
     } catch {
-      toast.show(gt('task.exec.actionFailed'), { icon: 'error', type: 'error' })
+      toast.show(gt('task.actionFailed'), { icon: 'error', type: 'error' })
       return
     }
     for (const exec of executions.value) {

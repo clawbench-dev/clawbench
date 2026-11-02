@@ -443,14 +443,29 @@ vi.mock('@/composables/useSkillsState', async (importOriginal) => ({
   ensureSkillsLoaded: (...a: unknown[]) => mockEnsureSkillsLoaded(...a),
 }))
 
-// Mock useVoiceInput — controllable fake for voice input tests
-const mockVoiceToggle = vi.fn()
+// Mock useVoiceInput — controllable fake for voice input tests.
+//
+// `startText` mirrors the REAL composable's captured prefix: start(prefix)
+// snapshots the box and a late transcript is appended to that snapshot. The
+// fake keeps it in a ref so a test can drive "send → transcript arrives" and
+// see whether the sent text comes back. `simulateTranscript` below is exactly
+// what the real appendText/setPartial do with it.
+const mockVoiceStartText = ref('')
+// Only the START call captures the box; the release calls toggle() with no
+// argument (the real composable then just stops, leaving the snapshot alone).
+const mockVoiceToggle = vi.fn((prefix?: string) => {
+  if (prefix !== undefined) mockVoiceStartText.value = prefix
+})
 const mockVoiceStart = vi.fn()
 const mockVoiceStop = vi.fn()
 const mockVoiceState = ref('idle')
 const mockVoiceInputText = ref('')
 const mockVoiceShortcutKey = vi.fn(() => 'F9')
 const mockVoiceCancel = vi.fn()
+const mockVoiceSetStartText = vi.fn((text: string) => {
+  mockVoiceStartText.value = text
+  mockVoiceInputText.value = text
+})
 vi.mock('@/composables/useVoiceInput', () => ({
   useVoiceInput: () => ({
     state: mockVoiceState,
@@ -465,6 +480,7 @@ vi.mock('@/composables/useVoiceInput', () => ({
     appendText: vi.fn(),
     setState: vi.fn(),
     setInputText: vi.fn(),
+    setStartText: mockVoiceSetStartText,
     shortcutKey: mockVoiceShortcutKey,
   }),
 }))
@@ -3739,13 +3755,25 @@ describe('ChatInputBar', () => {
   describe('voice input', () => {
     beforeEach(() => {
       mockVoiceToggle.mockReset()
+      // mockReset() drops the implementation, so restore the real composable's
+      // contract: start(prefix) captures the box, stop() leaves it alone.
+      mockVoiceToggle.mockImplementation((prefix?: string) => {
+        if (prefix !== undefined) mockVoiceStartText.value = prefix
+      })
       mockVoiceStart.mockReset()
       mockVoiceStop.mockReset()
       mockVoiceShortcutKey.mockReset()
       mockVoiceShortcutKey.mockReturnValue('F9')
       mockVoiceInputText.value = ''
+      mockVoiceStartText.value = ''
       mockVoiceState.value = 'idle'
     })
+
+    /** What the real composable does when the engine answers: append the
+     *  transcript to the text the dictation started from. */
+    function simulateTranscript(text: string) {
+      mockVoiceInputText.value = mockVoiceStartText.value + text
+    }
 
     it('long-press on send does not open quick-send menu', async () => {
       vi.useFakeTimers()
@@ -3777,6 +3805,107 @@ describe('ChatInputBar', () => {
       // The current text is handed over as the prefix so the transcript is
       // appended to it instead of replacing it.
       expect(mockVoiceToggle).toHaveBeenCalledWith('已有内容')
+      wrapper.unmount()
+      vi.useRealTimers()
+    })
+
+    // A slow tap with text in the box is still a send. Regression: the
+    // long-press handler set `voiceJustRecorded` unconditionally, so holding
+    // the send button ≥500ms (hand tremor, a slow device) started dictation and
+    // then swallowed the release click — the message never went out and a
+    // second tap was needed. Users read that as "the send button sometimes does
+    // nothing".
+    it('long-press with text present still sends on release', async () => {
+      vi.useFakeTimers()
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '请看一下这个改动'
+      await wrapper.vm.$nextTick()
+      const sendBtn = wrapper.find('.chat-send-btn')
+
+      await sendBtn.trigger('pointerdown')
+      vi.advanceTimersByTime(600)
+      // Dictation still starts, appending to the existing text (unchanged
+      // behavior — see the case above).
+      expect(mockVoiceToggle).toHaveBeenCalledWith('请看一下这个改动')
+
+      await sendBtn.trigger('pointerup')
+      await sendBtn.trigger('click')
+
+      expect(wrapper.emitted('send')?.[0]).toEqual(['请看一下这个改动'])
+      // And the gesture must not leave the mic recording: start (prefix) then
+      // stop is exactly two calls.
+      expect(mockVoiceToggle.mock.calls).toEqual([['请看一下这个改动'], []])
+
+      wrapper.unmount()
+      vi.useRealTimers()
+    })
+
+    // The send now goes out (see the case above), so the OTHER half of that
+    // gesture must be right too: the dictation that the long press started is
+    // still in flight when the message leaves, and its transcript must not drag
+    // the sent text back into the box.
+    //
+    // Regression: `clearInput()` only cleared the component's copy of the text.
+    // The composable keeps its own snapshot (taken by start(prefix)) and builds
+    // the transcript on top of it, so the box came back as "sent text +
+    // transcript" — one tap away from sending the same message twice.
+    //
+    // The full order matters and is what the old assertion missed: send →
+    // composer cleared by the parent → engine answers.
+    it('a transcript arriving after the send does not put the sent text back', async () => {
+      vi.useFakeTimers()
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '请看一下这个改动'
+      await wrapper.vm.$nextTick()
+      const sendBtn = wrapper.find('.chat-send-btn')
+
+      await sendBtn.trigger('pointerdown')
+      vi.advanceTimersByTime(600)
+      // Dictation captured the box as its start text.
+      expect(mockVoiceStartText.value).toBe('请看一下这个改动')
+
+      await sendBtn.trigger('pointerup')
+      await sendBtn.trigger('click')
+      expect(wrapper.emitted('send')?.[0]).toEqual(['请看一下这个改动'])
+
+      // ChatPanelContent clears the composer right after a successful send.
+      wrapper.vm.clearInput()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('')
+
+      // ...and only then does the engine answer.
+      simulateTranscript('听写')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('听写')
+      expect(wrapper.vm.inputText).not.toContain('请看一下这个改动')
+
+      wrapper.unmount()
+      vi.useRealTimers()
+    })
+
+    // A failed send restores the text; the in-flight dictation must then append
+    // to the RESTORED message rather than replace it (clearInput had just told
+    // the composable the box was empty).
+    it('restoring after a failed send keeps the dictation start text in step', async () => {
+      vi.useFakeTimers()
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '请看一下这个改动'
+      await wrapper.vm.$nextTick()
+      const sendBtn = wrapper.find('.chat-send-btn')
+
+      await sendBtn.trigger('pointerdown')
+      vi.advanceTimersByTime(600)
+      await sendBtn.trigger('pointerup')
+      await sendBtn.trigger('click')
+      wrapper.vm.clearInput()
+      // The request failed → the parent puts the user's text back.
+      wrapper.vm.restoreInput('请看一下这个改动')
+      await wrapper.vm.$nextTick()
+
+      simulateTranscript('听写')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('请看一下这个改动听写')
+
       wrapper.unmount()
       vi.useRealTimers()
     })

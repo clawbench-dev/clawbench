@@ -9,6 +9,7 @@
         v-for="cat in group.items"
         :key="cat.id"
         class="settings-index__row"
+        :data-category="cat.id"
         @click="$emit('navigate', cat.id)"
       >
         <div class="settings-index__left">

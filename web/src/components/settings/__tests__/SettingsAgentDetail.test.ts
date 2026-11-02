@@ -1,6 +1,22 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
+
+const { mockApiPatch, mockApiGet } = vi.hoisted(() => ({ mockApiPatch: vi.fn(), mockApiGet: vi.fn() }))
+
+// The provider-binding path calls the real HTTP helper directly (it is the one
+// save that must carry confirm_config_write in the same request), so the module
+// is mocked here; everything else keeps the real implementation.
+vi.mock('@/utils/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/api')>()
+  return {
+    ...actual,
+    apiPatch: (...args: unknown[]) => mockApiPatch(...args),
+    // The page loads the provider list on mount; stub it so the picker options
+    // are deterministic instead of depending on jsdom's fetch.
+    apiGet: (...args: unknown[]) => mockApiGet(...args),
+  }
+})
 
 const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDeleteAgent, mockDuplicateAgent, mockDefaultAgentId, mockPopulateACPStateFromCache, mockAgentsLoaded } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
@@ -84,6 +100,7 @@ vi.mock('vue-i18n', async (importOriginal) => {
         'settings.items.agentCopied': 'Agent duplicated',
         'settings.items.agentCopyFailed': 'Duplicate failed',
         'settings.items.agentCopyNameTaken': 'An agent with this name already exists',
+        'settings.items.providerNoKey': 'No key',
       }
       if (key === 'settings.items.agentSelfTestDeepReply' && params) return `Reply: ${params.reply}`
       if (key === 'settings.items.agentSelfTestDeepMeta' && params) {
@@ -231,6 +248,7 @@ describe('SettingsAgentDetail', () => {
     mockGetAgent.mockReturnValue(baseAgent)
     mockAgentsLoaded.value = true
     mockDuplicateAgent.mockResolvedValue(undefined)
+    mockApiGet.mockResolvedValue({ providers: [] })
   })
 
   it('renders SettingsItem children for a basic CLI agent', () => {
@@ -1089,5 +1107,67 @@ describe('SettingsAgentDetail', () => {
   it('hides the deep block when no deep run has happened', () => {
     const wrapper = mountDetail()
     expect(wrapper.find('.settings-agent-detail__selftest-deep').exists()).toBe(false)
+  })
+
+  // ─── Provider binding failures ─────────────────
+
+  /** Emit a new value on the model-provider select row. */
+  async function bindProvider(wrapper: ReturnType<typeof mountDetail>, value: unknown) {
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'settings.items.agentProvider')
+    expect(item, 'the provider row must render for a backend with protocols').toBeDefined()
+    item!.vm.$emit('update:model-value', value)
+    await flushPromises()
+  }
+
+  it('surfaces the backend reason when binding a provider is refused', async () => {
+    // The server answers this path with the actionable part — which agents
+    // conflict on the protocol, why the provider is invalid, or that the
+    // summary model already uses it. "Save failed" hides all of it.
+    mockApiPatch.mockRejectedValue(
+      new Error('openai 提供商不能用于只读 anthropic 协议的后端（冲突智能体：A、B）'),
+    )
+    const wrapper = mountDetail({ providerProtocols: ['anthropic'] })
+
+    await bindProvider(wrapper, 5)
+
+    expect(mockApiPatch).toHaveBeenCalledWith(
+      '/api/agents',
+      expect.objectContaining({ id: 'test-agent', provider_id: 5 }),
+    )
+    expect(mockToastShow).toHaveBeenCalledWith(
+      'openai 提供商不能用于只读 anthropic 协议的后端（冲突智能体：A、B）',
+      expect.objectContaining({ type: 'error' }),
+    )
+  })
+
+  it('marks a provider with no stored key in the binding picker', async () => {
+    // A keyless provider is still bindable (the user may paste the key after
+    // binding), but every turn fails until it is filled in — so the option has
+    // to say so, exactly like the orange badge on the provider list.
+    mockApiGet.mockResolvedValue({
+      providers: [
+        { id: 5, name: 'Ready', protocol: 'anthropic', baseUrl: 'https://a', hasKey: true },
+        { id: 6, name: 'Bare', protocol: 'anthropic', baseUrl: 'https://b', hasKey: false },
+      ],
+    })
+    const wrapper = mountDetail({ providerProtocols: ['anthropic'] })
+    await flushPromises()
+
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'settings.items.agentProvider')
+    expect(item).toBeDefined()
+    const options = item!.props('options') as { label: string; value: unknown }[]
+    expect(options.find((o) => o.value === 6)?.label).toContain('No key')
+    expect(options.find((o) => o.value === 5)?.label).not.toContain('No key')
+  })
+
+  it('falls back to the generic message when the refusal carries no text', async () => {
+    mockApiPatch.mockRejectedValue(new Error(''))
+    const wrapper = mountDetail({ providerProtocols: ['anthropic'] })
+
+    await bindProvider(wrapper, 6)
+
+    expect(mockToastShow).toHaveBeenCalledWith('Save failed', expect.objectContaining({ type: 'error' }))
   })
 })

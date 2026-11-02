@@ -386,6 +386,7 @@ import {
   type CaptureSource,
 } from '@/composables/useLiveShare'
 import { groupNoteSegments, useLiveNotes, withMeetingFileEvents } from '@/composables/useLiveNotes'
+import { useMeetingHistory } from '@/composables/useMeetingHistory'
 import { meetingFileEntries, meetingFilesVersion } from '@/utils/meetingFileTracker'
 import { DEFAULT_DEVICE, useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useScreenWindow, ANNOTATE_WINDOW_NAME, SCREEN_WINDOW_NAME } from '@/composables/useScreenWindow'
@@ -404,7 +405,7 @@ import LiveAnnotateOverlay from '@/share/LiveAnnotateOverlay.vue'
 import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
 import MemberScreenSurface from './MemberScreenSurface.vue'
 import { parseControlMessage, toInjectorEvent, type ControlMessage } from '@/share/liveControl'
-import { chunkChatHistory } from '@/share/chatHistory'
+import { chunkChatHistory, appendChatMessage, trimChat } from '@/share/chatHistory'
 import { viewerLabel } from '@/components/live/viewerLabels'
 import { appLog } from '@/utils/appLog'
 // The same section / hint / checkbox primitives the create form uses.
@@ -414,6 +415,16 @@ import '@/assets/meeting-form.css'
 import '@/assets/modal-footer-btn.css'
 
 const emit = defineEmits<{ ended: [token: string] }>()
+/**
+ * Whether this stage is the surface the host is looking at.
+ *
+ * The shell keeps the component MOUNTED even when it shows the record list (a
+ * meeting you leave is still running, and its chat and pending approvals must
+ * survive the trip), so "is this rendered" is no longer the same question as
+ * "is this visible". Anything that grabs the screen on its own — the member's
+ * picture going full screen — has to ask this instead.
+ */
+const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true })
 
 const { t } = useI18n()
 const toast = useToast()
@@ -636,7 +647,14 @@ function persistChat(msg: ControlMessage): void {
       viewerId: msg.from === 'host' ? '' : msg.from,
       text: msg.text,
     }),
-  }).catch((e) => appLog.w('MeetingStage', 'persist chat failed', e))
+  })
+    .then((resp) => {
+      // A refused write is not a transport error, so `.catch` alone never saw
+      // it: a chat row lost to a busy database or an expired token looked
+      // exactly like one that was saved.
+      if (!resp.ok) throw new Error(`status ${resp.status}`)
+    })
+    .catch((e) => appLog.w('MeetingStage', 'persist chat failed', e))
 }
 
 function sendChat(text: string): void {
@@ -649,8 +667,48 @@ function sendChat(text: string): void {
     at: Date.now(),
   }
   share.sendControl(msg)
-  chatMessages.value = [...chatMessages.value, { ...msg, self: true }]
+  // Bounded: a meeting runs for hours and every line stays in this array until
+  // the stage unmounts.
+  chatMessages.value = appendChatMessage(chatMessages.value, { ...msg, self: true })
   persistChat(msg)
+}
+
+/**
+ * Bring back the lines this client never saw arrive.
+ *
+ * Live lines only exist in this component's array, so anything archived before
+ * it mounted (the app was reloaded mid-meeting) or by another host device would
+ * be missing from the pane forever. The stored rows carry the same client id
+ * the live ones use, which is what makes the merge idempotent.
+ */
+let chatHistoryGen = 0
+async function loadChatHistory(): Promise<void> {
+  const token = share.token.value
+  if (!token) return
+  const gen = ++chatHistoryGen
+  try {
+    const { messages } = await useMeetingHistory().chat(token)
+    // The share may have ended, or another one started, while this was in
+    // flight: its rows are not ours to append.
+    if (gen !== chatHistoryGen || share.token.value !== token) return
+    const known = new Set(chatMessages.value.map((m) => m.id))
+    const restored = messages
+      .filter((m) => m.clientId && !known.has(m.clientId))
+      .map((m) => ({
+        id: m.clientId,
+        from: m.viewerId || 'host',
+        name: m.speaker,
+        text: m.text,
+        at: m.at,
+        // Only the host's own lines are mirrored to the right; `viewerId` is
+        // empty exactly for those.
+        self: !m.viewerId,
+      }))
+    if (restored.length === 0) return
+    chatMessages.value = trimChat([...restored, ...chatMessages.value].sort((a, b) => a.at - b.at))
+  } catch (e) {
+    appLog.d('MeetingStage', 'chat history load failed', e)
+  }
 }
 
 function onControl(msg: ControlMessage): void {
@@ -665,21 +723,18 @@ function onControl(msg: ControlMessage): void {
     return
   }
   if (msg.t === 'chat') {
-    chatMessages.value = [
-      ...chatMessages.value,
-      {
-        id: msg.id,
-        from: msg.from,
-        // The wire `name` is untrusted (a viewer could label itself "主持人");
-        // prefer the nickname the server accepted for that viewer.
-        name:
-          share.viewers.value.find((v) => v.id === msg.from)?.name ||
-          t('share.live.viewerName', { id: msg.from ?? '' }),
-        text: msg.text,
-        at: msg.at,
-        self: false,
-      },
-    ]
+    chatMessages.value = appendChatMessage(chatMessages.value, {
+      id: msg.id,
+      from: msg.from,
+      // The wire `name` is untrusted (a viewer could label itself "主持人");
+      // prefer the nickname the server accepted for that viewer.
+      name:
+        share.viewers.value.find((v) => v.id === msg.from)?.name ||
+        t('share.live.viewerName', { id: msg.from ?? '' }),
+      text: msg.text,
+      at: msg.at,
+      self: false,
+    })
     if (activeTab.value !== 'chat' && !screenChatOpen.value) unread.value += 1
     persistChat(msg)
     return
@@ -711,8 +766,20 @@ function onControl(msg: ControlMessage): void {
     }
     const payload = toInjectorEvent(msg)
     if (!payload) return
-    void Promise.resolve(bridge.remoteControl(payload)).then((res) => {
+    const inject = bridge.remoteControl
+    // The injection runs in the shell's input helper, which can refuse (no
+    // permission, security software, a helper that failed to start). Every
+    // mouse move would otherwise become an unhandled rejection and the control
+    // would fail silently.
+    void (async () => {
+      const res = await inject(payload)
       if (res && typeof res === 'object' && !res.supported && !controlUnsupportedWarned) {
+        controlUnsupportedWarned = true
+        toast.show(t('liveShare.controlUnsupported'), { type: 'error', icon: 'warning' })
+      }
+    })().catch((e) => {
+      appLog.w('MeetingStage', 'remote control injection failed', e)
+      if (!controlUnsupportedWarned) {
         controlUnsupportedWarned = true
         toast.show(t('liveShare.controlUnsupported'), { type: 'error', icon: 'warning' })
       }
@@ -797,6 +864,9 @@ watch(
   () => share.state.value,
   (next) => {
     if (next === 'publishing') return
+    // A history request that was in flight must not repopulate a finished
+    // meeting's chat.
+    chatHistoryGen += 1
     controlledBy.value = ''
     controlRequests.value = new Set()
     presence.value = {}
@@ -925,6 +995,9 @@ onMounted(() => {
     share.setControlSupported(ok)
   })
   if (notes.phase.value === 'recording') void notes.refresh()
+  // The stage stays mounted across the meeting list, so this only matters for
+  // the lines archived before it existed (a reload, or another host device).
+  void loadChatHistory()
   // The source list is what the picture grid draws; the camera probe rides
   // along in the same call, so a machine without a camera does not offer a
   // group that can only fail.
@@ -1062,22 +1135,57 @@ watch(
   },
 )
 
+/**
+ * The member's picture goes full screen as soon as it arrives — but only while
+ * this stage is what the host is looking at. The component now stays mounted
+ * behind the record list, and an overlay there would cover the list the host is
+ * reading.
+ */
+function maybeOpenRemoteScreen(): void {
+  const stream = share.remoteScreenStream.value
+  if (!stream) {
+    autoOpenedStream = null
+    screenFullscreen.value = false
+    closeScreenWindow()
+    return
+  }
+  if (!props.active) return
+  // The picture comes to the host, not the other way round: fill the screen as
+  // soon as the member starts sharing instead of waiting for a click.
+  if (autoOpenedStream === stream) return
+  autoOpenedStream = stream
+  openScreenFullscreen()
+}
+
+watch(() => share.remoteScreenStream.value, maybeOpenRemoteScreen, { immediate: true })
+// The full-screen overlay is a `Teleport to="body"`, so `v-show` cannot hide it:
+// leaving the stage for the record list would leave a black full-screen picture
+// on top of it, with only its own close button as a way out (the Android back
+// gesture lands on the list, not on the overlay). Closing it here is what the
+// old unmount used to do by accident.
+//
+// `autoOpenedStream` is cleared with it so coming back re-opens the picture the
+// host was watching: keeping the mark would make the "already auto-opened"
+// guard skip the reopen.
 watch(
-  () => share.remoteScreenStream.value,
-  (stream) => {
-    if (!stream) {
-      autoOpenedStream = null
-      screenFullscreen.value = false
-      closeScreenWindow()
+  () => props.active,
+  (active) => {
+    if (active) {
+      maybeOpenRemoteScreen()
       return
     }
-    // The picture comes to the host, not the other way round: fill the screen
-    // as soon as the member starts sharing instead of waiting for a click.
-    if (autoOpenedStream === stream) return
-    autoOpenedStream = stream
-    openScreenFullscreen()
+    if (screenFullscreen.value) closeScreenFullscreen()
+    autoOpenedStream = null
   },
-  { immediate: true },
+)
+
+// A different meeting is a different chat: pull its archived lines once the
+// token exists (the stage mounts before the room does).
+watch(
+  () => share.token.value,
+  (token) => {
+    if (token) void loadChatHistory()
+  },
 )
 
 
@@ -1214,16 +1322,18 @@ watch(
    Accent, not red: red means an error or a destructive action in this UI, while
    an unread line is ordinary traffic. */
 .live-count {
-  min-width: 14px;
-  padding: 0 3px;
-  margin-left: 4px;
+  /* Every geometry in --dp: the font size already scaled, so a bare px box
+     overflowed the pill as soon as the interface scale went above 1. */
+  min-width: calc(14 * var(--dp));
+  padding: 0 calc(3 * var(--dp));
+  margin-left: calc(4 * var(--dp));
   border-radius: var(--radius-full, 999px);
   background: var(--accent-color, #4a90d9);
   color: #fff;
   /* Scales with the root font size like every other size in the app; there is
      no 10px token, so express it in --dp instead of a literal. */
   font-size: calc(10 * var(--dp));
-  line-height: 14px;
+  line-height: calc(14 * var(--dp));
   text-align: center;
 }
 

@@ -479,7 +479,7 @@ import LiveDockButton from './LiveDockButton.vue'
 import LiveStageLayout from './LiveStageLayout.vue'
 import { useInkBoard } from './useInkBoard'
 import { contentRectOf, toNormalized, type ContentRect, type ControlMessage } from './liveControl'
-import { mergeChatHistory } from './chatHistory'
+import { appendChatMessage, mergeChatHistory } from './chatHistory'
 import { ShareNotesPoller, fetchNotesSnapshot } from './liveNotesClient'
 import { getShareToken } from './shareMode'
 import { groupNoteSegments, withMeetingFileEvents, type LiveNoteSegment, type NoteFileEvent } from '@/composables/liveNotes'
@@ -998,7 +998,7 @@ function sendChat(text: string): void {
     at: Date.now(),
   }
   if (!viewer?.sendControl(msg)) return
-  chatMessages.value = [...chatMessages.value, { ...msg, self: true }]
+  chatMessages.value = appendChatMessage(chatMessages.value, { ...msg, self: true })
 }
 
 function applyControl(msg: ControlMessage): void {
@@ -1014,25 +1014,24 @@ function applyControl(msg: ControlMessage): void {
     return
   }
   if (msg.t === 'chat') {
-    chatMessages.value = [
-      ...chatMessages.value,
-      {
-        id: msg.id,
-        from: msg.from,
-        name: msg.name || t('share.live.viewerName', { id: msg.from }),
-        text: msg.text,
-        at: msg.at,
-        self: msg.from === viewer?.viewerId,
-      },
-    ]
+    chatMessages.value = appendChatMessage(chatMessages.value, {
+      id: msg.id,
+      from: msg.from,
+      name: msg.name || t('share.live.viewerName', { id: msg.from }),
+      text: msg.text,
+      at: msg.at,
+      self: msg.from === viewer?.viewerId,
+    })
     if (!chatOpen.value) unread.value += 1
     return
   }
   if (msg.t === 'ctrl-grant') {
     // The grant is addressed to ONE viewer. Without this check a broadcast
     // grant would put every viewer into "controlling" — their keydown handler
-    // would then swallow typing in the chat box.
-    if (msg.viewerId && msg.viewerId !== viewer?.viewerId) return
+    // would then swallow typing in the chat box. A grant with no id is not
+    // "everybody": it is a malformed frame, and treating it as a broadcast is
+    // exactly the failure mode this guard exists for.
+    if (!msg.viewerId || msg.viewerId !== viewer?.viewerId) return
     controlState.value = msg.granted ? 'granted' : 'none'
     if (msg.granted) resetZoom()
     return
@@ -1333,7 +1332,10 @@ const overlayDesc = computed(() => {
     case 'full':
       return t('share.live.fullDesc')
     case 'failed':
-      return failReason.value === 'ice'
+      // Both of these mean "the peer link was never built" — the socket worked
+      // and the media path did not — so they share the advice. 'negotiation' is
+      // the watchdog giving up on an answer that never came.
+      return failReason.value === 'ice' || failReason.value === 'negotiation'
         ? t('share.live.failedIceDesc')
         : t('share.live.failedDesc')
     default:
@@ -1345,9 +1347,12 @@ function attachStream(stream: MediaStream): void {
   const el = videoRef.value
   if (!el) return
   el.srcObject = stream
-  // Playback starts muted (autoplay policy). `needsSoundUnlock` only appears
-  // when the stream actually carries audio.
-  needsSoundUnlock.value = stream.getAudioTracks().length > 0
+  // Playback starts muted (autoplay policy), and the prompt is only useful
+  // while that is still true. Reading the ELEMENT rather than assuming: after
+  // `unlockSound` the mute state lives on the element (imperative, not tracked
+  // by Vue), so a re-attach — the publisher swapping source, or a renegotiation
+  // — would otherwise bring the prompt back over audio that is already playing.
+  needsSoundUnlock.value = el.muted && stream.getAudioTracks().length > 0
   void el.play().catch((e) => {
     appLog.w(TAG, 'autoplay blocked', e)
   })
@@ -1377,6 +1382,30 @@ function attachCamera(stream: MediaStream | null): void {
   if (stream) void el.play().catch((e) => appLog.w(TAG, 'camera play failed', e))
 }
 
+/**
+ * Mirror one viewer state into the page and run its terminal cleanup.
+ *
+ * One implementation for both sources of a state change: the viewer's own
+ * callback, and the negotiation watchdog (which fails the page without the
+ * viewer reporting anything). Doing the cleanup in only one of them left the
+ * timed-out path with a live transcript poll and a stale side tab.
+ */
+function applyViewerState(s: LiveViewerState, reason?: string): void {
+  state.value = s
+  if (reason) failReason.value = reason
+  if (s === 'ended' || s === 'full' || s === 'failed') {
+    talking.value = false
+    sharingScreen.value = false
+    screenSharer.value = ''
+    memberStream.value = null
+    // The room is gone, so the transcript endpoint 404s from here on.
+    // Fall back to the chat tab rather than closing the panel: the
+    // conversation is still worth reading after the stream drops.
+    stopNotesPolling()
+    if (sideTab.value === 'notes') sideTab.value = 'chat'
+  }
+}
+
 /** Gate callback: remember the name and connect. */
 function onJoin(name: string): void {
   nick.value = name
@@ -1396,6 +1425,10 @@ function start(): void {
   talking.value = false
   mutedByHost.value = false
   roster.value = []
+  // Armed here rather than only in the state watcher: the very first
+  // `connecting` is the value the ref was created with, so no watcher callback
+  // ever fires for it — and a socket that never opens would then wait forever.
+  armNegotiationWatchdog()
 
   viewer = new LiveViewer({
     token,
@@ -1418,21 +1451,7 @@ function start(): void {
         cameraMode.value = on
       },
       onCameraStream: attachCamera,
-      onStateChange: (s, detail) => {
-        state.value = s
-        if (detail?.reason) failReason.value = detail.reason
-        if (s === 'ended' || s === 'full' || s === 'failed') {
-          talking.value = false
-          sharingScreen.value = false
-          screenSharer.value = ''
-          memberStream.value = null
-          // The room is gone, so the transcript endpoint 404s from here on.
-          // Fall back to the chat tab rather than closing the panel: the
-          // conversation is still worth reading after the stream drops.
-          stopNotesPolling()
-          if (sideTab.value === 'notes') sideTab.value = 'chat'
-        }
-      },
+      onStateChange: (s, detail) => applyViewerState(s, detail?.reason),
       onTalkEnabled: (v) => {
         talkEnabled.value = v
       },
@@ -1582,12 +1601,60 @@ watch(controlState, (next) => {
   }
 })
 
+/**
+ * How long a viewer waits for media before giving up on the negotiation.
+ *
+ * The publisher answers an offer only when it can wire the m-line layout it
+ * expects. Anything else — a bundle from a different generation, an SDP the
+ * browser refuses, a publisher that silently dropped the frame — leaves the
+ * viewer waiting for an `answer` that never comes. There is no failure frame on
+ * that path, so without a watchdog the page spins on "协商中…" forever with no
+ * retry: the only way out is a reload, which usually reproduces it.
+ *
+ * 15s is comfortably longer than a LAN handshake (sub-second) plus ICE, and
+ * short enough that a stuck viewer is not left guessing.
+ */
+const NEGOTIATION_TIMEOUT_MS = 15_000
+let negotiationTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearNegotiationWatchdog(): void {
+  if (negotiationTimer) clearTimeout(negotiationTimer)
+  negotiationTimer = null
+}
+
+function armNegotiationWatchdog(): void {
+  clearNegotiationWatchdog()
+  negotiationTimer = setTimeout(() => {
+    negotiationTimer = null
+    if (state.value !== 'connecting' && state.value !== 'negotiating') return
+    // Release the half-open session first: its socket and peer connection will
+    // never carry media, and leaving them open means the retry races a second
+    // offer on the same room slot.
+    viewer?.close()
+    viewer = null
+    // `negotiation`, not `ice`: nothing was established, so the advice that
+    // fits is "the peer link could not be built", not "the network failed".
+    applyViewerState('failed', 'negotiation')
+  }, NEGOTIATION_TIMEOUT_MS)
+}
+
 watch(state, (s) => {
   if (s !== 'playing') talking.value = false
   if (s === 'playing') {
+    clearNegotiationWatchdog()
     startStatsPolling()
     onVisibility()
+    return
   }
+  if (s === 'connecting' || s === 'negotiating') {
+    armNegotiationWatchdog()
+    return
+  }
+  // Terminal (or idle): stop both timers. Leaving the stats interval running
+  // after the picture ended kept polling a closed peer connection every 3s for
+  // as long as the page stayed open.
+  clearNegotiationWatchdog()
+  stopStatsPolling()
 })
 
 let statsTimer: ReturnType<typeof setInterval> | null = null
@@ -1613,6 +1680,11 @@ function startStatsPolling(): void {
   }, 3000)
 }
 
+function stopStatsPolling(): void {
+  if (statsTimer) clearInterval(statsTimer)
+  statsTimer = null
+}
+
 // The tab used to be the only "header" left once the bar was removed, so keep
 // the share title there instead of a generic "ClawBench Share".
 watch(title, (v) => {
@@ -1631,8 +1703,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  if (statsTimer) clearInterval(statsTimer)
-  statsTimer = null
+  stopStatsPolling()
+  clearNegotiationWatchdog()
   document.removeEventListener('visibilitychange', onVisibility)
   window.removeEventListener('keydown', onControlKey, true)
   window.removeEventListener('compositionend', onControlComposition)
@@ -1667,6 +1739,20 @@ onBeforeUnmount(() => {
   /* Positioning context for the floating dock and the banners. */
   position: relative;
   background: var(--bg-primary, #0d1117);
+  /* How much of the bottom the dock occupies — one 44dp row plus the pill's own
+     2 × 4dp padding and its 1px borders. The control pill is positioned above
+     it, so the two cannot drift apart. */
+  --live-dock-height: calc(54 * var(--dp));
+}
+
+/* The dock wraps once its buttons stop fitting (seven 44dp controls do not fit
+   a 320dp phone, and interface scaling multiplies the whole pill), so on narrow
+   screens the control pill above it has to clear TWO rows: 2 × 44dp + 4dp gap +
+   2 × 4dp padding + borders. */
+@media (max-width: 520px) {
+  .live-share-view {
+    --live-dock-height: calc(102 * var(--dp));
+  }
 }
 
 .live-stage {
@@ -1794,8 +1880,8 @@ onBeforeUnmount(() => {
 }
 
 .live-quality__dot {
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
   background: var(--color-success, #3fb950);
 }
@@ -1819,7 +1905,7 @@ onBeforeUnmount(() => {
  */
 .live-screen-banner.live-control-banner {
   top: auto;
-  bottom: calc(var(--space-6, 12px) + env(safe-area-inset-bottom, 0px) + calc(52 * var(--dp)));
+  bottom: calc(var(--space-6, 12px) + env(safe-area-inset-bottom, 0px) + var(--live-dock-height));
   border-color: color-mix(in srgb, var(--color-red, #cf222e) 55%, transparent);
   color: var(--color-red, #cf222e);
 }
@@ -1938,8 +2024,8 @@ onBeforeUnmount(() => {
 }
 
 .live-speaker__dot {
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
   background: var(--color-success, #3fb950);
   animation: live-speaker-pulse 1.2s ease-in-out infinite;

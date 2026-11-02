@@ -372,13 +372,17 @@ function createVideoSink(width: number, height: number): VideoSink {
       track: generator,
       async write(bitmap) {
         if (!bitmap) return
+        // The frame holds a GPU texture and must be released whether or not the
+        // write succeeded: once the generator is closed every tick throws, and
+        // a 10 fps leak of VideoFrames is what makes a long share crawl.
+        let frame: VideoFrame | null = null
         try {
-          const frame = new VideoFrame(bitmap, { timestamp: performance.now() * 1000 })
+          frame = new VideoFrame(bitmap, { timestamp: performance.now() * 1000 })
           await writer.write(frame)
-          frame.close()
         } catch (e) {
           appLog.w(TAG, 'frame write failed', e)
         } finally {
+          frame?.close()
           bitmap.close()
         }
       },

@@ -347,7 +347,7 @@ describe('landing page', () => {
       // the real pixels: when they disagree, crawlers drop the image instead of
       // laying out the card.
       const doc = new JSDOM(html).window.document
-      const size = jpegSize(readFileSync(resolve(here, 'img/og.jpg')))
+      const size = jpegSize(readFileSync(resolve(here, 'img/og-2026-11.jpg')))
 
       expect(size).toEqual({ width: 1200, height: 630 })
       expect(doc.querySelector('meta[property="og:image:width"]')?.getAttribute('content')).toBe(

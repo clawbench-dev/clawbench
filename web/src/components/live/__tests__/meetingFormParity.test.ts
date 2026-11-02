@@ -133,7 +133,13 @@ describe('one meeting form language', () => {
 
   it('draws the 听记 switch with the shared checkbox row', () => {
     const stage = sourceOf(STAGE)
-    expect(stage).toMatch(/class="meeting-check"[\s\S]*?data-role="stage-notes"/)
+    // The notes checkbox must be INSIDE a `meeting-check` label — that is the
+    // whole point of the shared row. A plain `[\s\S]*?` would also be satisfied
+    // by the camera row above it paired with a `stage-notes` that had been moved
+    // out of any label, which is exactly the regression this guards. The
+    // tempered part refuses to cross a `</label>`, so the match only succeeds
+    // when both ends belong to the same element.
+    expect(stage).toMatch(/<label class="meeting-check">(?:(?!<\/label>)[\s\S])*?data-role="stage-notes"/)
     // The stage-only row language is gone; two checkbox looks on one screen is
     // the drift this file exists to prevent.
     expect(stage).not.toMatch(/class="live-check"/)

@@ -47,6 +47,8 @@ const i18n = createI18n({
           providerWireLabel: '接口协议',
           providerWireResponses: 'Responses API',
           providerWireChat: 'Chat Completions',
+          providerWireHint: '只影响 Codex，已连接的会话需重启',
+          providerAuthUnsupported: '「{mode}」不适用于 {protocol}',
           providerTestFailed: '连接失败',
           providerModelTestHint: '测试该模型',
           providerModelTestOk: '{model} · {ms} 毫秒',
@@ -134,6 +136,49 @@ describe('ProviderFormDialog', () => {
     // that keeps "responses" fails every turn.
     const edited = mountDialog({ provider: { ...existing, wireApi: 'chat' } })
     expect((edited.find('[data-role="wire-api"]').element as HTMLSelectElement).value).toBe('chat')
+  })
+
+  it('says a wire-API change only reaches a Codex session that is restarted', async () => {
+    const created = mountDialog()
+    expect(created.text()).not.toContain('已连接的会话需重启')
+
+    await created.find('.provider-grid select').setValue('openai')
+    expect(created.text()).toContain('已连接的会话需重启')
+  })
+
+  it('only offers the auth modes the chosen protocol can express', async () => {
+    const wrapper = mountDialog()
+    const authSelect = () => wrapper.find('[data-role="auth-mode"]')
+    const optionValues = () =>
+      authSelect().findAll('option').map((o) => (o.element as HTMLOptionElement).value)
+
+    // anthropic backends read both ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN.
+    expect(optionValues()).toEqual(['auto', 'x-api-key', 'bearer'])
+
+    // openai/gemini have no auth-token variable: picking bearer there made
+    // BuildProviderEnv refuse every turn, so it must not be offered at all.
+    await wrapper.find('[data-role="protocol"]').setValue('openai')
+    expect(optionValues()).toEqual(['auto', 'x-api-key'])
+
+    await wrapper.find('[data-role="protocol"]').setValue('gemini')
+    expect(optionValues()).toEqual(['auto', 'x-api-key'])
+  })
+
+  it('flags a stored auth mode the protocol cannot express instead of silently rewriting it', async () => {
+    // `existing` is an openai provider saved with authMode=bearer — exactly the
+    // pair that fails on every turn. It stays selected (so the user sees what is
+    // stored) and the form explains what to change.
+    const wrapper = mountDialog({ provider: existing })
+    const warning = wrapper.find('[data-role="auth-mode-warning"]')
+    expect(warning.exists()).toBe(true)
+    expect(warning.text()).toContain('bearer')
+    expect(warning.text()).toContain('openai')
+    expect((wrapper.find('[data-role="auth-mode"]').element as HTMLSelectElement).value).toBe('bearer')
+
+    // The stored value must survive an unrelated save untouched: rewriting it
+    // silently would change the user's configuration behind their back.
+    await wrapper.find('.mock-dialog .fbtn-primary').trigger('click')
+    expect(wrapper.emitted('submit')?.[0]).toEqual([expect.objectContaining({ authMode: 'bearer' })])
   })
 
   it('opens in edit mode prefilled and keeps the stored key hidden', () => {
@@ -272,6 +317,39 @@ describe('ProviderFormDialog', () => {
     expect(wrapper.emitted('submit')?.[1]).toEqual([expect.objectContaining({ clearApiKey: true })])
   })
 
+  it('does not throw away a key typed after ticking 清除密钥', async () => {
+    // The server applies clearApiKey first (`if ClearAPIKey { next.APIKey = "" }`),
+    // so sending both would report success while leaving the provider with no
+    // key — the next turn fails with a 401 and nothing points at the cause.
+    const wrapper = mountDialog({ provider: existing })
+    await wrapper.find('.provider-clear input').setValue(true)
+    await inputs(wrapper)[2].setValue('sk-brand-new')
+
+    // The checkbox follows the field, so the two cannot disagree on screen.
+    expect((wrapper.find('.provider-clear input').element as HTMLInputElement).checked).toBe(false)
+
+    await wrapper.find('.mock-dialog .fbtn-primary').trigger('click')
+    expect(wrapper.emitted('submit')?.[0]).toEqual([
+      expect.objectContaining({ apiKey: 'sk-brand-new', clearApiKey: false }),
+    ])
+  })
+
+  it('does not clear a key that the eye revealed after 清除密钥 was ticked', async () => {
+    // Same contradiction through the other door: revealing a stored key fills
+    // the field without an input event.
+    mockGet.mockResolvedValue({ apiKey: 'sk-stored' })
+    const wrapper = mountDialog({ provider: existing })
+    await wrapper.find('.provider-clear input').setValue(true)
+
+    await wrapper.find('.provider-key-toggle').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('.mock-dialog .fbtn-primary').trigger('click')
+    expect(wrapper.emitted('submit')?.[0]).toEqual([
+      expect.objectContaining({ apiKey: 'sk-stored', clearApiKey: false }),
+    ])
+  })
+
   it('takes the picked model set and keeps the default model in range', async () => {
     const wrapper = mountDialog({ provider: existing })
     await wrapper.findComponent(ProviderModelsPicker).vm.$emit('update:selected', ['m-b', 'm-c'])
@@ -379,4 +457,70 @@ describe('ProviderFormDialog', () => {
 
     expect(wrapper.find('.provider-model-result').exists()).toBe(false)
   })
+
+  it('discards a probe that answers after the form was reseeded for another provider', async () => {
+    // No second probe here: the reopen alone must invalidate the first one, or
+    // its verdict lands on a form that never asked for it (the two providers
+    // can both list the same model id, which is exactly when this is invisible
+    // in a screenshot but wrong in the data).
+    const first = deferred<{ ok: boolean; latencyMs: number }>()
+    mockPost.mockReturnValueOnce(first.promise)
+
+    const wrapper = mountDialog({ provider: existing })
+    await wrapper.find('[data-model-test="m-a"]').trigger('click')
+
+    await wrapper.setProps({ open: false })
+    await wrapper.setProps({ provider: { ...existing, id: 8, name: 'Other' }, open: true })
+    await flushPromises()
+
+    first.resolve({ ok: true, latencyMs: 999 })
+    await flushPromises()
+
+    expect(wrapper.find('.provider-model-result').exists()).toBe(false)
+    expect(wrapper.findAll('.provider-model-chip--ok')).toHaveLength(0)
+    // And the form is not left believing a probe is still running.
+    expect(wrapper.find('[data-model-test="m-a"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('never lands a probe result on another provider (close → switch → reopen)', async () => {
+    // ModalDialog keeps this component alive across close (v-if + v-show), so
+    // the probe of the previous provider outlives the form it was started from.
+    const first = deferred<{ ok: boolean; latencyMs: number }>()
+    const second = deferred<{ ok: boolean; error: string }>()
+    mockPost.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+
+    const wrapper = mountDialog({ provider: existing })
+    await wrapper.find('[data-model-test="m-a"]').trigger('click')
+
+    await wrapper.setProps({ open: false })
+    await wrapper.setProps({ provider: { ...existing, id: 8, name: 'Other' }, open: true })
+    await flushPromises()
+    expect(wrapper.find('.provider-model-result').exists()).toBe(false)
+
+    // A probe for the new provider is now the one in flight.
+    await wrapper.find('[data-model-test="m-a"]').trigger('click')
+    expect(wrapper.find('[data-model-test="m-a"]').attributes('disabled')).toBeDefined()
+
+    // The abandoned probe answers: no verdict in this form, and it must not
+    // release the in-flight flag of the probe that is actually running (that
+    // would let a second click fire a third request).
+    first.resolve({ ok: true, latencyMs: 999 })
+    await flushPromises()
+    expect(wrapper.find('.provider-model-result').exists()).toBe(false)
+    expect(wrapper.find('[data-model-test="m-a"]').attributes('disabled')).toBeDefined()
+
+    second.resolve({ ok: false, error: 'HTTP 404: model not found' })
+    await flushPromises()
+    expect(wrapper.find('.provider-model-result--fail').text()).toContain('model not found')
+    expect(wrapper.find('[data-model-test="m-a"]').attributes('disabled')).toBeUndefined()
+  })
 })
+
+/** A promise plus its resolver, for holding one probe open across a reopen. */
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}

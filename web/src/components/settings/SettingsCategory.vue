@@ -216,6 +216,7 @@ import { openExternalUrl } from '@/utils/externalLink'
 import { PROJECT_FEEDBACK_URL, PROJECT_GITHUB_URL, PROJECT_HOMEPAGE_URL } from '@/utils/projectLinks'
 import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
 import { isSummaryModelConfigured } from '@/utils/aiSummaryModel'
+import { providerNameOf } from '@/utils/providerNames'
 import { THEMES } from '@/utils/themeMeta'
 import type { OptionPreview, SelectOption } from './SettingsItem.vue'
 import { filterAvailableFonts, MONO_FONT_CHOICES, UI_FONT_CHOICES, MONO_FALLBACK_CHOICES, DEFAULT_MONO_STACK, DEFAULT_UI_STACK, buildFontStack, getCustomFontChoices, type FontChoice } from '@/utils/fontConfig'
@@ -263,10 +264,18 @@ const activeKey = ref<string | null>(null)
 const showPasswordDialog = ref(false)
 const summaryPickerOpen = ref(false)
 
-/** Current summary model, shown on the action row. */
+/** Current summary model, shown on the action row. Formatted like the picker's
+ *  own rows ("provider · model"): two providers can serve the same model id, and
+ *  the bare id made a switch between them look like nothing happened. The
+ *  provider name comes from the shared cache (see utils/providerNames), so this
+ *  row does not fire its own request; it falls back to the bare id until some
+ *  screen has loaded the provider list. */
 const summaryModelLabel = computed(() => {
-  const raw = (serverConfig.value.ai_summary as { model?: string } | undefined)?.model
-  return typeof raw === 'string' ? raw : ''
+  const cfg = serverConfig.value.ai_summary as { model?: string; provider_id?: number } | undefined
+  const model = typeof cfg?.model === 'string' ? cfg.model : ''
+  if (!model) return ''
+  const provider = providerNameOf(cfg?.provider_id)
+  return provider ? `${provider} · ${model}` : model
 })
 
 function openSummaryModelPicker() {
@@ -640,6 +649,28 @@ async function handleUpdate(item: ItemSpec, value: unknown) {
   }
 }
 
+/**
+ * Desktop-only row. The shell remembers each accepted self-signed certificate
+ * by origin + fingerprint; this is the only way to undo it without editing the
+ * store by hand.
+ *
+ * It wipes EVERY remembered certificate, so every self-signed server has to be
+ * re-accepted on its next connection — the same class of destructive action as
+ * deleting an agent or a provider, and confirmed the same way.
+ */
+async function forgetTrustedCerts() {
+  const native = getNative()
+  if (!native?.forgetTrustedCerts) return
+  const ok = await dialog.confirm(t('settings.items.trustedCertsConfirm'), { dangerous: true })
+  if (!ok) return
+  try {
+    await native.forgetTrustedCerts()
+    toast.show(t('settings.items.trustedCertsCleared'), { icon: 'success', type: 'success', duration: 3000 })
+  } catch {
+    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+  }
+}
+
 function handleClick(item: ItemSpec) {
   if (item.key === 'reconfigureServer') {
     try {
@@ -650,16 +681,7 @@ function handleClick(item: ItemSpec) {
     showPasswordDialog.value = true
   }
   if (item.key === 'trustedCerts') {
-    // Desktop-only row. The shell remembers each accepted self-signed
-    // certificate by origin + fingerprint; this is the only way to undo it
-    // without editing the store by hand.
-    const native = getNative()
-    if (native?.forgetTrustedCerts) {
-      void native
-        .forgetTrustedCerts()
-        .then(() => toast.show(t('settings.items.trustedCertsCleared'), { icon: 'success', type: 'success', duration: 3000 }))
-        .catch(() => toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 }))
-    }
+    void forgetTrustedCerts()
   }
   if (item.key === 'restartServer') {
     handleRestartServer()

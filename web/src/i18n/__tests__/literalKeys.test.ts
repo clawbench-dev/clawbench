@@ -70,14 +70,19 @@ describe('i18n literal keys', () => {
     return false
   }
 
-  it('resolves every literal t() key in both locales', () => {
+  it('resolves every literal t() / gt() key in both locales', () => {
     const root = webSrcRoot()
     const missing: string[] = []
 
     for (const file of sourceFiles(root)) {
       const src = readFileSync(file, 'utf8')
-      // A dotted key, single-quoted: t('a.b.c') / $t('a.b.c').
-      for (const m of src.matchAll(/\bt\(\s*'([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+)'/g)) {
+      // A dotted key, single-quoted: t('a.b.c') / $t('a.b.c') / gt('a.b.c').
+      // `gt` is the module-level translate used outside components (composables,
+      // utils); its keys were invisible here until it was added, and four of
+      // them had drifted to a namespace that does not exist
+      // (`task.exec.actionFailed` vs the real `task.actionFailed`) — the toast
+      // rendered the raw key.
+      for (const m of src.matchAll(/(?:\$?\bt|\bgt)\(\s*'([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+)'/g)) {
         const key = m[1]
         const path = key.split('.')
         if (!isPresent(lookup(en, path)) || !isPresent(lookup(zh, path))) {
@@ -108,7 +113,7 @@ describe('i18n literal keys', () => {
       const src = readFileSync(file, 'utf8')
       // Dotted keys only: a single-segment key is a locally-scoped one
       // (`useScope: 'local'`), which the global locale does not own.
-      for (const m of src.matchAll(/\bt\(\s*[^()]*?\?\s*'([a-zA-Z][\w]*(?:\.[\w]+)+)'\s*:\s*'([a-zA-Z][\w]*(?:\.[\w]+)+)'/g)) {
+      for (const m of src.matchAll(/(?:\$?\bt|\bgt)\(\s*[^()]*?\?\s*'([a-zA-Z][\w]*(?:\.[\w]+)+)'\s*:\s*'([a-zA-Z][\w]*(?:\.[\w]+)+)'/g)) {
         for (const key of [m[1], m[2]]) {
           const path = key.split('.')
           if (!isPresent(lookup(en, path)) || !isPresent(lookup(zh, path))) {
@@ -133,7 +138,7 @@ describe('i18n literal keys', () => {
 
     const keysFound = files.reduce((n, f) => {
       const src = readFileSync(f, 'utf8')
-      return n + [...src.matchAll(/\bt\(\s*'([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+)'/g)].length
+      return n + [...src.matchAll(/(?:\$?\bt|\bgt)\(\s*'([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+)'/g)].length
     }, 0)
     expect(keysFound).toBeGreaterThan(500)
   })

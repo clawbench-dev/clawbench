@@ -278,7 +278,7 @@
            swapping them for grey blocks would read as a navigation). -->
       <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
       <div v-else-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
-        <FileIcon path="" :is-dir="true" size="var(--empty-icon-size)" />
+        <FileIcon path="" :is-dir="true" size="var(--empty-icon-size)" class="empty-state__icon" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
       </div>
 
@@ -351,7 +351,7 @@
       </template>
       <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" class="file-grid-skeleton" variant="grid" :rows="12" :label="t('common.loading')" />
       <div v-else-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
-        <FileIcon path="" :is-dir="true" size="var(--empty-icon-size)" />
+        <FileIcon path="" :is-dir="true" size="var(--empty-icon-size)" class="empty-state__icon" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
       </div>
 
@@ -3514,7 +3514,10 @@ function scrollSelectedIntoView(path) {
 }
 
 /* The glyph's size/opacity come from `FileIcon`'s `--empty-icon-size` and the
-   global `.empty-state__icon` rule; only the gap above the text is local. */
+   global `.empty-state__icon` rule — `FileIcon` renders an `<img>`, so that
+   class has to be passed through explicitly (neither `svg` nor a bare
+   `.file-type-icon` matches the shared rule). Only the gap above the text is
+   local. */
 .empty-state .file-type-icon,
 .empty-state svg {
     margin-bottom: var(--space-6);

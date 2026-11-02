@@ -48,8 +48,13 @@
           >×</button>
         </span>
 
+        <!-- `clickable: false` — this sheet has no viewer to open a file into,
+             so the cards keep their "×" (removal is the whole point here) but
+             must not show a hand cursor / "open file" tooltip for a click that
+             goes nowhere. Not `readonly`: that would drop the "×" as well. -->
         <AttachmentTags
           :files="fileEntries"
+          :clickable="false"
           @remove="removeEntry"
         />
       </div>

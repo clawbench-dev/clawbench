@@ -97,6 +97,22 @@ export const CHAT_MAX_CHARS = 2000
 export const CHAT_HISTORY_MAX = 200
 
 /**
+ * How many chat lines a viewer keeps in memory.
+ *
+ * The replay bound above is not enough: the live `chat` frame appends without
+ * limit, and the panel renders every line it is given. A meeting is not an
+ * archive — a few hundred lines is a long meeting, and an audience member can
+ * push frames indefinitely (each one is relayed to everybody). Without a bound
+ * the page's memory and per-frame render cost grow with the meeting's length,
+ * which is what makes a phone grind to a halt near the end.
+ *
+ * Larger than the replay bound on purpose: a viewer that has been in the room
+ * the whole time should keep the conversation it actually read, while a late
+ * joiner only needs enough context to follow along.
+ */
+export const LIVE_CHAT_MAX = 500
+
+/**
  * Character budget for one history frame.
  *
  * `parseControlMessage` refuses frames over 64 KiB, and one line can be

@@ -89,6 +89,34 @@ describe('the empty-state glyph is one size, declared once', () => {
     expect(missing, 'these surfaces still draw their own empty glyph').toEqual([])
   })
 
+  it('puts the class on the glyph of each .empty-state container', () => {
+    // The file-level check above is necessary but blind: FileManagerContent has
+    // TWO empty states (search + directory) and only the search one carried the
+    // class, so "the file mentions empty-state__icon" stayed true while the
+    // directory glyph rendered at full opacity. Anchor on the container and
+    // require the opt-in on the glyph that follows it.
+    //
+    // The window is bounded so a sibling empty state further down the file
+    // cannot satisfy the check on this one's behalf; the glyph is the
+    // container's first child, so 400 characters is ample.
+    const WINDOW = 400
+    const offenders: string[] = []
+    let containers = 0
+    for (const f of EMPTY_STATES) {
+      const src = read(f)
+      for (const m of src.matchAll(/class="empty-state(?:[\s"][^"]*)?"/g)) {
+        containers++
+        const block = src.slice(m.index, m.index + WINDOW)
+        if (!/empty-state__icon|<MeetingEmpty/.test(block)) {
+          const line = src.slice(0, m.index).split('\n').length
+          offenders.push(`${f}:${line}: ${block.split('\n')[1]?.trim() ?? ''}`)
+        }
+      }
+    }
+    expect(containers, 'no .empty-state container was found — the anchors moved').toBeGreaterThan(0)
+    expect(offenders, 'these glyphs are not covered by .empty-state__icon').toEqual([])
+  })
+
   it('leaves no call site sizing its own glyph', () => {
     // A `:size` on the empty glyph is dead code (CSS wins) that reads like a
     // decision, and it is exactly how the nine sizes drifted apart. Checked

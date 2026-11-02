@@ -22,12 +22,16 @@
 import { ref, computed, defineAsyncComponent } from 'vue'
 import { ChevronDown, Terminal } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
 
-// Plain defineAsyncComponent (no loader/error chrome): this is a read-only
-// preview inside an already-collapsed card, so a failed chunk load should just
-// leave the section empty instead of rendering an error card.
+// The editor chunk is fetched over the network like any other. A bare
+// defineAsyncComponent caches the rejected pendingRequest forever, so one
+// failed fetch left this section permanently blank with no way back (and the
+// recovery policy is "one failure does not reload, a second within 10s does",
+// so a single transient error would never recover either). The shared builder
+// retries and then offers a visible error with a retry entry point.
 const TaskScriptEditor = defineAsyncComponent(
-  async () => (await import('@/components/task/TaskScriptEditor.vue')).default,
+  buildAsyncComponentOptions({ loader: () => import('@/components/task/TaskScriptEditor.vue') }),
 )
 
 import '@/assets/task-overview-card.css'

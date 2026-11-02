@@ -87,7 +87,9 @@ function submit(): void {
 .join-gate__label { margin-top: var(--space-2, 4px); font-size: var(--font-size-sm); font-weight: 500; color: var(--text-primary); }
 .join-gate__input {
   width: 100%;
-  height: calc(32 * var(--dp));
+  /* 44dp: the gate is the first thing a phone viewer meets, and this field is
+     the only way past it. */
+  min-height: calc(44 * var(--dp));
   padding: 0 var(--space-5, 10px);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm, 6px);
@@ -100,7 +102,8 @@ function submit(): void {
 .join-gate__hint { font-size: var(--font-size-xs); color: var(--text-muted); }
 .join-gate__btn {
   margin-top: var(--space-3, 6px);
-  height: calc(30 * var(--dp));
+  /* Same 44dp floor: "加入会议" is pressed with a thumb, not a cursor. */
+  min-height: calc(44 * var(--dp));
   border: 1px solid var(--accent-color);
   border-radius: var(--radius-sm, 6px);
   background: var(--accent-color);

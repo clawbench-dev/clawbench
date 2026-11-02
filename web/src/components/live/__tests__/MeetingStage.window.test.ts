@@ -164,11 +164,12 @@ function fakeWindow(): FakeWindow {
   }
 }
 
-function mountPanel() {
+function mountPanel(props: { active?: boolean } = {}) {
   // A fresh instance per mount: installing the same one twice trips
   // vue-i18n's "already set up" guard.
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
   return mount(MeetingStage, {
+    props,
     global: {
       plugins: [i18n],
       stubs: {
@@ -369,6 +370,29 @@ describe('MeetingStage windows', () => {
     expect(full?.querySelector('[data-action="screen-switch"]')?.textContent).toContain(
       'Open in a window',
     )
+  })
+
+  it('takes the full-screen picture down when the host leaves the stage', async () => {
+    ;(shareApi.screenSharer as { value: string }).value = 'v1'
+    ;(shareApi.remoteScreenStream as { value: unknown }).value = { id: 'screen' }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(document.querySelector('[data-role="screen-fullscreen"]')).not.toBeNull()
+
+    // Back / edge swipe moves the shell to the record list, which only HIDES the
+    // stage. The overlay is teleported to <body>, so it does not hide with it —
+    // and its z-index covers the list the host just navigated to.
+    await wrapper.setProps({ active: false })
+    await flushPromises()
+    expect(document.querySelector('[data-role="screen-fullscreen"]')).toBeNull()
+
+    // Coming back brings back the picture the host was watching.
+    await wrapper.setProps({ active: true })
+    await flushPromises()
+    expect(document.querySelector('[data-role="screen-fullscreen"]')).not.toBeNull()
+
+    wrapper.unmount()
   })
 
   it('moves the picture between the screen and its own window', async () => {

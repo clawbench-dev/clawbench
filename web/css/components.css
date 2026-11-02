@@ -1385,12 +1385,17 @@
    emits — presentation attributes lose to any CSS rule — so a call site must
    not pass `:size` for an empty glyph any more: it would be dead code that
    reads like a decision.
+
+   The colour has no `#…` fallback: every one of the 36 themes defines
+   `--text-muted`, and index.html sets `data-theme` from an inline script before
+   first paint, so the fallback could only ever fire on a broken build — where a
+   grey literal would hide the problem instead of showing it.
    ========================================================================== */
 .empty-state__icon {
     width: var(--empty-icon-size);
     height: var(--empty-icon-size);
     stroke-width: var(--empty-icon-stroke);
-    color: var(--text-muted, #999);
+    color: var(--text-muted);
     opacity: var(--opacity-muted);
     flex-shrink: 0;
 }

@@ -350,6 +350,40 @@ describe('MeetingDetail', () => {
     expect(w.emitted('quote')?.[0]).toEqual(['tok-1'])
   })
 
+  it('stops polling when it is closed while a poll is in flight', async () => {
+    // `onBeforeUnmount` only clears the timer that is already scheduled. A load
+    // that is in flight at that moment used to return, find the record still
+    // `generating`, and re-arm the timer — so a closed view kept requesting
+    // record + minutes + transcript + chat every 2.5 s until the process ended.
+    vi.useFakeTimers()
+    const rec = record({ status: 'generating', updatedAt: Date.now() })
+    let releasePoll: (() => void) | null = null
+    getMock
+      .mockImplementationOnce(async () => rec)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releasePoll = () => resolve(rec)
+          }),
+      )
+
+    const w = mountDetail()
+    try {
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(2500)
+      expect(getMock).toHaveBeenCalledTimes(2) // the poll really is in flight
+
+      w.unmount()
+      releasePoll?.()
+      await flushPromises()
+
+      await vi.advanceTimersByTimeAsync(2500 * 4)
+      expect(getMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('polls a just-ended meeting without blanking the panel', async () => {
     // The minutes job is requested by the host after its upload queue drains,
     // so a freshly ended record sits at `idle` for a while and this view polls

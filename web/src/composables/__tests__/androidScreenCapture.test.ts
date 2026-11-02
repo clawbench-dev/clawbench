@@ -53,6 +53,10 @@ class FakeMediaStream {
 }
 
 const writtenFrames: unknown[] = []
+/** Frames whose close() was called, in order. */
+const closedFrames: FakeVideoFrame[] = []
+/** When set, the generator's writer rejects the next write (a closed sink). */
+let writeFails = false
 
 class FakeVideoFrame {
   constructor(
@@ -60,7 +64,7 @@ class FakeVideoFrame {
     public init: { timestamp: number },
   ) {}
   close() {
-    /* no-op */
+    closedFrames.push(this)
   }
 }
 
@@ -70,6 +74,7 @@ class FakeVideoTrackGenerator extends FakeTrack {
   writable = {
     getWriter: () => ({
       write: async (frame: unknown) => {
+        if (writeFails) throw new Error('generator closed')
         this.written.push(frame)
         writtenFrames.push(frame)
       },
@@ -168,6 +173,8 @@ describe('startAndroidScreenCapture', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     writtenFrames.length = 0
+    closedFrames.length = 0
+    writeFails = false
     bridge.startScreenCapture.mockClear()
     bridge.stopScreenCapture.mockClear()
     bridge.takeScreenFrame.mockReset().mockReturnValue('')
@@ -231,6 +238,26 @@ describe('startAndroidScreenCapture', () => {
     // must keep the frame out of the (already closed) generator.
     expect(writtenFrames).toHaveLength(1)
     expect(bridge.stopScreenCapture).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes the frame even when the generator refuses the write', async () => {
+    bridge.getScreenCaptureState.mockReturnValue(
+      '{"state":"running","width":1080,"height":2400,"systemAudio":false}',
+    )
+    const handle = await startAndroidScreenCapture({})
+    bridge.takeScreenFrame.mockReturnValue(base64(new Uint8Array([1, 2, 3])))
+
+    // The writer starts rejecting once the sink is closed or errored, and the
+    // tick keeps firing 10 times a second. Every one of those frames holds a
+    // GPU texture, so a frame left unclosed here is a leak that only GC ends.
+    writeFails = true
+    tick()
+    await flush()
+
+    expect(writtenFrames).toHaveLength(0)
+    expect(closedFrames).toHaveLength(1)
+
+    handle.stop()
   })
 
   it('feeds system audio into the stream when the host reports it', async () => {

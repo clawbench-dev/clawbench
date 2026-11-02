@@ -84,6 +84,15 @@ const truncated = ref(false)
 
 let capture: LiveNotesCapture | null = null
 /**
+ * The stream each member's microphone arrives on, kept OUTSIDE the capture.
+ *
+ * 听记 can be switched off and on again mid-meeting, and a new capture starts
+ * with no channels: only a NEW join calls `addViewer`, so every member already
+ * in the room would stay silent in the transcript for the rest of the meeting.
+ * Remembering the streams is what lets `start()` re-attach them.
+ */
+const viewerStreams = new Map<string, MediaStream | null>()
+/**
  * Bumped by start() and reset(). Every async continuation captures it and
  * bails out when it no longer matches, because the module-level state is
  * shared: without this, a drain that finishes after the user closed the dialog
@@ -95,6 +104,8 @@ let sessionGen = 0
 let sessionToken = ''
 let sessionTitle = ''
 let pollTimer: ReturnType<typeof setTimeout> | null = null
+/** The upload drain started by a pause, so a later finish can wait for it. */
+let draining: Promise<void> | null = null
 let labelFor: (channel: string) => string = (channel) => channel
 
 /**
@@ -162,6 +173,13 @@ export function useLiveNotes() {
    * would capture whatever else the machine is playing, which is not what a
    * meeting transcript is for, and it duplicated every remote voice into a
    * second channel. Viewers are added later as they join.
+   *
+   * `resume` restarts the recorder of the SAME meeting (听记 was switched off for
+   * a moment). It keeps the segments, the minutes and the member channels — a
+   * plain start would wipe the transcript and make the meeting's minutes cover
+   * only the part recorded after the toggle. A different token always starts
+   * clean: the module is a singleton and would otherwise show the previous
+   * meeting's transcript.
    */
   function start(opts: {
     token: string
@@ -169,11 +187,19 @@ export function useLiveNotes() {
     micStream: MediaStream | null
     title?: string
     label?: (channel: string) => string
+    resume?: boolean
   }): void {
-    reset()
+    if (opts.resume === true && sessionToken === opts.token) {
+      // Same meeting: keep everything, but invalidate the previous capture's
+      // continuations — its drain must not report "finalizing" over this one.
+      sessionGen += 1
+      stopPolling()
+    } else {
+      reset()
+    }
     sessionToken = opts.token
-    sessionTitle = opts.title ?? ''
-    labelFor = opts.label ?? ((channel) => channel)
+    if (opts.title !== undefined) sessionTitle = opts.title
+    if (opts.label) labelFor = opts.label
     capture = new LiveNotesCapture(opts.ctx, uploadSegment(opts.token), {
       // The mix track is the file the user actually listens to: one recording
       // of the whole meeting instead of one per participant.
@@ -188,12 +214,24 @@ export function useLiveNotes() {
       },
     })
     capture.addChannel('mic', () => labelFor('mic'), opts.micStream)
+    // Re-attach every member already in the room (a resumed recorder would
+    // otherwise only hear the host and whoever joins next).
+    for (const [viewerId, stream] of viewerStreams) {
+      capture.addChannel(`viewer:${viewerId}`, () => labelFor(`viewer:${viewerId}`), stream)
+    }
     phase.value = 'recording'
   }
 
-  /** Adds one viewer's microphone as its own channel. */
+  /**
+   * Adds one viewer's microphone as its own channel.
+   *
+   * The stream is remembered even while no recorder runs: 听记 may be switched
+   * on later, and `start()` re-attaches everything it knows about.
+   */
   function addViewer(viewerId: string, stream: MediaStream | null): void {
-    if (!capture || !viewerId) return
+    if (!viewerId) return
+    viewerStreams.set(viewerId, stream)
+    if (!capture) return
     capture.addChannel(`viewer:${viewerId}`, () => labelFor(`viewer:${viewerId}`), stream)
   }
 
@@ -211,6 +249,7 @@ export function useLiveNotes() {
   }
 
   function removeViewer(viewerId: string): void {
+    viewerStreams.delete(viewerId)
     capture?.removeChannel(`viewer:${viewerId}`)
   }
 
@@ -232,12 +271,25 @@ export function useLiveNotes() {
    * `merge` is false when the recording is only being PAUSED: turning 听记 off
    * mid-meeting drains the queue, but folding the audio now would leave the
    * rest of the meeting (recorded after the toggle) as loose segments beside a
-   * merged file that no longer covers it. The merge waits for the meeting to
-   * end, when nothing more is coming.
+   * merged file that no longer covers it. The merge AND the minutes wait for
+   * the meeting to end, when nothing more is coming — generating them here
+   * summarized only the first half and nothing ever regenerated them.
+   *
+   * With no live capture there is nothing to drain: either 听记 was never on, or
+   * it was switched off earlier in the meeting. `merge` (i.e. the meeting is
+   * really over) still folds the recording and summarizes every segment.
    */
   async function finishUploads(merge = true): Promise<void> {
     const cap = capture
-    if (!cap) return
+    if (!cap) {
+      if (!merge) return
+      // A pause may still be draining its queue (the panel does not await the
+      // toggle). Summarizing now would present a transcript that is missing its
+      // tail as the meeting's end.
+      if (draining) await draining.catch(() => undefined)
+      await finishPaused()
+      return
+    }
     const gen = sessionGen
     capture = null
     phase.value = 'finalizing'
@@ -247,24 +299,44 @@ export function useLiveNotes() {
     const progress = setInterval(() => {
       if (gen === sessionGen) pending.value = cap.pending
     }, 500)
-    try {
-      pending.value = cap.pending
-      const drained = await cap.drainUploads(FINISH_UPLOAD_TIMEOUT_MS)
-      if (gen !== sessionGen) return
-      if (!drained) truncated.value = true
-    } finally {
-      clearInterval(progress)
-      if (gen === sessionGen) {
-        pending.value = 0
-        phase.value = 'idle'
+    const run = (async () => {
+      try {
+        pending.value = cap.pending
+        const drained = await cap.drainUploads(FINISH_UPLOAD_TIMEOUT_MS)
+        if (gen !== sessionGen) return
+        if (!drained) truncated.value = true
+      } finally {
+        clearInterval(progress)
+        if (gen === sessionGen) {
+          pending.value = 0
+          phase.value = 'idle'
+        }
       }
+    })()
+    draining = run
+    try {
+      await run
+    } finally {
+      if (draining === run) draining = null
     }
     // The dialog may have been closed and another meeting started while the
     // backlog drained; its state is not ours to touch.
     if (gen !== sessionGen) return
     // Merge BEFORE the minutes: only now is "no more audio is coming" true, and
     // the minutes link to the recording.
-    if (merge) await mergeAudio()
+    if (merge) await finishPaused()
+  }
+
+  /**
+   * Fold the recording and summarize the whole meeting.
+   *
+   * The tail of `finishUploads`, split out because it is also what a meeting
+   * whose recorder was paused earlier needs: there is no queue to drain, but
+   * the segments it did produce are the transcript.
+   */
+  async function finishPaused(): Promise<void> {
+    const gen = sessionGen
+    await mergeAudio()
     if (gen !== sessionGen) return
     if (segments.value.length > 0) await generateMinutes()
   }
@@ -429,6 +501,9 @@ export function useLiveNotes() {
     sessionGen += 1
     stopPolling()
     capture = null
+    draining = null
+    viewerStreams.clear()
+    labelFor = (channel) => channel
     sessionToken = ''
     sessionTitle = ''
     phase.value = 'idle'

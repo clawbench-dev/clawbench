@@ -351,6 +351,8 @@ export class VideoLoadGovernor {
   private downStreak = 0
   private upStreak = 0
   private timer: ReturnType<typeof setInterval> | null = null
+  /** True while a sampling round is in flight (see sample()). */
+  private sampling = false
 
   /** Current downscale level: 0 = as captured, 1 = 2×, 2 = 4×. */
   get currentLevel(): number {
@@ -402,9 +404,25 @@ export class VideoLoadGovernor {
    * Public so tests can drive it directly: a 3 s timer is not something a unit
    * test should wait for, and faking timers around an async stats read is how
    * these tests become flaky.
+   *
+   * Re-entrant calls are dropped. The interval does not wait for the previous
+   * round, and a round costs one `getStats()` per sender — on the slow, loaded
+   * machine this governor exists for, two rounds can overlap, and then each one
+   * counts the same busy window: `DOWN_AFTER` would be reached in a single
+   * sample and `applyAll()` would run twice on the same senders.
    */
   async sample(): Promise<void> {
+    if (this.sampling) return
     if (this.entries.size === 0) return
+    this.sampling = true
+    try {
+      await this.sampleOnce()
+    } finally {
+      this.sampling = false
+    }
+  }
+
+  private async sampleOnce(): Promise<void> {
     let limited = false
     let sampled = false
     for (const entry of this.entries.values()) {

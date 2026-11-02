@@ -90,6 +90,12 @@ const source = ref<'' | 'live' | 'catalog'>('')
 const loadError = ref('')
 const available = ref<string[]>([])
 
+/** Bumped on every load. The dialog is only hidden on close (ModalDialog keeps
+ *  it mounted), so a probe started for the previous provider can land after the
+ *  next open and overwrite the list or clear the spinner early. Declared before
+ *  the immediate watcher below, which calls load() during setup. */
+let loadGeneration = 0
+
 // Reload on every open: the endpoint may have gained models since last time,
 // and a stale list here would silently drop them from the provider.
 watch(
@@ -105,23 +111,33 @@ watch(
 
 async function load() {
   if (props.providerId === null) return
+  const generation = ++loadGeneration
   loading.value = true
   loadError.value = ''
   try {
     const data = await apiGet<{ models?: string[]; source?: 'live' | 'catalog'; error?: string }>(
       `/api/providers/${props.providerId}/models`,
     )
+    if (generation !== loadGeneration) return
     available.value = data.models ?? []
     source.value = data.source ?? ''
-    loadError.value = data.error ?? ''
+    loadError.value = clipError(data.error ?? '')
   } catch (err) {
+    if (generation !== loadGeneration) return
     appLog.w('ProviderModelsPicker', 'load models failed', err)
     available.value = []
     source.value = ''
-    loadError.value = err instanceof Error ? err.message : String(err)
+    loadError.value = clipError(err instanceof Error ? err.message : String(err))
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) loading.value = false
   }
+}
+
+/** The endpoint relays the upstream body verbatim (an HTML error page can be a
+ *  megabyte) and this line renders it inline — clip before display. */
+function clipError(text: string): string {
+  const s = text.trim()
+  return s.length > 300 ? s.slice(0, 300) + '…' : s
 }
 
 /** Union of what the endpoint offers and what the user already picked, so a

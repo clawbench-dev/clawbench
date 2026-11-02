@@ -224,7 +224,11 @@
             </div>
 
             <div v-else-if="scanError" class="port-scan-empty port-scan-error">
-              <CircleAlert :size="24" />
+              <!-- Same glyph class as the "nothing found" branch below: both are
+                   states of this one box, so they must not differ in size. The
+                   error semantics (red, full opacity) are restored in the style
+                   block, which is the only thing that should differ. -->
+              <CircleAlert class="empty-state__icon" />
               <span>{{ t('proxy.scanFailed') }}</span>
               <button class="port-scan-retry" :disabled="scanning" @click="rescanPorts">
                 {{ t('proxy.rescan') }}
@@ -1182,6 +1186,17 @@ async function handleRetryTunnel() {
    never mistaken for an empty port table. Full opacity: this is an error, not
    a subdued empty placeholder. */
 .port-scan-error {
+  color: var(--color-red);
+  opacity: 1;
+}
+
+/* Both branches of this box draw an `.empty-state__icon`, so they share one
+   size (the token is the app-wide empty-glyph size). That shared rule also
+   paints the glyph `--text-muted` at `--opacity-muted`, which is exactly the
+   "subdued placeholder" look the error state must not have — restore the error
+   semantics here, at higher specificity, instead of shrinking one branch back
+   to a local size (two sizes in one box is what looked broken). */
+.port-scan-error .empty-state__icon {
   color: var(--color-red);
   opacity: 1;
 }

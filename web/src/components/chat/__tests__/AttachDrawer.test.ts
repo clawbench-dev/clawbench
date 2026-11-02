@@ -326,7 +326,7 @@ describe('AttachDrawer', () => {
     expect(wrapper.emitted('add-attached')).toBeFalsy()
     expect(row!.classes()).toContain('ad-file-attached')
 
-    await wrapper.findAll('.ad-footer-actions button')[1].trigger('click')
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
     expect(wrapper.emitted('add-attached')![0]).toEqual(['src/utils', true])
   })
 
@@ -341,7 +341,7 @@ describe('AttachDrawer', () => {
     await row!.trigger('click')
     expect(wrapper.emitted('add-attached')).toBeFalsy()
 
-    await wrapper.findAll('.ad-footer-actions button')[1].trigger('click')
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
     expect(wrapper.emitted('add-attached')![0]).toEqual(['src/foo.ts', false])
   })
 
@@ -629,7 +629,7 @@ describe('AttachDrawer', () => {
     expect(wrapper.findAll('.ad-footer .attachment-filename').map(w => w.text()))
       .toEqual(['a.png', 'b.png'])
 
-    await wrapper.findAll('.ad-footer-actions button')[1].trigger('click')
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
     expect(wrapper.emitted('add-attached')).toEqual([
       ['.clawbench/uploads/a.png', false],
       ['.clawbench/uploads/b.png', false],
@@ -643,7 +643,7 @@ describe('AttachDrawer', () => {
     expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(1)
 
     // …and OK has nothing to add, because it was already there.
-    await wrapper.findAll('.ad-footer-actions button')[1].trigger('click')
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
     expect(wrapper.emitted('add-attached')).toBeFalsy()
   })
 
@@ -1444,7 +1444,7 @@ describe('AttachDrawer footer actions', () => {
     state.toggleAttached('src/removed-dir', true)   // deselect
     state.toggleAttached('src/added.ts')            // select
 
-    await wrapper.findAll('.ad-footer-actions button')[1].trigger('click')
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
 
     expect(wrapper.emitted('add-attached')).toEqual([['src/added.ts', false]])
     expect(wrapper.emitted('remove-attached')).toEqual([[{ path: 'src/removed-dir', isDir: true }]])
@@ -1453,7 +1453,7 @@ describe('AttachDrawer footer actions', () => {
 
   it('OK is a plain close when the selection was not touched', async () => {
     const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/a.ts' }] })
-    await wrapper.findAll('.ad-footer-actions button')[1].trigger('click')
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
     expect(wrapper.emitted('close')).toBeTruthy()
     expect(wrapper.emitted('add-attached')).toBeFalsy()
     expect(wrapper.emitted('remove-attached')).toBeFalsy()
@@ -1465,7 +1465,7 @@ describe('AttachDrawer footer actions', () => {
     state.toggleAttached('src/added.ts')
     state.toggleAttached('src/keep.ts')
 
-    await wrapper.findAll('.ad-footer-actions button')[0].trigger('click')
+    await wrapper.find('[data-action="attach-cancel"]').trigger('click')
 
     expect(wrapper.emitted('add-attached')).toBeFalsy()
     expect(wrapper.emitted('remove-attached')).toBeFalsy()
@@ -1477,7 +1477,7 @@ describe('AttachDrawer footer actions', () => {
     // the next session.
     const wrapper = mountDrawer({ attachedFiles: [] })
     await getRawState(wrapper).toggleAttached('src/added.ts')
-    await wrapper.findAll('.ad-footer-actions button')[0].trigger('click')
+    await wrapper.find('[data-action="attach-cancel"]').trigger('click')
 
     await wrapper.setProps({ open: false })
     await nextTick()

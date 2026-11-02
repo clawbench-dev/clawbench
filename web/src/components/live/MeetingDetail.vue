@@ -532,11 +532,21 @@ async function regenerate(): Promise<void> {
 }
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * Set once the component is gone.
+ *
+ * `onBeforeUnmount` only cancels the timer that is already scheduled; a `load()`
+ * that is in flight at that moment still finishes and re-arms the poll, so a
+ * closed view kept hitting four endpoints every 2.5 s until the process ended.
+ */
+let disposed = false
 function pollMinutes(): void {
+  if (disposed) return
   if (pollTimer) clearTimeout(pollTimer)
   pollTimer = setTimeout(() => {
     void (async () => {
       await load(true)
+      if (disposed) return
       if (!shouldPoll(record.value)) {
         if (pollTimer) clearTimeout(pollTimer)
         pollTimer = null
@@ -546,6 +556,7 @@ function pollMinutes(): void {
 }
 
 onBeforeUnmount(() => {
+  disposed = true
   if (pollTimer) clearTimeout(pollTimer)
   pollTimer = null
   // The panel is unmounted on project switch / teardown; a stale view would

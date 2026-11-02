@@ -1,6 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
 
 describe('useVoiceInput', () => {
+  // Pay the module-graph transform once, outside any single test's budget.
+  // `beforeEach` resets the module registry, so every case re-imports, but only
+  // the FIRST import of the file is slow (it compiles the whole dependency
+  // graph). Under full-suite load that cold start exceeded the 5s default and
+  // failed `starts idle` — a timeout that said nothing about the behaviour
+  // under test.
+  beforeAll(async () => {
+    await import('./useVoiceInput')
+  }, 30000)
+
   beforeEach(() => {
     vi.resetModules()
   })
@@ -22,12 +32,42 @@ describe('useVoiceInput', () => {
     expect(v.state.value).toBe('done')
   })
 
-  it('appendText concatenates without inserting a separator', async () => {
+  // Chinese/Japanese/Korean do not separate words with spaces, so two CJK
+  // fragments must stay glued. (This case used to be titled "concatenates
+  // without inserting a separator", which was true for every script and is
+  // exactly what ran English words together.)
+  it('appendText joins two CJK fragments without a space', async () => {
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
     v.setInputText('你好')
     v.appendText('世界')
     expect(v.inputText.value).toBe('你好世界')
+  })
+
+  // Regression: the buffered engine emits one transcript per audio segment and
+  // appendText glued them verbatim, so dictating into a box that already had
+  // text produced "Please reviewthe diff" in English.
+  it('appendText separates two English fragments with a space', async () => {
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    v.setInputText('Please review')
+    v.appendText('the diff')
+    expect(v.inputText.value).toBe('Please review the diff')
+  })
+
+  it('appendText adds no space when the transcript opens with punctuation', async () => {
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    v.setInputText('hello')
+    v.appendText(', world')
+    expect(v.inputText.value).toBe('hello, world')
+  })
+
+  it('appendText adds no leading space when the box is empty', async () => {
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    v.appendText('hello')
+    expect(v.inputText.value).toBe('hello')
   })
 
   it('appendText keeps the existing text byte-for-byte (no trim)', async () => {
@@ -187,6 +227,69 @@ describe('useVoiceInput', () => {
     await v.start('已输入的文字')
     v.stop()
     await vi.waitFor(() => expect(v.inputText.value).toBe('已输入的文字识别结果'))
+  })
+
+  // The composer is emptied when the message is sent, but a dictation started
+  // from that text is still in flight. Its snapshot has to be dropped at that
+  // point: the late transcript would otherwise rebuild "sent text + transcript"
+  // and drop it back into the box — the message looks unsent, and the next tap
+  // sends it a second time.
+  it('setStartText("") keeps a late transcript from resurrecting the sent text', async () => {
+    const track = { stop: vi.fn() }
+    const stream = { getTracks: () => [track] }
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    })
+    vi.stubGlobal('MediaRecorder', class {
+      state = 'recording'
+      ondataavailable: unknown = null
+      onstop: (() => void) | null = null
+      start() { this.state = 'recording' }
+      stop() { this.state = 'inactive'; this.onstop?.() }
+      static isTypeSupported = vi.fn(() => true)
+    })
+    // Hold the response until the composer has been cleared, so the ordering
+    // matches the real send (the POST is in flight when clearInput() runs).
+    let resolveFetch!: (v: unknown) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise((resolve) => { resolveFetch = resolve })))
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+
+    await v.start('请看一下这个改动')
+    v.stop()
+    // The message went out → the composer is empty.
+    v.setStartText('')
+    resolveFetch({ ok: true, json: async () => ({ text: '听写' }) })
+
+    await vi.waitFor(() => expect(v.state.value).toBe('idle'))
+    expect(v.inputText.value).toBe('听写')
+    expect(v.inputText.value).not.toContain('请看一下这个改动')
+  })
+
+  // Same hazard on the PCM path, where the partial is rebuilt from
+  // `voicePrefix` rather than appended — clearing only `inputText` there would
+  // leave the sent text in front of every partial.
+  it('setStartText("") also drops the PCM prefix that partials are built on', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { 'stt.streaming': true, 'stt.provider': 'doubao' }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start('请看一下这个改动')
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.getWS()!.send).toHaveBeenCalled())
+
+    env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '听写' }) })
+    expect(v.inputText.value).toBe('请看一下这个改动听写')
+
+    // The message was sent: the box is empty and the snapshot is gone.
+    v.setStartText('')
+    env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '听写' }) })
+    expect(v.inputText.value).toBe('听写')
+
+    v.cancel()
   })
 
   // ── streaming (PCM + AudioWorklet) ───────────────────────────────

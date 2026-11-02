@@ -201,6 +201,20 @@ describe('QueuedMessageEditSheet (attachments)', () => {
     expect(wrapper.findAll('.chat-file-attachment')).toHaveLength(0)
   })
 
+  it('renders its attachment cards as removable but not clickable', async () => {
+    // This sheet has no viewer, so a card click used to emit `file-click` into
+    // the void while the card still showed a hand cursor and an "open file"
+    // tooltip. The fix must NOT be `readonly`: that drops the "×", and removing
+    // attachments is the whole reason this sheet exists.
+    const wrapper = mountSheet({ entry: entry({ files: [{ path: '/project/a.png' }] }) })
+    await nextTick()
+
+    const strip = wrapper.find('.chat-attachment-tags')
+    expect(strip.classes()).toContain('is-not-clickable')
+    expect(strip.classes(), 'not read-only: the × must stay').not.toContain('is-readonly')
+    expect(wrapper.findAll('.chat-file-attachment .attachment-close-btn')).toHaveLength(1)
+  })
+
   it('keeps the v-for key identity-based (a path key would collapse two quotes)', () => {
     // jsdom renders duplicate keys without failing, so the removal test alone
     // cannot catch a key regression — pin the binding at the source.

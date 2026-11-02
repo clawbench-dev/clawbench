@@ -346,6 +346,47 @@ describe('VideoLoadGovernor', () => {
     expect(sender.params.encodings[0].scaleResolutionDownBy).toBe(1)
   })
 
+  /**
+   * The poll interval does not wait for the previous round, and a round costs
+   * one `getStats()` per sender — so on the loaded machine this governor exists
+   * for, two rounds overlap. Each would then count the same busy window, and
+   * `DOWN_AFTER` (2) would be reached by a single sample: the room drops a
+   * resolution level for one busy moment, and `applyAll()` runs twice on the
+   * same senders.
+   */
+  it('ignores a poll that overlaps the previous one', async () => {
+    const sender = new Sender()
+    const { governor } = makeGovernor([sender])
+    sender.reason = 'cpu'
+    let release: () => void = () => {}
+    const stats = vi.spyOn(sender, 'getStats').mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve(
+              new Map([
+                ['out-1', { type: 'outbound-rtp', qualityLimitationReason: 'cpu' }],
+              ]) as unknown as RTCStatsReport,
+            )
+        }),
+    )
+
+    const first = governor.sample()
+    // The second round starts while the first one is still reading stats.
+    await governor.sample()
+    expect(stats).toHaveBeenCalledTimes(1)
+    expect(governor.currentLevel).toBe(0)
+
+    release()
+    await first
+    // One counted window, so the level is still untouched...
+    expect(governor.currentLevel).toBe(0)
+
+    // ...and the next real round does step down.
+    await governor.sample()
+    expect(governor.currentLevel).toBe(1)
+  })
+
   it('holds the level when no sender can report a reason', async () => {
     const sender = new MuteSender()
     const { governor } = makeGovernor([sender])

@@ -234,8 +234,8 @@
           @remove="removeFromDraft"
         />
         <div class="ad-footer-actions">
-          <button type="button" class="fbtn" @click="emit('close')">{{ t('common.cancel') }}</button>
-          <button type="button" class="fbtn fbtn-primary" @click="handleConfirm">{{ t('common.confirm') }}</button>
+          <button type="button" class="fbtn" data-action="attach-cancel" @click="emit('close')">{{ t('common.cancel') }}</button>
+          <button type="button" class="fbtn fbtn-primary" data-action="attach-ok" @click="handleConfirm">{{ t('common.confirm') }}</button>
         </div>
       </div>
     </template>

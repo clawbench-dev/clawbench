@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 
 /**
  * Focused coverage for the port-scan drawer's three terminal states.
@@ -166,6 +166,21 @@ describe('ProxyPanelContent port scan states', () => {
     expect(wrapper.text()).toContain('扫描失败——无法连接到服务端')
     // The whole point of the fix: the failure must NOT be reported as "no ports".
     expect(wrapper.text()).not.toContain('未检测到可转发的端口')
+  })
+
+  it('draws both terminal states with the same shared glyph size', async () => {
+    // Both branches fill the SAME `.port-scan-empty` box, so their glyphs must
+    // be the same size — the error branch kept a local `:size="24"` after the
+    // "no results" branch moved to the app-wide 56dp `.empty-state__icon`, and
+    // switching between the two states made the icon jump 2.3×. One mount, so
+    // the swap is exercised on the live component rather than on two snapshots.
+    const wrapper = mountPanel()
+    expect(wrapper.find('.port-scan-empty:not(.port-scan-error) .empty-state__icon').exists()).toBe(true)
+
+    scanState.scanError.value = 'Request timed out'
+    await nextTick()
+    expect(wrapper.find('.port-scan-error .empty-state__icon').exists()).toBe(true)
+    wrapper.unmount()
   })
 
   it('offers a retry that re-runs the scan from the failure state', async () => {

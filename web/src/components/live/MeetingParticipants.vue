@@ -355,6 +355,18 @@ function subline(v: LiveViewerInfo): string {
   transition: background var(--duration-fast), color var(--duration-fast);
 }
 
+/* Touch hosts get the 44dp target the design guide requires. The four buttons
+   sit side by side with a 2px gap, so an enlarged hit area cannot be faked with
+   a pseudo-element (the boxes would overlap and a tap could land on the
+   neighbour): the row itself grows, and `.mp-actions` already wraps. A mouse
+   pointer keeps the compact dock. */
+@media (pointer: coarse) {
+  .mp-action {
+    min-width: calc(44 * var(--dp));
+    height: calc(44 * var(--dp));
+  }
+}
+
 .mp-action:hover {
   background: var(--bg-secondary);
   color: var(--text-primary);

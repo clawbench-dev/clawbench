@@ -24,20 +24,21 @@
       </div>
 
       <div class="provider-grid">
-        <input v-model="draft.name" class="provider-input" :placeholder="t('settings.items.providerName')" />
-        <select v-model="draft.protocol" class="provider-input provider-select">
+        <input v-model="draft.name" class="provider-input" data-role="name" :placeholder="t('settings.items.providerName')" />
+        <select v-model="draft.protocol" class="provider-input provider-select" data-role="protocol">
           <option value="anthropic">anthropic</option>
           <option value="openai">openai</option>
           <option value="gemini">gemini</option>
         </select>
       </div>
-      <input v-model="draft.baseUrl" class="provider-input" :placeholder="t('settings.items.providerBaseUrl')" />
+      <input v-model="draft.baseUrl" class="provider-input" data-role="base-url" :placeholder="t('settings.items.providerBaseUrl')" />
       <div class="provider-key-field">
         <input
           :value="keyValue"
           :type="showKey ? 'text' : 'password'"
           autocomplete="off"
           class="provider-input provider-key-input"
+          data-role="api-key"
           :placeholder="provider ? t('settings.items.providerKeyKeep') : t('settings.items.providerKey')"
           @input="onKeyInput"
           @focus="onKeyFocus"
@@ -60,11 +61,15 @@
         <AlertCircle :size="13" />
         <span>{{ keyError }}</span>
       </div>
-      <select v-model="draft.authMode" class="provider-input provider-select provider-select--full">
-        <option value="auto">{{ t('settings.items.providerAuthAuto') }}</option>
-        <option value="x-api-key">x-api-key</option>
-        <option value="bearer">bearer</option>
+      <select v-model="draft.authMode" class="provider-input provider-select provider-select--full" data-role="auth-mode">
+        <option v-for="m in authModeOptions" :key="m.value" :value="m.value" :disabled="m.disabled">{{ m.label }}</option>
       </select>
+      <!-- A protocol that cannot express the mode makes every turn fail, so an
+           existing row in that state says so here instead of looking fine. -->
+      <div v-if="authModeUnsupported" class="provider-error" data-role="auth-mode-warning">
+        <AlertCircle :size="13" />
+        <span>{{ t('settings.items.providerAuthUnsupported', { mode: draft.authMode, protocol: draft.protocol }) }}</span>
+      </div>
 
       <!-- Only codex reads this: its managed config block tells codex whether
            the endpoint speaks the Responses API or plain chat/completions. A
@@ -85,6 +90,10 @@
         <option value="responses">{{ t('settings.items.providerWireResponses') }}</option>
         <option value="chat">{{ t('settings.items.providerWireChat') }}</option>
       </select>
+      <!-- Codex reads this from its config file at process start, so a live
+           connection keeps the old value; without the note the change looks
+           like it did nothing. -->
+      <div v-if="draft.protocol === 'openai'" class="provider-hint">{{ t('settings.items.providerWireHint') }}</div>
 
       <label v-if="provider" class="provider-clear">
         <input v-model="clearKey" type="checkbox" />
@@ -155,8 +164,8 @@
     </div>
 
     <template #footer>
-      <button class="fbtn" @click="close">{{ t('settings.items.providerCancel') }}</button>
-      <button class="fbtn fbtn-primary" :disabled="!canSave || saving" @click="submit">
+      <button class="fbtn" data-action="provider-cancel" @click="close">{{ t('settings.items.providerCancel') }}</button>
+      <button class="fbtn fbtn-primary" data-action="provider-save" :disabled="!canSave || saving" @click="submit">
         {{ provider ? t('settings.items.providerSave') : t('settings.items.providerAdd') }}
       </button>
     </template>
@@ -281,10 +290,53 @@ const draft = reactive({
 
 const canSave = computed(() => draft.name.trim() !== '')
 
+/**
+ * Auth modes each wire protocol can actually express.
+ *
+ * `bearer` needs a distinct auth-token variable (ANTHROPIC_AUTH_TOKEN), and only
+ * the Anthropic-style backends have one. Asking for it on openai/gemini makes
+ * the backend refuse every turn ("does not support Bearer auth"), while the
+ * dialog's own connection test still passes — it always sends an
+ * `Authorization: Bearer` header — so offering the option here is what let
+ * users walk into a provider that could never serve a request.
+ */
+const AUTH_MODES_BY_PROTOCOL: Record<string, string[]> = {
+  anthropic: ['auto', 'x-api-key', 'bearer'],
+  openai: ['auto', 'x-api-key'],
+  gemini: ['auto', 'x-api-key'],
+}
+
+const allowedAuthModes = computed(() => AUTH_MODES_BY_PROTOCOL[draft.protocol] ?? ['auto'])
+
+/** A row saved before the narrowing (or written through the API) can still
+ *  carry an impossible pair. It stays visible and flagged rather than being
+ *  silently rewritten on open. */
+const authModeUnsupported = computed(() => !allowedAuthModes.value.includes(draft.authMode))
+
+const authModeOptions = computed(() => {
+  const label = (mode: string) => (mode === 'auto' ? t('settings.items.providerAuthAuto') : mode)
+  const out = allowedAuthModes.value.map((value) => ({ value, label: label(value), disabled: false }))
+  if (authModeUnsupported.value) {
+    // Keep the stored value selectable-but-disabled so the control displays it
+    // (a <select> whose value is missing from its options renders blank) and
+    // the user cannot re-pick it after correcting the field.
+    out.push({ value: draft.authMode, label: label(draft.authMode), disabled: true })
+  }
+  return out
+})
+
 /** Per-model probe state. `testingModel` is the id currently in flight; one at
  *  a time keeps the results readable and the endpoint unhammered. */
 const testingModel = ref<string | null>(null)
 const modelResults = ref<Record<string, ModelTestResult>>({})
+
+/** Bumped on every re-seed and on every probe. The dialog is only hidden on
+ *  close (`v-if="everOpened"` + `v-show` inside ModalDialog), so a probe can
+ *  outlive the form it was started from: close → pick another provider →
+ *  reopen. Without this token that promise writes the PREVIOUS provider's
+ *  verdict into the new list and clears the in-flight flag of a probe that is
+ *  still running (its buttons become clickable again, so two probes overlap). */
+let probeGeneration = 0
 
 interface ModelTestResult {
   model: string
@@ -322,6 +374,7 @@ function chipClass(id: string): Record<string, boolean> {
 async function testModel(id: string) {
   const p = props.provider
   if (!p || testingModel.value !== null) return
+  const generation = ++probeGeneration
   testingModel.value = id
   const next = { ...modelResults.value }
   delete next[id]
@@ -340,6 +393,7 @@ async function testModel(id: string) {
       // A generated token is slower than the default 10s budget.
       { timeoutMs: 45_000 },
     )
+    if (generation !== probeGeneration) return
     modelResults.value = {
       ...modelResults.value,
       [id]: res.ok
@@ -358,6 +412,7 @@ async function testModel(id: string) {
           },
     }
   } catch (err) {
+    if (generation !== probeGeneration) return
     modelResults.value = {
       ...modelResults.value,
       [id]: {
@@ -370,7 +425,9 @@ async function testModel(id: string) {
       },
     }
   } finally {
-    testingModel.value = null
+    // Only the probe that still owns the form may release it; an older one
+    // returning late must not clear a probe that is legitimately in flight.
+    if (generation === probeGeneration) testingModel.value = null
   }
 }
 
@@ -381,6 +438,8 @@ const selectedPreset = computed<PresetOption | undefined>(() =>
 
 function resetFromProvider() {
   const p = props.provider
+  // Any probe still in flight belongs to the form being replaced.
+  probeGeneration++
   presetPickerOpen.value = false
   modelsPickerOpen.value = false
   clearKey.value = false
@@ -454,6 +513,10 @@ function onKeyInput(event: Event) {
     next = next.split(KEY_MASK_CHAR).join('')
   }
   draft.apiKey = next
+  // A typed key contradicts "clear the stored one": the server applies
+  // clearApiKey first and would drop the new secret, so the save would report
+  // success while leaving the provider with NO key at all.
+  if (next !== '') clearKey.value = false
   // Keep the DOM in sync when the mask prefix was removed.
   if (el.value !== next) el.value = next
 }
@@ -502,7 +565,10 @@ function submit() {
     authMode: draft.authMode,
     wireApi: draft.wireApi,
     presetId: draft.presetId,
-    clearApiKey: clearKey.value,
+    // The two are mutually exclusive on the server (clear wins). Only ask for
+    // a clear when there is no replacement key to send, whatever the checkbox
+    // ended up showing (e.g. the key was revealed by the eye afterwards).
+    clearApiKey: clearKey.value && draft.apiKey === '',
     models: [...draft.models],
     defaultModel: draft.defaultModel,
   })
@@ -636,6 +702,13 @@ function close() {
   outline: none;
   border-color: var(--accent-color);
   box-shadow: 0 0 0 calc(2 * var(--dp)) var(--focus-ring);
+}
+/* Muted explanatory line under a control (the wire-API note). */
+.provider-hint {
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 .provider-models {
   display: flex;

@@ -247,6 +247,10 @@ interface ProviderOption {
   protocol: string
   /** Empty for a key-only provider, which only injects the credential. */
   baseUrl: string
+  /** False when no secret is stored. The binding is still allowed (a user may
+   *  bind first and paste the key later), but every turn fails until it is
+   *  filled in, so the option has to say so. */
+  hasKey?: boolean
 }
 const providers = ref<ProviderOption[]>([])
 
@@ -442,7 +446,15 @@ const items = computed<AgentItem[]>(() => {
       type: 'select',
       options: [
         { label: t('settings.items.agentProviderNone'), value: '' },
-        ...providerOptions.value.map((p) => ({ label: `${p.name} · ${p.protocol}`, value: p.id })),
+        ...providerOptions.value.map((p) => ({
+          // The provider list marks a keyless row in orange; without carrying
+          // that into this picker the user binds it and only finds out on the
+          // next turn ("provider has no API key").
+          label: p.hasKey === false
+            ? `${p.name} · ${p.protocol} · ${t('settings.items.providerNoKey')}`
+            : `${p.name} · ${p.protocol}`,
+          value: p.id,
+        })),
       ],
       patchField: 'provider_id',
     })
@@ -706,8 +718,13 @@ async function handleUpdate(item: AgentItem, value: unknown) {
         ...(confirmWrite ? { confirm_config_write: true } : {}),
       })
       await loadAgents(true)
-    } catch {
-      toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+    } catch (err) {
+      // This path is refused with an actionable, localized reason: which agents
+      // conflict on the protocol, why the provider is invalid, or that the
+      // summary model already uses it. Collapsing that into "save failed"
+      // leaves the user with no idea which provider to pick instead.
+      const reason = err instanceof Error && err.message ? err.message : t('settings.saveFailed')
+      toast.show(reason, { icon: 'warning', type: 'error', duration: 3000 })
     }
     return
   }

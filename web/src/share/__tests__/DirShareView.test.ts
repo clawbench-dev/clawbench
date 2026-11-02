@@ -64,6 +64,8 @@ const originalFetch = globalThis.fetch
 let fetchCalls: string[] = []
 let assign: ReturnType<typeof vi.fn>
 let responses: Record<string, unknown> = {}
+/** Every wrapper mounted by a test, so its listeners die with the test. */
+let mounted: Array<ReturnType<typeof mount>> = []
 
 function useLocation(search = '') {
   assign = vi.fn()
@@ -97,6 +99,10 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  // Every mount registers a `popstate` listener; leaving them attached made a
+  // later test's dispatch fan out to every earlier component as well.
+  for (const w of mounted) w.unmount()
+  mounted = []
   globalThis.fetch = originalFetch
   Object.defineProperty(window, 'location', {
     configurable: true,
@@ -130,6 +136,7 @@ function rootListing(overrides: Record<string, unknown> = {}) {
 
 async function mountView() {
   const wrapper = mount(DirShareView, { global: { plugins: [i18n] } })
+  mounted.push(wrapper)
   await flushPromises()
   return wrapper
 }
@@ -351,5 +358,47 @@ describe('DirShareView', () => {
     const wrapper = await mountView()
     expect(wrapper.text()).toContain('Invalid link format')
     expect(fetchCalls).toEqual([])
+  })
+
+  /**
+   * Two navigations can be in flight at once (click into a folder, then Back —
+   * or open another folder from the breadcrumb). The network may answer them in
+   * either order, and writing the older answer last left the listing showing
+   * folder A while the URL said B, which reads as "I clicked the wrong thing"
+   * and only clears on a reload.
+   */
+  it('ignores a superseded listing that arrives after the newer one', async () => {
+    responses[LIST_URL] = rootListing()
+    const wrapper = await mountView()
+
+    // Every further request stays pending until the test answers it.
+    const pending: Array<(body: unknown) => void> = []
+    globalThis.fetch = vi.fn(
+      (url: string | URL | Request) =>
+        new Promise<Response>((resolve) => {
+          fetchCalls.push(String(url))
+          pending.push((body) => resolve({ ok: true, json: async () => body } as Response))
+        }),
+    ) as unknown as typeof fetch
+
+    const setSearch = (path: string) => {
+      ;(window.location as unknown as { search: string }).search = `?path=${encodeURIComponent(path)}`
+      window.dispatchEvent(new Event('popstate'))
+    }
+    setSearch(ROOT + '/a')
+    setSearch(ROOT + '/b')
+    expect(pending).toHaveLength(2)
+
+    // The newer request wins the race...
+    pending[1](rootListing({ name: 'b', path: ROOT + '/b', atRoot: false }))
+    await flushPromises()
+    expect(wrapper.find('.share-file-name').text()).toBe('b')
+
+    // ...and the older one must be discarded when it lands.
+    pending[0](rootListing({ name: 'a', path: ROOT + '/a', atRoot: false }))
+    await flushPromises()
+    expect(wrapper.find('.share-file-name').text()).toBe('b')
+    // The stale answer must not resurrect the skeleton either.
+    expect(wrapper.find('.dir-skeleton').exists()).toBe(false)
   })
 })

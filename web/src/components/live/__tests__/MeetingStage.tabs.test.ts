@@ -3,8 +3,10 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick, ref, shallowRef } from 'vue'
 import enMessages from '@/i18n/locales/en'
+import { appLog } from '@/utils/appLog'
 import { listAudioInputs, listCaptureSources } from '@/composables/useLiveShare'
 import { useMeetingOptions } from '@/composables/useMeetingOptions'
+import { LIVE_CHAT_MAX } from '@/share/liveControl'
 import MeetingStage from '../MeetingStage.vue'
 
 /**
@@ -44,8 +46,24 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
+const toastShow = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/useToast', () => ({
-  useToast: () => ({ show: vi.fn() }),
+  useToast: () => ({ show: toastShow }),
+}))
+
+/** The chat rows the server already archived for this meeting. */
+const archivedChat = vi.hoisted(() => ({
+  messages: [] as Array<Record<string, unknown>>,
+  /** Set by a test that wants the history request to stay in flight. */
+  pending: null as Promise<void> | null,
+}))
+vi.mock('@/composables/useMeetingHistory', () => ({
+  useMeetingHistory: () => ({
+    chat: async () => {
+      if (archivedChat.pending) await archivedChat.pending
+      return { messages: archivedChat.messages, count: archivedChat.messages.length }
+    },
+  }),
 }))
 
 vi.mock('@/composables/useMarkdownRenderer', () => ({
@@ -188,6 +206,8 @@ function tab(wrapper: ReturnType<typeof mountPanel>, key: string) {
 beforeEach(() => {
   vi.clearAllMocks()
   nativeBridge.current = null
+  archivedChat.messages = []
+  archivedChat.pending = null
   ;(shareApi.state as { value: string }).value = 'publishing'
   ;(shareApi.screenSharer as { value: string }).value = ''
   ;(shareApi.captureKind as { value: string }).value = 'screen'
@@ -652,5 +672,124 @@ describe('MeetingStage chat sides', () => {
     expect(rows[0].classes()).not.toContain('chat-row--self')
     expect(rows[1].classes()).toContain('chat-row--self')
     expect(rows[1].find('.chat-row__text').text()).toBe('早啊')
+  })
+})
+
+/**
+ * The chat lives in this component, so anything that removes the component —
+ * or a client that joined the meeting late — must not lose it. Two different
+ * paths: the lines the server already archived, and the failures that used to
+ * be silent.
+ */
+describe('MeetingStage chat archive', () => {
+  it('restores the lines archived before this client was on the stage', async () => {
+    archivedChat.messages = [
+      { id: 1, clientId: 'c1', speaker: '小明', viewerId: 'v1', text: '早', at: 1_700_000_001_000 },
+      { id: 2, clientId: 'c2', speaker: 'Alex', text: '早啊', at: 1_700_000_002_000 },
+    ]
+    const wrapper = mountPanel({ realChat: true })
+    await flushPromises()
+    await tab(wrapper, 'chat').trigger('click')
+
+    const rows = wrapper.findAll('.chat-row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].find('.chat-row__text').text()).toBe('早')
+    // A stored row with no viewerId is the host's own line: it belongs on the
+    // right, exactly like the live one.
+    expect(rows[1].classes()).toContain('chat-row--self')
+  })
+
+  it('does not duplicate a line that arrives while the history is loading', async () => {
+    let release = (): void => {}
+    archivedChat.pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const wrapper = mountPanel({ realChat: true })
+    await flushPromises()
+
+    // The archived request is still open when the live line lands: the row it
+    // also carries must not be appended twice.
+    controlRelay()({ t: 'chat', id: 'm1', from: 'v1', name: '小明', text: '早', at: 1_700_000_001_000 })
+    await nextTick()
+    archivedChat.messages = [
+      { id: 1, clientId: 'm1', speaker: '小明', viewerId: 'v1', text: '早', at: 1_700_000_001_000 },
+    ]
+    release()
+    await flushPromises()
+
+    await tab(wrapper, 'chat').trigger('click')
+    expect(wrapper.findAll('.chat-row')).toHaveLength(1)
+  })
+
+  it('reports a chat line the server refused to archive', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const wrapper = mountPanel()
+      await flushPromises()
+      controlRelay()({ t: 'chat', id: 'm1', from: 'v1', name: '小明', text: '早', at: Date.now() })
+      await flushPromises()
+
+      // A 4xx/5xx is not a transport error, so the old `.catch` never ran: the
+      // host saw the line in its own pane while the record silently lost it.
+      expect(appLog.w).toHaveBeenCalledWith('MeetingStage', 'persist chat failed', expect.any(Error))
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('says so when the shell refuses to inject a remote-control event', async () => {
+    remoteControlOk.value = true
+    const remoteControl = vi.fn(async () => {
+      throw new Error('injector blocked')
+    })
+    nativeBridge.current = { remoteControl }
+    try {
+      const wrapper = mountPanel()
+      await flushPromises()
+      controlRelay()({ t: 'ctrl-req', from: 'v1' })
+      await nextTick()
+      await tab(wrapper, 'participants').trigger('click')
+      await wrapper.find('[data-action="control-allow"]').trigger('click')
+      await flushPromises()
+
+      controlRelay()({ t: 'ctrl-ev', from: 'v1', kind: 'move', x: 0.1, y: 0.2 })
+      await flushPromises()
+
+      // Every mouse move would otherwise be an unhandled rejection: the control
+      // is dead and the host is told nothing.
+      expect(appLog.w).toHaveBeenCalledWith('MeetingStage', 'remote control injection failed', expect.any(Error))
+      expect(toastShow).toHaveBeenCalledWith(enMessages.liveShare.controlUnsupported, expect.anything())
+    } finally {
+      remoteControlOk.value = false
+    }
+  })
+})
+
+describe('MeetingStage chat transcript bound', () => {
+  it('keeps only the newest lines of a long meeting', async () => {
+    // The publisher's array is the source of every replay and every render, and
+    // a meeting runs for hours: without a bound it grows for the whole session.
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const wrapper = mountPanel({ realChat: true })
+      await flushPromises()
+      const relay = controlRelay()
+      const total = LIVE_CHAT_MAX + 20
+      for (let i = 0; i < total; i++) {
+        relay({ t: 'chat', id: `m${i}`, from: 'v1', name: '小明', text: `line ${i}`, at: i })
+      }
+      await nextTick()
+      await tab(wrapper, 'chat').trigger('click')
+
+      const rows = wrapper.findAll('.chat-row')
+      expect(rows).toHaveLength(LIVE_CHAT_MAX)
+      // The OLDEST are the ones dropped, not the newest.
+      expect(rows[0].find('.chat-row__text').text()).toBe(`line ${total - LIVE_CHAT_MAX}`)
+      expect(rows[rows.length - 1].find('.chat-row__text').text()).toBe(`line ${total - 1}`)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

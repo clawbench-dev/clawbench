@@ -103,6 +103,7 @@ import { apiGet, apiPatch } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
+import { rememberProviderNames } from '@/utils/providerNames'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
@@ -132,6 +133,29 @@ const resolvingIds = ref<number[]>([])
 const probeErrors = ref<Record<number, string>>({})
 const manualDraft = reactive<Record<number, string>>({})
 
+/**
+ * Successful probe results, cached for as long as this sheet is alive.
+ *
+ * Every uncatalogued provider costs one real outbound request (the endpoint
+ * tries `/models` and `/v1/models` with a 10s budget each), and the sheet is
+ * reopened often — without the cache a user with eight such providers fires
+ * 8–16 upstream calls per open and gets 429s from any gateway with a rate
+ * limit. Failures are deliberately NOT cached so a transient error retries.
+ *
+ * Component-scoped rather than module-scoped: the list must not outlive the
+ * page it was probed from (a provider edited in another category would keep
+ * serving its old list).
+ */
+const PROBE_CACHE_TTL_MS = 5 * 60 * 1000
+const probeCache = new Map<number, { at: number; models: string[] }>()
+
+/** Probes run three at a time for the same reason. */
+const PROBE_CONCURRENCY = 3
+
+/** Bumped on every load; a probe from a previous open must not write into the
+ *  current one (it would overwrite the list and clear the spinner early). */
+let loadGeneration = 0
+
 const currentProviderId = computed<number | null>(() => {
   const raw = (serverConfig.value.ai_summary as { provider_id?: number } | undefined)?.provider_id
   return typeof raw === 'number' && raw > 0 ? raw : null
@@ -152,6 +176,7 @@ watch(
 )
 
 async function load() {
+  const generation = ++loadGeneration
   loading.value = true
   resolvedModels.value = {}
   probeErrors.value = {}
@@ -159,16 +184,19 @@ async function load() {
   for (const key of Object.keys(manualDraft)) delete manualDraft[Number(key)]
   try {
     const data = await apiGet<{ providers: ProviderRow[] }>('/api/providers')
+    if (generation !== loadGeneration) return
     providers.value = data.providers ?? []
+    rememberProviderNames(providers.value)
   } catch (err) {
+    if (generation !== loadGeneration) return
     appLog.w('SummaryModelPicker', 'load providers failed', err)
     providers.value = []
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) loading.value = false
   }
   // The sheet is already usable at this point: curated lists render
   // immediately and each uncatalogued provider fills in when its probe lands.
-  void resolveUncatalogued()
+  void resolveUncatalogued(generation)
 }
 
 function isEligible(p: ProviderRow): boolean {
@@ -181,30 +209,59 @@ function hasEndpoint(p: ProviderRow): boolean {
   return (p.baseUrl ?? '').trim() !== ''
 }
 
-async function resolveUncatalogued() {
+/** Resolve every uncatalogued provider with at most PROBE_CONCURRENCY probes
+ *  in flight. A shared cursor is safe here: JavaScript runs one worker at a
+ *  time between awaits, so no two workers claim the same index. */
+async function resolveUncatalogued(generation: number) {
   const pending = providers.value.filter(
     (p) => isEligible(p) && hasEndpoint(p) && (p.models?.length ?? 0) === 0,
   )
-  await Promise.all(pending.map(resolveOne))
+  if (pending.length === 0) return
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < pending.length && generation === loadGeneration) {
+      await resolveOne(pending[cursor++], generation)
+    }
+  }
+  const workers = Math.min(PROBE_CONCURRENCY, pending.length)
+  await Promise.all(Array.from({ length: workers }, worker))
 }
 
-async function resolveOne(p: ProviderRow) {
+async function resolveOne(p: ProviderRow, generation: number) {
+  const cached = probeCache.get(p.id)
+  if (cached && Date.now() - cached.at < PROBE_CACHE_TTL_MS) {
+    resolvedModels.value = { ...resolvedModels.value, [p.id]: cached.models }
+    return
+  }
   resolvingIds.value = [...resolvingIds.value, p.id]
   try {
     const data = await apiGet<{ models?: string[]; error?: string }>(
       `/api/providers/${p.id}/models`,
     )
-    resolvedModels.value = { ...resolvedModels.value, [p.id]: data.models ?? [] }
-    if (data.error) probeErrors.value = { ...probeErrors.value, [p.id]: data.error }
+    if (generation !== loadGeneration) return
+    const models = data.models ?? []
+    if (!data.error) probeCache.set(p.id, { at: Date.now(), models })
+    resolvedModels.value = { ...resolvedModels.value, [p.id]: models }
+    if (data.error) probeErrors.value = { ...probeErrors.value, [p.id]: clipError(data.error) }
   } catch (err) {
+    if (generation !== loadGeneration) return
     appLog.w('SummaryModelPicker', 'resolve provider models failed', err)
     probeErrors.value = {
       ...probeErrors.value,
-      [p.id]: err instanceof Error ? err.message : String(err),
+      [p.id]: clipError(err instanceof Error ? err.message : String(err)),
     }
   } finally {
-    resolvingIds.value = resolvingIds.value.filter((id) => id !== p.id)
+    if (generation === loadGeneration) {
+      resolvingIds.value = resolvingIds.value.filter((id) => id !== p.id)
+    }
   }
+}
+
+/** The endpoint relays the upstream body verbatim (an HTML error page can be a
+ *  megabyte) and this hint renders it inline — clip before display. */
+function clipError(text: string): string {
+  const s = text.trim()
+  return s.length > 300 ? s.slice(0, 300) + '…' : s
 }
 
 /** Every provider that can back the summary, with the models it offers. A
