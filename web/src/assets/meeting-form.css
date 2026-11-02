@@ -75,7 +75,7 @@
 
 /* ── Checkbox row ──────────────────────────────────────────────────────────
    The icon is part of the row, not decoration: it is what tells "AI 听记" from
-   "允许观众发言" when several rows sit one under another. */
+   "允许成员发言" when several rows sit one under another. */
 .meeting-checks {
   display: flex;
   flex-direction: column;
