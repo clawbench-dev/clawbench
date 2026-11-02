@@ -395,4 +395,17 @@ describe('MeetingList row affordances (source)', () => {
   it('does not render a chevron next to the row', () => {
     expect(src).not.toContain('ChevronRight')
   })
+
+  it('starts all three tiers at the card edge', () => {
+    // The meta and tags lines used to be indented by the width of the
+    // meeting-type badge, so the three tiers lined up under the title's text.
+    // The badge is gone (see the DOM test above); an indent left behind would
+    // put an empty column in front of those two lines.
+    const blocks = src.match(/\.[\w-]+(?:\s*,\s*\.[\w-]+)*\s*\{[^}]*\}/g) ?? []
+    expect(blocks.length).toBeGreaterThan(0)
+    const indented = blocks.filter(
+      (b) => /\.meeting-row__(meta|tags)/.test(b) && /padding-left/.test(b),
+    )
+    expect(indented).toEqual([])
+  })
 })

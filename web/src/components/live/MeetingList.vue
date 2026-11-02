@@ -343,9 +343,6 @@ onMounted(() => {
   min-height: 0;
   overflow: hidden;
   background: var(--bg-primary, #ffffff);
-  /* The card indents its sub-lines only when the PANEL is wide enough — the
-     dock column's width has nothing to do with the viewport's. */
-  container-type: inline-size;
 }
 
 .meeting-header {
@@ -474,16 +471,6 @@ onMounted(() => {
 .meeting-row__m { white-space: nowrap; }
 .meeting-row__m.is-accent { color: var(--accent-color); }
 .meeting-row__sep { padding: 0 var(--space-2, 4px); color: var(--text-hint); }
-
-/* On a wide panel the three tiers share one left edge, which is what makes the
-   block read as a block. On a phone the same indent would push the meta line
-   into a second row, so it stays flush and keeps the full width. */
-@container (min-width: 460px) {
-  .meeting-row__meta,
-  .meeting-row__tags {
-    padding-left: calc(22 * var(--dp) + var(--space-3, 6px));
-  }
-}
 
 .meeting-row__tags {
   display: flex;
