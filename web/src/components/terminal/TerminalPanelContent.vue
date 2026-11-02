@@ -1742,17 +1742,35 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   background: var(--terminal-bg, #1e1e2e);
 }
 
+/* xterm paints its own bar inside the terminal (it is not a native scrollbar),
+   so the app-wide `::-webkit-scrollbar` rules in css/scrollbar.css never reach
+   it and the two width tiers have to be restated here. They must stay EQUAL to
+   that file's — 10px for a mouse / trackpad, 4px for touch — and are likewise
+   NOT scaled with `--dp` (scrollbar.css keeps the bar at browser-chrome size
+   across UI scale, because a bar that grows with the UI eats content).
+   Widening the bar is safe: FitAddon reserves 14px for it
+   (`overviewRuler.width || 14`), so the text grid already ends ~7px short of
+   the bar and nothing is covered. */
 .terminal-container :deep(.xterm-scrollable-element > .scrollbar.vertical),
 .terminal-container :deep(.xterm-scrollbar) {
-  width: calc(2 * var(--dp)) !important;
+  width: 10px !important;
   right: 1px !important;
   background: transparent !important;
 }
 
 .terminal-container :deep(.xterm-scrollable-element > .scrollbar > .slider) {
-  width: calc(2 * var(--dp)) !important;
+  width: 10px !important;
   left: 0 !important;
   border-radius: calc(999 * var(--dp)) !important;
+}
+
+/* Touch / pen: the original 4px bar, same tier as css/scrollbar.css. */
+@media (pointer: coarse) {
+  .terminal-container :deep(.xterm-scrollable-element > .scrollbar.vertical),
+  .terminal-container :deep(.xterm-scrollbar),
+  .terminal-container :deep(.xterm-scrollable-element > .scrollbar > .slider) {
+    width: 4px !important;
+  }
 }
 
 [data-theme-base="dark"] .terminal-container {
