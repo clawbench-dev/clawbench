@@ -423,7 +423,7 @@ UNIQUE：`(session_id, tag_id)`
 | error | TEXT | NOT NULL | `''` | 失败原因（仅 `failed`） |
 | file_path | TEXT | NOT NULL | `''` | 纪要 Markdown 在项目内的落盘路径 |
 | dir_path | TEXT | NOT NULL | `''` | **已停用**：绝对路径，项目改名后失效；目录改由 `dir_name` 表达 |
-| revised | TEXT | NOT NULL | `''` | 修订版转写（结合项目上下文校对） |
+| revised | TEXT | NOT NULL | `''` | 校对版转写（结合项目上下文修正听写错误与专有名词） |
 | revise_status | TEXT | NOT NULL | `idle` | 校对阶段状态 |
 | revise_error | TEXT | NOT NULL | `''` | 校对失败原因 |
 | started_at | INTEGER | NOT NULL | 0 | 会议开始（Unix 毫秒，**服务端时钟**） |

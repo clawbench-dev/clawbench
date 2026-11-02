@@ -199,6 +199,43 @@ func TestLiveShareCreate_DerivesCameraScreenAndVideo(t *testing.T) {
 	}
 }
 
+// The create form carries the two audience permissions, so a host who ticks
+// them there does not have to tick them again inside the meeting. The response
+// echoes them because the publisher is the one client that never receives a
+// `joined` frame — without the echo the stage would draw both switches as off
+// while the room has them on.
+func TestLiveShareCreate_AppliesAudiencePermissions(t *testing.T) {
+	resetLiveRegistry(t)
+
+	var resp liveShareManageResponse
+	w := httptest.NewRecorder()
+	ServeLiveShareManage(w, liveReq(t, http.MethodPost, "/api/live-share", projPath("/proj/open"),
+		map[string]any{"allowTalk": true, "allowMemberScreen": true}))
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	room := liveRegistry.Get(resp.Token)
+	require.NotNil(t, room)
+	assert.True(t, room.TalkEnabled())
+	assert.True(t, room.ScreenEnabled())
+	assert.True(t, resp.TalkEnabled)
+	assert.True(t, resp.ScreenEnabled)
+
+	// A client that knows nothing about the switches still gets the closed room
+	// it has always had.
+	w = httptest.NewRecorder()
+	ServeLiveShareManage(w, liveReq(t, http.MethodPost, "/api/live-share", projPath("/proj/legacy"), nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	room = liveRegistry.Get(resp.Token)
+	require.NotNil(t, room)
+	assert.False(t, room.TalkEnabled())
+	assert.False(t, room.ScreenEnabled())
+	assert.False(t, resp.TalkEnabled)
+	assert.False(t, resp.ScreenEnabled)
+}
+
 func TestLiveShareCreate_RejectsWhenRoomCeilingReached(t *testing.T) {
 	resetLiveRegistry(t)
 	for i := range maxLiveRooms {
@@ -387,21 +424,40 @@ func TestTruncateRunes(t *testing.T) {
 
 func TestLiveShareCreateBody_UnnamedMeetingGetsADate(t *testing.T) {
 	rec := httptest.NewRequest(http.MethodPost, "/api/live-share/create", strings.NewReader(`{}`))
-	title, _, _, _, _ := liveShareCreateBody(rec)
+	opts := liveShareCreateBody(rec)
 
 	// The project's own name used to stand in here, which made every meeting in
 	// a project carry the identical title ("clawbench").
-	assert.True(t, service.IsPlaceholderMeetingTitle(title), "got %q", title)
-	assert.NotEqual(t, "ClawBench", title)
+	assert.True(t, service.IsPlaceholderMeetingTitle(opts.title), "got %q", opts.title)
+	assert.NotEqual(t, "ClawBench", opts.title)
 }
 
 func TestLiveShareCreateBody_KeepsTheTitleTheUserTyped(t *testing.T) {
 	rec := httptest.NewRequest(http.MethodPost, "/api/live-share/create",
 		strings.NewReader(`{"title":"  发版评审  "}`))
-	title, _, _, _, _ := liveShareCreateBody(rec)
+	opts := liveShareCreateBody(rec)
 
-	assert.Equal(t, "发版评审", title)
-	assert.False(t, service.IsPlaceholderMeetingTitle(title))
+	assert.Equal(t, "发版评审", opts.title)
+	assert.False(t, service.IsPlaceholderMeetingTitle(opts.title))
+}
+
+// The two audience switches start closed unless the client asks for them: an
+// older client (or an older APK) must not silently open a room it never offered
+// the host a switch for.
+func TestLiveShareCreateBody_AudienceSwitchesDefaultToOff(t *testing.T) {
+	rec := httptest.NewRequest(http.MethodPost, "/api/live-share/create",
+		strings.NewReader(`{"title":"周会"}`))
+	opts := liveShareCreateBody(rec)
+
+	assert.False(t, opts.allowTalk)
+	assert.False(t, opts.allowMemberScreen)
+
+	rec = httptest.NewRequest(http.MethodPost, "/api/live-share/create",
+		strings.NewReader(`{"allowTalk":true,"allowMemberScreen":true}`))
+	opts = liveShareCreateBody(rec)
+
+	assert.True(t, opts.allowTalk)
+	assert.True(t, opts.allowMemberScreen)
 }
 
 // ── WebSocket end-to-end ─────────────────────────────────────────────────────

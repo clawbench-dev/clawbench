@@ -883,7 +883,7 @@ func TestServeLiveShareNotesMinutes_WritesThreeArtifactsAndSummarisesTheProofrea
 		w.Header().Set("Content-Type", "application/json")
 		// The proofreading pass is the one that carries the raw transcript; the
 		// summarisation pass carries whatever it returned.
-		if strings.Contains(string(body), "待修订转写") {
+		if strings.Contains(string(body), "待校对转写") {
 			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[00:00] 我：确认 ClawBench 发布计划"}}]}`))
 			return
 		}
@@ -950,7 +950,7 @@ func TestServeLiveShareNotesMinutes_ProofreadFailureFallsBackToRaw(t *testing.T)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		if strings.Contains(string(body), "待修订转写") {
+		if strings.Contains(string(body), "待校对转写") {
 			http.Error(w, "boom", http.StatusInternalServerError)
 			return
 		}

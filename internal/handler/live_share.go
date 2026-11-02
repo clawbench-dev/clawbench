@@ -71,9 +71,14 @@ func (s *liveSink) Send(msg any) error {
 }
 
 // liveShareManageResponse is the management endpoint's payload.
+//
+// The two switch fields are not omitempty: `false` is the meaningful answer for
+// a room created without them, and the publisher renders exactly that.
 type liveShareManageResponse struct {
-	Token string `json:"token,omitempty"`
-	Path  string `json:"path,omitempty"`
+	Token         string `json:"token,omitempty"`
+	Path          string `json:"path,omitempty"`
+	TalkEnabled   bool   `json:"talkEnabled"`
+	ScreenEnabled bool   `json:"screenEnabled"`
 }
 
 // liveShareStatusResponse is the GET payload.
@@ -105,15 +110,30 @@ func ServeLiveShareManage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// liveShareCreateBody derives the share title and the capture flags from the
-// create request. The title is author-supplied text that ends up on a public
-// page, so it is only ever rendered as text (never as HTML) by the SPA.
+// liveShareCreateOptions is what a create request asks the room to START with.
+// Every field is a starting state, not a meeting type: each one can be changed
+// again while the meeting runs.
+type liveShareCreateOptions struct {
+	title      string
+	notes      bool
+	video      bool
+	camera     bool
+	hostScreen bool
+	// allowTalk / allowMemberScreen are the two room-level audience
+	// permissions. Absent means "this client does not know about them" → off,
+	// which is how every client behaved before these fields existed.
+	allowTalk         bool
+	allowMemberScreen bool
+}
+
+// liveShareCreateBody derives the share title, the capture flags and the
+// audience permissions from the create request. The title is author-supplied
+// text that ends up on a public page, so it is only ever rendered as text
+// (never as HTML) by the SPA.
 //
-// The flags describe what the publisher STARTS WITH, not a meeting type: the
-// camera/screen pair can change at any moment afterwards (CtrlSetPicture).
-// `video` is derived from them, and a client that sends neither is a legacy one
-// whose picture has always been a screen.
-func liveShareCreateBody(r *http.Request) (title string, notes, video, camera, hostScreen bool) {
+// `video` is derived from camera/screen, and a client that sends neither is a
+// legacy one whose picture has always been a screen.
+func liveShareCreateBody(r *http.Request) liveShareCreateOptions {
 	var body struct {
 		Title string `json:"title"`
 		Notes bool   `json:"notes"`
@@ -125,34 +145,41 @@ func liveShareCreateBody(r *http.Request) (title string, notes, video, camera, h
 		// pointers.
 		Camera *bool `json:"camera"`
 		Screen *bool `json:"screen"`
+		// The audience switches are pointers for the same reason: an old client
+		// that never offered them must keep the closed room it has always had.
+		AllowTalk         *bool `json:"allowTalk"`
+		AllowMemberScreen *bool `json:"allowMemberScreen"`
 	}
-	video = true
+	opts := liveShareCreateOptions{video: true}
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
 	if body.Video != nil {
-		video = *body.Video
+		opts.video = *body.Video
 	}
 	if body.Camera != nil || body.Screen != nil {
-		camera = body.Camera != nil && *body.Camera
-		hostScreen = body.Screen != nil && *body.Screen
+		opts.camera = body.Camera != nil && *body.Camera
+		opts.hostScreen = body.Screen != nil && *body.Screen
 		// Derived, never trusted: a client claiming "video" with neither source
 		// would leave viewers waiting for a picture that does not exist.
-		video = camera || hostScreen
+		opts.video = opts.camera || opts.hostScreen
 	} else {
-		hostScreen = video
+		opts.hostScreen = opts.video
 	}
-	title = strings.TrimSpace(body.Title)
-	if title != "" {
-		title = truncateRunes(title, 80)
+	opts.notes = body.Notes
+	opts.allowTalk = body.AllowTalk != nil && *body.AllowTalk
+	opts.allowMemberScreen = body.AllowMemberScreen != nil && *body.AllowMemberScreen
+	opts.title = strings.TrimSpace(body.Title)
+	if opts.title != "" {
+		opts.title = truncateRunes(opts.title, 80)
 	} else {
 		// Unnamed. The project's own name used to stand in here, which made
 		// every meeting in a project carry the identical title and told the
 		// reader nothing. Date it instead; the summary model replaces this
 		// placeholder once the minutes exist (service.GenerateLiveNotesTitle).
-		title = service.PlaceholderMeetingTitle(time.Now())
+		opts.title = service.PlaceholderMeetingTitle(time.Now())
 	}
-	return title, body.Notes, video, camera, hostScreen
+	return opts
 }
 
 // liveShareReuseGrace is how long a publisher-less room is still treated as
@@ -161,8 +188,8 @@ func liveShareCreateBody(r *http.Request) (title string, notes, video, camera, h
 var liveShareReuseGrace = 10 * time.Second
 
 func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath string) {
-	title, notes, video, camera, hostScreen := liveShareCreateBody(r)
-	room, err := createLiveShareRoom(projectPath, title)
+	opts := liveShareCreateBody(r)
+	room, err := createLiveShareRoom(projectPath, opts.title)
 	if err != nil {
 		if errors.Is(err, liveshare.ErrTooManyRooms) {
 			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "LiveShareTooManyRooms")
@@ -175,14 +202,25 @@ func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath st
 	// Set on every create, not just the first: the room is idempotent per
 	// project, so a retry (or a second device) may be the one that knows
 	// whether 听记 is on.
-	room.SetNotesEnabled(notes)
-	room.SetVideoEnabled(video)
-	room.SetCameraEnabled(camera)
-	room.SetHostScreen(hostScreen)
+	room.SetNotesEnabled(opts.notes)
+	room.SetVideoEnabled(opts.video)
+	room.SetCameraEnabled(opts.camera)
+	room.SetHostScreen(opts.hostScreen)
+	// The audience permissions are part of the room's starting state, so a host
+	// who ticked them in the create form does not have to tick them again in
+	// the meeting. Routed through the same appliers as the control frames: on a
+	// reused room there may already be viewers, and they must be told.
+	applySetTalkEnabled(room, opts.allowTalk)
+	applySetScreenEnabled(room, opts.allowMemberScreen)
 
 	writeJSON(w, http.StatusOK, liveShareManageResponse{
 		Token: room.Token(),
 		Path:  "/share/" + room.Token(),
+		// Echoed back because the publisher is the ONE client that never
+		// receives a `joined` frame: without these it would draw both switches
+		// as off while the room has them on.
+		TalkEnabled:   room.TalkEnabled(),
+		ScreenEnabled: room.ScreenEnabled(),
 	})
 }
 
@@ -383,27 +421,7 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 		return false
 
 	case liveshare.CtrlSetTalkEnabled:
-		room.SetTalkEnabled(ctl.Enabled)
-		// Tell EVERY viewer the switch changed, in both directions. A viewer
-		// that joined while the switch was off has no other way to learn it was
-		// enabled later — its `joined` frame is long gone, so without this the
-		// microphone toggle would never appear.
-		for _, v := range room.Viewers() {
-			if ctl.Enabled {
-				room.SendToViewer(v.ID, liveshare.ViewerMessage{
-					Type:        liveshare.MsgTalkEnabled,
-					TalkEnabled: true,
-				})
-				continue
-			}
-			// Disabling also mutes everyone; the room already cleared the flags,
-			// so the viewer just needs to stop and flip its toggle back.
-			room.SendToViewer(v.ID, liveshare.ViewerMessage{
-				Type:   liveshare.MsgTalkRevoked,
-				Reason: liveshare.ReasonDisabled,
-			})
-			notifyTalkState(room, v.ID, false)
-		}
+		applySetTalkEnabled(room, ctl.Enabled)
 		return false
 
 	case liveshare.CtrlTalkRevoke:
@@ -640,6 +658,33 @@ func applySetPicture(room *liveshare.Room, ctl liveshare.PublisherControl) {
 		CameraEnabled: ctl.Camera,
 		HostScreen:    ctl.Screen,
 	}, "")
+}
+
+// applySetTalkEnabled flips the room-level audience-speech switch and tells
+// every viewer, in both directions. A viewer that joined while the switch was
+// off has no other way to learn it was enabled later — its `joined` frame is
+// long gone, so without this the microphone toggle would never appear.
+//
+// Shared with the create path, which sets the switch before any viewer exists;
+// splitting the notification out would let the two paths drift.
+func applySetTalkEnabled(room *liveshare.Room, enabled bool) {
+	room.SetTalkEnabled(enabled)
+	for _, v := range room.Viewers() {
+		if enabled {
+			room.SendToViewer(v.ID, liveshare.ViewerMessage{
+				Type:        liveshare.MsgTalkEnabled,
+				TalkEnabled: true,
+			})
+			continue
+		}
+		// Disabling also mutes everyone; the room already cleared the flags,
+		// so the viewer just needs to stop and flip its toggle back.
+		room.SendToViewer(v.ID, liveshare.ViewerMessage{
+			Type:   liveshare.MsgTalkRevoked,
+			Reason: liveshare.ReasonDisabled,
+		})
+		notifyTalkState(room, v.ID, false)
+	}
 }
 
 // applySetScreenEnabled flips the room switch and stops the current sharer.

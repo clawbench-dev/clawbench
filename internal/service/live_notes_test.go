@@ -240,7 +240,7 @@ func TestWriteLiveNotesTranscriptFile_KeepsHeadingNoteAndLines(t *testing.T) {
 	require.NoError(t, err)
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Contains(t, string(body), "# 修订版转写 · 季度规划 · 2026-10-30 14:30")
+	assert.Contains(t, string(body), "# 校对版转写 · 季度规划 · 2026-10-30 14:30")
 	assert.Contains(t, string(body), "> 已结合项目上下文修正听写错误与专有名词")
 	assert.Contains(t, string(body), "[00:00] 我：确认 ClawBench 的发布计划")
 
@@ -822,12 +822,12 @@ func TestSetLiveNoteRevise_RoundTrips(t *testing.T) {
 	db := setupTestDBForLiveNotes(t)
 	defer func() { _ = db.Close() }()
 
-	require.NoError(t, SetLiveNoteRevise("tok", 3, LiveNotesStatusReady, "修订后的文字", ""))
+	require.NoError(t, SetLiveNoteRevise("tok", 3, LiveNotesStatusReady, "校对后的文字", ""))
 	note, ok, err := GetLiveNote("tok")
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, LiveNotesStatusReady, note.ReviseStatus)
-	assert.Equal(t, "修订后的文字", note.Revised)
+	assert.Equal(t, "校对后的文字", note.Revised)
 	assert.Equal(t, "", note.ReviseError)
 
 	require.NoError(t, SetLiveNoteRevise("tok", 3, LiveNotesStatusFailed, "", "model down"))

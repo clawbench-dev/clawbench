@@ -3822,9 +3822,23 @@ paths:
                     同时在线（摄像头小窗叠在屏幕画面上）。观众端据此决定是否提供
                     标注与远程控制——这两项对摄像头画面没有意义。
                     省略 `camera` 与 `screen` 时按老客户端处理：`screen = video`、`camera = false`。
+                allowTalk:
+                  type: boolean
+                  default: false
+                  description: |
+                    房间级「允许观众发言」开关的**初始状态**。创建页默认勾选，
+                    会中「会议管理」页签可随时再改（`set-talk-enabled` 控制帧）。
+                    省略时按 `false`：不认识该字段的老客户端保持原来的封闭房间。
+                allowMemberScreen:
+                  type: boolean
+                  default: false
+                  description: |
+                    房间级「允许成员共享屏幕」开关的**初始状态**。与 `allowTalk` 同为创建页
+                    默认勾选的权限，会中可随时再改（`set-screen-enabled` 控制帧）。
+                    省略时按 `false`。
       responses:
         "200":
-          description: 房间 token 与分享路径
+          description: 房间 token、分享路径，以及两个权限开关的当前状态
           content:
             application/json:
               schema:
@@ -3834,6 +3848,14 @@ paths:
                     type: string
                   path:
                     type: string
+                  talkEnabled:
+                    type: boolean
+                    description: |
+                      回显房间的「允许观众发言」开关。发布端是唯一收不到 `joined` 帧的客户端，
+                      不回显就会把会中的两个勾选框画成关闭，而房间其实是开着的。
+                  screenEnabled:
+                    type: boolean
+                    description: 回显房间的「允许成员共享屏幕」开关（理由同上）
         "503":
           description: 并发房间数已达上限
     get:
@@ -7741,7 +7763,7 @@ components:
         `failed`；`markdown` 仅在 `ready` 时有值，`error` 仅在 `failed` 时有值。
 
         `revise` 是生成纪要**之前**的上下文校对阶段：结合项目文档（AGENTS.md /
-        README.md 等）修正听写错误与专有名词，纪要由修订后的转写生成。它失败时
+        README.md 等）修正听写错误与专有名词，纪要由校对后的转写生成。它失败时
         纪要改用原始转写，因此 `revise.status` 与 `status` 可以不同。
 
         `filePath` 与 `artifacts` 只对发布端返回：它们是发布端磁盘上的路径。

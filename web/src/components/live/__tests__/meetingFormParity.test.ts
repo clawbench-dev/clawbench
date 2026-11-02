@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
- * 创建会议 and 会中「基础配置」 are two screens of ONE form: the same heading,
+ * 创建会议 and 会中「会议管理」 are two screens of ONE form: the same heading,
  * the same hint line, the same checkbox row, and the same picture / camera /
  * microphone controls.
  *

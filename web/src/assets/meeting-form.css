@@ -2,7 +2,7 @@
  * The meeting form primitives: a section heading, a field, a hint line and a
  * checkbox row.
  *
- * 创建会议 / 加入会议 / 会中「基础配置」 are three screens of one form language.
+ * 创建会议 / 加入会议 / 会中「会议管理」 are three screens of one form language.
  * They used to be two scoped copies (`.meeting-*` on the create page,
  * `.live-dialog-*` on the stage) and had already drifted: the stage's hints
  * lost the icon gutter and its checkboxes carried no icon, so the same "AI

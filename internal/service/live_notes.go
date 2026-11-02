@@ -2004,9 +2004,9 @@ const liveNotesRevisePrompt = `你是一名会议转写校对员。输入是语�
 7. 不要删除任何信息（口头语也保留），不要改变时间戳、说话人、行数和顺序。
 8. 听不清且无法确定的，保持原样，不要猜测；拿不准正文里的人名是不是行首那个人时，同样保持原样。
 
-直接输出修订后的转写，不要任何解释、不要加代码块。`
+直接输出校对后的转写，不要任何解释、不要加代码块。`
 
-const liveNotesReviseQuestion = "请输出这一段修订后的转写。"
+const liveNotesReviseQuestion = "请输出这一段校对后的转写。"
 
 // ReviseLiveNotesTranscript proofreads the raw transcript against the project's
 // own vocabulary and returns the corrected timeline.
@@ -2049,7 +2049,7 @@ func ReviseLiveNotesTranscript(
 		// documents: without it the model has no delimiter between "context" and
 		// "the thing to correct", and a project without an AGENTS.md is the
 		// normal case for a fresh directory.
-		block := "## 待修订转写\n" + chunk
+		block := "## 待校对转写\n" + chunk
 		if background != "" {
 			block = "## 项目背景（专有名词以此为准）\n" + background + "\n\n" + block
 		}
@@ -2515,7 +2515,7 @@ func WriteLiveNotesMinutesFile(paths LiveNotesPaths, title string, startedAt tim
 	b.WriteString(strings.TrimSpace(minutes))
 	b.WriteString("\n\n---\n\n## 本次产物\n\n")
 	b.WriteString("- 转写：[transcript.vtt](transcript.vtt)\n")
-	b.WriteString("- 修订版转写：[transcript-revised.md](transcript-revised.md)\n")
+	b.WriteString("- 校对版转写：[transcript-revised.md](transcript-revised.md)\n")
 	if hasMeetingAudio {
 		// The merged track is what somebody actually listens to; the
 		// per-channel files are the source it was built from.
@@ -2559,7 +2559,7 @@ func WriteLiveNotesRawTranscript(paths LiveNotesPaths, segments []LiveNoteSegmen
 // differs from transcript.vtt, and "the timestamps were not touched" is the one
 // thing that makes it comparable.
 func WriteLiveNotesRevisedTranscript(paths LiveNotesPaths, title string, startedAt time.Time, body string) (string, error) {
-	return writeLiveNotesTranscript(paths, paths.Revised, "修订版转写",
+	return writeLiveNotesTranscript(paths, paths.Revised, "校对版转写",
 		"已结合项目上下文修正听写错误与专有名词；时间戳、说话人、行序均未改动。",
 		title, startedAt, body)
 }

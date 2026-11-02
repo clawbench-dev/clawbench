@@ -46,7 +46,7 @@
 
 ### 第二层：`web/src/assets/*.css` — 全局但按需引入
 
-组件里 `import '@/assets/x.css'` 或 `@import`，**不加 scoped**，所以同样是全局作用域。放的是**成组的基础设施样式**：`modal-card.css`、`modal-footer-btn.css`（`.fbtn`）、`meeting-form.css`（会议表单原语：分组标题 / 输入框 / 提示行 / 勾选行，创建页与会中基础配置共用）、`refresh-spin.css`、`search-bar.css`、`theme-picker.css`、`resize-divider.css`、`code-link-preview.css` 等。
+组件里 `import '@/assets/x.css'` 或 `@import`，**不加 scoped**，所以同样是全局作用域。放的是**成组的基础设施样式**：`modal-card.css`、`modal-footer-btn.css`（`.fbtn`）、`meeting-form.css`（会议表单原语：分组标题 / 输入框 / 提示行 / 勾选行，创建页与会中会议管理共用）、`refresh-spin.css`、`search-bar.css`、`theme-picker.css`、`resize-divider.css`、`code-link-preview.css` 等。
 
 判断标准：这套样式是**一个原语**（按钮语言、弹窗外壳、刷新动效），且被多个组件用 → 放这里。
 
@@ -685,7 +685,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/chat/__tests__/quickSendMenuStickyTitle.css.test.ts` | 快捷发送 / 快捷指令弹层标题 `.quick-send-title` 在 `components.css` 全局声明（sticky + 不透明 `--bg-secondary` + `z-index`），两个宿主不得各自重声明，且两个菜单的 `:max-height` 一致且 ≥400 |
 | `components/common/__tests__/modalFooterBtn.theme.css.test.ts` | `.fbtn` 深色主题前景提亮 |
 | `components/live/__tests__/meetingFooterButtons.test.ts` | 会议页脚动作条与任务动作条逐声明一致（`padding` / `background` / `border-top` / `flex-shrink`）、页脚里只能用 `.fbtn`（不得回退 `.meeting-btn`）、每个组件自己 import `modal-footer-btn.css` |
-| `components/live/__tests__/meetingFormParity.test.ts` | 创建会议与会中「基础配置」是同一套表单：原语只在 `assets/meeting-form.css` 声明一次（组件不得各写一份）、画面都是 `CaptureSourceGrid`（含「不共享」格子，不得回退屏幕勾选框）、摄像头/麦克风都是 `DeviceChoiceGrid`、分组标题都是 `meeting.create.av`、勾选行都是 `.meeting-check`；会中 tab 页不得给 `.live-panel__body.live-dialog` 设 `max-width`/`width`/`margin`（内容随面板宽度铺满） |
+| `components/live/__tests__/meetingFormParity.test.ts` | 创建会议与会中「会议管理」是同一套表单：原语只在 `assets/meeting-form.css` 声明一次（组件不得各写一份）、画面都是 `CaptureSourceGrid`（含「不共享」格子，不得回退屏幕勾选框）、摄像头/麦克风都是 `DeviceChoiceGrid`、分组标题都是 `meeting.create.av`、勾选行都是 `.meeting-check`；会中 tab 页不得给 `.live-panel__body.live-dialog` 设 `max-width`/`width`/`margin`（内容随面板宽度铺满） |
 | `assets/__tests__/modalWidth.css.test.ts` | **宽度只有两档**：`--modal-width-narrow/wide` 各一份且窄 < 宽、`modal-card.css` 只把修饰类映射到 token、全仓组件**不得**自设 `--modal-max-width` 或给弹窗外壳写裸 `max-width` 数字 |
 | `components/common/__tests__/wallpaperSurfaceTransparency.css.test.ts` | 壁纸开启后各表面透明度不叠乘 |
 | `components/common/__tests__/wallpaperBlurCost.css.test.ts` | 壁纸模糊不留 `will-change` |

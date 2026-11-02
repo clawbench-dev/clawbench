@@ -3,7 +3,7 @@
  * published.
  *
  * The same choice is asked twice — when creating a meeting and again, live, in
- * the running meeting's 基础配置 tab — and both must offer exactly the same
+ * the running meeting's 会议管理 tab — and both must offer exactly the same
  * tiles. The two hosts that have no source list are the ones worth naming:
  * Android decides the source in its own consent dialog, and a plain browser's
  * picker IS the source, so each gets one synthetic tile instead of an empty

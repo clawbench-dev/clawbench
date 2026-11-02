@@ -288,7 +288,7 @@ describe('MeetingCreate in a browser', () => {
     expect(wrapper.find('[data-source="browser:screen"]').classes()).toContain('capture-source--on')
   })
 
-  it('offers every axis as cards, leaving 听记 as the only checkbox', async () => {
+  it('offers every axis as cards, leaving 听记 and the permissions as checkboxes', async () => {
     stubCaptureApi(true)
     const wrapper = mountPanel()
     await flushPromises()
@@ -299,9 +299,52 @@ describe('MeetingCreate in a browser', () => {
     expect(wrapper.text()).not.toContain(enMessages.meeting.create.sound)
     expect(wrapper.text()).toContain(enMessages.meeting.create.av)
     expect(wrapper.findAll('[data-role="device-choice"]')).toHaveLength(2)
+    // 听记 and the two audience permissions are room-level yes/no questions,
+    // not capture sources, so they stay checkboxes.
     expect(wrapper.findAll('.meeting-check input').map((i) => i.attributes('data-role'))).toEqual([
       'meeting-notes',
+      'meeting-allow-talk',
+      'meeting-allow-member-screen',
     ])
+  })
+
+  // Both permissions start ON: a meeting where nobody may speak and nobody may
+  // share would otherwise need the host to go hunting for two switches
+  // mid-call. They are the same room-level switches the 会议管理 tab shows, so
+  // they travel with the create request rather than a follow-up frame.
+  it('starts with both audience permissions on and sends them at create time', async () => {
+    stubCaptureApi(true)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const talk = wrapper.find('[data-role="meeting-allow-talk"]').element as HTMLInputElement
+    const memberScreen = wrapper.find('[data-role="meeting-allow-member-screen"]')
+      .element as HTMLInputElement
+    expect(talk.checked).toBe(true)
+    expect(memberScreen.checked).toBe(true)
+
+    await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
+    await wrapper.find('[data-action="meeting-start"]').trigger('click')
+    await flushPromises()
+
+    expect(shareApi.start).toHaveBeenCalledWith(
+      expect.objectContaining({ allowTalk: true, allowMemberScreen: true }),
+    )
+  })
+
+  it('sends a permission the host unticked', async () => {
+    stubCaptureApi(true)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-role="meeting-allow-member-screen"]').setValue(false)
+    await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
+    await wrapper.find('[data-action="meeting-start"]').trigger('click')
+    await flushPromises()
+
+    expect(shareApi.start).toHaveBeenCalledWith(
+      expect.objectContaining({ allowTalk: true, allowMemberScreen: false }),
+    )
   })
 
   it('does not repeat a description under each simple choice', async () => {
@@ -409,26 +452,57 @@ describe('MeetingCreate in a browser', () => {
     expect(label('mic')).toBe('Alex')
   })
 
-  it('leaves the camera group out when the machine has none', async () => {
+  it('keeps the camera off card when the machine has none', async () => {
     stubCaptureApi(true)
     cameraDevice.has = false
     const wrapper = mountPanel()
     await flushPromises()
 
-    // No cards at all: a list whose only entry is "off" is not a choice.
-    expect(wrapper.find('[data-role="device-choice"][data-kind="video"]').exists()).toBe(false)
+    // The group stays on screen: 「不共享摄像头」 is still an answer to "which
+    // camera", and a missing group reads as a question the form forgot to ask.
+    const camera = wrapper.find('[data-role="device-choice"][data-kind="video"]')
+    expect(camera.exists()).toBe(true)
+    expect(camera.attributes('data-variant')).toBe('tile')
+    // Only the off card. A "system default" for hardware that is not there
+    // would be a lie, and there is no list to ask the browser for either.
+    expect(camera.findAll('[data-device]').map((c) => c.attributes('data-device'))).toEqual([
+      '__off__',
+    ])
+    expect(camera.text()).toContain(enMessages.meeting.create.cameraOffCard)
     // The single description line carries the reason.
     expect(wrapper.find('[data-role="meeting-picture"]').text()).toBe(
       enMessages.meeting.create.cameraNoDevice,
     )
 
     // The line keeps saying why the camera is unavailable; the picture tiles
-    // are the only way to a picture, and "share nothing" still works (a meeting
-    // without any picture is allowed).
+    // are the only way to a picture, and "share no screen" still works (a
+    // meeting without any picture is allowed).
     await wrapper.find('[data-source="__off__"]').trigger('click')
     expect(wrapper.find('[data-role="meeting-picture"]').text()).toBe(
       enMessages.meeting.create.cameraNoDevice,
     )
+  })
+
+  // A camera is a picture, so it is drawn with the screens' frames; a
+  // microphone is not, so it keeps the compact row. One decision, one look.
+  it('draws the camera in the same frames as the screens', async () => {
+    stubCaptureApi(true)
+    videoDevices.list = [{ id: 'cam-a', name: 'FaceTime HD' }]
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const camera = wrapper.find('[data-role="device-choice"][data-kind="video"]')
+    expect(camera.attributes('data-variant')).toBe('tile')
+    expect(camera.findAll('[data-device]').map((c) => c.attributes('data-device'))).toEqual([
+      '__off__',
+      'default',
+      'cam-a',
+    ])
+    expect(camera.find('.device-choice__thumb').exists()).toBe(true)
+
+    const mic = wrapper.find('[data-role="device-choice"][data-kind="audio"]')
+    expect(mic.attributes('data-variant')).toBe('row')
+    expect(mic.find('.device-choice__thumb').exists()).toBe(false)
   })
 
   // A machine with a headset AND a built-in mic has a real choice to make. It

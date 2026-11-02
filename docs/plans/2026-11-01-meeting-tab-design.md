@@ -251,7 +251,7 @@ stateDiagram-v2
 │ 已保存到                            │
 │ 纪要   …/minutes.md          [复制] │
 │ 转写   …/transcript.srt      [复制] │
-│ 修订版 …/transcript-revised.md[复制]│
+│ 校对版 …/transcript-revised.md[复制]│
 │ 录音 12 段 …/audio/          [复制] │
 ├────────────────────────────────────┤
 │ [删除记录]        [打开文件] [复制] │
@@ -605,7 +605,7 @@ if (!outVideoTrack) { fail('no video track captured'); await stop(); return fals
 | 观众称谓 | 复用已有的 `Viewer.Name` / `viewer-join.name` / 聊天帧 `name`；服务端校验 ≤24 字，空值 400；发布端用 `viewerId → 称谓` 覆盖自报值，`from` 保持不变 |
 | 语音会议 | `POST /api/live-share` 的 `video`（默认 true）→ 房间 → `joined.video`；发布端 `start({video:false})` 跳过采集；观众端音频轨即接通 |
 | 运行时开关 | 麦克风/系统声音切换轨道 `enabled`（不重协商）；听记开关走 `useLiveShare.startNotes()/stopNotes()` |
-| 引用 | 拖拽只带 token；落点/按钮统一走 `handleMeetingQuote` → 拉纪要（无则修订版转写 → 原始转写）→ 截断 4000 字 → 暂存；失败不暂存 |
+| 引用 | 拖拽只带 token；落点/按钮统一走 `handleMeetingQuote` → 拉纪要（无则校对版转写 → 原始转写）→ 截断 4000 字 → 暂存；失败不暂存 |
 | 角标 | 只剩一个主题色圆点（`liveDotVisible`），红色的 `is-recording` tint 删除 |
 | 评审后修正 | `video` 字段**去掉 `omitempty`**（false 必须真的发出去）；观众称谓在 `onViewerJoin` **之后**回填（否则行还不存在）；引用卡片补 `meetingToken` 三处映射 + 选区 `data-quote-meeting-token`；详情在会议刚结束时轮询纪要；分享自行停止时由外壳切走（阶段页没有返回键）；删除项目补三张会议表；列表删除失败弹提示；转写按纯文本渲染（SRT 过 Markdown 会把时间轴箭头吃掉）；观众重名加 `#2` |
 

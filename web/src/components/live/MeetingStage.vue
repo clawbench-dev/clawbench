@@ -53,7 +53,7 @@
     </div>
 
     <div class="live-panel__body live-dialog" :class="{ 'live-panel__body--fill': fillTab }">
-      <!-- Publishing: three surfaces. 会议配置 holds what is set up once and
+      <!-- Publishing: three surfaces. 会议管理 holds what is set up once and
            then glanced at (link, tools, audience, permissions); the transcript
            and the chat get their own tabs so each can use the panel's height. -->
         <template v-if="activeTab === 'basic'">
@@ -89,31 +89,30 @@
             {{ screenHint }}
           </div>
 
-          <!-- Camera. Shown whenever the machine has one; a camera the OS cannot
-               provide is not something to offer. The self-view is mirrored, like
-               every other video tool: you are looking in a mirror, not a photo.
-               Same cards as the create form — the off state is a card, so there
-               is no separate checkbox to keep in sync with the device choice. -->
-          <template v-if="cameraAvailable">
-            <div v-if="share.previewCameraStream.value" class="live-camera-self">
-              <video
-                ref="selfCameraRef"
-                class="live-camera-self__video"
-                :class="{ 'live-camera-self__video--off': !share.cameraEnabled.value }"
-                autoplay
-                playsinline
-                muted
-                data-role="camera-self"
-              />
-            </div>
-            <DeviceChoiceGrid
-              kind="video"
-              :label="t('meeting.create.cameraDevices')"
-              :off-label="t('meeting.create.cameraOffCard')"
-              :selected-id="cameraSelected"
-              @select="onSelectCamera"
+          <!-- Camera. The self-view is mirrored, like every other video tool:
+               you are looking in a mirror, not a photo. Same frames as the
+               create form, and the group stays on screen with no camera at all
+               — the off card is still an answer. -->
+          <div v-if="share.previewCameraStream.value" class="live-camera-self">
+            <video
+              ref="selfCameraRef"
+              class="live-camera-self__video"
+              :class="{ 'live-camera-self__video--off': !share.cameraEnabled.value }"
+              autoplay
+              playsinline
+              muted
+              data-role="camera-self"
             />
-          </template>
+          </div>
+          <DeviceChoiceGrid
+            kind="video"
+            variant="tile"
+            :available="cameraAvailable"
+            :label="t('meeting.create.cameraDevices')"
+            :off-label="t('meeting.create.cameraOffCard')"
+            :selected-id="cameraSelected"
+            @select="onSelectCamera"
+          />
           <div v-if="pictureHint" class="meeting-hint" data-role="stage-picture">
             {{ pictureHint }}
           </div>

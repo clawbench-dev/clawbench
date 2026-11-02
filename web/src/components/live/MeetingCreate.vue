@@ -79,9 +79,14 @@
         <!-- Camera and microphone are card choices too, with the off state as
              the first card: one control per decision instead of a checkbox plus
              a list underneath. -->
+        <!-- Camera, in the same frames as the screens above: it is a picture
+             too. The group stays on screen with no camera at all — 「不共享摄像头」
+             is still the answer to "which camera", and a missing group reads as
+             a question the form forgot to ask. -->
         <DeviceChoiceGrid
-          v-if="cameraAvailable"
           kind="video"
+          variant="tile"
+          :available="cameraAvailable"
           :label="t('meeting.create.cameraDevices')"
           :off-label="t('meeting.create.cameraOffCard')"
           :selected-id="cameraChoice"
@@ -110,6 +115,31 @@
             />
             <span class="meeting-check__icon"><NotebookPen :size="13" /></span>
             {{ t('meeting.create.notes') }}
+          </label>
+          <!-- Audience permissions start ON. They are the same two room-level
+               switches the 会议管理 tab shows during the meeting, so they travel
+               with the create request: a meeting where nobody may speak and
+               nobody may share would otherwise need the host to hunt for two
+               switches mid-call. -->
+          <label class="meeting-check">
+            <input
+              type="checkbox"
+              :checked="allowTalk"
+              data-role="meeting-allow-talk"
+              @change="allowTalk = ($event.target as HTMLInputElement).checked"
+            />
+            <span class="meeting-check__icon"><Mic :size="13" /></span>
+            {{ t('liveShare.allowTalking') }}
+          </label>
+          <label class="meeting-check">
+            <input
+              type="checkbox"
+              :checked="allowMemberScreen"
+              data-role="meeting-allow-member-screen"
+              @change="allowMemberScreen = ($event.target as HTMLInputElement).checked"
+            />
+            <span class="meeting-check__icon"><MonitorUp :size="13" /></span>
+            {{ t('liveShare.allowScreenShare') }}
           </label>
         </div>
       </template>
@@ -144,7 +174,7 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, NotebookPen } from 'lucide-vue-next'
+import { ArrowLeft, Mic, MonitorUp, NotebookPen } from 'lucide-vue-next'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
 import { useToast } from '@/composables/useToast'
@@ -163,7 +193,7 @@ import { buildCaptureChoices, captureSourceIdOf } from '@/utils/captureSourceCho
 import { appLog } from '@/utils/appLog'
 import '@/assets/modal-footer-btn.css'
 // The section / field / hint / checkbox primitives, shared with the running
-// meeting's 基础配置 tab so one form has one look.
+// meeting's 会议管理 tab so one form has one look.
 import '@/assets/meeting-form.css'
 
 const emit = defineEmits<{ back: []; started: [] }>()
@@ -186,6 +216,17 @@ const loadingSources = ref(false)
 const starting = ref(false)
 /** Whether this machine has a camera at all. */
 const cameraAvailable = ref(true)
+
+/**
+ * The two audience permissions, both ON by default.
+ *
+ * They are room-level switches rather than local capture choices, so they are
+ * not part of useMeetingOptions: the running meeting reads them back from the
+ * room, and the create response is what seeds that state. Turning one off here
+ * is the same decision as turning it off in the 会议管理 tab, only earlier.
+ */
+const allowTalk = ref(true)
+const allowMemberScreen = ref(true)
 
 const hasNativeCapture = computed(() => Boolean(getNative()?.listCaptureSources))
 const browserCapture = browserScreenCaptureAvailable()
@@ -351,6 +392,8 @@ async function start(): Promise<void> {
       micDeviceId: micChoice.value === DEFAULT_DEVICE ? '' : micChoice.value,
       cameraDeviceId: cameraOn.value ? cameraChoice.value : '',
       notes: notes.value,
+      allowTalk: allowTalk.value,
+      allowMemberScreen: allowMemberScreen.value,
       shareTitle: title.value.trim(),
       notesLabel,
     })
@@ -403,7 +446,7 @@ onMounted(() => {
   padding: var(--space-6) var(--space-7);
 }
 /* .meeting-section / .meeting-input / .meeting-hint / .meeting-check live in
-   assets/meeting-form.css — the running meeting's 基础配置 tab draws the same
+   assets/meeting-form.css — the running meeting's 会议管理 tab draws the same
    controls and must not grow a second copy. */
 .meeting-warn {
   padding: var(--space-4) var(--space-5); border-radius: var(--radius-md);

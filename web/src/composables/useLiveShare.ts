@@ -841,6 +841,17 @@ export function useLiveShare() {
     shareTitle?: string
     /** Enable AI 听记 (transcription + minutes) for this share. */
     notes?: boolean
+    /**
+     * The two audience permissions the room STARTS with. They are room-level
+     * switches (not local capture choices), so they travel with the create
+     * request instead of a follow-up control frame: viewers may join before the
+     * publisher socket is up, and they must see the right state from their
+     * `joined` frame.
+     *
+     * Omitted means off, which is what every client before these options did.
+     */
+    allowTalk?: boolean
+    allowMemberScreen?: boolean
     /** Localised speaker label for a channel ("system" / "mic" / "viewer:<id>"). */
     notesLabel?: (channel: string) => string
   }): Promise<boolean> {
@@ -932,6 +943,10 @@ export function useLiveShare() {
           video: videoEnabled.value,
           camera: cameraEnabled.value,
           screen: Boolean(displayStream),
+          // Audience permissions, likewise a starting state: the meeting's
+          // 会议管理 tab can flip both at any time afterwards.
+          allowTalk: Boolean(opts.allowTalk),
+          allowMemberScreen: Boolean(opts.allowMemberScreen),
         }),
       })
       if (!resp.ok) {
@@ -939,13 +954,23 @@ export function useLiveShare() {
         await stop()
         return false
       }
-      const data = (await resp.json()) as { token?: string; path?: string }
+      const data = (await resp.json()) as {
+        token?: string
+        path?: string
+        talkEnabled?: boolean
+        screenEnabled?: boolean
+      }
       if (!data.token) {
         fail('create room returned no token')
         await stop()
         return false
       }
       token.value = data.token
+      // The publisher never receives a `joined` frame, so the create response is
+      // the only source for these two room-level switches. Without this the
+      // 会议管理 tab would draw both as off while the room has them on.
+      talkEnabled.value = Boolean(data.talkEnabled)
+      screenEnabled.value = Boolean(data.screenEnabled)
       // Build from the server's address list, not window.location.origin: the
       // browser only knows the one address it used, which may not be reachable
       // from a colleague's subnet.
