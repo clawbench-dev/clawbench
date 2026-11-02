@@ -21,11 +21,13 @@ import { readWebFile } from '@/testUtils/readWebFile'
  */
 describe('LiveShareView dock', () => {
   const FILE = 'src/share/LiveShareView.vue'
+  // The buttons moved into the shared dock component; the pill itself stayed.
+  const BUTTON_FILE = 'src/share/LiveDockButton.vue'
 
   /** The component's own stylesheet, comments stripped (they mention the very
    *  selectors asserted below, and would make a rule-less file pass). */
-  function styleBlock(): string {
-    const src = readWebFile(FILE)
+  function styleBlock(file = FILE): string {
+    const src = readWebFile(file)
     const m = src.match(/<style scoped>([\s\S]*)<\/style>/)
     expect(m).not.toBeNull()
     return (m as RegExpMatchArray)[1].replace(/\/\*[\s\S]*?\*\//g, '')
@@ -65,7 +67,7 @@ describe('LiveShareView dock', () => {
   })
 
   it('dims dock buttons this platform cannot use', () => {
-    const all = rules(styleBlock())
+    const all = rules(styleBlock(BUTTON_FILE))
     const disabled = all.filter((r) => /\.live-dock-btn:disabled\b/.test(r.selector))
     expect(disabled.length).toBeGreaterThan(0)
     expect(disabled.some((r) => /opacity:\s*var\(--opacity-disabled/.test(r.body))).toBe(true)

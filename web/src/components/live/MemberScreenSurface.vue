@@ -1,44 +1,57 @@
 <template>
   <div class="member-screen" :data-variant="variant">
     <video ref="videoRef" class="member-screen__video" autoplay playsinline muted />
-    <!-- One dock for both surfaces: the picture is the same picture, and the
-         actions that belong next to it are the same actions. Only the frame
-         differs — the whole screen, or a window of its own. -->
-    <div class="member-screen__dock">
-      <span class="member-screen__who" :title="sharer">
-        {{ t('liveShare.memberSharing', { id: sharer }) }}
-      </span>
-      <button class="member-screen__btn" type="button" data-action="screen-chat" @click="emit('toggle-chat')">
+    <!-- Same pill and buttons as the member's own share page (LiveDock /
+         LiveDockButton), because the host is looking at the same call from the
+         other end. Only the actions differ: no microphone or screen capture
+         here, but a way to move the picture into its own window and to stop it.
+    -->
+    <LiveDock brand live :title="sharer">
+      <LiveDockButton
+        :live="chatOpen"
+        :badge="unread"
+        :aria-pressed="chatOpen"
+        :aria-label="t('liveShare.chat')"
+        :title="t('liveShare.chat')"
+        data-action="screen-chat"
+        @click="emit('toggle-chat')"
+      >
+        <template #icon><MessageSquare :size="16" /></template>
         {{ t('liveShare.chat') }}
-        <span v-if="unread > 0" class="live-count">{{ unread > 9 ? '9+' : unread }}</span>
-      </button>
-      <button
+      </LiveDockButton>
+      <LiveDockButton
         v-if="canSwitch"
-        class="member-screen__btn"
-        type="button"
+        :aria-label="switchLabel"
+        :title="switchLabel"
         data-action="screen-switch"
         @click="emit('switch')"
       >
-        {{ t(variant === 'fullscreen' ? 'liveShare.openInWindow' : 'liveShare.fullscreen') }}
-      </button>
-      <button
-        class="member-screen__btn member-screen__btn--danger"
-        type="button"
+        <template #icon>
+          <Minimize v-if="variant === 'window'" :size="16" />
+          <Maximize v-else :size="16" />
+        </template>
+        {{ switchLabel }}
+      </LiveDockButton>
+      <LiveDockButton
+        live
+        :aria-label="t('liveShare.stopScreenShare')"
+        :title="t('liveShare.stopScreenShare')"
         data-action="screen-stop"
         @click="emit('stop')"
       >
+        <template #icon><ScreenShareOff :size="16" /></template>
         {{ t('liveShare.stopScreenShare') }}
-      </button>
-      <button
-        class="member-screen__btn member-screen__btn--icon"
-        type="button"
-        data-action="screen-close"
+      </LiveDockButton>
+      <LiveDockButton
         :aria-label="t('common.close')"
+        :title="t('common.close')"
+        data-action="screen-close"
         @click="emit('close')"
       >
-        <X :size="14" />
-      </button>
-    </div>
+        <template #icon><X :size="16" /></template>
+        {{ t('common.close') }}
+      </LiveDockButton>
+    </LiveDock>
     <div v-if="chatOpen" class="member-screen__chat">
       <LiveChatPanel :messages="messages" @send="(text: string) => emit('send-chat', text)" />
     </div>
@@ -53,15 +66,19 @@
  * window — and it is deliberately the SAME component: the host moved the
  * picture, not the controls, so a second implementation would drift (a button
  * that exists in one and not the other, or two copies of the same dock CSS).
+ * The dock itself is the viewer page's `LiveDock`, so both ends of a share are
+ * the same object on screen.
  *
  * The picture is a live MediaStream, so it can only be attached here, in the
  * document that owns the track. That is also why the window is a PiP window
  * rather than a real one: a separate JS context cannot see the stream.
  */
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { X } from 'lucide-vue-next'
+import { Maximize, MessageSquare, Minimize, ScreenShareOff, X } from 'lucide-vue-next'
 import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
+import LiveDock from '@/share/LiveDock.vue'
+import LiveDockButton from '@/share/LiveDockButton.vue'
 
 const props = defineProps<{
   stream: MediaStream | null
@@ -85,6 +102,11 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const videoRef = ref<HTMLVideoElement | null>(null)
+
+/** Where the switch button would put the picture — named, not "toggle". */
+const switchLabel = computed(() =>
+  props.variant === 'fullscreen' ? t('liveShare.openInWindow') : t('liveShare.fullscreen'),
+)
 
 // The element appears after the stream does (the whole surface is behind a
 // v-if), so watching both is the only way to catch either order.
@@ -123,57 +145,6 @@ watch(
   width: 100%;
   object-fit: contain;
   background: #000;
-}
-
-/* Floating dock, mirroring the audience page: it must not eat picture area. */
-.member-screen__dock {
-  position: absolute;
-  left: 50%;
-  bottom: calc(14 * var(--dp));
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: calc(6 * var(--dp));
-  padding: calc(5 * var(--dp)) calc(8 * var(--dp));
-  border-radius: var(--radius-full, 999px);
-  background: color-mix(in srgb, #000 62%, transparent);
-  border: 1px solid color-mix(in srgb, #fff 16%, transparent);
-  box-shadow: 0 calc(6 * var(--dp)) calc(20 * var(--dp)) color-mix(in srgb, #000 45%, transparent);
-}
-
-.member-screen__who {
-  max-width: calc(220 * var(--dp));
-  padding: 0 calc(6 * var(--dp));
-  color: #fff;
-  font-size: var(--font-size-xs, 11px);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.member-screen__btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: calc(4 * var(--dp)) calc(10 * var(--dp));
-  border: none;
-  border-radius: var(--radius-full, 999px);
-  background: color-mix(in srgb, #fff 14%, transparent);
-  color: #fff;
-  font-size: var(--font-size-xs, 11px);
-  cursor: pointer;
-}
-
-.member-screen__btn:hover {
-  background: color-mix(in srgb, #fff 24%, transparent);
-}
-
-.member-screen__btn--danger {
-  background: color-mix(in srgb, var(--color-red, #cf222e) 80%, transparent);
-}
-
-.member-screen__btn--icon {
-  padding: calc(4 * var(--dp));
 }
 
 .member-screen__chat {

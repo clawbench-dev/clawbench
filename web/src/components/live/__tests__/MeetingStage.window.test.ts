@@ -335,7 +335,7 @@ describe('MeetingStage windows', () => {
     expect(requestWindow).toHaveBeenCalledTimes(1)
     expect(document.querySelector('[data-role="screen-fullscreen"]')).toBeNull()
     expect(win.document.querySelector('.member-screen__video')).not.toBeNull()
-    const dock = win.document.querySelector('.member-screen__dock')
+    const dock = win.document.querySelector('.live-dock')
     expect(dock?.textContent).toContain('Stop sharing')
     const back = win.document.querySelector('[data-action="screen-switch"]') as HTMLElement
     expect(back.textContent).toContain('Full screen')

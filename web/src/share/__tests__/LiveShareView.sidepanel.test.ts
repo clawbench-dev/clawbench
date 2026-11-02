@@ -555,7 +555,7 @@ describe('LiveShareView side panel layout', () => {
  */
 describe('meeting unread badge colour', () => {
   it.each([
-    { file: 'src/share/LiveShareView.vue', selector: '.live-dock-badge' },
+    { file: 'src/share/LiveDockButton.vue', selector: '.live-dock-badge' },
     { file: 'src/components/live/MeetingStage.vue', selector: '.live-count' },
   ])('paints $selector with the accent in $file', ({ file, selector }) => {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

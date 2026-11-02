@@ -186,45 +186,30 @@
         {{ t('share.live.speaking', { name: speakerLabel }) }}
       </div>
 
-      <!-- Floating control dock. Absolutely positioned so it overlays the video
-           instead of taking height from it, and always mounted: fullscreen is
-           useful even when the publisher never allowed speech. -->
-      <div class="live-dock">
-        <!-- Brand. Replaces the header's logo; the dot is the "live" signal the
-             header's status chip used to provide, and the tooltip carries the
-             share title (also mirrored into the tab title). -->
-        <span
-          class="live-dock-brand"
-          :title="title || t('share.live.title')"
-          :aria-label="title || t('share.live.title')"
-        >
-          <img class="live-dock-logo" src="/logo-64.png" alt="ClawBench" />
-          <span v-if="state === 'playing'" class="live-dock-dot" />
-        </span>
-
+      <!-- Floating control dock. The pill and its buttons are the shared
+           LiveDock / LiveDockButton the host's picture of a member's screen
+           uses too: same object, different actions. -->
+      <LiveDock brand :live="state === 'playing'" :title="title || t('share.live.title')">
         <!-- Autoplay with audio is blocked without a user gesture, so playback
              starts muted and the viewer opts in here. Showing an error instead
              would leave them with a silent stream and no clue. -->
-        <button
+        <LiveDockButton
           v-if="needsSoundUnlock"
-          class="live-dock-btn live-dock-btn--call"
-          type="button"
+          call
           data-action="enable-sound"
           @click="unlockSound"
         >
-          <VolumeX :size="16" />
-          <span class="live-dock-label">{{ t('share.live.enableSound') }}</span>
-        </button>
+          <template #icon><VolumeX :size="16" /></template>
+          {{ t('share.live.enableSound') }}
+        </LiveDockButton>
 
         <!-- One toggle: on = live, off = muted. No approval step — the
              publisher's room-level switch is the whole authorisation model, and
              it can be turned off at any moment (arrives as talk-revoked, which
              flips this back to off). -->
-        <button
+        <LiveDockButton
           v-if="talkEnabled"
-          class="live-dock-btn"
-          :class="{ 'live-dock-btn--live': talking }"
-          type="button"
+          :live="talking"
           role="switch"
           :aria-checked="talking"
           :aria-label="t('share.live.micToggle')"
@@ -239,18 +224,18 @@
           data-action="mic-toggle"
           @click="toggleMic"
         >
-          <Mic v-if="talking" :size="16" />
-          <MicOff v-else :size="16" />
-          <span class="live-dock-label">{{ talking ? t('share.live.micOn') : t('share.live.micOff') }}</span>
-        </button>
+          <template #icon>
+            <Mic v-if="talking" :size="16" />
+            <MicOff v-else :size="16" />
+          </template>
+          {{ talking ? t('share.live.micOn') : t('share.live.micOff') }}
+        </LiveDockButton>
 
         <!-- Shown whenever the host shares a screen, even when THIS page cannot
              drive it: hiding it entirely leaves a member wondering why the button
              their colleague sees is missing. Disabled + a title explains it. -->
-        <button
+        <LiveDockButton
           v-if="controlState === 'none' && hostScreen"
-          class="live-dock-btn"
-          type="button"
           :disabled="!canRequestControl"
           :aria-label="t('share.live.requestControl')"
           :title="
@@ -259,15 +244,13 @@
           data-action="request-control"
           @click="requestControl"
         >
-          <MousePointer2 :size="16" />
-          <span class="live-dock-label">{{ t('share.live.requestControl') }}</span>
-        </button>
+          <template #icon><MousePointer2 :size="16" /></template>
+          {{ t('share.live.requestControl') }}
+        </LiveDockButton>
 
-        <button
+        <LiveDockButton
           v-if="screenEnabled"
-          class="live-dock-btn"
-          :class="{ 'live-dock-btn--live': sharingScreen }"
-          type="button"
+          :live="sharingScreen"
           role="switch"
           :aria-checked="sharingScreen"
           :disabled="!canShareScreen"
@@ -282,59 +265,53 @@
           data-action="screen-share"
           @click="toggleScreenShare"
         >
-          <ScreenShare v-if="!sharingScreen" :size="16" />
-          <ScreenShareOff v-else :size="16" />
-          <span class="live-dock-label">
-            {{ sharingScreen ? t('share.live.stopSharing') : t('share.live.shareScreen') }}
-          </span>
-        </button>
+          <template #icon>
+            <ScreenShare v-if="!sharingScreen" :size="16" />
+            <ScreenShareOff v-else :size="16" />
+          </template>
+          {{ sharingScreen ? t('share.live.stopSharing') : t('share.live.shareScreen') }}
+        </LiveDockButton>
 
-        <button
-          class="live-dock-btn"
-          :class="{ 'live-dock-btn--live': chatOpen }"
-          type="button"
+        <LiveDockButton
+          :live="chatOpen"
+          :badge="unread"
           :aria-pressed="chatOpen"
           :aria-label="t('share.live.chatTitle')"
           :title="t('share.live.chatTitle')"
           data-action="chat"
           @click="toggleSide('chat')"
         >
-          <MessageSquare :size="16" />
-          <span class="live-dock-label">{{ t('share.live.chat') }}</span>
-          <span v-if="unread > 0" class="live-dock-badge">{{ unread > 9 ? '9+' : unread }}</span>
-        </button>
+          <template #icon><MessageSquare :size="16" /></template>
+          {{ t('share.live.chat') }}
+        </LiveDockButton>
 
-        <button
+        <LiveDockButton
           v-if="notesAvailable"
-          class="live-dock-btn"
-          :class="{ 'live-dock-btn--live': notesOpen }"
-          type="button"
+          :live="notesOpen"
           :aria-pressed="notesOpen"
           :aria-label="t('share.live.notesTitle')"
           :title="t('share.live.notesTitle')"
           data-action="notes"
           @click="toggleSide('notes')"
         >
-          <FileText :size="16" />
-          <span class="live-dock-label">{{ t('share.live.notes') }}</span>
-        </button>
+          <template #icon><FileText :size="16" /></template>
+          {{ t('share.live.notes') }}
+        </LiveDockButton>
 
-        <button
-          class="live-dock-btn"
-          type="button"
+        <LiveDockButton
           :aria-pressed="isFullscreen"
           :aria-label="isFullscreen ? t('share.live.exitFullscreen') : t('share.live.fullscreen')"
           :title="isFullscreen ? t('share.live.exitFullscreen') : t('share.live.fullscreen')"
           data-action="fullscreen"
           @click="toggleFullscreen"
         >
-          <Minimize v-if="isFullscreen" :size="16" />
-          <Maximize v-else :size="16" />
-          <span class="live-dock-label">
-            {{ isFullscreen ? t('share.live.exitFullscreen') : t('share.live.fullscreen') }}
-          </span>
-        </button>
-      </div>
+          <template #icon>
+            <Minimize v-if="isFullscreen" :size="16" />
+            <Maximize v-else :size="16" />
+          </template>
+          {{ isFullscreen ? t('share.live.exitFullscreen') : t('share.live.fullscreen') }}
+        </LiveDockButton>
+      </LiveDock>
     </div>
 
     <!-- The same divider the app's split panes use (App.vue, the file manager):
@@ -494,6 +471,8 @@ import TranscriptList from '@/components/live/TranscriptList.vue'
 import LiveJoinGate from './LiveJoinGate.vue'
 import LiveInkLayer from './LiveInkLayer.vue'
 import LiveChatPanel, { type ChatMessage } from './LiveChatPanel.vue'
+import LiveDock from './LiveDock.vue'
+import LiveDockButton from './LiveDockButton.vue'
 import SplitDivider from '@/components/common/SplitDivider.vue'
 import { useInkBoard } from './useInkBoard'
 import { contentRectOf, toNormalized, type ContentRect, type ControlMessage } from './liveControl'
@@ -1760,135 +1739,6 @@ onBeforeUnmount(() => {
   font-size: var(--font-size-sm, 13px);
 }
 
-/*
- * Floating dock, centred over the bottom of the video.
- *
- * Absolute rather than a flex row: a real bar would take height from the
- * stream, and the whole point of this page is the picture. The translucent
- * background keeps the controls legible over bright content without the blur
- * pass that some WebViews composite badly.
- */
-.live-dock {
-  position: absolute;
-  left: 50%;
-  bottom: calc(var(--space-6, 12px) + env(safe-area-inset-bottom, 0px));
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2, 4px);
-  padding: var(--space-2, 4px);
-  border-radius: var(--radius-full, 999px);
-  background: color-mix(in srgb, var(--bg-secondary, #161b22) 86%, transparent);
-  border: 1px solid var(--border-color, #30363d);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
-  z-index: 5;
-}
-
-/* Brand inside the dock. Sized to the dock's inner height so the pill keeps a
-   single visual rhythm; the dot reuses the status colour. */
-.live-dock-brand {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 var(--space-2, 4px) 0 var(--space-3, 6px);
-  flex-shrink: 0;
-}
-
-.live-dock-logo {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  display: block;
-}
-
-.live-dock-dot {
-  position: absolute;
-  right: 1px;
-  bottom: 0;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--color-success, #3fb950);
-  box-shadow: 0 0 0 2px var(--bg-secondary, #161b22);
-}
-
-.live-dock-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2, 4px);
-  padding: var(--space-2, 4px) var(--space-5, 10px);
-  border: none;
-  border-radius: var(--radius-full, 999px);
-  background: transparent;
-  color: var(--text-secondary, #8b949e);
-  cursor: pointer;
-  font-size: var(--font-size-sm, 13px);
-  line-height: 1.6;
-  white-space: nowrap;
-  /* Tapping repeatedly must not select the label. */
-  user-select: none;
-  touch-action: manipulation;
-  transition:
-    background var(--duration-fast, 0.1s) ease,
-    color var(--duration-fast, 0.1s) ease;
-}
-
-.live-dock-btn:hover {
-  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
-  color: var(--text-primary, #e6edf3);
-}
-
-/* Unavailable on this platform (plain-http microphone, browser-side screen
-   capture, remote control outside the client). The button keeps its place —
-   removing it would read as "the host did not allow this" — but must look
-   unusable, otherwise a click that does nothing looks broken. */
-.live-dock-btn:disabled {
-  opacity: var(--opacity-disabled, 0.4);
-  cursor: not-allowed;
-}
-
-.live-dock-btn:disabled:hover {
-  background: transparent;
-  color: var(--text-secondary, #8b949e);
-}
-
-/* Live microphone: tinted rather than a solid green fill, which would shout
-   next to the status chip in the header. */
-.live-dock-btn--live {
-  background: color-mix(in srgb, var(--color-success, #3fb950) 18%, transparent);
-  color: var(--color-success, #3fb950);
-}
-
-/* The sound prompt is the only control the viewer MUST act on, so it gets the
-   accent tint rather than the neutral one. */
-.live-dock-btn--call {
-  background: color-mix(in srgb, var(--accent-color, #4a90d9) 22%, transparent);
-  color: var(--accent-color, #4a90d9);
-}
-
-.live-dock-btn--call:hover {
-  background: color-mix(in srgb, var(--accent-color, #4a90d9) 32%, transparent);
-  color: var(--accent-color, #4a90d9);
-}
-
-.live-dock-btn--live:hover {
-  background: color-mix(in srgb, var(--color-success, #3fb950) 26%, transparent);
-  color: var(--color-success, #3fb950);
-}
-
-/* The label is the first thing to drop when space runs out: the icon and the
-   tint still carry the meaning, and the title has the full sentence. */
-@media (max-width: 520px) {
-  .live-dock-label {
-    display: none;
-  }
-
-  .live-dock-btn {
-    padding: var(--space-2, 4px) var(--space-3, 6px);
-  }
-}
-
 /* ── Zoom container + ink ───────────────────────────────────────────────── */
 
 /*
@@ -2151,19 +2001,6 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   min-height: 0;
   padding: var(--space-4, 8px) var(--space-5, 10px);
-}
-
-/* Unread counter on the dock button. Accent, not red: red means an error or a
-   destructive action in this UI, while an unread line is ordinary traffic. */
-.live-dock-badge {
-  min-width: 16px;
-  padding: 0 4px;
-  border-radius: var(--radius-full, 999px);
-  background: var(--accent-color, #4a90d9);
-  color: #fff;
-  font-size: calc(10 * var(--dp));
-  line-height: 16px;
-  text-align: center;
 }
 
 /* ── Speaking indicator ─────────────────────────────────────────────────── */
