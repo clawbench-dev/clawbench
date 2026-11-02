@@ -5,11 +5,12 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -355,8 +356,7 @@ func testRAG(ctx context.Context, values map[string]any) ConnectivityTestResult 
 
 // testSTT tests connectivity to the configured speech-to-text backend.
 func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
-	provider := resolveStringValue(values, "stt.provider", model.ConfigInstance.STT.Provider)
-	if provider == "doubao" {
+	if resolveStringValue(values, "stt.provider", model.ConfigInstance.STT.Provider) == "doubao" {
 		return testDoubaoSTT(ctx, values)
 	}
 
@@ -372,50 +372,58 @@ func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult 
 		sttModel = "openai/whisper-large-v3"
 	}
 
-	// Probe with a real transcription request instead of relying on
-	// /v1/models. Gateways (e.g. OneAPI) often don't enumerate every model in
-	// the models list even though the transcription endpoint accepts them, so
-	// a direct probe against /v1/audio/transcriptions is authoritative for the
-	// exact endpoint + model + auth the feature will actually use.
-	body, contentType, err := buildSTTProbe(sttModel, language)
+	// Probe by transcribing the embedded "你好" clip through the same provider
+	// the feature uses, instead of only checking reachability: a 200 that
+	// carries no text means the endpoint accepted the request but recognized
+	// nothing, which is a broken configuration, not a working one. Going through
+	// the provider also keeps the probe on the exact endpoint/model/auth (and
+	// multipart shape) that real transcription uses.
+	provider := stt.NewVLLMProvider(baseURL, sttModel, apiKey, language)
+	provider.Filename = "probe.mp3"
+	provider.HTTPClient = &http.Client{Timeout: 15 * time.Second}
+
+	text, err := provider.Transcribe(ctx, bytes.NewReader(sttProbeAudio), "")
 	if err != nil {
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to build probe: %v", err)}
+		return sttProbeFailure(baseURL, sttModel, err)
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ConnectivityTestResult{
+			Success: false,
+			Message: fmt.Sprintf("STT returned an empty transcription for model '%s'", sttModel),
+		}
+	}
+	return ConnectivityTestResult{
+		Success: true,
+		Message: fmt.Sprintf("STT transcription succeeded: %q (model: %s)", text, sttModel),
+	}
+}
+
+// sttProbeFailure names the cause of a failed STT probe: auth, endpoint, model
+// or transport. The provider reports non-2xx answers as *stt.APIError, so the
+// classification does not depend on the error text.
+func sttProbeFailure(baseURL, sttModel string, err error) ConnectivityTestResult {
+	var apiErr *stt.APIError
+	if errors.As(err, &apiErr) {
+		switch {
+		case apiErr.Status == http.StatusUnauthorized || apiErr.Status == http.StatusForbidden:
+			return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT auth failed (HTTP %d)", apiErr.Status)}
+		case apiErr.Status == http.StatusNotFound:
+			return ConnectivityTestResult{Success: false, Message: "STT endpoint or model not found (HTTP 404)"}
+		case isSTTModelNotFound([]byte(apiErr.Body)):
+			return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT service reachable, but model '%s' not recognized", sttModel)}
+		}
+		return ConnectivityTestResult{
+			Success: false,
+			Message: fmt.Sprintf("STT probe failed (HTTP %d): %s", apiErr.Status, strings.TrimSpace(apiErr.Body)),
+		}
 	}
 
-	url := strings.TrimRight(baseURL, "/") + "/v1/audio/transcriptions"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
-	if err != nil {
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to create request: %v", err)}
-	}
-	req.Header.Set("Content-Type", contentType)
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
 		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT service unreachable at %s: %v", baseURL, err)}
 	}
-	defer func() { _ = resp.Body.Close() }()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-
-	switch {
-	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("STT service reachable, transcription accepted for model '%s'", sttModel)}
-	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT auth failed (HTTP %d)", resp.StatusCode)}
-	case resp.StatusCode == http.StatusNotFound:
-		return ConnectivityTestResult{Success: false, Message: "STT endpoint or model not found (HTTP 404)"}
-	}
-
-	// Some servers reject an unknown model name with a 4xx body. Anything that
-	// isn't auth/404/model-not-found means the request reached the
-	// transcription handler with the model routed, which confirms connectivity.
-	if isSTTModelNotFound(respBody) {
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT service reachable, but model '%s' not recognized", sttModel)}
-	}
-	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("STT service reachable at %s (probe returned HTTP %d)", baseURL, resp.StatusCode)}
+	return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT probe failed: %v", err)}
 }
 
 // doubaoSTTBaseURL is the doubao speech API root used by the connectivity
@@ -448,34 +456,6 @@ func testDoubaoSTT(ctx context.Context, values map[string]any) ConnectivityTestR
 		return ConnectivityTestResult{Success: false, Message: "Doubao transcription returned empty text"}
 	}
 	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("Doubao transcription succeeded: %q", text)}
-}
-
-// buildSTTProbe builds a multipart transcription probe body (embedded "你好"
-// mp3 + model/language fields) and returns the body and its Content-Type
-// header.
-func buildSTTProbe(sttModel, language string) (*bytes.Buffer, string, error) {
-	audio := sttProbeAudio
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", "probe.mp3")
-	if err != nil {
-		return nil, "", err
-	}
-	if _, err := part.Write(audio); err != nil {
-		return nil, "", err
-	}
-	if err := writer.WriteField("model", sttModel); err != nil {
-		return nil, "", err
-	}
-	if language != "" {
-		if err := writer.WriteField("language", language); err != nil {
-			return nil, "", err
-		}
-	}
-	if err := writer.Close(); err != nil {
-		return nil, "", err
-	}
-	return &body, writer.FormDataContentType(), nil
 }
 
 // isSTTModelNotFound reports whether an STT error body indicates an unknown model.

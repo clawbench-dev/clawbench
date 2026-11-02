@@ -2,6 +2,7 @@ package stt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -122,6 +123,72 @@ func TestVLLMTranscribe_Non200(t *testing.T) {
 	p := newVLLM(srv.URL, "m")
 	if _, err := p.Transcribe(context.Background(), strings.NewReader("x"), ""); err == nil {
 		t.Fatal("expected error for non-200 response, got nil")
+	}
+}
+
+// A non-2xx answer must be an *APIError so callers can tell an auth failure
+// from a missing model without matching on the message text. The message shape
+// is kept for logs.
+func TestVLLMTranscribe_Non200IsAPIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"bad key"}}`))
+	}))
+	defer srv.Close()
+
+	p := newVLLM(srv.URL, "m")
+	_, err := p.Transcribe(context.Background(), strings.NewReader("x"), "")
+
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("err = %v, want *APIError", err)
+	}
+	if apiErr.Status != http.StatusUnauthorized {
+		t.Fatalf("Status = %d, want 401", apiErr.Status)
+	}
+	if !strings.Contains(apiErr.Body, "bad key") {
+		t.Fatalf("Body = %q, want the server body", apiErr.Body)
+	}
+	if !strings.Contains(err.Error(), "status 401") {
+		t.Fatalf("Error() = %q, want it to name the status", err.Error())
+	}
+}
+
+// The multipart filename defaults to the container the frontend records, and a
+// caller uploading another container (the mp3 connectivity probe) must be able
+// to say so: some gateways pick the decoder from the extension.
+func TestVLLMTranscribe_Filename(t *testing.T) {
+	cases := []struct {
+		name string
+		set  string
+		want string
+	}{
+		{"default", "", "recording.webm"},
+		{"override", "probe.mp3", "probe.mp3"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotName string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, header, err := r.FormFile("file")
+				if err != nil {
+					t.Fatalf("missing file field: %v", err)
+				}
+				gotName = header.Filename
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"text":"ok"}`))
+			}))
+			defer srv.Close()
+
+			p := newVLLM(srv.URL, "m")
+			p.Filename = tc.set
+			if _, err := p.Transcribe(context.Background(), strings.NewReader("x"), ""); err != nil {
+				t.Fatalf("Transcribe error: %v", err)
+			}
+			if gotName != tc.want {
+				t.Fatalf("filename = %q, want %q", gotName, tc.want)
+			}
+		})
 	}
 }
 

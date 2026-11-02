@@ -5,8 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,7 +20,7 @@ func TestServeConfigTest_STTCategory(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/v1/audio/transcriptions", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"text":""}`))
+		_, _ = w.Write([]byte(`{"text":"你好"}`))
 	}))
 	defer srv.Close()
 
@@ -34,7 +32,8 @@ func TestServeConfigTest_STTCategory(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	var result ConnectivityTestResult
 	_ = json.NewDecoder(w.Body).Decode(&result)
-	assert.True(t, result.Success)
+	assert.True(t, result.Success, result.Message)
+	assert.Contains(t, result.Message, "你好")
 }
 
 // TestSTTConnectivity_EmptyBaseURL covers the missing base URL guard in testSTT.
@@ -53,14 +52,14 @@ func TestSTTConnectivity_DefaultModel(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "openai/whisper-large-v3", r.FormValue("model"))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"text":""}`))
+		_, _ = w.Write([]byte(`{"text":"你好"}`))
 	}))
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
 		"stt.base_url": srv.URL,
 	})
-	assert.True(t, res.Success)
+	assert.True(t, res.Success, res.Message)
 }
 
 // TestSTTConnectivity_WithAPIKey covers setting the Authorization header
@@ -69,7 +68,7 @@ func TestSTTConnectivity_WithAPIKey(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"text":""}`))
+		_, _ = w.Write([]byte(`{"text":"你好"}`))
 	}))
 	defer srv.Close()
 
@@ -78,7 +77,7 @@ func TestSTTConnectivity_WithAPIKey(t *testing.T) {
 		"stt.model":    "m",
 		"stt.api_key":  "test-api-key",
 	})
-	assert.True(t, res.Success)
+	assert.True(t, res.Success, res.Message)
 }
 
 // TestSTTConnectivity_Unreachable covers the client.Do network error path.
@@ -91,91 +90,15 @@ func TestSTTConnectivity_Unreachable(t *testing.T) {
 	assert.Contains(t, res.Message, "unreachable")
 }
 
-// TestSTTConnectivity_NewRequestError covers the http.NewRequest error branch
-// by providing a base URL that produces an invalid URL.
+// TestSTTConnectivity_NewRequestError covers the invalid-URL branch: the probe
+// must report it rather than panicking or reporting success.
 func TestSTTConnectivity_NewRequestError(t *testing.T) {
 	res := testSTT(context.Background(), map[string]any{
 		"stt.base_url": ":",
 		"stt.model":    "m",
 	})
 	assert.False(t, res.Success)
-	assert.Contains(t, res.Message, "Failed to create request")
-}
-
-// TestSTTConnectivity_ProbeOtherStatus covers the fall-through success result
-// when the server returns a non-2xx status that is neither auth, 404, nor
-// model-not-found (i.e. the request reached the transcription handler).
-func TestSTTConnectivity_ProbeOtherStatus(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":"internal server error"}`))
-	}))
-	defer srv.Close()
-
-	res := testSTT(context.Background(), map[string]any{
-		"stt.base_url": srv.URL,
-		"stt.model":    "m",
-	})
-	assert.True(t, res.Success)
-	assert.Contains(t, res.Message, "probe returned HTTP 500")
-}
-
-// TestBuildSTTProbe verifies the multipart probe body contains the expected
-// fields and a valid Content-Type, and returns no error.
-func TestBuildSTTProbe(t *testing.T) {
-	body, contentType, err := buildSTTProbe("Qwen3-ASR-1.7B", "zh")
-	assert.NoError(t, err)
-	assert.NotEmpty(t, contentType)
-	assert.True(t, strings.HasPrefix(contentType, "multipart/form-data"))
-
-	// Parse the multipart body to verify fields.
-	mr := multipart.NewReader(body, strings.TrimPrefix(contentType, "multipart/form-data; boundary="))
-	form, err := mr.ReadForm(1 << 20)
-	assert.NoError(t, err)
-	defer func() { _ = form.RemoveAll() }()
-
-	assert.Len(t, form.File["file"], 1, "probe should include one audio file part")
-	assert.Equal(t, []string{"Qwen3-ASR-1.7B"}, form.Value["model"])
-	assert.Equal(t, []string{"zh"}, form.Value["language"])
-}
-
-// TestBuildSTTProbe_FilePartMp3 verifies the probe's audio file part is the
-// embedded "你好" mp3 asset under the filename "probe.mp3".
-func TestBuildSTTProbe_FilePartMp3(t *testing.T) {
-	body, contentType, err := buildSTTProbe("Qwen3-ASR-1.7B", "zh")
-	assert.NoError(t, err)
-
-	mr := multipart.NewReader(body, strings.TrimPrefix(contentType, "multipart/form-data; boundary="))
-	form, err := mr.ReadForm(1 << 20)
-	assert.NoError(t, err)
-	defer func() { _ = form.RemoveAll() }()
-
-	fileHeaders := form.File["file"]
-	require.Len(t, fileHeaders, 1)
-	assert.Equal(t, "probe.mp3", fileHeaders[0].Filename)
-
-	f, err := fileHeaders[0].Open()
-	require.NoError(t, err)
-	defer func() { _ = f.Close() }()
-	got, err := io.ReadAll(f)
-	require.NoError(t, err)
-	assert.Equal(t, sttProbeAudio, got)
-}
-
-// TestBuildSTTProbe_NoLanguage verifies that omitting language skips the
-// language field entirely.
-func TestBuildSTTProbe_NoLanguage(t *testing.T) {
-	body, contentType, err := buildSTTProbe("m", "")
-	assert.NoError(t, err)
-
-	mr := multipart.NewReader(body, strings.TrimPrefix(contentType, "multipart/form-data; boundary="))
-	form, err := mr.ReadForm(1 << 20)
-	assert.NoError(t, err)
-	defer func() { _ = form.RemoveAll() }()
-
-	_, ok := form.Value["language"]
-	assert.False(t, ok, "language field should be absent when empty")
-	assert.Equal(t, []string{"m"}, form.Value["model"])
+	assert.Contains(t, res.Message, "create request")
 }
 
 // TestIsSTTModelNotFound covers both the true (keyword-matched) and false

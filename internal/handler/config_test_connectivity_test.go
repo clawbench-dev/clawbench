@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -59,7 +60,7 @@ func TestSTTConnectivity(t *testing.T) {
 			t.Fatalf("model = %q, want Qwen3-ASR-1.7B", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"text":""}`))
+		_, _ = w.Write([]byte(`{"text":"你好"}`))
 	}))
 	defer srv.Close()
 
@@ -70,6 +71,79 @@ func TestSTTConnectivity(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("expected success, got %+v", res)
 	}
+	// The recognized text is the proof that the probe really ran ASR.
+	if !strings.Contains(res.Message, "你好") {
+		t.Fatalf("message = %q, want the recognized text", res.Message)
+	}
+}
+
+// A 200 that carries no text means the endpoint accepted the upload but
+// recognized nothing: a broken configuration, not a working engine.
+func TestSTTConnectivity_EmptyTranscriptFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"   "}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.base_url": srv.URL,
+		"stt.model":    "m",
+	})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "empty transcription")
+}
+
+// A server error is a failure. The probe used to treat any non-auth/non-404
+// status as "reachable", which reported a broken backend as green.
+func TestSTTConnectivity_ServerErrorFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"internal server error"}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.base_url": srv.URL,
+		"stt.model":    "m",
+	})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "500")
+}
+
+// The probe must upload the embedded "你好" clip through the same multipart
+// shape real transcription uses, otherwise it would not test the feature.
+func TestSTTConnectivity_UploadsEmbeddedClip(t *testing.T) {
+	var gotAudio []byte
+	var gotFilename, gotModel, gotLanguage, gotAuth string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotModel = r.FormValue("model")
+		gotLanguage = r.FormValue("language")
+		f, header, err := r.FormFile("file")
+		require.NoError(t, err)
+		defer func() { _ = f.Close() }()
+		gotFilename = header.Filename
+		gotAudio, err = io.ReadAll(f)
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"你好"}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.base_url": srv.URL,
+		"stt.model":    "Qwen3-ASR-1.7B",
+		"stt.api_key":  "k-1",
+		"stt.language": "zh",
+	})
+	assert.True(t, res.Success, res.Message)
+	assert.Equal(t, sttProbeAudio, gotAudio, "probe must upload the real speech clip")
+	assert.Equal(t, "probe.mp3", gotFilename, "the mp3 must keep its extension: some gateways pick the decoder from it")
+	assert.Equal(t, "Qwen3-ASR-1.7B", gotModel)
+	assert.Equal(t, "zh", gotLanguage)
+	assert.Equal(t, "Bearer k-1", gotAuth)
 }
 
 func TestSTTConnectivity_AuthFailure(t *testing.T) {
