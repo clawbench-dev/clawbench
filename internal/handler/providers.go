@@ -268,7 +268,16 @@ func writeProviderError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, service.ErrProviderUsedBySummary):
 		writeLocalizedErrorf(w, r, http.StatusConflict, "ProviderUsedBySummary")
 	case errors.Is(err, service.ErrProviderInvalid):
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderInvalid", map[string]any{"Reason": err.Error()})
+		detail := map[string]any{"Reason": err.Error()}
+		// Carry the offending field so the form can replace the raw reason with
+		// its own wording ("this protocol cannot express that auth mode"). The
+		// settings dialog branches on detail.field, which this response used to
+		// never contain — its field-specific message was dead code.
+		var fieldErr *service.ProviderFieldError
+		if errors.As(err, &fieldErr) && fieldErr.Field != "" {
+			detail["field"] = fieldErr.Field
+		}
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderInvalid", detail)
 	case errors.As(err, &conflict):
 		writeLocalizedErrorf(w, r, http.StatusConflict, "ProviderProtocolConflict",
 			map[string]any{"Agents": strings.Join(conflict.AgentNames, ", ")})
@@ -648,10 +657,10 @@ func probeProviderModels(ctx context.Context, p *model.Provider) ([]string, int,
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return parseProviderModelIDs(body), resp.StatusCode, nil
 		}
-		lastErr = errors.New(strings.TrimSpace(string(body)))
-		if lastErr.Error() == "" {
-			lastErr = errors.New(resp.Status)
-		}
+		// Same envelope-parsing and truncation as the chat probe: a gateway
+		// answering with an HTML error page used to put up to 1 MiB of markup
+		// into the settings dialog.
+		lastErr = providerProbeError(resp.StatusCode, body)
 	}
 	return nil, lastStatus, lastErr
 }

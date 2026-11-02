@@ -2,11 +2,14 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -705,4 +708,150 @@ func TestClipProbeText(t *testing.T) {
 	assert.Equal(t, "a b", clipProbeText("  a\n b  ", 10))
 	assert.Equal(t, "aaaa…", clipProbeText("aaaa bbbb", 4))
 	assert.Equal(t, "short", clipProbeText("short", 5))
+}
+
+// A row that predates the auth-mode rule can still be in the database, and the
+// binding is the last gate before it reaches a spawn path that fails every turn.
+func TestAgentPatch_RejectsProviderWhoseAuthModeTheBackendCannotExpress(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	// Inserted directly: CreateProvider now refuses this combination, but rows
+	// created before that check existed are still around.
+	_, err := store.WriteExec(`INSERT INTO providers
+		(name, protocol, base_url, api_key, auth_mode, preset_id, models, default_model, wire_api)
+		VALUES ('Legacy', 'openai', 'https://gw.example', 'k', 'bearer', '', '[]', '', 'responses')`)
+	require.NoError(t, err)
+	require.NoError(t, service.LoadProvidersIntoMemory())
+	legacy := model.GetProvider(1)
+	require.NotNil(t, legacy)
+	require.Equal(t, model.ProviderAuthBearer, legacy.AuthMode)
+
+	agent := &model.Agent{ID: "ds-agent", Name: "DeepSeek", Backend: "deepseek"}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	rec := doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{
+		"id": agent.ID, "provider_id": legacy.ID,
+	})
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "ProviderInvalid", "the error must be locatable, not a bare invalid_value")
+	assert.Contains(t, rec.Body.String(), `"field":"authMode"`,
+		"the settings form branches on detail.field; without it its message is dead code")
+	assert.Contains(t, rec.Body.String(), "Bearer")
+	assert.Contains(t, rec.Body.String(), "openai")
+	assert.Nil(t, model.GetAgent(agent.ID).ProviderID, "a refused binding must not be persisted")
+
+	// The same provider with the mode it can express binds fine.
+	_, err = store.WriteExec(`UPDATE providers SET auth_mode = 'auto' WHERE id = ?`, legacy.ID)
+	require.NoError(t, err)
+	require.NoError(t, service.LoadProvidersIntoMemory())
+
+	rec = doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{
+		"id": agent.ID, "provider_id": legacy.ID,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NotNil(t, model.GetAgent(agent.ID).ProviderID)
+}
+
+// A gateway answering /models with an HTML error page used to hand up to 1 MiB
+// of markup to the settings dialog and the model picker.
+func TestProbeProviderModels_TruncatesUpstreamBody(t *testing.T) {
+	huge := strings.Repeat("<html><body>upstream gateway failure</body></html>", 5000)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, huge)
+	}))
+	defer srv.Close()
+
+	p := &model.Provider{
+		Protocol: model.ProviderProtocolOpenAI, BaseURL: srv.URL,
+		APIKey: "k", AuthMode: model.ProviderAuthAuto,
+	}
+	_, status, err := probeProviderModels(context.Background(), p)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusBadGateway, status)
+	assert.Contains(t, err.Error(), "HTTP 502")
+	assert.Less(t, len(err.Error()), 400, "the body must be clipped, not echoed: %d bytes", len(err.Error()))
+}
+
+// A JSON envelope still wins over the raw body: the reason the user needs is in
+// the message, not in the wrapper.
+func TestProbeProviderModels_PrefersJSONErrorMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":{"message":"invalid api key"}}`)
+	}))
+	defer srv.Close()
+
+	p := &model.Provider{
+		Protocol: model.ProviderProtocolOpenAI, BaseURL: srv.URL,
+		APIKey: "k", AuthMode: model.ProviderAuthAuto,
+	}
+	_, _, err := probeProviderModels(context.Background(), p)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid api key")
+	assert.Contains(t, err.Error(), "HTTP 401")
+}
+
+// The ai_summary provider checks used bare fmt.Errorf, so the API helper (which
+// keeps only `error`) showed "invalid_value" and the user could not tell which
+// field was wrong.
+func TestValidatePatchValues_AISummaryProviderErrorsAreLocatable(t *testing.T) {
+	origConfig := model.ConfigInstance
+	model.ConfigInstance = model.Config{}
+	t.Cleanup(func() { model.ConfigInstance = origConfig })
+
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 9, Name: "Gem", Protocol: model.ProviderProtocolGemini,
+		BaseURL: "https://gem.example", APIKey: "k", AuthMode: model.ProviderAuthAuto,
+	}})
+	t.Cleanup(func() { model.ReplaceProviders(nil) })
+
+	err := validatePatchValues(map[string]any{
+		"ai_summary": map[string]any{"provider_id": float64(9)},
+	})
+	var valueErr *configValueError
+	require.ErrorAs(t, err, &valueErr, "must be a configValueError so serveConfigPatch localizes it")
+	assert.Equal(t, "ProviderInvalid", valueErr.MsgKey)
+	assert.Equal(t, "ai_summary.provider_id", valueErr.Field)
+	assert.Contains(t, fmt.Sprint(valueErr.templateData()["Reason"]), "gemini")
+	assert.Equal(t, "ai_summary.provider_id", valueErr.templateData()["field"])
+}
+
+// The settings form replaces the raw reason with its own wording when the
+// server says WHICH field is wrong. That branch (`msgKey === 'ProviderInvalid'
+// && detail.field === 'authMode'`) never fired because the response carried no
+// field at all — the reason named internal identifiers instead.
+func TestProvidersAPI_InvalidAuthModeCarriesField(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	rec := doProviderRequest(t, ServeProviders, http.MethodPost, "/api/providers", map[string]any{
+		"name": "Bearer", "protocol": "openai", "baseUrl": "https://gw.example",
+		"apiKey": "sk", "authMode": "bearer",
+	})
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"field":"authMode"`)
+
+	var body struct {
+		MsgKey string         `json:"msgKey"`
+		Detail map[string]any `json:"detail"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "ProviderInvalid", body.MsgKey)
+	assert.Equal(t, "authMode", body.Detail["field"], "this is the exact key the form reads")
+	assert.Contains(t, body.Detail["Reason"], "bearer")
+}
+
+// A rejected protocol change names its own field, so the form can point at the
+// right control instead of blaming the auth mode.
+func TestProvidersAPI_InvalidProtocolCarriesField(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	created, err := service.CreateProvider(model.Provider{Name: "P", Protocol: model.ProviderProtocolAnthropic, APIKey: "k"})
+	require.NoError(t, err)
+
+	rec := doProviderRequest(t, ServeProviderSubRoutes, http.MethodPatch, fmt.Sprintf("/api/providers/%d", created.ID),
+		map[string]any{"protocol": "bogus"})
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"field":"protocol"`)
 }

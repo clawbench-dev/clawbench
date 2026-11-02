@@ -1418,6 +1418,20 @@ func (e *configValueError) templateData() map[string]any {
 	return out
 }
 
+// aiSummaryProviderError reports a rejected ai_summary provider binding.
+//
+// These used to be bare fmt.Errorf values, which serveConfigPatch turned into
+// the generic `invalid_value` body — and the API helper surfaces only `error`,
+// so the user saw "invalid_value" and could not tell that the provider (not the
+// model, not the backend) was the problem.
+func aiSummaryProviderError(field, reason string) error {
+	return &configValueError{
+		MsgKey: "ProviderInvalid",
+		Field:  field,
+		Data:   map[string]any{"Reason": reason},
+	}
+}
+
 // normalizeUserIdentityInPatch trims the identity strings IN PLACE, before
 // validation, storage and the YAML write. The nickname is a routing target and
 // the parser trims each target, so a value like "  User  " would key the byName
@@ -1750,7 +1764,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			} else {
 				n, ok := raw.(float64)
 				if !ok || n <= 0 {
-					return fmt.Errorf("ai_summary.provider_id must be a positive provider id")
+					return aiSummaryProviderError("ai_summary.provider_id", "must be a positive provider id")
 				}
 				providerID = int64(n)
 			}
@@ -1758,10 +1772,12 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if providerID > 0 {
 			provider := model.GetProvider(providerID)
 			if provider == nil {
-				return fmt.Errorf("ai_summary.provider_id: provider %d not found", providerID)
+				return aiSummaryProviderError("ai_summary.provider_id",
+					fmt.Sprintf("provider %d not found", providerID))
 			}
 			if provider.Protocol != model.ProviderProtocolAnthropic && provider.Protocol != model.ProviderProtocolOpenAI {
-				return fmt.Errorf("ai_summary.provider_id: provider %q speaks %s, but the summary model only supports openai/anthropic", provider.Name, provider.Protocol)
+				return aiSummaryProviderError("ai_summary.provider_id",
+					fmt.Sprintf("provider %q speaks %s, but the summary model only supports openai/anthropic", provider.Name, provider.Protocol))
 			}
 			// A provider without a base_url only injects credentials into an
 			// agent's environment (see docs/spec/features/model-providers.md);
@@ -1769,7 +1785,8 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			// used to succeed and then leave every summary feature silently
 			// disabled, because SummaryEndpoint reports "not configured".
 			if provider.BaseURL == "" {
-				return fmt.Errorf("ai_summary.provider_id: provider %q has no API endpoint, so it cannot back the summary model", provider.Name)
+				return aiSummaryProviderError("ai_summary.provider_id",
+					fmt.Sprintf("provider %q has no API endpoint, so it cannot back the summary model", provider.Name))
 			}
 			// When the provider curates its models, the summary model must be
 			// one of them — otherwise the picker offers what the endpoint
@@ -1780,7 +1797,8 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 					effective = m
 				}
 				if effective != "" && !modelContains(provider.Models, effective) {
-					return fmt.Errorf("ai_summary.model: %q is not in the model list of provider %q", effective, provider.Name)
+					return aiSummaryProviderError("ai_summary.model",
+						fmt.Sprintf("%q is not in the model list of provider %q", effective, provider.Name))
 				}
 			}
 		}
@@ -1806,7 +1824,8 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			}
 		}
 		if !configured {
-			return fmt.Errorf("ai_summary.provider_id is required when summarize.tts_backend is \"api\"")
+			return aiSummaryProviderError("ai_summary.provider_id",
+				`is required when summarize.tts_backend is "api"`)
 		}
 	}
 

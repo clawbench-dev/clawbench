@@ -54,11 +54,15 @@ func DecodeMP3ToPCMFile(srcPath, dstPath string) (Format, error) {
 		return Format{}, fmt.Errorf("audio: create output directory: %w", mkErr)
 	}
 
-	tmpPath := dstPath + ".tmp"
-	out, err := os.Create(tmpPath)
+	// The temp name must be unique per call, not derived from dstPath: two
+	// concurrent decodes of the same source (same dstPath) would otherwise
+	// truncate each other's file mid-write and publish interleaved bytes under
+	// the final name.
+	out, err := os.CreateTemp(filepath.Dir(dstPath), filepath.Base(dstPath)+".tmp-*")
 	if err != nil {
 		return Format{}, fmt.Errorf("audio: create pcm file: %w", err)
 	}
+	tmpPath := out.Name()
 
 	if err := downmixToMono(dec, out); err != nil {
 		_ = out.Close()

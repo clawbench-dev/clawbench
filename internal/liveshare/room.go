@@ -396,7 +396,8 @@ func (r *Room) SetControlEnabled(on bool) {
 }
 
 // SetNotesEnabled flips the AI 听记 flag. Set from the create call, before the
-// publisher socket attaches; viewers learn it from their `joined` frame.
+// publisher socket attaches, and again whenever the publisher toggles 听记 while
+// the meeting runs — viewers learn the change from a `notes-enabled` frame.
 func (r *Room) SetNotesEnabled(on bool) {
 	r.mu.Lock()
 	r.notesEnabled = on
@@ -712,15 +713,33 @@ func (g *Registry) SetMaxRooms(n int) {
 // Idempotent by design: the publisher's "start sharing" button may be pressed
 // twice (double click, retry after a flaky response), and minting a second token
 // would silently invalidate the link the user already copied.
+//
+// title is an INITIAL value. A room that is already publishing keeps the title
+// it has; only a room nobody is publishing to (a fresh one, or one still waiting
+// for its publisher to attach) takes the new one.
 func (g *Registry) Create(projectKey, title string) (*Room, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
 	if token, ok := g.byProject[projectKey]; ok {
 		if room, live := g.rooms[token]; live {
-			room.mu.Lock()
-			room.title = title
-			room.mu.Unlock()
+			// The title is a STARTING state, like the room's switches: a meeting
+			// that is already publishing keeps the name its audience is looking
+			// at. This path is taken by every retry and by a second device (the
+			// create endpoint is idempotent per project), and the caller falls
+			// back to a DATE PLACEHOLDER when the body carries no title — so an
+			// unconditional write would rename a running meeting for everybody
+			// watching it, plus every notification raised afterwards.
+			//
+			// Checked here rather than in the caller because this is the only
+			// writer of title: a caller-side "look up the live room first" has a
+			// window where the room is reaped between the lookup and Create, and
+			// the brand-new room would inherit the dead meeting's name.
+			if !room.HasPublisher() {
+				room.mu.Lock()
+				room.title = title
+				room.mu.Unlock()
+			}
 			room.touch()
 			return room, nil
 		}
@@ -748,8 +767,8 @@ func (g *Registry) Create(projectKey, title string) (*Room, error) {
 		// means "screen share", which is what every room did before voice mode.
 		videoEnabled: true,
 		// Same reasoning: before video meetings existed the picture WAS a
-		// screen, and there was no camera. Both are overwritten by the create
-		// call on every share, including a reused room.
+		// screen, and there was no camera. The create call overwrites both for
+		// a room that is not live yet (see serveLiveShareCreate).
 		hostScreen:  true,
 		maxViewers:  g.maxViewers,
 		idleTimeout: g.idleTimeout,
@@ -767,8 +786,20 @@ func (g *Registry) Get(token string) *Room {
 	return g.rooms[token]
 }
 
-// Delete removes a room by token, detaching the publisher. Deleting an unknown
-// token is a no-op.
+// Delete removes a room by token, detaching AND hanging up its publisher.
+// Deleting an unknown token is a no-op.
+//
+// Hanging up matters because the room can be deleted by somebody other than the
+// publisher's own socket: the host ends the meeting from a second device (the
+// DELETE endpoint), or a stale room is rotated out before a new meeting starts.
+// Forgetting the sink alone left that publisher page showing "sharing" forever —
+// its socket stayed open and nothing ever told it the room was gone, so only a
+// reload or a new create noticed. Closing the socket is the signal its teardown
+// already handles (the same one a dropped connection gives).
+//
+// Viewers are the caller's business: the registry does not know how to phrase
+// "the publisher is gone", so `Reap` returns the rooms instead of discarding
+// them silently.
 func (g *Registry) Delete(token string) {
 	g.mu.Lock()
 	room, ok := g.rooms[token]
@@ -780,7 +811,27 @@ func (g *Registry) Delete(token string) {
 	}
 	g.mu.Unlock()
 	if ok {
-		room.SetPublisher(nil)
+		room.endPublisher()
+	}
+}
+
+// endPublisher detaches the publisher and closes its transport.
+//
+// The reservation is cleared too: a socket that reserved the slot but had not
+// finished its upgrade when the room was deleted must not keep a claim on a room
+// nobody can look up any more.
+func (r *Room) endPublisher() {
+	r.mu.Lock()
+	p := r.publisher
+	r.publisher = nil
+	r.publisherReserved = false
+	r.mu.Unlock()
+	r.touch()
+	if p == nil {
+		return
+	}
+	if closer, ok := p.(interface{ Close() error }); ok {
+		_ = closer.Close()
 	}
 }
 

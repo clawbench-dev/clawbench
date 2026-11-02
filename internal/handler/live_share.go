@@ -207,19 +207,36 @@ func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath st
 		model.WriteError(w, model.Internal(err))
 		return
 	}
-	// Set on every create, not just the first: the room is idempotent per
-	// project, so a retry (or a second device) may be the one that knows
-	// whether 听记 is on.
-	room.SetNotesEnabled(opts.notes)
-	room.SetVideoEnabled(opts.video)
-	room.SetCameraEnabled(opts.camera)
-	room.SetHostScreen(opts.hostScreen)
-	// The audience permissions are part of the room's starting state, so a host
-	// who ticked them in the create form does not have to tick them again in
-	// the meeting. Routed through the same appliers as the control frames: on a
-	// reused room there may already be viewers, and they must be told.
-	applySetTalkEnabled(room, opts.allowTalk)
-	applySetScreenEnabled(room, opts.allowMemberScreen)
+	// Everything below is a STARTING state, not a command: a room that already
+	// has a publisher (or an audience) is a meeting in progress, and the same
+	// POST that the publisher uses to start one is also what a retry, a second
+	// device or a script sends. Writing these into a live room would revoke
+	// every viewer's microphone (talk-revoked reason=disabled), cut off whoever
+	// is sharing a screen (screen-denied reason=disabled) and silently rewrite
+	// the picture flags — because every field here defaults to false when the
+	// body omits it.
+	//
+	// 听记 is in the same group, not an exception. It was outside this guard
+	// while `joined` was the only way viewers learned the flag; now that a
+	// mid-meeting toggle travels as `set-notes`, a second POST must not rewrite
+	// it either: the flag is view-only (nothing reads it to gate recording or
+	// uploads), so an unchecked create form on another device would leave new
+	// viewers told "听记 stopped" — and their pane stops polling — while the
+	// publisher is still recording, and the viewers already in the room
+	// disagree. Before the publisher attaches (the grace window, a retry) this
+	// block still runs, which is exactly the case the old comment was about.
+	if !liveRoomInProgress(room) {
+		room.SetNotesEnabled(opts.notes)
+		room.SetVideoEnabled(opts.video)
+		room.SetCameraEnabled(opts.camera)
+		room.SetHostScreen(opts.hostScreen)
+		// The audience permissions are part of the room's starting state, so a
+		// host who ticked them in the create form does not have to tick them
+		// again in the meeting. Routed through the same appliers as the control
+		// frames so the two paths cannot drift (they are the same switch).
+		applySetTalkEnabled(room, opts.allowTalk)
+		applySetScreenEnabled(room, opts.allowMemberScreen)
+	}
 
 	writeJSON(w, http.StatusOK, liveShareManageResponse{
 		Token: room.Token(),
@@ -230,6 +247,19 @@ func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath st
 		TalkEnabled:   room.TalkEnabled(),
 		ScreenEnabled: room.ScreenEnabled(),
 	})
+}
+
+// liveRoomInProgress reports whether a create request landed on a meeting that
+// is already running, in which case its body must not be applied.
+//
+// The criterion is "somebody is on the other side of this room", not "the room
+// object exists": a room reused inside the grace window with no publisher yet is
+// the same client retrying, and its switches are still initial state. A
+// reservation counts as a publisher (a socket is on its way), and viewers count
+// on their own — they can only be there because a publisher was attached a
+// moment ago, and they are exactly who the reset would hurt.
+func liveRoomInProgress(room *liveshare.Room) bool {
+	return room.HasPublisher() || room.ViewerCount() > 0
 }
 
 // createLiveShareRoom returns the project's room, starting a NEW one when the
@@ -411,7 +441,10 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 		// nickname is NOT: the audience's member list shows it on the host row,
 		// and a viewer that joined between attach and this frame has an empty
 		// one cached, so the roster is re-sent.
-		room.SetPublisherName(strings.TrimSpace(ctl.Name))
+		// Sanitized like the viewer nickname: the host name is rendered as a
+		// roster row in every viewer's member list, and a name with a newline
+		// in it breaks that list just as badly as a forged transcript line.
+		room.SetPublisherName(sanitizeLiveViewerName(ctl.Name))
 		broadcastRoster(room, "")
 		return false
 
@@ -490,6 +523,10 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 		applySetControlEnabled(room, ctl.Enabled)
 		return false
 
+	case liveshare.CtrlSetNotes:
+		applySetNotes(room, ctl.Enabled)
+		return false
+
 	case liveshare.CtrlSetPicture:
 		applySetPicture(room, ctl)
 		return false
@@ -533,9 +570,9 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 	// The nickname is required. Validated BEFORE the upgrade so a bad name is a
 	// real 400 the SPA can explain, instead of a socket that opens and then dies
 	// — which the share page can only report as "connection failed".
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	name := sanitizeLiveViewerName(r.URL.Query().Get("name"))
 	if name == "" || len([]rune(name)) > liveViewerNameMaxRunes {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ViewerNameRequired")
 		return
 	}
 
@@ -715,15 +752,117 @@ func handleViewerControl(room *liveshare.Room, viewer *liveshare.Viewer, ctl liv
 	}
 }
 
+// meetingNotifyKey identifies one occurrence of "who did what in which meeting".
+//
+// actor is the viewer id, except for viewer_joined where it is the nickname: a
+// reconnect gets a FRESH viewer id (ids are per-connection), so keying the join
+// on the id would notify the host again for the same person every time their
+// network hiccups — while the nickname is exactly what the host reads.
+type meetingNotifyKey struct {
+	token     string
+	eventType string
+	actor     string
+}
+
+// meetingNotifyDedupeWindow is how long a repeat of the same occurrence is
+// suppressed. Long enough that a reconnect loop or a held-down request cannot
+// flood, short enough that a genuine second ask still reaches the host.
+const meetingNotifyDedupeWindow = 30 * time.Second
+
+// meetingNotifyDedupeMaxEntries bounds the table. Entries only matter inside the
+// window, so pruning is enough; the cap keeps a burst of one-off keys (many
+// tokens, many viewer ids) from growing it without limit.
+const meetingNotifyDedupeMaxEntries = 512
+
+// meetingNotifyLimiter suppresses repeated meeting notifications.
+//
+// `control-request` is the one frame an ANONYMOUS viewer can send in a loop: the
+// token is the only credential, and each occurrence used to write a notification
+// row (the 500-row cap then evicts real events) and broadcast a frame that pops a
+// toast/system notification on the host. A reconnect loop is the same problem
+// one step earlier, arriving as viewer_joined.
+//
+// A time window rather than a rate limit, and the actor is part of the key: a
+// second request from the same viewer 30s later is a new ask (the host may have
+// missed the first), and a DIFFERENT viewer's identical request is never merged
+// with this one — two people asking for control are two facts.
+type meetingNotifyLimiter struct {
+	mu     sync.Mutex
+	last   map[meetingNotifyKey]time.Time
+	window time.Duration
+	// now is a test seam. The read loops run in their own goroutines, so a test
+	// cannot deterministically sleep its way to the end of the window; overriding
+	// the clock under the same lock keeps the assertion honest and race-free.
+	now func() time.Time
+}
+
+// allow records the occurrence and reports whether it should be notified.
+func (l *meetingNotifyLimiter) allow(key meetingNotifyKey) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	if last, seen := l.last[key]; seen && now.Sub(last) < l.window {
+		return false
+	}
+	if len(l.last) >= meetingNotifyDedupeMaxEntries {
+		l.evictLocked(now)
+	}
+	l.last[key] = now
+	return true
+}
+
+// evictLocked keeps the table bounded.
+//
+// Expired entries go first (they cannot suppress anything any more). If the
+// window is somehow full of live entries, the oldest one is dropped: the cap is
+// a hard bound, and forgetting one key only costs a possible duplicate
+// notification — never a lost one.
+func (l *meetingNotifyLimiter) evictLocked(now time.Time) {
+	oldestKey := meetingNotifyKey{}
+	var oldest time.Time
+	for k, at := range l.last {
+		if now.Sub(at) >= l.window {
+			delete(l.last, k)
+			continue
+		}
+		if oldest.IsZero() || at.Before(oldest) {
+			oldestKey, oldest = k, at
+		}
+	}
+	if len(l.last) >= meetingNotifyDedupeMaxEntries && !oldest.IsZero() {
+		delete(l.last, oldestKey)
+	}
+}
+
+var meetingNotifyDedupe = &meetingNotifyLimiter{
+	last:   make(map[meetingNotifyKey]time.Time),
+	window: meetingNotifyDedupeWindow,
+	now:    time.Now,
+}
+
 // notifyMeeting records one meeting event and pushes it to connected clients.
 //
 // The project path comes from the room: a meeting belongs to the project that
 // created it, and the viewer socket carries no project (its token is the only
 // credential). `viewer` is nil for events that have no actor (the minutes).
+//
+// Repeats are dropped BEFORE the emitter runs, so a suppressed occurrence costs
+// neither a row nor a frame.
 func notifyMeeting(room *liveshare.Room, eventType string, viewer *liveshare.Viewer) {
 	viewerID, name := "", ""
 	if viewer != nil {
 		viewerID, name = viewer.ID, viewer.Name
+	}
+	actor := viewerID
+	if eventType == service.MeetingEventViewerJoined {
+		actor = name
+	}
+	if !meetingNotifyDedupe.allow(meetingNotifyKey{
+		token:     room.Token(),
+		eventType: eventType,
+		actor:     actor,
+	}) {
+		return
 	}
 	service.EmitMeetingEvent(room.Token(), room.ProjectKey(), eventType, room.Title(), viewerID, name)
 }
@@ -789,6 +928,22 @@ func applySetScreenEnabled(room *liveshare.Room, enabled bool) {
 		})
 	}
 	broadcastScreenState(room)
+}
+
+// applySetNotes records the publisher's AI 听记 switch and tells every viewer.
+//
+// Mirrors applySetTalkEnabled, for the same reason: the `joined` frame is long
+// gone for anybody already watching, so a mid-meeting toggle has no other way to
+// reach them. Both directions matter — turning 听记 ON has to make the transcript
+// pane appear, turning it OFF has to stop a viewer polling a transcript that will
+// never grow again (hence the dedicated frame type, whose boolean is never
+// omitted).
+func applySetNotes(room *liveshare.Room, enabled bool) {
+	room.SetNotesEnabled(enabled)
+	room.BroadcastToViewers(liveshare.NotesEnabledMessage{
+		Type:         liveshare.MsgNotesEnabled,
+		NotesEnabled: enabled,
+	}, "")
 }
 
 // applySetControlEnabled advertises the publisher's remote-control capability.
@@ -920,6 +1075,35 @@ func liveShareRoomCountForTest() int {
 // page forwards) is always accepted. The cap exists so a hand-written URL
 // cannot bloat the room.
 const liveViewerNameMaxRunes = model.MaxUserNicknameRunes
+
+// sanitizeLiveViewerName strips what a nickname must never carry.
+//
+// The rule is the one the account nickname already follows (validUserNickname):
+// control characters are not allowed. Here they are REMOVED rather than
+// rejected, because the share page forwards the account nickname automatically
+// and refusing to join over an invisible byte is a dead end the reader cannot
+// fix. The dangerous one is `\n`: the nickname is written verbatim as the
+// `speaker` of every line in the archived chat.md and into notification bodies,
+// so a name carrying a newline forges a whole extra line ("主持人：会议已结束")
+// in a document that is later read as the record of the meeting.
+//
+// Quoting/angle brackets/comma are left alone: those matter to the group-routing
+// protocol, which a meeting nickname never enters, and mangling a legitimate
+// name ("张, 李") would be worse than the risk.
+func sanitizeLiveViewerName(raw string) string {
+	var b strings.Builder
+	b.Grow(len(raw))
+	for _, r := range raw {
+		// Space rather than deletion, so a byte that was meant as a separator
+		// does not glue two words together. The runs are collapsed below.
+		if r < 0x20 || r == 0x7f {
+			b.WriteRune(' ')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
 
 // finalizeLiveNotes closes a meeting record and archives its chat.
 //

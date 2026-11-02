@@ -241,6 +241,14 @@ func parseLiveNoteAudioSegmentName(name string) (audioSegment, bool) {
 // remux.
 func mergeLiveNoteAudioGroup(dir, target string, segs []audioSegment) (int, error) {
 	if len(segs) == 1 {
+		// A single segment is renamed rather than remuxed, so nothing else in
+		// this path would ever look at its contents. It still has to be a WebM:
+		// the client silently falls back to whatever MediaRecorder supports
+		// (Safari records audio/mp4), and publishing that as `mic.webm` would
+		// hide the problem until somebody tries to play the recording.
+		if err := validateLiveNoteWebMContainer(segs[0].path); err != nil {
+			return 0, err
+		}
 		if err := os.Rename(segs[0].path, target); err != nil {
 			return 0, fmt.Errorf("live notes: rename single segment: %w", err)
 		}
@@ -435,6 +443,29 @@ type liveNoteWebM struct {
 	// durationMS is the segment's own Duration, in milliseconds (0 when the
 	// element is missing).
 	durationMS float64
+}
+
+// validateLiveNoteWebMContainer checks the four-byte EBML magic at the head of
+// a file.
+//
+// This is the cheap gate for the single-segment path, which renames instead of
+// remuxing and therefore never parses the file: without it a recording in
+// another container (MediaRecorder falls back to audio/mp4 on Safari) is
+// published under a .webm name and only fails later, when somebody plays it.
+func validateLiveNoteWebMContainer(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("live notes: open segment: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	var head [4]byte
+	if _, err := io.ReadFull(f, head[:]); err != nil {
+		return fmt.Errorf("live notes: %s is not a WebM recording (no EBML header)", filepath.Base(path))
+	}
+	if binary.BigEndian.Uint32(head[:]) != ebmlIDHeader {
+		return fmt.Errorf("live notes: %s is not a WebM recording (no EBML header)", filepath.Base(path))
+	}
+	return nil
 }
 
 // readLiveNoteWebM parses one segment file.

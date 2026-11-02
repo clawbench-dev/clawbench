@@ -80,6 +80,12 @@ type FileEntry struct {
 	MessageID int64 `json:"messageId,omitempty"`
 	// ExecutionID is the task execution a run-detail quote came from.
 	ExecutionID string `json:"executionId,omitempty"`
+	// MeetingToken is the live-share room token a meeting quote (a quoted line
+	// of minutes or transcript) came from. It is the only route back to that
+	// meeting: the quoted text names the meeting, but a name is not
+	// addressable, so without the token the jump handler silently no-ops and
+	// the AI cannot tell which meeting the snippet came from.
+	MeetingToken string `json:"meetingToken,omitempty"`
 }
 
 // IsURL reports whether the entry is an external URL rather than a local path.

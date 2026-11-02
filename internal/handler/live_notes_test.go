@@ -222,10 +222,17 @@ func TestServeLiveNotesAudioMerge_PublishesMergedFiles(t *testing.T) {
 			fields["archive"] = "1"
 		}
 		w := httptest.NewRecorder()
-		ServeLiveShareNoteSegment(w, notesUpload(t, project, fields, []byte("audio-"+channel)))
+		// A real MediaRecorder segment starts with the EBML magic, and the merge
+		// validates it even on the single-segment (rename) path.
+		body := append([]byte{0x1A, 0x45, 0xDF, 0xA3}, []byte("audio-"+channel)...)
+		ServeLiveShareNoteSegment(w, notesUpload(t, project, fields, body))
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	}
 	upload("mic", "1700000000000", false)
+	// A second participant, so this is not a solo meeting: with only the mix and
+	// one channel the merge deliberately publishes just meeting.webm (the two
+	// would be the same audio).
+	upload("viewer:2", "1700000000000", false)
 	upload(service.LiveNoteMixChannel, "1700000000000", true)
 
 	w := httptest.NewRecorder()
@@ -237,6 +244,7 @@ func TestServeLiveNotesAudioMerge_PublishesMergedFiles(t *testing.T) {
 	require.NoError(t, err)
 	dir := service.MeetingDirPath(project, dirName)
 	assert.FileExists(t, filepath.Join(dir, "audio", "mic.webm"))
+	assert.FileExists(t, filepath.Join(dir, "audio", "viewer-2.webm"))
 	assert.FileExists(t, filepath.Join(dir, "audio", service.LiveNoteMeetingAudioFile))
 
 	var resp struct {
@@ -248,7 +256,7 @@ func TestServeLiveNotesAudioMerge_PublishesMergedFiles(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "audio", service.LiveNoteMeetingAudioFile), resp.Artifacts.AudioMeeting)
 	// The segments are gone: the user opens one recording, not a folder of them.
 	// The count is the channel recordings — the merged file is not a channel.
-	assert.Equal(t, 1, resp.Artifacts.AudioFiles)
+	assert.Equal(t, 2, resp.Artifacts.AudioFiles)
 }
 
 func TestServeLiveNotesAudioMerge_OtherProjectIs404(t *testing.T) {
@@ -1346,9 +1354,42 @@ func TestServeLiveNotesDelete_RefusesWhilePublishingOrGenerating(t *testing.T) {
 	require.NoError(t, service.SetLiveNoteMinutes(token, pid, "周会", service.LiveNotesStatusGenerating, "", "", ""))
 	req = liveNotesProjectRequest(t, "/api/live-share/notes/sessions?token="+token, project)
 	req.Method = http.MethodDelete
+	// Pin the language so the assertion below can compare the translated text:
+	// `Contains(body, "LiveNotesGenerating")` would also pass when the key is
+	// missing from the locale files, because i18n.T echoes the id back.
+	req.Header.Set("Accept-Language", "en")
 	rec = httptest.NewRecorder()
 	ServeLiveNotesSessions(rec, req)
 	assert.Equal(t, http.StatusConflict, rec.Code)
+	assertLocalizedError(t, rec.Body.Bytes(), "LiveNotesGenerating", "the minutes are still being generated")
+}
+
+// A crash during generation leaves status='generating' behind with no job to
+// finish it. Refusing forever would make that meeting — folder, transcript,
+// chat — undeletable, so the guard judges by the job's last write instead.
+func TestServeLiveNotesDelete_AllowsDeletingAnInterruptedGeneration(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+	project := t.TempDir()
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	require.NoError(t, service.SetLiveNoteMinutes(token, pid, "周会", service.LiveNotesStatusGenerating, "", "", ""))
+	_, err = store.WriteExec(`UPDATE live_notes SET updated_at = ? WHERE token = ?`,
+		time.Now().Add(-11*time.Minute).UTC().Format("2006-01-02 15:04:05"), token)
+	require.NoError(t, err)
+
+	req := liveNotesProjectRequest(t, "/api/live-share/notes/sessions?token="+token, project)
+	req.Method = http.MethodDelete
+	rec := httptest.NewRecorder()
+	ServeLiveNotesSessions(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	_, exists, err := service.GetLiveNote(token)
+	require.NoError(t, err)
+	assert.False(t, exists)
 }
 
 func TestServeLiveShareNoteChat_IsIdempotentAndReadable(t *testing.T) {
@@ -1361,12 +1402,28 @@ func TestServeLiveShareNoteChat_IsIdempotentAndReadable(t *testing.T) {
 	token := "0123456789abcdef0123456789abcdef"
 	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
 
-	for i := 0; i < 2; i++ {
+	post := func(id, text string) int64 {
+		t.Helper()
 		rec := httptest.NewRecorder()
 		ServeLiveShareNoteChat(rec, liveReq(t, http.MethodPost, "/api/live-share/notes/chat", project,
-			map[string]any{"token": token, "id": "m1", "speaker": "小明", "text": "收到"}))
+			map[string]any{"token": token, "id": id, "speaker": "小明", "text": text}))
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var resp struct {
+			ID int64 `json:"id"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.NotZero(t, resp.ID)
+		return resp.ID
 	}
+
+	first := post("m1", "收到")
+	// Another message in between: without it a stale last_insert_rowid() would
+	// happen to equal the right answer and the retry check below could not tell
+	// the two implementations apart.
+	second := post("m2", "好的")
+	require.NotEqual(t, first, second)
+	again := post("m1", "收到")
+	assert.Equal(t, first, again, "a retry must return the id of ITS row")
 
 	rec := httptest.NewRecorder()
 	ServeLiveNotesChat(rec, liveNotesProjectRequest(t,
@@ -1377,8 +1434,10 @@ func TestServeLiveShareNoteChat_IsIdempotentAndReadable(t *testing.T) {
 		Count    int                           `json:"count"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Len(t, body.Messages, 1, "a retried message must not duplicate")
-	assert.Equal(t, 1, body.Count)
+	require.Len(t, body.Messages, 2, "a retried message must not duplicate")
+	assert.Equal(t, 2, body.Count)
+	assert.Equal(t, first, body.Messages[0].ID)
 	assert.Equal(t, "小明", body.Messages[0].Speaker)
 	assert.Equal(t, "收到", body.Messages[0].Text)
+	assert.Equal(t, second, body.Messages[1].ID)
 }

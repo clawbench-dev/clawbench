@@ -79,6 +79,8 @@ type QuotePrompt struct {
 	SessionID   string
 	MessageID   int64
 	ExecutionID string
+	// MeetingToken is the live-share room token a meeting quote came from.
+	MeetingToken string
 }
 
 // ClassifyAttachments splits entries into prompt buckets. excludePaths holds
@@ -94,18 +96,19 @@ func ClassifyAttachments(entries []FileEntry, excludePaths map[string]struct{}) 
 		// there would silently drop the quoted text from the prompt.
 		if f.IsQuote() {
 			parts.Quotes = append(parts.Quotes, QuotePrompt{
-				Label:       f.Path,
-				Language:    f.Language,
-				Note:        f.Note,
-				Text:        f.Text,
-				URL:         f.URL,
-				StartLine:   f.StartLine,
-				EndLine:     f.EndLine,
-				CommitSHA:   f.CommitSHA,
-				TaskID:      f.TaskID,
-				SessionID:   f.SessionID,
-				MessageID:   f.MessageID,
-				ExecutionID: f.ExecutionID,
+				Label:        f.Path,
+				Language:     f.Language,
+				Note:         f.Note,
+				Text:         f.Text,
+				URL:          f.URL,
+				StartLine:    f.StartLine,
+				EndLine:      f.EndLine,
+				CommitSHA:    f.CommitSHA,
+				TaskID:       f.TaskID,
+				SessionID:    f.SessionID,
+				MessageID:    f.MessageID,
+				ExecutionID:  f.ExecutionID,
+				MeetingToken: f.MeetingToken,
 			})
 			continue
 		}
@@ -174,6 +177,9 @@ func quoteSourceKeys(q QuotePrompt) []string {
 	}
 	if q.ExecutionID != "" {
 		keys = append(keys, "execution: "+q.ExecutionID)
+	}
+	if q.MeetingToken != "" {
+		keys = append(keys, "meeting: "+q.MeetingToken)
 	}
 	return keys
 }

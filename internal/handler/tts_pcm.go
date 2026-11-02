@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"clawbench/internal/audio"
 	"clawbench/internal/model"
@@ -97,24 +99,108 @@ func TTSPCMGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmpPath := filepath.Join(ttsDir, cacheKey+".decoding")
-	format, err := decodeMP3ToPCM(mp3AbsPath, tmpPath)
+	pcmPath, format, err := cachedPCMPath(ttsDir, cacheKey, mp3AbsPath)
 	if err != nil {
 		slog.Error("tts pcm decode failed", slog.String("error", err.Error()), slog.String("cache_key", cacheKey))
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
 
+	service.EvictTTSCache(projectPath, model.TTSMaxCacheFiles)
+	servePCM(w, r, pcmPath, format)
+}
+
+// pcmDecodeCall is one in-flight decode that concurrent callers wait on.
+type pcmDecodeCall struct {
+	done   chan struct{}
+	result pcmDecodeResult
+}
+
+type pcmDecodeResult struct {
+	path   string
+	format audio.Format
+	err    error
+}
+
+// pcmDecodeGroup collapses concurrent decodes of the SAME cached MP3 into one.
+//
+// The decoded bytes are written to a temp path derived from cacheKey and then
+// renamed onto the final, parameter-carrying name. Without single-flight two
+// requests for the same phrase race on that temp path: the second open
+// truncates the file the first is still writing (or the two interleave), and
+// whichever rename lands last publishes truncated PCM under the final name —
+// which findCachedPCM then treats as a valid cache entry forever.
+var pcmDecodeGroup struct {
+	mu    sync.Mutex
+	calls map[string]*pcmDecodeCall
+}
+
+// cachedPCMPath returns the decoded PCM for mp3AbsPath, decoding at most once
+// across concurrent callers. The first caller does the work; the rest wait for
+// its result and serve the same file.
+func cachedPCMPath(ttsDir, cacheKey, mp3AbsPath string) (string, audio.Format, error) {
+	pcmDecodeGroup.mu.Lock()
+	if pcmDecodeGroup.calls == nil {
+		pcmDecodeGroup.calls = make(map[string]*pcmDecodeCall, 4)
+	}
+	if call, ok := pcmDecodeGroup.calls[mp3AbsPath]; ok {
+		pcmDecodeGroup.mu.Unlock()
+		<-call.done
+		return call.result.path, call.result.format, call.result.err
+	}
+	call := &pcmDecodeCall{done: make(chan struct{})}
+	pcmDecodeGroup.calls[mp3AbsPath] = call
+	pcmDecodeGroup.mu.Unlock()
+
+	// Deferred so a panicking decoder cannot leave the entry in the map with
+	// nobody to close it: every waiter — and every later request for the same
+	// phrase — would block forever. The result is published before the waiters
+	// are woken, and the entry is dropped first so a later request starts a
+	// fresh decode instead of joining a finished one.
+	func() {
+		defer func() {
+			pcmDecodeGroup.mu.Lock()
+			delete(pcmDecodeGroup.calls, mp3AbsPath)
+			pcmDecodeGroup.mu.Unlock()
+			close(call.done)
+		}()
+		call.result = decodePCM(ttsDir, cacheKey, mp3AbsPath)
+	}()
+
+	return call.result.path, call.result.format, call.result.err
+}
+
+// decodePCM decodes the cached MP3 into its final PCM path. Every failure path
+// removes the temp file, so a failed decode never leaves a half-written file
+// behind for a later run to serve.
+func decodePCM(ttsDir, cacheKey, mp3AbsPath string) pcmDecodeResult {
+	// A caller that lost the race for the MP3 may find the decode already done
+	// by the winner (synthesis is the slow half of the request).
+	if path, format, hit := findCachedPCM(ttsDir, cacheKey); hit {
+		return pcmDecodeResult{path: path, format: format}
+	}
+
+	tmpPath := filepath.Join(ttsDir, cacheKey+".decoding")
+	format, err := decodeMP3ToPCM(mp3AbsPath, tmpPath)
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		return pcmDecodeResult{err: err}
+	}
+	if format.SampleRate <= 0 || format.Channels <= 0 || format.Bits <= 0 {
+		_ = os.Remove(tmpPath)
+		return pcmDecodeResult{err: fmt.Errorf("tts pcm: decoder reported an invalid format %+v", format)}
+	}
+	if !pcmFileValid(tmpPath, format) {
+		_ = os.Remove(tmpPath)
+		return pcmDecodeResult{err: errors.New("tts pcm: decoder produced a truncated stream")}
+	}
+
 	pcmPath := pcmPathFor(ttsDir, cacheKey, format)
 	if err := os.Rename(tmpPath, pcmPath); err != nil {
 		_ = os.Remove(tmpPath)
-		slog.Error("tts pcm cache write failed", slog.String("error", err.Error()), slog.String("cache_key", cacheKey))
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-		return
+		return pcmDecodeResult{err: err}
 	}
-
-	service.EvictTTSCache(projectPath, model.TTSMaxCacheFiles)
-	servePCM(w, r, pcmPath, format)
+	return pcmDecodeResult{path: pcmPath, format: format}
 }
 
 // ensureMP3 synthesizes the MP3 into mp3AbsPath unless it is already cached.
@@ -162,6 +248,12 @@ func pcmPathFor(dir, cacheKey string, format audio.Format) string {
 }
 
 // findCachedPCM looks for a previously decoded stream for cacheKey.
+//
+// A non-zero size is not proof of a usable file: a decode that was cut short
+// (crash, interleaved write, full disk) leaves a file whose size is not a whole
+// number of PCM frames. Serving it would play truncated noise and, worse,
+// refresh its mtime so eviction never picks it. Such a file is skipped here, so
+// the caller decodes again and renames a complete file over it.
 func findCachedPCM(dir, cacheKey string) (string, audio.Format, bool) {
 	matches, err := filepath.Glob(filepath.Join(dir, cacheKey+"-r*"+ttsPCMExt))
 	if err != nil {
@@ -177,16 +269,35 @@ func findCachedPCM(dir, cacheKey string) (string, audio.Format, bool) {
 		if rate <= 0 || channels <= 0 || bits <= 0 {
 			continue
 		}
-		if info, err := os.Stat(path); err != nil || info.Size() == 0 {
+		format := audio.Format{SampleRate: rate, Channels: channels, Bits: bits}
+		if !pcmFileValid(path, format) {
 			continue
 		}
-		return path, audio.Format{SampleRate: rate, Channels: channels, Bits: bits}, true
+		return path, format, true
 	}
 	return "", audio.Format{}, false
 }
 
+// pcmFileValid reports whether path holds at least one whole PCM frame.
+func pcmFileValid(path string, format audio.Format) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.Size() <= 0 {
+		return false
+	}
+	frameBytes := int64(format.Channels) * int64(format.Bits) / 8
+	if frameBytes <= 0 {
+		return true
+	}
+	return info.Size()%frameBytes == 0
+}
+
 // servePCM writes the raw PCM file with a Content-Type carrying the stream
 // parameters, so clients do not have to hardcode them.
+//
+// endianness=little is explicit because RFC 3551 defines L16 as BIG endian
+// while the payload this endpoint produces is little endian (see
+// audio.DecodeMP3ToPCMFile). A client that trusts the bare media type decodes
+// the stream as full-scale noise.
 func servePCM(w http.ResponseWriter, r *http.Request, absPath string, format audio.Format) {
 	f, err := os.Open(absPath)
 	if err != nil {
@@ -201,7 +312,7 @@ func servePCM(w http.ResponseWriter, r *http.Request, absPath string, format aud
 		return
 	}
 
-	w.Header().Set("Content-Type", fmt.Sprintf("audio/L16; rate=%d; channels=%d", format.SampleRate, format.Channels))
+	w.Header().Set("Content-Type", fmt.Sprintf("audio/L16; rate=%d; channels=%d; endianness=little", format.SampleRate, format.Channels))
 	w.Header().Set("X-Audio-Bits", strconv.Itoa(format.Bits))
 	w.Header().Set("Cache-Control", "no-store")
 	http.ServeContent(w, r, "", info.ModTime(), f)

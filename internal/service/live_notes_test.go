@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -99,6 +100,29 @@ func TestDedupeLiveNoteSegments_KeepsRepeatedPhraseLater(t *testing.T) {
 	sorted := SortLiveNoteSegments([]LiveNoteSegment{
 		seg(1, "mic", "我", 10_000, "好"),
 		seg(2, "system", "系统声音", 40_000, "好"),
+	})
+
+	assert.Len(t, DedupeLiveNoteSegments(sorted), 2)
+}
+
+// Two utterances on the SAME channel are never an echo, however close they are.
+// 「好」「对」「嗯」 are the most common short answers in a meeting; dropping the
+// second one silently removes a real reply from the transcript and minutes.
+func TestDedupeLiveNoteSegments_KeepsRepeatedPhraseOnSameChannel(t *testing.T) {
+	sorted := SortLiveNoteSegments([]LiveNoteSegment{
+		seg(1, "mic", "我", 10_000, "好"),
+		seg(2, "mic", "我", 13_000, "好"),
+	})
+
+	assert.Len(t, DedupeLiveNoteSegments(sorted), 2)
+}
+
+// Two different participants answering the same thing are two voices, not an
+// echo of each other — neither channel is the loopback.
+func TestDedupeLiveNoteSegments_KeepsSameWordsFromTwoViewers(t *testing.T) {
+	sorted := SortLiveNoteSegments([]LiveNoteSegment{
+		seg(1, "viewer:v1", "小明", 10_000, "对"),
+		seg(2, "viewer:v2", "小红", 12_000, "对"),
 	})
 
 	assert.Len(t, DedupeLiveNoteSegments(sorted), 2)
@@ -266,6 +290,110 @@ func TestWriteLiveNotesTranscriptFile_KeepsHeadingNoteAndLines(t *testing.T) {
 		{Speaker: "我", StartedAt: base, DurationMS: 1000, Text: "原样"},
 	}, nil, nil)
 	assert.Error(t, err)
+}
+
+// artifactCJK matches any CJK character (including the fullwidth punctuation
+// this file used to hardcode) — an English artifact must contain none.
+var artifactCJK = regexp.MustCompile(`[\x{3000}-\x{303f}\x{4e00}-\x{9fff}\x{ff00}-\x{ffef}]`)
+
+// The meeting folder is a user artifact that gets committed to the repository,
+// and files.md has always followed the UI language. The chat archive, the
+// minutes and the proofread transcript used to be Chinese-only regardless.
+func TestMeetingArtifacts_FollowTheConfiguredLanguage(t *testing.T) {
+	withLanguage(t, "en")
+	paths := LiveNotesPathsIn(filepath.Join(t.TempDir(), "2026-10-30-1430-weekly-abc123"))
+	started := time.Date(2026, 10, 30, 14, 30, 0, 0, time.Local)
+	require.NoError(t, os.MkdirAll(paths.Dir, 0o755))
+
+	chatPath, err := WriteLiveNoteChatFile(paths, []LiveNoteChatMessage{
+		{Speaker: "Alice", Text: "first line", At: started.UnixMilli()},
+		{Speaker: "", Text: "second line"},
+	})
+	require.NoError(t, err)
+	chat, err := os.ReadFile(chatPath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(chat), "会议聊天记录")
+	assert.NotContains(t, string(chat), "匿名")
+	assert.Contains(t, string(chat), "# Meeting chat log")
+	assert.Contains(t, string(chat), "[14:30] Alice: first line")
+	assert.Contains(t, string(chat), "Anonymous: second line")
+	assert.NotRegexp(t, artifactCJK, string(chat))
+
+	minutesPath, err := WriteLiveNotesMinutesFile(paths, "", started, "## Summary\n\nAll good.", 3, true)
+	require.NoError(t, err)
+	minutes, err := os.ReadFile(minutesPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(minutes), "# Meeting minutes · 2026-10-30 14:30")
+	assert.Contains(t, string(minutes), "## Artifacts")
+	assert.Contains(t, string(minutes), "- Transcript: [transcript.vtt](transcript.vtt)")
+	assert.Contains(t, string(minutes), "- Proofread transcript: [transcript-revised.md]")
+	assert.Contains(t, string(minutes), "- Recording: [meeting.webm]")
+	assert.Contains(t, string(minutes), "Per-channel recordings: `audio/` (3 files)")
+	assert.NotRegexp(t, artifactCJK, string(minutes))
+
+	revisedPath, err := WriteLiveNotesRevisedTranscript(paths, "Weekly sync", started, "[00:00] Alice: hello")
+	require.NoError(t, err)
+	revised, err := os.ReadFile(revisedPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(revised), "# Proofread transcript · Weekly sync")
+	assert.Contains(t, string(revised), "> Dictation errors and proper nouns were corrected")
+	assert.NotRegexp(t, artifactCJK, string(revised))
+}
+
+// The transcript handed to the model, the lines merged into the proofread copy
+// and the parser that puts file events back in order all have to agree on the
+// separator — otherwise an English meeting gets a transcript the merge cannot
+// place its events into.
+func TestMeetingTranscript_SeparatorFollowsTheLanguageAndStaysParseable(t *testing.T) {
+	withLanguage(t, "en")
+	base := int64(1_700_000_000_000)
+
+	transcript := BuildLiveNotesTranscript([]LiveNoteSegment{
+		seg(1, "mic", "Alice", base, "hello"),
+		seg(2, "system", "System", base+65_000, "bye"),
+	})
+	assert.Equal(t, "[00:00] Alice: hello\n[01:05] System: bye", transcript)
+	assert.NotRegexp(t, artifactCJK, transcript)
+
+	merged := MergeLiveNoteFileEvents(transcript, []LiveNoteFile{
+		{Owner: "host", Path: "/proj/main.go", OpenedAt: base + 30_000, ClosedAt: base + 90_000},
+	}, nil, base)
+	assert.Contains(t, merged, "[00:30] File: Opened /proj/main.go")
+	assert.Contains(t, merged, "[01:30] File: Closed /proj/main.go")
+	assert.NotRegexp(t, artifactCJK, merged)
+	// Every event line keeps the `[mm:ss]` prefix the merge itself keys on, so a
+	// second merge pass would place it again instead of treating it as prose.
+	for _, line := range strings.Split(merged, "\n") {
+		if strings.HasPrefix(line, "[") {
+			assert.NotNil(t, liveNoteTranscriptLine.FindStringSubmatch(line), "unparseable line %q", line)
+		}
+	}
+
+	// The fallback section (used when the model rewrote the whole format) is
+	// localized too.
+	unparseable := MergeLiveNoteFileEvents("the model ignored the format", []LiveNoteFile{
+		{Owner: "host", Path: "/proj/main.go", OpenedAt: base + 30_000},
+	}, nil, base)
+	assert.Contains(t, unparseable, "## Files opened during the meeting")
+	assert.NotRegexp(t, artifactCJK, unparseable)
+}
+
+// A nickname is participant-typed text. A newline in it would start a new
+// Markdown paragraph and let the sender forge a second chat line.
+func TestWriteLiveNoteChatFile_FlattensSpeakerNewlines(t *testing.T) {
+	paths := LiveNotesPathsIn(t.TempDir())
+	require.NoError(t, os.MkdirAll(paths.Dir, 0o755))
+
+	path, err := WriteLiveNoteChatFile(paths, []LiveNoteChatMessage{
+		{Speaker: "小明\n[10:00] 小红\r\n", Text: "hi\nthere"},
+	})
+	require.NoError(t, err)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	lines := strings.Split(strings.TrimRight(string(body), "\n"), "\n")
+	require.Len(t, lines, 3, "heading, blank, one message line: %q", string(body))
+	assert.Equal(t, "小明 [10:00] 小红：hi there", lines[2])
 }
 
 func TestSaveLiveNoteAudio_NamesByStartTimeAndChannel(t *testing.T) {
@@ -1138,6 +1266,108 @@ func TestCloseStaleLiveNotes_OnlyClosesOldOpenRecords(t *testing.T) {
 	assert.Zero(t, fresh.EndedAt)
 }
 
+// backdateLiveNote moves a row's last-write stamp. updated_at is the ONLY
+// evidence the generation reset has that a job died with its process.
+func backdateLiveNote(t *testing.T, token string, ago time.Duration) {
+	t.Helper()
+	_, err := store.WriteExec(`UPDATE live_notes SET updated_at = ? WHERE token = ?`,
+		time.Now().Add(-ago).UTC().Format(liveNoteSQLTimeLayout), token)
+	require.NoError(t, err)
+}
+
+// A generating row is written by a detached goroutine with a ten-minute budget.
+// If the process dies inside it, nothing ever writes a terminal status — the row
+// stays generating forever and the meeting can never be deleted. Age is the only
+// signal left, so it must flip to failed; a job that wrote a minute ago is still
+// plausibly alive.
+func TestResetStaleLiveNoteGeneration_OnlyFlipsAbandonedJobs(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+
+	require.NoError(t, SetLiveNoteMinutes("stale", pid, "", LiveNotesStatusGenerating, "", "", ""))
+	backdateLiveNote(t, "stale", 11*time.Minute)
+	// The proofread stage has its own status column and its own detached job.
+	require.NoError(t, SetLiveNoteRevise("stale-rev", pid, LiveNotesStatusGenerating, "", ""))
+	backdateLiveNote(t, "stale-rev", 11*time.Minute)
+	require.NoError(t, SetLiveNoteMinutes("fresh", pid, "", LiveNotesStatusGenerating, "", "", ""))
+	backdateLiveNote(t, "fresh", time.Minute)
+	require.NoError(t, SetLiveNoteMinutes("ready", pid, "", LiveNotesStatusReady, "m", "", ""))
+	backdateLiveNote(t, "ready", 11*time.Minute)
+
+	now := time.Now().UnixMilli()
+	n, err := ResetStaleLiveNoteGeneration(now)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n, "the two abandoned jobs, and nothing else")
+
+	stale, _, err := GetLiveNote("stale")
+	require.NoError(t, err)
+	assert.Equal(t, LiveNotesStatusFailed, stale.Status)
+	assert.NotEmpty(t, stale.Error, "the row must say why it is failed")
+
+	rev, _, err := GetLiveNote("stale-rev")
+	require.NoError(t, err)
+	assert.Equal(t, LiveNotesStatusFailed, rev.ReviseStatus)
+	assert.NotEmpty(t, rev.ReviseError)
+
+	fresh, _, err := GetLiveNote("fresh")
+	require.NoError(t, err)
+	assert.Equal(t, LiveNotesStatusGenerating, fresh.Status, "a job that wrote a minute ago may still be running")
+	running, err := LiveNoteGenerationRunning("fresh", now)
+	require.NoError(t, err)
+	assert.True(t, running)
+	running, err = LiveNoteGenerationRunning("stale", now)
+	require.NoError(t, err)
+	assert.False(t, running, "an abandoned job must not block deleting its meeting")
+
+	ready, _, err := GetLiveNote("ready")
+	require.NoError(t, err)
+	assert.Equal(t, LiveNotesStatusReady, ready.Status, "a finished job must not be rewritten")
+	assert.Empty(t, ready.Error)
+}
+
+// The startup sweep is the path that actually runs after a crash: the reset has
+// to happen there, not only in a helper nobody calls.
+func TestCloseOrphanedLiveNotes_ResetsAbandonedGeneration(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	require.NoError(t, StartLiveNote("crashed", pid, "崩溃的会", time.Now().Add(-30*time.Minute).UnixMilli()))
+	require.NoError(t, SetLiveNoteMinutes("crashed", pid, "崩溃的会", LiveNotesStatusGenerating, "", "", ""))
+	backdateLiveNote(t, "crashed", 11*time.Minute)
+
+	_, err = CloseOrphanedLiveNotes(time.Now().UnixMilli())
+	require.NoError(t, err)
+
+	note, _, err := GetLiveNote("crashed")
+	require.NoError(t, err)
+	assert.Equal(t, LiveNotesStatusFailed, note.Status,
+		"a restart must not leave the meeting stuck in generating")
+}
+
+// Same wiring on the hourly backstop: a row whose writer vanished while the
+// process stayed up never reaches CloseOrphanedLiveNotes.
+func TestCloseStaleLiveNotes_ResetsAbandonedGeneration(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	require.NoError(t, StartLiveNote("stuck", pid, "卡住的会", time.Now().Add(-30*time.Minute).UnixMilli()))
+	require.NoError(t, SetLiveNoteMinutes("stuck", pid, "卡住的会", LiveNotesStatusGenerating, "", "", ""))
+	backdateLiveNote(t, "stuck", 11*time.Minute)
+
+	// The 12h close window does not reach this row — only the reset should.
+	closed, err := CloseStaleLiveNotes(time.Now().Add(-12 * time.Hour).UnixMilli())
+	require.NoError(t, err)
+	assert.Equal(t, 0, closed)
+
+	note, _, err := GetLiveNote("stuck")
+	require.NoError(t, err)
+	assert.Equal(t, LiveNotesStatusFailed, note.Status)
+}
+
 // A restart is the only caller: rooms live in memory, so every record still
 // marked open belongs to a process that is gone. Closing them is what stops the
 // list from showing 进行中 for the next 12 hours.
@@ -1264,6 +1494,39 @@ func TestListMeetingRecords_NewestFirstWithArtifacts(t *testing.T) {
 	assert.False(t, records[1].HasMinutes)
 }
 
+// Pre-record rows (started_at = 0, from before the meeting-record model) are
+// hidden rather than deleted by the upgrade, so their transcript survives. The
+// list is the user's view: a hidden row must not appear there, and opening it by
+// token must behave like a meeting that does not exist.
+func TestMeetingRecords_HideRowsMarkedHidden(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	project := t.TempDir()
+
+	require.NoError(t, StartLiveNote("visible", pid, "周会", 1_700_000_000_000))
+	require.NoError(t, StartLiveNote("legacy", pid, "旧会", 1_700_000_000_000))
+	_, err = AppendLiveNoteSegment(context.Background(), "legacy", pid, seg(0, "mic", "我", 1, "旧转写"))
+	require.NoError(t, err)
+	_, err = store.WriteExec(`UPDATE live_notes SET hidden = 1 WHERE token = 'legacy'`)
+	require.NoError(t, err)
+
+	records, err := ListMeetingRecords(project, pid, 200)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.Equal(t, "visible", records[0].Token)
+
+	_, ok, err := GetMeetingRecord(project, pid, "legacy")
+	require.NoError(t, err)
+	assert.False(t, ok, "a hidden meeting must not open by token either")
+
+	// Hiding is not deleting: the transcript is still there for recovery.
+	segs, err := ListLiveNoteSegments("legacy", 0)
+	require.NoError(t, err)
+	assert.Len(t, segs, 1)
+}
+
 // A record carries what the room WAS (voice vs video) and how many people the
 // transcript heard. It is what the record list needs to say something about a
 // meeting it cannot otherwise describe.
@@ -1312,6 +1575,13 @@ func TestDeleteMeetingRecord_RemovesFolderRowsAndChat(t *testing.T) {
 	require.NoError(t, err)
 	_, err = AppendLiveNoteChat("tok", pid, LiveNoteChatMessage{ClientID: "c1", Speaker: "我", Text: "你好"})
 	require.NoError(t, err)
+	// The file timeline and the screen-share log are written by the publisher
+	// during a meeting; a delete that only clears the other three tables leaves
+	// them behind for good (no other statement removes them).
+	require.NoError(t, RecordLiveNoteFiles(context.Background(), "tok", pid, []LiveNoteFile{
+		{Owner: "host", Path: "/proj/a/main.go", OpenedAt: 1_700_000_001_000},
+	}))
+	require.NoError(t, SetLiveNoteScreenSharer(context.Background(), "tok", pid, "host", "主持人", 1_700_000_002_000))
 
 	require.NoError(t, DeleteMeetingRecord(project, pid, "tok"))
 
@@ -1326,6 +1596,13 @@ func TestDeleteMeetingRecord_RemovesFolderRowsAndChat(t *testing.T) {
 	msgs, err := ListLiveNoteChat("tok", 0)
 	require.NoError(t, err)
 	assert.Empty(t, msgs)
+	for _, table := range []string{"live_notes_files", "live_notes_screen"} {
+		var n int
+		require.NoError(t, store.ReadDB().QueryRow(
+			"SELECT COUNT(*) FROM "+table+" WHERE token = 'tok'",
+		).Scan(&n))
+		assert.Zero(t, n, "%s rows must go with the meeting", table)
+	}
 }
 
 func TestDeleteMeetingRecord_UnknownToken(t *testing.T) {
@@ -1344,11 +1621,16 @@ func TestAppendLiveNoteChat_IsIdempotentAndOrdered(t *testing.T) {
 
 	first, err := AppendLiveNoteChat("tok", pid, LiveNoteChatMessage{ClientID: "c1", Speaker: "小明", Text: "一"})
 	require.NoError(t, err)
+	// Another message lands in between: this is what makes a stale
+	// last_insert_rowid() differ from the right answer. A retry immediately
+	// after the original would pass even with the buggy implementation.
+	second, err := AppendLiveNoteChat("tok", pid, LiveNoteChatMessage{ClientID: "c2", Speaker: "小红", Text: "二"})
+	require.NoError(t, err)
+	require.NotEqual(t, first, second)
+
 	again, err := AppendLiveNoteChat("tok", pid, LiveNoteChatMessage{ClientID: "c1", Speaker: "小明", Text: "一"})
 	require.NoError(t, err)
-	assert.Equal(t, first, again, "a retried message keeps its row")
-	_, err = AppendLiveNoteChat("tok", pid, LiveNoteChatMessage{ClientID: "c2", Speaker: "小红", Text: "二"})
-	require.NoError(t, err)
+	assert.Equal(t, first, again, "a retried message keeps ITS row, not the last one this connection inserted")
 
 	msgs, err := ListLiveNoteChat("tok", 0)
 	require.NoError(t, err)

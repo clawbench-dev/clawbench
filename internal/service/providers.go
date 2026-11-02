@@ -405,18 +405,50 @@ func agentsIncompatibleWithProvider(providerID int64, next model.Provider) ([]st
 	return names, rows.Err()
 }
 
+// ProviderFieldError is an ErrProviderInvalid that names the field the user has
+// to change, using the same name the client sent (the JSON field).
+//
+// Without it every validation failure folded into `{Reason: …}`, so the
+// settings form could not branch on the field: its "this protocol cannot
+// express that auth mode" message was unreachable and the user got the raw
+// reason with internal identifiers in it instead.
+type ProviderFieldError struct {
+	// Field is the wire field name, e.g. "authMode".
+	Field string
+	// Reason is the English explanation, for logs and non-UI callers.
+	Reason string
+}
+
+func (e *ProviderFieldError) Error() string {
+	return ErrProviderInvalid.Error() + ": " + e.Reason
+}
+
+// Unwrap keeps errors.Is(err, ErrProviderInvalid) working for every existing
+// caller (writeProviderError, tests).
+func (e *ProviderFieldError) Unwrap() error { return ErrProviderInvalid }
+
 func validateProviderFields(p model.Provider) error {
 	if p.Name == "" {
-		return fmt.Errorf("%w: name is required", ErrProviderInvalid)
+		return &ProviderFieldError{Field: "name", Reason: "name is required"}
 	}
 	if !model.ValidProtocol(p.Protocol) {
-		return fmt.Errorf("%w: unknown protocol %q", ErrProviderInvalid, p.Protocol)
+		return &ProviderFieldError{Field: "protocol", Reason: fmt.Sprintf("unknown protocol %q", p.Protocol)}
 	}
 	if !model.ValidAuthMode(p.AuthMode) {
-		return fmt.Errorf("%w: unknown auth mode %q", ErrProviderInvalid, p.AuthMode)
+		return &ProviderFieldError{Field: "authMode", Reason: fmt.Sprintf("unknown auth mode %q", p.AuthMode)}
+	}
+	// The auth mode decides which variable the CLI reads, so a mode no backend
+	// can express for this protocol is a dead row: it saved fine and then
+	// failed every turn. The bind-time check (handler) still guards rows that
+	// predate this rule.
+	if !model.ProtocolSupportsAuthMode(p.Protocol, p.AuthMode) {
+		return &ProviderFieldError{
+			Field:  "authMode",
+			Reason: fmt.Sprintf("no backend supports %s auth for the %s protocol", p.AuthMode, p.Protocol),
+		}
 	}
 	if !model.ValidWireAPI(p.WireAPI) {
-		return fmt.Errorf("%w: unknown wire api %q", ErrProviderInvalid, p.WireAPI)
+		return &ProviderFieldError{Field: "wireApi", Reason: fmt.Sprintf("unknown wire api %q", p.WireAPI)}
 	}
 	return nil
 }

@@ -99,6 +99,16 @@ func TestDeleteProjectData_RemovesAllProjectScopedRows(t *testing.T) {
 	// A group's undelivered private notes are keyed by the GROUP session id and
 	// carry no project_id, so nothing else in this delete reaches them.
 	exec("INSERT INTO group_pending_bcc (group_id, target_name, content) VALUES ('sess-1', 'Alice', 'note')")
+	// Meeting records: the row, the transcript, the chat, the file timeline and
+	// the screen-share log are five separate tables. The last two are only ever
+	// written by the meeting itself, so a delete that forgets them orphans them
+	// permanently — nothing else in the codebase deletes from them.
+	exec("INSERT INTO live_notes (token, project_id, title) VALUES ('ln-tok', ?, 'm')", id)
+	exec("INSERT INTO live_notes_segments (token, project_id, channel, text) VALUES ('ln-tok', ?, 'mic', 'x')", id)
+	exec("INSERT INTO live_notes_chat (token, project_id, client_msg_id, text) VALUES ('ln-tok', ?, 'c1', 'x')", id)
+	exec("INSERT INTO live_notes_files (token, project_id, path, opened_at) VALUES ('ln-tok', ?, '/p', 1)", id)
+	exec("INSERT INTO live_notes_screen (token, project_id, sharer, started_at) VALUES ('ln-tok', ?, 'host', 1)", id)
+	exec("INSERT INTO live_notes_screen (token, project_id, sharer, started_at) VALUES ('ln-other', ?, 'host', 1)", otherID)
 	// Rows belonging to the OTHER project, to prove isolation.
 	exec("INSERT INTO chat_history (project_id, backend, session_id, role, content) VALUES (?, 'claude', 'sess-other', 'assistant', 'keep')", otherID)
 	exec("INSERT INTO recent_projects (project_id) VALUES (?)", otherID)
@@ -111,6 +121,8 @@ func TestDeleteProjectData_RemovesAllProjectScopedRows(t *testing.T) {
 		"chat_quick_send", "queued_messages", "recent_projects", "file_shares",
 		"project_forges", "btw_questions", "session_tags", "scheduled_tasks",
 		"terminal_quick_commands",
+		"live_notes", "live_notes_segments", "live_notes_chat",
+		"live_notes_files", "live_notes_screen",
 	} {
 		assert.Zerof(t, countRows(t, table, id), "%s must have no rows left for the project", table)
 	}
@@ -146,6 +158,8 @@ func TestDeleteProjectData_RemovesAllProjectScopedRows(t *testing.T) {
 	assert.Equal(t, 1, n, "other project's summary must survive")
 	require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM tts_summaries WHERE message_id = 201").Scan(&n))
 	assert.Equal(t, 1, n, "other project's tts summary must survive")
+	// The other project's meeting rows must survive the delete as well.
+	assert.Equal(t, 1, countRows(t, "live_notes_screen", otherID), "other project's screen log must survive")
 
 	// The registry row itself is gone.
 	require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM projects WHERE id = ?", id).Scan(&n))

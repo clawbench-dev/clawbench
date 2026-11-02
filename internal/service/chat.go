@@ -3463,50 +3463,32 @@ func GetStreamingMessageID(sessionID string) int64 {
 	return id
 }
 
-// GetLiveRunState returns the state a client that just subscribed needs in order
-// to render a run already in flight: the streaming assistant row's id, the
-// question it answers (the nearest preceding user row), and the streaming row's
-// speaker (group-member row id; empty for ordinary single-agent turns). Backs
-// ws.StreamHub.EmitLiveRunStateToClient.
-//
-// Unlike GetStreamingMessageID this does NOT fall back to a finalized message:
-// the caller's whole purpose is "a turn is running, hand me its state", and
-// emitting a stream_start for an idle session would open a phantom placeholder.
-// messageID is 0 when nothing is streaming.
-//
-// The question is resolved by id order (the greatest user id below the
-// streaming row), NOT by a queue id: in this model a queued message is
-// materialized into chat_history immediately before the reply it produces, so
-// id order IS the conversation order. The old queue-id lookup also broke for
-// rows whose queue_id was empty. questionID is 0 for a run with no preceding
-// user row (e.g. some scheduled runs).
-//
-// speakerID MUST travel with the re-emitted stream_start: the subscribe-time
-// recovery is how a client that switched away and back learns about a live
-// turn, and without the speaker the placeholder it creates is speakerless —
-// the group speaker header then stays missing for the rest of the turn (the
-// frontend's db_load merge can heal it only because it also adopts agentId;
-// see rebuildFromDb).
-//
-// Returns the NEWEST stream only. Callers that must recover a session with
-// several concurrent streams (parallel group speaking) use
-// GetLiveRunStates instead.
-func GetLiveRunState(sessionID string) (messageID int64, questionID int64, questionContent, speakerID string) {
-	states := GetLiveRunStates(sessionID)
-	if len(states) == 0 {
-		return 0, 0, "", ""
-	}
-	st := states[0]
-	return st.MessageID, st.QuestionID, st.QuestionContent, st.SpeakerID
-}
-
 // GetLiveRunStates returns EVERY in-flight stream for a session, newest row
 // first. A session normally has one, but a group turn can run several members
 // CONCURRENTLY on one timeline (parallel speaking), and a client that subscribes
 // mid-flight must be told about all of them or it recovers only one bubble.
 //
+// Unlike GetStreamingMessageID this does NOT fall back to a finalized message:
+// the caller's whole purpose is "a turn is running, hand me its state", and
+// emitting a stream_start for an idle session would open a phantom placeholder.
+// An empty result means nothing is streaming.
+//
 // Each entry resolves its own question (the greatest user id below that
 // streaming row), so each recovered bubble is anchored to the right question.
+// The question is resolved by id order, NOT by a queue id: a queued message is
+// materialized into chat_history immediately before the reply it produces, so
+// id order IS the conversation order (the old queue-id lookup also broke for
+// rows whose queue_id was empty). QuestionID is 0 for a run with no preceding
+// user row (e.g. some scheduled runs).
+//
+// SpeakerID MUST travel with the re-emitted stream_start: the subscribe-time
+// recovery is how a client that switched away and back learns about a live
+// turn, and without the speaker the placeholder it creates is speakerless —
+// the group speaker header then stays missing for the rest of the turn (the
+// frontend's db_load merge can heal it only because it also adopts agentId;
+// see rebuildFromDb). QuestionFiles is filled for the same reason: the
+// recovery user_message is the only payload a late subscriber gets for the
+// question bubble.
 func GetLiveRunStates(sessionID string) []ws.LiveStreamState {
 	states := queryLiveStreamRows(sessionID)
 

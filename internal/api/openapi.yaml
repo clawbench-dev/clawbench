@@ -3792,6 +3792,16 @@ paths:
       description: |
         为本项目创建（或复用）一个直播房间。同一项目重复调用返回同一个 token，
         避免用户双击或重试时让已复制的链接失效。房间只存在于内存，进程重启即失效。
+
+        **请求体里的字段只是房间的初始状态**：房间已有发布端（含已预留）或已有观众时，
+        `title` / `video` / `camera` / `screen` / `allowTalk` / `allowMemberScreen` 一律忽略——
+        它们缺席即 `false`（`title` 缺席时是日期占位），照写会在第二次 POST 时给会议改名、
+        收走所有观众的麦克风、掐断正在共享的屏幕。响应里的 `talkEnabled` / `screenEnabled`
+        是房间的**当前**状态。
+        `notes` 与它们同组：房间已在运行时会中开关听记请用 `set-notes`，否则另一台设备
+        未勾选听记的创建页会把房间标记改成 false 且不广播，后进场的观众会被告知「听记已停止」。
+        会中改这些开关请用发布端控制帧（`set-talk-enabled` / `set-screen-enabled` /
+        `set-picture` / `set-notes`）。
       operationId: liveShareCreate
       requestBody:
         required: false
@@ -3805,6 +3815,8 @@ paths:
                   description: |
                     会议标题。省略时用会议开始时间（`MM-DD HH:mm`）占位，
                     纪要生成后由摘要模型据此改写；用户填写的标题不会被覆盖。
+                    与其他字段一样只是**初始值**：房间已在运行时（有发布端或观众）
+                    本次的 title 被忽略，正在进行的会议不会被另一台设备改名。
                 notes:
                   type: boolean
                   description: 是否开启 AI 听记（观众据此显示转写入口）
@@ -3883,7 +3895,8 @@ paths:
       tags: [LiveShare]
       summary: 结束共享
       description: |
-        断开全部观众。token 不存在时返回 200（重复结束不是错误）；
+        断开全部观众，**并关闭发布端自己的信令 socket**（发布端页面由 socket 生命周期
+        驱动，只删房间会让它一直显示「共享中」）。token 不存在时返回 200（重复结束不是错误）；
         token 属于其他项目时返回 404（与「不存在」同样的响应，不泄露房间存在性）。
       operationId: liveShareEnd
       parameters:
@@ -4642,6 +4655,12 @@ paths:
         （AI 听记时间线 + 纪要状态，`?since=` 增量）。`{token}/notes` 只在房间存活期间
         可读：共享结束后房间销毁，token 立即失效，不会留下可长期读取的转写。
 
+        `{token}/signal` **必须带 `?name=`（观众称谓）**：去掉首尾空白、剔除控制字符
+        （换行会被替换成空格并压缩连续空白，因为它要逐字写进归档的 chat.md 与通知正文），
+        清洗后为空或超过 32 个字符时在**升级之前**返回 **400**（`msgKey` 为
+        `ViewerNameRequired`），客户端据此提示「填写称谓后再加入」而不是一个开了又断的
+        socket。token 不存在或房间已无发布端一律 **404**，且先于称谓校验。
+
         `{token}/signal` 的观众控制帧含 `talk-start` / `talk-end`（麦克风）与
         `screen-start` / `screen-stop`（共享自己的屏幕，需房间开关已打开且当前无人共享）。
         服务端以 `screen-state` 广播谁在共享；被拒时回 `screen-denied`（`disabled` / `busy` /
@@ -4654,6 +4673,11 @@ paths:
         观众加入时的 `joined` 帧同样带 `video`（此刻有没有画面）、`camera`（发布端摄像头是否
         开着）与 `hostScreen`（画面是否为屏幕共享）三个独立标志，取值是**当前**状态而非创建时；
         远程控制与标注只在 `hostScreen` 为真时有意义。
+
+        **会中开关 AI 听记**用发布端帧 `set-notes`（`{type, enabled}`），服务端以
+        `notes-enabled`（`{type, notesEnabled}`）广播给全部观众。`notesEnabled` 在
+        `notes-enabled` 帧里**总是存在**（关闭时是显式的 `false`，不能省略）：观众端据此
+        显示/收起听记页签，省略会让它在主持人关闭后继续轮询一份不再增长的转写。
 
         会话 JSON 另附身份信息供分享页渲染真实智能体图标：`sessionAgent`（会话级智能体，
         单聊用）、`speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`
@@ -4688,6 +4712,17 @@ paths:
         对目录返回 404；目录内容请用 `{token}/list`。
       operationId: sharePublic
       security: []
+      parameters:
+        - name: name
+          in: query
+          required: false
+          description: |
+            观众称谓，**仅 `{token}/signal` 必填**（其余子路径忽略）。
+            清洗后为空或超过 32 个字符时，`{token}/signal` 在升级前返回 400
+            （`msgKey: ViewerNameRequired`）。
+          schema:
+            type: string
+            maxLength: 32
       responses:
         "200":
           description: |
@@ -4697,6 +4732,13 @@ paths:
           description: |
             `{token}/session` 专用：`If-None-Match` 与当前 `ETag` 匹配，内容未变。
             无响应体，仍带 `ETag`。
+        "400":
+          description: |
+            `{token}/signal` 专用：`?name=` 缺失、清洗后为空或超过 32 个字符。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: |
             `{token}/session` 专用：装配并发已达上限且排队超过服务端窗口。
@@ -5941,8 +5983,11 @@ paths:
         Go 解码器转成 PCM 并缓存为 `.pcm`。采样率跟随源 MP3（Edge TTS 为
         24 kHz），不做重采样。
 
-        响应 `Content-Type` 为 `audio/L16; rate=<采样率>; channels=<声道数>`，
-        采样位深见 `X-Audio-Bits`。PCM 缓存文件名内嵌采样参数，命中时无需解码。
+        响应 `Content-Type` 为
+        `audio/L16; rate=<采样率>; channels=<声道数>; endianness=little`，
+        采样位深见 `X-Audio-Bits`。`endianness=little` 是必须声明的：RFC 3551 的
+        `L16` 定义为**大端**，而本端点返回的负载是小端，按裸媒体类型解码的客户端
+        会得到满量程噪声。PCM 缓存文件名内嵌采样参数，命中时无需解码。
       operationId: ttsGeneratePcm
       requestBody:
         required: true
@@ -5972,8 +6017,10 @@ paths:
                 format: binary
         "400":
           description: 文本为空或超长
-        "501":
-          description: 当前语音提供方不支持裸 PCM（`PCMUnsupported`）
+        "500":
+          description: 解码或缓存写入失败（`InternalError`）。该端点对任何能产出 MP3 的语音提供方都成立，不存在「不支持裸 PCM」的独立状态码。
+        "502":
+          description: 摘要或语音合成失败（`SummarizeFailed` / `SynthesizeFailed`）
 
   /api/tts/stream/{jobId}:
     get:
@@ -7977,11 +8024,12 @@ components:
           description: 仅 `kind=quote`：围栏代码块的语言标识（如 `go`、`issue`）。
         sourceKind:
           type: string
-          enum: [file, url, message, selection, terminal]
+          enum: [file, url, message, selection, terminal, meeting]
           description: |
             仅 `kind=quote`：引用来源。`file` 本地文件、`url` 外部链接、`message` 聊天消息、
             `selection` 无来源地址的自由选区、`terminal` 终端选区（与 `selection` 同形，
-            分开是为了能标成「终端」而非泛化的「选中内容」）。
+            分开是为了能标成「终端」而非泛化的「选中内容」）、`meeting` 会议（听记/纪要/转写，
+            定位键为 `meetingToken`）。
             该字段会随 `files` 持久化：`selection`/`terminal` 与 `message` 都没有 path 与 url，
             不存下来刷新后就无法区分，抽屉会把终端引用误标为「聊天消息」。
             缺省（旧数据）由前端按 url/path 推断。
@@ -8001,8 +8049,14 @@ components:
           type: string
           description: |
             仅 `kind=quote`：来源任务执行 id（任务执行详情页引用），用于跳转回该次运行。
+        meetingToken:
+          type: string
+          description: |
+            仅 `kind=quote`：来源会议 token，用于跳转回该会议；会议名在 `path` 中。
+            仅在会议仍存活时可用（会议是内存态，结束即失效）。
 
-            上列 `commitSha` / `taskId` / `sessionId` / `messageId` / `executionId` 均为**来源定位键**：
+            上列 `commitSha` / `taskId` / `sessionId` / `messageId` / `executionId` /
+            `meetingToken` 均为**来源定位键**：
             客户端据此跳回源头，AI 提示词也会带上它们（形如 `[Quote 1/1] 名称 (task: 12)`），
             以便 AI 定位源头。它们随 `files` 持久化——引用正文里不含这些信息，不存就无法再跳转。
 

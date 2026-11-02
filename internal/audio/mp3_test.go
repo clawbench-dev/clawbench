@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"sort"
+	"sync"
 	"testing"
 )
 
@@ -60,5 +62,71 @@ func TestDecodeMP3ToPCMFile_InvalidInput(t *testing.T) {
 	}
 	if _, err := DecodeMP3ToPCMFile(src, filepath.Join(dir, "out.pcm")); err == nil {
 		t.Fatal("expected an error for non-MP3 input")
+	}
+}
+
+// TestDecodeMP3ToPCMFile_ConcurrentSameDestination guards the temp-file name.
+// It used to be dstPath+".tmp" — a name derived from the destination alone — so
+// two concurrent decodes of the same source truncated each other's file and the
+// loser's rename failed (ENOENT, or worse: it published interleaved bytes).
+func TestDecodeMP3ToPCMFile_ConcurrentSameDestination(t *testing.T) {
+	raw, err := base64.StdEncoding.DecodeString(tinyMP3Base64)
+	if err != nil {
+		t.Fatalf("fixture must decode: %v", err)
+	}
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "in.mp3")
+	dst := filepath.Join(dir, "out.pcm")
+	if err := os.WriteFile(src, raw, 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	formats := make([]Format, n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			formats[i], errs[i] = DecodeMP3ToPCMFile(src, dst)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("decode %d failed: %v", i, err)
+		}
+		if formats[i] != formats[0] {
+			t.Fatalf("decode %d reported %+v, want %+v", i, formats[i], formats[0])
+		}
+	}
+
+	st, err := os.Stat(dst)
+	if err != nil {
+		t.Fatalf("stat output: %v", err)
+	}
+	if st.Size() < 8000 || st.Size() > 20000 || st.Size()%2 != 0 {
+		t.Fatalf("output is not a complete frame-aligned stream: %d bytes", st.Size())
+	}
+
+	// No intermediate file may survive: the directory holds the source and the
+	// single published output.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	if len(names) != 2 || names[0] != "in.mp3" || names[1] != "out.pcm" {
+		t.Fatalf("leftover files after concurrent decode: %v", names)
 	}
 }

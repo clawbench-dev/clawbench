@@ -3,11 +3,15 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1453,11 +1457,41 @@ func TestLiveWS_JoinedCarriesControlCapability(t *testing.T) {
 	pub := dialPublisher(t, srv, token)
 
 	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetControlEnabled, Enabled: true})
+	// Wait until the room applied it: the frame is processed on the publisher's
+	// read loop, so a viewer that dials immediately can be told "not available"
+	// and then receive the advertisement as a separate `control-enabled` frame —
+	// which is correct behaviour, but not what this test is about.
+	room := liveRegistry.Get(token)
+	require.NotNil(t, room)
+	require.Eventually(t, func() bool { return room.ControlEnabled() }, 3*time.Second, 5*time.Millisecond,
+		"the advertisement must be applied before a viewer joins")
 
 	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
-	joined := readViewerMsg(t, view)
-	assert.Equal(t, liveshare.MsgJoined, joined.Type)
+	// `joined` is not guaranteed to be the FIRST frame: the publisher's
+	// advertisement is fanned out from the room and can overtake the join on
+	// this socket (the client dispatches by type, so the order is harmless).
+	joined := readViewerMsgOfType(t, view, liveshare.MsgJoined)
 	assert.True(t, joined.ControlEnabled, "a viewer joining after the advertisement must see it")
+}
+
+// readViewerMsgOfType reads frames until one of `want` arrives.
+//
+// Broadcast frames (roster, control-enabled, ...) are fanned out by the room and
+// can be delivered before the frame a test is waiting for; the deadline is the
+// per-read timeout, so a missing frame fails the test instead of hanging.
+func readViewerMsgOfType(t *testing.T, conn *websocket.Conn, want string) liveshare.ViewerMessage {
+	t.Helper()
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, data, err := conn.Read(ctx)
+		cancel()
+		require.NoError(t, err, "never received a %q frame", want)
+		var m liveshare.ViewerMessage
+		require.NoError(t, json.Unmarshal(data, &m))
+		if m.Type == want {
+			return m
+		}
+	}
 }
 
 // A viewer that is already in the room learns about a change as it happens —
@@ -1642,6 +1676,14 @@ func TestLiveWS_RosterReachesEveryViewer(t *testing.T) {
 	// The host's nickname travels on the publish frame; it is what the
 	// audience's member list shows on the host row.
 	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlPublish, Title: "t", Name: "泷泽"})
+	// That frame also broadcasts a roster (the host row appeared). Wait until the
+	// room has it before anybody joins, otherwise the broadcast can land AFTER
+	// the first viewer attached and be read as the join-triggered roster — which
+	// has one row fewer and looks like a lost participant.
+	room := liveRegistry.Get(token)
+	require.NotNil(t, room)
+	require.Eventually(t, func() bool { return room.PublisherName() == "泷泽" }, 3*time.Second, 5*time.Millisecond,
+		"the publish frame must be applied before a viewer joins")
 
 	first := dialWS(t, srv, "/api/share/"+token+"/signal?name="+url.QueryEscape("小明"))
 	joinedFirst := readViewerMsg(t, first)
@@ -1783,4 +1825,417 @@ func TestLiveWS_ScreenShareNotifiesOnlyWhenGranted(t *testing.T) {
 
 	rows := waitMeetingNotifications(t, token, service.MeetingEventScreenShare, 1)
 	assert.Contains(t, rows[0].Body, "张三")
+}
+
+// ── Reusing a live room must not rewrite its switches ────────────────────────
+
+// The create endpoint is idempotent per project, so the same POST that starts a
+// meeting is also what a retry, a second device or a script sends. Every switch
+// in the body defaults to false when omitted, so applying them to a room that is
+// already running revokes the audience's microphone and cuts off whoever is
+// sharing a screen — the host's own retry would end the meeting's features.
+func TestLiveShareCreate_ReuseDoesNotResetALiveMeeting(t *testing.T) {
+	resetLiveRegistry(t)
+
+	var first liveShareManageResponse
+	w := httptest.NewRecorder()
+	ServeLiveShareManage(w, liveReq(t, http.MethodPost, "/api/live-share", projPath("/proj/live"),
+		map[string]any{"allowTalk": true, "allowMemberScreen": true, "camera": true, "screen": false, "notes": true}))
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &first))
+
+	room := liveRegistry.Get(first.Token)
+	require.NotNil(t, room)
+	// The title the audience is looking at (the create body had none, so this is
+	// the date placeholder).
+	titleBefore := room.Title()
+	require.NotEmpty(t, titleBefore)
+
+	// The meeting is running: a publisher is attached, a member is speaking and
+	// sharing a screen, and the publisher's picture is a camera (not a screen).
+	pubSink := &recordingSink{}
+	room.SetPublisher(pubSink)
+	viewerSink := &recordingSink{}
+	viewer, err := room.AddViewer("成员", viewerSink)
+	require.NoError(t, err)
+	require.NoError(t, room.SetTalking(viewer.ID, true))
+	require.NoError(t, room.ClaimScreen(viewer.ID))
+	require.False(t, room.HostScreen())
+
+	// A second device (or the same client retrying after a flaky response)
+	// POSTs with only a title — every switch absent.
+	w = httptest.NewRecorder()
+	ServeLiveShareManage(w, liveReq(t, http.MethodPost, "/api/live-share", projPath("/proj/live"),
+		map[string]any{"title": "第二次"}))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	assert.True(t, room.TalkEnabled(), "a reuse must not take the audience's microphone away")
+	assert.True(t, room.ScreenEnabled(), "a reuse must not disable member screen sharing")
+	assert.Equal(t, viewer.ID, room.ScreenSharer(), "the running screen share must not be cut off")
+	assert.True(t, viewer.Talking(), "the speaking member must keep the floor")
+	assert.True(t, room.CameraEnabled(), "the picture flags are not initial state any more")
+	assert.False(t, room.HostScreen(), "the picture flags are not initial state any more")
+	// 听记 too: the second POST's body has no `notes`, so it means false. A live
+	// meeting learns about a toggle from `set-notes`, and rewriting the flag here
+	// (without a broadcast) would tell the NEXT viewer "听记 stopped" while the
+	// publisher is still recording — two viewers of one meeting disagreeing.
+	assert.True(t, room.NotesEnabled(), "a reuse must not stop 听记 behind the publisher's back")
+	// The title is a starting state too. Without this the second device's
+	// "第二次" (or, when its form is empty, a fresh date placeholder) would
+	// rename the meeting for everyone watching, and for every notification
+	// raised afterwards.
+	assert.Equal(t, titleBefore, room.Title(), "a reuse must not rename a running meeting")
+	// And nothing was pushed at the viewer: a reset would have sent
+	// talk-revoked / screen-denied, which is what the audience actually sees.
+	for _, msg := range viewerSink.all() {
+		vm, ok := msg.(liveshare.ViewerMessage)
+		if !ok {
+			continue
+		}
+		assert.NotEqual(t, liveshare.MsgTalkRevoked, vm.Type, "no revocation on reuse")
+		assert.NotEqual(t, liveshare.MsgScreenDenied, vm.Type, "no denial on reuse")
+	}
+}
+
+// The counter-case: a room with nobody on the other side is still initial state,
+// so a second create (the normal "POST, then attach" sequence, or a retry inside
+// the grace window) must apply its switches. Blanket-skipping would make the
+// create form's checkboxes silently ineffective.
+func TestLiveShareCreate_ReuseBeforeThePublisherAttachesStillApplies(t *testing.T) {
+	resetLiveRegistry(t)
+
+	w := httptest.NewRecorder()
+	ServeLiveShareManage(w, liveReq(t, http.MethodPost, "/api/live-share", projPath("/proj/pre"), nil))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp liveShareManageResponse
+	w = httptest.NewRecorder()
+	ServeLiveShareManage(w, liveReq(t, http.MethodPost, "/api/live-share", projPath("/proj/pre"),
+		map[string]any{"allowTalk": true, "allowMemberScreen": true}))
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	room := liveRegistry.Get(resp.Token)
+	require.NotNil(t, room)
+	assert.True(t, room.TalkEnabled())
+	assert.True(t, room.ScreenEnabled())
+	assert.True(t, resp.TalkEnabled)
+	assert.True(t, resp.ScreenEnabled)
+
+	// The title follows the same rule as the switches: applied while nobody is
+	// publishing, ignored once the meeting is live. This is the "still applies"
+	// side, so the guard cannot be a blanket skip.
+	w = httptest.NewRecorder()
+	ServeLiveShareManage(w, liveReq(t, http.MethodPost, "/api/live-share", projPath("/proj/pre"),
+		map[string]any{"title": "改过的名字"}))
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "改过的名字", room.Title())
+}
+
+// ── Meeting notification de-duplication ─────────────────────────────────────
+
+// freezeMeetingNotifyClock replaces the de-duplication clock and returns a
+// function that advances it.
+//
+// The viewer's read loop runs in its own goroutine, so a test cannot sleep its
+// way past the 30s window deterministically (and a 30s sleep is not a test). The
+// replacement reads an atomic offset, so advancing it is race-free even while
+// the handler is inside allow().
+func freezeMeetingNotifyClock(t *testing.T) func(time.Duration) {
+	t.Helper()
+	base := time.Now()
+	var offset atomic.Int64
+	meetingNotifyDedupe.mu.Lock()
+	prev := meetingNotifyDedupe.now
+	meetingNotifyDedupe.now = func() time.Time { return base.Add(time.Duration(offset.Load())) }
+	meetingNotifyDedupe.mu.Unlock()
+	t.Cleanup(func() {
+		meetingNotifyDedupe.mu.Lock()
+		meetingNotifyDedupe.now = prev
+		meetingNotifyDedupe.mu.Unlock()
+	})
+	return func(d time.Duration) { offset.Add(int64(d)) }
+}
+
+// probeMeetingNotify waits until the viewer's read loop has processed everything
+// written before the probe.
+//
+// The probe is a talk-start in a room whose speech switch is off: the server
+// answers talk-disabled on the same connection, in order. Frames are handled
+// sequentially, so receiving the answer proves the earlier frames have already
+// reached the notifier — without it "count is 1" could just mean "the other four
+// frames have not been read yet", and the assertion would pass on the buggy code.
+func probeMeetingNotify(t *testing.T, viewer *websocket.Conn) {
+	t.Helper()
+	writeJSONFrame(t, viewer, map[string]string{"type": liveshare.CtrlTalkStart})
+	msg := readViewerMsg(t, viewer)
+	require.Equal(t, liveshare.MsgTalkDisabled, msg.Type, "the probe must reach the room")
+}
+
+// listMeetingNotifications counts the rows of one event type for a token.
+func listMeetingNotifications(t *testing.T, token, eventType string) []service.Notification {
+	t.Helper()
+	all, err := service.ListNotifications(service.NotificationFilter{Kind: service.NotificationKindMeeting})
+	require.NoError(t, err)
+	var matched []service.Notification
+	for _, n := range all {
+		if n.MeetingToken == token && n.EventType == eventType {
+			matched = append(matched, n)
+		}
+	}
+	return matched
+}
+
+// An anonymous viewer can send `control-request` in a loop: each occurrence used
+// to write a notification row (whose 500-row cap then evicts real events) and
+// broadcast a frame that pops a toast on the host. The window keeps the FIRST
+// ask of a burst — that is the one the host must see.
+func TestLiveWS_ControlRequestIsDeduplicated(t *testing.T) {
+	advance := freezeMeetingNotifyClock(t)
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	defer closePublisherAndWait(t, pub, token)
+
+	viewer := dialWS(t, srv, "/api/share/"+token+"/signal?name=张三")
+	_ = readViewerMsg(t, viewer) // joined
+
+	for range 5 {
+		writeJSONFrame(t, viewer, map[string]string{"type": liveshare.CtrlControlRequest})
+	}
+	probeMeetingNotify(t, viewer)
+	require.Len(t, listMeetingNotifications(t, token, service.MeetingEventControlRequest), 1,
+		"five frames within the window are one ask")
+
+	// A DIFFERENT viewer asking for the same thing is a different fact: the key
+	// carries the viewer id, so two people must never be merged.
+	other := dialWS(t, srv, "/api/share/"+token+"/signal?name=李四")
+	_ = readViewerMsg(t, other) // joined
+	writeJSONFrame(t, other, map[string]string{"type": liveshare.CtrlControlRequest})
+	probeMeetingNotify(t, other)
+	require.Len(t, listMeetingNotifications(t, token, service.MeetingEventControlRequest), 2)
+
+	// ...and the same viewer again after the window is a NEW ask, not a
+	// duplicate: the host may have missed the first one entirely.
+	advance(31 * time.Second)
+	writeJSONFrame(t, viewer, map[string]string{"type": liveshare.CtrlControlRequest})
+	probeMeetingNotify(t, viewer)
+	require.Len(t, listMeetingNotifications(t, token, service.MeetingEventControlRequest), 3,
+		"a repeat after the window must be recorded again")
+}
+
+// A reconnect loop arrives as `viewer_joined` with a fresh viewer id each time,
+// so that event is keyed by nickname instead: the same person coming back is one
+// arrival, two different people are two.
+func TestLiveWS_ViewerJoinIsDeduplicatedByNickname(t *testing.T) {
+	freezeMeetingNotifyClock(t)
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	defer closePublisherAndWait(t, pub, token)
+	room := liveRegistry.Get(token)
+	require.NotNil(t, room)
+
+	first := dialWS(t, srv, "/api/share/"+token+"/signal?name=张三")
+	_ = readViewerMsg(t, first) // joined
+	require.Eventually(t, func() bool { return room.ViewerCount() == 1 }, 3*time.Second, 10*time.Millisecond)
+
+	// Drop and rejoin under the same nickname — a network hiccup, not a person.
+	_ = first.CloseNow()
+	require.Eventually(t, func() bool { return room.ViewerCount() == 0 }, 3*time.Second, 10*time.Millisecond)
+
+	second := dialWS(t, srv, "/api/share/"+token+"/signal?name=张三")
+	_ = readViewerMsg(t, second) // joined
+	probeMeetingNotify(t, second)
+	require.Len(t, listMeetingNotifications(t, token, service.MeetingEventViewerJoined), 1,
+		"the same person reconnecting is not a second arrival")
+
+	// A different person is.
+	third := dialWS(t, srv, "/api/share/"+token+"/signal?name=李四")
+	_ = readViewerMsg(t, third) // joined
+	probeMeetingNotify(t, third)
+	require.Len(t, listMeetingNotifications(t, token, service.MeetingEventViewerJoined), 2)
+}
+
+// The entry cap is a HARD bound: a burst of one-off keys (many tokens, many
+// viewer ids) inside one window must not grow the table without limit. Dropping
+// the oldest key only risks a duplicate notification, never a lost one.
+func TestMeetingNotifyLimiter_HardCapsTheTable(t *testing.T) {
+	frozen := time.Unix(1_700_000_000, 0)
+	l := &meetingNotifyLimiter{
+		last:   make(map[meetingNotifyKey]time.Time),
+		window: time.Minute,
+		now:    func() time.Time { return frozen },
+	}
+
+	for i := range meetingNotifyDedupeMaxEntries + 50 {
+		require.True(t, l.allow(meetingNotifyKey{token: "t", eventType: "e", actor: strconv.Itoa(i)}))
+	}
+
+	assert.LessOrEqual(t, len(l.last), meetingNotifyDedupeMaxEntries,
+		"a burst of distinct keys must not grow the table past the cap")
+}
+
+// ── AI 听记 toggled mid-meeting ─────────────────────────────────────────────
+
+// The room's 听记 flag used to be write-once at create time, so a viewer that
+// joined while it was off never learned it came on (the transcript pane never
+// appeared) and one watching a stopped transcript kept polling. `set-notes` is
+// the publisher's frame; every viewer must hear `notes-enabled`.
+func TestLiveWS_SetNotesReachesEveryViewer(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	defer closePublisherAndWait(t, pub, token)
+	room := liveRegistry.Get(token)
+	require.NotNil(t, room)
+
+	first := dialWS(t, srv, "/api/share/"+token+"/signal?name=甲")
+	joined := readViewerMsg(t, first)
+	require.Equal(t, liveshare.MsgJoined, joined.Type)
+	assert.False(t, joined.NotesEnabled, "the room was created without 听记")
+
+	second := dialWS(t, srv, "/api/share/"+token+"/signal?name=乙")
+	_ = readViewerMsg(t, second) // joined
+
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetNotes, Enabled: true})
+	for _, conn := range []*websocket.Conn{first, second} {
+		msg := readViewerMsg(t, conn)
+		assert.Equal(t, liveshare.MsgNotesEnabled, msg.Type)
+		assert.True(t, msg.NotesEnabled)
+	}
+	assert.True(t, room.NotesEnabled(), "the room must remember it for later joiners")
+
+	// A viewer that arrives AFTER the toggle reads the new value from `joined`
+	// — this is the path that made the old write-once flag wrong: it would have
+	// said "no 听记" for the rest of the meeting.
+	late := dialWS(t, srv, "/api/share/"+token+"/signal?name=丙")
+	joinedLate := readViewerMsgOfType(t, late, liveshare.MsgJoined)
+	assert.True(t, joinedLate.NotesEnabled, "a late joiner must see 听记 as on")
+
+	// Turning it off has to reach viewers as an explicit `false`: an omitted
+	// field would leave the pane polling a transcript that will never grow.
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetNotes, Enabled: false})
+	raw := readViewerRaw(t, first)
+	assert.Equal(t, liveshare.MsgNotesEnabled, raw["type"])
+	value, present := raw["notesEnabled"]
+	require.True(t, present, "notesEnabled must be on the wire even when false")
+	assert.Equal(t, false, value)
+	assert.False(t, room.NotesEnabled())
+}
+
+// readViewerRaw returns the next non-roster viewer frame as a raw map, so a test
+// can tell "the field is absent" from "the field is false".
+func readViewerRaw(t *testing.T, conn *websocket.Conn) map[string]any {
+	t.Helper()
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, data, err := conn.Read(ctx)
+		cancel()
+		require.NoError(t, err)
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(data, &m))
+		if m["type"] == liveshare.MsgRoster {
+			continue
+		}
+		return m
+	}
+}
+
+// ── Ending a meeting from another device ────────────────────────────────────
+
+// The publisher page is driven by its socket: if ending the meeting elsewhere
+// merely forgot the sink, that page kept showing "sharing" forever.
+func TestLiveShareEnd_ClosesThePublisherSocket(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+
+	w := httptest.NewRecorder()
+	ServeLiveShareManage(w, liveReq(t, http.MethodDelete, "/api/live-share?token="+token, projPath("/proj/a"), nil))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, _, err := pub.Read(ctx)
+	require.Error(t, err, "the publisher socket must be closed when the meeting ends elsewhere")
+	// Not just "quiet": a socket left open would also end this read with a
+	// deadline, and that is precisely the bug (the page keeps showing
+	// "sharing" because nothing ever closed it).
+	require.False(t, errors.Is(err, context.DeadlineExceeded),
+		"the socket must be CLOSED, not merely idle: %v", err)
+}
+
+// ── Viewer nickname ─────────────────────────────────────────────────────────
+
+// A missing name is a real 400 the share page can explain, with a localized key
+// (the previous "BadRequest" did not exist, so the body carried the raw key).
+func TestLiveShareSignalWS_RequiresAViewerName(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	defer closePublisherAndWait(t, pub, token)
+
+	base := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/share/" + token + "/signal"
+	for _, query := range []string{
+		"",
+		"?name=",
+		"?name=%20%20",
+		"?name=" + strings.Repeat("x", liveViewerNameMaxRunes+1),
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// Pin the language: the assertion below compares the TRANSLATED text,
+		// which is the only thing that distinguishes "the key exists" from
+		// "i18n echoed the key back".
+		_, resp, err := websocket.Dial(ctx, base+query, &websocket.DialOptions{
+			HTTPHeader: http.Header{"Accept-Language": []string{"en"}},
+		})
+		cancel()
+		require.Error(t, err, "query %q must not upgrade", query)
+		require.NotNil(t, resp, "query %q must answer with a status", query)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "query %q", query)
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		require.NoError(t, readErr)
+		assertLocalizedError(t, body, "ViewerNameRequired", "a display name is required to join")
+	}
+}
+
+// assertLocalizedError asserts the body names msgKey AND carries its
+// translation.
+//
+// `assert.Contains(body, "SomeKey")` is a tautology: i18n.T returns the message
+// id verbatim when the key is missing from the locale files, so deleting the key
+// leaves that assertion green. The rendered sentence is what tells the two
+// apart, and pinning the wording also catches a copy/paste of another message.
+// The request must pin a language (Accept-Language), otherwise the expected
+// sentence depends on the bundle default.
+func assertLocalizedError(t *testing.T, body []byte, wantKey, wantText string) {
+	t.Helper()
+	var resp model.ErrorResponse
+	require.NoError(t, json.Unmarshal(body, &resp), "body: %s", string(body))
+	assert.Equal(t, wantKey, resp.MsgKey)
+	assert.Equal(t, wantText, resp.Error,
+		"the body must carry the translated message, not the raw key")
+}
+
+// The nickname is written verbatim as the speaker of every archived chat line
+// and into notification bodies, so a newline in it forges a whole extra line in
+// the record of the meeting. Control characters are stripped, not rejected: the
+// share page forwards the account nickname, and refusing to join over an
+// invisible byte is a dead end the reader cannot fix.
+func TestLiveShareSignalWS_SanitizesTheViewerName(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	defer closePublisherAndWait(t, pub, token)
+	room := liveRegistry.Get(token)
+	require.NotNil(t, room)
+
+	forged := "主持人\n\n[10:03] 主持人：会议已结束"
+	viewer := dialWS(t, srv, "/api/share/"+token+"/signal?name="+url.QueryEscape(forged))
+	_ = readViewerMsg(t, viewer) // joined
+
+	viewers := room.Viewers()
+	require.Len(t, viewers, 1)
+	assert.Equal(t, "主持人 [10:03] 主持人：会议已结束", viewers[0].Name)
+	assert.NotContains(t, viewers[0].Name, "\n")
+
+	rows := waitMeetingNotifications(t, token, service.MeetingEventViewerJoined, 1)
+	assert.NotContains(t, rows[0].Body, "\n", "a newline must not survive into the notification body")
+	assert.Contains(t, rows[0].Body, "主持人")
 }

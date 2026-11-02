@@ -398,6 +398,10 @@ func TestQueueHandler_Enqueue_QuoteAttachment(t *testing.T) {
 			"path": "src/a.go", "kind": "quote", "id": "quote-1",
 			"text": "x := 1", "note": "为什么这样写？", "language": "go",
 			"startLine": 3, "endLine": 3,
+			// The queue endpoint is the other inbound decoder for file entries;
+			// it runs the same validatedQuoteEntry, so a locator dropped there
+			// makes a queued meeting quote unjumpable the moment it drains.
+			"meetingToken": "tok-9",
 		}},
 	}
 	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
@@ -423,6 +427,7 @@ func TestQueueHandler_Enqueue_QuoteAttachment(t *testing.T) {
 	assert.Equal(t, "go", got.Language)
 	assert.Equal(t, "src/a.go", got.Path, "the label must be preserved verbatim, not resolved")
 	assert.Equal(t, 3, got.StartLine)
+	assert.Equal(t, "tok-9", got.MeetingToken, "the meeting locator must survive the queue path too")
 
 	service.CancelSession(sessionID)
 }
@@ -699,7 +704,8 @@ func TestQueueHandler_Enqueue_CrossProject_403(t *testing.T) {
 	// subquery returns NULL for an unknown path and the NOT NULL constraint
 	// would reject the row.
 	_, err := store.UnsafeDBForTest().Exec(
-		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
+		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`,
+	)
 	assert.NoError(t, err)
 	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,
@@ -724,7 +730,8 @@ func TestQueueHandler_Get_CrossProject_403(t *testing.T) {
 	// subquery returns NULL for an unknown path and the NOT NULL constraint
 	// would reject the row.
 	_, err := store.UnsafeDBForTest().Exec(
-		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
+		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`,
+	)
 	assert.NoError(t, err)
 	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,
@@ -748,7 +755,8 @@ func TestQueueHandler_Delete_CrossProject_403(t *testing.T) {
 	// subquery returns NULL for an unknown path and the NOT NULL constraint
 	// would reject the row.
 	_, err := store.UnsafeDBForTest().Exec(
-		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
+		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`,
+	)
 	assert.NoError(t, err)
 	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,
@@ -1450,7 +1458,8 @@ func TestQueueMergeHandler_CrossProject_403(t *testing.T) {
 
 	sessionID := "q-merge-cross-project"
 	_, err := store.UnsafeDBForTest().Exec(
-		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
+		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`,
+	)
 	require.NoError(t, err)
 	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,

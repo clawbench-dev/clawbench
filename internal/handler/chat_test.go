@@ -1550,6 +1550,58 @@ func TestAIChat_QuoteAttachment_KeepsSourceLocators(t *testing.T) {
 	assert.Equal(t, "exec-7", got.ExecutionID, "execution locator must survive, or the quote cannot reach its run")
 }
 
+// TestAIChat_QuoteAttachment_KeepsMeetingToken verifies a meeting quote keeps
+// the token that identifies its meeting, through decode → validate → persist.
+//
+// Regression (MAJOR): the client has put `meetingToken` in the wire payload for
+// meeting quotes all along, but model.FileEntry had no such field, so the JSON
+// decoder dropped it at the boundary and validatedQuoteEntry (which rebuilds
+// the entry field by field) had nothing to copy. The quote survived the reload
+// with its "meeting" label intact — only the jump target was gone, so clicking
+// "跳转来源" silently did nothing and the AI never learned which meeting the
+// snippet came from.
+//
+// The body is a raw map (not a model.FileEntry) on purpose: marshalling the
+// struct would only prove the struct has the field, not that the wire name the
+// client actually sends reaches it.
+func TestAIChat_QuoteAttachment_KeepsMeetingToken(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-meeting", "", "", "default", "chat")
+	assert.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	body := map[string]any{
+		"message": "这段怎么理解",
+		"files": []map[string]any{{
+			"path": "产品评审会 · 纪要", "kind": "quote", "id": "quote-meeting-1",
+			"text": "决议：本季度聚焦稳定性", "language": "meeting",
+			"sourceKind": "meeting", "meetingToken": "tok-9",
+		}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assertOK(t, w)
+
+	// Queued (session running), so assert on the queued row's Files.
+	queue, err := service.GetQueuedMessages(sessionID)
+	assert.NoError(t, err)
+	require.Len(t, queue, 1)
+	require.Len(t, queue[0].Files, 1)
+
+	got := queue[0].Files[0]
+	assert.Equal(t, "quote", got.Kind)
+	assert.Equal(t, "tok-9", got.MeetingToken,
+		"the meeting locator must survive, or the reloaded quote cannot jump back to its meeting")
+}
+
 // TestAIChat_QuoteAttachment_EmptyPathAndTextOnly verifies a chat-message quote
 // (no path, message may even be empty) is accepted: files alone satisfy the
 // "message or files required" guard, and an empty Path never reaches

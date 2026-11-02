@@ -1224,6 +1224,15 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 					map[string]any{"Backend": agent.Backend, "Protocol": provider.Protocol})
 				return
 			}
+			// A provider row can predate the auth-mode rule (or be edited by
+			// hand), so the binding is the last place to catch a combination
+			// the CLI cannot express — otherwise the agent saves and then fails
+			// every turn with nothing pointing at the auth mode.
+			if aerr := model.ProviderAuthModeError(agent.Backend, provider.Protocol, provider.AuthMode); aerr != nil {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderInvalid",
+					map[string]any{"Reason": aerr.Error(), "field": "authMode"})
+				return
+			}
 			if model.ProviderUsesConfigFile(agent.Backend) {
 				conflicts, cerr := service.ProviderBindingConflict(agent.Backend, agentID, providerID)
 				if cerr != nil {

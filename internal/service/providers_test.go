@@ -309,3 +309,101 @@ func TestProviderModelsPersistAndNormalize(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "m3", updated.DefaultModel)
 }
+
+// An auth mode no backend can express is a dead row: it saved fine, the test
+// button went green, and every turn then failed with "does not support Bearer
+// auth". Rejecting it at write time is the only place the user can still see
+// which field is wrong.
+func TestProviderRejectsDeadAuthMode(t *testing.T) {
+	setupProvidersDB(t)
+
+	for _, tc := range []struct {
+		name     string
+		protocol string
+		auth     string
+	}{
+		{name: "openai+bearer", protocol: model.ProviderProtocolOpenAI, auth: model.ProviderAuthBearer},
+		{name: "gemini+bearer", protocol: model.ProviderProtocolGemini, auth: model.ProviderAuthBearer},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := service.CreateProvider(model.Provider{
+				Name: tc.name, Protocol: tc.protocol, BaseURL: "https://gw.example", APIKey: "k", AuthMode: tc.auth,
+			})
+			require.ErrorIs(t, err, service.ErrProviderInvalid)
+			assert.Contains(t, err.Error(), tc.auth, "the error must name the auth mode")
+			assert.Contains(t, err.Error(), tc.protocol, "the error must name the protocol")
+		})
+	}
+
+	// The two combinations that must keep working: anthropic gateways that only
+	// accept a Bearer token, and the x-api-key default everywhere else.
+	anthropicBearer, err := service.CreateProvider(model.Provider{
+		Name: "AnthropicBearer", Protocol: model.ProviderProtocolAnthropic, BaseURL: "https://gw.example", APIKey: "k",
+		AuthMode: model.ProviderAuthBearer,
+	})
+	require.NoError(t, err, "anthropic + bearer is a real gateway mode")
+	assert.Equal(t, model.ProviderAuthBearer, anthropicBearer.AuthMode)
+
+	openaiKey, err := service.CreateProvider(model.Provider{
+		Name: "OpenAIKey", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example", APIKey: "k",
+		AuthMode: model.ProviderAuthAPIKey,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, model.ProviderAuthAPIKey, openaiKey.AuthMode)
+
+	// Editing into a dead combination is refused the same way.
+	bearer := model.ProviderAuthBearer
+	_, err = service.UpdateProvider(openaiKey.ID, service.ProviderPatch{AuthMode: &bearer})
+	assert.ErrorIs(t, err, service.ErrProviderInvalid)
+
+	// ...and the row is untouched by the rejected update.
+	stored, err := service.GetProvider(openaiKey.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ProviderAuthAPIKey, stored.AuthMode)
+}
+
+// The settings form branches on detail.field to replace the raw reason with its
+// own wording, so the service has to name the field it rejected — a bare
+// "invalid provider" can only be shown verbatim.
+func TestProviderValidationErrorNamesField(t *testing.T) {
+	setupProvidersDB(t)
+
+	cases := []struct {
+		name  string
+		p     model.Provider
+		field string
+	}{
+		{
+			name:  "dead auth mode",
+			p:     model.Provider{Name: "A", Protocol: model.ProviderProtocolOpenAI, AuthMode: model.ProviderAuthBearer},
+			field: "authMode",
+		},
+		{
+			name:  "unknown auth mode",
+			p:     model.Provider{Name: "B", Protocol: model.ProviderProtocolOpenAI, AuthMode: "bogus"},
+			field: "authMode",
+		},
+		{
+			name:  "unknown protocol",
+			p:     model.Provider{Name: "C", Protocol: "bogus"},
+			field: "protocol",
+		},
+		{
+			name:  "missing name",
+			p:     model.Provider{Protocol: model.ProviderProtocolOpenAI},
+			field: "name",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := service.CreateProvider(tc.p)
+			require.ErrorIs(t, err, service.ErrProviderInvalid, "the sentinel must keep working")
+			var fieldErr *service.ProviderFieldError
+			require.ErrorAs(t, err, &fieldErr)
+			assert.Equal(t, tc.field, fieldErr.Field)
+			assert.NotEmpty(t, fieldErr.Reason)
+			// The message keeps the historical shape so logs stay readable.
+			assert.Contains(t, err.Error(), "invalid provider:")
+		})
+	}
+}

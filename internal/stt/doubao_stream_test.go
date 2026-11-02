@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,30 +19,52 @@ import (
 var _ StreamingSTTProvider = (*DoubaoProvider)(nil)
 
 // readClientFrame decodes a frame the client sent, including its sequence.
-func readClientFrame(t *testing.T, data []byte) (msgType, flags byte, seq int32, payload []byte) {
-	var err error
-	t.Helper()
+//
+// It returns an error instead of failing the test itself: it runs on the fake
+// server's goroutine, where t.Fatalf only calls runtime.Goexit on THAT goroutine
+// — the test is marked failed, the handler disappears, and the client then
+// reports an unrelated "websocket: close 1006" (or hangs until the deadline).
+// The caller logs the error and returns, so the failure names the real problem.
+func readClientFrame(data []byte) (msgType, flags byte, seq int32, payload []byte, err error) {
+	if len(data) < 4 {
+		return 0, 0, 0, nil, fmt.Errorf("frame too short for a header: %d byte(s)", len(data))
+	}
 	headerSize := int(data[0]&0x0F) * 4
+	if headerSize < 4 || headerSize > len(data) {
+		return 0, 0, 0, nil, fmt.Errorf("frame header size %d does not fit %d byte(s)", headerSize, len(data))
+	}
 	msgType = data[1] >> 4
 	flags = data[1] & 0x0F
 	rest := data[headerSize:]
 	if flags&(volcFlagPosSequence|volcFlagNegSequence) != 0 {
+		if len(rest) < 4 {
+			return 0, 0, 0, nil, fmt.Errorf("frame claims a sequence but only has %d byte(s)", len(rest))
+		}
 		seq = int32(binary.BigEndian.Uint32(rest[:4]))
 		rest = rest[4:]
 	}
+	if len(rest) < 4 {
+		return 0, 0, 0, nil, fmt.Errorf("frame has no payload length: %d byte(s) left", len(rest))
+	}
 	size := int(binary.BigEndian.Uint32(rest[:4]))
+	if size < 0 || size > len(rest)-4 {
+		return 0, 0, 0, nil, fmt.Errorf("frame payload size %d does not fit %d byte(s)", size, len(rest)-4)
+	}
 	payload = rest[4 : 4+size]
 	if data[2]&0x0F == volcCompressionGzip && len(payload) > 0 {
 		payload, err = gzipReader(payload)
 		if err != nil {
-			t.Fatalf("gunzip client payload: %v", err)
+			return 0, 0, 0, nil, fmt.Errorf("gunzip client payload: %w", err)
 		}
 	}
-	return msgType, flags, seq, payload
+	return msgType, flags, seq, payload, nil
 }
 
-// sendServerFrame writes one frame from the fake server.
-func sendServerFrame(t *testing.T, conn *websocket.Conn, msgType, flags byte, seq int32, body string) {
+// sendServerFrame writes one frame from the fake server. Like readClientFrame it
+// returns an error rather than calling t.Fatalf on the handler goroutine; a write
+// failure is only logged, because a client that has already gone away is not a
+// protocol bug.
+func sendServerFrame(t *testing.T, conn *websocket.Conn, msgType, flags byte, seq int32, body string) error {
 	t.Helper()
 	// The sequence field is only on the wire when the flags carry it; encoding
 	// one for a no-sequence frame shifts the payload length by four bytes.
@@ -51,11 +74,12 @@ func sendServerFrame(t *testing.T, conn *websocket.Conn, msgType, flags byte, se
 	}
 	frame, err := volcEncodeFrame(msgType, flags, volcSerializationJSON, volcCompressionGzip, seqPtr, []byte(body))
 	if err != nil {
-		t.Fatalf("encode server frame: %v", err)
+		return fmt.Errorf("encode server frame: %w", err)
 	}
 	if err := conn.Write(context.Background(), websocket.MessageBinary, frame); err != nil {
 		t.Logf("write server frame: %v", err)
 	}
+	return nil
 }
 
 // TestDoubaoOpenStream covers the wire protocol: request shape, sequence
@@ -81,19 +105,29 @@ func TestDoubaoOpenStream(t *testing.T) {
 			if err != nil {
 				return
 			}
-			msgType, flags, seq, payload := readClientFrame(t, data)
+			msgType, flags, seq, payload, err := readClientFrame(data)
+			if err != nil {
+				t.Errorf("decode client frame: %v", err)
+				return
+			}
 			switch msgType {
 			case volcMsgFullClientRequest:
 				if err := json.Unmarshal(payload, &gotInit); err != nil {
 					t.Errorf("decode init: %v", err)
 				}
-				sendServerFrame(t, conn, volcMsgFullServerResponse, volcFlagNoSequence, 0,
-					`{"result":{"additions":{"log_id":"log-1"}}}`)
+				if err := sendServerFrame(t, conn, volcMsgFullServerResponse, volcFlagNoSequence, 0,
+					`{"result":{"additions":{"log_id":"log-1"}}}`); err != nil {
+					t.Errorf("send init ack: %v", err)
+					return
+				}
 			case volcMsgAudioOnlyRequest:
 				if flags == volcFlagNegSequence {
 					lastSeq = seq
-					sendServerFrame(t, conn, volcMsgFullServerResponse, volcFlagPosSequence, 9,
-						`{"result":{"text":"你好世界"}}`)
+					if err := sendServerFrame(t, conn, volcMsgFullServerResponse, volcFlagPosSequence, 9,
+						`{"result":{"text":"你好世界"}}`); err != nil {
+						t.Errorf("send final frame: %v", err)
+						return
+					}
 					// Nothing may follow the end marker. Watch briefly so an
 					// audio frame sent after Finish is caught rather than
 					// silently accepted.
@@ -110,8 +144,11 @@ func TestDoubaoOpenStream(t *testing.T) {
 					return
 				}
 				audioSeqs = append(audioSeqs, seq)
-				sendServerFrame(t, conn, volcMsgFullServerResponse, volcFlagPosSequence, seq,
-					`{"result":{"text":"你好"}}`)
+				if err := sendServerFrame(t, conn, volcMsgFullServerResponse, volcFlagPosSequence, seq,
+					`{"result":{"text":"你好"}}`); err != nil {
+					t.Errorf("send audio ack: %v", err)
+					return
+				}
 			}
 		}
 	}))
@@ -230,14 +267,23 @@ func TestDoubaoOpenStream_ErrorFrame(t *testing.T) {
 			if err != nil {
 				return
 			}
-			msgType, _, _, _ := readClientFrame(t, data)
+			msgType, _, _, _, err := readClientFrame(data)
+			if err != nil {
+				t.Errorf("decode client frame: %v", err)
+				return
+			}
 			switch msgType {
 			case volcMsgFullClientRequest:
-				sendServerFrame(t, conn, volcMsgFullServerResponse, volcFlagNoSequence, 0,
-					`{"result":{"additions":{"log_id":"log-1"}}}`)
+				if err := sendServerFrame(t, conn, volcMsgFullServerResponse, volcFlagNoSequence, 0,
+					`{"result":{"additions":{"log_id":"log-1"}}}`); err != nil {
+					t.Errorf("send init ack: %v", err)
+					return
+				}
 			case volcMsgAudioOnlyRequest:
-				sendServerFrame(t, conn, volcMsgError, volcFlagNoSequence, 0,
-					`{"error":"invalid api key","code":45000001,"message":"unauthorized"}`)
+				if err := sendServerFrame(t, conn, volcMsgError, volcFlagNoSequence, 0,
+					`{"error":"invalid api key","code":45000001,"message":"unauthorized"}`); err != nil {
+					t.Errorf("send error frame: %v", err)
+				}
 				return
 			}
 		}
@@ -478,5 +524,37 @@ func TestVolcDecodeFrame(t *testing.T) {
 
 	if _, _, err := volcDecodeFrame([]byte{0x11}); err == nil {
 		t.Fatal("expected an error for a truncated frame")
+	}
+}
+
+// TestReadClientFrame_ReportsMalformedFrames pins the decoder's own error path.
+// A malformed client frame used to panic on the slice bounds (or, for a bad gzip
+// body, call t.Fatalf from the fake server's goroutine), which surfaced to the
+// test as "websocket: close 1006" instead of naming the bad header.
+func TestReadClientFrame_ReportsMalformedFrames(t *testing.T) {
+	cases := []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{"shorter than a header", []byte{0x11}, "too short"},
+		{"header size past the frame", []byte{0x1F, 0x10, 0x10, 0x00}, "header size"},
+		{"no payload length", []byte{0x11, 0x10, 0x10, 0x00}, "payload length"},
+		{
+			"payload length past the frame",
+			[]byte{0x11, 0x10, 0x10, 0x00, 0x00, 0x00, 0x00, 0x09, 'x'},
+			"payload size",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, _, err := readClientFrame(tc.data)
+			if err == nil {
+				t.Fatalf("expected an error for %s", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q, want it to mention %q", err, tc.want)
+			}
+		})
 	}
 }

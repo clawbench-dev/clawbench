@@ -33,6 +33,8 @@ sequenceDiagram
 
 **服务端只转发 SDP / ICE，从不解析、从不承载媒体。** 每个观众与发布端之间是独立的 `RTCPeerConnection`，观众发 offer、发布端答 answer。
 
+`POST /api/live-share` 按项目**幂等**（双击、响应丢失后重试、另一台设备都走同一条路），但它携带的开关是**房间的初始状态**，不是命令：房间已有发布端（含已预留）或已有观众时，请求体里的 `title` / `video` / `camera` / `screen` / `allowTalk` / `allowMemberScreen` / `notes` 一律**忽略**——这些字段缺席即 `false`（`title` 缺席时是日期占位），照写就会在第二次 POST 时给正在进行的会议改名、收走所有观众的麦克风、掐断正在共享的屏幕，或者把正在录的听记标记成「已停止」（新进场的观众据此停止轮询，而转写还在增长）。会中要改这些开关走发布端信令帧（`set-talk-enabled` / `set-screen-enabled` / `set-picture` / `set-notes`）。发布端还没 attach 时（grace 窗口、重试）这些字段仍然生效，那是它们的唯一用途。
+
 ## 功能与设计要点
 
 ### 功能清单
@@ -373,6 +375,8 @@ MediaProjection ─▶ VirtualDisplay ─▶ ImageReader ─▶ 缩放 + JPEG
 
 **会中关闭听记只停止采集，不隐藏已经转写的内容**：页签的存在与否由「这场会议是否有听记」决定，而不是「此刻是否在录」。关闭后观众端的页签与内容原地保留（顶部加一行「主持人已关闭听记」说明为什么不再增长）；连在关闭之后才加入的观众，也会用一次 `notes?since=0` 探测决定是否给出页签——已经落库的转写不能因为加入得晚就消失。只有确实什么都没录到时才不给入口。
 
+**开关本身走信令，不走 HTTP**：发布端的 `startNotes` / `stopNotes` 发 `set-notes`（`{type:'set-notes', enabled}`），服务端记进房间并以 `notes-enabled`（`{type:'notes-enabled', notesEnabled}`）广播给**全部**观众。`joined` 里的 `notesEnabled` 只是加入那一刻的快照，光有它的话，会中开启听记后已在场的观众永远看不到页签（它的 `joined` 早就过去了），会中关闭后也没人告诉观众停止轮询。该字段在 `notes-enabled` 帧里**总是存在**（关闭时是显式 `false`，不可省略）——省略与「关掉」在客户端无法区分。
+
 ### 为什么必须在发布端采集
 
 共享是纯 P2P，**服务端一个音频包都收不到**。而发布端本来就握着全部音源：系统声音、自己的麦克风、以及每个观众的麦克风（`pc.ontrack`）。所以转写只能在发布端做——它也是唯一还保留着**信道分离**的地方。
@@ -511,7 +515,9 @@ viewer:<id> 每个观众的麦克风，一人一条
 ## 安全
 
 - 管理端点（`POST`/`GET`/`DELETE /api/live-share`）**需登录**，且只操作本项目；发布端 WS 校验 token 与项目归属
-- 观众 WS（`/api/share/{token}/signal`）与听记读取（`/api/share/{token}/notes`）**公开**，token 即凭证
+- 观众 WS（`/api/share/{token}/signal`）与听记读取（`/api/share/{token}/notes`）**公开**，token 即凭证；信令 WS 必须带 `?name=`（观众称谓），清洗后为空或超过 32 字在**升级之前**返回 400（`ViewerNameRequired`），token 不存在/无发布端仍是 404 且先判
+- 称谓清洗：去掉控制字符（换行替换为空格并压缩连续空白）。称谓会逐字写进归档 `chat.md` 的发言人列与通知正文，一个换行就能伪造一整行会议记录
+- 观众帧 `control-request` 与 `viewer_joined` 按 `(token, 观众 id / 称谓, 事件类型)` 做 **30 秒窗口去重**：分享链接匿名可写，不去重的话一个脚本循环发帧就能把通知表灌满（500 条上限会挤掉真实通知），并让主持人端每帧弹一次 toast
 - 听记上传（`/api/live-share/notes/segment`）需登录 + 项目 cookie，且 token 必须属于该项目；上传体上限 4MB、单段时长上限 120s、每段文本上限 2000 字
 - 成员共享屏幕需要发布端先打开房间开关（默认关闭）；同一时刻只允许一个共享者
 - `setPendingCaptureSource` 一次性消费：消费后清空，任何页面后续调用 `getDisplayMedia` 都会被拒绝

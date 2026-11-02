@@ -177,6 +177,30 @@ func TestMergeLiveNoteAudio_SingleSegmentIsRenamedNotRewritten(t *testing.T) {
 	assert.Equal(t, raw, got, "the single segment is already a complete WebM")
 }
 
+// A single segment is renamed, not remuxed, so nothing else in that path ever
+// looks at its contents. MediaRecorder silently falls back to audio/mp4 on
+// Safari, and publishing that as `mic.webm` would only fail later, when somebody
+// plays the recording.
+func TestMergeLiveNoteAudio_RejectsASingleSegmentThatIsNotWebM(t *testing.T) {
+	paths := audioPaths(t)
+	// ISO-BMFF (MP4) header: a box size, then `ftyp`.
+	mp4 := append([]byte{0, 0, 0, 0x20}, []byte("ftypisom")...)
+	writeSegment(t, paths, 1_700_000_000_000, "mic", mp4)
+
+	_, err := MergeLiveNoteAudio(paths)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a WebM recording")
+
+	// Nothing may be published under a name that claims to be a WebM recording,
+	// and the uploaded segment must still be there (the merge failed, it did not
+	// consume the file).
+	_, statErr := os.Stat(filepath.Join(paths.Audio, "mic.webm"))
+	assert.ErrorIs(t, statErr, os.ErrNotExist)
+	entries, err := os.ReadDir(paths.Audio)
+	require.NoError(t, err)
+	assert.Len(t, entries, 2, "the .gitignore and the rejected segment: %v", entries)
+}
+
 func TestMergeLiveNoteAudio_SecondPassChangesNothing(t *testing.T) {
 	paths := audioPaths(t)
 	writeSegment(t, paths, 1_700_000_000_000, "mic", testSegment(t, testCluster{timecode: 0}))

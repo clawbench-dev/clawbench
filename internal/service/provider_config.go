@@ -165,10 +165,27 @@ func applyCodexProvider(p *model.Provider) error {
 	}
 	content := string(original)
 
-	state, _ := loadConfigState()
+	state, err := loadConfigState()
+	if err != nil {
+		// Proceed no further: without the sidecar we cannot record what the
+		// user had, and writing the file first would leave it pointing at a
+		// provider that can never be restored.
+		return fmt.Errorf("load codex config state: %w", err)
+	}
 	prev, hadState := state[path]
 	if !hadState {
 		_, origValue, hadKey := findTopLevelKey(stripManagedBlock(content, codexBlockStart, codexBlockEnd), "model_provider")
+		if hadKey && unquoteTomlString(origValue) == "clawbench" {
+			// Our own value from an earlier apply whose sidecar is gone. The
+			// file no longer records what the user had, so recovering it from a
+			// backup is the only way to keep the promise that unbinding
+			// restores the original configuration.
+			if value, had, ok := originalModelProviderFromBackup(path); ok {
+				origValue, hadKey = value, had
+			} else {
+				origValue, hadKey = "", false
+			}
+		}
 		prev = codexState{OriginalModelProvider: origValue, HadModelProvider: hadKey}
 	}
 
@@ -191,12 +208,16 @@ func applyCodexProvider(p *model.Provider) error {
 		}
 		prev.Backup = backup
 	}
-	if err := writeFileAtomic(path, []byte(next)); err != nil {
+	// Record the original state BEFORE rewriting the file. If the sidecar
+	// cannot be written, nothing has been changed yet; the other order leaves
+	// config.toml pointing at a provider whose original value was never
+	// recorded. (A state entry without a managed block is harmless: restore
+	// would just put the original value back.)
+	state[path] = prev
+	if err := saveConfigState(state); err != nil {
 		return err
 	}
-
-	state[path] = prev
-	return saveConfigState(state)
+	return writeFileAtomic(path, []byte(next))
 }
 
 func restoreCodexProvider(path string) error {
@@ -204,30 +225,96 @@ func restoreCodexProvider(path string) error {
 	if err != nil {
 		return err
 	}
-	prev, ok := state[path]
-	if !ok {
-		return nil
-	}
+	prev, hadState := state[path]
 	content, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			delete(state, path)
-			return saveConfigState(state)
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("read codex config: %w", err)
 		}
-		return fmt.Errorf("read codex config: %w", err)
+		if !hadState {
+			return nil
+		}
+		delete(state, path)
+		return saveConfigState(state)
 	}
 
 	next := stripManagedBlock(string(content), codexBlockStart, codexBlockEnd)
-	if prev.HadModelProvider {
+	switch {
+	case hadState && prev.HadModelProvider:
 		next = upsertTopLevelKey(next, "model_provider", prev.OriginalModelProvider)
-	} else {
+	case hadState:
 		next = removeTopLevelKey(next, "model_provider")
+	default:
+		// No sidecar record (corrupt, deleted, or a different data dir). The
+		// managed block is stripped regardless — leaving it behind points codex
+		// at a provider table that is about to disappear. For the top-level key
+		// the backups are the only surviving record of the user's value;
+		// without them, drop it only when it is our own value so a hand-written
+		// provider survives.
+		if value, had, ok := originalModelProviderFromBackup(path); ok && had {
+			next = upsertTopLevelKey(next, "model_provider", value)
+		} else {
+			next = dropClawbenchModelProvider(next)
+		}
 	}
-	if err := writeFileAtomic(path, []byte(next)); err != nil {
-		return err
+	if next != string(content) {
+		if err := writeFileAtomic(path, []byte(next)); err != nil {
+			return err
+		}
 	}
+	if !hadState {
+		return nil
+	}
+	// Drop the record even when the file already looked restored: keeping it
+	// would make the next reconcile re-apply a stale original over a value the
+	// user has edited by hand since.
 	delete(state, path)
 	return saveConfigState(state)
+}
+
+// originalModelProviderFromBackup recovers the user's top-level model_provider
+// from the newest backup that is not itself a ClawBench apply.
+//
+// A file ClawBench already rewrote is not a record of the original: its
+// model_provider is our own "clawbench". Backups taken before the first apply
+// are, so they are scanned newest-first and the first non-clawbench one wins.
+func originalModelProviderFromBackup(path string) (value string, had bool, ok bool) {
+	matches, err := filepath.Glob(path + ".clawbench-bak-*")
+	if err != nil || len(matches) == 0 {
+		return "", false, false
+	}
+	// Glob returns lexicographic order, so the newest backup is last.
+	for i := len(matches) - 1; i >= 0; i-- {
+		data, rerr := os.ReadFile(matches[i])
+		if rerr != nil {
+			continue
+		}
+		_, v, found := findTopLevelKey(string(data), "model_provider")
+		if found && unquoteTomlString(v) == "clawbench" {
+			continue
+		}
+		return v, found, true
+	}
+	return "", false, false
+}
+
+// dropClawbenchModelProvider removes a top-level model_provider that still
+// points at the managed provider, leaving any other value alone.
+func dropClawbenchModelProvider(content string) string {
+	_, value, found := findTopLevelKey(content, "model_provider")
+	if !found || unquoteTomlString(value) != "clawbench" {
+		return content
+	}
+	return removeTopLevelKey(content, "model_provider")
+}
+
+func unquoteTomlString(v string) string {
+	if len(v) >= 2 {
+		if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
+			return v[1 : len(v)-1]
+		}
+	}
+	return v
 }
 
 // codexProviderBlock renders the managed TOML block. The secret is referenced
@@ -265,7 +352,11 @@ func stripManagedBlock(content, start, end string) string {
 		}
 		j := strings.Index(content[i:], end)
 		if j < 0 {
-			return content
+			// Half a block: the end marker was deleted by hand. Keeping the
+			// remainder would leave two start markers, and the next strip would
+			// delete everything between them — including the user's own
+			// config. Drop to the end of the file instead.
+			return content[:i]
 		}
 		j += i + len(end)
 		// Swallow the newline that follows the end marker.
@@ -338,7 +429,10 @@ func loadConfigState() (map[string]codexState, error) {
 		if os.IsNotExist(err) {
 			return out, nil
 		}
-		return nil, err
+		// Never return a nil map: a caller that logs the error and carries on
+		// would panic on the first write, after the config file had already
+		// been rewritten.
+		return out, err
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
 		// A corrupt state file must not block applying a provider; losing it
@@ -364,8 +458,13 @@ func saveConfigState(state map[string]codexState) error {
 
 // backupFile copies the current content to a sibling backup and prunes old
 // backups so a long-lived install cannot accumulate them.
+//
+// The suffix is nanosecond-resolution on purpose: second-resolution names made
+// two edits within the same second overwrite each other, so the pristine copy
+// taken before the first apply could be replaced by one that already contained
+// our own block — exactly the copy the sidecar-less restore path needs.
 func backupFile(path string, content []byte) (string, error) {
-	backup := fmt.Sprintf("%s.clawbench-bak-%d", path, time.Now().Unix())
+	backup := fmt.Sprintf("%s.clawbench-bak-%d", path, time.Now().UnixNano())
 	if err := os.WriteFile(backup, content, 0o600); err != nil {
 		return "", fmt.Errorf("backup %s: %w", path, err)
 	}
@@ -378,8 +477,19 @@ func pruneBackups(path string, keep int) {
 	if err != nil || len(matches) <= keep {
 		return
 	}
-	// Glob returns lexicographic order; timestamps sort chronologically.
-	for _, old := range matches[:len(matches)-keep] {
+	// Keep the OLDEST backup plus the newest keep-1. Only the oldest one can
+	// predate our first apply, and it is the sole record of the user's original
+	// model_provider — dropping it (which "keep the newest N" did on the 4th
+	// apply) made the sidecar-less restore fall back to deleting the key.
+	drop := matches[1:]
+	if len(drop) > keep-1 {
+		drop = drop[:len(drop)-(keep-1)]
+	} else {
+		drop = nil
+	}
+	// Glob returns lexicographic order; the fixed-width nanosecond timestamps
+	// sort chronologically.
+	for _, old := range drop {
 		_ = os.Remove(old)
 	}
 }

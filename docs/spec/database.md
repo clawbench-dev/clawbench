@@ -429,10 +429,45 @@ UNIQUE：`(session_id, tag_id)`
 | started_at | INTEGER | NOT NULL | 0 | 会议开始（Unix 毫秒，**服务端时钟**） |
 | ended_at | INTEGER | NOT NULL | 0 | 会议结束；0 表示还在进行 |
 | dir_name | TEXT | NOT NULL | `''` | 会议目录**名**（不是路径）；空表示还没有产物 |
+| hidden | INTEGER | NOT NULL | 0 | 1 = 升级清理时判定为「上一版遗留、无法归属」的记录，列表与单条查询都不再返回；行与转写片段保留，不物理删除 |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | |
 | updated_at | DATETIME | | CURRENT_TIMESTAMP | |
 
 索引：`idx_live_notes_updated(updated_at)`、`idx_live_notes_project_started(project_id, started_at)`。
+
+### live_notes_files（会议期间打开的文件区间）
+
+发布端按「打开 / 关闭」两帧上报，同一 `(token, owner, path, opened_at)` 唯一，重复上报不会产生重复行。会议结束与项目删除都会清理。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | 服务端顺序 |
+| token | TEXT | NOT NULL | — | 会议 token |
+| project_id | INTEGER | NOT NULL | 0 | 发布端项目 |
+| owner | TEXT | NOT NULL | `'host'` | 打开者：`host` 或 viewer id |
+| owner_name | TEXT | NOT NULL | `''` | 打开者称谓（归档时渲染用） |
+| path | TEXT | NOT NULL | — | 文件路径（可为项目外绝对路径） |
+| opened_at | INTEGER | NOT NULL | — | 打开时刻（Unix 毫秒，服务端时钟） |
+| closed_at | INTEGER | NOT NULL | 0 | 关闭时刻；0 表示会中一直开着 |
+| source | TEXT | NOT NULL | `''` | 来源（工具 / 用户点开等） |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | |
+
+UNIQUE：`UNIQUE(token, owner, path, opened_at)`。
+
+### live_notes_screen（会议期间屏幕共享人区间）
+
+记录「谁在哪段时间共享着屏幕」，用于归档时在转写里插入画面归属。会议结束与项目删除都会清理。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | 服务端顺序 |
+| token | TEXT | NOT NULL | — | 会议 token |
+| project_id | INTEGER | NOT NULL | 0 | 发布端项目 |
+| sharer | TEXT | NOT NULL | — | 共享者 id |
+| sharer_name | TEXT | NOT NULL | `''` | 共享者称谓 |
+| started_at | INTEGER | NOT NULL | — | 开始共享（Unix 毫秒） |
+| ended_at | INTEGER | NOT NULL | 0 | 结束共享；0 表示仍在共享 |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | |
 
 ### live_notes_chat（会议聊天，永久）
 

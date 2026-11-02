@@ -83,6 +83,11 @@ CREATE TABLE IF NOT EXISTS live_notes (
 	ended_at INTEGER NOT NULL DEFAULT 0,
 	dir_name TEXT NOT NULL DEFAULT '',
 	kind TEXT NOT NULL DEFAULT '',
+	-- hidden keeps a pre-record meeting (started_at = 0, from before the
+	-- meeting-record model) out of the list without deleting its transcript.
+	-- Production databases get this column from the ALTER probe in InitDB; it is
+	-- declared here too so the DDL constant used by tests is self-contained.
+	hidden INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -737,6 +742,11 @@ func CloseOrphanedLiveNotes(nowMS int64) (int, error) {
 	if nowMS <= 0 {
 		nowMS = time.Now().UnixMilli()
 	}
+	// Before stamping finish lines: that UPDATE bumps updated_at, which is the
+	// only evidence ResetStaleLiveNoteGeneration has for "this job is dead".
+	if _, err := ResetStaleLiveNoteGeneration(nowMS); err != nil {
+		return 0, err
+	}
 	res, err := store.WriteExec(
 		`UPDATE live_notes
 		    SET ended_at = MIN(?, MAX(started_at,
@@ -764,7 +774,12 @@ func CloseStaleLiveNotes(beforeMS int64) (int, error) {
 	if beforeMS <= 0 {
 		return 0, nil
 	}
-	cutoff := time.UnixMilli(beforeMS).UTC().Format("2006-01-02 15:04:05")
+	// Same ordering reason as CloseOrphanedLiveNotes: the close below refreshes
+	// updated_at, which would hide a long-dead generating row from the reset.
+	if _, err := ResetStaleLiveNoteGeneration(time.Now().UnixMilli()); err != nil {
+		return 0, err
+	}
+	cutoff := time.UnixMilli(beforeMS).UTC().Format(liveNoteSQLTimeLayout)
 	res, err := store.WriteExec(
 		`UPDATE live_notes SET ended_at = started_at, updated_at = CURRENT_TIMESTAMP
 		  WHERE ended_at = 0 AND updated_at < ?`, cutoff,
@@ -774,6 +789,86 @@ func CloseStaleLiveNotes(beforeMS int64) (int, error) {
 	}
 	n, _ := res.RowsAffected()
 	return int(n), nil
+}
+
+// liveNoteSQLTimeLayout is how SQLite's CURRENT_TIMESTAMP writes updated_at.
+// Comparing against a formatted string is a lexicographic comparison of
+// identical-shape timestamps, which is why the cutoff is formatted, not
+// compared as a number.
+const liveNoteSQLTimeLayout = "2006-01-02 15:04:05"
+
+// liveNotesGeneratingStaleMS is how long a `generating` row may go without any
+// write before its job is presumed dead.
+//
+// Ten minutes is the same threshold the SPA uses (isStaleGenerating in
+// useMeetingHistory.ts): the list labels such a meeting 「已中断」, so the delete
+// guard must agree or the user sees an interrupted meeting the server refuses
+// to delete.
+const liveNotesGeneratingStaleMS = 10 * 60 * 1000
+
+// ResetStaleLiveNoteGeneration flips abandoned `generating` rows to `failed`
+// and reports how many it touched.
+//
+// A generating row is written by a detached goroutine with a ten-minute budget.
+// If the process dies inside that window (restart, SIGKILL, OOM) nothing ever
+// writes the terminal status again, so the row stays `generating` forever: the
+// list shows 「生成中断」 and the delete guard used to refuse with 409, making the
+// meeting — and its folder, transcript and chat — undeletable. There is no
+// in-memory job registry to consult (the job died with the process), so age is
+// the only signal available.
+//
+// updated_at is deliberately NOT refreshed: it is the evidence for this
+// decision, and the SPA keeps using it to date the interruption.
+func ResetStaleLiveNoteGeneration(nowMS int64) (int, error) {
+	if nowMS <= 0 {
+		nowMS = time.Now().UnixMilli()
+	}
+	cutoff := time.UnixMilli(nowMS - liveNotesGeneratingStaleMS).UTC().Format(liveNoteSQLTimeLayout)
+	res, err := store.WriteExec(
+		`UPDATE live_notes
+		    SET status = CASE WHEN status = ? THEN ? ELSE status END,
+		        error = CASE WHEN status = ? THEN ? ELSE error END,
+		        revise_status = CASE WHEN revise_status = ? THEN ? ELSE revise_status END,
+		        revise_error = CASE WHEN revise_status = ? THEN ? ELSE revise_error END
+		  WHERE updated_at < ? AND (status = ? OR revise_status = ?)`,
+		LiveNotesStatusGenerating, LiveNotesStatusFailed,
+		LiveNotesStatusGenerating, "interrupted: no progress for 10 minutes",
+		LiveNotesStatusGenerating, LiveNotesStatusFailed,
+		LiveNotesStatusGenerating, "interrupted: no progress for 10 minutes",
+		cutoff,
+		LiveNotesStatusGenerating, LiveNotesStatusGenerating,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("live notes: reset stale generation: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// LiveNoteGenerationRunning reports whether a minutes or proofread job on this
+// meeting is still plausibly running.
+//
+// The same age threshold as ResetStaleLiveNoteGeneration, applied as a read:
+// the delete guard must not depend on the hourly sweep having run since the
+// crash, or a meeting stays undeletable for up to an hour after a restart.
+func LiveNoteGenerationRunning(token string, nowMS int64) (bool, error) {
+	if token == "" {
+		return false, nil
+	}
+	if nowMS <= 0 {
+		nowMS = time.Now().UnixMilli()
+	}
+	cutoff := time.UnixMilli(nowMS - liveNotesGeneratingStaleMS).UTC().Format(liveNoteSQLTimeLayout)
+	var n int
+	err := store.ReadDB().QueryRow(
+		`SELECT COUNT(*) FROM live_notes
+		  WHERE token = ? AND (status = ? OR revise_status = ?) AND updated_at >= ?`,
+		token, LiveNotesStatusGenerating, LiveNotesStatusGenerating, cutoff,
+	).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("live notes: generation lookup: %w", err)
+	}
+	return n > 0, nil
 }
 
 // MeetingDirName returns the folder name recorded for a meeting, or "".
@@ -872,6 +967,11 @@ type MeetingRecord struct {
 }
 
 // ListMeetingRecords returns a project's meetings, newest first.
+//
+// hidden rows are skipped: they are pre-record meetings the upgrade could not
+// place on a timeline (started_at = 0). They are kept in the table — and their
+// segments with them — so nothing is lost, but the list is the user's view and
+// must not show them.
 func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]MeetingRecord, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
@@ -880,7 +980,7 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 		`SELECT token, title, started_at, ended_at, dir_name, status,
 		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000
 		   FROM live_notes
-		  WHERE project_id = ?
+		  WHERE project_id = ? AND hidden = 0
 		  ORDER BY started_at DESC, token DESC
 		  LIMIT ?`,
 		projectID, limit,
@@ -927,6 +1027,9 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 }
 
 // GetMeetingRecord returns one record by token, scoped to the project.
+//
+// A hidden row is reported as not found, exactly like a missing one: the detail
+// view must agree with the list it was opened from.
 func GetMeetingRecord(projectPath string, projectID int64, token string) (MeetingRecord, bool, error) {
 	var m MeetingRecord
 	var dirName string
@@ -934,7 +1037,7 @@ func GetMeetingRecord(projectPath string, projectID int64, token string) (Meetin
 	err := store.ReadDB().QueryRow(
 		`SELECT token, title, started_at, ended_at, dir_name, status,
 		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000
-		   FROM live_notes WHERE token = ? AND project_id = ?`, token, projectID,
+		   FROM live_notes WHERE token = ? AND project_id = ? AND hidden = 0`, token, projectID,
 	).Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName, &m.Status, &updatedMS)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MeetingRecord{}, false, nil
@@ -1106,6 +1209,7 @@ func DeleteMeetingRecord(projectPath string, projectID int64, token string) erro
 		`DELETE FROM live_notes_chat WHERE token = ?`,
 		`DELETE FROM live_notes_segments WHERE token = ?`,
 		`DELETE FROM live_notes_files WHERE token = ?`,
+		`DELETE FROM live_notes_screen WHERE token = ?`,
 		`DELETE FROM live_notes WHERE token = ? AND project_id = ?`,
 	} {
 		args := []any{token}
@@ -1137,21 +1241,22 @@ type LiveNoteChatMessage struct {
 // AppendLiveNoteChat stores one message. Duplicate client ids are ignored
 // (returns the existing row's id), so the publisher's retry cannot duplicate a
 // line.
+//
+// The id always comes from a lookup, never from LastInsertId: SQLite leaves
+// last_insert_rowid() untouched when ON CONFLICT DO NOTHING skips the insert, so
+// the result would be the id of whatever THIS CONNECTION inserted last — a
+// different message. (Modernc exposes exactly sqlite3_last_insert_rowid.)
 func AppendLiveNoteChat(token string, projectID int64, msg LiveNoteChatMessage) (int64, error) {
 	if token == "" || strings.TrimSpace(msg.Text) == "" || strings.TrimSpace(msg.ClientID) == "" {
 		return 0, errors.New("live notes: invalid chat message")
 	}
-	res, err := store.WriteExec(
+	if _, err := store.WriteExec(
 		`INSERT INTO live_notes_chat (token, project_id, client_msg_id, speaker, viewer_id, text)
 		 VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(token, client_msg_id) DO NOTHING`,
 		token, projectID, msg.ClientID, msg.Speaker, msg.ViewerID, msg.Text,
-	)
-	if err != nil {
+	); err != nil {
 		return 0, fmt.Errorf("live notes: append chat: %w", err)
-	}
-	if id, idErr := res.LastInsertId(); idErr == nil && id > 0 {
-		return id, nil
 	}
 	var existing int64
 	if scanErr := store.ReadDB().QueryRow(
@@ -1206,24 +1311,44 @@ func WriteLiveNoteChatFile(paths LiveNotesPaths, msgs []LiveNoteChatMessage) (st
 	if len(msgs) == 0 {
 		return "", nil
 	}
+	sep := liveNoteT("MeetingTranscriptSeparator")
 	var b strings.Builder
-	b.WriteString("# 会议聊天记录\n\n")
+	b.WriteString("# " + liveNoteT("MeetingChatTitle") + "\n\n")
 	for _, m := range msgs {
-		speaker := m.Speaker
+		speaker := liveNoteOneLine(m.Speaker)
 		if speaker == "" {
-			speaker = "匿名"
+			speaker = liveNoteT("MeetingChatAnonymous")
 		}
 		when := ""
 		if m.At > 0 {
 			when = "[" + time.UnixMilli(m.At).Format("15:04") + "] "
 		}
-		b.WriteString(when + speaker + "：" + strings.ReplaceAll(m.Text, "\n", " ") + "\n\n")
+		b.WriteString(when + speaker + sep + liveNoteOneLine(m.Text) + "\n\n")
 	}
 	path := filepath.Join(paths.Dir, "chat.md")
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 		return "", fmt.Errorf("live notes: write chat archive: %w", err)
 	}
 	return path, nil
+}
+
+// liveNoteOneLine flattens a client-supplied label or message onto one line.
+//
+// The speaker is a nickname a participant typed; a newline (or any other control
+// character) in it would start a new Markdown paragraph — or a whole new chat
+// line — and let the sender forge what looks like somebody else's message. The
+// handler sanitizes new names on the way in, but rows written before it did are
+// still in the table, so the archive cleans up on the way out too. Same rule as
+// handler.sanitizeLiveViewerName: control characters become spaces, runs of
+// whitespace collapse to one.
+func liveNoteOneLine(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // ── Timeline assembly ───────────────────────────────────────────────────────
@@ -1275,7 +1400,26 @@ func normalizeNoteText(s string) string {
 	return b.String()
 }
 
-// DedupeLiveNoteSegments drops a segment when another channel captured the same
+// liveNoteSystemChannel is the system-audio loopback: the one channel that
+// records sound the publisher did not make locally (everything playing through
+// its speakers).
+const liveNoteSystemChannel = "system"
+
+// liveNoteChannelsEcho reports whether two DIFFERENT channels can hold the same
+// utterance — i.e. one is the loopback and the other is a real capture.
+//
+// The channel pair is what makes dedupe safe. Two segments on the SAME channel
+// are two utterances: somebody saying 「好」 twice three seconds apart, or two
+// viewers both answering 「对」, are ordinary meeting speech, not an echo. Only
+// the loopback can duplicate another channel's words.
+func liveNoteChannelsEcho(a, b string) bool {
+	if a == b {
+		return false
+	}
+	return a == liveNoteSystemChannel || b == liveNoteSystemChannel
+}
+
+// DedupeLiveNoteSegments drops a segment when another CHANNEL captured the same
 // words at nearly the same moment.
 //
 // This is the speaker's own voice leaking into a second channel: the audience
@@ -1285,12 +1429,14 @@ func normalizeNoteText(s string) string {
 //
 // The earliest segment wins (it is the one closest to the source); the later
 // copy is dropped. Genuine simultaneous speech by two people differs in words,
-// so it is unaffected.
+// so it is unaffected — and identical words on one channel (or on two channels
+// that are not the loopback) are kept, because that is two real utterances.
 func DedupeLiveNoteSegments(sorted []LiveNoteSegment) []LiveNoteSegment {
 	out := make([]LiveNoteSegment, 0, len(sorted))
 	type kept struct {
-		norm string
-		at   int64
+		norm    string
+		at      int64
+		channel string
 	}
 	recent := make([]kept, 0, 8)
 	for _, s := range sorted {
@@ -1300,7 +1446,8 @@ func DedupeLiveNoteSegments(sorted []LiveNoteSegment) []LiveNoteSegment {
 		}
 		dup := false
 		for _, k := range recent {
-			if k.norm == norm && absInt64(k.at-s.StartedAt) <= liveNotesDedupeWindowMS {
+			if k.norm == norm && absInt64(k.at-s.StartedAt) <= liveNotesDedupeWindowMS &&
+				liveNoteChannelsEcho(k.channel, s.Channel) {
 				dup = true
 				break
 			}
@@ -1308,7 +1455,7 @@ func DedupeLiveNoteSegments(sorted []LiveNoteSegment) []LiveNoteSegment {
 		if dup {
 			continue
 		}
-		recent = append(recent, kept{norm: norm, at: s.StartedAt})
+		recent = append(recent, kept{norm: norm, at: s.StartedAt, channel: s.Channel})
 		if len(recent) > 8 {
 			recent = recent[1:]
 		}
@@ -1333,6 +1480,7 @@ func BuildLiveNotesTranscript(segments []LiveNoteSegment) string {
 		return ""
 	}
 	var b strings.Builder
+	sep := liveNoteT("MeetingTranscriptSeparator")
 	for _, s := range merged {
 		speaker := strings.TrimSpace(s.Speaker)
 		if speaker == "" {
@@ -1341,14 +1489,14 @@ func BuildLiveNotesTranscript(segments []LiveNoteSegment) string {
 		text := strings.Join(strings.Fields(s.Text), " ")
 		if s.StartedAt <= 0 || base == 0 {
 			// Unknown timing: say so rather than inventing an offset.
-			fmt.Fprintf(&b, "[--:--] %s：%s\n", speaker, text)
+			fmt.Fprintf(&b, "[--:--] %s%s%s\n", speaker, sep, text)
 			continue
 		}
 		offset := (s.StartedAt - base) / 1000
 		if offset < 0 {
 			offset = 0
 		}
-		fmt.Fprintf(&b, "[%02d:%02d] %s：%s\n", offset/60, offset%60, speaker, text)
+		fmt.Fprintf(&b, "[%02d:%02d] %s%s%s\n", offset/60, offset%60, speaker, sep, text)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -1759,7 +1907,7 @@ func MergeLiveNoteFileEvents(revised string, files []LiveNoteFile, screens []Liv
 	if parsed == 0 {
 		var b strings.Builder
 		b.WriteString(strings.TrimRight(revised, "\n"))
-		b.WriteString("\n\n## 会议期间打开的文件\n\n")
+		b.WriteString("\n\n## " + liveNoteT("MeetingTranscriptFilesSection") + "\n\n")
 		for _, e := range events {
 			b.WriteString("- ")
 			b.WriteString(e.line)
@@ -1775,13 +1923,14 @@ func MergeLiveNoteFileEvents(revised string, files []LiveNoteFile, screens []Liv
 }
 
 // liveNoteFileLine renders one event as a transcript line, matching the shape
-// the proofread pass produced: `[mm:ss] 说话人：内容`.
+// the proofread pass produced: `[mm:ss] 说话人：内容` (the separator follows the
+// UI language, like every other transcript line).
 func liveNoteFileLine(offsetMS int64, text string) string {
 	if offsetMS < 0 {
 		offsetMS = 0
 	}
-	return fmt.Sprintf("[%02d:%02d] %s：%s", offsetMS/60_000, (offsetMS/1000)%60,
-		liveNoteT("MeetingFilesSpeaker"), text)
+	return fmt.Sprintf("[%02d:%02d] %s%s%s", offsetMS/60_000, (offsetMS/1000)%60,
+		liveNoteT("MeetingFilesSpeaker"), liveNoteT("MeetingTranscriptSeparator"), text)
 }
 
 // liveNoteScreenLine renders a screen-sharing event in the same shape.
@@ -1789,8 +1938,8 @@ func liveNoteScreenLine(offsetMS int64, text string) string {
 	if offsetMS < 0 {
 		offsetMS = 0
 	}
-	return fmt.Sprintf("[%02d:%02d] %s：%s", offsetMS/60_000, (offsetMS/1000)%60,
-		liveNoteT("MeetingScreenVoice"), text)
+	return fmt.Sprintf("[%02d:%02d] %s%s%s", offsetMS/60_000, (offsetMS/1000)%60,
+		liveNoteT("MeetingScreenVoice"), liveNoteT("MeetingTranscriptSeparator"), text)
 }
 
 // vttCueID sanitizes a channel for use as a cue identifier. A cue id may not
@@ -2506,23 +2655,28 @@ func WriteLiveNotesMinutesFile(paths LiveNotesPaths, title string, startedAt tim
 	}
 
 	heading := startedAt.Format("2006-01-02 15:04")
+	sep := liveNoteT("MeetingTranscriptSeparator")
 	var b strings.Builder
 	if t := strings.TrimSpace(title); t != "" {
 		fmt.Fprintf(&b, "# %s · %s\n\n", t, heading)
 	} else {
-		fmt.Fprintf(&b, "# 会议纪要 · %s\n\n", heading)
+		fmt.Fprintf(&b, "# %s\n\n",
+			liveNoteT("MeetingMinutesTitle", map[string]interface{}{"Time": heading}))
 	}
 	b.WriteString(strings.TrimSpace(minutes))
-	b.WriteString("\n\n---\n\n## 本次产物\n\n")
-	b.WriteString("- 转写：[transcript.vtt](transcript.vtt)\n")
-	b.WriteString("- 校对版转写：[transcript-revised.md](transcript-revised.md)\n")
+	b.WriteString("\n\n---\n\n## " + liveNoteT("MeetingMinutesArtifacts") + "\n\n")
+	fmt.Fprintf(&b, "- %s%s[transcript.vtt](transcript.vtt)\n", liveNoteT("MeetingMinutesTranscript"), sep)
+	fmt.Fprintf(&b, "- %s%s[transcript-revised.md](transcript-revised.md)\n",
+		liveNoteT("MeetingTranscriptRevised"), sep)
 	if hasMeetingAudio {
 		// The merged track is what somebody actually listens to; the
 		// per-channel files are the source it was built from.
-		fmt.Fprintf(&b, "- 录音：[%s](audio/%s)\n", LiveNoteMeetingAudioFile, LiveNoteMeetingAudioFile)
+		fmt.Fprintf(&b, "- %s%s[%s](audio/%s)\n", liveNoteT("MeetingMinutesRecording"), sep,
+			LiveNoteMeetingAudioFile, LiveNoteMeetingAudioFile)
 	}
 	if audioFiles > 0 {
-		fmt.Fprintf(&b, "- 分声道录音：`audio/`（%d 个文件）\n", audioFiles)
+		fmt.Fprintf(&b, "- %s\n",
+			liveNoteT("MeetingMinutesChannelRecordings", map[string]interface{}{"N": audioFiles}))
 	}
 
 	if err := os.WriteFile(paths.Minutes, []byte(b.String()), 0o644); err != nil {
@@ -2559,8 +2713,8 @@ func WriteLiveNotesRawTranscript(paths LiveNotesPaths, segments []LiveNoteSegmen
 // differs from transcript.vtt, and "the timestamps were not touched" is the one
 // thing that makes it comparable.
 func WriteLiveNotesRevisedTranscript(paths LiveNotesPaths, title string, startedAt time.Time, body string) (string, error) {
-	return writeLiveNotesTranscript(paths, paths.Revised, "校对版转写",
-		"已结合项目上下文修正听写错误与专有名词；时间戳、说话人、行序均未改动。",
+	return writeLiveNotesTranscript(paths, paths.Revised, liveNoteT("MeetingTranscriptRevised"),
+		liveNoteT("MeetingTranscriptRevisedNote"),
 		title, startedAt, body)
 }
 

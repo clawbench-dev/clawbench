@@ -202,3 +202,102 @@ func TestProviderEnvVersion_ChangesWithProvider(t *testing.T) {
 		t.Fatal("an agent without a provider must have an empty fingerprint")
 	}
 }
+
+// An auth mode the backend cannot express must be refused at bind time, not on
+// the first turn. This is the predicate both the handler and the service use,
+// so it has to agree with BuildProviderEnv exactly.
+func TestProviderAuthModeError_MatchesBuildProviderEnv(t *testing.T) {
+	cases := []struct {
+		name     string
+		backend  string
+		protocol string
+		auth     string
+		wantErr  bool
+		wantText string
+	}{
+		{name: "anthropic bearer is expressible", backend: "claude", protocol: ProviderProtocolAnthropic, auth: ProviderAuthBearer},
+		{name: "openai bearer is dead", backend: "opencode", protocol: ProviderProtocolOpenAI, auth: ProviderAuthBearer, wantErr: true, wantText: "Bearer"},
+		{name: "deepseek bearer is dead", backend: "deepseek", protocol: ProviderProtocolOpenAI, auth: ProviderAuthBearer, wantErr: true, wantText: "Bearer"},
+		{name: "openai x-api-key stays available", backend: "deepseek", protocol: ProviderProtocolOpenAI, auth: ProviderAuthAPIKey},
+		{name: "gemini bearer is dead", backend: "antigravity", protocol: ProviderProtocolGemini, auth: ProviderAuthBearer, wantErr: true, wantText: "Bearer"},
+		// Key-only and config-file backends take the credential (or the file)
+		// and never read an auth mode, so nothing can be wrong there.
+		{name: "key-only backend ignores auth mode", backend: "cursor", protocol: ProviderProtocolAnthropic, auth: ProviderAuthBearer},
+		{name: "config-file backend ignores auth mode", backend: "codex", protocol: ProviderProtocolOpenAI, auth: ProviderAuthBearer},
+		{name: "backend without a provider slot", backend: "copilot", protocol: ProviderProtocolOpenAI, auth: ProviderAuthAuto, wantErr: true, wantText: "openai"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ProviderAuthModeError(tc.backend, tc.protocol, tc.auth)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("%s/%s/%s must be rejected", tc.backend, tc.protocol, tc.auth)
+				}
+				if !strings.Contains(err.Error(), tc.wantText) {
+					t.Fatalf("error %q must name %q", err, tc.wantText)
+				}
+			} else if err != nil {
+				t.Fatalf("%s/%s/%s must be accepted, got %v", tc.backend, tc.protocol, tc.auth, err)
+			}
+
+			// The two must never disagree: for a binding the protocol check
+			// accepts, a mode the predicate accepts must not blow up in
+			// BuildProviderEnv, and vice versa.
+			p := providerForTest(tc.protocol, "https://gw.example", "sk-1", tc.auth)
+			if !ProviderEnvSupportedProvider(tc.backend, p) {
+				return
+			}
+			_, buildErr := BuildProviderEnv(tc.backend, p)
+			if (buildErr != nil) != tc.wantErr {
+				t.Fatalf("BuildProviderEnv disagrees with ProviderAuthModeError: build=%v predicate=%v", buildErr, err)
+			}
+		})
+	}
+}
+
+// A provider row is not tied to a backend, so create/update can only ask
+// whether the protocol+auth pair is dead for every backend. It is for
+// bearer on the two protocols whose backends carry no auth-token variable.
+func TestProtocolSupportsAuthMode(t *testing.T) {
+	cases := []struct {
+		protocol string
+		auth     string
+		want     bool
+	}{
+		{ProviderProtocolAnthropic, ProviderAuthBearer, true},
+		{ProviderProtocolAnthropic, ProviderAuthAuto, true},
+		{ProviderProtocolAnthropic, ProviderAuthAPIKey, true},
+		{ProviderProtocolOpenAI, ProviderAuthAuto, true},
+		{ProviderProtocolOpenAI, ProviderAuthAPIKey, true},
+		{ProviderProtocolOpenAI, ProviderAuthBearer, false},
+		{ProviderProtocolGemini, ProviderAuthAuto, true},
+		{ProviderProtocolGemini, ProviderAuthBearer, false},
+	}
+	for _, tc := range cases {
+		if got := ProtocolSupportsAuthMode(tc.protocol, tc.auth); got != tc.want {
+			t.Errorf("ProtocolSupportsAuthMode(%s,%s) = %v, want %v", tc.protocol, tc.auth, got, tc.want)
+		}
+	}
+}
+
+// wire_api is written into codex's config file, which the process reads once at
+// startup: a live connection must be respawned when it changes.
+func TestProviderEnvVersion_ChangesWithWireAPI(t *testing.T) {
+	agentID := "provider-version-wire-agent"
+	pid := int64(2)
+	ReplaceAgents(map[string]*Agent{agentID: {ID: agentID, Backend: "codex", ProviderID: &pid}}, []*Agent{{ID: agentID, Backend: "codex", ProviderID: &pid}})
+	ReplaceProviders([]*Provider{{ID: 2, Name: "W", Protocol: ProviderProtocolOpenAI, BaseURL: "https://w", APIKey: "k", AuthMode: ProviderAuthAuto, WireAPI: ProviderWireResponses}})
+	t.Cleanup(func() {
+		ReplaceProviders(nil)
+		ReplaceAgents(nil, nil)
+	})
+
+	before := ProviderEnvVersion(agentID)
+	if before == "" {
+		t.Fatal("expected a fingerprint")
+	}
+	ReplaceProviders([]*Provider{{ID: 2, Name: "W", Protocol: ProviderProtocolOpenAI, BaseURL: "https://w", APIKey: "k", AuthMode: ProviderAuthAuto, WireAPI: ProviderWireChat}})
+	if ProviderEnvVersion(agentID) == before {
+		t.Fatal("changing wire_api must change the fingerprint")
+	}
+}

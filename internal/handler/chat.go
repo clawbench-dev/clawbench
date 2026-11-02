@@ -1310,29 +1310,30 @@ func validatedURLEntry(w http.ResponseWriter, r *http.Request, fEntry model.File
 // url and no path, exactly like a quote taken from a chat message, so without
 // the persisted kind the two are indistinguishable after a reload.
 //
-// The source locators (CommitSHA/TaskID/SessionID/MessageID/ExecutionID) are
-// carried through for the same reason one step stronger: they are the ONLY
-// route back to the origin, so dropping one makes the quote silently
-// unjumpable with no error anywhere.
+// The source locators (CommitSHA/TaskID/SessionID/MessageID/ExecutionID/
+// MeetingToken) are carried through for the same reason one step stronger:
+// they are the ONLY route back to the origin, so dropping one makes the quote
+// silently unjumpable with no error anywhere.
 //
 // Shared by every endpoint that accepts file entries (chat and queue) so the
 // two cannot drift apart.
 func validatedQuoteEntry(fEntry model.FileEntry) model.FileEntry {
 	return model.FileEntry{
-		Path:        fEntry.Path,
-		Kind:        "quote",
-		ID:          fEntry.ID,
-		Text:        fEntry.Text,
-		Note:        fEntry.Note,
-		Language:    fEntry.Language,
-		URL:         fEntry.URL,
-		SourceKind:  fEntry.SourceKind,
-		CommitSHA:   fEntry.CommitSHA,
-		TaskID:      fEntry.TaskID,
-		SessionID:   fEntry.SessionID,
-		MessageID:   fEntry.MessageID,
-		ExecutionID: fEntry.ExecutionID,
-		StartLine:   fEntry.StartLine,
-		EndLine:     fEntry.EndLine,
+		Path:         fEntry.Path,
+		Kind:         "quote",
+		ID:           fEntry.ID,
+		Text:         fEntry.Text,
+		Note:         fEntry.Note,
+		Language:     fEntry.Language,
+		URL:          fEntry.URL,
+		SourceKind:   fEntry.SourceKind,
+		CommitSHA:    fEntry.CommitSHA,
+		TaskID:       fEntry.TaskID,
+		SessionID:    fEntry.SessionID,
+		MessageID:    fEntry.MessageID,
+		ExecutionID:  fEntry.ExecutionID,
+		MeetingToken: fEntry.MeetingToken,
+		StartLine:    fEntry.StartLine,
+		EndLine:      fEntry.EndLine,
 	}
 }

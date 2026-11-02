@@ -203,6 +203,70 @@ func ProviderEnvSupportedProvider(backendID string, p *Provider) bool {
 	return spec.KeyOnly != "" && !spec.ConfigOnly && p.BaseURL == ""
 }
 
+// ProviderAuthModeError explains why backendID cannot express the provider's
+// auth mode, or returns nil when it can.
+//
+// This is the bind-time counterpart of keyEnvVar: an auth mode the backend has
+// no variable for used to be accepted at every entry point (create, edit,
+// bind) and only failed on the first turn, with nothing pointing at the auth
+// mode as the cause. Key-only and config-file backends take the credential (or
+// the config file) and never read an auth mode, so no mode can be wrong there.
+func ProviderAuthModeError(backendID, protocol, authMode string) error {
+	spec, ok := providerEnvTable[backendID]
+	if !ok {
+		return fmt.Errorf("backend %q does not support model providers", backendID)
+	}
+	pe := protocolEnvFor(spec, protocol)
+	if pe == nil {
+		if spec.ConfigOnly || spec.KeyOnly != "" {
+			return nil
+		}
+		return fmt.Errorf("backend %q does not support the %s protocol", backendID, protocol)
+	}
+	if authModeFits(pe, authMode) {
+		return nil
+	}
+	switch authMode {
+	case ProviderAuthBearer:
+		return fmt.Errorf("backend %q does not support Bearer auth for the %s protocol", backendID, protocol)
+	case ProviderAuthAPIKey:
+		return fmt.Errorf("backend %q does not support x-api-key auth for the %s protocol", backendID, protocol)
+	default:
+		return fmt.Errorf("backend %q has no credential variable for the %s protocol", backendID, protocol)
+	}
+}
+
+// ProtocolSupportsAuthMode reports whether ANY backend that reads an auth mode
+// can express it for the protocol.
+//
+// A provider row is not tied to a backend, so create/update cannot check one.
+// This answers the only question they can: whether the pair is dead everywhere.
+// Config-file and key-only backends are skipped because they ignore the auth
+// mode — they neither prove nor disprove that the pair works.
+func ProtocolSupportsAuthMode(protocol, authMode string) bool {
+	for _, spec := range providerEnvTable {
+		pe := protocolEnvFor(spec, protocol)
+		if pe != nil && authModeFits(pe, authMode) {
+			return true
+		}
+	}
+	return false
+}
+
+// authModeFits mirrors keyEnvVar's choice without building the message: it is
+// the single predicate behind both the bind-time error and the protocol-level
+// check, so the two can never disagree.
+func authModeFits(pe *ProtocolEnv, authMode string) bool {
+	switch authMode {
+	case ProviderAuthBearer:
+		return pe.AuthToken != ""
+	case ProviderAuthAPIKey:
+		return pe.APIKey != ""
+	default:
+		return pe.APIKey != "" || pe.AuthToken != ""
+	}
+}
+
 // any reports whether the spec can take a provider at all.
 func (s ProviderEnvSpec) any() bool {
 	return s.Anthropic != nil || s.OpenAI != nil || s.Gemini != nil || s.KeyOnly != "" || s.ConfigOnly
@@ -324,25 +388,19 @@ func protocolEnvFor(spec ProviderEnvSpec, protocol string) *ProtocolEnv {
 // provider's auth mode. An explicitly requested mode that the backend cannot
 // express is an error — falling back would send the key in the wrong header.
 func keyEnvVar(backendID string, pe *ProtocolEnv, p *Provider) (string, error) {
+	if err := ProviderAuthModeError(backendID, p.Protocol, p.AuthMode); err != nil {
+		return "", err
+	}
 	switch p.AuthMode {
 	case ProviderAuthBearer:
-		if pe.AuthToken == "" {
-			return "", fmt.Errorf("backend %q does not support Bearer auth for the %s protocol", backendID, p.Protocol)
-		}
 		return pe.AuthToken, nil
 	case ProviderAuthAPIKey:
-		if pe.APIKey == "" {
-			return "", fmt.Errorf("backend %q does not support x-api-key auth for the %s protocol", backendID, p.Protocol)
-		}
 		return pe.APIKey, nil
 	default:
 		if pe.APIKey != "" {
 			return pe.APIKey, nil
 		}
-		if pe.AuthToken != "" {
-			return pe.AuthToken, nil
-		}
-		return "", fmt.Errorf("backend %q has no credential variable for the %s protocol", backendID, p.Protocol)
+		return pe.AuthToken, nil
 	}
 }
 

@@ -198,13 +198,18 @@ func AgentProvider(agentID string) *Provider {
 // right now. ACP connections compare it before reuse: when the user edits a
 // provider (or rebinds an agent) the running process still carries the old
 // environment, so it must be respawned. Empty means "no provider".
+//
+// Every field that reaches the spawned process belongs here. WireAPI is written
+// into codex's config file, which the process reads once at startup, so
+// changing it without changing the fingerprint left a live connection talking
+// the old wire API while the file already said otherwise.
 func ProviderEnvVersion(agentID string) string {
 	p := AgentProvider(agentID)
 	if p == nil {
 		return ""
 	}
 	sum := sha256.Sum256([]byte(strings.Join([]string{
-		p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode,
+		p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.WireAPI,
 	}, "\x00")))
 	return hex.EncodeToString(sum[:8])
 }

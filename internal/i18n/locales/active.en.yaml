@@ -39,6 +39,9 @@ MethodNotAllowed: Method not allowed
 TokenRequired: token is required
 LiveShareAlreadyPublishing: another publisher is already sharing this room
 LiveShareTooManyRooms: too many concurrent screen shares
+ViewerNameRequired: a display name is required to join
+LiveNotesGenerating: the minutes are still being generated
+LiveNotesMeetingLive: the meeting is still in progress
 InvalidRequestBody: Invalid request body
 NotADirectory: Not a directory
 NotAFile: Not a file
@@ -441,3 +444,17 @@ MeetingEventViewerJoined: "{{.Name}} joined the meeting"
 MeetingEventScreenShare: "{{.Name}} started sharing their screen"
 MeetingEventMinutesReady: Meeting minutes are ready
 MeetingEventMinutesFailed: Meeting minutes failed to generate
+# Meeting artifacts written into the project (minutes.md, chat.md,
+# transcript-revised.md) and the transcript line format. Localized from the
+# configured UI language because the minutes job has no HTTP request in scope.
+MeetingTranscriptSeparator: ": "
+MeetingTranscriptRevised: Proofread transcript
+MeetingTranscriptRevisedNote: Dictation errors and proper nouns were corrected using the project context; timestamps, speakers and line order are unchanged.
+MeetingTranscriptFilesSection: Files opened during the meeting
+MeetingChatTitle: Meeting chat log
+MeetingChatAnonymous: Anonymous
+MeetingMinutesTitle: Meeting minutes · {{.Time}}
+MeetingMinutesArtifacts: Artifacts
+MeetingMinutesTranscript: Transcript
+MeetingMinutesRecording: Recording
+MeetingMinutesChannelRecordings: "Per-channel recordings: `audio/` ({{.N}} files)"

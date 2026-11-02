@@ -55,13 +55,49 @@ func TestRegistry_CreateIsIdempotentPerProject(t *testing.T) {
 	if first != second {
 		t.Fatal("second Create must return the same room instance")
 	}
-	// The retitled call must update the title: the publisher may rename while
-	// the room is live, and a stale title would show on the share page.
+	// Nobody is publishing yet (the create call runs before the publisher socket
+	// attaches), so the room still takes the new title: that is the window where
+	// a retry legitimately carries a corrected name.
 	if got := second.Title(); got != "屏幕 A（重命名）" {
-		t.Fatalf("title not updated: %q", got)
+		t.Fatalf("title not updated while the room is idle: %q", got)
 	}
 	if g.Len() != 1 {
 		t.Fatalf("want 1 room, got %d", g.Len())
+	}
+}
+
+// A room that is already publishing keeps its title. The create endpoint is
+// idempotent per project, so a retry — or a second device whose form has no
+// title at all, which falls back to a DATE PLACEHOLDER — would otherwise rename
+// the meeting under everybody who is watching it.
+func TestRegistry_CreateKeepsTheTitleOfALiveRoom(t *testing.T) {
+	g := newTestRegistry(t)
+
+	room, err := g.Create("/proj/a", "发版评审")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	room.SetPublisher(&fakeSink{})
+
+	again, err := g.Create("/proj/a", "11-03 01:12")
+	if err != nil {
+		t.Fatalf("Create again: %v", err)
+	}
+	if again != room {
+		t.Fatal("the live room must be reused, not replaced")
+	}
+	if got := room.Title(); got != "发版评审" {
+		t.Fatalf("a live room must keep its title, got %q", got)
+	}
+
+	// Once the publisher is gone the room is a leftover and may be renamed: the
+	// next meeting starts with whatever the create form says.
+	room.SetPublisher(nil)
+	if _, err := g.Create("/proj/a", "下一次"); err != nil {
+		t.Fatalf("Create after detach: %v", err)
+	}
+	if got := room.Title(); got != "下一次" {
+		t.Fatalf("an idle room must take the new title, got %q", got)
 	}
 }
 
@@ -126,6 +162,62 @@ func TestRegistry_DeleteUnknownTokenIsNoop(t *testing.T) {
 	g.Delete("nope") // must not panic
 	if g.Len() != 0 {
 		t.Fatal("no rooms expected")
+	}
+}
+
+// A room can be deleted by somebody other than its publisher: the host ends the
+// meeting from a second device, or a stale room is rotated out. Detaching the
+// sink alone left that publisher page showing "sharing" forever, because nothing
+// ever closed its socket and its teardown only runs on close.
+func TestRegistryDelete_HangsUpThePublisher(t *testing.T) {
+	g := newTestRegistry(t)
+	room, err := g.Create("/proj/a", "A")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pub := &closingSink{}
+	room.SetPublisher(pub)
+
+	g.Delete(room.Token())
+
+	if !pub.closed {
+		t.Fatal("Delete must close the publisher socket so its page converges")
+	}
+	if room.HasPublisher() {
+		t.Fatal("a deleted room must not keep a publisher")
+	}
+}
+
+// A reservation is a socket that has not finished upgrading. Deleting the room
+// must drop it too, otherwise the room nobody can look up keeps a claim.
+func TestRegistryDelete_DropsAPendingReservation(t *testing.T) {
+	g := newTestRegistry(t)
+	room, err := g.Create("/proj/a", "A")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !room.ReservePublisher() {
+		t.Fatal("ReservePublisher")
+	}
+
+	g.Delete(room.Token())
+
+	if room.HasPublisher() {
+		t.Fatal("a deleted room must not keep a reservation")
+	}
+}
+
+// Deleting a publisher-less room must stay a harmless no-op: that is the path
+// createLiveShareRoom takes when it rotates a stale token out.
+func TestRegistryDelete_RoomWithoutPublisherIsFine(t *testing.T) {
+	g := newTestRegistry(t)
+	room, err := g.Create("/proj/a", "A")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	g.Delete(room.Token()) // must not panic or block
+	if g.Get(room.Token()) != nil {
+		t.Fatal("room must be gone")
 	}
 }
 

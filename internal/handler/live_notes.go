@@ -293,6 +293,12 @@ func ServeLiveShareNotes(w http.ResponseWriter, r *http.Request) {
 //   - the room is still publishing (the user should end the meeting first);
 //   - the minutes/proofread job is running — its detached goroutine would
 //     recreate the folder and re-upsert the row seconds after the delete.
+//
+// "Running" is judged by the job's last write, not by the bare status: a crash
+// during generation leaves status='generating' behind with no job to finish it,
+// and refusing forever would make that meeting (and its folder) undeletable.
+// The age threshold is the SPA's own isStaleGenerating, so the list and this
+// guard agree on which meetings are interrupted rather than in progress.
 func serveLiveNotesDelete(w http.ResponseWriter, r *http.Request) {
 	projectPath, projectID, ok := liveNotesProject(w, r)
 	if !ok {
@@ -304,21 +310,17 @@ func serveLiveNotesDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if liveRegistry.Get(token) != nil {
-		writeLocalizedErrorf(w, r, http.StatusConflict, "Conflict")
+		writeLocalizedErrorf(w, r, http.StatusConflict, "LiveNotesMeetingLive")
 		return
 	}
-	note, exists, err := service.GetLiveNote(token)
+	generating, err := service.LiveNoteGenerationRunning(token, time.Now().UnixMilli())
 	if err != nil {
 		slog.Error("live notes: delete lookup failed", "err", err)
 		model.WriteError(w, model.Internal(err))
 		return
 	}
-	if !exists {
-		http.NotFound(w, r)
-		return
-	}
-	if note.Status == service.LiveNotesStatusGenerating || note.ReviseStatus == service.LiveNotesStatusGenerating {
-		writeLocalizedErrorf(w, r, http.StatusConflict, "Conflict")
+	if generating {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "LiveNotesGenerating")
 		return
 	}
 	if err := service.DeleteMeetingRecord(projectPath, projectID, token); err != nil {
@@ -791,7 +793,18 @@ func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 	}
 	// Idempotent unless explicitly asked to regenerate: a double-click on
 	// "生成纪要" must not queue two summarisation runs over the same transcript.
-	if !body.Regenerate && (note.Status == service.LiveNotesStatusGenerating || note.Status == service.LiveNotesStatusReady) {
+	//
+	// "Still generating" goes through the same staleness test the delete guard
+	// uses. A row left in `generating` by a crashed process would otherwise
+	// answer this endpoint with a state that never advances — the reader would
+	// wait forever, while DELETE happily reported the same job as finished.
+	running, err := service.LiveNoteGenerationRunning(body.Token, 0)
+	if err != nil {
+		slog.Error("live notes: generation state lookup failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if !body.Regenerate && (running || note.Status == service.LiveNotesStatusReady) {
 		writeJSON(w, http.StatusOK, liveNotesPayload(projectPath, note))
 		return
 	}

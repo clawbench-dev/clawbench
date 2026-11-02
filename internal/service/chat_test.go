@@ -1802,7 +1802,7 @@ func TestUnread_ReplyReadMidTurnStillBecomesUnread(t *testing.T) {
 		"a reply that landed after the user last read it must be unread — otherwise the completion popup shows with no badge")
 }
 
-// TestGetLiveRunState_ResolvesQuestionByIdOrder guards the subscribe-time
+// TestGetLiveRunStates_ResolvesQuestionByIdOrder guards the subscribe-time
 // recovery lookup. A client that subscribes mid-flight is handed the question
 // row plus the stream_start that anchors the reply under it; the question is
 // found by ID ORDER (greatest user id below the streaming row), because in this
@@ -1810,7 +1810,7 @@ func TestUnread_ReplyReadMidTurnStillBecomesUnread(t *testing.T) {
 //
 // Regression: the previous implementation resolved it through the answered
 // queue id, which also failed for rows whose queue_id was empty.
-func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
+func TestGetLiveRunStates_ResolvesQuestionByIdOrder(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Live Run State")
 
@@ -1831,7 +1831,9 @@ func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
 	}
 	t.Cleanup(func() { service.SetSessionRunning(sid, false, true) })
 
-	msgID, qID, qContent, speaker := service.GetLiveRunState(sid)
+	states := service.GetLiveRunStates(sid)
+	require.Len(t, states, 1, "the streaming row must be reported")
+	msgID, qID, qContent, speaker := states[0].MessageID, states[0].QuestionID, states[0].QuestionContent, states[0].SpeakerID
 	require.NotZero(t, msgID, "the streaming row must be reported")
 	require.NotZero(t, qID, "the question must be found by id order")
 	assert.Equal(t, "what is 2+2?", qContent)
@@ -1845,16 +1847,14 @@ func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
 	_, err = store.UnsafeDBForTest().Exec(
 		"UPDATE chat_history SET streaming = 0 WHERE session_id = ?", sid)
 	require.NoError(t, err)
-	idleMsgID, idleQID, _, _ := service.GetLiveRunState(sid)
-	assert.Zero(t, idleMsgID, "nothing streaming → no live run state")
-	assert.Zero(t, idleQID)
+	assert.Empty(t, service.GetLiveRunStates(sid), "nothing streaming → no live run state")
 }
 
-// TestGetLiveRunState_CarriesGroupSpeaker guards the group-chat switch-back
+// TestGetLiveRunStates_CarriesGroupSpeaker guards the group-chat switch-back
 // path: the streaming row's agent_id (member row id) must be returned so the
 // subscribe-time re-emitted stream_start carries it. Without it a returning
 // client creates a speakerless placeholder and the speaker header stays missing.
-func TestGetLiveRunState_CarriesGroupSpeaker(t *testing.T) {
+func TestGetLiveRunStates_CarriesGroupSpeaker(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "codebuddy", "Group Live Run State")
 
@@ -1874,8 +1874,9 @@ func TestGetLiveRunState_CarriesGroupSpeaker(t *testing.T) {
 	}
 	t.Cleanup(func() { service.SetSessionRunning(sid, false, true) })
 
-	_, _, _, speaker := service.GetLiveRunState(sid)
-	assert.Equal(t, "member-row-7", speaker, "the streaming row's speaker must be reported")
+	states := service.GetLiveRunStates(sid)
+	require.Len(t, states, 1)
+	assert.Equal(t, "member-row-7", states[0].SpeakerID, "the streaming row's speaker must be reported")
 }
 
 // TestGetLiveRunStates_ReturnsAllConcurrentStreams guards the parallel-speaking

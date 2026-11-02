@@ -1000,6 +1000,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		// before the column existed — the UI shows no type tag for those rather
 		// than guessing from the artifacts.
 		"kind": "ALTER TABLE live_notes ADD COLUMN kind TEXT NOT NULL DEFAULT ''",
+		// hidden marks a row the meeting list must not show. Only the
+		// pre-record rows described below are hidden; everything the current
+		// model writes stays visible. A column (rather than a delete) keeps the
+		// transcript recoverable — see the note on the one-time pass.
+		"hidden": "ALTER TABLE live_notes ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
 	} {
 		var present int
 		_ = store.ReadDB().QueryRow(
@@ -1013,16 +1018,25 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 	if hadStartedAt == 0 {
-		// Old rows and their segments belong to meetings that will never appear
-		// in the list. The folders on disk are untouched — they are the copy the
-		// user owns.
-		if _, err := store.WriteExec(
-			`DELETE FROM live_notes_segments WHERE token IN (SELECT token FROM live_notes WHERE started_at = 0)`,
-		); err != nil {
-			return fmt.Errorf("failed to drop pre-record live_notes segments: %w", err)
+		// Rows that predate the meeting-record model have no start time, so the
+		// list can never place them on a timeline. They used to be DELETEd here
+		// together with their live_notes_segments — irreversible, silent, and
+		// the transcript is not recoverable from the Markdown artifacts (those
+		// are written only on success, and the user may have removed the
+		// folder). Hide them instead: nothing is lost, and the meeting list
+		// filters on hidden = 0 (ListMeetingRecords / GetMeetingRecord).
+		//
+		// The pass stays gated on "this database had no started_at column":
+		// started_at = 0 is also the value of a share whose publisher has not
+		// attached yet (EnsureLiveNote), so running this on every startup would
+		// hide live meetings.
+		res, err := store.WriteExec(`UPDATE live_notes SET hidden = 1 WHERE started_at = 0 AND hidden = 0`)
+		if err != nil {
+			return fmt.Errorf("failed to hide pre-record live_notes rows: %w", err)
 		}
-		if _, err := store.WriteExec(`DELETE FROM live_notes WHERE started_at = 0`); err != nil {
-			return fmt.Errorf("failed to drop pre-record live_notes rows: %w", err)
+		if n, rowsErr := res.RowsAffected(); rowsErr == nil && n > 0 {
+			slog.Info("hid pre-record live notes rows instead of deleting them",
+				slog.Int64("rows", n))
 		}
 	}
 	// Only now are every indexed column guaranteed to exist, on both a fresh

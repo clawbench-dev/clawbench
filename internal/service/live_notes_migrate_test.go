@@ -70,8 +70,11 @@ func TestSchema_LiveNotesMigration_FromOldSchema(t *testing.T) {
 	oldDB.Exec("PRAGMA busy_timeout=5000")
 	_, err = oldDB.Exec(oldLiveNotesSchema)
 	require.NoError(t, err)
-	// A pre-record row plus one of its segments: both must be dropped by the
-	// one-time cleanup (they belong to meetings the list can never show).
+	// A pre-record row plus one of its segments. They belong to a meeting the
+	// list cannot place on a timeline; the migration must HIDE them, never
+	// delete them — the transcript is not recoverable from the Markdown
+	// artifacts (those are only written on success and the user may have
+	// removed the folder).
 	_, err = oldDB.Exec("INSERT INTO live_notes (token, project_id, status) VALUES ('legacy-share', 1, 'done')")
 	require.NoError(t, err)
 	_, err = oldDB.Exec("INSERT INTO live_notes_segments (token, project_id, channel, text) VALUES ('legacy-share', 1, 'mix', 'hello')")
@@ -85,6 +88,7 @@ func TestSchema_LiveNotesMigration_FromOldSchema(t *testing.T) {
 	assert.Contains(t, cols, "started_at")
 	assert.Contains(t, cols, "ended_at")
 	assert.Contains(t, cols, "dir_name")
+	assert.Contains(t, cols, "hidden")
 
 	var idx int
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
@@ -92,13 +96,73 @@ func TestSchema_LiveNotesMigration_FromOldSchema(t *testing.T) {
 	).Scan(&idx))
 	assert.Equal(t, 1, idx, "the index must exist once the column it covers has been added")
 
+	// The row survives, hidden: an upgrade must not destroy the user's data.
 	var rows int
 	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM live_notes").Scan(&rows))
-	assert.Zero(t, rows, "pre-record rows have no start time and must be dropped")
+	assert.Equal(t, 1, rows, "pre-record rows must be kept, not dropped")
+	var hidden int
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
+		"SELECT hidden FROM live_notes WHERE token = 'legacy-share'",
+	).Scan(&hidden))
+	assert.Equal(t, 1, hidden, "pre-record rows must be hidden from the list")
+
 	var segments int
 	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM live_notes_segments").Scan(&segments))
-	assert.Zero(t, segments, "segments of dropped rows must be dropped too")
+	assert.Equal(t, 1, segments, "the transcript of a pre-record row must be preserved")
+
+	// End to end: the hidden row is invisible to the meeting list (the whole
+	// point of hiding rather than deleting), and a direct lookup by token
+	// behaves as "not found" too.
+	records, err := ListMeetingRecords(tmpDir, 1, 0)
+	require.NoError(t, err)
+	assert.Empty(t, records, "a pre-record row must not appear in the meeting list")
+	_, found, err := GetMeetingRecord(tmpDir, 1, "legacy-share")
+	require.NoError(t, err)
+	assert.False(t, found, "a hidden row must read as not found")
 
 	// Idempotent: the next startup re-runs the same probes.
 	assert.NoError(t, InitDB())
+	var stillHidden int
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
+		"SELECT hidden FROM live_notes WHERE token = 'legacy-share'",
+	).Scan(&stillHidden))
+	assert.Equal(t, 1, stillHidden)
+
+	// The row is still there after the second startup, just hidden.
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM live_notes_segments",
+	).Scan(&segments))
+	assert.Equal(t, 1, segments)
+}
+
+// TestSchema_LiveNotesMigration_KeepsLiveRowsVisible is the counterweight to the
+// test above: started_at = 0 is ALSO the value of a share whose publisher has
+// not attached yet (EnsureLiveNote inserts the row before the room starts). The
+// one-time hide must not run again on a database that already has started_at,
+// or a restart during a live meeting would hide it.
+func TestSchema_LiveNotesMigration_KeepsLiveRowsVisible(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	require.NoError(t, InitDB())
+	defer store.Close()
+
+	// A share that exists but has no start time yet: the publisher is still
+	// negotiating.
+	_, err := store.WriteExec(
+		"INSERT INTO live_notes (token, project_id, status, started_at) VALUES ('live-share', 1, 'idle', 0)",
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, InitDB())
+
+	var hidden int
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
+		"SELECT hidden FROM live_notes WHERE token = 'live-share'",
+	).Scan(&hidden))
+	assert.Zero(t, hidden, "a row created by the current model must stay visible")
 }

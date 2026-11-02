@@ -68,6 +68,12 @@ const (
 	// the publisher (input injector + a whole-screen picture), so a viewer
 	// cannot work it out and must not offer a button that can only be refused.
 	MsgControlEnabled = "control-enabled"
+	// MsgNotesEnabled tells a viewer that the publisher turned AI 听记 on or off
+	// mid-meeting. `joined` carries the state at join time; without this frame a
+	// viewer that arrived while 听记 was off would never learn it was switched
+	// on later (its transcript pane would simply never appear), and one that was
+	// watching a running transcript would keep polling one that stopped.
+	MsgNotesEnabled = "notes-enabled"
 	// MsgError reports a rejected control frame without closing the socket.
 	MsgError = "error"
 	// MsgRoster carries the FULL participant list: the publisher plus every
@@ -116,6 +122,11 @@ const (
 	// remote-control requests: it needs the input injector AND a whole-screen
 	// picture. Viewers grey their "request control" button on it.
 	CtrlSetControlEnabled = "set-control-enabled"
+	// CtrlSetNotes tells the room that AI 听记 was switched on or off while the
+	// meeting is running. Without it the flag is write-once at create time, so
+	// a viewer joining mid-meeting reads a stale value and the transcript pane
+	// either never appears (turned on later) or polls forever (turned off).
+	CtrlSetNotes = "set-notes"
 )
 
 // Viewer control messages (client → server).
@@ -224,6 +235,11 @@ type ViewerMessage struct {
 	HostScreen bool `json:"hostScreen"`
 	// NotesEnabled tells the viewer that this share is running AI 听记, so the
 	// transcript panel can be offered at all. It carries no transcript.
+	//
+	// omitempty because `joined` carries it among a dozen other fields, where
+	// "absent" and "off" mean the same thing. The mid-meeting toggle uses
+	// NotesEnabledMessage instead: there `false` is the whole point and must
+	// reach the wire.
 	NotesEnabled bool `json:"notesEnabled,omitempty"`
 	// ControlEnabled tells the viewer that the publisher can be driven right
 	// now (input injector present, whole screen shared). Absent means "cannot":
@@ -239,6 +255,19 @@ type ViewerMessage struct {
 	Message string `json:"message,omitempty"`
 	// Roster is meaningful only on MsgRoster.
 	Roster []RosterEntry `json:"roster,omitempty"`
+}
+
+// NotesEnabledMessage is the `notes-enabled` frame: the publisher turned AI 听记
+// on or off while the meeting was running.
+//
+// A dedicated struct rather than a ViewerMessage. The frame's entire meaning is
+// the one boolean, and turning 听记 OFF has to be said out loud — that is how a
+// viewer learns to stop polling a transcript that will never grow again. Reusing
+// ViewerMessage.NotesEnabled would either drop that false (its `joined` tag is
+// omitempty) or force `notesEnabled` onto every other viewer frame.
+type NotesEnabledMessage struct {
+	Type         string `json:"type"`
+	NotesEnabled bool   `json:"notesEnabled"`
 }
 
 // RosterEntry is one participant as the audience sees them.

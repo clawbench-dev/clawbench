@@ -181,6 +181,25 @@ func TestApplyAttachmentPrefixes_QuoteRendersSourceLocators(t *testing.T) {
 	assert.Contains(t, got, "[Quote 1/1] 每日构建 (#12) (task: 12)")
 }
 
+// A meeting quote's token must reach BOTH the classification and the rendered
+// prompt: it is the only addressable handle on the meeting (the label is a
+// human-readable name the AI cannot resolve), so dropping it either in
+// ClassifyAttachments or in quoteSourceKeys leaves the AI unable to tell which
+// meeting the snippet came from.
+func TestApplyAttachmentPrefixes_QuoteRendersMeetingToken(t *testing.T) {
+	entries := []FileEntry{{
+		Path: "产品评审会 · 纪要", Kind: "quote", ID: "q1", Language: "meeting",
+		Text: "决议：本季度聚焦稳定性", SourceKind: "meeting", MeetingToken: "tok-9",
+	}}
+	parts := ClassifyAttachments(entries, nil)
+
+	require.Len(t, parts.Quotes, 1)
+	assert.Equal(t, "tok-9", parts.Quotes[0].MeetingToken, "classification must carry the meeting locator")
+
+	got := ApplyAttachmentPrefixes("这段怎么理解", nil, nil, parts)
+	assert.Contains(t, got, "(meeting: tok-9)")
+}
+
 // The quote's Path is only a label and may legitimately equal an attached
 // file's path. Checking excludePaths before the quote branch would silently
 // drop the quoted text from the prompt — the single most damaging regression
@@ -386,6 +405,11 @@ func TestQuoteHeader_CarriesSourceLocators(t *testing.T) {
 			"address leads the group",
 			QuotePrompt{Label: "a/b#1", URL: "https://e.com/1", CommitSHA: "deadbeef"},
 			"[Quote 1/1] a/b#1 (https://e.com/1, commit: deadbeef)",
+		},
+		{
+			"meeting locator",
+			QuotePrompt{Label: "产品评审会 · 纪要", Language: "meeting", MeetingToken: "tok-9"},
+			"[Quote 1/1] 产品评审会 · 纪要 (meeting: tok-9)",
 		},
 		{
 			"line range plus locator",
