@@ -5,6 +5,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import type { Terminal as TerminalType } from '@xterm/xterm'
 import { stripSyncOutput } from '@/utils/terminalSessionUtils'
+import { confirmAndOpenExternalLink } from '@/utils/externalLinkClick'
 import { DEFAULT_TERMINAL_MONO_STACK } from '@/utils/fontConfig'
 
 export interface TerminalTab {
@@ -73,10 +74,27 @@ export function useTerminalTabs(
       convertEol: false,
       scrollback: 5000,
       rightClickSelectsWord: true,
+      // OSC 8 hyperlinks (`ls --hyperlink`, gh, cargo) never reach the
+      // web-links addon — xterm's core link provider owns them and defaults to
+      // its own confirm + `window.open`, i.e. the same dead click. Both paths
+      // must end in the app's confirm-then-open dialog.
+      linkHandler: {
+        activate: (_event, text) => {
+          void confirmAndOpenExternalLink(text)
+        },
+      },
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
-    term.loadAddon(new WebLinksAddon())
+    // The addon's default handler is `window.open()`, which is a dead click in
+    // both shells: the desktop window-open handler denies popups and the
+    // Android WebView never calls setSupportMultipleWindows, so `window.open`
+    // returns null and the tap does nothing (the hover underline still shows,
+    // which is what makes it look broken rather than unsupported). Route
+    // through the same confirm-then-open path as rendered markdown links.
+    term.loadAddon(new WebLinksAddon((_event, uri) => {
+      void confirmAndOpenExternalLink(uri)
+    }))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(term as any).fitAddon = fit
     return { term, fit }

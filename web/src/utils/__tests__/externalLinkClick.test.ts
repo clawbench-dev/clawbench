@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { installExternalLinkClick } from '@/utils/externalLinkClick'
+import { installExternalLinkClick, confirmAndOpenExternalLink } from '@/utils/externalLinkClick'
 
 /**
  * External links are rendered as spans (see markedConfig's `link` renderer) so
@@ -220,5 +220,37 @@ describe('installExternalLinkClick', () => {
 
     click(renderSpan())
     expect(mockConfirm).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * The terminal draws its links on an xterm canvas, so the document-level
+ * listener above never sees them; the terminal's link provider calls this
+ * function directly. It must keep the same two guarantees: ask first, and
+ * refuse schemes that are not allowed to leave the app.
+ */
+describe('confirmAndOpenExternalLink', () => {
+  it('asks before opening and opens only after confirmation', async () => {
+    mockConfirm.mockResolvedValue(true)
+
+    await confirmAndOpenExternalLink('https://example.com/build')
+
+    expect(mockConfirm).toHaveBeenCalledWith('https://example.com/build', expect.any(Object))
+    expect(mockOpenExternalUrl).toHaveBeenCalledWith('https://example.com/build')
+  })
+
+  it('does not open when the dialog is cancelled', async () => {
+    mockConfirm.mockResolvedValue(false)
+
+    await confirmAndOpenExternalLink('https://example.com/build')
+
+    expect(mockOpenExternalUrl).not.toHaveBeenCalled()
+  })
+
+  it('refuses a non-external scheme without even asking', async () => {
+    await confirmAndOpenExternalLink('javascript:alert(1)')
+
+    expect(mockConfirm).not.toHaveBeenCalled()
+    expect(mockOpenExternalUrl).not.toHaveBeenCalled()
   })
 })

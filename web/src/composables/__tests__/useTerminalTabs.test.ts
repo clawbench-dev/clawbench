@@ -71,7 +71,10 @@ vi.mock('@xterm/xterm', () => {
     private _dataCallbacks: ((data: string) => void)[] = []
     private _resizeCallbacks: (() => void)[] = []
 
-    constructor(options: Record<string, unknown> = {}) { this.options = { ...options } }
+    constructor(options: Record<string, unknown> = {}) {
+      this.options = { ...options }
+      mockTerminals.push(this)
+    }
 
     loadAddon() {}
     open(el: HTMLElement) { this.element = el }
@@ -91,10 +94,24 @@ vi.mock('@xterm/addon-fit', () => {
   return { FitAddon: MockFitAddon }
 })
 
+const { mockLinkHandlers, mockConfirmAndOpenExternalLink, mockTerminals } = vi.hoisted(() => ({
+  mockLinkHandlers: [] as Array<(event: unknown, uri: string) => void>,
+  mockConfirmAndOpenExternalLink: vi.fn(),
+  mockTerminals: [] as Array<{ options: Record<string, unknown> }>,
+}))
+
 vi.mock('@xterm/addon-web-links', () => {
-  class MockWebLinksAddon {}
+  class MockWebLinksAddon {
+    constructor(handler?: (event: unknown, uri: string) => void) {
+      if (handler) mockLinkHandlers.push(handler)
+    }
+  }
   return { WebLinksAddon: MockWebLinksAddon }
 })
+
+vi.mock('@/utils/externalLinkClick', () => ({
+  confirmAndOpenExternalLink: (url: string) => mockConfirmAndOpenExternalLink(url),
+}))
 
 import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs'
 
@@ -149,6 +166,9 @@ function tabIndex(mgr: ReturnType<typeof useTerminalTabs>, tab: TerminalTab): nu
 
 beforeEach(() => {
   mockSessionStore.length = 0
+  mockLinkHandlers.length = 0
+  mockTerminals.length = 0
+  mockConfirmAndOpenExternalLink.mockClear()
 })
 
 afterEach(() => {
@@ -999,6 +1019,51 @@ describe('useTerminalTabs', () => {
       expect(onCloseViaHttp).toHaveBeenCalledWith('session-a')
       expect(onCloseViaHttp).toHaveBeenCalledWith('session-b')
       expect(onCloseViaHttp).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  /**
+   * xterm draws its links on a canvas, so the app-wide document click layer
+   * (externalLinkClick.ts) can never see them — the link provider's handler is
+   * the only hook. The addon's DEFAULT handler is `window.open()`, which is a
+   * dead click in both shells (the desktop window-open handler denies popups,
+   * the Android WebView never enables multiple windows): the underline appears
+   * on hover, the tap does nothing. Hence the custom handler.
+   */
+  describe('link activation', () => {
+    it('routes terminal URLs through the confirm-then-open path', () => {
+      createTabManager()
+      expect(mockLinkHandlers).toHaveLength(1)
+
+      mockLinkHandlers[0]({}, 'https://example.com/build/123')
+
+      expect(mockConfirmAndOpenExternalLink).toHaveBeenCalledWith('https://example.com/build/123')
+    })
+
+    it('never falls back to window.open', () => {
+      createTabManager()
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+
+      mockLinkHandlers[0]({}, 'https://example.com')
+
+      expect(openSpy).not.toHaveBeenCalled()
+    })
+
+    /**
+     * OSC 8 hyperlinks (`ls --hyperlink`, gh, cargo) are handled by xterm's
+     * core link provider, NOT by the addon — its default is its own confirm +
+     * `window.open`, so it needs the same handler or those links stay dead.
+     */
+    it('routes OSC 8 hyperlinks through the same confirm-then-open path', () => {
+      createTabManager()
+      const linkHandler = mockTerminals[0].options.linkHandler as {
+        activate: (event: unknown, text: string) => void
+      }
+      expect(linkHandler).toBeTruthy()
+
+      linkHandler.activate({}, 'https://example.com/osc8')
+
+      expect(mockConfirmAndOpenExternalLink).toHaveBeenCalledWith('https://example.com/osc8')
     })
   })
 })
