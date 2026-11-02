@@ -62,7 +62,10 @@ export async function fetchDesktopLatest(serverUrl: string): Promise<DesktopLate
 
   let body: string
   try {
-    body = (await httpGetBuffer(latestInfoUrl(serverUrl))).toString('utf8')
+    // The server's own certificate may be self-signed — the window was already
+    // told to trust it, so the main process must not verify it either. Without
+    // this the check throws and reads as "nothing to offer".
+    body = (await httpGetBuffer(latestInfoUrl(serverUrl), { insecure: true })).toString('utf8')
   } catch {
     // Server unreachable or too old to expose the endpoint — nothing to offer.
     return null

@@ -38,14 +38,20 @@ vi.mock('node:child_process', () => ({
 // `download` is the control: return a Buffer to serve it as a 200 body, or
 // throw to simulate an unreachable host (which downloadFirstAvailable must
 // report for every candidate).
-const { download, downloadSpy } = vi.hoisted(() => ({
+const { download, downloadSpy, downloadOptsSpy, redirect } = vi.hoisted(() => ({
   downloadSpy: vi.fn(),
+  downloadOptsSpy: vi.fn(),
+  // One-shot 302 target, so a redirect chain can be exercised (and cannot loop).
+  redirect: { to: '' },
   download: { impl: (() => Buffer.alloc(0)) as (url: string) => Buffer },
 }))
 
 function makeGetMock() {
-  const get = (url: string, cb: (res: unknown) => void) => {
+  const get = (url: string, optsOrCb: unknown, maybeCb?: unknown) => {
+    // `httpGetBuffer` may pass node's optional options argument.
+    const cb = (typeof optsOrCb === 'function' ? optsOrCb : maybeCb) as (res: unknown) => void
     downloadSpy(url)
+    downloadOptsSpy(url, typeof optsOrCb === 'function' ? undefined : optsOrCb)
     const handlers: Record<string, Array<(arg?: unknown) => void>> = {}
     const req = {
       on(ev: string, fn: (arg?: unknown) => void) {
@@ -62,9 +68,11 @@ function makeGetMock() {
       })
       return req
     }
+    const location = redirect.to
+    redirect.to = ''
     const res = {
-      statusCode: 200,
-      headers: {},
+      statusCode: location ? 302 : 200,
+      headers: location ? { location } : {},
       resume: () => {},
       on(ev: string, fn: (arg?: unknown) => void) {
         ;(handlers[ev] ||= []).push(fn)
@@ -94,6 +102,7 @@ import {
   pointerPath,
   versionDir,
   downloadFirstAvailable,
+  httpGetBuffer,
   downloadAndInstall,
   localNpmRegistryBase,
   npmTarballPath,
@@ -572,6 +581,38 @@ describe('downloadFirstAvailable', () => {
     } finally {
       download.impl = () => Buffer.alloc(0)
     }
+  })
+})
+
+describe('httpGetBuffer TLS options', () => {
+  afterEach(() => {
+    downloadOptsSpy.mockReset()
+    download.impl = () => Buffer.from('ok')
+  })
+
+  it('skips certificate verification only when the caller asks for it', async () => {
+    // The server's own certificate may be self-signed: the window was told to
+    // trust it, but Node's TLS stack would still reject /api/desktop/latest,
+    // making the upgrade check read as "nothing to offer". Third-party download
+    // URLs must keep verification on.
+    await httpGetBuffer('https://192.168.1.50:20000/api/desktop/latest', { insecure: true })
+    expect(downloadOptsSpy).toHaveBeenLastCalledWith(
+      'https://192.168.1.50:20000/api/desktop/latest',
+      { rejectUnauthorized: false },
+    )
+
+    await httpGetBuffer('https://github.com/x.zip')
+    expect(downloadOptsSpy).toHaveBeenLastCalledWith('https://github.com/x.zip', {})
+  })
+
+  it('keeps the insecure flag across redirects', async () => {
+    // A self-signed server that redirects (http → https, or a host alias) must
+    // not lose the carve-out on the hop, or the follow-up request fails exactly
+    // where the first one succeeded.
+    redirect.to = 'https://192.168.1.50:20000/login'
+    download.impl = () => Buffer.from('ok')
+    await httpGetBuffer('https://192.168.1.50:20000/api/desktop/latest', { insecure: true })
+    expect(downloadOptsSpy).toHaveBeenLastCalledWith('https://192.168.1.50:20000/login', { rejectUnauthorized: false })
   })
 })
 

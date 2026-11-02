@@ -1076,17 +1076,33 @@ export function handOffToPointedVersion(runningVersion: string): boolean {
   return true
 }
 
-export function httpGetBuffer(url: string, redirectsLeft = 5): Promise<Buffer> {
+export interface HttpGetOptions {
+  /**
+   * Skip certificate verification.
+   *
+   * Only for requests to the user's OWN server, whose self-signed certificate
+   * the window was told to trust but Node's TLS stack was not: without this the
+   * desktop upgrade check fails silently (`/api/desktop/latest` throws, the
+   * caller reads it as "nothing to offer"). Download URLs from a release must
+   * keep verification on — they are third-party hosts.
+   */
+  insecure?: boolean
+  /** Redirects left to follow before giving up. */
+  redirectsLeft?: number
+}
+
+export function httpGetBuffer(url: string, opts: HttpGetOptions = {}): Promise<Buffer> {
+  const { insecure = false, redirectsLeft = 5 } = opts
   return new Promise((resolve, reject) => {
     const lib = url.startsWith('https:') ? https : http
-    lib.get(url, (res) => {
+    lib.get(url, insecure ? { rejectUnauthorized: false } : {}, (res) => {
       // Registries and CDNs redirect tarball URLs; without following them the
       // download would silently produce a body of zero bytes.
       const { statusCode, headers } = res
       if (statusCode && statusCode >= 300 && statusCode < 400 && headers.location) {
         if (redirectsLeft <= 0) { reject(new Error('too many redirects')); return }
         res.resume()
-        resolve(httpGetBuffer(new URL(headers.location, url).toString(), redirectsLeft - 1))
+        resolve(httpGetBuffer(new URL(headers.location, url).toString(), { insecure, redirectsLeft: redirectsLeft - 1 }))
         return
       }
       if (statusCode !== 200) {

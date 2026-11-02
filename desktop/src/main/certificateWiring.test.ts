@@ -42,6 +42,16 @@ describe('certificate handler is registered', () => {
     expect(src).toContain('event.preventDefault()')
   })
 
+  it('answers subresource failures from the trusted-origin set', () => {
+    // Trust is granted for one navigation but must cover every request to that
+    // origin: each new socket (the WebSocket, most fetches) re-runs certificate
+    // verification with isMainFrame=false. Forgetting to pass the trust set
+    // here is invisible at build time and breaks the whole app at runtime.
+    const src = readRepoFile(CERT)
+    expect(src).toContain('trustedOrigins.has(origin)')
+    expect(src).toContain('decideCertificateAction(url, isMainFrame, alreadyTrusted)')
+  })
+
   it('prompts the user and trusts only on confirmation', () => {
     const src = readRepoFile(CERT)
     expect(src).toContain('dialog.showMessageBox')

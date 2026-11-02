@@ -49,6 +49,20 @@ describe('fetchDesktopLatest', () => {
     expect(info!.urls).toEqual(['https://mirror/x.zip', 'https://github.com/x.zip'])
   })
 
+  it('skips certificate verification for the server it is asking', async () => {
+    // A self-hosted server may be self-signed. The window was told to trust it,
+    // but the main process has its own TLS stack — without the carve-out the
+    // request throws and the check reads as "nothing to offer".
+    ;(httpGetBuffer as ReturnType<typeof vi.fn>).mockResolvedValue(
+      Buffer.from(JSON.stringify({ version: 'v2.0.0', downloads: { 'linux-x64': ['https://mirror/x.zip'] } })),
+    )
+    await fetchDesktopLatest('https://192.168.1.50:20000')
+    expect(httpGetBuffer).toHaveBeenCalledWith(
+      'https://192.168.1.50:20000/api/desktop/latest',
+      { insecure: true },
+    )
+  })
+
   it('returns null when the server has no release for this platform', async () => {
     // A dev server answers with an empty downloads map; there is nothing to
     // install even though the version string differs.

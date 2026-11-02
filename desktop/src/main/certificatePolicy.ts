@@ -22,10 +22,21 @@ export type CertificateAction =
   /** Ask the user; trust only if they confirm. */
   | 'prompt'
 
-/** The scheme://host:port origin of `url`, or '' when it cannot be parsed. */
+/**
+ * The origin used to key certificate trust for `url`, or '' when it cannot be
+ * parsed.
+ *
+ * WebSocket URLs are folded onto their HTTP equivalent: a `wss://` handshake to
+ * the same host:port reaches the same server and presents the same certificate
+ * as `https://`. Keying them separately left the WebSocket rejected right after
+ * the page itself had been trusted — the app then looked connected-but-dead.
+ */
 export function originOf(url: string): string {
   try {
-    return new URL(url).origin
+    const parsed = new URL(url)
+    if (parsed.protocol === 'wss:') parsed.protocol = 'https:'
+    else if (parsed.protocol === 'ws:') parsed.protocol = 'http:'
+    return parsed.origin
   } catch {
     return ''
   }
@@ -50,19 +61,34 @@ export function isLocalhostHost(hostname: string): boolean {
 /**
  * Decide what to do about a certificate error for `url`.
  *
- * Only a main-frame navigation is actionable: a subresource failure must not
- * raise a blocking prompt (and Chromium rejects it on its own anyway). A
- * localhost main-frame navigation is trusted silently — the same carve-out
- * Android makes for its tunneled connections. Everything else prompts.
+ * `trusted` says whether the user already approved this origin for the current
+ * connection. That answer has to cover EVERY request to the origin, not just
+ * the navigation that raised the prompt: certificate verification runs per
+ * connection, so the WebSocket and every fetch that opens a fresh socket
+ * (rather than reusing the navigation's keep-alive one) raises its own
+ * `certificate-error` with `isMainFrame === false`. Scoping the trust to the
+ * main frame left those rejected — the app rendered, then every later request
+ * failed with `ERR_CERT_AUTHORITY_INVALID`.
+ *
+ * A localhost request is trusted silently whatever the frame type: an SSH / h2
+ * tunnel reaches the server on loopback, where the certificate can never match
+ * the host the client typed — the same carve-out Android makes. Only a
+ * *third-party* subresource is left to Chromium's default rejection: prompting
+ * there would block the page on an asset the user never asked about.
  */
-export function decideCertificateAction(url: string, isMainFrame: boolean): CertificateAction {
-  if (!isMainFrame) return 'ignore'
+export function decideCertificateAction(
+  url: string,
+  isMainFrame: boolean,
+  trusted = false,
+): CertificateAction {
   let hostname: string
   try {
     hostname = new URL(url).hostname
   } catch {
     return 'ignore'
   }
+  if (trusted) return 'auto-trust'
   if (isLocalhostHost(hostname)) return 'auto-trust'
+  if (!isMainFrame) return 'ignore'
   return 'prompt'
 }

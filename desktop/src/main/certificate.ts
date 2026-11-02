@@ -17,6 +17,12 @@ import { decideCertificateAction, originOf } from './certificatePolicy'
  * counterpart: an `app.on('certificate-error')` handler that asks the user and
  * trusts the certificate for the rest of THAT CONNECTION only.
  *
+ * "For that connection" means every request to the origin, not just the
+ * navigation that raised the prompt. Verification runs per socket, so the
+ * WebSocket and any fetch that opens a new connection raises its own
+ * `certificate-error` — those must be answered from the trust set too, or the
+ * window loads and then every API call fails.
+ *
  * The trust is deliberately NOT persisted and is cleared on every connect: the
  * user re-confirms each time, matching Android, so a certificate that later
  * changes is re-prompted rather than silently accepted forever.
@@ -79,14 +85,18 @@ async function promptTrustCertificate(url: string, error: string, parent: Browse
  */
 export function registerCertificateHandler(): void {
   app.on('certificate-error', (event, webContents, url, error, _certificate, callback, isMainFrame) => {
-    const action = decideCertificateAction(url, isMainFrame)
+    const origin = originOf(url)
+    const alreadyTrusted = origin !== '' && trustedOrigins.has(origin)
+    const action = decideCertificateAction(url, isMainFrame, alreadyTrusted)
     if (action === 'ignore') return
 
-    const origin = originOf(url)
-    if (action === 'auto-trust' || (origin && trustedOrigins.has(origin))) {
-      // Already answered for this connection (a later subresource on the same
-      // origin), or a localhost tunnel whose cert can never match.
+    if (action === 'auto-trust') {
+      // Already answered for this connection, or a localhost tunnel whose cert
+      // can never match. This branch MUST also cover subresources: each new
+      // socket re-runs verification, so answering only the navigation leaves
+      // the WebSocket and most API calls rejected.
       event.preventDefault()
+      if (alreadyTrusted && !isMainFrame) record('D', TAG, `trusted subresource ${url} (${error})`)
       callback(true)
       return
     }

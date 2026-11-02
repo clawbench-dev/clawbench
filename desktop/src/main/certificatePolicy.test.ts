@@ -10,6 +10,15 @@ describe('originOf', () => {
     expect(originOf('https://example.com/')).toBe('https://example.com')
   })
 
+  it('folds a WebSocket URL onto its HTTP origin', () => {
+    // Same server, same certificate, same trust decision. Keeping `wss:` as a
+    // distinct key left the WebSocket rejected after the page was trusted.
+    expect(originOf('wss://example.com:20000/ws')).toBe('https://example.com:20000')
+    expect(originOf('ws://example.com:20000/ws')).toBe('http://example.com:20000')
+    // Default ports normalise the same way on both sides.
+    expect(originOf('wss://example.com/ws')).toBe('https://example.com')
+  })
+
   it('returns an empty string for an unparseable URL', () => {
     expect(originOf('not a url')).toBe('')
     expect(originOf('')).toBe('')
@@ -31,15 +40,33 @@ describe('isLocalhostHost', () => {
 })
 
 describe('decideCertificateAction', () => {
-  it('ignores a subframe failure regardless of host', () => {
-    // A subresource must never raise a blocking prompt.
-    expect(decideCertificateAction('https://example.com/', false)).toBe('ignore')
-    expect(decideCertificateAction('https://127.0.0.1:23999/', false)).toBe('ignore')
+  it('trusts every request to an origin the user already approved', () => {
+    // The regression this guards: trust used to apply to the main-frame
+    // navigation only. Verification runs per socket, so the WebSocket and most
+    // API calls raised their own certificate-error with isMainFrame=false and
+    // were rejected — the window rendered, then nothing worked.
+    expect(decideCertificateAction('https://example.com/api/chat', false, true)).toBe('auto-trust')
+    expect(decideCertificateAction('wss://example.com/ws', false, true)).toBe('auto-trust')
+    expect(decideCertificateAction('https://example.com/', true, true)).toBe('auto-trust')
+  })
+
+  it('trusts a localhost subresource without asking', () => {
+    // A tunneled connection reaches the server on loopback, where the
+    // certificate can never match the host the client typed. Restricting this
+    // to the main frame broke every API call over SSH / h2 tunnels.
+    for (const u of ['https://127.0.0.1:20000/api/chat', 'https://localhost:20000/ws', 'https://[::1]:20000/x']) {
+      expect(decideCertificateAction(u, false), u).toBe('auto-trust')
+    }
+  })
+
+  it('ignores a third-party subresource rather than prompting', () => {
+    // A subresource on an origin the user never approved must never raise a
+    // blocking prompt; Chromium rejects it on its own.
+    expect(decideCertificateAction('https://cdn.example.net/a.png', false)).toBe('ignore')
+    expect(decideCertificateAction('https://cdn.example.net/a.png', false, false)).toBe('ignore')
   })
 
   it('trusts a localhost main-frame navigation without asking', () => {
-    // A tunneled connection reaches the server on localhost, where the
-    // certificate can never match the host the client typed.
     for (const u of ['https://127.0.0.1:20000/', 'https://localhost:20000/', 'https://[::1]:20000/']) {
       expect(decideCertificateAction(u, true), u).toBe('auto-trust')
     }
@@ -53,5 +80,6 @@ describe('decideCertificateAction', () => {
   it('ignores an unparseable URL rather than prompting', () => {
     // A prompt for a URL we cannot even key trust on would be unanswerable.
     expect(decideCertificateAction('garbage', true)).toBe('ignore')
+    expect(decideCertificateAction('garbage', true, true)).toBe('ignore')
   })
 })
