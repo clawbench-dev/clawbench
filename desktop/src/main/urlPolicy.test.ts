@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { classifyUrl, isAppPopup } from './urlPolicy'
+import { classifyUrl, isAppPopup, shouldBlockPopupNavigation } from './urlPolicy'
 
 describe('classifyUrl', () => {
   it('treats http links as external when outside the server origin', () => {
@@ -55,5 +55,17 @@ describe('isAppPopup', () => {
     expect(isAppPopup('https://example.com/')).toBe(false)
     expect(isAppPopup('file:///etc/passwd')).toBe(false)
     expect(isAppPopup('javascript:alert(1)')).toBe(false)
+  })
+})
+
+describe('shouldBlockPopupNavigation', () => {
+  it('keeps the popup on its blank document', () => {
+    // The popup inherits this window's preload, so following a navigation would
+    // hand the native bridge to whatever origin it lands on.
+    expect(shouldBlockPopupNavigation('https://evil.example/')).toBe(true)
+    expect(shouldBlockPopupNavigation('file:///etc/passwd')).toBe(true)
+    expect(shouldBlockPopupNavigation('javascript:alert(1)')).toBe(true)
+    expect(shouldBlockPopupNavigation('about:blank')).toBe(false)
+    expect(shouldBlockPopupNavigation('')).toBe(false)
   })
 })

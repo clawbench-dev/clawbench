@@ -25,9 +25,14 @@ const displayHandler = vi.hoisted(() => ({
 }))
 const recorded = vi.hoisted(() => ({ value: [] as string[] }))
 const failCombined = vi.hoisted(() => ({ value: false }))
+const ipcHandlers = vi.hoisted(() => ({ value: {} as Record<string, (...a: unknown[]) => unknown> }))
 
 vi.mock('electron', () => ({
-  ipcMain: { handle: () => undefined },
+  ipcMain: {
+    handle: (channel: string, fn: (...a: unknown[]) => unknown) => {
+      ipcHandlers.value[channel] = fn
+    },
+  },
   session: {
     defaultSession: {
       setDisplayMediaRequestHandler: (fn: unknown) => {
@@ -57,9 +62,11 @@ import {
   _setPendingCaptureForTest,
   arePlaceholderSources,
   audioCaptureSupport,
+  currentCaptureDisplayId,
   decideCapture,
   installDisplayMediaHandler,
   listCaptureSources,
+  registerCaptureHandlers,
 } from './capture'
 
 function fakeSource(id: string, name = id, empty = true) {
@@ -82,6 +89,7 @@ beforeEach(() => {
   sources.value = [fakeSource('screen:1:0'), fakeSource('window:2:0')]
   displayHandler.value = null
   recorded.value = []
+  ipcHandlers.value = {}
   _resetCaptureForTest()
   installDisplayMediaHandler()
 })
@@ -270,5 +278,43 @@ describe('display media handler', () => {
   it('does not leak the pending declaration across installs', () => {
     installDisplayMediaHandler()
     expect(_pendingCaptureForTest()).toBeNull()
+  })
+})
+
+describe('captured display', () => {
+  /** A source that names the monitor it mirrors, as a real screen source does. */
+  function screenSource(id: string, displayId: string) {
+    return {
+      id,
+      name: id,
+      display_id: displayId,
+      thumbnail: { isEmpty: () => true, toDataURL: () => '' },
+    }
+  }
+
+  it('forgets which screen was shared once publishing stops', async () => {
+    // Nothing else ever overwrote the id, so a stale value survived the session
+    // and sent the next annotation overlay to the monitor shared last — on a
+    // multi-monitor host that reads as "my ink went to the other screen".
+    registerCaptureHandlers(() => null)
+    sources.value = [screenSource('screen:2:0', '2')]
+    _setPendingCaptureForTest({ sourceId: 'screen:2:0', systemAudio: false })
+    await requestCapture()
+
+    const setPublishing = ipcHandlers.value['native:set-publishing-active']
+
+    // The overlay can only be opened while publishing, so nothing is reported
+    // before the renderer says the session started.
+    expect(currentCaptureDisplayId()).toBe('')
+
+    await setPublishing({}, true)
+    expect(currentCaptureDisplayId()).toBe('2')
+
+    await setPublishing({}, false)
+    expect(currentCaptureDisplayId()).toBe('')
+
+    // A second session that never captured anything must not inherit the id.
+    await setPublishing({}, true)
+    expect(currentCaptureDisplayId()).toBe('')
   })
 })

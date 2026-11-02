@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { getStore } from './store'
 import { contextMenuLabels } from './contextMenu'
 import { resolveNativeLanguage } from './labels'
-import { classifyUrl, isAppPopup } from './urlPolicy'
+import { classifyUrl, isAppPopup, shouldBlockPopupNavigation } from './urlPolicy'
 import { markRendererLoading } from './navReady'
 import { handleShortcut } from './shortcuts'
 import { shouldFallBackToLogin, buildConnectErrorScript } from './loadFailure'
@@ -526,6 +526,18 @@ export function createMainWindow(): BrowserWindow {
       void shell.openExternal(target)
     }
     return { action: 'deny' }
+  })
+  // The one window that is allowed inherits THIS window's preload, so a page
+  // that opens `about:blank` and then assigns `location` would run the whole
+  // native bridge (server list, SSH password, file download) on a foreign
+  // origin. The popup only ever needs its blank document — the picture is drawn
+  // into it through Teleport from the opener — so it is pinned to that and may
+  // not open windows of its own.
+  mainWindow.webContents.on('did-create-window', (child) => {
+    child.webContents.on('will-navigate', (event, url) => {
+      if (shouldBlockPopupNavigation(url)) event.preventDefault()
+    })
+    child.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   })
   mainWindow.on('closed', () => {
     splash?.destroy()

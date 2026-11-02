@@ -50,4 +50,18 @@ describe('main window popup policy', () => {
     const block = handlerBlock()
     expect(block).toContain('openExternal(target)')
   })
+
+  it('pins the allowed popup to its blank document', () => {
+    // The popup inherits this window's preload. Without a navigation guard,
+    // `window.open('')` followed by `w.location = 'https://evil'` runs the whole
+    // native bridge on that origin. The child must also be unable to open
+    // further windows.
+    const block = handlerBlock()
+    expect(block).toContain("did-create-window")
+    expect(block).toContain('will-navigate')
+    expect(block).toContain('shouldBlockPopupNavigation(url)')
+    expect(block).toContain('event.preventDefault()')
+    // The child's own popup handler denies everything.
+    expect(block).toMatch(/child\.webContents\.setWindowOpenHandler\(\(\) => \(\{\s*action:\s*'deny'\s*\}\)\)/)
+  })
 })

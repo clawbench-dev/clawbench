@@ -84,6 +84,8 @@ public class ScreenShareService extends Service {
             AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * 2 / 10;
 
     private MediaProjection projection;
+    /** Held so it can be unregistered before `projection.stop()` (see releaseExistingSession). */
+    private MediaProjection.Callback projectionCallback;
     private VirtualDisplay virtualDisplay;
     private android.media.ImageReader imageReader;
     private HandlerThread captureThread;
@@ -164,8 +166,51 @@ public class ScreenShareService extends Service {
             fail("no projection consent data");
             return START_NOT_STICKY;
         }
+        // A second ACTION_START can still arrive (two quick taps, or a start
+        // that raced the activity's own guard). The fields below are
+        // overwritten wholesale, so the previous session must be torn down
+        // first — otherwise its VirtualDisplay is leaked and can never be
+        // released, leaving the system's sharing indicator on.
+        releaseExistingSession();
         beginProjection(resultCode, resultData);
         return START_NOT_STICKY;
+    }
+
+    /**
+     * Tear down a capture that is still running, before starting another one.
+     *
+     * <p>The previous projection's callback is unregistered <em>before</em>
+     * {@code stop()}: the callback answers {@code onStop} with {@code stopSelf()},
+     * which would tear down the very service the new session is about to use.
+     */
+    private void releaseExistingSession() {
+        if (!ScreenShareStartPolicy.shouldReleaseBeforeStart(projection != null, virtualDisplay != null)) {
+            return;
+        }
+        AppLog.i(TAG, "releasing the previous capture session before starting a new one");
+        stopAudio();
+        releaseDisplay();
+        MediaProjection previous = projection;
+        MediaProjection.Callback callback = projectionCallback;
+        projection = null;
+        projectionCallback = null;
+        if (previous != null) {
+            if (callback != null) {
+                try {
+                    previous.unregisterCallback(callback);
+                } catch (Exception e) {
+                    AppLog.w(TAG, "unregisterCallback failed", e);
+                }
+            }
+            try {
+                previous.stop();
+            } catch (Exception e) {
+                AppLog.w(TAG, "projection.stop failed", e);
+            }
+        }
+        lastEncodeMs = 0;
+        systemAudioActive = false;
+        ScreenShareStatus.reset();
     }
 
     @Override
@@ -180,6 +225,7 @@ public class ScreenShareService extends Service {
             }
             projection = null;
         }
+        projectionCallback = null;
         if (captureThread != null) {
             captureThread.quitSafely();
             captureThread = null;
@@ -231,13 +277,14 @@ public class ScreenShareService extends Service {
         }
         // Required before createVirtualDisplay() on API 34+, and the only way to
         // learn that the user revoked the share from the system UI.
-        projection.registerCallback(new MediaProjection.Callback() {
+        projectionCallback = new MediaProjection.Callback() {
             @Override
             public void onStop() {
                 AppLog.i(TAG, "projection stopped by the system");
                 stopSelf();
             }
-        }, captureHandler);
+        };
+        projection.registerCallback(projectionCallback, captureHandler);
 
         if (!createDisplay()) {
             return;

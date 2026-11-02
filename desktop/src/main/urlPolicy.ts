@@ -47,3 +47,17 @@ export function classifyUrl(targetUrl: string, serverUrl?: string): UrlDispositi
 export function isAppPopup(targetUrl: string): boolean {
   return targetUrl === '' || targetUrl === 'about:blank'
 }
+
+/**
+ * Whether a navigation inside the app popup must be blocked.
+ *
+ * The popup inherits this window's `preload`, so a page that opens
+ * `about:blank` and then assigns `location` would run the whole native bridge
+ * (`ClawBenchNative`: server list, SSH password, file download) on a foreign
+ * origin. The popup only ever needs its blank document — the picture is drawn
+ * into it through Teleport from the opener — so anything else is refused.
+ */
+export function shouldBlockPopupNavigation(targetUrl: string): boolean {
+  return !isAppPopup(targetUrl)
+}
+

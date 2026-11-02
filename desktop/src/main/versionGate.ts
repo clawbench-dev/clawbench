@@ -2,11 +2,13 @@ import { app, dialog, type BrowserWindow } from 'electron'
 import { fetchDesktopLatest, type DesktopLatest } from './updater'
 import {
   downloadAndInstall,
+  fetchNpmIntegrity,
   installPayload,
   restartInto,
   appRoot,
 } from './install'
 import { recordError } from './clientLog'
+import { trustedFingerprintFor } from './certificateTrust'
 import { compareVersions, shouldGate } from '../shared/version'
 import { resolveNativeLanguage, versionGateLabels } from './labels'
 
@@ -105,8 +107,15 @@ export async function checkVersionGate(url: string, gen: number): Promise<Versio
 
   let latest: DesktopLatest | null
   try {
-    latest = await fetchDesktopLatest(url)
-  } catch {
+    // The certificate the user accepted for this server, if any. Without it a
+    // self-signed server gets no upgrade offered (the request fails
+    // verification) — the same outcome as before pinning existed, and the safe
+    // one: this response decides which binary is downloaded and run.
+    latest = await fetchDesktopLatest(url, trustedFingerprintFor(url))
+  } catch (err) {
+    // fetchDesktopLatest answers null for every expected failure; reaching here
+    // means something unexpected, which must not vanish into a silent "no gate".
+    recordError('Gate', err)
     return null
   }
   if (!latest) return null
@@ -168,7 +177,12 @@ export async function installServerVersion(
   let payloadErr: unknown = null
   if (process.platform !== 'darwin' && info.payloadUrls.length > 0) {
     try {
-      await installPayload(info.payloadUrls, info.serverVersion, appRoot())
+      // The payload is the app itself (`resources/app.asar`). The registry
+      // publishes a checksum for the tarball, so it is checked before the
+      // archive is unpacked; when the registry cannot answer, the download is
+      // still https-only (see downloadFirstAvailable).
+      const integrity = await fetchNpmIntegrity(info.payloadUrls, info.serverVersion)
+      await installPayload(info.payloadUrls, info.serverVersion, appRoot(), undefined, integrity)
       installed = true
     } catch (err) {
       console.error('[gate] payload install failed, falling back to full download:', err)

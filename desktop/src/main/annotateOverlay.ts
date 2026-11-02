@@ -148,17 +148,45 @@ export function isAnnotateOverlayOpen(): boolean {
   return !!win && !win.isDestroyed()
 }
 
+/**
+ * Whether an IPC message came from the app window.
+ *
+ * The same preload is loaded by the share page, which renders conference data —
+ * exactly the kind of content that must not be able to open a full-screen,
+ * always-on-top, click-swallowing overlay. `remoteControl` guards its channels
+ * the same way and for the same reason.
+ */
+function isMainSender(sender: unknown): boolean {
+  const main = getMainWindow()
+  return !!main && sender === main.webContents
+}
+
+/** Whether an IPC message came from the annotation overlay document. */
+function isOverlaySender(sender: unknown): boolean {
+  return !!win && !win.isDestroyed() && sender === win.webContents
+}
+
 export function registerAnnotateIpc(): void {
-  ipcMain.handle('native:annotate-open', () => openAnnotateOverlay())
-  ipcMain.handle('native:annotate-close', () => closeAnnotateOverlay())
+  ipcMain.handle('native:annotate-open', (e) => {
+    if (!isMainSender(e.sender)) return { opened: false, inkViaControl: annotateHiddenFromCapture() }
+    return openAnnotateOverlay()
+  })
+  ipcMain.handle('native:annotate-close', (e) => {
+    if (!isMainSender(e.sender)) return
+    closeAnnotateOverlay()
+  })
   // Stroke frames from the overlay document. Dropped when the overlay is part
   // of the picture: forwarding them would draw every stroke twice.
-  ipcMain.on('annotate:ink', (_e, msg: unknown) => {
+  ipcMain.on('annotate:ink', (e, msg: unknown) => {
+    if (!isOverlaySender(e.sender)) return
     if (typeof msg !== 'string') return
     if (!annotateHiddenFromCapture()) return
     getMainWindow()?.webContents.send('native:annotate-ink', msg)
   })
-  ipcMain.on('annotate:close', () => closeAnnotateOverlay())
+  ipcMain.on('annotate:close', (e) => {
+    if (!isOverlaySender(e.sender)) return
+    closeAnnotateOverlay()
+  })
 }
 
 /** Test seam: drop the window reference without touching Electron. */

@@ -26,6 +26,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { getMainWindow } from './window'
 import { currentCaptureDisplayId } from './capture'
+import { record } from './clientLog'
 
 /** Physical-pixel rectangle of the captured display on the virtual desktop. */
 export interface DisplayBounds {
@@ -95,6 +96,18 @@ let child: ChildProcessWithoutNullStreams | null = null
 let pending: Array<(ok: boolean) => void> = []
 let buffer = ''
 
+const TAG = 'RemoteControl'
+
+/**
+ * How long one injected event may wait for the helper's reply.
+ *
+ * The helper can be alive but unable to answer — blocked behind an elevated
+ * (UIPI) window, or with its stdin pipe wedged. Pointer moves arrive at IPC
+ * rate, so without a deadline every move would leave a promise and a queue
+ * entry behind for as long as the wedge lasts.
+ */
+const EVENT_TIMEOUT_MS = 2000
+
 /** Where the helper lives, packaged and in development. */
 function helperPath(): string {
   const name = process.platform === 'win32' ? 'input-helper.exe' : 'input-helper'
@@ -156,33 +169,65 @@ function ensureHelper(): ChildProcessWithoutNullStreams | null {
 
 /** Stops the helper. Called when the app quits. */
 export function stopRemoteControlHelper(): void {
-  if (!child) return
+  resetHelper()
+}
+
+/**
+ * Kill the helper and fail every request still waiting on it.
+ *
+ * A wedged helper cannot be recovered in place: replies are correlated by
+ * POSITION, so a request that leaves the queue without its reply would shift
+ * every later reply onto the wrong event — the pointer would keep working, but
+ * driven by stale coordinates. Dropping the whole pipeline and spawning a fresh
+ * process is the only state that is known to be consistent, and it costs one
+ * spawn.
+ */
+function resetHelper(): void {
+  const proc = child
+  child = null
+  buffer = ''
+  const waiters = pending
+  pending = []
+  for (const w of waiters) w(false)
+  if (!proc) return
   try {
-    child.stdin.end()
-    child.kill()
+    proc.stdin.end()
+    proc.kill()
   } catch {
     /* already gone */
   }
-  child = null
 }
 
 /**
  * Applies one event.
  *
  * Returns false when the helper is missing or rejected the event (typically
- * UIPI: the focused window runs elevated and we do not).
+ * UIPI: the focused window runs elevated and we do not), and when the helper
+ * stops answering (see EVENT_TIMEOUT_MS).
  */
 export async function applyRemoteControlEvent(ev: RemoteControlEvent): Promise<boolean> {
   const proc = ensureHelper()
   if (!proc) return false
   const line = JSON.stringify(ev)
   return new Promise<boolean>((resolve) => {
-    pending.push(resolve)
+    let settled = false
+    const finish = (ok: boolean) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(ok)
+    }
+    const timer = setTimeout(() => {
+      record('W', TAG, `input helper did not answer within ${EVENT_TIMEOUT_MS}ms — restarting it`)
+      resetHelper()
+    }, EVENT_TIMEOUT_MS)
+    pending.push(finish)
     try {
       proc.stdin.write(line + '\n')
     } catch {
-      pending.pop()
-      resolve(false)
+      const i = pending.indexOf(finish)
+      if (i >= 0) pending.splice(i, 1)
+      finish(false)
     }
   })
 }

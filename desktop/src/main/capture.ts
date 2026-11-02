@@ -42,8 +42,23 @@ let pending: PendingCapture | null = null
  * The annotation overlay has to cover THAT screen, not the primary one — a
  * two-monitor host would otherwise draw on the wrong desktop. Empty when the
  * platform does not say (Wayland hands out a nameless placeholder).
+ *
+ * Cleared when publishing stops. Nothing else ever overwrites it, so a stale
+ * value would survive the session and send the next annotation overlay to a
+ * screen that is no longer being shared (visible only on a multi-monitor host,
+ * as "the ink went to the monitor I cannot see").
  */
 let capturedDisplayId = ''
+
+/**
+ * Whether the renderer says it is publishing right now.
+ *
+ * `setDisplayMediaRequestHandler` gives no handle on the resulting stream, so
+ * the stream's end is not observable here. The publishing toggle the renderer
+ * already sends (it exists to keep background throttling off) is the signal
+ * that the session started and stopped.
+ */
+let publishing = false
 
 /** Thumbnail size for the picker. Small on purpose: this crosses IPC as base64. */
 const THUMB_SIZE = { width: 320, height: 180 }
@@ -132,10 +147,16 @@ export function registerCaptureHandlers(getWindow: () => WebContents | null): vo
   ipcMain.handle('native:get-audio-capture-support', () => JSON.stringify(audioCaptureSupport()))
 
   ipcMain.handle('native:set-publishing-active', (_e, active: boolean) => {
+    const isPublishing = active === true
+    publishing = isPublishing
+    // Stopping the share ends the session: forget which screen it was, so the
+    // annotation overlay falls back to the primary display instead of covering
+    // whatever monitor happened to be shared last.
+    if (!isPublishing) capturedDisplayId = ''
     const wc = getWindow()
     if (!wc) return
     try {
-      wc.setBackgroundThrottling(!(active === true))
+      wc.setBackgroundThrottling(!isPublishing)
     } catch (e) {
       record('W', TAG, `setBackgroundThrottling failed: ${String(e)}`)
     }
@@ -174,9 +195,15 @@ export function decideCapture(
   return { sourceId: target.id, withAudio }
 }
 
-/** Display id of the screen currently being captured ('' when unknown). */
+/**
+ * Display id of the screen currently being captured ('' when unknown).
+ *
+ * Only meaningful while a share is running: after the session ends the id is
+ * cleared, and a consumer that asks in between gets '' rather than the last
+ * screen that happened to be shared.
+ */
 export function currentCaptureDisplayId(): string {
-  return capturedDisplayId
+  return publishing ? capturedDisplayId : ''
 }
 
 /** Test seam: read the pending declaration. */
@@ -193,6 +220,7 @@ export function _setPendingCaptureForTest(v: PendingCapture | null): void {
 export function _resetCaptureForTest(): void {
   pending = null
   capturedDisplayId = ''
+  publishing = false
 }
 
 /**

@@ -1,15 +1,20 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('electron', () => ({
   app: { getVersion: () => '1.0.0', isPackaged: true },
 }))
 
-vi.mock('./install', () => ({
+vi.mock('./httpGet', () => ({
   httpGetBuffer: vi.fn(),
 }))
 
-import { platformKey, latestInfoUrl, fetchDesktopLatest } from './updater'
-import { httpGetBuffer } from './install'
+vi.mock('./clientLog', () => ({
+  recordError: vi.fn(),
+}))
+
+import { platformKey, latestInfoUrl, fetchDesktopLatest, classifyFetchFailure } from './updater'
+import { httpGetBuffer } from './httpGet'
+import { recordError } from './clientLog'
 
 describe('platformKey', () => {
   it('maps the platforms the release workflow builds', () => {
@@ -33,6 +38,12 @@ describe('latestInfoUrl', () => {
 })
 
 describe('fetchDesktopLatest', () => {
+  beforeEach(() => {
+    // Call history must not leak between cases: the pinning tests assert how
+    // many attempts were made.
+    ;(httpGetBuffer as ReturnType<typeof vi.fn>).mockClear()
+  })
+
   it('returns the server version and platform URLs', async () => {
     ;(httpGetBuffer as ReturnType<typeof vi.fn>).mockResolvedValue(
       Buffer.from(JSON.stringify({
@@ -49,18 +60,50 @@ describe('fetchDesktopLatest', () => {
     expect(info!.urls).toEqual(['https://mirror/x.zip', 'https://github.com/x.zip'])
   })
 
-  it('skips certificate verification for the server it is asking', async () => {
-    // A self-hosted server may be self-signed. The window was told to trust it,
-    // but the main process has its own TLS stack — without the carve-out the
-    // request throws and the check reads as "nothing to offer".
+  it('verifies the server certificate normally when none is remembered', async () => {
+    // A self-hosted server may be self-signed, but the main process must not
+    // simply stop checking: the answer decides which binary is downloaded and
+    // run. With no accepted fingerprint the request is verified like any other
+    // and a self-signed server reads as "nothing to offer" — the behaviour
+    // before the upgrade check ever gained an insecure switch.
     ;(httpGetBuffer as ReturnType<typeof vi.fn>).mockResolvedValue(
       Buffer.from(JSON.stringify({ version: 'v2.0.0', downloads: { 'linux-x64': ['https://mirror/x.zip'] } })),
     )
     await fetchDesktopLatest('https://192.168.1.50:20000')
-    expect(httpGetBuffer).toHaveBeenCalledWith(
-      'https://192.168.1.50:20000/api/desktop/latest',
-      { insecure: true },
+    expect(httpGetBuffer).toHaveBeenCalledWith('https://192.168.1.50:20000/api/desktop/latest')
+    expect(httpGetBuffer).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries pinned to the accepted certificate when plain verification fails', async () => {
+    const fn = httpGetBuffer as ReturnType<typeof vi.fn>
+    fn.mockRejectedValueOnce(new Error('self signed certificate'))
+    fn.mockResolvedValueOnce(
+      Buffer.from(JSON.stringify({ version: 'v2.0.0', downloads: { 'linux-x64': ['https://mirror/x.zip'] } })),
     )
+
+    const info = await fetchDesktopLatest('https://192.168.1.50:20000', 'sha256/AAAA')
+
+    expect(info).not.toBeNull()
+    expect(info!.version).toBe('v2.0.0')
+    expect(fn).toHaveBeenLastCalledWith('https://192.168.1.50:20000/api/desktop/latest', {
+      pinnedFingerprint: 'sha256/AAAA',
+    })
+  })
+
+  it('returns null when the pinned certificate does not match either', async () => {
+    // The whole point: an answer from a certificate the user never accepted must
+    // not become a version + download URL to run.
+    const fn = httpGetBuffer as ReturnType<typeof vi.fn>
+    fn.mockRejectedValueOnce(new Error('self signed certificate'))
+    const mismatch = new Error('certificate does not match the pinned one for https://192.168.1.50:20000')
+    mismatch.name = 'CertificatePinMismatchError'
+    fn.mockRejectedValueOnce(mismatch)
+
+    expect(await fetchDesktopLatest('https://192.168.1.50:20000', 'sha256/AAAA')).toBeNull()
+    // And it must leave a trace: "upgrades silently stopped being offered" is
+    // otherwise indistinguishable from "this server publishes no release".
+    const logged = (recordError as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1] as string
+    expect(logged).toContain('pinned certificate mismatch')
   })
 
   it('returns null when the server has no release for this platform', async () => {
@@ -138,5 +181,25 @@ describe('fetchDesktopLatest', () => {
 
     const info = await fetchDesktopLatest('https://example.com:20000')
     expect(info!.payloadUrls).toEqual([])
+  })
+})
+
+describe('classifyFetchFailure', () => {
+  it('separates a changed certificate from an untrusted one and from a dead server', () => {
+    // All three end in "no update offered"; only the log can tell them apart,
+    // and each points at a different fix.
+    const pin = Object.assign(new Error('certificate does not match the pinned one'), {
+      name: 'CertificatePinMismatchError',
+    })
+    expect(classifyFetchFailure(pin)).toContain('pinned certificate mismatch')
+
+    expect(classifyFetchFailure(new Error('self signed certificate in certificate chain'))).toContain(
+      'TLS verification failed',
+    )
+    expect(classifyFetchFailure(new Error('connect ECONNREFUSED 192.168.1.50:20000'))).toContain(
+      'server unreachable',
+    )
+    // Anything else is passed through unchanged rather than mislabelled.
+    expect(classifyFetchFailure(new Error('unexpected thing'))).toBe('unexpected thing')
   })
 })

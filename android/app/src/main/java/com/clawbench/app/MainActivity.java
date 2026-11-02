@@ -318,6 +318,17 @@ public class MainActivity extends AppCompatActivity {
 
     /** Start the consent chain. Called from the bridge. */
     void requestScreenCapture(ScreenShareOptions options) {
+        // A second start while one is live would create a second
+        // MediaProjection and overwrite the service's projection/imageReader/
+        // virtualDisplay without releasing the old ones — the abandoned display
+        // can never be released afterwards, so the system's "screen is being
+        // shared" indicator stays on until the process dies. A WebView reload
+        // clears the page's own state and makes this reachable in normal use.
+        if (ScreenShareStartPolicy.shouldIgnoreStart(ScreenShareStatus.getState())) {
+            AppLog.i(TAG, "screen share already "
+                    + ScreenShareStatus.getState() + " — ignoring the start request");
+            return;
+        }
         pendingScreenShareOptions = options;
         ScreenShareStatus.beginRequesting();
         if (options.systemAudio

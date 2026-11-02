@@ -38,6 +38,8 @@ const state = vi.hoisted(() => ({
   events: {} as Record<string, (...a: unknown[]) => void>,
   sent: [] as Array<{ channel: string; payload: unknown }>,
   loadFileRejects: false,
+  /** The app window's webContents; IPC from anything else must be refused. */
+  mainWebContents: { send: (_c: string, _p: unknown) => {} } as { send: (c: string, p: unknown) => void },
 }))
 
 vi.mock('electron', () => ({
@@ -90,9 +92,15 @@ vi.mock('./capture', () => ({
   currentCaptureDisplayId: () => state.captureDisplayId,
 }))
 
-vi.mock('./window', () => ({
-  getMainWindow: () => ({ webContents: { send: (channel: string, payload: unknown) => state.sent.push({ channel, payload }) } }),
-}))
+vi.mock('./window', () => {
+  // One stable object: the IPC guards compare the sender by IDENTITY.
+  state.mainWebContents = {
+    send: (channel: string, payload: unknown) => {
+      state.sent.push({ channel, payload })
+    },
+  }
+  return { getMainWindow: () => ({ webContents: state.mainWebContents }) }
+})
 
 /** The real platform, restored after every test. */
 const REAL_PLATFORM = process.platform
@@ -107,6 +115,14 @@ async function load(platform: NodeJS.Platform = 'linux') {
   vi.resetModules()
   Object.defineProperty(process, 'platform', { value: platform, configurable: true })
   return await import('./annotateOverlay')
+}
+
+
+/** The overlay window's own webContents, as an IPC event sender. */
+function overlaySender(): { sender: unknown } {
+  const w = state.windows.at(-1)
+  if (!w) throw new Error('no overlay window')
+  return { sender: w.webContents }
 }
 
 afterEach(() => {
@@ -234,7 +250,8 @@ describe('ink forwarding', () => {
   it('forwards strokes to the renderer when the overlay is hidden from capture', async () => {
     const mod = await load('win32')
     mod.registerAnnotateIpc()
-    state.events['annotate:ink']?.({}, '{"t":"ink","phase":"move","x":0.5,"y":0.5}')
+    await mod.openAnnotateOverlay()
+    state.events['annotate:ink']?.(overlaySender(), '{"t":"ink","phase":"move","x":0.5,"y":0.5}')
     expect(state.sent).toEqual([
       { channel: 'native:annotate-ink', payload: '{"t":"ink","phase":"move","x":0.5,"y":0.5}' },
     ])
@@ -243,14 +260,64 @@ describe('ink forwarding', () => {
   it('drops strokes on Linux, where the ink is already in the picture', async () => {
     const mod = await load('linux')
     mod.registerAnnotateIpc()
-    state.events['annotate:ink']?.({}, '{"t":"ink","phase":"move","x":0.5,"y":0.5}')
+    await mod.openAnnotateOverlay()
+    state.events['annotate:ink']?.(overlaySender(), '{"t":"ink","phase":"move","x":0.5,"y":0.5}')
     expect(state.sent).toEqual([])
   })
 
   it('ignores a non-string frame instead of forwarding it', async () => {
     const mod = await load('win32')
     mod.registerAnnotateIpc()
-    state.events['annotate:ink']?.({}, { t: 'ink' })
+    await mod.openAnnotateOverlay()
+    state.events['annotate:ink']?.(overlaySender(), { t: 'ink' })
     expect(state.sent).toEqual([])
+  })
+})
+
+describe('IPC sender checks', () => {
+  it('refuses to open the overlay for anything but the app window', async () => {
+    // The same preload runs in the share page, which renders conference data.
+    // Without this check that page could raise a full-screen, always-on-top,
+    // transparent window that swallows every click on the desktop.
+    const mod = await load()
+    mod.registerAnnotateIpc()
+
+    const res = await state.handlers['native:annotate-open']({ sender: { id: 999 } })
+
+    expect(res).toEqual({ opened: false, inkViaControl: false })
+    expect(state.windows).toHaveLength(0)
+  })
+
+  it('opens the overlay for the app window', async () => {
+    const mod = await load()
+    mod.registerAnnotateIpc()
+
+    const res = await state.handlers['native:annotate-open']({ sender: state.mainWebContents })
+
+    expect(res).toEqual({ opened: true, inkViaControl: false })
+    expect(state.windows).toHaveLength(1)
+  })
+
+  it('drops strokes that do not come from the overlay document', async () => {
+    // Otherwise any page holding the preload could forge the host's ink.
+    const mod = await load('win32')
+    mod.registerAnnotateIpc()
+    await mod.openAnnotateOverlay()
+
+    state.events['annotate:ink']?.({ sender: { id: 42 } }, '{"t":"ink","phase":"move"}')
+
+    expect(state.sent).toEqual([])
+  })
+
+  it('closes the overlay only when the overlay itself asks', async () => {
+    const mod = await load()
+    mod.registerAnnotateIpc()
+    await mod.openAnnotateOverlay()
+
+    state.events['annotate:close']?.({ sender: state.mainWebContents })
+    expect(state.windows[0].close).not.toHaveBeenCalled()
+
+    state.events['annotate:close']?.(overlaySender())
+    expect(state.windows[0].close).toHaveBeenCalled()
   })
 })

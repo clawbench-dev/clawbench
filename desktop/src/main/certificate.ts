@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog } from 'electron'
 import { record } from './clientLog'
 import { resolveNativeLanguage, certificateLabels } from './labels'
 import { decideCertificateAction, isRememberedCertificate, originOf } from './certificatePolicy'
+import { rememberedCertificates } from './certificateTrust'
 import { getStore } from './store'
 
 /**
@@ -34,17 +35,16 @@ import { getStore } from './store'
 
 const TAG = 'Cert'
 
-/** Certificates the user has accepted, `origin -> fingerprint`. */
-function rememberedCertificates(): Record<string, string> {
-  return getStore().get('trustedCertificates') ?? {}
-}
-
 /**
  * Remember the certificate the user just accepted.
  *
  * Stored by origin rather than hostname so a different port is a different
  * server, and `originOf` folds `wss://` onto `https://` so the WebSocket of a
  * trusted page is covered by the same entry.
+ *
+ * The read side lives in `certificateTrust.ts`: the upgrade check needs the
+ * same answer in a context that cannot import this module (it pulls in
+ * `electron`).
  */
 function rememberCertificate(url: string, fingerprint: string): void {
   const origin = originOf(url)
