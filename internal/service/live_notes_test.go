@@ -1079,11 +1079,15 @@ func TestAppendLiveNoteSegment_RefreshesUpdatedAt(t *testing.T) {
 
 // ── History ─────────────────────────────────────────────────────────────────
 
+// testMeetingDirName is the folder name the writer produces for the meetings
+// these tests lay out; the reader is always addressed by this same name.
+const testMeetingDirName = "2026-10-31-1732-周会-a1b2c3"
+
 // writeMeetingFolder lays out one meeting folder the way the writer does, so
 // the history reader is tested against the real layout rather than a guess.
-func writeMeetingFolder(t *testing.T, project, name string, files map[string]string) string {
+func writeMeetingFolder(t *testing.T, project string, files map[string]string) string {
 	t.Helper()
-	dir := filepath.Join(project, filepath.FromSlash(LiveNotesDir), name)
+	dir := filepath.Join(project, filepath.FromSlash(LiveNotesDir), testMeetingDirName)
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "audio"), 0o755))
 	for file, body := range files {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, file), []byte(body), 0o644))
@@ -1093,14 +1097,14 @@ func writeMeetingFolder(t *testing.T, project, name string, files map[string]str
 
 func TestReadLiveNoteArtifact_ReturnsEachKind(t *testing.T) {
 	project := t.TempDir()
-	writeMeetingFolder(t, project, "2026-10-31-1732-周会-a1b2c3", map[string]string{
+	writeMeetingFolder(t, project, map[string]string{
 		"minutes.md":            "MINUTES",
 		"transcript.vtt":        "RAW",
 		"transcript-revised.md": "REVISED",
 	})
 
 	for kind, want := range map[string]string{"minutes": "MINUTES", "transcript": "RAW", "revised": "REVISED"} {
-		got, err := ReadLiveNoteArtifact(project, "2026-10-31-1732-周会-a1b2c3", kind)
+		got, err := ReadLiveNoteArtifact(project, testMeetingDirName, kind)
 		require.NoError(t, err, kind)
 		assert.Equal(t, want, got)
 	}
@@ -1108,28 +1112,28 @@ func TestReadLiveNoteArtifact_ReturnsEachKind(t *testing.T) {
 
 func TestReadLiveNoteArtifact_RejectsTraversalAndUnknownKinds(t *testing.T) {
 	project := t.TempDir()
-	writeMeetingFolder(t, project, "2026-10-31-1732-周会-a1b2c3", map[string]string{"minutes.md": "MINUTES"})
+	writeMeetingFolder(t, project, map[string]string{"minutes.md": "MINUTES"})
 
 	for _, dir := range []string{"", ".", "..", "../etc", "2026-10-31-1732-周会-a1b2c3/../..", "/etc"} {
 		_, err := ReadLiveNoteArtifact(project, dir, "minutes")
 		assert.ErrorIs(t, err, ErrLiveNoteSessionNotFound, "dir=%q must not resolve", dir)
 	}
-	_, err := ReadLiveNoteArtifact(project, "2026-10-31-1732-周会-a1b2c3", "audio")
+	_, err := ReadLiveNoteArtifact(project, testMeetingDirName, "audio")
 	assert.ErrorIs(t, err, ErrLiveNoteArtifactKind)
-	_, err = ReadLiveNoteArtifact(project, "2026-10-31-1732-周会-a1b2c3", "transcript")
+	_, err = ReadLiveNoteArtifact(project, testMeetingDirName, "transcript")
 	assert.ErrorIs(t, err, ErrLiveNoteSessionNotFound, "the file was never written")
 }
 
 func TestReadLiveNoteArtifact_RejectsOversizedFile(t *testing.T) {
 	project := t.TempDir()
-	dir := writeMeetingFolder(t, project, "2026-10-31-1732-周会-a1b2c3", nil)
+	dir := writeMeetingFolder(t, project, nil)
 	require.NoError(t, os.WriteFile(
 		filepath.Join(dir, "minutes.md"),
 		bytes.Repeat([]byte("x"), liveNoteArtifactMaxBytes+1),
 		0o644,
 	))
 
-	_, err := ReadLiveNoteArtifact(project, "2026-10-31-1732-周会-a1b2c3", "minutes")
+	_, err := ReadLiveNoteArtifact(project, testMeetingDirName, "minutes")
 	assert.ErrorIs(t, err, ErrLiveNoteArtifactTooLarge)
 }
 
@@ -1186,12 +1190,12 @@ func TestBuildLiveNotesVTT_Empty(t *testing.T) {
 // SubRip or Markdown files older builds wrote.
 func TestReadLiveNoteArtifactWithName_TranscriptIsVTT(t *testing.T) {
 	project := t.TempDir()
-	writeMeetingFolder(t, project, "2026-10-31-1732-周会-a1b2c3", map[string]string{
+	writeMeetingFolder(t, project, map[string]string{
 		"transcript.vtt": "WEBVTT\n\nmic\n00:00:00.000 --> 00:00:01.000\n<v 我>新\n",
 		"transcript.srt": "1\n00:00:00,000 --> 00:00:01,000\n我：旧\n",
 	})
 
-	body, file, err := ReadLiveNoteArtifactWithName(project, "2026-10-31-1732-周会-a1b2c3", "transcript")
+	body, file, err := ReadLiveNoteArtifactWithName(project, testMeetingDirName, "transcript")
 	require.NoError(t, err)
 	assert.Equal(t, "transcript.vtt", file)
 	assert.Contains(t, body, "<v 我>新")
@@ -1199,12 +1203,12 @@ func TestReadLiveNoteArtifactWithName_TranscriptIsVTT(t *testing.T) {
 
 func TestReadLiveNoteArtifactWithName_IgnoresLegacyTranscripts(t *testing.T) {
 	project := t.TempDir()
-	writeMeetingFolder(t, project, "2026-10-31-1732-周会-a1b2c3", map[string]string{
+	writeMeetingFolder(t, project, map[string]string{
 		"transcript.srt": "1\n00:00:00,000 --> 00:00:01,000\n我：旧\n",
 		"transcript.md":  "# 转写 · 旧会议\n",
 	})
 
-	_, _, err := ReadLiveNoteArtifactWithName(project, "2026-10-31-1732-周会-a1b2c3", "transcript")
+	_, _, err := ReadLiveNoteArtifactWithName(project, testMeetingDirName, "transcript")
 	assert.ErrorIs(t, err, ErrLiveNoteSessionNotFound, "no compatibility layer for pre-VTT meetings")
 }
 
@@ -1379,7 +1383,8 @@ func TestCloseOrphanedLiveNotes_ClosesWhatTheCrashedProcessLeftOpen(t *testing.T
 	require.NoError(t, StartLiveNote("crashed", pid, "崩溃的会", 1_700_000_000_000))
 	// Last write ten minutes in: the closest thing to "when it really stopped".
 	_, err = store.WriteExec(
-		`UPDATE live_notes SET updated_at = '2023-11-14 22:23:20' WHERE token = 'crashed'`)
+		`UPDATE live_notes SET updated_at = '2023-11-14 22:23:20' WHERE token = 'crashed'`,
+	)
 	require.NoError(t, err)
 	require.NoError(t, StartLiveNote("done", pid, "已结束", 1_700_000_000_000))
 	require.NoError(t, EndLiveNote("done", 1_700_000_030_000))
@@ -1408,11 +1413,13 @@ func TestCloseOrphanedLiveNotes_ClampsTheFinishLineToTheMeetingWindow(t *testing
 	require.NoError(t, err)
 	require.NoError(t, StartLiveNote("backdated", pid, "倒挂", 1_700_000_500_000))
 	_, err = store.WriteExec(
-		`UPDATE live_notes SET updated_at = '2023-11-14 22:13:20' WHERE token = 'backdated'`)
+		`UPDATE live_notes SET updated_at = '2023-11-14 22:13:20' WHERE token = 'backdated'`,
+	)
 	require.NoError(t, err)
 	require.NoError(t, StartLiveNote("ahead", pid, "时钟超前", 1_700_000_000_000))
 	_, err = store.WriteExec(
-		`UPDATE live_notes SET updated_at = '2030-01-01 00:00:00' WHERE token = 'ahead'`)
+		`UPDATE live_notes SET updated_at = '2030-01-01 00:00:00' WHERE token = 'ahead'`,
+	)
 	require.NoError(t, err)
 
 	_, err = CloseOrphanedLiveNotes(1_700_009_999_000)

@@ -13,7 +13,7 @@ import (
 // providerBoundConfig returns a config shaped exactly like the one the
 // ai_summary migration leaves on disk: a provider reference plus a model, and
 // no legacy ai_summary.api endpoint.
-func providerBoundConfig(t *testing.T, baseURL string) (model.Config, int64) {
+func providerBoundConfig(t *testing.T, baseURL string) model.Config {
 	t.Helper()
 	pid := int64(7)
 	model.ReplaceProviders([]*model.Provider{{
@@ -28,7 +28,7 @@ func providerBoundConfig(t *testing.T, baseURL string) (model.Config, int64) {
 	cfg := model.Config{}
 	cfg.AISummary.ProviderID = &pid
 	cfg.AISummary.Model = "MiniMax-M2.7"
-	return cfg, pid
+	return cfg
 }
 
 // A provider-bound summary model must build an LLM summarizer even though the
@@ -42,7 +42,7 @@ func providerBoundConfig(t *testing.T, baseURL string) (model.Config, int64) {
 // silently degraded to the simple cleaner while recommendation / auto-title /
 // /btw / live notes (which read SummaryConfigured) kept working.
 func TestBuildAISummarizer_UsesProviderBinding(t *testing.T) {
-	cfg, _ := providerBoundConfig(t, "https://gw.example/anthropic")
+	cfg := providerBoundConfig(t, "https://gw.example/anthropic")
 
 	s := buildAISummarizer(cfg)
 	require.NotNil(t, s, "a bound provider is a configured summary model")
@@ -80,7 +80,7 @@ func TestBuildAISummarizer_MissingProviderRowIsUnconfigured(t *testing.T) {
 // endpoint as the active one and kept a stale endpoint alive behind the
 // provider binding.
 func TestApplyLegacySummaryFallback_SkipsWhenProviderBound(t *testing.T) {
-	cfg, _ := providerBoundConfig(t, "https://gw.example/anthropic")
+	cfg := providerBoundConfig(t, "https://gw.example/anthropic")
 
 	applyLegacySummaryFallback(&cfg, "https://legacy.example/v1", "sk-legacy", "legacy-model", "openai")
 

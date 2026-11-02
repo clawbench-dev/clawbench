@@ -132,10 +132,7 @@ func TestBuildLiveNotesVTT_NoBaseDropsFileEvents(t *testing.T) {
 // they keep their exact text and position.
 func TestMergeLiveNoteFileEvents_InsertsByTimestamp(t *testing.T) {
 	base := int64(1_700_000_000_000)
-	revised := strings.Join([]string{
-		"[00:00] 我：先看接口文档",
-		"[01:00] 张三：我觉得可以",
-	}, "\n")
+	revised := "[00:00] 我：先看接口文档" + "\n" + "[01:00] 张三：我觉得可以"
 
 	got := MergeLiveNoteFileEvents(revised, []LiveNoteFile{
 		{Path: "docs/a.md", OpenedAt: base + 30_000, ClosedAt: base + 90_000},

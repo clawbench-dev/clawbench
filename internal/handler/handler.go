@@ -44,6 +44,10 @@ const (
 	jsonMaxCount    = "MaxCount"
 	jsonSessions    = "sessions"
 	jsonCommands    = "commands"
+	// jsonFile is the "which file does this payload point at" key (artifact
+	// name, watched file). Distinct from entryTypeFile / shareKindFile, which
+	// are VALUES classifying a file, not a key.
+	jsonFile = "file"
 )
 
 // loc returns the Localizer for the current request.

@@ -1539,7 +1539,7 @@ func TestApplyDefaults_WeChatDoesNotDerivePushMode(t *testing.T) {
 }
 
 // A hand-edited config bypasses the PATCH validation, so ApplyDefaults is the
-// last line of defence for the two identity fields: the nickname is trimmed
+// last line of defense for the two identity fields: the nickname is trimmed
 // (an empty value means "use the fallback") and the profile stays bounded
 // (it is injected into every agent system prompt).
 func TestApplyDefaults_UserIdentity(t *testing.T) {

@@ -328,7 +328,7 @@ type doubaoStreamSession struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// writeMu serialises frames on the wire (order matters: audio packets and
+	// writeMu serializes frames on the wire (order matters: audio packets and
 	// the end marker share one sequence space) without holding the state lock
 	// across the network write.
 	writeMu sync.Mutex
@@ -454,7 +454,7 @@ type doubaoStreamError struct {
 func doubaoErrorFromPayload(payload []byte) error {
 	var e doubaoStreamError
 	if err := json.Unmarshal(payload, &e); err != nil {
-		return fmt.Errorf("stt: doubao stream error: %s", truncate(payload, 256))
+		return fmt.Errorf("stt: doubao stream error: %s", truncate(payload))
 	}
 	parts := make([]string, 0, 3)
 	if code := rawJSONText(e.Code); code != "" {
@@ -467,7 +467,7 @@ func doubaoErrorFromPayload(payload []byte) error {
 		parts = append(parts, msg)
 	}
 	if len(parts) == 0 {
-		return fmt.Errorf("stt: doubao stream error: %s", truncate(payload, 256))
+		return fmt.Errorf("stt: doubao stream error: %s", truncate(payload))
 	}
 	return fmt.Errorf("stt: doubao stream error: %s", strings.Join(parts, ": "))
 }

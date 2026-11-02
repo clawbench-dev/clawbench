@@ -249,7 +249,7 @@ func TestProviderWireAPIPersistsAndDefaults(t *testing.T) {
 	setupProvidersDB(t)
 
 	// Unset means the Responses API, which is what codex always got before the
-	// field existed — an old row must not change behaviour.
+	// field existed — an old row must not change behavior.
 	def, err := service.CreateProvider(model.Provider{Name: "Default", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://x", APIKey: "k"})
 	require.NoError(t, err)
 	assert.Equal(t, model.ProviderWireResponses, def.WireAPI)

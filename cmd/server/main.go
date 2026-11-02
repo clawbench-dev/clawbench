@@ -1258,7 +1258,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		slog.Error("failed to load model providers", "error", err)
 	}
 
-	// Authoritative model catalogue: load the last snapshot synchronously (so a
+	// Authoritative model catalog: load the last snapshot synchronously (so a
 	// cold start still has a list) and refresh in the background when it is
 	// missing or stale. Nothing on the turn path waits for the download.
 	if err := model.LoadCatalogFromDisk(); err != nil {

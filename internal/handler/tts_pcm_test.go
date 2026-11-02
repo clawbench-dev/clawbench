@@ -285,7 +285,7 @@ func (noopSummarizer) Summarize(_ context.Context, text, _ string) (string, erro
 // forever.
 //
 // The distinguishing assertion is the decode count: one decode for eight
-// concurrent requests. A per-request decode (the old behaviour) reports 8 even
+// concurrent requests. A per-request decode (the old behavior) reports 8 even
 // though the bytes happen to match.
 func TestTTSPCMGenerate_ConcurrentSameKey(t *testing.T) {
 	format := audio.Format{SampleRate: 24000, Channels: 1, Bits: 16}

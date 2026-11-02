@@ -23,6 +23,10 @@ import (
 // construction, so no path can leak a key by forgetting a flag.
 const (
 	jsonKeyModels = "models"
+	// jsonKeyReason is the detail key writeLocalizedErrorf callers use to hand a
+	// human-readable explanation to the client. Capitalised because it lands
+	// verbatim in the error detail object the settings dialog reads.
+	jsonKeyReason = "Reason"
 	// strRole is the chat-message role key both the OpenAI and the Anthropic
 	// probe bodies carry.
 	strRole = "role"
@@ -268,7 +272,7 @@ func writeProviderError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, service.ErrProviderUsedBySummary):
 		writeLocalizedErrorf(w, r, http.StatusConflict, "ProviderUsedBySummary")
 	case errors.Is(err, service.ErrProviderInvalid):
-		detail := map[string]any{"Reason": err.Error()}
+		detail := map[string]any{jsonKeyReason: err.Error()}
 		// Carry the offending field so the form can replace the raw reason with
 		// its own wording ("this protocol cannot express that auth mode"). The
 		// settings dialog branches on detail.field, which this response used to
@@ -336,12 +340,12 @@ func serveProviderTest(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Protocol != "" && !model.ValidProtocol(strings.ToLower(strings.TrimSpace(req.Protocol))) {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderInvalid",
-			map[string]any{"Reason": "unknown protocol " + req.Protocol})
+			map[string]any{jsonKeyReason: "unknown protocol " + req.Protocol})
 		return
 	}
 	if req.AuthMode != "" && !model.ValidAuthMode(strings.ToLower(strings.TrimSpace(req.AuthMode))) {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderInvalid",
-			map[string]any{"Reason": "unknown auth mode " + req.AuthMode})
+			map[string]any{jsonKeyReason: "unknown auth mode " + req.AuthMode})
 		return
 	}
 	target := *p

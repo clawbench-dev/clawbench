@@ -181,7 +181,7 @@ func (p *DoubaoProvider) Transcribe(ctx context.Context, audioReader io.Reader, 
 
 	var parsed doubaoResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", fmt.Errorf("stt: decode response (HTTP %d): %s", resp.StatusCode, truncate(respBody, 256))
+		return "", fmt.Errorf("stt: decode response (HTTP %d): %s", resp.StatusCode, truncate(respBody))
 	}
 	// A success body has no header; a failure body always has one. code 0 in a
 	// present header means "no status" and is treated as success too.
@@ -189,7 +189,7 @@ func (p *DoubaoProvider) Transcribe(ctx context.Context, audioReader io.Reader, 
 		return "", fmt.Errorf("stt: doubao returned code %d (HTTP %d): %s", parsed.Header.Code, resp.StatusCode, parsed.Header.Message)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("stt: doubao returned HTTP %d: %s", resp.StatusCode, truncate(respBody, 256))
+		return "", fmt.Errorf("stt: doubao returned HTTP %d: %s", resp.StatusCode, truncate(respBody))
 	}
 
 	return parsed.Result.Text, nil
@@ -214,10 +214,13 @@ func detectAudioFormat(b []byte) (string, error) {
 	return "", fmt.Errorf("stt: unsupported audio format (leading bytes % X)", b[:min(4, len(b))])
 }
 
-// truncate shortens s to at most n bytes for error messages.
-func truncate(b []byte, n int) string {
-	if len(b) <= n {
+// maxErrBody bounds how much of a response body an error message echoes.
+const maxErrBody = 256
+
+// truncate shortens b to maxErrBody bytes for error messages.
+func truncate(b []byte) string {
+	if len(b) <= maxErrBody {
 		return string(b)
 	}
-	return string(b[:n]) + "..."
+	return string(b[:maxErrBody]) + "..."
 }

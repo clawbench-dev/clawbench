@@ -22,7 +22,7 @@ type Rect struct {
 // range MOUSEEVENTF_ABSOLUTE expects when combined with MOUSEEVENTF_VIRTUALDESK.
 //
 // vx/vy/vw/vh are the virtual-screen origin and size in physical pixels.
-// Without bounds the whole virtual desktop is the picture (the behaviour before
+// Without bounds the whole virtual desktop is the picture (the behavior before
 // per-display mapping existed), which keeps window-less captures working.
 func AbsolutePointer(ev Event, vx, vy, vw, vh int32) (int32, int32, error) {
 	if vw <= 0 || vh <= 0 {

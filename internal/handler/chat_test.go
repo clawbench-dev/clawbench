@@ -1561,7 +1561,7 @@ func TestAIChat_QuoteAttachment_KeepsSourceLocators(t *testing.T) {
 // "跳转来源" silently did nothing and the AI never learned which meeting the
 // snippet came from.
 //
-// The body is a raw map (not a model.FileEntry) on purpose: marshalling the
+// The body is a raw map (not a model.FileEntry) on purpose: marshaling the
 // struct would only prove the struct has the field, not that the wire name the
 // client actually sends reaches it.
 func TestAIChat_QuoteAttachment_KeepsMeetingToken(t *testing.T) {

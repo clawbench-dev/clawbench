@@ -1105,6 +1105,26 @@ func sanitizeLiveViewerName(raw string) string {
 	return strings.Join(strings.Fields(b.String()), " ")
 }
 
+// closeLiveNoteIntervals ends the meeting record and stamps every interval that
+// never got a close event.
+//
+// The publisher is gone, so nothing is still open from the reader's point of
+// view: an interval with no end would render as "opened at 10:03" with no answer
+// to "until when" — the one question the timeline exists to answer. A screen
+// share that was still running when the publisher vanished likewise ends with
+// the meeting, not at an invented later time.
+func closeLiveNoteIntervals(token string, now int64) {
+	if err := service.EndLiveNote(token, now); err != nil {
+		slog.Warn("liveshare: close meeting record failed", "err", err)
+	}
+	if err := service.CloseOpenLiveNoteFiles(token, now); err != nil {
+		slog.Warn("liveshare: close open files failed", "err", err)
+	}
+	if err := service.CloseOpenLiveNoteScreenShare(token, now); err != nil {
+		slog.Warn("liveshare: close open screen share failed", "err", err)
+	}
+}
+
 // finalizeLiveNotes closes a meeting record and archives its chat.
 //
 // The archive is the same bargain the minutes and the transcripts get: a copy
@@ -1113,21 +1133,8 @@ func sanitizeLiveViewerName(raw string) string {
 // log — the database is the live copy.
 func finalizeLiveNotes(token string, projectID int64, projectPath string) {
 	now := time.Now().UnixMilli()
-	if err := service.EndLiveNote(token, now); err != nil {
-		slog.Warn("liveshare: close meeting record failed", "err", err)
-	}
-	// Stamp every file interval that never got a close event. The publisher is
-	// gone, so nothing is still open from the reader's point of view, and an
-	// interval with no end would render as "opened at 10:03" with no answer to
-	// "until when" — the one question the timeline exists to answer.
-	if err := service.CloseOpenLiveNoteFiles(token, now); err != nil {
-		slog.Warn("liveshare: close open files failed", "err", err)
-	}
-	// Same for the screen: a share that was still running when the publisher
-	// vanished ends with the meeting, not at an invented later time.
-	if err := service.CloseOpenLiveNoteScreenShare(token, now); err != nil {
-		slog.Warn("liveshare: close open screen share failed", "err", err)
-	}
+	closeLiveNoteIntervals(token, now)
+
 	note, exists, err := service.GetLiveNote(token)
 	if err != nil || !exists {
 		return

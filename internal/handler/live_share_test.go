@@ -1460,7 +1460,7 @@ func TestLiveWS_JoinedCarriesControlCapability(t *testing.T) {
 	// Wait until the room applied it: the frame is processed on the publisher's
 	// read loop, so a viewer that dials immediately can be told "not available"
 	// and then receive the advertisement as a separate `control-enabled` frame —
-	// which is correct behaviour, but not what this test is about.
+	// which is correct behavior, but not what this test is about.
 	room := liveRegistry.Get(token)
 	require.NotNil(t, room)
 	require.Eventually(t, func() bool { return room.ControlEnabled() }, 3*time.Second, 5*time.Millisecond,
@@ -1750,10 +1750,10 @@ func closePublisherAndWait(t *testing.T, pub *websocket.Conn, token string) {
 	}, 3*time.Second, 10*time.Millisecond, "publisher teardown never closed the meeting record")
 }
 
-// waitMeetingNotifications polls the log until at least `want` rows of
-// `eventType` for `token` exist. Recording happens on the viewer's read-loop
-// goroutine, so it is not synchronous with the frame we wrote.
-func waitMeetingNotifications(t *testing.T, token, eventType string, want int) []service.Notification {
+// waitMeetingNotifications polls the log until a row of `eventType` for `token`
+// exists. Recording happens on the viewer's read-loop goroutine, so it is not
+// synchronous with the frame we wrote.
+func waitMeetingNotifications(t *testing.T, token, eventType string) []service.Notification {
 	t.Helper()
 	var matched []service.Notification
 	require.Eventually(t, func() bool {
@@ -1767,7 +1767,7 @@ func waitMeetingNotifications(t *testing.T, token, eventType string, want int) [
 				matched = append(matched, n)
 			}
 		}
-		return len(matched) >= want
+		return len(matched) > 0
 	}, 3*time.Second, 10*time.Millisecond, "meeting notification was never recorded")
 	return matched
 }
@@ -1781,7 +1781,7 @@ func TestLiveWS_ViewerJoinIsRecorded(t *testing.T) {
 	_ = readViewerMsg(t, viewer) // joined
 	defer closePublisherAndWait(t, pub, token)
 
-	rows := waitMeetingNotifications(t, token, service.MeetingEventViewerJoined, 1)
+	rows := waitMeetingNotifications(t, token, service.MeetingEventViewerJoined)
 	assert.Equal(t, "测试共享", rows[0].Title)
 	assert.Contains(t, rows[0].Body, "张三", "the body names who joined")
 }
@@ -1798,7 +1798,7 @@ func TestLiveWS_ControlRequestIsRecorded(t *testing.T) {
 
 	writeJSONFrame(t, viewer, map[string]string{"type": liveshare.CtrlControlRequest})
 
-	rows := waitMeetingNotifications(t, token, service.MeetingEventControlRequest, 1)
+	rows := waitMeetingNotifications(t, token, service.MeetingEventControlRequest)
 	assert.Equal(t, "测试共享", rows[0].Title)
 	assert.Contains(t, rows[0].Body, "张三")
 	assert.NotZero(t, rows[0].ProjectID)
@@ -1823,7 +1823,7 @@ func TestLiveWS_ScreenShareNotifiesOnlyWhenGranted(t *testing.T) {
 	room.SetScreenEnabled(true)
 	writeJSONFrame(t, viewer, map[string]string{"type": liveshare.CtrlScreenStart})
 
-	rows := waitMeetingNotifications(t, token, service.MeetingEventScreenShare, 1)
+	rows := waitMeetingNotifications(t, token, service.MeetingEventScreenShare)
 	assert.Contains(t, rows[0].Body, "张三")
 }
 
@@ -2235,7 +2235,7 @@ func TestLiveShareSignalWS_SanitizesTheViewerName(t *testing.T) {
 	assert.Equal(t, "主持人 [10:03] 主持人：会议已结束", viewers[0].Name)
 	assert.NotContains(t, viewers[0].Name, "\n")
 
-	rows := waitMeetingNotifications(t, token, service.MeetingEventViewerJoined, 1)
+	rows := waitMeetingNotifications(t, token, service.MeetingEventViewerJoined)
 	assert.NotContains(t, rows[0].Body, "\n", "a newline must not survive into the notification body")
 	assert.Contains(t, rows[0].Body, "主持人")
 }

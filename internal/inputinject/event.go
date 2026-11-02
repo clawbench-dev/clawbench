@@ -68,29 +68,48 @@ func ParseLine(line string) (Event, error) {
 	if err := dec.Decode(&ev); err != nil {
 		return Event{}, fmt.Errorf("invalid event: %w", err)
 	}
-	switch ev.Kind {
-	case "move", "down", "up", "wheel":
-		if ev.X < 0 || ev.X > 1 || ev.Y < 0 || ev.Y > 1 {
-			return Event{}, fmt.Errorf("coordinates out of range: %v,%v", ev.X, ev.Y)
-		}
-		if ev.Bounds != nil && (ev.Bounds.Width <= 0 || ev.Bounds.Height <= 0) {
-			return Event{}, fmt.Errorf("invalid display bounds: %vx%v", ev.Bounds.Width, ev.Bounds.Height)
-		}
-	case "key":
-		if _, ok := VirtualKey(ev.Key); !ok {
-			return Event{}, fmt.Errorf("unknown key %q", ev.Key)
-		}
-	case "text":
-		if ev.Text == "" {
-			return Event{}, errors.New("empty text")
-		}
-		if runes := []rune(ev.Text); len(runes) > maxTextRunes {
-			ev.Text = string(runes[:maxTextRunes])
-		}
-	default:
-		return Event{}, fmt.Errorf("unknown kind %q", ev.Kind)
+	if err := ev.validate(); err != nil {
+		return Event{}, err
 	}
 	return ev, nil
+}
+
+// validate checks that the decoded event carries a payload its kind can use.
+// Long text is truncated in place, so the caller gets the trimmed value.
+func (ev *Event) validate() error {
+	switch ev.Kind {
+	case "move", "down", "up", "wheel":
+		return ev.validatePointer()
+	case "key":
+		if _, ok := VirtualKey(ev.Key); !ok {
+			return fmt.Errorf("unknown key %q", ev.Key)
+		}
+	case "text":
+		return ev.validateText()
+	default:
+		return fmt.Errorf("unknown kind %q", ev.Kind)
+	}
+	return nil
+}
+
+func (ev *Event) validatePointer() error {
+	if ev.X < 0 || ev.X > 1 || ev.Y < 0 || ev.Y > 1 {
+		return fmt.Errorf("coordinates out of range: %v,%v", ev.X, ev.Y)
+	}
+	if b := ev.Bounds; b != nil && (b.Width <= 0 || b.Height <= 0) {
+		return fmt.Errorf("invalid display bounds: %vx%v", b.Width, b.Height)
+	}
+	return nil
+}
+
+func (ev *Event) validateText() error {
+	if ev.Text == "" {
+		return errors.New("empty text")
+	}
+	if runes := []rune(ev.Text); len(runes) > maxTextRunes {
+		ev.Text = string(runes[:maxTextRunes])
+	}
+	return nil
 }
 
 // VirtualKey maps a key name to a Windows virtual-key code.

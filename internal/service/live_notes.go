@@ -156,6 +156,11 @@ const (
 	LiveNotesStatusFailed     = "failed"
 )
 
+// liveNotesHostID is the participant id the publisher uses for itself. The room
+// (internal/liveshare) and the clients agree on it, so file owners, screen
+// sharers and transcript labels all compare against the same value.
+const liveNotesHostID = "host"
+
 // ErrLiveNotesEmpty is returned when minutes are requested for a share that has
 // no transcribed text.
 var ErrLiveNotesEmpty = errors.New("live notes: transcript is empty")
@@ -197,6 +202,21 @@ type LiveNote struct {
 	ReviseError  string `json:"reviseError"`
 }
 
+// ensureLiveNoteRow makes sure the share has an owner row, so an event that
+// arrives after the room was torn down still has a project to be checked
+// against. Every publisher write starts with it.
+func ensureLiveNoteRow(ctx context.Context, tx *sql.Tx, token string, projectID int64) error {
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO live_notes (token, project_id, status, started_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(token) DO UPDATE SET updated_at = CURRENT_TIMESTAMP`,
+		token, projectID, LiveNotesStatusIdle, time.Now().UnixMilli(),
+	); err != nil {
+		return fmt.Errorf("live notes: ensure row: %w", err)
+	}
+	return nil
+}
+
 // AppendLiveNoteSegment stores one transcribed segment. It also makes sure the
 // live_notes row exists so that a late upload (arriving after the room was
 // torn down) still has an owner to check the project against.
@@ -211,13 +231,8 @@ func AppendLiveNoteSegment(ctx context.Context, token string, projectID int64, s
 	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
-	if _, execErr := tx.ExecContext(
-		ctx,
-		`INSERT INTO live_notes (token, project_id, status, started_at) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(token) DO UPDATE SET updated_at = CURRENT_TIMESTAMP`,
-		token, projectID, LiveNotesStatusIdle, time.Now().UnixMilli(),
-	); execErr != nil {
-		return 0, fmt.Errorf("live notes: ensure row: %w", execErr)
+	if ensureErr := ensureLiveNoteRow(ctx, tx, token, projectID); ensureErr != nil {
+		return 0, ensureErr
 	}
 	res, execErr := tx.ExecContext(
 		ctx,
@@ -314,13 +329,8 @@ func RecordLiveNoteFiles(ctx context.Context, token string, projectID int64, fil
 	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
-	if _, execErr := tx.ExecContext(
-		ctx,
-		`INSERT INTO live_notes (token, project_id, status, started_at) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(token) DO UPDATE SET updated_at = CURRENT_TIMESTAMP`,
-		token, projectID, LiveNotesStatusIdle, time.Now().UnixMilli(),
-	); execErr != nil {
-		return fmt.Errorf("live notes: ensure row: %w", execErr)
+	if ensureErr := ensureLiveNoteRow(ctx, tx, token, projectID); ensureErr != nil {
+		return ensureErr
 	}
 	for _, f := range files {
 		path := strings.TrimSpace(f.Path)
@@ -329,7 +339,7 @@ func RecordLiveNoteFiles(ctx context.Context, token string, projectID int64, fil
 		}
 		owner := strings.TrimSpace(f.Owner)
 		if owner == "" {
-			owner = "host"
+			owner = liveNotesHostID
 		}
 		if _, execErr := tx.ExecContext(
 			ctx,
@@ -416,6 +426,16 @@ func liveNoteFileBase(p string) string {
 	return p
 }
 
+// liveNoteFileLabel is what a reader is shown for a file event: the full path
+// when the caller has it (the publisher), the base name otherwise (viewer
+// responses carry no path). Empty means the event cannot be shown at all.
+func liveNoteFileLabel(f LiveNoteFile) string {
+	if label := strings.TrimSpace(f.Path); label != "" {
+		return label
+	}
+	return f.Name
+}
+
 // LiveNoteScreenShare is one interval of "this participant is sharing a screen".
 //
 // Sharer is "host" or "viewer:<id>" — the same identities the room uses, so a
@@ -451,53 +471,23 @@ func SetLiveNoteScreenSharer(ctx context.Context, token string, projectID int64,
 	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
-	if _, execErr := tx.ExecContext(
-		ctx,
-		`INSERT INTO live_notes (token, project_id, status, started_at) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(token) DO UPDATE SET updated_at = CURRENT_TIMESTAMP`,
-		token, projectID, LiveNotesStatusIdle, time.Now().UnixMilli(),
-	); execErr != nil {
-		return fmt.Errorf("live notes: ensure row: %w", execErr)
+	if ensureErr := ensureLiveNoteRow(ctx, tx, token, projectID); ensureErr != nil {
+		return ensureErr
 	}
 
-	var (
-		openID      int64
-		openSharer  string
-		openStarted int64
-	)
-	scanErr := tx.QueryRowContext(
-		ctx,
-		`SELECT id, sharer, started_at FROM live_notes_screen
-		  WHERE token = ? AND ended_at = 0
-		  ORDER BY id DESC LIMIT 1`,
-		token,
-	).Scan(&openID, &openSharer, &openStarted)
-	switch {
-	case scanErr == nil && openSharer == sharer:
-		// Same sharer reported again (a reconnect, a duplicate watch): refresh
-		// the label only, never split the interval.
-		if _, execErr := tx.ExecContext(
-			ctx, `UPDATE live_notes_screen SET sharer_name = ? WHERE id = ?`,
-			truncateRunes(strings.TrimSpace(name), liveNotesNameMaxRunes), openID,
-		); execErr != nil {
-			return fmt.Errorf("live notes: update sharer name: %w", execErr)
-		}
+	// The previous interval has to be dealt with before the new one is opened,
+	// so the timeline never shows two sharers at once.
+	refreshed, retireErr := retireOpenScreenShare(ctx, tx, token, sharer, name, atMS)
+	if retireErr != nil {
+		return retireErr
+	}
+	if refreshed {
+		// Same sharer reported again (a reconnect, a duplicate watch): the label
+		// is already refreshed, never split the interval.
 		if commitErr := tx.Commit(); commitErr != nil {
 			return fmt.Errorf("live notes: commit: %w", commitErr)
 		}
 		return nil
-	case scanErr == nil:
-		end := atMS
-		if end < openStarted {
-			end = openStarted
-		}
-		if _, execErr := tx.ExecContext(
-			ctx, `UPDATE live_notes_screen SET ended_at = ? WHERE id = ?`, end, openID,
-		); execErr != nil {
-			return fmt.Errorf("live notes: close screen share: %w", execErr)
-		}
-	case !errors.Is(scanErr, sql.ErrNoRows):
-		return fmt.Errorf("live notes: read open screen share: %w", scanErr)
 	}
 
 	if sharer != "" {
@@ -515,6 +505,48 @@ func SetLiveNoteScreenSharer(ctx context.Context, token string, projectID int64,
 		return fmt.Errorf("live notes: commit: %w", commitErr)
 	}
 	return nil
+}
+
+// retireOpenScreenShare closes the interval that is still open, or — when the
+// same sharer is reported again — refreshes its label without splitting the
+// interval. refreshed reports that second case, where the caller has nothing
+// left to insert.
+func retireOpenScreenShare(ctx context.Context, tx *sql.Tx, token, sharer, name string, atMS int64) (refreshed bool, err error) {
+	var (
+		openID      int64
+		openSharer  string
+		openStarted int64
+	)
+	scanErr := tx.QueryRowContext(
+		ctx,
+		`SELECT id, sharer, started_at FROM live_notes_screen
+		  WHERE token = ? AND ended_at = 0
+		  ORDER BY id DESC LIMIT 1`,
+		token,
+	).Scan(&openID, &openSharer, &openStarted)
+	switch {
+	case scanErr == nil && openSharer == sharer:
+		if _, execErr := tx.ExecContext(
+			ctx, `UPDATE live_notes_screen SET sharer_name = ? WHERE id = ?`,
+			truncateRunes(strings.TrimSpace(name), liveNotesNameMaxRunes), openID,
+		); execErr != nil {
+			return false, fmt.Errorf("live notes: update sharer name: %w", execErr)
+		}
+		return true, nil
+	case scanErr == nil:
+		end := atMS
+		if end < openStarted {
+			end = openStarted
+		}
+		if _, execErr := tx.ExecContext(
+			ctx, `UPDATE live_notes_screen SET ended_at = ? WHERE id = ?`, end, openID,
+		); execErr != nil {
+			return false, fmt.Errorf("live notes: close screen share: %w", execErr)
+		}
+	case !errors.Is(scanErr, sql.ErrNoRows):
+		return false, fmt.Errorf("live notes: read open screen share: %w", scanErr)
+	}
+	return false, nil
 }
 
 // ListLiveNoteScreenShares returns a share's screen-sharing intervals in
@@ -1007,8 +1039,8 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 		}
 		out = append(out, m)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("live notes: iterate meetings: %w", err)
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, fmt.Errorf("live notes: iterate meetings: %w", rowsErr)
 	}
 
 	counts, err := liveNoteChatCounts(projectID)
@@ -1188,7 +1220,7 @@ func DeleteMeetingRecord(projectPath string, projectID int64, token string) erro
 	if dirName != "" {
 		root := liveNotesRoot(projectPath)
 		full := filepath.Join(root, dirName)
-		// Defence in depth: the name is generated by us, but a corrupted row
+		// Defense in depth: the name is generated by us, but a corrupted row
 		// must not be able to point outside the project's notes root.
 		if !strings.HasPrefix(filepath.Clean(full)+string(os.PathSeparator),
 			filepath.Clean(root)+string(os.PathSeparator)) {
@@ -1205,6 +1237,10 @@ func DeleteMeetingRecord(projectPath string, projectID int64, token string) erro
 	}
 	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
+	// The exported signature carries no ctx (callers delete synchronously from
+	// an HTTP handler), so the statements run on the background context: the
+	// transaction is five short DELETEs.
+	ctx := context.Background()
 	for _, stmt := range []string{
 		`DELETE FROM live_notes_chat WHERE token = ?`,
 		`DELETE FROM live_notes_segments WHERE token = ?`,
@@ -1216,7 +1252,7 @@ func DeleteMeetingRecord(projectPath string, projectID int64, token string) erro
 		if strings.Contains(stmt, "project_id") {
 			args = append(args, projectID)
 		}
-		if _, execErr := tx.Exec(stmt, args...); execErr != nil {
+		if _, execErr := tx.ExecContext(ctx, stmt, args...); execErr != nil {
 			return fmt.Errorf("live notes: delete meeting rows: %w", execErr)
 		}
 	}
@@ -1559,43 +1595,12 @@ func BuildLiveNotesVTT(segments []LiveNoteSegment, files []LiveNoteFile, screens
 		return ""
 	}
 
-	var cues []vttCue
-	cursor := int64(0) // end of the previous speech cue
-	for _, s := range merged {
-		text := strings.Join(strings.Fields(s.Text), " ")
-		if text == "" {
-			continue
-		}
-		speaker := strings.TrimSpace(s.Speaker)
-		if speaker == "" {
-			speaker = s.Channel
-		}
-
-		start, end := cursor, cursor+liveNoteFallbackCueMS
-		if s.StartedAt > 0 && base > 0 {
-			start = s.StartedAt - base
-			if start < 0 {
-				start = 0
-			}
-			end = start + s.DurationMS
-			if end <= start {
-				end = start + liveNoteFallbackCueMS
-			}
-		}
-		cursor = end
-
-		cues = append(cues, vttCue{
-			start: start,
-			end:   end,
-			id:    vttCueID(s.Channel),
-			voice: vttVoiceName(speaker),
-			text:  text,
-		})
-	}
+	cues := liveNoteSpeechCues(merged, base)
 	if base <= 0 {
 		// Without a timeline origin an absolute event time would be rendered as
-		// "1970" relative to nothing. Speech still chains forward (above); file
-		// events are dropped rather than placed at an invented moment.
+		// "1970" relative to nothing. Speech still chains forward (see
+		// liveNoteSpeechCues); file events are dropped rather than placed at an
+		// invented moment.
 		files = nil
 	}
 	cues = append(cues, liveNoteFileCues(files, base)...)
@@ -1622,6 +1627,45 @@ func BuildLiveNotesVTT(segments []LiveNoteSegment, files []LiveNoteFile, screens
 			vttTimestamp(c.start), vttTimestamp(c.end), vttEscape(c.text))
 	}
 	return b.String()
+}
+
+// liveNoteSpeechCues turns the merged utterances into cues.
+//
+// A segment without timing chains forward from the end of the previous cue: a
+// subtitle needs a start, and inventing an absolute one is worse than letting
+// it follow the line before.
+func liveNoteSpeechCues(merged []LiveNoteSegment, base int64) []vttCue {
+	cues := make([]vttCue, 0, len(merged))
+	cursor := int64(0) // end of the previous speech cue
+	for _, s := range merged {
+		text := strings.Join(strings.Fields(s.Text), " ")
+		if text == "" {
+			continue
+		}
+		speaker := strings.TrimSpace(s.Speaker)
+		if speaker == "" {
+			speaker = s.Channel
+		}
+
+		start, end := cursor, cursor+liveNoteFallbackCueMS
+		if s.StartedAt > 0 && base > 0 {
+			start = liveNoteOffset(s.StartedAt, base)
+			end = start + s.DurationMS
+			if end <= start {
+				end = start + liveNoteFallbackCueMS
+			}
+		}
+		cursor = end
+
+		cues = append(cues, vttCue{
+			start: start,
+			end:   end,
+			id:    vttCueID(s.Channel),
+			voice: vttVoiceName(speaker),
+			text:  text,
+		})
+	}
+	return cues
 }
 
 // vttCue is one cue before rendering, so speech and file events can be merged
@@ -1660,6 +1704,24 @@ func liveNoteT(key string, data ...map[string]interface{}) string {
 	return i18n.T(liveNoteLoc(), key, data...)
 }
 
+// Template placeholders of the meeting-artifact strings. They must match the
+// `{{.X}}` names in the i18n catalogs, and are shared by the WebVTT cues and
+// the proofread-transcript lines so the two renderings cannot drift.
+const (
+	i18nPathKey = "Path"
+	i18nStayKey = "Stay"
+)
+
+// liveNoteOffset is an event instant relative to the timeline origin, clamped
+// at zero: an event stamped before the first utterance would otherwise render
+// as a negative timestamp.
+func liveNoteOffset(at, base int64) int64 {
+	if at <= base {
+		return 0
+	}
+	return at - base
+}
+
 // liveNoteFileCues turns intervals into open/close cues.
 //
 // Two short cues rather than one long one: a cue spanning the whole interval
@@ -1672,42 +1734,30 @@ func liveNoteFileCues(files []LiveNoteFile, base int64) []vttCue {
 	voice := liveNoteT("MeetingFilesSpeaker")
 	out := make([]vttCue, 0, len(files)*2)
 	for _, f := range files {
-		if f.OpenedAt <= 0 {
+		label := liveNoteFileLabel(f)
+		if f.OpenedAt <= 0 || label == "" {
 			continue
 		}
-		label := strings.TrimSpace(f.Path)
-		if label == "" {
-			label = f.Name
-		}
-		if label == "" {
-			continue
-		}
-		open := f.OpenedAt - base
-		if open < 0 {
-			open = 0
-		}
+		open := liveNoteOffset(f.OpenedAt, base)
 		out = append(out, vttCue{
 			start: open,
 			end:   open + liveNoteFallbackCueMS,
 			id:    LiveNoteFileCueID,
 			voice: voice,
-			text:  liveNoteT("MeetingFilesOpened", map[string]interface{}{"Path": label}),
+			text:  liveNoteT("MeetingFilesOpened", map[string]interface{}{i18nPathKey: label}),
 		})
 		if f.ClosedAt <= f.OpenedAt {
 			continue
 		}
-		closeAt := f.ClosedAt - base
-		if closeAt < 0 {
-			closeAt = 0
-		}
+		closeAt := liveNoteOffset(f.ClosedAt, base)
 		out = append(out, vttCue{
 			start: closeAt,
 			end:   closeAt + liveNoteFallbackCueMS,
 			id:    LiveNoteFileCueID,
 			voice: voice,
 			text: liveNoteT("MeetingFilesClosed", map[string]interface{}{
-				"Path": label,
-				"Stay": liveNoteDurationSuffix(f.ClosedAt - f.OpenedAt),
+				i18nPathKey: label,
+				i18nStayKey: liveNoteDurationSuffix(f.ClosedAt - f.OpenedAt),
 			}),
 		})
 	}
@@ -1730,32 +1780,26 @@ func liveNoteScreenCues(screens []LiveNoteScreenShare, base int64) []vttCue {
 			continue
 		}
 		name := liveNoteScreenName(s)
-		start := s.StartedAt - base
-		if start < 0 {
-			start = 0
-		}
+		start := liveNoteOffset(s.StartedAt, base)
 		out = append(out, vttCue{
 			start: start,
 			end:   start + liveNoteFallbackCueMS,
 			id:    LiveNoteScreenCueID,
 			voice: voice,
-			text:  liveNoteT("MeetingScreenStarted", map[string]interface{}{"Name": name}),
+			text:  liveNoteT("MeetingScreenStarted", map[string]interface{}{i18nNameKey: name}),
 		})
 		if s.EndedAt <= s.StartedAt {
 			continue
 		}
-		end := s.EndedAt - base
-		if end < 0 {
-			end = 0
-		}
+		end := liveNoteOffset(s.EndedAt, base)
 		out = append(out, vttCue{
 			start: end,
 			end:   end + liveNoteFallbackCueMS,
 			id:    LiveNoteScreenCueID,
 			voice: voice,
 			text: liveNoteT("MeetingScreenStopped", map[string]interface{}{
-				"Name": name,
-				"Stay": liveNoteDurationSuffix(s.EndedAt - s.StartedAt),
+				i18nNameKey: name,
+				i18nStayKey: liveNoteDurationSuffix(s.EndedAt - s.StartedAt),
 			}),
 		})
 	}
@@ -1768,7 +1812,7 @@ func liveNoteScreenName(s LiveNoteScreenShare) string {
 	if name := strings.TrimSpace(s.SharerName); name != "" {
 		return name
 	}
-	if s.Sharer == "host" {
+	if s.Sharer == liveNotesHostID {
 		return liveNoteT("MeetingScreenHost")
 	}
 	return s.Sharer
@@ -1809,6 +1853,13 @@ func liveNoteDurationValue(ms int64) string {
 // not bounded to two digits.
 var liveNoteTranscriptLine = regexp.MustCompile(`^\[(\d+):(\d{2})\]`)
 
+// liveNoteEvent is one non-speech line waiting to be merged into the proofread
+// transcript: its offset from the timeline origin plus the rendered line.
+type liveNoteEvent struct {
+	at   int64
+	line string
+}
+
 // MergeLiveNoteFileEvents inserts file open/close lines into a proofread
 // transcript, in timeline order.
 //
@@ -1825,68 +1876,65 @@ func MergeLiveNoteFileEvents(revised string, files []LiveNoteFile, screens []Liv
 	if (len(files) == 0 && len(screens) == 0) || base <= 0 || strings.TrimSpace(revised) == "" {
 		return revised
 	}
-	type event struct {
-		at   int64
-		line string
+	events := liveNoteFileEvents(files, base)
+	events = append(events, liveNoteScreenEvents(screens, base)...)
+	if len(events) == 0 {
+		return revised
 	}
-	events := make([]event, 0, len(files)*2+len(screens)*2)
+	sort.SliceStable(events, func(i, j int) bool { return events[i].at < events[j].at })
+	return insertLiveNoteEvents(revised, events)
+}
+
+// liveNoteFileEvents renders file open/close events as transcript lines.
+func liveNoteFileEvents(files []LiveNoteFile, base int64) []liveNoteEvent {
+	out := make([]liveNoteEvent, 0, len(files)*2)
 	for _, f := range files {
-		if f.OpenedAt <= 0 {
+		label := liveNoteFileLabel(f)
+		if f.OpenedAt <= 0 || label == "" {
 			continue
 		}
-		label := strings.TrimSpace(f.Path)
-		if label == "" {
-			label = f.Name
-		}
-		if label == "" {
-			continue
-		}
-		at := f.OpenedAt - base
-		if at < 0 {
-			at = 0
-		}
-		events = append(events, event{at, liveNoteFileLine(at,
-			liveNoteT("MeetingFilesOpened", map[string]interface{}{"Path": label}))})
+		at := liveNoteOffset(f.OpenedAt, base)
+		out = append(out, liveNoteEvent{at: at, line: liveNoteFileLine(at,
+			liveNoteT("MeetingFilesOpened", map[string]interface{}{i18nPathKey: label}))})
 		if f.ClosedAt > f.OpenedAt {
-			closed := f.ClosedAt - base
-			if closed < 0 {
-				closed = 0
-			}
-			events = append(events, event{closed, liveNoteFileLine(closed,
+			closed := liveNoteOffset(f.ClosedAt, base)
+			out = append(out, liveNoteEvent{at: closed, line: liveNoteFileLine(closed,
 				liveNoteT("MeetingFilesClosed", map[string]interface{}{
-					"Path": label,
-					"Stay": liveNoteDurationSuffix(f.ClosedAt - f.OpenedAt),
+					i18nPathKey: label,
+					i18nStayKey: liveNoteDurationSuffix(f.ClosedAt - f.OpenedAt),
 				}))})
 		}
 	}
+	return out
+}
+
+// liveNoteScreenEvents renders screen-sharing open/close events as transcript
+// lines.
+func liveNoteScreenEvents(screens []LiveNoteScreenShare, base int64) []liveNoteEvent {
+	out := make([]liveNoteEvent, 0, len(screens)*2)
 	for _, s := range screens {
 		if s.StartedAt <= 0 {
 			continue
 		}
 		name := liveNoteScreenName(s)
-		at := s.StartedAt - base
-		if at < 0 {
-			at = 0
-		}
-		events = append(events, event{at, liveNoteScreenLine(at,
-			liveNoteT("MeetingScreenStarted", map[string]interface{}{"Name": name}))})
+		at := liveNoteOffset(s.StartedAt, base)
+		out = append(out, liveNoteEvent{at: at, line: liveNoteScreenLine(at,
+			liveNoteT("MeetingScreenStarted", map[string]interface{}{i18nNameKey: name}))})
 		if s.EndedAt > s.StartedAt {
-			end := s.EndedAt - base
-			if end < 0 {
-				end = 0
-			}
-			events = append(events, event{end, liveNoteScreenLine(end,
+			end := liveNoteOffset(s.EndedAt, base)
+			out = append(out, liveNoteEvent{at: end, line: liveNoteScreenLine(end,
 				liveNoteT("MeetingScreenStopped", map[string]interface{}{
-					"Name": name,
-					"Stay": liveNoteDurationSuffix(s.EndedAt - s.StartedAt),
+					i18nNameKey: name,
+					i18nStayKey: liveNoteDurationSuffix(s.EndedAt - s.StartedAt),
 				}))})
 		}
 	}
-	if len(events) == 0 {
-		return revised
-	}
-	sort.SliceStable(events, func(i, j int) bool { return events[i].at < events[j].at })
+	return out
+}
 
+// insertLiveNoteEvents splices the events into the proofread transcript, using
+// each line's `[mm:ss]` prefix as the insertion point.
+func insertLiveNoteEvents(revised string, events []liveNoteEvent) string {
 	lines := strings.Split(revised, "\n")
 	out := make([]string, 0, len(lines)+len(events))
 	next := 0
@@ -1894,9 +1942,7 @@ func MergeLiveNoteFileEvents(revised string, files []LiveNoteFile, screens []Liv
 	for _, line := range lines {
 		if m := liveNoteTranscriptLine.FindStringSubmatch(line); m != nil {
 			parsed++
-			minutes, _ := strconv.Atoi(m[1])
-			seconds, _ := strconv.Atoi(m[2])
-			offset := int64(minutes)*60_000 + int64(seconds)*1000
+			offset := liveNoteCueOffset(m)
 			for next < len(events) && events[next].at <= offset {
 				out = append(out, events[next].line)
 				next++
@@ -1905,21 +1951,35 @@ func MergeLiveNoteFileEvents(revised string, files []LiveNoteFile, screens []Liv
 		out = append(out, line)
 	}
 	if parsed == 0 {
-		var b strings.Builder
-		b.WriteString(strings.TrimRight(revised, "\n"))
-		b.WriteString("\n\n## " + liveNoteT("MeetingTranscriptFilesSection") + "\n\n")
-		for _, e := range events {
-			b.WriteString("- ")
-			b.WriteString(e.line)
-			b.WriteString("\n")
-		}
-		return strings.TrimRight(b.String(), "\n")
+		return appendLiveNoteEventSection(revised, events)
 	}
 	for next < len(events) {
 		out = append(out, events[next].line)
 		next++
 	}
 	return strings.Join(out, "\n")
+}
+
+// appendLiveNoteEventSection is the fallback for a transcript whose lines lost
+// the `[mm:ss]` prefix: the events still have to be visible somewhere.
+func appendLiveNoteEventSection(revised string, events []liveNoteEvent) string {
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(revised, "\n"))
+	b.WriteString("\n\n## " + liveNoteT("MeetingTranscriptFilesSection") + "\n\n")
+	for _, e := range events {
+		b.WriteString("- ")
+		b.WriteString(e.line)
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// liveNoteCueOffset reads the `[mm:ss]` prefix captured by
+// liveNoteTranscriptLine as an offset in milliseconds.
+func liveNoteCueOffset(match []string) int64 {
+	minutes, _ := strconv.Atoi(match[1])
+	seconds, _ := strconv.Atoi(match[2])
+	return int64(minutes)*60_000 + int64(seconds)*1000
 }
 
 // liveNoteFileLine renders one event as a transcript line, matching the shape
@@ -2186,7 +2246,7 @@ func ReviseLiveNotesTranscript(
 
 	background := strings.Join(projectContext(projectPath), "\n\n")
 	// Resolved once: every chunk gets the same initiator, and a chunk that
-	// happens to contain no 「我」 line still needs to recognise the name.
+	// happens to contain no 「我」 line still needs to recognize the name.
 	systemPrompt := liveNotesRevisePrompt
 	if note := self.reviseNote(); note != "" {
 		systemPrompt += "\n\n" + note
@@ -2238,14 +2298,8 @@ func LiveNoteFilesPromptSection(files []LiveNoteFile, startedAt time.Time, proje
 
 	var rows []string
 	for _, f := range ordered {
-		if f.OpenedAt <= 0 {
-			continue
-		}
-		label := strings.TrimSpace(f.Path)
-		if label == "" {
-			label = f.Name
-		}
-		if label == "" {
+		label := liveNoteFileLabel(f)
+		if f.OpenedAt <= 0 || label == "" {
 			continue
 		}
 		span := liveNoteClock(f.OpenedAt)
@@ -2255,7 +2309,7 @@ func LiveNoteFilesPromptSection(files []LiveNoteFile, startedAt time.Time, proje
 			span += " 起（至会议结束）"
 		}
 		row := fmt.Sprintf("- %s %s", span, label)
-		if owner := strings.TrimSpace(f.OwnerName); owner != "" && f.Owner != "host" {
+		if owner := strings.TrimSpace(f.OwnerName); owner != "" && f.Owner != liveNotesHostID {
 			row += "（" + owner + "）"
 		}
 		rows = append(rows, row)

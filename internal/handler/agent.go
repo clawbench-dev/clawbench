@@ -257,7 +257,7 @@ func gateUnconfirmedACPModels(a *model.Agent) *model.Agent {
 // has no reliable way to say which entry it corresponds to.
 // providerModelsForAgent turns the provider's curated list into picker entries.
 // It is nil when the agent is unbound or the provider has not curated models,
-// in which case discovery (and the catalogue fallback) still applies.
+// in which case discovery (and the catalog fallback) still applies.
 func providerModelsForAgent(a *model.Agent) []model.AgentModel {
 	p := a.Provider()
 	if p == nil || len(p.Models) == 0 {

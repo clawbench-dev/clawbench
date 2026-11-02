@@ -78,13 +78,44 @@ type audioSegment struct {
 // retry after a partial run cannot produce a file containing only the segments
 // that survived.
 func MergeLiveNoteAudio(paths LiveNotesPaths) (LiveNoteAudioMerge, error) {
-	var out LiveNoteAudioMerge
-	entries, err := os.ReadDir(paths.Audio)
+	groups, done, err := scanLiveNoteAudio(paths.Audio)
+	if err != nil {
+		return LiveNoteAudioMerge{}, err
+	}
+	channels := liveNoteAudioChannels(groups, done)
+
+	// A meeting with one participant records the same audio twice: the mix bus
+	// and that participant's channel. Merging both writes two identical files,
+	// which is pure work and disk for a meeting that is listened to as one file.
+	// The mix is kept (it is what the detail page plays) and the duplicate's
+	// segments are dropped once the mix is safely on disk.
+	solo := liveNoteSoloChannel(channels, groups, done)
+
+	out, err := mergeLiveNoteChannels(paths.Audio, channels, groups, done, solo)
+	if err != nil {
+		return out, err
+	}
+	// Only after the mix landed: a failed mix merge returns above and leaves the
+	// channel's segments as the fallback recording.
+	if solo != "" && out.Meeting != "" {
+		if dropErr := dropLiveNoteAudioSegments(groups[solo]); dropErr != nil {
+			return out, dropErr
+		}
+		out.Segments += len(groups[solo])
+	}
+	return out, nil
+}
+
+// scanLiveNoteAudio classifies what the audio directory holds: segment files
+// still waiting to be merged, and channel files a previous pass already wrote.
+// A missing directory is an empty recording, not an error.
+func scanLiveNoteAudio(dir string) (map[string][]audioSegment, map[string]string, error) {
+	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
-		return out, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return out, fmt.Errorf("live notes: list audio: %w", err)
+		return nil, nil, fmt.Errorf("live notes: list audio: %w", err)
 	}
 
 	groups := make(map[string][]audioSegment, 4)
@@ -95,15 +126,20 @@ func MergeLiveNoteAudio(paths LiveNotesPaths) (LiveNoteAudioMerge, error) {
 		}
 		name := e.Name()
 		if seg, ok := parseLiveNoteAudioSegmentName(name); ok {
-			seg.path = filepath.Join(paths.Audio, name)
+			seg.path = filepath.Join(dir, name)
 			groups[seg.channel] = append(groups[seg.channel], seg)
 			continue
 		}
 		if ch, ok := liveNoteAudioChannelOfFile(name); ok {
-			done[ch] = filepath.Join(paths.Audio, name)
+			done[ch] = filepath.Join(dir, name)
 		}
 	}
+	return groups, done, nil
+}
 
+// liveNoteAudioChannels returns every channel on disk, sorted so the merge
+// order (and therefore the reported file order) is deterministic.
+func liveNoteAudioChannels(groups map[string][]audioSegment, done map[string]string) []string {
 	channels := make([]string, 0, len(groups)+len(done))
 	for ch := range groups {
 		channels = append(channels, ch)
@@ -114,21 +150,22 @@ func MergeLiveNoteAudio(paths LiveNotesPaths) (LiveNoteAudioMerge, error) {
 		}
 	}
 	sort.Strings(channels)
+	return channels
+}
 
-	// A meeting with one participant records the same audio twice: the mix bus
-	// and that participant's channel. Merging both writes two identical files,
-	// which is pure work and disk for a meeting that is listened to as one file.
-	// The mix is kept (it is what the detail page plays) and the duplicate's
-	// segments are dropped once the mix is safely on disk.
-	solo := liveNoteSoloChannel(channels, groups, done)
-
+// mergeLiveNoteChannels folds every channel except solo into one file each.
+//
+// An existing output means a previous pass already folded that channel:
+// rewriting it would drop whatever that pass had that this one does not (a
+// retry sees fewer segments, never more), so it is only recorded.
+func mergeLiveNoteChannels(
+	dir string, channels []string, groups map[string][]audioSegment, done map[string]string, solo string,
+) (LiveNoteAudioMerge, error) {
+	var out LiveNoteAudioMerge
 	for _, ch := range channels {
 		if ch == solo {
 			continue
 		}
-		// An existing output means a previous pass already folded this channel:
-		// rewriting it would drop whatever that pass had that this one does not
-		// (a retry sees fewer segments, never more).
 		if target, ok := done[ch]; ok {
 			out.record(ch, target, 0)
 			continue
@@ -140,24 +177,25 @@ func MergeLiveNoteAudio(paths LiveNotesPaths) (LiveNoteAudioMerge, error) {
 			}
 			return segs[i].path < segs[j].path
 		})
-		target := filepath.Join(paths.Audio, liveNoteAudioFileName(ch))
-		merged, err := mergeLiveNoteAudioGroup(paths.Audio, target, segs)
+		target := filepath.Join(dir, liveNoteAudioFileName(ch))
+		merged, err := mergeLiveNoteAudioGroup(dir, target, segs)
 		if err != nil {
 			return out, err
 		}
 		out.record(ch, target, merged)
 	}
-	// Only after the mix landed: a failed mix merge returns above and leaves the
-	// channel's segments as the fallback recording.
-	if solo != "" && out.Meeting != "" {
-		for _, seg := range groups[solo] {
-			if err := os.Remove(seg.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return out, fmt.Errorf("live notes: remove duplicate segment: %w", err)
-			}
-		}
-		out.Segments += len(groups[solo])
-	}
 	return out, nil
+}
+
+// dropLiveNoteAudioSegments removes a duplicate channel's segments. A segment
+// that is already gone is not an error: the point is that it no longer exists.
+func dropLiveNoteAudioSegments(segs []audioSegment) error {
+	for _, seg := range segs {
+		if err := os.Remove(seg.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("live notes: remove duplicate segment: %w", err)
+		}
+	}
+	return nil
 }
 
 // liveNoteSoloChannel returns the single participant channel that duplicates the

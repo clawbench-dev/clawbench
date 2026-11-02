@@ -771,7 +771,32 @@ func serveShareListing(w http.ResponseWriter, r *http.Request, sharedAbsPath, sh
 		return
 	}
 
-	resp.Entries = make([]shareListEntry, 0, len(entries))
+	resp.Entries = shareListEntries(target, entries, evalRoot)
+
+	// Folders first, then name — the same ordering the in-app file manager uses,
+	// so a shared folder reads the same way as the one it was shared from.
+	sort.SliceStable(resp.Entries, func(i, j int) bool {
+		a, b := resp.Entries[i], resp.Entries[j]
+		if (a.Type == shareKindDir) != (b.Type == shareKindDir) {
+			return a.Type == shareKindDir
+		}
+		return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+	})
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// shareListEntries maps a directory's raw entries to the public listing rows,
+// dropping everything a token holder must not learn about: links that resolve
+// outside the share, and devices/sockets/FIFOs (reading one can block a public
+// request forever, and listing it would advertise an entry whose only possible
+// outcome is a failed open).
+//
+// evalRoot is the share root with symlinks already resolved: isPathUnderBase
+// evaluates the root, and doing that per entry turns a large folder into
+// hundreds of thousands of syscalls for one anonymous request.
+func shareListEntries(target string, entries []os.DirEntry, evalRoot string) []shareListEntry {
+	list := make([]shareListEntry, 0, len(entries))
 	for _, entry := range entries {
 		child := filepath.Join(target, entry.Name())
 		// Lstat first: a non-symlink child of a directory that is already inside
@@ -793,9 +818,7 @@ func serveShareListing(w http.ResponseWriter, r *http.Request, sharedAbsPath, sh
 				continue
 			}
 		}
-		// Devices, sockets and FIFOs are not shareable content: reading one can
-		// block a public request forever. Listing them would also advertise an
-		// entry whose only possible outcome is a failed open.
+		// Devices, sockets and FIFOs are not shareable content.
 		if !childInfo.IsDir() && !childInfo.Mode().IsRegular() {
 			continue
 		}
@@ -809,20 +832,9 @@ func serveShareListing(w http.ResponseWriter, r *http.Request, sharedAbsPath, sh
 			item.Type = shareKindDir
 			item.Size = 0
 		}
-		resp.Entries = append(resp.Entries, item)
+		list = append(list, item)
 	}
-
-	// Folders first, then name — the same ordering the in-app file manager uses,
-	// so a shared folder reads the same way as the one it was shared from.
-	sort.SliceStable(resp.Entries, func(i, j int) bool {
-		a, b := resp.Entries[i], resp.Entries[j]
-		if (a.Type == shareKindDir) != (b.Type == shareKindDir) {
-			return a.Type == shareKindDir
-		}
-		return strings.ToLower(a.Name) < strings.ToLower(b.Name)
-	})
-
-	writeJSON(w, http.StatusOK, resp)
+	return list
 }
 
 // shareParentDir returns the directory the SPA's "up" action should open, or

@@ -14,7 +14,7 @@ const (
 )
 
 func TestAbsolutePointer_WithoutBoundsCoversTheWholeDesktop(t *testing.T) {
-	// Legacy behaviour: no display rectangle means the fraction spans every
+	// Legacy behavior: no display rectangle means the fraction spans every
 	// monitor. This is what keeps a capture that reports no display working.
 	dx, dy, err := AbsolutePointer(Event{X: 0.5, Y: 0.5}, 0, 0, vdW, vdH)
 	require.NoError(t, err)
@@ -28,8 +28,8 @@ func TestAbsolutePointer_WithoutBoundsCoversTheWholeDesktop(t *testing.T) {
 }
 
 func TestAbsolutePointer_MapsInsideTheCapturedDisplay(t *testing.T) {
-	// Screen 2 starts at x=1920. Its centre must be the centre of THAT monitor
-	// (2880 physical px), not the centre of the desktop (1920).
+	// Screen 2 starts at x=1920. Its center must be the center of THAT monitor
+	// (2880 physical px), not the center of the desktop (1920).
 	bounds := &Rect{Left: 1920, Top: 0, Width: 1920, Height: 1080}
 	dx, _, err := AbsolutePointer(Event{X: 0.5, Y: 0.5, Bounds: bounds}, 0, 0, vdW, vdH)
 	require.NoError(t, err)

@@ -175,7 +175,7 @@ func serveLiveNotesList(w http.ResponseWriter, r *http.Request) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
+	writeJSON(w, http.StatusOK, map[string]any{jsonSessions: sessions})
 }
 
 // ServeLiveNotesArtifact handles
@@ -228,7 +228,7 @@ func ServeLiveNotesArtifact(w http.ResponseWriter, r *http.Request) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"kind": kind, "content": content, "file": file})
+	writeJSON(w, http.StatusOK, map[string]string{"kind": kind, strContent: content, jsonFile: file})
 }
 
 // ServeLiveShareNotes handles GET /api/live-share/notes?token=&since=
@@ -363,7 +363,7 @@ func ServeLiveNotesChat(w http.ResponseWriter, r *http.Request) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "count": count})
+	writeJSON(w, http.StatusOK, map[string]any{strMessages: messages, "count": count})
 }
 
 // ServeLiveShareNoteChat handles POST /api/live-share/notes/chat
@@ -835,6 +835,30 @@ func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// liveNotesStoredTitle returns the title actually stored for the meeting, or
+// fallback when the row is gone or still has no title.
+func liveNotesStoredTitle(token, fallback string) string {
+	row, ok, err := service.GetLiveNote(token)
+	if err != nil || !ok || strings.TrimSpace(row.Title) == "" {
+		return fallback
+	}
+	return row.Title
+}
+
+// liveNotesTimeline joins the "what were we looking at" context for the minutes
+// prompt: files and screen shares, one blank line apart.
+func liveNotesTimeline(files []service.LiveNoteFile, screens []service.LiveNoteScreenShare, startedAt time.Time, projectPath string) string {
+	timeline := service.LiveNoteFilesPromptSection(files, startedAt, projectPath)
+	section := service.LiveNoteScreenPromptSection(screens, startedAt)
+	if section == "" {
+		return timeline
+	}
+	if timeline != "" {
+		timeline += "\n\n"
+	}
+	return timeline + section
+}
+
 // generateLiveNotesArtifacts is the detached post-meeting job.
 //
 // It runs three stages in order, and each one has its own durable output:
@@ -859,9 +883,7 @@ func generateLiveNotesArtifacts(token string, projectID int64, projectPath, titl
 	// The row is the authority on the title: a client's copy can be stale (a
 	// second device, a page that never re-read the record), and the rename
 	// below has to inspect what is actually stored.
-	if row, ok, err := service.GetLiveNote(token); err == nil && ok && strings.TrimSpace(row.Title) != "" {
-		title = row.Title
-	}
+	title = liveNotesStoredTitle(token, title)
 	paths, dirErr := service.EnsureMeetingDir(token, projectID, projectPath, title, startedAt.UnixMilli())
 	if dirErr != nil {
 		// The transcript and the minutes still go into the database; only the
@@ -915,13 +937,7 @@ func generateLiveNotesArtifacts(token string, projectID int64, projectPath, titl
 	// One background block for both timelines: they answer the same question
 	// ("what were we looking at") and splitting them into two sections only
 	// makes the model treat the second one as an afterthought.
-	timeline := service.LiveNoteFilesPromptSection(files, startedAt, projectPath)
-	if section := service.LiveNoteScreenPromptSection(screens, startedAt); section != "" {
-		if timeline != "" {
-			timeline += "\n\n"
-		}
-		timeline += section
-	}
+	timeline := liveNotesTimeline(files, screens, startedAt, projectPath)
 	minutes, err := service.GenerateLiveNotesMinutes(ctx, title, transcript, timeline, self)
 	if err != nil {
 		slog.Warn("live notes: minutes generation failed", "err", err)

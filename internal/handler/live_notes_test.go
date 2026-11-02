@@ -570,7 +570,7 @@ func TestServeLiveShareNoteSegment_TranscriptionFailureIsBadGateway(t *testing.T
 // ── Ownership by meeting record ───────────────────────────────────────────
 
 // The meeting record exists from the moment the publisher attaches, so an
-// upload is authorised by the row rather than by a live room.
+// upload is authorized by the row rather than by a live room.
 func TestServeLiveShareNoteSegment_RecordOwnershipAuthorizesUpload(t *testing.T) {
 	db := setupLiveNotesDB(t)
 	defer func() { _ = db.Close() }()
@@ -1207,7 +1207,7 @@ func TestServeLiveShareNoteSegment_MalformedMultipartIs400(t *testing.T) {
 
 func liveNotesProjectRequest(t *testing.T, target, project string) *http.Request {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req := httptest.NewRequest(http.MethodGet, target, http.NoBody)
 	req.AddCookie(&http.Cookie{
 		Name:  model.ScopedCookieName("clawbench_project"),
 		Value: url.QueryEscape(project),

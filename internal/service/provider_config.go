@@ -22,6 +22,13 @@ const (
 	// backendCodex is the one backend whose provider lives in a config file.
 	backendCodex = "codex"
 
+	// managedProviderKey is the provider id ClawBench writes into a config-file
+	// backend's own configuration (codex `model_provider` / `[model_providers.*]`).
+	// It is a config contract rather than a display name: changing it would orphan
+	// every block already written to disk, so it is deliberately not shared with
+	// restartBinaryName even though the two strings currently coincide.
+	managedProviderKey = "clawbench"
+
 	codexBlockStart = "# >>> clawbench provider (managed by ClawBench) >>>"
 	codexBlockEnd   = "# <<< clawbench provider (managed by ClawBench) <<<"
 )
@@ -175,7 +182,7 @@ func applyCodexProvider(p *model.Provider) error {
 	prev, hadState := state[path]
 	if !hadState {
 		_, origValue, hadKey := findTopLevelKey(stripManagedBlock(content, codexBlockStart, codexBlockEnd), "model_provider")
-		if hadKey && unquoteTomlString(origValue) == "clawbench" {
+		if hadKey && unquoteTomlString(origValue) == managedProviderKey {
 			// Our own value from an earlier apply whose sidecar is gone. The
 			// file no longer records what the user had, so recovering it from a
 			// backup is the only way to keep the promise that unbinding
@@ -190,7 +197,7 @@ func applyCodexProvider(p *model.Provider) error {
 	}
 
 	next := stripManagedBlock(content, codexBlockStart, codexBlockEnd)
-	next = upsertTopLevelKey(next, "model_provider", tomlString("clawbench"))
+	next = upsertTopLevelKey(next, "model_provider", tomlString(managedProviderKey))
 	next = strings.TrimRight(next, "\n")
 	if next != "" {
 		next += "\n\n"
@@ -290,7 +297,7 @@ func originalModelProviderFromBackup(path string) (value string, had bool, ok bo
 			continue
 		}
 		_, v, found := findTopLevelKey(string(data), "model_provider")
-		if found && unquoteTomlString(v) == "clawbench" {
+		if found && unquoteTomlString(v) == managedProviderKey {
 			continue
 		}
 		return v, found, true
@@ -302,7 +309,7 @@ func originalModelProviderFromBackup(path string) (value string, had bool, ok bo
 // points at the managed provider, leaving any other value alone.
 func dropClawbenchModelProvider(content string) string {
 	_, value, found := findTopLevelKey(content, "model_provider")
-	if !found || unquoteTomlString(value) != "clawbench" {
+	if !found || unquoteTomlString(value) != managedProviderKey {
 		return content
 	}
 	return removeTopLevelKey(content, "model_provider")
@@ -330,7 +337,7 @@ func codexProviderBlock(p *model.Provider) string {
 		wire = model.ProviderWireResponses
 	}
 	return codexBlockStart + "\n" +
-		"[model_providers.clawbench]\n" +
+		"[model_providers." + managedProviderKey + "]\n" +
 		"name = " + tomlString(p.Name) + "\n" +
 		"base_url = " + tomlString(p.BaseURL) + "\n" +
 		`env_key = "CLAWBENCH_PROVIDER_API_KEY"` + "\n" +

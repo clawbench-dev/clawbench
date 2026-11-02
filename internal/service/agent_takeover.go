@@ -151,7 +151,7 @@ func anySessionOfAgentRunning(ctx context.Context, q rowQueryer, agentID string,
 // session CREATED between the re-check and the commit keeps the deleted agent id
 // and will fail its first turn (resolveAgentConfig returns an empty system prompt
 // and command). Session creation does not take configMutex, so this window
-// cannot be closed here without serialising every new session behind it; it is
+// cannot be closed here without serializing every new session behind it; it is
 // milliseconds wide and the failure is a clear error rather than silent damage.
 func DeleteAgentWithTakeover(old *model.Agent, replacement *model.Agent) (AgentTakeoverResult, error) {
 	var res AgentTakeoverResult
@@ -257,13 +257,13 @@ func deleteAgentTakeoverTx(old *model.Agent, replacement *model.Agent, reuseNati
 	// scheduled execution sessions; reporting RowsAffected would make the success
 	// toast print a different number than the confirm dialog the user just read.
 	var sessionCount int
-	if err := tx.QueryRowContext(ctx, `
+	if countErr := tx.QueryRowContext(ctx, `
 		SELECT
 			(SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND session_type = ?) +
 			(SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND session_type = ? AND archived = 0)`,
 		agentID, store.SessionTypeChat, agentID, store.SessionTypeGroupMember,
-	).Scan(&sessionCount); err != nil {
-		return res, fmt.Errorf("count sessions of agent %s: %w", agentID, err)
+	).Scan(&sessionCount); countErr != nil {
+		return res, fmt.Errorf("count sessions of agent %s: %w", agentID, countErr)
 	}
 	res.Sessions = sessionCount
 
@@ -307,8 +307,8 @@ func deleteAgentTakeoverTx(old *model.Agent, replacement *model.Agent, reuseNati
 	// member row does not touch it, so it would keep naming the deleted agent and
 	// the list would show an empty icon/name for a group that still works.
 	for _, groupID := range groupIDs {
-		if err := recomputeGroupIdentityTx(ctx, tx, groupID); err != nil {
-			return res, err
+		if groupErr := recomputeGroupIdentityTx(ctx, tx, groupID); groupErr != nil {
+			return res, groupErr
 		}
 	}
 	res.Groups = len(groupIDs)

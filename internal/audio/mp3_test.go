@@ -87,7 +87,7 @@ func TestDecodeMP3ToPCMFile_ConcurrentSameDestination(t *testing.T) {
 	errs := make([]error, n)
 	formats := make([]Format, n)
 	start := make(chan struct{})
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -121,7 +121,7 @@ func TestDecodeMP3ToPCMFile_ConcurrentSameDestination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read dir: %v", err)
 	}
-	var names []string
+	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}

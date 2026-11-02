@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS providers (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_name ON providers(name);
 `
 
-// providerWriteMu serialises provider read-modify-write sequences.
+// providerWriteMu serializes provider read-modify-write sequences.
 var providerWriteMu sync.Mutex
 
 var (
@@ -190,24 +190,8 @@ func UpdateProvider(id int64, patch ProviderPatch) (*model.Provider, error) {
 	if providerNameTaken(next.Name, id) {
 		return nil, ErrProviderNameTaken
 	}
-	if next.Protocol != current.Protocol {
-		if summaryUsesProvider(id) && next.Protocol != model.ProviderProtocolAnthropic && next.Protocol != model.ProviderProtocolOpenAI {
-			return nil, ErrProviderUsedBySummary
-		}
-		incompatible, cerr := agentsIncompatibleWithProvider(id, next)
-		if cerr != nil {
-			return nil, cerr
-		}
-		if len(incompatible) > 0 {
-			return nil, &ProviderProtocolConflictError{AgentNames: incompatible}
-		}
-	}
-	// Clearing the endpoint has the same effect as switching to a protocol the
-	// summarizer cannot speak: the binding still looks configured while every
-	// summary call has nowhere to go. Refuse it while the summary model uses
-	// this provider (the handler-level PATCH check only covers the bind step).
-	if next.BaseURL == "" && summaryUsesProvider(id) {
-		return nil, ErrProviderUsedBySummary
+	if verr := validateProviderUpdate(id, *current, next); verr != nil {
+		return nil, verr
 	}
 
 	if _, werr := store.WriteExec(`UPDATE providers SET name = ?, protocol = ?, base_url = ?,
@@ -233,6 +217,33 @@ func UpdateProvider(id int64, patch ProviderPatch) (*model.Provider, error) {
 		slog.Warn("reconcile provider configs after update failed", "error", rerr)
 	}
 	return updated, nil
+}
+
+// validateProviderUpdate rejects a patch that would break something outside the
+// provider row itself: bound agents that cannot speak the new protocol, or the
+// shared AI-summary binding left without an endpoint. Split out of UpdateProvider
+// to keep its branch count in budget.
+func validateProviderUpdate(id int64, current, next model.Provider) error {
+	if next.Protocol != current.Protocol {
+		if summaryUsesProvider(id) && next.Protocol != model.ProviderProtocolAnthropic && next.Protocol != model.ProviderProtocolOpenAI {
+			return ErrProviderUsedBySummary
+		}
+		incompatible, err := agentsIncompatibleWithProvider(id, next)
+		if err != nil {
+			return err
+		}
+		if len(incompatible) > 0 {
+			return &ProviderProtocolConflictError{AgentNames: incompatible}
+		}
+	}
+	// Clearing the endpoint has the same effect as switching to a protocol the
+	// summarizer cannot speak: the binding still looks configured while every
+	// summary call has nowhere to go. Refuse it while the summary model uses
+	// this provider (the handler-level PATCH check only covers the bind step).
+	if next.BaseURL == "" && summaryUsesProvider(id) {
+		return ErrProviderUsedBySummary
+	}
+	return nil
 }
 
 // applyProviderPatch overlays the non-nil fields and normalizes the result.

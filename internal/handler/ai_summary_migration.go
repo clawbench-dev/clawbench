@@ -122,8 +122,8 @@ func rewriteAISummaryConfig(providerID *int64, modelName string) error {
 
 	raw := map[string]any{}
 	if len(existing) > 0 {
-		if err := yaml.Unmarshal(existing, &raw); err != nil {
-			return fmt.Errorf("migrate ai_summary: parse config.yaml: %w", err)
+		if unmarshalErr := yaml.Unmarshal(existing, &raw); unmarshalErr != nil {
+			return fmt.Errorf("migrate ai_summary: parse config.yaml: %w", unmarshalErr)
 		}
 	}
 	if providerID != nil {
