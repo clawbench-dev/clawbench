@@ -14,22 +14,10 @@
       </template>
 
       <template v-else>
-        <!-- Identity first: it is required (viewers see it in chat), unlike the
-             meeting name below. Pre-filled from the account nickname when set,
-             but the host may use a different name for this meeting. -->
-        <div class="meeting-section">{{ t('meeting.join.nick') }}</div>
-        <input
-          v-model="nickname"
-          class="meeting-input"
-          type="text"
-          :maxlength="MEETING_NICK_MAX"
-          data-role="meeting-nick"
-          :placeholder="t('meeting.join.nickPlaceholder')"
-        />
-        <div class="meeting-hint">{{ t('meeting.create.nickHint') }}</div>
-
-        <!-- Name next: optional — an unnamed meeting is named after its start
-             time. -->
+        <!-- Name first: it is optional (an unnamed meeting is named after its
+             start time), so the required field is the one the host fills in
+             last and sees the reason for — the footer button is disabled until
+             then. -->
         <div class="meeting-section">{{ t('meeting.create.name') }}</div>
         <input
           v-model="title"
@@ -40,6 +28,28 @@
           :placeholder="t('meeting.create.namePlaceholder')"
           @keydown.enter="start"
         />
+
+        <!-- Identity second, and the only required field. Pre-filled from the
+             account nickname when set, but the host may use a different name for
+             this meeting. Empty is a blocked state, not a silent one: the hint
+             under the field says why the footer button is disabled. -->
+        <div class="meeting-section">{{ t('meeting.join.nick') }}</div>
+        <input
+          v-model="nickname"
+          class="meeting-input"
+          type="text"
+          :maxlength="MEETING_NICK_MAX"
+          data-role="meeting-nick"
+          :placeholder="t('meeting.join.nickPlaceholder')"
+          :aria-invalid="!nicknameValid"
+        />
+        <div
+          class="meeting-hint"
+          :class="{ 'meeting-hint--required': !nicknameValid }"
+          data-role="meeting-nick-hint"
+        >
+          {{ nicknameValid ? t('meeting.create.nickHint') : t('meeting.create.nickRequired') }}
+        </div>
 
         <!-- No meeting type: the picture is a CHOICE between "nothing" and the
              actual screens/windows, so it is a grid of frames rather than a
@@ -231,12 +241,14 @@ const pictureHint = computed(() => {
   return cameraOn.value && hasScreen.value ? t('meeting.create.pictureBoth') : ''
 })
 
+/** The one required field: viewers see it in chat, and an empty name would fall
+ *  back to the shared "User" label. */
+const nicknameValid = computed(() => Boolean(nickname.value.trim()))
+
 const canStart = computed(() => {
   if (starting.value) return false
   if (!supported.value) return false
-  // The nickname is required: viewers see it in chat, and an empty name would
-  // fall back to the shared "User" label.
-  return Boolean(nickname.value.trim())
+  return nicknameValid.value
 })
 
 /** Which id to publish: a browser pick has no id, the dialog decides. */
@@ -427,6 +439,9 @@ onMounted(() => {
   font-size: var(--font-size-xs); line-height: 1.6; color: var(--text-muted);
 }
 .meeting-hint--indent { padding-left: calc(16 * var(--dp)); }
+/* A blocked field, not a validation error: the line explains the disabled
+   footer button instead of waiting for a failed submit. */
+.meeting-hint--required { color: var(--color-red); }
 .meeting-warn {
   padding: var(--space-4) var(--space-5); border-radius: var(--radius-md);
   background: var(--bg-tertiary); color: var(--text-muted);

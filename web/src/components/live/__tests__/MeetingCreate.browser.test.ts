@@ -586,7 +586,7 @@ describe('MeetingCreate in a browser', () => {
     ).toBeGreaterThan(before)
   })
 
-  it('cannot start without a nickname', async () => {
+  it('cannot start without a nickname, and says why', async () => {
     stubCaptureApi(true)
     const wrapper = mountPanel()
     await flushPromises()
@@ -594,8 +594,35 @@ describe('MeetingCreate in a browser', () => {
     const start = wrapper.find('[data-action="meeting-start"]')
     expect(start.attributes('disabled')).toBeDefined()
 
+    // A disabled button with no explanation is the bug this pins: the field
+    // itself carries the reason, in the error colour.
+    const hint = () => wrapper.find('[data-role="meeting-nick-hint"]')
+    expect(hint().text()).toBe(enMessages.meeting.create.nickRequired)
+    expect(hint().classes()).toContain('meeting-hint--required')
+    expect(wrapper.find('[data-role="meeting-nick"]').attributes('aria-invalid')).toBe('true')
+
     await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
     expect(start.attributes('disabled')).toBeUndefined()
+    // ...and the line goes back to explaining what the name is for.
+    expect(hint().text()).toBe(enMessages.meeting.create.nickHint)
+    expect(hint().classes()).not.toContain('meeting-hint--required')
+
+    // Whitespace is not a name.
+    await wrapper.find('[data-role="meeting-nick"]').setValue('   ')
+    expect(start.attributes('disabled')).toBeDefined()
+    expect(hint().text()).toBe(enMessages.meeting.create.nickRequired)
+  })
+
+  it('asks for the optional name before the required nickname', async () => {
+    stubCaptureApi(true)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // The optional field first: the required one then sits directly above the
+    // explanation of why the footer button is disabled.
+    const title = wrapper.find('[data-role="meeting-title"]').element
+    const nick = wrapper.find('[data-role="meeting-nick"]').element
+    expect(title.compareDocumentPosition(nick) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('pre-fills the account nickname', async () => {

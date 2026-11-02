@@ -4005,6 +4005,7 @@ export default {
       name: '会议名称',
       namePlaceholder: '选填，不填则用日期命名',
       nickHint: '昵称是你在会议中的称呼，此外，在 AI 对话中，智能体也会用它称呼你。',
+      nickRequired: '请先填写昵称，否则无法开始会议。',
       picture: '画面',
       av: '画面与声音',
       noShare: '不共享',

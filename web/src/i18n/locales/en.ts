@@ -4010,6 +4010,7 @@ export default {
       name: 'Meeting name',
       namePlaceholder: 'Optional — defaults to the date',
       nickHint: 'Your nickname identifies you in meetings; agents also use it to address you in AI conversations.',
+      nickRequired: 'Fill in a nickname to start the meeting.',
       picture: 'Picture',
       av: 'Picture & sound',
       noShare: 'Share nothing',
