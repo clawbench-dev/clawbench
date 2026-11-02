@@ -14,9 +14,13 @@ import type { CaptureSource } from '@/composables/useLiveShare'
  * instead of one of them silently.
  */
 
-vi.mock('lucide-vue-next', () => ({
-  Monitor: { name: 'MonitorIcon', render: () => null },
-}))
+vi.mock('lucide-vue-next', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('lucide-vue-next')>()
+  const stub = (name: string) => ({ name, props: { size: Number }, render: () => null })
+  // Spread the real module: a narrow mock turns any icon this shared grid adds
+  // into `undefined` and the render throws, which reads as a broken component.
+  return { ...actual, Monitor: stub('Monitor'), MonitorOff: stub('MonitorOff'), Check: stub('Check'), Plus: stub('Plus') }
+})
 
 function mountGrid(props: Record<string, unknown>) {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
@@ -48,8 +52,10 @@ describe('CaptureSourceGrid', () => {
     const wrapper = mountGrid({ sources, selectedId: '' })
     const tiles = wrapper.findAll('.capture-source')
 
-    expect(tiles[0].find('.capture-source__note').text()).toBe('Screen')
-    expect(tiles[1].find('.capture-source__note').text()).toBe('Window')
+    // The label sits ON the frame: a third line of text under every tile pushed
+    // the rest of the create form off a phone.
+    expect(tiles[0].find('.capture-source__kind').text()).toBe('Screen')
+    expect(tiles[1].find('.capture-source__kind').text()).toBe('Window')
     expect(tiles[1].find('.capture-source__name').text()).toBe('Terminal')
   })
 
@@ -69,5 +75,40 @@ describe('CaptureSourceGrid', () => {
     const busy = mountGrid({ sources, selectedId: '', disabled: true })
     await busy.findAll('.capture-source')[1].trigger('click')
     expect(busy.emitted('select')).toBeUndefined()
+  })
+
+  it('offers "share nothing" as a frame of its own when the host asks for it', async () => {
+    const wrapper = mountGrid({ sources, selectedId: '', allowOff: true })
+    const tiles = wrapper.findAll('.capture-source')
+
+    expect(tiles).toHaveLength(3)
+    expect(tiles[0].attributes('data-source')).toBe('__off__')
+    // Nothing selected means exactly that: the empty frame is the choice.
+    expect(tiles[0].classes()).toContain('capture-source--on')
+
+    await tiles[0].trigger('click')
+    expect(wrapper.emitted('select')).toEqual([['']])
+
+    // Mid-meeting the tile is not offered: stopping the picture is the screen
+    // toggle's job there, not a source choice.
+    expect(mountGrid({ sources, selectedId: '' }).find('[data-source="__off__"]').exists()).toBe(false)
+  })
+
+  it('shows an "ask for the list" frame that reports the click, not a selection', async () => {
+    const wrapper = mountGrid({ sources: [], selectedId: '', allowOff: true, pickLabel: 'Choose what to share' })
+    const pick = wrapper.find('[data-source="__pick__"]')
+
+    expect(pick.exists()).toBe(true)
+    expect(pick.text()).toContain('Choose what to share')
+    await pick.trigger('click')
+    expect(wrapper.emitted('pick')).toHaveLength(1)
+    expect(wrapper.emitted('select')).toBeUndefined()
+
+    // Busy: the frame stays (the layout must not jump) but cannot be clicked
+    // twice.
+    const busy = mountGrid({ sources: [], selectedId: '', pickLabel: 'Listing…', pickBusy: true })
+    expect(busy.find('[data-source="__pick__"]').attributes('disabled')).toBeDefined()
+    // No label, no frame.
+    expect(mountGrid({ sources: [], selectedId: '' }).find('[data-source="__pick__"]').exists()).toBe(false)
   })
 })

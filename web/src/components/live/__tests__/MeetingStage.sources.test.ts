@@ -14,15 +14,25 @@ import MeetingStage from '../MeetingStage.vue'
  * tells two windows of the same app apart, so the picker must carry it too.
  */
 
-vi.mock('lucide-vue-next', () => ({
-  Monitor: { name: 'MonitorIcon', render: () => null },
-  MonitorUp: { name: 'MonitorUpIcon', render: () => null },
-  Mic: { name: 'MicIcon', render: () => null },
-  NotebookPen: { name: 'NotebookPenIcon', render: () => null },
-  Video: { name: 'VideoIcon', render: () => null },
-  Volume2: { name: 'Volume2Icon', render: () => null },
-  X: { name: 'XIcon', render: () => null },
-}))
+vi.mock('lucide-vue-next', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('lucide-vue-next')>()
+  const stub = (name: string) => ({ name, props: { size: Number }, render: () => null })
+  // Spread the real module so icons added by the shared source grid resolve
+  // instead of becoming undefined and crashing the render.
+  return {
+    ...actual,
+    Monitor: stub('Monitor'),
+    MonitorUp: stub('MonitorUp'),
+    MonitorOff: stub('MonitorOff'),
+    Check: stub('Check'),
+    Plus: stub('Plus'),
+    Mic: stub('Mic'),
+    NotebookPen: stub('NotebookPen'),
+    Video: stub('Video'),
+    Volume2: stub('Volume2'),
+    X: stub('X'),
+  }
+})
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -70,6 +80,7 @@ vi.mock('@/composables/useLiveShare', async () => {
     previewCameraStream: sr(null),
     micEnabled: r(true),
     setMicEnabled: vi.fn(),
+    switchMicDevice: vi.fn(async () => true),
     setCameraEnabled: vi.fn(async () => true),
     startScreen: vi.fn(async () => true),
     stopScreen: vi.fn(async () => undefined),
@@ -91,6 +102,7 @@ vi.mock('@/composables/useLiveShare', async () => {
     useLiveShare: () => shareApi,
     listCaptureSources: listSources,
     hasCameraDevice: vi.fn(async () => true),
+    listAudioInputs: vi.fn(async () => []),
   }
 })
 

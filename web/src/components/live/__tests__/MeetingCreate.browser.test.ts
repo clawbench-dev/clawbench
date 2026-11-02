@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import enMessages from '@/i18n/locales/en'
 import { _resetMeetingOptions, useMeetingOptions } from '@/composables/useMeetingOptions'
+import { listCaptureSources } from '@/composables/useLiveShare'
 import MeetingCreate from '../MeetingCreate.vue'
 
 /**
@@ -17,9 +18,12 @@ import MeetingCreate from '../MeetingCreate.vue'
 
 vi.mock('lucide-vue-next', () => ({
   ArrowLeft: { name: 'ArrowLeftIcon', render: () => null },
+  Check: { name: 'CheckIcon', render: () => null },
   Mic: { name: 'MicIcon', render: () => null },
   Monitor: { name: 'MonitorIcon', render: () => null },
+  MonitorOff: { name: 'MonitorOffIcon', render: () => null },
   NotebookPen: { name: 'NotebookPenIcon', render: () => null },
+  Plus: { name: 'PlusIcon', render: () => null },
   Video: { name: 'VideoIcon', render: () => null },
   Volume2: { name: 'Volume2Icon', render: () => null },
 }))
@@ -27,6 +31,12 @@ vi.mock('lucide-vue-next', () => ({
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
+
+/**
+ * The desktop bridge. Null is a plain browser; a native host that offers a
+ * source list is what puts the form in its "ask me for a list" state.
+ */
+const nativeApi = vi.hoisted(() => ({ value: null as unknown }))
 
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: vi.fn() }),
@@ -37,7 +47,7 @@ vi.mock('@/composables/useMarkdownRenderer', () => ({
 }))
 
 vi.mock('@/utils/clawbenchNative', () => ({
-  getNative: () => null,
+  getNative: () => nativeApi.value,
 }))
 
 vi.mock('@/utils/remoteControlSupport', () => ({
@@ -59,6 +69,9 @@ vi.mock('@/composables/useSettingsConfig', () => ({
 
 /** Whether this machine reports a camera; several tests flip it. */
 const cameraDevice = vi.hoisted(() => ({ has: true }))
+
+/** The microphones this machine reports; several tests set it. */
+const audioDevices = vi.hoisted(() => ({ list: [] as Array<{ id: string; name: string }> }))
 
 const shareApi = vi.hoisted(() => ({} as Record<string, unknown>))
 vi.mock('@/composables/useLiveShare', async () => {
@@ -93,6 +106,7 @@ vi.mock('@/composables/useLiveShare', async () => {
   return {
     useLiveShare: () => shareApi,
     listCaptureSources: vi.fn(async () => []),
+    listAudioInputs: vi.fn(async () => audioDevices.list),
     getAudioCaptureSupport: vi.fn(async () => true),
     hasCameraDevice: vi.fn(async () => cameraDevice.has),
   }
@@ -159,6 +173,8 @@ beforeEach(() => {
   ;(shareApi.state as { value: string }).value = 'idle'
   ;(shareApi.viewers as { value: unknown[] }).value = []
   cameraDevice.has = true
+  nativeApi.value = null
+  audioDevices.list = []
 })
 
 afterEach(() => {
@@ -166,19 +182,24 @@ afterEach(() => {
 })
 
 describe('MeetingCreate in a browser', () => {
-  it('offers independent toggles and keeps start usable with no source list', async () => {
+  it('offers the picture as frames and keeps start usable with no source list', async () => {
     stubCaptureApi(true)
     const wrapper = mountPanel()
     await flushPromises()
 
     // A browser's own picker IS the source choice, so an empty list is not a
-    // problem. There is no meeting type to pick: just the toggles.
+    // problem: it becomes one tile among the frames.
     expect(wrapper.find('.meeting-type-grid').exists()).toBe(false)
-    expect(wrapper.find('[data-role="meeting-screen"]').exists()).toBe(true)
-    expect(wrapper.find('[data-role="meeting-camera"]').exists()).toBe(true)
+    const tiles = wrapper.findAll('.capture-source')
+    expect(tiles).toHaveLength(2)
+    expect(wrapper.find('[data-source="__off__"]').exists()).toBe(true)
+    const browserTile = wrapper.find('[data-source="browser:screen"]')
+    expect(browserTile.exists()).toBe(true)
+    expect(browserTile.text()).toContain(enMessages.meeting.create.browserSource)
     // Screen sharing stays the default; the camera is opt-in.
-    expect((wrapper.find('[data-role="meeting-screen"]').element as HTMLInputElement).checked).toBe(true)
+    expect(browserTile.classes()).toContain('capture-source--on')
     expect((wrapper.find('[data-role="meeting-camera"]').element as HTMLInputElement).checked).toBe(false)
+    expect(wrapper.find('[data-role="meeting-screen"]').exists()).toBe(false)
 
     const start = wrapper.find('[data-action="meeting-start"]')
     expect(start.exists()).toBe(true)
@@ -195,13 +216,16 @@ describe('MeetingCreate in a browser', () => {
     await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
     const start = wrapper.find('[data-action="meeting-start"]')
 
-    await wrapper.find('[data-role="meeting-screen"]').setValue(false)
+    await wrapper.find('[data-source="__off__"]').trigger('click')
     // No type means no invalid combination: a meeting with neither a screen nor
     // a camera is a normal meeting, and the hint says what attendees get.
     expect(start.attributes('disabled')).toBeUndefined()
     expect(wrapper.find('[data-role="meeting-picture"]').text()).toBe(
       enMessages.meeting.create.noPictureHint,
     )
+    // The choice moved to the "share nothing" frame, and only that one.
+    expect(wrapper.find('[data-source="__off__"]').classes()).toContain('capture-source--on')
+    expect(wrapper.find('[data-source="browser:screen"]').classes()).not.toContain('capture-source--on')
   })
 
   it('describes the camera/screen combination in one line, four states', async () => {
@@ -218,13 +242,43 @@ describe('MeetingCreate in a browser', () => {
     await wrapper.find('[data-role="meeting-camera"]').setValue(true)
     expect(picture().text()).toBe(enMessages.meeting.create.pictureBoth)
 
-    await wrapper.find('[data-role="meeting-screen"]').setValue(false)
+    await wrapper.find('[data-source="__off__"]').trigger('click')
     expect(picture().text()).toBe(enMessages.meeting.create.pictureCamera)
 
     // "Neither" is allowed; the line explains what the audience gets.
     await wrapper.find('[data-role="meeting-camera"]').setValue(false)
     expect(picture().classes()).toContain('meeting-hint')
     expect(picture().text()).toBe(enMessages.meeting.create.noPictureHint)
+  })
+
+  it('keeps the picture choice on one tile at a time', async () => {
+    stubCaptureApi(true)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-source="__off__"]').trigger('click')
+    expect(wrapper.findAll('.capture-source--on')).toHaveLength(1)
+
+    await wrapper.find('[data-source="browser:screen"]').trigger('click')
+    expect(wrapper.findAll('.capture-source--on')).toHaveLength(1)
+    expect(wrapper.find('[data-source="browser:screen"]').classes()).toContain('capture-source--on')
+  })
+
+  it('puts camera, microphone and 听记 in one group with no separate sound heading', async () => {
+    stubCaptureApi(true)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // The three switches are all "what the host sends"; the old form split them
+    // under a "sound and notes" heading that only repeated the word sound.
+    expect(wrapper.text()).not.toContain(enMessages.meeting.create.sound)
+    expect(wrapper.text()).toContain(enMessages.meeting.create.av)
+    const checks = wrapper.findAll('.meeting-check')
+    expect(checks.map((c) => c.find('input').attributes('data-role'))).toEqual([
+      'meeting-camera',
+      'meeting-mic',
+      'meeting-notes',
+    ])
   })
 
   it('does not repeat a description under each simple toggle', async () => {
@@ -270,7 +324,7 @@ describe('MeetingCreate in a browser', () => {
     expect((mic.element as HTMLInputElement).checked).toBe(false)
 
     // ...and turning the picture off does not force it back on.
-    await wrapper.find('[data-role="meeting-screen"]').setValue(false)
+    await wrapper.find('[data-source="__off__"]').trigger('click')
     await flushPromises()
     expect((mic.element as HTMLInputElement).checked).toBe(false)
   })
@@ -280,7 +334,7 @@ describe('MeetingCreate in a browser', () => {
     const wrapper = mountPanel()
     await flushPromises()
 
-    await wrapper.find('[data-role="meeting-screen"]').setValue(false)
+    await wrapper.find('[data-source="__off__"]').trigger('click')
     await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
     await wrapper.find('[data-action="meeting-start"]').trigger('click')
     await flushPromises()
@@ -344,13 +398,136 @@ describe('MeetingCreate in a browser', () => {
       enMessages.meeting.create.cameraNoDevice,
     )
 
-    // The line keeps saying why the camera is unavailable; the screen toggle is
-    // the only way to a picture, and it can still be turned off (a meeting
+    // The line keeps saying why the camera is unavailable; the picture tiles
+    // are the only way to a picture, and "share nothing" still works (a meeting
     // without any picture is allowed).
-    await wrapper.find('[data-role="meeting-screen"]').setValue(false)
+    await wrapper.find('[data-source="__off__"]').trigger('click')
     expect(wrapper.find('[data-role="meeting-picture"]').text()).toBe(
       enMessages.meeting.create.cameraNoDevice,
     )
+  })
+
+  // A machine with a headset AND a built-in mic has a real choice to make. It
+  // is a preference, not a list: the meeting publishes one input.
+  it('lists the microphones as one choice, defaulting to the system default', async () => {
+    stubCaptureApi(true)
+    audioDevices.list = [
+      { id: 'mic-a', name: 'Built-in Microphone' },
+      { id: 'mic-b', name: 'Headset Microphone' },
+    ]
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const tiles = wrapper.findAll('.meeting-device')
+    expect(tiles).toHaveLength(3)
+    expect(tiles[0].text()).toContain(enMessages.meeting.create.micDefault)
+    expect(tiles[1].text()).toContain('Built-in Microphone')
+    // Nothing pinned yet: the system default is the choice, and it is shown.
+    expect(tiles[0].classes()).toContain('meeting-device--on')
+
+    await tiles[2].trigger('click')
+    expect(wrapper.findAll('.meeting-device--on')).toHaveLength(1)
+    expect(wrapper.find('[data-device="mic-b"]').classes()).toContain('meeting-device--on')
+
+    // Picking another REPLACES it — the meeting never captures two inputs.
+    await wrapper.find('[data-device="mic-a"]').trigger('click')
+    expect(wrapper.findAll('.meeting-device--on')).toHaveLength(1)
+    expect(wrapper.find('[data-device="mic-a"]').classes()).toContain('meeting-device--on')
+  })
+
+  it('sends the chosen microphone and drops it when the microphone is off', async () => {
+    stubCaptureApi(true)
+    audioDevices.list = [
+      { id: 'mic-a', name: 'Built-in Microphone' },
+      { id: 'mic-b', name: 'Headset Microphone' },
+    ]
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
+    await wrapper.find('[data-device="mic-b"]').trigger('click')
+    await wrapper.find('[data-action="meeting-start"]').trigger('click')
+    await flushPromises()
+    expect((shareApi.start as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+      microphone: true,
+      micDeviceId: 'mic-b',
+    })
+
+    ;(shareApi.start as ReturnType<typeof vi.fn>).mockClear()
+    await wrapper.find('[data-role="meeting-mic"]').setValue(false)
+    await wrapper.find('[data-action="meeting-start"]').trigger('click')
+    await flushPromises()
+    // A device for a microphone that is off would be a constraint nobody asked
+    // for — and a failed capture if it is unplugged.
+    expect((shareApi.start as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+      microphone: false,
+      micDeviceId: '',
+    })
+  })
+
+  it('hides the device list when there is nothing to choose between', async () => {
+    stubCaptureApi(true)
+    audioDevices.list = [{ id: 'mic-a', name: 'Built-in Microphone' }]
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(wrapper.find('[data-role="meeting-mic-devices"]').exists()).toBe(false)
+  })
+
+  it('drops the browser pseudo-devices that duplicate the system default', async () => {
+    stubCaptureApi(true)
+    audioDevices.list = [
+      { id: 'default', name: 'Default' },
+      { id: 'communications', name: 'Communications' },
+      { id: 'mic-a', name: 'Built-in Microphone' },
+    ]
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // One real input is left, so there is still nothing to choose between.
+    expect(wrapper.find('[data-role="meeting-mic-devices"]').exists()).toBe(false)
+  })
+
+  it('hides the device list while the microphone is off', async () => {
+    stubCaptureApi(true)
+    audioDevices.list = [
+      { id: 'mic-a', name: 'Built-in Microphone' },
+      { id: 'mic-b', name: 'Headset Microphone' },
+    ]
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(wrapper.find('[data-role="meeting-mic-devices"]').exists()).toBe(true)
+    await wrapper.find('[data-role="meeting-mic"]').setValue(false)
+    expect(wrapper.find('[data-role="meeting-mic-devices"]').exists()).toBe(false)
+  })
+
+  // A desktop host that has not handed over a list yet (macOS screen recording
+  // not granted, a Wayland portal that has not been asked) gets one empty frame
+  // that asks for it, rather than a form that silently has no picture.
+  it('asks a native host for its source list instead of showing nothing', async () => {
+    stubCaptureApi(true)
+    const listSources = vi.fn(async () => '[]')
+    nativeApi.value = { listCaptureSources: listSources }
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const pick = wrapper.find('[data-source="__pick__"]')
+    expect(pick.exists()).toBe(true)
+    expect(pick.text()).toContain(enMessages.meeting.create.pickSource)
+    // No browser fallback tile: the host said it has a list, it just did not
+    // produce one yet.
+    expect(wrapper.find('[data-source="browser:screen"]').exists()).toBe(false)
+    expect(wrapper.find('[data-role="meeting-sources"]').text()).toContain(
+      enMessages.liveShare.noSources,
+    )
+
+    const before = (listCaptureSources as unknown as ReturnType<typeof vi.fn>).mock.calls.length
+    await pick.trigger('click')
+    await flushPromises()
+    expect(
+      (listCaptureSources as unknown as ReturnType<typeof vi.fn>).mock.calls.length,
+    ).toBeGreaterThan(before)
   })
 
   it('cannot start without a nickname', async () => {

@@ -19,9 +19,18 @@ const microphone = ref(true)
 const notes = ref(true)
 /** Capture the publisher's camera. */
 const camera = ref(false)
+/**
+ * Which input device to capture, by `deviceId`; empty means "the system
+ * default".
+ *
+ * A machine with a headset and a built-in mic has two, and the OS default is
+ * not always the one the host wants. It is a PREFERENCE, not a list: the
+ * meeting uses exactly one input, so picking another replaces this value.
+ */
+const micDeviceId = ref('')
 
 export function useMeetingOptions() {
-  return { microphone, notes, camera }
+  return { microphone, notes, camera, micDeviceId }
 }
 
 /** @internal Test-only: restore the defaults. */
@@ -29,4 +38,5 @@ export function _resetMeetingOptions(): void {
   microphone.value = true
   notes.value = true
   camera.value = false
+  micDeviceId.value = ''
 }

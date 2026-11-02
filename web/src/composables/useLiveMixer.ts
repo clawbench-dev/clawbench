@@ -52,7 +52,9 @@ export class LiveMixer {
   private systemSource: MediaStreamAudioSourceNode | null
   /** The stream `systemSource` was built from, so a repeat call is a no-op. */
   private systemStream: MediaStream | null
-  private readonly micSource: MediaStreamAudioSourceNode | null
+  private micSource: MediaStreamAudioSourceNode | null
+  /** The stream `micSource` was built from; same no-op guard as the system one. */
+  private micStream: MediaStream | null
   private readonly slots = new Map<string, ViewerSlot>()
   /**
    * Level meters, keyed by `v:<viewerId>` or `self`.
@@ -71,10 +73,8 @@ export class LiveMixer {
     this.systemStream =
       systemStream && systemStream.getAudioTracks().length > 0 ? systemStream : null
     this.systemSource = this.systemStream ? ctx.createMediaStreamSource(this.systemStream) : null
-    this.micSource =
-      micStream && micStream.getAudioTracks().length > 0
-        ? ctx.createMediaStreamSource(micStream)
-        : null
+    this.micStream = micStream && micStream.getAudioTracks().length > 0 ? micStream : null
+    this.micSource = this.micStream ? ctx.createMediaStreamSource(this.micStream) : null
     if (this.micSource) this.tap('self', this.micSource)
   }
 
@@ -105,6 +105,39 @@ export class LiveMixer {
         /* already disconnected */
       }
     }
+  }
+
+  /**
+   * Swap the microphone input mid-meeting.
+   *
+   * A machine with a headset and a built-in mic: the host picks one before the
+   * meeting and may change their mind once the headset is on. Same shape as
+   * setSystemStream — the per-viewer destinations are stable, only the source
+   * node is replaced — plus the level meter, which is an analyser tapped off
+   * that source and therefore cannot be moved: it is rebuilt against the new
+   * one, otherwise the meter freezes at the last level of the old input.
+   *
+   * Passing the same stream twice is a no-op, so callers can be liberal.
+   */
+  setMicStream(stream: MediaStream | null): void {
+    const next = stream && stream.getAudioTracks().length > 0 ? stream : null
+    if (next === this.micStream) return
+    const previous = this.micSource
+    this.micStream = next
+    this.micSource = next ? this.ctx.createMediaStreamSource(next) : null
+    if (this.micSource) {
+      for (const slot of this.slots.values()) this.micSource.connect(slot.dest)
+    }
+    this.analysers.delete('self')
+    if (previous) {
+      // Drops every edge, including the one into the discarded analyser.
+      try {
+        previous.disconnect()
+      } catch {
+        /* already disconnected */
+      }
+    }
+    if (this.micSource) this.tap('self', this.micSource)
   }
 
   /** Tap a node for level metering; a context without analysers is fine. */

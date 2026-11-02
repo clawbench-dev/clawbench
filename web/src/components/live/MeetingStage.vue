@@ -117,6 +117,15 @@
           <div class="live-dialog-hint live-dialog-hint--indent">
             {{ micEnabled ? t('meeting.create.micOn') : t('meeting.create.micOff') }}
           </div>
+          <!-- Same list as the create form, live: putting a headset on mid-call
+               should not require ending the meeting. Only while the microphone
+               is on — switching opens a real device, and a host who muted it
+               would not expect that. -->
+          <MicDeviceList
+            v-if="micEnabled"
+            :selected-id="micDeviceId"
+            @select="onSelectMicDevice"
+          />
           <label class="live-check">
             <input type="checkbox" :checked="notesOn" data-role="stage-notes"
               @change="onToggleNotes(($event.target as HTMLInputElement).checked)" />
@@ -402,6 +411,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Mic, MonitorUp, NotebookPen, Video, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
+import MicDeviceList from '@/components/live/MicDeviceList.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import TranscriptList from '@/components/live/TranscriptList.vue'
 import { useToast } from '@/composables/useToast'
@@ -456,6 +466,8 @@ const isLive = computed(
  */
 const hasScreen = computed(() => share.captureKind.value !== null)
 const micEnabled = computed(() => share.micEnabled.value)
+/** The chosen input device; a plain object of refs, so unwrap it once here. */
+const micDeviceId = computed(() => options.micDeviceId.value)
 const notesOn = computed(() => notes.phase.value === 'recording')
 /** Whether this machine has a camera at all, so the toggle is worth showing. */
 const cameraAvailable = ref(true)
@@ -758,6 +770,23 @@ function talkLabel(talk: string): string {
 function onToggleMic(on: boolean): void {
   options.microphone.value = on
   share.setMicEnabled(on)
+}
+
+/**
+ * Switch the capture device mid-meeting.
+ *
+ * The preference is only written after the capture actually moved: a device
+ * that fails to open must leave both the running stream and the stored choice
+ * on the microphone that still works.
+ */
+async function onSelectMicDevice(id: string): Promise<void> {
+  if (id === micDeviceId.value) return
+  const ok = await share.switchMicDevice(id)
+  if (!ok) {
+    toast.show(share.error.value || t('liveShare.micSwitchFailed'), { type: 'error', icon: 'warning' })
+    return
+  }
+  options.micDeviceId.value = id
 }
 
 /** Which source a fresh screen share opens: the remembered one, else the first. */

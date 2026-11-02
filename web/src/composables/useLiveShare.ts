@@ -56,6 +56,13 @@ export interface CaptureSource {
   thumbnail: string
 }
 
+/** One microphone the host can publish from. */
+export interface AudioInputDevice {
+  /** `deviceId` from enumerateDevices; '' is the system default. */
+  id: string
+  name: string
+}
+
 // ── Module-level session state (one share per app instance) ──────────────────
 const state = ref<LiveShareState>('idle')
 const token = ref('')
@@ -351,6 +358,51 @@ export async function hasCameraDevice(): Promise<boolean> {
 let lastCameraError: unknown = null
 
 /**
+ * The constraints every microphone capture uses.
+ *
+ * One definition because the same microphone is opened twice — at start and
+ * when the host switches input mid-meeting — and two copies would drift into
+ * "the device I switched to sounds different" bugs.
+ */
+function micConstraints(deviceId: string): MediaTrackConstraints {
+  return {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    // A chosen input wins; otherwise the OS default, which is what `audio:
+    // true` means. `{exact: ''}` would fail on every machine.
+    ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+  }
+}
+
+/**
+ * The microphones this machine can publish from.
+ *
+ * Labels are empty until the page has been granted microphone access — the
+ * browser hides them from a page that could otherwise fingerprint the user's
+ * hardware, which is the normal state on a first visit. Unnamed devices are
+ * therefore NUMBERED rather than hidden: the list still works as a picker, and
+ * the real names appear once permission has been granted (i.e. from the second
+ * meeting onwards).
+ */
+export async function listAudioInputs(): Promise<AudioInputDevice[]> {
+  const md = navigator.mediaDevices
+  if (!md?.enumerateDevices) return []
+  try {
+    const devices = await md.enumerateDevices()
+    return devices
+      .filter((d) => d.kind === 'audioinput')
+      .map((d, i) => ({
+        id: d.deviceId,
+        name: d.label || i18n.global.t('meeting.create.micDeviceN', { n: i + 1 }),
+      }))
+  } catch (e) {
+    appLog.w(TAG, 'listAudioInputs failed', e)
+    return []
+  }
+}
+
+/**
  * Acquire the camera at the size the tile uses.
  *
  * Small and slow on purpose: a face in a corner (or the whole picture on a
@@ -588,6 +640,15 @@ export function useLiveShare() {
      */
     screen?: boolean
     microphone: boolean
+    /**
+     * Which input device to capture, by `deviceId`; empty means the system
+     * default.
+     *
+     * Only the id is passed: `exact` on a device that has since been
+     * unplugged fails the whole capture, and the existing failure path already
+     * degrades to "no local channel" instead of aborting the meeting.
+     */
+    micDeviceId?: string
     /** Capture the publisher's camera as well. */
     camera?: boolean
     shareTitle?: string
@@ -656,9 +717,7 @@ export function useLiveShare() {
 
       if (opts.microphone) {
         try {
-          micStream = await acquireMic({
-            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-          })
+          micStream = await acquireMic({ audio: micConstraints(opts.micDeviceId ?? '') })
         } catch (e) {
           // A denied microphone must not abort the share: the audience still
           // gets the screen and (possibly) system audio. The notes channel is
@@ -756,6 +815,39 @@ export function useLiveShare() {
     micStream?.getAudioTracks().forEach((track) => {
       track.enabled = on
     })
+  }
+
+  /**
+   * Switch the publisher's input device while the meeting runs.
+   *
+   * Three things hold the microphone: the mixer that feeds every viewer, the
+   * 听记 recorder, and the level meter (an analyser tapped off the mixer). All
+   * three are rewired here; the peer connections are untouched, so there is no
+   * renegotiation and no gap for the audience.
+   *
+   * Only used while the microphone is ON — the device list is hidden when it is
+   * off — so a switch never opens a device the host believes is muted.
+   */
+  async function switchMicDevice(deviceId: string): Promise<boolean> {
+    if (state.value !== 'publishing') return false
+    let next: MediaStream
+    try {
+      next = await acquireMic({ audio: micConstraints(deviceId) })
+    } catch (e) {
+      // The old device is still live: acquire before releasing, so a device
+      // that refuses to open never leaves the meeting without a microphone.
+      appLog.w(TAG, `microphone switch failed: ${describeMicError(e)}`)
+      fail(i18n.global.t('liveShare.micSwitchFailed'))
+      return false
+    }
+    micStream?.getAudioTracks().forEach((track) => track.stop())
+    micStream = next
+    next.getAudioTracks().forEach((track) => {
+      track.enabled = micEnabled.value
+    })
+    mixer?.setMicStream(next)
+    useLiveNotes().setMicStream(next)
+    return true
   }
 
   /**
@@ -1375,6 +1467,7 @@ export function useLiveShare() {
     cameraEnabled,
     micEnabled,
     setMicEnabled,
+    switchMicDevice,
     setCameraEnabled,
     startScreen,
     stopScreen,

@@ -125,6 +125,26 @@ describe('useLiveNotes — recording', () => {
     expect(lastCapture().channels.map((c) => c.speaker)).toEqual(['mic'])
   })
 
+  // Putting a headset on mid-meeting re-opens the microphone; the transcript
+  // must keep ONE "mic" stream of segments, not start a second channel.
+  it('replaces the microphone channel when the input device changes', () => {
+    const notes = useLiveNotes()
+    notes.setMicStream({} as MediaStream)
+    expect(h.instances).toHaveLength(0)
+
+    const first = {} as MediaStream
+    notes.start({ token: 'tok', ctx, micStream: first, label: (c) => `L:${c}` })
+    const cap = lastCapture()
+
+    const second = {} as MediaStream
+    notes.setMicStream(second)
+
+    expect(cap.channels).toEqual([
+      { channel: 'mic', speaker: 'L:mic', stream: first },
+      { channel: 'mic', speaker: 'L:mic', stream: second },
+    ])
+  })
+
   it('adds and removes viewer channels, ignoring empty ids and calls before start', () => {
     const notes = useLiveNotes()
     notes.addViewer('v1', {} as MediaStream)

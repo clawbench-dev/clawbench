@@ -363,10 +363,10 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-async function startSharing() {
+async function startSharing(opts: { micDeviceId?: string } = {}) {
   const { useLiveShare } = await import('../useLiveShare')
   const share = useLiveShare()
-  const ok = await share.start({ sourceId: 'screen:1:0', microphone: true })
+  const ok = await share.start({ sourceId: 'screen:1:0', microphone: true, ...opts })
   return { share, ok }
 }
 
@@ -544,6 +544,64 @@ describe('start', () => {
 
     expect(again).toBe(false)
     expect(FakeWS.instances).toHaveLength(1)
+  })
+
+  // A machine with a headset and a built-in mic: the host picks one, and that
+  // choice has to reach the capture constraint or the picker is decorative.
+  it('captures the microphone the host chose', async () => {
+    const { share, ok } = await startSharing({ micDeviceId: 'mic-b' })
+
+    expect(ok).toBe(true)
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    const audio = gum.mock.calls.find((c) => !c[0].video)?.[0].audio
+    expect(audio).toMatchObject({ deviceId: { exact: 'mic-b' } })
+    expect(share.state.value).toBe('publishing')
+  })
+
+  it('leaves the input to the system default when none was chosen', async () => {
+    await startSharing()
+
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    const audio = gum.mock.calls.find((c) => !c[0].video)?.[0].audio
+    // No `deviceId` at all — `{exact: ''}` would fail on every machine.
+    expect(audio).not.toHaveProperty('deviceId')
+  })
+
+  // Putting a headset on mid-call: the audience must not hear a gap, and the
+  // device the host stopped using must be released (the OS indicator stays lit
+  // otherwise).
+  it('moves the capture to another input device mid-meeting', async () => {
+    const { share, ok } = await startSharing()
+    expect(ok).toBe(true)
+    const oldTrack = micStream.getAudioTracks()[0] as unknown as FakeTrack
+
+    const nextStream = new FakeStream([new FakeTrack('audio', 'mic2')])
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    gum.mockImplementationOnce(async () => nextStream)
+
+    const switched = await share.switchMicDevice('mic-b')
+
+    expect(switched).toBe(true)
+    expect(oldTrack.stopped).toBe(true)
+    const audio = gum.mock.calls[gum.mock.calls.length - 1][0].audio
+    expect(audio).toMatchObject({ deviceId: { exact: 'mic-b' } })
+    expect(share.state.value).toBe('publishing')
+  })
+
+  it('keeps the running microphone when the new device cannot be opened', async () => {
+    const { share } = await startSharing()
+    const oldTrack = micStream.getAudioTracks()[0] as unknown as FakeTrack
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    gum.mockRejectedValueOnce(new Error('NotFoundError'))
+
+    const switched = await share.switchMicDevice('unplugged')
+
+    // Acquire before release: a device that refuses to open must never leave
+    // the meeting without the microphone it already had.
+    expect(switched).toBe(false)
+    expect(oldTrack.stopped).toBe(false)
+    expect(share.error.value).toBeTruthy()
+    expect(share.state.value).toBe('publishing')
   })
 })
 
@@ -818,6 +876,60 @@ describe('stop', () => {
     lastWS().onclose?.()
 
     await vi.waitFor(() => expect(share.state.value).toBe('idle'))
+  })
+})
+
+describe('listAudioInputs', () => {
+  it('returns only the input devices, with their labels', async () => {
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        enumerateDevices: vi.fn(async () => [
+          { kind: 'audioinput', deviceId: 'mic-a', label: 'Built-in Microphone' },
+          { kind: 'videoinput', deviceId: 'cam-a', label: 'FaceTime HD' },
+          { kind: 'audioinput', deviceId: 'mic-b', label: 'Headset Microphone' },
+        ]),
+      },
+    })
+    const { listAudioInputs } = await import('../useLiveShare')
+
+    const list = await listAudioInputs()
+
+    expect(list.map((d) => d.id)).toEqual(['mic-a', 'mic-b'])
+    expect(list[1].name).toBe('Headset Microphone')
+  })
+
+  it('numbers the devices the browser will not name yet', async () => {
+    // Labels are empty until the page has microphone permission, which is the
+    // normal state on a first visit — hiding them would leave the picker empty.
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        enumerateDevices: vi.fn(async () => [
+          { kind: 'audioinput', deviceId: 'mic-a', label: '' },
+          { kind: 'audioinput', deviceId: 'mic-b', label: '' },
+        ]),
+      },
+    })
+    const { listAudioInputs } = await import('../useLiveShare')
+
+    const list = await listAudioInputs()
+
+    expect(list.map((d) => d.name)).toEqual(['Microphone 1', 'Microphone 2'])
+    expect(list[0].id).toBe('mic-a')
+  })
+
+  it('returns an empty list when enumeration is unavailable or fails', async () => {
+    vi.stubGlobal('navigator', { mediaDevices: {} })
+    const { listAudioInputs } = await import('../useLiveShare')
+    expect(await listAudioInputs()).toEqual([])
+
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        enumerateDevices: vi.fn(async () => {
+          throw new Error('boom')
+        }),
+      },
+    })
+    expect(await listAudioInputs()).toEqual([])
   })
 })
 

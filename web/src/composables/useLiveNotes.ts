@@ -194,6 +194,19 @@ export function useLiveNotes() {
     capture.addChannel(`viewer:${viewerId}`, () => labelFor(`viewer:${viewerId}`), stream)
   }
 
+  /**
+   * Point the publisher's channel at a different input device.
+   *
+   * The host can switch microphones mid-meeting (headset put on). `addChannel`
+   * replaces an existing channel, so the transcript keeps one "mic" stream of
+   * segments instead of a second one — the segment in flight is flushed under
+   * the same speaker label.
+   */
+  function setMicStream(stream: MediaStream | null): void {
+    if (!capture) return
+    capture.addChannel('mic', () => labelFor('mic'), stream)
+  }
+
   function removeViewer(viewerId: string): void {
     capture?.removeChannel(`viewer:${viewerId}`)
   }
@@ -445,6 +458,7 @@ export function useLiveNotes() {
     start,
     addViewer,
     removeViewer,
+    setMicStream,
     stopCapture,
     finishUploads,
     finish,

@@ -41,63 +41,72 @@
           @keydown.enter="start"
         />
 
-        <!-- No meeting type: these checkboxes are what the host sends, and
-             every one of them can be changed again while the meeting runs.
-             Screen and camera are independent — what they produce together is
-             described once, underneath, instead of being a mode to pick. -->
-        <div class="meeting-section">{{ t('meeting.create.picture') }}</div>
-        <label class="meeting-check">
-          <input
-            type="checkbox"
-            :checked="shareScreen"
-            data-role="meeting-screen"
-            @change="shareScreen = ($event.target as HTMLInputElement).checked"
-          />
-          <span class="meeting-check__icon"><Monitor :size="13" /></span>
-          {{ t('meeting.create.shareScreen') }}
-        </label>
-        <label class="meeting-check" :class="{ 'meeting-check--disabled': !cameraAvailable }">
-          <input
-            type="checkbox"
-            :checked="camera && cameraAvailable"
-            :disabled="!cameraAvailable"
-            data-role="meeting-camera"
-            @change="camera = ($event.target as HTMLInputElement).checked"
-          />
-          <span class="meeting-check__icon"><Video :size="13" /></span>
-          {{ t('meeting.create.camera') }}
-        </label>
+        <!-- No meeting type: the picture is a CHOICE between "nothing" and the
+             actual screens/windows, so it is a grid of frames rather than a
+             checkbox followed by a list. Camera, microphone and 听记 are the
+             independent parts of the same setup and share one group. -->
+        <div class="meeting-section">{{ t('meeting.create.av') }}</div>
+        <CaptureSourceGrid
+          ref="gridRef"
+          compact
+          allow-off
+          :sources="sources"
+          :selected-id="screenChoice"
+          :pick-label="pickLabel"
+          :pick-busy="loadingSources"
+          @select="screenChoice = $event"
+          @pick="loadSources"
+        />
+        <div v-if="sourceHint" class="meeting-hint" data-role="meeting-sources">
+          {{ sourceHint }}
+        </div>
+
+        <div class="meeting-checks">
+          <label class="meeting-check" :class="{ 'meeting-check--disabled': !cameraAvailable }">
+            <input
+              type="checkbox"
+              :checked="camera && cameraAvailable"
+              :disabled="!cameraAvailable"
+              data-role="meeting-camera"
+              @change="camera = ($event.target as HTMLInputElement).checked"
+            />
+            <span class="meeting-check__icon"><Video :size="13" /></span>
+            {{ t('meeting.create.camera') }}
+          </label>
+          <label class="meeting-check">
+            <input
+              type="checkbox"
+              :checked="microphone"
+              data-role="meeting-mic"
+              @change="microphone = ($event.target as HTMLInputElement).checked"
+            />
+            <span class="meeting-check__icon"><Mic :size="13" /></span>
+            {{ t('meeting.create.mic') }}
+          </label>
+          <label class="meeting-check">
+            <input
+              type="checkbox"
+              :checked="notes"
+              data-role="meeting-notes"
+              @change="notes = ($event.target as HTMLInputElement).checked"
+            />
+            <span class="meeting-check__icon"><NotebookPen :size="13" /></span>
+            {{ t('meeting.create.notes') }}
+          </label>
+        </div>
+
         <div class="meeting-hint meeting-hint--indent" data-role="meeting-picture">
           {{ pictureHint }}
         </div>
 
-        <CaptureSourceGrid
-          v-if="shareScreen"
-          :sources="sources"
-          :selected-id="selected"
-          @select="selected = $event"
+        <!-- Which input, not how many: a meeting publishes ONE microphone, so
+             this is a single choice that replaces the previous one. Hidden when
+             there is nothing to choose between. -->
+        <MicDeviceList
+          v-if="microphone"
+          :selected-id="micDeviceId"
+          @select="micDeviceId = $event"
         />
-        <div v-if="shareScreen && sources.length === 0 && !loadingSources" class="meeting-hint">
-          {{ noSourceHint }}
-        </div>
-
-        <!-- These toggles name themselves; a sentence under each was noise. -->
-        <div class="meeting-section">{{ t('meeting.create.sound') }}</div>
-        <label class="meeting-check">
-          <input
-            type="checkbox"
-            :checked="microphone"
-            data-role="meeting-mic"
-            @change="microphone = ($event.target as HTMLInputElement).checked"
-          />
-          <span class="meeting-check__icon"><Mic :size="13" /></span>
-          {{ t('meeting.create.mic') }}
-        </label>
-        <label class="meeting-check">
-          <input type="checkbox" :checked="notes" @change="notes = ($event.target as HTMLInputElement).checked" />
-          <span class="meeting-check__icon"><NotebookPen :size="13" /></span>
-          {{ t('meeting.create.notes') }}
-        </label>
       </template>
     </div>
 
@@ -123,14 +132,16 @@
  * The options are the SAME refs the running meeting edits (useMeetingOptions),
  * so turning 听记 off here means it is off in the meeting too, and vice versa.
  *
- * There is no meeting type. What the host ticks here is just the starting
- * state: screen, camera and microphone are independent, every one of them can
- * be changed again during the meeting, and ticking none of them is allowed.
+ * There is no meeting type. What the host picks here is just the starting
+ * state: the picture is a choice of frame, camera/microphone/听记 are
+ * independent, every one of them can be changed again during the meeting, and
+ * sharing no picture at all is allowed.
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Mic, Monitor, NotebookPen, Video } from 'lucide-vue-next'
+import { ArrowLeft, Mic, NotebookPen, Video } from 'lucide-vue-next'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
+import MicDeviceList from '@/components/live/MicDeviceList.vue'
 import { useToast } from '@/composables/useToast'
 import { useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useMeetingNickname } from '@/composables/useMeetingNickname'
@@ -151,19 +162,31 @@ const emit = defineEmits<{ back: []; started: [] }>()
 const { t } = useI18n()
 const toast = useToast()
 const share = useLiveShare()
-const { microphone, notes, camera } = useMeetingOptions()
+const { microphone, notes, camera, micDeviceId } = useMeetingOptions()
 const { nickname, persist } = useMeetingNickname()
 
-/** Share a screen alongside the camera (or on its own). */
-const shareScreen = ref(false)
+/**
+ * A plain browser has no source list: its own picker IS the source choice.
+ * This synthetic id keeps that "share a screen, the browser asks which" case a
+ * tile in the grid like any other, instead of a separate control.
+ */
+const BROWSER_SOURCE = 'browser:screen'
+
+/**
+ * What the host chose: '' for no picture, BROWSER_SOURCE for "let the browser
+ * ask", otherwise a source id from the list.
+ */
+const screenChoice = ref('')
 
 const title = ref('')
-const selected = ref('')
 const sources = ref<CaptureSource[]>([])
 const loadingSources = ref(false)
 const starting = ref(false)
 /** Whether this machine has a camera at all. */
 const cameraAvailable = ref(true)
+/** The tile area scrolls once there are more than two rows of frames. */
+const gridOverflow = ref(false)
+const gridRef = ref<InstanceType<typeof CaptureSourceGrid> | null>(null)
 
 const hasNativeCapture = computed(() => Boolean(getNative()?.listCaptureSources))
 const browserCapture = browserScreenCaptureAvailable()
@@ -172,22 +195,34 @@ const canCapture = computed(() => hasNativeCapture.value || browserCapture)
 const isAndroidCapture = computed(() => Boolean(getNative()?.startScreenCapture))
 
 const supported = computed(() => canCapture.value || isAndroidCapture.value || cameraAvailable.value)
+/** Whether the user asked for a screen. */
+const hasScreen = computed(() => screenChoice.value !== '')
+
 /**
- * Whether the user asked for a screen.
+ * The tile that asks a host for a list it has not given yet.
  *
- * Not the same as "a source is selected": a plain browser picks its source in
- * the browser's own dialog, so its id list is empty while it still shares.
+ * Only a native host can be in this state: a browser has the synthetic tile
+ * above, and Android always has its one sentinel. Clicking re-runs the probe,
+ * which is what makes the OS raise its own permission dialog (macOS screen
+ * recording, Wayland portal).
  */
-const hasScreen = computed(() => shareScreen.value)
+const pickLabel = computed(() => {
+  if (sources.value.length > 0 || !canCapture.value) return ''
+  return loadingSources.value ? t('meeting.create.picking') : t('meeting.create.pickSource')
+})
+
+const sourceHint = computed(() => {
+  if (sources.value.length === 0 && canCapture.value && !loadingSources.value) {
+    return t('liveShare.noSources')
+  }
+  if (gridOverflow.value) return t('meeting.create.sourceOverflow', { count: sources.value.length })
+  return ''
+})
 
 const unsupportedHint = computed(() => {
   if (isInsecureCaptureContext()) return t('liveShare.insecureContext')
   return t('liveShare.captureNeedsClient')
 })
-
-const noSourceHint = computed(() =>
-  browserCapture ? t('liveShare.browserCaptureHint') : t('liveShare.noSources'),
-)
 
 /** Camera on AND usable — a camera the OS cannot provide is not a picture. */
 const cameraOn = computed(() => camera.value && cameraAvailable.value)
@@ -217,34 +252,56 @@ const canStart = computed(() => {
   return Boolean(nickname.value.trim())
 })
 
+/** Which id to publish: a browser pick has no id, the dialog decides. */
+const selectedSourceId = computed(() => (screenChoice.value === BROWSER_SOURCE ? '' : screenChoice.value))
+
 async function loadSources(): Promise<void> {
+  if (loadingSources.value) return
   loadingSources.value = true
   try {
     const [list, hasCamera] = await Promise.all([listCaptureSources(), hasCameraDevice()])
+    cameraAvailable.value = hasCamera
     // Android has no source list: the consent dialog decides what gets
     // mirrored. One sentinel tile keeps "share my screen" selectable.
-    sources.value = isAndroidCapture.value
-      ? [{ id: 'android:screen', name: t('liveShare.entireScreen'), kind: 'screen', thumbnail: '' }]
-      : list
-    cameraAvailable.value = hasCamera
-    if (!selected.value) {
-      const screen = list.find((s) => s.kind === 'screen')
-      selected.value = screen?.id ?? list[0]?.id ?? ''
+    if (isAndroidCapture.value) {
+      sources.value = [{ id: 'android:screen', name: t('liveShare.entireScreen'), kind: 'screen', thumbnail: '' }]
+    } else if (list.length > 0) {
+      sources.value = list
+    } else if (browserCapture && !hasNativeCapture.value) {
+      // No list to show, but the browser can still capture: one tile that hands
+      // the choice to the browser's own picker.
+      sources.value = [
+        { id: BROWSER_SOURCE, name: t('meeting.create.browserSource'), kind: 'screen', thumbnail: '' },
+      ]
+    } else {
+      sources.value = []
     }
-    // Screen sharing stays the default (it is what this feature has always
-    // been), including in a plain browser, where the id list is empty because
-    // the browser's own picker chooses the source. The camera is opt-IN —
-    // turning somebody's camera on because they opened a form is exactly the
-    // kind of surprise this setting must not give — unless there is no screen
-    // capture at all, where it is the only picture left.
-    const canPickScreen = sources.value.length > 0 || (browserCapture && !hasNativeCapture.value)
-    shareScreen.value = canPickScreen
-    if (!canPickScreen) camera.value = hasCamera
+
+    // Keep the current choice when it still exists; otherwise default to the
+    // first screen. Screen sharing stays the default (it is what this feature
+    // has always been) and the camera stays opt-IN — turning somebody's camera
+    // on because they opened a form is exactly the surprise this must not give
+    // — unless there is no screen capture at all, where it is the only picture
+    // left.
+    const stillThere = sources.value.some((s) => s.id === screenChoice.value)
+    if (!stillThere) {
+      const screen = sources.value.find((s) => s.kind === 'screen')
+      screenChoice.value = screen?.id ?? sources.value[0]?.id ?? ''
+    }
+    if (sources.value.length === 0) camera.value = hasCamera
+    await nextTick()
+    measureOverflow()
   } catch (e) {
     appLog.e('MeetingCreate', 'loadSources failed', e)
   } finally {
     loadingSources.value = false
   }
+}
+
+/** Whether the frames overflow their box, so the hint can say they scroll. */
+function measureOverflow(): void {
+  const el = (gridRef.value?.$el as HTMLElement | undefined) ?? null
+  gridOverflow.value = Boolean(el && el.scrollHeight > el.clientHeight + 2)
 }
 
 /**
@@ -279,9 +336,10 @@ async function start(): Promise<void> {
       return
     }
     const ok = await share.start({
-      sourceId: hasScreen.value ? selected.value : '',
+      sourceId: selectedSourceId.value,
       screen: hasScreen.value,
       microphone: microphone.value,
+      micDeviceId: microphone.value ? micDeviceId.value : '',
       camera: cameraOn.value,
       notes: notes.value,
       shareTitle: title.value.trim(),
@@ -300,6 +358,8 @@ async function start(): Promise<void> {
   }
 }
 
+watch(sources, () => void nextTick(measureOverflow))
+
 onMounted(() => {
   // The host always starts with the microphone on. The option is a shared
   // singleton (the running stage mutes/unmutes the same ref), so a previous
@@ -307,7 +367,9 @@ onMounted(() => {
   // DEFAULT, not a lock: the host can still uncheck it here, and mute later in
   // the meeting.
   microphone.value = true
-  if (supported.value) void loadSources()
+  if (supported.value) {
+    void loadSources()
+  }
 })
 </script>
 
@@ -355,6 +417,10 @@ onMounted(() => {
 }
 .meeting-input:focus { outline: none; border-color: var(--accent-color); }
 
+/* Camera, microphone and 听记 are one group of independent switches: they are
+   all "what the host sends", and they were previously split by a heading that
+   only repeated the word "sound". */
+.meeting-checks { display: flex; flex-direction: column; }
 .meeting-check {
   display: flex; align-items: center; gap: var(--space-2);
   padding: var(--space-1) 0;

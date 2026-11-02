@@ -3,6 +3,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick, ref, shallowRef } from 'vue'
 import enMessages from '@/i18n/locales/en'
+import { listAudioInputs } from '@/composables/useLiveShare'
+import { useMeetingOptions } from '@/composables/useMeetingOptions'
 import MeetingStage from '../MeetingStage.vue'
 
 /**
@@ -17,15 +19,26 @@ import MeetingStage from '../MeetingStage.vue'
  * audience list, so the panes are found by their `data-role` hooks.
  */
 
-vi.mock('lucide-vue-next', () => ({
-  Monitor: { name: 'MonitorIcon', render: () => null },
-  MonitorUp: { name: 'MonitorUpIcon', render: () => null },
-  Mic: { name: 'MicIcon', render: () => null },
-  NotebookPen: { name: 'NotebookPenIcon', render: () => null },
-  Video: { name: 'VideoIcon', render: () => null },
-  Volume2: { name: 'Volume2Icon', render: () => null },
-  X: { name: 'XIcon', render: () => null },
-}))
+vi.mock('lucide-vue-next', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('lucide-vue-next')>()
+  const stub = (name: string) => ({ name, props: { size: Number }, render: () => null })
+  // Spread the real module: a narrow mock turns any icon a shared child adds
+  // (the source grid's check mark, the microphone list's) into `undefined` and
+  // the whole panel fails to render.
+  return {
+    ...actual,
+    Monitor: stub('Monitor'),
+    MonitorUp: stub('MonitorUp'),
+    MonitorOff: stub('MonitorOff'),
+    Check: stub('Check'),
+    Plus: stub('Plus'),
+    Mic: stub('Mic'),
+    NotebookPen: stub('NotebookPen'),
+    Video: stub('Video'),
+    Volume2: stub('Volume2'),
+    X: stub('X'),
+  }
+})
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -73,6 +86,7 @@ vi.mock('@/composables/useLiveShare', async () => {
     previewCameraStream: sr(null),
     micEnabled: r(true),
     setMicEnabled: vi.fn(),
+    switchMicDevice: vi.fn(async () => true),
     setCameraEnabled: vi.fn(async () => true),
     startScreen: vi.fn(async () => true),
     stopScreen: vi.fn(async () => undefined),
@@ -94,6 +108,7 @@ vi.mock('@/composables/useLiveShare', async () => {
     useLiveShare: () => shareApi,
     listCaptureSources: vi.fn(async () => []),
     hasCameraDevice: vi.fn(async () => true),
+    listAudioInputs: vi.fn(async () => []),
   }
 })
 
@@ -161,6 +176,8 @@ beforeEach(() => {
   ;(shareApi.screenSharer as { value: string }).value = ''
   ;(notesApi.phase as { value: string }).value = 'idle'
   ;(notesApi.segments as { value: unknown[] }).value = []
+  // The chosen input is a module singleton shared with the create form.
+  useMeetingOptions().micDeviceId.value = ''
 })
 
 describe('MeetingStage tabs', () => {
@@ -413,6 +430,53 @@ describe('MeetingStage transcript rows', () => {
     expect(rows[1].find('.sa').attributes('data-name')).toBe('小明')
     expect(rows[0].find('.transcript__speaker').text()).toBe('我')
     expect(rows[0].find('.transcript__text').text()).toBe('第一句')
+  })
+})
+
+describe('MeetingStage microphone input', () => {
+  const devices = [
+    { id: 'mic-a', name: 'Built-in Microphone' },
+    { id: 'mic-b', name: 'Headset Microphone' },
+  ]
+
+  it('moves the capture to the device that was clicked, and remembers it', async () => {
+    ;(listAudioInputs as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(devices)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // System default + the two real inputs.
+    expect(wrapper.findAll('.meeting-device')).toHaveLength(3)
+    await wrapper.find('[data-device="mic-b"]').trigger('click')
+    await flushPromises()
+
+    expect(shareApi.switchMicDevice).toHaveBeenCalledWith('mic-b')
+    expect(useMeetingOptions().micDeviceId.value).toBe('mic-b')
+  })
+
+  it('keeps the previous device when the switch fails', async () => {
+    ;(listAudioInputs as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(devices)
+    ;(shareApi.switchMicDevice as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-device="mic-b"]').trigger('click')
+    await flushPromises()
+
+    // A device that refuses to open must not be remembered as the choice: the
+    // meeting is still capturing from the old one.
+    expect(useMeetingOptions().micDeviceId.value).toBe('')
+  })
+
+  it('hides the list while the microphone is off', async () => {
+    ;(listAudioInputs as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(devices)
+    ;(shareApi.micEnabled as { value: boolean }).value = false
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // Switching opens a real device; a host who muted the mic would not expect
+    // that. The create form hides the list for the same reason.
+    expect(wrapper.find('[data-role="meeting-mic-devices"]').exists()).toBe(false)
+    ;(shareApi.micEnabled as { value: boolean }).value = true
   })
 })
 
