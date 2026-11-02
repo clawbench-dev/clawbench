@@ -34,7 +34,7 @@ Dock 里现在有两个页签：
 4. 聊天**实时落库**，会议结束后可在记录详情里逐条回看。
 5. 会议记录可删除，删的是记录行 + 它对应的产物目录。
 6. 录音、转写、纪要在创建页与会议中**同一份状态**，两处可改、互相同步。
-7. **观众端（浏览器 / 客户端成员）也必须先填昵称才能进入会议**，昵称用于观众列表与聊天署名，并记住上次输入。
+7. **观众端（浏览器 / 客户端成员）也必须先填称谓才能进入会议**，称谓用于观众列表与聊天署名，并记住上次输入。
 8. **会议可以像 git 提交 / issue 一样被拖进聊天当上下文**：列表行拖拽、详情顶部按钮、详情正文选区，三条入口产出同一种引用卡片。
 
 ### 2.2 非目标
@@ -61,8 +61,8 @@ Dock 里现在有两个页签：
 | 会议名称 | 创建页**顶部**，选填 |
 | 麦克风 / 系统声音 / AI 听记 | 创建页一份、会议中一份，**同一状态**，实时同步 |
 | 语音会议 | 有链接、有观众、有聊天；无画面轨；标注/切源/远程控制/成员共享屏幕不出现 |
-| 加入会议（发布端） | 昵称**必填** + 链接必填，两项齐了才能加入 |
-| 加入会议（观众端） | 分享页先出昵称门，**填了才建立信令连接**；昵称随连接带上去，服务端拒绝空昵称 |
+| 加入会议（发布端） | 称谓**必填** + 链接必填，两项齐了才能加入 |
+| 加入会议（观众端） | 分享页先出称谓门，**填了才建立信令连接**；称谓随连接带上去，服务端拒绝空称谓 |
 | 结束会议 | 直接进入该会议的记录详情，不另设界面 |
 | **记录身份** | **token**（`live_notes` 表扩列后即会议记录），不是目录 |
 | **记录存在时机** | 发布端信令连上时插入（`ON CONFLICT DO NOTHING`），点「开始」但没连上就不留记录 |
@@ -207,7 +207,7 @@ stateDiagram-v2
 
 ```
 ┌ ← 加入会议 ────────────────────────┐
-│ 你的昵称                            │
+│ 你的称谓                            │
 │ [其他人会看到这个名字            ]  │
 │ 必填。发布端与其他观众用这个名字称呼你。│
 │ 会议链接                            │
@@ -218,8 +218,8 @@ stateDiagram-v2
 └────────────────────────────────────┘
 ```
 
-- 昵称与链接都非空才可点「加入」；只填链接时点不动，但校验失败（例如非 `http(s)://`）要就地提示，不静默。
-- 昵称写进与分享页昵称门**同一个** localStorage 键：打开链接后门里已预填，用户确认一次即可，不用输两遍。
+- 称谓与链接都非空才可点「加入」；只填链接时点不动，但校验失败（例如非 `http(s)://`）要就地提示，不静默。
+- 称谓写进与分享页称谓门**同一个** localStorage 键：打开链接后门里已预填，用户确认一次即可，不用输两遍。
 - 桌面壳在独立窗口打开（复用现有 `openShareLink`），浏览器新开标签页。打开后本页留在原地，提示「已在新窗口打开」。
 
 ### 6.4 会议中
@@ -234,7 +234,7 @@ stateDiagram-v2
   - 包含麦克风：关闭后提示「本端不再上传声音，转写只保留观众信道」。
   - 包含系统声音：语音会议下置灰；屏幕会议下开关控制回环音轨的 `enabled`。
   - AI 听记：关闭后转写页签的圆点消失、内容换成「不会生成转写与纪要，可在基础里重新打开」。
-- 观众列表（显示昵称，发布端自己固定显示「主持人」）+ 允许观众发言 + 允许成员共享屏幕（语音会议隐藏后者）。
+- 观众列表（显示称谓，发布端自己固定显示「主持人」）+ 允许观众发言 + 允许成员共享屏幕（语音会议隐藏后者）。
 
 **转写**：按说话人分行，录音中圆点常驻；本端麦克风关闭时提示只记录其他参与者。
 
@@ -261,20 +261,20 @@ stateDiagram-v2
 - 入参是 **token**。与「点一条历史记录」是**同一个组件、同一份数据**；差别只有刚结束时可能处于生成中。
 - 生成中、生成失败、无纪要（只有转写）、校对失败（纪要基于原始转写）都在这里表达，沿用现有文案。
 - `dir_name` 为空（没有任何产物）时：三个页签都能打开，纪要/转写显示「无产物」，聊天显示落库内容，底部「打开文件」不出现。
-- 底部「复制」按当前页签取内容：纪要/转写复制当前正文，**聊天页签复制全部聊天**（`[HH:MM] 昵称：文本` 逐行）。
+- 底部「复制」按当前页签取内容：纪要/转写复制当前正文，**聊天页签复制全部聊天**（`[HH:MM] 称谓：文本` 逐行）。
 - 记录永久之后要处理「卡在生成中」：打开详情时若 `status = generating` 且 `updated_at` 超过 10 分钟，显示「生成中断」并提供重试，否则一场被进程重启打断的会议会永远转圈。
 - 聊天页签读数据库（见 §8.3），会议中发过的消息在这里逐条可见。
 - 「打开文件」走现有文件查看器；路径分隔符按服务端返回的路径判断（Windows 反斜杠）。
 
 ### 6.6 观众端加入（浏览器 / 客户端成员）
 
-观众不是「打开链接就直接进会」，而是先过一道昵称门：
+观众不是「打开链接就直接进会」，而是先过一道称谓门：
 
 ```
 ┌ 发版评审 ───────────────────────────┐
 │ 主持人邀请你加入会议                 │
 │                                     │
-│ 你的昵称                            │
+│ 你的称谓                            │
 │ [小明                            ]  │
 │ 发布端与其他观众会看到这个名字。      │
 │                                     │
@@ -282,12 +282,12 @@ stateDiagram-v2
 └────────────────────────────────────┘
 ```
 
-- **门在连接之前**：昵称为空时**不建立 WS 信令连接**，因此不占观众名额、不消耗发布端上行。只有点了「加入会议」才 `connect(name)`。
-- **昵称必填且服务端校验**：信令连接带 `name` 查询参数（URL 编码，≤24 字），服务端遇到空值直接 `400` 拒绝，不做「空名字也放行、显示成匿名」的兜底。
+- **门在连接之前**：称谓为空时**不建立 WS 信令连接**，因此不占观众名额、不消耗发布端上行。只有点了「加入会议」才 `connect(name)`。
+- **称谓必填且服务端校验**：信令连接带 `name` 查询参数（URL 编码，≤24 字），服务端遇到空值直接 `400` 拒绝，不做「空名字也放行、显示成匿名」的兜底。
 - **管道已存在，只差取值**：`liveshare.Viewer` 已有 `Name` 字段（`room.go:74`），`AddViewer(name, sink)` 已经接收名字，只是 `live_share.go:422` 恒传 `""`；`PublisherMessage.Name`、`ViewerControl.Name`、聊天帧的 `name` 也都已存在。本设计**不新增协议字段**，只把值填上。
-- **本地记住**：`localStorage` 存上一次用的昵称，刷新后预填，一键即可重新加入；换会议也沿用同一个名字。桌面端「加入会议」页写的是同一个键。
-- **服务端名字是权威**：发布端在 `viewer-join` 里拿到 `name` 后建立 `viewerId → 昵称` 映射，转发观众消息时**替换帧里的 `name`**，`from` 保持 viewerId 不动（`from` 是身份，远程控制靠它鉴权，见 §8.2）。观众列表、聊天署名、说话人高亮都读这个映射。
-- **允许重名**：内部仍用 `viewerId` 区分，列表显示昵称，重名时追加 `#2`。
+- **本地记住**：`localStorage` 存上一次用的称谓，刷新后预填，一键即可重新加入；换会议也沿用同一个名字。桌面端「加入会议」页写的是同一个键。
+- **服务端名字是权威**：发布端在 `viewer-join` 里拿到 `name` 后建立 `viewerId → 称谓` 映射，转发观众消息时**替换帧里的 `name`**，`from` 保持 viewerId 不动（`from` 是身份，远程控制靠它鉴权，见 §8.2）。观众列表、聊天署名、说话人高亮都读这个映射。
+- **允许重名**：内部仍用 `viewerId` 区分，列表显示称谓，重名时追加 `#2`。
 - **不支持中途改名**：改名字要重新加入（首版不做，见 §14）。
 
 ### 6.7 删除
@@ -415,16 +415,16 @@ if (!outVideoTrack) { fail('no video track captured'); await stop(); return fals
 ### 8.2 落库
 
 - **两个写入点，一个函数**：观众消息在 `onControl` 里、主持人自己的消息在 `sendChat` 里——后者**不经过** `onControl`（它直接 `sendControl` 广播），只挂在收帧上是漏的。两处都调 `persistChat(msg)`。
-- **署名**：`speaker` 取 `msg.name`，但观众消息的名字由发布端用 `viewerId → 昵称` 映射覆盖，不信任帧里的自报值。`from`（viewerId）保持原样，因为远程控制靠它鉴权。
+- **署名**：`speaker` 取 `msg.name`，但观众消息的名字由发布端用 `viewerId → 称谓` 映射覆盖，不信任帧里的自报值。`from`（viewerId）保持原样，因为远程控制靠它鉴权。
 - **幂等**：`UNIQUE(token, client_msg_id)`，`client_msg_id` 就是帧里的 `id`；重复 POST 返回 200。退避重试因此不会产生重复行。
 - **顺序**：服务端自增 `id` 决定顺序，不按客户端时钟排序（观众的 `at` 可能偏）。
 - 失败按 1s/3s/9s 退避重试三次；仍失败只记日志，**不阻塞聊天**。这种情况下详情里的聊天可能缺条，界面上不额外报警——聊天不是会议的正式产物。
-- 限额：单条 ≤ 2000 字（复用 `liveControl.ts` 的 `CHAT_MAX_CHARS`）、昵称 ≤ 24 字（服务端兜底 40）；空文本拒绝。
+- 限额：单条 ≤ 2000 字（复用 `liveControl.ts` 的 `CHAT_MAX_CHARS`）、称谓 ≤ 24 字（服务端兜底 40）；空文本拒绝。
 
 ### 8.3 读取与归档
 
 - 详情页的聊天页签**读数据库**，按 `id` 升序；记录永久，所以不会出现「过几天聊天没了」。
-- 会议结束时（纪要生成入口）仍把聊天物化成目录里的 `chat.md`，格式 `[HH:MM] 昵称：文本`。这一步不是为了过期兜底，而是与纪要、转写一致：**磁盘上有一份可以进 git、可以直接打开、可以带走的副本**。
+- 会议结束时（纪要生成入口）仍把聊天物化成目录里的 `chat.md`，格式 `[HH:MM] 称谓：文本`。这一步不是为了过期兜底，而是与纪要、转写一致：**磁盘上有一份可以进 git、可以直接打开、可以带走的副本**。
 - 不做「解析 `chat.md` 回填消息」：Markdown 是给人看的，数据库才是权威。
 - 这也是「聊天-only 会议」创建目录的时机（没有录音、没有纪要，但有聊天）。
 
@@ -478,10 +478,10 @@ if (!outVideoTrack) { fail('no video track captured'); await stop(); return fals
 | `components/live/MeetingPanel.vue` | 外壳：状态机、页签头、角标、视图分发、`active` 复位 |
 | `components/live/MeetingList.vue` | 记录列表 + 刷新 + footer 两个入口 |
 | `components/live/MeetingCreate.vue` | 名称 / 选源 / 声音与听记 / 开始 |
-| `components/live/MeetingJoin.vue` | 昵称 + 链接 + 加入 |
+| `components/live/MeetingJoin.vue` | 称谓 + 链接 + 加入 |
 | `components/live/MeetingStage.vue` | 会议中（现 `LiveSharePanel.vue` 瘦身，去掉 minutes 分支与 footer 纪要栏） |
 | `components/live/MeetingDetail.vue` | 详情三页签 + 产物 + 删除 + 顶部引用按钮 + 正文选区引用 |
-| `share/LiveJoinGate.vue` | 观众端昵称门（分享页进入会议前的唯一入口） |
+| `share/LiveJoinGate.vue` | 观众端称谓门（分享页进入会议前的唯一入口） |
 | `components/live/NotesPanel.vue` | **删除** |
 | `composables/useMeetingHistory.ts` | 列表 / 详情 / 聊天 / 删除（从 `NotesPanel` 抽出约 150 行）+ `stageMeetingQuote` 的正文拉取 |
 | `composables/useLiveNotes.ts` | 不变（录音与上传单例） |
@@ -493,7 +493,7 @@ if (!outVideoTrack) { fail('no video track captured'); await stop(); return fals
 - **会议会话状态**（当前会议、页签、计时、转写、聊天）留在 `useLiveShare` / `useLiveNotes` 单例，切走页签不中断。
 - **视图状态**（list/create/join/meeting/detail）留在 `MeetingPanel`，`active` 变 true 时复位：不在会议中就回 `list`，在会议中就回 `meeting`。
 - **创建页与会议中的三个开关**共用 `useLiveNotes` 上的同一份布尔，不各存一份。
-- **观众昵称**留在 `LiveJoinGate` 的本地状态，`liveViewer.connect(name)` 接收它作为参数；`liveViewer` 不自己读 `localStorage`，便于测试。
+- **观众称谓**留在 `LiveJoinGate` 的本地状态，`liveViewer.connect(name)` 接收它作为参数；`liveViewer` 不自己读 `localStorage`，便于测试。
 
 ### 10.2 Dock
 
@@ -530,10 +530,10 @@ if (!outVideoTrack) { fail('no video track captured'); await stop(); return fals
 | 观众端 token 失效 | 沿用现有「共享已结束」提示 |
 | 引用时纪要正在生成 / 拉取失败 | 不暂存空引用，toast 说明原因（见 §6.8） |
 | 转写/聊天占用的空间 | 不再自动清理；删除记录或删除项目才会释放（见 §14） |
-| 观众昵称为空 / 纯空白 / 超长 | 前端按钮不可点；绕过前端直接连 WS 的由服务端 `400` 拒绝 |
-| 昵称门收到 400 | 服务端 400 表现为 WS 握手失败，浏览器拿不到状态码；前端已保证非空且 ≤24 字，正常路径不会触发。若真触发，页面落在通用的「连接失败」，重试前会回到昵称门 |
+| 观众称谓为空 / 纯空白 / 超长 | 前端按钮不可点；绕过前端直接连 WS 的由服务端 `400` 拒绝 |
+| 称谓门收到 400 | 服务端 400 表现为 WS 握手失败，浏览器拿不到状态码；前端已保证非空且 ≤24 字，正常路径不会触发。若真触发，页面落在通用的「连接失败」，重试前会回到称谓门 |
 | 观众重名 | 允许；列表用 `viewerId` 区分，重名追加序号 |
-| 观众刷新页面 | 回到昵称门，预填上次昵称，一键重新加入（不自动重连，避免静默占用名额） |
+| 观众刷新页面 | 回到称谓门，预填上次称谓，一键重新加入（不自动重连，避免静默占用名额） |
 
 ## 12. 测试
 
@@ -543,27 +543,27 @@ if (!outVideoTrack) { fail('no video track captured'); await stop(); return fals
 - `live_notes_chat_test.go`：追加 / 增量读取 / 幂等（同一 `client_msg_id` 两次只留一条）/ 空文本拒绝 / 长度上限 / 删除记录时一并清空。
 - `live_notes_delete_test.go`：按 token 删除、他人项目 404、房间运行中 409、生成中 409、目录删失败不删行、行删失败后重试仍可完成。
 - `live_notes_test.go` 增补：`chat.md` 物化、`dir_name` 为空时详情可读、老 `dir_path` 不再被读取。
-- `live_share_test.go` 增补：`video:false` 出现在 meta 与 `joined`；信令 WS 缺 `name` 返回 `400`；`viewer-join` 带回昵称。
+- `live_share_test.go` 增补：`video:false` 出现在 meta 与 `joined`；信令 WS 缺 `name` 返回 `400`；`viewer-join` 带回称谓。
 
 **前端**
 
 - `MeetingPanel.test.ts`：状态机（list → create → meeting → detail → list）、结束即进详情、`active` 复位、会议进行中切走再回来落在 meeting。
 - `MeetingCreate.test.ts`：名称选填、未选源时按钮禁用、选语音时系统声音置灰、三个开关与 `useLiveNotes` 同步。
-- `MeetingJoin.test.ts`：昵称必填、链接格式校验、两项齐了才可点。
+- `MeetingJoin.test.ts`：称谓必填、链接格式校验、两项齐了才可点。
 - `quoteDrag.test.ts` 增补：`meetingDragPayload` 的 label/类型/locator，空 token 返回 null。
 - `quoteItem.test.ts` 增补：`resolveQuoteType` 认 `meetingToken`，不被 `url`/`filePath` 抢走。
 - `MeetingPanel.test.ts` 增补：顶部按钮 → `stageMeetingQuote` 被调用；`clawbench-open-meeting` 能按 token 打开详情。
 - `MeetingDetail.test.ts`：生成中 / 生成中断（超时判定）/ 失败 / 无纪要 / 无产物 / 聊天空态、复制全部、删除确认。
-- `LiveJoinGate.test.ts`：昵称为空时按钮不可点且不发起连接、本地记住上次昵称、提交后把名字传给 `connect()`。
+- `LiveJoinGate.test.ts`：称谓为空时按钮不可点且不发起连接、本地记住上次称谓、提交后把名字传给 `connect()`。
 - `dockTabs.test.ts` / `useWideScreenLayout.test.ts`：`notes` 已移除、`live` 恒可见且位置变化、`leftTab` 记忆迁移（现有断言 `live` 在 `proxy-1` 且被 `liveUnavailable` 隐藏的两处要重写）。
 
 **E2E**（`e2e/specs/meeting-tab.spec.ts`）
 
-两条主线：①创建语音会议 → 发一条聊天 → 结束 → 详情里看到聊天 → 删除 → 列表少一条；②打开分享链接 → 昵称门出现 → 空昵称点不动 → 填名进入 → 聊天里显示该昵称。现有的 `share-page.spec.ts` / `live-share.spec.ts` 假定「打开即连」，要跟着改成先过门。
+两条主线：①创建语音会议 → 发一条聊天 → 结束 → 详情里看到聊天 → 删除 → 列表少一条；②打开分享链接 → 称谓门出现 → 空称谓点不动 → 填名进入 → 聊天里显示该称谓。现有的 `share-page.spec.ts` / `live-share.spec.ts` 假定「打开即连」，要跟着改成先过门。
 
 ## 13. 文档同步
 
-- `docs/spec/features/live-share.md`：新增「会议页签」一节，改写「界面位置」与「AI 听记」中的入口描述，补观众昵称门。
+- `docs/spec/features/live-share.md`：新增「会议页签」一节，改写「界面位置」与「AI 听记」中的入口描述，补观众称谓门。
 - `docs/spec/database.md`：`live_notes` 扩列与永久化、新增 `live_notes_chat`、删除保留期说明。
 - `internal/api/openapi.yaml`：`POST /api/live-share`、`GET /api/share/{token}/meta`、`POST /notes/chat`、`GET/DELETE /notes/sessions`、artifact 入参与 `kind=chat`、删除 `POST /notes/session`。
 - `dockTabs.ts` / `dockTabMeta.ts` 的注释同步（它们承载了「为什么两个页签」的旧论证）。
@@ -584,7 +584,7 @@ if (!outVideoTrack) { fail('no video track captured'); await stop(); return fals
 | 问题 | 决定 |
 |---|---|
 | 页签角标 | **一个主题色圆点 = 会议进行中**。不再用红色 tint 表示录音：红色留给错误；「在录 / 在播」进面板看 |
-| 发布端名字 | 固定「主持人」，创建页不再多一个昵称输入框 |
+| 发布端名字 | 固定「主持人」，创建页不再多一个称谓输入框 |
 | 聊天导出 | 详情页「聊天」加一个**复制全部**，与纪要、转写的复制按钮一致；不做下载 |
 | 保留期 | **取消 7 天限制**，记录、分段、聊天、目录统一跟随会议记录；删除记录是唯一出口 |
 
@@ -602,12 +602,12 @@ if (!outVideoTrack) { fail('no video track captured'); await stop(); return fals
 | 详情 | 单条记录走 `GET /sessions?token=`；聊天页签徽标用**已加载条数**而不是服务端总数（两者不一致时以列表为准） |
 | 删除 | 先删目录、再删三张表的行；目录删失败则不动行（可重试） |
 | 聊天归档 | 会议结束时写 `chat.md`；详情**只读数据库**，不做 Markdown 反解析 |
-| 观众昵称 | 复用已有的 `Viewer.Name` / `viewer-join.name` / 聊天帧 `name`；服务端校验 ≤24 字，空值 400；发布端用 `viewerId → 昵称` 覆盖自报值，`from` 保持不变 |
+| 观众称谓 | 复用已有的 `Viewer.Name` / `viewer-join.name` / 聊天帧 `name`；服务端校验 ≤24 字，空值 400；发布端用 `viewerId → 称谓` 覆盖自报值，`from` 保持不变 |
 | 语音会议 | `POST /api/live-share` 的 `video`（默认 true）→ 房间 → `joined.video`；发布端 `start({video:false})` 跳过采集；观众端音频轨即接通 |
 | 运行时开关 | 麦克风/系统声音切换轨道 `enabled`（不重协商）；听记开关走 `useLiveShare.startNotes()/stopNotes()` |
 | 引用 | 拖拽只带 token；落点/按钮统一走 `handleMeetingQuote` → 拉纪要（无则修订版转写 → 原始转写）→ 截断 4000 字 → 暂存；失败不暂存 |
 | 角标 | 只剩一个主题色圆点（`liveDotVisible`），红色的 `is-recording` tint 删除 |
-| 评审后修正 | `video` 字段**去掉 `omitempty`**（false 必须真的发出去）；观众昵称在 `onViewerJoin` **之后**回填（否则行还不存在）；引用卡片补 `meetingToken` 三处映射 + 选区 `data-quote-meeting-token`；详情在会议刚结束时轮询纪要；分享自行停止时由外壳切走（阶段页没有返回键）；删除项目补三张会议表；列表删除失败弹提示；转写按纯文本渲染（SRT 过 Markdown 会把时间轴箭头吃掉）；观众重名加 `#2` |
+| 评审后修正 | `video` 字段**去掉 `omitempty`**（false 必须真的发出去）；观众称谓在 `onViewerJoin` **之后**回填（否则行还不存在）；引用卡片补 `meetingToken` 三处映射 + 选区 `data-quote-meeting-token`；详情在会议刚结束时轮询纪要；分享自行停止时由外壳切走（阶段页没有返回键）；删除项目补三张会议表；列表删除失败弹提示；转写按纯文本渲染（SRT 过 Markdown 会把时间轴箭头吃掉）；观众重名加 `#2` |
 
 ## 附：评审修订记录（2026-11-01）
 
@@ -617,11 +617,11 @@ if (!outVideoTrack) { fail('no video track captured'); await stop(); return fals
 | 会议可能没有任何记录 | 记录模型改为 token（§4），开始即建行；目录可选 |
 | 发布端自己的聊天漏落库 | §8.2 改为两个写入点共用一个函数 |
 | 覆盖 `from` 会打断远程控制 | §6.6 / §8.2 改为只替换 `name`，`from` 保持 viewerId |
-| 昵称管道其实已存在 | §6.6 明确「不新增协议字段，只填值」 |
+| 称谓管道其实已存在 | §6.6 明确「不新增协议字段，只填值」 |
 | 删除会被后台纪要任务复活 | §6.7 / §11 增加「生成中 409」，改为先删目录后删行 |
 | `dir_path` 改名后失效 | `live_notes.dir_name` 存目录名，路径按当前项目拼 |
 | 观众端缺口不止一条轨 | §7.2 列出五处（接通判定、等待层、远程控制、标注、成员共享） |
-| 昵称门 400 没有失败路径 | §11 增加「回到昵称门并提示」 |
+| 称谓门 400 没有失败路径 | §11 增加「回到称谓门并提示」 |
 | 聊天重试乱序/重复 | §8.2 用 `client_msg_id` 幂等 + 服务端自增序 |
 | 目录名只有 6 位 token，拿不到 token | 记录改以 token 为身份；artifact/删除都不再吃目录名 |
 | 路径穿越（`\` 在 Linux 不算分隔符） | artifact 与删除都不再接受客户端路径 |

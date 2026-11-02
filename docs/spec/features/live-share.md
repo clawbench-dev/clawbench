@@ -317,7 +317,7 @@ MediaProjection ─▶ VirtualDisplay ─▶ ImageReader ─▶ 缩放 + JPEG
 |---|---|
 | 会议记录（默认） | 本项目的会议列表（数据库记录，永久）；footer 两个入口：加入会议 / 创建会议 |
 | 创建会议 | 会议名称（选填）→ 画面（共享屏幕 + 源 / 摄像头）→ 声音与听记 |
-| 加入会议 | 昵称（必填）+ 链接；桌面端在独立窗口打开 |
+| 加入会议 | 称谓（必填）+ 链接；桌面端在独立窗口打开 |
 | 会议中 | 基础 / 转写 / 聊天三个页签 + 结束会议 |
 | 记录详情 | 纪要 / 转写 / 聊天 + 产物路径 + 打开文件 / 复制 / 删除 |
 
@@ -325,7 +325,7 @@ MediaProjection ─▶ VirtualDisplay ─▶ ImageReader ─▶ 缩放 + JPEG
 - **返回**：创建 / 加入 / 记录详情 / 会议中四个子页都支持屏幕左右边缘内划返回（Android 物理返回键同一条链路），一律回到会议记录列表。会议中的返回**不结束会议**，列表里那条「进行中」的记录点开会回到会议中。
 - 会议进行中页签右上角挂**主题色圆点**（`.dock-badge--live`，无数字）。不再用红色区分「录音中」——红色只留给错误。
 - 页签**恒显示**：记录永远可读；宿主不能采集屏幕时，创建页里说明缺什么。
-- **观众端（分享页）先过昵称门**：填了昵称才建立信令连接（不占观众名额），昵称记在 `localStorage`，发布端观众列表与聊天署名都用它。
+- **观众端（分享页）先过称谓门**：填了称谓才建立信令连接（不占观众名额），称谓记在 `localStorage`，发布端观众列表与聊天署名都用它。
 - **会议没有类型**。「语音会议 / 视频会议」这个概念不存在：一场会议从头到尾是同一种东西，画面只是它此刻的状态。
   - 创建页是**一组独立勾选**：共享屏幕（+ 源）、摄像头、麦克风、AI 听记。全都不勾也允许开始——那就是一场只有链接、观众和聊天的会议。
   - **会议中随时可切**：基础页有「共享屏幕」和「摄像头」两个开关，走 `startScreen` / `stopScreen` / `setCameraEnabled`，只对已协商的 m-line 做 `replaceTrack`，观众无需重连。
@@ -377,7 +377,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 ```
 <项目>/.clawbench/notes/2026-10-31-1430-周会-a1b2c3/
     minutes.md               纪要（末尾链接同目录的另外两份）
-    transcript.vtt           原始转写（STT 原样输出，WebVTT 字幕；cue id = 信道，正文 <v 昵称>）
+    transcript.vtt           原始转写（STT 原样输出，WebVTT 字幕；cue id = 信道，正文 <v 称谓>）
     transcript-revised.md    修订版转写（结合项目上下文校对）
     chat.md                  聊天归档（会议结束时写入；详情读的是数据库）
     files.md                 会议期间打开的文件时间轴（归档结果与跳过原因）
@@ -393,7 +393,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 - **混音轨是录制端多录的一路**：发布端把每个被录音的信道同时接到一条共享的 Web Audio 总线上，再单独录这条总线（`channel=mix`，`archive=1` 上传——只存档、不转写，它没有单一说话人）。这样「整场会议」在任何播放器里都能直接听，而分信道文件仍然保留，供日后重新转写时保住说话人区分。
 - **合并只在上传队列排空之后**：发布端排空后调 `POST /api/live-share/notes/audio/merge`；纪要任务启动时也会再调一次（幂等）作为重试路径。已经有输出的信道直接跳过，所以重试不会产出一个只含残余片段的不完整文件。
 - 合并**只对新会议生效**：老会议目录里的片段保持原样，详情页仍显示「录音（N 段）」。
-- **转写用 WebVTT 而不是 SRT**：cue id 承载**信道**（`mic` / `viewer:<id>`）——显示名会被改名、复用、本地化，只有信道是稳定身份，文件里丢了它就再也对不上人；正文的 `<v 昵称>` 承载播放器要显示的名字。浏览器也只支持 VTT 的 `<track>`，SRT 得自己写解析器才能播。详情页读这个文件时会把头、cue id 和时间轴剥掉，只显示「说话人：内容」。
+- **转写用 WebVTT 而不是 SRT**：cue id 承载**信道**（`mic` / `viewer:<id>`）——显示名会被改名、复用、本地化，只有信道是稳定身份，文件里丢了它就再也对不上人；正文的 `<v 称谓>` 承载播放器要显示的名字。浏览器也只支持 VTT 的 `<track>`，SRT 得自己写解析器才能播。详情页读这个文件时会把头、cue id 和时间轴剥掉，只显示「说话人：内容」。
 - **录音在转写之前落盘**：STT 挂了要重转、模型升级要复跑、某句听错要复核——都需要原始音频，而它是唯一无法再生的产物。写盘失败只记警告，不阻断转写。
 - **文件名带 token 后缀**：同一分钟、同一标题的两场会不能共用目录，否则录音会交错、纪要会互相覆盖。
 - **`audio/.gitignore` 内容为 `*`**：录音是二进制，一小时约 14MB/信道；同目录的 Markdown 仍然可以进 git。
@@ -446,7 +446,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 - **公开读**：`{token}/notes` 只在房间存活期间可读。共享结束后 token 立即失效，不会留下可长期读取的转写。
 - **保留期**：**没有**。记录、转写分段、聊天、磁盘目录都永久保留；删除记录（或删除项目）是唯一的删除路径。
 - **纪要生成**：修订版转写超过 6000 字时先分段提取要点，再合并成纪要（map-reduce），避免整段塞进模型窗口被截断。
-- **纪要里用昵称指代「我」**：转写中发布端自己的信道标注是**客户端本地化**的「我 / Me」，模型无从知道那是谁，而纪要要给没参会的人看。生成时把 `user.nickname` 与该信道的实际标注一起写进提示词（分段提取与最终合并两处都注入），纪要里指代本人时写昵称。未配置昵称（仍是占位 `User`）或本人全程没说话时不注入。
+- **纪要里用称谓指代「我」**：转写中发布端自己的信道标注是**客户端本地化**的「我 / Me」，模型无从知道那是谁，而纪要要给没参会的人看。生成时把 `user.nickname` 与该信道的实际标注一起写进提示词（分段提取与最终合并两处都注入），纪要里指代本人时写称谓。未配置称谓（仍是占位 `User`）或本人全程没说话时不注入。
 - **落盘**：见上面的「产物」一节。纪要生成后写 `minutes.md`，同时把两份转写和录音留在同一目录；同一场共享重新生成会覆盖同名文件而不是堆副本。
 
 ### 会议记录列表与详情
@@ -491,16 +491,16 @@ viewer:<id> 每个观众的麦克风，一人一条
 | `web/src/components/live/MeetingPanel.vue` | 会议页签外壳：列表 / 创建 / 加入 / 会议中 / 详情 五视图状态机 |
 | `web/src/components/live/MeetingList.vue` | 会议记录列表（拖拽引用、删除、footer 两个入口） |
 | `web/src/components/live/MeetingCreate.vue` | 创建会议：名称、画面（共享屏幕 + 源 / 摄像头）、声音与听记；没有会议类型 |
-| `web/src/components/live/MeetingJoin.vue` | 加入会议：昵称（必填）+ 链接 |
+| `web/src/components/live/MeetingJoin.vue` | 加入会议：称谓（必填）+ 链接 |
 | `web/src/components/live/MeetingStage.vue` | 会议中：基础 / 转写 / 聊天；共享屏幕、摄像头、声音、听记都是运行时开关 |
 | `web/src/components/live/MeetingDetail.vue` | 记录详情：纪要 / 转写 / 聊天 + 产物 + 删除 + 引用 |
 | `web/src/composables/useMeetingHistory.ts` | 记录列表 / 单条 / 产物 / 聊天 / 删除 / 引用载荷 |
-| `web/src/share/LiveJoinGate.vue` | 观众端昵称门（连接之前） |
+| `web/src/share/LiveJoinGate.vue` | 观众端称谓门（连接之前） |
 | `web/src/share/liveNotesClient.ts` | 观众端听记轮询 |
 | `web/src/composables/useLiveShare.ts` | 发布端：房间、采集、每观众 PeerConnection；画面可随时开关（`startScreen`/`stopScreen`/`setCameraEnabled`，只 `replaceTrack`） |
 | `web/src/utils/screenCaptureSupport.ts` | 浏览器能否采集（`getDisplayMedia` 存在性）与是否非安全上下文，供 Dock 页签门槛与面板提示共用 |
 | `web/src/composables/useLiveMixer.ts` | 混音图（纯逻辑，可单测） |
-| `web/src/share/liveViewer.ts` | 观众端：信令（带昵称）+ 单个 PeerConnection；无画面时以音频轨为接通信号，画面随 `picture-state` 出现/消失 |
+| `web/src/share/liveViewer.ts` | 观众端：信令（带称谓）+ 单个 PeerConnection；无画面时以音频轨为接通信号，画面随 `picture-state` 出现/消失 |
 | `web/src/share/LiveShareView.vue` | 观众端页面 |
 | `web/src/components/live/LiveShareDialog.vue` | 发布端弹窗（含实时字幕与纪要） |
 | `desktop/src/main/capture.ts` | 捕获源列表、`setDisplayMediaRequestHandler`、节流开关 |

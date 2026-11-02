@@ -604,11 +604,18 @@ describe('MeetingCreate in a browser', () => {
     expect(hint().classes()).toContain('meeting-hint--required')
     expect(wrapper.find('[data-role="meeting-nick"]').attributes('aria-invalid')).toBe('true')
 
+    // The naming advice sits outside that state-dependent line: it is about
+    // choosing the name, so it must be readable while the field is still empty.
+    const advice = () => wrapper.find('[data-role="meeting-nick-advice"]')
+    expect(advice().text()).toBe(enMessages.meeting.create.nickAdvice)
+    expect(advice().classes()).not.toContain('meeting-hint--required')
+
     await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
     expect(start.attributes('disabled')).toBeUndefined()
     // ...and the line goes back to explaining what the name is for.
     expect(hint().text()).toBe(enMessages.meeting.create.nickHint)
     expect(hint().classes()).not.toContain('meeting-hint--required')
+    expect(advice().text()).toBe(enMessages.meeting.create.nickAdvice)
 
     // Whitespace is not a name.
     await wrapper.find('[data-role="meeting-nick"]').setValue('   ')

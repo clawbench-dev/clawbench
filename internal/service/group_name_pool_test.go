@@ -119,7 +119,7 @@ func TestAssignMemberNames_ReservesExistingAgentBase(t *testing.T) {
 	}
 }
 
-// 单实例本名与用户昵称冲突时回退本名 + 序号（从 2 起），不产生 "<base> 1"。
+// 单实例本名与用户称谓冲突时回退本名 + 序号（从 2 起），不产生 "<base> 1"。
 func TestAssignMemberNames_LoneCollisionFallsBackToTwo(t *testing.T) {
 	base := GetAgentDisplayName("a")
 	taken := map[string]bool{base: true}

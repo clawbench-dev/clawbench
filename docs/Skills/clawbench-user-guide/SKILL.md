@@ -1067,8 +1067,8 @@ sqlite3 "file:$HOME/.clawbench/ClawBench.db?mode=ro&immutable=1" \
 | 建群入口 | `[data-action="create"]`（**共用的 `+`**） | **独立的 `[data-action="create-group"]` 已删除**——群聊改从 `+` 抽屉内的分段开关进入 |
 | 建群分段开关 | `.agent-mode-switch` / `.agent-mode-tab[data-mode="single"\|"group"]`（`.active` 为当前） | 抽屉头部右侧；**仅当可选智能体 ≥ 2 时显示** |
 | 建群抽屉 | `.agent-option`（行）/ `.agent-option-check`（复选框）/ `.agent-host-btn`（主持按钮，`.active` = 当前主持人）/ `.agent-stepper`（`− N +` 实例步进器，`.agent-stepper-count` 是数量）/ `.agent-count-hint`（页脚「已添加 N/上限 个」）/ `.agent-multi-confirm`（创建按钮） | 标题用 `.agent-header-title`（「选择群聊成员」）；主持人模式/自由模式由 `GroupModeHint` 的 `.group-mode-hint-chip` 表示（皇冠/`@`），**没有 `.agent-header-mode`** |
-| 用户昵称 | 设置 → 身份 → 我的昵称（`user.nickname`） | 智能体在群里称呼你的名字，也是加入会议时的显示名；留空则回退 `User`。@ 芯片显示它（不再显示「你」） |
-| 真实名标签 | `.real-agent-name-tag`（共享组件 `RealAgentNameTag`） | 昵称是自动名池名/`本名 序号` 时显示底层真实智能体名；消息头 `.msg-speaker-real`、成员行 `.gm-real-name`、补全行 `.completion-real-name` 都用它 |
+| 用户称谓 | 设置 → 身份 → 我的称谓（`user.nickname`） | 智能体在群里称呼你的名字，也是加入会议时的显示名；留空则回退 `User`。@ 芯片显示它（不再显示「你」） |
+| 真实名标签 | `.real-agent-name-tag`（共享组件 `RealAgentNameTag`） | 称谓是自动名池名/`本名 序号` 时显示底层真实智能体名；消息头 `.msg-speaker-real`、成员行 `.gm-real-name`、补全行 `.completion-real-name` 都用它 |
 | @ 成员卡 | `.chat-attachment-tags .mention-card`（名字 `.mention-card-name`，锁 `.mention-card-lock`） | 输入框附件条 |
 | 智能体设置 | `.settings-agents-index__row` / `.settings-agents-index__rescan-row`（**两行**，用 `[data-action=agent-create|agent-rescan]` 区分）/ `.settings-agents-index__name` | 进设置 → 点「智能体」分类行；详情页 `.settings-agent-detail`（两组动作：`.settings-agent-detail__selftest-btn` 自检 ×2、`.settings-agent-detail__action-btn` 复制/禁用、`.settings-agent-detail__delete-btn` 删除） |
 

@@ -50,6 +50,12 @@
         >
           {{ nicknameValid ? t('meeting.create.nickHint') : t('meeting.create.nickRequired') }}
         </div>
+        <!-- Always visible, including while the field is still empty (the red
+             line above replaces the hint in that state): the advice is about
+             choosing the name, so it must come before typing, not after. -->
+        <div class="meeting-hint" data-role="meeting-nick-advice">
+          {{ t('meeting.create.nickAdvice') }}
+        </div>
 
         <!-- No meeting type: the picture is a CHOICE between "nothing" and the
              actual screens/windows, so it is a grid of frames rather than a

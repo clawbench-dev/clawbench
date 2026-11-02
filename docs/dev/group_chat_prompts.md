@@ -2,7 +2,7 @@
 
 > 本文档是群聊流程中所有提示词的**原始字符串快照**（未渲染、未翻译）。
 > 内容由源码构建器直接生成，样例成员为 `主持人A` / `CodeBuddy（代码编写与推理）` /
-> `Claude（长文写作与评审）` / `Gone（数据分析，已禁用）`，用户昵称取默认值 `User`。
+> `Claude（长文写作与评审）` / `Gone（数据分析，已禁用）`，用户称谓取默认值 `User`。
 >
 > 生成方式：临时 Go 测试调用 `BuildHostSystemPrompt` / `BuildMemberSystemPrompt` /
 > `BuildHostSummaryPrompt` / `BuildFreeMemberSystemPrompt` / `participantHeader` /
@@ -28,7 +28,7 @@ system prompt = agent 自己配置的 SystemPrompt（与群聊无关）
 - **主持人提示词的可点名名单只含未禁用成员**（被禁用的成员不进这个列表）；被禁用的成员由
   紧随其后的 `disabledNotice` 单独点名并附一句「不要点名、也不要密送」——成员提示词与
   自由模式提示词同样附这一句（它们的「其他成员」列表仍列出被禁用的成员，让人知道屋里还有谁）。
-- `{User}`：`groupUserTarget()`，即用户昵称（默认 `User`）。
+- `{User}`：`groupUserTarget()`，即用户称谓（默认 `User`）。
 
 ---
 

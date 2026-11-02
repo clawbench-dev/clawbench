@@ -130,9 +130,9 @@ InvalidModelForAgent: Invalid model for this agent
 InvalidThinkingEffort: Invalid thinking effort level for this agent
 InvalidModeForAgent: Invalid mode for this agent
 AgentNameTaken: An agent with this name already exists
-AgentNameReserved: This name conflicts with the group-chat user nickname
-UserNicknameTaken: This nickname is already used by an agent
-InvalidUserNickname: Invalid nickname (1-32 characters, no quotes, angle brackets, commas or control characters)
+AgentNameReserved: This name conflicts with the group-chat user name
+UserNicknameTaken: This name is already used by an agent
+InvalidUserNickname: Invalid name (1-32 characters, no quotes, angle brackets, commas or control characters)
 InvalidUserProfile: Profile is too long (at most {{.Max}} characters)
 InvalidAgentName: Invalid agent name
 InvalidAcpCommand: Invalid ACP command (must be non-empty and at most 4096 bytes)

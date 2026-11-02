@@ -444,7 +444,7 @@ UNIQUE：`(session_id, tag_id)`
 | token | TEXT | NOT NULL | — | 会议 token |
 | project_id | INTEGER | NOT NULL | 0 | 发布端项目 |
 | client_msg_id | TEXT | NOT NULL | — | 客户端消息 id（聊天帧自带），`UNIQUE(token, client_msg_id)` |
-| speaker | TEXT | NOT NULL | `''` | 服务端认定的昵称（发布端用 viewerId → 昵称覆盖自报值） |
+| speaker | TEXT | NOT NULL | `''` | 服务端认定的称谓（发布端用 viewerId → 称谓覆盖自报值） |
 | viewer_id | TEXT | NOT NULL | `''` | 观众 id；发布端自己发的为空 |
 | text | TEXT | NOT NULL | — | 单条 ≤ 2000 字 |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | |

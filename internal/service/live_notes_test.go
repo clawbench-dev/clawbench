@@ -529,7 +529,7 @@ func TestGenerateLiveNotesMinutes_NoSpeakerNoteWhenUnresolvable(t *testing.T) {
 			got := bodies()
 			require.Len(t, got, 1)
 			assert.NotContains(t, got[0], "补充说明")
-			assert.NotContains(t, got[0], "昵称是「"+model.DefaultUserNickname+"」",
+			assert.NotContains(t, got[0], "称谓是「"+model.DefaultUserNickname+"」",
 				"the placeholder nickname must never be presented as a real name")
 		})
 	}

@@ -4110,7 +4110,7 @@ paths:
                   description: 客户端消息 id（幂等键，≤64 字）
                 speaker:
                   type: string
-                  description: 服务端认定的昵称（发布端用 viewerId → 昵称覆盖）
+                  description: 服务端认定的称谓（发布端用 viewerId → 称谓覆盖）
                 viewerId:
                   type: string
                 text:
@@ -4365,7 +4365,7 @@ paths:
         `selectedIds` 为已有分享链接**冻结**的消息 id 列表（未分享时缺省）：链接一旦
         存在，选择就固化在链接里，对话框据此把列表转为**只读**并标出链接实际包含的
         消息，而不是继续提供勾选框与「取消全选」这种不生效的交互。
-        另附 `sessionAgent`（会话级智能体）与 `speakers`（群聊成员行 id → 身份），供对话框为每条助手消息渲染真实智能体图标；此端点需登录（仅属主），故身份**含**自定义头像。群成员身份现额外携带 `agentName`（底层**真实**智能体显示名；当成员昵称被自动派生——内置名池名或「本名 序号」——时与 `name` 不同，供 UI 在昵称后披露），且头像**优先**取成员自身的头像快照（`agent_avatar`），无快照时回退智能体头像。
+        另附 `sessionAgent`（会话级智能体）与 `speakers`（群聊成员行 id → 身份），供对话框为每条助手消息渲染真实智能体图标；此端点需登录（仅属主），故身份**含**自定义头像。群成员身份现额外携带 `agentName`（底层**真实**智能体显示名；当成员称谓被自动派生——内置名池名或「本名 序号」——时与 `name` 不同，供 UI 在称谓后披露），且头像**优先**取成员自身的头像快照（`agent_avatar`），无快照时回退智能体头像。
       operationId: sessionShareStatus
       parameters:
         - name: session_id
@@ -5397,7 +5397,7 @@ paths:
           模型等能力由该 agent 首次连接后上报，此前 `models` 为空。
 
         **名称全局唯一**（决策 #50）：重名 `409` + `AgentNameTaken`；等于群聊
-        用户昵称返回 `409` + `AgentNameReserved`。
+        用户称谓返回 `409` + `AgentNameReserved`。
       operationId: agentsCreate
       responses:
         "200":
@@ -5405,7 +5405,7 @@ paths:
         "400":
           description: 名称非法（`InvalidAgentName`），或命令为空 / 过长（`InvalidAcpCommand`）
         "409":
-          description: 名称已被占用（`AgentNameTaken`），或等于群聊用户昵称（`AgentNameReserved`）
+          description: 名称已被占用（`AgentNameTaken`），或等于群聊用户称谓（`AgentNameReserved`）
     patch:
       tags: [Agents]
       summary: 更新 agent
@@ -5432,7 +5432,7 @@ paths:
         `mcp.servers`），省略 `mode` 即 `all`，下一轮生效。
 
         `name` 全局唯一（决策 #50）：改名撞上其它 agent 返回 `409` +
-        `AgentNameTaken`；改成群聊用户昵称返回 `409` + `AgentNameReserved`。
+        `AgentNameTaken`；改成群聊用户称谓返回 `409` + `AgentNameReserved`。
       operationId: agentsUpdate
       responses:
         "200":
@@ -5440,7 +5440,7 @@ paths:
         "400":
           description: 请求非法，或试图禁用默认智能体（`CannotDisableDefaultAgent`）、把默认智能体限定到单个项目（`CannotScopeDefaultAgent`）、在未选择项目时开启 `project_scope`（`NoProjectSelected`）
         "409":
-          description: 名称已被其它 agent 占用（`AgentNameTaken`），或等于群聊用户昵称（`AgentNameReserved`）
+          description: 名称已被其它 agent 占用（`AgentNameTaken`），或等于群聊用户称谓（`AgentNameReserved`）
     delete:
       tags: [Agents]
       summary: 删除 agent（会话由默认智能体接管）
