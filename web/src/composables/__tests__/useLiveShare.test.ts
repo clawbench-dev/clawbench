@@ -1580,6 +1580,36 @@ describe('picture changes mid-meeting', () => {
     expect(share.videoEnabled.value).toBe(false)
     expect(share.error.value).toBeTruthy()
   })
+
+  it('stays pictureless when the late capture is cancelled', async () => {
+    const { share } = await startEmpty()
+    ;(navigator.mediaDevices.getDisplayMedia as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('cancelled'),
+    )
+
+    expect(await share.startScreen('screen:2:0')).toBe(false)
+
+    // Nothing was captured, so nothing may be reported as shared: the panel
+    // routes the NEXT click by this value, and a phantom screen sends it down
+    // the "swap the source" path — which can only fail, because there is no
+    // stream to swap.
+    expect(share.captureKind.value).toBeNull()
+    expect(share.captureSourceId.value).toBe('')
+    expect(share.videoEnabled.value).toBe(false)
+    expect(lastWS().sentJSON().some((m) => m.type === 'set-picture')).toBe(false)
+  })
+
+  it('surfaces a refused Android projection instead of throwing', async () => {
+    bridge.startScreenCapture = vi.fn(() => '{"state":"requesting"}')
+    androidCapture.startAndroidScreenCapture.mockRejectedValueOnce(new Error('已拒绝录制屏幕'))
+    const { share } = await startEmpty()
+
+    // startAndroidScreenCapture throws (consent denied) where the desktop path
+    // returns null; the click must still end with a message.
+    await expect(share.startScreen('android:screen')).resolves.toBe(false)
+    expect(share.error.value).toBe('已拒绝录制屏幕')
+    expect(share.captureKind.value).toBeNull()
+  })
 })
 
 /**
@@ -1638,5 +1668,34 @@ describe('remote control capability', () => {
     share.setControlSupported(false)
     expect(share.controlEnabled.value).toBe(false)
     expect(lastCapability()).toEqual({ type: 'set-control-enabled', enabled: false })
+  })
+})
+
+/**
+ * A meeting that starts with no picture at all.
+ *
+ * The running panel routes a click on the picture grid by `captureKind`:
+ * non-null means "a screen is on the wire, swap it", null means "capture one".
+ * So the value the module STARTS with decides what the first click does, before
+ * any capture has happened — which is why this block needs a module instance
+ * that no reset helper has touched.
+ */
+describe('a meeting with no picture', () => {
+  it('does not claim a screen is on the wire on a fresh page load', async () => {
+    vi.resetModules()
+    const mod = await import('../useLiveShare')
+    const share = mod.useLiveShare()
+
+    expect(share.captureKind.value).toBeNull()
+
+    expect(await share.start({ sourceId: '', microphone: true })).toBe(true)
+
+    // Still no screen: none was captured. A non-null kind here makes the first
+    // click on the grid take the "switch source" path, which has nothing to
+    // swap and reports 「切换失败」.
+    expect(share.captureKind.value).toBeNull()
+    expect(share.videoEnabled.value).toBe(false)
+
+    await share.stop()
   })
 })

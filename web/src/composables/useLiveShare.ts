@@ -171,8 +171,15 @@ const previewStream = shallowRef<MediaStream | null>(null)
  * Remote control needs this: the pointer is mapped over the desktop, which is
  * only correct when the picture IS the desktop. A window capture would put
  * every click at the same fraction of the screen instead of inside the window.
+ *
+ * `null` means "no screen is on the wire", which is the state a meeting that
+ * started without one is in. It must NOT default to 'screen': the running
+ * meeting reads this as "a screen is being shared" to route a click on the
+ * picture grid to `switchSource` (there is nothing to switch) and to show the
+ * annotation tools, so a fresh page load would claim a screen that was never
+ * captured.
  */
-const captureKind = ref<'screen' | 'window' | null>('screen')
+const captureKind = ref<'screen' | 'window' | null>(null)
 /**
  * Which tile of the source list is on the wire, as an id from
  * `listCaptureSources()`.
@@ -529,15 +536,24 @@ async function captureScreen(sourceId: string): Promise<MediaStream | null> {
   }
   try {
     const declare = bridge?.setPendingCaptureSource
+    const declaresSource = Boolean(declare && bridge)
     if (declare && bridge) {
       await declare.call(bridge, sourceId, true)
-      captureKind.value = sourceId.startsWith('screen:') ? 'screen' : 'window'
     }
     const stream = await capture.call(navigator.mediaDevices, {
       video: true,
       audio: true,
     })
-    if (!declare) captureKind.value = captureKindOf(stream)
+    // Recorded only once the picture is actually here. Setting it before the
+    // await (as the source declaration used to) left the meeting believing a
+    // screen was on the wire after a cancelled picker, and every later click on
+    // the grid then went to `switchSource` — which has nothing to swap and can
+    // only report "switch failed".
+    captureKind.value = declaresSource
+      ? sourceId.startsWith('screen:')
+        ? 'screen'
+        : 'window'
+      : captureKindOf(stream)
     // Remember which tile this is so the live picker can mark it. A browser
     // pick has no id (its dialog chose), which the panel maps to its own tile.
     captureSourceId.value = sourceId
@@ -631,7 +647,17 @@ function setControlSupported(on: boolean): void {
 /** Start sharing a screen mid-meeting (or after joining with none). */
 async function startScreen(sourceId: string): Promise<boolean> {
   if (state.value !== 'publishing' || displayStream) return false
-  const stream = await captureScreen(sourceId)
+  let stream: MediaStream | null
+  try {
+    stream = await captureScreen(sourceId)
+  } catch (e) {
+    // The Android host throws (consent denied, projection failed) where the
+    // desktop path returns null. Either way this click has to end with a
+    // message: an unhandled rejection would leave the button silently dead.
+    appLog.w(TAG, 'screen capture failed', e)
+    fail(e instanceof Error ? e.message : String(e))
+    return false
+  }
   if (!stream) return false
   displayStream = stream
   previewStream.value = stream
