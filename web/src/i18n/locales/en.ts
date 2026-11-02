@@ -3536,6 +3536,9 @@ export default {
       serverRestartDesc: 'Restart the server to apply configuration changes',
       changePassword: 'Change Password',
       changePasswordDesc: 'Change the server access password',
+      trustedCerts: 'Trusted Certificates',
+      trustedCertsDesc: 'Forget the self-signed certificates remembered for a server (bound to the certificate fingerprint). The next connection asks again.',
+      trustedCertsCleared: 'Cleared. The next connection will ask again.',
       tlsSection: 'HTTPS certificate',
       tlsPanelDesc:
         'HTTPS is required before viewers can share a screen or use a microphone — browsers only expose those APIs in a secure context. The certificate covers every address this machine has; regenerate it after changing networks.',

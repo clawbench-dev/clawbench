@@ -71,6 +71,17 @@ export interface ServerListSchema {
   floatingStats: FloatingStats | null
   /** Palette the web UI pushed through `setTheme`, for the capsule. */
   floatingColors: ResolvedColors | null
+  /**
+   * Certificates the user accepted for a self-signed server: `origin ->
+   * fingerprint` (`https://host:port`, WebSocket schemes folded onto their
+   * HTTP equivalent).
+   *
+   * The VALUE is the fingerprint, not a bare "trust this host": a server whose
+   * certificate changed (reinstalled, rotated, or swapped by a man-in-the-
+   * middle) no longer matches and prompts again. Entries are written by
+   * `certificate.ts` on confirmation and cleared from Settings → Security.
+   */
+  trustedCertificates: Record<string, string>
 }
 
 const defaults: ServerListSchema = {
@@ -87,6 +98,7 @@ const defaults: ServerListSchema = {
   floatingBounds: null,
   floatingStats: null,
   floatingColors: null,
+  trustedCertificates: {},
 }
 
 let store: Store<ServerListSchema> | null = null

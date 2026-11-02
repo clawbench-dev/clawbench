@@ -175,6 +175,11 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   /** 'ssh' | 'h2' — the transport that carried the last successful connect. */
   getActiveTunnelTransport: () => invoke('native:get-active-tunnel-transport'),
   getPendingNavigation: () => invoke('native:get-pending-navigation'),
+  /**
+   * Drop every remembered self-signed certificate (Settings → Security).
+   * Resolves with how many entries were removed; the next connection asks again.
+   */
+  forgetTrustedCerts: () => invoke('native:forget-trusted-certs'),
 
   // async writes
   saveServer: (u: string, p: string) => invoke('native:save-server', u, p),

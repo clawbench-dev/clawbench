@@ -367,6 +367,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.tlsSection', descriptionKey: 'settings.items.tlsPanelDesc', key: 'tlsCert', type: 'info', source: 'server', sectionHeader: 'settings.items.tlsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.tlsCertDir', descriptionKey: 'settings.items.tlsCertDirDesc', key: 'tls.cert_dir', type: 'text', source: 'server', needsRestart: true, sectionHeader: 'settings.items.tlsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.changePassword', descriptionKey: 'settings.items.changePasswordDesc', key: 'changePassword', type: 'action', source: 'local', sectionHeader: 'settings.items.securitySection' } },
+    // Desktop-only: the Electron shell remembers accepted self-signed
+    // certificates (origin -> fingerprint), so it needs an explicit undo.
+    // `appOnly` keeps it out of the browser, `hideInAndroidApp` out of Android,
+    // which never persists the answer (it re-asks on every connection).
+    { type: 'item', spec: { labelKey: 'settings.items.trustedCerts', descriptionKey: 'settings.items.trustedCertsDesc', key: 'trustedCerts', type: 'action', source: 'local', appOnly: true, hideInAndroidApp: true, sectionHeader: 'settings.items.securitySection' } },
   ],
   skills: [
     // Cross-agent skill discovery, split into one card per concern. Each entry

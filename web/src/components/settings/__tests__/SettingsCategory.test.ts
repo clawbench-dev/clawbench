@@ -352,6 +352,9 @@ const i18n = createI18n({
           localeEn: 'English',
           changePassword: '修改密码',
           changePasswordDesc: '更改登录密码',
+          trustedCerts: '已信任的证书',
+          trustedCertsDesc: '清除为自签名服务器记住的证书',
+          trustedCertsCleared: '已清除，下次连接会重新确认证书',
           addToHomeScreen: '添加到主屏幕',
           downloadDesktopApp: '下载桌面版',
           downloadDesktopAppDesc: '下载桌面版',
@@ -927,6 +930,39 @@ describe('SettingsCategory', () => {
       const item = allItems.find(i => i.props().label === '修改密码')
       expect(item).toBeTruthy()
       expect(item!.props().type).toBe('action')
+    })
+
+    it('clears remembered certificates from the desktop-only row', async () => {
+      mockIsAppMode.value = true
+      mockIsDesktopApp.value = true
+      const forget = vi.fn().mockResolvedValue(1)
+      ;(window as any).ClawBenchNative = {
+        isNativeApp: () => true,
+        isDesktopApp: () => true,
+        forgetTrustedCerts: forget,
+      }
+      try {
+        const wrapper = mountCategory('security')
+        const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+          .find(i => i.props().label === '已信任的证书')
+        expect(item, 'the desktop shell must expose the undo row').toBeTruthy()
+        await item!.vm.$emit('click')
+        await nextTick()
+        expect(forget).toHaveBeenCalledTimes(1)
+        expect(mockToastShow).toHaveBeenCalled()
+      } finally {
+        delete (window as any).ClawBenchNative
+      }
+    })
+
+    it('hides the trusted-certificate row outside the desktop shell', () => {
+      // Android never persists the certificate answer (it re-asks every
+      // connection), and the browser has no native bridge at all — the row
+      // would be a no-op button there.
+      const wrapper = mountCategory('security')
+      const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+        .find(i => i.props().label === '已信任的证书')
+      expect(item).toBeFalsy()
     })
 
     it('opens password dialog when changePassword action is clicked', async () => {

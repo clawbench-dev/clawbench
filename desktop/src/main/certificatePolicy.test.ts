@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { decideCertificateAction, isLocalhostHost, originOf } from './certificatePolicy'
+import { decideCertificateAction, isLocalhostHost, isRememberedCertificate, originOf } from './certificatePolicy'
 
 describe('originOf', () => {
   it('returns scheme://host:port for a full URL', () => {
@@ -36,6 +36,39 @@ describe('isLocalhostHost', () => {
     for (const h of ['example.com', 'localhost.example.com', '10.0.0.1', '127.0.0.1.example.com']) {
       expect(isLocalhostHost(h), h).toBe(false)
     }
+  })
+})
+
+describe('isRememberedCertificate', () => {
+  const remembered = { 'https://192.168.1.50:20000': 'sha256/AAAA' }
+
+  it('accepts the same certificate the user confirmed earlier', () => {
+    expect(isRememberedCertificate(remembered, 'https://192.168.1.50:20000/api/chat', 'sha256/AAAA')).toBe(true)
+  })
+
+  it('covers the WebSocket of a trusted page', () => {
+    // `originOf` folds wss onto https, so the socket is the same entry.
+    expect(isRememberedCertificate(remembered, 'wss://192.168.1.50:20000/ws', 'sha256/AAAA')).toBe(true)
+  })
+
+  it('rejects a DIFFERENT certificate on the same origin', () => {
+    // The whole point of binding to the fingerprint: a reinstalled server, a
+    // rotated certificate or a man-in-the-middle must prompt again.
+    expect(isRememberedCertificate(remembered, 'https://192.168.1.50:20000/', 'sha256/BBBB')).toBe(false)
+  })
+
+  it('rejects an unknown origin', () => {
+    expect(isRememberedCertificate(remembered, 'https://other:20000/', 'sha256/AAAA')).toBe(false)
+  })
+
+  it('never trusts an empty fingerprint', () => {
+    // An empty value means we could not read the certificate; asking is the
+    // only safe answer, and it must not match an entry stored as ''.
+    expect(isRememberedCertificate({ 'https://h:1': '' }, 'https://h:1/', '')).toBe(false)
+  })
+
+  it('rejects an unparseable URL', () => {
+    expect(isRememberedCertificate(remembered, 'garbage', 'sha256/AAAA')).toBe(false)
   })
 })
 

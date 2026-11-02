@@ -649,6 +649,18 @@ function handleClick(item: ItemSpec) {
   if (item.key === 'changePassword') {
     showPasswordDialog.value = true
   }
+  if (item.key === 'trustedCerts') {
+    // Desktop-only row. The shell remembers each accepted self-signed
+    // certificate by origin + fingerprint; this is the only way to undo it
+    // without editing the store by hand.
+    const native = getNative()
+    if (native?.forgetTrustedCerts) {
+      void native
+        .forgetTrustedCerts()
+        .then(() => toast.show(t('settings.items.trustedCertsCleared'), { icon: 'success', type: 'success', duration: 3000 }))
+        .catch(() => toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 }))
+    }
+  }
   if (item.key === 'restartServer') {
     handleRestartServer()
   }

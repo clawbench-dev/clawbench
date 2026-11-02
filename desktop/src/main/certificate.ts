@@ -1,7 +1,8 @@
 import { app, BrowserWindow, dialog } from 'electron'
 import { record } from './clientLog'
 import { resolveNativeLanguage, certificateLabels } from './labels'
-import { decideCertificateAction, originOf } from './certificatePolicy'
+import { decideCertificateAction, isRememberedCertificate, originOf } from './certificatePolicy'
+import { getStore } from './store'
 
 /**
  * TLS certificate trust for the desktop shell.
@@ -15,7 +16,7 @@ import { decideCertificateAction, originOf } from './certificatePolicy'
  * Android already prompts ("Trust and continue" / "Cancel connection") and
  * retries with a trusting client once the user confirms. This is the desktop
  * counterpart: an `app.on('certificate-error')` handler that asks the user and
- * trusts the certificate for the rest of THAT CONNECTION only.
+ * then remembers the answer.
  *
  * "For that connection" means every request to the origin, not just the
  * navigation that raised the prompt. Verification runs per socket, so the
@@ -23,31 +24,45 @@ import { decideCertificateAction, originOf } from './certificatePolicy'
  * `certificate-error` — those must be answered from the trust set too, or the
  * window loads and then every API call fails.
  *
- * The trust is deliberately NOT persisted and is cleared on every connect: the
- * user re-confirms each time, matching Android, so a certificate that later
- * changes is re-prompted rather than silently accepted forever.
+ * The answer is REMEMBERED across connections, keyed by origin and bound to the
+ * certificate's FINGERPRINT (see `trustedCertificates` in store.ts). A server
+ * whose certificate changed — reinstalled, rotated, or actually swapped by a
+ * man-in-the-middle — no longer matches and prompts again, so remembering never
+ * degrades into "stop checking this host". `forgetTrustedCertificates()` is the
+ * user-facing undo, exposed in Settings → Security.
  */
 
 const TAG = 'Cert'
 
-/**
- * Origins the user has trusted for the CURRENT connection.
- *
- * Keyed by origin (`https://host:port`) rather than hostname, so a different
- * port is a different server and gets its own prompt. Cleared by
- * `resetCertificateTrust()` at the start of every connect.
- */
-const trustedOrigins = new Set<string>()
+/** Certificates the user has accepted, `origin -> fingerprint`. */
+function rememberedCertificates(): Record<string, string> {
+  return getStore().get('trustedCertificates') ?? {}
+}
 
 /**
- * Forget every previously trusted origin. Called before each navigation so the
- * "trust this certificate" answer applies to one connection only.
+ * Remember the certificate the user just accepted.
+ *
+ * Stored by origin rather than hostname so a different port is a different
+ * server, and `originOf` folds `wss://` onto `https://` so the WebSocket of a
+ * trusted page is covered by the same entry.
  */
-export function resetCertificateTrust(): void {
-  if (trustedOrigins.size > 0) {
-    record('I', TAG, `clearing ${trustedOrigins.size} trusted certificate origin(s) for a new connection`)
-  }
-  trustedOrigins.clear()
+function rememberCertificate(url: string, fingerprint: string): void {
+  const origin = originOf(url)
+  if (!origin || !fingerprint) return
+  getStore().set('trustedCertificates', { ...rememberedCertificates(), [origin]: fingerprint })
+  record('I', TAG, `remembered certificate for ${origin} (${fingerprint})`)
+}
+
+/**
+ * Forget every remembered certificate, so the next connection asks again.
+ *
+ * Returns how many entries were dropped, for the caller's confirmation toast.
+ */
+export function forgetTrustedCertificates(): number {
+  const count = Object.keys(rememberedCertificates()).length
+  getStore().set('trustedCertificates', {})
+  record('I', TAG, `forgot ${count} remembered certificate(s)`)
+  return count
 }
 
 /**
@@ -84,19 +99,18 @@ async function promptTrustCertificate(url: string, error: string, parent: Browse
  * answer.
  */
 export function registerCertificateHandler(): void {
-  app.on('certificate-error', (event, webContents, url, error, _certificate, callback, isMainFrame) => {
-    const origin = originOf(url)
-    const alreadyTrusted = origin !== '' && trustedOrigins.has(origin)
-    const action = decideCertificateAction(url, isMainFrame, alreadyTrusted)
+  app.on('certificate-error', (event, webContents, url, error, certificate, callback, isMainFrame) => {
+    const remembered = isRememberedCertificate(rememberedCertificates(), url, certificate.fingerprint)
+    const action = decideCertificateAction(url, isMainFrame, remembered)
     if (action === 'ignore') return
 
     if (action === 'auto-trust') {
-      // Already answered for this connection, or a localhost tunnel whose cert
-      // can never match. This branch MUST also cover subresources: each new
-      // socket re-runs verification, so answering only the navigation leaves
-      // the WebSocket and most API calls rejected.
+      // Already accepted for this origin (same fingerprint), or a localhost
+      // tunnel whose cert can never match. This branch MUST also cover
+      // subresources: each new socket re-runs verification, so answering only
+      // the navigation leaves the WebSocket and most API calls rejected.
       event.preventDefault()
-      if (alreadyTrusted && !isMainFrame) record('D', TAG, `trusted subresource ${url} (${error})`)
+      if (remembered && !isMainFrame) record('D', TAG, `trusted subresource ${url} (${error})`)
       callback(true)
       return
     }
@@ -107,9 +121,8 @@ export function registerCertificateHandler(): void {
     record('W', TAG, `certificate error for ${url}: ${error} — prompting`)
     void promptTrustCertificate(url, error, BrowserWindow.fromWebContents(webContents))
       .then((trusted) => {
-        if (trusted && origin) {
-          trustedOrigins.add(origin)
-          record('I', TAG, `user trusted ${origin} for this connection`)
+        if (trusted) {
+          rememberCertificate(url, certificate.fingerprint)
         } else {
           record('I', TAG, `user declined the certificate for ${url}`)
         }

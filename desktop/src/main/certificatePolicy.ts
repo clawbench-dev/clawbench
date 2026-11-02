@@ -59,10 +59,31 @@ export function isLocalhostHost(hostname: string): boolean {
 }
 
 /**
+ * Whether a certificate the user accepted earlier still authorises this one.
+ *
+ * Bound to the FINGERPRINT, not just the origin: a server whose certificate
+ * changed (reinstalled, rotated, or swapped by a man-in-the-middle) must raise
+ * the prompt again. An empty fingerprint never matches — Electron reports one
+ * for every real certificate, so an empty value means something is off and
+ * asking is the safe answer.
+ */
+export function isRememberedCertificate(
+  remembered: Record<string, string>,
+  url: string,
+  fingerprint: string,
+): boolean {
+  if (!fingerprint) return false
+  const origin = originOf(url)
+  if (!origin) return false
+  return remembered[origin] === fingerprint
+}
+
+/**
  * Decide what to do about a certificate error for `url`.
  *
- * `trusted` says whether the user already approved this origin for the current
- * connection. That answer has to cover EVERY request to the origin, not just
+ * `trusted` says whether this origin's certificate is already accepted — the
+ * same certificate the user confirmed earlier, or one this connection already
+ * let through. That answer has to cover EVERY request to the origin, not just
  * the navigation that raised the prompt: certificate verification runs per
  * connection, so the WebSocket and every fetch that opens a fresh socket
  * (rather than reusing the navigation's keep-alive one) raises its own

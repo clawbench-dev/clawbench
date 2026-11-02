@@ -3532,6 +3532,9 @@ export default {
       serverRestartDesc: '重启服务端以使配置变更生效',
       changePassword: '修改密码',
       changePasswordDesc: '更改服务器访问密码',
+      trustedCerts: '已信任的证书',
+      trustedCertsDesc: '清除为自签名服务器记住的证书（按证书指纹记忆）；下次连接会重新确认',
+      trustedCertsCleared: '已清除，下次连接会重新确认证书',
       tlsSection: 'HTTPS 证书',
       tlsPanelDesc:
         '开启 HTTPS 后，成员端才能共享屏幕、使用麦克风（浏览器只在安全上下文提供这些能力）。证书会自动覆盖本机所有网卡地址；换网络后重新生成一次即可。',

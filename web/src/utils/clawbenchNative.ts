@@ -256,6 +256,16 @@ export interface ClawBenchNative {
   /** Write the Android local h2 tunnel toggle (SharedPreferences). */
   setTunnelTransportH2Enabled?(enabled: boolean): Promise<void> | void
   getPendingNavigation(): Promise<string>
+  /**
+   * Forget every self-signed certificate the desktop shell remembered for a
+   * server, so the next connection asks again. Resolves with how many entries
+   * were dropped.
+   *
+   * Desktop-only: Android never persists its certificate answer (it re-asks on
+   * every connection), so its bridge has no counterpart and the settings row is
+   * hidden there.
+   */
+  forgetTrustedCerts?(): Promise<number>
 
   // Async writes / actions
   saveServer(url: string, password: string): Promise<void>
