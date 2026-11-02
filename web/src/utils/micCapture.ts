@@ -55,6 +55,24 @@ export async function acquireMic(constraints: MediaStreamConstraints = { audio: 
 }
 
 /**
+ * The origin's microphone permission, as the Permissions API reports it.
+ *
+ * `unknown` means the API cannot answer (Firefox has no 'microphone' entry,
+ * older WebViews lack `permissions` at all) — callers must treat that as "may
+ * still ask", never as "denied". It lives here, next to the other microphone
+ * helpers, because a DOM type assertion inside a `.vue` file trips the
+ * `no-undef` lint rule.
+ */
+export async function microphonePermission(): Promise<'granted' | 'denied' | 'unknown'> {
+  try {
+    const status = await navigator.permissions?.query({ name: 'microphone' as PermissionName })
+    return (status?.state as 'granted' | 'denied' | undefined) ?? 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+/**
  * Logs the environment a failed `getUserMedia` ran in.
  *
  * Without this the only trace is `getUserMedia failed {}` — a DOMException has

@@ -1,5 +1,38 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { acquireMic, classifyMicError, describeMicError } from '../micCapture'
+import { acquireMic, classifyMicError, describeMicError, microphonePermission } from '../micCapture'
+
+describe('microphonePermission', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('reports what the Permissions API says', async () => {
+    vi.stubGlobal('navigator', {
+      permissions: { query: vi.fn(async () => ({ state: 'granted' })) },
+    })
+    expect(await microphonePermission()).toBe('granted')
+
+    vi.stubGlobal('navigator', {
+      permissions: { query: vi.fn(async () => ({ state: 'denied' })) },
+    })
+    expect(await microphonePermission()).toBe('denied')
+  })
+
+  it('answers "unknown" where the API cannot be asked', async () => {
+    // Firefox has no 'microphone' descriptor and old WebViews have no
+    // `permissions` object at all; neither may be read as "denied", or the UI
+    // would stop offering the device list on those browsers.
+    vi.stubGlobal('navigator', {})
+    expect(await microphonePermission()).toBe('unknown')
+
+    vi.stubGlobal('navigator', {
+      permissions: {
+        query: vi.fn(async () => {
+          throw new TypeError("'microphone' is not a valid PermissionName")
+        }),
+      },
+    })
+    expect(await microphonePermission()).toBe('unknown')
+  })
+})
 
 describe('classifyMicError', () => {
   it('treats a refused permission as "denied"', () => {

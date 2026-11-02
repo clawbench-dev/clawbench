@@ -18,6 +18,28 @@
       </button>
     </div>
   </div>
+
+  <!-- No names to show yet. The browser only reveals the device list after the
+       page has been granted microphone access — before that enumerateDevices
+       answers with one nameless placeholder, which is indistinguishable from a
+       machine that has a single microphone. So the row asks, instead of
+       pretending there is nothing to choose. -->
+  <div v-else-if="unnamed" class="meeting-devices" data-role="meeting-mic-devices">
+    <div class="meeting-devices__label">{{ t('meeting.create.micDevices') }}</div>
+    <button
+      class="meeting-device meeting-device--prime"
+      type="button"
+      :disabled="priming || disabled"
+      data-action="mic-list-devices"
+      @click="prime"
+    >
+      <span class="meeting-device__icon"><Mic :size="11" /></span>
+      <span class="meeting-device__name">
+        {{ priming ? t('meeting.create.micListing') : t('meeting.create.micListDevices') }}
+      </span>
+    </button>
+    <div class="meeting-devices__hint">{{ t('meeting.create.micListHint') }}</div>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -32,11 +54,19 @@
  * Hidden when there is nothing to choose between, which is the common case: one
  * input, or a device the browser will not name until it has been granted
  * microphone access.
+ *
+ * Those two are NOT the same thing and must not share a branch: with permission
+ * granted and one device there is genuinely nothing to choose, but with
+ * permission withheld `enumerateDevices` answers with a single placeholder even
+ * on a machine with five microphones — which is why the list looked missing.
+ * The withheld case gets a row that asks for access.
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, Mic } from 'lucide-vue-next'
 import { listAudioInputs, type AudioInputDevice } from '@/composables/useLiveShare'
+import { acquireMic, microphonePermission } from '@/utils/micCapture'
+import { appLog } from '@/utils/appLog'
 
 withDefaults(defineProps<{ selectedId: string; disabled?: boolean }>(), { disabled: false })
 
@@ -45,12 +75,42 @@ const emit = defineEmits<{ select: [id: string] }>()
 const { t } = useI18n()
 
 const choices = ref<AudioInputDevice[]>([])
+/** Access is withheld, so the device list cannot be read yet. */
+const unnamed = ref(false)
+const priming = ref(false)
 
 async function load(): Promise<void> {
-  const list = (await listAudioInputs()).filter((d) => d.id !== 'default' && d.id !== 'communications')
+  // An empty id means "the browser is not naming devices yet": those entries are
+  // placeholders, not devices, and using them as keys would collapse the tiles
+  // into one per duplicate id.
+  const list = (await listAudioInputs()).filter(
+    (d) => d.id !== '' && d.id !== 'default' && d.id !== 'communications',
+  )
   // "System default" only exists as a CHOICE once there is another device: on a
   // machine with one input it is the same thing twice.
   choices.value = list.length > 1 ? [{ id: '', name: t('meeting.create.micDefault') }, ...list] : list
+  unnamed.value = list.length === 0 && (await microphonePermission()) !== 'denied'
+}
+
+/**
+ * Open the microphone once so the browser releases the device list.
+ *
+ * The track is stopped immediately: this is about the permission, not about
+ * capturing. Nothing is published, and the recording indicator goes away with
+ * the track.
+ */
+async function prime(): Promise<void> {
+  if (priming.value) return
+  priming.value = true
+  try {
+    const stream = await acquireMic({ audio: true })
+    stream.getTracks().forEach((track) => track.stop())
+  } catch (e) {
+    appLog.w('MicDeviceList', 'listing devices needs microphone access', e)
+  } finally {
+    priming.value = false
+  }
+  await load()
 }
 
 onMounted(() => {
@@ -97,4 +157,13 @@ onBeforeUnmount(() => {
 .meeting-device--on .meeting-device__icon { color: var(--accent-color); }
 .meeting-device__name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .meeting-device__check { margin-left: auto; flex-shrink: 0; color: var(--accent-color); }
+
+/* The "ask for access" row lines up with the tiles below the label, and spans
+   the width because it is an action, not one of the choices. */
+.meeting-device--prime { margin-left: calc(19 * var(--dp)); }
+.meeting-device--prime .meeting-device__name { color: var(--accent-color); }
+.meeting-devices__hint {
+  padding-left: calc(19 * var(--dp));
+  font-size: var(--font-size-2xs); line-height: 1.6; color: var(--text-muted);
+}
 </style>

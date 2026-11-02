@@ -474,6 +474,53 @@ describe('MeetingCreate in a browser', () => {
     expect(wrapper.find('[data-role="meeting-mic-devices"]').exists()).toBe(false)
   })
 
+  // Before the page has microphone access, enumerateDevices answers with ONE
+  // nameless placeholder — indistinguishable from a machine with one mic, which
+  // is why the list looked missing on a machine with several.
+  it('asks for microphone access instead of pretending there is one device', async () => {
+    const stop = vi.fn()
+    const gum = vi.fn(async () => ({ getTracks: () => [{ stop }] }))
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getDisplayMedia: vi.fn(), getUserMedia: gum },
+    })
+    audioDevices.list = [{ id: '', name: 'Microphone 1' }]
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(wrapper.find('[data-role="meeting-mic-devices"]').exists()).toBe(true)
+    const ask = wrapper.find('[data-action="mic-list-devices"]')
+    expect(ask.exists()).toBe(true)
+    expect(ask.text()).toContain(enMessages.meeting.create.micListDevices)
+
+    // Granting releases the names; the row turns into the real list.
+    audioDevices.list = [
+      { id: 'mic-a', name: 'Built-in Microphone' },
+      { id: 'mic-b', name: 'Headset Microphone' },
+    ]
+    await ask.trigger('click')
+    await flushPromises()
+
+    expect(gum).toHaveBeenCalledTimes(1)
+    // ...and the track is released: this is about permission, not capturing.
+    expect(stop).toHaveBeenCalled()
+    expect(wrapper.findAll('.meeting-device')).toHaveLength(3)
+    expect(wrapper.find('[data-action="mic-list-devices"]').exists()).toBe(false)
+  })
+
+  it('does not ask again when microphone access was denied', async () => {
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getDisplayMedia: vi.fn(), getUserMedia: vi.fn() },
+      permissions: { query: vi.fn(async () => ({ state: 'denied' })) },
+    })
+    audioDevices.list = [{ id: '', name: 'Microphone 1' }]
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // A button that can only fail is worse than no button.
+    expect(wrapper.find('[data-action="mic-list-devices"]').exists()).toBe(false)
+    expect(wrapper.find('[data-role="meeting-mic-devices"]').exists()).toBe(false)
+  })
+
   it('drops the browser pseudo-devices that duplicate the system default', async () => {
     stubCaptureApi(true)
     audioDevices.list = [
