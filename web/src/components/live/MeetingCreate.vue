@@ -63,7 +63,6 @@
              independent parts of the same setup and share one group. -->
         <div class="meeting-section">{{ t('meeting.create.av') }}</div>
         <CaptureSourceGrid
-          ref="gridRef"
           compact
           allow-off
           :sources="sources"
@@ -143,7 +142,7 @@
  * independent, every one of them can be changed again during the meeting, and
  * sharing no picture at all is allowed.
  */
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft, NotebookPen } from 'lucide-vue-next'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
@@ -187,9 +186,6 @@ const loadingSources = ref(false)
 const starting = ref(false)
 /** Whether this machine has a camera at all. */
 const cameraAvailable = ref(true)
-/** The tile area scrolls once there are more than two rows of frames. */
-const gridOverflow = ref(false)
-const gridRef = ref<InstanceType<typeof CaptureSourceGrid> | null>(null)
 
 const hasNativeCapture = computed(() => Boolean(getNative()?.listCaptureSources))
 const browserCapture = browserScreenCaptureAvailable()
@@ -214,11 +210,16 @@ const pickLabel = computed(() => {
   return loadingSources.value ? t('meeting.create.picking') : t('meeting.create.pickSource')
 })
 
+/**
+ * The one line under the picture grid, when there is nothing to show at all.
+ *
+ * The grid does NOT scroll and does not need a "scroll for more" hint: every
+ * tile is laid out inline and the form body is the only scroll container.
+ */
 const sourceHint = computed(() => {
   if (sources.value.length === 0 && canCapture.value && !loadingSources.value) {
     return t('liveShare.noSources')
   }
-  if (gridOverflow.value) return t('meeting.create.sourceOverflow', { count: sources.value.length })
   return ''
 })
 
@@ -288,19 +289,11 @@ async function loadSources(): Promise<void> {
     if (sources.value.length === 0 && hasCamera && cameraChoice.value === '') {
       cameraChoice.value = DEFAULT_DEVICE
     }
-    await nextTick()
-    measureOverflow()
   } catch (e) {
     appLog.e('MeetingCreate', 'loadSources failed', e)
   } finally {
     loadingSources.value = false
   }
-}
-
-/** Whether the frames overflow their box, so the hint can say they scroll. */
-function measureOverflow(): void {
-  const el = (gridRef.value?.$el as HTMLElement | undefined) ?? null
-  gridOverflow.value = Boolean(el && el.scrollHeight > el.clientHeight + 2)
 }
 
 /**
@@ -373,8 +366,6 @@ async function start(): Promise<void> {
     starting.value = false
   }
 }
-
-watch(sources, () => void nextTick(measureOverflow))
 
 onMounted(() => {
   // The host always starts with the microphone on. The choice is a shared

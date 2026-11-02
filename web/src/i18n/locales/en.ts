@@ -4019,7 +4019,6 @@ export default {
       pickSource: 'Choose what to share',
       picking: 'Listing windows…',
       browserSource: 'Share a screen',
-      sourceOverflow: '{count} sources — scroll to see them all.',
       micDevices: 'Microphone',
       cameraDevices: 'Camera',
       micOffCard: 'Muted',

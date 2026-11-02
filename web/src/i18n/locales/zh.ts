@@ -4014,7 +4014,6 @@ export default {
       pickSource: '选择共享画面',
       picking: '正在获取窗口…',
       browserSource: '共享屏幕',
-      sourceOverflow: '共 {count} 个画面，可上下滚动查看全部。',
       micDevices: '麦克风',
       cameraDevices: '摄像头',
       micOffCard: '静音',

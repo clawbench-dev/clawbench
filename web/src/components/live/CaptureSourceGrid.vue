@@ -87,7 +87,7 @@ withDefaults(
     selectedId: string
     /** Tiles are not clickable while a switch is in flight. */
     disabled?: boolean
-    /** Narrow two-column layout for the meeting panel. */
+    /** Narrower tiles, for the meeting panel. */
     compact?: boolean
     /**
      * Offer a "share nothing" tile first.
@@ -110,19 +110,22 @@ const { t } = useI18n()
 </script>
 
 <style scoped>
+/* No padding: the first tile must start on the same vertical line as the
+   section heading and the hint lines around it. Even 2px of inset reads as a
+   misaligned block next to a heading, and there is no scroll container left
+   whose edges the selected tile's ring would need room inside. */
 .capture-sources {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(calc(150 * var(--dp)), 1fr));
   gap: var(--space-4);
-  padding: 2px;
 }
 
-/* The meeting panel is ~280dp wide: two columns, and the list scrolls so a
-   machine with a dozen windows does not push the rest of the form off. */
+/* The meeting panel is narrow: smaller tiles, more per row. The grid itself
+   does NOT scroll — every tile is laid out inline and the panel body is the
+   only scroll container. A nested `overflow` would also zero the grid's
+   automatic minimum size, letting the body squash it to one clipped row. */
 .capture-sources--compact {
   grid-template-columns: repeat(auto-fill, minmax(calc(120 * var(--dp)), 1fr));
-  max-height: calc(240 * var(--dp));
-  overflow-y: auto;
 }
 
 .capture-source {

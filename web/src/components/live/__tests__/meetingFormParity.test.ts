@@ -113,6 +113,21 @@ describe('one meeting form language', () => {
     expect(stage).not.toMatch(/class="live-dialog-section"/)
   })
 
+  it('lays every source tile out inline instead of in its own scroller', () => {
+    // A nested scroller clipped the tiles to one row AND cost the grid its
+    // automatic minimum size (an `overflow` other than visible zeroes it), so
+    // the flex body could squash the whole grid. The panel body is the only
+    // scroll container.
+    const css = styleOf('web/src/components/live/CaptureSourceGrid.vue')
+    const compact = ruleDecls(css, '.capture-sources--compact')
+    expect(compact['max-height']).toBeUndefined()
+    expect(compact.overflow).toBeUndefined()
+    expect(compact['overflow-y']).toBeUndefined()
+    // The grid must not inset itself either: any padding here reads as a
+    // section heading that does not line up with its own tiles.
+    expect(ruleDecls(css, '.capture-sources').padding).toBeUndefined()
+  })
+
   it('lets the meeting tabs use the full panel width', () => {
     // User requirement: the dock is a workspace, so the tab body must not cap
     // itself at a reading column and leave the rest empty.

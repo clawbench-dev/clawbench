@@ -72,7 +72,6 @@
                outright. -->
           <div class="meeting-section">{{ t('meeting.create.av') }}</div>
           <CaptureSourceGrid
-            ref="gridRef"
             compact
             allow-off
             :sources="captureSources"
@@ -486,9 +485,6 @@ const screenBusy = ref(false)
 
 const captureSources = ref<CaptureSource[]>([])
 const loadingSources = ref(false)
-/** The tile area scrolls once there are more than two rows of frames. */
-const gridOverflow = ref(false)
-const gridRef = ref<InstanceType<typeof CaptureSourceGrid> | null>(null)
 
 /** A native host that can enumerate screens and windows. */
 const hasNativeCapture = computed(() => Boolean(getNative()?.listCaptureSources))
@@ -528,11 +524,17 @@ const pickLabel = computed(() => {
   return loadingSources.value ? t('meeting.create.picking') : t('meeting.create.pickSource')
 })
 
+/**
+ * The one line under the picture grid, when there is nothing to show at all.
+ *
+ * The grid does NOT scroll: every tile is laid out inline and the panel body is
+ * the only scroll container. A nested scroller also cost the grid its automatic
+ * minimum size, so the body could squash it to a single clipped row.
+ */
 const sourceHint = computed(() => {
   if (captureSources.value.length === 0 && canCapture.value && !loadingSources.value) {
     return t('liveShare.noSources')
   }
-  if (gridOverflow.value) return t('meeting.create.sourceOverflow', { count: captureSources.value.length })
   return ''
 })
 
@@ -750,19 +752,11 @@ async function loadSources(): Promise<void> {
       entireScreen: t('liveShare.entireScreen'),
       browserSource: t('meeting.create.browserSource'),
     })
-    await nextTick()
-    measureOverflow()
   } catch (e) {
     appLog.e('MeetingStage', 'loadSources failed', e)
   } finally {
     loadingSources.value = false
   }
-}
-
-/** Whether the frames overflow their box, so the hint can say they scroll. */
-function measureOverflow(): void {
-  const el = (gridRef.value?.$el as HTMLElement | undefined) ?? null
-  gridOverflow.value = Boolean(el && el.scrollHeight > el.clientHeight + 2)
 }
 
 const hasTalkers = computed(() => share.viewers.value.some((v) => v.talk === 'talking'))
