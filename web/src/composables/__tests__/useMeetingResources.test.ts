@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -56,9 +56,12 @@ function installFetch(opts: {
   root: DirItem[]
   audio?: DirItem[]
   exists?: Record<string, string>
+  /** Held open before responding, so a test can assert mid-flight. */
+  gate?: Promise<void>
 }) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input)
+    if (opts.gate) await opts.gate
     if (url.startsWith('/api/dir?')) {
       const path = decodeURIComponent(url.slice('/api/dir?path='.length))
       if (path === DIR) return jsonResponse({ items: opts.root })
@@ -198,5 +201,72 @@ describe('useMeetingResources', () => {
 
     expect(before).toBe(6)
     expect(api.total.value).toBe(7)
+  })
+
+  it('refreshes silently when the detail poll hands back an equal record', async () => {
+    // The detail view polls a just-ended meeting every 2.5s and assigns a FRESH
+    // record object each tick (`record.value = await history.get(...)`), so the
+    // watcher fires again even though every value it reads is unchanged.
+    // Showing the spinner for that refresh is the reported "the resource tab
+    // keeps flickering by itself": the list is swapped for a centered 加载中.
+    installFetch({ root: ROOT, audio: AUDIO })
+    const { api, recordRef } = setup(record(), '')
+    await flushPromises()
+    expect(api.loading.value).toBe(false)
+    expect(api.groups.value.map((group) => group.key)).toEqual(['folder', 'audio'])
+
+    let release: (() => void) | null = null
+    const inFlight = new Promise<void>((resolve) => { release = resolve })
+    installFetch({ root: ROOT, audio: AUDIO, gate: inFlight })
+
+    recordRef.value = record() // same token/dirPath, new object — one poll tick
+    await nextTick()
+
+    // Asserted WHILE the refresh is in flight: `loading` only lives for a few
+    // microtasks, so checking after it settles passes whichever way it is
+    // implemented.
+    expect(api.loading.value).toBe(false)
+    expect(api.groups.value.map((group) => group.key)).toEqual(['folder', 'audio'])
+
+    release?.()
+    await flushPromises()
+    expect(api.loading.value).toBe(false)
+    expect(api.groups.value).toHaveLength(2)
+  })
+
+  it('still shows the spinner when a different meeting is loaded', async () => {
+    // The silent path must be keyed on the meeting, not on "we already have
+    // groups": switching records has to blank-and-load like a first paint.
+    installFetch({ root: ROOT, audio: AUDIO })
+    const { api, recordRef } = setup(record(), '')
+    await flushPromises()
+
+    let release: (() => void) | null = null
+    const inFlight = new Promise<void>((resolve) => { release = resolve })
+    installFetch({ root: [], gate: inFlight })
+
+    recordRef.value = record({ token: 'tok-2', dirPath: '/project/.clawbench/notes/other' })
+    await nextTick()
+    expect(api.loading.value).toBe(true)
+
+    release?.()
+    await flushPromises()
+    expect(api.loading.value).toBe(false)
+  })
+
+  it('keeps the list on screen when a background refresh fails', async () => {
+    installFetch({ root: ROOT, audio: AUDIO })
+    // Non-empty minutes: `detectReferenced` short-circuits on blank text, so a
+    // blank body would never reach the pipeline this test makes throw.
+    const { api, recordRef } = setup(record(), 'see web/src/a.ts')
+    await flushPromises()
+    expect(api.groups.value).toHaveLength(2)
+
+    buildMarkdownPreviewDom.mockImplementation(() => { throw new Error('bad minutes') })
+    recordRef.value = record()
+    await flushPromises()
+
+    expect(api.error.value).toBe('')
+    expect(api.groups.value).toHaveLength(2)
   })
 })

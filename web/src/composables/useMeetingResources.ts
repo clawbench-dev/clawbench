@@ -195,6 +195,17 @@ export function useMeetingResources(options: {
   const error = ref('')
   const groups = ref<MeetingResourceGroup[]>([])
   let loadSeq = 0
+  /**
+   * The meeting `groups` currently belong to.
+   *
+   * The detail view polls a just-ended meeting every 2.5s, and every tick hands
+   * us a fresh record object with identical values — enough to re-run the
+   * watcher below. That refresh must be silent: swapping the list for the
+   * centered spinner every few seconds is exactly the "resource tab keeps
+   * flickering by itself" report. Only the first paint of a meeting may show
+   * the spinner.
+   */
+  let loadedFor: string | null = null
 
   const total = computed(() => groups.value.reduce((n, group) => n + group.items.length, 0))
 
@@ -203,12 +214,15 @@ export function useMeetingResources(options: {
     const seq = ++loadSeq
     if (!record) {
       groups.value = []
+      loadedFor = null
       return
     }
     const projectRoot = store.state.projectRoot ?? ''
     const homeDir = store.state.homeDir ?? ''
     const relDir = record.dirPath ? normalizeSlashes(toProjectRelative(record.dirPath, projectRoot)) : ''
-    loading.value = true
+    const identity = `${record.token}\u0000${record.dirPath ?? ''}`
+    const firstPaint = loadedFor !== identity
+    if (firstPaint) loading.value = true
     error.value = ''
     try {
       const folderItems: MeetingResourceItem[] = []
@@ -312,9 +326,12 @@ export function useMeetingResources(options: {
         })
       }
       groups.value = next
+      loadedFor = identity
     } catch (e) {
       appLog.w(TAG, 'load failed', e)
-      if (seq === loadSeq) error.value = String(e)
+      // A silent refresh must not replace a list that is already on screen with
+      // an error box; it is only worth reporting when there is nothing to show.
+      if (seq === loadSeq && groups.value.length === 0) error.value = String(e)
     } finally {
       if (seq === loadSeq) loading.value = false
     }
