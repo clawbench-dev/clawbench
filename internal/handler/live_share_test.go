@@ -514,7 +514,35 @@ func dialPublisher(t *testing.T, srv *httptest.Server, token string) *websocket.
 	return conn
 }
 
+// readViewerMsg returns the next viewer frame, skipping roster snapshots.
+//
+// The roster is a background state frame: it is re-sent on every join, leave and
+// speech change, so a test that cares about `talk-revoked` must not be at the
+// mercy of how many people happened to join first. Tests that DO care about the
+// roster use readViewerRoster.
 func readViewerMsg(t *testing.T, conn *websocket.Conn) liveshare.ViewerMessage {
+	t.Helper()
+	for {
+		m := readViewerFrame(t, conn)
+		if m.Type == liveshare.MsgRoster {
+			continue
+		}
+		return m
+	}
+}
+
+// readViewerRoster waits for the next roster snapshot.
+func readViewerRoster(t *testing.T, conn *websocket.Conn) liveshare.ViewerMessage {
+	t.Helper()
+	for {
+		m := readViewerFrame(t, conn)
+		if m.Type == liveshare.MsgRoster {
+			return m
+		}
+	}
+}
+
+func readViewerFrame(t *testing.T, conn *websocket.Conn) liveshare.ViewerMessage {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1057,12 +1085,18 @@ func TestHandlePublisherControl_DisableRoomNotifiesEveryViewer(t *testing.T) {
 	})
 
 	// Reason matters: a viewer distinguishes "the publisher muted you" from
-	// "the room switch went off" only by this field.
+	// "the room switch went off" only by this field. Roster snapshots ride the
+	// same socket, so scan for the revocation rather than assuming it is last.
 	for _, s := range []*recordingSink{s1, s2} {
-		msg, ok := s.last().(liveshare.ViewerMessage)
-		require.True(t, ok, "viewers must receive a ViewerMessage")
-		assert.Equal(t, liveshare.MsgTalkRevoked, msg.Type)
-		assert.Equal(t, liveshare.ReasonDisabled, msg.Reason)
+		var revoked *liveshare.ViewerMessage
+		for _, frame := range s.all() {
+			if msg, ok := frame.(liveshare.ViewerMessage); ok && msg.Type == liveshare.MsgTalkRevoked {
+				m := msg
+				revoked = &m
+			}
+		}
+		require.NotNil(t, revoked, "viewers must be told the switch went off")
+		assert.Equal(t, liveshare.ReasonDisabled, revoked.Reason)
 	}
 	assert.False(t, room.TalkEnabled())
 }
@@ -1524,6 +1558,138 @@ func TestStartLiveShareReaper_ClosesMeetingsLeftOpenByThePreviousRun(t *testing.
 	require.NoError(t, err)
 	require.True(t, exists)
 	assert.NotZero(t, note.EndedAt, "a record orphaned by a crash must be closed at startup")
+}
+
+func TestLiveWS_HostMuteBlocksMicUntilUnmuted(t *testing.T) {
+	srv, token := liveWSServer(t)
+
+	pub := dialPublisher(t, srv, token)
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
+
+	joined := readViewerMsg(t, view)
+	_ = readPublisherMsg(t, pub)
+
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetTalkEnabled, Enabled: true})
+	_ = readViewerMsg(t, view) // talk-enabled
+
+	// The host silences this one viewer. Unlike talk-revoke, this must survive
+	// the viewer's own attempt to switch the microphone back on.
+	writeJSONFrame(t, pub, liveshare.PublisherControl{
+		Type: liveshare.CtrlTalkMute, ViewerID: joined.ViewerID, Enabled: true,
+	})
+	revoked := readViewerMsg(t, view)
+	assert.Equal(t, liveshare.MsgTalkRevoked, revoked.Type)
+	assert.Equal(t, liveshare.ReasonHostMuted, revoked.Reason, "a host mute must not read as 'room has no speech'")
+
+	st := readPublisherMsg(t, pub)
+	require.Equal(t, liveshare.MsgTalkState, st.Type)
+	assert.False(t, st.Talking)
+	require.NotNil(t, st.Muted, "the false/true pair must reach the publisher")
+	assert.True(t, *st.Muted)
+
+	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlTalkStart})
+	refused := readViewerMsg(t, view)
+	assert.Equal(t, liveshare.MsgTalkRevoked, refused.Type)
+	assert.Equal(t, liveshare.ReasonHostMuted, refused.Reason)
+
+	// Lifting the block only removes the refusal; the microphone stays off
+	// until the viewer turns it back on itself.
+	writeJSONFrame(t, pub, liveshare.PublisherControl{
+		Type: liveshare.CtrlTalkMute, ViewerID: joined.ViewerID, Enabled: false,
+	})
+	unmuted := readViewerMsg(t, view)
+	assert.Equal(t, liveshare.MsgTalkUnmuted, unmuted.Type)
+	st = readPublisherMsg(t, pub)
+	require.NotNil(t, st.Muted)
+	assert.False(t, *st.Muted)
+
+	writeJSONFrame(t, view, liveshare.ViewerControl{Type: liveshare.CtrlTalkStart})
+	st = readPublisherMsg(t, pub)
+	assert.Equal(t, liveshare.MsgTalkState, st.Type)
+	assert.True(t, st.Talking)
+}
+
+func TestLiveWS_KickRemovesViewerAndClosesSocket(t *testing.T) {
+	srv, token := liveWSServer(t)
+
+	pub := dialPublisher(t, srv, token)
+	view := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
+
+	joined := readViewerMsg(t, view)
+	_ = readPublisherMsg(t, pub)
+
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlKick, ViewerID: joined.ViewerID})
+
+	// The page learns why it is going away before the socket dies.
+	kicked := readViewerMsg(t, view)
+	assert.Equal(t, liveshare.MsgKicked, kicked.Type)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _, err := view.Read(ctx)
+	assert.Error(t, err, "the socket must be closed, not merely told about the kick")
+
+	// The publisher list has to lose the row too.
+	left := readPublisherMsg(t, pub)
+	assert.Equal(t, liveshare.MsgViewerLeave, left.Type)
+	assert.Equal(t, joined.ViewerID, left.ViewerID)
+}
+
+func TestLiveWS_RosterReachesEveryViewer(t *testing.T) {
+	srv, token := liveWSServer(t)
+
+	pub := dialPublisher(t, srv, token)
+	// The host's nickname travels on the publish frame; it is what the
+	// audience's member list shows on the host row.
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlPublish, Title: "t", Name: "泷泽"})
+
+	first := dialWS(t, srv, "/api/share/"+token+"/signal?name="+url.QueryEscape("小明"))
+	joinedFirst := readViewerMsg(t, first)
+	require.Equal(t, liveshare.MsgJoined, joinedFirst.Type)
+	require.Len(t, joinedFirst.Roster, 2, "the joining viewer gets the list with itself already in it")
+	assert.True(t, joinedFirst.Roster[0].Host)
+	assert.Equal(t, "泷泽", joinedFirst.Roster[0].Name)
+	assert.Equal(t, "小明", joinedFirst.Roster[1].Name)
+
+	second := dialWS(t, srv, "/api/share/"+token+"/signal?name="+url.QueryEscape("小红"))
+	joinedSecond := readViewerMsg(t, second)
+	require.Len(t, joinedSecond.Roster, 3)
+
+	// The first viewer is told somebody arrived, without asking.
+	roster := readViewerRoster(t, first)
+	require.Len(t, roster.Roster, 3)
+	assert.Equal(t, joinedSecond.ViewerID, roster.Roster[2].ID)
+
+	// And speaking shows up in the same list.
+	writeJSONFrame(t, pub, liveshare.PublisherControl{Type: liveshare.CtrlSetTalkEnabled, Enabled: true})
+	_ = readViewerMsg(t, first)
+	_ = readViewerMsg(t, second)
+	writeJSONFrame(t, second, liveshare.ViewerControl{Type: liveshare.CtrlTalkStart})
+	_ = readPublisherMsg(t, pub) // talk-state
+
+	roster = readViewerRoster(t, first)
+	require.Len(t, roster.Roster, 3)
+	assert.True(t, roster.Roster[2].Talking, "the audience must see who is speaking")
+}
+
+func TestLiveWS_RosterDropsALeavingViewer(t *testing.T) {
+	srv, token := liveWSServer(t)
+
+	pub := dialPublisher(t, srv, token)
+	_ = pub
+	first := dialWS(t, srv, "/api/share/"+token+"/signal?name=a")
+	_ = readViewerMsg(t, first)
+	second := dialWS(t, srv, "/api/share/"+token+"/signal?name=b")
+	_ = readViewerMsg(t, second)
+	_ = readViewerRoster(t, first) // first learns about second
+
+	_ = second.CloseNow()
+
+	roster := readViewerRoster(t, first)
+	assert.Len(t, roster.Roster, 2, "the departed viewer must leave the list")
+	for _, e := range roster.Roster {
+		assert.NotEqual(t, "b", e.Name)
+	}
 }
 
 // closePublisherAndWait tears the publisher socket down and waits until its

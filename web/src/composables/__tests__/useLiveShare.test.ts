@@ -428,6 +428,16 @@ describe('start', () => {
     await vi.waitFor(() => expect(lastWS().sentJSON().some((m) => m.type === 'publish')).toBe(true))
   })
 
+  it('carries the host nickname so the audience can name the host row', async () => {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    await share.start({ sourceId: 'screen:1:0', microphone: true, hostName: '  泷泽  ' })
+
+    const frame = lastWS().sentJSON().find((m) => m.type === 'publish')
+    // Trimmed: the audience list prints this verbatim.
+    expect(frame).toMatchObject({ type: 'publish', name: '泷泽' })
+  })
+
   it('keeps the renderer unthrottled while publishing', async () => {
     await startSharing()
     // A minimized window throttles timers, which stalls the encoder.
@@ -933,6 +943,40 @@ describe('talk authorisation', () => {
 
     expect(lastWS().sentJSON()).toContainEqual({ type: 'talk-mute-all' })
     expect(share.viewers.value.every((v) => v.talk === 'muted')).toBe(true)
+  })
+
+  it('blocks one viewer and shows it before the server confirms', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    await vi.waitFor(() => expect(share.viewers.value).toHaveLength(1))
+
+    share.setViewerMuted('v1', true)
+
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'talk-mute', viewerId: 'v1', enabled: true })
+    expect(share.viewers.value[0]).toMatchObject({ muted: true, talk: 'muted' })
+  })
+
+  it('treats an explicit muted:false as "the block was lifted"', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    await vi.waitFor(() => expect(share.viewers.value).toHaveLength(1))
+
+    lastWS().emit({ type: 'talk-state', viewerId: 'v1', talking: false, muted: true })
+    expect(share.viewers.value[0].muted).toBe(true)
+
+    // The server sends the field on every talk-state frame precisely because
+    // `false` is the meaningful "unmuted" answer; an omitted field must not be
+    // read as "still blocked".
+    lastWS().emit({ type: 'talk-state', viewerId: 'v1', talking: false, muted: false })
+    expect(share.viewers.value[0].muted).toBe(false)
+  })
+
+  it('removes a viewer through the server', async () => {
+    const { share } = await startSharing()
+
+    share.kickViewer('v1')
+
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'kick', viewerId: 'v1' })
   })
 })
 

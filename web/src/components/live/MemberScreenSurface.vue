@@ -150,8 +150,10 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const videoRef = ref<HTMLVideoElement | null>(null)
 
-/** Which pane the panel shows; the panel keeps both mounted. */
-const tab = ref<'chat' | 'notes'>('chat')
+/** Which pane the panel shows; the panel keeps them all mounted.
+ *  `participants` is part of the layout's tab union but not offered here — the
+ *  host's own 参会者 tab is the place for the roster. */
+const tab = ref<'chat' | 'notes' | 'participants'>('chat')
 
 /** The 听记 tab outlives the recorder: a finished transcript stays readable. */
 const notesAvailable = computed(() => props.notesEnabled || props.noteBlocks.length > 0)

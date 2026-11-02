@@ -31,11 +31,19 @@
         @click="selectTab(tab.key)"
       >
         {{ t(tab.labelKey) }}
+        <!-- An accent count on 参会者 while somebody is waiting for an answer:
+             the request lives in a tab the host is not looking at, and a
+             request nobody notices is the same as a refusal. -->
+        <span
+          v-if="tab.key === 'participants' && pendingApprovals > 0"
+          class="live-count"
+          data-role="participants-badge"
+        >{{ pendingApprovals > 9 ? '9+' : pendingApprovals }}</span>
         <span v-if="tab.key === 'chat' && unread > 0" class="live-count">{{ unread > 9 ? '9+' : unread }}</span>
         <!-- A red dot while the recorder runs: the tab bar is what the user
              looks at while reading the other tabs. -->
         <span
-          v-else-if="tab.key === 'notes' && notesOn"
+          v-if="tab.key === 'notes' && notesOn"
           class="live-tab__rec"
           :title="t('liveShare.notes.listening')"
         />
@@ -43,9 +51,10 @@
     </div>
 
     <div class="live-panel__body live-dialog" :class="{ 'live-panel__body--fill': fillTab }">
-      <!-- Publishing: three surfaces. 会议管理 holds what is set up once and
-           then glanced at (link, tools, audience, permissions); the transcript
-           and the chat get their own tabs so each can use the panel's height. -->
+      <!-- Publishing: four surfaces. 会议管理 holds what is set up once and
+           then glanced at (link, picture, devices, room switches); 参会者 holds
+           the people and the actions on them; the transcript and the chat get
+           their own tabs so each can use the panel's height. -->
         <template v-if="activeTab === 'basic'">
           <!-- Every address the server is reachable on, primary first. A
                machine with Wi-Fi + Ethernet + Docker needs this: the address
@@ -118,6 +127,10 @@
             @select="onSelectMic"
           />
 
+          <!-- What the room allows, in one group: 听记, audience speech and
+               audience screen sharing are the same kind of decision ("what may
+               happen in this meeting"), so they sit together instead of being
+               scattered between the device grids and the audience list. -->
           <div class="meeting-checks">
             <label class="meeting-check">
               <input type="checkbox" :checked="notesOn" data-role="stage-notes"
@@ -125,82 +138,31 @@
               <span class="meeting-check__icon"><NotebookPen :size="13" /></span>
               {{ t('meeting.create.notes') }}
             </label>
-          </div>
-          <div class="meeting-hint meeting-hint--indent">
-            {{ notesOn ? t('meeting.create.notesOn') : t('meeting.create.notesOff') }}
-          </div>
-
-          <div class="meeting-section">
-            {{ t('liveShare.audienceCount', { count: share.viewers.value.length }) }}
-          </div>
-          <div v-if="share.viewers.value.length === 0" class="meeting-hint">
-            {{ t('liveShare.noViewers') }}
-          </div>
-          <ul v-else class="live-viewer-list">
-            <li v-for="v in share.viewers.value" :key="v.id" class="live-viewer">
-              <span class="live-viewer-id">{{ viewerLabel(v) }}</span>
-              <span
-                v-if="presence[v.id] === false"
-                class="live-viewer-away"
-                :title="t('liveShare.viewerAway')"
-              >
-                {{ t('liveShare.viewerAway') }}
-              </span>
-              <span class="live-viewer-talk" :class="`live-viewer-talk--${v.talk}`">
-                {{ talkLabel(v.talk) }}
-              </span>
-              <!-- Only speaking viewers need an action: there is no approval
-                   queue, so the publisher's controls are "mute this one" and
-                   "mute everyone" (below). -->
-              <template v-if="controlRequests.has(v.id)">
-                <!-- Granting on a platform with no injector would silently do
-                     nothing, so say so instead of showing the button. -->
-                <span v-if="!controlSupported" class="live-viewer-note" data-role="control-unsupported">
-                  {{ t('liveShare.controlUnsupported') }}
-                </span>
-                <button
-                  v-else
-                  class="live-btn live-btn--sm"
-                  type="button"
-                  data-action="control-allow"
-                  @click="grantControl(v.id)"
-                >
-                  {{ t('liveShare.controlAllow') }}
-                </button>
-                <button class="live-btn live-btn--sm live-btn--danger" type="button" data-action="control-deny" @click="revokeControl(v.id)">
-                  {{ t('liveShare.controlDeny') }}
-                </button>
-              </template>
-              <button
-                v-else-if="controlledBy === v.id"
-                class="live-btn live-btn--sm live-btn--danger"
-                type="button"
-                data-action="control-stop"
-                @click="revokeControl(v.id)"
-              >
-                {{ t('liveShare.controlStop') }}
-              </button>
-              <button
-                v-if="v.talk === 'talking'"
-                class="live-btn live-btn--sm"
-                type="button"
-                @click="share.revokeTalk(v.id)"
-              >
-                {{ t('liveShare.mute') }}
-              </button>
-            </li>
-          </ul>
-
-          <div class="meeting-checks">
             <label class="meeting-check">
               <input
                 type="checkbox"
                 :checked="share.talkEnabled.value"
+                data-role="stage-talk"
                 @change="onToggleTalk(($event.target as HTMLInputElement).checked)"
               />
               <span class="meeting-check__icon"><Mic :size="13" /></span>
               {{ t('liveShare.allowTalking') }}
             </label>
+            <!-- Off by default: the token is a read credential, and a screen is
+                 a much bigger thing to hand out than a microphone. -->
+            <label class="meeting-check">
+              <input
+                type="checkbox"
+                :checked="share.screenEnabled.value"
+                data-role="stage-screen-share"
+                @change="onToggleScreen(($event.target as HTMLInputElement).checked)"
+              />
+              <span class="meeting-check__icon"><MonitorUp :size="13" /></span>
+              {{ t('liveShare.allowScreenShare') }}
+            </label>
+          </div>
+          <div class="meeting-hint meeting-hint--indent">
+            {{ notesOn ? t('meeting.create.notesOn') : t('meeting.create.notesOff') }}
           </div>
           <div class="meeting-hint meeting-hint--indent">
             {{ t('liveShare.allowTalkingHint') }}
@@ -219,21 +181,6 @@
           >
             {{ t('liveShare.muteAll') }}
           </button>
-
-          <!-- Audience screen sharing. Off by default: the token is a read
-               credential, and a screen is a much bigger thing to hand out than
-               a microphone. -->
-          <div class="meeting-checks">
-            <label class="meeting-check">
-              <input
-                type="checkbox"
-                :checked="share.screenEnabled.value"
-                @change="onToggleScreen(($event.target as HTMLInputElement).checked)"
-              />
-              <span class="meeting-check__icon"><MonitorUp :size="13" /></span>
-              {{ t('liveShare.allowScreenShare') }}
-            </label>
-          </div>
           <div class="meeting-hint meeting-hint--indent">
             {{ t('liveShare.allowScreenShareHint') }}
           </div>
@@ -279,6 +226,35 @@
             </div>
           </template>
         </template>
+
+        <!-- 参会者: managing people is a different task from setting the meeting
+             up, and it is the one surface that may need an answer at any
+             moment — which is why its tab carries the pending-approval badge.
+             The list scrolls with the panel body (no fill): it is at most nine
+             rows, and a nested scroller would only add a second scrollbar. -->
+        <div
+          v-else-if="activeTab === 'participants'"
+          class="live-participants-pane"
+          data-role="participants-pane"
+        >
+          <MeetingParticipants
+            :host-name="hostChatName"
+            :viewers="share.viewers.value"
+            :presence="presence"
+            :talk-enabled="share.talkEnabled.value"
+            :sharing-id="share.screenSharer.value"
+            :control-requests="controlRequests"
+            :controlled-by="controlledBy"
+            :control-supported="controlSupported"
+            @mute="share.setViewerMuted($event, true)"
+            @unmute="share.setViewerMuted($event, false)"
+            @kick="onKickViewer"
+            @stop-screen="share.revokeScreen($event)"
+            @allow-control="grantControl"
+            @deny-control="revokeControl"
+            @revoke-control="revokeControl"
+          />
+        </div>
 
         <!-- Live transcript. One line per speaker turn; the channels are
              recorded separately and merged by timestamp, so a remote
@@ -432,7 +408,9 @@ import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import TranscriptList from '@/components/live/TranscriptList.vue'
 import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
+import MeetingParticipants from '@/components/live/MeetingParticipants.vue'
 import { useToast } from '@/composables/useToast'
+import { useDialog } from '@/composables/useDialog'
 import {
   hasCameraDevice,
   listCaptureSources,
@@ -470,6 +448,7 @@ const emit = defineEmits<{ ended: [token: string] }>()
 
 const { t } = useI18n()
 const toast = useToast()
+const dialog = useDialog()
 const share = useLiveShare()
 const notes = useLiveNotes()
 const options = useMeetingOptions()
@@ -611,14 +590,24 @@ const nativeAnnotating = ref(false)
 const isAnnotating = computed(() => annotating.value || nativeAnnotating.value)
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
-type LiveTab = 'basic' | 'notes' | 'chat'
+type LiveTab = 'basic' | 'participants' | 'notes' | 'chat'
 const activeTab = ref<LiveTab>('basic')
 const tabs: Array<{ key: LiveTab; labelKey: string }> = [
   { key: 'basic', labelKey: 'liveShare.tabs.basic' },
+  { key: 'participants', labelKey: 'liveShare.tabs.participants' },
   { key: 'notes', labelKey: 'liveShare.tabs.transcript' },
   { key: 'chat', labelKey: 'liveShare.chat' },
 ]
-const fillTab = computed(() => activeTab.value !== 'basic')
+/** Panes that own their own scrolling; 会议管理 and 参会者 scroll as a form. */
+const fillTab = computed(() => activeTab.value === 'notes' || activeTab.value === 'chat')
+
+/**
+ * Pending approvals shown on the 参会者 tab.
+ *
+ * Only remote-control requests need an answer today; keeping the count derived
+ * from the request set means a future approval type joins the badge for free.
+ */
+const pendingApprovals = computed(() => controlRequests.value.size)
 
 function selectTab(key: LiveTab): void {
   activeTab.value = key
@@ -781,6 +770,24 @@ function revokeControl(viewerId: string): void {
 }
 
 /**
+ * Remove a viewer from the meeting.
+ *
+ * Confirmed first: the action is not undoable (the link works again, but they
+ * lose their place in the chat and any pending control request). The name is in
+ * the question so a mis-aimed click on a narrow row is caught before it lands.
+ */
+async function onKickViewer(viewerId: string): Promise<void> {
+  const name = share.viewers.value.find((v) => v.id === viewerId)?.name || viewerId
+  const ok = await dialog.confirm(t('liveShare.participant.kickConfirm', { name }), {
+    dangerous: true,
+  })
+  if (!ok) return
+  if (controlledBy.value === viewerId) controlledBy.value = ''
+  controlRequests.value = new Set([...controlRequests.value].filter((id) => id !== viewerId))
+  share.kickViewer(viewerId)
+}
+
+/**
  * Load the tiles the picture grid offers.
  *
  * Same builder as the create form, so the two screens cannot disagree about
@@ -808,29 +815,6 @@ async function loadSources(): Promise<void> {
 }
 
 const hasTalkers = computed(() => share.viewers.value.some((v) => v.talk === 'talking'))
-
-/**
- * Display name per viewer, with a `#2` suffix for duplicates.
- *
- * Nicknames are not unique (the server does not reserve them): two people may
- * both be "Alex". The list is keyed by viewerId, so the suffix only affects
- * what is shown, never who is who.
- */
-const viewerLabels = computed(() => {
-  const counts = new Map<string, number>()
-  const labels: Record<string, string> = {}
-  for (const v of share.viewers.value) {
-    const base = v.name || v.id
-    const n = (counts.get(base) ?? 0) + 1
-    counts.set(base, n)
-    labels[v.id] = n > 1 ? `${base} #${n}` : base
-  }
-  return labels
-})
-
-function viewerLabel(v: { id: string; name: string }): string {
-  return viewerLabels.value[v.id] || v.name || v.id
-}
 
 /**
  * Viewer ids restart at v1 for every share, so a grant from the previous share
@@ -865,10 +849,6 @@ const noteBlocks = computed(() => {
   void meetingFilesVersion.value
   return groupNoteSegments(withMeetingFileEvents(notes.segments.value, meetingFileEntries())).slice(-40)
 })
-
-function talkLabel(talk: string): string {
-  return talk === 'talking' ? t('liveShare.talkTalking') : t('liveShare.talkMuted')
-}
 
 // ── Runtime capture switches ────────────────────────────────────────────────
 /**
@@ -1180,54 +1160,6 @@ watch(
   color: var(--text-muted, #656d76);
 }
 
-/* ── Audience ──────────────────────────────────────────────────────────── */
-
-.live-viewer-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2, 4px);
-  max-height: 180px;
-  overflow-y: auto;
-}
-
-.live-viewer {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3, 6px);
-  padding: var(--space-2, 4px) var(--space-4, 8px);
-  border-radius: var(--radius-sm, 4px);
-  background: var(--bg-tertiary, #f6f8fa);
-  font-size: var(--font-size-sm, 13px);
-}
-
-.live-viewer-id {
-  font-family: var(--font-mono, monospace);
-  color: var(--text-secondary, #424a53);
-}
-
-.live-viewer-note {
-  font-size: var(--font-size-xs, 11px);
-  color: var(--text-muted, #656d76);
-}
-
-.live-viewer-talk {
-  flex: 1;
-  color: var(--text-muted, #656d76);
-  font-size: var(--font-size-xs, 11px);
-}
-
-.live-viewer-talk--talking {
-  color: var(--color-success, #1a7f37);
-  font-weight: 600;
-}
-
-.live-viewer-talk--pending {
-  color: var(--color-yellow, #9a6700);
-}
-
 /* ── In-body actions ───────────────────────────────────────────────────── */
 
 /*
@@ -1320,11 +1252,6 @@ watch(
   font-size: calc(10 * var(--dp));
   line-height: 14px;
   text-align: center;
-}
-
-.live-viewer-away {
-  color: var(--text-muted, #656d76);
-  font-size: var(--font-size-xs, 11px);
 }
 
 /* Inline chat inside the dialog: fixed height so the card does not grow with
@@ -1550,6 +1477,16 @@ watch(
   min-height: 0;
 }
 
+/* The participant list scrolls with the panel body rather than owning a
+   scroller: `flex: none` keeps it at its natural height so the body scrolls
+   instead of the row list being squashed into an invisible overflow. */
+.live-participants-pane {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-4, 8px);
+}
+
 /* Full width on purpose: the meeting tabs are a workspace, and a centred
    760px column left the rest of a wide dock empty while the transcript and the
    source tiles scrolled inside it. The panel's own padding is the only inset. */
@@ -1567,16 +1504,28 @@ watch(
   flex-shrink: 0;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f6f8fa);
+  /* Four labels do not fit a 320px dock in every language. The bar scrolls
+     sideways instead of wrapping a label onto a second line (the tab is a
+     fixed 34dp tall), and the scrollbar itself stays hidden. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.live-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .live-tab {
   display: inline-flex;
-  flex: 1 1 0;
+  /* Grow to share the width when there is room, never shrink below the label:
+     a squeezed label wraps out of the fixed-height bar. */
+  flex: 1 1 auto;
   align-items: center;
   justify-content: center;
   gap: var(--space-2, 4px);
   height: calc(34 * var(--dp));
   padding: 0 var(--space-5, 10px);
+  white-space: nowrap;
   border: none;
   border-bottom: 2px solid transparent;
   background: transparent;

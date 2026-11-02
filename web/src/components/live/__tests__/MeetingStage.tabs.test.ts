@@ -105,6 +105,8 @@ vi.mock('@/composables/useLiveShare', async () => {
     stop: vi.fn(async () => undefined),
     setTalkEnabled: vi.fn(),
     revokeTalk: vi.fn(),
+    setViewerMuted: vi.fn(),
+    kickViewer: vi.fn(),
     muteAll: vi.fn(),
     setScreenEnabled: vi.fn(),
     revokeScreen: vi.fn(),
@@ -237,6 +239,7 @@ describe('MeetingStage tabs', () => {
     // "no literal key is missing" scan cannot see them. A missing key renders
     // as the raw key, which is what this pins.
     expect(tab(wrapper, 'basic').text()).toBe('Manage meeting')
+    expect(tab(wrapper, 'participants').text()).toBe('Participants')
     expect(tab(wrapper, 'notes').text()).toBe('Transcript')
     expect(tab(wrapper, 'chat').text()).toBe('Chat')
   })
@@ -253,6 +256,52 @@ describe('MeetingStage tabs', () => {
     await tab(wrapper, 'notes').trigger('click')
     expect(wrapper.find('[data-role="notes-pane"]').exists()).toBe(true)
     expect(wrapper.find('[data-role="chat-pane"]').exists()).toBe(false)
+  })
+
+  it('gives the participants their own tab, right after the setup tab', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const keys = wrapper.findAll('[data-live-tab]').map((b) => b.attributes('data-live-tab'))
+    expect(keys).toEqual(['basic', 'participants', 'notes', 'chat'])
+
+    // The list used to be a section at the bottom of 会议管理, where it sat
+    // below a wall of device cards.
+    expect(wrapper.find('[data-role="participants"]').exists()).toBe(false)
+    await tab(wrapper, 'participants').trigger('click')
+    expect(wrapper.find('[data-role="participants"]').exists()).toBe(true)
+    expect(wrapper.find('share-address-list-stub').exists()).toBe(false)
+  })
+
+  it('badges the participants tab while an approval is waiting', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // A request nobody notices is the same as a refusal: the badge is the only
+    // signal outside the tab.
+    expect(tab(wrapper, 'participants').find('.live-count').exists()).toBe(false)
+
+    controlRelay()({ t: 'ctrl-req', from: 'v1' })
+    await nextTick()
+    expect(tab(wrapper, 'participants').find('[data-role="participants-badge"]').text()).toBe('1')
+
+    // Answering it clears the badge without leaving the tab.
+    controlRelay()({ t: 'ctrl-release', from: 'v1' })
+    await nextTick()
+    expect(tab(wrapper, 'participants').find('.live-count').exists()).toBe(false)
+  })
+
+  it('keeps 听记, 允许成员发言 and 允许成员共享屏幕 in one switch group', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // User requirement: the three room-level switches read as one decision, so
+    // they sit together instead of being scattered down the form.
+    const group = wrapper.findAll('.meeting-checks')[0]
+    expect(group.find('[data-role="stage-notes"]').exists()).toBe(true)
+    expect(group.find('[data-role="stage-talk"]').exists()).toBe(true)
+    expect(group.find('[data-role="stage-screen-share"]').exists()).toBe(true)
+    expect(wrapper.findAll('.meeting-checks')).toHaveLength(1)
   })
 
   it('counts a chat message as unread while another tab is open, and clears it on the chat tab', async () => {

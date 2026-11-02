@@ -67,6 +67,25 @@ interface ServerMessage {
   sharing?: boolean
   reason?: string
   message?: string
+  /** Participant list, on `joined` and on every `roster` frame. */
+  roster?: RosterMember[]
+}
+
+/**
+ * One participant, as the server reports them.
+ *
+ * `id` is "host" for the publisher and the room's viewer id for everybody else;
+ * comparing it with `viewer.viewerId` is how the page marks "you".
+ */
+export interface RosterMember {
+  id: string
+  name: string
+  /** The publisher row: pinned first and labelled with the role. */
+  host?: boolean
+  /** That viewer's microphone is on. */
+  talking?: boolean
+  /** The publisher blocked that viewer's microphone. */
+  muted?: boolean
 }
 
 export interface LiveViewerCallbacks {
@@ -111,6 +130,12 @@ export interface LiveViewerCallbacks {
   onControl?: (msg: ControlMessage) => void
   /** The publisher muted us, or the room switch was turned off. */
   onTalkRevoked?: (reason: string) => void
+  /** The publisher blocked (true) or released (false) our microphone. */
+  onTalkMuted?: (muted: boolean) => void
+  /** Our own viewer id, once the room has accepted us. */
+  onJoined?: (viewerId: string) => void
+  /** The full participant list, on join and on every change. */
+  onRoster?: (roster: RosterMember[]) => void
 }
 
 export interface LiveViewerOptions {
@@ -178,6 +203,7 @@ export class LiveViewer {
   private _screenEnabled = false
   private _screenSharer = ''
   private _viewerId = ''
+  private _roster: RosterMember[] = []
   /** Our own screen track while we are sharing (null when we are not). */
   private screenTrack: MediaStreamTrack | null = null
   /**
@@ -259,6 +285,11 @@ export class LiveViewer {
     return this._viewerId
   }
 
+  /** The participant list as the server last reported it. */
+  get roster(): RosterMember[] {
+    return this._roster
+  }
+
   /** Whether the room allows audience screen sharing. */
   get screenEnabled(): boolean {
     return this._screenEnabled
@@ -334,6 +365,17 @@ export class LiveViewer {
         this.setState('ended', { reason: msg.reason })
         this.teardown()
         break
+      case 'kicked':
+        // Removed by the host. A distinct reason so the page can say "you were
+        // removed" instead of the generic "the share ended".
+        this.setState('ended', { reason: 'kicked' })
+        this.teardown()
+        break
+      case 'roster':
+        // Full snapshot, not a delta: the list is at most nine rows, and a
+        // missed delta would leave the panel wrong until the page reloaded.
+        this.applyRoster(msg.roster ?? [])
+        break
       case 'talk-enabled':
         // The room-level switch changed after we joined. `joined` carries the
         // state at attach time, so this is the only way an already-connected
@@ -342,18 +384,25 @@ export class LiveViewer {
         this.cb.onTalkEnabled?.(this._talkEnabled)
         break
       case 'talk-revoked':
-        // Two different meanings share this frame: the publisher muted THIS
-        // viewer ('revoked'/'muted'), or the room switch went off ('disabled').
-        // Only the latter means the microphone toggle itself should disappear —
-        // clearing it on a personal mute would take away the button the viewer
-        // is still entitled to use.
+        // Three meanings share this frame: the publisher silenced THIS viewer
+        // for the moment ('revoked'/'muted'), the publisher blocked them
+        // outright ('host'), or the room switch went off ('disabled').
+        // Only 'disabled' means the microphone toggle itself should disappear —
+        // the other two are about the microphone, not about permission to have
+        // one, and the viewer stays entitled to the button.
         this._talking = false
         void this.detachMic()
         if (msg.reason === 'disabled') {
           this._talkEnabled = false
           this.cb.onTalkEnabled?.(false)
         }
+        if (msg.reason === 'host') this.cb.onTalkMuted?.(true)
         this.cb.onTalkRevoked?.(msg.reason ?? '')
+        break
+      case 'talk-unmuted':
+        // The block is gone; the microphone stays off until the viewer turns it
+        // back on themselves.
+        this.cb.onTalkMuted?.(false)
         break
       case 'talk-disabled':
         // We asked to speak while the room switch was off. Flip the toggle back
@@ -406,6 +455,12 @@ export class LiveViewer {
     }
   }
 
+  /** Store one roster snapshot and hand it to the page. */
+  private applyRoster(list: RosterMember[]): void {
+    this._roster = list
+    this.cb.onRoster?.(list)
+  }
+
   private onJoined(msg: ServerMessage): void {
     this._talkEnabled = Boolean(msg.talkEnabled)
     this._videoEnabled = msg.video !== false
@@ -420,6 +475,8 @@ export class LiveViewer {
     this.cb.onControlEnabled?.(this._controlEnabled)
     this.cb.onTalkEnabled?.(this._talkEnabled)
     this._viewerId = msg.viewerId ?? ''
+    this.cb.onJoined?.(this._viewerId)
+    if (msg.roster) this.applyRoster(msg.roster)
     this._notesEnabled = Boolean(msg.notesEnabled)
     this.cb.onNotesEnabled?.(this._notesEnabled)
     this._screenEnabled = Boolean(msg.screenEnabled)

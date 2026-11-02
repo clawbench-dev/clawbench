@@ -747,3 +747,95 @@ func TestRoom_HasPublisherAndCreatedAt(t *testing.T) {
 		t.Fatal("a detached publisher must be reported as gone")
 	}
 }
+
+func TestRoster_PublisherFirstThenJoinOrder(t *testing.T) {
+	g := NewRegistry()
+	g.SetLimits(10, 0)
+	room, err := g.Create("/proj/a", "A")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !room.ReservePublisher() {
+		t.Fatal("ReservePublisher")
+	}
+	room.AttachPublisher(&fakeSink{})
+	room.SetPublisherName("泷泽")
+
+	first, err := room.AddViewer("小明", &fakeSink{})
+	if err != nil {
+		t.Fatalf("AddViewer: %v", err)
+	}
+	second, err := room.AddViewer("小红", &fakeSink{})
+	if err != nil {
+		t.Fatalf("AddViewer: %v", err)
+	}
+
+	roster := room.Roster()
+	if len(roster) != 3 {
+		t.Fatalf("want host + 2 viewers, got %#v", roster)
+	}
+	// The host is pinned: the audience's list reads as "who is in this meeting",
+	// not "who is watching me".
+	if !roster[0].Host || roster[0].ID != "host" || roster[0].Name != "泷泽" {
+		t.Fatalf("host must be first with its nickname, got %#v", roster[0])
+	}
+	// Join order, not map order: a list that reshuffles every frame is unusable.
+	if roster[1].ID != first.ID || roster[2].ID != second.ID {
+		t.Fatalf("viewers must be in join order, got %q then %q", roster[1].ID, roster[2].ID)
+	}
+	if roster[1].Name != "小明" || roster[2].Name != "小红" {
+		t.Fatalf("names must survive, got %#v", roster[1:])
+	}
+}
+
+func TestRoster_KeepsJoinOrderAfterSomebodyLeaves(t *testing.T) {
+	g := NewRegistry()
+	g.SetLimits(10, 0)
+	room, _ := g.Create("/proj/a", "A")
+	room.ReservePublisher()
+	room.AttachPublisher(&fakeSink{})
+
+	first, _ := room.AddViewer("a", &fakeSink{})
+	second, _ := room.AddViewer("b", &fakeSink{})
+	room.RemoveViewer(first.ID)
+	third, _ := room.AddViewer("c", &fakeSink{})
+
+	roster := room.Roster()
+	if len(roster) != 3 { // host + b + c
+		t.Fatalf("want 3 entries, got %#v", roster)
+	}
+	if roster[1].ID != second.ID || roster[2].ID != third.ID {
+		t.Fatalf("a gap must not reorder the survivors, got %#v", roster[1:])
+	}
+}
+
+func TestRoster_ReflectsSpeechAndHostMute(t *testing.T) {
+	room, v := newTalkRoom(t)
+	room.SetTalkEnabled(true)
+	if err := room.SetTalking(v.ID, true); err != nil {
+		t.Fatalf("SetTalking: %v", err)
+	}
+	if _, err := room.SetMuted(v.ID, true); err != nil {
+		t.Fatalf("SetMuted: %v", err)
+	}
+
+	// Muting clears the microphone, so the snapshot must not claim both.
+	// newTalkRoom has no publisher, so the viewer is the only entry.
+	entry := room.Roster()[0]
+	if entry.Talking {
+		t.Fatal("a muted viewer must not read as talking")
+	}
+	if !entry.Muted {
+		t.Fatal("the block must be visible in the roster")
+	}
+}
+
+func TestRoster_EmptyRoomHasNoHost(t *testing.T) {
+	g := NewRegistry()
+	room, _ := g.Create("/proj/a", "A")
+
+	// No publisher attached: a host row would be a phantom.
+	if got := room.Roster(); len(got) != 0 {
+		t.Fatalf("want an empty roster, got %#v", got)
+	}
+}

@@ -35,6 +35,9 @@ vi.mock('@/share/liveViewer', () => ({
       sent.push(msg)
       return true
     }
+    /** The page calls this after sending the request; without it the click
+     *  handler throws and the test only passes by accident. */
+    requestControl(): void {}
     getStats() {
       return Promise.resolve({ rttMs: null, lossPct: null, bitrateKbps: null, jitterMs: null })
     }

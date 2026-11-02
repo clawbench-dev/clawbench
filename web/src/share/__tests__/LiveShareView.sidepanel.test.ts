@@ -97,6 +97,13 @@ const i18n = createI18n({
           fullscreen: '全屏',
           exitFullscreen: '退出全屏',
           viewerName: '观众 {id}',
+          participants: '成员',
+          hostRole: '主持人',
+          memberYou: '你',
+          memberSharing: '共享屏幕',
+          memberTalking: '说话中',
+          memberMuted: '已静音',
+          membersEmpty: '还没有其他人的信息。',
         },
       },
     },
@@ -122,7 +129,14 @@ afterEach(() => {
 })
 
 function mountView() {
-  const w = mount(LiveShareView, { global: { plugins: [i18n] } })
+  const w = mount(LiveShareView, {
+    global: {
+      plugins: [i18n],
+      // The avatar pulls a DiceBear chunk; the icon is decoration here and has
+      // its own tests.
+      stubs: { SpeakerAvatar: { props: ['name'], template: '<span class="sa" :data-name="name" />' } },
+    },
+  })
   passJoinGate(w)
   return w
 }
@@ -569,5 +583,92 @@ describe('meeting unread badge colour', () => {
     const body = (m as RegExpMatchArray)[1]
     expect(body).toMatch(/background:\s*var\(--accent-color/)
     expect(body).not.toMatch(/--color-red/)
+  })
+})
+
+/**
+ * 成员 is the audience's view of the room: it is the one tab that answers "who
+ * else is here", which the chat only answers indirectly (and only for people
+ * who have spoken).
+ */
+describe('LiveShareView 成员 tab', () => {
+  it('is offered even when the meeting has no 听记', async () => {
+    const w = mountView()
+    await flushPromises()
+
+    await w.find('[data-action="chat"]').trigger('click')
+    await flushPromises()
+
+    expect(w.find('[data-tab="participants"]').exists()).toBe(true)
+    expect(w.find('[data-tab="notes"]').exists()).toBe(false)
+
+    w.unmount()
+  })
+
+  it('lists the host first, then the audience, with me marked', async () => {
+    const w = mountView()
+    await flushPromises()
+    await w.find('[data-action="chat"]').trigger('click')
+    await flushPromises()
+
+    lastViewer?.opts?.callbacks?.onJoined?.('v2')
+    lastViewer?.opts?.callbacks?.onRoster?.([
+      { id: 'host', name: '泷泽', host: true },
+      { id: 'v1', name: '小明' },
+      { id: 'v2', name: '小红' },
+    ])
+    await flushPromises()
+
+    await w.find('[data-tab="participants"]').trigger('click')
+    await flushPromises()
+
+    const rows = w.findAll('.live-member')
+    expect(rows).toHaveLength(3)
+    // The same avatar mapping the transcript and the chat use.
+    expect(rows.map((r) => r.find('.sa').attributes('data-name'))).toEqual(['泷泽', '小明', '小红'])
+    expect(rows[0].text()).toContain('主持人')
+    // "You" is a position, not a name: duplicates make the name ambiguous.
+    expect(rows[2].find('[data-role="member-you"]').exists()).toBe(true)
+    expect(rows[1].find('[data-role="member-you"]').exists()).toBe(false)
+
+    w.unmount()
+  })
+
+  it('shows who is speaking, who is muted and who is sharing', async () => {
+    const w = mountView()
+    await flushPromises()
+    await w.find('[data-action="chat"]').trigger('click')
+    await flushPromises()
+
+    lastViewer?.opts?.callbacks?.onJoined?.('v2')
+    lastViewer?.opts?.callbacks?.onScreenSharer?.('v1')
+    lastViewer?.opts?.callbacks?.onRoster?.([
+      { id: 'host', name: '泷泽', host: true },
+      { id: 'v1', name: '小明', talking: true },
+      { id: 'v2', name: '小红', muted: true },
+    ])
+    await flushPromises()
+    await w.find('[data-tab="participants"]').trigger('click')
+    await flushPromises()
+
+    const rows = w.findAll('.live-member')
+    expect(rows[1].find('[data-role="member-talking"]').exists()).toBe(true)
+    expect(rows[1].find('[data-role="member-sharing"]').exists()).toBe(true)
+    expect(rows[2].find('[data-role="member-muted"]').exists()).toBe(true)
+
+    w.unmount()
+  })
+
+  it('says the list is empty instead of rendering nothing', async () => {
+    const w = mountView()
+    await flushPromises()
+    await w.find('[data-action="chat"]').trigger('click')
+    await flushPromises()
+    await w.find('[data-tab="participants"]').trigger('click')
+    await flushPromises()
+
+    expect(w.find('[data-role="members-empty"]').exists()).toBe(true)
+
+    w.unmount()
   })
 })

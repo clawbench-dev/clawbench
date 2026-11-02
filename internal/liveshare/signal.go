@@ -44,6 +44,13 @@ const (
 	// MsgTalkRevoked means the publisher muted this viewer (or the room switch
 	// was turned off), so its microphone must stop.
 	MsgTalkRevoked = "talk-revoked"
+	// MsgTalkUnmuted lifts a per-viewer block. It is a separate frame from
+	// MsgTalkEnabled because the two mean different things: this one leaves the
+	// microphone switch in the viewer's hands, that one removes it entirely.
+	MsgTalkUnmuted = "talk-unmuted"
+	// MsgKicked means the publisher removed this viewer from the meeting. The
+	// socket closes right after it; the frame is what lets the page say why.
+	MsgKicked = "kicked"
 	// MsgTalkDisabled means the viewer asked to speak while the room switch is
 	// off. The viewer's mic must go back to off.
 	MsgTalkDisabled = "talk-disabled"
@@ -63,6 +70,12 @@ const (
 	MsgControlEnabled = "control-enabled"
 	// MsgError reports a rejected control frame without closing the socket.
 	MsgError = "error"
+	// MsgRoster carries the FULL participant list: the publisher plus every
+	// viewer. Sent to every viewer whenever somebody joins, leaves, speaks or
+	// is muted. A full snapshot rather than join/leave deltas because the list
+	// is at most nine entries: one frame cannot drift, and a viewer that missed
+	// a delta would otherwise show a stale list until it reloaded.
+	MsgRoster = "roster"
 )
 
 // Publisher control messages (client → server).
@@ -75,6 +88,12 @@ const (
 	CtrlTalkRevoke = "talk-revoke"
 	// CtrlTalkMuteAll revokes every grant at once.
 	CtrlTalkMuteAll = "talk-mute-all"
+	// CtrlTalkMute blocks (Enabled=true) or unblocks one viewer's microphone.
+	// Distinct from CtrlTalkRevoke: that one silences the microphone for now,
+	// this one refuses to let it come back on.
+	CtrlTalkMute = "talk-mute"
+	// CtrlKick removes one viewer from the room and hangs up its socket.
+	CtrlKick = "kick"
 	// CtrlAnswer carries the publisher's SDP answer for one viewer.
 	CtrlAnswer = "answer"
 	// CtrlICE carries one ICE candidate (publisher → viewer direction is the
@@ -138,6 +157,17 @@ type PublisherMessage struct {
 	Candidate any `json:"candidate,omitempty"`
 	// Talking is meaningful only on MsgTalkState.
 	Talking bool `json:"talking,omitempty"`
+	// Muted is meaningful only on MsgTalkState: whether the publisher has
+	// blocked this viewer's microphone. It travels with Talking because the two
+	// always change together when the host mutes somebody (the block goes on
+	// and the microphone goes off), and a publisher list that applied them
+	// separately could briefly show "speaking" next to "muted".
+	//
+	// A pointer, not a bool: `false` is the meaningful answer ("the block was
+	// lifted") and must actually reach the wire, so it cannot be omitempty. A
+	// nil pointer keeps the "only the fields this frame means" property for
+	// every other message type.
+	Muted *bool `json:"muted,omitempty"`
 	// Sharing is meaningful only on MsgScreenState: whether ViewerID is
 	// currently sharing a screen.
 	Sharing bool `json:"sharing,omitempty"`
@@ -154,6 +184,10 @@ const (
 	ReasonRevoked = "revoked"
 	// ReasonMuted means a mute-all cleared every approval.
 	ReasonMuted = "muted"
+	// ReasonHostMuted means the publisher blocked this one viewer. The viewer
+	// keeps its microphone switch, but turning it on is refused until the host
+	// lifts the block (talk-unmuted).
+	ReasonHostMuted = "host"
 	// ReasonBusy means somebody else is already sharing a screen. Only one
 	// sharer at a time: every forwarded screen is another stream the publisher
 	// must upload to every viewer.
@@ -203,12 +237,37 @@ type ViewerMessage struct {
 	Sharing bool   `json:"sharing,omitempty"`
 	Reason  string `json:"reason,omitempty"`
 	Message string `json:"message,omitempty"`
+	// Roster is meaningful only on MsgRoster.
+	Roster []RosterEntry `json:"roster,omitempty"`
+}
+
+// RosterEntry is one participant as the audience sees them.
+//
+// Deliberately not a *Viewer: this is a value snapshot copied under the room
+// lock, so a frame cannot be mutated by a later state change while it is being
+// serialized.
+type RosterEntry struct {
+	// ID is "host" for the publisher and the room's viewer id otherwise.
+	ID string `json:"id"`
+	// Name is the nickname the server accepted at join. Empty for the publisher
+	// when its client sent none; the page then shows the role label instead.
+	Name string `json:"name,omitempty"`
+	// Host marks the publisher row so the list can pin it and label the role.
+	Host bool `json:"host,omitempty"`
+	// Talking is that viewer's microphone state.
+	Talking bool `json:"talking,omitempty"`
+	// Muted is the publisher's per-viewer block.
+	Muted bool `json:"muted,omitempty"`
 }
 
 // PublisherControl is a frame received from the publisher.
 type PublisherControl struct {
-	Type      string `json:"type"`
-	Title     string `json:"title"`
+	Type  string `json:"type"`
+	Title string `json:"title"`
+	// Name is the publisher's nickname, meaningful only on CtrlPublish. It is
+	// what the audience's member list shows for the host row; absent means the
+	// client did not send one and the page falls back to the role label.
+	Name      string `json:"name"`
 	ViewerID  string `json:"viewerId"`
 	SDP       string `json:"sdp"`
 	Candidate any    `json:"candidate"`

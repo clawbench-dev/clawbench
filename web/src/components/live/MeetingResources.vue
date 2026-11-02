@@ -299,7 +299,7 @@ function metaFor(item: MeetingResourceItem): string {
   padding: var(--space-3) var(--space-3) var(--space-1);
   font-size: var(--font-size-2xs);
   font-weight: 650;
-  letter-spacing: 0.3px;
+  letter-spacing: calc(0.3 * var(--dp));
   color: var(--text-muted);
 }
 .res-group__count { font-weight: 500; color: var(--text-hint); letter-spacing: 0; }

@@ -53,6 +53,21 @@
         >
           {{ t('share.live.notes') }}
         </button>
+        <!-- 成员 is the audience's view of the room: who else is here, who is
+             speaking. It is appended after the two content tabs so the chat and
+             the transcript keep the positions they always had. -->
+        <button
+          v-if="participantsAvailable"
+          class="live-side-tab"
+          :class="{ 'live-side-tab--on': activeTab === 'participants' }"
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === 'participants'"
+          data-tab="participants"
+          @click="selectTab('participants')"
+        >
+          {{ t('share.live.participants') }}
+        </button>
         <span class="live-side-gap" />
         <button
           class="live-side-close"
@@ -82,6 +97,16 @@
         data-panel="notes"
       >
         <slot name="notes" />
+      </div>
+
+      <div
+        v-if="participantsAvailable"
+        v-show="activeTab === 'participants'"
+        class="live-members-body"
+        role="tabpanel"
+        data-panel="participants"
+      >
+        <slot name="participants" />
       </div>
     </aside>
 
@@ -116,16 +141,18 @@ import { designToCss } from '@/utils/uiScale'
 const props = withDefaults(
   defineProps<{
     sideOpen: boolean
-    /** Which pane the panel shows. The panel keeps both mounted. */
-    activeTab: 'chat' | 'notes'
+    /** Which pane the panel shows. The panel keeps them all mounted. */
+    activeTab: 'chat' | 'notes' | 'participants'
     /** Whether the 听记 tab exists at all (no recorder ⇒ no tab). */
     notesAvailable?: boolean
+    /** Whether the 成员 tab exists (the audience has a roster; a lone host may not). */
+    participantsAvailable?: boolean
   }>(),
-  { notesAvailable: false },
+  { notesAvailable: false, participantsAvailable: false },
 )
 
 const emit = defineEmits<{
-  (e: 'update:activeTab', tab: 'chat' | 'notes'): void
+  (e: 'update:activeTab', tab: 'chat' | 'notes' | 'participants'): void
   (e: 'close'): void
   /** The picture column changed width — ink overlays must re-measure. */
   (e: 'resize'): void
@@ -162,8 +189,9 @@ function onSideDrag(clientX: number): void {
   sideWidth.value = clampSideWidth(rect.right - clientX, rect.width)
 }
 
-function selectTab(tab: 'chat' | 'notes'): void {
+function selectTab(tab: 'chat' | 'notes' | 'participants'): void {
   if (tab === 'notes' && !props.notesAvailable) return
+  if (tab === 'participants' && !props.participantsAvailable) return
   emit('update:activeTab', tab)
 }
 
@@ -308,6 +336,17 @@ defineExpose({ rootEl: computed(() => rootRef.value) })
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
+  padding: var(--space-4, 8px) var(--space-5, 10px);
+}
+
+/* The member list is short and scrolls with its own pane: the panel has a fixed
+   height, and the roster must not push the tab bar off the top. */
+.live-members-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   padding: var(--space-4, 8px) var(--space-5, 10px);
 }
 

@@ -12,6 +12,7 @@
     :side-open="sideOpen"
     :active-tab="sideTab"
     :notes-available="notesAvailable"
+    participants-available
     @update:active-tab="setSideTab"
     @close="closeSide"
     @resize="syncInkRect"
@@ -234,13 +235,15 @@
           role="switch"
           :aria-checked="talking"
           :aria-label="t('share.live.micToggle')"
-          :disabled="!canTalk"
+          :disabled="!canTalk || mutedByHost"
           :title="
-            !canTalk
-              ? t('share.live.micNeedsHttps')
-              : talking
-                ? t('share.live.micOnHint')
-                : t('share.live.micOffHint')
+            mutedByHost
+              ? t('share.live.micMutedByHost')
+              : !canTalk
+                ? t('share.live.micNeedsHttps')
+                : talking
+                  ? t('share.live.micOnHint')
+                  : t('share.live.micOffHint')
           "
           data-action="mic-toggle"
           @click="toggleMic"
@@ -249,7 +252,7 @@
             <Mic v-if="talking" :size="16" />
             <MicOff v-else :size="16" />
           </template>
-          {{ talking ? t('share.live.micOn') : t('share.live.micOff') }}
+          {{ mutedByHost ? t('share.live.micMutedByHost') : talking ? t('share.live.micOn') : t('share.live.micOff') }}
         </LiveDockButton>
 
         <!-- Shown whenever the host shares a screen, even when THIS page cannot
@@ -360,6 +363,52 @@
       <TranscriptList v-else :blocks="noteBlocks" fill />
     </template>
 
+    <template #participants>
+      <!-- The audience's view of the room. No actions here on purpose: only the
+           host can mute or remove somebody, so a member list that offered
+           buttons would be a set of controls that always fail. -->
+      <ul v-if="roster.length > 0" class="live-members" data-role="members-list">
+        <li v-for="m in roster" :key="m.id" class="live-member" :data-member-id="m.id">
+          <SpeakerAvatar class="live-member__avatar" :name="memberName(m)" />
+          <span class="live-member__name" :title="memberName(m)">{{ memberName(m) }}</span>
+          <span v-if="m.host" class="live-member__chip live-member__chip--role">
+            {{ t('share.live.hostRole') }}
+          </span>
+          <span
+            v-else-if="m.id === myViewerId"
+            class="live-member__chip live-member__chip--you"
+            data-role="member-you"
+          >
+            {{ t('share.live.memberYou') }}
+          </span>
+          <span
+            v-if="screenSharer === m.id"
+            class="live-member__chip"
+            data-role="member-sharing"
+          >
+            {{ t('share.live.memberSharing') }}
+          </span>
+          <span
+            v-if="m.talking"
+            class="live-member__chip live-member__chip--live"
+            data-role="member-talking"
+          >
+            {{ t('share.live.memberTalking') }}
+          </span>
+          <span
+            v-else-if="m.muted"
+            class="live-member__chip live-member__chip--muted"
+            data-role="member-muted"
+          >
+            {{ t('share.live.memberMuted') }}
+          </span>
+        </li>
+      </ul>
+      <p v-else class="live-members-empty" data-role="members-empty">
+        {{ t('share.live.membersEmpty') }}
+      </p>
+    </template>
+
     <template #overlay>
   <!-- Client-mode source picker. Electron refuses an undeclared capture
            source, so the choice has to happen before getDisplayMedia. It is a
@@ -418,8 +467,9 @@ import {
   VolumeX,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import SpeakerAvatar from '@/components/common/SpeakerAvatar.vue'
 import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
-import { LiveViewer, type LiveStats, type LiveViewerState } from './liveViewer'
+import { LiveViewer, type LiveStats, type LiveViewerState, type RosterMember } from './liveViewer'
 import TranscriptList from '@/components/live/TranscriptList.vue'
 import LiveJoinGate from './LiveJoinGate.vue'
 import LiveInkLayer from './LiveInkLayer.vue'
@@ -476,13 +526,21 @@ const title = ref('')
 const failReason = ref('')
 const talkEnabled = ref(false)
 const talking = ref(false)
+/**
+ * The host has blocked our microphone.
+ *
+ * The switch stays visible but disabled: hiding it would look like the room
+ * never allowed speech, while the reason here is one person's decision that the
+ * host can undo at any moment.
+ */
+const mutedByHost = ref(false)
 const needsSoundUnlock = ref(false)
 /** Mirrors the browser's fullscreen state so the icon can follow Esc / F11. */
 const isFullscreen = ref(false)
 
-// ── Side panel: 聊天 + 听记 ──────────────────────────────────────────────────
+// ── Side panel: 聊天 + 听记 + 成员 ───────────────────────────────────────────
 /**
- * One full-height column beside the picture, two tabs.
+ * One full-height column beside the picture, three tabs.
  *
  * Deliberately a flex SIBLING of the stage rather than an overlay. The panels
  * used to float over the video with a 50vh / 56vh cap, which on a laptop left
@@ -491,10 +549,33 @@ const isFullscreen = ref(false)
  * the chat gets the whole height of the window.
  */
 const sideOpen = ref(false)
-const sideTab = ref<'chat' | 'notes'>('chat')
+const sideTab = ref<'chat' | 'notes' | 'participants'>('chat')
 /** Derived, so the dock can keep using the old names for its active tint. */
 const chatOpen = computed(() => sideOpen.value && sideTab.value === 'chat')
 const notesOpen = computed(() => sideOpen.value && sideTab.value === 'notes')
+
+/**
+ * Who is in the meeting, as the server reports it.
+ *
+ * Full snapshots only — the server re-sends the list on every join, leave and
+ * speech change, so there is nothing to merge here.
+ */
+const roster = ref<RosterMember[]>([])
+/** Our own viewer id, so the list can mark "you" instead of just a name. */
+const myViewerId = ref('')
+
+/**
+ * What to print for one participant.
+ *
+ * The host may not have sent a nickname (an older client, or a page that never
+ * asked for one), and a viewer's name is whatever they typed at the gate. The
+ * role label is the honest fallback for the host; a numbered viewer is the same
+ * fallback the chat uses, so the two lists agree.
+ */
+function memberName(m: RosterMember): string {
+  if (m.name) return m.name
+  return m.host ? t('share.live.hostRole') : t('share.live.viewerName', { id: m.id })
+}
 
 // ── AI 听记 (viewer side) ────────────────────────────────────────────────────
 /** Whether the publisher is recording 听记 right now. */
@@ -876,7 +957,7 @@ function onStageWheel(ev: WheelEvent): void {
  * The poll is scoped to the 听记 tab, not to the panel: a viewer reading the
  * chat must not keep hitting the transcript endpoint every 3 seconds.
  */
-function setSideTab(tab: 'chat' | 'notes'): void {
+function setSideTab(tab: 'chat' | 'notes' | 'participants'): void {
   if (tab === 'notes' && !notesAvailable.value) return
   sideTab.value = tab
   if (tab === 'notes') startNotesPolling()
@@ -885,7 +966,7 @@ function setSideTab(tab: 'chat' | 'notes'): void {
   if (tab === 'chat') unread.value = 0
 }
 
-function openSide(tab: 'chat' | 'notes'): void {
+function openSide(tab: 'chat' | 'notes' | 'participants'): void {
   // A tab that does not exist yet must not open the panel on an empty pane.
   if (tab === 'notes' && !notesAvailable.value) return
   sideOpen.value = true
@@ -898,7 +979,7 @@ function closeSide(): void {
 }
 
 /** The dock buttons toggle: same tab again closes the panel. */
-function toggleSide(tab: 'chat' | 'notes'): void {
+function toggleSide(tab: 'chat' | 'notes' | 'participants'): void {
   if (sideOpen.value && sideTab.value === tab) closeSide()
   else openSide(tab)
 }
@@ -1229,7 +1310,9 @@ const statusText = computed(() => {
 const overlayTitle = computed(() => {
   switch (state.value) {
     case 'ended':
-      return t('share.live.endedTitle')
+      return failReason.value === 'kicked'
+        ? t('share.live.kickedTitle')
+        : t('share.live.endedTitle')
     case 'full':
       return t('share.live.fullTitle')
     case 'failed':
@@ -1242,7 +1325,11 @@ const overlayTitle = computed(() => {
 const overlayDesc = computed(() => {
   switch (state.value) {
     case 'ended':
-      return t('share.live.endedDesc')
+      // Being removed is not the meeting ending: say which one happened, or the
+      // viewer will think the host's connection dropped.
+      return failReason.value === 'kicked'
+        ? t('share.live.kickedDesc')
+        : t('share.live.endedDesc')
     case 'full':
       return t('share.live.fullDesc')
     case 'failed':
@@ -1307,6 +1394,8 @@ function start(): void {
   state.value = 'connecting'
   failReason.value = ''
   talking.value = false
+  mutedByHost.value = false
+  roster.value = []
 
   viewer = new LiveViewer({
     token,
@@ -1396,6 +1485,15 @@ function start(): void {
         // reflect reality rather than staying "on" while sending nothing.
         talking.value = false
       },
+      onTalkMuted: (muted) => {
+        mutedByHost.value = muted
+      },
+      onJoined: (id) => {
+        myViewerId.value = id
+      },
+      onRoster: (list) => {
+        roster.value = list
+      },
     },
   })
   viewer.connect()
@@ -1421,6 +1519,9 @@ function toggleMic(): void {
     void viewer.stopTalking()
     return
   }
+  // The host's block is enforced by the server too; checking here keeps the
+  // optimistic flip from flashing "on" for a frame before the refusal arrives.
+  if (mutedByHost.value) return
   talking.value = true
   void viewer.startTalking().then((ok) => {
     if (!ok) talking.value = false
@@ -1892,6 +1993,81 @@ onBeforeUnmount(() => {
   padding-bottom: var(--space-3, 6px);
   color: var(--text-muted, #6c757d);
   font-size: var(--font-size-xs, 11px);
+}
+
+/* ── 成员 tab ──────────────────────────────────────────────────────────────── */
+
+.live-members {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 4px);
+}
+
+.live-member {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 6px);
+  padding: var(--space-2, 4px) var(--space-3, 6px);
+  border-radius: var(--radius-sm, 6px);
+  min-width: 0;
+}
+
+/* One avatar size for the whole list, through the shared component's own
+   variable — the same icon the transcript and the chat draw for that name. */
+.live-member__avatar {
+  --sa-size: calc(24 * var(--dp));
+  flex: 0 0 auto;
+}
+
+.live-member__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary, #e6edf3);
+  font-size: var(--font-size-md, 13px);
+}
+
+.live-member__chip {
+  flex: 0 0 auto;
+  padding: 0 var(--space-3, 6px);
+  border-radius: var(--radius-full, 999px);
+  background: var(--bg-tertiary, #21262d);
+  color: var(--text-muted, #8b949e);
+  font-size: var(--font-size-2xs, 10px);
+  line-height: calc(16 * var(--dp));
+}
+
+/* Tinted from the chip's own text colour rather than a fixed background step:
+   the 36 themes do not agree on what "one step darker" is. */
+.live-member__chip--role {
+  color: var(--accent-color, #4a90d9);
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 16%, transparent);
+}
+
+.live-member__chip--you {
+  color: var(--text-primary, #e6edf3);
+  background: var(--bg-tertiary, #21262d);
+}
+
+.live-member__chip--live {
+  color: var(--color-success, #3fb950);
+  background: color-mix(in srgb, var(--color-success, #3fb950) 16%, transparent);
+}
+
+.live-member__chip--muted {
+  color: var(--color-red, #f85149);
+  background: color-mix(in srgb, var(--color-red, #f85149) 14%, transparent);
+}
+
+.live-members-empty {
+  margin: 0;
+  color: var(--text-muted, #8b949e);
+  font-size: var(--font-size-sm, 12px);
 }
 
 /* Voice meeting: no picture to show. The placeholder sits where the video

@@ -95,6 +95,8 @@ vi.mock('@/composables/useLiveShare', async () => {
     stop: vi.fn(async () => undefined),
     setTalkEnabled: vi.fn(),
     revokeTalk: vi.fn(),
+    setViewerMuted: vi.fn(),
+    kickViewer: vi.fn(),
     muteAll: vi.fn(),
     setScreenEnabled: vi.fn(),
     revokeScreen: vi.fn(),

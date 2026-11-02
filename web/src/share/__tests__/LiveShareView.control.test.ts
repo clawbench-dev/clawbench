@@ -39,6 +39,9 @@ vi.mock('@/share/liveViewer', () => ({
     stopTalking(): Promise<void> {
       return Promise.resolve()
     }
+    /** The page calls this right after sending ctrl-req; a mock without it
+     *  throws inside the click handler and hides real failures. */
+    requestControl(): void {}
     getStats() {
       return Promise.resolve({ rttMs: null, lossPct: null, bitrateKbps: null, jitterMs: null })
     }

@@ -58,6 +58,15 @@ export interface LiveViewerInfo {
   /** Speech state reported by the server. */
   /** 'talking' = that viewer's microphone is on; 'muted' = it is off. */
   talk: 'muted' | 'talking'
+  /**
+   * The publisher has blocked this viewer's microphone.
+   *
+   * Distinct from `talk`: `talk` is the viewer's own switch, `muted` is a
+   * decision only the host can undo. The viewer's client refuses to turn its
+   * microphone back on while this is set, so the button in the list is a real
+   * mute rather than a request.
+   */
+  muted: boolean
 }
 
 export interface CaptureSource {
@@ -81,6 +90,14 @@ const shareUrl = ref('')
 /** Every address this share can be opened on; shareUrl is the primary. */
 const shareLinks = ref<ShareLink[]>([])
 const title = ref('')
+/**
+ * The host's nickname, sent with the publish frame.
+ *
+ * It is what the audience's member list shows on the host row. The room has
+ * always known the meeting's TITLE; the host's own name only lived in the chat
+ * messages, so the member list would have shown a bare "主持人".
+ */
+const hostName = ref('')
 const viewers = ref<LiveViewerInfo[]>([])
 const talkEnabled = ref(false)
 /** Room-level switch: may viewers share their screen? */
@@ -325,6 +342,7 @@ function resetSession(): void {
   remoteScreenTrack = null
   remoteScreenStream.value = null
   screenSharer.value = ''
+  hostName.value = ''
   controlGrantee = ''
   if (ws) {
     try {
@@ -898,6 +916,11 @@ export function useLiveShare() {
      */
     cameraDeviceId?: string
     shareTitle?: string
+    /**
+     * The host's nickname. Sent with the publish frame so the audience's member
+     * list can name the host row; omitted means the page shows 主持人.
+     */
+    hostName?: string
     /** Enable AI 听记 (transcription + minutes) for this share. */
     notes?: boolean
     /**
@@ -1036,6 +1059,7 @@ export function useLiveShare() {
       shareLinks.value = await buildShareLinks(data.path ?? `/share/${data.token}`)
       shareUrl.value = shareLinks.value[0]?.url ?? window.location.origin + `/share/${data.token}`
       title.value = opts.shareTitle ?? ''
+      hostName.value = opts.hostName?.trim() ?? ''
 
       // 4. Build the mixing graph. One destination per viewer is created as
       //    viewers arrive (see onViewerJoin).
@@ -1198,7 +1222,7 @@ export function useLiveShare() {
 
     await new Promise<void>((resolve, reject) => {
       socket.onopen = () => {
-        socket.send(JSON.stringify({ type: 'publish', title: title.value }))
+        socket.send(JSON.stringify({ type: 'publish', title: title.value, name: hostName.value }))
         // The capability may already have been decided before this socket
         // existed (the panel probes the injector at mount, and a capture can
         // start before the room is open), in which case its `send` went
@@ -1250,9 +1274,15 @@ export function useLiveShare() {
         await onRemoteICE(viewerId, msg.candidate as RTCIceCandidateInit)
         break
       case 'talk-state':
-        // The only per-viewer state is "microphone on / off"; there is no
-        // approval queue to track.
-        updateViewer(viewerId, { talk: msg.talking ? 'talking' : 'muted' })
+        // The only per-viewer state is "microphone on / off" plus the host's
+        // mute flag; there is no approval queue to track.
+        updateViewer(viewerId, {
+          talk: msg.talking ? 'talking' : 'muted',
+          // `false` is meaningful here (the block was lifted), so the server
+          // sends the field on every talk-state frame; `=== true` only guards
+          // against an older server that omits it.
+          muted: msg.muted === true,
+        })
         break
       case 'screen-state':
         screenEnabled.value = Boolean(msg.screenEnabled)
@@ -1293,7 +1323,7 @@ export function useLiveShare() {
       attached: false,
       pendingIce: [],
     })
-    viewers.value = [...viewers.value, { id: viewerId, name: '', talk: 'muted' }]
+    viewers.value = [...viewers.value, { id: viewerId, name: '', talk: 'muted', muted: false }]
 
     // Control bus. The viewer's offer carries it (an answer cannot introduce an
     // m-line, so the answerer must never try to create one), and it arrives
@@ -1727,6 +1757,24 @@ export function useLiveShare() {
     send({ type: 'talk-revoke', viewerId })
   }
 
+  /**
+   * Block or unblock one viewer's microphone.
+   *
+   * Different from revokeTalk: that one silences the microphone for the moment,
+   * this one refuses to let it come back on until the host lifts it. The list
+   * writes the new state optimistically so the button flips immediately; the
+   * server's talk-state frame then confirms it.
+   */
+  function setViewerMuted(viewerId: string, muted: boolean): void {
+    send({ type: 'talk-mute', viewerId, enabled: muted })
+    updateViewer(viewerId, muted ? { muted: true, talk: 'muted' } : { muted: false })
+  }
+
+  /** Remove one viewer from the meeting. The server hangs up its socket. */
+  function kickViewer(viewerId: string): void {
+    send({ type: 'kick', viewerId })
+  }
+
   function muteAll(): void {
     send({ type: 'talk-mute-all' })
     viewers.value = viewers.value.map((v) => ({ ...v, talk: 'muted' }))
@@ -1801,6 +1849,8 @@ export function useLiveShare() {
     stop,
     setTalkEnabled,
     revokeTalk,
+    setViewerMuted,
+    kickViewer,
     muteAll,
     setScreenEnabled,
     revokeScreen,

@@ -32,6 +32,11 @@ var (
 	ErrViewerExists = errors.New("liveshare: viewer already present")
 	// ErrTalkNotAllowed means the room has not enabled audience speech.
 	ErrTalkNotAllowed = errors.New("liveshare: talking is not enabled for this room")
+	// ErrTalkMuted means the publisher blocked this viewer's microphone. It is
+	// distinct from ErrTalkNotAllowed so the client can say "the host muted
+	// you" instead of "the room has no speech", which is a different situation
+	// and a different fix.
+	ErrTalkMuted = errors.New("liveshare: viewer is muted by the publisher")
 	// ErrScreenNotAllowed means the room has not enabled audience screen sharing.
 	ErrScreenNotAllowed = errors.New("liveshare: screen sharing is not enabled for this room")
 	// ErrScreenBusy means another viewer is already sharing a screen.
@@ -84,6 +89,12 @@ type Viewer struct {
 	// talking is the viewer's microphone state. There is no per-viewer grant:
 	// the room-level switch is the only authorisation (see talk.go).
 	talking bool
+
+	// muted is the publisher's per-viewer block. It is NOT the same thing as
+	// `talking`: `talking` is the viewer's own switch, while `muted` is a
+	// decision only the publisher can undo. A muted viewer's talk-start is
+	// refused, so the microphone stays off until the host unmutes it.
+	muted bool
 }
 
 // Talking reports whether this viewer's microphone is on.
@@ -91,6 +102,13 @@ func (v *Viewer) Talking() bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.talking
+}
+
+// Muted reports whether the publisher has blocked this viewer's microphone.
+func (v *Viewer) Muted() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.muted
 }
 
 // Room is a single live share. All methods are safe for concurrent use.
@@ -101,6 +119,11 @@ type Room struct {
 	projectKey string
 	title      string
 	createdAt  time.Time
+
+	// publisherName is the host's nickname, from the `publish` frame. Empty is
+	// a legitimate value (the client did not send one) and only affects the
+	// label in the audience's member list.
+	publisherName string
 
 	publisher Sink
 	// publisherReserved is set between ReservePublisher and AttachPublisher.
@@ -166,6 +189,51 @@ func (r *Room) Title() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.title
+}
+
+// PublisherName is the host's nickname for the audience's member list.
+func (r *Room) PublisherName() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.publisherName
+}
+
+// SetPublisherName records the host's nickname from the `publish` frame.
+func (r *Room) SetPublisherName(name string) {
+	r.mu.Lock()
+	r.publisherName = name
+	r.mu.Unlock()
+}
+
+// Roster returns the participant list as the audience sees it: the publisher
+// first, then the viewers in join order.
+//
+// Join order, not map order: a viewer list that reshuffles on every frame would
+// make the same meeting look different each time somebody speaks. Ids are
+// allocated by nextID, so walking it reproduces the order exactly.
+func (r *Room) Roster() []RosterEntry {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	out := make([]RosterEntry, 0, len(r.viewers)+1)
+	if r.publisher != nil {
+		out = append(out, RosterEntry{ID: "host", Name: r.publisherName, Host: true})
+	}
+	for i := 1; i <= r.nextID; i++ {
+		v := r.viewers[viewerID(i)]
+		if v == nil {
+			continue
+		}
+		v.mu.Lock()
+		out = append(out, RosterEntry{
+			ID:      v.ID,
+			Name:    v.Name,
+			Talking: v.talking,
+			Muted:   v.muted,
+		})
+		v.mu.Unlock()
+	}
+	return out
 }
 
 // TalkEnabled reports whether the audience may request speech.
@@ -472,6 +540,38 @@ func (r *Room) RemoveViewer(id string) {
 	}
 	r.mu.Unlock()
 	r.touch()
+}
+
+// KickViewer removes a viewer and asks its transport to hang up.
+//
+// Removal and the hang-up are one operation on purpose: leaving the socket open
+// would let a removed viewer keep sending offers and control frames under an id
+// the room no longer knows. The frame is sent BEFORE the transport closes so the
+// client can explain why it was disconnected instead of reporting a dropped
+// connection.
+//
+// Returns whether the viewer was sharing its screen, so the caller can tell
+// everybody else that the picture is gone.
+func (r *Room) KickViewer(id string) (wasSharing bool) {
+	r.mu.Lock()
+	v := r.viewers[id]
+	if v == nil {
+		r.mu.Unlock()
+		return false
+	}
+	delete(r.viewers, id)
+	wasSharing = r.screenSharer == id
+	if wasSharing {
+		r.screenSharer = ""
+	}
+	r.mu.Unlock()
+
+	_ = v.sink.Send(ViewerMessage{Type: MsgKicked})
+	if closer, ok := v.sink.(interface{ Close() error }); ok {
+		_ = closer.Close()
+	}
+	r.touch()
+	return wasSharing
 }
 
 // Viewer returns the viewer with the given id, or nil.

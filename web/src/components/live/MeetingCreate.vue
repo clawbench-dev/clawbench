@@ -395,6 +395,9 @@ async function start(): Promise<void> {
       allowTalk: allowTalk.value,
       allowMemberScreen: allowMemberScreen.value,
       shareTitle: title.value.trim(),
+      // The audience's member list names the host with this; without it the
+      // host row can only say "主持人".
+      hostName: hostLabel,
       notesLabel,
     })
     if (ok) {

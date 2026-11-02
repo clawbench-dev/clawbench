@@ -176,7 +176,10 @@ function lastPC(): FakePC {
 }
 
 /** Drive the viewer to the `negotiating` state. */
-function joinRoom(viewer: LiveViewer, opts: { talkEnabled?: boolean } = {}) {
+function joinRoom(
+  viewer: LiveViewer,
+  opts: { talkEnabled?: boolean; roster?: Array<Record<string, unknown>> } = {},
+) {
   viewer.connect()
   lastWS().emit({
     type: 'joined',
@@ -184,6 +187,7 @@ function joinRoom(viewer: LiveViewer, opts: { talkEnabled?: boolean } = {}) {
     title: '测试共享',
     iceServers: [],
     talkEnabled: opts.talkEnabled ?? false,
+    ...(opts.roster ? { roster: opts.roster } : {}),
   })
 }
 
@@ -597,6 +601,42 @@ describe('LiveViewer talk', () => {
     expect(revoked).toEqual(['disabled'])
     expect(viewer.talking).toBe(false)
   })
+
+  it('reports a per-viewer mute separately from the room switch', () => {
+    const muted: boolean[] = []
+    const { viewer } = setup({
+      callbacks: { onTalkMuted: (v: boolean) => muted.push(v) },
+    })
+    joinRoom(viewer, { talkEnabled: true })
+
+    lastWS().emit({ type: 'talk-revoked', reason: 'host' })
+
+    // The room still allows speech — only this viewer is blocked. Losing the
+    // switch here would hide the button the host is about to re-enable.
+    expect(viewer.talkEnabled).toBe(true)
+    expect(muted).toEqual([true])
+
+    lastWS().emit({ type: 'talk-unmuted' })
+    expect(muted).toEqual([true, false])
+  })
+
+  it('ends with a distinct reason when the host removes us', () => {
+    const reasons: Array<string | undefined> = []
+    const { viewer } = setup({
+      callbacks: {
+        onStateChange: (_s: string, detail?: { reason?: string }) => reasons.push(detail?.reason),
+      },
+    })
+    joinRoom(viewer, { talkEnabled: true })
+
+    lastWS().emit({ type: 'kicked' })
+
+    // "Removed" is not "the share ended": the page says so, and the socket is
+    // closed rather than left half-open.
+    expect(viewer.state).toBe('ended')
+    expect(reasons).toContain('kicked')
+    expect(lastWS().readyState).toBe(3)
+  })
 })
 
 describe('LiveViewer cleanup', () => {
@@ -941,5 +981,39 @@ describe('LiveViewer screen sharing', () => {
     // jsdom has no mediaDevices at all — the same situation as an http:// page.
     await expect(viewer.startScreenShare()).resolves.toBe(false)
     expect(viewer.isSharingScreen).toBe(false)
+  })
+})
+
+describe('LiveViewer roster', () => {
+  it('takes the participant list from the joined frame', () => {
+    const seen: unknown[] = []
+    const { viewer } = setup({ callbacks: { onRoster: (r: unknown) => seen.push(r) } })
+
+    joinRoom(viewer, {
+      roster: [
+        { id: 'host', name: '泷泽', host: true },
+        { id: 'v1', name: '小明' },
+      ],
+    })
+
+    // The list rides `joined` so the panel is never empty for a viewer that
+    // joins after everybody else.
+    expect(viewer.roster).toHaveLength(2)
+    expect(viewer.roster[0]).toMatchObject({ id: 'host', host: true, name: '泷泽' })
+    expect(seen).toHaveLength(1)
+  })
+
+  it('replaces the list on every roster frame', () => {
+    const seen: Array<Array<{ id: string }>> = []
+    const { viewer } = setup({
+      callbacks: { onRoster: (r: Array<{ id: string }>) => seen.push(r) },
+    })
+    joinRoom(viewer, { roster: [{ id: 'host', name: '泷泽', host: true }] })
+
+    lastWS().emit({ type: 'roster', roster: [{ id: 'host', host: true }, { id: 'v2', name: '小红' }] })
+
+    // Full snapshots, not deltas: the new list replaces the old one.
+    expect(viewer.roster.map((m) => m.id)).toEqual(['host', 'v2'])
+    expect(seen[seen.length - 1]).toHaveLength(2)
   })
 })

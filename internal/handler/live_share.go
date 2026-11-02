@@ -70,6 +70,14 @@ func (s *liveSink) Send(msg any) error {
 	return s.conn.Write(ctx, websocket.MessageText, data)
 }
 
+// Close hangs up the socket. It is what makes `kick` a removal rather than a
+// suggestion: a viewer that keeps its socket could keep sending offers under an
+// id the room has already forgotten. Closing from another goroutine unblocks
+// the read loop, which then runs the normal teardown path.
+func (s *liveSink) Close() error {
+	return s.conn.CloseNow()
+}
+
 // liveShareManageResponse is the management endpoint's payload.
 //
 // The two switch fields are not omitempty: `false` is the meaningful answer for
@@ -399,7 +407,12 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 	switch ctl.Type {
 	case liveshare.CtrlPublish:
 		// The publisher's first frame carries the title; the room already has
-		// one from the management call, so this is informational only.
+		// one from the management call, so that part is informational only. The
+		// nickname is NOT: the audience's member list shows it on the host row,
+		// and a viewer that joined between attach and this frame has an empty
+		// one cached, so the roster is re-sent.
+		room.SetPublisherName(strings.TrimSpace(ctl.Name))
+		broadcastRoster(room, "")
 		return false
 
 	case liveshare.CtrlEnd:
@@ -437,6 +450,35 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 		for _, id := range room.MuteAll() {
 			room.SendToViewer(id, liveshare.ViewerMessage{Type: liveshare.MsgTalkRevoked, Reason: liveshare.ReasonMuted})
 			notifyTalkState(room, id, false)
+		}
+		return false
+
+	case liveshare.CtrlTalkMute:
+		if _, err := room.SetMuted(ctl.ViewerID, ctl.Enabled); err != nil {
+			_ = sink.Send(liveshare.PublisherMessage{Type: liveshare.MsgError, ViewerID: ctl.ViewerID, Name: err.Error()})
+			return false
+		}
+		if ctl.Enabled {
+			// Muting silences the microphone as well, so the viewer gets the
+			// same "stop now" frame it already understands, tagged as a host
+			// block (it must NOT clear the room-level speech switch).
+			room.SendToViewer(ctl.ViewerID, liveshare.ViewerMessage{
+				Type:   liveshare.MsgTalkRevoked,
+				Reason: liveshare.ReasonHostMuted,
+			})
+			notifyTalkState(room, ctl.ViewerID, false)
+			return false
+		}
+		room.SendToViewer(ctl.ViewerID, liveshare.ViewerMessage{Type: liveshare.MsgTalkUnmuted})
+		notifyTalkState(room, ctl.ViewerID, false)
+		return false
+
+	case liveshare.CtrlKick:
+		// The viewer's own teardown reports viewer-leave. Only the picture needs
+		// telling here: removal already cleared the sharer slot, so the normal
+		// "was it sharing?" branch in that teardown sees nothing to broadcast.
+		if room.KickViewer(ctl.ViewerID) {
+			broadcastScreenState(room)
 		}
 		return false
 
@@ -527,6 +569,8 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 		if wasSharing {
 			broadcastScreenState(room)
 		}
+		// The audience's member list loses this row too.
+		broadcastRoster(room, "")
 	}()
 
 	// Re-check after attaching: the publisher may have detached between the
@@ -558,9 +602,16 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 		// Publisher capability, not a room switch: whether the host can accept
 		// a remote-control request at all (injector + whole-screen picture).
 		ControlEnabled: room.ControlEnabled(),
+		// The roster rides the `joined` frame: the new viewer needs its own id
+		// before it can mark "you" in the list, and a second frame would only
+		// be a race to see which arrives first.
+		Roster: room.Roster(),
 	}); err != nil {
 		return
 	}
+
+	// Everyone else learns that somebody arrived.
+	broadcastRoster(room, viewer.ID)
 
 	// The host wants to know someone arrived: a meeting is often attended while
 	// the host is looking at another tab, and nothing else in the app reports
@@ -609,7 +660,16 @@ func handleViewerControl(room *liveshare.Room, viewer *liveshare.Viewer, ctl liv
 		if err := room.SetTalking(viewer.ID, true); err != nil {
 			// Rejected loudly: a client that turns its mic on with the room
 			// switch off has a bug, and silence would turn it into "the toggle
-			// does nothing". The viewer flips its switch back to off on this.
+			// does nothing". The two reasons are kept apart on the wire: a
+			// per-viewer mute must not take the microphone switch away, since
+			// the viewer may speak again the moment the host unmutes.
+			if errors.Is(err, liveshare.ErrTalkMuted) {
+				room.SendToViewer(viewer.ID, liveshare.ViewerMessage{
+					Type:   liveshare.MsgTalkRevoked,
+					Reason: liveshare.ReasonHostMuted,
+				})
+				return
+			}
 			room.SendToViewer(viewer.ID, liveshare.ViewerMessage{
 				Type:   liveshare.MsgTalkDisabled,
 				Reason: liveshare.ReasonDisabled,
@@ -778,13 +838,38 @@ func broadcastScreenState(room *liveshare.Room) {
 	})
 }
 
-// notifyTalkState tells the publisher that a viewer started or stopped speaking.
+// notifyTalkState pushes one viewer's microphone state to the publisher.
+//
+// The mute flag is read back from the room rather than passed in: every caller
+// (the viewer's own toggle, the host's per-viewer mute, mute-all) would
+// otherwise have to remember to keep the two in step, and the publisher list
+// renders them side by side.
 func notifyTalkState(room *liveshare.Room, viewerID string, talking bool) {
+	muted := false
+	if v := room.Viewer(viewerID); v != nil {
+		muted = v.Muted()
+	}
 	room.SendToPublisher(liveshare.PublisherMessage{
 		Type:     liveshare.MsgTalkState,
 		ViewerID: viewerID,
 		Talking:  talking,
+		Muted:    &muted,
 	})
+	// "Who is speaking" is part of the audience's member list too, and this is
+	// the single funnel every speech change goes through.
+	broadcastRoster(room, "")
+}
+
+// broadcastRoster pushes the full participant list to every viewer but skipID.
+//
+// Called on join, leave, publish (the host's nickname) and every speech change.
+// A full snapshot costs one small frame and cannot drift; deltas would leave a
+// viewer that missed one showing a wrong list until it reloaded.
+func broadcastRoster(room *liveshare.Room, skipID string) {
+	room.BroadcastToViewers(liveshare.ViewerMessage{
+		Type:   liveshare.MsgRoster,
+		Roster: room.Roster(),
+	}, skipID)
 }
 
 // acceptLiveWS upgrades the connection with the same origin allow-list the other

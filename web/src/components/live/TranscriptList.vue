@@ -33,7 +33,8 @@
  * that one grid, so every line's text starts at the same x.
  *
  * The host supplies the inset — the pane already pads its surfaces, the viewer
- * panel pads its own body — through `--transcript-inset`.
+ * panel pads its own body — through `--transcript-inset`, which defaults to 0
+ * here so the token is declared where it is read.
  */
 import { nextTick, ref, watch } from 'vue'
 import { FileText, MonitorUp } from 'lucide-vue-next'
@@ -96,7 +97,12 @@ watch(
   align-content: start;
   align-items: start;
   gap: var(--space-5, 10px) var(--space-4, 8px);
-  padding: var(--transcript-inset, 0);
+  /* Declared here, at its only reader: nothing sets it today, and an
+     undeclared token is what the design-token guard exists to catch. A host
+     that ever needs an inset overrides the variable instead of copying the
+     list. */
+  --transcript-inset: 0;
+  padding: var(--transcript-inset);
 }
 
 /* The list owns the pane's height, so an hour-long meeting scrolls inside it
