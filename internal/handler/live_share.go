@@ -336,26 +336,8 @@ func serveLiveShareEnd(w http.ResponseWriter, r *http.Request, projectPath strin
 //
 // WS /api/live-share/publish/ws?token={token}
 func LiveSharePublishWS(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
-		return
-	}
-	projectPath, ok := requireProject(w, r)
+	room, token, projectPath, ok := preparePublisherSocket(w, r)
 	if !ok {
-		return
-	}
-	token := r.URL.Query().Get("token")
-	room := liveRegistry.Get(token)
-	if room == nil || room.ProjectKey() != projectPath {
-		// One uniform 404: a token that exists but belongs to another project
-		// must not be distinguishable from a nonexistent one.
-		http.NotFound(w, r)
-		return
-	}
-	// Reserve BEFORE upgrading: a second publisher must receive a real HTTP 409,
-	// which is impossible once the socket has been upgraded.
-	if !room.ReservePublisher() {
-		writeLocalizedErrorf(w, r, http.StatusConflict, "LiveShareAlreadyPublishing")
 		return
 	}
 	reserved := true
@@ -384,35 +366,82 @@ func LiveSharePublishWS(w http.ResponseWriter, r *http.Request) {
 	// The meeting record starts here, not when the folder is first written: a
 	// meeting that recorded nothing still happened, and must appear in the list
 	// (and be deletable) like any other.
-	projectID, pidErr := store.ProjectIDForPath(projectPath)
-	if pidErr != nil {
-		slog.Warn("liveshare: meeting record project id failed", "err", pidErr)
-	}
-	if pidErr == nil {
-		// Meetings have no type: what the room happens to carry at this instant
-		// is not a property of the record, and it can change a second later.
-		if startErr := service.StartLiveNote(token, projectID, room.Title(), time.Now().UnixMilli()); startErr != nil {
-			slog.Warn("liveshare: meeting record start failed", "err", startErr)
-		}
-	}
+	projectID := startLiveMeetingRecord(token, projectPath, room)
 
 	// The publisher owns the room's lifetime: when this socket goes away the
 	// share is over, and every viewer must be told rather than left hanging.
-	//
-	// ReleasePublisher is compare-and-clear so a socket that was replaced never
-	// deletes the room its successor is using.
-	defer func() {
-		if !room.ReleasePublisher(sink) {
-			return
-		}
-		room.BroadcastToViewers(liveshare.ViewerMessage{Type: liveshare.MsgPublisherGone, Reason: "ended"}, "")
-		liveRegistry.Delete(token)
-		// Close the record and archive the chat while the project path is still
-		// known. Best effort: losing the archive must not keep the meeting open.
-		finalizeLiveNotes(token, projectID, projectPath)
-	}()
+	defer func() { endPublisherSocket(room, sink, token, projectID, projectPath) }()
 
-	ctx, cancel := context.WithCancel(r.Context())
+	readPublisherFrames(r.Context(), conn, room, sink)
+}
+
+// preparePublisherSocket runs the authenticated preflight of the publisher
+// socket: method, project, room ownership, and the publisher reservation.
+//
+// The reservation is taken BEFORE the upgrade because a second publisher must
+// receive a real HTTP 409, which is impossible once the socket has been
+// upgraded. When ok is false the caller must not touch the room.
+func preparePublisherSocket(w http.ResponseWriter, r *http.Request) (room *liveshare.Room, token, projectPath string, ok bool) {
+	if r.Method != http.MethodGet {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return nil, "", "", false
+	}
+	projectPath, ok = requireProject(w, r)
+	if !ok {
+		return nil, "", "", false
+	}
+	token = r.URL.Query().Get("token")
+	room = liveRegistry.Get(token)
+	if room == nil || room.ProjectKey() != projectPath {
+		// One uniform 404: a token that exists but belongs to another project
+		// must not be distinguishable from a nonexistent one.
+		http.NotFound(w, r)
+		return nil, "", "", false
+	}
+	if !room.ReservePublisher() {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "LiveShareAlreadyPublishing")
+		return nil, "", "", false
+	}
+	return room, token, projectPath, true
+}
+
+// startLiveMeetingRecord opens the meeting row for this room and returns the
+// project id the record belongs to (0 when the project could not be resolved,
+// in which case no record is opened at all).
+func startLiveMeetingRecord(token, projectPath string, room *liveshare.Room) int64 {
+	projectID, err := store.ProjectIDForPath(projectPath)
+	if err != nil {
+		slog.Warn("liveshare: meeting record project id failed", "err", err)
+		return 0
+	}
+	// Meetings have no type: what the room happens to carry at this instant is
+	// not a property of the record, and it can change a second later.
+	if startErr := service.StartLiveNote(token, projectID, room.Title(), time.Now().UnixMilli()); startErr != nil {
+		slog.Warn("liveshare: meeting record start failed", "err", startErr)
+	}
+	return projectID
+}
+
+// endPublisherSocket is the publisher socket's teardown: release the slot, tell
+// every viewer the share ended, and close the meeting record.
+//
+// ReleasePublisher is compare-and-clear so a socket that was replaced never
+// deletes the room its successor is using.
+func endPublisherSocket(room *liveshare.Room, sink *liveSink, token string, projectID int64, projectPath string) {
+	if !room.ReleasePublisher(sink) {
+		return
+	}
+	room.BroadcastToViewers(liveshare.ViewerMessage{Type: liveshare.MsgPublisherGone, Reason: "ended"}, "")
+	liveRegistry.Delete(token)
+	// Close the record and archive the chat while the project path is still
+	// known. Best effort: losing the archive must not keep the meeting open.
+	finalizeLiveNotes(token, projectID, projectPath)
+}
+
+// readPublisherFrames applies publisher control frames until the socket dies or
+// the publisher ends the share.
+func readPublisherFrames(parent context.Context, conn *websocket.Conn, room *liveshare.Room, sink *liveSink) {
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	for {
@@ -433,7 +462,36 @@ func LiveSharePublishWS(w http.ResponseWriter, r *http.Request) {
 
 // handlePublisherControl applies one publisher frame, reporting whether the
 // socket should close.
+//
+// The cases are grouped by what they touch — the SDP/ICE relay, the audience's
+// microphone and membership, and the room-level switches — and each group is
+// applied by its own function. The grouping is only a complexity budget: the
+// frame types inside a group share no state, they just keep this dispatch table
+// small enough to read at a glance.
 func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.PublisherControl) (closeConn bool) {
+	switch ctl.Type {
+	case liveshare.CtrlEnd:
+		return true
+
+	case liveshare.CtrlPublish, liveshare.CtrlAnswer, liveshare.CtrlICE:
+		applyPublisherSignal(room, ctl)
+
+	case liveshare.CtrlSetTalkEnabled, liveshare.CtrlTalkRevoke, liveshare.CtrlTalkMuteAll,
+		liveshare.CtrlTalkMute, liveshare.CtrlKick:
+		applyPublisherAudience(room, sink, ctl)
+
+	case liveshare.CtrlSetScreenEnabled, liveshare.CtrlSetControlEnabled, liveshare.CtrlSetNotes,
+		liveshare.CtrlSetPicture, liveshare.CtrlScreenRevoke:
+		applyPublisherRoomSwitch(room, ctl)
+
+	default:
+		_ = sink.Send(liveshare.PublisherMessage{Type: liveshare.MsgError, Name: "unknown control type: " + ctl.Type})
+	}
+	return false
+}
+
+// applyPublisherSignal handles the frames that carry one viewer's SDP/ICE.
+func applyPublisherSignal(room *liveshare.Room, ctl liveshare.PublisherControl) {
 	switch ctl.Type {
 	case liveshare.CtrlPublish:
 		// The publisher's first frame carries the title; the room already has
@@ -446,17 +504,12 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 		// in it breaks that list just as badly as a forged transcript line.
 		room.SetPublisherName(sanitizeLiveViewerName(ctl.Name))
 		broadcastRoster(room, "")
-		return false
-
-	case liveshare.CtrlEnd:
-		return true
 
 	case liveshare.CtrlAnswer:
 		room.SendToViewer(ctl.ViewerID, liveshare.ViewerMessage{
 			Type: liveshare.MsgAnswer,
 			SDP:  ctl.SDP,
 		})
-		return false
 
 	case liveshare.CtrlICE:
 		// Only the viewer's candidate travels this direction.
@@ -464,47 +517,24 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 			Type:      liveshare.MsgICE,
 			Candidate: ctl.Candidate,
 		})
-		return false
+	}
+}
 
+// applyPublisherAudience handles the frames that change who may speak and who
+// is still in the room.
+func applyPublisherAudience(room *liveshare.Room, sink *liveSink, ctl liveshare.PublisherControl) {
+	switch ctl.Type {
 	case liveshare.CtrlSetTalkEnabled:
 		applySetTalkEnabled(room, ctl.Enabled)
-		return false
 
 	case liveshare.CtrlTalkRevoke:
-		if err := room.SetTalking(ctl.ViewerID, false); err != nil {
-			_ = sink.Send(liveshare.PublisherMessage{Type: liveshare.MsgError, ViewerID: ctl.ViewerID, Name: err.Error()})
-			return false
-		}
-		room.SendToViewer(ctl.ViewerID, liveshare.ViewerMessage{Type: liveshare.MsgTalkRevoked, Reason: liveshare.ReasonRevoked})
-		notifyTalkState(room, ctl.ViewerID, false)
-		return false
+		applyTalkRevoke(room, sink, ctl.ViewerID)
 
 	case liveshare.CtrlTalkMuteAll:
-		for _, id := range room.MuteAll() {
-			room.SendToViewer(id, liveshare.ViewerMessage{Type: liveshare.MsgTalkRevoked, Reason: liveshare.ReasonMuted})
-			notifyTalkState(room, id, false)
-		}
-		return false
+		applyTalkMuteAll(room)
 
 	case liveshare.CtrlTalkMute:
-		if _, err := room.SetMuted(ctl.ViewerID, ctl.Enabled); err != nil {
-			_ = sink.Send(liveshare.PublisherMessage{Type: liveshare.MsgError, ViewerID: ctl.ViewerID, Name: err.Error()})
-			return false
-		}
-		if ctl.Enabled {
-			// Muting silences the microphone as well, so the viewer gets the
-			// same "stop now" frame it already understands, tagged as a host
-			// block (it must NOT clear the room-level speech switch).
-			room.SendToViewer(ctl.ViewerID, liveshare.ViewerMessage{
-				Type:   liveshare.MsgTalkRevoked,
-				Reason: liveshare.ReasonHostMuted,
-			})
-			notifyTalkState(room, ctl.ViewerID, false)
-			return false
-		}
-		room.SendToViewer(ctl.ViewerID, liveshare.ViewerMessage{Type: liveshare.MsgTalkUnmuted})
-		notifyTalkState(room, ctl.ViewerID, false)
-		return false
+		applyTalkMute(room, sink, ctl)
 
 	case liveshare.CtrlKick:
 		// The viewer's own teardown reports viewer-leave. Only the picture needs
@@ -513,31 +543,66 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 		if room.KickViewer(ctl.ViewerID) {
 			broadcastScreenState(room)
 		}
-		return false
+	}
+}
 
+// applyTalkRevoke stops one viewer's microphone at the host's request.
+func applyTalkRevoke(room *liveshare.Room, sink *liveSink, viewerID string) {
+	if err := room.SetTalking(viewerID, false); err != nil {
+		_ = sink.Send(liveshare.PublisherMessage{Type: liveshare.MsgError, ViewerID: viewerID, Name: err.Error()})
+		return
+	}
+	room.SendToViewer(viewerID, liveshare.ViewerMessage{Type: liveshare.MsgTalkRevoked, Reason: liveshare.ReasonRevoked})
+	notifyTalkState(room, viewerID, false)
+}
+
+// applyTalkMuteAll silences every speaking viewer.
+func applyTalkMuteAll(room *liveshare.Room) {
+	for _, id := range room.MuteAll() {
+		room.SendToViewer(id, liveshare.ViewerMessage{Type: liveshare.MsgTalkRevoked, Reason: liveshare.ReasonMuted})
+		notifyTalkState(room, id, false)
+	}
+}
+
+// applyTalkMute flips one viewer's per-viewer mute.
+func applyTalkMute(room *liveshare.Room, sink *liveSink, ctl liveshare.PublisherControl) {
+	if _, err := room.SetMuted(ctl.ViewerID, ctl.Enabled); err != nil {
+		_ = sink.Send(liveshare.PublisherMessage{Type: liveshare.MsgError, ViewerID: ctl.ViewerID, Name: err.Error()})
+		return
+	}
+	if ctl.Enabled {
+		// Muting silences the microphone as well, so the viewer gets the
+		// same "stop now" frame it already understands, tagged as a host
+		// block (it must NOT clear the room-level speech switch).
+		room.SendToViewer(ctl.ViewerID, liveshare.ViewerMessage{
+			Type:   liveshare.MsgTalkRevoked,
+			Reason: liveshare.ReasonHostMuted,
+		})
+		notifyTalkState(room, ctl.ViewerID, false)
+		return
+	}
+	room.SendToViewer(ctl.ViewerID, liveshare.ViewerMessage{Type: liveshare.MsgTalkUnmuted})
+	notifyTalkState(room, ctl.ViewerID, false)
+}
+
+// applyPublisherRoomSwitch handles the frames that flip a room-level switch or
+// change the publisher's picture.
+func applyPublisherRoomSwitch(room *liveshare.Room, ctl liveshare.PublisherControl) {
+	switch ctl.Type {
 	case liveshare.CtrlSetScreenEnabled:
 		applySetScreenEnabled(room, ctl.Enabled)
-		return false
 
 	case liveshare.CtrlSetControlEnabled:
 		applySetControlEnabled(room, ctl.Enabled)
-		return false
 
 	case liveshare.CtrlSetNotes:
 		applySetNotes(room, ctl.Enabled)
-		return false
 
 	case liveshare.CtrlSetPicture:
 		applySetPicture(room, ctl)
-		return false
 
 	case liveshare.CtrlScreenRevoke:
 		applyScreenRevoke(room, ctl.ViewerID)
-		return false
-
-	default:
-		_ = sink.Send(liveshare.PublisherMessage{Type: liveshare.MsgError, Name: "unknown control type: " + ctl.Type})
-		return false
 	}
 }
 
@@ -546,33 +611,8 @@ func handlePublisherControl(room *liveshare.Room, sink *liveSink, ctl liveshare.
 //
 // WS /api/share/{token}/signal
 func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
-		return
-	}
-	token := liveTokenFromSignalPath(r.URL.Path)
-	if token == "" || !validShareToken(token) {
-		http.NotFound(w, r)
-		return
-	}
-	room := liveRegistry.Get(token)
-	if room == nil {
-		http.NotFound(w, r)
-		return
-	}
-	if room.Publisher() == nil {
-		// No publisher means the room is a leftover from a socket that has not
-		// been reaped yet; treat it as gone rather than letting a viewer attach
-		// to a room nobody is publishing to.
-		http.NotFound(w, r)
-		return
-	}
-	// The nickname is required. Validated BEFORE the upgrade so a bad name is a
-	// real 400 the SPA can explain, instead of a socket that opens and then dies
-	// — which the share page can only report as "connection failed".
-	name := sanitizeLiveViewerName(r.URL.Query().Get("name"))
-	if name == "" || len([]rune(name)) > liveViewerNameMaxRunes {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ViewerNameRequired")
+	room, name, ok := prepareViewerSocket(w, r)
+	if !ok {
 		return
 	}
 
@@ -586,29 +626,11 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 	var writeMu sync.Mutex
 	sink := &liveSink{conn: conn, mu: &writeMu}
 
-	viewer, err := room.AddViewer(name, sink)
-	if err != nil {
-		if errors.Is(err, liveshare.ErrRoomFull) {
-			_ = sink.Send(liveshare.ViewerMessage{Type: liveshare.MsgFull})
-		}
+	viewer, ok := addViewer(room, name, sink)
+	if !ok {
 		return
 	}
-
-	defer func() {
-		wasSharing := room.ScreenSharer() == viewer.ID
-		room.RemoveViewer(viewer.ID)
-		room.SendToPublisher(liveshare.PublisherMessage{
-			Type:     liveshare.MsgViewerLeave,
-			ViewerID: viewer.ID,
-		})
-		// RemoveViewer already cleared the slot; everyone else still has to be
-		// told, or they keep showing a screen that no longer exists.
-		if wasSharing {
-			broadcastScreenState(room)
-		}
-		// The audience's member list loses this row too.
-		broadcastRoster(room, "")
-	}()
+	defer func() { detachViewer(room, viewer) }()
 
 	// Re-check after attaching: the publisher may have detached between the
 	// check above and AddViewer. Without this the viewer would receive `joined`,
@@ -624,7 +646,93 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 		ViewerID: viewer.ID,
 		Name:     viewer.Name,
 	})
-	if err := sink.Send(liveshare.ViewerMessage{
+	if err := sink.Send(joinedViewerMessage(room, viewer)); err != nil {
+		return
+	}
+
+	// Everyone else learns that somebody arrived.
+	broadcastRoster(room, viewer.ID)
+
+	// The host wants to know someone arrived: a meeting is often attended while
+	// the host is looking at another tab, and nothing else in the app reports
+	// it. Emitted after `joined` succeeded, so only a viewer that is actually in
+	// the room counts.
+	notifyMeeting(room, service.MeetingEventViewerJoined, viewer)
+
+	readViewerFrames(r.Context(), conn, room, viewer, sink)
+}
+
+// prepareViewerSocket runs the unauthenticated preflight of the viewer socket:
+// method, token, room liveness and the required nickname.
+//
+// Everything is validated BEFORE the upgrade so a bad request is a real HTTP
+// status the SPA can explain, instead of a socket that opens and then dies —
+// which the share page can only report as "connection failed".
+func prepareViewerSocket(w http.ResponseWriter, r *http.Request) (room *liveshare.Room, name string, ok bool) {
+	if r.Method != http.MethodGet {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return nil, "", false
+	}
+	token := liveTokenFromSignalPath(r.URL.Path)
+	if token == "" || !validShareToken(token) {
+		http.NotFound(w, r)
+		return nil, "", false
+	}
+	room = liveRegistry.Get(token)
+	if room == nil {
+		http.NotFound(w, r)
+		return nil, "", false
+	}
+	if room.Publisher() == nil {
+		// No publisher means the room is a leftover from a socket that has not
+		// been reaped yet; treat it as gone rather than letting a viewer attach
+		// to a room nobody is publishing to.
+		http.NotFound(w, r)
+		return nil, "", false
+	}
+	name = sanitizeLiveViewerName(r.URL.Query().Get("name"))
+	if name == "" || len([]rune(name)) > liveViewerNameMaxRunes {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ViewerNameRequired")
+		return nil, "", false
+	}
+	return room, name, true
+}
+
+// addViewer attaches the socket to the room, reporting the refusal as a frame
+// on the socket that is already open.
+func addViewer(room *liveshare.Room, name string, sink *liveSink) (*liveshare.Viewer, bool) {
+	viewer, err := room.AddViewer(name, sink)
+	if err != nil {
+		if errors.Is(err, liveshare.ErrRoomFull) {
+			_ = sink.Send(liveshare.ViewerMessage{Type: liveshare.MsgFull})
+		}
+		return nil, false
+	}
+	return viewer, true
+}
+
+// detachViewer is the viewer socket's teardown: drop the member, tell the
+// publisher and the rest of the audience.
+func detachViewer(room *liveshare.Room, viewer *liveshare.Viewer) {
+	wasSharing := room.ScreenSharer() == viewer.ID
+	room.RemoveViewer(viewer.ID)
+	room.SendToPublisher(liveshare.PublisherMessage{
+		Type:     liveshare.MsgViewerLeave,
+		ViewerID: viewer.ID,
+	})
+	// RemoveViewer already cleared the slot; everyone else still has to be
+	// told, or they keep showing a screen that no longer exists.
+	if wasSharing {
+		broadcastScreenState(room)
+	}
+	// The audience's member list loses this row too.
+	broadcastRoster(room, "")
+}
+
+// joinedViewerMessage is the viewer's first frame: its own id plus the room's
+// current state.
+func joinedViewerMessage(room *liveshare.Room, viewer *liveshare.Viewer) liveshare.ViewerMessage {
+	return liveshare.ViewerMessage{
 		Type:          liveshare.MsgJoined,
 		ViewerID:      viewer.ID,
 		Title:         room.Title(),
@@ -643,20 +751,12 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 		// before it can mark "you" in the list, and a second frame would only
 		// be a race to see which arrives first.
 		Roster: room.Roster(),
-	}); err != nil {
-		return
 	}
+}
 
-	// Everyone else learns that somebody arrived.
-	broadcastRoster(room, viewer.ID)
-
-	// The host wants to know someone arrived: a meeting is often attended while
-	// the host is looking at another tab, and nothing else in the app reports
-	// it. Emitted after `joined` succeeded, so only a viewer that is actually in
-	// the room counts.
-	notifyMeeting(room, service.MeetingEventViewerJoined, viewer)
-
-	ctx, cancel := context.WithCancel(r.Context())
+// readViewerFrames applies viewer control frames until the socket dies.
+func readViewerFrames(parent context.Context, conn *websocket.Conn, room *liveshare.Room, viewer *liveshare.Viewer, sink *liveSink) {
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	for {

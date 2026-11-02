@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/hajimehoshi/go-mp3"
 )
@@ -75,12 +77,31 @@ func DecodeMP3ToPCMFile(srcPath, dstPath string) (Format, error) {
 		return Format{}, fmt.Errorf("audio: close pcm file: %w", err)
 	}
 
-	if err := os.Rename(tmpPath, dstPath); err != nil {
+	if err := publishTempFile(tmpPath, dstPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return Format{}, fmt.Errorf("audio: rename pcm file: %w", err)
 	}
 
 	return format, nil
+}
+
+// publishTempFile renames tmp onto dst, retrying a permission failure briefly.
+//
+// POSIX rename replaces the destination atomically, so any number of concurrent
+// publishes to the same path simply end with one of the complete files. Windows
+// implements the replace as delete-then-rename, and a second publish landing
+// while the first is inside that window fails with "Access is denied" — even
+// though both writers only ever produce complete files. The retry is what makes
+// the concurrent-decode guarantee hold there; on POSIX it never fires.
+func publishTempFile(tmp, dst string) error {
+	const attempts = 20
+	const backoff = 10 * time.Millisecond
+	err := os.Rename(tmp, dst)
+	for i := 0; i < attempts && errors.Is(err, fs.ErrPermission); i++ {
+		time.Sleep(backoff)
+		err = os.Rename(tmp, dst)
+	}
+	return err
 }
 
 // downmixToMono reads stereo s16le frames from r and writes averaged mono

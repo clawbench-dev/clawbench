@@ -2022,7 +2022,15 @@ func TestSharePublic_ContentConvertsOpenAPISpecToJSON(t *testing.T) {
 
 // An unreadable file is an outage (500), not a missing one: reporting 404 would
 // tell the reader the share is broken.
+//
+// POSIX-only: Windows has no read bit to drop. os.Chmod there sets
+// FILE_ATTRIBUTE_READONLY, which the filesystem honors for writes but not for
+// reads, so the file stays readable and the handler correctly answers 200.
+// Denying read needs an ACL edit, which is not worth a subprocess here.
 func TestSharePublic_ContentUnreadableIs500(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no file read bit; a read cannot be made to fail this way")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("permission bits do not apply to root")
 	}
@@ -2042,7 +2050,13 @@ func TestSharePublic_ContentUnreadableIs500(t *testing.T) {
 // An unreadable shared folder cannot be listed; the answer is the same uniform
 // 404 as everything else on this public surface (no distinction between "you
 // may not" and "it is gone").
+//
+// POSIX-only: a Windows directory's mode bits do not restrict listing (the
+// read-only attribute is about writes), so the listing succeeds there.
 func TestSharePublic_ListUnreadableDirectoryIs404(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows directory mode bits do not restrict listing")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("permission bits do not apply to root")
 	}
@@ -2182,7 +2196,13 @@ func TestSharePublic_DownloadRejectsNonRegularFile(t *testing.T) {
 
 // An unreadable file is an outage: the download path must say 500, not pretend
 // the file is missing.
+//
+// POSIX-only for the same reason as TestSharePublic_ContentUnreadableIs500: a
+// Windows read-only attribute does not stop a read.
 func TestSharePublic_DownloadUnreadableIs500(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no file read bit; a read cannot be made to fail this way")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("permission bits do not apply to root")
 	}

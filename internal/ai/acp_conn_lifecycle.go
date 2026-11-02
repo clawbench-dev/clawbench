@@ -225,52 +225,13 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Set cwd on first call — used by spawnLocked to set cmd.Dir so the ACP
-	// process starts in the correct project directory instead of inheriting
-	// the ClawBench server's cwd.
-	if c.cwd == "" && cwd != "" {
-		c.cwd = cwd
-		slog.Info("acp conn: cwd locked on first call",
-			slog.String("clawbench_sid", c.clawbenchSID),
-			slog.String("cwd", cwd))
-	}
-	if c.cwd != cwd && cwd != "" {
-		slog.Warn("acp conn: cwd mismatch — cwd is already locked, ignoring new value",
-			slog.String("clawbench_sid", c.clawbenchSID),
-			slog.String("locked_cwd", c.cwd),
-			slog.String("requested_cwd", cwd))
-	}
+	c.lockCwdLocked(cwd)
 
-	// If alive and already has a session, reuse — unless the MCP policy changed
-	// since this session was created.
-	//
-	// MCP servers are bound at session creation (new / load / resume), so a
-	// config or per-agent policy edit cannot reach a live session. Comparing the
-	// hash HERE (between turns, c.mu held) lets the change take effect on the
-	// next turn without interrupting a running one. Killing connections on PATCH
-	// instead would abort whatever the user is watching.
-	//
-	// The version covers the policy only, NOT the agent's advertised
-	// capabilities — see model.Config.MCPPolicyVersion for why hashing the
-	// filtered list would force a reconnect on every fresh process.
-	wantMCPVersion := c.mcpPolicyVersion()
-	mcpChanged := wantMCPVersion != c.mcpVersion
-	// Provider environment is fixed when the process is spawned. Compare the
-	// fingerprint here, between turns, so an edit takes effect on the next turn
-	// instead of requiring the user to kill the session.
-	wantProviderVersion := model.ProviderEnvVersion(c.agent.ID)
-	providerChanged := wantProviderVersion != c.providerVersion
-	if c.canReuseLocked() && !mcpChanged && !providerChanged {
+	want, reusable := c.configDriftLocked()
+	if reusable {
 		slog.Debug("acp conn: reusing existing connection", "clawbench_sid", c.clawbenchSID, "acp_sid", c.acpSID)
 		c.lastUsed = time.Now()
 		return false, nil
-	}
-	c.logMCPReconnectLocked(mcpChanged, wantMCPVersion)
-	if providerChanged && c.alive {
-		slog.Info("acp conn: model provider changed, reconnecting before this turn",
-			"clawbench_sid", c.clawbenchSID,
-			"old_version", c.providerVersion,
-			"new_version", wantProviderVersion)
 	}
 
 	// Snapshot cached config state before spawn
@@ -296,39 +257,117 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 		return c.recoverViaLoadSession(ctx, cwd, loadSID, false)
 	}
 
-	// Recover a previous session after the process died.
-	// Check both in-memory acpSID (saved before spawnLocked cleared it) and
-	// the DB (external_session_id). The DB fallback handles cases where the
-	// in-memory acpSID was lost — e.g., after ResumeSession failure called
-	// killProcessLocked (which clears acpSID), or after idle sweep called
-	// close() (which also clears acpSID and removes from pool, but the new
-	// conn's GetOrCreateConn may not pre-populate if the DB write was delayed).
-	acpSID := preSpawnAcpSID
+	// Recover a previous session after the process died, or create one when
+	// there is nothing to recover.
+	acpSID := c.recoverableSessionIDLocked(preSpawnAcpSID)
 	if acpSID == "" {
-		if extID := getExternalSessionID(c.clawbenchSID); extID != "" {
-			acpSID = extID
-			slog.Info("acp conn: recovered acpSID from DB (in-memory was empty)",
-				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
-		}
+		return c.createSessionLocked(ctx, cwd, want)
 	}
-
-	if acpSID != "" {
-		if err := c.recoverExistingSession(ctx, cwd, acpSID, prevConfig); err != nil {
-			return false, err
-		}
-		// The session now carries the servers this version describes. Recording
-		// it here (and not before the call) keeps a failed recovery from
-		// claiming the new policy was applied.
-		c.mcpVersion = wantMCPVersion
-		c.providerVersion = wantProviderVersion
-		return false, nil
+	if err := c.recoverExistingSession(ctx, cwd, acpSID, prevConfig); err != nil {
+		return false, err
 	}
+	// The session now carries the servers this version describes. Recording
+	// it here (and not before the call) keeps a failed recovery from
+	// claiming the new policy was applied.
+	c.mcpVersion = want.mcp
+	c.providerVersion = want.provider
+	return false, nil
+}
 
-	// No prior session — create new session.
-	//
-	// MCP servers are injected on ALL FOUR session-establishing paths
-	// (new / load / resume / SyncLoadSession). Missing one produces the
-	// "works until the process restarts, then the tools vanish" failure.
+// lockCwdLocked pins the connection's working directory on first use — used by
+// spawnLocked to set cmd.Dir so the ACP process starts in the correct project
+// directory instead of inheriting the ClawBench server's cwd — and warns when a
+// later caller asks for a different one.
+//
+// Caller holds c.mu.
+func (c *ACPConn) lockCwdLocked(cwd string) {
+	if c.cwd == "" && cwd != "" {
+		c.cwd = cwd
+		slog.Info("acp conn: cwd locked on first call",
+			slog.String("clawbench_sid", c.clawbenchSID),
+			slog.String("cwd", cwd))
+	}
+	if c.cwd != cwd && cwd != "" {
+		slog.Warn("acp conn: cwd mismatch — cwd is already locked, ignoring new value",
+			slog.String("clawbench_sid", c.clawbenchSID),
+			slog.String("locked_cwd", c.cwd),
+			slog.String("requested_cwd", cwd))
+	}
+}
+
+// connConfigVersions are the config fingerprints a live session was built with.
+type connConfigVersions struct {
+	mcp      string
+	provider string
+}
+
+// configDriftLocked reports the config versions this turn wants and whether the
+// live session can serve it as-is.
+//
+// MCP servers are bound at session creation (new / load / resume), so a config
+// or per-agent policy edit cannot reach a live session. Comparing the hash HERE
+// (between turns, c.mu held) lets the change take effect on the next turn
+// without interrupting a running one. Killing connections on PATCH instead
+// would abort whatever the user is watching.
+//
+// The version covers the policy only, NOT the agent's advertised capabilities —
+// see model.Config.MCPPolicyVersion for why hashing the filtered list would
+// force a reconnect on every fresh process.
+//
+// Provider environment is fixed when the process is spawned. Its fingerprint is
+// compared here for the same reason: an edit takes effect on the next turn
+// instead of requiring the user to kill the session.
+//
+// Caller holds c.mu.
+func (c *ACPConn) configDriftLocked() (connConfigVersions, bool) {
+	want := connConfigVersions{
+		mcp:      c.mcpPolicyVersion(),
+		provider: model.ProviderEnvVersion(c.agent.ID),
+	}
+	mcpChanged := want.mcp != c.mcpVersion
+	providerChanged := want.provider != c.providerVersion
+	c.logMCPReconnectLocked(mcpChanged, want.mcp)
+	if providerChanged && c.alive {
+		slog.Info("acp conn: model provider changed, reconnecting before this turn",
+			"clawbench_sid", c.clawbenchSID,
+			"old_version", c.providerVersion,
+			"new_version", want.provider)
+	}
+	return want, c.canReuseLocked() && !mcpChanged && !providerChanged
+}
+
+// recoverableSessionIDLocked returns the ACP session id to re-attach after a
+// respawn: the in-memory one saved before spawnLocked cleared it, or the
+// persisted external_session_id when memory lost it.
+//
+// The DB fallback handles cases where the in-memory acpSID was lost — e.g.,
+// after ResumeSession failure called killProcessLocked (which clears acpSID), or
+// after idle sweep called close() (which also clears acpSID and removes from
+// pool, but the new conn's GetOrCreateConn may not pre-populate if the DB write
+// was delayed).
+//
+// Caller holds c.mu.
+func (c *ACPConn) recoverableSessionIDLocked(preSpawnAcpSID string) string {
+	if preSpawnAcpSID != "" {
+		return preSpawnAcpSID
+	}
+	extID := getExternalSessionID(c.clawbenchSID)
+	if extID == "" {
+		return ""
+	}
+	slog.Info("acp conn: recovered acpSID from DB (in-memory was empty)",
+		"clawbench_sid", c.clawbenchSID, "acp_sid", extID)
+	return extID
+}
+
+// createSessionLocked opens a brand-new ACP session on the live connection.
+//
+// MCP servers are injected on ALL FOUR session-establishing paths
+// (new / load / resume / SyncLoadSession). Missing one produces the "works
+// until the process restarts, then the tools vanish" failure.
+//
+// Caller holds c.mu.
+func (c *ACPConn) createSessionLocked(ctx context.Context, cwd string, want connConfigVersions) (bool, error) {
 	mcpServers := c.mcpServersForSession()
 
 	newSessCtx, newSessCancel := context.WithTimeout(ctx, newSessionTimeout(len(mcpServers)))
@@ -354,8 +393,8 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	c.acpSID = string(sessResp.SessionId)
 	c.lastNewSessionResp = &sessResp
 	c.lastUsed = time.Now()
-	c.mcpVersion = wantMCPVersion
-	c.providerVersion = wantProviderVersion
+	c.mcpVersion = want.mcp
+	c.providerVersion = want.provider
 	slog.Info("acp conn: created new session", "clawbench_sid", c.clawbenchSID, "acp_sid", c.acpSID)
 	return true, nil
 }

@@ -27,13 +27,40 @@ env_key = "DEEPSEEK_API_KEY"
 trust_level = "trusted"
 `
 
-func setupCodexHome(t *testing.T) string {
+// setHome points the process's home directory at dir.
+//
+// os.UserHomeDir reads HOME on POSIX and USERPROFILE on Windows, so a test that
+// only sets HOME silently keeps using the runner's real profile there — the
+// sandbox never takes effect and the assertions fail (or, worse, pass while
+// writing outside the temp dir).
+func setHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+}
+
+// clearHome removes both variables so os.UserHomeDir fails, which is the state
+// a machine without a resolvable profile is in.
+func clearHome(t *testing.T) {
+	t.Helper()
+	setHome(t, "")
+}
+
+// setupCodexDataDir gives the test a sandboxed home + data dir. The codex config
+// file is left absent; callers that need one use setupCodexHome.
+func setupCodexDataDir(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	origDataDir := model.DataDir
 	model.DataDir = filepath.Join(home, ".clawbench")
 	t.Cleanup(func() { model.DataDir = origDataDir })
+	return home
+}
+
+func setupCodexHome(t *testing.T) string {
+	t.Helper()
+	home := setupCodexDataDir(t)
 
 	codexDir := filepath.Join(home, ".codex")
 	require.NoError(t, os.MkdirAll(codexDir, 0o755))
@@ -105,11 +132,7 @@ func TestCodexProviderConfig_WireAPIFollowsProvider(t *testing.T) {
 }
 
 func TestCodexProviderConfig_RestoreWithoutOriginalKey(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	origDataDir := model.DataDir
-	model.DataDir = filepath.Join(home, ".clawbench")
-	t.Cleanup(func() { model.DataDir = origDataDir })
+	home := setupCodexDataDir(t)
 
 	dir := filepath.Join(home, ".codex")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
@@ -172,11 +195,7 @@ func TestCodexProviderConfig_RestoreWithoutSidecarLeavesNoDanglingKey(t *testing
 // Without a sidecar AND without a usable backup the key is still removed when it
 // holds our own value — the one case where guessing is safe.
 func TestCodexProviderConfig_RestoreWithoutSidecarOrBackupDropsOnlyOurValue(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	origDataDir := model.DataDir
-	model.DataDir = filepath.Join(home, ".clawbench")
-	t.Cleanup(func() { model.DataDir = origDataDir })
+	home := setupCodexDataDir(t)
 
 	dir := filepath.Join(home, ".codex")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
@@ -286,7 +305,7 @@ func TestCodexProviderConfig_RestoreAfterManyAppliesKeepsPristineBackup(t *testi
 // Without a home directory there is nowhere to write, and the caller must get
 // an empty list (env backends) rather than a bogus path under the CWD.
 func TestProviderConfigPaths_NoHome(t *testing.T) {
-	t.Setenv("HOME", "")
+	clearHome(t)
 	assert.Empty(t, service.ProviderConfigPaths("codex"))
 	assert.Empty(t, service.ProviderConfigPaths("claude"))
 }
@@ -357,7 +376,7 @@ func TestApplyProviderConfigToBackend_NoopForNilOrEnvBackend(t *testing.T) {
 // A codex install with no resolvable config path cannot be applied; the error
 // must be reported (the caller then refuses to persist the binding).
 func TestApplyCodexProvider_NoConfigPath(t *testing.T) {
-	t.Setenv("HOME", "")
+	clearHome(t)
 	origDataDir := model.DataDir
 	model.DataDir = t.TempDir()
 	t.Cleanup(func() { model.DataDir = origDataDir })
@@ -424,7 +443,7 @@ func TestReconcileProviderConfigs_PropagatesApplyError(t *testing.T) {
 	)
 
 	// No home → no config path → the apply fails.
-	t.Setenv("HOME", "")
+	clearHome(t)
 	require.Error(t, service.ReconcileProviderConfigs())
 }
 
@@ -446,7 +465,7 @@ func TestReconcileProviderConfigs_PropagatesRestoreError(t *testing.T) {
 // ── Restore edge cases ──────────────────────────────────────
 
 func TestRestoreProviderConfig_NoConfigPathIsNoop(t *testing.T) {
-	t.Setenv("HOME", "")
+	clearHome(t)
 	require.NoError(t, service.RestoreProviderConfig("codex"))
 	// An env-driven backend never had a file to restore.
 	require.NoError(t, service.RestoreProviderConfig("claude"))
@@ -455,11 +474,7 @@ func TestRestoreProviderConfig_NoConfigPathIsNoop(t *testing.T) {
 // A config.toml that exists but cannot be read is an error: silently treating
 // it as absent would report success while the managed block stays behind.
 func TestCodexProviderConfig_UnreadableConfigIsReported(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	origDataDir := model.DataDir
-	model.DataDir = filepath.Join(home, ".clawbench")
-	t.Cleanup(func() { model.DataDir = origDataDir })
+	home := setupCodexDataDir(t)
 
 	// A directory where config.toml should be.
 	path := filepath.Join(home, ".codex", "config.toml")

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"testing"
 	"testing/iotest"
@@ -76,8 +77,17 @@ func TestDecodeMP3ToPCMFile_OutputDirUnusable(t *testing.T) {
 }
 
 // TestDecodeMP3ToPCMFile_OutputDirNotWritable covers the temp-file creation
-// failure. It needs a non-root user, because root ignores the mode bits.
+// failure. It needs a non-root user, because root ignores the mode bits, and a
+// POSIX filesystem, because Windows has no mode bits to drop: os.Mkdir with
+// 0o500 only sets FILE_ATTRIBUTE_READONLY there, which the filesystem ignores
+// when deciding whether a new file may be created inside the directory, so
+// CreateTemp still succeeds. Denying writes on Windows needs an ACL edit
+// (icacls / SetNamedSecurityInfo), which is not worth a subprocess in a unit
+// test.
 func TestDecodeMP3ToPCMFile_OutputDirNotWritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no directory write bit; CreateTemp cannot be made to fail this way")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions, so CreateTemp cannot fail")
 	}
@@ -97,6 +107,39 @@ func TestDecodeMP3ToPCMFile_OutputDirNotWritable(t *testing.T) {
 	}
 	if !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("error = %v, want it to wrap ErrPermission", err)
+	}
+}
+
+// TestPublishTempFile_PersistentPermissionFailureIsReported covers the retry's
+// exit condition: a permission failure that does not clear must still be
+// returned, not swallowed or retried forever. (The retry exists for Windows,
+// where a concurrent replace of the same destination is transiently denied; a
+// read-only directory is the POSIX equivalent of "the denial never clears".)
+func TestPublishTempFile_PersistentPermissionFailureIsReported(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no directory write bit to revoke")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+
+	dir := t.TempDir()
+	tmp := filepath.Join(dir, "out.pcm.tmp-1")
+	dst := filepath.Join(dir, "out.pcm")
+	if err := os.WriteFile(tmp, []byte("pcm"), 0o600); err != nil {
+		t.Fatalf("write temp: %v", err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	err := publishTempFile(tmp, dst)
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("error = %v, want the permission failure to be reported", err)
+	}
+	if _, statErr := os.Stat(dst); !os.IsNotExist(statErr) {
+		t.Fatalf("destination must not exist after a failed publish: %v", statErr)
 	}
 }
 

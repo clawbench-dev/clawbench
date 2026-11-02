@@ -502,7 +502,14 @@ func TestLiveNoteSegmentEndMS_PrefersDurationThenLastCluster(t *testing.T) {
 
 // ── Merge: failures and unusual layouts ─────────────────────────────────────
 
+// POSIX-only: Go's os.ReadDir on Windows returns the regular file itself as a
+// single entry instead of failing with ENOTDIR, so the same construction makes
+// the merge succeed there (with nothing to merge, which is the right answer for
+// a Windows layout — there is no such thing as a "file where a directory is").
 func TestMergeLiveNoteAudio_AudioPathIsAFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.ReadDir on Windows lists a regular file instead of failing")
+	}
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "audio"), []byte("x"), 0o644))
 

@@ -94,14 +94,14 @@ var hotReloadFields = map[string]bool{
 	"terminal.max_sessions": true,
 	"terminal.buffer_lines": true,
 	// TTS engine + sub-configs — recreate provider
-	"tts.engine":                 true,
-	"tts.tts_model":              true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
-	"tts.format":                 true, // forward-compatible: audio format override (no-op, inferred from engine)
-	"tts.openai.base_url":        true,
-	"tts.openai.api_key":         true,
-	"tts.openai.model":           true,
-	"tts.openai.voice":           true,
-	"tts.openai.stream_mode":     true,
+	"tts.engine":             true,
+	"tts.tts_model":          true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
+	"tts.format":             true, // forward-compatible: audio format override (no-op, inferred from engine)
+	"tts.openai.base_url":    true,
+	"tts.openai.api_key":     true,
+	"tts.openai.model":       true,
+	"tts.openai.voice":       true,
+	"tts.openai.stream_mode": true,
 	// STT — speech-to-text config, hot-reloadable
 	"stt.provider":          true,
 	"stt.base_url":          true,
@@ -459,11 +459,6 @@ type configOpenAITTS struct {
 	Model      string `json:"model"`
 	Voice      string `json:"voice"`
 	StreamMode string `json:"stream_mode"`
-}
-
-type configAPI struct {
-	BaseURL string `json:"base_url"`
-	Key     string `json:"key"`
 }
 
 type configSTT struct {
@@ -1139,8 +1134,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	// Conditionally populate engine-specific sub-configs
-	switch cfg.TTS.Engine {
-	case strOpenAI:
+	if cfg.TTS.Engine == strOpenAI {
 		resp.TTS.OpenAI = &configOpenAITTS{
 			BaseURL:    cfg.TTS.OpenAI.BaseURL,
 			APIKey:     cfg.TTS.OpenAI.APIKey,
@@ -2689,30 +2683,9 @@ func writeConfigYAML(patch map[string]any) error {
 	// Merge patch into raw map (only touched fields are modified)
 	mergePatchIntoRaw(raw, patch)
 
-	// One-time cleanup of the legacy chat.user_nickname key. The value was
-	// migrated into user.nickname at startup, but the write path merges into the
-	// existing file, so without this the old key would survive forever and a
-	// hand-edit of it would look effective while being ignored.
-	if chatMap, ok := raw["chat"].(map[string]any); ok {
-		if legacy, exists := chatMap["user_nickname"]; exists {
-			userMap, _ := raw["user"].(map[string]any)
-			if userMap == nil {
-				userMap = make(map[string]any, 2)
-				raw["user"] = userMap
-			}
-			if _, hasNew := userMap["nickname"]; !hasNew {
-				// The old ApplyDefaults materialized the fallback literal into
-				// every config. Carrying that over would make an unconfigured
-				// install look configured, so it is dropped instead: empty now
-				// means "not configured".
-				legacyStr, _ := legacy.(string)
-				if strings.TrimSpace(legacyStr) != model.DefaultUserNickname {
-					userMap["nickname"] = legacy
-				}
-			}
-			delete(chatMap, "user_nickname")
-		}
-	}
+	// One-time cleanup of the legacy chat.user_nickname key (see
+	// dropLegacyChatNickname).
+	dropLegacyChatNickname(raw)
 
 	data, err := yaml.Marshal(raw)
 	if err != nil {
@@ -2731,6 +2704,40 @@ func writeConfigYAML(patch map[string]any) error {
 	}
 
 	return nil
+}
+
+// dropLegacyChatNickname migrates the legacy chat.user_nickname key into
+// user.nickname and removes it, in place on the generic config map. The value
+// was migrated at startup, but the write path merges into the existing file, so
+// without this the old key would survive forever and a hand-edit of it would
+// look effective while being ignored.
+//
+// The old ApplyDefaults materialized the fallback literal into every config.
+// Carrying that over would make an unconfigured install look configured, so it
+// is dropped instead: empty now means "not configured". An existing
+// user.nickname always wins.
+func dropLegacyChatNickname(raw map[string]any) {
+	chatMap, ok := raw["chat"].(map[string]any)
+	if !ok {
+		return
+	}
+	legacy, exists := chatMap["user_nickname"]
+	if !exists {
+		return
+	}
+
+	userMap, _ := raw["user"].(map[string]any)
+	if userMap == nil {
+		userMap = make(map[string]any, 2)
+		raw["user"] = userMap
+	}
+	if _, hasNew := userMap["nickname"]; !hasNew {
+		legacyStr, _ := legacy.(string)
+		if strings.TrimSpace(legacyStr) != model.DefaultUserNickname {
+			userMap["nickname"] = legacy
+		}
+	}
+	delete(chatMap, "user_nickname")
 }
 
 // backupConfigYAML copies the current config.yaml to bakPath before it is

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -1657,7 +1658,13 @@ func TestServeLiveNotesArtifact_DirLookupFailureIs500(t *testing.T) {
 
 // Stat succeeds but the read does not (permissions): that is an outage, not a
 // missing artifact, so it must not masquerade as 404.
+//
+// POSIX-only: Windows has no file read bit, so a 0o000 file there is still
+// readable and the artifact is served normally.
 func TestServeLiveNotesArtifact_ReadFailureIs500(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no file read bit; a read cannot be made to fail this way")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("permission bits do not apply to root")
 	}
@@ -2217,6 +2224,24 @@ func TestWriteLiveNotesMinutes_CountsChannelRecordings(t *testing.T) {
 	assert.Contains(t, string(body), service.LiveNoteMeetingAudioFile, "the merged track is linked")
 }
 
+// breakNotesFolder makes the meeting folder unusable on every platform.
+//
+// POSIX revokes the directory's write bit. Windows has no such bit — os.Chmod
+// there only sets FILE_ATTRIBUTE_READONLY, which the filesystem ignores when
+// deciding whether a file may be created inside the directory — so the folder
+// is replaced by a regular file instead: every create/write below it then
+// fails, which is the condition these tests are about.
+func breakNotesFolder(t *testing.T, dir string) {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		require.NoError(t, os.Chmod(dir, 0o500))
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+		return
+	}
+	require.NoError(t, os.RemoveAll(dir))
+	require.NoError(t, os.WriteFile(dir, []byte("not a folder"), 0o644))
+}
+
 // A folder that cannot be written must not fail the job: the caller stores the
 // minutes in the database either way and simply reports no path.
 func TestWriteLiveNotesMinutes_UnwritableFolderReturnsEmptyPath(t *testing.T) {
@@ -2225,9 +2250,7 @@ func TestWriteLiveNotesMinutes_UnwritableFolderReturnsEmptyPath(t *testing.T) {
 	}
 	dir := t.TempDir()
 	paths := service.LiveNotesPathsIn(dir)
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	require.NoError(t, os.Chmod(dir, 0o500))
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	breakNotesFolder(t, dir)
 
 	assert.Empty(t, writeLiveNotesMinutes(paths, "周会", time.UnixMilli(1_700_000_000_000), "## 概要"))
 }
@@ -2342,8 +2365,7 @@ func TestGenerateLiveNotesArtifacts_UnwritableFolderStillStoresMinutes(t *testin
 	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
 	paths, err := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000)
 	require.NoError(t, err)
-	require.NoError(t, os.Chmod(paths.Dir, 0o500))
-	t.Cleanup(func() { _ = os.Chmod(paths.Dir, 0o755) })
+	breakNotesFolder(t, paths.Dir)
 
 	generateLiveNotesArtifacts(token, pid, project, "周会", []service.LiveNoteSegment{
 		{Channel: "mic", Speaker: "我", StartedAt: 1_000, Text: "内容"},

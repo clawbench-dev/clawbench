@@ -215,70 +215,13 @@ func parseAgentJSONColumns(a *model.Agent, modelsJSON, levelsJSON, effortByModel
 // Writing it here is what let a stale copy of the shared prompt outlive the
 // template it came from and override later changes.
 func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
-	modelsJSON, err := json.Marshal(agent.Models)
+	cols, err := encodeAgentJSONColumns(agent)
 	if err != nil {
-		return fmt.Errorf("marshal models: %w", err)
-	}
-	// json.Marshal(nil slice) produces "null" instead of "[]" — normalize to "[]"
-	if string(modelsJSON) == jsonNull {
-		modelsJSON = []byte("[]")
-	}
-	levelsJSON, err := json.Marshal(agent.ThinkingEffortLevels)
-	if err != nil {
-		return fmt.Errorf("marshal thinking_effort_levels: %w", err)
-	}
-	// Normalize nil to "{}" so the column never holds the string "null".
-	effortByModelJSON, err := json.Marshal(agent.ThinkingEffortByModel)
-	if err != nil {
-		return fmt.Errorf("marshal thinking_effort_by_model: %w", err)
-	}
-	if string(effortByModelJSON) == jsonNull {
-		effortByModelJSON = []byte("{}")
+		return err
 	}
 
-	modelsAutoDetected := 0
-	if agent.ModelsAutoDetected {
-		modelsAutoDetected = 1
-	}
-
-	sortOrder := agent.SortOrder
-	transport := agent.Transport
-	if transport == "" {
-		if agent.AcpCommand != "" {
-			transport = transportACPStdio
-		} else {
-			transport = transportCLI
-		}
-	}
-
-	autoApprove := 0
-	if agent.AutoApprove {
-		autoApprove = 1
-	}
-
-	disabled := 0
-	if agent.Disabled {
-		disabled = 1
-	}
-
-	// NULL scopes the agent globally; a value scopes it to that project. Passed
-	// as any so a nil *int64 binds SQL NULL rather than 0 (0 is a real project
-	// id — the reserved global sentinel — but the column distinguishes NULL).
-	var projectID any
-	if agent.ProjectID != nil {
-		projectID = *agent.ProjectID
-	}
-	// Same NULL semantics for the provider binding: nil = no provider.
-	var providerID any
-	if agent.ProviderID != nil {
-		providerID = *agent.ProviderID
-	}
-
-	if IsUserNickname(agent.Name) {
-		return fmt.Errorf("save agent %s: %w", agent.ID, ErrAgentNameReserved)
-	}
-	if AgentNameTaken(agent.Name, agent.ID) {
-		return fmt.Errorf("save agent %s: %w", agent.ID, ErrAgentNameTaken)
+	if nameErr := ensureAgentNameFreeFor("save", agent.ID, agent.Name); nameErr != nil {
+		return nameErr
 	}
 
 	_, err = db.Exec(`
@@ -313,17 +256,86 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			provider_id = excluded.provider_id,
 			thinking_effort_by_model = excluded.thinking_effort_by_model,
 			updated_at = CURRENT_TIMESTAMP
-	`, agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
-		agent.ThinkingEffort, string(levelsJSON),
-		agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
-		agent.CustomSystemPrompt, agent.Avatar, string(modelsJSON), modelsAutoDetected,
-		sortOrder,
-		transport, agent.AcpCommand, autoApprove, disabled, projectID,
-		providerID, string(effortByModelJSON))
+	`, agentInsertArgs(agent, cols)...)
 	if err != nil {
 		return fmt.Errorf("save agent %s: %w", agent.ID, err)
 	}
 	return nil
+}
+
+// agentJSONColumns holds the three JSON-encoded agent columns as the exact
+// strings to bind.
+type agentJSONColumns struct {
+	models        string
+	levels        string
+	effortByModel string
+}
+
+// encodeAgentJSONColumns marshals the JSON-backed agent columns and normalizes
+// them so the table never stores the literal string "null".
+func encodeAgentJSONColumns(agent *model.Agent) (agentJSONColumns, error) {
+	modelsJSON, err := json.Marshal(agent.Models)
+	if err != nil {
+		return agentJSONColumns{}, fmt.Errorf("marshal models: %w", err)
+	}
+	// json.Marshal(nil slice) produces "null" instead of "[]" — normalize to "[]"
+	if string(modelsJSON) == jsonNull {
+		modelsJSON = []byte("[]")
+	}
+	levelsJSON, err := json.Marshal(agent.ThinkingEffortLevels)
+	if err != nil {
+		return agentJSONColumns{}, fmt.Errorf("marshal thinking_effort_levels: %w", err)
+	}
+	// Normalize nil to "{}" so the column never holds the string "null".
+	effortByModelJSON, err := json.Marshal(agent.ThinkingEffortByModel)
+	if err != nil {
+		return agentJSONColumns{}, fmt.Errorf("marshal thinking_effort_by_model: %w", err)
+	}
+	if string(effortByModelJSON) == jsonNull {
+		effortByModelJSON = []byte("{}")
+	}
+	return agentJSONColumns{
+		models:        string(modelsJSON),
+		levels:        string(levelsJSON),
+		effortByModel: string(effortByModelJSON),
+	}, nil
+}
+
+// agentInsertArgs binds the INSERT column order of SaveAgent.
+func agentInsertArgs(agent *model.Agent, cols agentJSONColumns) []any {
+	return []any{
+		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
+		agent.ThinkingEffort, cols.levels,
+		agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
+		agent.CustomSystemPrompt, agent.Avatar, cols.models, boolToInt(agent.ModelsAutoDetected),
+		agent.SortOrder,
+		agentTransportForSave(agent), agent.AcpCommand, boolToInt(agent.AutoApprove), boolToInt(agent.Disabled),
+		nullableIDArg(agent.ProjectID), nullableIDArg(agent.ProviderID), cols.effortByModel,
+	}
+}
+
+// agentTransportForSave resolves the persisted transport, defaulting by command
+// shape when the caller left it empty.
+func agentTransportForSave(agent *model.Agent) string {
+	if agent.Transport != "" {
+		return agent.Transport
+	}
+	if agent.AcpCommand != "" {
+		return transportACPStdio
+	}
+	return transportCLI
+}
+
+// nullableIDArg binds a *int64 as SQL NULL when nil.
+//
+// Passed as any so a nil pointer binds NULL rather than 0 (0 is a real project
+// id — the reserved global sentinel — but the column distinguishes NULL). Same
+// NULL semantics for the provider binding: nil = no provider.
+func nullableIDArg(id *int64) any {
+	if id == nil {
+		return nil
+	}
+	return *id
 }
 
 // DeleteAgent deletes an agent by ID (requires PRAGMA foreign_keys=ON).
@@ -805,11 +817,18 @@ func applyProviderSet(patch AgentPatch, setClauses []string, args []any) ([]stri
 // when name is already used by a different agent. Split out of
 // PatchAgentFields to keep its branch count in budget.
 func ensureAgentNameFree(id, name string) error {
+	return ensureAgentNameFreeFor("patch", id, name)
+}
+
+// ensureAgentNameFreeFor is ensureAgentNameFree with the operation named in the
+// wrapped error (SaveAgent writes "save agent …", PatchAgentFields "patch
+// agent …").
+func ensureAgentNameFreeFor(op, id, name string) error {
 	if IsUserNickname(name) {
-		return fmt.Errorf("patch agent %s: %w", id, ErrAgentNameReserved)
+		return fmt.Errorf("%s agent %s: %w", op, id, ErrAgentNameReserved)
 	}
 	if AgentNameTaken(name, id) {
-		return fmt.Errorf("patch agent %s: %w", id, ErrAgentNameTaken)
+		return fmt.Errorf("%s agent %s: %w", op, id, ErrAgentNameTaken)
 	}
 	return nil
 }

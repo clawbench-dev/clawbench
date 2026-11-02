@@ -288,6 +288,14 @@ jobs:
         run: npm ci
 
       - name: Run coverage gate check
+        # V8 coverage roughly triples the suite's wall clock, and the suite has
+        # grown past what the default 20-minute watchdog allows on a 2-core
+        # runner: the run was killed mid-suite and never wrote
+        # coverage-summary.json, which reads as a gate failure. 45 minutes
+        # leaves room for the slowest runner without hiding a real hang (the
+        # script still kills workers that stop making CPU progress).
+        env:
+          VITEST_TIMEOUT_S: 2700
         run: |
           set +e
           ./scripts/check-frontend-coverage.sh

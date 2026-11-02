@@ -2520,8 +2520,7 @@ func TestFinalizeLiveNotes_UnwritableFolderIsOnlyAWarning(t *testing.T) {
 		ClientID: "m1", Speaker: "我", Text: "开始吧",
 	})
 	require.NoError(t, err)
-	require.NoError(t, os.Chmod(paths.Dir, 0o500))
-	t.Cleanup(func() { _ = os.Chmod(paths.Dir, 0o755) })
+	breakNotesFolder(t, paths.Dir)
 
 	finalizeLiveNotes(token, pid, project)
 

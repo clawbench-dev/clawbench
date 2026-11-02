@@ -694,57 +694,73 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 
 	var agents []*Agent
 	for rows.Next() {
-		agent := &Agent{}
-		var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON string
-		var autoDetected, autoApprove, disabled int
-		var projectID, providerID sql.NullInt64
-
-		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Specialty,
-			&agent.Backend, &agent.Command, &agent.ThinkingEffort, &levelsJSON,
-			&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
-			&agent.CustomSystemPrompt, &agent.Avatar, &modelsJSON, &autoDetected,
-			&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove, &disabled, &projectID,
-			&providerID, &effortByModelJSON, &mcpServersJSON); err != nil {
+		agent, err := scanAgentRow(rows)
+		if err != nil {
 			return nil, err
-		}
-
-		agent.ModelsAutoDetected = autoDetected == 1
-		agent.AutoApprove = autoApprove == 1
-		agent.Disabled = disabled == 1
-		if projectID.Valid {
-			id := projectID.Int64
-			agent.ProjectID = &id
-		}
-		if providerID.Valid {
-			id := providerID.Int64
-			agent.ProviderID = &id
-		}
-
-		if err := json.Unmarshal([]byte(modelsJSON), &agent.Models); err != nil {
-			agent.Models = nil
-		}
-		if err := json.Unmarshal([]byte(levelsJSON), &agent.ThinkingEffortLevels); err != nil {
-			agent.ThinkingEffortLevels = nil
-		}
-		// Unreadable MCP policy degrades to the zero value, which Normalized()
-		// reads as "all". Leaving it empty would be read as "none" and strip
-		// MCP from the agent — the exact silent failure this column exists to
-		// avoid.
-		if mcpServersJSON != "" && mcpServersJSON != "null" {
-			if err := json.Unmarshal([]byte(mcpServersJSON), &agent.MCPServers); err != nil {
-				agent.MCPServers = MCPServerPolicy{}
-			}
-		}
-		// Unreadable per-model picks degrade to "none" rather than failing the
-		// whole load: they only affect a default, and refusing to start (or to
-		// reload) over them would be far worse.
-		if effortByModelJSON != "" && effortByModelJSON != "{}" && effortByModelJSON != "null" {
-			var byModel map[string]string
-			if err := json.Unmarshal([]byte(effortByModelJSON), &byModel); err == nil && len(byModel) > 0 {
-				agent.ThinkingEffortByModel = byModel
-			}
 		}
 		agents = append(agents, agent)
 	}
 	return agents, rows.Err()
+}
+
+// scanAgentRow reads one agent row, including the JSON-encoded columns.
+func scanAgentRow(rows *sql.Rows) (*Agent, error) {
+	agent := &Agent{}
+	var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON string
+	var autoDetected, autoApprove, disabled int
+	var projectID, providerID sql.NullInt64
+
+	if err := rows.Scan(&agent.ID, &agent.Name, &agent.Specialty,
+		&agent.Backend, &agent.Command, &agent.ThinkingEffort, &levelsJSON,
+		&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
+		&agent.CustomSystemPrompt, &agent.Avatar, &modelsJSON, &autoDetected,
+		&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove, &disabled, &projectID,
+		&providerID, &effortByModelJSON, &mcpServersJSON); err != nil {
+		return nil, err
+	}
+
+	agent.ModelsAutoDetected = autoDetected == 1
+	agent.AutoApprove = autoApprove == 1
+	agent.Disabled = disabled == 1
+	if projectID.Valid {
+		id := projectID.Int64
+		agent.ProjectID = &id
+	}
+	if providerID.Valid {
+		id := providerID.Int64
+		agent.ProviderID = &id
+	}
+
+	decodeAgentColumns(agent, modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON)
+	return agent, nil
+}
+
+// decodeAgentColumns turns the four JSON-encoded agent columns into model
+// fields. Every failure degrades to the zero value rather than aborting the
+// load — see the per-column notes below.
+func decodeAgentColumns(agent *Agent, modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON string) {
+	if err := json.Unmarshal([]byte(modelsJSON), &agent.Models); err != nil {
+		agent.Models = nil
+	}
+	if err := json.Unmarshal([]byte(levelsJSON), &agent.ThinkingEffortLevels); err != nil {
+		agent.ThinkingEffortLevels = nil
+	}
+	// Unreadable MCP policy degrades to the zero value, which Normalized()
+	// reads as "all". Leaving it empty would be read as "none" and strip
+	// MCP from the agent — the exact silent failure this column exists to
+	// avoid.
+	if mcpServersJSON != "" && mcpServersJSON != "null" {
+		if err := json.Unmarshal([]byte(mcpServersJSON), &agent.MCPServers); err != nil {
+			agent.MCPServers = MCPServerPolicy{}
+		}
+	}
+	// Unreadable per-model picks degrade to "none" rather than failing the
+	// whole load: they only affect a default, and refusing to start (or to
+	// reload) over them would be far worse.
+	if effortByModelJSON != "" && effortByModelJSON != "{}" && effortByModelJSON != "null" {
+		var byModel map[string]string
+		if err := json.Unmarshal([]byte(effortByModelJSON), &byModel); err == nil && len(byModel) > 0 {
+			agent.ThinkingEffortByModel = byModel
+		}
+	}
 }
