@@ -1895,6 +1895,34 @@ describe('duplicate message root causes (regression)', () => {
     expect(users[0]._remoteQueueId).toBeUndefined()
   })
 
+  it('rebuildFromDb fills a _remote bubble\'s attachments from the DB row (fill-only)', () => {
+    // A queued message carries NO optimistic bubble, so its bubble is built from
+    // whatever the WS event says. The subscribe-time recovery user_message used
+    // to omit `files` (a client that was on another session when the turn began
+    // never gets the live one), which left the bubble with no attachment card at
+    // all. This branch keeps the live object instead of the DB row, so the DB's
+    // attachments are the ONLY chance to repair it.
+    const dbFiles = [{ path: '/proj/.clawbench/uploads/image_25.png', isDir: false }]
+    const messages: any[] = [
+      { role: 'user', id: 100, content: '这个显示异常', blocks: [{ type: 'text', text: '这个显示异常' }], files: [], _remote: true, _remoteQueueId: 'q-1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 100, content: '这个显示异常', blocks: [{ type: 'text', text: '这个显示异常' }], files: dbFiles },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    expect(merged).toHaveLength(1)
+    expect(merged[0].files).toEqual(dbFiles)
+    expect((merged[0] as any)._remote).toBeUndefined()
+
+    // Fill-only, never overwrite: a snapshot fetched before the send committed
+    // is OLDER than the live bubble, so its empty list must not wipe real files.
+    const live: any[] = [
+      { role: 'user', id: 100, content: 'x', blocks: [], files: dbFiles, _remote: true },
+    ]
+    const stale: any[] = [{ role: 'user', id: 100, content: 'x', blocks: [], files: [] }]
+    expect(rebuildFromDb(live, stale as any)[0].files).toEqual(dbFiles)
+  })
+
   it('RC4: queue_drain does not materialize the user message; the user_message event lands it once', () => {
     // New contract: a queued message is NOT part of the messages array until
     // the backend materializes it into chat_history. `ws_queue_drain` is a bare

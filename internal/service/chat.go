@@ -3532,12 +3532,22 @@ func GetLiveRunStates(sessionID string) []ws.LiveStreamState {
 	for i := range states {
 		var qID int64
 		var qContent string
+		var qFilesJSON sql.NullString
+		// `files` is read here because the recovery user_message is the ONLY
+		// thing a late subscriber gets for the question bubble: a client that
+		// was on another session when the turn started never sees the live
+		// user_message (the hub drops it with reason=no_subscribers), so this
+		// payload is what builds the bubble. Without the attachments a queued
+		// image message rendered as text only.
 		if qErr := store.ReadDB().QueryRow(
-			"SELECT id, content FROM chat_history WHERE session_id = ? AND role = 'user' AND id < ? ORDER BY id DESC LIMIT 1",
+			"SELECT id, content, files FROM chat_history WHERE session_id = ? AND role = 'user' AND id < ? ORDER BY id DESC LIMIT 1",
 			sessionID, states[i].MessageID,
-		).Scan(&qID, &qContent); qErr == nil {
+		).Scan(&qID, &qContent, &qFilesJSON); qErr == nil {
 			states[i].QuestionID = qID
 			states[i].QuestionContent = qContent
+			if qFilesJSON.Valid && qFilesJSON.String != "" {
+				states[i].QuestionFiles = unmarshalFilesJSON(qFilesJSON.String)
+			}
 		}
 	}
 	return states

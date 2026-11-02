@@ -1922,6 +1922,40 @@ func TestGetLiveRunStates_ReturnsAllConcurrentStreams(t *testing.T) {
 	}
 }
 
+// TestGetLiveRunStates_CarriesQuestionFiles pins the attachments of the question
+// row. The subscribe-time recovery user_message is built from this state, and it
+// is the ONLY source of the question bubble for a client that was on another
+// session when the turn started (the hub drops the live user_message with
+// reason=no_subscribers). Without the files, a message queued with an image
+// renders as text with no attachment card — permanently, because the frontend
+// keeps the recovered bubble instead of the DB row.
+func TestGetLiveRunStates_CarriesQuestionFiles(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "codebuddy", "Queued image")
+	pid := store.ProjectIDForTest(t, "/project")
+
+	filesJSON := `[{"path":"/project/.clawbench/uploads/image_25.png","isDir":false}]`
+	_, err := store.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, files, streaming) VALUES (?, 'codebuddy', ?, 'user', '这个显示异常', ?, 0)",
+		pid, sid, filesJSON)
+	require.NoError(t, err)
+	_, err = store.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (?, 'codebuddy', ?, 'assistant', '', 1)",
+		pid, sid)
+	require.NoError(t, err)
+
+	if _, created := service.TryClaimSessionRun(sid); !created {
+		t.Fatal("setup: expected to win the claim")
+	}
+	t.Cleanup(func() { service.SetSessionRunning(sid, false, true) })
+
+	states := service.GetLiveRunStates(sid)
+	require.Len(t, states, 1)
+	require.Len(t, states[0].QuestionFiles, 1,
+		"the recovery question must carry the row's attachments")
+	assert.Equal(t, "/project/.clawbench/uploads/image_25.png", states[0].QuestionFiles[0].Path)
+}
+
 // TestGetLiveRunStates_IgnoresOrphanStreamingRow pins the fix for "the session
 // shows as running but nothing is executing".
 //
