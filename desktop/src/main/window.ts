@@ -515,6 +515,10 @@ export function createMainWindow(): BrowserWindow {
           minHeight: 320,
           backgroundColor: '#000000',
           autoHideMenuBar: true,
+          // The app window is frameless; a picture window must not inherit
+          // that — without a title bar it cannot be moved or resized by hand.
+          frame: true,
+          titleBarStyle: 'default',
         },
       }
     }

@@ -22,6 +22,16 @@ import { isDesktopApp } from '@/utils/clawbenchNative'
 
 const TAG = 'ScreenWindow'
 
+/**
+ * A DOMException serialises to `{}`, which made "requestWindow failed {}" the
+ * only clue we had when the picture refused to leave the app. Keep the name and
+ * the message.
+ */
+function describeError(e: unknown): string {
+  if (e instanceof Error) return `${e.name}: ${e.message}`
+  return String(e)
+}
+
 /** Window name, so re-opening reuses the same popup instead of stacking. */
 const POPUP_NAME = 'clawbench-screen-window'
 
@@ -68,7 +78,7 @@ export function useScreenWindow(): ScreenWindow {
     } catch (e) {
       // Cross-process popup: its DOM is unreachable, so nothing can be rendered
       // into it. Close it instead of leaving an empty window behind.
-      appLog.w(TAG, 'window document is not reachable', e)
+      appLog.w(TAG, 'window document is not reachable', describeError(e))
       try {
         w.close()
       } catch {
@@ -78,6 +88,7 @@ export function useScreenWindow(): ScreenWindow {
     }
     copyDocumentStyles(document, doc)
     doc.title = 'ClawBench'
+    appLog.i(TAG, `picture moved to a ${kind} window`)
     win.value = w
     target.value = doc.body
     if (kind === 'pip') {
@@ -94,9 +105,13 @@ export function useScreenWindow(): ScreenWindow {
 
   function openPopup(width: number, height: number): Window | null {
     try {
-      return window.open('', POPUP_NAME, `popup=yes,width=${width},height=${height}`)
+      const w = window.open('', POPUP_NAME, `popup=yes,width=${width},height=${height}`)
+      // The desktop shell answers `deny` with null (its popup handler), and so
+      // does a browser popup blocker.
+      if (!w) appLog.w(TAG, 'window.open was blocked')
+      return w
     } catch (e) {
-      appLog.w(TAG, 'window.open failed', e)
+      appLog.w(TAG, 'window.open failed', describeError(e))
       return null
     }
   }
@@ -129,7 +144,7 @@ export function useScreenWindow(): ScreenWindow {
       } catch (e) {
         // Denied/blocked must not look like a dead button; the popup below is
         // the last resort.
-        appLog.w(TAG, 'requestWindow failed', e)
+        appLog.w(TAG, 'requestWindow failed', describeError(e))
       }
     }
 
