@@ -237,6 +237,15 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	// Snapshot cached config state before spawn
 	prevConfig := c.snapshotCachedConfig()
 
+	// From here on the session is being (re)established: spawn → new / resume /
+	// load → re-apply the user's config. While this is in effect, an agent
+	// announcement about mode/config is its OWN persisted default (CodeBuddy
+	// announces "default" ~200ms before the resume response), not a user
+	// action, so notification handlers ignore it entirely. The truthful state
+	// is emitted once by EmitSessionStateEvents right after this returns.
+	c.SetEstablishingSession(true)
+	defer c.SetEstablishingSession(false)
+
 	// Save acpSID before spawnLocked clears it
 	preSpawnAcpSID := c.acpSID
 

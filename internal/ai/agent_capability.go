@@ -979,6 +979,11 @@ func (row *capabilityRow) toCapability() *AgentCapability {
 	if row.config != "" {
 		var config ConfigOptionState
 		if err := json.Unmarshal([]byte(row.config), &config); err == nil {
+			// Rows written before the current value became session-scoped may
+			// carry one here. It belongs to whichever session happened to be
+			// active at the time, so it must not come back as this agent's
+			// current value (see ACPConn.SessionConfigState).
+			config.CurrentID = ""
 			capability.ConfigOptionState = &config
 		}
 	}

@@ -145,18 +145,21 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		// so RequestPermission callbacks use the correct state.
 		conn.SetAutoApprove(getSessionAutoApprove(req.SessionID))
 
-		// Pre-apply user's mode/thinkingEffort/model selection to the cached state
-		// BEFORE emitting WS events, so the frontend sees the user's choice (e.g.
-		// "plan") instead of the agent's default (e.g. "bypassPermissions")
-		// during streaming. The actual RPC to set the config is still done inside
-		// Prompt().
+		// Pre-apply user's mode/thinkingEffort/model selection to the SESSION
+		// cache BEFORE emitting WS events, so the frontend sees the user's
+		// choice (e.g. "plan") instead of the agent's default (e.g.
+		// "bypassPermissions") during streaming. The actual RPC to set the
+		// config is still done inside Prompt().
+		//
+		// Only the session cache is written. The agent-level capability
+		// registry holds options, never a current value: it is shared by every
+		// session of the agent, so writing this turn's pick there made another
+		// session's config_update carry it (see SessionConfigState).
 		if req.Mode != "" {
 			conn.UpdateCachedCurrent("mode", req.Mode)
-			conn.PreApplyConfigCurrentID("mode", req.Mode)
 		}
 		if req.ThinkingEffort != "" {
 			conn.UpdateCachedCurrent("thought_level", req.ThinkingEffort)
-			conn.PreApplyConfigCurrentID("thinkingEffort", req.ThinkingEffort)
 		}
 		// Model: without this the first model_list_update (emitted in step 2,
 		// before Prompt applies the selection in step 3) reports the AGENT's
@@ -333,7 +336,9 @@ func (b *ACPBackend) emitSessionAndCacheState(conn *ACPConn, isNew bool, ch chan
 
 	// config_update is still re-emitted every stream because the frontend
 	// resets config state on session switch and config covers more than just mode.
-	if configState := GetAgentCapabilityRegistry().GetConfigState(conn.AgentID()); configState != nil {
+	// Its current value comes from THIS session (SessionConfigState), never from
+	// the agent-level registry.
+	if configState := conn.SessionConfigState(); configState != nil {
 		slog.Debug("acp: re-emitting cached config_update", "config_id", configState.ConfigID, "current", configState.CurrentID)
 		forwardACPEvent(ch, StreamEvent{Type: "config_update", Config: configState})
 	}

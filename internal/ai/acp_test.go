@@ -1349,6 +1349,64 @@ func TestMapACPSessionUpdate_CurrentModeUpdate_WithCacheEntry(t *testing.T) {
 	assert.Equal(t, "code", events[0].Mode.CurrentModeID)
 }
 
+func TestMapACPSessionUpdate_CurrentModeUpdate_WhileEstablishingSession(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	agent := &model.Agent{ID: "test-current-mode-establishing", Backend: "acp-stdio"}
+	entry := newACPConn(agent, "test-current-mode-establishing-sid")
+	GetAgentCapabilityRegistry().UpdateModes(agent.ID, []ModeDef{
+		{ID: "default", Name: "Always Ask"},
+		{ID: "bypassPermissions", Name: "Bypass"},
+	})
+	entry.SetCurrentModeID("bypassPermissions")
+	// A session is being resumed: the agent announces its own persisted
+	// default before we re-apply the user's mode. That must not reach the
+	// client, or the chip shows the default until the next reload.
+	entry.SetEstablishingSession(true)
+
+	update := acp.SessionUpdate{
+		CurrentModeUpdate: &acp.SessionCurrentModeUpdate{
+			CurrentModeId: acp.SessionModeId("default"),
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, entry, nil)
+
+	// Ignored completely: neither the cache nor the client may adopt the
+	// agent's pre-resume default. The user's choice is re-applied and emitted
+	// after establishment.
+	assert.Equal(t, "bypassPermissions", entry.GetCurrentModeID())
+	assertNoMoreACPEvents(ch, t)
+}
+
+func TestMapACPSessionUpdate_CurrentModeUpdate_AfterEstablishingSession(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	agent := &model.Agent{ID: "test-current-mode-established", Backend: "acp-stdio"}
+	entry := newACPConn(agent, "test-current-mode-established-sid")
+	GetAgentCapabilityRegistry().UpdateModes(agent.ID, []ModeDef{
+		{ID: "ask", Name: "Ask"},
+		{ID: "code", Name: "Code"},
+	})
+	entry.SetCurrentModeID("ask")
+	entry.SetEstablishingSession(true)
+	entry.SetEstablishingSession(false)
+
+	update := acp.SessionUpdate{
+		CurrentModeUpdate: &acp.SessionCurrentModeUpdate{
+			CurrentModeId: acp.SessionModeId("code"),
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, entry, nil)
+
+	assert.Equal(t, "code", entry.GetCurrentModeID())
+	events := drainACPEvents(ch, 1)
+	assert.Equal(t, "mode_update", events[0].Type)
+}
+
 func TestMapACPSessionUpdate_CurrentModeUpdate_InvalidModeRejected(t *testing.T) {
 	ch := make(chan StreamEvent, 10)
 	ctx := context.Background()

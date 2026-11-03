@@ -256,3 +256,82 @@ func TestStreamEventTypeFromCategory(t *testing.T) {
 	assert.Equal(t, "config_update", streamEventTypeFromCategory("custom"))
 	assert.Equal(t, "config_update", streamEventTypeFromCategory(""))
 }
+
+// ── establishing-session suppression ───────────────────────────────────────
+
+// While a session is being created/resumed, the agent reports its OWN persisted
+// mode before we re-apply the user's choice. Forwarding it made the chip show
+// the default ("Always Ask") even though the session kept running the user's
+// mode — and because this path publishes nothing to the DB, switching away and
+// back restored the right value, which made it look transient.
+func TestHandleConfigOptionSelect_EstablishingSessionSuppressesModeForward(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	reg.caps["a1"] = &AgentCapability{
+		AvailableModes: []ModeDef{{ID: "default"}, {ID: "bypassPermissions"}},
+	}
+
+	conn := newACPConn(&model.Agent{ID: "a1", Backend: "acp-stdio"}, "s1")
+	conn.UpdateCachedCurrent("mode", "bypassPermissions")
+	conn.SetEstablishingSession(true)
+	ch := make(chan StreamEvent, 10)
+
+	sel := SelectState{
+		CurrentID: "default",
+		Available: []SelectOptionDef{{ID: "default"}, {ID: "bypassPermissions"}},
+		Category:  "mode",
+	}
+
+	events := handleConfigOptionSelect(sel, conn, ch)
+
+	assert.Empty(t, events, "the agent's pre-resume default must not be published")
+	assert.Empty(t, ch, "no event may be written to the stream")
+	// Ignored completely: the user's choice stays in the session cache so
+	// applyExtractedState preserves it and EmitSessionStateEvents publishes it.
+	assert.Equal(t, "bypassPermissions", conn.GetCurrentSelection("mode"))
+}
+
+func TestHandleConfigOptionSelect_AfterEstablishingSessionForwardsMode(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	reg.caps["a1"] = &AgentCapability{
+		AvailableModes: []ModeDef{{ID: "ask"}, {ID: "code"}},
+	}
+
+	conn := newACPConn(&model.Agent{ID: "a1", Backend: "acp-stdio"}, "s1")
+	conn.UpdateCachedCurrent("mode", "ask")
+	conn.SetEstablishingSession(true)
+	conn.SetEstablishingSession(false)
+	ch := make(chan StreamEvent, 10)
+
+	sel := SelectState{
+		CurrentID: "code",
+		Available: []SelectOptionDef{{ID: "ask"}, {ID: "code"}},
+		Category:  "mode",
+	}
+
+	events := handleConfigOptionSelect(sel, conn, ch)
+
+	require.NotEmpty(t, events, "a real agent-initiated change still reaches the client")
+	assert.Equal(t, "code", conn.GetCurrentSelection("mode"))
+}
+
+// Non-session-scoped categories are not re-applied by us, so establishment
+// must not suppress them — their current value is the only source the client has.
+func TestHandleConfigOptionSelect_EstablishingSessionKeepsCustomCategory(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	reg.caps["a1"] = &AgentCapability{}
+
+	conn := newACPConn(&model.Agent{ID: "a1", Backend: "acp-stdio"}, "s1")
+	conn.SetEstablishingSession(true)
+	ch := make(chan StreamEvent, 10)
+
+	sel := SelectState{
+		CurrentID: "v1",
+		Available: []SelectOptionDef{{ID: "v1"}, {ID: "v2"}},
+		Category:  "custom",
+	}
+
+	events := handleConfigOptionSelect(sel, conn, ch)
+
+	require.NotEmpty(t, events)
+	assert.Equal(t, "config_update", events[0])
+}

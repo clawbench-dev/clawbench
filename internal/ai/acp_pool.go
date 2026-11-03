@@ -755,7 +755,7 @@ func (m *ACPConnManager) GetCachedStateByClawbenchSID(clawbenchSID string) ACPCa
 		Effort:        reg.GetThinkingEffortState(agentID, currentThinkingEffortID),
 		ModelList:     reg.GetModelListState(agentID, currentModelID),
 		Commands:      reg.GetCommands(agentID),
-		Config:        reg.GetConfigState(agentID),
+		Config:        conn.SessionConfigState(),
 		Plan:          planState,
 		Usage:         usageState,
 		ReplayPending: replayPending,
@@ -955,6 +955,13 @@ type ACPConn struct {
 
 	// loadSessionActive indicates that a LoadSession replay is in progress.
 	loadSessionActive atomic.Bool
+
+	// establishingSession is true from spawn until the new/resumed session's
+	// config has been re-applied. While set, agent-reported mode/config
+	// notifications for session-scoped categories are ignored entirely — they
+	// are the agent's own persisted defaults, not the user's choice. See
+	// SetEstablishingSession and configSelectDisposition.
+	establishingSession atomic.Bool
 
 	// liveness
 	lastUsed  time.Time
@@ -2301,28 +2308,27 @@ func (c *ACPConn) UpdateCachedCurrentThinkingEffort(effortID string) {
 	c.currentThinkingEffortID = effortID
 }
 
-// PreApplyConfigCurrentID optimistically updates the registry's ConfigOptionState.CurrentID
-// before WS events are emitted, so the frontend sees the user's requested value
-// (e.g. "plan") instead of the agent's default (e.g. "bypassPermissions").
-// The actual RPC is still done inside Prompt(); this only affects WS display.
-func (c *ACPConn) PreApplyConfigCurrentID(configID, value string) {
-	agentID := c.AgentID()
-	reg := GetAgentCapabilityRegistry()
-	configState := reg.GetConfigState(agentID)
-	if configState == nil {
-		return
-	}
-	// Find the matching option and update CurrentID only if the value is valid
-	for _, opt := range configState.Options {
-		if opt.Category == configID || opt.ID == configID {
-			for _, v := range opt.Values {
-				if v.ID == value {
-					configState.CurrentID = value
-					return
-				}
-			}
-		}
-	}
+// SetEstablishingSession marks whether a session is currently being created or
+// re-attached (spawn → new/resume/load → config re-apply).
+//
+// While it is true the agent may announce ITS OWN persisted config — most
+// notably the default permission mode it had on disk — before we have re-sent
+// the user's choice. Those announcements are not user intent and are ignored
+// entirely (neither the session cache nor the client may adopt them): the
+// user's choice was already pre-applied or read from the DB, reapply re-sends
+// it, and EmitSessionStateEvents publishes the settled state right after
+// establishment.
+//
+// Lock-free on purpose: it is read from the SDK notification goroutine, which
+// must never take c.mu (an RPC holds it while draining notifications).
+func (c *ACPConn) SetEstablishingSession(v bool) {
+	c.establishingSession.Store(v)
+}
+
+// IsEstablishingSession reports whether SetEstablishingSession(true) is in
+// effect. See SetEstablishingSession for why this exists.
+func (c *ACPConn) IsEstablishingSession() bool {
+	return c.establishingSession.Load()
 }
 
 // SetCachedModeState updates the session's current mode ID and registers
@@ -2340,25 +2346,35 @@ func (c *ACPConn) SetCachedModeState(state *ModeState) {
 	}
 }
 
-// SetCachedConfigState registers the config option state in the agent capability registry.
+// SetCachedConfigState registers the config option state in the agent capability
+// registry and, when nothing else describes this session's mode yet, seeds the
+// session cache from the state's current value.
+//
+// The registry receives the OPTIONS only: a current value is session-scoped
+// (see SessionConfigState), so it goes to this connection, never into the
+// shared agent entry.
 func (c *ACPConn) SetCachedConfigState(state *ConfigOptionState) {
 	if state == nil {
 		return
 	}
 	agentID := c.AgentID()
-	if agentID != "" {
-		GetAgentCapabilityRegistry().UpdateConfigState(agentID, state)
-		if !GetAgentCapabilityRegistry().HasAvailableModes(agentID) {
-			if derived := modeStateFromConfigState(state); derived != nil && len(derived.AvailableModes) > 0 {
-				GetAgentCapabilityRegistry().UpdateModes(agentID, derived.AvailableModes)
-				c.stateMu.Lock()
-				if c.currentModeID == "" {
-					c.currentModeID = derived.CurrentModeID
-				}
-				c.stateMu.Unlock()
+	if agentID == "" {
+		return
+	}
+	reg := GetAgentCapabilityRegistry()
+	if !reg.HasAvailableModes(agentID) {
+		if derived := modeStateFromConfigState(state); derived != nil && len(derived.AvailableModes) > 0 {
+			reg.UpdateModes(agentID, derived.AvailableModes)
+			c.stateMu.Lock()
+			if c.currentModeID == "" {
+				c.currentModeID = derived.CurrentModeID
 			}
+			c.stateMu.Unlock()
 		}
 	}
+	stored := *state
+	stored.CurrentID = ""
+	reg.UpdateConfigState(agentID, &stored)
 }
 
 // SetCachedThinkingEffortState updates the session's current thinking effort ID

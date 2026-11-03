@@ -733,107 +733,99 @@ func TestGetOrCreateConn_PrePopulatesAcpSID_FromDB(t *testing.T) {
 	mgr.CloseConn(clawbenchSID)
 }
 
-// --- ACPConn.PreApplyConfigCurrentID ---
+// --- ACPConn.SessionConfigState ---
 
-func TestACPConn_PreApplyConfigCurrentID_UpdatesRegistryConfigState(t *testing.T) {
-	agentID := "test-preapply-config-mode"
+// The agent-level registry is shared by every session of an agent. Its config
+// state may carry the OPTION DESCRIPTIONS; a "current" value belongs to one
+// session and must be resolved from that session's connection. Emitting the
+// registry value made session B's mode appear in session A's chip.
+func TestACPConn_SessionConfigState_UsesSessionCurrent(t *testing.T) {
+	agentID := "test-session-config-state"
 	agent := &model.Agent{ID: agentID, Backend: "acp-stdio", AcpCommand: "echo"}
-	conn := newACPConn(agent, "session-preapply")
+	conn := newACPConn(agent, "session-config-state")
 
-	// Set up registry with config state (simulating NewSession response with bypassPermissions)
 	reg := GetAgentCapabilityRegistry()
+	// Simulates a stale value left by another session — exactly the pollution
+	// this accessor exists to keep off the wire.
 	reg.UpdateConfigState(agentID, &ConfigOptionState{
 		ConfigID:  "mode",
-		CurrentID: "bypassPermissions",
+		CurrentID: "default",
 		Options: []ConfigOptionDef{{
 			ID:       "mode",
 			Category: "mode",
-			Values: []ConfigOptionValue{
-				{ID: "bypassPermissions", Name: "Auto-accept"},
-				{ID: "plan", Name: "Plan"},
-				{ID: "code", Name: "Code"},
-			},
+			Values:   []ConfigOptionValue{{ID: "default", Name: "Always Ask"}, {ID: "bypassPermissions", Name: "Bypass"}},
 		}},
 	})
+	conn.UpdateCachedCurrent("mode", "bypassPermissions")
 
-	// Before pre-apply, config state should have the default
-	configState := reg.GetConfigState(agentID)
-	require.NotNil(t, configState)
-	assert.Equal(t, "bypassPermissions", configState.CurrentID)
-
-	// Pre-apply the user's mode selection
-	conn.PreApplyConfigCurrentID("mode", "plan")
-
-	// After pre-apply, config state should reflect the user's choice
-	configState = reg.GetConfigState(agentID)
-	require.NotNil(t, configState)
-	assert.Equal(t, "plan", configState.CurrentID)
+	cs := conn.SessionConfigState()
+	require.NotNil(t, cs)
+	assert.Equal(t, "bypassPermissions", cs.CurrentID,
+		"must use the session's mode, never the registry's")
+	assert.Len(t, cs.Options, 1)
+	assert.Len(t, cs.Options[0].Values, 2)
+	// Reading must not mutate the shared registry value.
+	assert.Equal(t, "default", reg.GetConfigState(agentID).CurrentID)
 }
 
-func TestACPConn_PreApplyConfigCurrentID_InvalidValueNoChange(t *testing.T) {
-	agentID := "test-preapply-invalid"
+func TestACPConn_SessionConfigState_NoSessionSelectionIsEmpty(t *testing.T) {
+	agentID := "test-session-config-empty"
 	agent := &model.Agent{ID: agentID, Backend: "acp-stdio", AcpCommand: "echo"}
-	conn := newACPConn(agent, "session-preapply-invalid")
+	conn := newACPConn(agent, "session-config-empty")
 
-	reg := GetAgentCapabilityRegistry()
-	reg.UpdateConfigState(agentID, &ConfigOptionState{
+	GetAgentCapabilityRegistry().UpdateConfigState(agentID, &ConfigOptionState{
 		ConfigID:  "mode",
-		CurrentID: "bypassPermissions",
+		CurrentID: "default",
 		Options: []ConfigOptionDef{{
 			ID:       "mode",
 			Category: "mode",
-			Values: []ConfigOptionValue{
-				{ID: "bypassPermissions", Name: "Auto-accept"},
-				{ID: "code", Name: "Code"},
-			},
+			Values:   []ConfigOptionValue{{ID: "default"}, {ID: "bypassPermissions"}},
 		}},
 	})
 
-	// Try to pre-apply a mode that's not in the available values
-	conn.PreApplyConfigCurrentID("mode", "plan")
-
-	// Should NOT change because "plan" is not a valid value
-	configState := reg.GetConfigState(agentID)
-	require.NotNil(t, configState)
-	assert.Equal(t, "bypassPermissions", configState.CurrentID)
+	cs := conn.SessionConfigState()
+	require.NotNil(t, cs)
+	assert.Empty(t, cs.CurrentID,
+		"a session with no selection must not inherit another session's current value")
 }
 
-func TestACPConn_PreApplyConfigCurrentID_NoConfigState(t *testing.T) {
-	agentID := "test-preapply-noconfig"
-	agent := &model.Agent{ID: agentID, Backend: "acp-stdio", AcpCommand: "echo"}
-	conn := newACPConn(agent, "session-preapply-noconfig")
-
-	// No config state registered — should not panic
-	assert.NotPanics(t, func() {
-		conn.PreApplyConfigCurrentID("mode", "plan")
-	})
+func TestACPConn_SessionConfigState_NilWithoutOptions(t *testing.T) {
+	agent := &model.Agent{ID: "test-session-config-none", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "session-config-none")
+	assert.Nil(t, conn.SessionConfigState())
 }
 
-func TestACPConn_PreApplyConfigCurrentID_ThinkingEffort(t *testing.T) {
-	agentID := "test-preapply-effort"
+// Two sessions of the SAME agent must report their own current mode, even
+// though the options come from one shared registry entry.
+func TestGetCachedStateByClawbenchSID_ConfigIsPerSession(t *testing.T) {
+	mgr := GetACPConnManager()
+	agentID := "test-cached-config-per-session"
 	agent := &model.Agent{ID: agentID, Backend: "acp-stdio", AcpCommand: "echo"}
-	conn := newACPConn(agent, "session-preapply-effort")
 
-	reg := GetAgentCapabilityRegistry()
-	reg.UpdateConfigState(agentID, &ConfigOptionState{
-		ConfigID:  "thinkingEffort",
-		CurrentID: "medium",
+	GetAgentCapabilityRegistry().UpdateConfigState(agentID, &ConfigOptionState{
+		ConfigID: "mode",
 		Options: []ConfigOptionDef{{
-			ID:       "thinkingEffort",
-			Category: "thinkingEffort",
-			Values: []ConfigOptionValue{
-				{ID: "low", Name: "Low"},
-				{ID: "medium", Name: "Medium"},
-				{ID: "high", Name: "High"},
-			},
+			ID:       "mode",
+			Category: "mode",
+			Values:   []ConfigOptionValue{{ID: "default"}, {ID: "bypassPermissions"}},
 		}},
 	})
 
-	conn.PreApplyConfigCurrentID("thinkingEffort", "high")
+	a := newACPConn(agent, "sid-config-a")
+	b := newACPConn(agent, "sid-config-b")
+	a.UpdateCachedCurrent("mode", "bypassPermissions")
+	b.UpdateCachedCurrent("mode", "default")
+	mgr.SetConnForTest("sid-config-a", a)
+	mgr.SetConnForTest("sid-config-b", b)
+	defer mgr.CloseConn("sid-config-a")
+	defer mgr.CloseConn("sid-config-b")
 
-	configState := reg.GetConfigState(agentID)
-	require.NotNil(t, configState)
-	assert.Equal(t, "high", configState.CurrentID)
+	stateA := mgr.GetCachedStateByClawbenchSID("sid-config-a")
+	stateB := mgr.GetCachedStateByClawbenchSID("sid-config-b")
+	require.NotNil(t, stateA.Config)
+	require.NotNil(t, stateB.Config)
+	assert.Equal(t, "bypassPermissions", stateA.Config.CurrentID)
+	assert.Equal(t, "default", stateB.Config.CurrentID)
 }
 
 // --- ensureAliveWithSession preserves acpSID across spawnLocked ---

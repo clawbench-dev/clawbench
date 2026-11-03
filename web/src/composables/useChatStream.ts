@@ -3,7 +3,7 @@ import { appLog, diagLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useGlobalEvents } from './useGlobalEvents'
 import { gt } from '@/composables/useLocale'
-import { updateModeState, updateCommandState, updateThinkingEffortState, reconcileThinkingEffort, reconcileModelSelection, currentAgentId, currentModelId, updateUsageState } from './useSessionIdentity'
+import { updateModeState, updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, reconcileThinkingEffort, reconcileModelSelection, currentAgentId, currentModelId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import type { ToastIconKey } from './useToast'
@@ -1040,22 +1040,29 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
 
       case 'config_update': {
+        // AVAILABLE OPTIONS ONLY — never the current selection.
+        //
+        // config_update is an agent-level snapshot: the server builds it from
+        // the capability registry, which is shared by every session of the
+        // agent. Its currentValueId is therefore NOT authoritative for this
+        // session — it may describe another session's pick, and the server
+        // re-emits it on every turn start / subscribe. Adopting it moved the
+        // mode chip to another session's mode ("Always Ask") without
+        // persisting anything, so switching away and back restored the real
+        // value from the DB.
+        //
+        // Current values have dedicated SESSION-scoped events: mode_update and
+        // thinking_effort_update.
         if (sessionChanged()) return
         const configData = payload as Record<string, unknown>
         for (const opt of (configData.options as Record<string, unknown>[] || [])) {
           if ((opt.category as string) === 'mode' || (opt.id as string) === 'mode') {
             const modes = ((opt.values as Record<string, string>[]) || []).map((v) => ({ id: v.id, name: v.name || v.id }))
-            const currentModeId = (configData.currentValueId as string) || ''
-            if (currentModeId || modes.length > 0) {
-              updateModeState(currentModeId, modes)
-            }
+            if (modes.length > 0) updateAvailableModes(modes)
           }
           if ((opt.category as string) === 'thought_level' || (opt.id as string) === 'thought_level') {
             const levels = ((opt.values as Record<string, string>[]) || []).map((v) => ({ id: v.id, name: v.name || v.id }))
-            const currentId = (configData.currentValueId as string) || ''
-            if (currentId || levels.length > 0) {
-              updateThinkingEffortState(currentId, levels)
-            }
+            if (levels.length > 0) updateAvailableThinkingEfforts(levels)
           }
         }
         break

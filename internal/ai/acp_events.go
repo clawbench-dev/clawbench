@@ -424,7 +424,16 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 				slog.Debug("acp: ignoring CurrentModeUpdate with unrecognized mode",
 					"mode_id", modeID, "clawbench_sid", conn.clawbenchSID)
 			} else {
-				if conn.HasCurrentChanged("mode", modeID) {
+				// While the session is being (re)established this is the
+				// agent's own persisted default, not a user action. Ignore it
+				// completely — neither the cache nor the client may see it:
+				// PreApply/DB already holds the user's choice, reapply re-sends
+				// it, and EmitSessionStateEvents publishes the settled state.
+				// See configSelectDisposition.
+				if conn.IsEstablishingSession() {
+					slog.Debug("acp: ignoring CurrentModeUpdate while establishing session",
+						"mode_id", modeID, "clawbench_sid", conn.clawbenchSID)
+				} else if conn.HasCurrentChanged("mode", modeID) {
 					conn.UpdateCachedCurrent("mode", modeID)
 					// Build mode state from registry + session current value
 					if ms := GetAgentCapabilityRegistry().GetModeState(conn.AgentID(), modeID); ms != nil {
@@ -457,11 +466,15 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			case acp.SessionConfigOptionCategoryMode:
 				// Build SelectState and delegate to unified handler
 				selState := buildSelectStateFromACPSelect(sel, "mode")
-				// Also maintain ConfigOptionState for agent capability tracking
+				// Also maintain ConfigOptionState for agent capability tracking.
+				// Only the DESCRIPTIONS are agent-scoped; the current value is
+				// per-session and must not enter the shared registry (see
+				// SessionConfigState). Blank it before storing.
 				configState := buildConfigOptionStateFromSelect(sel, "mode")
 				handleConfigOptionSelect(selState, conn, ch)
 				// Update agent-level config state in registry (used by REST API / agent list)
 				if conn != nil && configState != nil {
+					configState.CurrentID = ""
 					GetAgentCapabilityRegistry().UpdateConfigState(conn.AgentID(), configState)
 				}
 
@@ -688,25 +701,66 @@ func handleConfigOptionSelect(sel SelectState, conn *ACPConn, ch chan<- StreamEv
 		reg.UpdateAvailableOptions(agentID, sel.Category, sel.Available)
 	}
 
-	// Forward WS event
-	evt := buildStreamEventFromSelectState(sel)
-	forwardACPEvent(ch, evt)
-	forwarded = append(forwarded, streamEventTypeFromCategory(sel.Category))
+	// Forward WS event and mirror the value into the session cache — except
+	// while the session is being established (see configSelectDisposition).
+	forward, updateCache := configSelectDisposition(conn, sel.Category)
+	if forward {
+		evt := buildStreamEventFromSelectState(sel)
+		forwardACPEvent(ch, evt)
+		forwarded = append(forwarded, streamEventTypeFromCategory(sel.Category))
+	}
+	if updateCache {
+		applyConfigSelectToSessionCache(sel, conn, reg, newOpts, currentChanged)
+	}
 
-	// Category-specific cache update logic
+	return forwarded
+}
+
+// configSelectDisposition decides how to treat an agent-reported config option
+// update for one category.
+//
+// While a session is being created or re-attached, an agent reports its OWN
+// persisted defaults (CodeBuddy announces "default" ~200ms before the resume
+// response arrives). For a session-scoped category that report is not a user
+// action and must change nothing: the user's choice was already pre-applied
+// (or read from the DB) and is re-sent by reapplyConfigAfterResume. Letting it
+// into the session cache is what made applyExtractedState "preserve" the
+// agent's default over the user's pick; letting it out is what flipped the
+// chip. The truthful state is emitted once by EmitSessionStateEvents after
+// establishment.
+//
+// Categories that are not session-scoped are never re-applied by us, so their
+// report is the only source the client has and must keep flowing.
+func configSelectDisposition(conn *ACPConn, category string) (forward, updateSessionCache bool) {
+	if conn.IsEstablishingSession() && isSessionScopedConfigCategory(category) {
+		return false, false
+	}
+	return true, true
+}
+
+// applyConfigSelectToSessionCache updates the session cache for a config option
+// update, after the diff checks and the forwarding decision have been made.
+//
+// Split out of handleConfigOptionSelect to keep that function's branch count
+// under the complexity limit — it sits on the notification hot path and is
+// already close to it.
+func applyConfigSelectToSessionCache(sel SelectState, conn *ACPConn, reg *AgentCapabilityRegistry, newOpts, currentChanged bool) {
 	switch sel.Category {
 	case "mode":
 		if newOpts {
 			conn.UpdateCachedCurrent(sel.Category, sel.CurrentID)
-		} else if currentChanged {
-			// Validate mode change (bridge adapter filter)
-			if sel.CurrentID != "" && !reg.IsOptionAvailable(agentID, "mode", sel.CurrentID) {
-				slog.Debug("acp: ignoring ConfigOptionSelect with unrecognized mode",
-					"mode_id", sel.CurrentID, "clawbench_sid", conn.clawbenchSID)
-				return forwarded
-			}
-			conn.UpdateCachedCurrent(sel.Category, sel.CurrentID)
+			return
 		}
+		if !currentChanged {
+			return
+		}
+		// Validate mode change (bridge adapter filter)
+		if sel.CurrentID != "" && !reg.IsOptionAvailable(conn.AgentID(), "mode", sel.CurrentID) {
+			slog.Debug("acp: ignoring ConfigOptionSelect with unrecognized mode",
+				"mode_id", sel.CurrentID, "clawbench_sid", conn.clawbenchSID)
+			return
+		}
+		conn.UpdateCachedCurrent(sel.Category, sel.CurrentID)
 	case "thought_level":
 		// Only update session cache when the value actually changed,
 		// to avoid overwriting the user's selection with the agent's default
@@ -718,8 +772,19 @@ func handleConfigOptionSelect(sel SelectState, conn *ACPConn, ch chan<- StreamEv
 			conn.UpdateCachedCurrent(sel.Category, sel.CurrentID)
 		}
 	}
+}
 
-	return forwarded
+// isSessionScopedConfigCategory reports whether a config category's "current"
+// value belongs to one session rather than to the agent. Only these values are
+// re-applied by us after a respawn, so only they can be a stale agent default
+// while the session is being established.
+func isSessionScopedConfigCategory(category string) bool {
+	switch category {
+	case "mode", "thought_level", "model":
+		return true
+	default:
+		return false
+	}
 }
 
 // buildStreamEventFromSelectState creates the appropriate StreamEvent for a

@@ -2606,8 +2606,12 @@ func TestRefactor_ApplyExtractedState(t *testing.T) {
 			configState:   configState,
 		}
 		conn.applyExtractedState(ext)
-		// configState.CurrentID should be updated to existing user selection
-		assert.Equal(t, "code", configState.CurrentID)
+		// The session selection is preserved on the CONNECTION (the only place
+		// a current value may live). The registry's config state keeps the
+		// option descriptions only — a current value there would be emitted to
+		// every other session of the same agent (see SessionConfigState).
+		assert.Equal(t, "code", conn.GetCurrentModeID())
+		assert.Empty(t, configState.CurrentID)
 	})
 
 	// Regression: CacheNewSessionState must preserve user's PreApply selections
@@ -3578,7 +3582,8 @@ func TestRefactor_ReapplyConfigOption_NonStandardWireID(t *testing.T) {
 // follows, and the value the next turn inherits from context_state, both come
 // out of this path. Before the fix, step 3's success was recorded only in the
 // dedup cache, so step 4 preserved the clobbered "default" and the session
-// silently fell back to Always Ask.
+// silently fell back to Always Ask. Step 1 is now ignored outright while the
+// session is being established, so the default cannot even flash.
 func TestRefactor_ResumeSequence_KeepsUserMode(t *testing.T) {
 	const userMode = "bypassPermissions"
 	agent := &model.Agent{ID: "test-resume-seq", Backend: "codebuddy", AcpCommand: "echo"}
@@ -3609,6 +3614,10 @@ func TestRefactor_ResumeSequence_KeepsUserMode(t *testing.T) {
 	}
 	ch := make(chan StreamEvent, 64)
 
+	// A session is being re-attached: everything the agent says about mode
+	// until we finish re-applying is its own persisted default.
+	conn.SetEstablishingSession(true)
+
 	// 1. Agent announces its own mode while resume is in flight.
 	mapACPSessionUpdate(staleAnnouncement, ch, context.Background(), conn, nil)
 
@@ -3634,6 +3643,9 @@ func TestRefactor_ResumeSequence_KeepsUserMode(t *testing.T) {
 	conn.reapplyConfigAfterResume(context.Background(), "acp-sid-resume-seq", cachedConfigSnapshot{mode: userMode})
 	conn.mu.Unlock()
 
+	// Establishment finished — the settled state is published from here.
+	conn.SetEstablishingSession(false)
+
 	// 4. Merge + emit.
 	conn.MergeResumedSessionState()
 	conn.EmitSessionStateEvents(ch)
@@ -3650,6 +3662,10 @@ func TestRefactor_ResumeSequence_KeepsUserMode(t *testing.T) {
 	require.NotEmpty(t, emitted, "a mode_update must be emitted on stream start")
 	assert.Equal(t, userMode, emitted[len(emitted)-1],
 		"the LAST mode_update is what the chip adopts; it must be the user's mode")
+	for _, id := range emitted {
+		assert.NotEqual(t, "default", id,
+			"the agent's pre-resume default must never reach the client, not even transiently")
+	}
 }
 
 func TestRefactor_RecoverViaResumeSession_AliveConn(t *testing.T) {

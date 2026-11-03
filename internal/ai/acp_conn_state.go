@@ -248,9 +248,12 @@ func (c *ACPConn) applyExtractedState(ext sessionStateExtracted) {
 		}
 	}
 
-	// Special: also update configState.CurrentID to match preserved mode
-	if ext.configState != nil && ext.modeCurrentID != "" {
-		ext.configState.CurrentID = ext.modeCurrentID
+	// The config option DESCRIPTIONS are agent-scoped and go into the registry;
+	// their CURRENT value is session-scoped and must not. This struct is shared
+	// by every session of the agent, so a current value stored here is emitted
+	// to other sessions as if it were theirs (see SessionConfigState).
+	if ext.configState != nil {
+		ext.configState.CurrentID = ""
 	}
 
 	// Remember the config-option ids the agent advertised for each category so
@@ -327,6 +330,38 @@ func (c *ACPConn) resolveWireConfigIDLocked(category, fallback string) string {
 		return id
 	}
 	return fallback
+}
+
+// SessionConfigState returns the agent's config-option DESCRIPTIONS with the
+// CURRENT value resolved from THIS session.
+//
+// The registry's ConfigOptionState is agent-scoped: it knows which options
+// exist (ids, names, values, wire ids) but a "current" value is per session.
+// Emitting the registry value as `config_update.currentValueId` is what made a
+// mode picked in session B appear in session A's chip — and because
+// config_update is not persisted (unlike mode_update), the wrong value looked
+// transient: switching away and back reloaded the real one from the DB.
+//
+// Returns nil when the agent never advertised any config option.
+func (c *ACPConn) SessionConfigState() *ConfigOptionState {
+	base := GetAgentCapabilityRegistry().GetConfigState(c.AgentID())
+	if base == nil {
+		return nil
+	}
+	out := *base // shallow copy; Options is only read below
+	out.CurrentID = ""
+	// A ConfigOptionState carries a single current value, and agents on this
+	// path advertise a single option (mode). Resolve it from that option's own
+	// category so a future multi-option state cannot silently pick the wrong
+	// session value.
+	if len(base.Options) > 0 {
+		category := base.Options[0].Category
+		if category == "" {
+			category = base.Options[0].ID
+		}
+		out.CurrentID = c.GetCurrentSelection(category)
+	}
+	return &out
 }
 
 // EmitSessionStateEvents emits mode_update, thinking_effort_update, and model_list_update
