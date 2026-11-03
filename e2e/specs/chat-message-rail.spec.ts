@@ -88,12 +88,39 @@ test.describe('chat message rail', () => {
     )
 
     // Real user gesture: a programmatic scrollTop is undone by the follow pin.
+    //
+    // The distance cannot be a fixed number of wheel steps: this session is
+    // shared with every other spec on the server, so how far the pane has to
+    // travel is not knowable here — a run that wheeled 4 × -400 stopped 26px
+    // short of the top. Wheel until the pane actually gets there, one genuine
+    // gesture per attempt (never a programmatic scrollTop, which is exactly
+    // what the follow pin is designed to undo), and only stop once both facts
+    // this test is about hold — the rail's mark is updated on a rAF tick, so
+    // sampling it in the same breath as the last wheel can catch it trailing.
     const box = (await page.locator('.chat-messages').boundingBox())!
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-    for (let i = 0; i < 4; i++) {
-      await page.mouse.wheel(0, -400)
-      await page.waitForTimeout(200)
-    }
+
+    await expect
+      .poll(
+        async () => {
+          const before = await railState()
+          if (before.scrollTop > 0) {
+            // One gesture covering the whole remaining distance, so this also
+            // converges on a conversation far taller than the viewport.
+            await page.mouse.wheel(0, -Math.max(before.scrollTop, 400))
+            return false
+          }
+          await page.evaluate(
+            () => new Promise<void>((resolve) => {
+              requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+            }),
+          )
+          const after = await railState()
+          return after.scrollTop === 0 && after.active === 0
+        },
+        { timeout: 20000, intervals: [200, 300, 500] },
+      )
+      .toBe(true)
 
     const atTop = await railState()
     expect(atTop.scrollTop, 'precondition: scrolled to the top').toBe(0)

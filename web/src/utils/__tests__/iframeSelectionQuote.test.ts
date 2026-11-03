@@ -130,7 +130,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
       language: '',
       startLine: 0,
       endLine: 0,
-    }, null)
+    }, null, null)
     expect(filePath).toHaveBeenCalled()
     dispose()
   })
@@ -167,7 +167,25 @@ describe('attachIframeSelectionQuoteBridge', () => {
     doc.fire('selectionchange')
     vi.advanceTimersByTime(150)
 
-    expect(show).toHaveBeenCalledWith(expect.objectContaining({ text: 'GET /pets' }), null)
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ text: 'GET /pets' }), null, null)
+    dispose()
+  })
+
+  it('passes the frame element to show so the bar can tell its surface from unrelated scrolls', () => {
+    const frame = document.createElement('iframe')
+    const doc = new FakeDoc()
+    const show = vi.fn()
+    const dispose = attachIframeSelectionQuoteBridge({
+      win: { getSelection: () => new FakeSelection('selected text'), document: doc, frameElement: frame },
+      filePath: () => '/specs/api.yaml',
+      show,
+      hide: vi.fn(),
+    })
+    doc.fire('selectionchange')
+    vi.advanceTimersByTime(150)
+
+    expect(show).toHaveBeenCalledTimes(1)
+    expect(show.mock.calls[0][2]).toBe(frame)
     dispose()
   })
 

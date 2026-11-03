@@ -30,14 +30,21 @@ test.describe('Meeting tab', () => {
   test('create is its own page, with the name first and the picture as cards', async ({ page }) => {
     await page.locator('[data-action="meeting-create"]').click()
 
+    // The stage is kept mounted behind every other view (`v-show`, so its chat
+    // lines and control requests survive a trip to the list), and it renders
+    // the SAME picture and device grids. An unscoped `[data-source="__off__"]`
+    // therefore matches two elements — the hidden stage's and this form's — and
+    // fails strict mode. Scope every grid query to the view on screen.
+    const form = page.locator('.meeting-panel')
+
     await expect(page.locator('[data-role="meeting-title"]')).toBeVisible()
     // Meetings have no type: the picture is a grid of frames with "share
     // nothing" as one of them, and each device axis is its own row of cards
     // (the off state is a card, not a checkbox).
     await expect(page.locator('[data-type="voice"]')).toHaveCount(0)
-    await expect(page.locator('[data-source="__off__"]')).toBeVisible()
-    const mic = page.locator('[data-role="device-choice"][data-kind="audio"] [data-device="default"]')
-    const micOff = page.locator('[data-role="device-choice"][data-kind="audio"] [data-device="__off__"]')
+    await expect(form.locator('[data-source="__off__"]')).toBeVisible()
+    const mic = form.locator('[data-role="device-choice"][data-kind="audio"] [data-device="default"]')
+    const micOff = form.locator('[data-role="device-choice"][data-kind="audio"] [data-device="__off__"]')
 
     // A picture source is pre-selected (a screen when one can be enumerated),
     // so the only thing missing is the required nickname.
@@ -54,7 +61,7 @@ test.describe('Meeting tab', () => {
 
     // No picture is a normal meeting, not an invalid one: the button stays
     // usable and the microphone choice survives.
-    await page.locator('[data-source="__off__"]').click()
+    await form.locator('[data-source="__off__"]').click()
     await expect(start).toBeEnabled()
     await expect(mic).not.toHaveClass(/device-choice__card--on/)
 
@@ -63,7 +70,7 @@ test.describe('Meeting tab', () => {
     await page.locator('[data-action="meeting-create-back"]').click()
     await page.locator('[data-action="meeting-create"]').click()
     await expect(
-      page.locator('[data-role="device-choice"][data-kind="audio"] [data-device="default"]'),
+      form.locator('[data-role="device-choice"][data-kind="audio"] [data-device="default"]'),
     ).toHaveClass(/device-choice__card--on/)
   })
 
@@ -100,13 +107,15 @@ test.describe('Meeting tab', () => {
     // Nothing narrates the picture: the card grids show what is being sent.
     // The camera grid is always on screen — 「不共享摄像头」 is an answer even on a
     // machine with no camera — and the only line under it is that reason.
-    const cameraGrid = page.locator('[data-role="device-choice"][data-kind="video"]')
+    // Scoped to the form: the hidden stage renders the same grid.
+    const form = page.locator('.meeting-panel')
+    const cameraGrid = form.locator('[data-role="device-choice"][data-kind="video"]')
     await expect(cameraGrid).toBeVisible()
     await expect(cameraGrid.locator('[data-device="__off__"]')).toBeVisible()
 
     // "Share no screen" is a normal state, not a warning: the meeting still starts.
     await page.locator('[data-role="meeting-nick"]').fill('E2E 用户')
-    await page.locator('[data-source="__off__"]').click()
+    await form.locator('[data-source="__off__"]').click()
     await expect(page.locator('[data-action="meeting-start"]')).toBeEnabled()
   })
 
@@ -127,12 +136,18 @@ test.describe('Meeting tab', () => {
  * Swipe inward from a screen edge, the way the phone shell delivers the back
  * gesture.
  *
- * Dispatched as real `TouchEvent`s on the panel rather than with
- * `page.touchscreen` (the desktop projects have no touch device): the app's
- * listener is on `document` and only reads coordinates, so a synthetic event is
- * the same input it sees on a phone. This exercises the whole chain — gesture →
+ * Dispatched on the panel rather than with `page.touchscreen` (the desktop
+ * projects have no touch device). This exercises the whole chain — gesture →
  * `clawbench-back-press` → back handler → view change — which no unit test can
  * cover, because each link is mocked there.
+ *
+ * The events are plain `Event`s carrying `touches`/`changedTouches`, NOT
+ * `TouchEvent`s: the `Touch` constructor is Chromium-only. Firefox has no
+ * `Touch` at all ("Touch is not defined") and WebKit exposes the interface but
+ * refuses to construct it ("Illegal constructor") — touches can only be created
+ * by the browser there. The app's listener only reads
+ * `touches[0]`/`changedTouches[0]` coordinates, so this is the same input it
+ * sees from a real finger, in every engine.
  */
 async function edgeSwipe(page: Page, from: 'left' | 'right', target: string): Promise<void> {
   await page.evaluate(
@@ -143,19 +158,16 @@ async function edgeSwipe(page: Page, from: 'left' | 'right', target: string): Pr
       const y = Math.round(window.innerHeight / 2)
       const startX = from === 'left' ? 4 : width - 4
       const endX = from === 'left' ? 180 : width - 180
-      const touch = (x: number) =>
-        new Touch({ identifier: 1, target: el, clientX: x, clientY: y })
+      const point = (x: number) => ({ identifier: 1, target: el, clientX: x, clientY: y })
       const fire = (type: string, x: number, live: boolean) => {
-        const t = touch(x)
-        el.dispatchEvent(
-          new TouchEvent(type, {
-            bubbles: true,
-            cancelable: true,
-            touches: live ? [t] : [],
-            targetTouches: live ? [t] : [],
-            changedTouches: [t],
-          }),
-        )
+        const ev = new Event(type, { bubbles: true, cancelable: true })
+        const list = [point(x)]
+        Object.defineProperties(ev, {
+          touches: { value: live ? list : [] },
+          targetTouches: { value: live ? list : [] },
+          changedTouches: { value: list },
+        })
+        el.dispatchEvent(ev)
       }
       fire('touchstart', startX, true)
       fire('touchend', endX, false)
@@ -229,6 +241,14 @@ test.describe('Meeting flow', () => {
     // "the first row" ambiguous for the next run.
     const title = `E2E 语音会议 ${Date.now()}`
     await page.goto('/')
+    // The meeting always records its notes channel, and `liveNotes` builds it
+    // with `new MediaRecorder(...)`. Playwright's WebKit has no MediaRecorder at
+    // all (WebKitGTK/WPE do not ship it), so `share.start()` throws and the room
+    // never comes up — a capability of the ENGINE, not a product regression.
+    // Checked by capability rather than by browser name so the test starts
+    // running again the day the engine implements it.
+    const hasMediaRecorder = await page.evaluate(() => typeof MediaRecorder !== 'undefined')
+    test.skip(!hasMediaRecorder, 'this engine has no MediaRecorder, so the notes recorder cannot start')
     await page.locator('.dock-btn[data-tab="live"]').filter({ visible: true }).first().click()
 
     await page.locator('[data-action="meeting-create"]').click()
@@ -237,9 +257,11 @@ test.describe('Meeting flow', () => {
     await page.locator('[data-role="meeting-nick"]').fill('E2E 用户')
     // No meeting type to pick: just turn the picture off (headless Chromium has
     // no screen to capture) and mute the microphone, so the room comes up with
-    // no media at all.
-    await page.locator('[data-source="__off__"]').click()
-    await page.locator('[data-role="device-choice"][data-kind="audio"] [data-device="__off__"]').click()
+    // no media at all. Scoped to the form: the (hidden) stage renders the same
+    // grids.
+    const form = page.locator('.meeting-panel')
+    await form.locator('[data-source="__off__"]').click()
+    await form.locator('[data-role="device-choice"][data-kind="audio"] [data-device="__off__"]').click()
     await page.locator('[data-action="meeting-start"]').click()
 
     // The stage replaces the create page once the room is up.
