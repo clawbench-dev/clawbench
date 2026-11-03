@@ -119,6 +119,17 @@ interface ZoomState {
      * on the same layout.
      */
     restingWidth?: string
+    /**
+     * The thumbnail `src` the activation swapped for the full-size image.
+     *
+     * Zooming is scaled by layout size, so a thumbnail `src` re-rasterises a
+     * 480px-wide picture at 4x — blurry, which defeats the feature for raster
+     * content (vector art is unaffected). Activation therefore upgrades `src`
+     * to `data-full-src` and exit restores the thumbnail: the resting layout
+     * must keep sizing from the thumbnail's intrinsic width, or a wide picture
+     * would grow to the whole column after its first zoom.
+     */
+    restingSrc?: string
 }
 
 /** Only one figure can be zoomed at a time. */
@@ -163,6 +174,39 @@ const CONTENT_MEDIA_SELECTOR =
  * that is not painted cannot be zoomed, whatever surface hid it.
  */
 const HIDDEN_MEDIA_CLASS = 'local-media-hidden'
+
+/** Attribute carrying the full-size URL a thumbnail `src` upgrades to while zoomed. */
+const FULL_SRC_ATTR = 'data-full-src'
+
+/**
+ * Swap a thumbnail `src` for the full-size image, returning the resting src.
+ *
+ * Zooming writes layout WIDTH/HEIGHT (see `scaledSize`), which re-rasterises
+ * the element — that keeps vector art sharp but only resamples a raster
+ * thumbnail, so an upgraded diagram looks exactly as blurry as before. The
+ * pipelines already store the full-size URL on the img for the lightbox; the
+ * activation reuses it, and the displayed pixels never flash: an `<img>` keeps
+ * painting the previous image until the new one decodes.
+ *
+ * Layout is unaffected by the swap — the contain-fit maths read the artwork's
+ * RATIO, identical between thumbnail and original — and a failed upgrade
+ * (source deleted mid-session) falls back to the thumbnail. Restoring that src
+ * also resolves the missing-media placeholder the shared error listener may
+ * have mounted, through its own reversible `load` path.
+ */
+function upgradeToFullSize(img: HTMLImageElement): string | undefined {
+    const full = img.getAttribute(FULL_SRC_ATTR)
+    const resting = img.getAttribute('src') ?? ''
+    if (!full || full === resting) return undefined
+    img.addEventListener('error', () => {
+        // Only undo our own swap: after a deactivate the src is the thumbnail
+        // again, and a late error for the cancelled full-size request (or any
+        // later thumbnail error) must be a no-op.
+        if (img.getAttribute('src') === full) img.src = resting
+    }, { once: true })
+    img.src = full
+    return resting
+}
 
 /** Resolve the zoomable media of a figure, or null. */
 export function zoomableMedia(figure: Element | null): HTMLElement | null {
@@ -231,7 +275,13 @@ function releaseInteraction(): void {
  */
 function deactivate(): void {
     if (!active) return
-    const { figure, media, savedSvgWidth, savedMaxWidth, restingWidth } = active
+    const { figure, media, savedSvgWidth, savedMaxWidth, restingWidth, restingSrc } = active
+    // The thumbnail back first: it is what the resting CSS sizes the element
+    // from (intrinsic width), and a full-size src left behind would let a wide
+    // picture grow to the whole column after its first zoom.
+    if (restingSrc !== undefined && media instanceof HTMLImageElement && media.getAttribute('src') !== restingSrc) {
+        media.src = restingSrc
+    }
     media.style.transform = ''
     media.style.transformOrigin = ''
     media.style.width = ''
@@ -424,6 +474,8 @@ function activate(figure: HTMLElement): ZoomState | null {
         savedMaxWidth: media.style.maxWidth,
         // Captured now, while the resting layout is still intact.
         restingWidth: media.style.width,
+        // Raster content: load the original while the reader is actually zooming.
+        restingSrc: media instanceof HTMLImageElement ? upgradeToFullSize(media) : undefined,
     }
     figure.classList.add(ZOOM_ACTIVE_CLASS)
     figure.classList.add(ZOOM_INTERACTIVE_CLASS)

@@ -1127,3 +1127,86 @@ describe('inlineZoom — toolbar focus', () => {
     expect(isZoomActive()).toBe(true)
   })
 })
+
+describe('inlineZoom — full-size upgrade', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    withPointerDevice(true)
+    installInlineZoom()
+  })
+  afterEach(() => { uninstallInlineZoom(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  /** A raster figure the pipelines rendered as a thumbnail (src + data-full-src). */
+  function mountThumbFigure(): { figure: HTMLElement; img: HTMLImageElement } {
+    const figure = mountFigure('img')
+    const img = figure.querySelector('img') as HTMLImageElement
+    img.setAttribute('src', '/api/fs/thumb?target=docs%2Fa.png&w=200')
+    img.setAttribute('data-full-src', '/api/fs/raw/?target=docs%2Fa.png')
+    stubIntrinsic(figure, 400, 300)
+    stubRect(figure, 0, 0, 300, 400)
+    return { figure, img }
+  }
+
+  it('loads the original on activation and restores the thumbnail on reset', () => {
+    // Zoom is scaled by layout size: with the thumbnail still in `src`, the
+    // browser resamples a 200px-wide JPEG at 4x and the zoomed picture is
+    // exactly as blurry as before — the upgrade is the whole point.
+    const { figure, img } = mountThumbFigure()
+
+    click(img)
+
+    expect(isZoomActive()).toBe(true)
+    expect(img.getAttribute('src')).toBe('/api/fs/raw/?target=docs%2Fa.png')
+
+    resetActiveZoom()
+
+    // Restoring is not cosmetic: the resting layout sizes from the src's
+    // intrinsic width, and leaving the original in place would let a wide
+    // picture grow to the whole column after its first zoom.
+    expect(img.getAttribute('src')).toBe('/api/fs/thumb?target=docs%2Fa.png&w=200')
+    expect(figure.classList.contains('is-zooming')).toBe(false)
+  })
+
+  it('keeps the original while the zoom is merely held', () => {
+    // Enter, actually ZOOM (an untouched figure is deactivated by an outside
+    // click — there is nothing to hold at fit scale), then leave.
+    const { img } = mountThumbFigure()
+
+    click(img)
+    wheel(img, -120)
+    click(document.body) // release the wheel, KEEP the zoom
+
+    expect(isZoomActive()).toBe(true)
+    expect(img.getAttribute('src')).toBe('/api/fs/raw/?target=docs%2Fa.png')
+
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(img.getAttribute('src')).toBe('/api/fs/thumb?target=docs%2Fa.png&w=200')
+  })
+
+  it('leaves the src alone when there is no full-size variant', () => {
+    // svg / gif / already-full images carry no data-full-src; the swap must be
+    // a no-op there, not a re-fetch of the same URL.
+    const figure = mountFigure('img')
+    const img = figure.querySelector('img') as HTMLImageElement
+    stubIntrinsic(figure, 400, 300)
+    stubRect(figure, 0, 0, 300, 400)
+
+    click(img)
+
+    expect(img.getAttribute('src')).toBe('a.png')
+  })
+
+  it('falls back to the thumbnail when the full-size load fails', () => {
+    const { img } = mountThumbFigure()
+
+    click(img)
+    expect(img.getAttribute('src')).toBe('/api/fs/raw/?target=docs%2Fa.png')
+
+    // The source disappeared mid-session. The shared missing-media listener
+    // may already have mounted its placeholder; setting the thumbnail back is
+    // what resolves it (its own load handler unmounts the card).
+    img.dispatchEvent(new Event('error'))
+
+    expect(img.getAttribute('src')).toBe('/api/fs/thumb?target=docs%2Fa.png&w=200')
+  })
+})
