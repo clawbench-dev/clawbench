@@ -109,7 +109,7 @@ test.describe('Upload name conflict', () => {
     const dialog = page.locator('.modal-dialog')
     await expect(dialog).toBeVisible({ timeout: 10000 })
 
-    // "Keep both" is the neutral footer action between cancel and overwrite.
+    // "Auto rename" is the neutral footer action between cancel and overwrite.
     await dialog.locator('.modal-footer .fbtn').nth(1).click()
 
     await expect.poll(() => existsInProject(NUMBERED), { timeout: 15000 }).toBe('file')

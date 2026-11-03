@@ -57,9 +57,9 @@ describe('UploadConflictDialog', () => {
     const answer = askUploadConflict([{ name: 'a.txt', relpath: '', path: 'a.txt' }])
     await flushPromises()
 
-    const keepBoth = wrapper.findAll('.modal-footer button')
-      .find(b => b.text() === zh.upload.conflict.keepBoth)
-    await keepBoth!.trigger('click')
+    const autoRename = wrapper.findAll('.modal-footer button')
+      .find(b => b.text() === zh.upload.conflict.autoRename)
+    await autoRename!.trigger('click')
 
     await expect(answer).resolves.toBe('rename')
   })

@@ -11,7 +11,7 @@ import { ref } from 'vue'
  * into the file manager or the terminal they are usually copying a build
  * artifact over an older one, and a silently renamed copy is a confusing
  * outcome. So the batch is preflighted against the target directory and the
- * user picks: overwrite, keep both (the old auto-rename), or cancel.
+ * user picks: overwrite, auto-rename, or cancel.
  *
  * ## Why a singleton
  *

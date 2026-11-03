@@ -5,18 +5,20 @@
     size="narrow"
     @close="resolveUploadConflict('cancel')"
   >
-    <p class="ucd-lead">{{ t('upload.conflict.message', { count: state.conflicts.length }) }}</p>
-    <ul class="ucd-list">
-      <li v-for="item in shown" :key="item.path" class="ucd-item" :title="item.path">{{ item.path }}</li>
-    </ul>
-    <p v-if="hiddenCount > 0" class="ucd-more">
-      {{ t('upload.conflict.more', { count: hiddenCount }) }}
-    </p>
-    <p class="ucd-hint">{{ t('upload.conflict.hint') }}</p>
+    <div class="ucd-body">
+      <p class="ucd-lead">{{ t('upload.conflict.message', { count: state.conflicts.length }) }}</p>
+      <ul class="ucd-list">
+        <li v-for="item in shown" :key="item.path" class="ucd-item" :title="item.path">{{ item.path }}</li>
+      </ul>
+      <p v-if="hiddenCount > 0" class="ucd-more">
+        {{ t('upload.conflict.more', { count: hiddenCount }) }}
+      </p>
+      <p class="ucd-hint">{{ t('upload.conflict.hint') }}</p>
+    </div>
 
     <template #footer>
       <button class="fbtn" @click="resolveUploadConflict('cancel')">{{ t('common.cancel') }}</button>
-      <button class="fbtn" @click="resolveUploadConflict('rename')">{{ t('upload.conflict.keepBoth') }}</button>
+      <button class="fbtn" @click="resolveUploadConflict('rename')">{{ t('upload.conflict.autoRename') }}</button>
       <button class="fbtn fbtn-danger" @click="resolveUploadConflict('overwrite')">
         {{ t('upload.conflict.overwrite') }}
       </button>
@@ -51,8 +53,19 @@ const hiddenCount = computed(() => Math.max(0, state.value.conflicts.length - MA
 </script>
 
 <style scoped>
+/* The shared .modal-body is padding-free by design (modal-card.css) — it only
+   provides the scroll container, so every dialog must inset its own content or
+   it renders flush against the card edge. Matches the convention used by the
+   other dialogs (SessionTagDialog / ShareLinkDialog). */
+.ucd-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-7) calc(14 * var(--dp));
+}
+
 .ucd-lead {
-  margin: 0 0 var(--space-5);
+  margin: 0;
   font-size: var(--font-size-md);
   color: var(--text-primary);
   line-height: var(--line-height-normal);
@@ -82,13 +95,13 @@ const hiddenCount = computed(() => Math.max(0, state.value.conflicts.length - MA
 }
 
 .ucd-more {
-  margin: var(--space-3) 0 0;
+  margin: 0;
   font-size: var(--font-size-sm);
   color: var(--text-muted);
 }
 
 .ucd-hint {
-  margin: var(--space-5) 0 0;
+  margin: 0;
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   line-height: var(--line-height-normal);
