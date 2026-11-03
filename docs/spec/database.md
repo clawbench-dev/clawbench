@@ -826,6 +826,18 @@ UNIQUE：`(type, key_id)`
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
 | updated_at | DATETIME | | CURRENT_TIMESTAMP | 更新时间 |
 
+### live_sfu_config（会议中继配置）
+
+单行表（`id = 1`）：会议中继的端点与凭据。**属于这台服务器，不属于某场会议**——所有启用中继的会议共用一份；房间在创建时把当时的配置快照进内存，改这里不影响进行中的会议（否则同一场会的人会连到两个中继）。`api_secret` 只写不读回（接口只返回 `hasSecret`）。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY | 1 | 恒为 1 |
+| url | TEXT | NOT NULL | `''` | 中继地址（`wss://…` 或回环上的 `ws://…`） |
+| api_key | TEXT | NOT NULL | `''` | LiveKit API Key |
+| api_secret | TEXT | NOT NULL | `''` | LiveKit API Secret，永不回显 |
+| updated_at | DATETIME | | CURRENT_TIMESTAMP | 更新时间 |
+
 ### schema_migrations（数据转换迁移台账）
 
 按名字记账，保证数据转换类迁移只跑一次。**名字一旦发布不得再改**——改了等于让所有已升级的库重跑一次全表扫描。
