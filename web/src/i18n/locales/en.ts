@@ -2434,6 +2434,14 @@ export default {
     downloadCancelled: 'Download cancelled',
     dirDownloadUnsupported: 'Tree download is not supported in this browser. Use Chrome/Edge with HTTPS.',
     dirDownloadFailed: 'Failed to fetch file list',
+    conflict: {
+      title: 'Files with these names already exist',
+      message: '{count} file(s) already exist in the target folder. Choose how to handle them:',
+      more: '{count} more file(s)…',
+      hint: '"Overwrite" replaces the existing files; "Keep both" saves a renamed copy and leaves the originals untouched.',
+      keepBoth: 'Keep both',
+      overwrite: 'Overwrite',
+    },
   },
   autoSpeech: {
     generateFailed: 'Speech generation failed (HTTP {status})',

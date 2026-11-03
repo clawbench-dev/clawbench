@@ -7120,7 +7120,13 @@ paths:
     post:
       tags: [Upload]
       summary: 上传文件
-      description: multipart 上传；除 `file` 外还支持 `dir`（目标目录）与 `relpath`（相对路径）。
+      description: |
+        multipart 上传；除 `file` 外还支持：
+
+        - `dir`（目标目录，缺省落 `.clawbench/uploads/`）；
+        - `relpath`（相对子路径，用于保留文件夹结构）；
+        - `onconflict`：`overwrite` 时覆盖目标位置的同名文件；缺省（或其它值）
+          自动追加数字后缀重命名。
       operationId: uploadFile
       requestBody:
         required: true
@@ -7132,9 +7138,69 @@ paths:
                 file:
                   type: string
                   format: binary
+                dir:
+                  type: string
+                relpath:
+                  type: string
+                onconflict:
+                  type: string
+                  enum: [rename, overwrite]
       responses:
         "200":
           description: 上传结果
+
+  /api/upload/check:
+    post:
+      tags: [Upload]
+      summary: 上传重名预检
+      description: |
+        上传前检查这批文件在目标目录中是否已存在同名文件（按上传端同样的规则
+        规范化：扩展名小写、空格转下划线），供前端弹出「覆盖 / 保留两者」提示。
+        只读：不写入文件，也不会为不存在的 `relpath` 创建目录。
+      operationId: uploadCheck
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dir:
+                  type: string
+                  description: 目标目录（相对项目根或绝对路径）
+                files:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: 原始文件名
+                      relpath:
+                        type: string
+                        description: 相对子路径（可空）
+      responses:
+        "200":
+          description: 冲突列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  conflicts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        relpath:
+                          type: string
+                        path:
+                          type: string
+                          description: 相对目标目录的落地路径
 
   /share-target:
     post:

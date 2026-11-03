@@ -109,22 +109,10 @@ func UploadFile(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 	}
 
 	// Generate filename: use original name, append sequential number if exists
-	baseName := filepath.Base(header.Filename)
-	ext := strings.ToLower(filepath.Ext(baseName))
-	nameWithoutExt := strings.TrimSuffix(baseName, ext)
-	// Replace spaces with underscores for safety
-	nameWithoutExt = strings.ReplaceAll(nameWithoutExt, " ", "_")
-	filename := nameWithoutExt + ext
-	dstPath := filepath.Join(targetDir, filename)
-	if _, err := os.Stat(dstPath); err == nil {
-		for i := 1; i <= 9999; i++ {
-			filename = fmt.Sprintf("%s_%d%s", nameWithoutExt, i, ext)
-			dstPath = filepath.Join(targetDir, filename)
-			if _, err := os.Stat(dstPath); err != nil {
-				break
-			}
-		}
-	}
+	// unless the client explicitly asked to overwrite (the "重名" dialog's
+	// direct-overwrite button sends onconflict=overwrite).
+	dstPath := resolveUploadDestination(targetDir, header.Filename, r.FormValue("onconflict") == uploadConflictOverwrite)
+	filename := filepath.Base(dstPath)
 
 	// Validate the final destination path is under a root path
 	// (defense-in-depth: resolveAbsPath already validated dir, but filepath.Join
@@ -176,27 +164,156 @@ func UploadFile(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 	})
 }
 
+// uploadConflictOverwrite is the `onconflict` form value that makes an upload
+// replace an existing file instead of being auto-renamed. Every other value
+// (including the empty default) keeps the historical rename behavior, so old
+// clients are unaffected.
+const uploadConflictOverwrite = "overwrite"
+
+// uploadNameParts splits an uploaded file's base name into the stem used on
+// disk and its lowercased extension. Spaces in the stem become underscores
+// because the resulting name is also a URL path segment.
+//
+// Shared by the upload itself and the conflict preflight (`UploadCheck`) so the
+// two can never disagree about what "the same file name" means.
+func uploadNameParts(baseName string) (stem, ext string) {
+	ext = strings.ToLower(filepath.Ext(baseName))
+	stem = strings.TrimSuffix(baseName, ext)
+	stem = strings.ReplaceAll(stem, " ", "_")
+	return stem, ext
+}
+
+// resolveUploadDestination returns the path an uploaded file will be written to
+// inside dir. Unless overwrite is set, an existing name is disambiguated with a
+// numeric suffix, which is what makes a dropped file never clobber its namesake
+// by accident.
+func resolveUploadDestination(dir, baseName string, overwrite bool) string {
+	stem, ext := uploadNameParts(baseName)
+	dstPath := filepath.Join(dir, stem+ext)
+	if overwrite {
+		return dstPath
+	}
+	if _, err := os.Stat(dstPath); err != nil {
+		return dstPath
+	}
+	for i := 1; i <= 9999; i++ {
+		dstPath = filepath.Join(dir, fmt.Sprintf("%s_%d%s", stem, i, ext))
+		if _, err := os.Stat(dstPath); err != nil {
+			break
+		}
+	}
+	return dstPath
+}
+
+// maxUploadCheckFiles bounds the preflight request: the body is only file
+// names, but a single directory drop can legitimately hold thousands of files
+// and the endpoint stats each one.
+const maxUploadCheckFiles = 5000
+
+// UploadCheck handles POST /api/upload/check.
+//
+// The client calls it BEFORE uploading a batch into a directory so it can ask
+// the user what to do about name collisions ("覆盖" / "保留两者") instead of
+// discovering the conflict after the bytes are already on disk. It reports the
+// conflicts only — nothing is created, and no directory is auto-created for a
+// relpath that does not exist yet (that would be a side effect of a read-only
+// question).
+func UploadCheck(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	// Same project scoping as the upload it preflights.
+	if _, ok := requireProject(w, r); !ok {
+		return
+	}
+
+	var req struct {
+		Dir   string `json:"dir"`
+		Files []struct {
+			Name    string `json:"name"`
+			RelPath string `json:"relpath"`
+		} `json:"files"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.Dir == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "MissingPath")
+		return
+	}
+	if len(req.Files) > maxUploadCheckFiles {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "TooManyPaths")
+		return
+	}
+
+	dirAbs, ok := resolveAbsPath(w, r, req.Dir)
+	if !ok {
+		return
+	}
+
+	conflicts := make([]map[string]string, 0)
+	for _, f := range req.Files {
+		subDir, ok := resolveRelDir(dirAbs, f.RelPath)
+		if !ok {
+			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+			return
+		}
+		stem, ext := uploadNameParts(filepath.Base(f.Name))
+		target := filepath.Join(subDir, stem+ext)
+		if !isPathUnderAnyRoot(target) {
+			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+			return
+		}
+		if _, err := os.Stat(target); err != nil {
+			continue
+		}
+		// Path is what the user would see in the target folder: relpath plus
+		// the normalized name, with forward slashes on every platform.
+		rel, err := filepath.Rel(dirAbs, target)
+		if err != nil {
+			rel = stem + ext
+		}
+		conflicts = append(conflicts, map[string]string{
+			"name":    f.Name,
+			"relpath": f.RelPath,
+			"path":    filepath.ToSlash(rel),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "conflicts": conflicts})
+}
+
+// resolveRelDir resolves an optional upload "relpath" against dirAbs without
+// touching the filesystem. The second result is false when the path is
+// absolute or climbs out of dirAbs.
+func resolveRelDir(dirAbs, relRaw string) (string, bool) {
+	if relRaw == "" {
+		return dirAbs, true
+	}
+	rel := strings.Trim(filepath.ToSlash(filepath.Clean(relRaw)), "/")
+	if rel == "" || rel == "." {
+		return dirAbs, true
+	}
+	// Reject absolute paths and parent-directory traversal.
+	if filepath.IsAbs(relRaw) || containsParentTraversal(rel) {
+		return "", false
+	}
+	subAbs := filepath.Join(dirAbs, filepath.FromSlash(rel))
+	// Defense-in-depth: the joined path must stay under the target dir.
+	if !isPathUnderBase(subAbs, dirAbs) {
+		return "", false
+	}
+	return subAbs, true
+}
+
 // resolveRelPathDir applies the optional "relpath" form value to targetDir,
 // creating the nested directory structure it describes. Returns the new target
 // directory, or the original targetDir when relpath is absent/empty. On a
 // validation or filesystem error it writes the response and returns "".
 func resolveRelPathDir(w http.ResponseWriter, r *http.Request, targetDir string) string {
-	relRaw := r.FormValue("relpath")
-	if relRaw == "" {
-		return targetDir
-	}
-	rel := strings.Trim(filepath.ToSlash(filepath.Clean(relRaw)), "/")
-	if rel == "" || rel == "." {
-		return targetDir
-	}
-	// Reject absolute paths and parent-directory traversal.
-	if filepath.IsAbs(relRaw) || containsParentTraversal(rel) {
-		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-		return ""
-	}
-	subAbs := filepath.Join(targetDir, filepath.FromSlash(rel))
-	// Defense-in-depth: the joined path must stay under the target dir.
-	if !isPathUnderBase(subAbs, targetDir) {
+	subAbs, ok := resolveRelDir(targetDir, r.FormValue("relpath"))
+	if !ok {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return ""
 	}

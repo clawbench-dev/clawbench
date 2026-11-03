@@ -2430,6 +2430,14 @@ export default {
     downloadCancelled: '已取消下载',
     dirDownloadUnsupported: '当前浏览器不支持按文件树下载，请使用 Chrome/Edge 并开启 HTTPS 访问',
     dirDownloadFailed: '获取文件列表失败',
+    conflict: {
+      title: '目标位置已有同名文件',
+      message: '目标文件夹中已存在 {count} 个同名文件，请选择处理方式：',
+      more: '另有 {count} 个同名文件…',
+      hint: '「覆盖」会替换目标位置的同名文件；「保留两者」会自动改名保存，不删除原文件。',
+      keepBoth: '保留两者',
+      overwrite: '覆盖',
+    },
   },
   autoSpeech: {
     generateFailed: '语音生成失败 (HTTP {status})',

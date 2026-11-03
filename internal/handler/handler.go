@@ -631,6 +631,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/git/cloc", ServeGitCloc)
 	register("/api/ai/permission/respond", ServePermissionRespond)
 	register("/api/upload/file", UploadFile)
+	register("/api/upload/check", UploadCheck)
 	register("/api/upload/recent", UploadRecent)
 	register("/api/share-in/recent", ShareInRecent)
 	// Web Share Target for the installed PWA: the browser POSTs a multipart

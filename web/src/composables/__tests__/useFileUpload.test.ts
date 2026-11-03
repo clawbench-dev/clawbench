@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { useChatContext } from '@/composables/useChatContext'
+import { useUploadConflict, _resetUploadConflict } from '@/composables/useUploadConflict'
 
 // Mock dependencies
 const mockToastShow = vi.fn()
@@ -93,21 +94,69 @@ function makeDirFile(name: string, relPath: string, size = 100) {
   return { name, size, type: 'text/plain', webkitRelativePath: relPath } as unknown as File
 }
 
+// ── Fake FileSystemEntry helpers (folder drops) ──
+function makeFileEntry(fullPath: string, content = 'x') {
+  const name = fullPath.split('/').pop() || 'file'
+  return {
+    isFile: true,
+    isDirectory: false,
+    name,
+    fullPath,
+    file: (cb: (f: File) => void) => cb(new File([content], name, { type: 'text/plain' })),
+  }
+}
+
+function makeDirEntry(name: string, fullPath: string, children: any[]) {
+  let done = false
+  return {
+    isFile: false,
+    isDirectory: true,
+    name,
+    fullPath,
+    createReader: () => ({
+      readEntries: (cb: (e: any[]) => void) => {
+        if (done) { cb([]); return }
+        done = true
+        cb(children)
+      },
+    }),
+  }
+}
+
+function dropEventWith(entries: any[]) {
+  return {
+    dataTransfer: {
+      items: entries.map((e) => ({ webkitGetAsEntry: () => e })),
+      files: [] as any[],
+    },
+  }
+}
+
 describe('useFileUpload', () => {
   let teardownXHR: () => void
+  const originalFetch = globalThis.fetch
 
   beforeEach(() => {
     vi.clearAllMocks()
     xhrSendHandler = null
     teardownXHR = setupXHRMock()
+    // Directory uploads preflight name collisions against the server. The
+    // default stub answers "no conflicts" so the historical tests (which never
+    // cared about collisions) keep exercising the upload itself.
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, conflicts: [] }),
+    })) as unknown as typeof fetch
     // Clear global attachedFiles from useChatContext singleton
     useChatContext().clearAll()
     // Clear module-level pendingFiles singleton
     useFileUpload().clearPendingFiles()
+    _resetUploadConflict()
   })
 
   afterEach(() => {
     teardownXHR()
+    globalThis.fetch = originalFetch
   })
 
   describe('initial state', () => {
@@ -378,18 +427,22 @@ describe('useFileUpload', () => {
 
   describe('dir upload', () => {
     it('successful dir upload updates progress refs', async () => {
-      xhrSendHandler = (xhr) => respondSuccess(xhr, 'some/dir/file.txt')
+      // Hold the transfer open so the "during upload" state can be observed:
+      // the collision preflight makes the upload start asynchronously, and an
+      // auto-responding handler would finish before the assertion runs.
+      let pendingXhr: any = null
+      xhrSendHandler = (xhr) => { pendingXhr = xhr }
 
       const upload = useFileUpload()
       const promise = upload.handleFileDropToDir([makeFile('file.txt')], '/some/dir')
 
       // Dir upload should not add to pendingFiles
       expect(upload.pendingFiles.value).toHaveLength(0)
-      // dirUploading should be true during upload
-      expect(upload.dirUploading.value).toBe(true)
+      await vi.waitFor(() => expect(upload.dirUploading.value).toBe(true))
       expect(upload.dirUploadTotal.value).toBe(1)
       expect(upload.dirUploadDone.value).toBe(0)
 
+      respondSuccess(pendingXhr, 'some/dir/file.txt')
       await promise
 
       expect(upload.dirUploadDone.value).toBe(1)
@@ -1154,42 +1207,6 @@ describe('useFileUpload', () => {
   })
 
   describe('expanded folder drop (webkitGetAsEntry traversal)', () => {
-    // ── Fake FileSystemEntry helpers ──
-    function makeFileEntry(fullPath: string, content = 'x') {
-      const name = fullPath.split('/').pop() || 'file'
-      return {
-        isFile: true,
-        isDirectory: false,
-        name,
-        fullPath,
-        file: (cb: (f: File) => void) => cb(new File([content], name, { type: 'text/plain' })),
-      }
-    }
-    function makeDirEntry(name: string, fullPath: string, children: any[]) {
-      let done = false
-      return {
-        isFile: false,
-        isDirectory: true,
-        name,
-        fullPath,
-        createReader: () => ({
-          readEntries: (cb: (e: any[]) => void) => {
-            if (done) { cb([]); return }
-            done = true
-            cb(children)
-          },
-        }),
-      }
-    }
-    function dropEventWith(entries: any[]) {
-      return {
-        dataTransfer: {
-          items: entries.map((e) => ({ webkitGetAsEntry: () => e })),
-          files: [] as any[],
-        },
-      }
-    }
-
     it('uploads each folder file with its relPath', async () => {
       const captured: FormData[] = []
       xhrSendHandler = (xhr, formData) => {
@@ -1404,6 +1421,141 @@ describe('useFileUpload', () => {
       await upload.downloadDirAsTree('src')
       expect(upload.dirUploading.value).toBe(false)
       expect(upload.dirUploadDone.value).toBe(0)
+    })
+  })
+
+  describe('name collision preflight', () => {
+    function conflictFetch(conflicts: { name: string; relpath: string; path: string }[]) {
+      return vi.fn(async (url: unknown) => {
+        if (String(url).includes('/api/upload/check')) {
+          return { ok: true, json: async () => ({ ok: true, conflicts }) } as unknown as Response
+        }
+        return { ok: true, json: async () => ({ ok: true, conflicts: [] }) } as unknown as Response
+      })
+    }
+
+    it('asks before overwriting and sends onconflict=overwrite when confirmed', async () => {
+      globalThis.fetch = conflictFetch([{ name: 'a.txt', relpath: '', path: 'a.txt' }]) as unknown as typeof fetch
+      const captured: FormData[] = []
+      xhrSendHandler = (xhr, formData) => {
+        captured.push(formData)
+        respondSuccess(xhr, 'dir/a.txt')
+      }
+
+      const upload = useFileUpload()
+      const prompt = useUploadConflict()
+      const done = upload.handleFileDropToDir([makeFile('a.txt')], '/dir')
+
+      await vi.waitFor(() => expect(prompt.state.value.visible).toBe(true))
+      expect(prompt.state.value.conflicts.map(c => c.path)).toEqual(['a.txt'])
+      // Nothing may be uploaded while the question is open.
+      expect(captured).toHaveLength(0)
+
+      prompt.resolveUploadConflict('overwrite')
+      await done
+
+      expect(captured).toHaveLength(1)
+      expect(captured[0].get('onconflict')).toBe('overwrite')
+    })
+
+    it('keeps both (default rename) when the user chooses it', async () => {
+      globalThis.fetch = conflictFetch([{ name: 'a.txt', relpath: '', path: 'a.txt' }]) as unknown as typeof fetch
+      const captured: FormData[] = []
+      xhrSendHandler = (xhr, formData) => {
+        captured.push(formData)
+        respondSuccess(xhr, 'dir/a_1.txt')
+      }
+
+      const upload = useFileUpload()
+      const prompt = useUploadConflict()
+      const done = upload.handleFileDropToDir([makeFile('a.txt')], '/dir')
+
+      await vi.waitFor(() => expect(prompt.state.value.visible).toBe(true))
+      prompt.resolveUploadConflict('rename')
+      await done
+
+      expect(captured).toHaveLength(1)
+      // Absent field == server's historical auto-rename behaviour.
+      expect(captured[0].get('onconflict')).toBeNull()
+    })
+
+    it('uploads nothing when the user cancels the prompt', async () => {
+      globalThis.fetch = conflictFetch([{ name: 'a.txt', relpath: '', path: 'a.txt' }]) as unknown as typeof fetch
+      const captured: FormData[] = []
+      xhrSendHandler = (xhr, formData) => {
+        captured.push(formData)
+        respondSuccess(xhr, 'dir/a.txt')
+      }
+
+      const upload = useFileUpload()
+      const prompt = useUploadConflict()
+      upload.dirUploadDone.value = 0
+      const done = upload.handleFileDropToDir([makeFile('a.txt')], '/dir')
+
+      await vi.waitFor(() => expect(prompt.state.value.visible).toBe(true))
+      prompt.resolveUploadConflict('cancel')
+      await done
+
+      expect(captured).toHaveLength(0)
+      expect(upload.dirUploading.value).toBe(false)
+      expect(upload.dirUploadDone.value).toBe(0)
+    })
+
+    it('does not ask when the target has no conflicts', async () => {
+      const fetchMock = conflictFetch([])
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+      xhrSendHandler = (xhr) => respondSuccess(xhr, 'dir/a.txt')
+
+      const upload = useFileUpload()
+      const prompt = useUploadConflict()
+      await upload.handleFileDropToDir([makeFile('a.txt')], '/dir')
+
+      expect(fetchMock).toHaveBeenCalled()
+      expect(prompt.state.value.visible).toBe(false)
+    })
+
+    it('proceeds with the default rename when the preflight itself fails', async () => {
+      globalThis.fetch = vi.fn(async () => { throw new Error('network down') }) as unknown as typeof fetch
+      const captured: FormData[] = []
+      xhrSendHandler = (xhr, formData) => {
+        captured.push(formData)
+        respondSuccess(xhr, 'dir/a.txt')
+      }
+
+      const upload = useFileUpload()
+      const prompt = useUploadConflict()
+      await upload.handleFileDropToDir([makeFile('a.txt')], '/dir')
+
+      expect(prompt.state.value.visible).toBe(false)
+      expect(captured).toHaveLength(1)
+      expect(captured[0].get('onconflict')).toBeNull()
+    })
+
+    it('checks folder drops with their relative paths', async () => {
+      const fetchMock = conflictFetch([{ name: 'a.ts', relpath: 'proj/src', path: 'proj/src/a.ts' }])
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+      const captured: FormData[] = []
+      xhrSendHandler = (xhr, formData) => {
+        captured.push(formData)
+        respondSuccess(xhr, 'dir/proj/src/a.ts')
+      }
+
+      const root = makeDirEntry('proj', '/proj', [makeFileEntry('/proj/src/a.ts', 'A')])
+      const upload = useFileUpload()
+      const prompt = useUploadConflict()
+      const done = upload.handleFolderDropExpanded(dropEventWith([root]) as any, '/dir')
+
+      await vi.waitFor(() => expect(prompt.state.value.visible).toBe(true))
+      const checkCall = (fetchMock.mock.calls as any[]).find(c => String(c[0]).includes('/api/upload/check'))
+      expect(JSON.parse(checkCall![1].body)).toEqual({
+        dir: '/dir',
+        files: [{ name: 'a.ts', relpath: 'proj/src' }],
+      })
+
+      prompt.resolveUploadConflict('overwrite')
+      await done
+      expect(captured[0].get('onconflict')).toBe('overwrite')
+      expect(captured[0].get('relpath')).toBe('proj/src')
     })
   })
 })
