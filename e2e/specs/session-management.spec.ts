@@ -59,15 +59,33 @@ test.describe.serial('Session Management', () => {
 
     // Archiving an EMPTY session hard-deletes it (no row left to resume), so
     // give it a message first — that is what makes the archive a soft delete.
+    //
+    // `session_id` must ride in the QUERY STRING: POST /api/ai/chat resolves the
+    // target session from `?session_id=` (then the cookie) and ignores a
+    // `session_id` field in the JSON body. Passing it in the body sent the
+    // message to whatever session the cookie happened to point at, leaving THIS
+    // session empty — the archive then hard-deleted it and the resume below got
+    // a 404 (only visible on the slower WebKit run).
     const sendOk = await page.evaluate(async (id) => {
-      const resp = await fetch('/api/ai/chat', {
+      const resp = await fetch(`/api/ai/chat?session_id=${encodeURIComponent(id)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'resume-me', session_id: id, agentId: 'acp-mock' }),
+        body: JSON.stringify({ message: 'resume-me', agentId: 'acp-mock' }),
       })
       return resp.ok
     }, sessionId)
     expect(sendOk).toBe(true)
+
+    // Prove the message actually landed in THIS session before archiving: an
+    // empty session is destroyed rather than archived, so a mis-targeted send
+    // turns the resume below into a confusing 404.
+    const messageCount = await page.evaluate(async (id) => {
+      const resp = await fetch(`/api/ai/chat?session_id=${encodeURIComponent(id)}&limit=100`)
+      if (!resp.ok) return -1
+      const data = await resp.json()
+      return (data.messages || []).filter((m: any) => m.role === 'user').length
+    }, sessionId)
+    expect(messageCount).toBeGreaterThan(0)
 
     // Archive the session
     const deleteOk = await page.evaluate(async (id) => {
@@ -166,12 +184,13 @@ test.describe.serial('Session Management', () => {
     expect(backend).toBeTruthy()
 
     // Give the session content so the archive is a soft delete (an empty
-    // session is hard-deleted and cannot be resumed).
+    // session is hard-deleted and cannot be resumed). `session_id` goes in the
+    // query string — the handler ignores a body field (see the first test).
     await page.evaluate(async (id) => {
-      await fetch('/api/ai/chat', {
+      await fetch(`/api/ai/chat?session_id=${encodeURIComponent(id)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'keep-agent', session_id: id, agentId: 'acp-mock' }),
+        body: JSON.stringify({ message: 'keep-agent', agentId: 'acp-mock' }),
       })
     }, sessionId)
 

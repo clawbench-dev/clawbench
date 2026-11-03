@@ -1137,8 +1137,19 @@ export function useLiveShare() {
 
       // 4. Build the mixing graph. One destination per viewer is created as
       //    viewers arrive (see onViewerJoin).
+      //
+      //    `resume()` is started but deliberately NOT awaited: on a host with no
+      //    audio output device (headless Firefox, a kiosk, a machine whose audio
+      //    server is down) the context stays `suspended` and the promise stays
+      //    PENDING FOREVER — awaiting it hung meeting creation after the room had
+      //    already been created, so the stage never appeared and the meeting
+      //    could not be ended or chatted in. Audio is optional here: a meeting
+      //    with only a picture and chat is a normal meeting, and a context that
+      //    is allowed to run later starts producing sound at that point.
       audioCtx = new AudioContext({ sampleRate: 48000 })
-      await audioCtx.resume()
+      void audioCtx.resume().catch((e: unknown) => {
+        appLog.w(TAG, `audio context resume failed, continuing without audio: ${String(e)}`)
+      })
       mixer = new LiveMixer(audioCtx, displayStream, micStream)
       startTalkMetering()
 

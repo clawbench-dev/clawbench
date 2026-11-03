@@ -13,8 +13,22 @@ import { ChatPage } from '../pages/chat.page'
 test.describe('Chat scroll FAB', () => {
   let chat: ChatPage
 
+  // Each test drives up to 10 sequential mock turns: 4 to fill the transcript
+  // plus up to 6 more inside `ensureScrollableRange` (1200ms mock delay each,
+  // and every turn also polls /api/ai/sessions before returning). That is
+  // ~25-30s of setup on a quiet machine and comfortably over the 30s config
+  // default on a loaded CI runner — measured in CI as "Test timeout of 30000ms
+  // exceeded" while waiting for the 11th assistant message, i.e. the test ran
+  // out of budget mid-setup, not a scroll-behaviour difference between engines.
+  // Other multi-turn specs use 120000 for the same reason.
+  test.setTimeout(120000)
+
   test.beforeEach(async ({ page }) => {
     chat = new ChatPage(page)
+    // The run shares one server and one default session: wait out whatever the
+    // previous spec left streaming (or queued) so our sends start turns instead
+    // of joining someone else's queue.
+    await chat.waitForIdle(60000)
   })
 
   /** Send multiple messages so the transcript overflows and can scroll. */

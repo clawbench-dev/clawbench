@@ -95,6 +95,12 @@ function pointerEvent(pointerType: string, buttons: number): PointerEvent {
 }
 
 describe('attachIframeSelectionQuoteBridge', () => {
+  // Timers below are advanced a couple of ms PAST the debounce (152 / 122 rather
+  // than 150 / 120) on purpose. The fake window has no layout, so it reports no
+  // line boxes and the bridge spends its whole retry budget (see
+  // ANCHOR_RETRY_LIMIT) before showing; a zero-delay timer scheduled inside the
+  // tick that fires at the target time is not guaranteed to run in that same
+  // advance.
   beforeEach(() => {
     vi.useFakeTimers()
   })
@@ -121,7 +127,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
   it('shows the bar with QuoteData for a non-empty selection', () => {
     const { doc, show, filePath, dispose } = makeBridge()
     doc.fire('selectionchange')
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(152)
 
     expect(show).toHaveBeenCalledTimes(1)
     expect(show).toHaveBeenCalledWith({
@@ -141,7 +147,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
     getSelectionMock.mockReturnValue(emptySel)
 
     doc.fire('selectionchange')
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(152)
 
     expect(hide).toHaveBeenCalledTimes(1)
     expect(show).not.toHaveBeenCalled()
@@ -153,7 +159,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
     getSelectionMock.mockReturnValue(new FakeSelection('   \n  '))
 
     doc.fire('selectionchange')
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(152)
 
     expect(hide).toHaveBeenCalledTimes(1)
     expect(show).not.toHaveBeenCalled()
@@ -165,9 +171,52 @@ describe('attachIframeSelectionQuoteBridge', () => {
     getSelectionMock.mockReturnValue(new FakeSelection('  GET /pets  '))
 
     doc.fire('selectionchange')
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(152)
 
     expect(show).toHaveBeenCalledWith(expect.objectContaining({ text: 'GET /pets' }), null, null)
+    dispose()
+  })
+
+  it('re-measures a selection whose anchor is not measurable yet, instead of pinning the bar to the top', () => {
+    // A freshly navigated frame can hold a selection before it has line boxes.
+    // Measuring once and giving up is what puts the bar at the pinned top
+    // position, far from the text the user just selected.
+    const frameElement = {
+      getBoundingClientRect: () => ({ left: 100, top: 50, width: 400, height: 300 }),
+    } as unknown as Element
+    let measurements = 0
+    const selection = {
+      collapsed: false,
+      toString: () => 'selected text',
+      rangeCount: 1,
+      getRangeAt: () => ({
+        getClientRects: () =>
+          ++measurements === 1 ? [] : [{ top: 10, left: 20, width: 100, height: 18 }],
+      }),
+    } as unknown as Selection
+    const doc = new FakeDoc()
+    const show = vi.fn()
+    const dispose = attachIframeSelectionQuoteBridge({
+      win: {
+        getSelection: () => selection,
+        document: doc,
+        frameElement,
+        innerWidth: 400,
+        innerHeight: 300,
+      },
+      filePath: () => '/a.html',
+      show,
+      hide: vi.fn(),
+    })
+
+    doc.fire('selectionchange')
+    vi.advanceTimersByTime(152)
+
+    expect(show).toHaveBeenCalledTimes(1)
+    const anchor = show.mock.calls[0][1] as DOMRect | null
+    expect(anchor).not.toBeNull()
+    // Mapped into host coordinates: frame top 50 + selection top 10.
+    expect(anchor!.top).toBe(60)
     dispose()
   })
 
@@ -182,7 +231,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
       hide: vi.fn(),
     })
     doc.fire('selectionchange')
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(152)
 
     expect(show).toHaveBeenCalledTimes(1)
     expect(show.mock.calls[0][2]).toBe(frame)
@@ -193,7 +242,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
     const { doc, show, hide, dispose } = makeBridge()
     doc.fire('pointerdown')
     doc.fire('selectionchange')
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(152)
 
     expect(show).not.toHaveBeenCalled()
     expect(hide).not.toHaveBeenCalled()
@@ -204,11 +253,11 @@ describe('attachIframeSelectionQuoteBridge', () => {
     const { doc, show, dispose } = makeBridge()
     doc.fire('pointerdown')
     doc.fire('selectionchange')
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(152)
     expect(show).not.toHaveBeenCalled()
 
     doc.fire('pointerup')
-    vi.advanceTimersByTime(120)
+    vi.advanceTimersByTime(122)
 
     expect(show).toHaveBeenCalledTimes(1)
     dispose()
@@ -218,7 +267,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
     const { doc, show, dispose } = makeBridge()
     doc.fire('pointerdown')
     doc.fire('touchend')
-    vi.advanceTimersByTime(120)
+    vi.advanceTimersByTime(122)
 
     expect(show).toHaveBeenCalledTimes(1)
     dispose()
@@ -229,7 +278,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
     doc.fire('pointerdown')
     // A selection settles while the guard is stuck (no pointerup / touchend).
     doc.fire('selectionchange')
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(152)
     expect(show).not.toHaveBeenCalled()
 
     // The stuck-guard safety timer drops the held count and re-evaluates.
@@ -263,7 +312,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
     }
 
     doc.fire('pointerup')
-    vi.advanceTimersByTime(120)
+    vi.advanceTimersByTime(122)
     expect(show).toHaveBeenCalledTimes(1)
     dispose()
   })
@@ -280,7 +329,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
     }
 
     doc.fire('pointerup')
-    vi.advanceTimersByTime(120)
+    vi.advanceTimersByTime(122)
     expect(show).toHaveBeenCalledTimes(1)
     dispose()
   })
@@ -290,7 +339,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
     doc.fire('pointerdown')
     // No pointerup reaches the bridge; the next mouse move proves the release.
     doc.fire('pointermove', pointerEvent('mouse', 0))
-    vi.advanceTimersByTime(120)
+    vi.advanceTimersByTime(122)
 
     expect(show).toHaveBeenCalledTimes(1)
     dispose()
@@ -302,7 +351,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
     const { doc, show, dispose } = makeBridge()
     doc.fire('pointerdown')
     doc.fire('pointermove', pointerEvent('touch', 0))
-    vi.advanceTimersByTime(120)
+    vi.advanceTimersByTime(122)
 
     expect(show).not.toHaveBeenCalled()
     dispose()
@@ -321,7 +370,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
     expect(hide).toHaveBeenCalledTimes(1)
 
     doc.fire('pointerup')
-    vi.advanceTimersByTime(120)
+    vi.advanceTimersByTime(122)
     expect(show).toHaveBeenCalledTimes(2)
     dispose()
   })
@@ -330,9 +379,9 @@ describe('attachIframeSelectionQuoteBridge', () => {
     const { doc, show, filePath, dispose } = makeBridge()
 
     doc.fire('selectionchange')
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(152)
     doc.fire('selectionchange')
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(152)
 
     expect(show).toHaveBeenCalledTimes(2)
     expect(filePath).toHaveBeenCalledTimes(2)
@@ -352,7 +401,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
 
     // A late selectionchange must not surface the bar after disposal.
     doc.fire('selectionchange')
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(152)
     expect(show).not.toHaveBeenCalled()
   })
 
@@ -360,13 +409,13 @@ describe('attachIframeSelectionQuoteBridge', () => {
     const { doc, getSelectionMock, show, hide, dispose } = makeBridge()
     // First: a real selection shows the bar.
     doc.fire('selectionchange')
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(152)
     expect(show).toHaveBeenCalledTimes(1)
 
     // Then the selection collapses — the bar must hide.
     getSelectionMock.mockReturnValue(new FakeSelection('', true))
     doc.fire('selectionchange')
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(152)
     expect(hide).toHaveBeenCalledTimes(1)
     dispose()
   })
@@ -377,7 +426,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
       show: (d: QuoteData) => { captured.push(d) },
     })
     doc.fire('selectionchange')
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(152)
 
     expect(captured).toHaveLength(1)
     expect(captured[0]).toEqual({
@@ -591,6 +640,21 @@ describe('iframeSelectionAnchor', () => {
 
   it('returns null for a selection with no laid-out boxes', () => {
     expect(iframeSelectionAnchor(fakeWin(), selectionWithRects([]))).toBeNull()
+  })
+
+  it('returns null while the frame itself has no box', () => {
+    // A frame that is not laid out yet (a document that just navigated, a pane
+    // whose height is still 0) would map every rect with a scale of 0, i.e.
+    // collapse the anchor onto the frame's top-left corner — the bar would then
+    // sit somewhere the user never selected. "Not measurable" lets the bridge
+    // retry once layout exists.
+    const frameElement = {
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0 }),
+    } as unknown as Element
+    expect(iframeSelectionAnchor(
+      fakeWin({ frameElement }),
+      selectionWithRects([{ top: 10, left: 20, width: 200, height: 18 }]),
+    )).toBeNull()
   })
 
   it('the bridge hands the anchor to show() (null when unmeasurable)', () => {

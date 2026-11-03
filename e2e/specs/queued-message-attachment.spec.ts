@@ -1,6 +1,7 @@
 import { test, expect } from '../fixtures'
 import type { Page } from '@playwright/test'
 import { ChatPage } from '../pages/chat.page'
+import { isBenignPageError } from '../helpers/console'
 import os from 'os'
 import path from 'path'
 import fs from 'fs'
@@ -73,12 +74,22 @@ test.describe('Queued message with an image attachment', () => {
     fs.writeFileSync(imgPath, Buffer.from(PNG_BASE64, 'base64'))
 
     const pageErrors: string[] = []
-    page.on('pageerror', (err) => pageErrors.push(`PAGEERROR: ${err.message}`))
+    page.on('pageerror', (err) => {
+      if (!isBenignPageError(err.message)) pageErrors.push(`PAGEERROR: ${err.message}`)
+    })
 
     try {
       // Keep a multi-turn backlog so attaching + sending the image is not a
       // race against the first reply: three messages queue ~3 mock turns.
-      await chat.sendMessage(first)
+      //
+      // The backlog alone is not enough — attaching an image on WebKit
+      // (drawer, file input, upload, strip settling) measured ~15s, far longer
+      // than three default 1200ms turns, so the queue was already empty by the
+      // time the image message was sent and the test silently exercised the
+      // DIRECT-send path instead (observed: `.queued-bar` never appeared). The
+      // `[mock:slow-reply:…]` marker holds turn 1 open past the attach flow so
+      // the image message is queued by construction.
+      await chat.sendMessage(`${first} [mock:slow-reply:30000]`)
       await chat.sendMessage(`qimg-filler-a-${run}`)
       await chat.sendMessage(`qimg-filler-b-${run}`)
 
@@ -117,12 +128,16 @@ test.describe('Queued message with an image attachment', () => {
 
       if (pageErrors.length > 0) throw new Error(pageErrors.join('\n'))
     } finally {
+      // Only the SOURCE file is removed. The uploaded copy under the project's
+      // `.clawbench/uploads/` must stay: the message row that references it
+      // lives in the SHARED default session, so every later spec that reloads
+      // that session renders the bubble's `<img src="/api/fs/thumb?target=…">`.
+      // Deleting the file while the row survives made those renders 404, and
+      // the 404 tripped the "no console errors" collector in
+      // queued-messages.spec.ts (three browsers red for a file this spec
+      // removed). `.clawbench/` is gitignored and the directory already
+      // accumulates uploads from other specs, so keeping it costs nothing.
       if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath)
-      // The upload lands in the REAL project's .clawbench/uploads/ (the e2e
-      // server's project root is the repo root), so the copy must be removed
-      // too — the local temp file above is only the source.
-      const uploaded = path.join(process.cwd(), '.clawbench', 'uploads', path.basename(imgPath))
-      if (fs.existsSync(uploaded)) fs.unlinkSync(uploaded)
     }
   })
 })

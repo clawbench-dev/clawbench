@@ -280,10 +280,25 @@ class FakeAnalyser {
   }
 }
 
+/**
+ * Whether `AudioContext.resume()` never settles, which is what a host with no
+ * audio output device does (the context stays `suspended` and the promise is
+ * left pending rather than rejected). Default false so every pre-existing test
+ * keeps the normal path.
+ */
+let audioResumeHangs = false
+/** Resolver of the never-settling `resume()` above, released at the end of the test. */
+let releaseAudioResume: (() => void) | null = null
+
 class FakeAudioCtx {
   state = 'running'
   dests: FakeDest[] = []
-  resume = vi.fn(async () => undefined)
+  resume = vi.fn(() => {
+    if (!audioResumeHangs) return Promise.resolve()
+    // Stays pending until the test releases it: the caller must not wait for it.
+    this.state = 'suspended'
+    return new Promise<void>((resolve) => { releaseAudioResume = resolve })
+  })
   close = vi.fn(async () => undefined)
   createMediaStreamDestination() {
     const d = new FakeDest(String(this.dests.length))
@@ -371,6 +386,8 @@ function installGlobals() {
   vi.stubGlobal('RTCPeerConnection', FakePC as unknown as typeof RTCPeerConnection)
   vi.stubGlobal('AudioContext', FakeAudioCtx as unknown as typeof AudioContext)
   vi.stubGlobal('MediaRecorder', FakeMediaRecorder as unknown as typeof MediaRecorder)
+  audioResumeHangs = false
+  releaseAudioResume = null
   fakeMicLevel = 0
   // `new MediaStream([track])` runs on every viewer join; without this stub it
   // throws and silently aborts the rest of that handler (no ICE, no state hook).
@@ -466,6 +483,31 @@ describe('start', () => {
   it('sends the publish frame on open', async () => {
     await startSharing()
     await vi.waitFor(() => expect(lastWS().sentJSON().some((m) => m.type === 'publish')).toBe(true))
+  })
+
+  /**
+   * A host with no audio output device (headless Firefox, a kiosk, a machine
+   * whose audio server is down) leaves the AudioContext `suspended` and its
+   * `resume()` promise PENDING FOREVER — it neither resolves nor rejects.
+   * Awaiting it hung the whole meeting after the room had already been created
+   * on the server: no stage, no chat, and no way to end it. Audio is optional,
+   * so startup must not depend on the context ever running.
+   */
+  it('starts the room even when the audio context never resumes', async () => {
+    audioResumeHangs = true
+    const { share, ok } = await startSharing()
+
+    expect(ok).toBe(true)
+    expect(share.state.value).toBe('publishing')
+    // The room is on the wire, so the meeting is usable: picture/chat do not
+    // need the audio graph.
+    await vi.waitFor(() => expect(lastWS().sentJSON().some((m) => m.type === 'publish')).toBe(true))
+    // Proof the resume really was still pending: `start()` got this far without it.
+    expect(releaseAudioResume).not.toBeNull()
+
+    await share.stop()
+    // Release the pending promise so the leak detector stays quiet.
+    releaseAudioResume?.()
   })
 
   /**
