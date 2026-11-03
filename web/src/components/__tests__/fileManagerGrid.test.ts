@@ -173,8 +173,8 @@ describe('isThumbable (thumbnail eligibility)', () => {
     expect(isThumbable({ type: 'file', name: 'logo.svg' })).toBe(false)
   })
 
-  it('excludes WebP (not in Go stdlib decoder)', () => {
-    expect(isThumbable({ type: 'file', name: 'photo.webp' })).toBe(false)
+  it('includes WebP (x/image/webp decoder is registered server-side)', () => {
+    expect(isThumbable({ type: 'file', name: 'photo.webp' })).toBe(true)
   })
 
   it('excludes PDF files', () => {
@@ -233,9 +233,15 @@ describe('THUMBABLE_EXTS', () => {
 
   it('does not contain excluded extensions', () => {
     expect(THUMBABLE_EXTS.has('.svg')).toBe(false)
-    expect(THUMBABLE_EXTS.has('.webp')).toBe(false)
     expect(THUMBABLE_EXTS.has('.bmp')).toBe(false)
     expect(THUMBABLE_EXTS.has('.pdf')).toBe(false)
+  })
+
+  // The backend registers `golang.org/x/image/webp` (meeting key frames are
+  // stored in that format), so a WebP must not be filtered out front-side —
+  // doing so left every meeting shot with a generic icon.
+  it('includes WebP, which the backend can decode', () => {
+    expect(THUMBABLE_EXTS.has('.webp')).toBe(true)
   })
 })
 

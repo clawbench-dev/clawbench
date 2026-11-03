@@ -65,6 +65,7 @@
         <div class="res-group__label">
           <Folder v-if="group.key === 'folder'" :size="11" />
           <AudioLines v-else-if="group.key === 'audio'" :size="11" />
+          <ImageIcon v-else-if="group.key === 'shots'" :size="11" />
           <Link2 v-else :size="11" />
           {{ group.title }}
           <span class="res-group__count">{{ group.items.length }}</span>
@@ -83,14 +84,21 @@
           @dragstart="onDragStart($event, item)"
           @dragend="cleanupDragGhost()"
         >
-          <span class="res-icon" :class="`res-icon--${item.kind}`">
-            <FileText v-if="item.kind === 'minutes' || item.kind === 'revised' || item.kind === 'markdown'" :size="15" />
-            <Captions v-else-if="item.kind === 'transcript'" :size="15" />
-            <AudioLines v-else-if="item.kind === 'audio'" :size="15" />
-            <ImageIcon v-else-if="item.kind === 'image'" :size="15" />
-            <Code2 v-else-if="item.kind === 'code'" :size="15" />
-            <Folder v-else-if="item.kind === 'dir'" :size="15" />
-            <File v-else :size="15" />
+          <!-- Same glyph source as the file manager: the material icon theme,
+               plus the file manager's own thumbnail for decodable raster
+               images. Anything the backend cannot rasterize (SVG/AVIF/…) or
+               whose thumbnail fails keeps the type icon, so a row never shows
+               an empty tile. -->
+          <span class="res-icon">
+            <img
+              v-if="showsThumb(item)"
+              class="res-thumb"
+              :src="thumbUrl(item)"
+              :alt="item.name"
+              loading="lazy"
+              @error="onThumbError(item)"
+            />
+            <FileIcon v-else :path="item.path" :is-dir="item.isDir" :size="18" />
           </span>
 
           <span class="res-main">
@@ -149,16 +157,12 @@
  * row exactly like a file-manager row; the paperclip is the touch fallback
  * (the chat column is not visible in the narrow layout).
  */
-import { computed, toRefs } from 'vue'
+import { computed, reactive, toRefs, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   AudioLines,
-  Captions,
-  Code2,
   Copy,
   ExternalLink,
-  File,
-  FileText,
   Folder,
   FolderOpen,
   Image as ImageIcon,
@@ -166,6 +170,7 @@ import {
   Link2,
   Paperclip,
 } from 'lucide-vue-next'
+import FileIcon from '@/components/common/FileIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import MeetingEmpty from './MeetingEmpty.vue'
@@ -176,6 +181,9 @@ import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation'
 import { requestAttachmentTarget } from '@/composables/useConversationTarget'
 import { startAttachDrag, cleanupDragGhost } from '@/utils/attachDrag'
 import { formatFileSize } from '@/utils/fileType'
+import { buildPathThumbUrl } from '@/utils/fileIcon'
+import { isThumbableExt } from '@/utils/fileManager'
+import { mediaVersionFor } from '@/composables/useMediaWatch'
 
 const props = defineProps<{
   groups: MeetingResourceGroup[]
@@ -208,6 +216,31 @@ const summary = computed(() => {
   const refs = props.groups.find((group) => group.key === 'referenced')?.items.length ?? 0
   return t('meeting.resources.summary', { total: props.total, folder: folder + audio + shots, refs })
 })
+
+// ── Row glyphs ──
+// Two-tier source, same as the file manager list: a real thumbnail for images
+// the backend can rasterize, the material icon theme for everything else.
+const thumbErrors = reactive(new Set<string>())
+
+function showsThumb(item: MeetingResourceItem): boolean {
+  return !item.isDir && isThumbableExt(item.path) && !thumbErrors.has(item.path)
+}
+
+function thumbUrl(item: MeetingResourceItem): string {
+  const url = buildPathThumbUrl(item.path, 80)
+  // Versioned so a shot rewritten in place re-fetches instead of staying
+  // cached. The media watcher keys on project-relative paths.
+  const v = mediaVersionFor(item.displayPath || item.path)
+  return v ? `${url}&t=${v}` : url
+}
+
+function onThumbError(item: MeetingResourceItem): void {
+  thumbErrors.add(item.path)
+}
+
+// A reload re-lists the folder, so a path that failed before deserves a fresh
+// attempt rather than a permanent icon.
+watch(() => props.groups, () => thumbErrors.clear())
 
 function open(item: MeetingResourceItem): void {
   void openFilePath(item.path, undefined, undefined, 'live')
@@ -356,12 +389,17 @@ function metaFor(item: MeetingResourceItem): string {
   border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
+  overflow: hidden;
 }
-.res-icon--minutes, .res-icon--revised, .res-icon--markdown { background: color-mix(in srgb, var(--link-color) 12%, transparent); color: var(--link-color); }
-.res-icon--transcript { background: color-mix(in srgb, var(--color-purple) 12%, transparent); color: var(--color-purple); }
-.res-icon--audio { background: color-mix(in srgb, var(--color-green) 12%, transparent); color: var(--color-green); }
-.res-icon--image { background: color-mix(in srgb, var(--color-orange) 12%, transparent); color: var(--color-orange); }
-.res-icon--dir { background: color-mix(in srgb, var(--color-orange) 12%, transparent); color: var(--color-orange); }
+/* Thumbnail fills the glyph tile (it replaces the icon, so the row height must
+   not change). `cover` crops rather than letterboxing — the tile is a square. */
+.res-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  background: var(--bg-secondary);
+}
 
 .res-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .res-name {

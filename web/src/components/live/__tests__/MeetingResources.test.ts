@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import enMessages from '@/i18n/locales/en'
 
@@ -27,6 +27,14 @@ vi.mock('@/utils/attachDrag', () => ({
 
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: vi.fn() }),
+}))
+
+// The rows now take their glyph from the same place the file manager does:
+// material icons for types, `/api/fs/thumb` for raster images. Stub the icon
+// resolver so the `img` exists in jsdom without a HEAD request per icon.
+vi.mock('@/utils/materialIcons', () => ({
+  getFileIconUrl: (path: string) => Promise.resolve(`/material-icons/${path}.svg`),
+  getFolderIconUrl: (path: string) => Promise.resolve(`/material-icons/folder-${path}.svg`),
 }))
 
 import MeetingResources from '../MeetingResources.vue'
@@ -186,6 +194,114 @@ describe('MeetingResources', () => {
     await wrapper.find('.meeting-link').trigger('click')
 
     expect(wrapper.emitted('reload')).toHaveLength(1)
+  })
+})
+
+/**
+ * Rows take their glyph from the same place the file manager does: the material
+ * icon theme for types, `/api/fs/thumb` for decodable raster images.
+ */
+describe('MeetingResources row glyphs (file manager parity)', () => {
+  const SHOTS: MeetingResourceGroup = {
+    key: 'shots',
+    title: 'Shots',
+    items: [
+      {
+        key: 'shots:a.png',
+        name: 'a.png',
+        path: '.clawbench/notes/x/shots/a.png',
+        displayPath: '.clawbench/notes/x/shots/a.png',
+        kind: 'image',
+        typeLabel: 'PNG',
+        isDir: false,
+      },
+      {
+        key: 'shots:b.webp',
+        name: 'b.webp',
+        path: '.clawbench/notes/x/shots/b.webp',
+        displayPath: '.clawbench/notes/x/shots/b.webp',
+        kind: 'image',
+        typeLabel: 'WebP',
+        isDir: false,
+      },
+      {
+        key: 'shots:c.svg',
+        name: 'c.svg',
+        path: '.clawbench/notes/x/shots/c.svg',
+        displayPath: '.clawbench/notes/x/shots/c.svg',
+        kind: 'image',
+        typeLabel: 'SVG',
+        isDir: false,
+      },
+    ],
+  }
+
+  function mountShots() {
+    return mountResources({ groups: [SHOTS], total: SHOTS.items.length })
+  }
+
+  it('shows the backend thumbnail for images the file manager can rasterize', () => {
+    const wrapper = mountShots()
+
+    const img = wrapper.find('img.res-thumb')
+    expect(img.exists()).toBe(true)
+    // Same endpoint and width the file manager list uses.
+    expect(img.attributes('src')).toContain('/api/fs/thumb')
+    expect(img.attributes('src')).toContain(encodeURIComponent(SHOTS.items[0].path))
+    expect(img.attributes('src')).toContain('w=80')
+  })
+
+  // Meeting key frames are stored as WebP — the backend registers the WebP
+  // decoder for exactly this reason, so the shots must get real thumbnails.
+  it('thumbnails WebP shots too', () => {
+    const wrapper = mountShots()
+
+    const webpRow = wrapper.findAll('.res-row')[1]
+    const img = webpRow.find('img.res-thumb')
+    expect(img.exists()).toBe(true)
+    expect(img.attributes('src')).toContain(encodeURIComponent(SHOTS.items[1].path))
+  })
+
+  it('keeps the type icon for images no decoder handles (SVG)', async () => {
+    const wrapper = mountShots()
+    await flushPromises()
+
+    const svgRow = wrapper.findAll('.res-row')[2]
+    expect(svgRow.find('img.res-thumb').exists()).toBe(false)
+    // The row falls back to the material icon.
+    expect(svgRow.find('img.file-type-icon').exists()).toBe(true)
+  })
+
+  // `shots` used to fall into the `v-else` and render the link glyph — it
+  // holds screenshots, not references.
+  it('labels the shots group with a picture glyph, referenced keeps the link glyph', () => {
+    const shots = mountShots()
+    expect(shots.find('.res-group__label svg.lucide-image').exists()).toBe(true)
+    expect(shots.find('.res-group__label svg.lucide-link-2').exists()).toBe(false)
+
+    const refs = mountResources()
+    expect(refs.find('.res-group__label svg.lucide-link-2').exists()).toBe(true)
+  })
+
+  it('renders no lucide glyph inside the icon tile (the material theme owns it)', async () => {
+    const wrapper = mountResources()
+    await flushPromises()
+
+    expect(wrapper.findAll('.res-icon svg')).toHaveLength(0)
+    expect(wrapper.findAll('.res-icon img.file-type-icon').length).toBeGreaterThan(0)
+  })
+
+  it('falls back to the type icon after a thumbnail request fails', async () => {
+    const wrapper = mountShots()
+
+    await wrapper.find('img.res-thumb').trigger('error')
+    await flushPromises()
+
+    const rows = wrapper.findAll('.res-row')
+    expect(rows[0].find('img.res-thumb').exists()).toBe(false)
+    expect(rows[0].find('img.file-type-icon').exists()).toBe(true)
+    // The other rows are untouched.
+    expect(rows[1].find('img.res-thumb').exists()).toBe(true)
   })
 })
 

@@ -46,10 +46,12 @@ export function isVideo(entry: { type: string; name: string }): boolean {
 }
 
 // ── Thumbnail eligibility ──
-// Extensions that the backend thumbnail API can decode (Go stdlib: png, jpg, gif).
-// SVG, WebP, AVIF, PDF, BMP, TIFF are excluded — they'll cause a 404 round-trip if attempted.
+// Extensions the backend thumbnail API can decode. It registers png/jpeg/gif
+// from the stdlib plus `golang.org/x/image/webp` (meeting key frames are WebP),
+// so WebP belongs here even though the decoder is read-only. SVG, AVIF, BMP,
+// TIFF and PDF have no decoder — requesting them is a guaranteed 404.
 
-export const THUMBABLE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif'])
+export const THUMBABLE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp'])
 
 export function isThumbable(entry: { type: string; name: string }): boolean {
   // Blacklist rather than whitelist: any non-directory entry is eligible, so a

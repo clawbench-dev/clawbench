@@ -6001,7 +6001,7 @@ describe('thumbnail lazy mounting', () => {
     const thumbs = wrapper.findAll('img.file-thumb')
     expect(thumbs).toHaveLength(3)
     expect(thumbs[0].attributes('src')).toContain('/api/fs/thumb')
-    // Thumbnails must not request SVG/WebP etc. — only decodable formats.
+    // Thumbnails must not request SVG/BMP etc. — only decodable formats.
     expect(thumbs.map(t => t.attributes('src')).join(' ')).not.toContain('.md')
   })
 
