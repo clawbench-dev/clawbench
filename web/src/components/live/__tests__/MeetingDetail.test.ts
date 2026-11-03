@@ -23,6 +23,7 @@ vi.mock('lucide-vue-next', () => {
     FileText: stub,
     MessageSquare: stub,
     MessagesSquare: stub,
+    MonitorUp: stub,
     SpellCheck: stub,
     Trash2: stub,
   }
@@ -126,6 +127,16 @@ mic
 <v 我>hi
 `
 
+/** One stored proofread transcript, exactly as the server writes it. */
+const REVISED = `# 校对版转写 · Release review · 2026-11-01 14:30
+
+> 已结合项目上下文修正听写错误与专有名词；时间戳、说话人、行序均未改动。
+
+[00:00] 我：hi
+[00:30] 文件：打开 a.md
+[00:40] 屏幕：小芳 开始共享屏幕
+`
+
 beforeEach(() => {
   vi.clearAllMocks()
   getMock.mockResolvedValue(record())
@@ -176,12 +187,12 @@ describe('MeetingDetail', () => {
     expect(w.find('.meeting-resources-stub').exists()).toBe(true)
   })
 
-  it('shows the AI proofread transcript in its own tab, next to the transcript', async () => {
+  it('shows the AI proofread transcript as the same speaker rows as the transcript', async () => {
     getMock.mockResolvedValue(record({ hasRevised: true }))
     artifactMock.mockImplementation(async (_token: string, kind: string) => {
       if (kind === 'minutes') return { content: '# MINUTES', file: 'minutes.md' }
       if (kind === 'transcript') return { content: VTT, file: 'transcript.vtt' }
-      if (kind === 'revised') return { content: '# PROOFREAD', file: 'transcript-revised.md' }
+      if (kind === 'revised') return { content: REVISED, file: 'transcript-revised.md' }
       return null
     })
     const writeText = vi.fn(async () => {})
@@ -191,15 +202,27 @@ describe('MeetingDetail', () => {
     await flushPromises()
 
     await w.find('[data-tab="revised"]').trigger('click')
-    // Rendered by the same document body as the minutes, not flattened text.
-    expect(w.find('.meeting-md').html()).toContain('PROOFREAD')
+
+    const pane = w.find('[data-role="revised"]')
+    const rows = pane.findAll('.transcript__row')
+    expect(rows).toHaveLength(3)
+    expect(rows[0].find('.transcript__speaker').text()).toBe('我')
+    expect(rows[0].find('.transcript__text').text()).toBe('hi')
+    // File and screen events keep their own glyph rows, not a "文" avatar.
+    expect(rows[1].classes()).toContain('transcript__row--file')
+    expect(rows[1].find('.transcript__speaker').text()).toBe('文件')
+    expect(rows[2].find('.transcript__speaker').text()).toBe('屏幕')
+    // The heading and the note are document chrome, not conversation.
+    expect(pane.text()).not.toContain('校对版转写')
+    expect(pane.text()).not.toContain('已结合项目上下文')
+
     // Copy takes the proofread text — and the button says what it copies
     // instead of claiming it copies the minutes.
     const copyBtn = w.findAll('.meeting-footer .fbtn').find((b) => b.text() === enMessages.common.copy)
     expect(copyBtn).toBeTruthy()
     await copyBtn!.trigger('click')
     await flushPromises()
-    expect(writeText).toHaveBeenCalledWith('# PROOFREAD')
+    expect(writeText).toHaveBeenCalledWith('我：hi\n\n文件：打开 a.md\n\n屏幕：小芳 开始共享屏幕')
   })
 
   it('says there is no proofread transcript when the meeting has none', async () => {
@@ -214,20 +237,20 @@ describe('MeetingDetail', () => {
     expect(card.find('.meeting-empty__desc').text()).toBe(enMessages.meeting.detail.emptyRevisedDesc)
   })
 
-  it('already shows the proofread text while the minutes are still generating', async () => {
+  it('already shows the proofread transcript while the minutes are still generating', async () => {
     // Proofreading runs BEFORE summarisation, so its file exists while the
     // minutes are still being written. The tab must show it instead of a
     // spinner that hides work already done.
     getMock.mockResolvedValue(record({ status: 'generating', updatedAt: Date.now(), hasRevised: true }))
     artifactMock.mockImplementation(async (_token: string, kind: string) =>
-      kind === 'revised' ? { content: '# PROOFREAD', file: 'transcript-revised.md' } : null,
+      kind === 'revised' ? { content: REVISED, file: 'transcript-revised.md' } : null,
     )
 
     const w = mountDetail()
     await flushPromises()
 
     await w.find('[data-tab="revised"]').trigger('click')
-    expect(w.find('.meeting-md').html()).toContain('PROOFREAD')
+    expect(w.findAll('[data-role="revised"] .transcript__row')).toHaveLength(3)
     expect(w.find('.meeting-generating').exists()).toBe(false)
 
     w.unmount()

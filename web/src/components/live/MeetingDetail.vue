@@ -133,15 +133,14 @@
         </template>
 
         <template v-else-if="activeTab === 'revised'">
-          <!-- The proofread transcript is the same lines the 转写 tab shows,
-               after the model fixed dictation errors against the project's own
-               vocabulary. It is Markdown, so it goes through the same document
-               body as the minutes (path chips, relative links, copy). -->
-          <MeetingMarkdown
-            v-if="revisedText"
-            :content="revisedText"
-            :path="revisedPath"
-            @copy="copy"
+          <!-- The same rows the 转写 tab draws, from the proofread file: the
+               model only fixes words, so the speakers and the timeline are the
+               same conversation. Not Markdown — one line per utterance has no
+               paragraph breaks and would render as a single block. -->
+          <TranscriptList
+            v-if="revisedLines.length"
+            :blocks="revisedLines"
+            data-role="revised"
           />
           <div v-else-if="generating" class="meeting-generating">
             <div class="meeting-generating__row"><span class="meeting-spinner" />{{ t('liveShare.notes.proofreading') }}</div>
@@ -262,6 +261,7 @@ import { resolveUserNickname } from '@/utils/userNickname'
 import { meetingDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
 import { parseVttCues, vttToPlainText, type VttCue } from '@/utils/vtt'
 import { groupNoteSegments, type NoteBlock } from '@/composables/liveNotes'
+import { parseRevisedTranscript, revisedToPlainText } from '@/utils/revisedTranscript'
 import { normalizeSlashes, toProjectRelative } from '@/utils/path'
 import { store } from '@/stores/app'
 import { appLog } from '@/utils/appLog'
@@ -375,6 +375,27 @@ const transcriptLines = computed<NoteBlock[]>(() =>
 )
 
 /**
+ * The proofread transcript as the same rows.
+ *
+ * The file carries start times but no durations, so the 4s merge window is
+ * measured from the previous line's start rather than from its end: the list
+ * stays closer to one row per line, and never merges two distant utterances.
+ */
+const revisedLines = computed<NoteBlock[]>(() =>
+  groupNoteSegments(
+    parseRevisedTranscript(revisedText.value).map((line, i) => ({
+      id: i + 1,
+      channel: line.kind || line.speaker || 'unknown',
+      speaker: line.speaker,
+      startedAt: line.startMs,
+      durationMs: 0,
+      text: line.text,
+      ...(line.kind ? { kind: line.kind } : {}),
+    })),
+  ),
+)
+
+/**
  * How long after the end of a meeting an absent transcript is still "on its
  * way" rather than "never existed".
  *
@@ -422,7 +443,7 @@ const durationLabel = computed(() => {
 
 const currentText = computed(() => {
   if (activeTab.value === 'transcript') return transcriptText.value
-  if (activeTab.value === 'revised') return revisedText.value
+  if (activeTab.value === 'revised') return revisedToPlainText(revisedText.value)
   return minutesText.value
 })
 const copyText = computed(() => {
