@@ -166,3 +166,59 @@ func TestSchema_LiveNotesMigration_KeepsLiveRowsVisible(t *testing.T) {
 	).Scan(&hidden))
 	assert.Zero(t, hidden, "a row created by the current model must stay visible")
 }
+
+// TestSchema_LiveNotesMigration_BackfillsArtifactStates is the guard for the
+// upgrade that introduced live_notes_artifacts: the record list reads the new
+// table, so an existing install's finished minutes/proofread must be visible
+// there without waiting for the next generation.
+func TestSchema_LiveNotesMigration_BackfillsArtifactStates(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	dbDir := filepath.Join(tmpDir, ".clawbench")
+	require.NoError(t, os.MkdirAll(dbDir, 0o755))
+	oldDB, err := sql.Open("sqlite", filepath.Join(dbDir, "ClawBench.db"))
+	require.NoError(t, err)
+	oldDB.SetMaxOpenConns(1)
+	oldDB.Exec("PRAGMA journal_mode=WAL")
+	oldDB.Exec("PRAGMA busy_timeout=5000")
+	_, err = oldDB.Exec(oldLiveNotesSchema)
+	require.NoError(t, err)
+	_, err = oldDB.Exec(`INSERT INTO live_notes
+		(token, project_id, status, minutes, file_path, revised, revise_status, updated_at)
+		VALUES ('done-share', 1, 'ready', '## 纪要', '/p/minutes.md', '校对稿', 'ready', '2026-01-02 03:04:05')`)
+	require.NoError(t, err)
+	_, err = oldDB.Exec(`INSERT INTO live_notes
+		(token, project_id, status, updated_at)
+		VALUES ('crashed-share', 1, 'generating', '2026-01-02 03:04:05')`)
+	require.NoError(t, err)
+	require.NoError(t, oldDB.Close())
+
+	require.NoError(t, InitDB())
+	defer store.Close()
+
+	states, err := ArtifactStatesForToken("done-share")
+	require.NoError(t, err)
+	assert.Equal(t, ArtifactJobIdle, states[ArtifactMinutes].JobStatus)
+	assert.NotZero(t, states[ArtifactMinutes].ContentAt, "a finished minutes row must keep its content time")
+	assert.Equal(t, ArtifactJobIdle, states[ArtifactRevised].JobStatus)
+	assert.NotZero(t, states[ArtifactRevised].ContentAt)
+
+	crashed, err := ArtifactStatesForToken("crashed-share")
+	require.NoError(t, err)
+	assert.Equal(t, ArtifactJobFailed, crashed[ArtifactMinutes].JobStatus)
+	assert.Equal(t, ArtifactErrInterrupted, crashed[ArtifactMinutes].ErrorCode,
+		"a job that was running before the upgrade cannot still be alive")
+
+	// The backfill must not resurrect an advanced state on the next startup.
+	require.NoError(t, SetArtifactSucceeded("done-share", ArtifactMinutes, 12345, 12345))
+	require.NoError(t, InitDB())
+	states, err = ArtifactStatesForToken("done-share")
+	require.NoError(t, err)
+	assert.Equal(t, int64(12345), states[ArtifactMinutes].ContentAt,
+		"INSERT OR IGNORE must leave the live row alone")
+}

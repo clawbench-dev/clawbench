@@ -62,6 +62,17 @@
         </button>
       </div>
 
+      <MeetingArtifactBar
+        v-if="activeArtifactKind"
+        :kind="activeArtifactKind"
+        :state="activeArtifactState"
+        :generation="record?.generation ?? null"
+        :has-audio="Boolean(record?.hasAudio)"
+        :blocked="activeBlockedReason"
+        @regenerate="openRegenerate(activeArtifactKind)"
+        @cancel="cancelRegenerate"
+      />
+
       <div
         class="meeting-body"
         :data-quote-source="quoteSource"
@@ -69,30 +80,36 @@
         :data-quote-meeting-token="record?.token || ''"
       >
         <template v-if="activeTab === 'minutes'">
-          <div v-if="generating" class="meeting-generating">
-            <div class="meeting-generating__row"><span class="meeting-spinner" />{{ t('liveShare.notes.generating') }}</div>
-          </div>
-          <div v-else-if="staleGenerating" class="meeting-warn">
-            {{ t('meeting.detail.generatingStale') }}
-            <button class="meeting-link" type="button" @click="regenerate">{{ t('common.retry') }}</button>
-          </div>
-          <div v-else-if="minutesFailed" class="meeting-error">{{ t('liveShare.notes.generateFailed') }}</div>
           <!-- The minutes are rendered by the SAME pipeline/interactions as the
                file preview. Do NOT go back to v-html + renderMarkdownHtml:
                that drops detectedPaths, never verifies the path chips, and
                resolves relative links against the project root. -->
           <MeetingMarkdown
-            v-else-if="minutesText"
+            v-if="minutesText"
             :content="minutesText"
             :path="minutesPath"
             @copy="copy"
           />
+          <div v-else-if="isArtifactRunning('minutes')" class="meeting-generating">
+            <div class="meeting-generating__row"><span class="meeting-spinner" />{{ t('liveShare.notes.generating') }}</div>
+          </div>
           <MeetingEmpty
             v-else
             :icon="FileText"
             :title="t('meeting.detail.emptyMinutesTitle')"
-            :desc="t('meeting.detail.emptyMinutesDesc')"
-          />
+            :desc="canRegenerate('minutes') ? t('meeting.detail.emptyMinutesDesc') : t('meeting.detail.artifact.noSource')"
+          >
+            <template v-if="canRegenerate('minutes')" #action>
+              <button
+                class="fbtn fbtn-primary"
+                type="button"
+                data-action="meeting-generate-minutes"
+                @click="openRegenerate('minutes')"
+              >
+                {{ t('meeting.detail.artifact.generate') }}
+              </button>
+            </template>
+          </MeetingEmpty>
         </template>
 
         <template v-else-if="activeTab === 'transcript'">
@@ -108,6 +125,9 @@
             @shot-open="openShot"
             @shot-delete="removeShot"
           />
+          <div v-else-if="isArtifactRunning('transcript')" class="meeting-generating">
+            <div class="meeting-generating__row"><span class="meeting-spinner" />{{ t('meeting.detail.artifact.runningAsr') }}</div>
+          </div>
           <!-- An empty transcript has three different causes and the old single
                sentence ("听记没有开启") was only right for one of them: it also
                claimed that while the file was still being uploaded right after
@@ -130,8 +150,19 @@
             v-else
             :icon="Captions"
             :title="t('meeting.detail.emptyTranscriptTitle')"
-            :desc="t('meeting.detail.emptyTranscriptDesc')"
-          />
+            :desc="canRegenerate('transcript') ? t('meeting.detail.emptyTranscriptDesc') : t('meeting.detail.artifact.noSource')"
+          >
+            <template v-if="canRegenerate('transcript')" #action>
+              <button
+                class="fbtn fbtn-primary"
+                type="button"
+                data-action="meeting-generate-transcript"
+                @click="openRegenerate('transcript')"
+              >
+                {{ record?.hasAudio ? t('meeting.detail.artifact.reasr') : t('meeting.detail.artifact.generate') }}
+              </button>
+            </template>
+          </MeetingEmpty>
         </template>
 
         <template v-else-if="activeTab === 'revised'">
@@ -144,12 +175,8 @@
             :blocks="revisedLines"
             data-role="revised"
           />
-          <div v-else-if="generating" class="meeting-generating">
+          <div v-else-if="isArtifactRunning('revised')" class="meeting-generating">
             <div class="meeting-generating__row"><span class="meeting-spinner" />{{ t('liveShare.notes.proofreading') }}</div>
-          </div>
-          <div v-else-if="staleGenerating" class="meeting-warn">
-            {{ t('meeting.detail.generatingStale') }}
-            <button class="meeting-link" type="button" @click="regenerate">{{ t('common.retry') }}</button>
           </div>
           <!-- Proofreading is allowed to fail without failing the minutes: the
                summary then comes from the raw transcript, and this tab stays
@@ -158,9 +185,20 @@
             v-else
             :icon="SpellCheck"
             :title="t('meeting.detail.emptyRevisedTitle')"
-            :desc="t('meeting.detail.emptyRevisedDesc')"
+            :desc="canRegenerate('revised') ? t('meeting.detail.emptyRevisedDesc') : t('meeting.detail.artifact.noSource')"
             data-role="revised-empty"
-          />
+          >
+            <template v-if="canRegenerate('revised')" #action>
+              <button
+                class="fbtn fbtn-primary"
+                type="button"
+                data-action="meeting-generate-revised"
+                @click="openRegenerate('revised')"
+              >
+                {{ t('meeting.detail.artifact.generate') }}
+              </button>
+            </template>
+          </MeetingEmpty>
         </template>
 
         <template v-else-if="activeTab === 'chat'">
@@ -210,6 +248,17 @@
         </button>
       </div>
     </template>
+
+    <MeetingRegenerateSheet
+      :open="regenOpen"
+      :target="regenTarget"
+      :plan="regenPlan"
+      :loading="regenLoading"
+      :error="regenError"
+      v-model:include-downstream="regenDownstream"
+      @close="regenOpen = false"
+      @confirm="confirmRegenerate"
+    />
   </div>
 </template>
 
@@ -242,17 +291,23 @@ import TranscriptList from './TranscriptList.vue'
 import MeetingMarkdown from './MeetingMarkdown.vue'
 import MeetingEmpty from './MeetingEmpty.vue'
 import MeetingResources from './MeetingResources.vue'
+import MeetingArtifactBar from './MeetingArtifactBar.vue'
+import MeetingRegenerateSheet from './MeetingRegenerateSheet.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation'
+import { onAppResume } from '@/composables/useAppForeground'
 import {
-  isStaleGenerating,
+  artifactStateOf,
   meetingQuoteLabel,
   useMeetingHistory,
+  type MeetingArtifactKind,
   type MeetingChatMessage,
+  type MeetingGeneration,
   type MeetingRecord,
   type MeetingShot,
+  type RegenPlan,
 } from '@/composables/useMeetingHistory'
 import { useMeetingResources } from '@/composables/useMeetingResources'
 import { buildShareLinks, type ShareLink } from '@/composables/useShareLinks'
@@ -387,9 +442,55 @@ const tabs = computed(() => [
   { key: 'chat' as Tab, label: t('meeting.detail.tabChat'), count: chat.value.length },
 ])
 
-const generating = computed(() => record.value?.status === 'generating' && !isStaleGenerating(record.value))
-const staleGenerating = computed(() => (record.value ? isStaleGenerating(record.value) : false))
-const minutesFailed = computed(() => record.value?.status === 'failed')
+const regenOpen = ref(false)
+const regenTarget = ref<MeetingArtifactKind>('minutes')
+const regenPlan = ref<RegenPlan | null>(null)
+const regenLoading = ref(false)
+const regenError = ref('')
+const regenDownstream = ref(true)
+let lastRegenTarget: MeetingArtifactKind | null = null
+let lastRegenContentAt = 0
+let prevGeneration: MeetingGeneration | null = null
+
+/** The artifact the active text tab owns; null on chat/resources. */
+const activeArtifactKind = computed<MeetingArtifactKind | null>(() => {
+  if (activeTab.value === 'minutes' || activeTab.value === 'transcript' || activeTab.value === 'revised') {
+    return activeTab.value
+  }
+  return null
+})
+const activeArtifactState = computed(() => artifactStateOf(record.value, activeArtifactKind.value ?? 'minutes'))
+const activeBlockedReason = computed(() => {
+  const kind = activeArtifactKind.value
+  if (!kind || !record.value || canRegenerate(kind)) return ''
+  return t('meeting.detail.artifact.noSource')
+})
+
+/** The step is the current one, or the only job left after a refresh. */
+function isArtifactRunning(kind: MeetingArtifactKind): boolean {
+  const generation = record.value?.generation
+  if (generation?.step === kind) return true
+  return !generation && artifactStateOf(record.value, kind).jobStatus === 'running'
+}
+
+/**
+ * Whether a source exists. This is only used for the empty-state CTA and the
+ * disabled reason; the server's plan is the authority on what will actually run.
+ */
+function canRegenerate(kind: MeetingArtifactKind): boolean {
+  const current = record.value
+  if (!current) return false
+  if (kind === 'minutes') {
+    return current.hasAudio || current.hasSegments || artifactStateOf(current, 'revised').hasContent
+  }
+  return current.hasAudio || current.hasSegments
+}
+
+function kindLabel(kind: MeetingArtifactKind): string {
+  if (kind === 'minutes') return t('meeting.detail.tabMinutes')
+  if (kind === 'revised') return t('meeting.detail.tabRevised')
+  return t('meeting.detail.tabTranscript')
+}
 
 /**
  * The stored cues as speaker turns.
@@ -598,60 +699,79 @@ function formatWhen(ms: number): string {
   })
 }
 
+const loadedContentAt: Record<MeetingArtifactKind, number> = {
+  minutes: -1,
+  transcript: -1,
+  revised: -1,
+}
+
 /**
  * Fetch the record and its artifacts.
  *
- * `silent` is for the minutes poll. Toggling `loading` on every tick swaps the
- * whole panel below the header — meta, tabs, body, footer — for a centered
- * spinner, which reads as "the screen refreshes itself every few seconds".
- * Only the first paint of a token may show that state.
+ * `silent` is for the poll. It must not toggle `loading` (that swaps the whole
+ * panel below the header for a spinner) and it only re-reads an artifact whose
+ * `contentAt` moved: a long regeneration would otherwise re-download three
+ * unchanged files every 2.5 seconds.
  */
 async function load(silent = false): Promise<void> {
   if (!props.token) return
   if (!silent) loading.value = true
   try {
-    record.value = await history.get(props.token)
-    if (!record.value) return
-    const [minutes, transcript, revised] = await Promise.all([
-      history.artifact(props.token, 'minutes'),
-      history.artifact(props.token, 'transcript'),
-      history.artifact(props.token, 'revised'),
-    ])
-    minutesText.value = minutes?.content ?? ''
-    // The artifact is WebVTT; the tab is a reading surface, so the markup is
-    // stripped here rather than in the file.
-    transcriptText.value = vttToPlainText(transcript?.content ?? '')
-    transcriptCues.value = parseVttCues(transcript?.content ?? '')
-    transcriptFile.value = transcript?.file ?? ''
-    revisedText.value = revised?.content ?? ''
-    revisedFile.value = revised?.file ?? ''
-    // Frames are final by the time the record is opened; the poll below only
-    // waits for the minutes, so there is no reason to re-read them every 2.5s.
-    if (!silent) shots.value = await history.shots(props.token)
-    const messages = await history.chat(props.token)
-    chat.value = messages.messages
-    // The minutes job starts AFTER stop() resolves, i.e. after this view was
+    const rec = await history.get(props.token)
+    record.value = rec
+    if (!rec) return
+    await loadArtifacts(rec, silent)
+    if (!silent) {
+      const messages = await history.chat(props.token)
+      chat.value = messages.messages
+      // Frames are final by the time the record is opened; the poll below only
+      // waits for the text artifacts, so there is no reason to re-read them
+      // every 2.5s.
+      shots.value = await history.shots(props.token)
+    }
+    // The initial job starts AFTER stop() resolves, i.e. after this view was
     // opened. Without polling, a meeting that just ended would say "no minutes"
     // until the user navigated away and back.
-    if (shouldPoll(record.value)) pollMinutes()
+    if (shouldPoll(rec)) pollRecord()
   } finally {
     if (!silent) loading.value = false
   }
 }
 
+async function loadArtifacts(rec: MeetingRecord, silent: boolean): Promise<void> {
+  for (const kind of ['minutes', 'transcript', 'revised'] as const) {
+    const contentAt = artifactStateOf(rec, kind).contentAt
+    if (silent && loadedContentAt[kind] === contentAt) continue
+    const art = await history.artifact(props.token, kind)
+    if (kind === 'minutes') {
+      minutesText.value = art?.content ?? ''
+    } else if (kind === 'transcript') {
+      // The artifact is WebVTT; the tab is a reading surface, so the markup is
+      // stripped here rather than in the file.
+      transcriptText.value = vttToPlainText(art?.content ?? '')
+      transcriptCues.value = parseVttCues(art?.content ?? '')
+      transcriptFile.value = art?.file ?? ''
+    } else {
+      revisedText.value = art?.content ?? ''
+      revisedFile.value = art?.file ?? ''
+    }
+    loadedContentAt[kind] = contentAt
+  }
+}
+
 /**
- * Whether the minutes may still arrive.
+ * Whether a job may still change the record.
  *
- * `generating` is obvious. The second case is the just-ended meeting: the
+ * `generation` is obvious. The second case is the just-ended meeting: the
  * publisher drains its upload queue and only then asks for the minutes, so for
- * a while the record is still `idle` although a job is about to start. The
- * window is bounded so an old meeting that never got minutes does not poll
- * forever.
+ * a while the record has no job although one is about to start. The window is
+ * bounded so an old meeting that never got minutes does not poll forever.
  */
 function shouldPoll(r: MeetingRecord | null): boolean {
   if (!r) return false
-  if (r.status === 'generating') return true
-  return r.status === 'idle' && r.endedAt > 0 && Date.now() - r.endedAt < 10 * 60 * 1000
+  if (r.generation) return true
+  return r.endedAt > 0 && !artifactStateOf(r, 'minutes').hasContent
+    && Date.now() - r.endedAt < 10 * 60 * 1000
 }
 
 function selectTab(tab: Tab): void {
@@ -698,6 +818,15 @@ function openFile(): void {
   if (target) void openFilePath(target, undefined, undefined, 'live')
 }
 
+async function openRegenerate(kind: MeetingArtifactKind): Promise<void> {
+  if (!record.value) return
+  regenTarget.value = kind
+  regenDownstream.value = true
+  regenOpen.value = true
+  regenPlan.value = null
+  await fetchRegenPlan()
+}
+
 /** Open one frame in the image viewer (the same one the file manager uses). */
 function openShot(block: NoteBlock): void {
   const target = block.shot?.fullPath
@@ -724,22 +853,81 @@ async function removeShot(block: NoteBlock): Promise<void> {
   }
 }
 
-async function regenerate(): Promise<void> {
+async function fetchRegenPlan(): Promise<void> {
   if (!record.value) return
+  regenLoading.value = true
+  regenError.value = ''
   try {
-    const resp = await fetch('/api/live-share/notes/minutes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: record.value.token, title: record.value.title, regenerate: true }),
-    })
-    if (!resp.ok) throw new Error(`minutes failed: ${resp.status}`)
-    record.value.status = 'generating'
-    record.value.updatedAt = Date.now()
-    pollMinutes()
-  } catch (e) {
-    appLog.w('MeetingDetail', 'regenerate failed', e)
+    const plan = await history.regenPlan(record.value.token, regenTarget.value, regenDownstream.value)
+    if (!plan) {
+      regenError.value = t('meeting.detail.regen.planFailed')
+      return
+    }
+    regenPlan.value = plan
+  } finally {
+    regenLoading.value = false
   }
 }
+
+async function confirmRegenerate(): Promise<void> {
+  const current = record.value
+  if (!current || !regenPlan.value || regenPlan.value.blocked) return
+  const kind = regenTarget.value
+  lastRegenTarget = kind
+  lastRegenContentAt = artifactStateOf(current, kind).contentAt
+  const result = await history.regenerate(current.token, kind, regenDownstream.value)
+  if (!result.ok) {
+    if (result.plan) {
+      regenPlan.value = result.plan
+      return
+    }
+    toast.show(t('meeting.detail.regen.startFailed'), { type: 'error', icon: 'warning' })
+    return
+  }
+  regenOpen.value = false
+  if (result.session) {
+    record.value = result.session
+    prevGeneration = result.session.generation
+  }
+  pollRecord()
+}
+
+async function cancelRegenerate(): Promise<void> {
+  if (!record.value) return
+  const ok = await history.cancelRegeneration(record.value.token)
+  if (!ok) {
+    toast.show(t('meeting.detail.regen.cancelFailed'), { type: 'error', icon: 'warning' })
+    return
+  }
+  toast.show(t('meeting.detail.artifact.cancelled'), { type: 'info', icon: 'info' })
+  pollRecord()
+}
+
+watch(regenDownstream, () => {
+  if (regenOpen.value) void fetchRegenPlan()
+})
+
+// Completion toast: only for a job this view started. A job started on another
+// device already arrives as a live_event toast/notification.
+watch(
+  () => record.value?.generation,
+  (generation) => {
+    const previous = prevGeneration
+    prevGeneration = generation ?? null
+    if (!previous || generation) return
+    const target = lastRegenTarget
+    if (!target) return
+    const state = artifactStateOf(record.value, target)
+    if (state.jobStatus !== 'failed') {
+      if (state.contentAt !== lastRegenContentAt) {
+        toast.show(t('meeting.detail.artifact.updated', { kind: kindLabel(target) }), { type: 'success', icon: 'success' })
+      } else {
+        toast.show(t('meeting.detail.artifact.unchanged'), { type: 'info', icon: 'info' })
+      }
+    }
+    lastRegenTarget = null
+  },
+)
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 /**
@@ -750,7 +938,7 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null
  * closed view kept hitting four endpoints every 2.5 s until the process ended.
  */
 let disposed = false
-function pollMinutes(): void {
+function pollRecord(): void {
   if (disposed) return
   if (pollTimer) clearTimeout(pollTimer)
   pollTimer = setTimeout(() => {
@@ -765,8 +953,15 @@ function pollMinutes(): void {
   }, 2500)
 }
 
+const removeResumeListener = onAppResume(() => {
+  // A backgrounded WebView throttles timers; on return the record may be many
+  // seconds stale even though the job finished. Refresh once immediately.
+  void load(true)
+})
+
 onBeforeUnmount(() => {
   disposed = true
+  removeResumeListener()
   if (pollTimer) clearTimeout(pollTimer)
   pollTimer = null
   // The panel is unmounted on project switch / teardown; a stale view would
@@ -797,6 +992,11 @@ watch(
   () => props.token,
   () => {
     activeTab.value = props.initialTab ?? 'resources'
+    loadedContentAt.minutes = -1
+    loadedContentAt.transcript = -1
+    loadedContentAt.revised = -1
+    prevGeneration = null
+    lastRegenTarget = null
     void load()
   },
 )

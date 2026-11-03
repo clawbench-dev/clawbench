@@ -3,6 +3,9 @@
     <component :is="icon" class="meeting-empty__icon empty-state__icon" />
     <div class="meeting-empty__title">{{ title }}</div>
     <div v-if="desc" class="meeting-empty__desc">{{ desc }}</div>
+    <div v-if="$slots.action" class="meeting-empty__action">
+      <slot name="action" />
+    </div>
   </div>
 </template>
 
@@ -66,4 +69,7 @@ withDefaults(
   line-height: 1.6;
   color: var(--text-muted);
 }
+/* The action is slotted from the parent (a real button with the shared
+   .fbtn styles), so this only owns the gap. */
+.meeting-empty__action { margin-top: var(--space-2); }
 </style>

@@ -355,7 +355,7 @@ function eventTone(n: NotificationItem): string {
     // A remote-control request is the one meeting event that needs an answer,
     // so it reads like permission_pending rather than like a completion.
     if (s === 'control_request') return 'warning'
-    if (s === 'minutes_failed') return 'danger'
+    if (s === 'minutes_failed' || s === 'transcript_failed' || s === 'revised_failed') return 'danger'
     return 'success'
   }
   if (s === 'failed' || s === 'cancelled') return 'danger'
@@ -370,8 +370,8 @@ function eventIcon(n: NotificationItem) {
   if (n.kind === 'usage') return Gauge
   if (n.kind === 'meeting') {
     if (s === 'control_request') return Hand
-    if (s === 'minutes_failed') return X
-    if (s === 'minutes_ready') return Check
+    if (s === 'minutes_failed' || s === 'transcript_failed' || s === 'revised_failed') return X
+    if (s === 'minutes_ready' || s === 'transcript_ready' || s === 'revised_ready') return Check
     return Video
   }
   if (s === 'failed' || s === 'cancelled') return X
@@ -400,6 +400,10 @@ function eventLabel(n: NotificationItem): string {
     screen_share: 'notifications.event.meetingScreenShare',
     minutes_ready: 'notifications.event.meetingMinutesReady',
     minutes_failed: 'notifications.event.meetingMinutesFailed',
+    transcript_ready: 'notifications.event.transcriptReady',
+    transcript_failed: 'notifications.event.transcriptFailed',
+    revised_ready: 'notifications.event.revisedReady',
+    revised_failed: 'notifications.event.revisedFailed',
   }
   const key = map[n.eventType]
   // Fall back to the raw event type rather than an empty chip: an unknown event

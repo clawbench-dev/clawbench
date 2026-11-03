@@ -268,6 +268,22 @@ test.describe('Meeting flow', () => {
     await page.locator('[data-action="panel-end"]').click()
     await expect(page.locator('[data-action="meeting-quote"]')).toBeVisible({ timeout: 20000 })
 
+    // The artifact bar is the status/action strip above each TEXT tab, so the
+    // record has to be on 纪要 first — the record opens on 资源.
+    await page.locator('.meeting-tabs [data-tab="minutes"]').click()
+    // This meeting recorded nothing and transcribed nothing, so there is no
+    // source to regenerate from: the bar must say so and keep its button
+    // disabled instead of promising a job the server would refuse. (The
+    // confirmation sheet itself needs a real source — an ASR provider is not
+    // configured in e2e — so its states are covered by
+    // MeetingRegenerateSheet.test.ts.)
+    const bar = page.locator('.artifact-bar')
+    await expect(bar).toBeVisible()
+    await expect(bar.locator('.artifact-bar__text')).toHaveText(/没有可用的来源|no source available/i)
+    await expect(bar.locator('[data-action="meeting-artifact-regenerate"]')).toBeDisabled()
+    // The empty state explains why, and offers no CTA that could not run.
+    await expect(page.locator('[data-action="meeting-generate-minutes"]')).toHaveCount(0)
+
     await page.locator('.meeting-tabs [data-tab="chat"]').click()
     await expect(page.locator('.chat-row__text')).toContainText('这是一条会议聊天')
 

@@ -34,20 +34,6 @@ describe('clipQuoteText', () => {
   })
 })
 
-describe('isStaleGenerating', () => {
-  it('is false while the job is fresh', () => {
-    expect(isStaleGenerating({ status: 'generating', updatedAt: Date.now() })).toBe(false)
-  })
-
-  it('flags a job that has not moved for ten minutes', () => {
-    expect(isStaleGenerating({ status: 'generating', updatedAt: Date.now() - 11 * 60 * 1000 })).toBe(true)
-  })
-
-  it('ignores a finished record however old', () => {
-    expect(isStaleGenerating({ status: 'ready', updatedAt: 0 })).toBe(false)
-  })
-})
-
 describe('meetingQuoteLabel', () => {
   it('includes the title and the start time', () => {
     const label = meetingQuoteLabel({ title: '周会', startedAt: new Date(2026, 10, 1, 9, 5).getTime() })
@@ -83,5 +69,55 @@ describe('useMeetingHistory.buildQuote', () => {
     stubArtifacts({})
     const quote = await useMeetingHistory().buildQuote({ token: 't1', title: '周会', startedAt: 0 })
     expect(quote).toBeNull()
+  })
+})
+
+describe('useMeetingHistory regeneration', () => {
+  it('asks the plan endpoint for the exact target and downstream flag', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ target: 'minutes', steps: [], warnings: [], blocked: null }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const plan = await useMeetingHistory().regenPlan('tok', 'minutes', true)
+    expect(plan?.target).toBe('minutes')
+    const url = String(fetchMock.mock.calls[0][0])
+    expect(url).toContain('/api/live-share/notes/regenerate/plan?')
+    expect(url).toContain('target=minutes')
+    expect(url).toContain('downstream=1')
+  })
+
+  it('returns the updated session on success', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ session: { token: 'tok' } }),
+    })))
+
+    const result = await useMeetingHistory().regenerate('tok', 'transcript', false)
+    expect(result.ok).toBe(true)
+    expect(result.session?.token).toBe('tok')
+  })
+
+  it('returns the blocked plan on 409 instead of pretending it started', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: 'no source', plan: { target: 'minutes', steps: [], warnings: [], blocked: { code: 'no_source', message: 'no source' } } }),
+    })))
+
+    const result = await useMeetingHistory().regenerate('tok', 'minutes', false)
+    expect(result.ok).toBe(false)
+    expect(result.plan?.blocked?.code).toBe('no_source')
+  })
+
+  it('reports cancellation success from the response status', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) })))
+    await expect(useMeetingHistory().cancelRegeneration('tok')).resolves.toBe(true)
+
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 409, json: async () => ({}) })))
+    await expect(useMeetingHistory().cancelRegeneration('tok')).resolves.toBe(false)
   })
 })

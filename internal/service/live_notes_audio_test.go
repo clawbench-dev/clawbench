@@ -557,7 +557,7 @@ func TestMergeLiveNoteAudioGroup_ReportsUnpublishableTarget(t *testing.T) {
 	target := filepath.Join(dir, "mic.webm")
 	require.NoError(t, os.MkdirAll(target, 0o755))
 
-	_, err := mergeLiveNoteAudioGroup(dir, target, []audioSegment{
+	_, _, err := mergeLiveNoteAudioGroup(dir, target, []audioSegment{
 		{path: segPath, channel: "mic", startedAt: 1_700_000_000_000},
 	})
 	require.Error(t, err)
@@ -573,7 +573,7 @@ func TestMergeLiveNoteAudioGroup_ReportsUnreadableFirstSegment(t *testing.T) {
 	require.NoError(t, os.WriteFile(bad, []byte("not a webm"), 0o644))
 	require.NoError(t, os.WriteFile(good, testSegment(t, testCluster{timecode: 0}), 0o644))
 
-	_, err := mergeLiveNoteAudioGroup(dir, filepath.Join(dir, "mic.webm"), []audioSegment{
+	_, _, err := mergeLiveNoteAudioGroup(dir, filepath.Join(dir, "mic.webm"), []audioSegment{
 		{path: bad, startedAt: 1_700_000_000_000},
 		{path: good, startedAt: 1_700_000_005_000},
 	})
@@ -591,7 +591,7 @@ func TestMergeLiveNoteAudioGroup_ReportsUnpublishableRemux(t *testing.T) {
 	target := filepath.Join(dir, "mic.webm")
 	require.NoError(t, os.MkdirAll(target, 0o755))
 
-	_, err := mergeLiveNoteAudioGroup(dir, target, []audioSegment{
+	_, _, err := mergeLiveNoteAudioGroup(dir, target, []audioSegment{
 		{path: segA, startedAt: 1_700_000_000_000},
 		{path: segB, startedAt: 1_700_000_005_000},
 	})
@@ -611,7 +611,7 @@ func TestMergeLiveNoteAudioGroup_ReportsUnwritableDirectory(t *testing.T) {
 	require.NoError(t, os.Chmod(dir, 0o500))
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
-	_, err := mergeLiveNoteAudioGroup(dir, filepath.Join(dir, "mic.webm"), []audioSegment{
+	_, _, err := mergeLiveNoteAudioGroup(dir, filepath.Join(dir, "mic.webm"), []audioSegment{
 		{path: segA, startedAt: 1_700_000_000_000},
 		{path: segB, startedAt: 1_700_000_005_000},
 	})

@@ -170,7 +170,6 @@ import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import {
-  isStaleGenerating,
   meetingQuoteLabel,
   useMeetingHistory,
   type MeetingRecord,
@@ -237,6 +236,8 @@ watch(
 onBeforeUnmount(() => {
   if (clock) clearInterval(clock)
   clock = null
+  if (pollTimer) clearTimeout(pollTimer)
+  pollTimer = null
 })
 
 /**
@@ -273,18 +274,29 @@ interface RowState {
  * their own line; this one only speaks up when the meeting is still running,
  * still generating, or broken.
  */
+function artifactLabel(kind: 'minutes' | 'transcript' | 'revised'): string {
+  if (kind === 'minutes') return t('meeting.detail.tabMinutes')
+  if (kind === 'revised') return t('meeting.detail.tabRevised')
+  return t('meeting.detail.tabTranscript')
+}
+
 function rowState(s: MeetingRecord): RowState {
   if (!s.endedAt) {
     return { kind: 'running', cls: 'is-accent', label: t('meeting.list.running'), dot: true }
   }
-  if (s.status === 'failed') {
+  if (s.generation) {
+    return {
+      kind: 'generating',
+      cls: 'is-accent',
+      label: t('meeting.list.regenerating', { kind: artifactLabel(s.generation.step) }),
+    }
+  }
+  const states = Object.values(s.artifacts ?? {})
+  if (states.some((state) => state.jobStatus === 'failed')) {
     return { kind: 'failed', cls: 'is-danger', label: t('meeting.list.failed'), icon: 'alert' }
   }
-  if (isStaleGenerating(s)) {
-    return { kind: 'stale', cls: 'is-warn', label: t('meeting.list.stale'), icon: 'alert' }
-  }
-  if (s.status === 'generating') {
-    return { kind: 'generating', cls: 'is-accent', label: t('meeting.list.generating') }
+  if (states.some((state) => state.stale)) {
+    return { kind: 'stale', cls: 'is-warn', label: t('meeting.list.updating'), icon: 'alert' }
   }
   return { kind: '', cls: '', label: '' }
 }
@@ -314,9 +326,30 @@ const rows = computed(() =>
   }),
 )
 
-function reload(): void {
-  void history.load()
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+const anyGenerating = computed(() => sessions.value.some((s) => Boolean(s.generation)))
+
+/**
+ * Poll the list only while a row is generating, and stop the moment none is.
+ * A user who parks on the list still sees the completion; an idle list makes no
+ * requests.
+ */
+function schedulePoll(): void {
+  if (pollTimer) clearTimeout(pollTimer)
+  pollTimer = null
+  if (!anyGenerating.value || props.active === false) return
+  pollTimer = setTimeout(() => {
+    void history.load().then(() => schedulePoll())
+  }, 5000)
 }
+
+function reload(): void {
+  void history.load().then(() => schedulePoll())
+}
+
+// A row that settles between polls must stop the timer immediately; otherwise
+// one more request fires before schedulePoll notices.
+watch(anyGenerating, () => schedulePoll())
 
 function onDragStart(e: DragEvent, s: MeetingRecord): void {
   const payload = meetingDragPayload({ token: s.token, label: meetingQuoteLabel(s) })
@@ -347,7 +380,12 @@ async function askDelete(s: MeetingRecord): Promise<void> {
 watch(
   () => props.active,
   (active) => {
-    if (active) reload()
+    if (active) {
+      reload()
+      return
+    }
+    if (pollTimer) clearTimeout(pollTimer)
+    pollTimer = null
   },
 )
 

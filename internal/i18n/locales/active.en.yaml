@@ -444,6 +444,12 @@ MeetingEventViewerJoined: "{{.Name}} joined the meeting"
 MeetingEventScreenShare: "{{.Name}} started sharing their screen"
 MeetingEventMinutesReady: Meeting minutes are ready
 MeetingEventMinutesFailed: Meeting minutes failed to generate
+MeetingEventRevisedReady: Proofread transcript is ready
+MeetingEventRevisedFailed: Proofread transcript failed to generate
+MeetingEventTranscriptReady: Meeting transcript is ready
+MeetingEventTranscriptFailed: Meeting transcript failed to generate
+MeetingSpeakerUnknown: Speaker
+MeetingProgressFinal: Summarizing
 # Meeting artifacts written into the project (minutes.md, chat.md,
 # transcript-revised.md) and the transcript line format. Localized from the
 # configured UI language because the minutes job has no HTTP request in scope.

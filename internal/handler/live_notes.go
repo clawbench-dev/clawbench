@@ -3,7 +3,7 @@
 // The publisher records each audio channel separately and uploads short
 // segments; the server transcribes them with the configured STT provider and
 // stores the text. This file is the transport layer only — persistence,
-// timeline merging and summarisation live in internal/service/live_notes.go.
+// timeline merging and summarization live in internal/service/live_notes.go.
 //
 // Why the publisher uploads instead of the server capturing the media: a live
 // share is P2P, the server never receives a single audio packet. The publisher
@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"clawbench/internal/model"
@@ -76,13 +78,43 @@ const (
 	// across all rooms. The STT backend is a shared HTTP service; a long meeting
 	// with eight speaking viewers would otherwise burst it.
 	liveNoteSTTConcurrency = 4
-	// liveNoteMinutesTimeout bounds one minutes generation. The job runs two
-	// chunked passes now (proofread, then summarize), so the budget covers both.
-	liveNoteMinutesTimeout = 10 * time.Minute
+	// Per-step budgets. Recognition is the long one (a one-hour meeting is
+	// hundreds of 20-second chunks); proofread and summarize are model passes
+	// over the same text. The chain budget is deliberately larger than the sum
+	// of two steps because a regeneration can run all three.
+	liveNoteASRTimeout   = 30 * time.Minute
+	liveNoteModelTimeout = 10 * time.Minute
+	liveNoteChainTimeout = 60 * time.Minute
 )
 
 // liveNoteSTTSlots is the process-wide transcription semaphore.
 var liveNoteSTTSlots = make(chan struct{}, liveNoteSTTConcurrency)
+
+// liveNoteJobs is the cancellation registry: token → the cancel func of the
+// chain that owns it. Only the goroutine writes status; cancelling just asks
+// the context to stop, so the two paths cannot race.
+var liveNoteJobs sync.Map
+
+func registerLiveNoteJob(token string, cancel context.CancelFunc) {
+	liveNoteJobs.Store(token, cancel)
+}
+
+func unregisterLiveNoteJob(token string) {
+	liveNoteJobs.Delete(token)
+}
+
+func cancelLiveNoteJob(token string) bool {
+	value, ok := liveNoteJobs.Load(token)
+	if !ok {
+		return false
+	}
+	cancel, ok := value.(context.CancelFunc)
+	if !ok {
+		return false
+	}
+	cancel()
+	return true
+}
 
 // liveNotesResponse is the publisher/viewer read payload.
 type liveNotesResponse struct {
@@ -129,7 +161,7 @@ type liveNotesMinutesPayload struct {
 	// FilePath is publisher-only: the Markdown copy written inside the project.
 	// Never sent to viewers — a server path is not theirs to read.
 	FilePath string `json:"filePath,omitempty"`
-	// Revise reports the proofreading stage that runs before summarisation, so
+	// Revise reports the proofreading stage that runs before summarization, so
 	// the dialog can say "正在校对转写" instead of a generic spinner.
 	Revise liveNotesRevisePayload `json:"revise"`
 	// Artifacts are the files this meeting left in the project (publisher only:
@@ -356,7 +388,7 @@ func serveLiveNotesDelete(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedErrorf(w, r, http.StatusConflict, "LiveNotesMeetingLive")
 		return
 	}
-	generating, err := service.LiveNoteGenerationRunning(token, time.Now().UnixMilli())
+	generating, err := service.ArtifactJobActive(token, time.Now().UnixMilli())
 	if err != nil {
 		slog.Error("live notes: delete lookup failed", "err", err)
 		model.WriteError(w, model.Internal(err))
@@ -888,7 +920,7 @@ func ServeLiveShareNoteScreen(w http.ResponseWriter, r *http.Request) {
 // Artifacts are resolved here rather than stored as four columns: the folder is
 // the single fact, and the file names inside it are a convention.
 func liveNotesPayload(projectPath string, note service.LiveNote) liveNotesMinutesPayload {
-	return liveNotesMinutesPayload{
+	payload := liveNotesMinutesPayload{
 		Status:    note.Status,
 		Markdown:  note.Minutes,
 		Error:     note.Error,
@@ -896,6 +928,38 @@ func liveNotesPayload(projectPath string, note service.LiveNote) liveNotesMinute
 		Revise:    liveNotesRevisePayload{Status: note.ReviseStatus, Error: note.ReviseError},
 		Artifacts: liveNoteArtifactsOf(service.MeetingDirPath(projectPath, note.DirName)),
 	}
+	// The artifact table is the authority. The legacy columns above are the
+	// fallback for a store error, not a second opinion in the normal path: a
+	// chain that starts with the transcript would otherwise leave the dialog
+	// saying "idle" for the first two stages.
+	states, err := service.ArtifactStatesForToken(note.Token)
+	if err != nil {
+		return payload
+	}
+	minutes := service.NormalizeArtifactState(states[service.ArtifactMinutes], 0)
+	payload.Status = artifactPhase(minutes, note.Minutes)
+	payload.Error = minutes.Error
+	revised := service.NormalizeArtifactState(states[service.ArtifactRevised], 0)
+	payload.Revise = liveNotesRevisePayload{
+		Status: artifactPhase(revised, note.Revised),
+		Error:  revised.Error,
+	}
+	return payload
+}
+
+// artifactPhase maps the two-axis artifact state onto the single phase the
+// live panel already understands.
+func artifactPhase(st service.ArtifactState, content string) string {
+	switch st.JobStatus {
+	case service.ArtifactJobQueued, service.ArtifactJobRunning:
+		return service.LiveNotesStatusGenerating
+	case service.ArtifactJobFailed:
+		return service.LiveNotesStatusFailed
+	}
+	if st.ContentAt > 0 || strings.TrimSpace(content) != "" {
+		return service.LiveNotesStatusReady
+	}
+	return service.LiveNotesStatusIdle
 }
 
 // liveNoteArtifactsOf lists what is ACTUALLY on disk for a meeting folder.
@@ -1143,19 +1207,14 @@ func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Idempotent unless explicitly asked to regenerate: a double-click on
-	// "生成纪要" must not queue two summarisation runs over the same transcript.
-	//
-	// "Still generating" goes through the same staleness test the delete guard
-	// uses. A row left in `generating` by a crashed process would otherwise
-	// answer this endpoint with a state that never advances — the reader would
-	// wait forever, while DELETE happily reported the same job as finished.
-	running, err := service.LiveNoteGenerationRunning(body.Token, 0)
-	if err != nil {
-		slog.Error("live notes: generation state lookup failed", "err", err)
-		model.WriteError(w, model.Internal(err))
+	// "生成纪要" must not queue two runs over the same transcript.
+	ready, readyErr := liveNotesMinutesReady(body.Token, note)
+	if readyErr != nil {
+		slog.Error("live notes: generation state lookup failed", "err", readyErr)
+		model.WriteError(w, model.Internal(readyErr))
 		return
 	}
-	if !body.Regenerate && (running || note.Status == service.LiveNotesStatusReady) {
+	if !body.Regenerate && ready {
 		writeJSON(w, http.StatusOK, liveNotesPayload(projectPath, note))
 		return
 	}
@@ -1172,18 +1231,42 @@ func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	title := truncateRunes(strings.TrimSpace(body.Title), 80)
-	if err := service.SetLiveNoteMinutes(body.Token, projectID, title, service.LiveNotesStatusGenerating, "", "", ""); err != nil {
-		slog.Error("live notes: mark generating failed", "err", err)
-		model.WriteError(w, model.Internal(err))
+	plan := service.PlanForInitialJob()
+	claimed, claimErr := service.ClaimArtifactJob(body.Token, artifactPlanKinds(plan), 0)
+	if claimErr != nil {
+		slog.Error("live notes: claim minutes job failed", "err", claimErr)
+		model.WriteError(w, model.Internal(claimErr))
 		return
 	}
-	go generateLiveNotesArtifacts(body.Token, projectID, projectPath, title, segments)
+	if claimed {
+		go runArtifactChain(body.Token, projectID, projectPath, title, plan, false)
+	}
 
-	writeJSON(w, http.StatusOK, liveNotesMinutesPayload{
-		Status:    service.LiveNotesStatusGenerating,
-		Revise:    liveNotesRevisePayload{Status: service.LiveNotesStatusGenerating},
-		Artifacts: liveNoteArtifactsOf(service.MeetingDirPath(projectPath, note.DirName)),
-	})
+	// The payload reads the artifact table, so it already says "generating"
+	// even though the minutes step is still queued behind transcript/proofread.
+	writeJSON(w, http.StatusOK, liveNotesPayload(projectPath, note))
+}
+
+// liveNotesMinutesReady reports whether the post-meeting job already produced
+// the minutes or is already running them.
+//
+// The legacy projection is the cheap "already ready" check; the artifact table
+// is the authority for "is something running" (the claim below).
+func liveNotesMinutesReady(token string, note service.LiveNote) (bool, error) {
+	running, err := service.LiveNoteGenerationRunning(token, 0)
+	if err != nil {
+		return false, err
+	}
+	return running || note.Status == service.LiveNotesStatusReady, nil
+}
+
+// artifactPlanKinds lists the artifacts a plan touches, in dependency order.
+func artifactPlanKinds(plan []service.RegenStep) []service.ArtifactKind {
+	kinds := make([]service.ArtifactKind, 0, len(plan))
+	for _, step := range plan {
+		kinds = append(kinds, step.Kind)
+	}
+	return kinds
 }
 
 // liveNotesStoredTitle returns the title actually stored for the meeting, or
@@ -1210,117 +1293,343 @@ func liveNotesTimeline(files []service.LiveNoteFile, screens []service.LiveNoteS
 	return timeline + section
 }
 
-// generateLiveNotesArtifacts is the detached post-meeting job.
-//
-// It runs three stages in order, and each one has its own durable output:
-//
-//  1. transcript.vtt         raw ASR, exactly as recognized (WebVTT cues)
-//  2. transcript-revised.md  proofread against the project's own vocabulary
-//  3. minutes.md             summary generated FROM the proofread transcript
-//
-// Stage 2 is why the summary reads like a meeting instead of a dictation: ASR
-// has no idea that "claw bench" is ClawBench, and the project's AGENTS.md does.
-// When proofreading fails the minutes fall back to the raw transcript — a
-// summary of an imperfect transcript beats no summary at all.
-//
-// Everything is written into the meeting folder that already holds the audio,
-// so the three artifacts plus the recording stay together. Both the row and the
-// folder are permanent; deleting the record removes both.
-func generateLiveNotesArtifacts(token string, projectID int64, projectPath, title string, segments []service.LiveNoteSegment) {
-	ctx, cancel := context.WithTimeout(context.Background(), liveNoteMinutesTimeout)
-	defer cancel()
+// ── Regeneration chain ─────────────────────────────────────────────────────
 
-	startedAt := liveNotesStartTime(segments)
-	// The row is the authority on the title: a client's copy can be stale (a
-	// second device, a page that never re-read the record), and the rename
-	// below has to inspect what is actually stored.
-	title = liveNotesStoredTitle(token, title)
-	paths, dirErr := service.EnsureMeetingDir(token, projectID, projectPath, title, startedAt.UnixMilli())
-	if dirErr != nil {
-		// The transcript and the minutes still go into the database; only the
-		// durable copies are lost, which is worth a warning rather than a
-		// failed meeting.
-		slog.Warn("live notes: meeting folder unavailable", "err", dirErr)
+// artifactChain is the shared state of one chain run: the meeting folder, the
+// file/screen timeline, the segments and the text produced by earlier steps.
+//
+// It exists so each step is a small method with the same inputs, and so a chain
+// that runs transcript → proofread → minutes reads the folder once.
+type artifactChain struct {
+	token       string
+	projectID   int64
+	projectPath string
+	title       string
+	strict      bool
+
+	paths    service.LiveNotesPaths
+	onDisk   bool
+	files    []service.LiveNoteFile
+	screens  []service.LiveNoteScreenShare
+	segments []service.LiveNoteSegment
+	self     service.LiveNotesSpeaker
+	raw      string
+	revised  string
+}
+
+func newArtifactChain(token string, projectID int64, projectPath, title string, strict bool) *artifactChain {
+	return &artifactChain{
+		token: token, projectID: projectID, projectPath: projectPath,
+		title: title, strict: strict,
 	}
-	onDisk := dirErr == nil
+}
 
-	// Fold the segments into one recording per channel before anything else
-	// reads the folder: the minutes link to the audio, and the user opens the
-	// meeting expecting one file rather than forty. This is also the retry path
-	// for a publisher whose merge request never arrived.
-	if onDisk {
-		if merged, mergeErr := service.MergeLiveNoteAudio(paths); mergeErr != nil {
+// prepare resolves everything the steps share. A failure to create the folder is
+// not fatal: the transcript/minutes can still be stored in the database, and the
+// durable copies are the only thing lost.
+func (c *artifactChain) prepare() {
+	c.refreshSegments()
+	startedAt := liveNotesStartTime(c.segments)
+	c.title = liveNotesStoredTitle(c.token, c.title)
+	paths, err := service.EnsureMeetingDir(c.token, c.projectID, c.projectPath, c.title, startedAt.UnixMilli())
+	if err != nil {
+		slog.Warn("live notes: meeting folder unavailable", "err", err)
+	}
+	c.paths = paths
+	c.onDisk = err == nil
+	if c.onDisk {
+		// Fold the segments into one recording per channel before anything else
+		// reads the folder. This is also the retry path for a publisher whose
+		// merge request never arrived.
+		merged, mergeErr := service.MergeLiveNoteAudio(paths)
+		if mergeErr != nil {
 			slog.Warn("live notes: merge audio failed", "err", mergeErr)
 		} else if merged.Segments > 0 {
 			slog.Info("live notes: merged meeting audio", "segments", merged.Segments)
 		}
+		recordMergedAudioChannels(c.token, merged)
 	}
-
-	files, filesErr := service.ListLiveNoteFiles(token, 0)
+	files, filesErr := service.ListLiveNoteFiles(c.token, 0)
 	if filesErr != nil {
 		// The transcript and the minutes are worth producing without the file
 		// timeline; losing it is a gap, not a reason to fail the meeting.
 		slog.Warn("live notes: list files failed", "err", filesErr)
-		files = nil
 	}
-	screens, screensErr := service.ListLiveNoteScreenShares(token)
+	c.files = files
+	screens, screensErr := service.ListLiveNoteScreenShares(c.token)
 	if screensErr != nil {
 		slog.Warn("live notes: list screen shares failed", "err", screensErr)
-		screens = nil
 	}
+	c.screens = screens
+}
 
-	raw := service.BuildLiveNotesTranscript(segments)
-	if onDisk {
-		writeLiveNotesArtifact("transcript", func() (string, error) {
-			return service.WriteLiveNotesRawTranscript(paths, segments, files, screens)
-		})
+// refreshSegments re-reads the transcript rows. The ASR step replaces them, so
+// every step after it must see the new rows rather than the pre-chain snapshot.
+func (c *artifactChain) refreshSegments() {
+	segments, err := service.ListLiveNoteSegments(c.token, 0)
+	if err != nil {
+		slog.Warn("live notes: list segments failed", "err", err)
+		segments = nil
 	}
-
-	// Who the meeting's initiator is, resolved once and shared by both model
-	// stages: the proofreader needs the spelling, the minutes need the name.
-	self := service.LiveNotesSpeaker{
+	c.segments = segments
+	c.self = service.LiveNotesSpeaker{
 		Label: service.LiveNotesSelfLabel(segments),
 		Name:  model.UserNickname,
 	}
+}
 
-	transcript := proofreadLiveNotesTranscript(ctx, token, projectID, projectPath, title, segments, files, screens, raw, paths, onDisk, startedAt, self)
+// run executes the plan. Status writes are the only authority: the chain is the
+// single writer, so cancellation (which only asks the context to stop) cannot
+// race it.
+func (c *artifactChain) run(ctx context.Context, steps []service.RegenStep) {
+	for _, step := range steps {
+		if ctx.Err() != nil {
+			c.abandon()
+			return
+		}
+		c.markRunning(step)
+		stepCtx, cancel := context.WithTimeout(ctx, artifactStepTimeout(step.Kind))
+		err := c.runStep(stepCtx, step)
+		cancel()
+		if err == nil {
+			continue
+		}
+		if ctx.Err() == context.Canceled {
+			c.abandon()
+			return
+		}
+		c.markFailed(step, err)
+		if resetErr := service.ResetQueuedArtifacts(c.token, 0); resetErr != nil {
+			slog.Warn("live notes: reset queued steps failed", "err", resetErr)
+		}
+		// Manual regeneration is strict: the user asked for this level, and
+		// quietly summarizing the raw transcript instead would hide the failure.
+		// The initial post-meeting job keeps the old fallback (a summary of an
+		// imperfect transcript beats no summary at all).
+		if c.strict || step.Kind != service.ArtifactRevised {
+			c.emit(step.Kind, false)
+			return
+		}
+		slog.Warn("live notes: proofread failed; minutes use the raw transcript", "err", err)
+		c.revised = c.raw
+	}
+	c.emit(steps[len(steps)-1].Kind, true)
+}
 
+func (c *artifactChain) runStep(ctx context.Context, step service.RegenStep) error {
+	switch step.Kind {
+	case service.ArtifactTranscript:
+		return c.buildTranscript(ctx, step.Mode)
+	case service.ArtifactRevised:
+		return c.buildRevised(ctx)
+	case service.ArtifactMinutes:
+		return c.buildMinutes(ctx)
+	default:
+		return fmt.Errorf("live notes: unknown artifact kind %q", step.Kind)
+	}
+}
+
+func (c *artifactChain) markRunning(step service.RegenStep) {
+	var err error
+	switch step.Kind {
+	case service.ArtifactTranscript:
+		err = service.SetArtifactRunning(c.token, step.Kind, "", 0)
+	case service.ArtifactRevised:
+		err = service.SetLiveNoteRevise(c.token, c.projectID, service.LiveNotesStatusGenerating, "", "")
+	case service.ArtifactMinutes:
+		err = service.SetLiveNoteMinutes(c.token, c.projectID, c.title, service.LiveNotesStatusGenerating, "", "", "")
+	}
+	if err != nil {
+		slog.Warn("live notes: mark step running failed", "kind", step.Kind, "err", err)
+	}
+}
+
+func (c *artifactChain) markFailed(step service.RegenStep, cause error) {
+	code := artifactErrorCode(step.Kind, cause)
+	msg := cause.Error()
+	var err error
+	switch step.Kind {
+	case service.ArtifactTranscript:
+		err = service.SetArtifactFailed(c.token, step.Kind, code, msg, 0)
+	case service.ArtifactRevised:
+		err = service.SetLiveNoteRevise(c.token, c.projectID, service.LiveNotesStatusFailed, "", msg)
+	case service.ArtifactMinutes:
+		err = service.SetLiveNoteMinutes(c.token, c.projectID, c.title, service.LiveNotesStatusFailed, "", msg, "")
+	}
+	if err != nil {
+		slog.Error("live notes: persist step failure failed", "kind", step.Kind, "err", err)
+	}
+}
+
+// abandon settles a cancelled chain. Cancellation is not a failure: the content
+// the artifact already had stays, and the user is not shown an error they
+// caused.
+func (c *artifactChain) abandon() {
+	if err := service.ResetActiveArtifacts(c.token, 0); err != nil {
+		slog.Warn("live notes: reset cancelled artifacts failed", "err", err)
+	}
+}
+
+func (c *artifactChain) emit(kind service.ArtifactKind, ok bool) {
+	eventType := ""
+	switch kind {
+	case service.ArtifactTranscript:
+		if ok {
+			eventType = service.MeetingEventTranscriptReady
+		} else {
+			eventType = service.MeetingEventTranscriptFailed
+		}
+	case service.ArtifactRevised:
+		if ok {
+			eventType = service.MeetingEventRevisedReady
+		} else {
+			eventType = service.MeetingEventRevisedFailed
+		}
+	case service.ArtifactMinutes:
+		if ok {
+			eventType = service.MeetingEventMinutesReady
+		} else {
+			eventType = service.MeetingEventMinutesFailed
+		}
+	}
+	if eventType == "" {
+		return
+	}
+	service.EmitMeetingEvent(c.token, c.projectPath, eventType, c.title, "", "")
+}
+
+// buildTranscript renders the VTT from the segments (mode=render) or re-runs
+// recognition on the recording (mode=asr, implemented in live_notes_reasr.go).
+func (c *artifactChain) buildTranscript(ctx context.Context, mode string) error {
+	if mode == service.RegenModeASR {
+		return c.buildTranscriptASR(ctx)
+	}
+	c.refreshSegments()
+	raw := service.BuildLiveNotesTranscript(c.segments)
+	if strings.TrimSpace(raw) == "" {
+		return service.ErrLiveNotesEmpty
+	}
+	c.raw = raw
+	changed := true
+	if c.onDisk {
+		body := service.BuildLiveNotesVTT(c.segments, c.files, c.screens)
+		if old, readErr := os.ReadFile(c.paths.Transcript); readErr == nil && string(old) == body {
+			changed = false
+		}
+		if _, err := service.WriteLiveNotesRawTranscript(c.paths, c.segments, c.files, c.screens); err != nil {
+			// The transcript is file-only, so this artifact really is missing.
+			// It must not take the minutes down with it: the initial job keeps
+			// going on the text it already has, exactly like the proofread
+			// failure path. A manual transcript regeneration is strict and
+			// reports the failure.
+			slog.Warn("live notes: write transcript failed", "err", err)
+			if markErr := service.SetArtifactFailed(c.token, service.ArtifactTranscript, service.ArtifactErrIO, err.Error(), 0); markErr != nil {
+				slog.Error("live notes: persist transcript failure failed", "err", markErr)
+			}
+			if c.strict {
+				return fmt.Errorf("write transcript: %w", err)
+			}
+			return nil
+		}
+	}
+	contentAt := int64(0)
+	if changed && c.onDisk {
+		contentAt = time.Now().UnixMilli()
+	}
+	return service.SetArtifactSucceeded(c.token, service.ArtifactTranscript, contentAt, 0)
+}
+
+// buildRevised runs the proofreading pass and stores both the database copy and
+// the Markdown file. The file write is best-effort: the content is already in
+// the database, so a read-only project folder must not fail the meeting.
+func (c *artifactChain) buildRevised(ctx context.Context) error {
+	if strings.TrimSpace(c.raw) == "" {
+		c.refreshSegments()
+		c.raw = service.BuildLiveNotesTranscript(c.segments)
+	}
+	progress := func(done, total int) {
+		if err := service.HeartbeatArtifact(c.token, service.ArtifactRevised, fmt.Sprintf("%d/%d", done, total), 0); err != nil {
+			slog.Warn("live notes: revise heartbeat failed", "err", err)
+		}
+	}
+	revised, err := service.ReviseLiveNotesTranscript(ctx, c.projectPath, c.title, c.segments, c.self, progress)
+	if err != nil {
+		return err
+	}
+	c.revised = revised
+	if err := service.SetLiveNoteRevise(c.token, c.projectID, service.LiveNotesStatusReady, revised, ""); err != nil {
+		slog.Error("live notes: persist proofread failed", "err", err)
+	}
+	if c.onDisk {
+		// Merged only into the FILE, never into the DB copy or the minutes
+		// input: the proofread text is speech, and the summarizer gets the file
+		// timeline as its own explicitly-framed block.
+		body := service.MergeLiveNoteFileEvents(revised, c.files, c.screens, service.LiveNotesTimelineBase(c.segments))
+		writeLiveNotesArtifact("revised", func() (string, error) {
+			return service.WriteLiveNotesRevisedTranscript(c.paths, c.title, liveNotesStartTime(c.segments), body)
+		})
+	}
+	return nil
+}
+
+// buildMinutes summarizes the proofread text. The database copy is the input
+// (the chain reads database text, not the exported file); when this chain did
+// not produce a proofread, the stored one is used, and a raw transcript is the
+// last resort.
+func (c *artifactChain) buildMinutes(ctx context.Context) error {
+	text := c.revised
+	if strings.TrimSpace(text) == "" {
+		if note, ok, err := service.GetLiveNote(c.token); err == nil && ok {
+			text = note.Revised
+		}
+	}
+	if strings.TrimSpace(text) == "" {
+		if strings.TrimSpace(c.raw) == "" {
+			c.refreshSegments()
+			c.raw = service.BuildLiveNotesTranscript(c.segments)
+		}
+		text = c.raw
+	}
+	if strings.TrimSpace(text) == "" {
+		return service.ErrLiveNotesEmpty
+	}
+
+	startedAt := liveNotesStartTime(c.segments)
 	// One background block for both timelines: they answer the same question
 	// ("what were we looking at") and splitting them into two sections only
 	// makes the model treat the second one as an afterthought.
-	timeline := liveNotesTimeline(files, screens, startedAt, projectPath)
-	minutes, err := service.GenerateLiveNotesMinutes(ctx, title, transcript, timeline, self)
-	if err != nil {
-		slog.Warn("live notes: minutes generation failed", "err", err)
-		if serr := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusFailed, "", err.Error(), ""); serr != nil {
-			slog.Error("live notes: persist minutes failure failed", "err", serr)
-		} else {
-			// The job runs detached (up to ten minutes) and the host has almost
-			// certainly left the meeting page by now, so the failure has to
-			// travel to them — polling the record list is not a notification.
-			service.EmitMeetingEvent(token, projectPath, service.MeetingEventMinutesFailed, title, "", "")
+	timeline := liveNotesTimeline(c.files, c.screens, startedAt, c.projectPath)
+	progress := func(done, total int, phase string) {
+		detail := fmt.Sprintf("%d/%d", done, total)
+		if phase == "final" {
+			detail = service.LiveNoteSummarizing()
 		}
-		return
+		if err := service.HeartbeatArtifact(c.token, service.ArtifactMinutes, detail, 0); err != nil {
+			slog.Warn("live notes: minutes heartbeat failed", "err", err)
+		}
+	}
+	minutes, err := service.GenerateLiveNotesMinutes(ctx, c.title, text, timeline, c.self, progress)
+	if err != nil {
+		return err
 	}
 
 	// Now that the meeting has been summarized there is something to name it
 	// after. Only a placeholder is replaced — a title the user typed is theirs.
 	// Done before the file is written so the minutes.md heading carries the
 	// real name instead of "11-01 17:35".
-	title = nameMeetingFromMinutes(ctx, title, minutes, service.GenerateLiveNotesTitle)
+	title := nameMeetingFromMinutes(ctx, c.title, minutes, service.GenerateLiveNotesTitle)
 
 	// A failed write must not lose the minutes: they are still stored below, and
 	// the UI simply shows no file path.
 	filePath := ""
-	if onDisk {
-		filePath = writeLiveNotesMinutes(paths, title, startedAt, minutes)
+	if c.onDisk {
+		filePath = writeLiveNotesMinutes(c.paths, title, startedAt, minutes)
 	}
-	if err := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusReady, minutes, "", filePath); err != nil {
+	if err := service.SetLiveNoteMinutes(c.token, c.projectID, title, service.LiveNotesStatusReady, minutes, "", filePath); err != nil {
 		slog.Error("live notes: persist minutes failed", "err", err)
-		return
 	}
-	// Same reason as the failure path: the job outlives the meeting page.
-	service.EmitMeetingEvent(token, projectPath, service.MeetingEventMinutesReady, title, "", "")
+	c.title = title
+	return nil
 }
 
 // nameMeetingFromMinutes replaces a placeholder title with one the summary
@@ -1344,41 +1653,51 @@ func nameMeetingFromMinutes(ctx context.Context, title, minutes string, generate
 	return named
 }
 
-// proofreadLiveNotesTranscript runs stage 2 and returns the text to summarize.
-//
-// On failure it returns the raw transcript: a summary of an imperfect
-// transcript beats no summary at all, and the failure is recorded where the UI
-// can show it.
-func proofreadLiveNotesTranscript(
-	ctx context.Context, token string, projectID int64, projectPath, title string,
-	segments []service.LiveNoteSegment, files []service.LiveNoteFile, screens []service.LiveNoteScreenShare,
-	raw string,
-	paths service.LiveNotesPaths, onDisk bool, startedAt time.Time, self service.LiveNotesSpeaker,
-) string {
-	if err := service.SetLiveNoteRevise(token, projectID, service.LiveNotesStatusGenerating, "", ""); err != nil {
-		slog.Warn("live notes: mark revising failed", "err", err)
+// runArtifactChain is the detached job behind both the initial post-meeting
+// generation and every manual regeneration.
+func runArtifactChain(token string, projectID int64, projectPath, title string, steps []service.RegenStep, strict bool) {
+	if len(steps) == 0 {
+		return
 	}
-	revised, err := service.ReviseLiveNotesTranscript(ctx, projectPath, title, segments, self)
-	if err != nil {
-		slog.Warn("live notes: proofread failed", "err", err)
-		if serr := service.SetLiveNoteRevise(token, projectID, service.LiveNotesStatusFailed, "", err.Error()); serr != nil {
-			slog.Error("live notes: persist proofread failure failed", "err", serr)
-		}
-		return raw
+	ctx, cancel := context.WithTimeout(context.Background(), liveNoteChainTimeout)
+	registerLiveNoteJob(token, cancel)
+	defer func() {
+		unregisterLiveNoteJob(token)
+		cancel()
+	}()
+
+	chain := newArtifactChain(token, projectID, projectPath, title, strict)
+	chain.prepare()
+	chain.run(ctx, steps)
+}
+
+// artifactStepTimeout is the budget for one step. Recognition is the long one;
+// the model passes share a smaller budget.
+func artifactStepTimeout(kind service.ArtifactKind) time.Duration {
+	if kind == service.ArtifactTranscript {
+		return liveNoteASRTimeout
 	}
-	if err := service.SetLiveNoteRevise(token, projectID, service.LiveNotesStatusReady, revised, ""); err != nil {
-		slog.Error("live notes: persist proofread failed", "err", err)
+	return liveNoteModelTimeout
+}
+
+// artifactErrorCode maps a step failure onto the code the SPA localizes.
+func artifactErrorCode(kind service.ArtifactKind, err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return service.ArtifactErrTimeout
+	case errors.Is(err, service.ErrLiveNotesEmpty):
+		return service.ArtifactErrNoSource
+	case errors.Is(err, service.ErrSummaryModelNotConfigured):
+		return service.ArtifactErrModel
+	case errors.Is(err, service.ErrLiveNoteSTT):
+		return service.ArtifactErrSTT
+	case errors.Is(err, service.ErrLiveNoteAudioMissing):
+		return service.ArtifactErrAudio
 	}
-	if onDisk {
-		// Merged only into the FILE, never into the DB copy or the minutes
-		// input: the proofread text is speech, and the summariser gets the file
-		// timeline as its own explicitly-framed block.
-		body := service.MergeLiveNoteFileEvents(revised, files, screens, service.LiveNotesTimelineBase(segments))
-		writeLiveNotesArtifact("revised", func() (string, error) {
-			return service.WriteLiveNotesRevisedTranscript(paths, title, startedAt, body)
-		})
+	if kind == service.ArtifactTranscript {
+		return service.ArtifactErrIO
 	}
-	return revised
+	return service.ArtifactErrModel
 }
 
 // writeLiveNotesArtifact runs one file write, downgrading any error to a

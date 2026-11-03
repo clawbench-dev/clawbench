@@ -130,6 +130,40 @@ CREATE TABLE IF NOT EXISTS live_notes_screen (
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- One row per regenerable artifact (transcript / revised / minutes). Two axes
+-- live here on purpose: content_at says when the content last CHANGED (drives
+-- staleness), while job_status/job_at describe the last attempt (drives
+-- "generating" and the 10-minute interruption rule). A single status cannot
+-- express "regenerating while the old content is still on screen".
+CREATE TABLE IF NOT EXISTS live_notes_artifacts (
+	token      TEXT NOT NULL,
+	kind       TEXT NOT NULL,
+	job_status TEXT NOT NULL DEFAULT 'idle',
+	error_code TEXT NOT NULL DEFAULT '',
+	error      TEXT NOT NULL DEFAULT '',
+	detail     TEXT NOT NULL DEFAULT '',
+	content_at INTEGER NOT NULL DEFAULT 0,
+	job_at     INTEGER NOT NULL DEFAULT 0,
+	started_at INTEGER NOT NULL DEFAULT 0,
+	-- transcript only: ASR finished but the VTT has not been written yet. A
+	-- retry renders instead of paying for the whole recognition again.
+	pending_asr_at INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (token, kind)
+);
+
+-- The absolute time each merged channel file starts at. Leading silent chunks
+-- never become live_notes_segments rows, so MIN(started_at) cannot reconstruct
+-- this origin; re-recognition needs it to place the new segments on the
+-- timeline. Filled by the merge, not by the recording path.
+CREATE TABLE IF NOT EXISTS live_notes_audio (
+	token       TEXT NOT NULL,
+	channel     TEXT NOT NULL,
+	file        TEXT NOT NULL,
+	base_at     INTEGER NOT NULL DEFAULT 0,
+	duration_ms INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (token, channel)
+);
+
 -- live_notes_shots holds the key frames captured during a meeting. The file
 -- itself lives in <meeting dir>/shots; this row is the timeline entry, so the
 -- record can place a frame between two transcript lines.
@@ -162,6 +196,8 @@ CREATE INDEX IF NOT EXISTS idx_live_note_chat_token ON live_notes_chat(token, id
 CREATE INDEX IF NOT EXISTS idx_live_note_chat_project ON live_notes_chat(project_id, token);
 CREATE INDEX IF NOT EXISTS idx_live_note_files_token ON live_notes_files(token, opened_at);
 CREATE INDEX IF NOT EXISTS idx_live_note_screen_token ON live_notes_screen(token, started_at);
+CREATE INDEX IF NOT EXISTS idx_live_note_artifacts_token ON live_notes_artifacts(token);
+CREATE INDEX IF NOT EXISTS idx_live_note_audio_token ON live_notes_audio(token);
 CREATE INDEX IF NOT EXISTS idx_live_note_shots_token ON live_notes_shots(token, at_ms);
 `
 
@@ -689,23 +725,42 @@ func LiveNoteProjectID(token string) (int64, bool, error) {
 }
 
 // SetLiveNoteMinutes records the minutes status/output for a share.
+//
+// The legacy status columns are a projection for the live panel (`/notes`); the
+// record list, detail and regeneration guard read live_notes_artifacts. Both
+// are written here so the two surfaces cannot disagree about what is running.
+//
+// Content is only replaced on `ready`: starting or failing a job must not wipe
+// the last good minutes, which is what made a failed regeneration lose the
+// only copy the user had.
 func SetLiveNoteMinutes(token string, projectID int64, title, status, minutes, errMsg, filePath string) error {
-	_, err := store.WriteExec(
+	var existing string
+	err := store.ReadDB().QueryRow(`SELECT minutes FROM live_notes WHERE token = ?`, token).Scan(&existing)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		// Let the write below report the failure: it carries the operation's
+		// established error prefix, and a store that cannot be read cannot be
+		// written either.
+		existing = ""
+	}
+	changed := status == LiveNotesStatusReady && existing != minutes
+
+	nowMS := time.Now().UnixMilli()
+	if _, err := store.WriteExec(
 		`INSERT INTO live_notes (token, project_id, title, status, minutes, error, file_path, started_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		 ON CONFLICT(token) DO UPDATE SET
 		   status = excluded.status,
-		   minutes = excluded.minutes,
 		   error = excluded.error,
-		   file_path = excluded.file_path,
+		   minutes = CASE WHEN excluded.status = ? THEN excluded.minutes ELSE live_notes.minutes END,
+		   file_path = CASE WHEN excluded.status = ? THEN excluded.file_path ELSE live_notes.file_path END,
 		   title = CASE WHEN excluded.title <> '' THEN excluded.title ELSE live_notes.title END,
 		   updated_at = CURRENT_TIMESTAMP`,
-		token, projectID, title, status, minutes, errMsg, filePath, time.Now().UnixMilli(),
-	)
-	if err != nil {
+		token, projectID, title, status, minutes, errMsg, filePath, nowMS,
+		LiveNotesStatusReady, LiveNotesStatusReady,
+	); err != nil {
 		return fmt.Errorf("live notes: set minutes: %w", err)
 	}
-	return nil
+	return syncArtifactFromLegacy(token, ArtifactMinutes, status, errMsg, changed, nowMS)
 }
 
 // SetLiveNoteRevise records the proofreading stage of a share's transcript.
@@ -714,20 +769,51 @@ func SetLiveNoteMinutes(token string, projectID int64, title, status, minutes, e
 // independently, and a failed proofread must not hide a perfectly good summary
 // (which is then generated from the raw transcript).
 func SetLiveNoteRevise(token string, projectID int64, status, revised, errMsg string) error {
-	_, err := store.WriteExec(
+	var existing string
+	err := store.ReadDB().QueryRow(`SELECT revised FROM live_notes WHERE token = ?`, token).Scan(&existing)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		existing = ""
+	}
+	changed := status == LiveNotesStatusReady && existing != revised
+
+	nowMS := time.Now().UnixMilli()
+	if _, err := store.WriteExec(
 		`INSERT INTO live_notes (token, project_id, revise_status, revised, revise_error, started_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		 ON CONFLICT(token) DO UPDATE SET
 		   revise_status = excluded.revise_status,
-		   revised = excluded.revised,
 		   revise_error = excluded.revise_error,
+		   revised = CASE WHEN excluded.revise_status = ? THEN excluded.revised ELSE live_notes.revised END,
 		   updated_at = CURRENT_TIMESTAMP`,
-		token, projectID, status, revised, errMsg, time.Now().UnixMilli(),
-	)
-	if err != nil {
+		token, projectID, status, revised, errMsg, nowMS, LiveNotesStatusReady,
+	); err != nil {
 		return fmt.Errorf("live notes: set revise: %w", err)
 	}
-	return nil
+	return syncArtifactFromLegacy(token, ArtifactRevised, status, errMsg, changed, nowMS)
+}
+
+// syncArtifactFromLegacy mirrors one legacy status write onto the artifact
+// table. The artifact row is the authority for the record/detail; the legacy
+// columns exist only so the live panel and the pre-artifact tests keep working.
+func syncArtifactFromLegacy(token string, kind ArtifactKind, status, errMsg string, changed bool, nowMS int64) error {
+	switch status {
+	case LiveNotesStatusGenerating:
+		return SetArtifactRunning(token, kind, "", nowMS)
+	case LiveNotesStatusReady:
+		contentAt := int64(0)
+		if changed {
+			contentAt = nowMS
+		}
+		return SetArtifactSucceeded(token, kind, contentAt, nowMS)
+	case LiveNotesStatusFailed:
+		code := ArtifactErrModel
+		if strings.Contains(strings.ToLower(errMsg), "stt") || strings.Contains(strings.ToLower(errMsg), "transcri") {
+			code = ArtifactErrSTT
+		}
+		return SetArtifactFailed(token, kind, code, errMsg, nowMS)
+	default:
+		return nil
+	}
 }
 
 // ── Meeting record lifecycle ────────────────────────────────────────────────
@@ -838,6 +924,11 @@ func CloseOrphanedLiveNotes(nowMS int64) (int, error) {
 	if _, err := ResetStaleLiveNoteGeneration(nowMS); err != nil {
 		return 0, err
 	}
+	// Same sweep for the artifact table (the authority for the record/detail).
+	// The legacy columns above only feed the live panel.
+	if _, err := ResetStaleArtifactJobs(nowMS); err != nil {
+		return 0, err
+	}
 	res, err := store.WriteExec(
 		`UPDATE live_notes
 		    SET ended_at = MIN(?, MAX(started_at,
@@ -868,6 +959,9 @@ func CloseStaleLiveNotes(beforeMS int64) (int, error) {
 	// Same ordering reason as CloseOrphanedLiveNotes: the close below refreshes
 	// updated_at, which would hide a long-dead generating row from the reset.
 	if _, err := ResetStaleLiveNoteGeneration(time.Now().UnixMilli()); err != nil {
+		return 0, err
+	}
+	if _, err := ResetStaleArtifactJobs(time.Now().UnixMilli()); err != nil {
 		return 0, err
 	}
 	cutoff := time.UnixMilli(beforeMS).UTC().Format(liveNoteSQLTimeLayout)
@@ -1050,13 +1144,23 @@ type MeetingRecord struct {
 	// ShotCount is how many key frames were kept. Derived from the folder like
 	// the other artifact flags, so a frame deleted from disk stops counting.
 	ShotCount int `json:"shotCount"`
-	// Status is the minutes job state (idle/generating/ready/failed). The list
-	// uses it to show "生成中" and to mark a job that died with the process.
-	Status string `json:"status"`
+	// HasSegments / HasAudio answer "can anything be regenerated": a meeting
+	// with neither has no source for any of the three artifacts.
+	HasSegments bool `json:"hasSegments"`
+	HasAudio    bool `json:"hasAudio"`
+	// Artifacts carries the per-artifact job state; Generation is the derived
+	// "which step is running" summary (nil when nothing is running).
+	//
+	// There is deliberately no single `status` field: it cannot express
+	// "regenerating while the old minutes are still readable". The old minutes
+	// job state survives only as the /notes live-panel projection.
+	Artifacts  map[ArtifactKind]MeetingArtifactView `json:"artifacts"`
+	Generation *MeetingGeneration                   `json:"generation"`
 	// SpeakerCount is how many distinct people the transcript heard. Derived
 	// from the segments like the artifact flags, so it disappears with them.
 	SpeakerCount int `json:"speakerCount"`
-	// UpdatedAt is the row's last write, used to detect a stuck "generating".
+	// UpdatedAt is the row's last write, used by the record's own lifecycle
+	// (the artifact heartbeat is separate).
 	UpdatedAt int64 `json:"updatedAt"`
 }
 
@@ -1071,7 +1175,7 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 		limit = 200
 	}
 	rows, err := store.ReadDB().Query(
-		`SELECT token, title, started_at, ended_at, dir_name, status,
+		`SELECT token, title, started_at, ended_at, dir_name,
 		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000
 		   FROM live_notes
 		  WHERE project_id = ? AND hidden = 0
@@ -1090,14 +1194,16 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 		var dirName string
 		var updatedMS int64
 		if scanErr := rows.Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName,
-			&m.Status, &updatedMS); scanErr != nil {
+			&updatedMS); scanErr != nil {
 			return nil, fmt.Errorf("live notes: scan meeting: %w", scanErr)
 		}
 		m.UpdatedAt = updatedMS
 		if dirName != "" {
 			m.Dir = dirName
 			m.DirPath = MeetingDirPath(projectPath, dirName)
-			applyLiveNoteArtifactFlags(&m, liveNoteArtifactFlags(m.DirPath))
+			flags := liveNoteArtifactFlags(m.DirPath)
+			applyLiveNoteArtifactFlags(&m, flags)
+			m.HasAudio = flags.hasMeetingAudio || flags.audioFiles > 0
 		}
 		out = append(out, m)
 	}
@@ -1113,9 +1219,32 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 	if err != nil {
 		return nil, err
 	}
+	segments, err := liveNoteSegmentCounts(projectID)
+	if err != nil {
+		return nil, err
+	}
+	tokens := make([]string, len(out))
 	for i := range out {
-		out[i].ChatCount = counts[out[i].Token]
-		out[i].SpeakerCount = speakers[out[i].Token]
+		tokens[i] = out[i].Token
+	}
+	states, err := ArtifactStatesForTokens(tokens)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UnixMilli()
+	for i := range out {
+		m := &out[i]
+		m.ChatCount = counts[m.Token]
+		m.SpeakerCount = speakers[m.Token]
+		m.HasSegments = segments[m.Token] > 0
+		flags := liveNoteArtifactState{
+			hasMinutes:      m.HasMinutes,
+			hasTranscript:   m.HasTranscript,
+			hasRevised:      m.HasRevised,
+			hasMeetingAudio: m.HasMeetingAudio,
+			audioFiles:      m.AudioFiles,
+		}
+		m.Artifacts, m.Generation = BuildMeetingArtifactViews(flags, states[m.Token], now)
 	}
 	return out, nil
 }
@@ -1129,10 +1258,10 @@ func GetMeetingRecord(projectPath string, projectID int64, token string) (Meetin
 	var dirName string
 	var updatedMS int64
 	err := store.ReadDB().QueryRow(
-		`SELECT token, title, started_at, ended_at, dir_name, status,
+		`SELECT token, title, started_at, ended_at, dir_name,
 		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000
 		   FROM live_notes WHERE token = ? AND project_id = ? AND hidden = 0`, token, projectID,
-	).Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName, &m.Status, &updatedMS)
+	).Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName, &updatedMS)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MeetingRecord{}, false, nil
 	}
@@ -1140,10 +1269,13 @@ func GetMeetingRecord(projectPath string, projectID int64, token string) (Meetin
 		return MeetingRecord{}, false, fmt.Errorf("live notes: get meeting: %w", err)
 	}
 	m.UpdatedAt = updatedMS
+	var flags liveNoteArtifactState
 	if dirName != "" {
 		m.Dir = dirName
 		m.DirPath = MeetingDirPath(projectPath, dirName)
-		applyLiveNoteArtifactFlags(&m, liveNoteArtifactFlags(m.DirPath))
+		flags = liveNoteArtifactFlags(m.DirPath)
+		applyLiveNoteArtifactFlags(&m, flags)
+		m.HasAudio = flags.hasMeetingAudio || flags.audioFiles > 0
 	}
 	counts, err := liveNoteChatCounts(projectID)
 	if err != nil {
@@ -1155,7 +1287,43 @@ func GetMeetingRecord(projectPath string, projectID int64, token string) (Meetin
 		return MeetingRecord{}, false, err
 	}
 	m.SpeakerCount = speakers[token]
+	var segmentCount int
+	if scanErr := store.ReadDB().QueryRow(
+		`SELECT COUNT(*) FROM live_notes_segments WHERE token = ? AND project_id = ?`,
+		token, projectID,
+	).Scan(&segmentCount); scanErr != nil {
+		return MeetingRecord{}, false, fmt.Errorf("live notes: segment count: %w", scanErr)
+	}
+	m.HasSegments = segmentCount > 0
+	states, err := ArtifactStatesForToken(token)
+	if err != nil {
+		return MeetingRecord{}, false, err
+	}
+	m.Artifacts, m.Generation = BuildMeetingArtifactViews(flags, states, time.Now().UnixMilli())
 	return m, true, nil
+}
+
+// liveNoteSegmentCounts returns how many transcript segments each meeting has,
+// per token. Used to answer "can this meeting be regenerated at all".
+func liveNoteSegmentCounts(projectID int64) (map[string]int, error) {
+	rows, err := store.ReadDB().Query(
+		`SELECT token, COUNT(*) FROM live_notes_segments
+		  WHERE project_id = ? GROUP BY token`, projectID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("live notes: segment counts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]int, 16)
+	for rows.Next() {
+		var token string
+		var n int
+		if scanErr := rows.Scan(&token, &n); scanErr != nil {
+			return nil, fmt.Errorf("live notes: scan segment count: %w", scanErr)
+		}
+		out[token] = n
+	}
+	return out, rows.Err()
 }
 
 // liveNoteSpeakerCounts returns how many distinct speakers each transcript
@@ -1311,6 +1479,8 @@ func DeleteMeetingRecord(projectPath string, projectID int64, token string) erro
 		`DELETE FROM live_notes_segments WHERE token = ?`,
 		`DELETE FROM live_notes_files WHERE token = ?`,
 		`DELETE FROM live_notes_screen WHERE token = ?`,
+		`DELETE FROM live_notes_artifacts WHERE token = ?`,
+		`DELETE FROM live_notes_audio WHERE token = ?`,
 		`DELETE FROM live_notes_shots WHERE token = ?`,
 		`DELETE FROM live_notes WHERE token = ? AND project_id = ?`,
 	} {
@@ -2300,6 +2470,7 @@ const liveNotesReviseQuestion = "请输出这一段校对后的转写。"
 // read from config here — the caller already resolves it for the minutes.
 func ReviseLiveNotesTranscript(
 	ctx context.Context, projectPath, title string, segments []LiveNoteSegment, self LiveNotesSpeaker,
+	progress ...func(done, total int),
 ) (string, error) {
 	transcript := BuildLiveNotesTranscript(segments)
 	if strings.TrimSpace(transcript) == "" {
@@ -2339,6 +2510,9 @@ func ReviseLiveNotesTranscript(
 		// The provider already fails on an empty answer, so a blank chunk cannot
 		// reach here; trimming is all that is left to do.
 		out = append(out, strings.TrimSpace(revised))
+		if len(progress) > 0 && progress[0] != nil {
+			progress[0](i+1, len(chunks))
+		}
 	}
 	return strings.Join(out, "\n"), nil
 }
@@ -2534,13 +2708,21 @@ func liveNoteExcerptText(data []byte, maxRunes int) string {
 // the bullet points are merged into the final minutes. Sending the whole
 // transcript in one request would either overflow the model window or be
 // silently truncated by the provider.
-func GenerateLiveNotesMinutes(ctx context.Context, title, transcript, filesSection string, self LiveNotesSpeaker) (string, error) {
+func GenerateLiveNotesMinutes(
+	ctx context.Context, title, transcript, filesSection string, self LiveNotesSpeaker,
+	progress ...func(done, total int, phase string),
+) (string, error) {
 	if strings.TrimSpace(transcript) == "" {
 		return "", ErrLiveNotesEmpty
 	}
 	summarizer := summarize.NewAISummarizer(model.ConfigInstance.AISummary)
 	if summarizer == nil {
 		return "", ErrSummaryModelNotConfigured
+	}
+	report := func(done, total int, phase string) {
+		if len(progress) > 0 && progress[0] != nil {
+			progress[0](done, total, phase)
+		}
 	}
 
 	chunks := splitRunes(transcript, liveNotesChunkRunes)
@@ -2557,6 +2739,7 @@ func GenerateLiveNotesMinutes(ctx context.Context, title, transcript, filesSecti
 				return "", fmt.Errorf("live notes: chunk %d: %w", i+1, err)
 			}
 			partials = append(partials, out)
+			report(i+1, len(chunks), "chunk")
 		}
 		contextBlock = strings.Join(partials, "\n\n")
 	}
@@ -2567,6 +2750,7 @@ func GenerateLiveNotesMinutes(ctx context.Context, title, transcript, filesSecti
 		contextBlock += "\n\n" + filesSection
 	}
 
+	report(0, 1, "final")
 	question := liveNotesMinutesQuestion(title)
 	minutes, err := summarize.AskAboutContext(ctx, summarizer, self.withPrompt(liveNotesMinutesPrompt), contextBlock, question, 3000)
 	if err != nil {

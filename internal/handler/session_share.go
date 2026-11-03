@@ -461,7 +461,7 @@ type shareMetaResponse struct {
 	// Ended is live-share only: true means the room is gone and the token now
 	// addresses the permanent meeting RECORD. The share page then opens the
 	// record (minutes / transcript / proofread / chat) instead of asking for a
-	// nickname and dialling a room that no longer exists.
+	// nickname and dialing a room that no longer exists.
 	Ended bool `json:"ended"`
 	// StartedAt / EndedAt are unix ms of the record (live-share only, ended
 	// case): the record view shows when the meeting ran.

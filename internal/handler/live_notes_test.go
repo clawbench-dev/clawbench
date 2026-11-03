@@ -884,7 +884,7 @@ func TestGenerateLiveNotesMinutes_BackgroundFailureMarksFailed(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, service.SetLiveNoteMinutes("tok-fail", pid, "", service.LiveNotesStatusGenerating, "", "", ""))
 
-	generateLiveNotesArtifacts("tok-fail", pid, t.TempDir(), "", []service.LiveNoteSegment{
+	generateLiveNotesArtifactsForTest(t, "tok-fail", pid, t.TempDir(), "", []service.LiveNoteSegment{
 		{Channel: "mic", Speaker: "我", StartedAt: 1_000, Text: "内容"},
 	})
 
@@ -923,7 +923,7 @@ func TestGenerateLiveNotesArtifacts_NamesTheUser(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, service.SetLiveNoteMinutes("tok-nick", pid, "", service.LiveNotesStatusGenerating, "", "", ""))
 
-	generateLiveNotesArtifacts("tok-nick", pid, t.TempDir(), "", []service.LiveNoteSegment{
+	generateLiveNotesArtifactsForTest(t, "tok-nick", pid, t.TempDir(), "", []service.LiveNoteSegment{
 		{Channel: "mic", Speaker: "我", StartedAt: 1_000, Text: "我来负责发版"},
 		{Channel: "viewer:v1", Speaker: "观众 1", StartedAt: 2_000, Text: "好的"},
 	})
@@ -1190,7 +1190,7 @@ func TestGenerateLiveNotesMinutes_FileWriteFailureStillStoresMinutes(t *testing.
 	blocker := filepath.Join(t.TempDir(), "blocker")
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
 
-	generateLiveNotesArtifacts("tok-nofile", pid, blocker, "", []service.LiveNoteSegment{
+	generateLiveNotesArtifactsForTest(t, "tok-nofile", pid, blocker, "", []service.LiveNoteSegment{
 		{Channel: "mic", Speaker: "我", StartedAt: 1_000, Text: "内容"},
 	})
 
@@ -1516,6 +1516,11 @@ func TestServeLiveNotesDelete_AllowsDeletingAnInterruptedGeneration(t *testing.T
 	require.NoError(t, service.SetLiveNoteMinutes(token, pid, "周会", service.LiveNotesStatusGenerating, "", "", ""))
 	_, err = store.WriteExec(`UPDATE live_notes SET updated_at = ? WHERE token = ?`,
 		time.Now().Add(-11*time.Minute).UTC().Format("2006-01-02 15:04:05"), token)
+	require.NoError(t, err)
+	// The artifact table is the delete guard's authority now; age its heartbeat
+	// too so the test still models a job whose process died 11 minutes ago.
+	_, err = store.WriteExec(`UPDATE live_notes_artifacts SET job_at = ? WHERE token = ? AND kind = ?`,
+		time.Now().Add(-11*time.Minute).UnixMilli(), token, service.ArtifactMinutes)
 	require.NoError(t, err)
 
 	req := liveNotesProjectRequest(t, "/api/live-share/notes/sessions?token="+token, project)
@@ -2503,7 +2508,7 @@ func TestGenerateLiveNotesArtifacts_UnwritableFolderStillStoresMinutes(t *testin
 	require.NoError(t, err)
 	breakNotesFolder(t, paths.Dir)
 
-	generateLiveNotesArtifacts(token, pid, project, "周会", []service.LiveNoteSegment{
+	generateLiveNotesArtifactsForTest(t, token, pid, project, "周会", []service.LiveNoteSegment{
 		{Channel: "mic", Speaker: "我", StartedAt: 1_000, Text: "内容"},
 	})
 
@@ -2535,12 +2540,13 @@ func TestGenerateLiveNotesArtifacts_SurvivesNotesWriteFailure(t *testing.T) {
 	pid := cacheProjectID(t, project)
 	token := "0123456789abcdef0123456789abcdef"
 	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	seedLiveNoteSegments(t, token, pid, []service.LiveNoteSegment{
+		{Channel: "mic", Speaker: "我", StartedAt: 1_000, Text: "内容"},
+	})
 	breakWrites(t, project)
 
 	// The job must return, not panic or block, on a database that cannot write.
-	generateLiveNotesArtifacts(token, pid, project, "周会", []service.LiveNoteSegment{
-		{Channel: "mic", Speaker: "我", StartedAt: 1_000, Text: "内容"},
-	})
+	runArtifactChain(token, pid, project, "周会", service.PlanForInitialJob(), false)
 }
 
 // A failing summariser plus a failing write: the failure still has to be
@@ -2559,11 +2565,12 @@ func TestGenerateLiveNotesArtifacts_FailedMinutesWithBrokenWrite(t *testing.T) {
 	pid := cacheProjectID(t, project)
 	token := "0123456789abcdef0123456789abcdef"
 	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
-	breakWrites(t, project)
-
-	generateLiveNotesArtifacts(token, pid, project, "周会", []service.LiveNoteSegment{
+	seedLiveNoteSegments(t, token, pid, []service.LiveNoteSegment{
 		{Channel: "mic", Speaker: "我", StartedAt: 1_000, Text: "内容"},
 	})
+	breakWrites(t, project)
+
+	runArtifactChain(token, pid, project, "周会", service.PlanForInitialJob(), false)
 }
 
 func TestServeLiveNotesDelete_ProjectLookupFailureIs500(t *testing.T) {
@@ -2603,7 +2610,7 @@ func TestGenerateLiveNotesArtifacts_MergesRecordedSegments(t *testing.T) {
 	segment := filepath.Join(paths.Audio, "1700000000000-mic.webm")
 	require.NoError(t, os.WriteFile(segment, append([]byte{0x1A, 0x45, 0xDF, 0xA3}, []byte("audio")...), 0o644))
 
-	generateLiveNotesArtifacts(token, pid, project, "周会", []service.LiveNoteSegment{
+	generateLiveNotesArtifactsForTest(t, token, pid, project, "周会", []service.LiveNoteSegment{
 		{Channel: "mic", Speaker: "我", StartedAt: 1_700_000_000_000, Text: "内容"},
 	})
 
@@ -2632,7 +2639,7 @@ func TestGenerateLiveNotesArtifacts_SurvivesCorruptAudio(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(paths.Audio, "1700000000000-mic.webm"), []byte("not webm"), 0o644))
 
-	generateLiveNotesArtifacts(token, pid, project, "周会", []service.LiveNoteSegment{
+	generateLiveNotesArtifactsForTest(t, token, pid, project, "周会", []service.LiveNoteSegment{
 		{Channel: "mic", Speaker: "我", StartedAt: 1_700_000_000_000, Text: "内容"},
 	})
 
@@ -2662,7 +2669,7 @@ func TestGenerateLiveNotesArtifacts_SurvivesTimelineLookupFailures(t *testing.T)
 	dropTable(t, "live_notes_files")
 	dropTable(t, "live_notes_screen")
 
-	generateLiveNotesArtifacts(token, pid, project, "周会", []service.LiveNoteSegment{
+	generateLiveNotesArtifactsForTest(t, token, pid, project, "周会", []service.LiveNoteSegment{
 		{Channel: "mic", Speaker: "我", StartedAt: 1_700_000_000_000, Text: "内容"},
 	})
 
@@ -2671,4 +2678,24 @@ func TestGenerateLiveNotesArtifacts_SurvivesTimelineLookupFailures(t *testing.T)
 	require.True(t, ok)
 	assert.Equal(t, service.LiveNotesStatusReady, note.Status)
 	assert.Contains(t, note.Minutes, "## 概要")
+}
+
+// generateLiveNotesArtifactsForTest runs the initial chain over the given
+// segments. The production chain reads segments from the database (the ASR
+// step may replace them), so the fixture has to store them first.
+func generateLiveNotesArtifactsForTest(t *testing.T, token string, projectID int64, projectPath, title string, segments []service.LiveNoteSegment) {
+	t.Helper()
+	seedLiveNoteSegments(t, token, projectID, segments)
+	runArtifactChain(token, projectID, projectPath, title, service.PlanForInitialJob(), false)
+}
+
+// seedLiveNoteSegments stores the fixture transcript. Tests that deliberately
+// break the write pool must call this BEFORE breakWrites: the chain reads the
+// segments from the database, unlike the old in-memory function.
+func seedLiveNoteSegments(t *testing.T, token string, projectID int64, segments []service.LiveNoteSegment) {
+	t.Helper()
+	for _, seg := range segments {
+		_, err := service.AppendLiveNoteSegment(context.Background(), token, projectID, seg)
+		require.NoError(t, err)
+	}
 }

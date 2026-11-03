@@ -716,6 +716,12 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/live-share/notes/sessions", ServeLiveNotesSessions)
 	register("/api/live-share/notes/sessions/artifact", ServeLiveNotesArtifact)
 	register("/api/live-share/notes/sessions/chat", ServeLiveNotesChat)
+	// Regeneration: plan first (the confirmation sheet), then accept or cancel.
+	// The plan endpoint is read-only; the POST recomputes the plan instead of
+	// trusting the client's copy.
+	register("/api/live-share/notes/regenerate/plan", ServeLiveShareNotesRegeneratePlan)
+	register("/api/live-share/notes/regenerate/cancel", ServeLiveShareNotesRegenerateCancel)
+	register("/api/live-share/notes/regenerate", ServeLiveShareNotesRegenerate)
 	registerPublic("/api/share/", ServeSharePublic)
 	registerPublic("/share/", ServeSharePage)
 	register("/api/dir", ListDir)
