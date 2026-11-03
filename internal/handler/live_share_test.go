@@ -907,7 +907,12 @@ func TestLiveWS_EndControlClosesRoom(t *testing.T) {
 
 	msg := readViewerMsg(t, view)
 	assert.Equal(t, liveshare.MsgPublisherGone, msg.Type)
-	assert.Nil(t, liveRegistry.Get(token))
+	// The room leaves the registry when the publisher's read loop unwinds, which
+	// is a different goroutine from the broadcast that told the viewer. Assert
+	// the end state rather than the instant: the room must be gone, but it may
+	// take a scheduler tick (this flaked once under the slower coverage build).
+	require.Eventually(t, func() bool { return liveRegistry.Get(token) == nil },
+		2*time.Second, 5*time.Millisecond, "the room must leave the registry")
 }
 
 func TestLiveWS_SignalForUnknownTokenIs404(t *testing.T) {
