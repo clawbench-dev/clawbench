@@ -533,7 +533,7 @@ func TestTunnelControl_DisconnectReleasesAllPorts(t *testing.T) {
 	// instead of failing on that race — the subject here is the scanner bound,
 	// not which port got bound.
 	bindPort := func() int {
-		for attempt := 0; attempt < 5; attempt++ {
+		for range 5 {
 			port := freeLoopbackPort(t)
 			msg := bindAndExpect(t, pw, rd, port)
 			require.Contains(t, []string{tunnel.MsgBound, tunnel.MsgBindErr}, msg.Type)
@@ -1075,7 +1075,7 @@ func TestTunnelControl_OverlongControlLineDropsStream(t *testing.T) {
 	// instead of failing on that race — the subject here is the scanner bound,
 	// not which port got bound.
 	bindPort := func() int {
-		for attempt := 0; attempt < 5; attempt++ {
+		for range 5 {
 			port := freeLoopbackPort(t)
 			msg := bindAndExpect(t, pw, rd, port)
 			require.Contains(t, []string{tunnel.MsgBound, tunnel.MsgBindErr}, msg.Type)
