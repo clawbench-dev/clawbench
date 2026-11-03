@@ -4273,6 +4273,103 @@ paths:
         "404":
           description: token 不存在或不属于当前项目
 
+  /api/live-share/notes/shot:
+    post:
+      tags: [LiveShare]
+      summary: 上传一张会议关键画面
+      description: |
+        发布端在本地抓帧后上传：屏幕共享是 P2P，服务端收不到画面。文件按**魔数**
+        识别（WebP / PNG / JPEG），不信任客户端声明的类型；单张 ≤2 MiB、单场最多
+        100 张。
+
+        `(token, clientShotId)` 唯一，重试幂等（返回已有行）。`at` 超出会议区间时
+        被钳到区间内——客户端时钟偏差不该让一张真实画面丢掉。
+
+        图片本身落在会议目录的 `shots/` 下，文件名由服务端生成；缩略图走
+        `/api/fs/thumb`，不在这里返回二进制。
+      operationId: liveShareNoteShotUpload
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [token, clientShotId, reason, file]
+              properties:
+                token: { type: string }
+                clientShotId: { type: string, description: 客户端生成，≤64 字，用于幂等 }
+                at: { type: integer, format: int64, description: Unix 毫秒 }
+                reason:
+                  type: string
+                  enum: [manual, file, sharer, switch, speech, change]
+                  description: 触发原因
+                ref: { type: string, description: 文件路径 / viewerId / 段 id }
+                width: { type: integer }
+                height: { type: integer }
+                file:
+                  type: string
+                  format: binary
+                  description: WebP / PNG / JPEG，≤2 MiB
+      responses:
+        "200":
+          description: 已保存
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveNoteShot"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
+        "413":
+          description: 图片超过 2 MiB
+    delete:
+      tags: [LiveShare]
+      summary: 删除一张会议关键画面
+      description: 先删数据库行，再删文件；行不存在返回 404。文件删失败只记日志（行已删，残留文件随会议目录一起清理）。
+      operationId: liveShareNoteShotDelete
+      parameters:
+        - { name: token, in: query, required: true, schema: { type: string } }
+        - { name: id, in: query, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: 已删除
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 或画面不存在
+
+  /api/live-share/notes/shots:
+    get:
+      tags: [LiveShare]
+      summary: 列出会议关键画面
+      description: |
+        按拍摄时间升序返回，每条带 `offsetMs`（相对转写时间线原点）。没有转写
+        （听记未开启）时原点退回会议开始时间，因此偏移始终从 0 附近开始。
+      operationId: liveShareNoteShots
+      parameters:
+        - { name: token, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 画面列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  shots:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LiveNoteShot"
+        "404":
+          description: token 不存在或不属于当前项目
+
   /api/live-share/notes/sessions:
     get:
       tags: [LiveShare]
@@ -7926,6 +8023,25 @@ components:
         closedAt: { type: integer, format: int64, description: Unix 毫秒，0 表示未关闭 }
         source: { type: string, description: "preview / editor 等来源" }
       required: [id, owner, path, name, openedAt]
+
+    LiveNoteShot:
+      type: object
+      description: |
+        会议中的一张关键画面。文件本身在会议目录的 `shots/` 下，`fileName` 是相对
+        会议目录的路径；`offsetMs` 是相对转写时间线原点的偏移，用来把它插进转写。
+      properties:
+        id: { type: integer, format: int64 }
+        at: { type: integer, format: int64, description: 拍摄时刻（Unix 毫秒） }
+        offsetMs: { type: integer, format: int64, description: 相对转写时间线原点的毫秒偏移 }
+        reason:
+          type: string
+          enum: [manual, file, sharer, switch, speech, change]
+        ref: { type: string, description: 文件路径 / viewerId / 段 id }
+        fileName: { type: string, description: 相对会议目录，如 shots/1700000000000-file-3f2a.webp }
+        width: { type: integer }
+        height: { type: integer }
+        bytes: { type: integer, format: int64 }
+      required: [id, at, reason, fileName]
 
     LiveNoteMinutes:
       type: object

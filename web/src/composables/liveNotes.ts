@@ -124,7 +124,19 @@ export interface NoteBlock {
    * it must never be merged into a neighbouring line the way consecutive
    * utterances from one speaker are.
    */
-  kind?: 'file' | 'screen'
+  kind?: 'file' | 'screen' | 'shot'
+  /**
+   * Present on `kind: 'shot'` rows: the stored frame, where it lives, and why
+   * it was taken. The thumbnail URL is resolved by the record view (it needs
+   * the meeting folder), so this row stays a plain value object.
+   */
+  shot?: {
+    id: number
+    thumbUrl: string
+    fullPath: string
+    reason: string
+    ref?: string
+  }
   /**
    * Which half of the interval this row is. Set only for live rows, whose text
    * is a bare path that the view localizes; a stored transcript already carries
@@ -157,7 +169,13 @@ const BLOCK_MERGE_GAP_MS = 4_000
  * without hiding who said what.
  */
 export function groupNoteSegments(
-  list: Array<LiveNoteSegment & { kind?: 'file' | 'screen'; fileAction?: 'open' | 'close' }>,
+  list: Array<
+    LiveNoteSegment & {
+      kind?: 'file' | 'screen' | 'shot'
+      fileAction?: 'open' | 'close'
+      shot?: NoteBlock['shot']
+    }
+  >,
 ): NoteBlock[] {
   const out: NoteBlock[] = []
   let lastEnd = 0
@@ -178,6 +196,7 @@ export function groupNoteSegments(
         text: s.text,
         ...(s.kind ? { kind: s.kind } : {}),
         ...(s.fileAction ? { fileAction: s.fileAction } : {}),
+        ...(s.shot ? { shot: s.shot } : {}),
       })
     }
     lastEnd = s.startedAt + Math.max(0, s.durationMs)

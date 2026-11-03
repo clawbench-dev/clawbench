@@ -34,7 +34,8 @@ import (
 	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
 )
 
-// LiveNotesDDL creates the two tables behind AI 听记.
+// LiveNotesDDL creates the tables behind AI 听记: segments, the meeting row,
+// chat, the file timeline, the screen-share log and the key frames.
 //
 // Exported so handler tests can create the schema in their own databases.
 //
@@ -128,6 +129,26 @@ CREATE TABLE IF NOT EXISTS live_notes_screen (
 	ended_at INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- live_notes_shots holds the key frames captured during a meeting. The file
+-- itself lives in <meeting dir>/shots; this row is the timeline entry, so the
+-- record can place a frame between two transcript lines.
+CREATE TABLE IF NOT EXISTS live_notes_shots (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	token TEXT NOT NULL,
+	project_id INTEGER NOT NULL DEFAULT 0,
+	client_shot_id TEXT NOT NULL,
+	at_ms INTEGER NOT NULL,
+	reason TEXT NOT NULL,
+	ref TEXT NOT NULL DEFAULT '',
+	file_name TEXT NOT NULL,
+	width INTEGER NOT NULL DEFAULT 0,
+	height INTEGER NOT NULL DEFAULT 0,
+	bytes INTEGER NOT NULL DEFAULT 0,
+	hash TEXT NOT NULL DEFAULT '',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(token, client_shot_id)
+);
 `
 
 // LiveNotesIndexesDDL creates the indexes. Applied by InitDB *after* the
@@ -141,6 +162,7 @@ CREATE INDEX IF NOT EXISTS idx_live_note_chat_token ON live_notes_chat(token, id
 CREATE INDEX IF NOT EXISTS idx_live_note_chat_project ON live_notes_chat(project_id, token);
 CREATE INDEX IF NOT EXISTS idx_live_note_files_token ON live_notes_files(token, opened_at);
 CREATE INDEX IF NOT EXISTS idx_live_note_screen_token ON live_notes_screen(token, started_at);
+CREATE INDEX IF NOT EXISTS idx_live_note_shots_token ON live_notes_shots(token, at_ms);
 `
 
 // LiveNotesDDL is the full schema for a fresh database (tables then indexes).
@@ -988,6 +1010,9 @@ type MeetingRecord struct {
 	HasMeetingAudio bool `json:"hasMeetingAudio"`
 	AudioFiles      int  `json:"audioFiles"`
 	ChatCount       int  `json:"chatCount"`
+	// ShotCount is how many key frames were kept. Derived from the folder like
+	// the other artifact flags, so a frame deleted from disk stops counting.
+	ShotCount int `json:"shotCount"`
 	// Status is the minutes job state (idle/generating/ready/failed). The list
 	// uses it to show "生成中" and to mark a job that died with the process.
 	Status string `json:"status"`
@@ -1167,6 +1192,7 @@ func liveNoteArtifactFlags(dirPath string) liveNoteArtifactState {
 			st.audioFiles++
 		}
 	}
+	st.shots = liveNoteShotCountIn(paths.Shots)
 	return st
 }
 
@@ -1177,6 +1203,7 @@ func applyLiveNoteArtifactFlags(m *MeetingRecord, st liveNoteArtifactState) {
 	m.HasRevised = st.hasRevised
 	m.HasMeetingAudio = st.hasMeetingAudio
 	m.AudioFiles = st.audioFiles
+	m.ShotCount = st.shots
 }
 
 // liveNoteArtifactState is what one meeting folder actually holds. A struct
@@ -1188,6 +1215,7 @@ type liveNoteArtifactState struct {
 	hasRevised      bool
 	hasMeetingAudio bool
 	audioFiles      int
+	shots           int
 }
 
 // ErrMeetingNotFound is returned when a record does not exist (or belongs to
@@ -1246,6 +1274,7 @@ func DeleteMeetingRecord(projectPath string, projectID int64, token string) erro
 		`DELETE FROM live_notes_segments WHERE token = ?`,
 		`DELETE FROM live_notes_files WHERE token = ?`,
 		`DELETE FROM live_notes_screen WHERE token = ?`,
+		`DELETE FROM live_notes_shots WHERE token = ?`,
 		`DELETE FROM live_notes WHERE token = ? AND project_id = ?`,
 	} {
 		args := []any{token}
@@ -2596,6 +2625,10 @@ type LiveNotesPaths struct {
 	Revised string
 	// Audio is `<dir>/audio/` — one WebM file per transcribed segment.
 	Audio string
+	// Shots is `<dir>/shots/` — the key frames captured during the meeting.
+	// Created on the first frame, not up front: an empty folder would show up
+	// in the resource list as a directory with nothing in it.
+	Shots string
 }
 
 const (
@@ -2613,6 +2646,7 @@ func liveNotesPathsFor(dir string) LiveNotesPaths {
 		Transcript: filepath.Join(dir, liveNoteTranscriptVTT),
 		Revised:    filepath.Join(dir, "transcript-revised.md"),
 		Audio:      filepath.Join(dir, "audio"),
+		Shots:      filepath.Join(dir, LiveNoteShotDirName),
 	}
 }
 

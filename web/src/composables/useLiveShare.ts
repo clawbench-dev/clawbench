@@ -19,8 +19,11 @@ import {
   VIEWER_MESSAGE_TYPES,
   parseControlMessage,
   type ControlMessage,
+  type InkStroke,
 } from '@/share/liveControl'
 import { useLiveNotes } from './useLiveNotes'
+import { useMeetingShots, _resetMeetingShotsForTest } from './useMeetingShots'
+import { useInkBoard } from '@/share/useInkBoard'
 import { notesRecordingSupported } from './liveNotes'
 import { startMeetingFileTracking, stopMeetingFileTracking, _resetMeetingFileTrackerForTest } from '@/utils/meetingFileTracker'
 import { acquireMic, describeMicError, logMicEnv } from '@/utils/micCapture'
@@ -197,6 +200,30 @@ let preferredVideoMime: string | null = null
 /** UI subscribers for control frames coming from viewers. */
 const controlHandlers = new Set<(msg: ControlMessage) => void>()
 /**
+ * A local copy of the ink that is on the wire.
+ *
+ * The publisher draws in a separate window (or in Document PiP), so the main
+ * window's picture never contains the strokes: on Windows and macOS the
+ * overlay is even excluded from the capture. Key frames composite this board
+ * on top of the grabbed frame, which is the only way a screenshot shows what
+ * the presenter actually pointed at.
+ *
+ * Fed from both directions: `sendControl` (the publisher's own strokes, and the
+ * native overlay's, which arrive as control frames) and `onViewerControl` (the
+ * protocol allows a viewer to draw, even though no UI does today).
+ */
+const inkMirror = useInkBoard()
+
+/** Apply an ink frame to the mirror; anything else is ignored. */
+function mirrorInk(msg: ControlMessage): void {
+  if (msg.t === 'ink' || msg.t === 'ink-undo' || msg.t === 'ink-clear') inkMirror.apply(msg)
+}
+
+/** Drop the mirrored strokes (the annotation window closed). */
+function clearInkMirror(): void {
+  inkMirror.clear()
+}
+/**
  * Viewer id the panel last granted remote control to ('' when nobody).
  *
  * The authoritative `controlledBy` lives in the share panel; this mirror is
@@ -364,6 +391,9 @@ function resetSession(): void {
   remoteScreenTrack = null
   remoteScreenStream.value = null
   screenSharer.value = ''
+  // The mirror belongs to the meeting, not to the module: a leftover stroke
+  // would be composited into the next meeting's first frame.
+  inkMirror.clear()
   hostName.value = ''
   controlGrantee = ''
   if (ws) {
@@ -942,6 +972,10 @@ async function reportScreenSharer(sharer: string): Promise<void> {
 watch(currentScreenSharer, (next, prev) => {
   if (next === prev) return
   void reportScreenSharer(next)
+  // A member taking the screen over (or giving it back) changes the picture the
+  // meeting is about. Host → host is a source switch, which this watcher does
+  // NOT see: `switchSource` reports that one itself.
+  if (next) useMeetingShots().noteSourceChanged('sharer')
 })
 
 export function useLiveShare() {
@@ -996,6 +1030,14 @@ export function useLiveShare() {
     hostName?: string
     /** Enable AI 听记 (transcription + minutes) for this share. */
     notes?: boolean
+    /**
+     * Keep key frames (a screenshot when a file is opened, the source changes,
+     * or the presenter says "look here").
+     *
+     * Independent of `notes`: a meeting may want the pictures without a
+     * transcript, or the transcript without pictures. Omitted means on.
+     */
+    shots?: boolean
     /**
      * The two audience permissions the room STARTS with. They are room-level
      * switches (not local capture choices), so they travel with the create
@@ -1197,6 +1239,11 @@ export function useLiveShare() {
       // is on: the record answers "what did we look at", which is exactly what
       // a later summary needs even when nobody recorded audio.
       startMeetingFileTracking({ token: token.value })
+      // Key frames share the file timeline but not the audio one: a meeting can
+      // keep pictures without a transcript. The source is read at capture time
+      // (a member may take the screen at any moment), so only the getters are
+      // handed over here.
+      if (opts.shots !== false) startShots()
       return true
     } catch (e) {
       appLog.e(TAG, 'start failed', e)
@@ -1340,6 +1387,28 @@ export function useLiveShare() {
    */
   function publishNotes(on: boolean): void {
     send({ type: 'set-notes', enabled: on })
+  }
+
+  /**
+   * Start keeping key frames mid-meeting.
+   *
+   * The capture needs the streams and the ink mirror, which this module owns —
+   * the shots composable only receives getters, so it cannot import this file
+   * (that would be a cycle). Nothing earlier is recovered: the frames begin at
+   * the toggle.
+   */
+  function startShots(): void {
+    if (!token.value || state.value !== 'publishing') return
+    useMeetingShots().start({
+      token: token.value,
+      getSource: () => (screenSharer.value ? remoteScreenStream.value : previewStream.value),
+      getStrokes: () => inkMirror.strokes.value,
+    })
+  }
+
+  /** Stop keeping frames. The queue drains on its own (it carries the token). */
+  function stopShots(): void {
+    useMeetingShots().stop()
   }
 
   async function openSocket(): Promise<void> {
@@ -1743,6 +1812,9 @@ export function useLiveShare() {
     for (const track of previous.getTracks()) {
       if (!next.getTracks().includes(track)) track.stop()
     }
+    // Same sharer ("host") but a different picture: the timeline watcher cannot
+    // see this one, so the key-frame trigger is reported here.
+    useMeetingShots().noteSourceChanged('switch')
     return true
   }
 
@@ -1756,6 +1828,8 @@ export function useLiveShare() {
    * so they go straight onto the channel without batching.
    */
   function sendControl(msg: ControlMessage): void {
+    // Keep the screenshot pipeline's copy in step with what the audience sees.
+    mirrorInk(msg)
     const data = JSON.stringify(msg)
     for (const peer of peers.values()) {
       if (peer.channel?.readyState === 'open') {
@@ -1841,6 +1915,9 @@ export function useLiveShare() {
           }
         : tagged
     controlHandlers.forEach((cb) => cb(frame))
+    // A viewer's strokes are part of the picture too; mirror them so a frame
+    // captured while somebody else is drawing still carries the annotation.
+    mirrorInk(frame)
     // A history request is addressed to the publisher alone; relaying it would
     // ask every other viewer to answer a question only this side can answer.
     if (msg.t === 'chat-history-req') return
@@ -1967,6 +2044,8 @@ export function useLiveShare() {
     // Same for the screen: "still sharing at the end" must be closed by us,
     // while the token and the publishing state are still set.
     await reportScreenSharer('')
+    // Stop grabbing before resetSession() nulls the streams the getter reads.
+    useMeetingShots().stop()
 
     send({ type: 'end' })
     resetSession()
@@ -2046,12 +2125,21 @@ export function useLiveShare() {
     stopScreen,
     startNotes,
     stopNotes,
+    startShots,
+    stopShots,
+    clearInkMirror,
   }
+}
+
+/** Test seam: the strokes the key-frame capture would composite. */
+export function _inkMirrorForTest(): InkStroke[] {
+  return inkMirror.strokes.value
 }
 
 /** Test seam: drop all module state without touching the network. */
 export function _resetLiveShareForTest(): void {
   resetSession()
+  _resetMeetingShotsForTest()
   controlHandlers.clear()
   useLiveNotes().reset()
   _resetMeetingFileTrackerForTest()

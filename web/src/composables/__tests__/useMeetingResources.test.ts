@@ -55,6 +55,7 @@ function jsonResponse(body: unknown) {
 function installFetch(opts: {
   root: DirItem[]
   audio?: DirItem[]
+  shots?: DirItem[]
   exists?: Record<string, string>
   /** Held open before responding, so a test can assert mid-flight. */
   gate?: Promise<void>
@@ -66,6 +67,7 @@ function installFetch(opts: {
       const path = decodeURIComponent(url.slice('/api/dir?path='.length))
       if (path === DIR) return jsonResponse({ items: opts.root })
       if (path === `${DIR}/audio`) return jsonResponse({ items: opts.audio ?? [] })
+      if (path === `${DIR}/shots`) return jsonResponse({ items: opts.shots ?? [] })
       return jsonResponse({ items: [] })
     }
     if (url === '/api/file/batch-exists') {
@@ -126,6 +128,30 @@ describe('useMeetingResources', () => {
       'system.webm',
     ])
     expect(api.total.value).toBe(6)
+  })
+
+  it('lists key frames as their own group, not as a folder row', async () => {
+    installFetch({
+      root: [...ROOT, { name: 'shots', type: 'dir' }],
+      audio: AUDIO,
+      shots: [
+        { name: '1700000000000-file-3f2a.webp', type: 'image', size: 1200 },
+        { name: '1700000005000-manual-9c1b.webp', type: 'image', size: 900 },
+      ],
+    })
+    const { api } = setup(record(), '')
+    await flushPromises()
+
+    const shots = api.groups.value.find((group) => group.key === 'shots')
+    expect(shots?.items.map((item) => item.displayPath)).toEqual([
+      'shots/1700000000000-file-3f2a.webp',
+      'shots/1700000005000-manual-9c1b.webp',
+    ])
+    expect(shots?.items.every((item) => item.kind === 'image')).toBe(true)
+    // The directory itself is not repeated as an opaque folder entry.
+    const folder = api.groups.value.find((group) => group.key === 'folder')
+    expect(folder?.items.some((item) => item.name === 'shots')).toBe(false)
+    expect(api.total.value).toBe(8)
   })
 
   it('adds the paths the minutes reference, de-duplicated and outside the meeting folder', async () => {

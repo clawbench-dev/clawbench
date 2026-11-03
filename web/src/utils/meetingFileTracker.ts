@@ -126,6 +126,21 @@ export async function stopMeetingFileTracking(): Promise<void> {
 }
 
 /**
+ * Listeners for "a new file interval just started".
+ *
+ * The key-frame capturer needs the moment of the open, not the 5-second upload
+ * batch: by the time a batch flushes, the presenter has often moved on. A
+ * callback (rather than watching `meetingFilesVersion`) also keeps the
+ * subscriber from having to diff the history and guess which entry is new.
+ */
+const openedListeners = new Set<(path: string, source: string) => void>()
+
+export function onMeetingFileOpened(cb: (path: string, source: string) => void): () => void {
+  openedListeners.add(cb)
+  return () => openedListeners.delete(cb)
+}
+
+/**
  * Records that `path` became the file being looked at.
  *
  * A new file always closes the previous one: a person reads one document at a
@@ -152,6 +167,13 @@ export function noteMeetingFileOpened(path: string, source = 'preview'): void {
   history.push(open)
   if (history.length > 200) history = history.slice(history.length - 200)
   meetingFilesVersion.value++
+  for (const cb of openedListeners) {
+    try {
+      cb(path, source)
+    } catch {
+      /* a subscriber must not break the tracker */
+    }
+  }
 }
 
 /** Records that the file preview was closed. */
@@ -222,6 +244,7 @@ export function _resetMeetingFileTrackerForTest(): void {
   pending = []
   history = []
   chain = Promise.resolve()
+  openedListeners.clear()
   meetingFilesVersion.value++
 }
 
