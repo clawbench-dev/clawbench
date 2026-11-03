@@ -1,0 +1,41 @@
+/*
+ * The meeting views' inline text button.
+ *
+ * Two meeting screens end a one-line status strip with a word-level action:
+ * the post-meeting artifact bar (重新识别 / 取消) and the running meeting's
+ * shot bar (暂停截图 / 继续截图). Both lines are `--font-size-xs` muted text on
+ * `--bg-primary`, so the action must read as words in that line — not as a
+ * filled control sitting in the corner. The shape lives here once; callers
+ * keep only their own layout (margin / alignment).
+ *
+ * Height is the artifact bar's 26dp baseline, so the two strips are the same
+ * height when they are on screen side by side in a recording.
+ */
+.meeting-text-btn {
+  flex-shrink: 0;
+  height: calc(26 * var(--dp));
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent-color);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--duration-fast, 0.1s) ease;
+}
+
+.meeting-text-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.meeting-text-btn:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.meeting-text-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
+}

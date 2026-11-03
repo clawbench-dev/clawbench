@@ -285,7 +285,7 @@
             <span v-if="shots.lost.value > 0" class="live-shot-bar__lost">
               {{ t('meeting.shots.lost', { n: shots.lost.value }) }}
             </span>
-            <button class="meeting-link live-shot-bar__toggle" type="button" data-role="shots-toggle"
+            <button class="meeting-text-btn live-shot-bar__toggle" type="button" data-role="shots-toggle"
               @click="onToggleShots(!shotsOn)">
               {{ shotsOn ? t('meeting.shots.pause') : t('meeting.shots.resume') }}
             </button>
@@ -466,6 +466,9 @@ import '@/assets/meeting-form.css'
 // The footer's pills: this panel is not inside ModalDialog, so it loads the
 // shared footer-button sheet itself.
 import '@/assets/modal-footer-btn.css'
+// The shot bar's toggle is the same word-level action as the post-meeting
+// artifact bar, so both wear the shared text button.
+import '@/assets/meeting-text-btn.css'
 
 const emit = defineEmits<{ ended: [token: string]; back: [] }>()
 /**
@@ -1682,6 +1685,13 @@ watch(
   color: var(--color-orange, #d97706);
 }
 
+/*
+ * The toggle used to carry `meeting-link`, a class scoped to MeetingDetail —
+ * here nothing styled it, so the UA's filled gray rectangle sat in the corner
+ * of a quiet 11px line and read as a foreign control. It now wears the same
+ * text button as the post-meeting artifact bar (assets/meeting-text-btn.css);
+ * this rule only pins it to the right edge.
+ */
 .live-shot-bar__toggle {
   margin-left: auto;
 }

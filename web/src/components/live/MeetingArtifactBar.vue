@@ -26,7 +26,7 @@
 
     <button
       v-if="running || waiting"
-      class="artifact-bar__btn"
+      class="meeting-text-btn"
       type="button"
       data-action="meeting-artifact-cancel"
       @click="emit('cancel')"
@@ -35,7 +35,7 @@
     </button>
     <button
       v-else
-      class="artifact-bar__btn"
+      class="meeting-text-btn"
       type="button"
       :disabled="Boolean(blocked)"
       data-action="meeting-artifact-regenerate"
@@ -63,6 +63,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import '@/assets/meeting-text-btn.css'
 import type {
   MeetingArtifactKind,
   MeetingArtifactState,
@@ -183,17 +184,4 @@ const actionLabel = computed(() => {
   white-space: nowrap;
 }
 .artifact-bar__hint { opacity: 0.85; white-space: nowrap; }
-.artifact-bar__btn {
-  flex-shrink: 0;
-  height: calc(26 * var(--dp));
-  padding: 0 var(--space-3);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--accent-color);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-.artifact-bar__btn:hover:not(:disabled) { background: var(--bg-hover); }
-.artifact-bar__btn:disabled { color: var(--text-muted); cursor: default; }
 </style>
