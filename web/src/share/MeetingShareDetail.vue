@@ -1,15 +1,24 @@
 <template>
   <div class="share-meeting">
-    <div class="share-meeting__head">
-      <div class="share-meeting__title-row">
-        <span class="share-meeting__badge" data-role="meeting-ended">
-          {{ t('meeting.share.ended') }}
-        </span>
-        <span class="share-meeting__title" data-role="record-title">
-          {{ record?.title || title || t('meeting.list.untitled') }}
-        </span>
-      </div>
-      <div v-if="metaLabel" class="share-meeting__meta">{{ metaLabel }}</div>
+    <!-- The same topbar chrome every public share page uses: brand mark, the
+         name of what is open, and the theme picker at the far edge. A member
+         who followed a link lands here instead of the app, so the page has to
+         say whose page it is — the record body alone reads like a stray
+         document. -->
+    <div class="share-topbar">
+      <img class="share-logo" src="/logo-64.png" alt="ClawBench" />
+      <h1 class="share-file-name share-meeting__title" data-role="record-title">
+        {{ record?.title || title || t('meeting.list.untitled') }}
+      </h1>
+      <span class="share-spacer" />
+      <ShareThemeButton />
+    </div>
+
+    <div class="share-meeting__meta">
+      <span class="share-meeting__badge" data-role="meeting-ended">
+        {{ t('meeting.share.ended') }}
+      </span>
+      <span v-if="metaLabel" class="share-meeting__when">{{ metaLabel }}</span>
     </div>
 
     <div v-if="loading" class="share-meeting__center">
@@ -169,6 +178,7 @@ import { groupNoteSegments, withMeetingFileEvents, type NoteBlock } from '@/comp
 import { parseRevisedTranscript, revisedToPlainText } from '@/utils/revisedTranscript'
 import { appLog } from '@/utils/appLog'
 import { readMeetingNick } from './meetingNickname'
+import ShareThemeButton from './ShareThemeButton.vue'
 import {
   fetchMeetingRecord,
   type ShareChatMessage,
@@ -360,19 +370,23 @@ onBeforeUnmount(() => {
   background: var(--bg-primary);
 }
 
-.share-meeting__head {
-  flex-shrink: 0;
-  padding: var(--space-6) var(--space-7) var(--space-4);
-  border-bottom: 1px solid var(--border-color);
-}
-.share-meeting__title-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
+.share-meeting__title {
+  margin: 0;
   min-width: 0;
 }
-.share-meeting__badge {
+/* Meta line under the topbar: the record's own facts, not chrome. */
+.share-meeting__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
   flex-shrink: 0;
+  padding: var(--space-3) var(--space-7);
+  border-bottom: 1px solid var(--border-color);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+.share-meeting__badge {
   height: calc(18 * var(--dp));
   padding: 0 var(--space-3);
   border-radius: var(--radius-full);
@@ -380,20 +394,6 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
   font-size: var(--font-size-2xs);
   line-height: calc(18 * var(--dp));
-}
-.share-meeting__title {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-size: var(--font-size-md);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.share-meeting__meta {
-  margin-top: var(--space-2);
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
 }
 
 .share-meeting__center {

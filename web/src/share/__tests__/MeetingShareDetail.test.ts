@@ -65,6 +65,8 @@ function mountDetail(props: Record<string, unknown> = {}) {
       plugins: [i18n],
       stubs: {
         LoadingIndicator: true,
+        // The real button owns the theme popup; this view only has to place it.
+        ShareThemeButton: { template: '<button class="theme-stub" />' },
         SpeakerAvatar: { props: ['name'], template: '<span class="sa" :data-name="name" />' },
         // The real body mounts the whole markdown pipeline; that wiring is
         // covered by MeetingMarkdown.test.ts.
@@ -83,6 +85,22 @@ beforeEach(() => {
 })
 
 describe('MeetingShareDetail', () => {
+  it('wears the public share topbar: brand mark, title, theme picker', async () => {
+    const w = mountDetail({ title: 'Release review' })
+    await flushPromises()
+
+    // A member followed a link and is not inside the app: the page has to say
+    // whose page it is, exactly like the file/session share pages do.
+    const bar = w.find('.share-topbar')
+    expect(bar.exists()).toBe(true)
+    const logo = bar.find('img.share-logo')
+    expect(logo.exists()).toBe(true)
+    expect(logo.attributes('src')).toBe('/logo-64.png')
+    expect(logo.attributes('alt')).toBe('ClawBench')
+    expect(bar.find('[data-role="record-title"]').text()).toBe('Release review')
+    expect(bar.find('.theme-stub').exists()).toBe(true)
+  })
+
   it('names the record and marks it as ended', async () => {
     const w = mountDetail({ title: 'Release review' })
     await flushPromises()
