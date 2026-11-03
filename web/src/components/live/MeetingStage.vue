@@ -1094,8 +1094,16 @@ onBeforeUnmount(() => {
   closeAnnotate()
 })
 
-/** End the meeting and hand the token to the shell so it can open the record. */
+/**
+ * End the meeting and hand the token to the shell so it can open the record.
+ *
+ * Confirmed first: the pill sits next to 标注画面 in the footer, and the click
+ * disconnects every viewer and archives the meeting — there is no way back
+ * (the link stays dead, a new meeting gets a new token).
+ */
 async function onStop(): Promise<void> {
+  const ok = await dialog.confirm(t('meeting.stage.endConfirm'), { dangerous: true })
+  if (!ok) return
   const token = share.token.value
   await share.stop()
   emit('ended', token)

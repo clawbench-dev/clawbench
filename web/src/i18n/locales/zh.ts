@@ -4143,6 +4143,7 @@ export default {
     stage: {
       notesUnavailable: '听记暂时无法开启，请稍后再试。',
       end: '结束会议',
+      endConfirm: '结束这场会议？所有成员会立刻断开，共享与听记都会停止，这场会议随即归档。',
       back: '返回列表',
     },
     detail: {

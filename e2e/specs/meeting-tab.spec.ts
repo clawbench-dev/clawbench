@@ -264,8 +264,18 @@ test.describe('Meeting flow', () => {
     await input.fill('这是一条会议聊天')
     await input.press('Enter')
 
-    // Ending goes straight to the record, not to a separate report screen.
+    // Ending is destructive and sits next to 标注画面 in the footer, so it asks
+    // first; dismissing the sheet must leave the meeting running.
     await page.locator('[data-action="panel-end"]').click()
+    await expect(page.locator('.dlg-box')).toBeVisible({ timeout: 5000 })
+    await page.locator('.dlg-cancel').click()
+    await expect(page.locator('.dlg-box')).toHaveCount(0)
+    await expect(page.locator('[data-live-tab="basic"]')).toBeVisible()
+
+    // Confirming goes straight to the record, not to a separate report screen.
+    await page.locator('[data-action="panel-end"]').click()
+    await expect(page.locator('.dlg-box')).toBeVisible({ timeout: 5000 })
+    await page.locator('.dlg-ok').click()
     await expect(page.locator('[data-action="meeting-quote"]')).toBeVisible({ timeout: 20000 })
 
     // The artifact bar sits ABOVE the tab strip, so it is on screen from the

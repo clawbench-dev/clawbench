@@ -4148,6 +4148,8 @@ export default {
     stage: {
       notesUnavailable: 'Could not start transcription. Please try again.',
       end: 'End meeting',
+      endConfirm:
+        'End this meeting? Every member is disconnected right away, sharing and transcription stop, and the meeting is archived.',
       back: 'Back to list',
     },
     detail: {

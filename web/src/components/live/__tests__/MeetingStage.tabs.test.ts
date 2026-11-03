@@ -51,6 +51,12 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: toastShow }),
 }))
 
+/** Ending the meeting is behind a confirm; tests decide which answer it gives. */
+const confirmMock = vi.hoisted(() => vi.fn(async (_message: string, _opts?: unknown) => true))
+vi.mock('@/composables/useDialog', () => ({
+  useDialog: () => ({ confirm: confirmMock }),
+}))
+
 /** The chat rows the server already archived for this meeting. */
 const archivedChat = vi.hoisted(() => ({
   messages: [] as Array<Record<string, unknown>>,
@@ -475,15 +481,33 @@ describe('MeetingStage tabs', () => {
     expect(wrapper.find('[data-live-tab="basic"] [data-action="annotate"]').exists()).toBe(false)
   })
 
-  it('ends the meeting from the footer pill', async () => {
+  it('ends the meeting from the footer pill, after the destructive confirm', async () => {
+    confirmMock.mockResolvedValueOnce(true)
     const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.find('[data-action="panel-end"]').trigger('click')
     await flushPromises()
 
+    // The pill sits next to 标注画面 and the click disconnects everyone: it
+    // must ask first, and the question must be flagged destructive.
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+    expect(confirmMock.mock.calls[0][1]).toEqual({ dangerous: true })
     expect(shareApi.stop).toHaveBeenCalled()
     expect(wrapper.emitted('ended')).toEqual([['tok-1']])
+  })
+
+  it('keeps the meeting running when the confirm is dismissed', async () => {
+    confirmMock.mockResolvedValueOnce(false)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-action="panel-end"]').trigger('click')
+    await flushPromises()
+
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+    expect(shareApi.stop).not.toHaveBeenCalled()
+    expect(wrapper.emitted('ended')).toBeUndefined()
   })
 })
 
