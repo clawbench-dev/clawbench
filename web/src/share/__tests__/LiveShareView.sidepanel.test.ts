@@ -47,7 +47,7 @@ vi.mock('@/share/liveViewer', () => ({
     }
   },
 }))
-vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok' }))
+vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok', isShareMode: () => true }))
 vi.mock('@/share/liveNotesClient', () => ({
   ShareNotesPoller: class {
     start(): void {

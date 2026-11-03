@@ -42,7 +42,7 @@ vi.mock('@/share/liveViewer', () => ({
     }
   },
 }))
-vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok' }))
+vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok', isShareMode: () => true }))
 
 import LiveShareView from '@/share/LiveShareView.vue'
 import { passJoinGate } from './joinGateTestHelper'

@@ -42,7 +42,7 @@ const nativeBridge = {
   setPendingCaptureSource: vi.fn(async () => undefined),
 }
 vi.mock('@/utils/clawbenchNative', () => ({ getNative: () => nativeBridge }))
-vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok' }))
+vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok', isShareMode: () => true }))
 // Avatars are decoration here; the real generator pulls a DiceBear chunk.
 vi.mock('@/utils/lazyAvatar', () => ({
   generateAvatarSvgWithStyle: async (seed: string) => `<svg data-seed="${seed}"/>`,

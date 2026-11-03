@@ -24,15 +24,20 @@ export function shotReasonLabel(reason: string): string {
   return i18n.global.t(REASON_KEYS[reason] ?? 'meeting.shots.reasonChange')
 }
 
-/** The reason plus the file's base name, when the trigger was a file.
+/** The display name of a frame's file reference.
  *
  * `ref` arrives as a path from the publisher and as a bare name from the public
  * record, so both separators are split here — the row must read the same on
  * every surface.
  */
+export function shotRefName(ref: string): string {
+  return ref ? (ref.split(/[\\/]/).pop() ?? '') : ''
+}
+
+/** The reason plus the file's base name, when the trigger was a file. */
 export function shotLabel(reason: string, ref = ''): string {
   const reasonText = shotReasonLabel(reason)
-  const name = ref ? (ref.split(/[\\/]/).pop() ?? '') : ''
+  const name = shotRefName(ref)
   return name ? `${reasonText} · ${name}` : reasonText
 }
 

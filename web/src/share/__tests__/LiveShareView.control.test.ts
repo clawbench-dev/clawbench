@@ -48,7 +48,7 @@ vi.mock('@/share/liveViewer', () => ({
   },
 }))
 
-vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok' }))
+vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok', isShareMode: () => true }))
 vi.mock('@/utils/clawbenchNative', () => ({ getNative: () => undefined }))
 
 import LiveShareView from '@/share/LiveShareView.vue'

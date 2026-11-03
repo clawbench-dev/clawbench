@@ -50,7 +50,13 @@ vi.mock('@/composables/useToast', () => ({ useToast: () => ({ show: vi.fn() }) }
 // against the local nickname; pin that nickname so the test is not dependent on
 // whatever this machine's config says.
 vi.mock('@/composables/useSettingsConfig', () => ({
-  useSettingsConfig: () => ({ serverConfig: { value: { user: { nickname: 'Alex' } } } }),
+  useSettingsConfig: () => ({
+    serverConfig: { value: { user: { nickname: 'Alex' } } },
+    // The transcript rows mount the shared markdown interaction layer, whose
+    // inline preview card reads this preference (the card itself is stubbed
+    // below — only the flag has to exist).
+    localConfig: { markdownCodeLinkPreview: false },
+  }),
 }))
 
 // The resource list is its own composable with its own test; here it only

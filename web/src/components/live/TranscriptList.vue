@@ -1,5 +1,11 @@
 <template>
-  <div ref="rootRef" class="transcript" :class="{ 'transcript--fill': fill }" data-media-gallery>
+  <div
+    ref="rootRef"
+    class="transcript"
+    :class="{ 'transcript--fill': fill }"
+    data-media-gallery
+    @click="interactions.handleClick"
+  >
     <div
       v-for="b in blocks"
       :key="b.key"
@@ -20,7 +26,7 @@
       <span class="transcript__speaker">{{ b.continuation ? '' : speakerOf(b) }}</span>
       <div v-if="b.kind === 'shot' && b.shot" class="transcript__text transcript__text--shot">
         <span class="transcript__shot-head">
-          <span class="transcript__shot-meta">{{ labelOf(b) }}</span>
+          <span class="transcript__shot-meta" v-html="shotMetaHtml(b)" />
           <button
             v-if="!readonly"
             class="transcript__shot-del"
@@ -41,8 +47,22 @@
              listener. `data-full-src` points at the viewing size. -->
         <div class="transcript__shot" data-role="shot-open" v-html="shotFigure(b)" />
       </div>
-      <span v-else class="transcript__text">{{ textOf(b) }}</span>
+      <span v-else class="transcript__text" v-html="textHtml(b)" />
     </div>
+
+    <!-- The inline file preview (desktop card / touch bottom sheet) and its
+         click wiring come from the SAME interaction layer the markdown preview
+         and the minutes use, so a path chip in a transcript row behaves
+         identically on every reading surface.
+
+         It stays INSIDE the list so this component keeps a single root element
+         (hosts pass `data-role` to it, which a fragment root cannot inherit).
+         Both of its shapes are out of flow — the card is `position: fixed` and
+         the sheet teleports to <body> — so it does not become a grid cell. -->
+    <CodeLinkPreview
+      v-if="interactions.codeLinkPreview.enabled.value"
+      :preview="interactions.codeLinkPreview"
+    />
   </div>
 </template>
 
@@ -65,12 +85,16 @@
  * panel pads its own body — through `--transcript-inset`, which defaults to 0
  * here so the token is declared where it is read.
  */
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 import { FileText, ImageIcon, MonitorUp, Trash2 } from 'lucide-vue-next'
 import i18n from '@/i18n'
-import { shotLabel } from '@/utils/meetingShots'
+import { shotLabel, shotReasonLabel, shotRefName } from '@/utils/meetingShots'
 import { annotateMediaBlocks } from '@/utils/mediaBlockFactory'
 import { escapeHtml } from '@/utils/html.ts'
+import { annotatePlainText } from '@/composables/usePlainTextAnnotation.ts'
+import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
+import { useMarkdownDocumentInteractions } from '@/composables/useMarkdownDocumentInteractions.ts'
+import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import SpeakerAvatar from '@/components/common/SpeakerAvatar.vue'
 import type { NoteBlock } from '@/composables/liveNotes'
 
@@ -97,10 +121,11 @@ const emit = defineEmits<{
 /**
  * Localization goes through the global instance rather than `useI18n()`.
  *
- * This component is mounted by the public share SPA and by three panels, and
- * one of the parity tests mounts it without an i18n plugin. Reading
- * `i18n.global.t` inside a render function still tracks the locale ref, so a
- * language switch re-renders it like any other translated text.
+ * This component is mounted by the public share SPA and by three panels.
+ * Reading `i18n.global.t` inside a render function still tracks the locale
+ * ref, so a language switch re-renders it like any other translated text.
+ * (The inline preview card it hosts does call `useI18n()`, so every host —
+ * tests included — has to install the plugin.)
  */
 function speakerOf(b: NoteBlock): string {
   if (b.speaker) return b.speaker
@@ -150,6 +175,170 @@ function textOf(b: NoteBlock): string {
 }
 
 const rootRef = ref<HTMLElement | null>(null)
+
+/**
+ * The same click/drag layer the markdown preview and the minutes use.
+ *
+ * A transcript row names files and URLs as often as a document does, so the
+ * affordances must not be a second implementation: desktop click on a chip
+ * opens the inline preview card, touch tap opens the bottom sheet, the open
+ * button opens the file viewer, a directory chip opens the file manager, and
+ * an external link goes through the shared confirm dialog (that one is a
+ * document-level layer, so it needs no wiring here).
+ *
+ * `source: 'live'` records the meeting as the navigation origin, so Back from
+ * the viewer returns to this panel — exactly like the minutes.
+ */
+const interactions = useMarkdownDocumentInteractions({
+  containerRef: rootRef,
+  // No markdown document: relative paths are resolved by the annotator (against
+  // the project root), and there are no relative anchors to resolve here.
+  filePath: () => '',
+  source: 'live',
+  enableCommitLinks: false,
+})
+
+const { verifyFilePaths } = useFilePathAnnotation()
+
+/** Annotated HTML per utterance — the list re-renders on every live poll, and
+ *  each build pays a DOMParser round trip plus two annotation passes. */
+interface AnnotatedBlockText {
+  html: string
+  paths: string[]
+}
+const textCache = new Map<string, AnnotatedBlockText>()
+
+function textHtml(b: NoteBlock): string {
+  return rowAnnotation(b).html
+}
+
+function annotatedText(text: string): AnnotatedBlockText {
+  let hit = textCache.get(text)
+  if (hit === undefined) {
+    const annotation = annotatePlainText(text)
+    hit = { html: annotation.html, paths: annotation.detectedPaths }
+    // A guard, not a working set: the whole list re-renders on every live poll,
+    // so dropping entries that are still on screen would re-parse all of them
+    // at once. Real meetings stay far below this (an 8-hour meeting is a few
+    // thousand utterances), and the cache dies with the component.
+    if (textCache.size > 20000) textCache.clear()
+    textCache.set(text, hit)
+  }
+  return hit
+}
+
+/**
+ * "打开 AGENTS.md" / "关闭 README.md（21 秒）" — a file event whose path sits at
+ * the project root, so the recorded path is a bare name with no directory.
+ *
+ * The path annotator deliberately skips a single-segment name (it cannot tell
+ * `AGENTS.md` from an identifier like `build.sh`), which left exactly the most
+ * common file in a meeting — a root-level README — as dead text. A `./` prefix
+ * makes it unambiguous for the annotator; the chip's visible text is then
+ * restored, so the row reads exactly as before and the click opens the file.
+ */
+const FILE_EVENT_NAME_RE = /(^|[\s（(])([^\s/\\（）()]+?\.[A-Za-z0-9]{1,10})(?=[\s（()）]|$)/
+const fileEventCache = new Map<string, AnnotatedBlockText>()
+
+function fileEventText(text: string): AnnotatedBlockText {
+  let hit = fileEventCache.get(text)
+  if (hit === undefined) {
+    const source = text.replace(FILE_EVENT_NAME_RE, (_m, pre: string, name: string) => `${pre}./${name}`)
+    const annotation = annotatePlainText(source)
+    hit = { html: annotation.html, paths: annotation.detectedPaths }
+    if (annotation.detectedPaths.length > 0) {
+      const doc = new DOMParser().parseFromString(annotation.html, 'text/html')
+      for (const chip of doc.querySelectorAll<HTMLElement>('.chat-file-path')) {
+        if (chip.textContent?.startsWith('./')) chip.textContent = chip.textContent.slice(2)
+      }
+      hit = { html: doc.body.innerHTML, paths: annotation.detectedPaths }
+    }
+    if (fileEventCache.size > 2000) fileEventCache.clear()
+    fileEventCache.set(text, hit)
+  }
+  return hit
+}
+
+/** The annotated form of one row: a frame annotates its caption, a file event
+ *  annotates its bare name, everything else annotates the utterance. */
+function rowAnnotation(b: NoteBlock): AnnotatedBlockText {
+  if (b.kind === 'shot') return shotMeta(b)
+  const text = textOf(b)
+  return b.kind === 'file' ? fileEventText(text) : annotatedText(text)
+}
+
+/**
+ * The frame's caption ("打开文件 · main.ts"), annotated like every other path.
+ *
+ * A caption that names a file IS a reference to it — the row already shows the
+ * picture, and the file it was taken for must be openable from the same line.
+ *
+ * The annotation source uses the FULL `ref`, not the displayed base name: the
+ * path annotator deliberately ignores a bare `main.ts` (it cannot tell a
+ * filename from an identifier like `build.sh`), so a caption-only string would
+ * never produce a chip. The chip's text is then shortened back to the base name
+ * so the row still reads the same — the click target keeps the whole path.
+ */
+const shotMetaCache = new Map<string, AnnotatedBlockText>()
+
+function shotMeta(b: NoteBlock): AnnotatedBlockText {
+  const shot = b.shot
+  if (!shot) return { html: '', paths: [] }
+  const ref = shot.ref ?? ''
+  const name = shotRefName(ref)
+  // Nothing to annotate: a bare name from the public payload, a path with
+  // spaces (the annotator stops at whitespace and would chip a fragment), or
+  // share mode. Keep the short caption the row has always shown.
+  if (!name || /\s/.test(ref)) return { html: escapeHtml(labelOf(b)), paths: [] }
+
+  const source = `${shotReasonLabel(shot.reason)} · ${ref}`
+  let hit = shotMetaCache.get(source)
+  if (hit === undefined) {
+    const annotation = annotatePlainText(source)
+    if (annotation.detectedPaths.length === 0) {
+      hit = { html: escapeHtml(labelOf(b)), paths: [] }
+    } else {
+      // Shorten the visible text back to the base name; the chip keeps the
+      // whole path as its target.
+      const doc = new DOMParser().parseFromString(annotation.html, 'text/html')
+      for (const chip of doc.querySelectorAll<HTMLElement>('.chat-file-path')) {
+        chip.textContent = name
+      }
+      hit = { html: doc.body.innerHTML, paths: annotation.detectedPaths }
+    }
+    if (shotMetaCache.size > 20000) shotMetaCache.clear()
+    shotMetaCache.set(source, hit)
+  }
+  return hit
+}
+
+function shotMetaHtml(b: NoteBlock): string {
+  return shotMeta(b).html
+}
+
+/**
+ * Stamp `data-path-type` on the chips once their HTML is in the DOM.
+ *
+ * That attribute is what makes a chip interactive (preview card / open
+ * button), so skipping this leaves dead-looking chips. Runs on mount and after
+ * every list change: the live pane appends a row at a time, and
+ * `verifyFilePaths` keeps its own cache, so an unchanged conversation costs one
+ * map lookup.
+ */
+function verifyRenderedPaths(): void {
+  const el = rootRef.value
+  if (!el) return
+  const paths = new Set<string>()
+  for (const b of props.blocks) {
+    for (const p of rowAnnotation(b).paths) paths.add(p)
+  }
+  if (paths.size > 0) void verifyFilePaths([...paths], el)
+}
+
+// `post` so the annotated HTML is already in the DOM: verification queries the
+// chips it just stamped, not the previous render.
+watch(() => props.blocks, verifyRenderedPaths, { flush: 'post' })
+onMounted(verifyRenderedPaths)
 
 /**
  * Follows the conversation, but only when the reader is already at the bottom.

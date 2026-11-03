@@ -19,7 +19,7 @@ let lastViewer: { opts?: { callbacks?: Cbs } } | null = null
 let sent: Array<Record<string, unknown>> = []
 
 vi.mock('@/utils/clawbenchNative', () => ({ getNative: () => undefined }))
-vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok' }))
+vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok', isShareMode: () => true }))
 
 vi.mock('@/share/liveViewer', () => ({
   LiveViewer: class {
