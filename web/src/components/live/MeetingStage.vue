@@ -363,6 +363,17 @@
         <PhoneOff :size="14" />{{ t('meeting.stage.end') }}
       </button>
       <span class="live-panel__spacer" />
+      <!-- The only way to keep a frame the triggers missed. Whole-meeting tool,
+           like 标注: it belongs in the footer, not in a setup tab. -->
+      <button
+        v-if="shotsOn"
+        class="fbtn"
+        type="button"
+        data-action="shot-now"
+        @click="captureShot"
+      >
+        <ImageIcon :size="14" />{{ t('meeting.shots.capture') }}
+      </button>
       <!-- Drawing only exists for a SCREEN picture: a camera image has no
            desktop coordinates to map the ink onto, so the tool follows the
            current capture rather than a type chosen at creation. -->
@@ -1013,6 +1024,11 @@ function onToggleShots(on: boolean): void {
   }
   if (shots.active.value) shots.resume()
   else share.startShots()
+}
+
+/** Keep the picture on screen right now (the triggers may have missed it). */
+function captureShot(): void {
+  void shots.captureNow('manual')
 }
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────

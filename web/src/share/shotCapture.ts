@@ -38,7 +38,7 @@ export const SHOT_MAX_PER_HOUR = 40
 export const SHOT_MAX_PER_MEETING = 80
 
 /** How many uploads may wait behind the one in flight before the oldest
- *  low-value one is dropped. Manual frames are never dropped. */
+ *  low-value one is dropped. Manual frames are dropped last. */
 export const SHOT_MAX_PENDING = 8
 
 export interface ShotJob {
@@ -167,7 +167,8 @@ export function shotRetryable(status: number): boolean {
  * connection is carrying the meeting's audio segments. A bounded queue keeps a
  * long outage from growing memory without bound; when it overflows the oldest
  * low-priority frame goes first, because the newest frames are the ones the
- * meeting is still about.
+ * meeting is still about. Manual frames are dropped only when every waiting
+ * frame is manual, and then oldest-first.
  */
 export class ShotQueue {
   private pending: ShotJob[] = []

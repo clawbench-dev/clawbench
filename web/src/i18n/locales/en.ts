@@ -4084,6 +4084,7 @@ export default {
       lost: '{n} frames not saved',
       pause: 'Pause capture',
       resume: 'Resume capture',
+      capture: 'Save frame',
       delete: 'Delete frame',
       deleteConfirm: 'Delete this frame? The file is removed from the meeting folder and cannot be recovered.',
       deleteFailed: 'Could not delete the frame. Please try again.',

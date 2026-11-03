@@ -379,6 +379,11 @@ function start(opts: {
   getSource = opts.getSource
   getStrokes = opts.getStrokes
   seenSegments.clear()
+  // Frames begin at the toggle. Lines transcribed before it were never
+  // presented while this was on, and re-scanning them would fire a burst of
+  // retroactive shots for keywords the user already heard.
+  const notes = useLiveNotes()
+  for (const seg of notes.segments.value) seenSegments.add(seg.id)
   scheduler = new ShotScheduler()
   count.value = 0
   lost.value = 0
@@ -407,7 +412,6 @@ function start(opts: {
     }, FILE_TRIGGER_DELAY_MS)
   })
 
-  const notes = useLiveNotes()
   unwatchSegments = watch(
     notes.segments,
     (list) => scanSegments(list),

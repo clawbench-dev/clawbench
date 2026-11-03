@@ -4079,6 +4079,7 @@ export default {
       lost: '{n} 张未保存',
       pause: '暂停截图',
       resume: '继续截图',
+      capture: '留存画面',
       delete: '删除画面',
       deleteConfirm: '删除这张画面？文件会从会议目录移除，无法恢复。',
       deleteFailed: '删除失败，请稍后重试。',

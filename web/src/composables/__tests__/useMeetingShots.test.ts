@@ -167,4 +167,17 @@ describe('useMeetingShots', () => {
     expect(sent[0]).toMatchObject({ reason: 'speech', ref: '1' })
     expect(shots.count.value).toBe(1)
   })
+
+  it('does not backfill frames for lines transcribed before the toggle', async () => {
+    const notes = useLiveNotes()
+    // Already in the transcript when the host turns 关键画面 on: it was not on
+    // screen for this pipeline, and re-scanning it would fire a retroactive shot.
+    notes.segments.value = [
+      { id: 7, channel: 'mic', speaker: '我', startedAt: Date.now() - 60_000, durationMs: 1_000, text: '大家看这个页面' },
+    ]
+    const shots = start()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(uploads()).toHaveLength(0)
+    expect(shots.count.value).toBe(0)
+  })
 })
