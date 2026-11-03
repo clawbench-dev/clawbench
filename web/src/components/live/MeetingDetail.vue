@@ -440,7 +440,9 @@ watch(
 )
 
 const tabs = computed(() => [
-  { key: 'resources' as Tab, label: t('meeting.detail.tabResources'), count: resourceTotal.value },
+  // No count badge on 资源: the tab body's own header already states the
+  // total, and a number next to the label just repeats it.
+  { key: 'resources' as Tab, label: t('meeting.detail.tabResources'), count: 0 },
   { key: 'minutes' as Tab, label: t('meeting.detail.tabMinutes'), count: 0 },
   { key: 'transcript' as Tab, label: t('meeting.detail.tabTranscript'), count: 0 },
   { key: 'revised' as Tab, label: t('meeting.detail.tabRevised'), count: 0 },

@@ -48,13 +48,15 @@ vi.mock('@/composables/useSettingsConfig', () => ({
 }))
 
 // The resource list is its own composable with its own test; here it only
-// needs to exist (the detail reads its count for the tab badge).
+// needs to exist. `resourcesTotal` is mutable so a test can hand the detail a
+// non-zero total (the tab must still draw no badge for it).
+const resourcesTotal = vi.hoisted(() => ({ value: 0 }))
 vi.mock('@/composables/useMeetingResources', () => ({
   useMeetingResources: () => ({
     groups: ref([]),
     loading: ref(false),
     error: ref(''),
-    total: ref(0),
+    total: ref(resourcesTotal.value),
     reload: vi.fn(),
   }),
 }))
@@ -175,6 +177,7 @@ const REVISED = `# 校对版转写 · Release review · 2026-11-01 14:30
 
 beforeEach(() => {
   vi.clearAllMocks()
+  resourcesTotal.value = 0
   getMock.mockResolvedValue(record())
   artifactMock.mockImplementation(async (_token: string, kind: string) => {
     if (kind === 'minutes') return { content: '# MINUTES', file: 'minutes.md' }
@@ -223,6 +226,19 @@ describe('MeetingDetail', () => {
     // Default: the resource pane is already the one rendered.
     expect(w.find('.meeting-tab--on').attributes('data-tab')).toBe('resources')
     expect(w.find('.meeting-resources-stub').exists()).toBe(true)
+  })
+
+  it('draws no count badge on the resources tab', async () => {
+    // The tab body's header already states the total; a number on the label
+    // would just repeat it. Chat keeps its own badge (see the chat tab below),
+    // so this asserts against a non-zero total rather than a zero one.
+    resourcesTotal.value = 7
+    const w = mountDetail()
+    await flushPromises()
+
+    const resources = w.find('[data-tab="resources"]')
+    expect(resources.find('.meeting-tab__count').exists()).toBe(false)
+    expect(resources.text()).toBe(enMessages.meeting.detail.tabResources)
   })
 
   it('shows the AI proofread transcript as the same speaker rows as the transcript', async () => {
