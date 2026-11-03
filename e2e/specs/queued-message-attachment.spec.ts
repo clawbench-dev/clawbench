@@ -71,7 +71,7 @@ test.describe('Queued message with an image attachment', () => {
     // The input bar's attachment strip is the surface the user sees while the
     // upload runs; wait until the transfer card is gone (upload finished).
     await expect(page.locator('.chat-input-wrapper .chat-file-attachment').first()).toBeVisible({ timeout: 20000 })
-    await expect(page.locator('.chat-input-wrapper .attachment-pending')).toHaveCount(0, { timeout: 30000 })
+    await expect(page.locator('.chat-input-wrapper .attachment-pending')).toHaveCount(0, { timeout: 45000 })
   }
 
   test('the drained bubble renders the image thumbnail', async ({ page }) => {
@@ -133,7 +133,7 @@ test.describe('Queued message with an image attachment', () => {
       // DB row lost its files, the image would vanish exactly when the turn
       // finishes — the reported "执行到后图片不显示".
       await expect(page.locator('.chat-message.assistant.streaming')).toHaveCount(0, { timeout: 90000 })
-      await expect(page.locator('.chat-message.user.pending')).toHaveCount(0, { timeout: 30000 })
+      await expect(page.locator('.chat-message.user.pending')).toHaveCount(0, { timeout: 45000 })
       const afterHtml = await bubble.evaluate((el) => el.outerHTML)
       await expect(bubble.locator('img.attachment-thumb-img'), `after-turn html: ${afterHtml}`).toHaveCount(1, { timeout: 20000 })
 

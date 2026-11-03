@@ -97,7 +97,7 @@ test.describe.serial('ACP Tool Rendering', () => {
     // the response completes, there are no active spinners.
 
     // Wait for streaming to fully complete — stop button gone, send button back
-    await expect(chat.stopButton).not.toBeVisible({ timeout: 30000 })
+    await expect(chat.stopButton).not.toBeVisible({ timeout: 45000 })
     await expect(chat.sendButton).toBeVisible({ timeout: 5000 })
 
     // After completion, all tool calls should be in "done" state

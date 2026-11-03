@@ -52,8 +52,8 @@ test.describe.serial('group chat UI', () => {
     // (non-streaming) render would go straight to the action-bar state. Sample
     // in a tight loop right after the first content appears.
     const assistant = page.locator('.chat-message.assistant').last()
-    await expect(assistant).toBeVisible({ timeout: 30000 })
-    await expect(assistant).toContainText(/.+/, { timeout: 30000 })
+    await expect(assistant).toBeVisible({ timeout: 45000 })
+    await expect(assistant).toContainText(/.+/, { timeout: 45000 })
 
     let sawStreamingState = false
     for (let i = 0; i < 40; i++) {

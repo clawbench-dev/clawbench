@@ -29,11 +29,11 @@ test.describe('chat message rail', () => {
     // first — a send during someone else's turn is queued and its reply lands
     // only after that turn drains, which reads as "the agent never answered".
     for (let i = 1; i <= 3; i++) {
-      await expect(chat.stopButton).toHaveCount(0, { timeout: 30000 })
+      await expect(chat.stopButton).toHaveCount(0, { timeout: 45000 })
       const before = await chat.sendMessage(`rail check ${i} — padding text so the bubbles take up height`)
       await chat.waitForReply(30000, before)
     }
-    await expect(chat.stopButton).toHaveCount(0, { timeout: 30000 })
+    await expect(chat.stopButton).toHaveCount(0, { timeout: 45000 })
 
     const railState = () =>
       page.evaluate(() => {

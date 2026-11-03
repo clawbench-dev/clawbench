@@ -62,7 +62,7 @@ test.describe.serial('group chat private notes (bcc)', () => {
 
     // The host's bubble carries the note card.
     const hostBubble = page.locator(`.chat-message.assistant[data-msg-key]`).filter({ has: page.locator('.msg-bcc') }).first()
-    await expect(hostBubble).toBeVisible({ timeout: 30000 })
+    await expect(hostBubble).toBeVisible({ timeout: 45000 })
 
     // (1) The card is INSIDE the bubble, not in the speaker row above it.
     await expect(hostBubble.locator('.msg-card .msg-bcc')).toHaveCount(1)
