@@ -4052,6 +4052,8 @@ export default {
       shotShort: '{n} 张画面',
       duration: '{n} 分钟',
       running: '进行中',
+      liveResume: '返回会议',
+      liveHint: '会议进行中 · 返回会议',
       generating: '生成中',
       failed: '生成失败',
       stale: '生成中断',
@@ -4135,6 +4137,7 @@ export default {
     stage: {
       notesUnavailable: '听记暂时无法开启，请稍后再试。',
       end: '结束会议',
+      back: '返回列表',
     },
     detail: {
       back: '返回列表',

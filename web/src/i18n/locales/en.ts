@@ -4057,6 +4057,8 @@ export default {
       shotShort: '{n} frames',
       duration: '{n} min',
       running: 'Live',
+      liveResume: 'Back to meeting',
+      liveHint: 'Meeting in progress — back to the meeting',
       generating: 'Generating',
       failed: 'Failed',
       stale: 'Interrupted',
@@ -4140,6 +4142,7 @@ export default {
     stage: {
       notesUnavailable: 'Could not start transcription. Please try again.',
       end: 'End meeting',
+      back: 'Back to list',
     },
     detail: {
       back: 'Back to list',

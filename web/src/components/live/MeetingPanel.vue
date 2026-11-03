@@ -3,9 +3,11 @@
     <MeetingList
       v-if="view === 'list'"
       :active="active"
+      :live-token="liveToken"
       @create="view = 'create'"
       @join="view = 'join'"
       @open="openDetail"
+      @resume="view = 'meeting'"
     />
     <MeetingCreate v-else-if="view === 'create'" @back="view = 'list'" @started="view = 'meeting'" />
     <MeetingJoin v-else-if="view === 'join'" @back="view = 'list'" />
@@ -25,7 +27,12 @@
          sent while the host was reading the list would then be neither shown
          nor archived. The meeting keeps running either way (the room lives in
          useLiveShare), so the instance has to as well. -->
-    <MeetingStage v-show="view === 'meeting'" :active="view === 'meeting'" @ended="onEnded" />
+    <MeetingStage
+      v-show="view === 'meeting'"
+      :active="view === 'meeting'"
+      @ended="onEnded"
+      @back="view = 'list'"
+    />
   </div>
 </template>
 
@@ -63,6 +70,8 @@ const view = ref<View>('list')
 const detailToken = ref('')
 const detailTab = ref<MeetingDetailTab>('minutes')
 const share = useLiveShare()
+/** The meeting this client publishes, or '' — the list's "back to meeting" chip. */
+const liveToken = computed(() => (share.state.value === 'publishing' ? share.token.value : ''))
 
 function openDetail(token: string): void {
   if (!token) return
@@ -117,9 +126,8 @@ watch(
 )
 
 // The panel is kept alive by TabPanel, so `active` is the only "entered the tab"
-// signal: a meeting in progress returns to the stage, anything else to the list.
-// Leaving the detail (back to the list) drops the view the coordinator would
-// otherwise use as a return target for a later file jump.
+// signal. Leaving the detail (back to the list) drops the view the coordinator
+// would otherwise use as a return target for a later file jump.
 watch(view, (next) => {
   if (next === 'list') clearMeetingView()
 })
@@ -138,7 +146,15 @@ watch(
       view.value = 'detail'
       return
     }
-    view.value = share.state.value === 'publishing' ? 'meeting' : 'list'
+    // Re-entering the tab keeps where the user left off. A running meeting
+    // used to force the stage here, which yanked a host back mid-read after
+    // they had deliberately gone to the list to look at another record. The
+    // stage is one tap away again (its own back control, then the list's live
+    // chip), so only the transient pages fall back — a half-filled 创建/加入
+    // form is not a place to come back to.
+    if (view.value === 'create' || view.value === 'join') {
+      view.value = share.state.value === 'publishing' ? 'meeting' : 'list'
+    }
   },
 )
 

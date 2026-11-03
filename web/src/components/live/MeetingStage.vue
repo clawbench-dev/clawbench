@@ -5,6 +5,20 @@
          come back to, so its state has to be visible from the tab, not only
          inside a dialog that has been closed. -->
     <div class="live-panel__header">
+      <!-- Leaving the stage for the record list is NAVIGATION, not an exit:
+           the room lives in useLiveShare, so the meeting keeps running and its
+           record (the live row) leads straight back. The hardware back gesture
+           already did this, which left desktop hosts with no way out at all. -->
+      <button
+        class="live-panel__back"
+        type="button"
+        :title="t('meeting.stage.back')"
+        :aria-label="t('meeting.stage.back')"
+        data-action="stage-back"
+        @click="emit('back')"
+      >
+        <ArrowLeft :size="14" />
+      </button>
       <span class="live-panel__icon">
         <MonitorUp :size="14" />
       </span>
@@ -406,7 +420,7 @@
  * only answer "not available" is worse than no button.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Captions, ImageIcon, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
+import { ArrowLeft, Captions, ImageIcon, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import MemberScreenCard from '@/components/live/MemberScreenCard.vue'
@@ -453,7 +467,7 @@ import '@/assets/meeting-form.css'
 // shared footer-button sheet itself.
 import '@/assets/modal-footer-btn.css'
 
-const emit = defineEmits<{ ended: [token: string] }>()
+const emit = defineEmits<{ ended: [token: string]; back: [] }>()
 /**
  * Whether this stage is the surface the host is looking at.
  *
@@ -1526,6 +1540,29 @@ watch(
   color: var(--text-secondary, #666);
   flex-shrink: 0;
 }
+
+/* Same geometry as the record view's `.meeting-icon-btn`, so the two headers
+   read as one family. The negative margin absorbs the header's own left
+   padding: the glyph should sit where the title's icon sits on the other
+   panels, not 12px further in. */
+.live-panel__back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(26 * var(--dp));
+  height: calc(26 * var(--dp));
+  padding: 0;
+  margin-left: calc(-1 * var(--space-2, 4px));
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--duration-fast, 0.1s) ease, color var(--duration-fast, 0.1s) ease;
+}
+.live-panel__back:hover { background: var(--bg-hover); color: var(--text-primary); }
+.live-panel__back:active { transform: scale(0.92); }
 
 .live-panel__title {
   font-size: var(--font-size-md);

@@ -234,6 +234,21 @@ describe('MeetingStage tabs', () => {
     expect(pane.element.closest('template')).toBeNull()
   })
 
+  // Leaving the stage for the record list is navigation, not an exit — the
+  // room lives outside this component. The gesture existed already; a desktop
+  // host had no control for it.
+  it('offers a visible way back to the record list', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const back = wrapper.find('.live-panel__header [data-action="stage-back"]')
+    expect(back.exists()).toBe(true)
+    expect(back.attributes('title')).toBe(enMessages.meeting.stage.back)
+
+    await back.trigger('click')
+    expect(wrapper.emitted('back')).toHaveLength(1)
+  })
+
   // Remote control is the publisher's capability, and viewers grey their button
   // on what the room advertises. The panel is the only place that knows whether
   // the shell has an input injector, so it has to push the probe result through.

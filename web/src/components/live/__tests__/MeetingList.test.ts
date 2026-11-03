@@ -66,10 +66,10 @@ vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
   }
 })
 
-function mountList() {
+function mountList(props: Record<string, unknown> = {}) {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
   return mount(MeetingList, {
-    props: { active: true },
+    props: { active: true, ...props },
     global: { plugins: [i18n], stubs: { LoadingIndicator: true } },
   })
 }
@@ -120,6 +120,23 @@ describe('MeetingList header', () => {
     await w.find('[data-action="meeting-refresh"]').trigger('click')
 
     expect(loadMock).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * The list is reachable mid-meeting now, which makes it a place the host
+   * VISITS. The chip is the way back; without it the trip is one-way.
+   */
+  it('offers the way back to a running meeting, and only while it runs', async () => {
+    const idle = mountList()
+    expect(idle.find('[data-action="meeting-resume"]').exists()).toBe(false)
+
+    const live = mountList({ liveToken: 'tok-1' })
+    const chip = live.find('.meeting-header [data-action="meeting-resume"]')
+    expect(chip.exists()).toBe(true)
+    expect(chip.text()).toBe(enMessages.meeting.list.liveResume)
+
+    await chip.trigger('click')
+    expect(live.emitted('resume')).toHaveLength(1)
   })
 
   it('spins and blocks re-entry while a reload is in flight', async () => {
