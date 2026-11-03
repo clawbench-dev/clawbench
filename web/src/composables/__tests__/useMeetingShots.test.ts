@@ -16,8 +16,8 @@ function stream(): MediaStream {
   return { getVideoTracks: () => [{}] } as unknown as MediaStream
 }
 
-function frame(hash = '0'.repeat(64)) {
-  return { blob: new Blob(['x']), width: 1280, height: 720, hash }
+function sample(hash = '0'.repeat(64), encode = vi.fn(async () => new Blob(['x']))) {
+  return { hash, width: 1280, height: 720, encode }
 }
 
 function uploads(): Array<Record<string, unknown>> {
@@ -41,7 +41,7 @@ describe('useMeetingShots', () => {
     _resetMeetingShotsForTest()
     _resetLiveNotesForTest()
     _resetMeetingFileTrackerForTest()
-    _setShotGrabberForTest(async () => frame())
+    _setShotGrabberForTest(async () => sample())
   })
 
   afterEach(() => {
@@ -98,16 +98,32 @@ describe('useMeetingShots', () => {
   })
 
   it('drops a frame that finished decoding after the meeting ended', async () => {
-    let release: ((value: ReturnType<typeof frame>) => void) | null = null
+    let release: ((value: ReturnType<typeof sample>) => void) | null = null
+    const encode = vi.fn(async () => new Blob(['x']))
     _setShotGrabberForTest(() => new Promise((resolve) => (release = resolve)))
 
     const shots = start()
     const pending = shots.captureNow('file', 'docs/a.md')
     shots.stop()
-    release?.(frame())
+    release?.(sample('0'.repeat(64), encode))
     await pending
     await vi.advanceTimersByTimeAsync(0)
     expect(uploads()).toHaveLength(0)
+    expect(encode).not.toHaveBeenCalled()
+  })
+
+  it('does not encode a frame the scheduler drops', async () => {
+    const encode = vi.fn(async () => new Blob(['x']))
+    _setShotGrabberForTest(async () => sample('0'.repeat(64), encode))
+
+    const shots = start()
+    await shots.captureNow('change')
+    await vi.advanceTimersByTimeAsync(9_000)
+    // Same picture past the interval: rejected by the hash, before encoding.
+    await shots.captureNow('change')
+
+    expect(encode).toHaveBeenCalledTimes(1)
+    expect(uploads()).toHaveLength(1)
   })
 
   it('takes a frame 1.2s after a file opens, with the path as reference', async () => {

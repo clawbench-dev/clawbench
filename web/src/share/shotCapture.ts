@@ -41,15 +41,6 @@ export const SHOT_MAX_PER_MEETING = 80
  *  low-value one is dropped. Manual frames are never dropped. */
 export const SHOT_MAX_PENDING = 8
 
-/** One captured frame, ready to upload. */
-export interface ShotFrame {
-  blob: Blob
-  width: number
-  height: number
-  /** 64-character binary string from `dhash`. */
-  hash: string
-}
-
 export interface ShotJob {
   clientShotId: string
   at: number

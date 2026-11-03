@@ -449,6 +449,12 @@ CREATE INDEX IF NOT EXISTS idx_live_note_shots_token ON live_notes_shots(token, 
 3. **截图行不进 `transcript.vtt`**，详情页在客户端合并；`/notes/shots` 返回的 `offsetMs` 已经算好原点，客户端不再换算。
 4. **`serveLiveShareNoteShotUpload` 拆成了五个小函数**（`parseShotUpload` / `shotFields` / `readShotImage` / `shotQuotaAvailable` / `shotMeeting`）：原实现圈复杂度 25，超过仓库的 15 上限。
 
+### 性能（2026-11-03 优化）
+
+- 抓帧拆成 `domSample()`（drawImage + dHash）与惰性的 `encode()`：被调度器丢弃的帧不再编码。兜底触发的成本从 ~30–60ms 降到 ~3ms，按现在的触发频率约省掉 3/4 的编码；
+- 两张 canvas 复用（全尺寸 + 9×8 采样），会议结束释放那块 ~9MB 的帧缓冲；
+- `captureNow` 单飞（`capturing` 标志）：canvas 是共享的，两次抓帧交错会编码出对方的画面。
+
 ### 测试
 
 - `internal/service/live_notes_shots_test.go`：幂等、排序、命名与落盘、删除、路径钳制、计数；

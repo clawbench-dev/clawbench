@@ -18,7 +18,6 @@ import {
   ShotScheduler,
   dhash,
   newClientShotId,
-  type ShotFrame,
   type ShotJob,
   type ShotReason,
   type ShotSendResult,
@@ -86,12 +85,35 @@ let unsubFile: (() => void) | null = null
 let unwatchSegments: WatchStopHandle | null = null
 let periodic: ReturnType<typeof setInterval> | null = null
 let video: HTMLVideoElement | null = null
+/** Reused across captures: a 1920×1200 canvas is ~9 MB, and a meeting grabs
+ *  dozens of frames. Reallocating one per capture is pure GC churn. */
+let fullCanvas: HTMLCanvasElement | null = null
+let fullCtx: CanvasRenderingContext2D | null = null
+let sampleCanvas: HTMLCanvasElement | null = null
+let sampleCtx: CanvasRenderingContext2D | null = null
+/** One capture at a time: the canvases above are shared, so two overlapping
+ *  grabs would encode each other's picture. */
+let capturing = false
 const seenSegments = new Set<number>()
+
+/**
+ * A grabbed picture before encoding.
+ *
+ * Encoding is the expensive half (~30–60 ms of CPU), and most triggers are
+ * dropped as "same picture". Returning a lazy `encode` is what lets the
+ * scheduler reject a frame without paying for it.
+ */
+export interface ShotSample {
+  hash: string
+  width: number
+  height: number
+  encode: () => Promise<Blob | null>
+}
 
 /** Injected in tests: a canvas is not available there, and the pipeline's
  *  behaviour is what the tests are about. */
-type Grabber = (stream: MediaStream, strokes: InkStroke[]) => Promise<ShotFrame | null>
-let grabber: Grabber = domGrabFrame
+type Grabber = (stream: MediaStream, strokes: InkStroke[]) => Promise<ShotSample | null>
+let grabber: Grabber = domSample
 
 // ── Frame grabbing ──────────────────────────────────────────────────────────
 
@@ -177,15 +199,18 @@ function drawStrokes(ctx: CanvasRenderingContext2D, strokes: InkStroke[], w: num
 }
 
 function hashOf(source: CanvasImageSource): string {
-  const canvas = document.createElement('canvas')
-  canvas.width = 9
-  canvas.height = 8
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })
-  if (!ctx) return ''
-  ctx.drawImage(source, 0, 0, 9, 8)
+  if (!sampleCanvas) {
+    sampleCanvas = document.createElement('canvas')
+    sampleCanvas.width = 9
+    sampleCanvas.height = 8
+    sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true })
+  }
+  if (!sampleCtx) return ''
+  sampleCtx.clearRect(0, 0, 9, 8)
+  sampleCtx.drawImage(source, 0, 0, 9, 8)
   let data: Uint8ClampedArray
   try {
-    data = ctx.getImageData(0, 0, 9, 8).data
+    data = sampleCtx.getImageData(0, 0, 9, 8).data
   } catch {
     return ''
   }
@@ -214,7 +239,14 @@ function encode(canvas: HTMLCanvasElement): Promise<Blob | null> {
   })
 }
 
-async function domGrabFrame(stream: MediaStream, strokes: InkStroke[]): Promise<ShotFrame | null> {
+/**
+ * Grab the current picture and its hash, without encoding.
+ *
+ * The full-size canvas is reused and only resized when the source dimensions
+ * change; the 9×8 one is a fixed scratch surface. The returned `encode`
+ * closure is safe to call because `captureNow` runs one capture at a time.
+ */
+async function domSample(stream: MediaStream, strokes: InkStroke[]): Promise<ShotSample | null> {
   const el = ensureVideo()
   await attach(el, stream)
   if (el.readyState < 2 || !el.videoWidth || !el.videoHeight) {
@@ -223,17 +255,22 @@ async function domGrabFrame(stream: MediaStream, strokes: InkStroke[]): Promise<
   const w = el.videoWidth
   const h = el.videoHeight
   if (!w || !h) return null
-  const canvas = document.createElement('canvas')
-  canvas.width = w
-  canvas.height = h
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return null
-  ctx.drawImage(el, 0, 0, w, h)
-  drawStrokes(ctx, strokes, w, h)
-  const hash = hashOf(canvas)
-  const blob = await encode(canvas)
-  if (!blob) return null
-  return { blob, width: w, height: h, hash }
+  if (!fullCanvas) {
+    fullCanvas = document.createElement('canvas')
+    fullCtx = fullCanvas.getContext('2d')
+  }
+  if (!fullCtx) return null
+  if (fullCanvas.width !== w || fullCanvas.height !== h) {
+    // Assigning either dimension clears the canvas and resets its state, which
+    // is fine here: the frame is drawn immediately afterwards.
+    fullCanvas.width = w
+    fullCanvas.height = h
+  }
+  fullCtx.drawImage(el, 0, 0, w, h)
+  drawStrokes(fullCtx, strokes, w, h)
+  const hash = hashOf(fullCanvas)
+  const canvas = fullCanvas
+  return { hash, width: w, height: h, encode: () => encode(canvas) }
 }
 
 // ── Upload ──────────────────────────────────────────────────────────────────
@@ -259,38 +296,51 @@ async function sendShot(tok: string, job: ShotJob): Promise<ShotSendResult> {
 
 // ── Pipeline ────────────────────────────────────────────────────────────────
 
-/** Grab one frame and, if the scheduler agrees, queue it. */
+/** Grab one frame and, if the scheduler agrees, encode and queue it. */
 async function captureNow(reason: ShotReason, ref = ''): Promise<void> {
   if (!active.value || paused.value || !scheduler || !queue) return
+  if (capturing) return
+  capturing = true
   const gen = sessionGen
-  const stream = getSource()
-  if (!stream || stream.getVideoTracks().length === 0) return
-  let frame: ShotFrame | null
   try {
-    frame = await grabber(stream, getStrokes())
-  } catch (e) {
-    appLog.w(TAG, 'frame grab failed', e)
-    return
+    const stream = getSource()
+    if (!stream || stream.getVideoTracks().length === 0) return
+    let sample: ShotSample | null
+    try {
+      sample = await grabber(stream, getStrokes())
+    } catch (e) {
+      appLog.w(TAG, 'frame grab failed', e)
+      return
+    }
+    // A meeting can end while the frame is being decoded; the next one must not
+    // receive this meeting's picture.
+    if (gen !== sessionGen || !sample) return
+    const at = Date.now()
+    const decision = scheduler.shouldKeep(reason, sample.hash, at)
+    if (!decision.keep) {
+      // The expensive half never runs for a frame we are about to throw away.
+      appLog.d(TAG, 'shot skipped', decision.reject, reason)
+      return
+    }
+    const blob = await sample.encode()
+    if (gen !== sessionGen) return
+    if (!blob) {
+      lost.value++
+      return
+    }
+    scheduler.noteKept(reason, sample.hash, at)
+    queue.enqueue({
+      clientShotId: newClientShotId(),
+      at,
+      reason,
+      ref,
+      width: sample.width,
+      height: sample.height,
+      blob,
+    })
+  } finally {
+    capturing = false
   }
-  // A meeting can end while the frame is being decoded; the next one must not
-  // receive this meeting's picture.
-  if (gen !== sessionGen || !frame) return
-  const at = Date.now()
-  const decision = scheduler.shouldKeep(reason, frame.hash, at)
-  if (!decision.keep) {
-    appLog.d(TAG, 'shot skipped', decision.reject, reason)
-    return
-  }
-  scheduler.noteKept(reason, frame.hash, at)
-  queue.enqueue({
-    clientShotId: newClientShotId(),
-    at,
-    reason,
-    ref,
-    width: frame.width,
-    height: frame.height,
-    blob: frame.blob,
-  })
 }
 
 /** A different picture is on the wire: capture once it has settled. */
@@ -386,6 +436,12 @@ function stop(): void {
     periodic = null
   }
   releaseVideo()
+  // Free the 9 MB frame buffer while no meeting is running; it is recreated on
+  // the next capture.
+  fullCanvas = null
+  fullCtx = null
+  sampleCanvas = null
+  sampleCtx = null
   const pending = queue
   queue = null
   scheduler = null
@@ -419,7 +475,7 @@ export function useMeetingShots() {
 
 /** @internal Test seam: replace the DOM grabber. */
 export function _setShotGrabberForTest(fn: Grabber | null): void {
-  grabber = fn ?? domGrabFrame
+  grabber = fn ?? domSample
 }
 
 /** @internal Test seam: drop all state without touching the network. */
