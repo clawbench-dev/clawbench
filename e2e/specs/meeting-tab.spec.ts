@@ -268,20 +268,25 @@ test.describe('Meeting flow', () => {
     await page.locator('[data-action="panel-end"]').click()
     await expect(page.locator('[data-action="meeting-quote"]')).toBeVisible({ timeout: 20000 })
 
-    // The artifact bar is the status/action strip above each TEXT tab, so the
-    // record has to be on 纪要 first — the record opens on 资源.
-    await page.locator('.meeting-tabs [data-tab="minutes"]').click()
+    // The artifact bar sits ABOVE the tab strip, so it is on screen from the
+    // tab the record opens on (资源) — a running job or a missing artifact must
+    // not depend on which tab the reader happens to be looking at.
+    const bar = page.locator('.artifact-bar')
+    await expect(bar).toBeVisible()
+    // On a tab that owns no artifact the bar names its subject.
+    await expect(bar.locator('.artifact-bar__kind')).toHaveText(/纪要|Minutes/i)
     // This meeting recorded nothing and transcribed nothing, so there is no
     // source to regenerate from: the bar must say so and keep its button
     // disabled instead of promising a job the server would refuse. (The
     // confirmation sheet itself needs a real source — an ASR provider is not
     // configured in e2e — so its states are covered by
     // MeetingRegenerateSheet.test.ts.)
-    const bar = page.locator('.artifact-bar')
-    await expect(bar).toBeVisible()
     await expect(bar.locator('.artifact-bar__text')).toHaveText(/没有可用的来源|no source available/i)
     await expect(bar.locator('[data-action="meeting-artifact-regenerate"]')).toBeDisabled()
-    // The empty state explains why, and offers no CTA that could not run.
+    // The minutes tab's empty state explains why, and offers no CTA that could
+    // not run. (On 资源 the CTA would be absent for the wrong reason — that tab
+    // has no empty state at all — so the assertion belongs on 纪要.)
+    await page.locator('.meeting-tabs [data-tab="minutes"]').click()
     await expect(page.locator('[data-action="meeting-generate-minutes"]')).toHaveCount(0)
 
     await page.locator('.meeting-tabs [data-tab="chat"]').click()

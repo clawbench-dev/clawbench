@@ -42,6 +42,21 @@
         <span>· {{ record.chatCount > 0 ? t('meeting.detail.chatCount', { n: record.chatCount }) : t('meeting.detail.noChat') }}</span>
       </div>
 
+      <!-- The bar sits ABOVE the tabs so it is visible from every tab: the
+           record opens on 资源, and a regeneration started elsewhere must not
+           be invisible (or unreachable) just because the reader is not on a
+           text tab. -->
+      <MeetingArtifactBar
+        :kind="barKind"
+        :state="barState"
+        :generation="record?.generation ?? null"
+        :has-audio="Boolean(record?.hasAudio)"
+        :show-kind="!activeArtifactKind"
+        :blocked="barBlockedReason"
+        @regenerate="openRegenerate(barKind)"
+        @cancel="cancelRegenerate"
+      />
+
       <div class="meeting-tabs">
         <button
           v-for="tab in tabs"
@@ -62,16 +77,6 @@
         </button>
       </div>
 
-      <MeetingArtifactBar
-        v-if="activeArtifactKind"
-        :kind="activeArtifactKind"
-        :state="activeArtifactState"
-        :generation="record?.generation ?? null"
-        :has-audio="Boolean(record?.hasAudio)"
-        :blocked="activeBlockedReason"
-        @regenerate="openRegenerate(activeArtifactKind)"
-        @cancel="cancelRegenerate"
-      />
 
       <div
         class="meeting-body"
@@ -459,11 +464,21 @@ const activeArtifactKind = computed<MeetingArtifactKind | null>(() => {
   }
   return null
 })
-const activeArtifactState = computed(() => artifactStateOf(record.value, activeArtifactKind.value ?? 'minutes'))
-const activeBlockedReason = computed(() => {
-  const kind = activeArtifactKind.value
-  if (!kind || !record.value || canRegenerate(kind)) return ''
-  return t('meeting.detail.artifact.noSource')
+/**
+ * The artifact the bar speaks for.
+ *
+ * On a text tab that is the tab's own artifact. On 资源/聊天 the bar still has
+ * to mean something: it follows the running step, so a chain started from
+ * another tab stays visible, and otherwise falls back to the minutes — the
+ * record's primary output. `showKind` marks that fallback so "还没有生成" never
+ * reads as if it were about the tab on screen.
+ */
+const barKind = computed<MeetingArtifactKind>(() =>
+  activeArtifactKind.value ?? record.value?.generation?.step ?? 'minutes')
+const barState = computed(() => artifactStateOf(record.value, barKind.value))
+const barBlockedReason = computed(() => {
+  if (!record.value) return ''
+  return canRegenerate(barKind.value) ? '' : t('meeting.detail.artifact.noSource')
 })
 
 /** The step is the current one, or the only job left after a refresh. */

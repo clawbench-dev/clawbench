@@ -119,6 +119,27 @@ describe('MeetingArtifactBar', () => {
     expect(w.emitted('regenerate')).toHaveLength(1)
   })
 
+  it('names its subject only when asked to', () => {
+    // The record view sets showKind on tabs that own no artifact, where
+    // "Not generated yet" would otherwise be about nothing in particular.
+    expect(mountBar().find('.artifact-bar__kind').exists()).toBe(false)
+    const w = mountBar({
+      showKind: true,
+      state: { hasContent: false, jobStatus: 'idle', contentAt: 0, stale: false },
+    })
+    expect(w.find('.artifact-bar__kind').text()).toBe(enMessages.meeting.detail.tabMinutes)
+  })
+
+  it('does not repeat the subject while a step is running', () => {
+    // The running sentence already names the step ("Regenerating minutes"), so
+    // a chip next to it would say the same thing twice.
+    const w = mountBar({
+      showKind: true,
+      generation: { step: 'minutes', remaining: [], startedAt: Date.now() },
+    })
+    expect(w.find('.artifact-bar__kind').exists()).toBe(false)
+  })
+
   it('ignores a click on a disabled action', async () => {
     const w = mountBar({
       state: { hasContent: false, jobStatus: 'idle', contentAt: 0, stale: false },
