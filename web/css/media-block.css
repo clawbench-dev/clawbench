@@ -518,11 +518,21 @@
 
    The selectors mirror the resting ones including `:has()`: `:has()` adds the
    specificity of its argument, so `.image-block-wrapper--thumb` alone (0-1-0)
-   would lose to the 0-2-1 resting rule above. */
+   would lose to the 0-2-1 resting rule above.
+
+   The frame's `max-width` REPEATS the media cap instead of just `100%`.
+   `fit-content` alone does not follow the cap: the media's `max-width` carries a
+   percentage, which is indefinite while the frame is being sized from its
+   content, so the browser resolves the cell↔figure cycle to an intermediate
+   width (measured 267dp for a 480px thumb, 282px on the share page). The frame
+   then ran to that width while the picture stopped at 260dp, leaving a dead
+   band — with the floating view button inside it — to the right of the picture.
+   `+ 2px` is the frame's own 1px borders (`box-sizing: border-box`), so the
+   content box and the media end on the same pixel. */
 .image-block-wrapper--thumb,
 .image-block-wrapper--thumb:has(> .lightbox-img-wrap > img) {
     width: fit-content;
-    max-width: 100%;
+    max-width: min(100%, calc(260 * var(--dp) + 2px));
     margin: 0;
 }
 
@@ -534,6 +544,28 @@
     max-width: min(100%, calc(260 * var(--dp)));
     max-height: calc(150 * var(--dp));
     object-fit: contain;
+}
+
+/* Zoomed, the frame is the pan viewport again — the same state every other
+   figure gets from `.is-zooming { width: 100% }`. The caps above are the
+   RESTING thumbnail size, so they must not follow the reader into the zoom:
+   keeping them would clamp the enlarged picture back to 260x150dp and leave
+   nowhere to pan to, which is exactly what markdown preview does not do.
+
+   The media needs its own override because these selectors are the ones that
+   carry the `:has()` specificity (0-3-2): the generic
+   `.image-block-wrapper.is-zooming > .lightbox-img-wrap > img` (0-3-1) loses to
+   them, so without this the zoom would move the frame and leave the picture
+   pinned at thumbnail size inside it. */
+.image-block-wrapper--thumb.is-zooming,
+.image-block-wrapper--thumb.is-zooming:has(> .lightbox-img-wrap > img) {
+    max-width: 100%;
+}
+
+.image-block-wrapper--thumb.is-zooming > .lightbox-img-wrap > img,
+.image-block-wrapper--thumb.is-zooming:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap > img {
+    max-width: none;
+    max-height: none;
 }
 
 /* ─── Pending content media: shimmer placeholder ──────────────────────────
