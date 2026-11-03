@@ -715,6 +715,7 @@ import { useMeetingHistory } from './composables/useMeetingHistory.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
+import { useMeetingFileVisibility } from './composables/useMeetingFileVisibility'
 import { useFileEditor } from './composables/useFileEditor'
 import { useTocDockPreference } from './composables/useTocDockPreference'
 import { removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
@@ -1987,6 +1988,17 @@ useFileWatch({
 
 const fileNav = useFileNavStack()
 const fileEditor = useFileEditor()
+
+// The meeting timeline used to learn about files only from openFile(), which a
+// file opened before the meeting never fires — switching to the file tab during
+// the meeting left the record empty. What the record actually means is "the
+// file was on screen": entering the viewer starts an interval, leaving it (or
+// collapsing the column) ends one. The tracker ignores this outside a meeting.
+useMeetingFileVisibility(() =>
+  panelIsActive('view') && fileNav.overlayOpen.value && !(isWideScreen.value && leftCollapsed.value)
+    ? fileNav.currentFilePath.value
+    : '',
+)
 
 function openShareLinkDialog() {
   shareLinkOpen.value = true
