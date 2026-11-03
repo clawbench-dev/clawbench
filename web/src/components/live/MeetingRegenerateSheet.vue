@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" :title="sheetTitle" size="narrow" @close="emit('close')">
+  <BottomSheet :open="open" :title="sheetTitle" auto size="narrow" @close="emit('close')">
     <div class="regen-body">
       <div v-if="loading" class="regen-loading">
         <LoadingIndicator size="sm" inline />
@@ -159,6 +159,12 @@ function onDownstreamChange(event: Event): void {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  /* The shared `.bs-body` / `.modal-body` is deliberately padding-free; every
+     consumer supplies its own (see modal-card.css and MeetingStage.vue, which
+     shipped the same bug). Without this the plan and the hints sit flush
+     against the card border on wide screens and against the screen edge in the
+     narrow bottom drawer. */
+  padding: var(--space-6) var(--space-7);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
 }
@@ -213,7 +219,9 @@ function onDownstreamChange(event: Event): void {
   font-size: var(--font-size-2xs);
 }
 .regen-step__reason {
-  margin-left: auto;
+  /* Inline, right after the step name/mode. Pushing it to the far right with
+     `margin-left: auto` left a 450px gap between 「纪要」 and 「目标」 in the
+     520px card, reading as two unrelated fragments. */
   color: var(--text-muted);
   font-size: var(--font-size-xs);
 }

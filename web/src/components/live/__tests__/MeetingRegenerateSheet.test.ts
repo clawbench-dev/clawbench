@@ -1,9 +1,24 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import enMessages from '@/i18n/locales/en'
 import MeetingRegenerateSheet from '../MeetingRegenerateSheet.vue'
 import type { RegenPlan } from '@/composables/useMeetingHistory'
+
+const SRC = readFileSync(join(__dirname, '..', 'MeetingRegenerateSheet.vue'), 'utf8')
+/* Comments carry braces and the very words these guards search for, so they
+ * have to go before anything is matched against the CSS. */
+const CSS = SRC.slice(SRC.indexOf('<style')).replace(/\/\*[\s\S]*?\*\//g, '')
+
+/** The declarations of one rule in this component's scoped style block. */
+function ruleBody(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const m = CSS.match(new RegExp(`(?:^|[\\s,}])${escaped}\\s*\\{([^}]*)\\}`))
+  if (!m) throw new Error(`rule ${selector} not found`)
+  return m[1]
+}
 
 const minutesPlan: RegenPlan = {
   target: 'minutes',
@@ -103,5 +118,26 @@ describe('MeetingRegenerateSheet', () => {
     const w = mountSheet()
     await w.find('[data-action="regen-start"]').trigger('click')
     expect(w.emitted('confirm')).toHaveLength(1)
+  })
+})
+
+/**
+ * Layout invariants. jsdom applies no stylesheets, so a mounted component
+ * cannot see any of these; the type checker does not read CSS either. All
+ * three shipped broken once (content flush against the card edge, the drawer
+ * filling the whole screen, and 「纪要」/「目标」 separated by half the card),
+ * and the source is the only place they can be asserted.
+ */
+describe('MeetingRegenerateSheet layout', () => {
+  it('gives the body its own padding (the shared modal body is padding-free)', () => {
+    expect(ruleBody('.regen-body')).toMatch(/padding:\s*var\(--space-\d+\)/)
+  })
+
+  it('opens as an auto-height sheet so the narrow drawer hugs its content', () => {
+    expect(SRC).toMatch(/<BottomSheet[^>]*\bauto\b/)
+  })
+
+  it('keeps the step reason next to the step instead of at the far edge', () => {
+    expect(ruleBody('.regen-step__reason')).not.toMatch(/margin-left:\s*auto/)
   })
 })
