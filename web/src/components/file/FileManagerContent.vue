@@ -1478,7 +1478,18 @@ function confirmSelected() {
     openItem(entry.type === 'dir' ? 'dir' : 'file', path)
 }
 
-/** Re-run the active search (after rename/delete/move) so stale results disappear. */
+/**
+ * Re-run the active search so stale results disappear.
+ *
+ * The result list is a listing of its own: the store's post-mutation
+ * `loadFiles()` reloads the browsed directory and never touches it. Mutation
+ * handlers therefore have to call this — but only once the mutation has
+ * actually landed, which is why it is exposed for the parent (App.vue) rather
+ * than called right after `emit()`. Emitting is synchronous while the handlers
+ * are async (the single-file delete even blocks on its confirmation dialog),
+ * so refreshing at emit time re-scans the tree while the target still exists
+ * and the deleted hit stays in the list forever.
+ */
 function refreshSearchResults() {
     if (search.state.query.trim()) {
         search.startSearch(props.currentDir)
@@ -1783,6 +1794,10 @@ defineExpose({
     closeContentSearch,
     exitMultiSelect,
     focusSearchInput() { searchInputRef.value?.focus() },
+    // Called by App.vue AFTER a rename/delete/move finished: the search result
+    // list is not derived from the browsed directory, so the store's reload
+    // does not refresh it (see the function's own comment).
+    refreshSearchResults,
 })
 
 const isAllSelected = computed(() => {
@@ -2190,7 +2205,6 @@ async function doBatchDelete() {
     if (!confirmed) return
     emit('batchDelete', paths)
     exitMultiSelect()
-    refreshSearchResults() // drop deleted entries from an active search view
 }
 
 const allSelectedAreFiles = computed(() => {
@@ -2517,7 +2531,6 @@ async function doRename() {
     if (!newName || newName === entry.name) { closeCtxMenu(); return }
     emit('rename', { path: entry.path, name: newName })
     closeCtxMenu()
-    refreshSearchResults()
 }
 
 function doDownload() {
@@ -2678,7 +2691,6 @@ function doDelete() {
     const path = ctxMenu.entry.path
     closeCtxMenu()
     emit('delete', path)
-    refreshSearchResults()
 }
 
 // ── PC keyboard shortcuts (Ctrl+C/X/V, Delete) ──
@@ -2752,7 +2764,6 @@ async function handleKeydown(e) {
         } else if (selectedPath.value) {
             e.preventDefault()
             emit('delete', selectedPath.value)
-            refreshSearchResults()
         } else if (props.currentFile?.path) {
             e.preventDefault()
             emit('delete', props.currentFile.path)
@@ -2805,7 +2816,6 @@ async function handleKeydown(e) {
             const newName = await dialog.prompt(t('file.prompt.newName'), { value: oldName })
             if (!newName || newName === oldName) return
             emit('rename', { path, name: newName })
-            refreshSearchResults()
         }
         return
     }

@@ -3296,7 +3296,11 @@ async function handleRename({ path, name }: { path: string; name: string }) {
         await store.renameFile(path, name)
     } catch (err) {
         appLog.e(TAG, '[handleRename] error:', err)
+        return
     }
+    // The search result list is not derived from the browsed directory, so the
+    // store's own loadFiles() reload never drops the old name from it.
+    fileManagerRef.value?.refreshSearchResults()
 }
 
 async function handleDelete(path: string) {
@@ -3307,6 +3311,10 @@ async function handleDelete(path: string) {
     } catch (err) {
         appLog.e(TAG, '[handleDelete] unhandled error:', err)
     }
+    // Refresh the search result list only now: the delete waits for its
+    // confirmation dialog, so a refresh issued when the child emitted would
+    // re-scan while the file is still there and the hit would never leave.
+    fileManagerRef.value?.refreshSearchResults()
     if (wasOverlay) {
         if (fileNav.canGoBack.value) {
             const prevPath = fileNav.goBack()
@@ -3326,6 +3334,7 @@ async function handleBatchDelete(paths: string[]) {
     } catch (err) {
         appLog.e(TAG, '[handleBatchDelete] unhandled error:', err)
     }
+    fileManagerRef.value?.refreshSearchResults()
 }
 
 async function handleRefresh() {

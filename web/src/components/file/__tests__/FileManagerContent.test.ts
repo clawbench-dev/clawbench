@@ -1423,6 +1423,58 @@ describe('FileManagerContent — resident search', () => {
     expect(wrapper.vm.searchActive).toBe(true)
   })
 
+  it('does not re-run the search when a delete is emitted, only when the parent reports it landed', async () => {
+    // Regression: the result list was refreshed right after emit(). Emitting is
+    // synchronous while the delete handler waits for its confirmation dialog, so
+    // the re-scan ran while the file still existed and the deleted hit stayed in
+    // the list until the query changed.
+    searchState.query = 'main'
+    const wrapper = mountContent({ currentDir: 'src' })
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'main.ts', path: 'src/main.ts' }
+    await nextTick()
+    // `searchState` is module-level and wrappers from earlier cases are still
+    // mounted, so their query watcher may have fired into this mock already.
+    mockSearchStart.mockClear()
+
+    await wrapper.vm.doDelete()
+    expect(wrapper.emitted('delete')).toBeTruthy()
+    expect(mockSearchStart).not.toHaveBeenCalled()
+
+    // The parent calls this once store.deleteFile() resolved.
+    wrapper.vm.refreshSearchResults()
+    expect(mockSearchStart).toHaveBeenCalledTimes(1)
+    expect(mockSearchStart).toHaveBeenCalledWith('src')
+    wrapper.unmount()
+  })
+
+  it('does not re-run the search when a rename is emitted, only when the parent reports it landed', async () => {
+    searchState.query = 'main'
+    const wrapper = mountContent({ currentDir: 'src' })
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'main.ts', path: 'src/main.ts' }
+    await nextTick()
+    mockSearchStart.mockClear()
+
+    await wrapper.vm.doRename()
+    expect(wrapper.emitted('rename')).toBeTruthy()
+    expect(mockSearchStart).not.toHaveBeenCalled()
+
+    wrapper.vm.refreshSearchResults()
+    expect(mockSearchStart).toHaveBeenCalledTimes(1)
+    expect(mockSearchStart).toHaveBeenCalledWith('src')
+    wrapper.unmount()
+  })
+
+  it('refreshSearchResults is a no-op while no query is active', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+    mockSearchStart.mockClear()
+    wrapper.vm.refreshSearchResults()
+    expect(mockSearchStart).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('clears the query without exiting multi-select', async () => {
     searchState.query = 'main'
     searchState.results = [
