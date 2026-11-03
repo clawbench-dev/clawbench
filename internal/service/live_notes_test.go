@@ -1289,6 +1289,57 @@ func TestEndLiveNote_StampsOnce(t *testing.T) {
 	assert.Equal(t, int64(1_700_000_060_000), note.EndedAt, "a second close must not move the finish line")
 }
 
+func TestSetMeetingTitle_RenamesOnlyTheRecord(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	require.NoError(t, StartLiveNote("tok", pid, "11-01 17:35", 1_700_000_000_000))
+
+	require.NoError(t, SetMeetingTitle(pid, "tok", "发版评审"))
+
+	note, exists, err := GetLiveNote("tok")
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(t, "发版评审", note.Title)
+	// A rename is metadata only: the lifecycle is untouched.
+	assert.Zero(t, note.EndedAt)
+	assert.Equal(t, int64(1_700_000_000_000), note.StartedAt)
+}
+
+func TestSetMeetingTitle_UnknownTokenOrOtherProjectIsNotFound(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	other, err := store.ProjectIDForPath("/proj/b")
+	require.NoError(t, err)
+	require.NoError(t, StartLiveNote("tok", pid, "周会", 1_700_000_000_000))
+
+	assert.ErrorIs(t, SetMeetingTitle(pid, "", "名字"), ErrMeetingNotFound)
+	assert.ErrorIs(t, SetMeetingTitle(pid, "nope", "名字"), ErrMeetingNotFound)
+	assert.ErrorIs(t, SetMeetingTitle(other, "tok", "名字"), ErrMeetingNotFound,
+		"a token from another project must not be renamable")
+
+	note, _, err := GetLiveNote("tok")
+	require.NoError(t, err)
+	assert.Equal(t, "周会", note.Title)
+}
+
+// A pre-record meeting the upgrade could not place is invisible everywhere
+// else; a caller who happens to know its token must not be able to rename it.
+func TestSetMeetingTitle_HiddenRowIsNotFound(t *testing.T) {
+	db := setupTestDBForLiveNotes(t)
+	defer func() { _ = db.Close() }()
+	pid, err := store.ProjectIDForPath("/proj/a")
+	require.NoError(t, err)
+	require.NoError(t, StartLiveNote("tok", pid, "周会", 1_700_000_000_000))
+	_, err = store.WriteExec(`UPDATE live_notes SET hidden = 1 WHERE token = ?`, "tok")
+	require.NoError(t, err)
+
+	assert.ErrorIs(t, SetMeetingTitle(pid, "tok", "名字"), ErrMeetingNotFound)
+}
+
 func TestCloseStaleLiveNotes_OnlyClosesOldOpenRecords(t *testing.T) {
 	db := setupTestDBForLiveNotes(t)
 	defer func() { _ = db.Close() }()

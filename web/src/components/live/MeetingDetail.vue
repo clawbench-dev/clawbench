@@ -11,6 +11,19 @@
         @dragstart="onDragStart"
         @dragend="cleanupDragGhost()"
       >{{ record?.title || t('meeting.list.untitled') }}</span>
+      <!-- Rename sits next to the title it changes, and only for a finished
+           meeting: while one is running the record is not what the user is
+           looking at (the stage is), and its title is still the room's. -->
+      <button
+        v-if="canRename"
+        class="meeting-icon-btn"
+        type="button"
+        :title="t('meeting.detail.rename')"
+        data-action="meeting-rename"
+        @click="askRename"
+      >
+        <Pencil :size="13" />
+      </button>
       <!-- When/How long: merged into the title bar instead of taking a row of
            its own. The container query below drops it on a narrow pane rather
            than squeezing the title to nothing. -->
@@ -291,6 +304,7 @@ import {
   FileText,
   MessageSquare,
   MessagesSquare,
+  Pencil,
   SpellCheck,
   Trash2,
 } from 'lucide-vue-next'
@@ -309,6 +323,7 @@ import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation'
 import { onAppResume } from '@/composables/useAppForeground'
 import {
   artifactStateOf,
+  isLiveRecord,
   meetingQuoteLabel,
   useMeetingHistory,
   type MeetingArtifactKind,
@@ -345,6 +360,14 @@ import '@/assets/modal-footer-btn.css'
 
 const props = defineProps<{ token: string; initialTab?: MeetingDetailTab }>()
 const emit = defineEmits<{ back: []; quote: [token: string]; 'tab-change': [tab: MeetingDetailTab] }>()
+
+/**
+ * The meeting-name limit, in characters.
+ *
+ * Mirrors the create form's `maxlength=80` and `liveNoteTitleMaxRunes` on the
+ * server: a name that fits one field must not be refused by another.
+ */
+const MEETING_TITLE_MAX_CHARS = 80
 
 const { t, locale } = useI18n()
 const toast = useToast()
@@ -784,6 +807,55 @@ function onQuote(): void {
   if (record.value) emit('quote', record.value.token)
 }
 
+/**
+ * A finished meeting can be renamed; a running one cannot.
+ *
+ * While a meeting runs this view is not what the host is looking at (the stage
+ * is), and its title still belongs to the room. After it ends the name is the
+ * only thing left that the user may want to correct — the generated one is a
+ * guess from the minutes.
+ */
+const canRename = computed(() => {
+  const r = record.value
+  return r !== null && !isLiveRecord(r)
+})
+
+/**
+ * Rename the meeting through the shared prompt dialog (the same one the session
+ * list uses, so Enter confirms and Escape cancels everywhere).
+ *
+ * Only the title changes: the meeting folder keeps the name it was created
+ * with, and `minutes.md` keeps the heading written when it was generated.
+ */
+async function askRename(): Promise<void> {
+  const current = record.value
+  if (!current) return
+  const next = await dialog.prompt(t('meeting.detail.renameMessage'), {
+    title: t('meeting.detail.renameTitle'),
+    value: current.title,
+    placeholder: t('meeting.detail.renamePlaceholder'),
+    confirmText: t('common.confirm'),
+    cancelText: t('common.cancel'),
+    singleLine: true,
+  })
+  if (next === null) return
+  const title = next.trim()
+  if (!title || title === current.title) return
+  // The server caps the name at 80 characters (the same limit the create form
+  // applies). Saying so here beats a generic "rename failed" the user cannot
+  // act on.
+  if (title.length > MEETING_TITLE_MAX_CHARS) {
+    toast.show(t('meeting.detail.renameTooLong', { n: MEETING_TITLE_MAX_CHARS }), { type: 'error', icon: 'warning' })
+    return
+  }
+  const updated = await history.rename(current.token, title)
+  if (!updated) {
+    toast.show(t('meeting.detail.renameFailed'), { type: 'error', icon: 'warning' })
+    return
+  }
+  record.value = updated
+}
+
 async function copy(text: string): Promise<void> {
   if (!text) return
   try {
@@ -1026,6 +1098,10 @@ onMounted(() => {
 }
 .meeting-header__title {
   font-size: var(--font-size-md); font-weight: 600; color: var(--text-primary);
+  /* A flex item defaults to its min-content width, which for nowrap text is the
+     whole title — it would push the meta and the trailing buttons out of the
+     bar instead of ellipsizing. */
+  min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .meeting-header__meta {

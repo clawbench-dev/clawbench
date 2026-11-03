@@ -345,6 +345,38 @@ export function useMeetingHistory() {
   }
 
   /**
+   * Rename one meeting. Only the record's title changes: the folder keeps the
+   * name it was created with, because every artifact path points at it.
+   *
+   * Returns the refreshed record (the caller redraws its header from it), or
+   * null when the server refused — an empty title, an unknown token, a failed
+   * request. The list copy is updated in place so going back shows the new
+   * name without a reload.
+   */
+  async function rename(token: string, title: string): Promise<MeetingRecord | null> {
+    const trimmed = title.trim()
+    if (!token || !trimmed) return null
+    try {
+      const resp = await fetch(`/api/live-share/notes/sessions?token=${encodeURIComponent(token)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: trimmed }),
+      })
+      if (!resp.ok) return null
+      const data = (await resp.json()) as { session?: MeetingRecord }
+      const record = data.session ?? null
+      if (record) {
+        const index = sessions.value.findIndex((s) => s.token === token)
+        if (index >= 0) sessions.value[index] = record
+      }
+      return record
+    } catch (e) {
+      appLog.w(TAG, 'rename failed', e)
+      return null
+    }
+  }
+
+  /**
    * Delete one meeting (folder + rows). The server refuses while the meeting is
    * running or while any artifact job is running; both surface as `409`.
    */
@@ -411,6 +443,7 @@ export function useMeetingHistory() {
     regenerate,
     cancelRegeneration,
     remove,
+    rename,
     buildQuote,
   }
 }

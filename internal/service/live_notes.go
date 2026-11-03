@@ -881,6 +881,38 @@ func IsPlaceholderMeetingTitle(title string) bool {
 	return err == nil
 }
 
+// SetMeetingTitle renames one meeting record.
+//
+// Only the record's title changes. The FOLDER keeps the name it was created
+// with (`liveNotesMeetingDirName`): every artifact path, the artifacts
+// endpoint and anything the reader opened already point at it, and moving it
+// under a running job would break all of them at once. A rename changes how
+// the meeting is listed, quoted and titled — not where its leftovers live.
+//
+// A hidden row (a pre-record meeting the upgrade could not place) is reported
+// as not found, exactly like a missing one: it is invisible everywhere else.
+func SetMeetingTitle(projectID int64, token, title string) error {
+	if token == "" {
+		return ErrMeetingNotFound
+	}
+	res, err := store.WriteExec(
+		`UPDATE live_notes SET title = ?, updated_at = CURRENT_TIMESTAMP
+		  WHERE token = ? AND project_id = ? AND hidden = 0`,
+		title, token, projectID,
+	)
+	if err != nil {
+		return fmt.Errorf("live notes: rename meeting: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("live notes: rename meeting: %w", err)
+	}
+	if n == 0 {
+		return ErrMeetingNotFound
+	}
+	return nil
+}
+
 // EndLiveNote stamps the end time once. A second call is a no-op so a
 // double-close (explicit end + socket teardown) cannot move the finish line.
 func EndLiveNote(token string, endedAtMS int64) error {

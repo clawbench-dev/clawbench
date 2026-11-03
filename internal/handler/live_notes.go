@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -45,6 +46,10 @@ const (
 	liveNoteTextMaxRunes = 2000
 	// liveNoteSpeakerMaxRunes bounds the display label supplied by the client.
 	liveNoteSpeakerMaxRunes = 40
+	// liveNoteTitleMaxRunes bounds a renamed meeting. It mirrors the create
+	// form's `maxlength=80`, so a name typed here can never be longer than one
+	// typed at the start of the meeting.
+	liveNoteTitleMaxRunes = 80
 	// liveNoteChatMaxRunes bounds one chat line, mirroring CHAT_MAX_CHARS in
 	// web/src/share/liveControl.ts.
 	liveNoteChatMaxRunes = 2000
@@ -195,8 +200,11 @@ type liveNotesArtifacts struct {
 	AudioFiles   int    `json:"audioFiles,omitempty"`
 }
 
-// ServeLiveNotesSessions handles GET /api/live-share/notes/sessions
+// ServeLiveNotesSessions handles /api/live-share/notes/sessions
 // (authenticated, project-scoped): the project's meeting records.
+//
+// GET lists them (or one, by token); PATCH renames one; DELETE removes one
+// together with its folder.
 //
 // The record is the database row, not the folder. A meeting exists from the
 // moment the publisher attaches — including one that recorded nothing, or whose
@@ -207,6 +215,8 @@ func ServeLiveNotesSessions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		serveLiveNotesList(w, r)
+	case http.MethodPatch:
+		serveLiveNotesRename(w, r)
 	case http.MethodDelete:
 		serveLiveNotesDelete(w, r)
 	default:
@@ -358,6 +368,60 @@ func ServeLiveShareNotes(w http.ResponseWriter, r *http.Request) {
 		Shots:    shots,
 		Minutes:  liveNotesPayload(projectPath, note),
 	})
+}
+
+// serveLiveNotesRename handles PATCH /api/live-share/notes/sessions?token=
+// (authenticated, project-scoped): rename one meeting.
+//
+// Body: {"title": "..."} — trimmed, non-empty, at most liveNoteTitleMaxRunes.
+// The response carries the refreshed record, so the caller does not have to
+// re-read it just to redraw the header.
+//
+// Renaming is allowed while a job runs: the title is metadata, and the only
+// thing that could clobber it — the chain writing the auto-generated name —
+// re-reads the stored title first (see the minutes step in live_notes.go), so
+// a name the user typed wins over one the model would have produced.
+func serveLiveNotesRename(w http.ResponseWriter, r *http.Request) {
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	token := r.URL.Query().Get("token")
+	if !validShareToken(token) || !liveNotesOwnedByProject(token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	var body struct {
+		Title string `json:"title"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	title := strings.TrimSpace(body.Title)
+	if title == "" || utf8.RuneCountInString(title) > liveNoteTitleMaxRunes {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return
+	}
+	if err := service.SetMeetingTitle(projectID, token, title); err != nil {
+		if errors.Is(err, service.ErrMeetingNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		slog.Error("live notes: rename failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	record, exists, err := service.GetMeetingRecord(projectPath, projectID, token)
+	if err != nil {
+		slog.Error("live notes: rename read-back failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if !exists {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"session": record})
 }
 
 // serveLiveNotesDelete handles DELETE /api/live-share/notes/sessions?token=
@@ -1662,7 +1726,13 @@ func (c *artifactChain) buildMinutes(ctx context.Context) error {
 	// after. Only a placeholder is replaced — a title the user typed is theirs.
 	// Done before the file is written so the minutes.md heading carries the
 	// real name instead of "11-01 17:35".
-	title := nameMeetingFromMinutes(ctx, c.title, minutes, service.GenerateLiveNotesTitle)
+	//
+	// The CURRENT stored title, not `c.title`: the chain captured its title
+	// when the job started, and the user may have renamed the meeting since
+	// (the record detail offers that while a job runs). Re-reading is what
+	// makes the typed name win — with the captured one this write would put
+	// the old placeholder back.
+	title := nameMeetingFromMinutes(ctx, liveNotesStoredTitle(c.token, c.title), minutes, service.GenerateLiveNotesTitle)
 
 	// A failed write must not lose the minutes: they are still stored below, and
 	// the UI simply shows no file path.

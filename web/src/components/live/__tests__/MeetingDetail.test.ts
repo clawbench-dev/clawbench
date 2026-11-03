@@ -45,7 +45,8 @@ vi.mock('@/utils/attachDrag', () => ({
   buildAttachDragImage: vi.fn(),
 }))
 
-vi.mock('@/composables/useToast', () => ({ useToast: () => ({ show: vi.fn() }) }))
+const toastShowMock = vi.hoisted(() => vi.fn())
+vi.mock('@/composables/useToast', () => ({ useToast: () => ({ show: toastShowMock }) }))
 // The record mirrors the reader's own lines by matching the stored speaker name
 // against the local nickname; pin that nickname so the test is not dependent on
 // whatever this machine's config says.
@@ -77,12 +78,16 @@ vi.mock('@/composables/useMarkdownRenderer', () => ({
 }))
 
 const confirmMock = vi.hoisted(() => vi.fn(async () => true))
-vi.mock('@/composables/useDialog', () => ({ useDialog: () => ({ confirm: confirmMock }) }))
+const promptMock = vi.hoisted(() => vi.fn(async () => null as string | null))
+vi.mock('@/composables/useDialog', () => ({
+  useDialog: () => ({ confirm: confirmMock, prompt: promptMock }),
+}))
 
 const getMock = vi.hoisted(() => vi.fn())
 const artifactMock = vi.hoisted(() => vi.fn())
 const chatMock = vi.hoisted(() => vi.fn())
 const removeMock = vi.hoisted(() => vi.fn(async () => ({ ok: true })))
+const renameMock = vi.hoisted(() => vi.fn())
 const shotsMock = vi.hoisted(() => vi.fn(async () => []))
 const deleteShotMock = vi.hoisted(() => vi.fn(async () => true))
 const regenPlanMock = vi.hoisted(() => vi.fn())
@@ -99,6 +104,7 @@ vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
       shots: shotsMock,
       deleteShot: deleteShotMock,
       remove: removeMock,
+      rename: renameMock,
       regenPlan: regenPlanMock,
       regenerate: regenerateMock,
       cancelRegeneration: cancelRegenMock,
@@ -190,6 +196,8 @@ const REVISED = `# 校对版转写 · Release review · 2026-11-01 14:30
 beforeEach(() => {
   vi.clearAllMocks()
   resourcesTotal.value = 0
+  promptMock.mockResolvedValue(null)
+  renameMock.mockResolvedValue(null)
   getMock.mockResolvedValue(record())
   artifactMock.mockImplementation(async (_token: string, kind: string) => {
     if (kind === 'minutes') return { content: '# MINUTES', file: 'minutes.md' }
@@ -838,5 +846,84 @@ describe('MeetingDetail key frames', () => {
     expect(w.find('[data-role="transcript"]').exists()).toBe(true)
     expect(w.find('[data-role="transcript-unreadable"]').exists()).toBe(false)
     expect(w.findAll('[data-role="shot-open"]')).toHaveLength(1)
+  })
+})
+
+describe('MeetingDetail rename', () => {
+  it('renames a finished meeting from the title bar and redraws it', async () => {
+    promptMock.mockResolvedValue('November release review')
+    renameMock.mockResolvedValue(record({ title: 'November release review' }))
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-action="meeting-rename"]').trigger('click')
+    await flushPromises()
+
+    expect(promptMock).toHaveBeenCalledTimes(1)
+    // The prompt opens on the current name, as a single line: a name has no
+    // newline, and the textarea would invite one.
+    const opts = promptMock.mock.calls[0][1] as { value: string; singleLine: boolean }
+    expect(opts.value).toBe('Release review')
+    expect(opts.singleLine).toBe(true)
+    expect(renameMock).toHaveBeenCalledWith('tok-1', 'November release review')
+    // The header is redrawn from the server's refreshed record, not from the
+    // string the user typed — the two are only equal by coincidence.
+    expect(w.find('.meeting-header__title').text()).toBe('November release review')
+  })
+
+  it('offers no rename while the meeting is still running', async () => {
+    getMock.mockResolvedValue(record({ endedAt: 0 }))
+    const w = mountDetail()
+    await flushPromises()
+
+    expect(w.find('[data-action="meeting-rename"]').exists()).toBe(false)
+  })
+
+  it('leaves the record alone when the prompt is cancelled or left empty', async () => {
+    const w = mountDetail()
+    await flushPromises()
+
+    // Cancelled: the shared prompt resolves null.
+    promptMock.mockResolvedValue(null)
+    await w.find('[data-action="meeting-rename"]').trigger('click')
+    await flushPromises()
+    expect(renameMock).not.toHaveBeenCalled()
+
+    // Whitespace only: trimming it would name the meeting nothing.
+    promptMock.mockResolvedValue('   ')
+    await w.find('[data-action="meeting-rename"]').trigger('click')
+    await flushPromises()
+    expect(renameMock).not.toHaveBeenCalled()
+  })
+
+  it('refuses a name longer than the server accepts, and names the limit', async () => {
+    const w = mountDetail()
+    await flushPromises()
+
+    promptMock.mockResolvedValue('名'.repeat(81))
+    await w.find('[data-action="meeting-rename"]').trigger('click')
+    await flushPromises()
+
+    expect(renameMock).not.toHaveBeenCalled()
+    expect(toastShowMock).toHaveBeenCalledWith(
+      enMessages.meeting.detail.renameTooLong.replace('{n}', '80'),
+      expect.objectContaining({ type: 'error' }),
+    )
+  })
+
+  it('keeps the old name and says so when the server refuses', async () => {
+    promptMock.mockResolvedValue('New name')
+    renameMock.mockResolvedValue(null)
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-action="meeting-rename"]').trigger('click')
+    await flushPromises()
+
+    expect(toastShowMock).toHaveBeenCalledWith(
+      enMessages.meeting.detail.renameFailed,
+      expect.objectContaining({ type: 'error' }),
+    )
+    expect(w.find('.meeting-header__title').text()).toBe('Release review')
   })
 })

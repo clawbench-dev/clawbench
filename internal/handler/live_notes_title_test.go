@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -156,4 +157,77 @@ func TestMinutesJobKeepsATitleTheUserTyped(t *testing.T) {
 
 	assert.Equal(t, "发版评审", note.Title)
 	assert.False(t, *titleAsked, "a name the user typed must not even be re-asked")
+}
+
+// A rename that lands while the minutes job runs must survive.
+//
+// The chain captures its title when the job starts and its last step writes
+// that value back. Without re-reading the stored title, a user who renamed the
+// meeting while the minutes were generating would watch the placeholder (or the
+// model's guess) come back seconds later.
+func TestMinutesJobKeepsARenameMadeWhileItRuns(t *testing.T) {
+	minutesAsked := make(chan struct{}, 1)
+	releaseCh := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseCh) }) }
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		req := string(body)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(req, "会议标题生成器"):
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"模型起的名字"}}]}`))
+		case strings.Contains(req, "待校对转写"):
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"NO_CHANGES"}}]}`))
+		default:
+			// Hold the minutes pass open so the rename below lands mid-chain.
+			minutesAsked <- struct{}{}
+			<-releaseCh
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要\n\n确认发版计划。"}}]}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(release)
+	withSummaryModel(t, srv.URL)
+
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+
+	project := t.TempDir()
+	placeholder := service.PlaceholderMeetingTitle(time.Now())
+	room, err := liveRegistry.Create(projPath(project), placeholder)
+	require.NoError(t, err)
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	_, err = service.AppendLiveNoteSegment(context.Background(), room.Token(), pid, service.LiveNoteSegment{
+		Channel: "mic", Speaker: "我", StartedAt: 1_700_000_000_000, Text: "确认发版计划",
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNotesMinutes(w, liveReq(t, http.MethodPost, "/api/live-share/notes/minutes", project,
+		map[string]any{"token": room.Token(), "title": placeholder}))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	select {
+	case <-minutesAsked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the minutes step never asked the model")
+	}
+
+	// The user renames the meeting while the model is still answering.
+	require.NoError(t, service.SetMeetingTitle(pid, room.Token(), "发版评审"))
+	release()
+
+	require.Eventually(t, func() bool {
+		n, ok, err := service.GetLiveNote(room.Token())
+		return err == nil && ok && n.Status == service.LiveNotesStatusReady
+	}, 10*time.Second, 20*time.Millisecond, "the background job must finish")
+
+	note, ok, err := service.GetLiveNote(room.Token())
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "发版评审", note.Title,
+		"the name the user typed must survive the chain writing its captured title")
 }

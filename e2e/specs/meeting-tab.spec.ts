@@ -281,6 +281,19 @@ test.describe('Meeting flow', () => {
     // 资源 owns no artifact, so it carries no strip at all.
     await expect(page.locator('.artifact-bar')).toHaveCount(0)
 
+    // A finished meeting can be renamed from its record — the 资源 tab is what
+    // the view opens on, and the pencil sits next to the title it changes.
+    // The prompt starts on the current name; only the title changes, never the
+    // meeting folder (asserted below by the link still resolving).
+    const renamed = `${title} 改名`
+    await page.locator('[data-action="meeting-rename"]').click()
+    const renameInput = page.locator('.dlg-input')
+    await expect(renameInput).toBeVisible()
+    await expect(renameInput).toHaveValue(title)
+    await renameInput.fill(renamed)
+    await page.locator('.dlg-ok').click()
+    await expect(page.locator('.meeting-header__title')).toHaveText(renamed)
+
     await page.locator('.meeting-tabs [data-tab="minutes"]').click()
     // On 纪要 the strip lives at the top of the tab pane, above the content.
     const bar = page.locator('.meeting-tabpanel .artifact-bar')
@@ -307,10 +320,10 @@ test.describe('Meeting flow', () => {
     await expect(page.locator('.artifact-bar')).toHaveCount(0)
     await expect(page.locator('.chat-row__text')).toContainText('这是一条会议聊天')
 
-    // And the record is in the list, titled as typed.
+    // And the record is in the list under the name it was renamed to.
     await page.locator('[data-action="meeting-back"]').click()
-    const row = page.locator('.meeting-row').filter({ hasText: title })
-    await expect(row.locator('.meeting-row__title')).toHaveText(title)
+    const row = page.locator('.meeting-row').filter({ hasText: renamed })
+    await expect(row.locator('.meeting-row__title')).toHaveText(renamed)
 
     // Leave nothing behind. Without this every run added a record (and its
     // artifact folder) to the e2e project, so the list grew forever and any
@@ -325,7 +338,7 @@ test.describe('Meeting flow', () => {
     const viewer = await page.context().newPage()
     await viewer.goto(`/share/${token}`)
     await expect(viewer.locator('[data-role="meeting-ended"]')).toBeVisible({ timeout: 20000 })
-    await expect(viewer.locator('[data-role="record-title"]')).toHaveText(title)
+    await expect(viewer.locator('[data-role="record-title"]')).toHaveText(renamed)
     await viewer.locator('.share-meeting__tab[data-tab="chat"]').click()
     await expect(viewer.locator('.chat-row__text')).toContainText('这是一条会议聊天')
     await viewer.close()

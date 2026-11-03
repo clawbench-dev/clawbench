@@ -4584,6 +4584,48 @@ paths:
                       $ref: "#/components/schemas/MeetingRecord"
         "403":
           description: 缺少项目上下文
+    patch:
+      tags: [LiveShare]
+      summary: 重命名一场会议
+      description: |
+        只改会议名（列表、详情标题、引用卡片都用它），**不改磁盘上的会议目录**：
+        目录名是创建时的快照，所有产物路径都指向它，改名只影响怎么称呼这场会议。
+
+        空标题或超过 80 字返回 400；会议不存在（或不属于当前项目）返回 404。
+        纪要/校对任务正在运行时也允许改名——链式任务写回标题前会重新读库，
+        用户手填的名字不会被模型生成的名字覆盖。
+      operationId: liveShareNotesRename
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title:
+                  type: string
+                  description: 新会议名，去掉首尾空白后不能为空，最长 80 字
+      responses:
+        "200":
+          description: 已改名，返回更新后的记录
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    $ref: "#/components/schemas/MeetingRecord"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
     delete:
       tags: [LiveShare]
       summary: 删除一场会议

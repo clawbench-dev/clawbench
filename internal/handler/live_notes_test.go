@@ -1535,6 +1535,108 @@ func TestServeLiveNotesDelete_AllowsDeletingAnInterruptedGeneration(t *testing.T
 	assert.False(t, exists)
 }
 
+// ── Rename ─────────────────────────────────────────────────────────────────
+
+func TestServeLiveNotesRename_UpdatesTheRecordTitle(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+	project := t.TempDir()
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "11-01 17:35", 1_700_000_000_000))
+	paths, err := service.EnsureMeetingDir(token, pid, project, "11-01 17:35", 1_700_000_000_000)
+	require.NoError(t, err)
+	dirName := filepath.Base(paths.Dir)
+
+	w := httptest.NewRecorder()
+	ServeLiveNotesSessions(w, liveReq(t, http.MethodPatch,
+		"/api/live-share/notes/sessions?token="+token, project, map[string]string{"title": "  发版评审  "}))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	// The response carries the refreshed record: the caller redraws its header
+	// from it instead of re-reading the record itself.
+	var body struct {
+		Session service.MeetingRecord `json:"session"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, token, body.Session.Token)
+	assert.Equal(t, "发版评审", body.Session.Title, "the stored title is trimmed")
+
+	record, exists, err := service.GetMeetingRecord(project, pid, token)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(t, "发版评审", record.Title)
+	// The folder keeps the name it was created with — every artifact path in
+	// the record points at it, so a rename must not move anything.
+	assert.Equal(t, dirName, record.Dir)
+	_, statErr := os.Stat(paths.Dir)
+	assert.NoError(t, statErr, "renaming must not move the meeting folder")
+}
+
+func TestServeLiveNotesRename_RejectsBlankAndOverlongTitles(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+	project := t.TempDir()
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+
+	for name, title := range map[string]string{
+		"blank":    "   ",
+		"overlong": strings.Repeat("名", liveNoteTitleMaxRunes+1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			ServeLiveNotesSessions(w, liveReq(t, http.MethodPatch,
+				"/api/live-share/notes/sessions?token="+token, project, map[string]string{"title": title}))
+			assertErrorKey(t, w, http.StatusBadRequest, "BadRequest")
+		})
+	}
+
+	// A name of exactly the limit is fine: the cap is inclusive, matching the
+	// create form's maxlength.
+	w := httptest.NewRecorder()
+	ServeLiveNotesSessions(w, liveReq(t, http.MethodPatch,
+		"/api/live-share/notes/sessions?token="+token, project,
+		map[string]string{"title": strings.Repeat("名", liveNoteTitleMaxRunes)}))
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+func TestServeLiveNotesRename_UnknownOrForeignTokenIs404(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+	project := t.TempDir()
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+
+	// Well-formed but unknown.
+	w := httptest.NewRecorder()
+	ServeLiveNotesSessions(w, liveReq(t, http.MethodPatch,
+		"/api/live-share/notes/sessions?token=ffffffffffffffffffffffffffffffff", project,
+		map[string]string{"title": "别的会"}))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	// Belongs to another project: the same answer, so the token cannot be
+	// probed from a project the caller does have access to.
+	other := t.TempDir()
+	w = httptest.NewRecorder()
+	ServeLiveNotesSessions(w, liveReq(t, http.MethodPatch,
+		"/api/live-share/notes/sessions?token="+token, other, map[string]string{"title": "别的会"}))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	record, exists, err := service.GetMeetingRecord(project, pid, token)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(t, "周会", record.Title, "a refused rename must not touch the row")
+}
+
 func TestServeLiveShareNoteChat_IsIdempotentAndReadable(t *testing.T) {
 	db := setupLiveNotesDB(t)
 	defer func() { _ = db.Close() }()
