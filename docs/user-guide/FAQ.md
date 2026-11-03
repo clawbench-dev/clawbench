@@ -6,7 +6,7 @@ A: 支持 Linux（x86_64 / ARM64）、macOS（Apple Silicon / Intel）和 Window
 
 **Q: 支持哪些 AI 后端？**
 
-A: 支持 CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、Qoder CN（国内版）、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw 十九种后端，均支持 CLI 和/或 ACP 传输模式。可在 Web UI 中实时切换，会话数据隔离。CLI 后端需确保对应 CLI 已安装并在 PATH 中可用。OpenClaw 走 ACP 桥接，需要先跑起它自己的 Gateway（`openclaw gateway start`），否则桥连不上会表现为「Agent 启动超时」。
+A: 支持 CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、Qoder CN（国内版）、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw 二十种后端，均支持 CLI 和/或 ACP 传输模式。可在 Web UI 中实时切换，会话数据隔离。CLI 后端需确保对应 CLI 已安装并在 PATH 中可用。OpenClaw 走 ACP 桥接，需要先跑起它自己的 Gateway（`openclaw gateway start`），否则桥连不上会表现为「Agent 启动超时」。
 
 **Q: 如何添加新的智能体？**
 
@@ -65,16 +65,22 @@ A: 把技能放进**项目根目录**下的 `.agents/skills/`（即 `<项目路�
 
 **Q: 如何启用 HTTPS？**
 
-A: 将证书文件放入 `<DataDir>/config/tls/` 目录即可。ClawBench 自动检测证书文件，支持三种命名方式（按优先级）：
+A: 两条路，选一条即可。
+
+**没有证书**：打开 **设置 → 安全 → HTTPS 证书**，点「生成自签名证书」，再点「立即重启」。证书会自动覆盖本机所有网卡地址与 localhost，重启后按面板给出的 HTTPS 地址访问（浏览器首次会提示「不安全」，选择继续访问即可）。命令行 `./clawbench --gen-cert` 做的是同一件事。
+
+**已有证书**：把文件放入 `<DataDir>/config/tls/` 目录，ClawBench 自动检测，支持三种命名方式（按优先级）：
 1. `fullchain.pem` + `privkey.pem`（Let's Encrypt 风格）
 2. `cert.pem` + `key.pem`（通用风格）
 3. `combined.pem`（证书和私钥合并文件）
 
 找到有效证书对即自动启用 HTTPS，否则回退 HTTP。也可通过 `tls.cert_dir` 配置项指定其他目录。
 
+> **换了网络（IP 变了）之后浏览器又报证书错误**：自签名证书把 IP 写进了证书本身，重新生成一次即可。
+
 **Q: 如何启用语音输入（STT）？**
 
-A: 需要部署 vLLM Whisper 引擎（或兼容 OpenAI `/v1/audio/transcriptions` 端点的 ASR 服务），在设置面板中配置 STT 端点地址和模型名称即可。语音输入需要 HTTPS 或 localhost 环境才能访问麦克风。
+A: 需要一个兼容 OpenAI `/v1/audio/transcriptions` 的 ASR 服务（如自建 vLLM Whisper），在设置面板中配置 STT 端点地址和模型名称即可。语音输入需要 HTTPS 或 localhost 环境才能访问麦克风。
 
 **Q: AI 一直不回复 / 卡住了？**
 
@@ -149,3 +155,19 @@ A: 在跑。会话执行在服务端，切后台不影响。App 模式下还会�
 **Q: 文件分享链接安全吗？**
 
 A: 链接本身就是凭证——任何拿到的人都能只读访问，直到你关闭分享。不要把敏感文件的链接发到公开场合。
+
+**Q: 怎么开一场会？别人需要装什么吗？**
+
+A: 左栏 Dock 的「视频会议」页签 → 创建会议。共享屏幕 / 摄像头 / 麦克风 / AI 听记都是独立开关，全不勾也能开。对方什么都不用装——把链接发过去，用浏览器打开、填个称谓就进来了。详见[会议与 AI 听记](meeting.md)。
+
+**Q: 会议结束后纪要和录音在哪？**
+
+A: 都在会议页签的那条记录里（详情四个页签：纪要 / 转写 / 聊天 / 资源），**永久保存**。录音同时落在项目目录 `.clawbench/notes/<场次>/audio/`，整场会议听 `meeting.webm`。
+
+**Q: 观众说连不上会议。**
+
+A: 当前是点对点直连，**只在同一局域网内可用**（没有公网中继），上限 8 人。跨网段、公网、或路由器开了「客户端隔离」都连不上。观众要发言还需要用 HTTPS 打开分享页。
+
+**Q: 模型提供商和「我的身份」是什么？**
+
+A: 模型提供商把自建 / 第三方端点登记成一条可复用的「端点 + 凭据」，智能体与摘要模型直接引用，密钥只写不回显；「我的身份」里的称谓与身份偏好会注入每个智能体的系统提示（改完下一轮生效），称谓同时是会议里的显示名。
