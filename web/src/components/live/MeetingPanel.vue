@@ -6,6 +6,7 @@
       :live-token="liveToken"
       @create="view = 'create'"
       @join="view = 'join'"
+      @join-live="joinRunning"
       @open="openDetail"
       @resume="view = 'meeting'"
     />
@@ -52,13 +53,16 @@
  * the delete button live in exactly one place.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
+import { useI18n } from 'vue-i18n'
 import MeetingList from './MeetingList.vue'
 import MeetingCreate from './MeetingCreate.vue'
 import MeetingJoin from './MeetingJoin.vue'
 import MeetingStage from './MeetingStage.vue'
 import MeetingDetail from './MeetingDetail.vue'
 import { useLiveShare } from '@/composables/useLiveShare'
+import { useToast } from '@/composables/useToast'
 import { setHostedMeetingToken, setVisibleMeetingToken } from '@/utils/meetingVisibility'
+import { getNative } from '@/utils/clawbenchNative'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { takeMeetingReturn, clearMeetingView, type MeetingDetailTab } from '@/composables/useMeetingViewState'
 
@@ -69,6 +73,8 @@ type View = 'list' | 'create' | 'join' | 'meeting' | 'detail'
 const view = ref<View>('list')
 const detailToken = ref('')
 const detailTab = ref<MeetingDetailTab>('resources')
+const { t } = useI18n()
+const toast = useToast()
 const share = useLiveShare()
 /** The meeting this client publishes, or '' — the list's "back to meeting" chip. */
 const liveToken = computed(() => (share.state.value === 'publishing' ? share.token.value : ''))
@@ -93,6 +99,28 @@ function onEnded(token: string): void {
   // the detail needs — no "which folder is this" lookup.
   if (token) openDetail(token)
   else view.value = 'list'
+}
+
+/**
+ * One-click entry into the meeting the list says is running but this client
+ * is not publishing (another device hosts it). The record's token IS the
+ * share link — the room is per project, so there is nothing to look up — and
+ * the opening mechanism is the same one the 加入 page performs with a pasted
+ * link: the native bridge opens the member view inside the app shell, a
+ * browser opens it in a new tab. No nickname edit here: there is no field to
+ * type into, and the member view's own gate asks for a name when none is
+ * remembered.
+ */
+async function joinRunning(token: string): Promise<void> {
+  if (!token) return
+  const link = `${window.location.origin}/share/${encodeURIComponent(token)}`
+  const bridge = getNative()
+  if (bridge?.openShareLink) {
+    const ok = await bridge.openShareLink(link)
+    if (!ok) toast.show(t('liveShare.joinInvalid'), { type: 'error', icon: 'warning' })
+    return
+  }
+  window.open(link, '_blank', 'noopener')
 }
 
 // A meeting started from anywhere (the create page, a restored session) brings

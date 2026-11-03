@@ -68,7 +68,7 @@
               >{{ formatWhen(r.record.startedAt) }}</span>
               <template v-if="r.duration">
                 <span class="meeting-row__sep">·</span>
-                <span class="meeting-row__m" :class="{ 'is-accent': !r.record.endedAt }">{{ r.duration }}</span>
+                <span class="meeting-row__m" :class="{ 'is-accent': r.state.kind === 'running' }">{{ r.duration }}</span>
               </template>
               <template v-if="r.record.hasMeetingAudio">
                 <span class="meeting-row__sep">·</span>
@@ -118,21 +118,35 @@
     <!-- Footer actions use the shared .fbtn pills, the same language the task
          tab's action bar uses — see design-guide §按钮.
 
-         While THIS client is in a meeting the list is a place it visited, so
-         the two entry actions are not offered: starting or joining a second
-         meeting would strand the running one. The bar's single action is the
-         way back. -->
+         The bar has three states, and all three agree with the rows above
+         (the list is the server's truth):
+
+         - THIS client is publishing → the single action is the way back;
+           starting or joining a second meeting would strand the running one.
+         - A row is 进行中 but this client is not the publisher (another
+           device hosts it) → the primary action joins that meeting. Creating
+           is not offered: the room is per project, so a create here reuses
+           the live room and then fails its publisher attach with 409.
+         - Nothing is running → the two entry points. -->
     <div class="meeting-footer">
-      <template v-if="liveToken">
-        <button
-          class="fbtn fbtn-primary"
-          type="button"
-          data-action="meeting-resume"
-          @click="emit('resume')"
-        >
-          <ArrowLeft :size="14" />{{ t('meeting.list.liveResume') }}
-        </button>
-      </template>
+      <button
+        v-if="liveToken"
+        class="fbtn fbtn-primary"
+        type="button"
+        data-action="meeting-resume"
+        @click="emit('resume')"
+      >
+        <ArrowLeft :size="14" />{{ t('meeting.list.liveResume') }}
+      </button>
+      <button
+        v-else-if="runningToken"
+        class="fbtn fbtn-primary"
+        type="button"
+        data-action="meeting-join-live"
+        @click="emit('joinLive', runningToken)"
+      >
+        <LinkIcon :size="14" />{{ t('meeting.list.joinLive') }}
+      </button>
       <template v-else>
         <button class="fbtn" type="button" data-action="meeting-join" @click="emit('join')">
           <LinkIcon :size="14" />{{ t('meeting.list.join') }}
@@ -172,6 +186,7 @@ import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import {
+  isLiveRecord,
   meetingQuoteLabel,
   useMeetingHistory,
   type MeetingRecord,
@@ -185,6 +200,7 @@ const props = defineProps<{ active?: boolean; liveToken?: string }>()
 const emit = defineEmits<{
   create: []
   join: []
+  joinLive: [token: string]
   open: [token: string]
   resume: []
 }>()
@@ -196,6 +212,13 @@ const history = useMeetingHistory()
 const sessions = computed(() => history.sessions.value)
 const loading = computed(() => history.loading.value)
 const error = computed(() => history.error.value)
+
+/**
+ * The meeting a row above advertises as 进行中 — the same `isLiveRecord` fact
+ * the pill uses, so the footer can never offer a second meeting while the
+ * list itself says one is running.
+ */
+const runningToken = computed(() => sessions.value.find(isLiveRecord)?.token ?? '')
 
 /** `3小时前` / `昨天` / `2天前` — the list's own stamp; the detail spells the
  *  exact date and clock out in full, and the tooltip keeps it reachable here. */
@@ -221,7 +244,7 @@ function formatWhen(ms: number): string {
  */
 const now = ref(Date.now())
 let clock: ReturnType<typeof setInterval> | null = null
-const anyRunning = computed(() => sessions.value.some((s) => !s.endedAt && s.startedAt > 0))
+const anyRunning = computed(() => sessions.value.some(isLiveRecord))
 
 watch(
   anyRunning,
@@ -283,7 +306,7 @@ function artifactLabel(kind: 'minutes' | 'transcript' | 'revised'): string {
 }
 
 function rowState(s: MeetingRecord): RowState {
-  if (!s.endedAt) {
+  if (isLiveRecord(s)) {
     return { kind: 'running', cls: 'is-accent', label: t('meeting.list.running'), dot: true }
   }
   if (s.generation) {

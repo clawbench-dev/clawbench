@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { createI18n } from 'vue-i18n'
 import { nextTick, onUnmounted, ref } from 'vue'
+import enMessages from '@/i18n/locales/en'
 import MeetingPanel from '../MeetingPanel.vue'
 
 /**
@@ -52,6 +54,7 @@ const ListStub = {
     <button data-stub="join" @click="$emit('join')" />
     <button data-stub="open" @click="$emit('open', 'tok-1')" />
     <button data-stub="resume" @click="$emit('resume')" />
+    <button data-stub="join-live" @click="$emit('join-live', 'tok-live')" />
   </div>`,
 }
 const CreateStub = {
@@ -81,6 +84,8 @@ function mountPanel(props: { active?: boolean } = { active: true }) {
   return mount(MeetingPanel, {
     props,
     global: {
+      // The panel translates its own error toast (join failure) via useI18n.
+      plugins: [createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })],
       stubs: {
         MeetingList: ListStub,
         MeetingCreate: CreateStub,
@@ -134,6 +139,27 @@ describe('MeetingPanel state machine', () => {
     const w2 = mountPanel()
     await w2.find('[data-stub="join"]').trigger('click')
     expect(visibleViews(w2)).toEqual(['join'])
+  })
+
+  /**
+   * The list's running row advertises a meeting this client is not publishing
+   * (another device hosts it). Joining it is the same entry the 加入 page
+   * performs with a pasted link, minus the input: open the member view at the
+   * record's token — the room is per project, so there is nothing to look up.
+   */
+  it('opens the member view when joining the running meeting from the list', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const w = mountPanel()
+
+    await w.find('[data-stub="join-live"]').trigger('click')
+
+    expect(open).toHaveBeenCalledWith(
+      `${window.location.origin}/share/tok-live`,
+      '_blank',
+      'noopener',
+    )
+    // The list stays where it is: the member view is a separate page.
+    expect(visibleViews(w)).toEqual(['list'])
   })
 
   it('enters the meeting when the create page starts one', async () => {

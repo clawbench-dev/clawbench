@@ -179,6 +179,32 @@ describe('MeetingList header', () => {
     expect(live.emitted('resume')).toHaveLength(1)
   })
 
+  /**
+   * A meeting can be running in this project while THIS client is not its
+   * publisher (another device hosts it). The rows above are the server's
+   * truth, so the bar must agree with them: no create (one room per project —
+   * a create would reuse the live room and fail its publisher attach), and
+   * the primary action joins the running one directly.
+   */
+  it('offers to join the running meeting when another client hosts it', async () => {
+    sessions.value = [
+      record({ token: 'live-tok', endedAt: 0, hasMinutes: false, hasTranscript: false, hasRevised: false }),
+    ]
+    const w = mountList()
+
+    expect(w.find('[data-action="meeting-create"]').exists()).toBe(false)
+    expect(w.find('[data-action="meeting-join"]').exists()).toBe(false)
+    expect(w.find('[data-action="meeting-resume"]').exists()).toBe(false)
+
+    const join = w.find('[data-action="meeting-join-live"]')
+    expect(join.exists()).toBe(true)
+    expect(join.text()).toBe(enMessages.meeting.list.joinLive)
+    expect(join.classes()).toContain('fbtn-primary')
+
+    await join.trigger('click')
+    expect(w.emitted('joinLive')?.[0]).toEqual(['live-tok'])
+  })
+
   it('spins and blocks re-entry while a reload is in flight', async () => {
     const w = mountList()
     const btn = () => w.find('[data-action="meeting-refresh"]')

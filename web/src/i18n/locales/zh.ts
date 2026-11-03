@@ -4065,6 +4065,7 @@ export default {
       regenerating: '生成中 · {kind}',
       noArtifacts: '无产物',
       join: '加入会议',
+      joinLive: '加入进行中的会议',
       create: '创建会议',
     },
     create: {

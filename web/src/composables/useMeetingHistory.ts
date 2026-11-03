@@ -150,6 +150,20 @@ export function clipQuoteText(text: string, max = MEETING_QUOTE_MAX_CHARS): stri
   return `${trimmed.slice(0, max)}\n${note}`
 }
 
+/**
+ * The server's truth for "this meeting is still open": the record has no end
+ * stamp. Records are only created when the publisher attaches, so a listed
+ * row always has `startedAt`; the `> 0` guard just keeps a malformed row out
+ * of the running set.
+ *
+ * This is the ONE predicate behind the row's 进行中 pill, the ticking clock
+ * and the footer's join action — every consumer reads it from here, so the
+ * badges and the actions can never disagree about whether a meeting runs.
+ */
+export function isLiveRecord(record: Pick<MeetingRecord, 'endedAt' | 'startedAt'>): boolean {
+  return !record.endedAt && record.startedAt > 0
+}
+
 /** `会议 · 发版评审 · 11-01 14:30` — the card's label and the prompt's title. */
 export function meetingQuoteLabel(record: Pick<MeetingRecord, 'title' | 'startedAt'>): string {
   const title = record.title.trim() || i18n.global.t('meeting.list.untitled')

@@ -4070,6 +4070,7 @@ export default {
       regenerating: 'Generating · {kind}',
       noArtifacts: 'No artifacts',
       join: 'Join meeting',
+      joinLive: 'Join the live meeting',
       create: 'New meeting',
     },
     create: {
