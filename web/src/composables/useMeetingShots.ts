@@ -20,7 +20,6 @@ import {
   newClientShotId,
   type ShotJob,
   type ShotReason,
-  type ShotSendResult,
 } from '@/share/shotCapture'
 import { useLiveNotes } from './useLiveNotes'
 
@@ -75,6 +74,17 @@ const count = ref(0)
 const lost = ref(0)
 const active = ref(false)
 const paused = ref(false)
+/** Every frame stored so far, oldest first — the transcript's picture rows. */
+const items = ref<LiveShotItem[]>([])
+
+/** One stored frame as the timeline needs it. */
+export interface LiveShotItem {
+  id: number
+  /** Unix ms, on the same clock as the live transcript segments. */
+  at: number
+  reason: ShotReason
+  ref: string
+}
 
 let sessionGen = 0
 let getSource: () => MediaStream | null = () => null
@@ -275,7 +285,14 @@ async function domSample(stream: MediaStream, strokes: InkStroke[]): Promise<Sho
 
 // ── Upload ──────────────────────────────────────────────────────────────────
 
-async function sendShot(tok: string, job: ShotJob): Promise<ShotSendResult> {
+/**
+ * What the transport reported. `status: 0` means "never reached the server".
+ * A stored frame also comes back with its id and (clamped) timestamp, which is
+ * what lets the transcript row appear without a second read.
+ */
+type ShotUploadResult = { ok: true; id: number; at: number } | { ok: false; status: number }
+
+async function sendShot(tok: string, job: ShotJob): Promise<ShotUploadResult> {
   const form = new FormData()
   form.append('token', tok)
   form.append('clientShotId', job.clientShotId)
@@ -287,7 +304,9 @@ async function sendShot(tok: string, job: ShotJob): Promise<ShotSendResult> {
   form.append('file', job.blob, 'shot.webp')
   try {
     const resp = await fetch('/api/live-share/notes/shot', { method: 'POST', body: form })
-    return resp.ok ? { ok: true } : { ok: false, status: resp.status }
+    if (!resp.ok) return { ok: false, status: resp.status }
+    const stored = (await resp.json()) as { id?: number; at?: number }
+    return { ok: true, id: Number(stored.id) || 0, at: Number(stored.at) || job.at }
   } catch (e) {
     appLog.d(TAG, 'shot upload failed', e)
     return { ok: false, status: 0 }
@@ -387,6 +406,7 @@ function start(opts: {
   scheduler = new ShotScheduler()
   count.value = 0
   lost.value = 0
+  items.value = []
   paused.value = false
   active.value = true
 
@@ -394,7 +414,14 @@ function start(opts: {
   queue = new ShotQueue({
     send: async (job) => {
       const result = await sendShot(tok, job)
-      if (result.ok) count.value++
+      if (result.ok) {
+        count.value++
+        // The row appears as soon as the server owns the frame: the panel must
+        // not wait for the next history read to show what was just kept.
+        if (result.id > 0) {
+          items.value.push({ id: result.id, at: result.at, reason: job.reason, ref: job.ref })
+        }
+      }
       return result
     },
     onLost: () => {
@@ -468,6 +495,7 @@ export function useMeetingShots() {
     paused,
     count,
     lost,
+    items,
     start,
     stop,
     pause,
@@ -487,5 +515,6 @@ export function _resetMeetingShotsForTest(): void {
   stop()
   count.value = 0
   lost.value = 0
+  items.value = []
   seenSegments.clear()
 }

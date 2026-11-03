@@ -1816,6 +1816,20 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 	if full {
 		revise.Text = note.Revised
 	}
+	// Frames are part of the record a member opens after the meeting: the
+	// transcript reads the same for everyone, pictures included. Only the full
+	// (record) view carries them — the live poll runs every few seconds and a
+	// viewer already watches the picture itself.
+	var shots []service.LiveNoteShot
+	if full {
+		listed, shotErr := service.ListLiveNoteShots(token)
+		if shotErr != nil {
+			// Like chat: losing the frames must not cost the reader the minutes
+			// and the transcript.
+			slog.Warn("live notes: public shots failed", "err", shotErr)
+		}
+		shots = redactLiveNoteShots(listed)
+	}
 	writeJSON(w, http.StatusOK, liveNotesResponse{
 		Title:     note.Title,
 		StartedAt: note.StartedAt,
@@ -1824,6 +1838,7 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 		Segments:  segments,
 		Files:     redactLiveNoteFilePaths(files),
 		Screens:   screens,
+		Shots:     shots,
 		Chat:      chat,
 		Minutes: liveNotesMinutesPayload{
 			Status:   note.Status,
@@ -1853,6 +1868,62 @@ func redactLiveNoteFilePaths(files []service.LiveNoteFile) []service.LiveNoteFil
 		out[i].Path = ""
 	}
 	return out
+}
+
+// redactLiveNoteShots makes a stored frame safe to hand a viewer.
+//
+// The id is the address (the image endpoint resolves the file server-side), so
+// the stored relative name is dropped. The ref keeps only its base name — the
+// same rule the file timeline follows: a viewer may know WHICH file was opened,
+// but not where the publisher keeps it. Both separators are handled because the
+// publisher may be on Windows.
+func redactLiveNoteShots(shots []service.LiveNoteShot) []service.LiveNoteShot {
+	if len(shots) == 0 {
+		return nil
+	}
+	out := make([]service.LiveNoteShot, len(shots))
+	copy(out, shots)
+	for i := range out {
+		out[i].FileName = ""
+		if ref := out[i].Ref; ref != "" {
+			if idx := strings.LastIndexAny(ref, `\/`); idx >= 0 {
+				out[i].Ref = ref[idx+1:]
+			}
+		}
+	}
+	return out
+}
+
+// ServeShareLiveNoteShotImage handles GET /api/share/{token}/notes/shot?id=&w=
+// (public, token-scoped): one stored key frame, resized like a file thumbnail.
+//
+// The token is the credential, exactly as for the notes payload itself, and the
+// file is located from the database row — the client never supplies a path.
+func ServeShareLiveNoteShotImage(w http.ResponseWriter, r *http.Request, token string) {
+	if !requireMethod(w, r, http.MethodGet, http.MethodHead) {
+		return
+	}
+	id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+	if err != nil || id <= 0 || !validShareToken(token) {
+		http.NotFound(w, r)
+		return
+	}
+	absPath, found, lookupErr := service.LiveNoteShotFile(token, id)
+	if lookupErr != nil {
+		slog.Error("live notes: shot file lookup failed", "err", lookupErr)
+		model.WriteError(w, model.Internal(lookupErr))
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	info, statErr := os.Stat(absPath)
+	if statErr != nil || info.IsDir() || info.Size() > thumbMaxFileSize || !isThumbDecodable(absPath) {
+		http.NotFound(w, r)
+		return
+	}
+	serveThumbOfFile(w, r, absPath, info)
 }
 
 // liveNotesProject resolves the request's project cookie to both its path and

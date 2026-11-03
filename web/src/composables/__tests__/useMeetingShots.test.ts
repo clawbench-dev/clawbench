@@ -34,10 +34,19 @@ function uploads(): Array<Record<string, unknown>> {
     })
 }
 
+/** Sequence for the stubbed upload responses (one id per stored frame). */
+let shotSeq = 0
+
 describe('useMeetingShots', () => {
   beforeEach(() => {
     vi.useFakeTimers()
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200 })))
+    shotSeq = 0
+    // The upload response carries the stored row: the id is what the transcript
+    // row addresses, so the stub must answer like the real endpoint.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ id: ++shotSeq, at: 1_700_000_000_000 }) })),
+    )
     _resetMeetingShotsForTest()
     _resetLiveNotesForTest()
     _resetMeetingFileTrackerForTest()
@@ -68,6 +77,10 @@ describe('useMeetingShots', () => {
     expect(sent).toHaveLength(1)
     expect(sent[0]).toMatchObject({ token: 'tok', reason: 'manual', width: '1280', height: '720' })
     expect(shots.count.value).toBe(1)
+    // The stored row is kept locally so the live transcript can show the frame
+    // immediately, without waiting for a history read.
+    expect(shots.items.value).toHaveLength(1)
+    expect(shots.items.value[0]).toMatchObject({ id: 1, at: 1_700_000_000_000, reason: 'manual' })
   })
 
   it('does not upload the same picture twice', async () => {

@@ -25,8 +25,9 @@ describe('meeting key-frame wiring', () => {
   it('offers a manual capture button while frames are being kept', () => {
     expect(stage).toContain('data-action="shot-now"')
     // Hidden when capture is off or paused: a button that silently does nothing
-    // reads as broken.
-    expect(stage).toContain('v-if="shotsOn"')
+    // reads as broken. It also needs a picture: with nobody sharing there is
+    // nothing to grab (behaviour pinned in MeetingStage.shotButton.test.ts).
+    expect(stage).toContain('v-if="shotsOn && shotSourceReady"')
     expect(stage).toContain('@click="captureShot"')
   })
 

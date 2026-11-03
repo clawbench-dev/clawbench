@@ -66,6 +66,11 @@ const shareSignalSegment = "signal"
 // token is the credential.
 const shareNotesSegment = "notes"
 
+// shareNotesShotSegment addresses one key frame of a live-share meeting
+// (/api/share/{token}/notes/shot?id=). Same credential as the timeline: the
+// record view shows the same transcript to members, pictures included.
+const shareNotesShotSegment = "notes/shot"
+
 // shareKindFile, shareKindDir and shareKindSession are the `kind` values the
 // share meta endpoint reports, telling the share SPA which renderer to use.
 // Kept distinct from entryTypeFile, which classifies a directory-search entry
@@ -507,6 +512,10 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 	}
 	// AI 听记 timeline for a live share. Same subtree for the same reason: a
 	// live token has no file_shares row.
+	if rest == shareNotesShotSegment {
+		ServeShareLiveNoteShotImage(w, r, token)
+		return
+	}
 	if rest == shareNotesSegment {
 		ServeShareLiveNotes(w, r, token)
 		return

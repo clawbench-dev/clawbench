@@ -245,6 +245,16 @@ func FileThumb(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mul
 		return
 	}
 
+	serveThumbOfFile(w, r, absPath, info)
+}
+
+// serveThumbOfFile writes a resized JPEG for an image file the caller has
+// already validated (regular file, size, decodable format).
+//
+// Split out of FileThumb so a second caller — the token-scoped meeting-frame
+// endpoint — gets the same ETag/revalidation, decode semaphore and cache
+// instead of a second, subtly different implementation.
+func serveThumbOfFile(w http.ResponseWriter, r *http.Request, absPath string, info os.FileInfo) {
 	// Revalidation: derive a validator from the source file's metadata so the
 	// thumbnail refreshes immediately when the source image changes, and returns
 	// a cheap 304 when it hasn't. Checked BEFORE decode/encode to avoid wasted work.

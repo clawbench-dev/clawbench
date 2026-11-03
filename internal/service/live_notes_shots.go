@@ -206,6 +206,46 @@ func CountLiveNoteShots(token string) (int, error) {
 	return n, nil
 }
 
+// LiveNoteShotFile resolves one stored frame to the file on disk.
+//
+// The row is looked up by (token, id) — never by a client-supplied path — and
+// the meeting folder comes from the registry, so a corrupted row cannot address
+// anything outside this meeting's shots folder.
+func LiveNoteShotFile(token string, id int64) (string, bool, error) {
+	var fileName string
+	var projectID int64
+	err := store.ReadDB().QueryRow(
+		`SELECT file_name, project_id FROM live_notes_shots WHERE id = ? AND token = ?`,
+		id, token,
+	).Scan(&fileName, &projectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("live notes: shot file lookup: %w", err)
+	}
+	projectPath, ok, pathErr := store.ProjectPathForID(projectID)
+	if pathErr != nil {
+		return "", false, fmt.Errorf("live notes: shot project path: %w", pathErr)
+	}
+	if !ok {
+		return "", false, nil
+	}
+	dirName, nameErr := MeetingDirName(token)
+	if nameErr != nil {
+		return "", false, fmt.Errorf("live notes: shot dir name: %w", nameErr)
+	}
+	if dirName == "" {
+		return "", false, nil
+	}
+	name := filepath.Base(filepath.Clean(fileName))
+	if name == "" || name == "." || name == string(os.PathSeparator) {
+		return "", false, nil
+	}
+	paths := LiveNotesPathsIn(MeetingDirPath(projectPath, dirName))
+	return filepath.Join(paths.Shots, name), true, nil
+}
+
 // DeleteLiveNoteShot removes one row and reports its file name so the caller
 // can delete the file. An unknown id (or one from another project) is
 // ErrMeetingNotFound, the same answer the record endpoints give.

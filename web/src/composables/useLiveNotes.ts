@@ -17,11 +17,14 @@ import {
   mergeNoteSegments,
   notesRecordingSupported,
   withMeetingFileEvents,
+  withMeetingShots,
   type LiveNoteSegment,
   type NoteBlock,
   type NoteFileEvent,
   type NotesUploadArgs,
   type NotesUploader,
+  type NoteTimelineRow,
+  type NoteShotEvent,
 } from './liveNotes'
 
 const TAG = 'LiveNotes'
@@ -57,8 +60,8 @@ interface NotesStagePayload {
 }
 
 export type { LiveNoteSegment, NoteBlock }
-export { groupNoteSegments, mergeNoteSegments, withMeetingFileEvents }
-export type { NoteFileEvent }
+export { groupNoteSegments, mergeNoteSegments, withMeetingFileEvents, withMeetingShots }
+export type { NoteFileEvent, NoteTimelineRow, NoteShotEvent }
 
 const phase = ref<NotesPhase>('idle')
 const segments = ref<LiveNoteSegment[]>([])

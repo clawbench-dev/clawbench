@@ -51,8 +51,19 @@ export interface ShareMeetingRecord {
   ended: boolean
   segments: LiveNoteSegment[]
   files: ShareNotesFile[]
+  /** Key frames kept by the publisher, on the same absolute clock as the
+   *  segments. `ref` is a bare name: the public payload blanks the path. */
+  shots: ShareNoteShot[]
   minutes: ShareNotesMinutes
   chat: ShareChatMessage[]
+}
+
+/** One stored frame as a viewer may see it. */
+export interface ShareNoteShot {
+  id: number
+  at: number
+  reason: string
+  ref?: string
 }
 
 export interface ShareNotesSnapshot {
@@ -81,6 +92,7 @@ interface NotesPayload {
   ended?: boolean
   segments?: LiveNoteSegment[]
   files?: ShareNotesFile[]
+  shots?: ShareNoteShot[]
   minutes?: ShareNotesMinutes
   chat?: ShareChatMessage[]
 }
@@ -137,6 +149,7 @@ export async function fetchMeetingRecord(
       ended: Boolean(data.ended),
       segments: Array.isArray(data.segments) ? data.segments : [],
       files: Array.isArray(data.files) ? data.files : [],
+      shots: Array.isArray(data.shots) ? data.shots : [],
       minutes: data.minutes ?? { status: 'idle' },
       chat: Array.isArray(data.chat) ? data.chat : [],
     }
