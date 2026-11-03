@@ -62,6 +62,7 @@ vi.mock('@/share/liveNotesClient', () => ({
 
 import LiveShareView from '@/share/LiveShareView.vue'
 import SplitDivider from '@/components/common/SplitDivider.vue'
+import { _resetWakeLockForTest } from '@/composables/useWakeLock'
 import { passJoinGate } from './joinGateTestHelper'
 
 const i18n = createI18n({
@@ -116,6 +117,8 @@ beforeEach(() => {
   poller.stop.mockClear()
   probe.fetch.mockReset()
   probe.fetch.mockResolvedValue(null)
+  _resetWakeLockForTest()
+  delete (globalThis as any).ClawBenchNative
   Object.defineProperty(HTMLMediaElement.prototype, 'play', {
     configurable: true,
     writable: true,
@@ -146,6 +149,23 @@ function display(el: { element: Element }): string {
 }
 
 describe('LiveShareView side panel', () => {
+  /**
+   * Same reasoning as the host side: a phone that dims out drops this viewer out
+   * of the room. Held only while the meeting is live — the record left after it
+   * ends is a page to read, not a call to attend.
+   */
+  it('keeps the screen on only while the member is in the meeting', async () => {
+    const setKeepScreenOn = vi.fn()
+    ;(globalThis as any).ClawBenchNative = { setKeepScreenOn }
+
+    const w = mountView()
+    await flushPromises()
+    expect(setKeepScreenOn).toHaveBeenCalledWith(true)
+
+    w.unmount()
+    expect(setKeepScreenOn).toHaveBeenLastCalledWith(false)
+  })
+
   it('starts closed and opens on the chat tab from the dock', async () => {
     const w = mountView()
     await flushPromises()

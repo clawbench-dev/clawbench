@@ -60,6 +60,7 @@ import MeetingJoin from './MeetingJoin.vue'
 import MeetingStage from './MeetingStage.vue'
 import MeetingDetail from './MeetingDetail.vue'
 import { useLiveShare } from '@/composables/useLiveShare'
+import { useWakeLock } from '@/composables/useWakeLock'
 import { useToast } from '@/composables/useToast'
 import { setHostedMeetingToken, setVisibleMeetingToken } from '@/utils/meetingVisibility'
 import { getNative } from '@/utils/clawbenchNative'
@@ -76,8 +77,31 @@ const detailTab = ref<MeetingDetailTab>('resources')
 const { t } = useI18n()
 const toast = useToast()
 const share = useLiveShare()
+const wakeLock = useWakeLock()
 /** The meeting this client publishes, or '' — the list's "back to meeting" chip. */
 const liveToken = computed(() => (share.state.value === 'publishing' ? share.token.value : ''))
+
+/**
+ * Keep the screen on for as long as a meeting runs.
+ *
+ * On a phone, letting the screen time out is not a cosmetic problem: the app
+ * goes to the background, the WebView is paused and the publisher socket closes
+ * — which `useLiveShare` treats as "the share is over" and stops for good. So
+ * the lock is keyed on the share state rather than on the stage being visible:
+ * the meeting keeps running while the host reads the record list or works in
+ * another tab, and the screen must stay on for that too.
+ *
+ * `immediate` covers mounting the panel while a meeting is already publishing
+ * (a reload, or the panel being re-created); at 'idle' it is a harmless no-op.
+ */
+watch(
+  () => share.state.value,
+  (s) => {
+    if (s === 'publishing' || s === 'capturing') void wakeLock.acquire('meeting')
+    else wakeLock.release('meeting')
+  },
+  { immediate: true },
+)
 
 function openDetail(token: string): void {
   if (!token) return
@@ -228,6 +252,9 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   window.removeEventListener('clawbench-open-meeting', handleOpenMeeting)
+  // A held wake lock outlives this component (it lives in the composable), so
+  // leaving it behind would keep the screen on for good.
+  wakeLock.release('meeting')
   // The panel is the only writer of these two facts; leaving them behind would
   // keep suppressing (or worse, keep raising) notifications for a meeting this
   // client no longer shows.

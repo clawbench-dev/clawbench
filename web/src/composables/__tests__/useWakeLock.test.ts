@@ -160,6 +160,31 @@ describe('useWakeLock', () => {
     expect(held.value).toBe(true)
   })
 
+  it('keeps the lock while another reason still holds it', async () => {
+    const { held, acquire, release } = await importUseWakeLock()
+    // Two features at once: AI speech and a running meeting.
+    await acquire('speech')
+    await acquire('meeting')
+
+    release('speech')
+    // The meeting still needs the screen: nothing may be released yet.
+    expect(held.value).toBe(true)
+    expect(mockSentinel.release).not.toHaveBeenCalled()
+
+    release('meeting')
+    expect(held.value).toBe(false)
+    expect(mockSentinel.release).toHaveBeenCalled()
+  })
+
+  it('ignores a release from a reason that never acquired', async () => {
+    const { held, acquire, release } = await importUseWakeLock()
+    await acquire('meeting')
+
+    // A stale/unbalanced release must not turn off someone else's lock.
+    release('speech')
+    expect(held.value).toBe(true)
+  })
+
   it('Web API release callback clears held when shouldHold is false', async () => {
     const { held, acquire } = await importUseWakeLock()
     await acquire()

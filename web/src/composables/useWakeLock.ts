@@ -25,6 +25,17 @@ const held = ref(false)
 /** True when we *want* the lock held (even if the tab is hidden and the browser auto-released) */
 let shouldHold = false
 
+/**
+ * Who is currently asking for the lock.
+ *
+ * A Set of reasons rather than a boolean because two unrelated features want it
+ * at the same time: AI output + auto-speech, and a running meeting. With one
+ * flag, whichever finished first would turn the screen back off while the other
+ * still needed it. `acquire`/`release` are idempotent per reason, so a watcher
+ * that fires repeatedly is harmless.
+ */
+const holders = new Set<string>()
+
 let webWakeLock: WakeLockSentinel | null = null
 
 /**
@@ -65,17 +76,26 @@ async function _doAcquire() {
   } catch { /* not in app mode */ }
 }
 
-/** Acquire the screen wake lock. No-op if already held. */
-async function acquire() {
-  if (shouldHold) {
+/** Acquire the screen wake lock on behalf of `reason`. No-op if that reason already holds it. */
+async function acquire(reason = 'default') {
+  if (holders.has(reason)) {
     return
   }
+  const first = holders.size === 0
+  holders.add(reason)
   shouldHold = true
+  if (!first) return
   await _doAcquire()
 }
 
-/** Release the screen wake lock via all acquired mechanisms. */
-function release() {
+/** Release the lock on behalf of `reason`; the screen is only released once nobody else holds it. */
+function release(reason = 'default') {
+  if (!holders.delete(reason)) {
+    return
+  }
+  if (holders.size > 0) {
+    return
+  }
   shouldHold = false
 
   // Web Wake Lock
@@ -114,4 +134,12 @@ if (typeof document !== 'undefined') {
 
 export function useWakeLock() {
   return { held, acquire, release }
+}
+
+/** Test-only: module state outlives a single case, and the reasons are global. */
+export function _resetWakeLockForTest() {
+  holders.clear()
+  shouldHold = false
+  webWakeLock = null
+  held.value = false
 }

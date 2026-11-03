@@ -4,6 +4,7 @@ import { createI18n } from 'vue-i18n'
 import { nextTick, onUnmounted, ref } from 'vue'
 import enMessages from '@/i18n/locales/en'
 import MeetingPanel from '../MeetingPanel.vue'
+import { _resetWakeLockForTest } from '@/composables/useWakeLock'
 
 /**
  * Every wrapper is torn down after its test.
@@ -122,6 +123,8 @@ beforeEach(() => {
   backHandler = null
   stageLifecycle.mounts = 0
   stageLifecycle.unmounts = 0
+  _resetWakeLockForTest()
+  delete (globalThis as any).ClawBenchNative
 })
 
 describe('MeetingPanel state machine', () => {
@@ -167,6 +170,37 @@ describe('MeetingPanel state machine', () => {
     await w.find('[data-stub="create"]').trigger('click')
     await w.find('[data-stub="started"]').trigger('click')
     expect(visibleViews(w)).toEqual(['meeting'])
+  })
+
+  /**
+   * A phone that dims out mid-meeting ends the meeting: the WebView pauses, the
+   * publisher socket closes and the share stops. The lock is keyed on the share
+   * state (not on the stage being visible), because the meeting keeps running
+   * while the host reads the record list or works in another tab.
+   */
+  it('holds the screen awake while a meeting runs, and only then', async () => {
+    const setKeepScreenOn = vi.fn()
+    ;(globalThis as any).ClawBenchNative = { setKeepScreenOn }
+
+    const w = mountPanel()
+    // Mounting on the record list must not turn anything on.
+    expect(setKeepScreenOn).not.toHaveBeenCalled()
+
+    shareState.value = 'publishing'
+    await nextTick()
+    expect(setKeepScreenOn).toHaveBeenCalledWith(true)
+
+    // The meeting ended: release.
+    shareState.value = 'idle'
+    await nextTick()
+    expect(setKeepScreenOn).toHaveBeenLastCalledWith(false)
+
+    // Leaving the panel mid-meeting releases it too.
+    shareState.value = 'publishing'
+    await nextTick()
+    setKeepScreenOn.mockClear()
+    w.unmount()
+    expect(setKeepScreenOn).toHaveBeenCalledWith(false)
   })
 
   it('opens the record of the meeting that just ended, not a separate report', async () => {

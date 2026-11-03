@@ -490,6 +490,7 @@ import { getShareToken } from './shareMode'
 import { groupNoteSegments, withMeetingFileEvents, type LiveNoteSegment, type NoteFileEvent } from '@/composables/liveNotes'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
+import { useWakeLock } from '@/composables/useWakeLock'
 
 const TAG = 'LiveShareView'
 
@@ -523,6 +524,29 @@ const cameraVideoRef = ref<HTMLVideoElement | null>(null)
 const state = ref<LiveViewerState>('connecting')
 /** The nickname gate has been passed; only then is a socket opened. */
 const joined = ref(false)
+
+/**
+ * Keep the screen on while this member is actually in the meeting.
+ *
+ * Same reasoning as the host side: a phone that dims out pauses the WebView and
+ * the viewer drops out of the room. Scoped to the live states — once the meeting
+ * has ended the record is a page to read, not a call to attend.
+ */
+const wakeLock = useWakeLock()
+const inMeeting = computed(
+  () =>
+    joined.value &&
+    (state.value === 'connecting' || state.value === 'negotiating' || state.value === 'playing'),
+)
+watch(
+  inMeeting,
+  (on) => {
+    if (on) void wakeLock.acquire('meeting-viewer')
+    else wakeLock.release('meeting-viewer')
+  },
+  { immediate: true },
+)
+
 const nick = ref('')
 /**
  * Why the last join attempt was refused, shown under the gate's name field.
@@ -1750,6 +1774,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  // The lock lives in the composable, not in this component: unmounting without
+  // releasing it would leave the screen on for the rest of the session.
+  wakeLock.release('meeting-viewer')
   stopStatsPolling()
   clearNegotiationWatchdog()
   document.removeEventListener('visibilitychange', onVisibility)
