@@ -869,35 +869,37 @@ func extractUserText(blocks []acp.ContentBlock) string {
 // enough for the group specs' assertions (host + 2 member turns) and matches
 // the ~10s abort the suite was tuned around. Override with
 // ACP_MOCK_GROUP_ROUTE_TURNS.
+
+// routingBudgetExceeded reports whether this host routing turn is past the
+// discussion budget. Cruise gets a single routing turn (the end tag then
+// triggers its confirmation round); a plain discussion gets
+// ACP_MOCK_GROUP_ROUTE_TURNS (default 2) so the E2E suite can never be poisoned
+// by a discussion that nobody stopped — see groupRoutingReply.
+func routingBudgetExceeded(sid, prompt string) bool {
+	limit := 2
+	if v := os.Getenv("ACP_MOCK_GROUP_ROUTE_TURNS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			limit = n
+		}
+	}
+	if strings.Contains(prompt, "[自动巡航模式]") {
+		limit = 1
+	}
+	relayTurnsMu.Lock()
+	relayTurns[sid]++
+	turn := relayTurns[sid]
+	relayTurnsMu.Unlock()
+	return turn > limit
+}
+
 func groupRoutingReply(sid, prompt string) string {
 	const marker = "可选的成员名："
 	idx := strings.Index(prompt, marker)
 	if idx < 0 {
 		return ""
 	}
-	routeLimit := 2
-	if v := os.Getenv("ACP_MOCK_GROUP_ROUTE_TURNS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			routeLimit = n
-		}
-	}
-	cruise := strings.Contains(prompt, "[自动巡航模式]")
-	if cruise {
-		relayTurnsMu.Lock()
-		relayTurns[sid]++
-		turn := relayTurns[sid]
-		relayTurnsMu.Unlock()
-		if turn > 1 {
-			return "讨论差不多了。<clawbench-group-end/>"
-		}
-	} else {
-		relayTurnsMu.Lock()
-		relayTurns[sid]++
-		turn := relayTurns[sid]
-		relayTurnsMu.Unlock()
-		if turn > routeLimit {
-			return "讨论差不多了。<clawbench-group-end/>"
-		}
+	if routingBudgetExceeded(sid, prompt) {
+		return "讨论差不多了。<clawbench-group-end/>"
 	}
 	rest := prompt[idx+len(marker):]
 	// The list ends at the first newline (BuildHostSystemPrompt appends "。\n").
