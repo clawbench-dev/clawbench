@@ -67,6 +67,7 @@ const i18n = createI18n({
           joinNickPlaceholder: '例如：小明',
           joinNickHint: '称谓会记住，下次加入不用再填。',
           joinEnter: '加入会议',
+          nameTaken: '该称谓已被会议中的其他人使用，请换一个。',
           noPictureTitle: '暂未共享画面',
           noPictureDesc: '主持人可以随时打开屏幕共享或摄像头',
           statusLive: '直播中',
@@ -194,6 +195,23 @@ describe('LiveShareView overlay states', () => {
     // happened, and the record is not the answer to "why am I out".
     expect(w.find('.live-overlay-title').text()).toContain('已被移出会议')
     expect(w.find('.share-meeting').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('returns to the name field when the room refuses a duplicate name', async () => {
+    const w = mountView()
+    await flushPromises()
+
+    lastViewer?.opts?.callbacks?.onStateChange?.('name-taken')
+    await flushPromises()
+
+    // The fix is another name, not a retry: the gate comes back with the reason
+    // under the field and the refused name still there to edit. A terminal
+    // overlay would offer a retry that fails identically.
+    expect(w.find('[data-role="join-nick"]').exists()).toBe(true)
+    expect((w.find('[data-role="join-nick"]').element as HTMLInputElement).value).toBe('Tester')
+    expect(w.find('[data-role="join-error"]').text()).toContain('该称谓已被会议中的其他人使用')
+    expect(w.find('.live-overlay-title').exists()).toBe(false)
     w.unmount()
   })
 

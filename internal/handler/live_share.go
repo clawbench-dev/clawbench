@@ -700,11 +700,19 @@ func prepareViewerSocket(w http.ResponseWriter, r *http.Request) (room *liveshar
 
 // addViewer attaches the socket to the room, reporting the refusal as a frame
 // on the socket that is already open.
+//
+// Both refusals travel as frames rather than HTTP statuses: the page opens the
+// socket with `new WebSocket`, and a handshake rejection carries no body it
+// could read — it could only say "connection failed", while these two have
+// specific answers (wait, or pick another name).
 func addViewer(room *liveshare.Room, name string, sink *liveSink) (*liveshare.Viewer, bool) {
 	viewer, err := room.AddViewer(name, sink)
 	if err != nil {
-		if errors.Is(err, liveshare.ErrRoomFull) {
+		switch {
+		case errors.Is(err, liveshare.ErrRoomFull):
 			_ = sink.Send(liveshare.ViewerMessage{Type: liveshare.MsgFull})
+		case errors.Is(err, liveshare.ErrViewerNameTaken):
+			_ = sink.Send(liveshare.ViewerMessage{Type: liveshare.MsgNameTaken})
 		}
 		return nil, false
 	}

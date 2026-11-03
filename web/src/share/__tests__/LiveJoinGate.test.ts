@@ -62,6 +62,23 @@ describe('LiveJoinGate', () => {
     expect(w.find('[data-action="join-meeting"]').attributes('disabled')).toBeDefined()
   })
 
+  it('shows a refusal under the field instead of blocking the page', () => {
+    const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
+    const w = mount(LiveJoinGate, {
+      props: { title: 'Release review', error: 'That name is already in use.' },
+      global: { plugins: [i18n] },
+    })
+
+    expect(w.find('[data-role="join-error"]').text()).toBe('That name is already in use.')
+    // The field stays usable: the reader edits the name and submits again.
+    expect(w.find('[data-role="join-nick"]').exists()).toBe(true)
+    expect(w.find('[data-action="join-meeting"]').exists()).toBe(true)
+  })
+
+  it('has no error slot when nothing was refused', () => {
+    expect(mountGate().find('[data-role="join-error"]').exists()).toBe(false)
+  })
+
   it('shows the meeting title the share page resolved', () => {
     const w = mountGate()
     expect(w.text()).toContain('Release review')

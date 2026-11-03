@@ -3952,6 +3952,7 @@ export default {
       joinNickPlaceholder: 'e.g. Alex',
       joinNickHint: 'Your name is remembered, so you will not type it again.',
       joinEnter: 'Join meeting',
+      nameTaken: 'Somebody in this meeting already uses that name. Please pick another.',
       noPictureTitle: 'No picture yet',
       noPictureDesc: 'The host can turn on a screen share or camera at any time',
 

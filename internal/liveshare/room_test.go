@@ -931,3 +931,120 @@ func TestRoster_EmptyRoomHasNoHost(t *testing.T) {
 		t.Fatalf("want an empty roster, got %#v", got)
 	}
 }
+
+// A name identifies one person: the roster, the meeting chat and the transcript
+// all attribute lines by name, so two "小明" rows would merge two people into
+// one speaker. The room refuses the second one instead of accepting an
+// ambiguous meeting.
+func TestAddViewer_RefusesNameAlreadyInTheRoom(t *testing.T) {
+	g := NewRegistry()
+	room, _ := g.Create("/proj/a", "A")
+
+	if _, err := room.AddViewer("小明", &fakeSink{}); err != nil {
+		t.Fatalf("first join must succeed: %v", err)
+	}
+	_, err := room.AddViewer("小明", &fakeSink{})
+	if !errors.Is(err, ErrViewerNameTaken) {
+		t.Fatalf("want ErrViewerNameTaken, got %v", err)
+	}
+	if n := room.ViewerCount(); n != 1 {
+		t.Fatalf("a refused viewer must not take a slot, have %d", n)
+	}
+}
+
+// Case and surrounding space are not identity: "Alex", "alex" and " Alex " are
+// one label to everyone reading the roster, which is the whole point of the
+// rule. (Names are trimmed upstream, so this is the belt to that braces.)
+func TestAddViewer_NameComparisonIgnoresCaseAndPadding(t *testing.T) {
+	g := NewRegistry()
+	room, _ := g.Create("/proj/a", "A")
+	if _, err := room.AddViewer("Alex", &fakeSink{}); err != nil {
+		t.Fatalf("AddViewer: %v", err)
+	}
+	for _, name := range []string{"alex", "ALEX", "  Alex  "} {
+		if _, err := room.AddViewer(name, &fakeSink{}); !errors.Is(err, ErrViewerNameTaken) {
+			t.Fatalf("%q must be refused, got %v", name, err)
+		}
+	}
+}
+
+// The host is a participant too: a viewer named like the host would make the
+// audience list show two identical rows, one of them mislabelled.
+func TestAddViewer_RefusesThePublisherName(t *testing.T) {
+	g := NewRegistry()
+	room, _ := g.Create("/proj/a", "A")
+	room.ReservePublisher()
+	room.AttachPublisher(&fakeSink{})
+	room.SetPublisherName("泷泽")
+
+	if _, err := room.AddViewer("泷泽", &fakeSink{}); !errors.Is(err, ErrViewerNameTaken) {
+		t.Fatalf("want ErrViewerNameTaken, got %v", err)
+	}
+	if _, err := room.AddViewer("小明", &fakeSink{}); err != nil {
+		t.Fatalf("a different name must be accepted: %v", err)
+	}
+}
+
+// Leaving frees the name: a viewer that reconnects (reload, network blip) must
+// not find its own previous slot blocking it forever.
+func TestAddViewer_NameIsFreedWhenItsOwnerLeaves(t *testing.T) {
+	g := NewRegistry()
+	room, _ := g.Create("/proj/a", "A")
+	first, err := room.AddViewer("小明", &fakeSink{})
+	if err != nil {
+		t.Fatalf("AddViewer: %v", err)
+	}
+	room.RemoveViewer(first.ID)
+
+	if _, err := room.AddViewer("小明", &fakeSink{}); err != nil {
+		t.Fatalf("the name must be reusable after its owner left: %v", err)
+	}
+}
+
+// Two sockets dialing at once with one name: the check and the insert are one
+// critical section, so exactly one of them gets in. A read-then-write check
+// would let both pass and produce the duplicate this rule exists to prevent.
+func TestAddViewer_ConcurrentSameNameAdmitsExactlyOne(t *testing.T) {
+	g := NewRegistry()
+	room, _ := g.Create("/proj/a", "A")
+	g.SetLimits(10, 0)
+
+	const attempts = 16
+	var wg sync.WaitGroup
+	results := make([]error, attempts)
+	for i := range attempts {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, results[i] = room.AddViewer("小明", &fakeSink{})
+		}(i)
+	}
+	wg.Wait()
+
+	ok := 0
+	for _, err := range results {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, ErrViewerNameTaken):
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("exactly one join must succeed, got %d", ok)
+	}
+}
+
+// An unnamed participant is not an identity. newTalkRoom joins with "", and
+// refusing the second empty name would turn a missing label into a locked room.
+func TestAddViewer_EmptyNamesDoNotCollide(t *testing.T) {
+	g := NewRegistry()
+	room, _ := g.Create("/proj/a", "A")
+	if _, err := room.AddViewer("", &fakeSink{}); err != nil {
+		t.Fatalf("first unnamed join: %v", err)
+	}
+	if _, err := room.AddViewer("", &fakeSink{}); err != nil {
+		t.Fatalf("a second unnamed join must be allowed: %v", err)
+	}
+}

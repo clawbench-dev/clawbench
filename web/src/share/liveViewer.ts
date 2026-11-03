@@ -38,6 +38,7 @@ export type LiveViewerState =
   | 'playing'
   | 'ended' // publisher gone or the share was closed
   | 'full' // room at capacity
+  | 'name-taken' // somebody in the meeting already uses this display name
   | 'failed' // signalling or ICE failure
 
 /** Message shapes the server sends. Fields are optional by message type. */
@@ -368,6 +369,14 @@ export class LiveViewer {
         break
       case 'full':
         this.setState('full')
+        this.teardown()
+        break
+      case 'name-taken':
+        // The room refused the name. Terminal for THIS attempt and nothing
+        // more: the page puts the reader back on the name field, so this must
+        // not look like a connection failure (which offers a retry that would
+        // fail identically).
+        this.setState('name-taken')
         this.teardown()
         break
       case 'publisher-gone':

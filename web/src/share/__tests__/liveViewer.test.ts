@@ -431,6 +431,18 @@ describe('LiveViewer terminal states', () => {
     expect(lastWS().readyState).toBe(3)
   })
 
+  it('reports a refused duplicate name and tears down', () => {
+    const { viewer, states } = setup()
+    viewer.connect()
+    lastWS().emit({ type: 'name-taken' })
+
+    // Its own state, not 'failed': the page has to send the reader back to the
+    // name field, and a failure state would offer a retry of the same name.
+    expect(viewer.state).toBe('name-taken')
+    expect(states.some((s) => s.state === 'name-taken')).toBe(true)
+    expect(lastWS().readyState).toBe(3)
+  })
+
   it('reports ended with the server reason', () => {
     const { viewer, states } = setup()
     joinRoom(viewer)

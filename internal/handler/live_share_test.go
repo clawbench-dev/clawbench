@@ -1329,7 +1329,7 @@ func TestLiveWS_SecondSharerIsRefused(t *testing.T) {
 	view1 := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
 	_ = readViewerMsg(t, view1)
 	_ = readPublisherMsg(t, pub)
-	view2 := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer")
+	view2 := dialWS(t, srv, "/api/share/"+token+"/signal?name=viewer2")
 	_ = readViewerMsg(t, view2)
 	_ = readPublisherMsg(t, pub)
 
@@ -2500,6 +2500,28 @@ func TestLiveWS_RoomFullIsReportedToTheNextViewer(t *testing.T) {
 	extra := dialWS(t, srv, "/api/share/"+token+"/signal?name=extra")
 	msg := readViewerMsg(t, extra)
 	assert.Equal(t, liveshare.MsgFull, msg.Type)
+}
+
+// A duplicate display name is refused with its own frame, not by dropping the
+// socket: the page has to send the reader back to the name field, and a bare
+// close would look like a network failure with a useless retry button.
+func TestLiveWS_DuplicateNameIsRefusedWithAFrame(t *testing.T) {
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	defer closePublisherAndWait(t, pub, token)
+
+	first := dialWS(t, srv, "/api/share/"+token+"/signal?name="+url.QueryEscape("小明"))
+	_ = readViewerMsg(t, first) // joined
+
+	dup := dialWS(t, srv, "/api/share/"+token+"/signal?name="+url.QueryEscape("小明"))
+	msg := readViewerMsg(t, dup)
+	assert.Equal(t, liveshare.MsgNameTaken, msg.Type)
+
+	// The refused socket must not have taken a slot: the first viewer is still
+	// the only member, so the host's roster is unchanged.
+	room := liveRegistry.Get(token)
+	require.NotNil(t, room)
+	assert.Equal(t, 1, room.ViewerCount())
 }
 
 // Both archives are optional: when the folder cannot be written the teardown

@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 )
@@ -30,6 +31,11 @@ var (
 	ErrRoomFull = errors.New("liveshare: room is full")
 	// ErrViewerExists means the same viewer id was added twice.
 	ErrViewerExists = errors.New("liveshare: viewer already present")
+	// ErrViewerNameTaken means the display name is already in use by somebody
+	// else in this room. Two participants with one name make the roster and the
+	// meeting record ambiguous: every chat line, transcript segment and
+	// notification is attributed by name, so "小明" would become two people.
+	ErrViewerNameTaken = errors.New("liveshare: display name already in use")
 	// ErrTalkNotAllowed means the room has not enabled audience speech.
 	ErrTalkNotAllowed = errors.New("liveshare: talking is not enabled for this room")
 	// ErrTalkMuted means the publisher blocked this viewer's microphone. It is
@@ -511,11 +517,21 @@ func (r *Room) ViewerCount() int {
 }
 
 // AddViewer registers a viewer and returns its id.
+//
+// A display name is unique within the room, and the check happens under the
+// same lock as the insert: two people dialing at once with one name must not
+// both pass a read-then-write check. Comparison ignores case and surrounding
+// space, because "Alex" and "alex" are the same label to everyone reading the
+// roster, and the whole point of the rule is that a name identifies one person.
 func (r *Room) AddViewer(name string, sink Sink) (*Viewer, error) {
 	r.mu.Lock()
 	if len(r.viewers) >= r.maxViewers {
 		r.mu.Unlock()
 		return nil, ErrRoomFull
+	}
+	if r.nameTakenLocked(name) {
+		r.mu.Unlock()
+		return nil, ErrViewerNameTaken
 	}
 	r.nextID++
 	v := &Viewer{
@@ -527,6 +543,26 @@ func (r *Room) AddViewer(name string, sink Sink) (*Viewer, error) {
 	r.mu.Unlock()
 	r.touch()
 	return v, nil
+}
+
+// nameTakenLocked is the one implementation of the uniqueness rule. The caller
+// must hold r.mu.
+func (r *Room) nameTakenLocked(name string) bool {
+	want := strings.TrimSpace(name)
+	if want == "" {
+		// An unnamed participant is not an identity: refusing every later empty
+		// name would turn a missing label into a locked room.
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(r.publisherName), want) {
+		return true
+	}
+	for _, v := range r.viewers {
+		if strings.EqualFold(strings.TrimSpace(v.Name), want) {
+			return true
+		}
+	}
+	return false
 }
 
 // RemoveViewer detaches a viewer. Removing an unknown id is a no-op so that

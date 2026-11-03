@@ -4871,6 +4871,11 @@ paths:
         `ViewerNameRequired`），客户端据此提示「填写称谓后再加入」而不是一个开了又断的
         socket。token 不存在或房间已无发布端一律 **404**，且先于称谓校验。
 
+        称谓在房间内**唯一**：与发布端称谓及每个已加入观众比对（忽略大小写与首尾空白），
+        重名时**升级之后**发 `name-taken` 帧再关闭 socket——不能用升级前的 400，因为 WebSocket
+        握手失败没有页面能读的响应体，页面只能报「连接失败」。分享页收到该帧后退回称谓输入框
+        并提示换一个。重名会让名单、归档 chat.md 与转写无法区分两个人（按名字归属发言）。
+
         `{token}/signal` 的观众控制帧含 `talk-start` / `talk-end`（麦克风）与
         `screen-start` / `screen-stop`（共享自己的屏幕，需房间开关已打开且当前无人共享）。
         服务端以 `screen-state` 广播谁在共享；被拒时回 `screen-denied`（`disabled` / `busy` /

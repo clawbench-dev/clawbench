@@ -185,6 +185,56 @@ test.describe('Live share viewer', () => {
     }
   })
 
+  test('a duplicate viewer name is refused with its own frame', async ({ page }) => {
+    const room = await createRoom(page)
+    try {
+      const result = await page.evaluate(async (token) => {
+        const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+        const pub = new WebSocket(`${proto}://${location.host}/api/live-share/publish/ws?token=${token}`)
+        await new Promise<void>((resolve, reject) => {
+          pub.onopen = () => resolve()
+          pub.onerror = () => reject(new Error('publisher socket failed'))
+        })
+        pub.send(JSON.stringify({ type: 'publish', title: 'e2e' }))
+
+        const join = (name: string) =>
+          new Promise<{ type?: string }>((resolve, reject) => {
+            const view = new WebSocket(
+              `${proto}://${location.host}/api/share/${token}/signal?name=${encodeURIComponent(name)}`,
+            )
+            const timer = setTimeout(() => reject(new Error(`no frame for ${name}`)), 10000)
+            view.onmessage = (ev) => {
+              clearTimeout(timer)
+              resolve(JSON.parse(String(ev.data)) as { type?: string })
+            }
+            view.onerror = () => {
+              clearTimeout(timer)
+              reject(new Error('viewer socket failed'))
+            }
+          })
+
+        // The room admits viewers only after the publisher attaches, and that
+        // happens after the handshake that resolved `pub.onopen` — so retry
+        // until the first viewer is really in, instead of sleeping a fixed time.
+        let first: { type?: string } | null = null
+        for (let i = 0; i < 40 && first?.type !== 'joined'; i++) {
+          first = await join('同名观众').catch(() => null)
+          if (first?.type !== 'joined') await new Promise((r) => setTimeout(r, 50))
+        }
+        const second = await join('同名观众')
+        pub.close()
+        return { first, second }
+      }, room.token)
+
+      expect(result.first?.type).toBe('joined')
+      // Not a dropped socket: the frame is what lets the page send the reader
+      // back to the name field with an explanation.
+      expect(result.second?.type).toBe('name-taken')
+    } finally {
+      await endRoom(page, room.token)
+    }
+  })
+
   test('a second publisher is refused', async ({ page }) => {
     const room = await createRoom(page)
     try {

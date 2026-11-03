@@ -6,7 +6,7 @@
   <!-- The nickname gate runs BEFORE any connection: an empty name must not take
        an audience slot. It also carries the meeting title the server already
        resolved from the share link. -->
-  <LiveJoinGate v-else-if="!joined" :title="title" @join="onJoin" />
+  <LiveJoinGate v-else-if="!joined" :title="title" :error="gateError" @join="onJoin" />
   <!-- Shell: the picture column plus the side panel, side by side. The panel is
        a SIBLING of the picture, never an overlay: opening it must squeeze the
        stage, so nothing the presenter draws ends up hidden behind it. -->
@@ -524,6 +524,14 @@ const state = ref<LiveViewerState>('connecting')
 /** The nickname gate has been passed; only then is a socket opened. */
 const joined = ref(false)
 const nick = ref('')
+/**
+ * Why the last join attempt was refused, shown under the gate's name field.
+ *
+ * Only the duplicate-name refusal lands here: it is the one refusal the reader
+ * can fix without leaving the page, so it must come back to the field rather
+ * than to a terminal "connection failed" screen.
+ */
+const gateError = ref('')
 /** Whether the publisher sends a picture (false = voice meeting). */
 const videoEnabled = ref(true)
 /**
@@ -1422,7 +1430,16 @@ function applyViewerState(s: LiveViewerState, reason?: string): void {
   // keeps its own explanation. The record survives the room, so this is where
   // the member lands: the same four surfaces the host sees.
   if (s === 'ended' && reason !== 'kicked') recordView.value = true
-  if (s === 'ended' || s === 'full' || s === 'failed') {
+  // The name was refused: back to the gate, with the name still in the field
+  // and the reason under it. The fix is a different name, so an overlay with a
+  // retry button would send the reader in a circle — retrying the same name is
+  // refused identically.
+  if (s === 'name-taken') {
+    viewer = null
+    gateError.value = t('share.live.nameTaken')
+    joined.value = false
+  }
+  if (s === 'ended' || s === 'full' || s === 'failed' || s === 'name-taken') {
     talking.value = false
     sharingScreen.value = false
     screenSharer.value = ''
@@ -1438,6 +1455,7 @@ function applyViewerState(s: LiveViewerState, reason?: string): void {
 /** Gate callback: remember the name and connect. */
 function onJoin(name: string): void {
   nick.value = name
+  gateError.value = ''
   joined.value = true
   void nextTick(() => start())
 }

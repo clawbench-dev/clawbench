@@ -35,6 +35,13 @@ const (
 	MsgJoined = "joined"
 	// MsgFull means the room is at capacity; the socket closes after it.
 	MsgFull = "full"
+	// MsgNameTaken means the requested display name already belongs to somebody
+	// in this meeting. The socket closes after it, and the page must send the
+	// viewer back to the name field rather than to a "connection failed" screen:
+	// the fix is a different name, not a retry. A frame instead of a handshake
+	// rejection because a WebSocket handshake failure carries no body the page
+	// could read — the client could only say "could not connect".
+	MsgNameTaken = "name-taken"
 	// MsgPublisherGone means the publisher detached; the share is over.
 	MsgPublisherGone = "publisher-gone"
 	// MsgTalkEnabled tells a viewer that the room-level switch changed. Without

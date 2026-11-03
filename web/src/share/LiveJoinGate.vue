@@ -17,6 +17,12 @@
         @keydown.enter="submit"
       />
       <div class="join-gate__hint">{{ t('share.live.joinNickHint') }}</div>
+      <!-- The server refused this name because somebody in the meeting already
+           uses it. Rendered here rather than as a terminal overlay: the reader
+           is one edit away from getting in. -->
+      <div v-if="error" class="join-gate__error" role="alert" data-role="join-error">
+        {{ error }}
+      </div>
 
       <button
         class="join-gate__btn"
@@ -44,7 +50,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MEETING_NICK_MAX, isValidMeetingNick, readMeetingNick, saveMeetingNick } from './meetingNickname'
 
-defineProps<{ title?: string }>()
+defineProps<{ title?: string; error?: string }>()
 const emit = defineEmits<{ join: [name: string] }>()
 
 const { t } = useI18n()
@@ -100,6 +106,15 @@ function submit(): void {
 }
 .join-gate__input:focus { outline: none; border-color: var(--accent-color); }
 .join-gate__hint { font-size: var(--font-size-xs); color: var(--text-muted); }
+/* Same shape as the join page's inline error, so a refusal reads the same
+   whether it happened before or after the socket opened. */
+.join-gate__error {
+  padding: var(--space-4, 8px) var(--space-5, 10px);
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--color-red) 10%, transparent);
+  color: var(--color-red);
+  font-size: var(--font-size-sm);
+}
 .join-gate__btn {
   margin-top: var(--space-3, 6px);
   /* Same 44dp floor: "加入会议" is pressed with a thumb, not a cursor. */

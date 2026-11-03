@@ -3947,6 +3947,7 @@ export default {
       joinNickPlaceholder: '例如：小明',
       joinNickHint: '称谓会记住，下次加入不用再填。',
       joinEnter: '加入会议',
+      nameTaken: '该称谓已被会议中的其他人使用，请换一个。',
       noPictureTitle: '暂未共享画面',
       noPictureDesc: '主持人可以随时打开屏幕共享或摄像头',
 
