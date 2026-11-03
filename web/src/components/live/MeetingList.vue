@@ -82,6 +82,10 @@
                 <span class="meeting-row__sep">·</span>
                 <span class="meeting-row__m">{{ t('meeting.list.chatShort', { n: r.record.chatCount }) }}</span>
               </template>
+              <template v-if="(r.record.shotCount ?? 0) > 0">
+                <span class="meeting-row__sep">·</span>
+                <span class="meeting-row__m">{{ t('meeting.list.shotShort', { n: r.record.shotCount }) }}</span>
+              </template>
               <template v-if="r.speakers > 0">
                 <span class="meeting-row__sep">·</span>
                 <span class="meeting-row__m">{{ t('meeting.list.speakers', { n: r.speakers }) }}</span>

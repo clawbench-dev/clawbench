@@ -4,15 +4,34 @@
       v-for="b in blocks"
       :key="b.key"
       class="transcript__row"
-      :class="{ 'transcript__row--file': b.kind === 'file' }"
+      :class="{ 'transcript__row--file': b.kind === 'file', 'transcript__row--shot': b.kind === 'shot' }"
     >
       <!-- A file event has no speaker: an avatar with the character 文 would
            read as a participant. The glyph says "this is not a person". -->
       <FileText v-if="b.kind === 'file'" class="transcript__avatar transcript__file-icon" :size="16" aria-hidden="true" />
       <MonitorUp v-else-if="b.kind === 'screen'" class="transcript__avatar transcript__file-icon" :size="16" aria-hidden="true" />
+      <ImageIcon v-else-if="b.kind === 'shot'" class="transcript__avatar transcript__file-icon" :size="16" aria-hidden="true" />
       <SpeakerAvatar v-else class="transcript__avatar" :name="b.speaker" />
       <span class="transcript__speaker">{{ speakerOf(b) }}</span>
-      <span class="transcript__text">{{ textOf(b) }}</span>
+      <span v-if="b.kind === 'shot' && b.shot" class="transcript__text transcript__text--shot">
+        <span class="transcript__shot-head">
+          <span class="transcript__shot-meta">{{ shotLabel(b) }}</span>
+          <button
+            class="transcript__shot-del"
+            type="button"
+            :title="i18n.global.t('meeting.shots.delete')"
+            :aria-label="i18n.global.t('meeting.shots.delete')"
+            data-role="shot-delete"
+            @click="emit('shot-delete', b)"
+          >
+            <Trash2 :size="13" />
+          </button>
+        </span>
+        <button class="transcript__shot" type="button" data-role="shot-open" @click="emit('shot-open', b)">
+          <img :src="b.shot.thumbUrl" :alt="shotLabel(b)" loading="lazy" />
+        </button>
+      </span>
+      <span v-else class="transcript__text">{{ textOf(b) }}</span>
     </div>
   </div>
 </template>
@@ -37,12 +56,16 @@
  * here so the token is declared where it is read.
  */
 import { nextTick, ref, watch } from 'vue'
-import { FileText, MonitorUp } from 'lucide-vue-next'
+import { FileText, ImageIcon, MonitorUp, Trash2 } from 'lucide-vue-next'
 import i18n from '@/i18n'
 import SpeakerAvatar from '@/components/common/SpeakerAvatar.vue'
 import type { NoteBlock } from '@/composables/liveNotes'
 
 const props = withDefaults(defineProps<{ blocks: NoteBlock[]; fill?: boolean }>(), { fill: false })
+const emit = defineEmits<{
+  'shot-open': [block: NoteBlock]
+  'shot-delete': [block: NoteBlock]
+}>()
 
 /**
  * Localization goes through the global instance rather than `useI18n()`.
@@ -54,7 +77,27 @@ const props = withDefaults(defineProps<{ blocks: NoteBlock[]; fill?: boolean }>(
  */
 function speakerOf(b: NoteBlock): string {
   if (b.speaker) return b.speaker
+  if (b.kind === 'shot') return i18n.global.t('meeting.shots.speaker')
   return b.kind === 'file' ? i18n.global.t('liveShare.fileSpeaker') : ''
+}
+
+/** "打开 architecture.md" / "切换共享源" — why the frame was taken. */
+const REASON_KEYS: Record<string, string> = {
+  manual: 'meeting.shots.reasonManual',
+  file: 'meeting.shots.reasonFile',
+  sharer: 'meeting.shots.reasonSharer',
+  switch: 'meeting.shots.reasonSwitch',
+  speech: 'meeting.shots.reasonSpeech',
+  change: 'meeting.shots.reasonChange',
+}
+
+function shotLabel(b: NoteBlock): string {
+  const shot = b.shot
+  if (!shot) return ''
+  const key = REASON_KEYS[shot.reason] ?? 'meeting.shots.reasonChange'
+  const reason = i18n.global.t(key)
+  const name = shot.ref ? shot.ref.split(/[\\/]/).pop() ?? '' : ''
+  return name ? `${reason} · ${name}` : reason
 }
 
 /** A live file row carries a bare path; a stored transcript carries a sentence. */
@@ -160,5 +203,61 @@ watch(
 .transcript__row--file .transcript__text {
   color: var(--text-muted, #656d76);
   font-style: italic;
+}
+
+/* A frame row: the picture is the content, the reason is the label. */
+.transcript__text--shot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 4px);
+}
+
+.transcript__shot-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 4px);
+}
+
+.transcript__shot-meta {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-muted, #656d76);
+}
+
+/* The only destructive control in this list; sized for a fingertip, not a
+   cursor (a 14px icon with a 22px hit area). */
+.transcript__shot-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text-muted, #656d76);
+  cursor: pointer;
+}
+
+.transcript__shot-del:hover {
+  background: var(--bg-tertiary, rgba(0, 0, 0, 0.06));
+  color: var(--text-primary, #1f2328);
+}
+
+.transcript__shot {
+  display: block;
+  max-width: calc(360 * var(--dp));
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.transcript__shot img {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--border-subtle, #e5e7eb);
+  border-radius: var(--radius-md, 8px);
 }
 </style>

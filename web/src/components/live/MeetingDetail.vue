@@ -105,6 +105,8 @@
             v-if="transcriptLines.length"
             :blocks="transcriptLines"
             data-role="transcript"
+            @shot-open="openShot"
+            @shot-delete="removeShot"
           />
           <!-- An empty transcript has three different causes and the old single
                sentence ("听记没有开启") was only right for one of them: it also
@@ -248,6 +250,7 @@ import {
   useMeetingHistory,
   type MeetingChatMessage,
   type MeetingRecord,
+  type MeetingShot,
 } from '@/composables/useMeetingHistory'
 import { useMeetingResources } from '@/composables/useMeetingResources'
 import {
@@ -260,7 +263,7 @@ import { formatClockTime } from '@/utils/format'
 import { resolveUserNickname } from '@/utils/userNickname'
 import { meetingDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
 import { parseVttCues, vttToPlainText, type VttCue } from '@/utils/vtt'
-import { groupNoteSegments, type NoteBlock } from '@/composables/liveNotes'
+import { groupNoteSegments, type LiveNoteSegment, type NoteBlock } from '@/composables/liveNotes'
 import { parseRevisedTranscript, revisedToPlainText } from '@/utils/revisedTranscript'
 import { normalizeSlashes, toProjectRelative } from '@/utils/path'
 import { store } from '@/stores/app'
@@ -303,6 +306,8 @@ const transcriptCues = ref<VttCue[]>([])
 const transcriptFile = ref('')
 const revisedFile = ref('')
 const chat = ref<MeetingChatMessage[]>([])
+/** Key frames, already ordered and offset onto the transcript timeline. */
+const shots = ref<MeetingShot[]>([])
 
 /** Join inside a meeting folder without assuming a separator style. */
 function meetingPath(dir: string, ...parts: string[]): string {
@@ -360,19 +365,83 @@ const minutesFailed = computed(() => record.value?.status === 'failed')
  * rule the live transcript uses (`groupNoteSegments`) — not by a second one
  * that would split the conversation differently on the two surfaces.
  */
-const transcriptLines = computed<NoteBlock[]>(() =>
-  groupNoteSegments(
-    transcriptCues.value.map((cue, i) => ({
-      id: i + 1,
-      channel: cue.speaker || 'unknown',
-      speaker: cue.speaker,
-      startedAt: cue.startMs,
-      durationMs: Math.max(0, cue.endMs - cue.startMs),
-      text: cue.text,
-      ...(cue.kind ? { kind: cue.kind } : {}),
-    })),
-  ),
-)
+const REASON_KEYS: Record<string, string> = {
+  manual: 'meeting.shots.reasonManual',
+  file: 'meeting.shots.reasonFile',
+  sharer: 'meeting.shots.reasonSharer',
+  switch: 'meeting.shots.reasonSwitch',
+  speech: 'meeting.shots.reasonSpeech',
+  change: 'meeting.shots.reasonChange',
+}
+
+function shotReasonLabel(reason: string): string {
+  return t(REASON_KEYS[reason] ?? 'meeting.shots.reasonChange')
+}
+
+/** Absolute path of a stored frame (the image viewer takes one). */
+function shotFullPath(shot: MeetingShot): string {
+  const dir = record.value?.dirPath
+  if (!dir) return ''
+  return meetingPath(dir, ...shot.fileName.split('/'))
+}
+
+/**
+ * Thumbnail URL.
+ *
+ * The frame lives inside the meeting folder, which is inside the project, so
+ * the existing thumbnail endpoint serves it with the project cookie — no new
+ * binary endpoint, and the file-manager cache/revalidation comes for free.
+ */
+function shotThumbUrl(shot: MeetingShot): string {
+  const full = shotFullPath(shot)
+  if (!full) return ''
+  const rel = normalizeSlashes(toProjectRelative(full, store.state.projectRoot ?? ''))
+  return `/api/fs/thumb?target=${encodeURIComponent(rel)}&w=480`
+}
+
+/**
+ * The stored cues as speaker turns, with the key frames merged in.
+ *
+ * Frames and utterances share one timeline, so they are put in ONE array and
+ * sorted before grouping: `groupNoteSegments` walks its input in order, and
+ * appending the frames would put every screenshot at the end of the meeting.
+ * The row also carries text — an empty one is dropped by the grouper — which is
+ * why the reason label is the row's text and the picture is an extra field.
+ */
+const transcriptLines = computed<NoteBlock[]>(() => {
+  const rows: Array<
+    LiveNoteSegment & { kind?: 'file' | 'screen' | 'shot'; shot?: NoteBlock['shot'] }
+  > = transcriptCues.value.map((cue, i) => ({
+    id: i + 1,
+    channel: cue.speaker || 'unknown',
+    speaker: cue.speaker,
+    startedAt: cue.startMs,
+    durationMs: Math.max(0, cue.endMs - cue.startMs),
+    text: cue.text,
+    ...(cue.kind ? { kind: cue.kind } : {}),
+  }))
+  for (const shot of shots.value) {
+    rows.push({
+      // Negative ids keep frames out of the way of cue ids, which are 1-based.
+      id: -shot.id,
+      channel: 'shot',
+      speaker: '',
+      startedAt: shot.offsetMs,
+      durationMs: 0,
+      text: shotReasonLabel(shot.reason),
+      kind: 'shot',
+      shot: {
+        id: shot.id,
+        thumbUrl: shotThumbUrl(shot),
+        fullPath: shotFullPath(shot),
+        reason: shot.reason,
+        ref: shot.ref,
+      },
+    })
+  }
+  rows.sort((a, b) => a.startedAt - b.startedAt || a.id - b.id)
+  return groupNoteSegments(rows)
+})
 
 /**
  * The proofread transcript as the same rows.
@@ -522,6 +591,9 @@ async function load(silent = false): Promise<void> {
     transcriptFile.value = transcript?.file ?? ''
     revisedText.value = revised?.content ?? ''
     revisedFile.value = revised?.file ?? ''
+    // Frames are final by the time the record is opened; the poll below only
+    // waits for the minutes, so there is no reason to re-read them every 2.5s.
+    if (!silent) shots.value = await history.shots(props.token)
     const messages = await history.chat(props.token)
     chat.value = messages.messages
     // The minutes job starts AFTER stop() resolves, i.e. after this view was
@@ -590,6 +662,32 @@ function openFile(): void {
         ? revisedPath.value
         : minutesPath.value
   if (target) void openFilePath(target, undefined, undefined, 'live')
+}
+
+/** Open one frame in the image viewer (the same one the file manager uses). */
+function openShot(block: NoteBlock): void {
+  const target = block.shot?.fullPath
+  if (target) void openFilePath(target, undefined, undefined, 'live')
+}
+
+/**
+ * Delete one frame. Confirmed, because it removes a file from the meeting
+ * folder and cannot be undone; the row disappears only after the server says
+ * it is gone.
+ */
+async function removeShot(block: NoteBlock): Promise<void> {
+  const shot = block.shot
+  if (!shot) return
+  const ok = await dialog.confirm(t('meeting.shots.deleteConfirm'), { dangerous: true })
+  if (!ok) return
+  if (!(await history.deleteShot(props.token, shot.id))) {
+    toast.show(t('meeting.shots.deleteFailed'), { type: 'error', icon: 'warning' })
+    return
+  }
+  shots.value = shots.value.filter((s) => s.id !== shot.id)
+  if (record.value && typeof record.value.shotCount === 'number') {
+    record.value.shotCount = Math.max(0, record.value.shotCount - 1)
+  }
 }
 
 async function regenerate(): Promise<void> {

@@ -2297,3 +2297,22 @@ describe('a meeting with no picture', () => {
     await share.stop()
   })
 })
+
+describe('ink mirror for key frames', () => {
+  it('keeps the strokes that are on the wire and clears them with the meeting', async () => {
+    const { share } = await startSharing()
+    const { _inkMirrorForTest } = await import('../useLiveShare')
+
+    share.sendControl({ t: 'ink', phase: 'start', x: 0.1, y: 0.2, color: '#ff3b30', width: 3 })
+    share.sendControl({ t: 'ink', phase: 'move', x: 0.2, y: 0.3, color: '#ff3b30', width: 3 })
+    expect(_inkMirrorForTest()).toHaveLength(1)
+    expect(_inkMirrorForTest()[0].points).toHaveLength(2)
+
+    // Closing the annotation window drops the strokes; a leftover would be
+    // composited into the next frame.
+    share.clearInkMirror()
+    expect(_inkMirrorForTest()).toHaveLength(0)
+
+    await share.stop()
+  })
+})

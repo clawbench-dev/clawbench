@@ -122,6 +122,20 @@
               {{ t('meeting.create.notesUnsupported') }}
             </span>
           </label>
+          <!-- Pictures are independent of the transcript: they are a persistent
+               artifact of this machine, and wanting one does not imply wanting
+               the other. Always shown, including for a voice meeting — somebody
+               can share a screen later and the frames should follow. -->
+          <label class="meeting-check">
+            <input
+              type="checkbox"
+              :checked="shots"
+              data-role="meeting-shots"
+              @change="shots = ($event.target as HTMLInputElement).checked"
+            />
+            <span class="meeting-check__icon"><ImageIcon :size="13" /></span>
+            {{ t('meeting.create.shots') }}
+          </label>
           <!-- Audience permissions start ON. They are the same two room-level
                switches the 会议管理 tab shows during the meeting, so they travel
                with the create request: a meeting where nobody may speak and
@@ -180,7 +194,7 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Mic, MonitorUp, NotebookPen } from 'lucide-vue-next'
+import { ArrowLeft, ImageIcon, Mic, MonitorUp, NotebookPen } from 'lucide-vue-next'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
 import { useToast } from '@/composables/useToast'
@@ -208,7 +222,7 @@ const emit = defineEmits<{ back: []; started: [] }>()
 const { t } = useI18n()
 const toast = useToast()
 const share = useLiveShare()
-const { micChoice, cameraChoice, notes } = useMeetingOptions()
+const { micChoice, cameraChoice, notes, shots } = useMeetingOptions()
 const { nickname, persist } = useMeetingNickname()
 /**
  * 听记 needs `MediaRecorder`, which not every engine has. The switch is shown
@@ -404,6 +418,7 @@ async function start(): Promise<void> {
       micDeviceId: micChoice.value === DEFAULT_DEVICE ? '' : micChoice.value,
       cameraDeviceId: cameraOn.value ? cameraChoice.value : '',
       notes: notes.value,
+      shots: shots.value,
       allowTalk: allowTalk.value,
       allowMemberScreen: allowMemberScreen.value,
       shareTitle: title.value.trim(),

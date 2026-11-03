@@ -24,6 +24,9 @@ import (
 	// Register image decoders for image.Decode (init() side-effects)
 	_ "image/gif"
 	_ "image/png"
+	// WebP: meeting key frames are stored in that format, and the file manager
+	// has always had images it could not thumbnail.
+	_ "golang.org/x/image/webp"
 )
 
 const (
@@ -198,13 +201,15 @@ func resetThumbDecodeTracker() {
 	thumbDecodeTracker.maxSeen.Store(0)
 }
 
-// thumbDecodeExts lists extensions that Go's image.Decode can handle
-// (standard library: png, jpeg, gif). BMP and TIFF require golang.org/x/image.
-// SVG is explicitly excluded because it's vector, not raster.
+// thumbDecodeExts lists extensions that Go's image.Decode can handle.
+// Standard library: png, jpeg, gif. WebP comes from golang.org/x/image/webp
+// (registered in the import block above); it is what the meeting key frames are
+// stored as, so without it every shot thumbnail 404s. BMP and TIFF are still
+// out, SVG is explicitly excluded because it's vector, not raster.
 //
 //nolint:goconst // ".png" appears in multiple unrelated string maps; extracting is overkill
 var thumbDecodeExts = []string{
-	".png", ".jpg", ".jpeg", ".gif",
+	".png", ".jpg", ".jpeg", ".gif", ".webp",
 }
 
 // FileThumb handles GET /api/fs/thumb?target=<path>&w=<width>

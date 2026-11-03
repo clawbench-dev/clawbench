@@ -161,6 +161,15 @@
               <span class="meeting-check__icon"><NotebookPen :size="13" /></span>
               {{ t('meeting.create.notes') }}
             </label>
+            <!-- Key frames are a separate decision from the transcript: the
+                 pictures are stored in this project, and a host may want one
+                 without the other. -->
+            <label class="meeting-check">
+              <input type="checkbox" :checked="shotsOn" data-role="stage-shots"
+                @change="onToggleShots(($event.target as HTMLInputElement).checked)" />
+              <span class="meeting-check__icon"><ImageIcon :size="13" /></span>
+              {{ t('meeting.create.shots') }}
+            </label>
             <label class="meeting-check">
               <input
                 type="checkbox"
@@ -249,6 +258,24 @@
             />
             <TranscriptList v-else :blocks="noteBlocks" fill />
           </template>
+          <!-- What the record will contain, visible while it happens. Shown
+               only once frames exist (or were lost): an empty bar under every
+               voice meeting would just be noise. -->
+          <div
+            v-if="shots.active.value && (shots.count.value > 0 || shots.lost.value > 0)"
+            class="live-shot-bar"
+            data-role="shots-bar"
+          >
+            <ImageIcon :size="13" />
+            <span>{{ t('meeting.shots.count', { n: shots.count.value }) }}</span>
+            <span v-if="shots.lost.value > 0" class="live-shot-bar__lost">
+              {{ t('meeting.shots.lost', { n: shots.lost.value }) }}
+            </span>
+            <button class="meeting-link live-shot-bar__toggle" type="button" data-role="shots-toggle"
+              @click="onToggleShots(!shotsOn)">
+              {{ shotsOn ? t('meeting.shots.pause') : t('meeting.shots.resume') }}
+            </button>
+          </div>
         </div>
 
         <div v-else class="live-tab-pane" data-role="chat-pane">
@@ -368,7 +395,7 @@
  * only answer "not available" is worse than no button.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Captions, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
+import { Captions, ImageIcon, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import MemberScreenCard from '@/components/live/MemberScreenCard.vue'
@@ -389,6 +416,7 @@ import { groupNoteSegments, useLiveNotes, withMeetingFileEvents } from '@/compos
 import { useMeetingHistory } from '@/composables/useMeetingHistory'
 import { meetingFileEntries, meetingFilesVersion } from '@/utils/meetingFileTracker'
 import { DEFAULT_DEVICE, useMeetingOptions } from '@/composables/useMeetingOptions'
+import { useMeetingShots } from '@/composables/useMeetingShots'
 import { useScreenWindow, ANNOTATE_WINDOW_NAME, SCREEN_WINDOW_NAME } from '@/composables/useScreenWindow'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { getNative, isDesktopApp } from '@/utils/clawbenchNative'
@@ -432,6 +460,7 @@ const dialog = useDialog()
 const share = useLiveShare()
 const notes = useLiveNotes()
 const options = useMeetingOptions()
+const shots = useMeetingShots()
 const { serverConfig } = useSettingsConfig()
 
 /**
@@ -474,6 +503,8 @@ const cameraSelected = computed(() =>
   share.cameraEnabled.value ? options.cameraChoice.value || DEFAULT_DEVICE : '',
 )
 const notesOn = computed(() => notes.phase.value === 'recording')
+/** Whether frames are being kept right now (running and not paused). */
+const shotsOn = computed(() => shots.active.value && !shots.paused.value)
 /** Whether this machine has a camera at all, so the group is worth showing. */
 const cameraAvailable = ref(true)
 /** Guards the async start/stop of a screen capture (it opens a picker). */
@@ -969,6 +1000,21 @@ function onToggleNotes(on: boolean): void {
   void share.stopNotes()
 }
 
+/**
+ * Turning frames off PAUSES rather than tears down: the count and the
+ * de-duplication state survive, so turning it back on does not restart the
+ * hourly quota or forget the last frame.
+ */
+function onToggleShots(on: boolean): void {
+  options.shots.value = on
+  if (!on) {
+    shots.pause()
+    return
+  }
+  if (shots.active.value) shots.resume()
+  else share.startShots()
+}
+
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 onMounted(() => {
   // The desktop shell can always give the picture a real window (a popup is an
@@ -986,6 +1032,9 @@ onMounted(() => {
   })
   unsubscribeClosed = getNative()?.onAnnotateClosed?.(() => {
     nativeAnnotating.value = false
+    // The strokes are gone with the window; a mirror left behind would be
+    // composited into the next key frame.
+    share.clearInkMirror()
   })
   void resolveRemoteControlSupport(getNative()).then((ok) => {
     controlSupported.value = ok
@@ -1115,6 +1164,7 @@ async function openAnnotate(): Promise<void> {
 function closeAnnotate(): void {
   annotating.value = false
   annotateWindow.close()
+  share.clearInkMirror()
   if (nativeAnnotating.value) {
     nativeAnnotating.value = false
     void getNative()?.closeAnnotateOverlay?.()
@@ -1554,6 +1604,25 @@ watch(
   flex-direction: column;
   gap: var(--space-4, 8px);
   min-height: 0;
+}
+
+/* The frame counter under the live transcript: one quiet line, not a panel. */
+.live-shot-bar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: var(--space-2, 4px);
+  padding-top: var(--space-2, 4px);
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-muted, #656d76);
+}
+
+.live-shot-bar__lost {
+  color: var(--color-orange, #d97706);
+}
+
+.live-shot-bar__toggle {
+  margin-left: auto;
 }
 
 /* The participant list scrolls with the panel body rather than owning a

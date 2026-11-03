@@ -21,6 +21,7 @@ vi.mock('lucide-vue-next', () => {
     ExternalLink: stub,
     FileQuestion: stub,
     FileText: stub,
+    ImageIcon: stub,
     MessageSquare: stub,
     MessagesSquare: stub,
     MonitorUp: stub,
@@ -68,6 +69,8 @@ const getMock = vi.hoisted(() => vi.fn())
 const artifactMock = vi.hoisted(() => vi.fn())
 const chatMock = vi.hoisted(() => vi.fn())
 const removeMock = vi.hoisted(() => vi.fn(async () => ({ ok: true })))
+const shotsMock = vi.hoisted(() => vi.fn(async () => []))
+const deleteShotMock = vi.hoisted(() => vi.fn(async () => true))
 vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/composables/useMeetingHistory')>()
   return {
@@ -76,6 +79,8 @@ vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
       get: getMock,
       artifact: artifactMock,
       chat: chatMock,
+      shots: shotsMock,
+      deleteShot: deleteShotMock,
       remove: removeMock,
     }),
   }
@@ -145,6 +150,7 @@ beforeEach(() => {
     if (kind === 'transcript') return { content: VTT, file: 'transcript.vtt' }
     return null
   })
+  shotsMock.mockResolvedValue([])
   chatMock.mockResolvedValue({
     messages: [
       { id: 1, clientId: 'c1', speaker: 'Alex', text: 'hello', at: 1_700_000_001_000 },
@@ -535,5 +541,50 @@ describe('MeetingDetail chat sides', () => {
     expect(rows).toHaveLength(2)
     expect(rows[0].classes()).not.toContain('chat-row--self')
     expect(rows[1].classes()).toContain('chat-row--self')
+  })
+})
+
+describe('MeetingDetail key frames', () => {
+  it('merges frames into the transcript by offset and deletes one', async () => {
+    shotsMock.mockResolvedValue([
+      // Deliberately out of order: the view must sort, not append.
+      { id: 7, at: 1_700_000_030_000, offsetMs: 30_000, reason: 'file', ref: 'docs/arch.md', fileName: 'shots/a.webp' },
+      { id: 8, at: 1_700_000_005_000, offsetMs: 5_000, reason: 'manual', fileName: 'shots/b.webp' },
+    ])
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-tab="transcript"]').trigger('click')
+    const rows = w.findAll('[data-role="shot-open"]')
+    expect(rows).toHaveLength(2)
+
+    // 5s comes before 30s, and the 0s utterance stays first.
+    const labels = w.findAll('.transcript__shot-meta').map((n) => n.text())
+    expect(labels[0]).toContain(enMessages.meeting.shots.reasonManual)
+    expect(labels[1]).toContain('arch.md')
+
+    const src = rows[0].find('img').attributes('src') ?? ''
+    expect(src).toContain('/api/fs/thumb?target=')
+    expect(decodeURIComponent(src)).toContain('shots/b.webp')
+
+    await w.findAll('[data-role="shot-delete"]')[0].trigger('click')
+    await flushPromises()
+    expect(deleteShotMock).toHaveBeenCalledWith('tok-1', 8)
+    expect(w.findAll('[data-role="shot-open"]')).toHaveLength(1)
+  })
+
+  it('does not claim "no transcript" when only frames exist', async () => {
+    getMock.mockResolvedValue(record({ hasTranscript: false }))
+    artifactMock.mockResolvedValue(null)
+    shotsMock.mockResolvedValue([
+      { id: 9, at: 1_700_000_002_000, offsetMs: 2_000, reason: 'manual', fileName: 'shots/c.webp' },
+    ])
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-tab="transcript"]').trigger('click')
+    expect(w.find('[data-role="transcript"]').exists()).toBe(true)
+    expect(w.find('[data-role="transcript-unreadable"]').exists()).toBe(false)
+    expect(w.findAll('[data-role="shot-open"]')).toHaveLength(1)
   })
 })

@@ -181,8 +181,9 @@ const reload = () => emit('reload')
 const summary = computed(() => {
   const folder = props.groups.find((group) => group.key === 'folder')?.items.length ?? 0
   const audio = props.groups.find((group) => group.key === 'audio')?.items.length ?? 0
+  const shots = props.groups.find((group) => group.key === 'shots')?.items.length ?? 0
   const refs = props.groups.find((group) => group.key === 'referenced')?.items.length ?? 0
-  return t('meeting.resources.summary', { total: props.total, folder: folder + audio, refs })
+  return t('meeting.resources.summary', { total: props.total, folder: folder + audio + shots, refs })
 })
 
 function open(item: MeetingResourceItem): void {

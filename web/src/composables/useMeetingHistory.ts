@@ -34,10 +34,28 @@ export interface MeetingRecord {
   hasMeetingAudio: boolean
   audioFiles: number
   chatCount: number
+  /** Key frames kept for this meeting (derived from the folder). */
+  shotCount?: number
   status: 'idle' | 'generating' | 'ready' | 'failed'
   /** Distinct speakers the transcript heard; 0 when there is no transcript. */
   speakerCount?: number
   updatedAt: number
+}
+
+/** One stored key frame. */
+export interface MeetingShot {
+  id: number
+  /** Unix ms. */
+  at: number
+  /** Offset from the transcript's timeline origin, in ms. */
+  offsetMs: number
+  reason: string
+  ref?: string
+  /** Relative to the meeting folder, e.g. `shots/1700000000000-file-3f2a.webp`. */
+  fileName: string
+  width?: number
+  height?: number
+  bytes?: number
 }
 
 /** One persisted chat line. */
@@ -154,6 +172,34 @@ export function useMeetingHistory() {
     return { messages: data.messages ?? [], count: data.count ?? 0 }
   }
 
+  /** The meeting's key frames, already ordered and offset onto the timeline. */
+  async function shots(token: string): Promise<MeetingShot[]> {
+    try {
+      const data = await readJSON<{ shots?: MeetingShot[] }>(
+        await fetch(`/api/live-share/notes/shots?token=${encodeURIComponent(token)}`),
+        'meeting shots',
+      )
+      return Array.isArray(data.shots) ? data.shots : []
+    } catch (e) {
+      appLog.w(TAG, 'shots failed', e)
+      return []
+    }
+  }
+
+  /** Remove one frame (row + file). */
+  async function deleteShot(token: string, id: number): Promise<boolean> {
+    try {
+      const resp = await fetch(
+        `/api/live-share/notes/shot?token=${encodeURIComponent(token)}&id=${id}`,
+        { method: 'DELETE' },
+      )
+      return resp.ok
+    } catch (e) {
+      appLog.w(TAG, 'delete shot failed', e)
+      return false
+    }
+  }
+
   /**
    * Delete one meeting (folder + rows). The server refuses while the meeting is
    * running or while the minutes job is running; both surface as `409`.
@@ -207,5 +253,5 @@ export function useMeetingHistory() {
     }
   }
 
-  return { sessions, loading, error, load, get, artifact, chat, remove, buildQuote }
+  return { sessions, loading, error, load, get, artifact, chat, shots, deleteShot, remove, buildQuote }
 }
