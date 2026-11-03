@@ -1000,7 +1000,7 @@ func headTail(s string, headLen, tailLen int) string {
 	return s[:headLen] + " … " + s[len(s)-tailLen:]
 }
 
-// escapeMarkdownImageEmbeds neutralises `![alt](src)` so an echoed prompt
+// escapeMarkdownImageEmbeds neutralizes `![alt](src)` so an echoed prompt
 // cannot make the UI fetch images. See the call site in Prompt for why.
 func escapeMarkdownImageEmbeds(s string) string {
 	return strings.ReplaceAll(s, "![", `!\[`)

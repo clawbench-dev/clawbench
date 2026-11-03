@@ -295,7 +295,7 @@ func TestNoNewHardcodedUserVisibleCJKFrontend(t *testing.T) {
 		// Not copy either: this parses the proofread transcript the backend writes
 		// and re-emits the same `说话人：内容` shape when the user copies it. The
 		// Chinese tokens are the writer's localized speaker labels (文件 / 屏幕),
-		// so they have to be recognised verbatim.
+		// so they have to be recognized verbatim.
 		"utils/revisedTranscript.ts": "proofread-transcript parser (localized speaker labels + separator)",
 		// Pre-existing ad-hoc bilingual strings: each already branches on the
 		// locale (zh ? '…' : '…'), so neither language is stuck with the other's
