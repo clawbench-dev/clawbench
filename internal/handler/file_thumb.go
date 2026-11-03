@@ -214,7 +214,7 @@ var thumbDecodeExts = []string{
 
 // FileThumb handles GET /api/fs/thumb?target=<path>&w=<width>
 // Returns a JPEG thumbnail of the image file at the given path.
-func FileThumb(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // multi-format thumbnail generation
+func FileThumb(w http.ResponseWriter, r *http.Request) {
 	relPath := r.URL.Query().Get("target")
 	if relPath == "" {
 		model.WriteError(w, model.NotFound(nil, "path required"))
@@ -254,6 +254,23 @@ func FileThumb(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mul
 // Split out of FileThumb so a second caller — the token-scoped meeting-frame
 // endpoint — gets the same ETag/revalidation, decode semaphore and cache
 // instead of a second, subtly different implementation.
+
+// thumbRevalidated answers a conditional request (If-None-Match /
+// If-Modified-Since) and reports whether the caller can stop.
+func thumbRevalidated(w http.ResponseWriter, r *http.Request, etag string, lastMod time.Time) bool {
+	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return true
+	}
+	if ims := r.Header.Get("If-Modified-Since"); ims != "" {
+		if imsTime, parseErr := http.ParseTime(ims); parseErr == nil && !lastMod.After(imsTime) {
+			w.WriteHeader(http.StatusNotModified)
+			return true
+		}
+	}
+	return false
+}
+
 func serveThumbOfFile(w http.ResponseWriter, r *http.Request, absPath string, info os.FileInfo) {
 	// Revalidation: derive a validator from the source file's metadata so the
 	// thumbnail refreshes immediately when the source image changes, and returns
@@ -264,15 +281,8 @@ func serveThumbOfFile(w http.ResponseWriter, r *http.Request, absPath string, in
 	lastMod := modTime.Truncate(time.Second)
 	etag := fmt.Sprintf(`"%x-%x"`, modTime.UnixNano(), info.Size())
 
-	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
-		w.WriteHeader(http.StatusNotModified)
+	if thumbRevalidated(w, r, etag, lastMod) {
 		return
-	}
-	if ims := r.Header.Get("If-Modified-Since"); ims != "" {
-		if imsTime, parseErr := http.ParseTime(ims); parseErr == nil && !lastMod.After(imsTime) {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
 	}
 
 	// Parse width parameter. Done before the cache lookup because the target
@@ -281,7 +291,7 @@ func serveThumbOfFile(w http.ResponseWriter, r *http.Request, absPath string, in
 	widthStr := r.URL.Query().Get("w")
 	targetWidth := thumbDefaultWidth
 	if widthStr != "" {
-		if w, err := strconv.Atoi(widthStr); err == nil { //nolint:govet // shadowed err, scoped to if-block
+		if w, err := strconv.Atoi(widthStr); err == nil {
 			targetWidth = clampInt(w, thumbMinWidth, thumbMaxWidth)
 		}
 	}

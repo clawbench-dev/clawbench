@@ -38,6 +38,8 @@ type liveSFUPatchBody struct {
 	Clear     bool    `json:"clear"`
 }
 
+const jsonSuccessKey = "success"
+
 func toLiveSFUResponse(c *service.LiveSFUConfig) liveSFUResponse {
 	return liveSFUResponse{
 		URL:        c.URL,
@@ -127,8 +129,8 @@ func ServeLiveSFUTest(w http.ResponseWriter, r *http.Request) {
 	}
 	if url == "" || key == "" || secret == "" {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"message": "中继地址、API Key、API Secret 都需要填写",
+			jsonSuccessKey: false,
+			messageKey:     "中继地址、API Key、API Secret 都需要填写",
 		})
 		return
 	}
@@ -145,14 +147,14 @@ func ServeLiveSFUTest(w http.ResponseWriter, r *http.Request) {
 	rooms, err := cfg.ListRooms(ctx)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"message": describeRelayError(url, err),
+			jsonSuccessKey: false,
+			messageKey:     describeRelayError(url, err),
 		})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"message": fmt.Sprintf("连接成功，当前 %d 个房间", rooms),
+		jsonSuccessKey: true,
+		messageKey:     fmt.Sprintf("连接成功，当前 %d 个房间", rooms),
 	})
 }
 

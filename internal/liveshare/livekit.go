@@ -87,7 +87,7 @@ func (c LiveKitConfig) JoinToken(room, identity, name string, canPublish bool, t
 	}, ttl)
 }
 
-// adminToken authorises calls to LiveKit's server API.
+// adminToken authorizes calls to LiveKit's server API.
 func (c LiveKitConfig) adminToken(room string) (string, error) {
 	return c.sign(map[string]any{
 		"sub":   c.APIKey,
@@ -157,14 +157,14 @@ func (c LiveKitConfig) call(ctx context.Context, method, room string, payload an
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		strings.TrimSuffix(c.APIURL, "/")+"/twirp/livekit.RoomService/"+method, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrRelayUnreachable, err)
+		return fmt.Errorf("%w: %w", ErrRelayUnreachable, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrRelayUnreachable, err)
+		return fmt.Errorf("%w: %w", ErrRelayUnreachable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -188,7 +188,7 @@ func (c LiveKitConfig) call(ctx context.Context, method, room string, payload an
 		return nil
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
-		return fmt.Errorf("%w: %v", ErrRelayRejected, err)
+		return fmt.Errorf("%w: %w", ErrRelayRejected, err)
 	}
 	return nil
 }

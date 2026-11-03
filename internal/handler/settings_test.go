@@ -3311,7 +3311,7 @@ func TestServeConfig_GetIncludesMeeting(t *testing.T) {
 		MinutesMaxTokens: 4500,
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 

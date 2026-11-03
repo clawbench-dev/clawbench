@@ -75,6 +75,80 @@ const (
 	ModeSFU = "sfu"
 )
 
+// Room is a single live share. All methods are safe for concurrent use.
+type Room struct {
+	mu sync.Mutex
+
+	token      string
+	projectKey string
+	title      string
+	createdAt  time.Time
+
+	// publisherName is the host's nickname, from the `publish` frame. Empty is
+	// a legitimate value (the client did not send one) and only affects the
+	// label in the audience's member list.
+	publisherName string
+
+	publisher Sink
+	// publisherReserved is set between ReservePublisher and AttachPublisher.
+	// Distinct from `publisher != nil` so viewers never see a phantom publisher.
+	publisherReserved bool
+	viewers           map[string]*Viewer
+	nextID            int
+
+	// talkEnabled is the room-level switch. Per-viewer grants are on Viewer.
+	talkEnabled bool
+
+	// screenEnabled is the room-level switch for audience screen sharing;
+	// screenSharer is the viewer currently sharing ("" when nobody is).
+	//
+	// One sharer at a time is a bandwidth rule, not a UX one: the publisher
+	// forwards every shared screen to every other viewer, so N sharers cost N ×
+	// N streams of upstream. One at a time keeps it at one per viewer.
+	screenEnabled bool
+	screenSharer  string
+
+	// videoEnabled tells viewers whether the publisher is sending a picture.
+	// Voice meetings keep the same room, signaling and chat; they simply have no
+	// video track, and a viewer must not sit on "connecting" waiting for one.
+	videoEnabled bool
+
+	// cameraEnabled and hostScreen split "there is a picture" into the two
+	// things it can be made of. They are orthogonal: a video meeting may run
+	// camera + screen at once (the camera goes out as a second video track and
+	// renders as a picture-in-picture tile), a screen-only share has hostScreen
+	// but no camera, and a voice meeting has neither.
+	//
+	// hostScreen is NOT the same as screenEnabled above: that one is the
+	// audience's permission to share, this one is what the publisher is showing.
+	cameraEnabled bool
+	hostScreen    bool
+
+	// notesEnabled tells viewers whether the publisher is running AI 听记.
+	// Purely informational: the transcript itself never passes through the room
+	// (it is uploaded over HTTP), but a viewer must not show a "听记" control for
+	// a share that has none.
+	notesEnabled bool
+
+	// controlEnabled tells viewers whether they may ask to drive this
+	// publisher's pointer and keyboard. The publisher is the only one that can
+	// answer: injection happens on the host machine (it needs the input
+	// injector) and only a whole-screen capture has a desktop to map onto.
+	controlEnabled bool
+
+	maxViewers int
+	// mode is ModeP2P (default) or ModeSFU. Fixed at creation: switching
+	// topologies means rebuilding every connection, which blacks out the room
+	// for several seconds and would need every participant to reconnect at once.
+	mode string
+	// livekit is the relay snapshot for ModeSFU. Copied from the installation
+	// config when the room is created so that editing that config never reaches
+	// a meeting that is already running.
+	livekit     LiveKitConfig
+	idleTimeout time.Duration
+	lastActive  time.Time
+}
+
 // Mode reports the room's transport. Always ModeP2P or ModeSFU.
 func (r *Room) Mode() string {
 	r.mu.Lock()
@@ -176,80 +250,6 @@ func (v *Viewer) Muted() bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.muted
-}
-
-// Room is a single live share. All methods are safe for concurrent use.
-type Room struct {
-	mu sync.Mutex
-
-	token      string
-	projectKey string
-	title      string
-	createdAt  time.Time
-
-	// publisherName is the host's nickname, from the `publish` frame. Empty is
-	// a legitimate value (the client did not send one) and only affects the
-	// label in the audience's member list.
-	publisherName string
-
-	publisher Sink
-	// publisherReserved is set between ReservePublisher and AttachPublisher.
-	// Distinct from `publisher != nil` so viewers never see a phantom publisher.
-	publisherReserved bool
-	viewers           map[string]*Viewer
-	nextID            int
-
-	// talkEnabled is the room-level switch. Per-viewer grants are on Viewer.
-	talkEnabled bool
-
-	// screenEnabled is the room-level switch for audience screen sharing;
-	// screenSharer is the viewer currently sharing ("" when nobody is).
-	//
-	// One sharer at a time is a bandwidth rule, not a UX one: the publisher
-	// forwards every shared screen to every other viewer, so N sharers cost N ×
-	// N streams of upstream. One at a time keeps it at one per viewer.
-	screenEnabled bool
-	screenSharer  string
-
-	// videoEnabled tells viewers whether the publisher is sending a picture.
-	// Voice meetings keep the same room, signaling and chat; they simply have no
-	// video track, and a viewer must not sit on "connecting" waiting for one.
-	videoEnabled bool
-
-	// cameraEnabled and hostScreen split "there is a picture" into the two
-	// things it can be made of. They are orthogonal: a video meeting may run
-	// camera + screen at once (the camera goes out as a second video track and
-	// renders as a picture-in-picture tile), a screen-only share has hostScreen
-	// but no camera, and a voice meeting has neither.
-	//
-	// hostScreen is NOT the same as screenEnabled above: that one is the
-	// audience's permission to share, this one is what the publisher is showing.
-	cameraEnabled bool
-	hostScreen    bool
-
-	// notesEnabled tells viewers whether the publisher is running AI 听记.
-	// Purely informational: the transcript itself never passes through the room
-	// (it is uploaded over HTTP), but a viewer must not show a "听记" control for
-	// a share that has none.
-	notesEnabled bool
-
-	// controlEnabled tells viewers whether they may ask to drive this
-	// publisher's pointer and keyboard. The publisher is the only one that can
-	// answer: injection happens on the host machine (it needs the input
-	// injector) and only a whole-screen capture has a desktop to map onto.
-	controlEnabled bool
-
-	maxViewers  int
-	// mode is ModeP2P (default) or ModeSFU. Fixed at creation: switching
-	// topologies means rebuilding every connection, which blacks out the room
-	// for several seconds and would need every participant to reconnect at once.
-	mode string
-	// livekit is the relay snapshot for ModeSFU. Copied from the installation
-	// config when the room is created so that editing that config never reaches
-	// a meeting that is already running.
-	livekit LiveKitConfig
-	idleTimeout time.Duration
-	lastActive  time.Time
 }
 
 // Token is the share token (the sole credential for viewers).

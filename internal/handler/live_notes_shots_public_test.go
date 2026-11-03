@@ -50,7 +50,7 @@ func TestServeShareLiveNotes_RecordCarriesShots(t *testing.T) {
 	uploadShot(t, project, token, realPNG(t, 4, 3))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/share/"+token+"/notes?since=0&full=1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/share/"+token+"/notes?since=0&full=1", http.NoBody)
 	ServeShareLiveNotes(rec, req, token)
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -75,7 +75,7 @@ func TestServeShareLiveNotes_LivePollHasNoShots(t *testing.T) {
 	uploadShot(t, project, token, realPNG(t, 4, 3))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/share/"+token+"/notes?since=0", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/share/"+token+"/notes?since=0", http.NoBody)
 	ServeShareLiveNotes(rec, req, token)
 
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -102,7 +102,7 @@ func TestServeShareLiveNotes_RedactsShotRefPath(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	rec = httptest.NewRecorder()
-	ServeShareLiveNotes(rec, httptest.NewRequest(http.MethodGet, "/api/share/"+token+"/notes?full=1", nil), token)
+	ServeShareLiveNotes(rec, httptest.NewRequest(http.MethodGet, "/api/share/"+token+"/notes?full=1", http.NoBody), token)
 
 	var payload liveNotesResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
@@ -122,7 +122,7 @@ func TestServeShareLiveNoteShotImage_ServesThumbnail(t *testing.T) {
 	req := httptest.NewRequest(
 		http.MethodGet,
 		"/api/share/"+token+"/notes/shot?id="+strconv.FormatInt(shot.ID, 10)+"&w=100",
-		nil,
+		http.NoBody,
 	)
 	ServeShareLiveNoteShotImage(rec, req, token)
 
@@ -148,7 +148,7 @@ func TestServeShareLiveNoteShotImage_RejectsForeignMeeting(t *testing.T) {
 	req := httptest.NewRequest(
 		http.MethodGet,
 		"/api/share/"+other+"/notes/shot?id="+strconv.FormatInt(shot.ID, 10),
-		nil,
+		http.NoBody,
 	)
 	ServeShareLiveNoteShotImage(rec, req, other)
 
@@ -163,7 +163,7 @@ func TestServeShareLiveNoteShotImage_RejectsUnknownID(t *testing.T) {
 	token := createShotMeeting(t, project)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/share/"+token+"/notes/shot?id=999999", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/share/"+token+"/notes/shot?id=999999", http.NoBody)
 	ServeShareLiveNoteShotImage(rec, req, token)
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)

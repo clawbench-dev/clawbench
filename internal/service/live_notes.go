@@ -2788,7 +2788,7 @@ func GenerateLiveNotesMinutesWithOptions(
 	)
 	if err != nil {
 		if errors.Is(err, summarize.ErrOutputTruncated) {
-			return "", fmt.Errorf("%w (max_tokens=%d): %v", ErrLiveNotesBudget, maxTokens, err)
+			return "", fmt.Errorf("%w (max_tokens=%d): %w", ErrLiveNotesBudget, maxTokens, err)
 		}
 		return "", fmt.Errorf("live notes: minutes: %w", err)
 	}

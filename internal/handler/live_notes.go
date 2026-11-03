@@ -1239,6 +1239,27 @@ func ServeLiveNotesAudioMerge(w http.ResponseWriter, r *http.Request) {
 // Generation runs in the background: a long meeting takes tens of seconds, and
 // the publisher's dialog may be closed while it runs. The caller polls
 // ServeLiveShareNotes for the status.
+
+// liveNotesOwnedNote resolves the meeting a request names and proves the caller
+// may touch it, answering the client itself on every failure.
+func liveNotesOwnedNote(w http.ResponseWriter, r *http.Request, token, projectPath string, projectID int64) (service.LiveNote, bool) {
+	if !validShareToken(token) || !liveNotesOwnedByProject(token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return service.LiveNote{}, false
+	}
+	note, exists, err := service.GetLiveNote(token)
+	if err != nil {
+		slog.Error("live notes: minutes lookup failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return service.LiveNote{}, false
+	}
+	if !exists {
+		http.NotFound(w, r)
+		return service.LiveNote{}, false
+	}
+	return note, true
+}
+
 func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
@@ -1255,19 +1276,8 @@ func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if !validShareToken(body.Token) || !liveNotesOwnedByProject(body.Token, projectPath, projectID) {
-		http.NotFound(w, r)
-		return
-	}
-
-	note, exists, err := service.GetLiveNote(body.Token)
-	if err != nil {
-		slog.Error("live notes: minutes lookup failed", "err", err)
-		model.WriteError(w, model.Internal(err))
-		return
-	}
-	if !exists {
-		http.NotFound(w, r)
+	note, ok := liveNotesOwnedNote(w, r, body.Token, projectPath, projectID)
+	if !ok {
 		return
 	}
 	// Idempotent unless explicitly asked to regenerate: a double-click on

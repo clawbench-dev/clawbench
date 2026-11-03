@@ -59,9 +59,9 @@ func (c LiveSFUConfig) APIBaseURL() string {
 	}
 	switch u.Scheme {
 	case "wss":
-		u.Scheme = "https"
+		u.Scheme = schemeHTTPS
 	case "ws":
-		u.Scheme = "http"
+		u.Scheme = schemeHTTP
 	default:
 		return ""
 	}
