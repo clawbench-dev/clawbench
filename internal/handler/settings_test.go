@@ -3245,3 +3245,84 @@ func TestServeConfig_Get_ExposesUploadRetention(t *testing.T) {
 	assert.True(t, resp.Upload.RetentionEnabled)
 	assert.Equal(t, 7, resp.Upload.RetentionDays)
 }
+
+// The minutes cap is a user-facing number, so an out-of-range value must be
+// rejected with a message naming the range — not clamped silently, which would
+// leave the UI showing a number the server never used.
+func TestServeConfig_Patch_MeetingMinutesMaxTokensRange(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"below the minimum", `{"meeting":{"minutes_max_tokens":500}}`},
+		{"above the maximum", `{"meeting":{"minutes_max_tokens":9000}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model.ConfigInstance = model.Config{}
+
+			req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Locale", "en")
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeConfig, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+
+			var resp map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, "MeetingMinutesMaxTokensRange", resp["msgKey"])
+			detail, ok := resp["detail"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, "meeting.minutes_max_tokens", detail["field"])
+		})
+	}
+}
+
+func TestServeConfig_Patch_MeetingRejectsUnknownLanguage(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(`{"meeting":{"language":"fr"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "meeting.language")
+}
+
+// GET must carry the meeting section, otherwise the settings rows fall back to
+// their defaults forever and a saved value looks like it was ignored.
+func TestServeConfig_GetIncludesMeeting(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.Meeting = model.MeetingConfig{
+		AutoMinutes:      false,
+		Proofread:        false,
+		Language:         "en",
+		FileExcerpts:     false,
+		MinutesMaxTokens: 4500,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	meeting, ok := resp["meeting"].(map[string]any)
+	require.True(t, ok, "GET /api/config must include the meeting section")
+	assert.Equal(t, false, meeting["auto_minutes"])
+	assert.Equal(t, false, meeting["proofread"])
+	assert.Equal(t, "en", meeting["language"])
+	assert.Equal(t, false, meeting["file_excerpts"])
+	assert.Equal(t, float64(4500), meeting["minutes_max_tokens"])
+}

@@ -122,6 +122,13 @@ var hotReloadFields = map[string]bool{
 	"summarize.auto_junk_ratio": true,
 	"ai_summary.model":          true,
 	"ai_summary.provider_id":    true,
+	// Meeting minutes — read at generation time from ConfigInstance, so a
+	// changed default takes effect on the next meeting without a restart.
+	"meeting.auto_minutes":       true,
+	"meeting.proofread":          true,
+	"meeting.language":           true,
+	"meeting.file_excerpts":      true,
+	"meeting.minutes_max_tokens": true,
 	// Port Forward — SSH tunnel; enabled and port can be hot-reloaded.
 	// port_forward.transport is accepted but has no effect: it is pinned to
 	// "both" (see applyConfigPatch), so listing it here only avoids reporting a
@@ -287,6 +294,7 @@ type configResponse struct {
 	PortForward    configPortForward    `json:"port_forward"`
 	Summarize      configSummarize      `json:"summarize"`
 	AISummary      configAISummary      `json:"ai_summary"`
+	Meeting        configMeeting        `json:"meeting"`
 	DingTalk       configDingTalk       `json:"dingtalk"`
 	Feishu         configFeishu         `json:"feishu"`
 	WeChat         configWeChat         `json:"wechat"`
@@ -507,6 +515,16 @@ type configAISummary struct {
 	// format. nil = the shared summary model is unconfigured.
 	ProviderID *int64 `json:"provider_id,omitempty"`
 	Model      string `json:"model"`
+}
+
+// configMeeting exposes the meeting-minutes defaults and output limit. It has
+// no model fields on purpose: minutes reuse the shared ai_summary model.
+type configMeeting struct {
+	AutoMinutes      bool   `json:"auto_minutes"`
+	Proofread        bool   `json:"proofread"`
+	Language         string `json:"language"`
+	FileExcerpts     bool   `json:"file_excerpts"`
+	MinutesMaxTokens int    `json:"minutes_max_tokens"`
 }
 
 type configDingTalk struct {
@@ -889,6 +907,11 @@ var PatchableConfigPaths = map[string]bool{
 	"summarize.auto_junk_ratio":          true,
 	"ai_summary.model":                   true,
 	"ai_summary.provider_id":             true,
+	"meeting.auto_minutes":               true,
+	"meeting.proofread":                  true,
+	"meeting.language":                   true,
+	"meeting.file_excerpts":              true,
+	"meeting.minutes_max_tokens":         true,
 	"dingtalk.enabled":                   true,
 	"dingtalk.app_key":                   true,
 	"dingtalk.app_secret":                true,
@@ -1086,6 +1109,13 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		AISummary: configAISummary{
 			ProviderID: cfg.AISummary.ProviderID,
 			Model:      cfg.AISummary.Model,
+		},
+		Meeting: configMeeting{
+			AutoMinutes:      cfg.Meeting.AutoMinutes,
+			Proofread:        cfg.Meeting.Proofread,
+			Language:         cfg.Meeting.Language,
+			FileExcerpts:     cfg.Meeting.FileExcerpts,
+			MinutesMaxTokens: cfg.Meeting.MinutesMaxTokens,
 		},
 		DingTalk: configDingTalk{
 			Enabled:   cfg.DingTalk.Enabled,
@@ -1561,6 +1591,26 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if chat, ok := patch["chat"].(map[string]any); ok {
 		if v, ok := chat["group_max_speeches"].(float64); ok && v < 1 {
 			return fmt.Errorf("chat.group_max_speeches must be a positive integer")
+		}
+	}
+	if meeting, ok := patch["meeting"].(map[string]any); ok {
+		// Empty means "follow the transcript"; anything else must be a locale
+		// the prompt builder knows how to instruct the model in.
+		if v, ok := meeting["language"].(string); ok && v != "" && v != "zh" && v != "en" {
+			return fmt.Errorf("meeting.language must be one of: zh,en (or empty to follow the transcript)")
+		}
+		if v, ok := meeting["minutes_max_tokens"].(float64); ok {
+			n := int(v)
+			if n < model.MinMeetingMinutesMaxTokens || n > model.MaxMeetingMinutesMaxTokens {
+				return &configValueError{
+					MsgKey: "MeetingMinutesMaxTokensRange",
+					Field:  "meeting.minutes_max_tokens",
+					Data: map[string]any{
+						"Min": model.MinMeetingMinutesMaxTokens,
+						"Max": model.MaxMeetingMinutesMaxTokens,
+					},
+				}
+			}
 		}
 	}
 	tts, ok := patch["tts"].(map[string]any)
@@ -2385,6 +2435,24 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 				pid := int64(n)
 				cfg.AISummary.ProviderID = &pid
 			}
+		}
+	}
+
+	if meeting, ok := patch["meeting"].(map[string]any); ok {
+		if v, ok := meeting["auto_minutes"].(bool); ok {
+			cfg.Meeting.AutoMinutes = v
+		}
+		if v, ok := meeting["proofread"].(bool); ok {
+			cfg.Meeting.Proofread = v
+		}
+		if v, ok := meeting["language"].(string); ok {
+			cfg.Meeting.Language = v
+		}
+		if v, ok := meeting["file_excerpts"].(bool); ok {
+			cfg.Meeting.FileExcerpts = v
+		}
+		if v, ok := meeting["minutes_max_tokens"].(float64); ok {
+			cfg.Meeting.MinutesMaxTokens = int(v)
 		}
 	}
 

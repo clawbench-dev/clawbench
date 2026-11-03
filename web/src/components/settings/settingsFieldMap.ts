@@ -697,6 +697,29 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       getTestCategories: (values) => [{ category: 'stt', values }],
     }},
   ],
+  meeting: [
+    // AI 纪要. The model row reuses the shared ai_summary config on purpose:
+    // meeting minutes, proofreading, auto-title, voice summary, recommendations,
+    // session auto-title and /btw all share one model, so a meeting-specific
+    // picker would be a second source of truth for the same credential.
+    { type: 'item', spec: { labelKey: 'settings.items.summaryModelRow', descriptionKey: 'settings.items.summaryModelRowDescMeeting', key: 'summaryModel', type: 'summaryModel', source: 'local', showSummaryModelStatus: true, sectionHeader: 'settings.items.meetingSummarySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.meetingAutoMinutes', descriptionKey: 'settings.items.meetingAutoMinutesDesc', key: 'meeting.auto_minutes', type: 'switch', source: 'server', sectionHeader: 'settings.items.meetingSummarySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.meetingProofread', descriptionKey: 'settings.items.meetingProofreadDesc', key: 'meeting.proofread', type: 'switch', source: 'server', sectionHeader: 'settings.items.meetingSummarySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.meetingLanguage', descriptionKey: 'settings.items.meetingLanguageDesc', key: 'meeting.language', type: 'select', source: 'server', sectionHeader: 'settings.items.meetingSummarySection', options: [
+      { labelKey: 'settings.items.meetingLanguageAuto', value: '' },
+      { labelKey: 'settings.items.meetingLanguageZh', value: 'zh' },
+      { labelKey: 'settings.items.meetingLanguageEn', value: 'en' },
+    ]} },
+    { type: 'item', spec: { labelKey: 'settings.items.meetingFileExcerpts', descriptionKey: 'settings.items.meetingFileExcerptsDesc', key: 'meeting.file_excerpts', type: 'switch', source: 'server', sectionHeader: 'settings.items.meetingSummarySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.meetingMinutesMaxTokens', descriptionKey: 'settings.items.meetingMinutesMaxTokensDesc', key: 'meeting.minutes_max_tokens', type: 'number', source: 'server', min: 1000, max: 8000, step: 500, sectionHeader: 'settings.items.meetingSummarySection' } },
+    // New-meeting defaults. These are local (per device) because they seed the
+    // create form; the room-level value is still chosen per meeting and can be
+    // changed in the stage's 会议管理 tab.
+    { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultNotes', descriptionKey: 'settings.items.meetingDefaultNotesDesc', key: 'meetingDefaultNotes', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultShots', descriptionKey: 'settings.items.meetingDefaultShotsDesc', key: 'meetingDefaultShots', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultAllowTalk', descriptionKey: 'settings.items.meetingDefaultAllowTalkDesc', key: 'meetingDefaultAllowTalk', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultAllowMemberScreen', descriptionKey: 'settings.items.meetingDefaultAllowMemberScreenDesc', key: 'meetingDefaultAllowMemberScreen', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
+  ],
   rag: [
     { type: 'panel', config: {
       panelId: 'rag',

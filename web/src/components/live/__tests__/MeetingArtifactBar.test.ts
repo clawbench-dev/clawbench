@@ -129,3 +129,43 @@ describe('MeetingArtifactBar', () => {
     expect(w.emitted('regenerate')).toBeUndefined()
   })
 })
+
+// A budget failure is a settings problem, not a model problem: the bar must
+// say so and offer a way to fix it instead of a bare "generation failed".
+describe('MeetingArtifactBar budget failure', () => {
+  it('explains the output limit and offers a settings shortcut', async () => {
+    const { pendingSettingsCategory } = await import('@/composables/useSettingsNavigation')
+    pendingSettingsCategory.value = null
+
+    const w = mountBar({
+      state: {
+        hasContent: false,
+        jobStatus: 'failed',
+        errorCode: 'budget',
+        error: 'max_tokens=1200',
+        contentAt: 0,
+        stale: false,
+      },
+    })
+
+    expect(w.text()).toContain(enMessages.meeting.detail.artifact.budgetFailed)
+    const settings = w.find('[data-action="meeting-artifact-settings"]')
+    expect(settings.exists()).toBe(true)
+    await settings.trigger('click')
+    expect(pendingSettingsCategory.value).toBe('meeting')
+  })
+
+  it('does not offer settings for an I/O failure', () => {
+    const w = mountBar({
+      state: {
+        hasContent: false,
+        jobStatus: 'failed',
+        errorCode: 'io',
+        error: 'disk full',
+        contentAt: 0,
+        stale: false,
+      },
+    })
+    expect(w.find('[data-action="meeting-artifact-settings"]').exists()).toBe(false)
+  })
+})

@@ -375,6 +375,39 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.Summarize.AutoJunkRatio = 0.5
 	}
 
+	// --- Meeting (AI 听记 / minutes) ---
+	// Three bool zero-value traps: all default ON, so only an explicit false in
+	// config.yaml turns them off. The presence map is what distinguishes "the
+	// user opted out" from "the field did not exist before this release".
+	if !presence["meeting.auto_minutes"] {
+		cfg.Meeting.AutoMinutes = true
+	}
+	if !presence["meeting.proofread"] {
+		cfg.Meeting.Proofread = true
+	}
+	if !presence["meeting.file_excerpts"] {
+		cfg.Meeting.FileExcerpts = true
+	}
+	if cfg.Meeting.MinutesMaxTokens <= 0 {
+		cfg.Meeting.MinutesMaxTokens = DefaultMeetingMinutesMaxTokens
+	}
+	// Clamp hand-edited values instead of failing startup: an out-of-range cap
+	// is a bad preference, not a broken installation.
+	if cfg.Meeting.MinutesMaxTokens < MinMeetingMinutesMaxTokens {
+		cfg.Meeting.MinutesMaxTokens = MinMeetingMinutesMaxTokens
+	}
+	if cfg.Meeting.MinutesMaxTokens > MaxMeetingMinutesMaxTokens {
+		cfg.Meeting.MinutesMaxTokens = MaxMeetingMinutesMaxTokens
+	}
+	// Empty means "follow the transcript". An unknown value from a hand-edited
+	// file falls back to the same default rather than producing a prompt in a
+	// language the user did not choose.
+	switch cfg.Meeting.Language {
+	case "", "zh", "en":
+	default:
+		cfg.Meeting.Language = ""
+	}
+
 	// --- AISummary (shared AI model config) ---
 	// Legacy TTS summary config (summarize.tts_model / summarize.tts_api) was
 	// removed from the typed struct, so it no longer unmarshals and is simply

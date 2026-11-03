@@ -1564,3 +1564,65 @@ func TestApplyDefaults_UserIdentity(t *testing.T) {
 		t.Errorf("User.Profile rune length = %d, want the cap %d", got, MaxUserProfileRunes)
 	}
 }
+
+func TestApplyDefaults_MeetingDefaults(t *testing.T) {
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+
+	if !cfg.Meeting.AutoMinutes {
+		t.Error("meeting.auto_minutes must default to true")
+	}
+	if !cfg.Meeting.Proofread {
+		t.Error("meeting.proofread must default to true")
+	}
+	if !cfg.Meeting.FileExcerpts {
+		t.Error("meeting.file_excerpts must default to true")
+	}
+	if cfg.Meeting.MinutesMaxTokens != DefaultMeetingMinutesMaxTokens {
+		t.Errorf("meeting.minutes_max_tokens = %d, want %d", cfg.Meeting.MinutesMaxTokens, DefaultMeetingMinutesMaxTokens)
+	}
+	if cfg.Meeting.Language != "" {
+		t.Errorf("meeting.language = %q, want empty (follow the transcript)", cfg.Meeting.Language)
+	}
+}
+
+func TestApplyDefaults_MeetingExplicitFalseSurvives(t *testing.T) {
+	cfg := Config{}
+	presence := map[string]bool{
+		"meeting.auto_minutes":  true,
+		"meeting.proofread":     true,
+		"meeting.file_excerpts": true,
+	}
+	ApplyDefaults(&cfg, presence)
+
+	if cfg.Meeting.AutoMinutes || cfg.Meeting.Proofread || cfg.Meeting.FileExcerpts {
+		t.Error("an explicit false must not be overwritten by the default")
+	}
+}
+
+func TestApplyDefaults_MeetingClampsAndSanitizes(t *testing.T) {
+	for _, tc := range []struct {
+		in   int
+		want int
+	}{
+		{0, DefaultMeetingMinutesMaxTokens},
+		{-10, DefaultMeetingMinutesMaxTokens},
+		{50, MinMeetingMinutesMaxTokens},
+		{MaxMeetingMinutesMaxTokens + 1, MaxMeetingMinutesMaxTokens},
+		{4500, 4500},
+	} {
+		cfg := Config{}
+		cfg.Meeting.MinutesMaxTokens = tc.in
+		ApplyDefaults(&cfg, map[string]bool{"meeting.minutes_max_tokens": true})
+		if cfg.Meeting.MinutesMaxTokens != tc.want {
+			t.Errorf("MinutesMaxTokens(%d) = %d, want %d", tc.in, cfg.Meeting.MinutesMaxTokens, tc.want)
+		}
+	}
+
+	cfg := Config{}
+	cfg.Meeting.Language = "fr"
+	ApplyDefaults(&cfg, map[string]bool{"meeting.language": true})
+	if cfg.Meeting.Language != "" {
+		t.Errorf("unknown meeting.language = %q, want empty", cfg.Meeting.Language)
+	}
+}

@@ -647,6 +647,10 @@ type LiveNoteMinutesContext struct {
 	Shots   []LiveNoteShot
 	Prev    LiveNote
 	HasPrev bool
+	// SkipFileExcerpts keeps the file timeline but drops the excerpts of the
+	// files' contents. It mirrors meeting.file_excerpts: the timeline says what
+	// was on screen, the excerpt sends project file text to the model.
+	SkipFileExcerpts bool
 }
 
 // PromptSection renders the whole block, or "" when the meeting has nothing
@@ -659,7 +663,7 @@ func (c LiveNoteMinutesContext) PromptSection() string {
 	if s := LiveNoteChatPromptSection(c.Chat); s != "" {
 		sections = append(sections, s)
 	}
-	timeline := LiveNoteFilesPromptSection(c.Files, c.Info.startTime(), c.Info.ProjectPath)
+	timeline := LiveNoteFilesPromptSectionWithExcerpts(c.Files, c.Info.startTime(), c.Info.ProjectPath, !c.SkipFileExcerpts)
 	if s := LiveNoteScreenPromptSection(c.Screens, c.Info.startTime()); s != "" {
 		if timeline != "" {
 			timeline += "\n\n"

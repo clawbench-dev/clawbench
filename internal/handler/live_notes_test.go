@@ -761,6 +761,15 @@ func withSummaryModel(t *testing.T, baseURL string) {
 	model.ConfigInstance = model.Config{}
 	model.ConfigInstance.AISummary.API.BaseURL = baseURL
 	model.ConfigInstance.AISummary.Format = "openai"
+	// ApplyDefaults normally fills these in; tests that replace the whole
+	// ConfigInstance must mirror the production defaults or the artifact chain
+	// silently skips the proofread step.
+	model.ConfigInstance.Meeting = model.MeetingConfig{
+		AutoMinutes:      true,
+		Proofread:        true,
+		FileExcerpts:     true,
+		MinutesMaxTokens: model.DefaultMeetingMinutesMaxTokens,
+	}
 }
 
 func TestServeLiveShareNotesMinutes_RejectsWrongMethod(t *testing.T) {
@@ -1139,6 +1148,59 @@ func TestServeLiveShareNotesMinutes_ProofreadFailureFallsBackToRaw(t *testing.T)
 
 	_, err = os.Stat(filepath.Join(service.MeetingDirPath(project, note.DirName), "transcript-revised.md"))
 	assert.True(t, os.IsNotExist(err), "a failed proofread writes no revised file")
+}
+
+// meeting.proofread = false removes the proofread pass entirely: the minutes
+// must be built from the raw transcript, with no "待校对转写" request sent.
+func TestServeLiveShareNotesMinutes_SkipsProofreadWhenDisabled(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(body))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要"}}]}`))
+	}))
+	defer srv.Close()
+	withSummaryModel(t, srv.URL)
+	model.ConfigInstance.Meeting.Proofread = false
+
+	project := t.TempDir()
+	room, err := liveRegistry.Create(projPath(project), "会议")
+	require.NoError(t, err)
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	_, err = service.AppendLiveNoteSegment(context.Background(), room.Token(), pid, service.LiveNoteSegment{
+		Channel: "mic", Speaker: "我", StartedAt: 1_700_000_000_000, Text: "内容",
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	ServeLiveShareNotesMinutes(w, liveReq(t, http.MethodPost, "/api/live-share/notes/minutes", project,
+		map[string]any{"token": room.Token()}))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	require.Eventually(t, func() bool {
+		note, ok, err := service.GetLiveNote(room.Token())
+		return err == nil && ok && note.Status == service.LiveNotesStatusReady
+	}, 10*time.Second, 20*time.Millisecond, "minutes must be produced without proofreading")
+
+	note, _, err := service.GetLiveNote(room.Token())
+	require.NoError(t, err)
+	assert.NotEqual(t, service.LiveNotesStatusReady, note.ReviseStatus)
+	assert.Contains(t, note.Minutes, "## 概要")
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, body := range bodies {
+		assert.NotContains(t, body, "待校对转写", "the proofread pass must not run")
+	}
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -2802,4 +2864,12 @@ func seedLiveNoteSegments(t *testing.T, token string, projectID int64, segments 
 		_, err := service.AppendLiveNoteSegment(context.Background(), token, projectID, seg)
 		require.NoError(t, err)
 	}
+}
+
+// A budget failure must be classified as its own code, not "model": the SPA
+// points at 会议设置 → 纪要输出上限 for this one, while "model" points at the
+// provider. Getting this wrong sends the user to the wrong settings page.
+func TestArtifactErrorCode_MapsBudget(t *testing.T) {
+	err := errors.Join(service.ErrLiveNotesBudget, errors.New("max_tokens=1200"))
+	assert.Equal(t, service.ArtifactErrBudget, artifactErrorCode(service.ArtifactMinutes, err))
 }

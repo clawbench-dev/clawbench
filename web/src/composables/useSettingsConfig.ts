@@ -507,6 +507,14 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   // name may point at a file another device deleted; the app self-heals on a
   // 404 (see App.vue onWallpaperError) rather than trusting it forever.
   wallpaperLocalSelected: '',
+  // New-meeting defaults. These seed the create form on THIS device; the
+  // per-meeting value is still chosen on the create page and in the stage's
+  // 会议管理 tab. Kept local because the answer depends on the machine (a phone
+  // and a desktop should not have to share "keep key frames").
+  meetingDefaultNotes: true,
+  meetingDefaultShots: true,
+  meetingDefaultAllowTalk: true,
+  meetingDefaultAllowMemberScreen: true,
 }
 
 // Build reactive local config from legacy localStorage + defaults
@@ -641,6 +649,13 @@ const serverDefaults: Record<string, unknown> = {
   'summarize.auto_junk_ratio': 0.5,
   'ai_summary.model': '',
   'ai_summary.provider_id': 0,
+  // Mirrors model.ApplyDefaults: the three switches default ON, the language
+  // follows the transcript, and the cap matches the backend constant.
+  'meeting.auto_minutes': true,
+  'meeting.proofread': true,
+  'meeting.language': '',
+  'meeting.file_excerpts': true,
+  'meeting.minutes_max_tokens': 3000,
   'port_forward.allowed_ports': '1024-65535',
   'push_mode': 'native',
   'file_search.display_limit': 100,

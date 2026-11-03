@@ -1242,6 +1242,12 @@ export function useLiveShare() {
      */
     shots?: boolean
     /**
+     * Ask for minutes when the meeting ends. Omitted means on (the historical
+     * behaviour); the audio is merged either way, so turning this off only
+     * skips the automatic summary request.
+     */
+    autoMinutes?: boolean
+    /**
      * The two audience permissions the room STARTS with. They are room-level
      * switches (not local capture choices), so they travel with the create
      * request instead of a follow-up control frame: viewers may join before the
@@ -1428,6 +1434,7 @@ export function useLiveShare() {
           micStream,
           title: title.value,
           label: opts.notesLabel,
+          autoMinutes: opts.autoMinutes,
         })
       } else if (opts.notes) {
         appLog.w(TAG, 'MediaRecorder unavailable: starting the meeting without notes')

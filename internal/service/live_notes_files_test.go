@@ -388,3 +388,21 @@ func TestArchiveLiveNoteFiles_SuffixesCollidingNames(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "one", string(first), "the first copy is never overwritten")
 }
+
+// meeting.file_excerpts=false keeps the timeline (what was on screen) but must
+// not send the file's text to the model.
+func TestLiveNoteFilesPromptSectionWithExcerpts_CanOmitContents(t *testing.T) {
+	project := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(project, "a.md"), []byte("SECRET_TOKEN_123"), 0o644))
+
+	started := time.Date(2026, 10, 30, 14, 30, 0, 0, time.Local)
+	files := []LiveNoteFile{{Owner: "host", Path: "a.md", OpenedAt: started.UnixMilli()}}
+
+	withExcerpt := LiveNoteFilesPromptSectionWithExcerpts(files, started, project, true)
+	assert.Contains(t, withExcerpt, "SECRET_TOKEN_123")
+
+	without := LiveNoteFilesPromptSectionWithExcerpts(files, started, project, false)
+	assert.Contains(t, without, "## 会议期间打开的文件")
+	assert.Contains(t, without, "a.md", "the timeline must survive")
+	assert.NotContains(t, without, "SECRET_TOKEN_123", "the contents must not")
+}

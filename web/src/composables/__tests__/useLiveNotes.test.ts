@@ -270,6 +270,23 @@ describe('useLiveNotes — finishing', () => {
     expect(notes.artifacts.value.audioMeeting).toBe('/p/.clawbench/notes/x/audio/meeting.webm')
   })
 
+  it('merges the recording but skips the minutes when auto-generation is off', async () => {
+    const notes = useLiveNotes()
+    notes.start({ token: 'tok', ctx, micStream: null, autoMinutes: false })
+    notes.segments.value = [{ id: 1, channel: 'mic', speaker: '我', startedAt: 1, durationMs: 1, text: '内容' }]
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ok: true, artifacts: { dir: '/p/.clawbench/notes/x', audioMeeting: '/p/.clawbench/notes/x/audio/meeting.webm' } }),
+    )
+
+    await notes.finishUploads()
+
+    // The merge still has to happen: it is the source for "重新识别转写".
+    // Only the automatic summary request is skipped.
+    const urls = fetchMock.mock.calls.map(([url]) => String(url))
+    expect(urls).toEqual(['/api/live-share/notes/audio/merge'])
+    expect(notes.minutesPhase.value).toBe('idle')
+  })
+
   it('drains without merging OR summarizing when the recording is only paused', async () => {
     const notes = useLiveNotes()
     notes.start({ token: 'tok', ctx, micStream: null })

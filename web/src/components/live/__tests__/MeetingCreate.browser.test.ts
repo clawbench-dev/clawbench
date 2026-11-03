@@ -84,11 +84,18 @@ vi.mock('@/utils/remoteControlSupport', () => ({
 // identity field, and writes an edit back through the settings API.
 const settingsApi = vi.hoisted(() => ({
   serverConfig: { value: {} as Record<string, unknown> },
+  localConfig: {
+    meetingDefaultNotes: true,
+    meetingDefaultShots: true,
+    meetingDefaultAllowTalk: true,
+    meetingDefaultAllowMemberScreen: true,
+  } as Record<string, unknown>,
   setServerValue: vi.fn(),
 }))
 vi.mock('@/composables/useSettingsConfig', () => ({
   useSettingsConfig: () => ({
     serverConfig: settingsApi.serverConfig,
+    localConfig: settingsApi.localConfig,
     setServerValue: settingsApi.setServerValue,
   }),
 }))

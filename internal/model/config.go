@@ -207,6 +207,7 @@ type Config struct {
 	STT         STTConfig         `yaml:"stt"`          // Speech-to-text (voice input) configuration
 	AISummary   AISummaryConfig   `yaml:"ai_summary"`   // Shared AI model configuration (TTS summary + next-step recommendation)
 	Summarize   SummarizeConfig   `yaml:"summarize"`    // Voice reading summary: only the summary-type selection (uses AISummary for "api")
+	Meeting     MeetingConfig     `yaml:"meeting"`      // AI 听记 / meeting minutes defaults and output limits
 	PortForward PortForwardConfig `yaml:"port_forward"` // SSH tunnel server + port forwarding configuration
 	RAG         RAGConfig         `yaml:"rag"`          // RAG history memory configuration
 	Terminal    TerminalConfig    `yaml:"terminal"`     // Interactive web terminal configuration
@@ -499,6 +500,44 @@ type SummarizeConfig struct {
 	// backend routes a message to the LLM instead of speaking the cleaned text.
 	// See internal/summarize.AutoJunkRatio. Default 0.5.
 	AutoJunkRatio float64 `yaml:"auto_junk_ratio"`
+}
+
+// Meeting minutes output limits. Exported so the settings PATCH validator and
+// the frontend's number field agree on the same range.
+const (
+	DefaultMeetingMinutesMaxTokens = 3000
+	MinMeetingMinutesMaxTokens     = 1000
+	MaxMeetingMinutesMaxTokens     = 8000
+)
+
+// MeetingConfig holds the defaults and output limits for AI meeting notes.
+//
+// It deliberately has NO model or endpoint fields: meeting minutes reuse the
+// shared AISummaryConfig, so rotating a provider key happens once for every
+// feature that summarizes text. Adding a meeting-specific model here would
+// create a second source of truth for the same credential.
+type MeetingConfig struct {
+	// AutoMinutes asks the publisher's client to generate minutes when the
+	// meeting ends. The trigger is client-side (the server only archives the
+	// meeting); this switch is read by the client, not by a server job.
+	AutoMinutes bool `yaml:"auto_minutes"`
+	// Proofread produces a corrected transcript before the minutes. Turning it
+	// off saves one model pass per meeting; the minutes then use the raw
+	// transcript. Existing proofread artifacts are still preferred when present.
+	Proofread bool `yaml:"proofread"`
+	// Language is the minutes output language: "" follows the transcript,
+	// "zh" forces Simplified Chinese, "en" forces English. It does not affect
+	// the transcript itself (that is stt.language).
+	Language string `yaml:"language"`
+	// FileExcerpts sends short excerpts of the files opened during the meeting
+	// to the minutes model. This is the only setting that sends project file
+	// CONTENT off the machine; the file timeline itself is still included when
+	// it is off.
+	FileExcerpts bool `yaml:"file_excerpts"`
+	// MinutesMaxTokens caps the final minutes output. The map-reduce chunk
+	// extraction has its own fixed budget: this only controls how long the
+	// final document may be, and it is a cap rather than a target.
+	MinutesMaxTokens int `yaml:"minutes_max_tokens"`
 }
 
 // RAGConfig holds configuration for the RAG history memory system.

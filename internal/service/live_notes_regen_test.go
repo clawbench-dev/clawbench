@@ -230,3 +230,13 @@ func TestPlanForInitialJob(t *testing.T) {
 		{ArtifactMinutes, RegenModeModel, RegenReasonTarget},
 	}, steps)
 }
+
+func TestPlanForInitialJobWithoutProofread(t *testing.T) {
+	steps := PlanForInitialJobWithoutProofread()
+	assert.Equal(t, []RegenStep{
+		{ArtifactTranscript, RegenModeRender, RegenReasonTarget},
+		{ArtifactMinutes, RegenModeModel, RegenReasonTarget},
+	}, steps)
+	assert.NotContains(t, FormatPlanKinds(steps), string(ArtifactRevised),
+		"the proofread switch must remove the model pass, not just its result")
+}

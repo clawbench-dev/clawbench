@@ -19,6 +19,7 @@ const i18n = createI18n({
           terminal: '终端',
           tts: 'TTS语音',
           stt: '语音识别',
+          meeting: '会议',
           rag: '会话搜索',
           portForward: '端口映射',
           notification: '消息通知',
@@ -50,6 +51,7 @@ const globalStubs = {
   'lucide-terminal': true,
   'lucide-volume2': true,
   'lucide-mic': true,
+  'lucide-video': true,
   'lucide-brain': true,
   'lucide-arrow-left-right': true,
   'lucide-bell': true,
@@ -65,11 +67,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 20 category rows', () => {
+  it('renders 21 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(20)
+    expect(rows.length).toBe(21)
   })
 
   it('renders category labels', () => {
@@ -109,9 +111,9 @@ describe('SettingsIndex', () => {
     // AI 与对话 gained 身份 (8 → 9): the user's nickname and self-description
     // are agent context, not chat behavior, so they lead the group.
     // AI 摘要 was removed (9 → 8) once the model is picked where it is
-    // referenced.
-    expect(perCard).toEqual([3, 9, 3, 3, 2])
-    expect(perCard.reduce((a, b) => a + b, 0)).toBe(20)
+    // referenced; 会议 (10) brings the meeting defaults next to STT.
+    expect(perCard).toEqual([3, 10, 3, 3, 2])
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(21)
   })
 
   it('emits navigate with categoryId when row clicked', async () => {
@@ -129,7 +131,7 @@ describe('SettingsIndex', () => {
 
     const expectedIds = [
       'project', 'appearance', 'files',
-      'identity', 'chat', 'agents', 'providers', 'skills', 'mcp', 'rag', 'tts', 'stt',
+      'identity', 'chat', 'agents', 'providers', 'skills', 'mcp', 'rag', 'tts', 'stt', 'meeting',
       'terminal', 'portForward', 'forgeIntegration',
       'notification', 'usageMeter', 'security',
       'debug', 'about',

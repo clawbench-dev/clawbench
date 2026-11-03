@@ -56,6 +56,36 @@ describe('settingsFieldMap', () => {
     expect(chatKeys).not.toContain('chat.user_nickname')
   })
 
+  // The meeting panel is the first place the shared summary model is described
+  // as a MEETING setting. Keep the row list explicit: dropping one silently
+  // removes a documented knob, and reusing the generic description would hide
+  // that changing it also changes voice summary / recommendations.
+  it('meeting category owns the AI minutes defaults and the shared model row', () => {
+    const meeting = categoryItems['meeting']
+    expect(meeting).toBeDefined()
+    const keys = meeting
+      .filter(e => e.type === 'item')
+      .map(e => (e as { spec: { key: string } }).spec.key)
+
+    expect(keys).toEqual([
+      'summaryModel',
+      'meeting.auto_minutes',
+      'meeting.proofread',
+      'meeting.language',
+      'meeting.file_excerpts',
+      'meeting.minutes_max_tokens',
+      'meetingDefaultNotes',
+      'meetingDefaultShots',
+      'meetingDefaultAllowTalk',
+      'meetingDefaultAllowMemberScreen',
+    ])
+
+    const model = meeting.find(e => e.type === 'item' && e.spec.key === 'summaryModel')
+    if (model?.type !== 'item') throw new Error('expected the shared summary model row')
+    expect(model.spec.descriptionKey).toBe('settings.items.summaryModelRowDescMeeting')
+    expect(model.spec.showSummaryModelStatus).toBe(true)
+  })
+
   it('does not map local-only settings', () => {
     const map = getServerFieldToLabelKey()
 

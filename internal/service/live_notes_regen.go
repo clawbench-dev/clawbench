@@ -302,6 +302,17 @@ func PlanForInitialJob() []RegenStep {
 	}
 }
 
+// PlanForInitialJobWithoutProofread is PlanForInitialJob with the proofread
+// step removed (meeting.proofread = false). The minutes step already falls back
+// to the raw transcript when no revised draft exists, so the chain still
+// produces a complete document with one fewer model pass.
+func PlanForInitialJobWithoutProofread() []RegenStep {
+	return []RegenStep{
+		{Kind: ArtifactTranscript, Mode: RegenModeRender, Reason: RegenReasonTarget},
+		{Kind: ArtifactMinutes, Mode: RegenModeModel, Reason: RegenReasonTarget},
+	}
+}
+
 // FormatPlanKinds is a small helper for logs and error messages.
 func FormatPlanKinds(steps []RegenStep) string {
 	out := ""

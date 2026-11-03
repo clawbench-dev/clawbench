@@ -930,3 +930,17 @@ func TestWriteConfigYAML_DropsLegacyFallbackNickname(t *testing.T) {
 	assert.Nil(t, getNestedValue(raw, "chat.user_nickname"),
 		"the legacy key must still be removed")
 }
+
+func TestPersist_MeetingConfig(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+
+	cfg := patchAndReadConfig(t, `{"meeting":{"auto_minutes":false,"proofread":false,"language":"en","file_excerpts":false,"minutes_max_tokens":4500}}`)
+	assert.Equal(t, false, getNestedValue(cfg, "meeting.auto_minutes"))
+	assert.Equal(t, false, getNestedValue(cfg, "meeting.proofread"))
+	assert.Equal(t, "en", getNestedValue(cfg, "meeting.language"))
+	assert.Equal(t, false, getNestedValue(cfg, "meeting.file_excerpts"))
+	assert.Equal(t, 4500, getNestedValue(cfg, "meeting.minutes_max_tokens"))
+}

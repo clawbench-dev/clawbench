@@ -111,6 +111,14 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null
 /** The upload drain started by a pause, so a later finish can wait for it. */
 let draining: Promise<void> | null = null
 let labelFor: (channel: string) => string = (channel) => channel
+/**
+ * Whether the end of the meeting should request minutes automatically.
+ *
+ * Server setting (meeting.auto_minutes), passed in at start because the
+ * trigger is client-side. The audio is merged regardless: turning this off must
+ * not cost the user the recording needed by "重新识别转写".
+ */
+let autoMinutesEnabled = true
 
 /**
  * Builds the multipart body every segment upload shares.
@@ -192,6 +200,7 @@ export function useLiveNotes() {
     title?: string
     label?: (channel: string) => string
     resume?: boolean
+    autoMinutes?: boolean
   }): void {
     // No recorder on this engine: leave the module idle and say so once. The
     // meeting continues (picture / microphone / chat), it just has no 听记.
@@ -208,6 +217,7 @@ export function useLiveNotes() {
       reset()
     }
     sessionToken = opts.token
+    autoMinutesEnabled = opts.autoMinutes !== false
     if (opts.title !== undefined) sessionTitle = opts.title
     if (opts.label) labelFor = opts.label
     capture = new LiveNotesCapture(opts.ctx, uploadSegment(opts.token), {
@@ -348,7 +358,7 @@ export function useLiveNotes() {
     const gen = sessionGen
     await mergeAudio()
     if (gen !== sessionGen) return
-    if (segments.value.length > 0) await generateMinutes()
+    if (autoMinutesEnabled && segments.value.length > 0) await generateMinutes()
   }
 
   /**
@@ -514,6 +524,7 @@ export function useLiveNotes() {
     draining = null
     viewerStreams.clear()
     labelFor = (channel) => channel
+    autoMinutesEnabled = true
     sessionToken = ''
     sessionTitle = ''
     phase.value = 'idle'

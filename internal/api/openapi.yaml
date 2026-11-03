@@ -670,6 +670,14 @@ paths:
         含义为「轮到用户发言前，智能体之间最多发言多少次」；主持人模式与自由模式
         语义一致，只计**成员**发言（主持人的路由/汇总回合不计）。达到上限即停止
         AI 讨论并写一条系统消息。`PATCH` 时须为正整数。
+
+        `meeting` 段是会议 AI 纪要的全局默认值：`auto_minutes`（会议结束后由主持人
+        客户端自动生成纪要，默认 `true`）、`proofread`（生成前先校对转写，默认
+        `true`）、`language`（`""` 跟随转写 / `zh` / `en`）、`file_excerpts`
+        （是否把会议中打开的文件内容摘录发给纪要模型，默认 `true`）、
+        `minutes_max_tokens`（最终纪要输出上限，默认 `3000`，范围 `1000`–`8000`）。
+        它**不含模型字段**：纪要复用 `ai_summary`，改一次模型会同时影响语音摘要、
+        推荐回复、自动命名等所有摘要功能。
         `mcp.servers` 是全局 MCP 服务列表，供所有 ACP 传输的智能体使用（CLI
         传输没有该参数，读各自的配置文件，因此不受影响）。`env` / `headers`
         **明文返回**，与 `stt` / `rag` / `tts` 的 `api_key` 一致。
@@ -711,6 +719,11 @@ paths:
         `user.nickname` 非法值返回 400，与智能体同名返回 **409**
         （`msgKey=UserNicknameTaken`）；`user.profile` 超 4000 字符返回 400
         （`msgKey=InvalidUserProfile`）。
+
+        `meeting.language` 只接受 `""` / `zh` / `en`；`meeting.minutes_max_tokens`
+        超出 `1000`–`8000` 返回 400（`msgKey=MeetingMinutesMaxTokensRange`，
+        `detail.field=meeting.minutes_max_tokens`）。`meeting.*` 全部是热更新：
+        生成时读取 `ConfigInstance`，不需要重启。
 
         `tts.openai.stream_mode`（OpenAI 兼容 TTS 的请求方式）只接受
         `auto` / `sse` / `audio`，其他值返回 400

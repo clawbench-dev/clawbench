@@ -223,6 +223,12 @@ const liveNotesHostID = "host"
 // no transcribed text.
 var ErrLiveNotesEmpty = errors.New("live notes: transcript is empty")
 
+// ErrLiveNotesBudget is returned when the minutes hit the configured output
+// limit. It is deliberately distinct from a model failure: the transcript is
+// fine, and the fix is to raise 会议设置 → 纪要输出上限 (or shorten the meeting),
+// not to change the model.
+var ErrLiveNotesBudget = errors.New("live notes: minutes exceeded the output limit")
+
 // LiveNoteSegment is one transcribed audio segment from one channel.
 type LiveNoteSegment struct {
 	ID         int64  `json:"id"`
@@ -2484,6 +2490,14 @@ const liveNotesChunkPrompt = `你是一名会议记录员。下面是一场长�
 // "the team decided to refactor main.go" from the mere fact that main.go was
 // open; the block says explicitly that these are things people LOOKED AT.
 func LiveNoteFilesPromptSection(files []LiveNoteFile, startedAt time.Time, projectPath string) string {
+	return LiveNoteFilesPromptSectionWithExcerpts(files, startedAt, projectPath, true)
+}
+
+// LiveNoteFilesPromptSectionWithExcerpts is LiveNoteFilesPromptSection with the
+// file CONTENT excerpt switched off. The timeline stays either way: the setting
+// is about sending project file contents to the model, not about hiding which
+// documents were on screen.
+func LiveNoteFilesPromptSectionWithExcerpts(files []LiveNoteFile, startedAt time.Time, projectPath string, includeExcerpts bool) string {
 	if len(files) == 0 || startedAt.IsZero() {
 		return ""
 	}
@@ -2523,9 +2537,11 @@ func LiveNoteFilesPromptSection(files []LiveNoteFile, startedAt time.Time, proje
 	// The timeline alone only says which documents were on screen. The excerpt
 	// is what lets the summary use their vocabulary and subject — which is the
 	// whole reason the meeting recorded the files.
-	if excerpts := LiveNoteFileExcerpts(projectPath, files); excerpts != "" {
-		b.WriteString("\n")
-		b.WriteString(excerpts)
+	if includeExcerpts {
+		if excerpts := LiveNoteFileExcerpts(projectPath, files); excerpts != "" {
+			b.WriteString("\n")
+			b.WriteString(excerpts)
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -2652,6 +2668,35 @@ func liveNoteExcerptText(data []byte, maxRunes int) string {
 	return strings.TrimSpace(string(runes))
 }
 
+// LiveNotesMinutesOptions tunes one minutes pass.
+//
+// It intentionally does not carry the model or endpoint: those come from the
+// shared AISummaryConfig so every feature rotates its key in one place.
+type LiveNotesMinutesOptions struct {
+	// Language is "zh" / "en" to force the output language, or "" to follow
+	// the transcript. It applies to the FINAL pass only; chunk extraction
+	// stays in the transcript's language so the intermediate notes do not
+	// drift from the source.
+	Language string
+	// MaxTokens caps the final minutes. <= 0 uses the default. The cap is a
+	// limit, not a target: the model may stop earlier.
+	MaxTokens int
+}
+
+// liveNotesLanguageDirective is appended AFTER the base prompt (and after the
+// speaker clarification) so it overrides rule 5's "use the transcript's
+// language" without rewriting the prompt for every locale.
+func liveNotesLanguageDirective(lang string) string {
+	switch lang {
+	case "zh":
+		return "输出语言：简体中文。即使转写主要是英文，也用简体中文写纪要。"
+	case "en":
+		return "Output language: English. Write the minutes in English even if the transcript is mostly Chinese."
+	default:
+		return ""
+	}
+}
+
 // GenerateLiveNotesMinutes turns a transcript into Markdown minutes.
 //
 // It takes the transcript as text (not segments) because the caller decides
@@ -2672,6 +2717,18 @@ func liveNoteExcerptText(data []byte, maxRunes int) string {
 // silently truncated by the provider.
 func GenerateLiveNotesMinutes(
 	ctx context.Context, title, transcript, contextSection string, self LiveNotesSpeaker,
+	progress ...func(done, total int, phase string),
+) (string, error) {
+	return GenerateLiveNotesMinutesWithOptions(
+		ctx, title, transcript, contextSection, self, LiveNotesMinutesOptions{}, progress...,
+	)
+}
+
+// GenerateLiveNotesMinutesWithOptions is GenerateLiveNotesMinutes plus the two
+// user-facing knobs: output language and output cap.
+func GenerateLiveNotesMinutesWithOptions(
+	ctx context.Context, title, transcript, contextSection string, self LiveNotesSpeaker,
+	opts LiveNotesMinutesOptions,
 	progress ...func(done, total int, phase string),
 ) (string, error) {
 	if strings.TrimSpace(transcript) == "" {
@@ -2714,8 +2771,25 @@ func GenerateLiveNotesMinutes(
 
 	report(0, 1, "final")
 	question := liveNotesMinutesQuestion(title)
-	minutes, err := summarize.AskAboutContext(ctx, summarizer, self.withPrompt(liveNotesMinutesPrompt), contextBlock, question, 3000)
+	maxTokens := opts.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = model.DefaultMeetingMinutesMaxTokens
+	}
+	systemPrompt := self.withPrompt(liveNotesMinutesPrompt)
+	if directive := liveNotesLanguageDirective(opts.Language); directive != "" {
+		systemPrompt += "\n\n" + directive
+	}
+	// Lossless rather than AskAboutContext: a user-configurable cap that
+	// silently returns half a document is worse than an explicit failure. The
+	// transcript and audio are intact, so raising the limit and regenerating
+	// is a complete recovery.
+	minutes, err := summarize.AskAboutContextLossless(
+		ctx, summarizer, systemPrompt, contextBlock, question, maxTokens,
+	)
 	if err != nil {
+		if errors.Is(err, summarize.ErrOutputTruncated) {
+			return "", fmt.Errorf("%w (max_tokens=%d): %v", ErrLiveNotesBudget, maxTokens, err)
+		}
 		return "", fmt.Errorf("live notes: minutes: %w", err)
 	}
 	return strings.TrimSpace(minutes), nil

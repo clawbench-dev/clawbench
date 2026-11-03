@@ -37,6 +37,18 @@ export function useMeetingOptions() {
   return { micChoice, cameraChoice, notes, shots }
 }
 
+/**
+ * Seed the create form from the per-device defaults (设置 → 会议).
+ *
+ * Called when a NEW create flow opens, not on every mount of a component that
+ * can be re-entered mid-meeting: resetting there would overwrite a choice the
+ * user already made for the meeting in progress.
+ */
+export function applyMeetingDefaults(defaults: { notes?: boolean; shots?: boolean }): void {
+  if (typeof defaults.notes === 'boolean') notes.value = defaults.notes
+  if (typeof defaults.shots === 'boolean') shots.value = defaults.shots
+}
+
 /** @internal Test-only: restore the defaults. */
 export function _resetMeetingOptions(): void {
   micChoice.value = DEFAULT_DEVICE

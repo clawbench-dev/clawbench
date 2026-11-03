@@ -270,8 +270,9 @@ import { ArrowLeft, ImageIcon, Mic, MonitorUp, NotebookPen, Radio } from 'lucide
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
 import { useToast } from '@/composables/useToast'
-import { DEFAULT_DEVICE, useMeetingOptions } from '@/composables/useMeetingOptions'
+import { DEFAULT_DEVICE, applyMeetingDefaults, useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useMeetingNickname } from '@/composables/useMeetingNickname'
+import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { notesRecordingSupported } from '@/composables/liveNotes'
 import { useLiveSFUConfig } from '@/composables/useLiveSFUConfig'
 import { MEETING_NICK_MAX } from '@/share/meetingNickname'
@@ -296,6 +297,13 @@ const { t } = useI18n()
 const toast = useToast()
 const share = useLiveShare()
 const { micChoice, cameraChoice, notes, shots } = useMeetingOptions()
+const { localConfig, serverConfig } = useSettingsConfig()
+// A new create flow starts from the per-device defaults (设置 → 会议). The stage
+// never re-applies them, so a choice made during the meeting survives.
+applyMeetingDefaults({
+  notes: localConfig.meetingDefaultNotes !== false,
+  shots: localConfig.meetingDefaultShots !== false,
+})
 const { nickname, persist } = useMeetingNickname()
 /**
  * 听记 needs `MediaRecorder`, which not every engine has. The switch is shown
@@ -318,15 +326,28 @@ const starting = ref(false)
 const cameraAvailable = ref(true)
 
 /**
- * The two audience permissions, both ON by default.
+ * The two audience permissions, seeded from the per-device defaults (both ON
+ * out of the box).
  *
  * They are room-level switches rather than local capture choices, so they are
  * not part of useMeetingOptions: the running meeting reads them back from the
  * room, and the create response is what seeds that state. Turning one off here
  * is the same decision as turning it off in the 会议管理 tab, only earlier.
  */
-const allowTalk = ref(true)
-const allowMemberScreen = ref(true)
+const allowTalk = ref(localConfig.meetingDefaultAllowTalk !== false)
+const allowMemberScreen = ref(localConfig.meetingDefaultAllowMemberScreen !== false)
+
+/**
+ * Whether the client should ask for minutes when the meeting ends.
+ *
+ * Server config, read at start time: the trigger is client-side, so the
+ * server's job is only to expose the preference. The stage still shows the
+ * "生成" action, which is the manual path when this is off.
+ */
+const autoMinutes = computed(() => {
+  const meeting = serverConfig.value.meeting as { auto_minutes?: boolean } | undefined
+  return meeting?.auto_minutes !== false
+})
 
 /**
  * 中继服务: a per-meeting choice backed by installation-wide credentials.
@@ -548,6 +569,9 @@ async function start(): Promise<void> {
       cameraDeviceId: cameraOn.value ? cameraChoice.value : '',
       notes: notes.value,
       shots: shots.value,
+      // When off, the audio is still merged on finish (so "重新识别转写" keeps
+      // its source); only the automatic minutes request is skipped.
+      autoMinutes: autoMinutes.value,
       allowTalk: allowTalk.value,
       allowMemberScreen: allowMemberScreen.value,
       // Fixed for the life of the room: the topology cannot change mid-meeting.

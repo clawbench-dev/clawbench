@@ -25,6 +25,15 @@
     </div>
 
     <button
+      v-if="showSettingsAction && !running && !waiting"
+      class="meeting-text-btn"
+      type="button"
+      data-action="meeting-artifact-settings"
+      @click="openSettings"
+    >
+      {{ t('meeting.detail.artifact.goSettings') }}
+    </button>
+    <button
       v-if="running || waiting"
       class="meeting-text-btn"
       type="button"
@@ -60,9 +69,10 @@
  * that tab's own product (纪要 / 转写 / 校对). Tabs without an artifact (资源 /
  * 聊天) do not render it at all.
  */
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import { setPendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import '@/assets/meeting-text-btn.css'
 import type {
   MeetingArtifactKind,
@@ -82,6 +92,7 @@ const props = defineProps<{
 const emit = defineEmits<{ regenerate: []; cancel: [] }>()
 
 const { t, locale } = useI18n()
+const switchTab = inject<(tab: string) => void>('switchTab')
 
 const label = computed(() => t(`meeting.detail.tab${props.kind === 'minutes' ? 'Minutes' : props.kind === 'revised' ? 'Revised' : 'Transcript'}`))
 
@@ -135,6 +146,8 @@ const errorText = computed(() => {
       return t('meeting.detail.artifact.timeout')
     case 'io':
       return t('meeting.detail.artifact.ioFailed', { error })
+    case 'budget':
+      return t('meeting.detail.artifact.budgetFailed')
     case 'model':
     case 'no_source':
       return t('meeting.detail.artifact.failedWith', { error })
@@ -142,6 +155,27 @@ const errorText = computed(() => {
       return error || t('meeting.detail.artifact.failed')
   }
 })
+
+/**
+ * Where "去设置" should land for a failure the settings page can actually fix.
+ *
+ * STT failures belong to 语音识别; model/budget failures belong to 会议. Other
+ * codes (io/audio/timeout/interrupted) are not configuration problems, so the
+ * bar offers no misleading link.
+ */
+const settingsCategory = computed(() => {
+  if (props.state.errorCode === 'stt') return 'stt'
+  if (props.state.errorCode === 'model' || props.state.errorCode === 'budget') return 'meeting'
+  return ''
+})
+const showSettingsAction = computed(() => settingsCategory.value !== '')
+
+function openSettings() {
+  const category = settingsCategory.value
+  if (!category) return
+  setPendingSettingsCategory(category)
+  switchTab?.('settings')
+}
 
 const actionLabel = computed(() => {
   if (props.blocked) return t('meeting.detail.artifact.generate')

@@ -2836,3 +2836,53 @@ func TestLiveNotesFileSlug_DropsControlCharacters(t *testing.T) {
 	assert.Equal(t, "季度 规划", liveNotesFileSlug("季度\x01 规划"))
 	assert.Equal(t, "a b", liveNotesFileSlug("a\tb"))
 }
+
+// ── Minutes output language and token budget ────────────────────────────────
+
+// A forced output language must reach the FINAL prompt only: the chunk passes
+// are intermediate notes, and forcing them into the target language would make
+// a long meeting's condensed text drift from its source.
+func TestGenerateLiveNotesMinutes_ForcesFinalOutputLanguage(t *testing.T) {
+	bodies := captureSummaryBodies(t, "## 概要\n\nMinutes.")
+	_, err := GenerateLiveNotesMinutesWithOptions(
+		context.Background(), "季度会", "[00:00] 我：先确认时间", "", LiveNotesSpeaker{},
+		LiveNotesMinutesOptions{Language: "en", MaxTokens: 1500},
+	)
+	require.NoError(t, err)
+
+	got := bodies()
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0], `"max_tokens":1500`, "the configured cap must reach the request")
+	assert.Contains(t, got[0], "Output language: English")
+	assert.NotContains(t, got[0], "输出语言：简体中文")
+}
+
+func TestGenerateLiveNotesMinutes_DefaultLanguageFollowsTranscript(t *testing.T) {
+	bodies := captureSummaryBodies(t, "## 概要\n\n纪要")
+	_, err := GenerateLiveNotesMinutes(context.Background(), "季度会", "[00:00] 我：内容", "", LiveNotesSpeaker{})
+	require.NoError(t, err)
+
+	body := bodies()[0]
+	assert.NotContains(t, body, "Output language:")
+	assert.NotContains(t, body, "输出语言：")
+	assert.Contains(t, body, `"max_tokens":3000`, "the default cap must stay the documented 3000")
+}
+
+// A low cap must fail visibly. Before this, AskAboutContext discarded the
+// finish_reason and returned half a document that looked complete.
+func TestGenerateLiveNotesMinutes_TruncationIsABudgetError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要\n\n半截"},"finish_reason":"length"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	withAISummary(t, srv.URL)
+
+	_, err := GenerateLiveNotesMinutesWithOptions(
+		context.Background(), "季度会", "[00:00] 我：内容", "", LiveNotesSpeaker{},
+		LiveNotesMinutesOptions{MaxTokens: 1200},
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrLiveNotesBudget)
+	assert.Contains(t, err.Error(), "max_tokens=1200")
+}

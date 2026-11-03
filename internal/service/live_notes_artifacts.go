@@ -57,7 +57,11 @@ const (
 	ArtifactErrAudio       = "audio"
 	ArtifactErrIO          = "io"
 	ArtifactErrTimeout     = "timeout"
-	ArtifactErrUnknown     = "unknown"
+	// ArtifactErrBudget is the minutes output cap being hit. It is separate
+	// from "model" so the SPA can point at the 纪要输出上限 setting instead of
+	// suggesting a model/provider problem.
+	ArtifactErrBudget  = "budget"
+	ArtifactErrUnknown = "unknown"
 )
 
 // ArtifactState is one artifact's two axes.

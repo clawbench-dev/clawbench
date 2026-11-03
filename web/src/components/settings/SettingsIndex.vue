@@ -46,6 +46,7 @@ import {
   ChevronRight,
   Github,
   UserRound,
+  Video,
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsCard from './SettingsCard.vue'
@@ -87,6 +88,9 @@ const groupDefs = [
       { id: 'rag', icon: Brain },
       { id: 'tts', icon: Volume2 },
       { id: 'stt', icon: Mic },
+      // Meeting defaults sit next to the speech settings they depend on:
+      // transcription (STT) and the shared summary model (providers).
+      { id: 'meeting', icon: Video },
     ],
   },
   {

@@ -1295,7 +1295,13 @@ func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	title := truncateRunes(strings.TrimSpace(body.Title), 80)
+	// The proofread switch is read when the job is accepted, not when it was
+	// configured: a user who turns it off expects the next generation to skip
+	// that model pass.
 	plan := service.PlanForInitialJob()
+	if !model.ConfigInstance.Meeting.Proofread {
+		plan = service.PlanForInitialJobWithoutProofread()
+	}
 	claimed, claimErr := service.ClaimArtifactJob(body.Token, artifactPlanKinds(plan), 0)
 	if claimErr != nil {
 		slog.Error("live notes: claim minutes job failed", "err", claimErr)
@@ -1707,6 +1713,10 @@ func (c *artifactChain) buildMinutes(ctx context.Context) error {
 		Shots:   c.shots,
 		Prev:    c.prev,
 		HasPrev: c.hasPrev,
+		// The file timeline stays; only the contents are withheld. See the
+		// field comment: the setting is about sending project text to the
+		// model, not about hiding what was on screen.
+		SkipFileExcerpts: !model.ConfigInstance.Meeting.FileExcerpts,
 	}.PromptSection()
 	progress := func(done, total int, phase string) {
 		detail := fmt.Sprintf("%d/%d", done, total)
@@ -1717,7 +1727,14 @@ func (c *artifactChain) buildMinutes(ctx context.Context) error {
 			slog.Warn("live notes: minutes heartbeat failed", "err", err)
 		}
 	}
-	minutes, err := service.GenerateLiveNotesMinutes(ctx, c.title, text, contextSection, c.self, progress)
+	minutes, err := service.GenerateLiveNotesMinutesWithOptions(
+		ctx, c.title, text, contextSection, c.self,
+		service.LiveNotesMinutesOptions{
+			Language:  model.ConfigInstance.Meeting.Language,
+			MaxTokens: model.ConfigInstance.Meeting.MinutesMaxTokens,
+		},
+		progress,
+	)
 	if err != nil {
 		return err
 	}
@@ -1804,6 +1821,8 @@ func artifactErrorCode(kind service.ArtifactKind, err error) string {
 		return service.ArtifactErrNoSource
 	case errors.Is(err, service.ErrSummaryModelNotConfigured):
 		return service.ArtifactErrModel
+	case errors.Is(err, service.ErrLiveNotesBudget):
+		return service.ArtifactErrBudget
 	case errors.Is(err, service.ErrLiveNoteSTT):
 		return service.ArtifactErrSTT
 	case errors.Is(err, service.ErrLiveNoteAudioMissing):
