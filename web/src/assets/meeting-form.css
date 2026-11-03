@@ -111,3 +111,13 @@
 .meeting-check input:checked + .meeting-check__icon {
   color: var(--accent-color);
 }
+/* Why a switch is not available (e.g. this engine has no MediaRecorder for
+   听记). Sits on the same line, muted, so the row keeps its height. */
+.meeting-check__note {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+.meeting-check:has(input:disabled) {
+  cursor: default;
+  color: var(--text-muted);
+}

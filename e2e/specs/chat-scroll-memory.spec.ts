@@ -93,6 +93,31 @@ test.describe.serial('Session switch scroll memory', () => {
   }
 
   /**
+   * Wheel up (real gestures) until the transcript is genuinely away from the
+   * bottom.
+   *
+   * A FIXED number of pixels cannot do this: the transcript's height depends on
+   * how long the mock replies are, so one 600px flick left only 88px of range on
+   * CI (`max - top` was 88 where the test needed >300) and the "still session
+   * remembers where you were" precondition failed before the feature was even
+   * exercised. Wheel until the measured distance says we are there — the
+   * condition is the state, not a guessed gesture count.
+   */
+  async function wheelAwayFromBottom(page: Page, minDistance = 300): Promise<void> {
+    await expect
+      .poll(
+        async () => {
+          const now = await scrollInfo(page)
+          if (now.max - now.top > minDistance) return now.max - now.top
+          await wheelUp(page, 300)
+          return 0
+        },
+        { timeout: 20000, intervals: [250] },
+      )
+      .toBeGreaterThan(minDistance)
+  }
+
+  /**
    * Ensure a second session exists so a switch is actually possible.
    *
    * The suite starts with a single session (the one the fixture created), and
@@ -171,11 +196,9 @@ test.describe.serial('Session switch scroll memory', () => {
     expect(sessionId).toBeTruthy()
     await makeScrollable(page)
 
-    // Read partway up the transcript.
-    await wheelUp(page, 600)
-    await expect
-      .poll(async () => (await scrollInfo(page)).top, { timeout: 5000 })
-      .toBeGreaterThan(100)
+    // Read partway up the transcript, far enough that "left at the bottom"
+    // (which is deliberately NOT remembered) cannot be what we are measuring.
+    await wheelAwayFromBottom(page)
     // Let the wheel's momentum settle before sampling: a mid-fling reading is
     // not the position the user "left", and asserting against it makes the
     // comparison meaningless (webkit keeps coasting longer than chromium).
@@ -228,8 +251,7 @@ test.describe.serial('Session switch scroll memory', () => {
     await makeScrollable(page)
 
     // Leave mid-history so a still session WOULD be restored…
-    await wheelUp(page, 600)
-    await expect.poll(async () => (await scrollInfo(page)).top, { timeout: 5000 }).toBeGreaterThan(100)
+    await wheelAwayFromBottom(page)
 
     // …then start a turn and switch away/back while it runs. The turn must win:
     // a running session shows its newest output, not the old reading position.

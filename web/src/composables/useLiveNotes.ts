@@ -15,6 +15,7 @@ import {
   LiveNotesCapture,
   groupNoteSegments,
   mergeNoteSegments,
+  notesRecordingSupported,
   withMeetingFileEvents,
   type LiveNoteSegment,
   type NoteBlock,
@@ -189,6 +190,12 @@ export function useLiveNotes() {
     label?: (channel: string) => string
     resume?: boolean
   }): void {
+    // No recorder on this engine: leave the module idle and say so once. The
+    // meeting continues (picture / microphone / chat), it just has no 听记.
+    if (!notesRecordingSupported()) {
+      appLog.w(TAG, 'MediaRecorder unavailable: 听记 stays off for this meeting')
+      return
+    }
     if (opts.resume === true && sessionToken === opts.token) {
       // Same meeting: keep everything, but invalidate the previous capture's
       // continuations — its drain must not report "finalizing" over this one.

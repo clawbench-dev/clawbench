@@ -54,6 +54,20 @@ export const NOTES_SILENCE_RMS = 0.01
 const NOTES_VAD_INTERVAL_MS = 100
 
 /**
+ * Whether this engine can record audio at all.
+ *
+ * 听记 is built on `MediaRecorder`, which not every engine the app runs in
+ * implements (the WebKit build Playwright ships has none, and neither do some
+ * embedded WebViews). Every entry point uses this to DEGRADE instead of
+ * throwing: a meeting whose picture, microphone and chat work must still start
+ * when the notes recorder cannot — `new MediaRecorder(...)` used to escape
+ * `start()` as a raw ReferenceError and take the whole room down with it.
+ */
+export function notesRecordingSupported(): boolean {
+  return typeof MediaRecorder !== 'undefined'
+}
+
+/**
  * Hard memory guard, NOT a backpressure policy.
  *
  * Losing a segment loses part of the meeting forever, so the queue is allowed

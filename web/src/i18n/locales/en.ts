@@ -4071,6 +4071,7 @@ export default {
       micOn: 'Your microphone is captured once the meeting starts.',
       micOff: 'No microphone: the transcript only keeps the other participants.',
       notes: 'AI notes',
+      notesUnsupported: 'This browser cannot record audio, so this meeting will have no notes',
       start: 'Start meeting',
       startShare: 'Start sharing',
       starting: 'Starting…',

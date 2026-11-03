@@ -468,6 +468,36 @@ describe('start', () => {
     await vi.waitFor(() => expect(lastWS().sentJSON().some((m) => m.type === 'publish')).toBe(true))
   })
 
+  /**
+   * 听记 needs `MediaRecorder`, which some engines do not have (the WebKit build
+   * Playwright ships has none). `new MediaRecorder` used to throw straight out
+   * of `start()` and the room never came up at all — the picture, the
+   * microphone and the chat have nothing to do with the recorder and must not
+   * go down with it.
+   */
+  it('starts the room without 听记 when the engine has no MediaRecorder', async () => {
+    vi.stubGlobal('MediaRecorder', undefined)
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+
+    const ok = await share.start({ sourceId: 'screen:1:0', microphone: true, notes: true })
+
+    expect(ok).toBe(true)
+    expect(share.state.value).toBe('publishing')
+
+    const notes = (await import('../useLiveNotes')).useLiveNotes()
+    expect(notes.phase.value).toBe('idle')
+
+    await share.stop()
+    // `finishUploads()` is fired without awaiting it, so give its microtasks a
+    // turn before checking that it was not fired at all.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // Nothing was recorded, so the end-of-meeting merge must not go looking for
+    // audio files that were never written.
+    const mergeCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/notes/audio/merge'))
+    expect(mergeCalls).toHaveLength(0)
+  })
+
   it('carries the host nickname so the audience can name the host row', async () => {
     const { useLiveShare } = await import('../useLiveShare')
     const share = useLiveShare()

@@ -112,11 +112,15 @@
             <input
               type="checkbox"
               :checked="notes"
+              :disabled="!notesSupported"
               data-role="meeting-notes"
               @change="notes = ($event.target as HTMLInputElement).checked"
             />
             <span class="meeting-check__icon"><NotebookPen :size="13" /></span>
             {{ t('meeting.create.notes') }}
+            <span v-if="!notesSupported" class="meeting-check__note">
+              {{ t('meeting.create.notesUnsupported') }}
+            </span>
           </label>
           <!-- Audience permissions start ON. They are the same two room-level
                switches the 会议管理 tab shows during the meeting, so they travel
@@ -182,6 +186,7 @@ import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
 import { useToast } from '@/composables/useToast'
 import { DEFAULT_DEVICE, useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useMeetingNickname } from '@/composables/useMeetingNickname'
+import { notesRecordingSupported } from '@/composables/liveNotes'
 import { MEETING_NICK_MAX } from '@/share/meetingNickname'
 import {
   hasCameraDevice,
@@ -205,6 +210,12 @@ const toast = useToast()
 const share = useLiveShare()
 const { micChoice, cameraChoice, notes } = useMeetingOptions()
 const { nickname, persist } = useMeetingNickname()
+/**
+ * 听记 needs `MediaRecorder`, which not every engine has. The switch is shown
+ * disabled with the reason rather than left on: an enabled switch that produces
+ * no transcript is worse than an honest "not here".
+ */
+const notesSupported = notesRecordingSupported()
 
 /**
  * What the host chose: '' for no picture, the browser tile for "let the browser
@@ -415,6 +426,9 @@ async function start(): Promise<void> {
 }
 
 onMounted(() => {
+  // A disabled switch must not be left ON (it is a shared singleton, so the
+  // running stage would read it back as "notes wanted").
+  if (!notesSupported) notes.value = false
   // The host always starts with the microphone on. The choice is a shared
   // singleton (the running stage mutes/unmutes the same ref), so a previous
   // meeting — or a previous visit to this form — may have left it muted. A

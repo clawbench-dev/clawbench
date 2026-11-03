@@ -21,6 +21,7 @@ import {
   type ControlMessage,
 } from '@/share/liveControl'
 import { useLiveNotes } from './useLiveNotes'
+import { notesRecordingSupported } from './liveNotes'
 import { startMeetingFileTracking, stopMeetingFileTracking, _resetMeetingFileTrackerForTest } from '@/utils/meetingFileTracker'
 import { acquireMic, describeMicError, logMicEnv } from '@/utils/micCapture'
 import { startAndroidScreenCapture, type AndroidCaptureHandle } from './androidScreenCapture'
@@ -1145,7 +1146,12 @@ export function useLiveShare() {
       // sent to viewers is per-viewer and excludes that viewer, so it cannot be
       // used to transcribe the meeting. Started before the socket so the first
       // viewer's audio is never missed.
-      if (opts.notes) {
+      //
+      // An engine without `MediaRecorder` simply has no 听记: the room still
+      // comes up with the picture, the microphone and the chat. `notesStarted`
+      // must NOT be set in that case — it is what tells the end-of-meeting
+      // merge to look for recordings that were never made.
+      if (opts.notes && notesRecordingSupported()) {
         notesStarted = true
         useLiveNotes().start({
           token: token.value,
@@ -1154,6 +1160,8 @@ export function useLiveShare() {
           title: title.value,
           label: opts.notesLabel,
         })
+      } else if (opts.notes) {
+        appLog.w(TAG, 'MediaRecorder unavailable: starting the meeting without 听记')
       }
 
       // 5. Encode policy. One governor for the whole session (CPU is shared by
@@ -1280,6 +1288,12 @@ export function useLiveShare() {
   function startNotes(): boolean {
     if (!audioCtx || !token.value) return false
     if (useLiveNotes().phase.value === 'recording') return true
+    // Nothing to record with: report failure so the switch reverts and the
+    // stage can say why, instead of showing 听记 as on with an empty transcript.
+    if (!notesRecordingSupported()) {
+      appLog.w(TAG, 'MediaRecorder unavailable: 听记 cannot be turned on')
+      return false
+    }
     useLiveNotes().start({
       token: token.value,
       ctx: audioCtx,
