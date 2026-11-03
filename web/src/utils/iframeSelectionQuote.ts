@@ -54,8 +54,13 @@ export interface IframeSelectionQuoteOptions {
    * `position: fixed` is expressed in), or null when it could not be measured.
    * Without it the bar can only fall back to its pinned top position, which
    * puts it far away from the text the user just selected.
+   *
+   * `sourceEl` is the frame element the selection lives in. The host cannot
+   * derive it (the selection is in another document), yet the bar needs it to
+   * tell "the surface under my anchor moved" from "some unrelated pane scrolled"
+   * — see `useQuoteQuestion.onScroll`.
    */
-  show: (data: QuoteData, anchor: DOMRect | null) => void
+  show: (data: QuoteData, anchor: DOMRect | null, sourceEl: Element | null) => void
   /** Hide the quote bar (empty selection / collapsed). */
   hide: () => void
   /** Debounce for `selectionchange` (mirrors the host's 150ms). */
@@ -267,7 +272,7 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
       language: '',
       startLine: 0,
       endLine: 0,
-    }, iframeSelectionAnchor(win, sel!))
+    }, iframeSelectionAnchor(win, sel!), (win.frameElement as Element | null | undefined) ?? null)
   }
 
   function onSelectionChange() {

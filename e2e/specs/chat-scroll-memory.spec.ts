@@ -66,14 +66,17 @@ test.describe.serial('Session switch scroll memory', () => {
   /**
    * Read the scroll offset once it has stopped changing.
    *
-   * A wheel gesture keeps coasting for a few frames (much longer in webkit), so
-   * sampling immediately after it can capture a transient offset — and then the
-   * restore, which correctly lands on the SETTLED position, looks wrong by
-   * exactly the distance the coast still had to travel.
+   * A wheel gesture keeps coasting for a few frames (much longer in webkit,
+   * whose smooth scrolling is animated), so sampling immediately after it can
+   * capture a transient offset — and then the restore, which correctly lands on
+   * the SETTLED position the app saved at switch time, looks wrong by exactly
+   * the distance the coast still had to travel. The window is deliberately
+   * generous: a loaded CI machine can keep a fling alive for seconds, and the
+   * loop still returns on the first stable pair, so a quiet machine pays 100ms.
    */
   async function settleScroll(page: Page) {
     let prev = await scrollInfo(page)
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 40; i++) {
       await page.waitForTimeout(100)
       const now = await scrollInfo(page)
       if (now.top === prev.top) return now

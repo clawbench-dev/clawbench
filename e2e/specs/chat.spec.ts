@@ -3,6 +3,7 @@ import { ChatPage } from '../pages/chat.page'
 import { seedQuickSendItems } from '../helpers/test-data'
 import { getServerURL } from '../helpers/server'
 import path from 'path'
+import os from 'os'
 
 test.describe('Chat', () => {
   let chat: ChatPage
@@ -97,8 +98,13 @@ test.describe('Chat', () => {
   // ───────────────────────────────────────────────────────
 
   test('should attach a file and show attachment tag', async ({ page }) => {
-    // Create a small test file
-    const testFilePath = path.join(process.cwd(), 'test-upload.txt')
+    // Create a small test file. The name must be unique per process/run and the
+    // file must live OUTSIDE the repo: e2e runs from several worktrees/agents
+    // share this machine, and a fixed `cwd/test-upload.txt` is shared mutable
+    // state — a concurrent run's `finally` deletes it mid-upload and the test
+    // dies with ENOENT from setInputFiles.
+    const fileName = `test-upload-${process.pid}-${Date.now()}.txt`
+    const testFilePath = path.join(os.tmpdir(), fileName)
     const fs = await import('fs')
     fs.writeFileSync(testFilePath, 'test content for e2e upload')
 
@@ -117,18 +123,24 @@ test.describe('Chat', () => {
       // three and trips Playwright's strict mode.
       await drawer.locator('input[type="file"]:not([accept])').setInputFiles(testFilePath)
 
-      // Picking a file ends the drawer's job: it closes immediately and the
-      // upload keeps running in the background, reporting progress on the input
-      // bar's attachment cards. Keeping the sheet open only delayed the user, so
-      // the chip must be asserted on the input bar — not inside the drawer.
+      // Picking a file ends at the DRAFT, not at the composer: the sheet stays
+      // open until OK (see AttachDrawer.test.ts — "onFileSelect keeps the sheet
+      // open and puts the upload in the draft" / "OK commits the draft as a
+      // delta and closes"). The footer chip is the signal that the background
+      // upload finished and the file is in the draft; confirming before it
+      // appears would commit an empty selection.
+      const draftChip = drawer.locator('.ad-footer .chat-file-attachment')
+      await expect(draftChip.first()).toBeVisible({ timeout: 20000 })
+      await drawer.locator('[data-action="attach-ok"]').click()
+
       await expect(drawer).toBeHidden({ timeout: 10000 })
 
       // The input bar's attachment strip is the surface the user actually sees.
-      // The server de-dupes upload names (`test-upload.txt` → `test-upload_2.txt`
-      // when a prior run left one behind), so match the stem.
+      // The name is unique to this run, so no server-side de-dupe suffix can
+      // appear and the chip must carry it verbatim.
       const attachment = page.locator('.chat-input-wrapper .chat-file-attachment')
       await expect(attachment.first()).toBeVisible({ timeout: 15000 })
-      await expect(attachment.first()).toContainText(/test-upload(_\d+)?\.txt/)
+      await expect(attachment.first()).toContainText(fileName)
     } finally {
       if (fs.existsSync(testFilePath)) fs.unlinkSync(testFilePath)
     }

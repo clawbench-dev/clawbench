@@ -292,6 +292,67 @@ describe('useQuoteQuestion', () => {
 
       wrapper.unmount()
     })
+
+    /**
+     * The bar floats over a selection; only a scroll that MOVES that selection
+     * leaves it pointing at nothing. The chat transcript auto-follows a reply
+     * that is streaming in from a background session, and that used to take the
+     * bar away while the user was selecting text in a file preview (observed as
+     * the e2e selection test losing the bar mid-click on firefox).
+     */
+    it('keeps the bar when an unrelated pane scrolls', () => {
+      const wrapper = mountWithComposable()
+      const preview = document.createElement('div')
+      const frame = document.createElement('iframe')
+      preview.appendChild(frame)
+      const transcript = document.createElement('div')
+      const row = document.createElement('div')
+      transcript.appendChild(row)
+      document.body.append(preview, transcript)
+      // try/finally: a failed assertion here must not leak the mounted component
+      // (its listeners keep `listenerCount` above 0 and break the unmount test).
+      try {
+        const qq = useQuoteQuestion()
+        // The quote came from the preview frame, so the preview is its surface.
+        qq.showBar(
+          { text: 'hello', filePath: '/a.html', language: '', startLine: 0, endLine: 0 },
+          { anchor: new DOMRect(0, 0, 10, 10), anchorEl: frame },
+        )
+        vi.advanceTimersByTime(400)
+        expect(qq.visible.value).toBe(true)
+
+        transcript.dispatchEvent(new Event('scroll'))
+        expect(qq.visible.value).toBe(true)
+      } finally {
+        wrapper.unmount()
+        preview.remove()
+        transcript.remove()
+      }
+    })
+
+    it('dismisses when the surface holding the selection scrolls', () => {
+      const wrapper = mountWithComposable()
+      // Same shape as the chat transcript: the quoted row scrolls with it.
+      const transcript = document.createElement('div')
+      const row = document.createElement('div')
+      transcript.appendChild(row)
+      document.body.appendChild(transcript)
+      try {
+        const qq = useQuoteQuestion()
+        qq.showBar(
+          { text: 'hello', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 3 },
+          { anchor: new DOMRect(0, 0, 10, 10), anchorEl: row },
+        )
+        vi.advanceTimersByTime(400)
+        expect(qq.visible.value).toBe(true)
+
+        transcript.dispatchEvent(new Event('scroll'))
+        expect(qq.visible.value).toBe(false)
+      } finally {
+        wrapper.unmount()
+        transcript.remove()
+      }
+    })
   })
 
   describe('closeSheet', () => {

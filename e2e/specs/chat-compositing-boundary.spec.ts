@@ -22,7 +22,14 @@ test.describe('chat compositing boundary', () => {
   test('one panel boundary, no promoted message rows', async ({ page }) => {
     const chat = new ChatPage(page)
     await expect(chat.textarea).toBeVisible()
-    await chat.sendMessage('compositing_' + Date.now())
+    // Wait for the turn to actually FINISH, not just for a meta bar to be on
+    // screen. The e2e session survives between specs, so it already holds an
+    // assistant message when this test starts: `.last()` matched that older
+    // message and the assertion passed before this turn's reply had even been
+    // rendered — then the sampling below read a row that was still streaming
+    // (`streaming` rows deliberately have no meta bar yet) and failed on
+    // webkit, where the turn takes a little longer to settle.
+    await chat.sendAndAwaitACPReply('compositing_' + Date.now())
 
     // The reply must have finished, so the meta bar (the element that grows the
     // row) is present — that is the state the ghost appeared in.
