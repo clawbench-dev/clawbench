@@ -2,6 +2,38 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { LiveViewer, liveSignalUrl, type LiveViewerState } from '../liveViewer'
 
 /**
+ * The relay client is replaced wholesale: `livekit-client` needs a real
+ * browser (WebRTC, workers) and cannot run under jsdom. Everything the viewer
+ * does with the room is a function call, so asserting on those calls covers
+ * the contract — the LiveKit side is `useLiveRelay`'s own responsibility.
+ */
+const relayMock = vi.hoisted(() => ({
+  openRelay: vi.fn(),
+  closeRelay: vi.fn(),
+  publishVideo: vi.fn(),
+  publishMic: vi.fn(),
+  sendRelayData: vi.fn(),
+}))
+
+vi.mock('@/composables/useLiveRelay', () => ({
+  openRelay: relayMock.openRelay,
+  closeRelay: relayMock.closeRelay,
+  publishVideo: relayMock.publishVideo,
+  publishMic: relayMock.publishMic,
+  sendRelayData: relayMock.sendRelayData,
+  // Real implementation: the viewer must run frames through the same parser
+  // the peer-to-peer path uses, so a fake that always returns null would hide
+  // a broken wiring.
+  decodeRelayData: (payload: Uint8Array) => {
+    try {
+      return JSON.parse(new TextDecoder().decode(payload)) as unknown
+    } catch {
+      return null
+    }
+  },
+}))
+
+/**
  * Fakes for the browser APIs the viewer touches.
  *
  * RTCPeerConnection is not implemented by jsdom, so the tests drive a minimal
@@ -206,6 +238,11 @@ function joinRoom(
 beforeEach(() => {
   FakePC.instances = []
   FakeWS.instances = []
+  relayMock.openRelay.mockReset()
+  relayMock.closeRelay.mockReset()
+  relayMock.publishVideo.mockReset()
+  relayMock.publishMic.mockReset()
+  relayMock.sendRelayData.mockReset()
 })
 
 afterEach(() => {
@@ -1155,5 +1192,290 @@ describe('LiveViewer quality stats', () => {
     const st = await viewer.getStats()
     expect(st.lossPct).toBe(9.1)
     expect(st.jitterMs).toBe(20)
+  })
+})
+
+// ── Relay (SFU) mode ────────────────────────────────────────────────────────
+
+/**
+ * In a relayed room the media and the control bus live in LiveKit, and the
+ * signalling socket carries room state only. These tests pin that split: no
+ * PeerConnection, control frames on the relay's data channel, and the same
+ * callbacks the peer-to-peer path fires.
+ */
+const RELAY = { url: 'wss://livekit.example.com:7880', token: 'jwt-1', room: 'tok123' }
+
+interface RelayHandlers {
+  onTrack?: (track: MediaStreamTrack, source: string, identity: string) => void
+  onTrackGone?: (track: MediaStreamTrack) => void
+  onData?: (payload: Uint8Array, from: string) => void
+  onActiveSpeakers?: (identities: string[]) => void
+  onDisconnected?: (reason: string) => void
+}
+
+function setupRelay(overrides: Record<string, unknown> = {}) {
+  const states: Array<{ state: LiveViewerState; reason?: string }> = []
+  const streams: MediaStream[] = []
+  const cameraStreams: Array<MediaStream | null> = []
+  const memberStreams: Array<MediaStream | null> = []
+  const controls: unknown[] = []
+  const rosters: Array<Array<{ id: string; talking?: boolean }>> = []
+  const viewer = new LiveViewer({
+    token: 'tok123',
+    callbacks: {
+      onStateChange: (state, detail) => states.push({ state, reason: detail?.reason }),
+      onStream: (s) => streams.push(s),
+      onCameraStream: (s) => cameraStreams.push(s),
+      onMemberScreenStream: (s) => memberStreams.push(s),
+      onControl: (m) => controls.push(m),
+      onRoster: (r) => rosters.push(r as Array<{ id: string; talking?: boolean }>),
+    },
+    wsFactory: (url) => new FakeWS(url) as unknown as WebSocket,
+    pcFactory: (cfg) => new FakePC(cfg) as unknown as RTCPeerConnection,
+    ...overrides,
+  })
+  return { viewer, states, streams, cameraStreams, memberStreams, controls, rosters }
+}
+
+/** Emit the SFU `joined` and wait until the viewer has adopted the room. */
+async function joinRelay(
+  viewer: LiveViewer,
+  extra: Record<string, unknown> = {},
+): Promise<RelayHandlers> {
+  viewer.connect()
+  lastWS().emit({
+    type: 'joined',
+    viewerId: 'v1',
+    mode: 'sfu',
+    relay: RELAY,
+    iceServers: [],
+    ...extra,
+  })
+  await vi.waitFor(() => expect(relayMock.sendRelayData).toHaveBeenCalled())
+  return relayMock.openRelay.mock.calls[0][2] as RelayHandlers
+}
+
+describe('LiveViewer relay mode', () => {
+  let room: { name: string }
+
+  beforeEach(() => {
+    room = { name: 'livekit-room' }
+    relayMock.openRelay.mockResolvedValue(room)
+    // jsdom has no MediaStream; the viewer merges the host's tracks into one,
+    // so the double has to answer the kind queries the merge relies on.
+    vi.stubGlobal(
+      'MediaStream',
+      class {
+        constructor(public tracks: MediaStreamTrack[] = []) {}
+        getVideoTracks() {
+          return this.tracks.filter((t) => t.kind === 'video')
+        }
+        getAudioTracks() {
+          return this.tracks.filter((t) => t.kind === 'audio')
+        }
+      },
+    )
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    // @ts-expect-error -- jsdom has no mediaDevices to restore.
+    delete navigator.mediaDevices
+  })
+
+  it('joins the relay instead of creating a PeerConnection', async () => {
+    const { viewer } = setupRelay()
+
+    await joinRelay(viewer)
+
+    expect(relayMock.openRelay).toHaveBeenCalledWith(RELAY.url, RELAY.token, expect.any(Object))
+    // The whole point of the mode: no second transport, and no offer that
+    // nobody would answer.
+    expect(FakePC.instances).toHaveLength(0)
+    expect(lastWS().sentJSON().some((m) => m.type === 'offer')).toBe(false)
+  })
+
+  it('asks for the transcript as soon as the room is up', async () => {
+    const { viewer } = setupRelay()
+
+    await joinRelay(viewer)
+
+    // Peer-to-peer sends this from the data channel's `open`; a relayed room
+    // has no such event, so it must be sent here or late joiners see an empty
+    // chat panel forever.
+    expect(relayMock.sendRelayData).toHaveBeenCalledWith(room, { t: 'chat-history-req' })
+  })
+
+  it('reaches playing when the host picture arrives, and merges its audio', async () => {
+    const { viewer, states, streams } = setupRelay()
+    const handlers = await joinRelay(viewer)
+    expect(viewer.state).toBe('connecting')
+
+    const video = makeTrack('video')
+    handlers.onTrack?.(video, 'screen_share', 'host')
+
+    expect(states.at(-1)?.state).toBe('playing')
+    expect(streams).toHaveLength(1)
+    expect(streams[0].getVideoTracks()).toEqual([video])
+
+    // The relay delivers the mixed audio as its own track; the page renders a
+    // single <video>, so both must end up in the same stream.
+    const audio = makeTrack('audio')
+    handlers.onTrack?.(audio, 'microphone', 'host')
+
+    expect(streams.at(-1)?.getVideoTracks()).toEqual([video])
+    expect(streams.at(-1)?.getAudioTracks()).toEqual([audio])
+  })
+
+  it('routes the host camera to its own callback, not the main picture', async () => {
+    const { viewer, streams, cameraStreams } = setupRelay()
+    const handlers = await joinRelay(viewer)
+
+    handlers.onTrack?.(makeTrack('video'), 'camera', 'host')
+
+    expect(cameraStreams).toHaveLength(1)
+    expect(streams).toEqual([])
+  })
+
+  it('routes another viewer screen to the member callback', async () => {
+    const { viewer, memberStreams } = setupRelay()
+    const handlers = await joinRelay(viewer)
+
+    handlers.onTrack?.(makeTrack('video'), 'screen_share', 'v2')
+
+    expect(memberStreams).toHaveLength(1)
+    expect(memberStreams[0]?.getVideoTracks()).toHaveLength(1)
+  })
+
+  it('clears the tile callbacks when a track goes away', async () => {
+    const { viewer, cameraStreams, memberStreams } = setupRelay()
+    const handlers = await joinRelay(viewer)
+    const camera = makeTrack('video')
+    const member = makeTrack('video')
+    handlers.onTrack?.(camera, 'camera', 'host')
+    handlers.onTrack?.(member, 'screen_share', 'v2')
+
+    handlers.onTrackGone?.(camera)
+    handlers.onTrackGone?.(member)
+
+    expect(cameraStreams.at(-1)).toBeNull()
+    expect(memberStreams.at(-1)).toBeNull()
+  })
+
+  it('sends control frames over the relay data channel', async () => {
+    const { viewer } = setupRelay()
+    await joinRelay(viewer)
+    relayMock.sendRelayData.mockClear()
+
+    const ok = viewer.sendControl({ t: 'ctrl-req' })
+
+    expect(ok).toBe(true)
+    expect(relayMock.sendRelayData).toHaveBeenCalledWith(room, { t: 'ctrl-req' })
+  })
+
+  it('parses control frames arriving on the relay data channel', async () => {
+    const { viewer, controls } = setupRelay()
+    const handlers = await joinRelay(viewer)
+
+    handlers.onData?.(
+      new TextEncoder().encode(
+        JSON.stringify({ t: 'chat', id: 'c1', from: 'host', name: '主持人', text: 'hi', at: 1 }),
+      ),
+      'host',
+    )
+    expect(controls).toEqual([expect.objectContaining({ t: 'chat', text: 'hi' })])
+
+    // A malformed frame must be dropped, not thrown into the render path.
+    handlers.onData?.(new TextEncoder().encode('not json'), 'host')
+    expect(controls).toHaveLength(1)
+  })
+
+  it('folds who is speaking into the roster', async () => {
+    const { viewer, rosters } = setupRelay()
+    const handlers = await joinRelay(viewer, {
+      roster: [
+        { id: 'host', name: '主持人', host: true },
+        { id: 'v1', name: '我' },
+        { id: 'v2', name: '小明' },
+      ],
+    })
+
+    handlers.onActiveSpeakers?.(['v2'])
+
+    expect(viewer.activeSpeakers).toEqual(['v2'])
+    // The relay ids are the roster ids, so the existing callback carries it —
+    // no new API for the panel to keep in step.
+    expect(viewer.roster.find((m) => m.id === 'v2')?.talking).toBe(true)
+    expect(viewer.roster.find((m) => m.id === 'host')?.talking).toBe(false)
+    expect(rosters.at(-1)).toHaveLength(3)
+  })
+
+  it('publishes the microphone instead of replacing a transceiver track', async () => {
+    const micTrack = makeTrack('audio')
+    const getUserMedia = vi.fn(
+      async () => ({ getAudioTracks: () => [micTrack] }) as unknown as MediaStream,
+    )
+    const { viewer } = setupRelay({ getUserMedia })
+    await joinRelay(viewer)
+
+    const ok = await viewer.startTalking()
+
+    expect(ok).toBe(true)
+    expect(relayMock.publishMic).toHaveBeenCalledWith(room, micTrack)
+    // The server still owns the room's talk switch, so it is still told.
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'talk-start' })
+  })
+
+  it('publishes our own screen instead of attaching it to a sender', async () => {
+    const track = makeTrack('video')
+    installDisplayMedia(track)
+    const { viewer } = setupRelay()
+    await joinRelay(viewer)
+
+    const ok = await viewer.startScreenShare()
+
+    expect(ok).toBe(true)
+    expect(relayMock.publishVideo).toHaveBeenCalledWith(room, track, 'screen_share')
+    expect(viewer.isSharingScreen).toBe(true)
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'screen-start' })
+  })
+
+  it('reports a failure and releases the room when the relay drops', async () => {
+    const { viewer, states } = setupRelay()
+    const handlers = await joinRelay(viewer)
+    handlers.onTrack?.(makeTrack('video'), 'screen_share', 'host')
+    expect(viewer.state).toBe('playing')
+
+    handlers.onDisconnected?.('server')
+
+    expect(viewer.state).toBe('failed')
+    expect(states.at(-1)).toEqual({ state: 'failed', reason: 'relay' })
+    expect(relayMock.closeRelay).toHaveBeenCalledWith(room)
+  })
+
+  it('disconnects the room on teardown, and does not mistake that for a failure', async () => {
+    const { viewer } = setupRelay()
+    const handlers = await joinRelay(viewer)
+
+    viewer.close()
+    expect(relayMock.closeRelay).toHaveBeenCalledWith(room)
+
+    // LiveKit reports the close we just asked for through the same callback.
+    // Acting on it would turn every clean exit into `failed`.
+    handlers.onDisconnected?.('client')
+    expect(viewer.state).toBe('idle')
+    expect(relayMock.closeRelay).toHaveBeenCalledTimes(1)
+  })
+
+  it('releases a room that arrives after the page was closed', async () => {
+    const { viewer } = setupRelay()
+    viewer.connect()
+    lastWS().emit({ type: 'joined', viewerId: 'v1', mode: 'sfu', relay: RELAY })
+
+    // Close while the relay handshake is still in flight.
+    viewer.close()
+
+    await vi.waitFor(() => expect(relayMock.closeRelay).toHaveBeenCalledWith(room))
+    expect(viewer.state).toBe('idle')
   })
 })

@@ -219,6 +219,13 @@ type ViewerMessage struct {
 	Title     string `json:"title,omitempty"`
 	SDP       string `json:"sdp,omitempty"`
 	Candidate any    `json:"candidate,omitempty"`
+	// Mode is "p2p" or "sfu". Absent means p2p, which is what every client
+	// written before the relay assumed.
+	Mode string `json:"mode,omitempty"`
+	// Relay carries what an sfu viewer needs to reach LiveKit. Absent for p2p,
+	// and also for an sfu room whose token could not be signed — in which case
+	// the viewer sees a connection error rather than a silent p2p fallback.
+	Relay *RelayInfo `json:"relay,omitempty"`
 	// ICEServers is reserved for a future TURN/STUN addition. Always empty
 	// today; the viewer already passes it straight to RTCPeerConnection, so
 	// enabling relay later needs no client change.
@@ -322,4 +329,15 @@ type ViewerControl struct {
 	Name      string `json:"name"`
 	SDP       string `json:"sdp"`
 	Candidate any    `json:"candidate"`
+}
+
+// RelayInfo is the LiveKit connection a participant makes directly.
+//
+// The server never carries media for this mode: it only signs the token and
+// tells the browser where to go. Room is the share token, so the room name and
+// the share link are the same string.
+type RelayInfo struct {
+	URL   string `json:"url"`
+	Token string `json:"token"`
+	Room  string `json:"room"`
 }

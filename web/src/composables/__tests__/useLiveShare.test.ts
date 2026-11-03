@@ -34,6 +34,19 @@ vi.mock('@/composables/androidScreenCapture', () => ({
   startAndroidScreenCapture: androidCapture.startAndroidScreenCapture,
 }))
 
+// The relay client. `livekit-client` cannot run under jsdom, and what matters
+// here is the WIRING: did the publisher connect, publish, and skip the
+// per-viewer PeerConnection it no longer needs?
+const relayApi = vi.hoisted(() => ({
+  openRelay: vi.fn(async () => ({ name: 'relay-room' })),
+  closeRelay: vi.fn(),
+  publishVideo: vi.fn(async () => undefined),
+  publishMic: vi.fn(async () => undefined),
+  sendRelayData: vi.fn(async () => undefined),
+}))
+
+vi.mock('@/composables/useLiveRelay', () => relayApi)
+
 class FakeTrack {
   kind: string
   id: string
@@ -2401,5 +2414,96 @@ describe('F5 during a meeting', () => {
 
     expect(useDialog().state.value.visible).toBe(false)
     await share.stop()
+  })
+})
+
+/**
+ * Relay-mode speaker frames.
+ *
+ * LiveKit reports who is speaking, but a viewer's chip is cleared by an explicit
+ * zero: without the "stopped" frame the last speaker stays lit for the rest of
+ * the meeting.
+ */
+describe('relaySpeakerFrames', () => {
+  it('reports the current speakers and clears the previous one', async () => {
+    const { relaySpeakerFrames } = await import('../useLiveShare')
+
+    const first = relaySpeakerFrames(['viewer:v3', 'viewer:v4'], [])
+    expect(first.levels).toEqual({ v3: 1, v4: 1 })
+    expect(first.frames).toEqual([
+      { id: 'v3', level: 1 },
+      { id: 'v4', level: 1 },
+    ])
+
+    const second = relaySpeakerFrames(['viewer:v4'], ['viewer:v3', 'viewer:v4'])
+    expect(second.levels).toEqual({ v4: 1 })
+    expect(second.frames).toContainEqual({ id: 'v3', level: 0 })
+    expect(second.frames).not.toContainEqual({ id: 'v4', level: 0 })
+  })
+
+  it('keeps the host identity as-is', async () => {
+    const { relaySpeakerFrames } = await import('../useLiveShare')
+    expect(relaySpeakerFrames(['host'], []).levels).toEqual({ host: 1 })
+  })
+})
+
+/**
+ * Relay mode on the publisher.
+ *
+ * The whole point of the relay is that the host stops maintaining one encoder
+ * and one PeerConnection per viewer. If a PC is still built here, the topology
+ * change bought nothing.
+ */
+describe('relay mode', () => {
+  function respondWithRelay(): void {
+    fetchMock.mockImplementation(async (url: string, init?: { method?: string }) => {
+      if (url === '/api/live-share' && init?.method === 'POST') {
+        return {
+          ok: true,
+          json: async () => ({
+            token: 'tok-1',
+            path: '/share/tok-1',
+            mode: 'sfu',
+            relay: { url: 'wss://relay.example.com', token: 'jwt-host', room: 'tok-1' },
+          }),
+        }
+      }
+      return { ok: true, json: async () => ({}) }
+    })
+  }
+
+  it('connects to the relay and publishes instead of building peers', async () => {
+    relayApi.openRelay.mockClear()
+    relayApi.publishVideo.mockClear()
+    respondWithRelay()
+
+    const { share, ok } = await startSharing()
+    expect(ok).toBe(true)
+
+    expect(relayApi.openRelay).toHaveBeenCalledWith(
+      'wss://relay.example.com',
+      'jwt-host',
+      expect.objectContaining({ onTrack: expect.any(Function) }),
+    )
+    // The picture is published once, not once per viewer.
+    expect(relayApi.publishVideo).toHaveBeenCalled()
+
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    await vi.waitFor(() => expect(share.viewers.value).toHaveLength(1))
+    // Still no PeerConnection: the viewer subscribes to LiveKit directly.
+    expect(FakePC.instances).toHaveLength(0)
+  })
+
+  it('routes control frames over the relay data channel', async () => {
+    relayApi.sendRelayData.mockClear()
+    respondWithRelay()
+
+    const { share } = await startSharing()
+    share.sendControl({ t: 'chat', id: 'm1', from: 'host', name: 'Alex', text: 'hi', at: 1 })
+
+    expect(relayApi.sendRelayData).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ t: 'chat' }),
+    )
   })
 })

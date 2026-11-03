@@ -87,6 +87,13 @@ type liveShareManageResponse struct {
 	Path          string `json:"path,omitempty"`
 	TalkEnabled   bool   `json:"talkEnabled"`
 	ScreenEnabled bool   `json:"screenEnabled"`
+	// Mode is echoed for the same reason as the switches: the publisher never
+	// receives a `joined` frame, so this reply is the only place it learns
+	// which transport the room actually uses.
+	Mode string `json:"mode,omitempty"`
+	// Relay is the publisher's own LiveKit credential. Only present in sfu
+	// mode; the browser connects to URL directly and never comes back here.
+	Relay *liveshare.RelayInfo `json:"relay,omitempty"`
 }
 
 // liveShareStatusResponse is the GET payload.
@@ -132,6 +139,10 @@ type liveShareCreateOptions struct {
 	// which is how every client behaved before these fields existed.
 	allowTalk         bool
 	allowMemberScreen bool
+	// useRelay asks for the external LiveKit relay instead of peer-to-peer.
+	// Chosen at creation and never changed: switching topologies rebuilds every
+	// connection, which blacks the room out for seconds.
+	useRelay bool
 }
 
 // liveShareCreateBody derives the share title, the capture flags and the
@@ -157,6 +168,9 @@ func liveShareCreateBody(r *http.Request) liveShareCreateOptions {
 		// that never offered them must keep the closed room it has always had.
 		AllowTalk         *bool `json:"allowTalk"`
 		AllowMemberScreen *bool `json:"allowMemberScreen"`
+		// UseRelay opts this meeting into the relay. Absent means "p2p", which
+		// is what every client that predates the relay asked for.
+		UseRelay *bool `json:"useRelay"`
 	}
 	opts := liveShareCreateOptions{video: true}
 	if r.Body != nil {
@@ -177,6 +191,7 @@ func liveShareCreateBody(r *http.Request) liveShareCreateOptions {
 	opts.notes = body.Notes
 	opts.allowTalk = body.AllowTalk != nil && *body.AllowTalk
 	opts.allowMemberScreen = body.AllowMemberScreen != nil && *body.AllowMemberScreen
+	opts.useRelay = body.UseRelay != nil && *body.UseRelay
 	opts.title = strings.TrimSpace(body.Title)
 	if opts.title != "" {
 		opts.title = truncateRunes(opts.title, 80)
@@ -197,6 +212,30 @@ var liveShareReuseGrace = 10 * time.Second
 
 func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath string) {
 	opts := liveShareCreateBody(r)
+	// Resolve the relay BEFORE the room exists. A meeting that asked for the
+	// relay and cannot have it must not start as a p2p room that silently caps
+	// at eight people: the ninth joiner would be told "room full" while the host
+	// believes they are running a three-hundred-seat training.
+	var relayCfg liveshare.LiveKitConfig
+	if opts.useRelay {
+		cfg, err := service.GetLiveSFUConfig()
+		if err != nil {
+			slog.Error("liveshare: read relay config failed", "err", err)
+			model.WriteError(w, model.Internal(err))
+			return
+		}
+		if !cfg.Configured() {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "LiveShareRelayNotConfigured")
+			return
+		}
+		relayCfg = liveshare.LiveKitConfig{
+			URL:       cfg.URL,
+			APIURL:    cfg.APIBaseURL(),
+			APIKey:    cfg.APIKey,
+			APISecret: cfg.APISecret,
+		}
+	}
+
 	room, err := createLiveShareRoom(projectPath, opts.title)
 	if err != nil {
 		if errors.Is(err, liveshare.ErrTooManyRooms) {
@@ -226,6 +265,14 @@ func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath st
 	// disagree. Before the publisher attaches (the grace window, a retry) this
 	// block still runs, which is exactly the case the old comment was about.
 	if !liveRoomInProgress(room) {
+		// Transport first: everything below assumes the room's topology.
+		// SetMode refuses on a live room, which is why it sits inside this
+		// guard like the rest of the starting state.
+		mode := liveshare.ModeP2P
+		if opts.useRelay {
+			mode = liveshare.ModeSFU
+		}
+		room.SetMode(mode, relayCfg, liveshare.DefaultMaxViewers)
 		room.SetNotesEnabled(opts.notes)
 		room.SetVideoEnabled(opts.video)
 		room.SetCameraEnabled(opts.camera)
@@ -238,7 +285,7 @@ func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath st
 		applySetScreenEnabled(room, opts.allowMemberScreen)
 	}
 
-	writeJSON(w, http.StatusOK, liveShareManageResponse{
+	resp := liveShareManageResponse{
 		Token: room.Token(),
 		Path:  "/share/" + room.Token(),
 		// Echoed back because the publisher is the ONE client that never
@@ -246,8 +293,26 @@ func serveLiveShareCreate(w http.ResponseWriter, r *http.Request, projectPath st
 		// as off while the room has them on.
 		TalkEnabled:   room.TalkEnabled(),
 		ScreenEnabled: room.ScreenEnabled(),
-	})
+	}
+	if room.UseRelay() {
+		cfg := room.LiveKit()
+		hostToken, err := cfg.JoinToken(room.Token(), hostRelayIdentity, room.PublisherName(), true, liveshare.DefaultTokenTTL)
+		if err != nil {
+			slog.Error("liveshare: sign host relay token failed", "err", err)
+			model.WriteError(w, model.Internal(err))
+			return
+		}
+		resp.Mode = liveshare.ModeSFU
+		resp.Relay = &liveshare.RelayInfo{URL: cfg.URL, Token: hostToken, Room: room.Token()}
+	} else {
+		resp.Mode = liveshare.ModeP2P
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
+
+// hostRelayIdentity is the publisher's identity inside LiveKit. The prefix keeps
+// it from colliding with a viewer id, and matches what the permission calls use.
+const hostRelayIdentity = "host"
 
 // liveRoomInProgress reports whether a create request landed on a meeting that
 // is already running, in which case its body must not be applied.
@@ -540,8 +605,15 @@ func applyPublisherAudience(room *liveshare.Room, sink *liveSink, ctl liveshare.
 		// The viewer's own teardown reports viewer-leave. Only the picture needs
 		// telling here: removal already cleared the sharer slot, so the normal
 		// "was it sharing?" branch in that teardown sees nothing to broadcast.
+		known := room.Viewer(ctl.ViewerID) != nil
 		if room.KickViewer(ctl.ViewerID) {
 			broadcastScreenState(room)
+		}
+		// Removal is a permission change in relay mode: the page is gone but
+		// its LiveKit connection is not, and only the server can hang that up.
+		// Skipped for an unknown id so a repeated kick does not log a 404.
+		if known {
+			removeRelayViewer(room, ctl.ViewerID)
 		}
 	}
 }
@@ -557,6 +629,11 @@ func applyTalkRevoke(room *liveshare.Room, sink *liveSink, viewerID string) {
 }
 
 // applyTalkMuteAll silences every speaking viewer.
+//
+// No relay call: mute-all stops the microphones that are on right now, it does
+// not take the permission away (the room switch is the boundary, the per-viewer
+// mute is the persistent block — see live_relay.go). The permission is
+// unchanged, so the frame below is all there is to send, exactly as in p2p.
 func applyTalkMuteAll(room *liveshare.Room) {
 	for _, id := range room.MuteAll() {
 		room.SendToViewer(id, liveshare.ViewerMessage{Type: liveshare.MsgTalkRevoked, Reason: liveshare.ReasonMuted})
@@ -570,6 +647,10 @@ func applyTalkMute(room *liveshare.Room, sink *liveSink, ctl liveshare.Publisher
 		_ = sink.Send(liveshare.PublisherMessage{Type: liveshare.MsgError, ViewerID: ctl.ViewerID, Name: err.Error()})
 		return
 	}
+	// Before the frames: revoking is what actually silences a relayed browser,
+	// the frame below only tells it to redraw. Doing it the other way round
+	// leaves a window where the roster says "muted" and audio still flows.
+	syncRelayViewer(room, ctl.ViewerID)
 	if ctl.Enabled {
 		// Muting silences the microphone as well, so the viewer gets the
 		// same "stop now" frame it already understands, tagged as a host
@@ -646,7 +727,15 @@ func LiveShareSignalWS(w http.ResponseWriter, r *http.Request) {
 		ViewerID: viewer.ID,
 		Name:     viewer.Name,
 	})
-	if err := sink.Send(joinedViewerMessage(room, viewer)); err != nil {
+	joined, err := joinedViewerMessage(room, viewer)
+	if err != nil {
+		// Relay token signing failed. Refuse the join rather than sending a
+		// frame that tells the page "you are in" while nothing can reach it.
+		slog.Error("liveshare: build joined frame failed", "err", err)
+		_ = sink.Send(liveshare.ViewerMessage{Type: liveshare.MsgError, Reason: "relay"})
+		return
+	}
+	if err := sink.Send(joined); err != nil {
 		return
 	}
 
@@ -739,8 +828,13 @@ func detachViewer(room *liveshare.Room, viewer *liveshare.Viewer) {
 
 // joinedViewerMessage is the viewer's first frame: its own id plus the room's
 // current state.
-func joinedViewerMessage(room *liveshare.Room, viewer *liveshare.Viewer) liveshare.ViewerMessage {
-	return liveshare.ViewerMessage{
+//
+// It returns an error only in relay mode, when the LiveKit token cannot be
+// signed. Sending a `joined` frame without its relay info would leave the page
+// waiting for an offer that never comes, which reads as "stuck on connecting"
+// with no explanation.
+func joinedViewerMessage(room *liveshare.Room, viewer *liveshare.Viewer) (liveshare.ViewerMessage, error) {
+	msg := liveshare.ViewerMessage{
 		Type:          liveshare.MsgJoined,
 		ViewerID:      viewer.ID,
 		Title:         room.Title(),
@@ -760,6 +854,20 @@ func joinedViewerMessage(room *liveshare.Room, viewer *liveshare.Viewer) livesha
 		// be a race to see which arrives first.
 		Roster: room.Roster(),
 	}
+	if !room.UseRelay() {
+		msg.Mode = liveshare.ModeP2P
+		return msg, nil
+	}
+	cfg := room.LiveKit()
+	// Identity is prefixed so it can never collide with the host's.
+	identity := "viewer:" + viewer.ID
+	token, err := cfg.JoinToken(room.Token(), identity, viewer.Name, room.TalkEnabled() && !viewer.Muted(), liveshare.DefaultTokenTTL)
+	if err != nil {
+		return msg, err
+	}
+	msg.Mode = liveshare.ModeSFU
+	msg.Relay = &liveshare.RelayInfo{URL: cfg.URL, Token: token, Room: room.Token()}
+	return msg, nil
 }
 
 // readViewerFrames applies viewer control frames until the socket dies.
@@ -1004,6 +1112,11 @@ func applySetPicture(room *liveshare.Room, ctl liveshare.PublisherControl) {
 func applySetTalkEnabled(room *liveshare.Room, enabled bool) {
 	room.SetTalkEnabled(enabled)
 	for _, v := range room.Viewers() {
+		// Relay enforcement first, per viewer: the switch is the security
+		// boundary, so a browser that is slow to act on the frame below must
+		// still lose (or regain) the ability to publish. A viewer the host
+		// muted stays revoked even when the room switch comes back on.
+		syncRelayPublish(room, v.ID, enabled && !v.Muted())
 		if enabled {
 			room.SendToViewer(v.ID, liveshare.ViewerMessage{
 				Type:        liveshare.MsgTalkEnabled,

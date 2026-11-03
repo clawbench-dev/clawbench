@@ -1,5 +1,5 @@
 /**
- * Viewer-side live share client: signalling socket + one RTCPeerConnection.
+ * Viewer-side live share client: signalling socket + one media transport.
  *
  * Kept free of Vue so the state machine can be unit tested directly. The
  * component wraps it and mirrors `state` into reactive refs.
@@ -8,9 +8,16 @@
  *   server → joined | answer | ice | full | publisher-gone | talk-* | error
  *   client → join | offer | ice | talk-request | talk-start | talk-end
  *
- * Media is P2P: the socket carries only SDP/ICE. `iceServers` comes from the
- * `joined` frame and is passed to RTCPeerConnection verbatim, so enabling a
- * TURN relay later needs no change here.
+ * Two topologies share this class, chosen by the `joined` frame:
+ *
+ *  - **p2p** (default): the socket carries only SDP/ICE and the media rides one
+ *    RTCPeerConnection. `iceServers` is passed through verbatim, so a TURN
+ *    rollout needs no change here.
+ *  - **sfu**: `joined` also carries `mode: 'sfu'` and a `relay` block. No
+ *    PeerConnection is created at all — media AND the control bus move to the
+ *    LiveKit room, and the socket is left carrying room state only.
+ *
+ * The control-frame shapes are identical in both, so callers never branch.
  */
 import { appLog } from '@/utils/appLog'
 import { parseControlMessage, type ControlMessage } from './liveControl'
@@ -20,8 +27,27 @@ import {
   applyEncodeBudget,
   screenCaptureConstraints,
 } from '@/composables/liveMediaPolicy'
+import {
+  closeRelay,
+  decodeRelayData,
+  openRelay,
+  publishMic,
+  publishVideo,
+  sendRelayData,
+} from '@/composables/useLiveRelay'
+import type { Room, Track } from 'livekit-client'
 
 const TAG = 'LiveViewer'
+
+/**
+ * LiveKit's `Track.Source` values, spelled out as strings.
+ *
+ * Imported as values they would drag the LiveKit runtime into this module (and
+ * into every test that mounts the viewer). `useLiveRelay` already owns that
+ * dependency, so the only thing needed here is the two source tags.
+ */
+const SOURCE_SCREEN = 'screen_share' as Track.Source.ScreenShare
+const SOURCE_CAMERA = 'camera' as Track.Source.Camera
 
 /** One health reading, as shown by the quality badge. */
 export interface LiveStats {
@@ -41,9 +67,28 @@ export type LiveViewerState =
   | 'name-taken' // somebody in the meeting already uses this display name
   | 'failed' // signalling or ICE failure
 
+/**
+ * Where the media goes when the room is relayed (SFU) rather than peer-to-peer.
+ *
+ * `token` is a short-lived credential the server signed for THIS viewer; it is
+ * never stored, because a reconnect asks ClawBench for a fresh one.
+ */
+export interface RelayInfo {
+  url: string
+  token: string
+  /** The LiveKit room name (the share token). */
+  room?: string
+}
+
 /** Message shapes the server sends. Fields are optional by message type. */
 interface ServerMessage {
   type?: string
+  /**
+   * Media topology. Absent (or 'p2p') means the classic PeerConnection path;
+   * 'sfu' means `relay` is present and must be used instead.
+   */
+  mode?: string
+  relay?: RelayInfo
   viewerId?: string
   title?: string
   sdp?: string
@@ -247,6 +292,33 @@ export class LiveViewer {
   private _controlEnabled = false
   /** Whether the host's camera tile should be shown. */
   private _cameraEnabled = false
+  /** Identities speaking right now, as the relay reports them (most recent first). */
+  private _activeSpeakers: string[] = []
+
+  // ── Relay (SFU) mode ──────────────────────────────────────────────────────
+  /**
+   * The LiveKit room, or null on the peer-to-peer path.
+   *
+   * Every relay-only operation keys off this handle rather than a separate
+   * mode flag: there is nothing to publish to before the room resolves, and a
+   * failed connect leaves it null (the session goes to `failed` instead of
+   * silently falling back to a p2p room that may not exist).
+   */
+  private relayRoom: Room | null = null
+  /**
+   * Tracks of the host's picture, in arrival order.
+   *
+   * The relay delivers the screen and its audio as separate tracks (the p2p
+   * path got one mixed audio track), but the page renders one `<video>` with a
+   * single `srcObject` — so they are merged into one stream here.
+   */
+  private relayMainTracks: MediaStreamTrack[] = []
+  private relayMainStream: MediaStream | null = null
+  private relayMainVideoTrack: MediaStreamTrack | null = null
+  /** The host's camera tile track (picture-in-picture). */
+  private relayCameraTrack: MediaStreamTrack | null = null
+  /** Another viewer's screen, relayed by the server. */
+  private relayMemberTrack: MediaStreamTrack | null = null
 
   constructor(opts: LiveViewerOptions) {
     this.opts = opts
@@ -298,6 +370,17 @@ export class LiveViewer {
   /** The participant list as the server last reported it. */
   get roster(): RosterMember[] {
     return this._roster
+  }
+
+  /**
+   * Identities the relay currently reports as speaking.
+   *
+   * Only meaningful in relay mode: peer-to-peer mixes the audio on the
+   * publisher's machine, so there is no per-speaker signal to report. The same
+   * information is folded into `roster[].talking`.
+   */
+  get activeSpeakers(): string[] {
+    return this._activeSpeakers
   }
 
   /** Whether the room allows audience screen sharing. */
@@ -511,6 +594,15 @@ export class LiveViewer {
     this.cb.onScreenSharer?.(this._screenSharer)
     if (msg.title) this.cb.onTitle?.(msg.title)
 
+    if (msg.mode === 'sfu' && msg.relay) {
+      // Relayed room: media and the control bus live in LiveKit. Everything
+      // below belongs to the peer-to-peer path (offer, transceivers, data
+      // channel) and must NOT run — creating a PeerConnection here would open
+      // a second, unused transport and send an offer nobody answers.
+      void this.startRelay(msg.relay)
+      return
+    }
+
     const pcFactory =
       this.opts.pcFactory ??
       ((config: RTCConfiguration) => new RTCPeerConnection(config))
@@ -606,6 +698,170 @@ export class LiveViewer {
     void this.sendOffer()
   }
 
+  // ── Relay (SFU) mode ──────────────────────────────────────────────────────
+
+  /**
+   * Join the LiveKit room that carries this meeting's media.
+   *
+   * The socket stays open: it is still the authority on room state (who may
+   * speak, who is sharing a screen, the participant list). Only media and the
+   * control bus move.
+   */
+  private async startRelay(relay: RelayInfo): Promise<void> {
+    // Assigned inside the try, read by the disconnect handler: a room that was
+    // never handed to us must not be able to fail the session.
+    let room: Room | null = null
+    try {
+      room = await openRelay(relay.url, relay.token, {
+        onTrack: (track, source, identity) => this.onRelayTrack(track, source, identity),
+        onTrackGone: (track) => this.onRelayTrackGone(track),
+        onData: (payload) => this.onRelayData(payload),
+        onActiveSpeakers: (identities) => this.onRelaySpeakers(identities),
+        onDisconnected: (reason) => this.onRelayDisconnected(room, reason),
+      })
+    } catch (e) {
+      appLog.e(TAG, 'relay connect failed', e)
+      this.setState('failed', { reason: 'relay' })
+      return
+    }
+    if (!room) return
+    if (this._closed) {
+      // The page was closed while we were connecting.
+      closeRelay(room)
+      return
+    }
+    this.relayRoom = room
+    // Ask for the transcript so far. Peer-to-peer does this in the data
+    // channel's `open` handler; LiveKit's channel is usable as soon as the room
+    // is connected, so this is the equivalent moment — without it a viewer that
+    // joins late sees an empty chat panel.
+    void sendRelayData(room, { t: 'chat-history-req' })
+  }
+
+  /**
+   * One track arrived from the relay.
+   *
+   * The relay delivers every participant's tracks separately, so the routing
+   * that the peer-to-peer path does with transceivers is done with `source` and
+   * `identity` here. `identity` is 'host' for the publisher and the room's
+   * viewer id for everybody else — the same ids the roster uses.
+   */
+  private onRelayTrack(track: MediaStreamTrack, source: string, identity: string): void {
+    // The publisher is 'host'; everybody else is their viewer id. An empty one
+    // means the relay could not name the sender — the picture then has no
+    // owner, so say so instead of silently routing it as a member's screen.
+    if (!identity) appLog.w(TAG, 'relay track without an identity', source, track.kind)
+
+    if (track.kind === 'audio') {
+      // EVERY audio track goes into the main stream, not just the host's.
+      // A viewer who raised their hand and was approved publishes here, and the
+      // rest of the audience has to hear them — dropping non-host audio would
+      // make "举手发言" a silent feature. The relay never delivers our own
+      // track back, so there is no echo to guard against; the identity check is
+      // only a belt-and-braces guard for a relay that misroutes.
+      if (identity === `viewer:${this._viewerId}`) return
+      this.addRelayMainTrack(track)
+      // A voice meeting has no video: the audio track IS the picture arriving.
+      if (!this._videoEnabled) this.setState('playing')
+      return
+    }
+
+    if (source === SOURCE_CAMERA) {
+      // The picture-in-picture tile. It must NOT reach onStream: that assigns
+      // the main <video>, so the camera would replace the screen.
+      this.relayCameraTrack = track
+      this.cb.onCameraStream?.(new MediaStream([track]))
+      track.addEventListener('ended', () => this.onRelayTrackGone(track))
+      return
+    }
+
+    if (source !== SOURCE_SCREEN) return
+
+    if (identity === 'host') {
+      this.relayMainVideoTrack = track
+      this.addRelayMainTrack(track)
+      this.setState('playing')
+      return
+    }
+
+    // Another viewer's screen. Surfaced through the same callback the p2p path
+    // uses; a build without member sharing simply ignores it.
+    this.relayMemberTrack = track
+    this.cb.onMemberScreenStream?.(new MediaStream([track]))
+    track.addEventListener('ended', () => this.onRelayTrackGone(track))
+  }
+
+  /** Merge one host track into the single stream the main <video> renders. */
+  private addRelayMainTrack(track: MediaStreamTrack): void {
+    if (this.relayMainTracks.includes(track)) return
+    this.relayMainTracks = [...this.relayMainTracks, track]
+    if (track.kind === 'video') this.mainVideoTrack = track
+    // A fresh MediaStream rather than addTrack: the component re-assigns
+    // `srcObject` on every onStream, so a mutated stream would not be noticed.
+    this.relayMainStream = new MediaStream(this.relayMainTracks)
+    this.cb.onStream?.(this.relayMainStream)
+  }
+
+  private onRelayTrackGone(track: MediaStreamTrack): void {
+    if (track === this.relayCameraTrack) {
+      this.relayCameraTrack = null
+      this.cb.onCameraStream?.(null)
+      return
+    }
+    if (track === this.relayMemberTrack) {
+      this.relayMemberTrack = null
+      this.cb.onMemberScreenStream?.(null)
+      return
+    }
+    if (!this.relayMainTracks.includes(track)) return
+    this.relayMainTracks = this.relayMainTracks.filter((t) => t !== track)
+    if (this.relayMainVideoTrack === track) this.relayMainVideoTrack = null
+    if (this.relayMainTracks.length === 0) {
+      // Nothing left to render. The page learns about the missing picture from
+      // the server's `picture-state` frame, exactly as on the p2p path, so
+      // there is nothing to report here.
+      this.relayMainStream = null
+      return
+    }
+    this.relayMainStream = new MediaStream(this.relayMainTracks)
+    this.cb.onStream?.(this.relayMainStream)
+  }
+
+  /** A control frame arrived on LiveKit's data channel. */
+  private onRelayData(payload: Uint8Array): void {
+    const decoded = decodeRelayData(payload)
+    if (decoded === null) return
+    // Re-encode and run the SAME parser the data channel uses: one place
+    // decides what a valid control frame is, whatever carried it.
+    const msg = parseControlMessage(JSON.stringify(decoded))
+    if (msg) this.cb.onControl?.(msg)
+  }
+
+  /**
+   * Who is speaking, per the relay.
+   *
+   * The server cannot report this in relay mode (it never sees the media), so
+   * the roster's `talking` flags are derived here. The roster ids ARE the
+   * relay identities, so the existing callback is enough — no new API and no
+   * second list for the panel to keep in step.
+   */
+  private onRelaySpeakers(identities: string[]): void {
+    this._activeSpeakers = identities
+    const active = new Set(identities)
+    this.applyRoster(this._roster.map((m) => ({ ...m, talking: active.has(m.id) })))
+  }
+
+  private onRelayDisconnected(room: Room | null, reason: string): void {
+    // Ignore a room we already released (or never adopted). `teardown()` closes
+    // the room on purpose and LiveKit reports that close through this very
+    // callback — acting on it would turn every clean exit into `failed`.
+    if (!room || this.relayRoom !== room) return
+    appLog.w(TAG, 'relay disconnected', reason)
+    this.relayRoom = null
+    closeRelay(room)
+    this.setState('failed', { reason: 'relay' })
+  }
+
   private async sendOffer(): Promise<void> {
     if (!this.pc) return
     try {
@@ -648,7 +904,9 @@ export class LiveViewer {
    * which also covers a stale UI whose toggle was enabled by an older `joined`.
    */
   async startTalking(): Promise<boolean> {
-    if (!this.talkTx) return false
+    // `talkTx` exists only on the p2p path; a relayed room has a LiveKit room
+    // instead, and the microphone is published there.
+    if (!this.talkTx && !this.relayRoom) return false
     if (!this.micTrack) {
       try {
         const gum =
@@ -664,7 +922,16 @@ export class LiveViewer {
       }
     }
     if (!this.micTrack) return false
-    await this.talkTx.sender.replaceTrack(this.micTrack)
+    if (this.relayRoom) {
+      try {
+        await publishMic(this.relayRoom, this.micTrack)
+      } catch (e) {
+        appLog.e(TAG, 'publish microphone failed', e)
+        return false
+      }
+    } else {
+      await this.talkTx!.sender.replaceTrack(this.micTrack)
+    }
     this._talking = true
     this.send({ type: 'talk-start' })
     return true
@@ -690,7 +957,8 @@ export class LiveViewer {
    * page.
    */
   async startScreenShare(): Promise<boolean> {
-    if (!this.screenTx || this.screenTrack) return false
+    // `screenTx` exists only on the p2p path; a relayed room publishes instead.
+    if ((!this.screenTx && !this.relayRoom) || this.screenTrack) return false
     const gdm = navigator.mediaDevices?.getDisplayMedia
     if (!gdm) return false
     try {
@@ -712,11 +980,23 @@ export class LiveViewer {
       }
       applyContentHint(track, 'text')
       this.screenTrack = track
-      await this.screenTx.sender.replaceTrack(track)
-      // The host re-encodes this, so the uplink has to be bounded on the side
-      // that owns the encoder. Best effort: a rejected budget still leaves a
-      // working share.
-      void applyEncodeBudget(this.screenTx.sender, GUEST_SCREEN_BUDGET)
+      if (this.relayRoom) {
+        // Relay mode: publish the capture; the SFU owns the encoder and the
+        // per-viewer fan-out, so the p2p uplink budget below does not apply.
+        try {
+          await publishVideo(this.relayRoom, track, SOURCE_SCREEN)
+        } catch (e) {
+          appLog.w(TAG, 'publish screen failed', e)
+          this.releaseScreenTrack()
+          return false
+        }
+      } else {
+        await this.screenTx!.sender.replaceTrack(track)
+        // The host re-encodes this, so the uplink has to be bounded on the side
+        // that owns the encoder. Best effort: a rejected budget still leaves a
+        // working share.
+        void applyEncodeBudget(this.screenTx!.sender, GUEST_SCREEN_BUDGET)
+      }
       // The browser's own "stop sharing" bar ends the track without telling us
       // through a socket, so it has to be handled here.
       track.addEventListener('ended', () => {
@@ -820,6 +1100,12 @@ export class LiveViewer {
 
   /** Send one control frame (laser, ink, chat, remote-control event). */
   sendControl(msg: ControlMessage): boolean {
+    if (this.relayRoom) {
+      // Relay mode: the control bus is LiveKit's data channel. The frame shape
+      // is unchanged, so every caller stays topology-agnostic.
+      void sendRelayData(this.relayRoom, msg)
+      return true
+    }
     if (this.dc?.readyState !== 'open') return false
     try {
       this.dc.send(JSON.stringify(msg))
@@ -881,6 +1167,13 @@ export class LiveViewer {
   }
 
   private async detachScreen(): Promise<void> {
+    if (this.relayRoom) {
+      try {
+        await publishVideo(this.relayRoom, null, SOURCE_SCREEN)
+      } catch (e) {
+        appLog.d(TAG, 'unpublish screen failed', e)
+      }
+    }
     try {
       await this.screenTx?.sender.replaceTrack(null)
     } catch (e) {
@@ -890,6 +1183,13 @@ export class LiveViewer {
 
   /** Detach the microphone track without reporting it (used on mute). */
   private async detachMic(): Promise<void> {
+    if (this.relayRoom) {
+      try {
+        await publishMic(this.relayRoom, null)
+      } catch (e) {
+        appLog.d(TAG, 'unpublish microphone failed', e)
+      }
+    }
     try {
       await this.talkTx?.sender.replaceTrack(null)
     } catch (e) {
@@ -923,6 +1223,17 @@ export class LiveViewer {
   private teardown(): void {
     void this.stopTalking()
     this.releaseScreenTrack()
+    // Clear the handle BEFORE closing: LiveKit reports the close through
+    // `onDisconnected`, which must not turn a clean exit into `failed`.
+    const relay = this.relayRoom
+    this.relayRoom = null
+    if (relay) closeRelay(relay)
+    this.relayMainTracks = []
+    this.relayMainStream = null
+    this.relayMainVideoTrack = null
+    this.relayCameraTrack = null
+    this.relayMemberTrack = null
+    this._activeSpeakers = []
     this.dc = null
     this.lastStats = null
     this.mainVideoTrack = null

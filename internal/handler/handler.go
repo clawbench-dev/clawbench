@@ -690,6 +690,16 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// the credential, exactly like the file/session share endpoints above.
 	register("/api/live-share", ServeLiveShareManage)
 	register("/api/live-share/publish/ws", LiveSharePublishWS)
+	// 中继服务 (LiveKit) endpoint + credential. Installation-wide, not per
+	// meeting: the create dialog edits it, every meeting that opts in uses it.
+	// The secret is write-only — see handler/live_sfu.go.
+	register("/api/live-share/sfu", ServeLiveSFUConfig)
+	register("/api/live-share/sfu/test", ServeLiveSFUTest)
+	// Signaling proxy for a LOOPBACK relay. Public like the viewer socket: an
+	// https page cannot open ws://, so it asks the origin instead, and the
+	// LiveKit token it carries is the credential. Only 127.0.0.1 is ever
+	// dialed — see handler/live_proxy.go.
+	registerPublic("/livekit/", ServeLiveKitProxy)
 	// AI 听记: the publisher uploads one audio segment per channel, reads the
 	// merged timeline back, and asks for the minutes once the share ends.
 	register("/api/live-share/notes", ServeLiveShareNotes)

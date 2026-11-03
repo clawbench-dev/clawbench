@@ -39,6 +39,8 @@ MethodNotAllowed: Method not allowed
 TokenRequired: token is required
 LiveShareAlreadyPublishing: another publisher is already sharing this room
 LiveShareTooManyRooms: too many concurrent screen shares
+LiveShareRelayNotConfigured: the relay service is not configured — fill in and test the relay URL and credentials first
+LiveShareRelayUnavailable: the relay service is unavailable, so the meeting cannot start
 ViewerNameRequired: a display name is required to join
 LiveNotesGenerating: the minutes are still being generated
 LiveNotesMeetingLive: the meeting is still in progress

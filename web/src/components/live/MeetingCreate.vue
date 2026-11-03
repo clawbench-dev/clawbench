@@ -162,6 +162,78 @@
             {{ t('liveShare.allowScreenShare') }}
           </label>
         </div>
+
+        <!-- 中继服务: the only option here that needs a second deployment.
+             The switch stays visible so the feature can be found at all; the
+             endpoint fields only appear once it is on, because a small meeting
+             must not have to scroll past three inputs it will never use. -->
+        <div class="meeting-section" data-role="meeting-relay-section">
+          {{ t('meeting.create.relay') }}
+        </div>
+        <div class="meeting-hint">{{ t('meeting.create.relayHint') }}</div>
+        <div class="meeting-checks">
+          <label class="meeting-check">
+            <input
+              type="checkbox"
+              :checked="useRelay"
+              data-role="meeting-relay"
+              @change="useRelay = ($event.target as HTMLInputElement).checked"
+            />
+            <span class="meeting-check__icon"><Radio :size="13" /></span>
+            {{ t('meeting.create.relayEnable') }}
+          </label>
+        </div>
+
+        <template v-if="useRelay">
+          <!-- Said out loud because the fields sit in a per-meeting form while
+               they apply to every meeting on this server. -->
+          <div class="meeting-hint" data-role="meeting-relay-scope">
+            {{ t('meeting.create.relayScope') }}
+          </div>
+          <input
+            v-model="relayUrl"
+            class="meeting-input"
+            type="text"
+            data-role="meeting-relay-url"
+            :placeholder="t('meeting.create.relayUrlPlaceholder')"
+            spellcheck="false"
+          />
+          <input
+            v-model="relayKey"
+            class="meeting-input"
+            type="text"
+            data-role="meeting-relay-key"
+            :placeholder="t('meeting.create.relayKey')"
+            spellcheck="false"
+          />
+          <input
+            v-model="relaySecret"
+            class="meeting-input"
+            type="password"
+            data-role="meeting-relay-secret"
+            :placeholder="relayHasSecret ? t('meeting.create.relaySecretStored') : t('meeting.create.relaySecret')"
+            spellcheck="false"
+          />
+          <div class="meeting-checks">
+            <button
+              class="fbtn"
+              type="button"
+              data-action="meeting-relay-test"
+              :disabled="relayTesting"
+              @click="testRelay"
+            >
+              {{ relayTesting ? t('meeting.create.relayTesting') : t('meeting.create.relayTest') }}
+            </button>
+          </div>
+          <div
+            v-if="relayMessage"
+            class="meeting-hint"
+            :class="{ 'meeting-hint--required': !relayOk }"
+            data-role="meeting-relay-result"
+          >
+            {{ relayMessage }}
+          </div>
+        </template>
       </template>
     </div>
 
@@ -194,13 +266,14 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, ImageIcon, Mic, MonitorUp, NotebookPen } from 'lucide-vue-next'
+import { ArrowLeft, ImageIcon, Mic, MonitorUp, NotebookPen, Radio } from 'lucide-vue-next'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
 import { useToast } from '@/composables/useToast'
 import { DEFAULT_DEVICE, useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useMeetingNickname } from '@/composables/useMeetingNickname'
 import { notesRecordingSupported } from '@/composables/liveNotes'
+import { useLiveSFUConfig } from '@/composables/useLiveSFUConfig'
 import { MEETING_NICK_MAX } from '@/share/meetingNickname'
 import {
   hasCameraDevice,
@@ -254,6 +327,26 @@ const cameraAvailable = ref(true)
  */
 const allowTalk = ref(true)
 const allowMemberScreen = ref(true)
+
+/**
+ * 中继服务: a per-meeting choice backed by installation-wide credentials.
+ *
+ * The switch is what decides the topology (and with it the viewer ceiling);
+ * the three fields are the endpoint it points at. Default OFF: a meeting that
+ * never asked for a relay must not start paying a hop through one.
+ */
+const useRelay = ref(false)
+const relayUrl = ref('')
+const relayKey = ref('')
+const relaySecret = ref('')
+const relayMessage = ref('')
+const relayOk = ref(false)
+const relayTesting = ref(false)
+const { state: relayState, load: loadRelay, saveAndTest: saveAndTestRelay } = useLiveSFUConfig()
+/** Whether a credential is already stored — the form never receives its value. */
+const relayHasSecret = computed(() => relayState.value.hasSecret)
+/** The relay can only be selected once a working endpoint is stored. */
+const relayReady = computed(() => relayState.value.configured)
 
 const hasNativeCapture = computed(() => Boolean(getNative()?.listCaptureSources))
 const browserCapture = browserScreenCaptureAvailable()
@@ -319,6 +412,10 @@ const nicknameValid = computed(() => Boolean(nickname.value.trim()))
 const canStart = computed(() => {
   if (starting.value) return false
   if (!supported.value) return false
+  // Asking for the relay without a tested endpoint would create a room that
+  // cannot carry media. Refusing here is the honest failure: the alternative is
+  // a meeting that silently falls back to 8 seats.
+  if (useRelay.value && !relayReady.value) return false
   return nicknameValid.value
 })
 
@@ -394,6 +491,38 @@ function notesLabel(channel: string): string {
   return t('liveShare.notes.speakerViewer', { n })
 }
 
+/**
+ * Probe the draft values, and store them only if the probe passes.
+ *
+ * A relay that "saves fine" but cannot be reached is worse than one that
+ * refuses: every later meeting would fail at start with no indication of which
+ * of the three fields is wrong.
+ */
+async function testRelay(): Promise<void> {
+  if (relayTesting.value) return
+  if (!relayUrl.value.trim() || (!relayKey.value.trim() && !relayHasSecret.value)) {
+    relayOk.value = false
+    relayMessage.value = t('meeting.create.relayMissing')
+    return
+  }
+  relayTesting.value = true
+  relayMessage.value = ''
+  try {
+    const res = await saveAndTestRelay({
+      url: relayUrl.value,
+      apiKey: relayKey.value,
+      apiSecret: relaySecret.value,
+    })
+    relayOk.value = res.ok
+    relayMessage.value = res.message
+    // The secret is now stored server-side; keeping it in the field would send
+    // it again on the next save for no reason.
+    if (res.ok) relaySecret.value = ''
+  } finally {
+    relayTesting.value = false
+  }
+}
+
 async function start(): Promise<void> {
   if (!canStart.value) return
   starting.value = true
@@ -421,6 +550,8 @@ async function start(): Promise<void> {
       shots: shots.value,
       allowTalk: allowTalk.value,
       allowMemberScreen: allowMemberScreen.value,
+      // Fixed for the life of the room: the topology cannot change mid-meeting.
+      useRelay: useRelay.value,
       shareTitle: title.value.trim(),
       // The audience's member list names the host with this; without it the
       // host row can only say "主持人".
@@ -444,6 +575,12 @@ onMounted(() => {
   // A disabled switch must not be left ON (it is a shared singleton, so the
   // running stage would read it back as "notes wanted").
   if (!notesSupported) notes.value = false
+  // Prefill the relay URL from what is stored, so enabling the switch on a
+  // configured install needs no retyping. The secret never comes back, which is
+  // why the placeholder says "已保存" instead.
+  void loadRelay().then(() => {
+    if (!relayUrl.value) relayUrl.value = relayState.value.url
+  })
   // The host always starts with the microphone on. The choice is a shared
   // singleton (the running stage mutes/unmutes the same ref), so a previous
   // meeting — or a previous visit to this form — may have left it muted. A

@@ -64,6 +64,67 @@ const (
 	tokenBytes = 16
 )
 
+// Transport modes.
+//
+// P2P is the default and the only one that works without extra deployment: the
+// publisher answers one offer per viewer. SFU relays media through an external
+// LiveKit, which is what makes hundreds of viewers possible — the publisher
+// encodes once instead of once per viewer.
+const (
+	ModeP2P = "p2p"
+	ModeSFU = "sfu"
+)
+
+// Mode reports the room's transport. Always ModeP2P or ModeSFU.
+func (r *Room) Mode() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.mode == "" {
+		return ModeP2P
+	}
+	return r.mode
+}
+
+// LiveKit returns the relay snapshot (zero value for a P2P room).
+func (r *Room) LiveKit() LiveKitConfig {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.livekit
+}
+
+// UseRelay reports whether media goes through LiveKit.
+func (r *Room) UseRelay() bool {
+	return r.Mode() == ModeSFU && r.LiveKit().Configured()
+}
+
+// SetMode fixes the transport at creation time.
+//
+// Returns false when the room already has a publisher: the mode cannot change
+// under a live meeting, and a late second create (the endpoint is idempotent per
+// project) must not silently rewrite it.
+//
+// p2pMax is the registry's viewer ceiling, restored when a room is created
+// without the relay. A relay room has no ceiling — see AddViewer.
+func (r *Room) SetMode(mode string, cfg LiveKitConfig, p2pMax int) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.publisher != nil || r.publisherReserved {
+		return false
+	}
+	if mode == ModeSFU && cfg.Configured() {
+		r.mode = ModeSFU
+		r.livekit = cfg
+		r.maxViewers = 0
+		return true
+	}
+	r.mode = ModeP2P
+	r.livekit = LiveKitConfig{}
+	if p2pMax > 0 {
+		r.maxViewers = p2pMax
+	}
+	return true
+}
+
 // Sink is the transport a participant is reachable through.
 //
 // Implementations must be safe for concurrent use: the room fans out to several
@@ -179,6 +240,14 @@ type Room struct {
 	controlEnabled bool
 
 	maxViewers  int
+	// mode is ModeP2P (default) or ModeSFU. Fixed at creation: switching
+	// topologies means rebuilding every connection, which blacks out the room
+	// for several seconds and would need every participant to reconnect at once.
+	mode string
+	// livekit is the relay snapshot for ModeSFU. Copied from the installation
+	// config when the room is created so that editing that config never reaches
+	// a meeting that is already running.
+	livekit LiveKitConfig
 	idleTimeout time.Duration
 	lastActive  time.Time
 }
@@ -525,7 +594,10 @@ func (r *Room) ViewerCount() int {
 // roster, and the whole point of the rule is that a name identifies one person.
 func (r *Room) AddViewer(name string, sink Sink) (*Viewer, error) {
 	r.mu.Lock()
-	if len(r.viewers) >= r.maxViewers {
+	// maxViewers == 0 means "no ceiling". Relay rooms use it: the real limit
+	// there is bandwidth, and inventing a number would only block a deployment
+	// that can actually carry more.
+	if r.maxViewers > 0 && len(r.viewers) >= r.maxViewers {
 		r.mu.Unlock()
 		return nil, ErrRoomFull
 	}

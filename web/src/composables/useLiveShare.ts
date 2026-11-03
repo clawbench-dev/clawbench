@@ -39,6 +39,14 @@ import {
   resolvePreferredVideoMime,
   screenCaptureConstraints,
 } from './liveMediaPolicy'
+import { Track } from 'livekit-client'
+import {
+  closeRelay,
+  openRelay,
+  publishMic,
+  publishVideo,
+  sendRelayData,
+} from './useLiveRelay'
 
 const TAG = 'LiveShare'
 
@@ -277,6 +285,18 @@ let governor: VideoLoadGovernor | null = null
 let videoCodecs: RTCRtpCodec[] = []
 /** Hardware-accelerated codec to prefer, or null to keep the browser default. */
 let preferredVideoMime: string | null = null
+/**
+ * LiveKit room, when this meeting's media goes through the relay.
+ *
+ * Null in peer-to-peer. The two topologies never coexist: the mode is fixed at
+ * creation, and every branch below keys off `relayMode` rather than testing the
+ * room handle, so a failed connect cannot silently fall back to a p2p room that
+ * is capped at eight seats.
+ */
+let relayRoom: import('livekit-client').Room | null = null
+let relayMode = false
+/** Identities that were speaking at the previous sample, to send their stop. */
+let lastRelaySpeakers: string[] = []
 /** UI subscribers for control frames coming from viewers. */
 const controlHandlers = new Set<(msg: ControlMessage) => void>()
 /**
@@ -433,6 +453,12 @@ function resetSession(): void {
   governor = null
   videoCodecs = []
   preferredVideoMime = null
+  // Disconnect before dropping the handle: leaving the LiveKit room open keeps
+  // the server's participant alive and the OS camera/mic indicators lit.
+  closeRelay(relayRoom)
+  relayRoom = null
+  relayMode = false
+  lastRelaySpeakers = []
   for (const p of peers.values()) {
     try {
       p.pc.close()
@@ -694,6 +720,97 @@ async function resolveVideoCodecPreference(): Promise<void> {
   if (preferredVideoMime) appLog.i(TAG, 'hardware video encoder preferred', preferredVideoMime)
 }
 
+// ── Relay (LiveKit) ────────────────────────────────────────────────────────
+
+/** The viewer id inside a LiveKit identity (`viewer:3` → `3`). */
+function relayViewerId(identity: string): string {
+  return identity.startsWith('viewer:') ? identity.slice('viewer:'.length) : ''
+}
+
+/**
+ * Publish the current picture.
+ *
+ * One video track at a time: screen and camera both travel as video, and the
+ * viewer distinguishes them by source. A camera TILE next to a screen is a
+ * peer-to-peer layout (two m-lines); in relay mode the main picture is the only
+ * one that matters, and publishing two video tracks would double every viewer's
+ * downstream for a thumbnail.
+ */
+async function publishRelayPicture(): Promise<void> {
+  if (!relayRoom) return
+  const screen = displayStream?.getVideoTracks()[0] ?? null
+  const camera = cameraStream?.getVideoTracks()[0] ?? null
+  const main = screen ?? camera
+  await publishVideo(relayRoom, screen, Track.Source.ScreenShare)
+  await publishVideo(relayRoom, screen ? null : camera, Track.Source.Camera)
+  applyContentHint(main, screen ? 'text' : 'motion')
+}
+
+/** A control frame from a viewer, over LiveKit's data channel. */
+function handleRelayData(payload: Uint8Array): void {
+  const msg = parseControlMessage(new TextDecoder().decode(payload))
+  if (msg) controlHandlers.forEach((cb) => cb(msg))
+}
+
+/**
+ * LiveKit computes audio levels server-side, so the relay path does not poll.
+ *
+ * Returns the new level map plus the frames to broadcast: a speaker that has
+ * stopped needs an explicit zero, or its chip stays lit forever.
+ */
+export function relaySpeakerFrames(
+  identities: readonly string[],
+  previous: readonly string[],
+): { levels: Record<string, number>; frames: Array<{ id: string; level: number }> } {
+  const speaking = identities.filter((id) => id === 'host' || relayViewerId(id) !== '')
+  const levels: Record<string, number> = {}
+  const frames: Array<{ id: string; level: number }> = []
+  for (const identity of speaking) {
+    const id = identity === 'host' ? 'host' : relayViewerId(identity)
+    levels[id] = 1
+    frames.push({ id, level: 1 })
+  }
+  for (const identity of previous) {
+    if (speaking.includes(identity)) continue
+    frames.push({ id: identity === 'host' ? 'host' : relayViewerId(identity), level: 0 })
+  }
+  return { levels, frames }
+}
+
+/**
+ * The host subscribes to every guest's microphone, because that audio is what
+ * the transcript is made of. A guest it does not subscribe to is silently
+ * missing from the minutes.
+ */
+function handleRelayTrack(track: MediaStreamTrack, _source: unknown, identity: string): void {
+  const viewerId = relayViewerId(identity)
+  if (viewerId && track.kind === 'audio') {
+    useLiveNotes().addViewer(viewerId, new MediaStream([track]))
+  }
+}
+
+function handleRelayDisconnected(reason: string): void {
+  appLog.w(TAG, 'relay disconnected', reason)
+  relayRoom = null
+  if (state.value === 'publishing') fail(i18n.global.t('liveShare.relayLost'))
+}
+
+/** Connect and publish everything this meeting has. */
+async function connectRelay(
+  relay: { url: string; token: string },
+  onActiveSpeakers: (identities: string[]) => void,
+): Promise<void> {
+  relayRoom = await openRelay(relay.url, relay.token, {
+    onData: handleRelayData,
+    onActiveSpeakers,
+    onTrack: handleRelayTrack,
+    onDisconnected: handleRelayDisconnected,
+  })
+  await publishRelayPicture()
+  const mic = micEnabled.value ? (micStream?.getAudioTracks()[0] ?? null) : null
+  await publishMic(relayRoom, mic)
+}
+
 /**
  * Capture a screen or window on whichever host we are running on.
  *
@@ -827,6 +944,12 @@ async function applyPicture(): Promise<void> {
   const tile = screenTrack && cameraEnabled.value ? cameraTrack : null
   outVideoTrack = main
   outCameraTrack = tile
+  // Relay mode publishes instead of fanning out to per-viewer senders.
+  if (relayMode) {
+    await publishRelayPicture()
+    publishControl()
+    return
+  }
   // The m-line is the same whether it carries a screen or a camera, but the two
   // want different encode budgets and different encoder hints.
   applyContentHint(main, screenTrack ? 'text' : 'motion')
@@ -1129,6 +1252,14 @@ export function useLiveShare() {
      */
     allowTalk?: boolean
     allowMemberScreen?: boolean
+    /**
+     * Route media through the external LiveKit relay instead of peer-to-peer.
+     *
+     * Chosen once, at creation: switching topologies mid-meeting rebuilds every
+     * connection and blacks the room out for seconds. Omitted means p2p, which
+     * is what every client before the relay asked for.
+     */
+    useRelay?: boolean
     /** Localised speaker label for a channel ("system" / "mic" / "viewer:<id>"). */
     notesLabel?: (channel: string) => string
   }): Promise<boolean> {
@@ -1225,6 +1356,9 @@ export function useLiveShare() {
           // 会议管理 tab can flip both at any time afterwards.
           allowTalk: Boolean(opts.allowTalk),
           allowMemberScreen: Boolean(opts.allowMemberScreen),
+          // Topology, fixed at creation. The server refuses the request when
+          // the relay is not configured rather than silently giving a p2p room.
+          useRelay: Boolean(opts.useRelay),
         }),
       })
       if (!resp.ok) {
@@ -1237,6 +1371,8 @@ export function useLiveShare() {
         path?: string
         talkEnabled?: boolean
         screenEnabled?: boolean
+        mode?: string
+        relay?: { url: string; token: string; room: string }
       }
       if (!data.token) {
         fail('create room returned no token')
@@ -1308,6 +1444,22 @@ export function useLiveShare() {
 
       // 6. Open the publisher socket.
       await openSocket()
+
+      // 6b. Relay. The create reply carries the room's mode and, in sfu mode,
+      //     this participant's LiveKit credential. Connecting here (before the
+      //     state flips to publishing) means the first viewer already finds a
+      //     publisher in the room.
+      if (data.relay) {
+        relayMode = true
+        await connectRelay(data.relay, (identities) => {
+          const { levels: next, frames } = relaySpeakerFrames(identities, lastRelaySpeakers)
+          levels.value = next
+          for (const frame of frames) {
+            sendControl({ t: 'talk', viewerId: frame.id, level: frame.level })
+          }
+          lastRelaySpeakers = [...identities]
+        })
+      }
 
       // 7. Keep the renderer unthrottled: a minimized window otherwise throttles
       //    the encoder and the stream stalls for every viewer. A browser has no
@@ -1594,6 +1746,14 @@ export function useLiveShare() {
   /** A viewer arrived: build its PeerConnection and wait for its offer. */
   async function onViewerJoin(viewerId: string): Promise<void> {
     if (!viewerId || peers.has(viewerId)) return
+
+    // Relay mode: the viewer subscribes to LiveKit, so there is nothing to
+    // answer. The row still goes in the list — it is what the host's roster and
+    // the "who is speaking" chips are built from.
+    if (relayMode) {
+      viewers.value = [...viewers.value, { id: viewerId, name: '', talk: 'muted', muted: false }]
+      return
+    }
 
     const pc = new RTCPeerConnection({ iceServers: [] })
     // One destination per viewer, carrying system audio + mic + the OTHER
@@ -1910,6 +2070,12 @@ export function useLiveShare() {
   function sendControl(msg: ControlMessage): void {
     // Keep the screenshot pipeline's copy in step with what the audience sees.
     mirrorInk(msg)
+    // Relay mode has no per-viewer data channels: the same frames ride
+    // LiveKit's data channel, where every participant already is.
+    if (relayMode) {
+      if (relayRoom) void sendRelayData(relayRoom, msg)
+      return
+    }
     const data = JSON.stringify(msg)
     for (const peer of peers.values()) {
       if (peer.channel?.readyState === 'open') {
@@ -1932,6 +2098,9 @@ export function useLiveShare() {
   function startTalkMetering(): void {
     if (talkTimer !== null) return
     talkTimer = setInterval(() => {
+      // Relay mode gets its levels from LiveKit (ActiveSpeakersChanged): polling
+      // here would fight it, and there are no per-viewer analysers to read.
+      if (relayMode) return
       if (!mixer) return
       const next: Record<string, number> = {}
       const publish = (id: string, level: number): void => {

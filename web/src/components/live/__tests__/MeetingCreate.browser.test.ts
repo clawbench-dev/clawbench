@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import enMessages from '@/i18n/locales/en'
 import { _resetMeetingOptions, useMeetingOptions } from '@/composables/useMeetingOptions'
+import { _resetLiveSFUConfigForTest } from '@/composables/useLiveSFUConfig'
 import { listCaptureSources } from '@/composables/useLiveShare'
 import MeetingCreate from '../MeetingCreate.vue'
 
@@ -39,6 +40,22 @@ vi.mock('lucide-vue-next', async (importOriginal) => {
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
+}))
+
+// The relay section reads its stored endpoint on mount. Answered here rather
+// than left to the real client: jsdom has no server, and an unhandled rejection
+// from a background read would fail an unrelated test.
+vi.mock('@/utils/api', () => ({
+  apiGet: vi.fn(async () => ({ url: '', hasSecret: false, configured: false })),
+  apiPost: vi.fn(async () => ({ success: true, message: 'ok' })),
+  apiPatch: vi.fn(async (_url: string, body: Record<string, unknown>) => ({
+    url: (body.url as string) ?? '',
+    hasSecret: true,
+    configured: true,
+  })),
+  apiPut: vi.fn(),
+  apiDelete: vi.fn(),
+  cancelChat: vi.fn(),
 }))
 
 /**
@@ -189,6 +206,8 @@ function stubCaptureApi(available: boolean): void {
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  // The relay configuration is a module-level singleton too.
+  _resetLiveSFUConfigForTest()
   // The capture options are module-level singletons shared with the running
   // meeting; a test that flips the camera would otherwise leak into the next
   // one and make the expectations order-dependent.
@@ -302,14 +321,48 @@ describe('MeetingCreate in a browser', () => {
     expect(wrapper.text()).not.toContain(enMessages.meeting.create.sound)
     expect(wrapper.text()).toContain(enMessages.meeting.create.av)
     expect(wrapper.findAll('[data-role="device-choice"]')).toHaveLength(2)
-    // 听记, key frames and the two audience permissions are room-level
-    // yes/no questions, not capture sources, so they stay checkboxes.
+    // 听记, key frames, the two audience permissions and the relay are
+    // room-level yes/no questions, not capture sources, so they stay checkboxes.
     expect(wrapper.findAll('.meeting-check input').map((i) => i.attributes('data-role'))).toEqual([
       'meeting-notes',
       'meeting-shots',
       'meeting-allow-talk',
       'meeting-allow-member-screen',
+      'meeting-relay',
     ])
+  })
+
+  it('keeps the relay fields hidden until the switch is on', async () => {
+    stubCaptureApi(true)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // The switch has to be findable without opening anything; the three inputs
+    // must not make every small meeting scroll past them.
+    expect(wrapper.find('[data-role="meeting-relay"]').exists()).toBe(true)
+    expect(wrapper.find('[data-role="meeting-relay-url"]').exists()).toBe(false)
+
+    await wrapper.find('[data-role="meeting-relay"]').setValue(true)
+
+    expect(wrapper.find('[data-role="meeting-relay-url"]').exists()).toBe(true)
+    expect(wrapper.find('[data-role="meeting-relay-key"]').exists()).toBe(true)
+    expect(wrapper.find('[data-role="meeting-relay-secret"]').exists()).toBe(true)
+    expect(wrapper.find('[data-action="meeting-relay-test"]').exists()).toBe(true)
+  })
+
+  it('blocks starting a relay meeting until the relay is configured', async () => {
+    stubCaptureApi(true)
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
+
+    const startBtn = () => wrapper.find('[data-action="meeting-start"]')
+    expect(startBtn().attributes('disabled')).toBeUndefined()
+
+    await wrapper.find('[data-role="meeting-relay"]').setValue(true)
+    // No stored endpoint and nothing tested: creating the room would produce one
+    // that cannot carry media, so the button refuses instead.
+    expect(startBtn().attributes('disabled')).toBeDefined()
   })
 
   // Both permissions start ON: a meeting where nobody may speak and nobody may

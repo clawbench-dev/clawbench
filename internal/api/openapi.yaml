@@ -3945,6 +3945,96 @@ paths:
         "409":
           description: 已有发布端在共享
 
+  /api/live-share/sfu:
+    get:
+      tags: [LiveShare]
+      summary: 读取中继服务（LiveKit）配置
+      description: |
+        中继是本安装级的配置（一个地址、一对密钥，所有选择中继的会议共用），
+        不是每场会议一份。密钥只写不读：响应只有 `hasSecret`，从不回显。
+      operationId: liveShareSFUConfigGet
+      responses:
+        "200":
+          description: 当前配置（不含密钥）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    description: 浏览器连接的地址（ws:// 或 wss://）
+                  hasSecret:
+                    type: boolean
+                  configured:
+                    type: boolean
+                  updatedAt:
+                    type: string
+    patch:
+      tags: [LiveShare]
+      summary: 修改中继服务配置
+      description: |
+        `apiKey` / `apiSecret` 缺省表示「保留已存的值」——客户端从未收到密钥，
+        只改地址时不能把凭据清空。`clear: true` 才清除密钥。
+      operationId: liveShareSFUConfigPatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+                  description: 必须以 ws:// 或 wss:// 开头
+                apiKey:
+                  type: string
+                apiSecret:
+                  type: string
+                clear:
+                  type: boolean
+      responses:
+        "200":
+          description: 保存后的配置（不含密钥）
+        "400":
+          description: 地址无法解析或协议不对；密钥只填了一半
+
+  /api/live-share/sfu/test:
+    post:
+      tags: [LiveShare]
+      summary: 测试中继服务连通性与凭据
+      description: |
+        用请求里的草稿值（缺省回落到已存配置）调用一次 LiveKit 的 ListRooms：
+        一次调用同时回答「地址是否可达」与「密钥是否正确」，纯 TCP 探测会在密钥
+        错误时也报成功，直到第一场会议才暴露。与 `/api/config/test` 一样以
+        `{success, message}` 作答，不改变已存配置。
+      operationId: liveShareSFUTest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+                apiKey:
+                  type: string
+                apiSecret:
+                  type: string
+      responses:
+        "200":
+          description: 探测结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
   /api/live-share/notes:
     get:
       tags: [LiveShare]
