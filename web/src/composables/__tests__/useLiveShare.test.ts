@@ -2316,3 +2316,90 @@ describe('ink mirror for key frames', () => {
     await share.stop()
   })
 })
+
+describe('leaving the page during a meeting', () => {
+  /** Dispatch a cancelable unload and report whether it was blocked. */
+  function tryLeave(): boolean {
+    const ev = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(ev)
+    return ev.defaultPrevented
+  }
+
+  it('warns while the meeting is live and stops warning once it ends', async () => {
+    const { share } = await startSharing()
+    expect(share.state.value).toBe('publishing')
+
+    // Closing the publisher socket is what ends the meeting server-side, so an
+    // unguarded refresh destroys it for every viewer.
+    expect(tryLeave()).toBe(true)
+
+    await share.stop()
+    expect(share.state.value).toBe('idle')
+    // A guard that outlived the meeting would make the app unrefreshable.
+    expect(tryLeave()).toBe(false)
+  })
+
+  it('does not warn while only the capture preview is up', async () => {
+    const { share } = await startSharing()
+    // `capturing` runs before the socket attaches: no room is publishing and no
+    // meeting record exists, so a reload loses nothing but the preview.
+    share.state.value = 'capturing'
+    expect(tryLeave()).toBe(false)
+
+    await share.stop()
+  })
+})
+
+describe('F5 during a meeting', () => {
+  /** Press F5 on the window, the way useF5Reload sees it. */
+  function pressF5(): KeyboardEvent {
+    const ev = new KeyboardEvent('keydown', { key: 'F5', bubbles: true, cancelable: true })
+    window.dispatchEvent(ev)
+    return ev
+  }
+
+  it('asks first, and staying keeps the meeting', async () => {
+    const { share } = await startSharing()
+    const { useDialog } = await import('../useDialog')
+    const dlg = useDialog()
+
+    const ev = pressF5()
+    // Claimed, or useF5Reload's deferred check would reload the page behind the
+    // dialog (and the reload would end the meeting).
+    expect(ev.defaultPrevented).toBe(true)
+    expect(dlg.state.value.visible).toBe(true)
+
+    dlg.resolve(false)
+    expect(share.state.value).toBe('publishing')
+
+    await share.stop()
+  })
+
+  it('leaves F5 alone when nothing is being published', async () => {
+    const { share } = await startSharing()
+    const { useDialog } = await import('../useDialog')
+    // `capturing` has no publisher socket attached: a reload loses only the
+    // preview, so the key must keep its normal meaning.
+    share.state.value = 'capturing'
+
+    const ev = pressF5()
+    expect(ev.defaultPrevented).toBe(false)
+    expect(useDialog().state.value.visible).toBe(false)
+
+    await share.stop()
+  })
+
+  it('does not steal F5 from a handler that already claimed it', async () => {
+    const { share } = await startSharing()
+    const { useDialog } = await import('../useDialog')
+
+    // The terminal (page its TUI) and the file manager (refresh) both
+    // preventDefault before the event reaches the window.
+    const ev = new KeyboardEvent('keydown', { key: 'F5', bubbles: true, cancelable: true })
+    ev.preventDefault()
+    window.dispatchEvent(ev)
+
+    expect(useDialog().state.value.visible).toBe(false)
+    await share.stop()
+  })
+})

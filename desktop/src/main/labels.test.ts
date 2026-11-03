@@ -16,6 +16,7 @@ import {
   versionGateLabels,
   certificateLabels,
   floatingCapsuleLabels,
+  unloadGuardLabels,
 } from './labels'
 
 describe('normalizeNativeLanguage', () => {
@@ -140,6 +141,29 @@ describe('certificateLabels', () => {
 
   it('has no hardcoded Chinese left in the English table', () => {
     const l = certificateLabels('en')
+    for (const v of Object.values(l)) {
+      expect(v).not.toMatch(/[\u4e00-\u9fff]/)
+    }
+  })
+})
+
+describe('unloadGuardLabels', () => {
+  it('returns Chinese wording for zh locales', () => {
+    const l = unloadGuardLabels('zh-CN')
+    expect(l.title).toBe('会议正在进行')
+    expect(l.leave).toBe('结束会议并离开')
+    expect(l.stay).toBe('留在会议中')
+  })
+
+  it('returns English wording for non-Chinese locales', () => {
+    const l = unloadGuardLabels('en')
+    expect(l.title).toBe('Meeting in progress')
+    expect(l.leave).toBe('End meeting and leave')
+    expect(l.stay).toBe('Stay in meeting')
+  })
+
+  it('has no hardcoded Chinese left in the English table', () => {
+    const l = unloadGuardLabels('en')
     for (const v of Object.values(l)) {
       expect(v).not.toMatch(/[\u4e00-\u9fff]/)
     }

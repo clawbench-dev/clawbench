@@ -1,9 +1,9 @@
-import { BrowserWindow, Menu, MenuItem, clipboard, screen, shell } from 'electron'
+import { BrowserWindow, Menu, MenuItem, clipboard, dialog, screen, shell } from 'electron'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getStore } from './store'
 import { contextMenuLabels } from './contextMenu'
-import { resolveNativeLanguage } from './labels'
+import { resolveNativeLanguage, unloadGuardLabels } from './labels'
 import { classifyUrl, isAppPopup, shouldBlockPopupNavigation } from './urlPolicy'
 import { markRendererLoading } from './navReady'
 import { handleShortcut } from './shortcuts'
@@ -188,6 +188,36 @@ function registerKeyboardShortcuts(webContents: Electron.WebContents): void {
     })
     // preventDefault stops the renderer from also seeing a key we handled.
     if (claimed) event.preventDefault()
+  })
+}
+
+/**
+ * Turn a prevented unload into a real question.
+ *
+ * The renderer cancels `beforeunload` while a meeting is publishing, because the
+ * publisher socket IS the meeting's lifetime (see useLiveShare.ts). Electron's
+ * default for that is to drop the unload SILENTLY — no dialog — so F5 and the
+ * window's close button look dead rather than dangerous. This handler is what
+ * makes the guard visible; choosing "leave" lets the unload through.
+ *
+ * The meeting guard is the only renderer code that cancels `beforeunload` today,
+ * which is why the wording is meeting-specific (see `unloadGuardLabels`).
+ */
+function registerUnloadGuard(win: BrowserWindow): void {
+  win.webContents.on('will-prevent-unload', (event) => {
+    const labels = unloadGuardLabels(resolveNativeLanguage())
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      buttons: [labels.leave, labels.stay],
+      // Esc / closing the dialog must mean "stay": leaving is destructive.
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: labels.title,
+      message: labels.message,
+      detail: labels.detail,
+    })
+    if (choice === 0) event.preventDefault()
   })
 }
 
@@ -409,6 +439,7 @@ export function createMainWindow(): BrowserWindow {
   registerWindowGeometryPersistence(mainWindow)
   registerContextMenu(mainWindow.webContents)
   registerKeyboardShortcuts(mainWindow.webContents)
+  registerUnloadGuard(mainWindow)
   registerWindowStateReporting(mainWindow)
   // After the window's own wiring, before anything can show it: a listener that
   // missed the first `show` would think the window is still hidden.

@@ -128,6 +128,15 @@ muted --talk-mute(false)--> 可发言    （解除硬静音，麦克风仍由观
 2. **发布端断开**：收到 `publisher-gone`（`reason=ended`）时**切到该会议的记录视图**（纪要 / 转写 / 校对 / 聊天）。链接不会失效，只是不能再进会——token 指向的永久记录继续可读，直到记录被删除；只有「再加入一场新会议」才需要新链接。`reason=kicked` 不切记录，仍显示「已被移出」。
 3. **ICE 失败要说清原因**：纯 P2P 下常见原因是双方不在同一网段、AP 禁了组播（mDNS 候选解析失败）、或开了客户端隔离。提示里要列出这三条，不能只说「连接失败」。
 
+### 刷新发布端页面会结束会议
+
+发布端 socket 就是会议的生命周期：页面卸载 → socket 关闭 → 服务端广播 `publisher-gone`、删除房间、收尾会议记录（`internal/handler/live_share.go` 的 `endPublisherSocket`），**没有重连宽限**（`liveShareReuseGrace` 只决定再次创建时是否复用 token，不保活）。连带损失：正在上传的录音段丢失、「停止后合并整场录音 / 生成纪要」不会发生。
+
+因此会议进行中（`state === 'publishing'`）有两道守卫（都在 `web/src/composables/useLiveShare.ts`）：
+
+- **F5 由应用自己拦**：冒泡阶段监听 keydown（终端转发 F5 给 TUI、文件管理器 F5 刷新都会先 `preventDefault`，`useF5Reload` 也读同一个标记，所以不能抢在捕获阶段）。命中时弹应用内确认框（`meeting.stage.leave*`），确认后**先正常结束会议再刷新**——`stop()` 会折好最后一段录音、启动纪要生成、给观众一个真正的「已结束」，而不是让 socket 半路断掉。确认框文案可自定义，故走 i18n。
+- **其余路径走 `beforeunload`**：Ctrl+R、关闭标签页、关闭窗口、浏览器自带的刷新按钮。这条通道的文案由浏览器决定（不可自定义）。**桌面端必须自己接 `will-prevent-unload`**（`desktop/src/main/window.ts`，文案在 `labels.ts`）：Electron 的默认行为是**静默丢弃这次卸载、不弹任何框**，表现就是「F5 / 关闭按钮完全没反应」。Android WebView 没有 `onJsBeforeUnload` 实现，同样是静默拦截。
+
 ### 已知限制
 
 | 限制 | 说明 |

@@ -4150,6 +4150,11 @@ export default {
       end: 'End meeting',
       endConfirm:
         'End this meeting? Every member is disconnected right away, sharing and transcription stop, and the meeting is archived.',
+      leaveTitle: 'Meeting in progress',
+      leaveConfirm:
+        'Reloading ends this meeting immediately: members are disconnected, and the last recording segment and this meeting’s minutes are lost.',
+      leaveStay: 'Stay in meeting',
+      leaveRefresh: 'End meeting and reload',
       back: 'Back to list',
     },
     detail: {

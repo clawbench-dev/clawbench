@@ -132,6 +132,43 @@ export function certificateLabels(locale: string): CertificateLabels {
   }
 }
 
+/** Labels for the "leave the page?" prompt raised by `will-prevent-unload`. */
+export interface UnloadGuardLabels {
+  title: string
+  message: string
+  detail: string
+  /** The affirmative button: drop the guard and let the unload happen. */
+  leave: string
+  /** The negative button: stay on the page. */
+  stay: string
+}
+
+/**
+ * Resolve the unload-guard prompt's strings from a raw locale string.
+ *
+ * The wording is meeting-specific because the meeting guard is the only
+ * renderer code that cancels `beforeunload` today; a second canceller would
+ * need its own key rather than reusing this one.
+ */
+export function unloadGuardLabels(locale: string): UnloadGuardLabels {
+  if (normalizeNativeLanguage(locale) === 'zh') {
+    return {
+      title: '会议正在进行',
+      message: '离开当前页面会立即结束会议。',
+      detail: '观众会看到「会议已结束」，正在录制的最后一段与本次纪要也不会保留。',
+      leave: '结束会议并离开',
+      stay: '留在会议中',
+    }
+  }
+  return {
+    title: 'Meeting in progress',
+    message: 'Leaving this page ends the meeting immediately.',
+    detail: 'Viewers are told the meeting has ended, and the last recording segment and this meeting’s minutes are lost.',
+    leave: 'End meeting and leave',
+    stay: 'Stay in meeting',
+  }
+}
+
 export interface FloatingCapsuleLabels {
   /**
    * Counter words. The number is rendered as a separate node (unlike Android's

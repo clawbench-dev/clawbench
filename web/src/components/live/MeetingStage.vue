@@ -1458,11 +1458,16 @@ watch(
 
 /* Fullscreen frame for the shared picture: the whole viewport, above the app.
    Teleported to <body> because a dock tab is hidden the moment the host
-   switches tabs, and the picture must survive that. */
+   switches tabs, and the picture must survive that.
+
+   One below `--z-modal` (3000), NOT equal to it: the confirm dialogs are
+   teleported to the same <body>, and on a tie the one appended later wins — the
+   picture mounts after the dialog host, so an equal z-index hid every prompt
+   raised while watching fullscreen (including "reload ends the meeting"). */
 .live-screen-fullscreen {
   position: fixed;
   inset: 0;
-  z-index: 3000;
+  z-index: 2900;
   display: flex;
   background: #000;
 }

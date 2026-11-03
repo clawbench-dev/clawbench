@@ -22,6 +22,7 @@ import {
   type InkStroke,
 } from '@/share/liveControl'
 import { useLiveNotes } from './useLiveNotes'
+import { useDialog } from './useDialog'
 import { useMeetingShots, _resetMeetingShotsForTest } from './useMeetingShots'
 import { useInkBoard } from '@/share/useInkBoard'
 import { notesRecordingSupported } from './liveNotes'
@@ -111,6 +112,85 @@ const screenSharer = ref('')
 /** The screen a viewer is sharing, as received from that viewer's PC. */
 const remoteScreenStream = shallowRef<MediaStream | null>(null)
 const error = ref('')
+
+/**
+ * Warn before the page goes away while a meeting is live.
+ *
+ * The publisher socket IS the meeting's lifetime: when it closes the server
+ * tells every viewer `publisher-gone`, deletes the room and closes the record
+ * (internal/handler/live_share.go's endPublisherSocket), with no reconnect
+ * grace. A stray F5 therefore ends the meeting for everybody watching, and the
+ * in-flight recording tail never reaches the server — so the browser's own
+ * "leave this page?" prompt is the only thing standing between a reflex and a
+ * destroyed meeting.
+ *
+ * Registered once at module scope rather than from a component: the meeting
+ * outlives the panel (switching dock tabs unmounts it) and the state this reads
+ * is module-level too. Browsers ignore the message and show their own generic
+ * text, so there is nothing to translate. Electron's default is to drop the
+ * unload SILENTLY (no prompt at all), which is why the desktop shell answers
+ * `will-prevent-unload` with a native dialog; Android's WebView has no
+ * onJsBeforeUnload handler and silently skips it.
+ */
+function warnBeforeLeavingMeeting(e: BeforeUnloadEvent): void {
+  if (state.value !== 'publishing') return
+  // Cancelling is what makes the prompt appear in current browsers; the
+  // returnValue assignment is for engines (and Electron's default dialog) that
+  // only look at it.
+  e.preventDefault()
+  e.returnValue = ''
+}
+
+if (typeof window !== 'undefined') window.addEventListener('beforeunload', warnBeforeLeavingMeeting)
+
+/** Set once the F5 guard is on the window; the state it reads is shared too. */
+let f5GuardInstalled = false
+
+/**
+ * Intercept F5 while a meeting is publishing.
+ *
+ * A reload is exactly as destructive as closing the page (see the
+ * `beforeunload` guard above), but the browser's own prompt cannot be worded
+ * for the occasion — and Electron shows nothing at all without a
+ * `will-prevent-unload` handler, which made the key look simply broken. This
+ * path asks in the app's own dialog and then ends the meeting cleanly.
+ *
+ * BUBBLE phase, deliberately: the terminal (pages its TUI) and the file manager
+ * (refreshes its listing) claim F5 by calling preventDefault on the way up, and
+ * `useF5Reload` defers its reload decision so it can read the same flag. Taking
+ * the key in the capture phase would break both.
+ */
+function installF5Guard(endMeeting: () => Promise<void>): void {
+  if (f5GuardInstalled || typeof window === 'undefined') return
+  f5GuardInstalled = true
+  window.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key !== 'F5') return
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
+    if (e.defaultPrevented) return
+    if (state.value !== 'publishing') return
+    e.preventDefault()
+    void askThenLeave(endMeeting)
+  })
+}
+
+async function askThenLeave(endMeeting: () => Promise<void>): Promise<void> {
+  const ok = await useDialog().confirm(i18n.global.t('meeting.stage.leaveConfirm'), {
+    title: i18n.global.t('meeting.stage.leaveTitle'),
+    confirmText: i18n.global.t('meeting.stage.leaveRefresh'),
+    cancelText: i18n.global.t('meeting.stage.leaveStay'),
+    dangerous: true,
+  })
+  if (!ok) return
+  // End it properly instead of letting the socket drop mid-recording: the
+  // recorder folds its last segment, minutes generation starts and viewers get
+  // a real "ended". `stop()` also clears `state`, so the `beforeunload` guard
+  // above no longer blocks the reload.
+  try {
+    await endMeeting()
+  } finally {
+    window.location.reload()
+  }
+}
 
 interface PublisherPeer {
   pc: RTCPeerConnection
@@ -2079,6 +2159,10 @@ export function useLiveShare() {
       }
     }
   }
+
+  // A meeting is only ever started from this composable, so this is the first
+  // moment F5 can need guarding; the installer is idempotent across instances.
+  installF5Guard(stop)
 
   return {
     state,

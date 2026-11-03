@@ -4144,6 +4144,10 @@ export default {
       notesUnavailable: '听记暂时无法开启，请稍后再试。',
       end: '结束会议',
       endConfirm: '结束这场会议？所有成员会立刻断开，共享与听记都会停止，这场会议随即归档。',
+      leaveTitle: '会议正在进行',
+      leaveConfirm: '刷新页面会立刻结束这场会议：成员会断开，正在录制的最后一段与本次纪要也不会保留。',
+      leaveStay: '留在会议中',
+      leaveRefresh: '结束会议并刷新',
       back: '返回列表',
     },
     detail: {
