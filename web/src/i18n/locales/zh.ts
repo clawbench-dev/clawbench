@@ -4058,7 +4058,6 @@ export default {
       duration: '{n} 分钟',
       running: '进行中',
       liveResume: '返回会议',
-      liveHint: '会议进行中 · 返回会议',
       generating: '生成中',
       failed: '生成失败',
       stale: '生成中断',

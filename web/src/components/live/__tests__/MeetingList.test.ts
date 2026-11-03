@@ -18,6 +18,7 @@ vi.mock('lucide-vue-next', () => {
   const stub = { render: () => null }
   return {
     AlertTriangle: stub,
+    ArrowLeft: stub,
     MonitorUp: stub,
     Check: stub,
     CheckCircle2: stub,
@@ -152,18 +153,29 @@ describe('MeetingList header', () => {
 
   /**
    * The list is reachable mid-meeting now, which makes it a place the host
-   * VISITS. The chip is the way back; without it the trip is one-way.
+   * VISITS. While this client is in a meeting the two entry actions are gone —
+   * starting or joining a second meeting would strand the running one — and
+   * the bar's only action is the way back.
    */
-  it('offers the way back to a running meeting, and only while it runs', async () => {
+  it('replaces the entry actions with "back to meeting" while a meeting runs', async () => {
     const idle = mountList()
+    expect(idle.find('[data-action="meeting-create"]').exists()).toBe(true)
+    expect(idle.find('[data-action="meeting-join"]').exists()).toBe(true)
     expect(idle.find('[data-action="meeting-resume"]').exists()).toBe(false)
 
     const live = mountList({ liveToken: 'tok-1' })
-    const chip = live.find('.meeting-header [data-action="meeting-resume"]')
-    expect(chip.exists()).toBe(true)
-    expect(chip.text()).toBe(enMessages.meeting.list.liveResume)
+    expect(live.find('[data-action="meeting-create"]').exists()).toBe(false)
+    expect(live.find('[data-action="meeting-join"]').exists()).toBe(false)
+    // Not in the header: the list's header is status only (title, count,
+    // refresh), and the action belongs with the other footer actions.
+    expect(live.find('.meeting-header [data-action="meeting-resume"]').exists()).toBe(false)
 
-    await chip.trigger('click')
+    const resume = live.find('.meeting-footer [data-action="meeting-resume"]')
+    expect(resume.exists()).toBe(true)
+    expect(resume.text()).toBe(enMessages.meeting.list.liveResume)
+    expect(resume.classes()).toContain('fbtn-primary')
+
+    await resume.trigger('click')
     expect(live.emitted('resume')).toHaveLength(1)
   })
 

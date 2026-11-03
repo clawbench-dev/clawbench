@@ -9,22 +9,6 @@
       <span class="meeting-header__title">{{ t('meeting.list.title') }}</span>
       <span class="meeting-header__count count-badge">{{ t('meeting.list.count', { n: sessions.length }) }}</span>
       <span class="meeting-header__spacer" />
-      <!-- This client is IN a meeting right now. The chip is both the status
-           (the list is a place it visited, not where the meeting lives) and
-           the way back — without it, leaving the stage to read another record
-           is a one-way trip on a desktop. -->
-      <button
-        v-if="liveToken"
-        class="meeting-live-chip"
-        type="button"
-        data-action="meeting-resume"
-        :title="t('meeting.list.liveHint')"
-        :aria-label="t('meeting.list.liveHint')"
-        @click="emit('resume')"
-      >
-        <span class="meeting-live-chip__dot" />
-        {{ t('meeting.list.liveResume') }}
-      </button>
       <RefreshButton
         class="meeting-icon-btn meeting-refresh-btn"
         :loading="loading"
@@ -132,14 +116,31 @@
     </div>
 
     <!-- Footer actions use the shared .fbtn pills, the same language the task
-         tab's action bar uses — see design-guide §按钮. -->
+         tab's action bar uses — see design-guide §按钮.
+
+         While THIS client is in a meeting the list is a place it visited, so
+         the two entry actions are not offered: starting or joining a second
+         meeting would strand the running one. The bar's single action is the
+         way back. -->
     <div class="meeting-footer">
-      <button class="fbtn" type="button" data-action="meeting-join" @click="emit('join')">
-        <LinkIcon :size="14" />{{ t('meeting.list.join') }}
-      </button>
-      <button class="fbtn fbtn-primary" type="button" data-action="meeting-create" @click="emit('create')">
-        <Plus :size="14" />{{ t('meeting.list.create') }}
-      </button>
+      <template v-if="liveToken">
+        <button
+          class="fbtn fbtn-primary"
+          type="button"
+          data-action="meeting-resume"
+          @click="emit('resume')"
+        >
+          <ArrowLeft :size="14" />{{ t('meeting.list.liveResume') }}
+        </button>
+      </template>
+      <template v-else>
+        <button class="fbtn" type="button" data-action="meeting-join" @click="emit('join')">
+          <LinkIcon :size="14" />{{ t('meeting.list.join') }}
+        </button>
+        <button class="fbtn fbtn-primary" type="button" data-action="meeting-create" @click="emit('create')">
+          <Plus :size="14" />{{ t('meeting.list.create') }}
+        </button>
+      </template>
     </div>
   </div>
 </template>
@@ -157,6 +158,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   AlertTriangle,
+  ArrowLeft,
   Check,
   Link as LinkIcon,
   Plus,
@@ -428,43 +430,6 @@ onMounted(() => {
   font-weight: var(--font-weight-bold);
 }
 .meeting-header__spacer { flex: 1; }
-
-/* The running meeting's return chip. Capsule + tinted fill like the stage's
-   live badge, so the two read as the same fact seen from two places. */
-.meeting-live-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2, 4px);
-  height: calc(22 * var(--dp));
-  padding: 0 var(--space-4, 8px);
-  border: 1px solid color-mix(in srgb, var(--accent-color) 38%, transparent);
-  border-radius: var(--radius-full, 999px);
-  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-  color: var(--accent-color);
-  font-size: var(--font-size-xs, 11px);
-  font-weight: var(--font-weight-semibold);
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background var(--duration-base) ease, border-color var(--duration-base) ease;
-}
-.meeting-live-chip:hover {
-  background: color-mix(in srgb, var(--accent-color) 20%, transparent);
-  border-color: color-mix(in srgb, var(--accent-color) 55%, transparent);
-}
-.meeting-live-chip:active { transform: scale(0.96); }
-.meeting-live-chip__dot {
-  width: calc(5 * var(--dp));
-  height: calc(5 * var(--dp));
-  border-radius: 50%;
-  background: currentColor;
-  animation: meeting-live-pulse 1.4s ease-in-out infinite;
-}
-@keyframes meeting-live-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.25; }
-}
 /* Press feedback matches the other panel headers' refresh buttons (the shared
    .drilldown-refresh-btn / .forge-header-btn scale). The spin + green check
    come from RefreshButton itself. */

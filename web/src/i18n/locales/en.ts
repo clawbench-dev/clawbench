@@ -4063,7 +4063,6 @@ export default {
       duration: '{n} min',
       running: 'Live',
       liveResume: 'Back to meeting',
-      liveHint: 'Meeting in progress — back to the meeting',
       generating: 'Generating',
       failed: 'Failed',
       stale: 'Interrupted',
