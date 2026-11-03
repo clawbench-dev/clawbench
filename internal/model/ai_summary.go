@@ -22,14 +22,13 @@ func (c AISummaryConfig) SummaryConfigured() bool {
 
 // SummaryEndpoint resolves the endpoint the summarizer should call.
 //
-// format is "" when it must be inferred from the URL (legacy rows only). ok is
-// false when nothing usable is configured — a Gemini provider is deliberately
-// rejected here because the summarizer only speaks the OpenAI and Anthropic
-// wire formats.
+//   - format is "" when it must be inferred from the URL. ok is
+//     false when nothing usable is configured — a Gemini provider is deliberately
+//     rejected here because the summarizer only speaks the OpenAI and Anthropic
+//     wire formats.
 //
-// The legacy api/format fields are a migration safety net: they are read only
-// while provider_id is absent, and the startup migration turns them into a
-// providers row. The settings UI never writes them.
+// The api/format fields are a plain endpoint fallback: read only while
+// provider_id is absent. The settings UI never writes them.
 func (c AISummaryConfig) SummaryEndpoint() (baseURL, key, format string, ok bool) {
 	if p := c.SummaryProvider(); p != nil {
 		if p.BaseURL == "" {

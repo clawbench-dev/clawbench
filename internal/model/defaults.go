@@ -351,14 +351,18 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.TTS.Engine == "" {
 		cfg.TTS.Engine = "edge"
 	}
-	// Migrate legacy agent-based summarize backends to "api"
+	// Legacy agent-based summarize backends are gone: the agent CLIs are no
+	// longer summarizer backends, and the LLM path is the shared ai_summary
+	// model. Drop the value instead of migrating it — there is no equivalent to
+	// map it onto (guessing "api" left upgraded installs pointing at a backend
+	// with nothing bound, which read as a broken configuration forever).
 	agentBackends := map[string]bool{
 		"claude": true, "codebuddy": true, "opencode": true, "codex": true,
 		"qoder": true, "vecli": true, "deepseek": true, "pi": true, "mimo": true,
 	}
 	if agentBackends[cfg.Summarize.TTSBackend] {
-		slog.Warn("summarize.tts_backend is a legacy agent backend, migrating to \"api\"", slog.String("old", cfg.Summarize.TTSBackend))
-		cfg.Summarize.TTSBackend = "api"
+		slog.Warn("summarize.tts_backend is a removed agent backend, falling back to simple", slog.String("old", cfg.Summarize.TTSBackend))
+		cfg.Summarize.TTSBackend = ""
 	}
 	if cfg.Summarize.TTSBackend == "" {
 		cfg.Summarize.TTSBackend = "simple"
@@ -372,9 +376,9 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 
 	// --- AISummary (shared AI model config) ---
-	// Legacy TTS summary config (summarize.tts_model / summarize.tts_api) is
-	// migrated in main.go from the raw YAML map (fields removed from the typed
-	// struct, so they no longer unmarshal). Here we only ensure a format default.
+	// Legacy TTS summary config (summarize.tts_model / summarize.tts_api) was
+	// removed from the typed struct, so it no longer unmarshals and is simply
+	// ignored. Here we only ensure a format default.
 	if cfg.AISummary.API.BaseURL != "" && cfg.AISummary.Format == "" {
 		cfg.AISummary.Format = "openai"
 	}

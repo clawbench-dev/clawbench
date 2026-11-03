@@ -120,7 +120,7 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 约束与行为：
 
 - **强制引用**：设置页不再写 `format` / `api.*`；PATCH 白名单只接受 `provider_id` 与 `model`。
-- **迁移**：启动时 `MigrateAISummaryProvider` 把旧的 `ai_summary.api.base_url/key` 建成一条 provider（名称 `AI Summary`，协议按旧 `format` 或 URL 推断），重写 `config.yaml` 并清掉旧字段。迁移失败时旧的读取路径仍然生效，下次启动重试。
+- **端点回退（无启动迁移）**：`ai_summary.api` 端点块只在未绑 provider 时作为回退读取（provider 优先），设置页从不写入；更早的 `summarize.tts_api` / `tts_model` 键已删除、不再读取，legacy agent 后端值（claude/codebuddy/…）直接丢弃并落回 `simple`。`tts_backend="api"` 而摘要模型未配置时，启动与热重载都降级为 simple 并打 ERROR，进程不退出。
 - **协议限制**：摘要器只会说 OpenAI / Anthropic 两种线格式；绑定 Gemini 提供商在 PATCH 时 400，运行时也视为未配置。
 - **引用守卫**：摘要正在使用的 provider 不能删除（`ProviderUsedBySummary`），也不能把协议改成 Gemini。
 - **模型列表**：`GET /api/providers/{id}/models` 返回该端点实测（或目录兜底）的模型，另带已保存清单 `curated`；网关不暴露列表时返回空数组与原因，设置页退化为手填。

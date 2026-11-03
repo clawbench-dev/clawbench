@@ -837,10 +837,8 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Load configuration — config/config.yaml is optional
 	var cfg model.Config
 	var presence map[string]bool
-	// Legacy values extracted from the raw map for migration (summarize.tts_model
-	// / tts_api were removed from the typed struct; chat.user_nickname moved to
-	// the first-class user section).
-	var legacySummaryBaseURL, legacySummaryKey, legacySummaryModel, legacySummaryFormat string
+	// Legacy value extracted from the raw map for migration (chat.user_nickname
+	// moved to the first-class user section).
 	var legacyUserNickname string
 
 	// Search for config in priority order:
@@ -857,24 +855,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			os.Exit(1)
 		}
 		presence = model.ParsePresenceMap(raw)
-
-		// Capture legacy summarize model/API config for migration.
-		if apiMap, ok := raw["summarize"].(map[string]any); ok {
-			if legacyBase, ok := apiMap["tts_api"].(map[string]any); ok {
-				if b, ok := legacyBase["base_url"].(string); ok && b != "" {
-					legacySummaryBaseURL = b
-				}
-				if k, ok := legacyBase["key"].(string); ok && k != "" {
-					legacySummaryKey = k
-				}
-				if f, ok := legacyBase["format"].(string); ok && f != "" {
-					legacySummaryFormat = f
-				}
-			}
-			if m, ok := apiMap["tts_model"].(string); ok && m != "" {
-				legacySummaryModel = m
-			}
-		}
 
 		// Capture the legacy chat.user_nickname for migration into the
 		// first-class user section. It was a chat field until the nickname
@@ -897,10 +877,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		os.Exit(1)
 	}
 	// If file doesn't exist: cfg stays zero-value, presence is nil → all defaults apply
-
-	// Migrate legacy TTS summary model config (summarize.tts_model / tts_api)
-	// into the new shared ai_summary section so existing configs keep working.
-	applyLegacySummaryFallback(&cfg, legacySummaryBaseURL, legacySummaryKey, legacySummaryModel, legacySummaryFormat)
 
 	// Migrate legacy chat.user_nickname into user.nickname. The new value wins
 	// when both are present (a user who already edited the new key must not be
@@ -1179,35 +1155,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		service.EmitSessionEvent(service.ResolveGroupTimelineID(clawbenchSID), status, false, toolName, toolInput)
 	})
 
-	// Initialize TTS summarizer from config (deferred from earlier — needs DB for API key resolution).
-	// Language is now per-request (sent from frontend), not configured at startup.
-	ttsBackend := cfg.Summarize.TTSBackend
-
-	var ttsSummarizer summarize.Summarizer
-	switch ttsBackend {
-	case "", summarizeBackendSimple:
-		ttsSummarizer = summarize.NewSimple()
-		slog.Info("tts summarizer configured", slog.String("backend", summarizeBackendSimple))
-	case summarizeBackendAPI:
-		ttsSummarizer = buildAISummarizer(cfg)
-		if ttsSummarizer == nil {
-			slog.Error("summarize.tts_backend is \"api\" but no summary model is configured (bind a provider in settings)")
-			os.Exit(1)
-		}
-	case summarizeBackendAuto:
-		// "auto" needs no LLM to start: without a configured ai_summary it
-		// degrades to the simple cleaner, which is a valid (if less clever)
-		// configuration — unlike "api", which hard-fails.
-		api := buildAISummarizer(cfg)
-		ttsSummarizer = summarize.NewAuto(summarize.NewSimple(), api)
-		slog.Info(
-			"tts summarizer configured",
-			slog.String("backend", summarizeBackendAuto),
-			slog.Bool("llm_available", api != nil),
-			slog.Float64("auto_junk_ratio", summarize.AutoJunkRatio),
-		)
-	}
-	handler.SetSummarizer(ttsSummarizer)
+	// The TTS summarizer is initialized further down, after the provider
+	// registry is in memory (see the SetSummarizer call after
+	// LoadProvidersIntoMemory). Language is per-request (sent from the
+	// frontend), not configured at startup.
 
 	// Initialize RAG history memory system
 	if err := rag.Init(cfg.RAG); err != nil {
@@ -1266,12 +1217,14 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	model.RefreshCatalogIfStale()
 
-	// The shared summary model is configured by referencing a provider. Turn a
-	// legacy ai_summary endpoint into a providers row once, before anything can
-	// read the config (a failed write leaves the legacy fallback working).
-	if err := handler.MigrateAISummaryProvider(); err != nil {
-		slog.Error("failed to migrate ai_summary to a model provider", "error", err)
-	}
+	// Initialize the TTS summarizer only now: it resolves the summary model
+	// through the provider registry, which is populated above.
+	//
+	// Building it earlier (right after InitDB) made a provider-bound config read
+	// as "not configured" on every start, because GetProvider had nothing to
+	// resolve. Startup and hot-reload now share one builder so the two paths
+	// cannot diverge again.
+	handler.SetSummarizer(newTTSSummarizer(model.ConfigInstance))
 
 	if _, err := model.RefreshAgents(store.WriteDB(), model.RefreshOptions{
 		ConfigDir:     filepath.Dir(configPath),
@@ -2232,43 +2185,15 @@ func newOpenAITTSProvider(cfg model.Config) *speech.OpenAITTSProvider {
 	return o
 }
 
-// applyLegacySummaryFallback copies the removed summarize.tts_api / tts_model
-// block into the shared ai_summary config.
-//
-// It is a migration safety net for configs written before ai_summary existed,
-// and it deliberately runs ONLY while no provider is bound. Once a provider is
-// referenced, the legacy keys are dead weight: re-applying them made the
-// startup log report the pre-provider endpoint as the active one, and kept a
-// stale endpoint reachable behind the binding — so deleting the provider row
-// silently fell back to it instead of reading as "not configured" (the
-// contract model.AISummaryConfig documents).
-func applyLegacySummaryFallback(cfg *model.Config, baseURL, key, modelName, format string) {
-	if cfg.AISummary.ProviderID != nil {
-		return
-	}
-	if cfg.AISummary.API.BaseURL == "" && baseURL != "" {
-		cfg.AISummary.API.BaseURL = baseURL
-		cfg.AISummary.API.Key = key
-	}
-	if cfg.AISummary.Model == "" {
-		cfg.AISummary.Model = modelName
-	}
-	// The API format too, so anthropic endpoints are not defaulted to "openai"
-	// (which would cause the recommendation/summary call to fail).
-	if cfg.AISummary.Format == "" {
-		cfg.AISummary.Format = format
-	}
-}
-
 // buildAISummarizer creates an LLM summarizer from the shared ai_summary config.
 // Returns nil when the summary model is not configured.
 //
-// The gate is SummaryConfigured, not the legacy ai_summary.api.base_url: since
-// the provider migration rewrites config.yaml to {provider_id, model} and
-// clears that block, gating on it made the summarizer nil on the first restart
-// after a successful migration — startup then hard-failed when
-// summarize.tts_backend was "api" and silently degraded "auto" to the simple
-// cleaner.
+// The gate is SummaryConfigured, so both supported shapes work: a bound provider
+// row (what the settings page writes) and the endpoint block left in
+// ai_summary.api by an older config.
+//
+// It resolves the model through the provider registry, so it may only be called
+// after service.LoadProvidersIntoMemory — see the SetSummarizer call site.
 func buildAISummarizer(cfg model.Config) summarize.Summarizer {
 	baseURL, _, format, ok := cfg.AISummary.SummaryEndpoint()
 	if !ok {
@@ -2286,7 +2211,16 @@ func buildAISummarizer(cfg model.Config) summarize.Summarizer {
 	return s
 }
 
-// newTTSSummarizer creates a TTS summarizer from config for hot-reload.
+// newTTSSummarizer creates a TTS summarizer from config. It is the ONLY
+// construction point — startup and hot-reload both call it, deliberately.
+//
+// They used to be two copies of the same switch, and only the hot-reload copy
+// degraded gracefully: with tts_backend "api" and no resolvable summary model
+// the startup copy called os.Exit(1), killing the process before it listened.
+// That state is reachable without hand-editing: the settings page allows
+// switching to "api" before a model is bound (one field per autosave). A dead
+// process also means no UI to fix the config, so degrading to the simple
+// cleaner is strictly better than refusing to boot.
 func newTTSSummarizer(cfg model.Config) summarize.Summarizer {
 	switch cfg.Summarize.TTSBackend {
 	case "", summarizeBackendSimple:
@@ -2294,15 +2228,22 @@ func newTTSSummarizer(cfg model.Config) summarize.Summarizer {
 	case summarizeBackendAPI:
 		s := buildAISummarizer(cfg)
 		if s == nil {
-			slog.Warn("hot-reload: summarize.tts_backend is \"api\" but no summary model is configured, falling back to simple")
+			slog.Error("summarize.tts_backend is \"api\" but no summary model is configured, falling back to simple (bind a provider in settings)")
 			return summarize.NewSimple()
 		}
 		return s
 	case summarizeBackendAuto:
 		// api may be nil here: auto degrades to simple when no LLM is set.
-		return summarize.NewAuto(summarize.NewSimple(), buildAISummarizer(cfg))
+		api := buildAISummarizer(cfg)
+		slog.Info(
+			"tts summarizer configured",
+			slog.String("backend", summarizeBackendAuto),
+			slog.Bool("llm_available", api != nil),
+			slog.Float64("auto_junk_ratio", summarize.AutoJunkRatio),
+		)
+		return summarize.NewAuto(summarize.NewSimple(), api)
 	default:
-		slog.Warn("hot-reload: unsupported tts_backend, falling back to simple", slog.String("backend", cfg.Summarize.TTSBackend))
+		slog.Warn("unsupported tts_backend, falling back to simple", slog.String("backend", cfg.Summarize.TTSBackend))
 		return summarize.NewSimple()
 	}
 }

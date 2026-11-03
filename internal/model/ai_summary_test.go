@@ -49,8 +49,9 @@ func TestSummaryEndpoint_MissingProviderIsUnconfigured(t *testing.T) {
 	}
 }
 
-// The legacy shape keeps working until the startup migration rewrites it; this
-// is what makes an upgrade safe when the config write fails.
+// The endpoint-block shape keeps working as a fallback for configs written
+// before the provider binding existed; this is what keeps an upgraded install
+// reading as configured instead of silently dropping its summary model.
 func TestSummaryEndpoint_LegacyFallback(t *testing.T) {
 	cfg := AISummaryConfig{API: APIConfig{BaseURL: "https://legacy.example/v1", Key: "old"}}
 	base, key, format, ok := cfg.SummaryEndpoint()
@@ -59,8 +60,8 @@ func TestSummaryEndpoint_LegacyFallback(t *testing.T) {
 	}
 }
 
-// A bound provider wins over a leftover legacy endpoint, so a half-migrated
-// config cannot keep calling the old service.
+// A bound provider wins over the endpoint-block fallback, so a config with both
+// cannot keep calling the old service.
 func TestSummaryEndpoint_ProviderWinsOverLegacy(t *testing.T) {
 	pid := int64(44)
 	ReplaceProviders([]*Provider{{

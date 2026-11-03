@@ -2376,7 +2376,8 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		// provider_id is the only way to point the summary model at an
 		// endpoint; null clears it. The legacy format/api fields are no longer
-		// writable (they survive only until the startup migration runs).
+		// writable (they remain readable only as a hand-edited-config
+		// fallback).
 		if raw, present := aiSummary["provider_id"]; present {
 			if raw == nil {
 				cfg.AISummary.ProviderID = nil

@@ -852,17 +852,18 @@ func TestApplyDefaults_LogLevel(t *testing.T) {
 	}
 }
 
-func TestApplyDefaults_SummarizeTTSBackendMigration(t *testing.T) {
+func TestApplyDefaults_SummarizeTTSBackendLegacyAgentDropped(t *testing.T) {
 	setupTestBinDir(t)
 
-	// Test legacy agent backend migration for Summarize.TTSBackend
+	// Removed agent backends are dropped, not migrated: there is no equivalent
+	// to map them onto, so they fall through to the simple default.
 	for _, backend := range []string{"claude", "codebuddy", "opencode", "codex"} {
 		t.Run("tts_backend_"+backend, func(t *testing.T) {
 			cfg := Config{}
 			cfg.Summarize.TTSBackend = backend
 			ApplyDefaults(&cfg, nil)
-			if cfg.Summarize.TTSBackend != "api" {
-				t.Errorf("Summarize.TTSBackend = %q after migration from %q, want %q", cfg.Summarize.TTSBackend, backend, "api")
+			if cfg.Summarize.TTSBackend != "simple" {
+				t.Errorf("Summarize.TTSBackend = %q after dropping legacy %q, want %q", cfg.Summarize.TTSBackend, backend, "simple")
 			}
 		})
 	}
@@ -871,12 +872,19 @@ func TestApplyDefaults_SummarizeTTSBackendMigration(t *testing.T) {
 func TestApplyDefaults_SummarizeTTSBackendNonAgent(t *testing.T) {
 	setupTestBinDir(t)
 
-	// Non-agent backends should NOT be migrated
+	// Non-agent backends are kept as-is
 	cfg := Config{}
+	cfg.Summarize.TTSBackend = "api"
+	ApplyDefaults(&cfg, nil)
+	if cfg.Summarize.TTSBackend != "api" {
+		t.Errorf("Summarize.TTSBackend = %q, want %q (non-agent backend should be kept)", cfg.Summarize.TTSBackend, "api")
+	}
+
+	cfg = Config{}
 	cfg.Summarize.TTSBackend = "simple"
 	ApplyDefaults(&cfg, nil)
 	if cfg.Summarize.TTSBackend != "simple" {
-		t.Errorf("Summarize.TTSBackend = %q, want %q (non-agent backend should not be migrated)", cfg.Summarize.TTSBackend, "simple")
+		t.Errorf("Summarize.TTSBackend = %q, want %q (non-agent backend should be kept)", cfg.Summarize.TTSBackend, "simple")
 	}
 }
 

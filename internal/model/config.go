@@ -483,10 +483,9 @@ type AISummaryConfig struct {
 	ProviderID *int64 `yaml:"provider_id,omitempty"`
 	Model      string `yaml:"model"` // Model name (empty = backend default)
 
-	// Deprecated: migration-only fallback. Read while provider_id is absent so
-	// an upgrade cannot lose a working configuration; the startup migration
-	// turns these into a providers row and clears them. The settings UI never
-	// writes them.
+	// Endpoint fallback for configs written before the provider binding existed
+	// (and for hand-edited files): read only while provider_id is absent. The
+	// settings UI never writes them.
 	Format string    `yaml:"format,omitempty"` // "openai" / "anthropic" ("" = detect from base_url)
 	API    APIConfig `yaml:"api,omitempty"`    // API endpoint + key
 }
