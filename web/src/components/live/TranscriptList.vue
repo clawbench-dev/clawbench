@@ -38,7 +38,10 @@
              the image body, desktop from the view button — the document-level
              listener in Lightbox.vue drives both, so this component carries no
              viewer logic of its own). `data-full-src` points at the viewing
-             size; the lightbox loads that instead of the thumbnail. -->
+             size; the lightbox loads that instead of the thumbnail. The reset
+             button is hidden at rest and revealed by the shared stylesheet
+             while the figure holds an inline zoom — same as every markdown
+             image; the reset gesture itself is inlineZoom's delegated listener. -->
         <div
           class="transcript__shot image-block-wrapper image-block-wrapper--thumb"
           data-role="shot-open"
@@ -53,6 +56,15 @@
                 :aria-label="i18n.global.t('imageBlock.view')"
               >
                 <Maximize :size="14" />
+              </button>
+              <button
+                class="image-block-reset-btn"
+                type="button"
+                data-action="reset-zoom"
+                :title="i18n.global.t('imageBlock.resetZoom')"
+                :aria-label="i18n.global.t('imageBlock.resetZoom')"
+              >
+                <Minimize2 :size="14" />
               </button>
             </span>
           </div>
@@ -92,7 +104,7 @@
  * here so the token is declared where it is read.
  */
 import { nextTick, ref, watch } from 'vue'
-import { FileText, ImageIcon, Maximize, MonitorUp, Trash2 } from 'lucide-vue-next'
+import { FileText, ImageIcon, Maximize, Minimize2, MonitorUp, Trash2 } from 'lucide-vue-next'
 import i18n from '@/i18n'
 import { shotLabel } from '@/utils/meetingShots'
 import SpeakerAvatar from '@/components/common/SpeakerAvatar.vue'

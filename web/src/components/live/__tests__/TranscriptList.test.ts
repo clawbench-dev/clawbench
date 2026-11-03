@@ -102,6 +102,9 @@ describe('TranscriptList', () => {
     expect(figure.classes()).toContain('image-block-wrapper')
     expect(figure.classes()).toContain('image-block-wrapper--thumb')
     expect(figure.find('.image-block-view-btn').exists()).toBe(true)
+    // Same chrome as a markdown figure: the reset button is hidden at rest by
+    // the shared stylesheet and revealed while the figure holds an inline zoom.
+    expect(figure.find('.image-block-reset-btn').exists()).toBe(true)
 
     const img = figure.find('img.lightbox-img')
     // The row paints the thumbnail; the viewer loads `data-full-src`.
