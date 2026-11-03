@@ -93,9 +93,13 @@
               :path="minutesPath"
               @copy="copy"
             />
-            <div v-else-if="isArtifactRunning('minutes')" class="meeting-generating">
-              <div class="meeting-generating__row"><span class="meeting-spinner" />{{ t('liveShare.notes.generating') }}</div>
-            </div>
+            <!-- Running is already announced by the strip at the top of this
+                 pane (with the elapsed time and the cancel button), so the pane
+                 itself stays empty — saying it again in the middle of the
+                 screen was the same sentence twice. The branch still has to
+                 exist: it keeps the empty state and its generate CTA from
+                 showing while the job is in flight. -->
+            <template v-else-if="isArtifactRunning('minutes')"></template>
             <MeetingEmpty
               v-else
               :icon="FileText"
@@ -127,9 +131,10 @@
               data-role="transcript"
               @shot-delete="removeShot"
             />
-            <div v-else-if="isArtifactRunning('transcript')" class="meeting-generating">
-              <div class="meeting-generating__row"><span class="meeting-spinner" />{{ t('meeting.detail.artifact.runningAsr') }}</div>
-            </div>
+            <!-- Same as the minutes tab: the strip above owns the "running"
+                 message, and this branch keeps the empty states (and their
+                 buttons) out of the way until the transcript arrives. -->
+            <template v-else-if="isArtifactRunning('transcript')"></template>
             <!-- An empty transcript has three different causes and the old single
                  sentence ("听记没有开启") was only right for one of them: it also
                  claimed that while the file was still being uploaded right after
@@ -177,9 +182,10 @@
               :blocks="revisedLines"
               data-role="revised"
             />
-            <div v-else-if="isArtifactRunning('revised')" class="meeting-generating">
-              <div class="meeting-generating__row"><span class="meeting-spinner" />{{ t('liveShare.notes.proofreading') }}</div>
-            </div>
+            <!-- Same as the other two tabs: the strip above already says the
+                 proofreading is running, so the pane stays empty until it
+                 lands. -->
+            <template v-else-if="isArtifactRunning('revised')"></template>
             <!-- Proofreading is allowed to fail without failing the minutes: the
                  summary then comes from the raw transcript, and this tab stays
                  empty. Say so instead of leaving a blank pane. -->
@@ -1081,19 +1087,6 @@ onMounted(() => {
    timestamp have exactly one implementation. This container only owns the
    scroll column and the gap between messages. */
 .meeting-chat { display: flex; flex-direction: column; gap: var(--space-3); }
-
-.meeting-generating {
-  display: flex; flex-direction: column; gap: var(--space-3);
-  padding: var(--space-5); border-radius: var(--radius-md); background: var(--bg-secondary);
-}
-.meeting-generating__row { display: flex; align-items: center; gap: var(--space-3); font-size: var(--font-size-sm); color: var(--text-secondary); }
-.meeting-spinner {
-  width: calc(13 * var(--dp)); height: calc(13 * var(--dp));
-  border: 2px solid color-mix(in srgb, var(--accent-color) 25%, transparent);
-  border-top-color: var(--accent-color); border-radius: 50%;
-  animation: meeting-spin 0.8s linear infinite; flex-shrink: 0;
-}
-@keyframes meeting-spin { to { transform: rotate(360deg); } }
 
 .meeting-warn {
   padding: var(--space-4) var(--space-5); border-radius: var(--radius-md);

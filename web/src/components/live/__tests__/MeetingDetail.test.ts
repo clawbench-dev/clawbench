@@ -305,8 +305,8 @@ describe('MeetingDetail', () => {
 
   it('already shows the proofread transcript while the minutes are still generating', async () => {
     // Proofreading runs BEFORE summarisation, so its file exists while the
-    // minutes are still being written. The tab must show it instead of a
-    // spinner that hides work already done.
+    // minutes are still being written. The tab must show it instead of the
+    // empty state that would hide work already done.
     getMock.mockResolvedValue(record({ hasRevised: true }))
     artifactMock.mockImplementation(async (_token: string, kind: string) =>
       kind === 'revised' ? { content: REVISED, file: 'transcript-revised.md' } : null,
@@ -317,7 +317,7 @@ describe('MeetingDetail', () => {
 
     await w.find('[data-tab="revised"]').trigger('click')
     expect(w.findAll('[data-role="revised"] .transcript__row')).toHaveLength(3)
-    expect(w.find('.meeting-generating').exists()).toBe(false)
+    expect(w.find('[data-role="revised-empty"]').exists()).toBe(false)
 
     w.unmount()
   })
@@ -351,10 +351,10 @@ describe('MeetingDetail', () => {
     await flushPromises()
 
     expect(w.text()).toContain(enMessages.meeting.detail.artifact.interrupted)
-    expect(w.find('.meeting-generating').exists()).toBe(false)
+    expect(w.find('.artifact-bar--error').exists()).toBe(true)
   })
 
-  it('shows a spinner while the job is genuinely running', async () => {
+  it('leaves the pane silent while the job runs — the strip above already says it', async () => {
     getMock.mockResolvedValue(record({
       hasMinutes: false,
       artifacts: {
@@ -368,7 +368,18 @@ describe('MeetingDetail', () => {
     const w = mountDetail('minutes')
     await flushPromises()
 
-    expect(w.find('.meeting-generating').exists()).toBe(true)
+    // The status strip owns the "running" message (and the cancel button);
+    // repeating it in the middle of the pane said the same thing twice.
+    const bar = w.find('.meeting-tabpanel .artifact-bar')
+    expect(bar.exists()).toBe(true)
+    expect(bar.text()).toContain(
+      enMessages.meeting.detail.artifact.running
+        .replace('{kind}', enMessages.meeting.detail.tabMinutes),
+    )
+    // And the pane itself draws nothing: no spinner, no empty state with a
+    // generate button that would contradict the job already in flight.
+    expect(w.find('.meeting-body').text().trim()).toBe('')
+    w.unmount()
   })
 
   it('treats a meeting with no artifacts as a normal empty record', async () => {
