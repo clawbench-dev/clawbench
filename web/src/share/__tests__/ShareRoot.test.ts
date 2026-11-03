@@ -13,6 +13,16 @@ vi.mock('@/share/SessionShareView.vue', () => ({
 vi.mock('@/share/DirShareView.vue', () => ({
   default: { name: 'DirShareView', template: '<div class="dir-view-stub" />' },
 }))
+// The live view needs the meta payload it was dispatched with: whether the room
+// is already gone decides between the record and the join gate.
+vi.mock('@/share/LiveShareView.vue', () => ({
+  default: {
+    name: 'LiveShareView',
+    props: ['meta'],
+    template:
+      '<div class="live-view-stub" :data-ended="meta && meta.ended ? \'1\' : \'0\'" :data-title="meta && meta.title" />',
+  },
+}))
 vi.mock('@/components/common/LoadingIndicator.vue', () => ({
   default: { name: 'LoadingIndicator', props: ['size'], template: '<div class="loading-stub" />' },
 }))
@@ -81,6 +91,21 @@ describe('ShareRoot', () => {
     const wrapper = await mountRoot('/share/tokabc')
     expect(wrapper.find('.session-view-stub').exists()).toBe(true)
     expect(wrapper.find('.file-view-stub').exists()).toBe(false)
+  })
+
+  it('dispatches a live share with the record facts the view needs', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ kind: 'live', ended: true, title: 'Release review' }),
+    } as Response)) as unknown as typeof fetch
+    const wrapper = await mountRoot('/share/tokabc')
+
+    const stub = wrapper.find('.live-view-stub')
+    expect(stub.exists()).toBe(true)
+    // `ended` is what makes the page open the permanent record instead of the
+    // join gate; the title names it before its first fetch returns.
+    expect(stub.attributes('data-ended')).toBe('1')
+    expect(stub.attributes('data-title')).toBe('Release review')
   })
 
   it('dispatches a file share to ShareView', async () => {

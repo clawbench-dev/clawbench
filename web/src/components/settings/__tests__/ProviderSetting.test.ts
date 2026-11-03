@@ -30,14 +30,25 @@ const i18n = createI18n({
   locale: 'zh',
   messages: {
     zh: {
+      common: { back: '返回', close: '关闭' },
       settings: {
         items: {
           providerDesc: '模型提供商',
           providerEmpty: '还没有配置模型提供商',
           providerName: '名称',
+          providerNamePlaceholder: '例如 MiniMax',
+          providerProtocol: '协议',
           providerBaseUrl: '端点地址',
+          providerBaseUrlPlaceholder: 'https://api.example.com/v1',
+          providerBaseUrlHint: '可留空',
+          providerAuthLabel: '认证方式',
           providerKey: 'API Key',
           providerKeyKeep: '留空表示不修改',
+          providerKeyStateSaved: '已保存',
+          providerKeyStateMissing: '未配置',
+          providerClearKey: '清除已保存的密钥',
+          providerClearKeyPending: '保存后将删除已保存的密钥',
+          providerUndo: '撤销',
           providerKeySet: '已配置密钥',
           providerNoKey: '未配置密钥',
           providerNoBaseUrl: '未设置端点',
@@ -47,7 +58,7 @@ const i18n = createI18n({
           providerDefaultModelValue: '默认 {model}',
           providerAgentsValue: '智能体 {agents}',
           providerAuthAutoShort: '自动认证',
-          providerAuthAuto: '自动',
+          providerAuthAuto: '自动（推荐）',
           providerAuthUnsupported: '「{mode}」不适用于 {protocol}',
           providerPresetPlaceholder: '从预设选择',
           providerPresetTitle: '选择供应商',
@@ -61,7 +72,18 @@ const i18n = createI18n({
           providerCancel: '取消',
           providerEdit: '编辑',
           providerRemove: '删除',
-          providerClearKey: '清除密钥',
+          providerSectionConn: '连接',
+          providerSectionCreds: '凭据',
+          providerSectionModels: '模型',
+          providerModelsLabel: '模型',
+          providerModelsManage: '管理',
+          providerModelsNone: '还没有选择模型',
+          providerModelsSummary: '已选 {count} 个',
+          providerModelsTitle: '选择可用模型',
+          providerModelsDone: '完成',
+          providerCreatedHint: '已创建，正在配置模型',
+          providerTestConn: '测试连接',
+          providerTestingConn: '测试中…',
           providerDeleteConfirm: '删除 {name}？',
           providerTest: '测试',
           providerTesting: '测试中',
@@ -90,15 +112,8 @@ function mountSetting(providers: unknown[], catalog: unknown = {}) {
     global: {
       plugins: [i18n],
       stubs: {
-        AlertCircle: true,
-        CheckCircle2: true,
-        Loader2: true,
-        PlugZap: true,
-        Pencil: true,
-        Plus: true,
-        Trash2: true,
         // The real dialog teleports to <body>; render it inline so its fields
-        // and buttons stay inside the wrapper (the pickers use it too).
+        // and buttons stay inside the wrapper.
         ModalDialog: {
           props: ['open', 'title'],
           template: '<div v-if="open" class="mock-dialog"><span class="mock-title">{{ title }}</span><slot name="header" /><slot /><slot name="footer" /></div>',
@@ -111,7 +126,11 @@ function mountSetting(providers: unknown[], catalog: unknown = {}) {
 /** The dialog's own primary button — the toolbar's "add" button is also
  *  `.fbtn-primary`, so every form assertion has to be scoped to the dialog. */
 function dialogSave(wrapper: ReturnType<typeof mountSetting>) {
-  return wrapper.find('.mock-dialog .fbtn-primary')
+  return wrapper.find('.mock-dialog [data-action="provider-save"]')
+}
+
+function openCreate(wrapper: ReturnType<typeof mountSetting>) {
+  return wrapper.find('[data-action="provider-add"]').trigger('click')
 }
 
 describe('ProviderSetting', () => {
@@ -186,17 +205,21 @@ describe('ProviderSetting', () => {
     expect(wrapper.find('.mock-dialog').exists()).toBe(false)
     expect(wrapper.find('.provider-preset-trigger').exists()).toBe(false)
 
-    await wrapper.find('.provider-toolbar .fbtn-primary').trigger('click')
+    await openCreate(wrapper)
     await flushPromises()
     expect(wrapper.find('.mock-dialog').exists()).toBe(true)
     expect(wrapper.find('.mock-dialog').text()).toContain('添加模型提供商')
   })
 
   it('creates a provider with the values typed in the dialog', async () => {
+    mockPost.mockResolvedValue({
+      id: 11, name: 'My Provider', protocol: 'anthropic', baseUrl: 'https://api.example.com/v1',
+      authMode: 'auto', hasKey: true, agentCount: 0, models: [],
+    })
     const wrapper = mountSetting([])
     await flushPromises()
 
-    await wrapper.find('.provider-toolbar .fbtn-primary').trigger('click')
+    await openCreate(wrapper)
     await flushPromises()
 
     const dialog = wrapper.find('.mock-dialog')
@@ -215,16 +238,31 @@ describe('ProviderSetting', () => {
       baseUrl: 'https://api.example.com/v1',
       apiKey: 'sk-secret',
     }))
-    // A successful save closes the dialog and reloads the list.
-    expect(wrapper.find('.mock-dialog').exists()).toBe(false)
+    // The provider exists now, so the dialog continues on the model view
+    // instead of closing and making the user find the row and reopen it.
+    expect(wrapper.find('.mock-dialog').exists()).toBe(true)
+    expect(wrapper.find('.provider-created').exists()).toBe(true)
     expect(mockGet).toHaveBeenCalledWith('/api/providers')
+
+    // The models view only offers a way back; the form's footer then says
+    // "close" instead of "cancel", because the provider already exists.
+    await wrapper.find('.provider-back').trigger('click')
+    const cancel = wrapper.find('[data-action="provider-cancel"]')
+    expect(cancel.text()).toBe('关闭')
+    await cancel.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.mock-dialog').exists()).toBe(false)
   })
 
   it('applies a preset into the dialog and remembers its catalogue id', async () => {
+    mockPost.mockResolvedValue({
+      id: 12, name: 'Preset One', protocol: 'openai', baseUrl: 'https://p1/v1',
+      authMode: 'auto', hasKey: true, agentCount: 0, models: [],
+    })
     const wrapper = mountSetting([])
     await flushPromises()
 
-    await wrapper.find('.provider-toolbar .fbtn-primary').trigger('click')
+    await openCreate(wrapper)
     await flushPromises()
 
     await wrapper.find('.provider-preset-trigger').trigger('click')
@@ -259,22 +297,24 @@ describe('ProviderSetting', () => {
     // contains a 2, so `toContain('2')` passed even when the count was 0.
     const catalog = wrapper.find('.provider-catalog-text')
     expect(catalog.text()).toContain('2 个供应商')
-    const refresh = wrapper.findAll('.fbtn').find(b => b.text().includes('刷新目录'))
-    expect(refresh).toBeDefined()
+    const refresh = wrapper.find('.provider-catalog-refresh')
+    expect(refresh.exists()).toBe(true)
 
     mockPost.mockResolvedValueOnce({})
-    await refresh!.trigger('click')
+    await refresh.trigger('click')
     await flushPromises()
     expect(mockPost).toHaveBeenCalledWith('/api/catalog', {})
   })
 
-  it('editing opens the dialog prefilled and sends an empty apiKey (keep) unless clear is ticked', async () => {
+  it('editing opens the dialog prefilled and sends an empty apiKey (keep) unless clear is used', async () => {
     const wrapper = mountSetting([
       { id: 7, name: 'Existing', protocol: 'openai', baseUrl: 'https://x/v1', authMode: 'bearer', hasKey: true, agentCount: 0 },
     ])
     await flushPromises()
 
-    await wrapper.findAll('.fbtn').find((b) => b.text().includes('编辑'))!.trigger('click')
+    // The whole row is the edit affordance; the two icon buttons on it stop
+    // propagation, so this click cannot be mistaken for test/delete.
+    await wrapper.find('.provider-row[data-provider-id="7"]').trigger('click')
     await flushPromises()
 
     const dialog = wrapper.find('.mock-dialog')
@@ -297,7 +337,7 @@ describe('ProviderSetting', () => {
     await flushPromises()
 
     mockPost.mockRejectedValueOnce(new Error('name already exists'))
-    await wrapper.find('.provider-toolbar .fbtn-primary').trigger('click')
+    await openCreate(wrapper)
     await flushPromises()
     await wrapper.find('.mock-dialog').find('[data-role="name"]').setValue('Dup')
     await dialogSave(wrapper).trigger('click')
@@ -315,7 +355,7 @@ describe('ProviderSetting', () => {
       { id: 7, name: 'Existing', protocol: 'openai', baseUrl: 'https://x/v1', authMode: 'bearer', hasKey: true, agentCount: 0 },
     ])
     await flushPromises()
-    await wrapper.findAll('.fbtn').find((b) => b.text().includes('编辑'))!.trigger('click')
+    await wrapper.find('.provider-row[data-provider-id="7"]').trigger('click')
     await flushPromises()
 
     mockPut.mockRejectedValueOnce(Object.assign(
@@ -339,11 +379,11 @@ describe('ProviderSetting', () => {
     await flushPromises()
 
     mockPost.mockResolvedValueOnce({ ok: true, models: ['m1', 'm2'] })
-    await wrapper.findAll('.fbtn').find((b) => b.text().includes('测试'))!.trigger('click')
+    await wrapper.find('.provider-row[data-provider-id="4"] [data-action="provider-test"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('.provider-test-result--ok').exists()).toBe(true)
 
-    await wrapper.findAll('.fbtn').find((b) => b.text().includes('编辑'))!.trigger('click')
+    await wrapper.find('.provider-row[data-provider-id="4"]').trigger('click')
     await flushPromises()
     await dialogSave(wrapper).trigger('click')
     await flushPromises()
@@ -357,14 +397,27 @@ describe('ProviderSetting', () => {
     ])
     await flushPromises()
 
+    const remove = () => wrapper.find('.provider-row[data-provider-id="3"] [data-action="provider-remove"]')
+
     mockConfirm.mockResolvedValueOnce(false)
-    await wrapper.findAll('.fbtn').find((b) => b.text().includes('删除'))!.trigger('click')
+    await remove().trigger('click')
     await flushPromises()
     expect(mockDelete).not.toHaveBeenCalled()
 
     mockConfirm.mockResolvedValueOnce(true)
-    await wrapper.findAll('.fbtn').find((b) => b.text().includes('删除'))!.trigger('click')
+    await remove().trigger('click')
     await flushPromises()
     expect(mockDelete).toHaveBeenCalledWith('/api/providers/3')
+  })
+
+  it('does not open the editor when a row action is tapped', async () => {
+    const wrapper = mountSetting([
+      { id: 5, name: 'Tap', protocol: 'openai', baseUrl: 'https://x', authMode: 'auto', hasKey: true, agentCount: 0 },
+    ])
+    await flushPromises()
+
+    await wrapper.find('.provider-row[data-provider-id="5"] [data-action="provider-test"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.mock-dialog').exists()).toBe(false)
   })
 })

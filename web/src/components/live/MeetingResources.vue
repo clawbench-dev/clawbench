@@ -11,6 +11,22 @@
     </div>
 
     <template v-else>
+      <!-- The meeting link outlives the room: it resolves to this record until
+           the record is deleted. It sits above the files because it is the one
+           item a reader comes here to copy. Gated on `links` as well as the
+           token so the address list never flashes as an empty input. -->
+      <div v-if="shareToken && shareLinks.length > 0" class="res-link" data-role="meeting-link">
+        <div class="res-group__label">
+          <Link2 :size="11" />
+          {{ t('meeting.resources.linkTitle') }}
+        </div>
+        <ShareAddressList :links="shareLinks" />
+        <div class="res-hint">
+          <Info :size="12" />
+          {{ t('meeting.resources.linkHint') }}
+        </div>
+      </div>
+
       <div v-if="folderPath || total > 0" class="res-head">
         <span class="res-head__icon"><Folder :size="15" /></span>
         <div class="res-head__main">
@@ -151,9 +167,11 @@ import {
   Paperclip,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import MeetingEmpty from './MeetingEmpty.vue'
 import { useToast } from '@/composables/useToast'
 import type { MeetingResourceGroup, MeetingResourceItem } from '@/composables/useMeetingResources'
+import type { ShareLink } from '@/composables/useShareLinks'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation'
 import { requestAttachmentTarget } from '@/composables/useConversationTarget'
 import { startAttachDrag, cleanupDragGhost } from '@/utils/attachDrag'
@@ -165,6 +183,10 @@ const props = defineProps<{
   error: string
   total: number
   folderPath: string
+  /** Every address the meeting link is reachable on; empty while it loads. */
+  links?: ShareLink[]
+  /** The record's token. Empty hides the link block entirely. */
+  shareToken?: string
 }>()
 
 const emit = defineEmits<{ reload: [] }>()
@@ -177,12 +199,14 @@ const { openFilePath } = useFilePathAnnotation()
 
 const { groups, loading, error, total } = toRefs(props)
 const reload = () => emit('reload')
+const shareLinks = computed(() => props.links ?? [])
 
 const summary = computed(() => {
   const folder = props.groups.find((group) => group.key === 'folder')?.items.length ?? 0
   const audio = props.groups.find((group) => group.key === 'audio')?.items.length ?? 0
+  const shots = props.groups.find((group) => group.key === 'shots')?.items.length ?? 0
   const refs = props.groups.find((group) => group.key === 'referenced')?.items.length ?? 0
-  return t('meeting.resources.summary', { total: props.total, folder: folder + audio, refs })
+  return t('meeting.resources.summary', { total: props.total, folder: folder + audio + shots, refs })
 })
 
 function open(item: MeetingResourceItem): void {
@@ -291,8 +315,13 @@ function metaFor(item: MeetingResourceItem): string {
 .res-head__meta { margin-top: 3px; font-size: var(--font-size-2xs); color: var(--text-hint); }
 .res-head__actions { display: flex; gap: var(--space-1); flex-shrink: 0; }
 
-.res-group { display: flex; flex-direction: column; gap: 1px; }
-.res-group__label {
+/* The meeting link block: same column rhythm as a resource group, but it is
+   not a group — it holds one control (the address list) and the sentence that
+   says how long it stays valid. */
+.res-link { display: flex; flex-direction: column; gap: var(--space-2); }
+.res-link .res-hint { margin-top: 0; }
+
+.res-group { display: flex; flex-direction: column; gap: 1px; }.res-group__label {
   display: flex;
   align-items: center;
   gap: var(--space-2);

@@ -46,10 +46,12 @@ const stageLifecycle = vi.hoisted(() => ({ mounts: 0, unmounts: 0 }))
 
 const ListStub = {
   name: 'MeetingList',
-  template: `<div data-view="list">
+  props: ['liveToken'],
+  template: `<div data-view="list" :data-live-token="liveToken || ''">
     <button data-stub="create" @click="$emit('create')" />
     <button data-stub="join" @click="$emit('join')" />
     <button data-stub="open" @click="$emit('open', 'tok-1')" />
+    <button data-stub="resume" @click="$emit('resume')" />
   </div>`,
 }
 const CreateStub = {
@@ -67,7 +69,7 @@ const StageStub = {
     })
     return {}
   },
-  template: `<div data-view="meeting" :data-active="active ? 'true' : 'false'"><button data-stub="ended" @click="$emit('ended', 'tok-9')" /></div>`,
+  template: `<div data-view="meeting" :data-active="active ? 'true' : 'false'"><button data-stub="ended" @click="$emit('ended', 'tok-9')" /><button data-stub="stage-back" @click="$emit('back')" /></div>`,
 }
 const DetailStub = {
   name: 'MeetingDetail',
@@ -277,6 +279,68 @@ describe('MeetingPanel back navigation', () => {
   it('does not intercept back on the list itself', () => {
     mountPanel()
     expect(backHandler?.enabled()).toBe(false)
+  })
+
+  /**
+   * The stage used to be a dead end on a desktop: the hardware/edge gesture
+   * existed, but nothing on screen did, so a host could not go read another
+   * meeting's minutes without ending this one.
+   */
+  it('leaves the stage for the list from the stage back control', async () => {
+    shareState.value = 'publishing'
+    shareToken.value = 'tok-live'
+    const w = mountPanel()
+    await nextTick()
+    expect(visibleViews(w)).toEqual(['meeting'])
+
+    await w.find('[data-stub="stage-back"]').trigger('click')
+
+    expect(visibleViews(w)).toEqual(['list'])
+    // Navigation, not an exit: the meeting is still running and the stage is
+    // still mounted with its chat and pending approvals.
+    expect(shareState.value).toBe('publishing')
+    expect(stageLifecycle.unmounts).toBe(0)
+  })
+
+  it('hands the list the live token so it can offer the way back', async () => {
+    shareState.value = 'publishing'
+    shareToken.value = 'tok-live'
+    const w = mountPanel()
+    await nextTick()
+    await w.find('[data-stub="stage-back"]').trigger('click')
+
+    expect(w.find('[data-view="list"]').attributes('data-live-token')).toBe('tok-live')
+
+    await w.find('[data-stub="resume"]').trigger('click')
+    expect(visibleViews(w)).toEqual(['meeting'])
+  })
+
+  it('offers no way back when nothing is running', async () => {
+    const w = mountPanel()
+    expect(w.find('[data-view="list"]').attributes('data-live-token')).toBe('')
+  })
+
+  /**
+   * Reading another record while a meeting runs must survive a trip to another
+   * dock tab: the old `active` watcher forced the stage on every re-entry, so
+   * the record the host had opened was replaced mid-read.
+   */
+  it('keeps the record the host opened when the tab is re-entered', async () => {
+    shareState.value = 'publishing'
+    shareToken.value = 'tok-live'
+    const w = mountPanel()
+    await nextTick()
+
+    window.dispatchEvent(new CustomEvent('clawbench-open-meeting', { detail: { token: 'tok-7' } }))
+    await nextTick()
+    expect(w.find('[data-view="detail"]').attributes('data-token')).toBe('tok-7')
+
+    await w.setProps({ active: false })
+    await w.setProps({ active: true })
+    await nextTick()
+
+    expect(visibleViews(w)).toEqual(['detail'])
+    expect(w.find('[data-view="detail"]').attributes('data-token')).toBe('tok-7')
   })
 
   it('does not intercept back while the tab is inactive', async () => {

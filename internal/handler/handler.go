@@ -631,6 +631,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/git/cloc", ServeGitCloc)
 	register("/api/ai/permission/respond", ServePermissionRespond)
 	register("/api/upload/file", UploadFile)
+	register("/api/upload/check", UploadCheck)
 	register("/api/upload/recent", UploadRecent)
 	register("/api/share-in/recent", ShareInRecent)
 	// Web Share Target for the installed PWA: the browser POSTs a multipart
@@ -706,6 +707,10 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// Who was sharing the screen, as intervals. Recorded as transitions so the
 	// timeline can never show two sharers at once.
 	register("/api/live-share/notes/screen", ServeLiveShareNoteScreen)
+	// Key frames captured by the publisher while a screen is on the wire: POST
+	// uploads one, DELETE removes one, GET (below) lists them.
+	register("/api/live-share/notes/shot", ServeLiveShareNoteShot)
+	register("/api/live-share/notes/shots", ServeLiveNotesShots)
 	// Meeting records: GET lists the project's meetings (the database row is the
 	// record, permanent), DELETE removes one with its folder.
 	register("/api/live-share/notes/sessions", ServeLiveNotesSessions)

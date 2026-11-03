@@ -4372,6 +4372,103 @@ paths:
         "404":
           description: token 不存在或不属于当前项目
 
+  /api/live-share/notes/shot:
+    post:
+      tags: [LiveShare]
+      summary: 上传一张会议关键画面
+      description: |
+        发布端在本地抓帧后上传：屏幕共享是 P2P，服务端收不到画面。文件按**魔数**
+        识别（WebP / PNG / JPEG），不信任客户端声明的类型；单张 ≤2 MiB、单场最多
+        100 张。
+
+        `(token, clientShotId)` 唯一，重试幂等（返回已有行）。`at` 超出会议区间时
+        被钳到区间内——客户端时钟偏差不该让一张真实画面丢掉。
+
+        图片本身落在会议目录的 `shots/` 下，文件名由服务端生成；缩略图走
+        `/api/fs/thumb`，不在这里返回二进制。
+      operationId: liveShareNoteShotUpload
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [token, clientShotId, reason, file]
+              properties:
+                token: { type: string }
+                clientShotId: { type: string, description: 客户端生成，≤64 字，用于幂等 }
+                at: { type: integer, format: int64, description: Unix 毫秒 }
+                reason:
+                  type: string
+                  enum: [manual, file, sharer, switch, speech, change]
+                  description: 触发原因
+                ref: { type: string, description: 文件路径 / viewerId / 段 id }
+                width: { type: integer }
+                height: { type: integer }
+                file:
+                  type: string
+                  format: binary
+                  description: WebP / PNG / JPEG，≤2 MiB
+      responses:
+        "200":
+          description: 已保存
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveNoteShot"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
+        "413":
+          description: 图片超过 2 MiB
+    delete:
+      tags: [LiveShare]
+      summary: 删除一张会议关键画面
+      description: 先删数据库行，再删文件；行不存在返回 404。文件删失败只记日志（行已删，残留文件随会议目录一起清理）。
+      operationId: liveShareNoteShotDelete
+      parameters:
+        - { name: token, in: query, required: true, schema: { type: string } }
+        - { name: id, in: query, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: 已删除
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 或画面不存在
+
+  /api/live-share/notes/shots:
+    get:
+      tags: [LiveShare]
+      summary: 列出会议关键画面
+      description: |
+        按拍摄时间升序返回，每条带 `offsetMs`（相对转写时间线原点）。没有转写
+        （听记未开启）时原点退回会议开始时间，因此偏移始终从 0 附近开始。
+      operationId: liveShareNoteShots
+      parameters:
+        - { name: token, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 画面列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  shots:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LiveNoteShot"
+        "404":
+          description: token 不存在或不属于当前项目
+
   /api/live-share/notes/sessions:
     get:
       tags: [LiveShare]
@@ -4757,8 +4854,16 @@ paths:
         会话 JSON）。两者同样免鉴权、token 不存在一律 404。
 
         **直播共享**另有 `{token}/signal`（信令 WebSocket）与 `{token}/notes`
-        （AI 听记时间线 + 纪要状态，`?since=` 增量）。`{token}/notes` 只在房间存活期间
-        可读：共享结束后房间销毁，token 立即失效，不会留下可长期读取的转写。
+        （AI 听记时间线 + 纪要状态，`?since=` 增量）。
+
+        **会议链接长期有效**：直播的 `{token}/meta` 在房间销毁后仍返回 `kind=live`，并带
+        `ended=true` 与 `startedAt` / `endedAt`——token 从此指向**永久的会议记录**，直到该记录
+        被删除才 404。分享页据此直接打开会议详情（纪要 / 转写 / 校对 / 聊天），不再要求填称谓
+        去加入一个已经不存在的房间。
+
+        `{token}/notes` 同样在会议结束后继续可读（房间只是实时通道，记录才是权威）。`?full=1`
+        是**记录视图**：额外返回 `chat`（归档聊天）与 `minutes.revise.text`（校对稿正文）。
+        不带 `full` 的实时轮询刻意不返回这两项，避免每几秒重传一份不断增长的聊天记录。
 
         `{token}/signal` **必须带 `?name=`（观众称谓）**：去掉首尾空白、剔除控制字符
         （换行会被替换成空格并压缩连续空白，因为它要逐字写进归档的 chat.md 与通知正文），
@@ -7219,7 +7324,13 @@ paths:
     post:
       tags: [Upload]
       summary: 上传文件
-      description: multipart 上传；除 `file` 外还支持 `dir`（目标目录）与 `relpath`（相对路径）。
+      description: |
+        multipart 上传；除 `file` 外还支持：
+
+        - `dir`（目标目录，缺省落 `.clawbench/uploads/`）；
+        - `relpath`（相对子路径，用于保留文件夹结构）；
+        - `onconflict`：`overwrite` 时覆盖目标位置的同名文件；缺省（或其它值）
+          自动追加数字后缀重命名。
       operationId: uploadFile
       requestBody:
         required: true
@@ -7231,9 +7342,69 @@ paths:
                 file:
                   type: string
                   format: binary
+                dir:
+                  type: string
+                relpath:
+                  type: string
+                onconflict:
+                  type: string
+                  enum: [rename, overwrite]
       responses:
         "200":
           description: 上传结果
+
+  /api/upload/check:
+    post:
+      tags: [Upload]
+      summary: 上传重名预检
+      description: |
+        上传前检查这批文件在目标目录中是否已存在同名文件（按上传端同样的规则
+        规范化：扩展名小写、空格转下划线），供前端弹出「覆盖 / 保留两者」提示。
+        只读：不写入文件，也不会为不存在的 `relpath` 创建目录。
+      operationId: uploadCheck
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dir:
+                  type: string
+                  description: 目标目录（相对项目根或绝对路径）
+                files:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: 原始文件名
+                      relpath:
+                        type: string
+                        description: 相对子路径（可空）
+      responses:
+        "200":
+          description: 冲突列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  conflicts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        relpath:
+                          type: string
+                        path:
+                          type: string
+                          description: 相对目标目录的落地路径
 
   /share-target:
     post:
@@ -7959,6 +8130,25 @@ components:
         closedAt: { type: integer, format: int64, description: Unix 毫秒，0 表示未关闭 }
         source: { type: string, description: "preview / editor 等来源" }
       required: [id, owner, path, name, openedAt]
+
+    LiveNoteShot:
+      type: object
+      description: |
+        会议中的一张关键画面。文件本身在会议目录的 `shots/` 下，`fileName` 是相对
+        会议目录的路径；`offsetMs` 是相对转写时间线原点的偏移，用来把它插进转写。
+      properties:
+        id: { type: integer, format: int64 }
+        at: { type: integer, format: int64, description: 拍摄时刻（Unix 毫秒） }
+        offsetMs: { type: integer, format: int64, description: 相对转写时间线原点的毫秒偏移 }
+        reason:
+          type: string
+          enum: [manual, file, sharer, switch, speech, change]
+        ref: { type: string, description: 文件路径 / viewerId / 段 id }
+        fileName: { type: string, description: 相对会议目录，如 shots/1700000000000-file-3f2a.webp }
+        width: { type: integer }
+        height: { type: integer }
+        bytes: { type: integer, format: int64 }
+      required: [id, at, reason, fileName]
 
     LiveNoteMinutes:
       type: object

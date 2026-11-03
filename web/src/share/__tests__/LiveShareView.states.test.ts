@@ -76,6 +76,8 @@ const i18n = createI18n({
           statusFailed: '连接失败',
           endedTitle: '直播已结束',
           endedDesc: '发布者已停止共享',
+          kickedTitle: '已被移出会议',
+          kickedDesc: '主持人已把你移出这场会议',
           fullTitle: '房间已满',
           fullDesc: '稍后再试',
           failedTitle: '连接失败',
@@ -151,16 +153,47 @@ describe('LiveShareView overlay states', () => {
     w.unmount()
   })
 
-  it('shows the ended copy and a retry button when the publisher stops', async () => {
+  it('switches to the meeting record when the publisher stops', async () => {
     const w = mountView()
     await flushPromises()
 
     lastViewer?.opts?.callbacks?.onStateChange?.('ended')
     await flushPromises()
 
-    expect(w.find('.live-overlay-title').text()).toContain('直播已结束')
-    expect(w.find('.live-overlay-desc').text()).toContain('发布者已停止共享')
-    expect(w.find('.live-retry').exists()).toBe(true)
+    // The room is gone but the record is permanent: the member lands on the
+    // same four surfaces the host sees, not on a dead "share ended" card.
+    expect(w.find('.share-meeting').exists()).toBe(true)
+    expect(w.find('.live-overlay-title').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('opens the record straight away when the link is opened after the meeting', async () => {
+    // `meta.ended` is what the dispatcher resolved before mounting: no nickname
+    // gate (there is no room to join) and no socket.
+    const w = mount(LiveShareView, {
+      props: { meta: { ended: true, title: 'Release review' } },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    expect(w.find('.join-gate').exists()).toBe(false)
+    expect(lastViewer).toBeNull()
+    expect(w.find('.share-meeting').exists()).toBe(true)
+    expect(w.text()).toContain('Release review')
+    w.unmount()
+  })
+
+  it('keeps the overlay when the viewer was removed from the room', async () => {
+    const w = mountView()
+    await flushPromises()
+
+    lastViewer?.opts?.callbacks?.onStateChange?.('ended', { reason: 'kicked' })
+    await flushPromises()
+
+    // Being removed is not the meeting ending: the copy has to say which one
+    // happened, and the record is not the answer to "why am I out".
+    expect(w.find('.live-overlay-title').text()).toContain('已被移出会议')
+    expect(w.find('.share-meeting').exists()).toBe(false)
     w.unmount()
   })
 
@@ -205,7 +238,7 @@ describe('LiveShareView overlay states', () => {
     await flushPromises()
     const first = lastViewer
 
-    lastViewer?.opts?.callbacks?.onStateChange?.('ended')
+    lastViewer?.opts?.callbacks?.onStateChange?.('failed', { reason: 'ice' })
     await flushPromises()
     await w.find('.live-retry').trigger('click')
     await flushPromises()
@@ -227,11 +260,13 @@ describe('LiveShareView overlay states', () => {
     await flushPromises()
     expect(w.find('[data-action="mic-toggle"]').attributes('aria-checked')).toBe('true')
 
-    lastViewer?.opts?.callbacks?.onStateChange?.('ended')
+    // A transport failure, not the meeting ending: `ended` now replaces the
+    // stage with the record, so the button would simply be gone.
+    lastViewer?.opts?.callbacks?.onStateChange?.('failed', { reason: 'ice' })
     await flushPromises()
 
     // The button survives (the room switch is still on), but it must no longer
-    // claim to be sending: an ended stream cannot carry audio.
+    // claim to be sending: a dead stream cannot carry audio.
     const toggle = w.find('[data-action="mic-toggle"]')
     expect(toggle.exists()).toBe(true)
     expect(toggle.attributes('aria-checked')).toBe('false')
@@ -245,9 +280,12 @@ describe('LiveShareView overlay states', () => {
  * renders two sets of copy on top of each other.
  *
  * The realistic sequence that produced the bug: the host stops its picture
- * (`picture-state { video: false }` leaves `videoEnabled` false) and then ends
- * the meeting. Nothing rolls `videoEnabled` back, so "not sharing yet" and
- * "sharing has ended" were both true and their titles/descriptions interleaved.
+ * (`picture-state { video: false }` leaves `videoEnabled` false) and then the
+ * media path fails. Nothing rolls `videoEnabled` back, so "not sharing yet" and
+ * "connection failed" were both true and their titles/descriptions interleaved.
+ *
+ * (`ended` is covered separately: the meeting ending now replaces the whole
+ * stage with the record, so there is no overlay left to collide with.)
  */
 describe('LiveShareView overlay slot exclusivity', () => {
   it('hides the no-picture placeholder whenever a status overlay is up', async () => {
@@ -260,18 +298,14 @@ describe('LiveShareView overlay slot exclusivity', () => {
     await flushPromises()
     expect(w.find('[data-role="no-picture"]').exists()).toBe(true)
 
-    // Host stops sharing, then the room ends.
-    cb.onStateChange?.('ended')
-    await flushPromises()
-    expect(w.find('[data-role="no-picture"]').exists()).toBe(false)
-    expect(w.find('.live-overlay-title').text()).toContain('直播已结束')
-
-    // Same for a retry that lands back in `connecting`, and for a failure.
-    await w.find('.live-retry').trigger('click')
-    await flushPromises()
-    expect(w.find('[data-role="no-picture"]').exists()).toBe(false)
-
+    // Host stops sharing, then the peer link fails.
     cb.onStateChange?.('failed', { reason: 'ice' })
+    await flushPromises()
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(false)
+    expect(w.find('.live-overlay-title').text()).toContain('连接失败')
+
+    // Same for a retry that lands back in `connecting`.
+    await w.find('.live-retry').trigger('click')
     await flushPromises()
     expect(w.find('[data-role="no-picture"]').exists()).toBe(false)
 

@@ -24,7 +24,14 @@ export interface MeetingView {
   tab: MeetingDetailTab
 }
 
-const DEFAULT_TAB: MeetingDetailTab = 'minutes'
+/**
+ * The tab a record opens on: 资源.
+ *
+ * The first thing a reader wants from a finished meeting is what it LEFT
+ * BEHIND — the folder, the minutes file, the recording — and the meeting link,
+ * which the resource tab now carries. The reading tabs are one click away.
+ */
+const DEFAULT_TAB: MeetingDetailTab = 'resources'
 
 const _view = ref<MeetingView>({ token: '', tab: DEFAULT_TAB })
 let _pendingReturn: MeetingView | null = null

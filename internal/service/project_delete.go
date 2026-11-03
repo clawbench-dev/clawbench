@@ -45,6 +45,7 @@ var projectScopedDeleteTables = []string{
 	// them left them behind for good (no other statement deletes from either).
 	"live_notes_files",
 	"live_notes_screen",
+	"live_notes_shots",
 }
 
 // projectTokenScopedDeleteTables are meeting tables keyed by the share token

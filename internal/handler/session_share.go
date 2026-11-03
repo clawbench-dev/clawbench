@@ -458,6 +458,15 @@ type shareMetaResponse struct {
 	// Video is live-share only: false means a voice meeting. The share page
 	// renders a placeholder instead of waiting for a picture that never comes.
 	Video bool `json:"video"`
+	// Ended is live-share only: true means the room is gone and the token now
+	// addresses the permanent meeting RECORD. The share page then opens the
+	// record (minutes / transcript / proofread / chat) instead of asking for a
+	// nickname and dialing a room that no longer exists.
+	Ended bool `json:"ended"`
+	// StartedAt / EndedAt are unix ms of the record (live-share only, ended
+	// case): the record view shows when the meeting ran.
+	StartedAt int64 `json:"startedAt,omitempty"`
+	EndedAt   int64 `json:"endedAt,omitempty"`
 }
 
 // serveShareMeta reports whether a token is a file share or a session share.
@@ -479,6 +488,25 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 			Title:        room.Title(),
 			NotesEnabled: room.NotesEnabled(),
 			Video:        room.VideoEnabled(),
+		})
+		return
+	}
+
+	// The room is gone, but the meeting record is permanent: a link that was
+	// handed out must keep working after the meeting ends, until the owner
+	// deletes the record. Answering 404 here is what used to turn every link
+	// into a dead URL the moment the host pressed 结束会议.
+	if note, ok, err := service.PublicMeetingByToken(token); err != nil {
+		slog.Error("share: meta live record lookup failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	} else if ok {
+		writeJSON(w, http.StatusOK, shareMetaResponse{
+			Kind:      shareKindLive,
+			Title:     note.Title,
+			Ended:     true,
+			StartedAt: note.StartedAt,
+			EndedAt:   note.EndedAt,
 		})
 		return
 	}

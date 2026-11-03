@@ -20,6 +20,39 @@ export interface ShareNotesMinutes {
   status: string
   markdown?: string
   error?: string
+  /** Proofreading stage; `text` is only present in the record view. */
+  revise?: ShareNotesRevise
+}
+
+export interface ShareNotesRevise {
+  status: string
+  text?: string
+  error?: string
+}
+
+/** One archived chat line, as the record view receives it. */
+export interface ShareChatMessage {
+  speaker: string
+  text: string
+  at: number
+}
+
+/**
+ * The meeting record as a viewer reads it after the meeting ended.
+ *
+ * The share link is the credential and it outlives the room: this is the same
+ * `/notes` endpoint the live poll uses, asked with `full=1` for the two parts
+ * the poll skips (proofread text and the archived chat).
+ */
+export interface ShareMeetingRecord {
+  title: string
+  startedAt: number
+  endedAt: number
+  ended: boolean
+  segments: LiveNoteSegment[]
+  files: ShareNotesFile[]
+  minutes: ShareNotesMinutes
+  chat: ShareChatMessage[]
 }
 
 export interface ShareNotesSnapshot {
@@ -42,9 +75,14 @@ export interface ShareNotesFile {
 
 /** Shape of the public transcript payload. */
 interface NotesPayload {
+  title?: string
+  startedAt?: number
+  endedAt?: number
+  ended?: boolean
   segments?: LiveNoteSegment[]
   files?: ShareNotesFile[]
   minutes?: ShareNotesMinutes
+  chat?: ShareChatMessage[]
 }
 
 function toSnapshot(data: NotesPayload): ShareNotesSnapshot {
@@ -73,6 +111,37 @@ export async function fetchNotesSnapshot(
     return toSnapshot((await resp.json()) as NotesPayload)
   } catch (e) {
     appLog.d(TAG, 'notes probe failed', e)
+    return null
+  }
+}
+
+/**
+ * Read the whole meeting record in one request (`?full=1`).
+ *
+ * Used by the viewer's record view once the meeting is over — and by the same
+ * view when a link is opened days later, which is why it does not depend on
+ * the room existing. `null` means the token no longer resolves (the record was
+ * deleted) or the request failed; the caller shows the not-found state.
+ */
+export async function fetchMeetingRecord(
+  fetchImpl: typeof fetch = (input, init) => fetch(input, init),
+): Promise<ShareMeetingRecord | null> {
+  try {
+    const resp = await fetchImpl(shareApiUrl('notes?since=0&full=1'))
+    if (!resp.ok) return null
+    const data = (await resp.json()) as NotesPayload
+    return {
+      title: data.title ?? '',
+      startedAt: data.startedAt ?? 0,
+      endedAt: data.endedAt ?? 0,
+      ended: Boolean(data.ended),
+      segments: Array.isArray(data.segments) ? data.segments : [],
+      files: Array.isArray(data.files) ? data.files : [],
+      minutes: data.minutes ?? { status: 'idle' },
+      chat: Array.isArray(data.chat) ? data.chat : [],
+    }
+  } catch (e) {
+    appLog.d(TAG, 'record fetch failed', e)
     return null
   }
 }

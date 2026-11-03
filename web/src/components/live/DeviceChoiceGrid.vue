@@ -324,8 +324,12 @@ onBeforeUnmount(() => {
   border: 1px dashed var(--border-color);
   background: transparent;
 }
+/* Same selected "nothing" language as the screen grid: a soft accent wash, not
+   a solid outline on an empty box (that would nest a second frame inside the
+   card's own ring). The dashed frame stays neutral. */
 .device-choice__card--off.device-choice__card--on .device-choice__thumb {
-  border-style: solid; border-color: var(--accent-color); color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  color: var(--accent-color);
 }
 .device-choice__card--on.device-choice__card--tile .device-choice__thumb { color: var(--accent-color); }
 .device-choice__thumb--ask {

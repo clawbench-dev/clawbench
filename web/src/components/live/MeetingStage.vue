@@ -5,6 +5,20 @@
          come back to, so its state has to be visible from the tab, not only
          inside a dialog that has been closed. -->
     <div class="live-panel__header">
+      <!-- Leaving the stage for the record list is NAVIGATION, not an exit:
+           the room lives in useLiveShare, so the meeting keeps running and its
+           record (the live row) leads straight back. The hardware back gesture
+           already did this, which left desktop hosts with no way out at all. -->
+      <button
+        class="live-panel__back"
+        type="button"
+        :title="t('meeting.stage.back')"
+        :aria-label="t('meeting.stage.back')"
+        data-action="stage-back"
+        @click="emit('back')"
+      >
+        <ArrowLeft :size="14" />
+      </button>
       <span class="live-panel__icon">
         <MonitorUp :size="14" />
       </span>
@@ -161,6 +175,15 @@
               <span class="meeting-check__icon"><NotebookPen :size="13" /></span>
               {{ t('meeting.create.notes') }}
             </label>
+            <!-- Key frames are a separate decision from the transcript: the
+                 pictures are stored in this project, and a host may want one
+                 without the other. -->
+            <label class="meeting-check">
+              <input type="checkbox" :checked="shotsOn" data-role="stage-shots"
+                @change="onToggleShots(($event.target as HTMLInputElement).checked)" />
+              <span class="meeting-check__icon"><ImageIcon :size="13" /></span>
+              {{ t('meeting.create.shots') }}
+            </label>
             <label class="meeting-check">
               <input
                 type="checkbox"
@@ -249,6 +272,24 @@
             />
             <TranscriptList v-else :blocks="noteBlocks" fill />
           </template>
+          <!-- What the record will contain, visible while it happens. Shown
+               only once frames exist (or were lost): an empty bar under every
+               voice meeting would just be noise. -->
+          <div
+            v-if="shots.active.value && (shots.count.value > 0 || shots.lost.value > 0)"
+            class="live-shot-bar"
+            data-role="shots-bar"
+          >
+            <ImageIcon :size="13" />
+            <span>{{ t('meeting.shots.count', { n: shots.count.value }) }}</span>
+            <span v-if="shots.lost.value > 0" class="live-shot-bar__lost">
+              {{ t('meeting.shots.lost', { n: shots.lost.value }) }}
+            </span>
+            <button class="meeting-link live-shot-bar__toggle" type="button" data-role="shots-toggle"
+              @click="onToggleShots(!shotsOn)">
+              {{ shotsOn ? t('meeting.shots.pause') : t('meeting.shots.resume') }}
+            </button>
+          </div>
         </div>
 
         <div v-else class="live-tab-pane" data-role="chat-pane">
@@ -336,6 +377,17 @@
         <PhoneOff :size="14" />{{ t('meeting.stage.end') }}
       </button>
       <span class="live-panel__spacer" />
+      <!-- The only way to keep a frame the triggers missed. Whole-meeting tool,
+           like 标注: it belongs in the footer, not in a setup tab. -->
+      <button
+        v-if="shotsOn"
+        class="fbtn"
+        type="button"
+        data-action="shot-now"
+        @click="captureShot"
+      >
+        <ImageIcon :size="14" />{{ t('meeting.shots.capture') }}
+      </button>
       <!-- Drawing only exists for a SCREEN picture: a camera image has no
            desktop coordinates to map the ink onto, so the tool follows the
            current capture rather than a type chosen at creation. -->
@@ -368,7 +420,7 @@
  * only answer "not available" is worse than no button.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Captions, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
+import { ArrowLeft, Captions, ImageIcon, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import MemberScreenCard from '@/components/live/MemberScreenCard.vue'
@@ -389,6 +441,7 @@ import { groupNoteSegments, useLiveNotes, withMeetingFileEvents } from '@/compos
 import { useMeetingHistory } from '@/composables/useMeetingHistory'
 import { meetingFileEntries, meetingFilesVersion } from '@/utils/meetingFileTracker'
 import { DEFAULT_DEVICE, useMeetingOptions } from '@/composables/useMeetingOptions'
+import { useMeetingShots } from '@/composables/useMeetingShots'
 import { useScreenWindow, ANNOTATE_WINDOW_NAME, SCREEN_WINDOW_NAME } from '@/composables/useScreenWindow'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { getNative, isDesktopApp } from '@/utils/clawbenchNative'
@@ -414,7 +467,7 @@ import '@/assets/meeting-form.css'
 // shared footer-button sheet itself.
 import '@/assets/modal-footer-btn.css'
 
-const emit = defineEmits<{ ended: [token: string] }>()
+const emit = defineEmits<{ ended: [token: string]; back: [] }>()
 /**
  * Whether this stage is the surface the host is looking at.
  *
@@ -432,6 +485,7 @@ const dialog = useDialog()
 const share = useLiveShare()
 const notes = useLiveNotes()
 const options = useMeetingOptions()
+const shots = useMeetingShots()
 const { serverConfig } = useSettingsConfig()
 
 /**
@@ -474,6 +528,8 @@ const cameraSelected = computed(() =>
   share.cameraEnabled.value ? options.cameraChoice.value || DEFAULT_DEVICE : '',
 )
 const notesOn = computed(() => notes.phase.value === 'recording')
+/** Whether frames are being kept right now (running and not paused). */
+const shotsOn = computed(() => shots.active.value && !shots.paused.value)
 /** Whether this machine has a camera at all, so the group is worth showing. */
 const cameraAvailable = ref(true)
 /** Guards the async start/stop of a screen capture (it opens a picker). */
@@ -969,6 +1025,26 @@ function onToggleNotes(on: boolean): void {
   void share.stopNotes()
 }
 
+/**
+ * Turning frames off PAUSES rather than tears down: the count and the
+ * de-duplication state survive, so turning it back on does not restart the
+ * hourly quota or forget the last frame.
+ */
+function onToggleShots(on: boolean): void {
+  options.shots.value = on
+  if (!on) {
+    shots.pause()
+    return
+  }
+  if (shots.active.value) shots.resume()
+  else share.startShots()
+}
+
+/** Keep the picture on screen right now (the triggers may have missed it). */
+function captureShot(): void {
+  void shots.captureNow('manual')
+}
+
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 onMounted(() => {
   // The desktop shell can always give the picture a real window (a popup is an
@@ -986,6 +1062,9 @@ onMounted(() => {
   })
   unsubscribeClosed = getNative()?.onAnnotateClosed?.(() => {
     nativeAnnotating.value = false
+    // The strokes are gone with the window; a mirror left behind would be
+    // composited into the next key frame.
+    share.clearInkMirror()
   })
   void resolveRemoteControlSupport(getNative()).then((ok) => {
     controlSupported.value = ok
@@ -1115,6 +1194,7 @@ async function openAnnotate(): Promise<void> {
 function closeAnnotate(): void {
   annotating.value = false
   annotateWindow.close()
+  share.clearInkMirror()
   if (nativeAnnotating.value) {
     nativeAnnotating.value = false
     void getNative()?.closeAnnotateOverlay?.()
@@ -1461,6 +1541,29 @@ watch(
   flex-shrink: 0;
 }
 
+/* Same geometry as the record view's `.meeting-icon-btn`, so the two headers
+   read as one family. The negative margin absorbs the header's own left
+   padding: the glyph should sit where the title's icon sits on the other
+   panels, not 12px further in. */
+.live-panel__back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(26 * var(--dp));
+  height: calc(26 * var(--dp));
+  padding: 0;
+  margin-left: calc(-1 * var(--space-2, 4px));
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--duration-fast, 0.1s) ease, color var(--duration-fast, 0.1s) ease;
+}
+.live-panel__back:hover { background: var(--bg-hover); color: var(--text-primary); }
+.live-panel__back:active { transform: scale(0.92); }
+
 .live-panel__title {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
@@ -1554,6 +1657,25 @@ watch(
   flex-direction: column;
   gap: var(--space-4, 8px);
   min-height: 0;
+}
+
+/* The frame counter under the live transcript: one quiet line, not a panel. */
+.live-shot-bar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: var(--space-2, 4px);
+  padding-top: var(--space-2, 4px);
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-muted, #656d76);
+}
+
+.live-shot-bar__lost {
+  color: var(--color-orange, #d97706);
+}
+
+.live-shot-bar__toggle {
+  margin-left: auto;
 }
 
 /* The participant list scrolls with the panel body rather than owning a

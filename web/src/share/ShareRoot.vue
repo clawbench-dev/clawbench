@@ -19,7 +19,7 @@
       <div class="share-root-error-desc">{{ error }}</div>
     </div>
 
-    <LiveShareView v-else-if="kind === 'live'" />
+    <LiveShareView v-else-if="kind === 'live'" :meta="meta" />
     <SessionShareView v-else-if="kind === 'session'" />
     <DirShareView v-else-if="kind === 'dir'" />
     <ShareView v-else-if="kind === 'file'" />
@@ -77,6 +77,15 @@ const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, down
 const loading = ref(true)
 const error = ref('')
 const kind = ref<'file' | 'dir' | 'session' | 'live' | ''>('')
+/**
+ * The meta payload for the mounted view.
+ *
+ * Live shares need two extra facts from it: whether the room is already gone
+ * (`ended` — the page then opens the permanent meeting record instead of the
+ * join gate) and the title, so the record header is named before its first
+ * fetch returns.
+ */
+const meta = ref<{ ended?: boolean; title?: string } | null>(null)
 
 /** Extract the capability token from /share/{token}. */
 function parseTokenFromPath(): string {
@@ -101,6 +110,7 @@ onMounted(async () => {
       return
     }
     const data = await resp.json()
+    meta.value = { ended: data.ended === true, title: typeof data.title === 'string' ? data.title : '' }
     // Four kinds now. Anything unrecognized falls back to 'file' — the
     // pre-existing behaviour — so an older server cannot break this page.
     kind.value =

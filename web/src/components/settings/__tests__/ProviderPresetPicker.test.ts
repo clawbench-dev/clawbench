@@ -29,15 +29,9 @@ const presets = [
 
 function mountPicker(selectedId = '') {
   return mount(ProviderPresetPicker, {
-    props: { open: true, presets, selectedId },
+    props: { active: true, presets, selectedId },
     global: {
       plugins: [i18n],
-      stubs: {
-        ModalDialog: {
-          props: ['open'],
-          template: '<div v-if="open"><slot name="header" /><slot /></div>',
-        },
-      },
     },
   })
 }
@@ -76,12 +70,12 @@ describe('ProviderPresetPicker', () => {
     expect(wrapper.find('.preset-empty').exists()).toBe(true)
   })
 
-  it('emits the chosen preset and closes', async () => {
+  it('emits the chosen preset and asks the form to go back', async () => {
     const wrapper = mountPicker()
     await wrapper.find('.preset-row[data-preset-id="deepseek"]').trigger('click')
 
     expect(wrapper.emitted('select')?.[0]).toEqual([presets[1]])
-    expect(wrapper.emitted('update:open')?.[0]).toEqual([false])
+    expect(wrapper.emitted('done')).toHaveLength(1)
   })
 
   it('offers "no preset" and emits null', async () => {

@@ -24,9 +24,17 @@ const micChoice = ref<string>(DEFAULT_DEVICE)
 const cameraChoice = ref<string>('')
 /** Run AI 听记 (transcription + minutes) for this meeting. */
 const notes = ref(true)
+/**
+ * Keep key frames (screenshots of what was being shown).
+ *
+ * Separate from 听记 on purpose: the pictures are a persistent artifact of the
+ * host's project, and wanting one does not imply wanting the other. Default on,
+ * because the whole point is that nobody has to remember to press anything.
+ */
+const shots = ref(true)
 
 export function useMeetingOptions() {
-  return { micChoice, cameraChoice, notes }
+  return { micChoice, cameraChoice, notes, shots }
 }
 
 /** @internal Test-only: restore the defaults. */
@@ -34,4 +42,5 @@ export function _resetMeetingOptions(): void {
   micChoice.value = DEFAULT_DEVICE
   cameraChoice.value = ''
   notes.value = true
+  shots.value = true
 }

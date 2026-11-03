@@ -8,6 +8,7 @@ import { expandDataTransfer, type ExpandResult } from '@/utils/dropFolder'
 import { writeFileToTree } from '@/utils/dirHandle'
 import { buildLocalFileUrl } from '@/utils/download'
 import { createTransferSpeedMeter } from '@/utils/transferSpeed'
+import { askUploadConflict, type UploadConflictChoice, type UploadConflictItem } from '@/composables/useUploadConflict'
 
 // ── Module-level singleton state ──
 // pendingFiles MUST be shared across all callers (AttachDrawer, ChatPanelContent,
@@ -125,6 +126,53 @@ function bankDirProgress(size: number, maxSizeBytes: number): void {
   reportDirProgress(dirUploadLoadedBytes)
 }
 
+/**
+ * Ask the server which of these files would land on an existing path.
+ *
+ * The upload endpoint disambiguates silently by default, so the only way to
+ * offer the user a choice is to ask first. A preflight that cannot answer
+ * (network hiccup, older server without the endpoint) must never block the
+ * upload — the batch then proceeds with the default rename behaviour.
+ */
+async function findUploadConflicts(
+  items: { name: string; relpath?: string }[],
+  dir: string,
+): Promise<UploadConflictItem[]> {
+  if (items.length === 0) return []
+  try {
+    const resp = await fetch('/api/upload/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        dir,
+        files: items.map(i => ({ name: i.name, relpath: i.relpath || '' })),
+      }),
+    })
+    if (!resp.ok) return []
+    const data = await resp.json()
+    return Array.isArray(data?.conflicts) ? data.conflicts as UploadConflictItem[] : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Resolve how a batch should handle name collisions.
+ *
+ * Returns the `onconflict` policy for the upload, or `'cancel'` when the user
+ * dismissed the prompt (the whole batch is then abandoned — a partially
+ * uploaded batch would be the worst of both worlds).
+ */
+async function decideUploadConflicts(
+  items: { name: string; relpath?: string }[],
+  dir: string,
+): Promise<UploadConflictChoice> {
+  if (!dir) return 'rename'
+  const conflicts = await findUploadConflicts(items, dir)
+  if (conflicts.length === 0) return 'rename'
+  return askUploadConflict(conflicts)
+}
+
 export function useFileUpload() {
   const toast = useToast()
 
@@ -138,7 +186,7 @@ export function useFileUpload() {
    * freshly uploaded file read the path from here rather than scanning the
    * shared `pendingFiles` list (which cannot distinguish two same-sized files).
    */
-  function uploadOneFile(file: File, dir?: string, autoAttach?: boolean, relPath?: string): Promise<string | null> {
+  function uploadOneFile(file: File, dir?: string, autoAttach?: boolean, relPath?: string, onConflict?: UploadConflictChoice): Promise<string | null> {
     // Hoisted out of the executor so the banking step below shares the same cap.
     const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
     // Hoisted so the `.then` below can tell whether this file still owns the
@@ -195,6 +243,9 @@ export function useFileUpload() {
       formData.append('file', file)
       if (dir) formData.append('dir', dir)
       if (relPath) formData.append('relpath', relPath)
+      // Only the explicit overwrite choice is sent: the server's default is
+      // rename, which is what every other caller wants.
+      if (dir && onConflict === 'overwrite') formData.append('onconflict', 'overwrite')
 
       if (entry) entry.xhr = xhr
       if (isDirUpload) activeDirXhr = xhr
@@ -345,6 +396,21 @@ export function useFileUpload() {
 
     // Dir upload progress tracking
     const isDirUpload = !!dir
+    // Ask about name collisions before a single byte is sent. Doing it here
+    // (rather than letting the server rename) is the whole point of the
+    // conflict dialog: the user is copying into a real directory, so a silent
+    // `_1` copy is usually the wrong outcome.
+    let onConflict: UploadConflictChoice = 'rename'
+    if (dir) {
+      onConflict = await decideUploadConflicts(
+        toUpload.map(f => ({
+          name: f.name,
+          relpath: preserveStructure ? folderRelPath(f) : '',
+        })),
+        dir,
+      )
+      if (onConflict === 'cancel') return []
+    }
     if (isDirUpload) {
       dirUploading.value = true
       dirUploadCancelled.value = false
@@ -384,7 +450,7 @@ export function useFileUpload() {
       // When preserving folder structure, derive each file's relative sub-path
       // (including the top-level folder) from webkitRelativePath.
       const relPath = preserveStructure ? folderRelPath(file) || undefined : undefined
-      const uploadedPath = await uploadOneFile(file, dir, false, relPath)
+      const uploadedPath = await uploadOneFile(file, dir, false, relPath, onConflict)
       if (isDirUpload ? dirUploadCancelled.value : chatUploadCancelled.value) break
       if (isDirUpload) {
         if (uploadedPath) okCount++
@@ -518,6 +584,13 @@ export function useFileUpload() {
    */
   async function uploadExpandedFolder(result: ExpandResult, dir: string) {
     const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
+    // Name collisions are decided before the progress bar appears: cancelling
+    // the prompt must leave no trace of an upload that never started.
+    const onConflict = await decideUploadConflicts(
+      result.files.map(f => ({ name: f.file.name, relpath: f.relPath })),
+      dir,
+    )
+    if (onConflict === 'cancel') return
     dirUploading.value = true
     dirUploadCancelled.value = false
     activeDirXhr = null
@@ -538,7 +611,7 @@ export function useFileUpload() {
         dirUploadErrorMsgs.push(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }))
         failCount++
       } else {
-        const uploadedPath = await uploadOneFile(file, dir, false, relPath || undefined)
+        const uploadedPath = await uploadOneFile(file, dir, false, relPath || undefined, onConflict)
         if (dirUploadCancelled.value) break
         if (uploadedPath) okCount++
         else failCount++

@@ -302,10 +302,11 @@ describe('MeetingCreate in a browser', () => {
     expect(wrapper.text()).not.toContain(enMessages.meeting.create.sound)
     expect(wrapper.text()).toContain(enMessages.meeting.create.av)
     expect(wrapper.findAll('[data-role="device-choice"]')).toHaveLength(2)
-    // 听记 and the two audience permissions are room-level yes/no questions,
-    // not capture sources, so they stay checkboxes.
+    // 听记, key frames and the two audience permissions are room-level
+    // yes/no questions, not capture sources, so they stay checkboxes.
     expect(wrapper.findAll('.meeting-check input').map((i) => i.attributes('data-role'))).toEqual([
       'meeting-notes',
+      'meeting-shots',
       'meeting-allow-talk',
       'meeting-allow-member-screen',
     ])

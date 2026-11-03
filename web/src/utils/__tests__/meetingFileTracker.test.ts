@@ -4,6 +4,7 @@ import {
   meetingFileEntries,
   noteMeetingFileClosed,
   noteMeetingFileOpened,
+  onMeetingFileOpened,
   startMeetingFileTracking,
   stopMeetingFileTracking,
   _meetingFileSnapshotForTest,
@@ -142,5 +143,30 @@ describe('meetingFileTracker', () => {
     await flushMeetingFiles()
     expect(calls).toHaveLength(0)
     expect(meetingFileEntries()).toHaveLength(0)
+  })
+})
+
+describe('onMeetingFileOpened', () => {
+  it('fires at the moment of the open, not when the batch flushes', () => {
+    startMeetingFileTracking({ token: 'tok' })
+    const seen: string[] = []
+    const off = onMeetingFileOpened((path) => seen.push(path))
+
+    noteMeetingFileOpened('docs/a.md')
+    expect(seen).toEqual(['docs/a.md'])
+    expect(calls).toHaveLength(0, 'the upload batch is still 5 seconds away')
+
+    off()
+    noteMeetingFileOpened('docs/b.md')
+    expect(seen).toEqual(['docs/a.md'])
+  })
+
+  it('does not fire when the same file stays open', () => {
+    startMeetingFileTracking({ token: 'tok' })
+    const cb = vi.fn()
+    onMeetingFileOpened(cb)
+    noteMeetingFileOpened('docs/a.md')
+    noteMeetingFileOpened('docs/a.md')
+    expect(cb).toHaveBeenCalledTimes(1)
   })
 })

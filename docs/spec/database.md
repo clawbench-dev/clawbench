@@ -469,6 +469,28 @@ UNIQUE：`UNIQUE(token, owner, path, opened_at)`。
 | ended_at | INTEGER | NOT NULL | 0 | 结束共享；0 表示仍在共享 |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | |
 
+### live_notes_shots（会议关键画面）
+
+会中由发布端（或手动入口）截取的关键画面，按 `client_shot_id` 幂等写入；`at_ms` 是相对会议时间轴的位置，用于在纪要/转写里定位。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | 服务端顺序 |
+| token | TEXT | NOT NULL | — | 会议 token |
+| project_id | INTEGER | NOT NULL | 0 | 发布端项目 |
+| client_shot_id | TEXT | NOT NULL | — | 客户端画面 id（幂等键），`UNIQUE(token, client_shot_id)` |
+| at_ms | INTEGER | NOT NULL | — | 画面时刻（相对会议起点的毫秒） |
+| reason | TEXT | NOT NULL | — | 触发原因（自动线索 / 手动） |
+| ref | TEXT | NOT NULL | `''` | 关联的转写行或线索标识 |
+| file_name | TEXT | NOT NULL | — | 会议目录内的文件名 |
+| width | INTEGER | NOT NULL | 0 | 像素宽 |
+| height | INTEGER | NOT NULL | 0 | 像素高 |
+| bytes | INTEGER | NOT NULL | 0 | 文件字节数 |
+| hash | TEXT | NOT NULL | `''` | 内容哈希（去重用） |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | |
+
+索引：`idx_live_note_shots_token(token, at_ms)`。
+
 ### live_notes_chat（会议聊天，永久）
 
 发布端是唯一写入点（观众的消息经它中转，它自己的消息也走同一条路径）。`client_msg_id` 是幂等键：重试不会产生重复行。

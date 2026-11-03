@@ -104,6 +104,27 @@ describe('MeetingResources', () => {
     expect(wrapper.findAll('.res-row')).toHaveLength(2)
   })
 
+  it('keeps the meeting link above the files, with the retention note', () => {
+    const wrapper = mountResources({
+      shareToken: 'tok-9',
+      links: [{ url: 'http://10.0.0.5:20000/share/tok-9', address: { ip: '10.0.0.5', interface: '', kind: 'lan' } }],
+    })
+
+    const block = wrapper.find('[data-role="meeting-link"]')
+    expect(block.exists()).toBe(true)
+    expect(block.find('input[data-share-primary]').attributes('value')).toBe(
+      'http://10.0.0.5:20000/share/tok-9',
+    )
+    // The sentence that answers "how long does this keep working" is the whole
+    // point of showing the link here rather than in the running stage.
+    expect(block.text()).toContain(enMessages.meeting.resources.linkHint)
+  })
+
+  it('hides the link block when there is no record token', () => {
+    const wrapper = mountResources()
+    expect(wrapper.find('[data-role="meeting-link"]').exists()).toBe(false)
+  })
+
   it('opens a row through the live navigation source', async () => {
     const wrapper = mountResources()
 

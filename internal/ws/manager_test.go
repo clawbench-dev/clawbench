@@ -1871,3 +1871,113 @@ func TestManager_SetClientMetricsPreference_RejectsStaleConnection(t *testing.T)
 		t.Fatalf("expected the current declaration to take effect, got %d", count)
 	}
 }
+
+// fillSubscriptions registers n clients. When disconnectedFor > 0 each one is
+// marked as disconnected that long ago (bufferStart), which is what the cap has
+// to distinguish from a live client.
+func fillSubscriptions(t *testing.T, mgr *Manager, n int, disconnectedFor time.Duration) {
+	t.Helper()
+	for i := range n {
+		var writeMu sync.Mutex
+		id := fmt.Sprintf("filler-%d", i)
+		mgr.Subscribe(nil, &writeMu, id, "")
+		if disconnectedFor > 0 {
+			mgr.mu.Lock()
+			sub := mgr.subscriptions[id]
+			mgr.mu.Unlock()
+			sub.mu.Lock()
+			sub.bufferStart = time.Now().Add(-disconnectedFor)
+			sub.mu.Unlock()
+		}
+	}
+}
+
+// A slot held by a client that has been gone for longer than the replay window
+// must not lock a NEW client out. Counting those was how a normal browser
+// session (several tabs/reloads/devices) — or a test suite that opens a fresh
+// context per test — hit "too many subscriptions" for minutes: the entry is only
+// reaped by CleanupStale after staleTimeout (2min), so the cap looked full while
+// every one of those clients was long gone.
+func TestSubscribe_ReclaimsSlotFromDisconnectedClient(t *testing.T) {
+	mgr := newTestManager()
+	fillSubscriptions(t, mgr, maxSubscriptions, disconnectedBufferWindow+time.Second)
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "newcomer", "")
+	if sub == nil {
+		t.Fatal("a disconnected client must not block a new one")
+	}
+	mgr.mu.Lock()
+	count := len(mgr.subscriptions)
+	_, hasNew := mgr.subscriptions["newcomer"]
+	mgr.mu.Unlock()
+	if !hasNew {
+		t.Fatal("expected the new client to be registered")
+	}
+	if count != maxSubscriptions {
+		t.Fatalf("expected exactly one slot to be reclaimed, got %d entries", count)
+	}
+}
+
+// The eviction must pick the LONGEST-dead client, so a short-lived disconnect
+// (which may still reconnect and replay) keeps its slot.
+func TestSubscribe_ReclaimsOldestDisconnectedClient(t *testing.T) {
+	mgr := newTestManager()
+	// One long-dead client, the rest merely past the window.
+	var writeMu sync.Mutex
+	mgr.Subscribe(nil, &writeMu, "long-gone", "")
+	mgr.mu.Lock()
+	sub := mgr.subscriptions["long-gone"]
+	mgr.mu.Unlock()
+	sub.mu.Lock()
+	sub.bufferStart = time.Now().Add(-staleTimeout)
+	sub.mu.Unlock()
+	fillSubscriptions(t, mgr, maxSubscriptions-1, disconnectedBufferWindow+time.Second)
+
+	if got := mgr.Subscribe(nil, &writeMu, "newcomer", ""); got == nil {
+		t.Fatal("expected the newcomer to be admitted")
+	}
+	mgr.mu.Lock()
+	_, stillThere := mgr.subscriptions["long-gone"]
+	mgr.mu.Unlock()
+	if stillThere {
+		t.Fatal("expected the longest-disconnected client to be evicted")
+	}
+}
+
+// A live client must NEVER be evicted for a newcomer: with every slot held by a
+// connected client there is nothing to reclaim, so the limit still applies.
+//
+// Asserted on the reclaim decision rather than on Subscribe's return value: the
+// rejection path closes the incoming connection, and these fixtures have none.
+// The rejection itself is covered end-to-end by
+// TestEventsHandler_SubscriptionLimit (its fillers are equally unreclaimable).
+func TestSubscribe_ReclaimsNothingWhenAllClientsAreLive(t *testing.T) {
+	mgr := newTestManager()
+	fillSubscriptions(t, mgr, maxSubscriptions, 0)
+
+	mgr.mu.Lock()
+	reclaimed := mgr.reclaimDisconnectedSlotLocked()
+	count := len(mgr.subscriptions)
+	mgr.mu.Unlock()
+	if reclaimed {
+		t.Fatal("a live client must never be evicted for a newcomer")
+	}
+	if count != maxSubscriptions {
+		t.Fatalf("expected no slot to be freed, got %d entries", count)
+	}
+}
+
+// A client that disconnected only moments ago may still reconnect and replay its
+// buffer, so its slot is not reclaimable yet.
+func TestSubscribe_KeepsRecentlyDisconnectedClient(t *testing.T) {
+	mgr := newTestManager()
+	fillSubscriptions(t, mgr, maxSubscriptions, disconnectedBufferWindow/2)
+
+	mgr.mu.Lock()
+	reclaimed := mgr.reclaimDisconnectedSlotLocked()
+	mgr.mu.Unlock()
+	if reclaimed {
+		t.Fatal("expected a client still inside the replay window to keep its slot")
+	}
+}

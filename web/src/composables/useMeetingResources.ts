@@ -43,7 +43,7 @@ export interface MeetingResourceItem {
 }
 
 export interface MeetingResourceGroup {
-  key: 'folder' | 'audio' | 'referenced'
+  key: 'folder' | 'audio' | 'shots' | 'referenced'
   title: string
   /** Longer explanation, shown under the group label when present. */
   hint?: string
@@ -227,6 +227,7 @@ export function useMeetingResources(options: {
     try {
       const folderItems: MeetingResourceItem[] = []
       const audioItems: MeetingResourceItem[] = []
+      const shotItems: MeetingResourceItem[] = []
 
       if (relDir) {
         const rootEntries = await listDir(relDir)
@@ -234,6 +235,28 @@ export function useMeetingResources(options: {
         for (const entry of rootEntries) {
           if (entry.type === 'dir') {
             if (entry.name === 'audio') continue
+            // Key frames get their own group: they are images, and opening the
+            // folder to find them one by one defeats the point of the record.
+            if (entry.name === 'shots') {
+              const frames = await listDir(`${relDir}/shots`)
+              if (seq !== loadSeq) return
+              for (const frame of frames) {
+                if (frame.type === 'dir') continue
+                shotItems.push({
+                  key: `shot:${relDir}/shots/${frame.name}`,
+                  name: frame.name,
+                  path: `${relDir}/shots/${frame.name}`,
+                  displayPath: `shots/${frame.name}`,
+                  kind: kindOf(frame.name, false),
+                  typeLabel: typeLabelOf(frame.name, false, t('meeting.resources.file')),
+                  size: frame.size,
+                  modified: frame.modified,
+                  isDir: false,
+                })
+              }
+              shotItems.sort((a, b) => a.name.localeCompare(b.name))
+              continue
+            }
             // A stray subdirectory is still a resource; it opens the manager.
             folderItems.push({
               key: `folder:${relDir}/${entry.name}`,
@@ -316,6 +339,9 @@ export function useMeetingResources(options: {
       }
       if (audioItems.length) {
         next.push({ key: 'audio', title: 'audio/', items: audioItems })
+      }
+      if (shotItems.length) {
+        next.push({ key: 'shots', title: 'shots/', items: shotItems })
       }
       if (referencedItems.length) {
         next.push({

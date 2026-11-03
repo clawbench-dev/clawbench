@@ -21,6 +21,7 @@ vi.mock('lucide-vue-next', () => {
     ExternalLink: stub,
     FileQuestion: stub,
     FileText: stub,
+    ImageIcon: stub,
     MessageSquare: stub,
     MessagesSquare: stub,
     MonitorUp: stub,
@@ -68,6 +69,8 @@ const getMock = vi.hoisted(() => vi.fn())
 const artifactMock = vi.hoisted(() => vi.fn())
 const chatMock = vi.hoisted(() => vi.fn())
 const removeMock = vi.hoisted(() => vi.fn(async () => ({ ok: true })))
+const shotsMock = vi.hoisted(() => vi.fn(async () => []))
+const deleteShotMock = vi.hoisted(() => vi.fn(async () => true))
 const regenPlanMock = vi.hoisted(() => vi.fn())
 const regenerateMock = vi.hoisted(() => vi.fn())
 const cancelRegenMock = vi.hoisted(() => vi.fn(async () => true))
@@ -79,6 +82,8 @@ vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
       get: getMock,
       artifact: artifactMock,
       chat: chatMock,
+      shots: shotsMock,
+      deleteShot: deleteShotMock,
       remove: removeMock,
       regenPlan: regenPlanMock,
       regenerate: regenerateMock,
@@ -87,10 +92,17 @@ vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
   }
 })
 
-function mountDetail() {
+type DetailTab = 'resources' | 'minutes' | 'transcript' | 'revised' | 'chat'
+
+/**
+ * The record opens on 资源 by default, so a test that is about another pane has
+ * to say so explicitly — otherwise it silently asserts against the resources
+ * tab (which is exactly the kind of test that passes for the wrong reason).
+ */
+function mountDetail(initialTab?: DetailTab) {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
   return mount(MeetingDetail, {
-    props: { token: 'tok-1' },
+    props: initialTab ? { token: 'tok-1', initialTab } : { token: 'tok-1' },
     global: {
       plugins: [i18n],
       stubs: {
@@ -169,6 +181,7 @@ beforeEach(() => {
     if (kind === 'transcript') return { content: VTT, file: 'transcript.vtt' }
     return null
   })
+  shotsMock.mockResolvedValue([])
   chatMock.mockResolvedValue({
     messages: [
       { id: 1, clientId: 'c1', speaker: 'Alex', text: 'hello', at: 1_700_000_001_000 },
@@ -192,7 +205,7 @@ describe('MeetingDetail', () => {
   })
 
   it('renders the minutes through the shared document body', async () => {
-    const w = mountDetail()
+    const w = mountDetail('minutes')
     await flushPromises()
 
     expect(w.find('.meeting-md').html()).toContain('MINUTES')
@@ -201,13 +214,14 @@ describe('MeetingDetail', () => {
     expect(w.findAll('.meeting-file')).toHaveLength(0)
   })
 
-  it('adds a resources tab alongside minutes, transcript, proofread and chat', async () => {
+  it('opens on the resources tab, first in the bar', async () => {
     const w = mountDetail()
     await flushPromises()
 
     const tabs = w.findAll('.meeting-tab').map((tab) => tab.attributes('data-tab'))
-    expect(tabs).toEqual(['minutes', 'transcript', 'revised', 'chat', 'resources'])
-    await w.find('[data-tab="resources"]').trigger('click')
+    expect(tabs).toEqual(['resources', 'minutes', 'transcript', 'revised', 'chat'])
+    // Default: the resource pane is already the one rendered.
+    expect(w.find('.meeting-tab--on').attributes('data-tab')).toBe('resources')
     expect(w.find('.meeting-resources-stub').exists()).toBe(true)
   })
 
@@ -305,7 +319,7 @@ describe('MeetingDetail', () => {
         revised: artifact({ hasContent: false, contentAt: 0 }),
       },
     }))
-    const w = mountDetail()
+    const w = mountDetail('minutes')
     await flushPromises()
 
     expect(w.text()).toContain(enMessages.meeting.detail.artifact.interrupted)
@@ -323,7 +337,7 @@ describe('MeetingDetail', () => {
       generation: { step: 'minutes', remaining: [], startedAt: Date.now() },
     }))
     artifactMock.mockResolvedValue(null)
-    const w = mountDetail()
+    const w = mountDetail('minutes')
     await flushPromises()
 
     expect(w.find('.meeting-generating').exists()).toBe(true)
@@ -334,7 +348,7 @@ describe('MeetingDetail', () => {
       record({ hasMinutes: false, hasTranscript: false, hasRevised: false, audioFiles: 0, dirPath: undefined }),
     )
     artifactMock.mockResolvedValue(null)
-    const w = mountDetail()
+    const w = mountDetail('minutes')
     await flushPromises()
 
     expect(w.find('.meeting-empty').exists()).toBe(true)
@@ -538,7 +552,7 @@ describe('MeetingDetail', () => {
       kind === 'transcript' ? { content: VTT, file: 'transcript.vtt' } : null,
     )
 
-    const w = mountDetail()
+    const w = mountDetail('minutes')
     try {
       expect(w.find('.meeting-center').exists()).toBe(true) // first paint shows loading
 
@@ -606,7 +620,7 @@ describe('MeetingDetail regeneration', () => {
     const next = record({ generation: { step: 'minutes', remaining: [], startedAt: Date.now() } })
     regenerateMock.mockResolvedValue({ ok: true, session: next })
 
-    const w = mountDetail()
+    const w = mountDetail('minutes')
     await flushPromises()
 
     await w.find('[data-action="meeting-generate-minutes"]').trigger('click')
@@ -635,12 +649,57 @@ describe('MeetingDetail regeneration', () => {
     }))
     artifactMock.mockResolvedValue(null)
 
-    const w = mountDetail()
+    const w = mountDetail('minutes')
     await flushPromises()
 
     await w.find('[data-action="meeting-artifact-cancel"]').trigger('click')
     await flushPromises()
     expect(cancelRegenMock).toHaveBeenCalledWith('tok-1')
     w.unmount()
+  })
+})
+
+describe('MeetingDetail key frames', () => {
+  it('merges frames into the transcript by offset and deletes one', async () => {
+    shotsMock.mockResolvedValue([
+      // Deliberately out of order: the view must sort, not append.
+      { id: 7, at: 1_700_000_030_000, offsetMs: 30_000, reason: 'file', ref: 'docs/arch.md', fileName: 'shots/a.webp' },
+      { id: 8, at: 1_700_000_005_000, offsetMs: 5_000, reason: 'manual', fileName: 'shots/b.webp' },
+    ])
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-tab="transcript"]').trigger('click')
+    const rows = w.findAll('[data-role="shot-open"]')
+    expect(rows).toHaveLength(2)
+
+    // 5s comes before 30s, and the 0s utterance stays first.
+    const labels = w.findAll('.transcript__shot-meta').map((n) => n.text())
+    expect(labels[0]).toContain(enMessages.meeting.shots.reasonManual)
+    expect(labels[1]).toContain('arch.md')
+
+    const src = rows[0].find('img').attributes('src') ?? ''
+    expect(src).toContain('/api/fs/thumb?target=')
+    expect(decodeURIComponent(src)).toContain('shots/b.webp')
+
+    await w.findAll('[data-role="shot-delete"]')[0].trigger('click')
+    await flushPromises()
+    expect(deleteShotMock).toHaveBeenCalledWith('tok-1', 8)
+    expect(w.findAll('[data-role="shot-open"]')).toHaveLength(1)
+  })
+
+  it('does not claim "no transcript" when only frames exist', async () => {
+    getMock.mockResolvedValue(record({ hasTranscript: false }))
+    artifactMock.mockResolvedValue(null)
+    shotsMock.mockResolvedValue([
+      { id: 9, at: 1_700_000_002_000, offsetMs: 2_000, reason: 'manual', fileName: 'shots/c.webp' },
+    ])
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-tab="transcript"]').trigger('click')
+    expect(w.find('[data-role="transcript"]').exists()).toBe(true)
+    expect(w.find('[data-role="transcript-unreadable"]').exists()).toBe(false)
+    expect(w.findAll('[data-role="shot-open"]')).toHaveLength(1)
   })
 })

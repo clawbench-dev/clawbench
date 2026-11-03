@@ -15,6 +15,8 @@ package handler
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -63,6 +65,13 @@ const (
 	liveNoteFilesMaxBodyBytes = 1 << 20
 	// liveNoteSharerMaxRunes bounds the sharer identity ("host" / "viewer:v12").
 	liveNoteSharerMaxRunes = 64
+	// liveNoteShotMaxBytes caps one uploaded frame. A 1920-wide WebP of a
+	// desktop is well under 1 MiB; the cap only stops a client from streaming a
+	// video through an endpoint that expects a still.
+	liveNoteShotMaxBytes = 2 << 20
+	// liveNoteShotMaxDimension bounds the claimed pixel size. It is metadata
+	// for the UI (aspect ratio while the image loads), not a decode budget.
+	liveNoteShotMaxDimension = 8192
 	// liveNoteTextKey is the JSON key carrying one transcript line.
 	liveNoteTextKey = "text"
 	// liveNoteSTTConcurrency is how many segment transcriptions may run at once
@@ -109,15 +118,38 @@ func cancelLiveNoteJob(token string) bool {
 
 // liveNotesResponse is the publisher/viewer read payload.
 type liveNotesResponse struct {
-	Title    string                    `json:"title,omitempty"`
-	Segments []service.LiveNoteSegment `json:"segments"`
+	Title string `json:"title,omitempty"`
+	// StartedAt / EndedAt are unix ms, server clock. A viewer reads them from
+	// the record once the meeting is over (the record view prints the time and
+	// the duration); during a live meeting they are simply the current values.
+	StartedAt int64                     `json:"startedAt,omitempty"`
+	EndedAt   int64                     `json:"endedAt,omitempty"`
+	Ended     bool                      `json:"ended"`
+	Segments  []service.LiveNoteSegment `json:"segments"`
 	// Files are the open/close events so far. A viewer gets the same rows with
 	// Path blanked — it may know which file, not where the publisher keeps it.
 	Files []service.LiveNoteFile `json:"files,omitempty"`
 	// Screens are the screen-sharing intervals (who shared, when). No redaction
 	// needed: a nickname is already visible to every viewer in the roster.
 	Screens []service.LiveNoteScreenShare `json:"screens,omitempty"`
-	Minutes liveNotesMinutesPayload       `json:"minutes"`
+	// Chat is the archived conversation, oldest first. Filled only for the
+	// record view (`?full=1`): the live poll runs every few seconds and must not
+	// re-transfer a growing message list on every tick.
+	Chat []liveNotePublicChat `json:"chat,omitempty"`
+	// Shots are the key frames kept for this meeting. Publisher-only: the
+	// public endpoint leaves this empty (a viewer watches the live picture, and
+	// the frames are a persistent artifact of the host's project).
+	Shots   []service.LiveNoteShot  `json:"shots,omitempty"`
+	Minutes liveNotesMinutesPayload `json:"minutes"`
+}
+
+// liveNotePublicChat is one chat line as a viewer may see it: the text, who
+// said it and when. The client message id and the viewer id are internal
+// identifiers and are not part of the record.
+type liveNotePublicChat struct {
+	Speaker string `json:"speaker"`
+	Text    string `json:"text"`
+	At      int64  `json:"at"`
 }
 
 // liveNotesMinutesPayload carries the generated minutes and their status so the
@@ -141,6 +173,10 @@ type liveNotesMinutesPayload struct {
 type liveNotesRevisePayload struct {
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
+	// Text is the proofread transcript. Viewer-only (`?full=1`): the publisher
+	// reads the same content from `transcript-revised.md`, which is a path on
+	// its own disk.
+	Text string `json:"text,omitempty"`
 }
 
 // liveNotesArtifacts lists the permanent files of one meeting.
@@ -308,11 +344,18 @@ func ServeLiveShareNotes(w http.ResponseWriter, r *http.Request) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
+	shots, err := service.ListLiveNoteShots(token)
+	if err != nil {
+		slog.Error("live notes: list shots failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
 	writeJSON(w, http.StatusOK, liveNotesResponse{
 		Title:    note.Title,
 		Segments: segments,
 		Files:    files,
 		Screens:  screens,
+		Shots:    shots,
 		Minutes:  liveNotesPayload(projectPath, note),
 	})
 }
@@ -365,6 +408,314 @@ func serveLiveNotesDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ServeLiveShareNoteShot is the one path with two verbs: POST uploads a frame,
+// DELETE removes one. They share the path because they address the same
+// resource; the router keys on the path alone, so the switch lives here.
+func ServeLiveShareNoteShot(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		serveLiveShareNoteShotUpload(w, r)
+	case http.MethodDelete:
+		serveLiveNoteShotDelete(w, r)
+	default:
+		requireMethod(w, r, http.MethodPost)
+	}
+}
+
+// serveLiveShareNoteShotUpload handles POST /api/live-share/notes/shot
+// (authenticated, project-scoped, multipart): the publisher uploads one key
+// frame it captured locally.
+//
+// Fields: token, clientShotId, at (unix ms), reason, ref, width, height, file.
+// The file is sniffed, never trusted by its declared type: the client asks the
+// canvas for WebP but some engines hand back PNG, and a mislabelled upload must
+// not become a file the thumbnailer cannot open.
+func serveLiveShareNoteShotUpload(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	if !parseShotUpload(w, r) {
+		return
+	}
+	token := r.FormValue("token")
+	if !validShareToken(token) || !liveNotesOwnedByProject(token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	reason, clientShotID, ok := shotFields(w, r)
+	if !ok {
+		return
+	}
+	img, ext, ok := readShotImage(w, r)
+	if !ok {
+		return
+	}
+	if !shotQuotaAvailable(w, r, token) {
+		return
+	}
+	note, ok := shotMeeting(w, r, token)
+	if !ok {
+		return
+	}
+	at := shotUploadAt(r, note.StartedAt)
+	paths, err := service.EnsureMeetingDir(token, projectID, projectPath, note.Title, note.StartedAt)
+	if err != nil {
+		slog.Warn("live notes: meeting folder unavailable for shot", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	fileName, err := service.SaveLiveNoteShot(paths, at, reason, ext, img)
+	if err != nil {
+		slog.Error("live notes: save shot failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	sum := sha256.Sum256(img)
+	shot := service.LiveNoteShot{
+		At:       at,
+		Reason:   reason,
+		Ref:      truncateRunes(strings.TrimSpace(r.FormValue("ref")), liveNotePathMaxRunes),
+		FileName: fileName,
+		Width:    clampInt(parseLiveNoteInt(r.FormValue("width")), 0, liveNoteShotMaxDimension),
+		Height:   clampInt(parseLiveNoteInt(r.FormValue("height")), 0, liveNoteShotMaxDimension),
+		Bytes:    int64(len(img)),
+	}
+	id, err := service.AppendLiveNoteShot(r.Context(), token, projectID, shot, clientShotID, hex.EncodeToString(sum[:8]))
+	if err != nil {
+		// The row is the record; a file with no row would never be listed or
+		// deleted, so undo the write instead of leaving an orphan.
+		_ = service.DeleteLiveNoteShotFile(paths, fileName)
+		slog.Error("live notes: append shot failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	shot.ID = id
+	writeJSON(w, http.StatusOK, shot)
+}
+
+// parseShotUpload reads the multipart body, answering 413 for an oversized one.
+//
+// Parsed before any field is read: r.FormValue swallows the reader error, and
+// an oversized upload would look like "no token" — which the publisher reads as
+// "this share is gone" and uses to drop its whole queue.
+func parseShotUpload(w http.ResponseWriter, r *http.Request) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, liveNoteShotMaxBytes)
+	if err := r.ParseMultipartForm(liveNoteShotMaxBytes); err != nil { //nolint:gosec // bounded by MaxBytesReader
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeLocalizedErrorf(w, r, http.StatusRequestEntityTooLarge, "BadRequest")
+			return false
+		}
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return false
+	}
+	return true
+}
+
+// shotFields validates the two fields that make the row addressable.
+func shotFields(w http.ResponseWriter, r *http.Request) (reason, clientShotID string, ok bool) {
+	reason = strings.TrimSpace(r.FormValue("reason"))
+	clientShotID = truncateRunes(strings.TrimSpace(r.FormValue("clientShotId")), liveNoteClientIDMaxRunes)
+	if !service.ValidLiveNoteShotReason(reason) || clientShotID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return "", "", false
+	}
+	return reason, clientShotID, true
+}
+
+// readShotImage reads and sniffs the uploaded frame.
+//
+// The container is decided by the bytes, never by the client's label: the
+// canvas may hand back PNG where WebP was requested, and a text file with a
+// .webp name would only break the thumbnailer later, where nobody can connect
+// it back to this request.
+func readShotImage(w http.ResponseWriter, r *http.Request) ([]byte, string, bool) {
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return nil, "", false
+	}
+	defer func() { _ = file.Close() }()
+	img, err := io.ReadAll(io.LimitReader(file, liveNoteShotMaxBytes))
+	if err != nil || len(img) == 0 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return nil, "", false
+	}
+	ext, ok := liveNoteShotExt(img)
+	if !ok {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return nil, "", false
+	}
+	return img, ext, true
+}
+
+// shotQuotaAvailable enforces the per-meeting ceiling.
+func shotQuotaAvailable(w http.ResponseWriter, r *http.Request, token string) bool {
+	n, err := service.CountLiveNoteShots(token)
+	if err != nil {
+		slog.Error("live notes: count shots failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return false
+	}
+	if n >= service.LiveNoteShotMaxPerMeeting {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return false
+	}
+	return true
+}
+
+// shotMeeting loads the row the frame belongs to (title and start time are
+// needed to create the folder).
+func shotMeeting(w http.ResponseWriter, r *http.Request, token string) (service.LiveNote, bool) {
+	note, exists, err := service.GetLiveNote(token)
+	if err != nil {
+		slog.Error("live notes: shot meeting lookup failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return service.LiveNote{}, false
+	}
+	if !exists {
+		http.NotFound(w, r)
+		return service.LiveNote{}, false
+	}
+	return note, true
+}
+
+// shotUploadAt clamps the client's timestamp into the meeting window.
+//
+// Clock skew is normal across machines; a frame that claims to be from before
+// the meeting started (or from the future) is clamped rather than rejected,
+// because the picture itself is still real.
+func shotUploadAt(r *http.Request, startedAt int64) int64 {
+	at := parseLiveNoteMillis(r.FormValue("at"))
+	if at <= 0 {
+		at = time.Now().UnixMilli()
+	}
+	if startedAt > 0 && at < startedAt {
+		at = startedAt
+	}
+	if now := time.Now().UnixMilli(); at > now {
+		at = now
+	}
+	return at
+}
+
+// ServeLiveNotesShots handles GET /api/live-share/notes/shots?token=
+// (authenticated, project-scoped): the meeting's frames with their offset on
+// the transcript timeline.
+//
+// The offset is computed here, from the same origin the transcript uses, so the
+// detail view can merge frames into the cue list without a second notion of
+// "when did this meeting start".
+func ServeLiveNotesShots(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	token := r.URL.Query().Get("token")
+	if !validShareToken(token) || !liveNotesOwnedByProject(token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	shots, err := service.ListLiveNoteShots(token)
+	if err != nil {
+		slog.Error("live notes: list shots failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	base := int64(0)
+	if segments, segErr := service.ListLiveNoteSegments(token, 0); segErr == nil {
+		base = service.LiveNotesTimelineBase(segments)
+	}
+	if base <= 0 {
+		// No transcript at all (听记 was off): the meeting start is the only
+		// origin that keeps offsets small and meaningful.
+		if note, exists, noteErr := service.GetLiveNote(token); noteErr == nil && exists {
+			base = note.StartedAt
+		}
+	}
+	for i := range shots {
+		offset := shots[i].At - base
+		if base <= 0 || offset < 0 {
+			offset = 0
+		}
+		shots[i].OffsetMS = offset
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"shots": shots})
+}
+
+// serveLiveNoteShotDelete handles DELETE /api/live-share/notes/shot?token=&id=
+// (authenticated, project-scoped): remove one frame, row first then file.
+func serveLiveNoteShotDelete(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodDelete) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	token := r.URL.Query().Get("token")
+	if !validShareToken(token) || !liveNotesOwnedByProject(token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return
+	}
+	fileName, err := service.DeleteLiveNoteShot(token, projectID, id)
+	if errors.Is(err, service.ErrMeetingNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		slog.Error("live notes: delete shot failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if dirName, nameErr := service.MeetingDirName(token); nameErr == nil && dirName != "" {
+		paths := service.LiveNotesPathsIn(service.MeetingDirPath(projectPath, dirName))
+		if rmErr := service.DeleteLiveNoteShotFile(paths, fileName); rmErr != nil {
+			// The row is gone; a leftover file is invisible to every surface and
+			// disappears with the meeting folder. Log it, do not fail the call.
+			slog.Warn("live notes: remove shot file failed", "err", rmErr)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// liveNoteShotExt sniffs the image container from its first bytes.
+//
+// The extension decides the stored file name, and the thumbnailer dispatches on
+// it, so it has to describe the real content rather than the client's label.
+func liveNoteShotExt(b []byte) (string, bool) {
+	switch {
+	case len(b) >= 12 && string(b[0:4]) == "RIFF" && string(b[8:12]) == "WEBP":
+		return "webp", true
+	case len(b) >= 8 && bytes.HasPrefix(b, []byte("\x89PNG\r\n\x1a\n")):
+		return "png", true
+	case len(b) >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF:
+		return "jpg", true
+	}
+	return "", false
+}
+
+// parseLiveNoteInt parses a non-negative int, returning 0 for garbage.
+func parseLiveNoteInt(raw string) int {
+	v, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || v < 0 {
+		return 0
+	}
+	return v
 }
 
 // ServeLiveNotesChat handles GET /api/live-share/notes/sessions/chat?token=&since=
@@ -1399,9 +1750,15 @@ func liveNotesStartTime(segments []service.LiveNoteSegment) time.Time {
 // ServeShareLiveNotes handles GET /api/share/{token}/notes (PUBLIC: the share
 // token is the sole credential, exactly like the signaling socket).
 //
-// Notes are only readable while the room is live. After the publisher ends the
-// share the token stops resolving, so a leaked link cannot be used to read a
-// transcript later.
+// The token stays readable after the meeting ends: the room is only the live
+// transport, the meeting RECORD is permanent. Once the publisher stops, the
+// same URL answers with the archived transcript, minutes, proofread text and
+// chat until the owner deletes the record — which is what makes a link handed
+// out in advance still worth opening the next day.
+//
+// `?full=1` is the record view: it adds the proofread text and the archived
+// chat. The live poll deliberately omits them (it runs every few seconds and
+// must not re-transfer a growing message list on each tick).
 func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -1410,10 +1767,20 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 		http.NotFound(w, r)
 		return
 	}
-	if liveRegistry.Get(token) == nil {
+	// A live room is the fast path, but it is NOT the only valid state: after
+	// the room is gone the record still owns the token.
+	live := liveRegistry.Get(token) != nil
+	note, exists, err := service.PublicMeetingByToken(token)
+	if err != nil {
+		slog.Error("live notes: public get failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if !live && !exists {
 		http.NotFound(w, r)
 		return
 	}
+	full := r.URL.Query().Get("full") != ""
 	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
 	segments, err := service.ListLiveNoteSegments(token, since)
 	if err != nil {
@@ -1433,23 +1800,38 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
-	note, _, err := service.GetLiveNote(token)
-	if err != nil {
-		slog.Error("live notes: public get failed", "err", err)
-		model.WriteError(w, model.Internal(err))
-		return
+	var chat []liveNotePublicChat
+	if full {
+		messages, chatErr := service.ListLiveNoteChat(token, 0)
+		if chatErr != nil {
+			// Chat is not an official artifact of the meeting: losing it must
+			// not cost the reader the minutes and the transcript.
+			slog.Warn("live notes: public chat failed", "err", chatErr)
+		}
+		for _, m := range messages {
+			chat = append(chat, liveNotePublicChat{Speaker: m.Speaker, Text: m.Text, At: m.At})
+		}
+	}
+	revise := liveNotesRevisePayload{Status: note.ReviseStatus, Error: note.ReviseError}
+	if full {
+		revise.Text = note.Revised
 	}
 	writeJSON(w, http.StatusOK, liveNotesResponse{
-		Segments: segments,
-		Files:    redactLiveNoteFilePaths(files),
-		Screens:  screens,
+		Title:     note.Title,
+		StartedAt: note.StartedAt,
+		EndedAt:   note.EndedAt,
+		Ended:     !live,
+		Segments:  segments,
+		Files:     redactLiveNoteFilePaths(files),
+		Screens:   screens,
+		Chat:      chat,
 		Minutes: liveNotesMinutesPayload{
 			Status:   note.Status,
 			Markdown: note.Minutes,
 			Error:    note.Error,
 			// FilePath and Artifacts deliberately omitted: viewers get the text,
 			// not paths into the publisher's project.
-			Revise: liveNotesRevisePayload{Status: note.ReviseStatus},
+			Revise: revise,
 		},
 	})
 }

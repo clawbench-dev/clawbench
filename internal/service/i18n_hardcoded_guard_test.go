@@ -297,6 +297,10 @@ func TestNoNewHardcodedUserVisibleCJKFrontend(t *testing.T) {
 		// Chinese tokens are the writer's localized speaker labels (文件 / 屏幕),
 		// so they have to be recognized verbatim.
 		"utils/revisedTranscript.ts": "proofread-transcript parser (localized speaker labels + separator)",
+		// Not copy: the phrases a speaker uses to point the room at their screen
+		// ("look here", "this page"). They are matched against the transcript to
+		// pick key frames; nothing here is ever rendered.
+		"composables/useMeetingShots.ts": "key-frame cue phrases matched against the transcript",
 		// Pre-existing ad-hoc bilingual strings: each already branches on the
 		// locale (zh ? '…' : '…'), so neither language is stuck with the other's
 		// text. Not the "Chinese-only, no English path" defect this guard

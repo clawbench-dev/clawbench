@@ -34,7 +34,8 @@ import (
 	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
 )
 
-// LiveNotesDDL creates the two tables behind AI 听记.
+// LiveNotesDDL creates the tables behind AI 听记: segments, the meeting row,
+// chat, the file timeline, the screen-share log and the key frames.
 //
 // Exported so handler tests can create the schema in their own databases.
 //
@@ -162,6 +163,26 @@ CREATE TABLE IF NOT EXISTS live_notes_audio (
 	duration_ms INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (token, channel)
 );
+
+-- live_notes_shots holds the key frames captured during a meeting. The file
+-- itself lives in <meeting dir>/shots; this row is the timeline entry, so the
+-- record can place a frame between two transcript lines.
+CREATE TABLE IF NOT EXISTS live_notes_shots (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	token TEXT NOT NULL,
+	project_id INTEGER NOT NULL DEFAULT 0,
+	client_shot_id TEXT NOT NULL,
+	at_ms INTEGER NOT NULL,
+	reason TEXT NOT NULL,
+	ref TEXT NOT NULL DEFAULT '',
+	file_name TEXT NOT NULL,
+	width INTEGER NOT NULL DEFAULT 0,
+	height INTEGER NOT NULL DEFAULT 0,
+	bytes INTEGER NOT NULL DEFAULT 0,
+	hash TEXT NOT NULL DEFAULT '',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(token, client_shot_id)
+);
 `
 
 // LiveNotesIndexesDDL creates the indexes. Applied by InitDB *after* the
@@ -177,6 +198,7 @@ CREATE INDEX IF NOT EXISTS idx_live_note_files_token ON live_notes_files(token, 
 CREATE INDEX IF NOT EXISTS idx_live_note_screen_token ON live_notes_screen(token, started_at);
 CREATE INDEX IF NOT EXISTS idx_live_note_artifacts_token ON live_notes_artifacts(token);
 CREATE INDEX IF NOT EXISTS idx_live_note_audio_token ON live_notes_audio(token);
+CREATE INDEX IF NOT EXISTS idx_live_note_shots_token ON live_notes_shots(token, at_ms);
 `
 
 // LiveNotesDDL is the full schema for a fresh database (tables then indexes).
@@ -651,6 +673,43 @@ func GetLiveNote(token string) (LiveNote, bool, error) {
 	return n, true, nil
 }
 
+// PublicMeetingByToken resolves a share token to its meeting record WITHOUT a
+// project scope.
+//
+// This is what makes a meeting link outlive the room: the room is in-memory and
+// disappears the moment the publisher stops, while the record is permanent. The
+// public share endpoints use this after the room lookup fails, so the same URL
+// keeps answering with the meeting's minutes, transcript and chat until the
+// record is deleted.
+//
+// Hidden rows (pre-record meetings the upgrade could not place on a timeline)
+// are reported as missing, exactly like the list and the detail view: the link
+// must not expose something the owner cannot even see.
+func PublicMeetingByToken(token string) (LiveNote, bool, error) {
+	if strings.TrimSpace(token) == "" {
+		return LiveNote{}, false, nil
+	}
+	var n LiveNote
+	var hidden int64
+	err := store.ReadDB().QueryRow(
+		`SELECT token, title, status, minutes, error, file_path, dir_name, revised,
+		        revise_status, revise_error, started_at, ended_at, hidden
+		   FROM live_notes WHERE token = ?`, token,
+	).Scan(&n.Token, &n.Title, &n.Status, &n.Minutes, &n.Error, &n.FilePath,
+		&n.DirName, &n.Revised, &n.ReviseStatus, &n.ReviseError, &n.StartedAt,
+		&n.EndedAt, &hidden)
+	if errors.Is(err, sql.ErrNoRows) {
+		return LiveNote{}, false, nil
+	}
+	if err != nil {
+		return LiveNote{}, false, fmt.Errorf("live notes: public get: %w", err)
+	}
+	if hidden != 0 {
+		return LiveNote{}, false, nil
+	}
+	return n, true, nil
+}
+
 // LiveNoteProjectID reports which project owns a share's notes. The publisher
 // endpoints use it to authorize requests for a room that has already ended.
 func LiveNoteProjectID(token string) (int64, bool, error) {
@@ -1082,12 +1141,19 @@ type MeetingRecord struct {
 	HasMeetingAudio bool `json:"hasMeetingAudio"`
 	AudioFiles      int  `json:"audioFiles"`
 	ChatCount       int  `json:"chatCount"`
+	// ShotCount is how many key frames were kept. Derived from the folder like
+	// the other artifact flags, so a frame deleted from disk stops counting.
+	ShotCount int `json:"shotCount"`
 	// HasSegments / HasAudio answer "can anything be regenerated": a meeting
 	// with neither has no source for any of the three artifacts.
 	HasSegments bool `json:"hasSegments"`
 	HasAudio    bool `json:"hasAudio"`
 	// Artifacts carries the per-artifact job state; Generation is the derived
 	// "which step is running" summary (nil when nothing is running).
+	//
+	// There is deliberately no single `status` field: it cannot express
+	// "regenerating while the old minutes are still readable". The old minutes
+	// job state survives only as the /notes live-panel projection.
 	Artifacts  map[ArtifactKind]MeetingArtifactView `json:"artifacts"`
 	Generation *MeetingGeneration                   `json:"generation"`
 	// SpeakerCount is how many distinct people the transcript heard. Derived
@@ -1331,6 +1397,7 @@ func liveNoteArtifactFlags(dirPath string) liveNoteArtifactState {
 			st.audioFiles++
 		}
 	}
+	st.shots = liveNoteShotCountIn(paths.Shots)
 	return st
 }
 
@@ -1341,6 +1408,7 @@ func applyLiveNoteArtifactFlags(m *MeetingRecord, st liveNoteArtifactState) {
 	m.HasRevised = st.hasRevised
 	m.HasMeetingAudio = st.hasMeetingAudio
 	m.AudioFiles = st.audioFiles
+	m.ShotCount = st.shots
 }
 
 // liveNoteArtifactState is what one meeting folder actually holds. A struct
@@ -1352,6 +1420,7 @@ type liveNoteArtifactState struct {
 	hasRevised      bool
 	hasMeetingAudio bool
 	audioFiles      int
+	shots           int
 }
 
 // ErrMeetingNotFound is returned when a record does not exist (or belongs to
@@ -1412,6 +1481,7 @@ func DeleteMeetingRecord(projectPath string, projectID int64, token string) erro
 		`DELETE FROM live_notes_screen WHERE token = ?`,
 		`DELETE FROM live_notes_artifacts WHERE token = ?`,
 		`DELETE FROM live_notes_audio WHERE token = ?`,
+		`DELETE FROM live_notes_shots WHERE token = ?`,
 		`DELETE FROM live_notes WHERE token = ? AND project_id = ?`,
 	} {
 		args := []any{token}
@@ -2776,6 +2846,10 @@ type LiveNotesPaths struct {
 	Revised string
 	// Audio is `<dir>/audio/` — one WebM file per transcribed segment.
 	Audio string
+	// Shots is `<dir>/shots/` — the key frames captured during the meeting.
+	// Created on the first frame, not up front: an empty folder would show up
+	// in the resource list as a directory with nothing in it.
+	Shots string
 }
 
 const (
@@ -2793,6 +2867,7 @@ func liveNotesPathsFor(dir string) LiveNotesPaths {
 		Transcript: filepath.Join(dir, liveNoteTranscriptVTT),
 		Revised:    filepath.Join(dir, "transcript-revised.md"),
 		Audio:      filepath.Join(dir, "audio"),
+		Shots:      filepath.Join(dir, LiveNoteShotDirName),
 	}
 }
 

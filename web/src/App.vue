@@ -609,6 +609,7 @@
     <ToastNotification :toast="toast" />
     <CompletionPopover />
     <DialogOverlay />
+    <UploadConflictDialog />
     <InertPathPicker />
   </div>
 </template>
@@ -665,6 +666,7 @@ import DownloadProgressBar from './components/common/DownloadProgressBar.vue'
 import { useDownloadProgress } from '@/composables/useDownloadProgress'
 import CompletionPopover from './components/common/CompletionPopover.vue'
 import DialogOverlay from './components/common/DialogOverlay.vue'
+import UploadConflictDialog from './components/common/UploadConflictDialog.vue'
 import SessionDrawer from './components/session/SessionDrawer.vue'
 import SessionSidebar from './components/session/SessionSidebar.vue'
 import SessionSearchDrawer from './components/session/SessionSearchDrawer.vue'

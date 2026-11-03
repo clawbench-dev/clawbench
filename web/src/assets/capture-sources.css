@@ -76,9 +76,13 @@
   background: transparent;
 }
 
+/* Selected "nothing" is NOT a second hard frame: a solid accent outline around
+   an empty box nests inside the card's own ring (four accent strokes on one
+   empty tile — loud, and only this tile shows it because real sources fill the
+   thumb with a picture). A soft accent wash keeps the dashed "no picture"
+   frame neutral and lets the card ring + badge + icon carry the selection. */
 .capture-source--off.capture-source--on .capture-source__thumb {
-  border-style: solid;
-  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
   color: var(--accent-color);
 }
 

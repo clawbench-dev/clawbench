@@ -149,6 +149,44 @@ test.describe('HTML preview: find and quote', () => {
     await expect(quoteCard).toBeVisible({ timeout: 5000 })
     await expect(quoteCard).toContainText(HTML_FILE)
   })
+
+  /**
+   * The bar's position is expressed in HOST viewport coordinates, so a scroll
+   * inside the PREVIEWED document moves the selected text out from under it.
+   * The host document never sees that scroll (different document), so nothing
+   * dismissed or re-placed the bar and it stayed where the text used to be —
+   * measured: a 411px scroll of the preview left the bar 475px away from its
+   * own text. That is also the shape of the intermittent CI failure this spec
+   * kept hitting (475), so this pins the fix.
+   */
+  test('the bar follows the text when the previewed document scrolls', async ({ page }) => {
+    const frame = await openHtmlPreview(page)
+    const heading = frame.locator('h1')
+    await heading.scrollIntoViewIfNeeded()
+    await heading.selectText()
+
+    const quoteBar = page.locator('.quote-question-bar')
+    await expect(quoteBar).toBeVisible({ timeout: 5000 })
+    const before = await heading.boundingBox()
+
+    // Scroll the frame's document: the heading (and the selection on it) moves,
+    // the bar must move with it. The document is already scrolled to its bottom
+    // by `scrollIntoViewIfNeeded`, so the scroll has to go UP; 120px keeps the
+    // heading on screen while still moving it by more than the tolerance below.
+    await frame.locator('body').evaluate(() => window.scrollBy(0, -120))
+    await expect
+      .poll(async () => (await heading.boundingBox())?.y ?? -1, { timeout: 5000 })
+      .toBeGreaterThan(before!.y + 100)
+
+    await expect
+      .poll(async () => {
+        const h = await heading.boundingBox()
+        const b = await quoteBar.boundingBox()
+        if (!h || !b) return Number.POSITIVE_INFINITY
+        return Math.abs(b.y + b.height / 2 - (h.y + h.height / 2))
+      }, { timeout: 5000 })
+      .toBeLessThan(80)
+  })
 })
 
 /**

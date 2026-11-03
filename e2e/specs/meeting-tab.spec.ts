@@ -268,12 +268,15 @@ test.describe('Meeting flow', () => {
     await page.locator('[data-action="panel-end"]').click()
     await expect(page.locator('[data-action="meeting-quote"]')).toBeVisible({ timeout: 20000 })
 
-    // The artifact bar is the status/action strip above every text tab. This
-    // meeting recorded nothing and transcribed nothing, so there is no source
-    // to regenerate from: the bar must say so and keep its button disabled
-    // instead of promising a job the server would refuse. (The confirmation
-    // sheet itself needs a real source — an ASR provider is not configured in
-    // e2e — so its states are covered by MeetingRegenerateSheet.test.ts.)
+    // The artifact bar is the status/action strip above each TEXT tab, so the
+    // record has to be on 纪要 first — the record opens on 资源.
+    await page.locator('.meeting-tabs [data-tab="minutes"]').click()
+    // This meeting recorded nothing and transcribed nothing, so there is no
+    // source to regenerate from: the bar must say so and keep its button
+    // disabled instead of promising a job the server would refuse. (The
+    // confirmation sheet itself needs a real source — an ASR provider is not
+    // configured in e2e — so its states are covered by
+    // MeetingRegenerateSheet.test.ts.)
     const bar = page.locator('.artifact-bar')
     await expect(bar).toBeVisible()
     await expect(bar.locator('.artifact-bar__text')).toHaveText(/没有可用的来源|no source available/i)
@@ -294,6 +297,19 @@ test.describe('Meeting flow', () => {
     // "first row is the one I just made" assertion depended on run order.
     const token = await row.getAttribute('data-token')
     expect(token, 'the row must carry the meeting token for cleanup').toBeTruthy()
+
+    // The link handed out in advance still works after the meeting: a member
+    // opening it now lands on the record — minutes / transcript / proofread /
+    // chat — instead of a dead "share ended" page. This is the whole point of
+    // keeping the link until the record is deleted.
+    const viewer = await page.context().newPage()
+    await viewer.goto(`/share/${token}`)
+    await expect(viewer.locator('[data-role="meeting-ended"]')).toBeVisible({ timeout: 20000 })
+    await expect(viewer.locator('[data-role="record-title"]')).toHaveText(title)
+    await viewer.locator('.share-meeting__tab[data-tab="chat"]').click()
+    await expect(viewer.locator('.chat-row__text')).toContainText('这是一条会议聊天')
+    await viewer.close()
+
     // 409 means the minutes job is still running and the record cannot be
     // deleted yet — retry instead of treating it as a failure.
     await expect
