@@ -20,8 +20,13 @@ export default defineConfig({
   reporter: process.env.CI
     ? [['html', { open: 'never' }], ['github']]
     : [['html', { open: 'on-failure' }], ['list']],
-  timeout: 30000,
-  expect: { timeout: 10000 },
+  // CI runners are shared and ~2x slower than a dev machine: the same suite
+  // takes 30 min locally and 50+ min there. The assertions are unchanged, only
+  // the budget is — a 30 s test timeout on a runner that stalls for seconds at
+  // a time turns ordinary waits into failures (and every retry re-runs the
+  // whole spec, which is what pushed the job past an hour).
+  timeout: process.env.CI ? 90000 : 30000,
+  expect: { timeout: process.env.CI ? 20000 : 10000 },
 
   use: {
     baseURL: `http://localhost:${process.env.E2E_PORT || 20100}`,

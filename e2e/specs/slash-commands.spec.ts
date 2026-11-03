@@ -94,7 +94,7 @@ test.describe.serial('ACP Slash Commands', () => {
 
     // @ is the file-reference trigger, never the slash-command trigger.
     const commandItems = page.locator('.completion-item--clawbench, .completion-item--agent')
-    await expect(commandItems.first()).not.toBeVisible({ timeout: 1500 })
+    await expect(commandItems.first()).not.toBeVisible({ timeout: 3000 })
   })
 
   test('should show ClawBench badge in user message after sending /cb-chatsearch', async ({ page }) => {

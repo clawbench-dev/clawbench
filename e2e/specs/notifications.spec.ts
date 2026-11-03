@@ -44,7 +44,7 @@ test.describe('Notifications', () => {
       if (!res.ok()) return -1
       const body = await res.json()
       return body.total ?? 0
-    }, { timeout: 30000, message: 'a notification row should be recorded after the turn completes' })
+    }, { timeout: 45000, message: 'a notification row should be recorded after the turn completes' })
       .toBeGreaterThan(0)
   }
 
