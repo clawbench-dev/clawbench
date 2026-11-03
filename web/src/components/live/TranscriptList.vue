@@ -88,7 +88,7 @@
 import { nextTick, onMounted, ref, watch } from 'vue'
 import { FileText, ImageIcon, MonitorUp, Trash2 } from 'lucide-vue-next'
 import i18n from '@/i18n'
-import { shotLabel, shotReasonLabel, shotRefName } from '@/utils/meetingShots'
+import { shotLabel, shotRefName } from '@/utils/meetingShots'
 import { annotateMediaBlocks } from '@/utils/mediaBlockFactory'
 import { escapeHtml } from '@/utils/html.ts'
 import { annotatePlainText } from '@/composables/usePlainTextAnnotation.ts'
@@ -163,12 +163,26 @@ function shotFigure(b: NoteBlock): string {
   return html
 }
 
+/** The wording the server used before the label was unified to "打开文件". */
+const LEGACY_FILE_EVENT_RE = /^(打开|Opened|关闭|Closed)\s+(.+)$/i
+
 /** A live file row carries a bare path; a stored transcript carries a sentence. */
 function textOf(b: NoteBlock): string {
   if (b.kind === 'file' && b.fileAction) {
     return i18n.global.t(
       b.fileAction === 'open' ? 'liveShare.fileOpened' : 'liveShare.fileClosed',
       { path: b.text },
+    )
+  }
+  // A stored row is the sentence the server wrote at the time ("打开 X" /
+  // "Opened X"). Re-say it in today's wording so an old meeting reads the same
+  // as a new one; the path (and the "（21 秒）" tail) is carried over as-is.
+  const legacy = LEGACY_FILE_EVENT_RE.exec(b.text)
+  if (b.kind === 'file' && legacy) {
+    const opening = /^open/i.test(legacy[1]) || legacy[1] === '打开'
+    return i18n.global.t(
+      opening ? 'liveShare.fileOpened' : 'liveShare.fileClosed',
+      { path: legacy[2] },
     )
   }
   return b.text
@@ -268,16 +282,17 @@ function rowAnnotation(b: NoteBlock): AnnotatedBlockText {
 }
 
 /**
- * The frame's caption ("打开文件 · main.ts"), annotated like every other path.
+ * The frame's caption ("打开文件 main.ts"), annotated like every other path.
  *
  * A caption that names a file IS a reference to it — the row already shows the
  * picture, and the file it was taken for must be openable from the same line.
  *
- * The annotation source uses the FULL `ref`, not the displayed base name: the
+ * The annotation source uses the whole `ref`, not the displayed base name: the
  * path annotator deliberately ignores a bare `main.ts` (it cannot tell a
- * filename from an identifier like `build.sh`), so a caption-only string would
- * never produce a chip. The chip's text is then shortened back to the base name
- * so the row still reads the same — the click target keeps the whole path.
+ * filename from an identifier like `build.sh`), and a root-level file's ref IS
+ * a bare name. So a single-segment ref gets the same `./` prefix the file
+ * event uses, and the chip's text is then shortened back to the base name —
+ * the row reads the same, the click opens the file.
  */
 const shotMetaCache = new Map<string, AnnotatedBlockText>()
 
@@ -286,17 +301,22 @@ function shotMeta(b: NoteBlock): AnnotatedBlockText {
   if (!shot) return { html: '', paths: [] }
   const ref = shot.ref ?? ''
   const name = shotRefName(ref)
-  // Nothing to annotate: a bare name from the public payload, a path with
-  // spaces (the annotator stops at whitespace and would chip a fragment), or
-  // share mode. Keep the short caption the row has always shown.
+  // Nothing to annotate: no file reference at all, a path with spaces (the
+  // annotator stops at whitespace and would chip a fragment), or share mode.
+  // Keep the short caption the row has always shown.
   if (!name || /\s/.test(ref)) return { html: escapeHtml(labelOf(b)), paths: [] }
 
-  const source = `${shotReasonLabel(shot.reason)} · ${ref}`
+  // The caption's own wording, with the base name swapped for something the
+  // annotator can see (full path, or `./name` for a root-level file).
+  const display = labelOf(b)
+  const target = /[\\/]/.test(ref) ? ref : `./${ref}`
+  const at = display.lastIndexOf(name)
+  const source = at < 0 ? display : `${display.slice(0, at)}${target}${display.slice(at + name.length)}`
   let hit = shotMetaCache.get(source)
   if (hit === undefined) {
     const annotation = annotatePlainText(source)
     if (annotation.detectedPaths.length === 0) {
-      hit = { html: escapeHtml(labelOf(b)), paths: [] }
+      hit = { html: escapeHtml(display), paths: [] }
     } else {
       // Shorten the visible text back to the base name; the chip keeps the
       // whole path as its target.
@@ -437,7 +457,6 @@ watch(
 .transcript__row--file .transcript__speaker,
 .transcript__row--file .transcript__text {
   color: var(--text-muted, #656d76);
-  font-style: italic;
 }
 
 /* A frame row: the label is the caption, the figure is the content. */
@@ -453,8 +472,11 @@ watch(
   gap: var(--space-2, 4px);
 }
 
+/* Same size and colour as the text it introduces: a frame caption is a line of
+   the transcript, and a smaller/dimmer one made the two marker rows (file
+   event, frame) read as different kinds of thing. */
 .transcript__shot-meta {
-  font-size: var(--font-size-xs, 11px);
+  font-size: var(--font-size-md, 13px);
   color: var(--text-muted, #656d76);
 }
 

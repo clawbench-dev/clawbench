@@ -100,7 +100,11 @@ describe('TranscriptList', () => {
     expect(row.find('.sa').exists()).toBe(false)
     expect(row.find('.transcript__file-icon').exists()).toBe(true)
     expect(row.find('.transcript__speaker').text()).toBe('文件')
-    expect(row.find('.transcript__text').text()).toBe('打开 docs/a.md')
+    // A stored row is re-said in today's wording, so an old meeting reads the
+    // same as a new one.
+    expect(row.find('.transcript__text').text()).toBe(
+      i18n.global.t('liveShare.fileOpened', { path: 'docs/a.md' }),
+    )
   })
 
   it('draws a screen-sharer change as a monitor row, not a speaker', () => {
@@ -260,10 +264,13 @@ describe('TranscriptList', () => {
         { key: 'n1', channel: 'file', speaker: '文件', startedAt: 0, text: '打开 docs/a.md', kind: 'file' },
       ])
       expect(w.find('.transcript__text .chat-file-path').attributes('data-file-path')).toBe('docs/a.md')
+      expect(w.find('.transcript__text').text()).toBe(
+        i18n.global.t('liveShare.fileOpened', { path: 'docs/a.md' }),
+      )
     })
 
     it('annotates a root-level file event, which the path is a bare name for', () => {
-      // A meeting that opens README.md records exactly "打开 README.md" — no
+      // A meeting that opens AGENTS.md records exactly "打开 AGENTS.md" — no
       // directory. The annotator skips single-segment names on purpose, so the
       // row used to be dead text; the file event must still be openable.
       const w = mountList([
@@ -274,7 +281,9 @@ describe('TranscriptList', () => {
       expect(chip.attributes('data-file-path')).toBe('AGENTS.md')
       // The `./` used to make it detectable must not show up in the row.
       expect(chip.text()).toBe('AGENTS.md')
-      expect(w.find('.transcript__text').text()).toBe('打开 AGENTS.md')
+      expect(w.find('.transcript__text').text()).toBe(
+        i18n.global.t('liveShare.fileOpened', { path: 'AGENTS.md' }),
+      )
     })
 
     it('keeps the duration suffix on a close event', () => {
@@ -282,7 +291,9 @@ describe('TranscriptList', () => {
         { key: 'n1', channel: 'file', speaker: '文件', startedAt: 0, text: '关闭 README.md（21 秒）', kind: 'file' },
       ])
       expect(w.find('.transcript__text .chat-file-path').attributes('data-file-path')).toBe('README.md')
-      expect(w.find('.transcript__text').text()).toBe('关闭 README.md（21 秒）')
+      expect(w.find('.transcript__text').text()).toBe(
+        i18n.global.t('liveShare.fileClosed', { path: 'README.md（21 秒）' }),
+      )
     })
 
     it('leaves a bare file name in ordinary speech alone', () => {
@@ -318,11 +329,10 @@ describe('TranscriptList', () => {
       expect(paths).toContain('web/src/main.ts')
     })
 
-    it('keeps the short caption when the frame ref cannot be annotated', () => {
-      // The public payload carries a bare name, and a path with spaces would
-      // only produce a fragment chip — both must fall back to the caption the
-      // row has always shown, not to the raw ref.
-      const bare = mountList([
+    it('annotates a root-level file in the frame caption too', () => {
+      // Same trap as the file event: a root-level file's ref is a bare name,
+      // so the caption used to read as dead text.
+      const w = mountList([
         {
           key: 'n1',
           channel: 'shot',
@@ -330,12 +340,40 @@ describe('TranscriptList', () => {
           startedAt: 0,
           text: '',
           kind: 'shot',
-          shot: { id: 1, thumbUrl: '/t/1', fullUrl: '/f/1', reason: 'file', ref: 'main.ts' },
+          shot: { id: 1, thumbUrl: '/t/1', fullUrl: '/f/1', reason: 'file', ref: 'AGENTS.md' },
         },
       ])
-      expect(bare.find('.transcript__shot-meta').text()).toContain('main.ts')
-      expect(bare.find('.transcript__shot-meta .chat-file-path').exists()).toBe(false)
+      const chip = w.find('.transcript__shot-meta .chat-file-path')
+      expect(chip.exists()).toBe(true)
+      expect(chip.attributes('data-file-path')).toBe('AGENTS.md')
+      expect(chip.text()).toBe('AGENTS.md')
+    })
 
+    it('words the frame caption and the file event the same way', () => {
+      // One meeting, two marker rows: they must not be labelled two different
+      // ways ("打开 x" vs "打开文件 · x").
+      const caption = mountList([
+        {
+          key: 'n1',
+          channel: 'shot',
+          speaker: '',
+          startedAt: 0,
+          text: '',
+          kind: 'shot',
+          shot: { id: 1, thumbUrl: '/t/1', fullUrl: '/f/1', reason: 'file', ref: 'AGENTS.md' },
+        },
+      ])
+      const event = mountList([
+        { key: 'n2', channel: 'file', speaker: '文件', startedAt: 0, text: '打开 AGENTS.md', kind: 'file' },
+      ])
+      expect(caption.find('.transcript__shot-meta').text()).toBe(
+        event.find('.transcript__text').text(),
+      )
+    })
+
+    it('keeps the short caption when the frame ref cannot be annotated', () => {
+      // A path with spaces would only produce a fragment chip — it must fall
+      // back to the caption the row has always shown, not to the raw ref.
       const spaced = mountList([
         {
           key: 'n2',

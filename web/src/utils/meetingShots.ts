@@ -34,11 +34,18 @@ export function shotRefName(ref: string): string {
   return ref ? (ref.split(/[\\/]/).pop() ?? '') : ''
 }
 
-/** The reason plus the file's base name, when the trigger was a file. */
+/** The reason plus the file's base name, when the trigger was a file.
+ *
+ * The file reason reads as one sentence — "打开文件 main.ts" — the same shape
+ * the transcript's own file event uses, so the two rows in a meeting are not
+ * labelled two different ways. Other reasons keep the separator: they pair a
+ * cause with a person or a source, not a sentence with a path.
+ */
 export function shotLabel(reason: string, ref = ''): string {
   const reasonText = shotReasonLabel(reason)
   const name = shotRefName(ref)
-  return name ? `${reasonText} · ${name}` : reasonText
+  if (!name) return reasonText
+  return reason === 'file' ? `${reasonText} ${name}` : `${reasonText} · ${name}`
 }
 
 /**
