@@ -7,6 +7,7 @@ import { folderRelPath } from '@/utils/fileAttachmentUtils'
 import { expandDataTransfer, type ExpandResult } from '@/utils/dropFolder'
 import { writeFileToTree } from '@/utils/dirHandle'
 import { buildLocalFileUrl } from '@/utils/download'
+import { appLog, diagLog } from '@/utils/appLog'
 import { createTransferSpeedMeter } from '@/utils/transferSpeed'
 import { askUploadConflict, type UploadConflictChoice, type UploadConflictItem } from '@/composables/useUploadConflict'
 
@@ -36,6 +37,18 @@ let uploadGeneration = 0
 // A ref (not a plain let) so the drawer can tell, after `await handleFileSelect`,
 // whether the batch it was waiting on was terminated.
 const chatUploadCancelled = ref(false)
+/**
+ * Identity of the current chat upload batch.
+ *
+ * `chatUploadCancelled` alone cannot answer "was *my* batch cancelled": every
+ * new batch resets that ref to false, and a retry keeps the previous batch's
+ * promise alive for up to the backoff delay. Without a per-batch token, a file
+ * still waiting to retry when the user cancels and starts a new batch would be
+ * resurrected by that reset and keep uploading files the user already
+ * terminated. The object is replaced per batch, so an older upload keeps
+ * pointing at the cancelled one.
+ */
+let chatBatch: { cancelled: boolean } = { cancelled: false }
 // Paths that finished uploading in the CURRENT chat batch. Terminating the
 // batch removes exactly these from the attachment list ("clear everything"),
 // leaving attachments that predate the batch untouched.
@@ -58,6 +71,8 @@ const dirUploadProgress = ref(0)
 const dirUploadTotal = ref(0)
 const dirUploadDone = ref(0)
 const dirUploadCancelled = ref(false)
+/** Per-batch identity for directory uploads — same reason as `chatBatch`. */
+let dirBatch: { cancelled: boolean } = { cancelled: false }
 /**
  * Bytes per second across the whole batch. Same meter the download bar uses,
  * fed by the cumulative byte count `reportDirProgress` already receives.
@@ -173,6 +188,38 @@ async function decideUploadConflicts(
   return askUploadConflict(conflicts)
 }
 
+/** Logger tag for the upload diagnostics relayed to /api/client-log. */
+const TAG = 'FileUpload'
+
+/**
+ * Attempts per file (1 initial + 2 retries).
+ *
+ * Uploads used to be single-shot: one dropped response at 100% threw the whole
+ * transfer away and the user had to drag the file in again ("多试几次就成功").
+ * The File object is still in memory, so resending costs nothing but time.
+ *
+ * Trade-off: if the first attempt did reach the server and only its response
+ * was lost, the resend lands as a second copy (`name_1.ext`) — the server
+ * renames instead of overwriting. That is the same outcome the user gets by
+ * retrying by hand, and it is the lesser evil compared to losing the upload.
+ */
+const UPLOAD_MAX_ATTEMPTS = 3
+/** Backoff before attempt 2 and 3. */
+const UPLOAD_RETRY_DELAYS_MS = [500, 1500]
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Outcome of one POST, so the retry loop (not the XHR handlers) decides. */
+type UploadAttempt =
+  | { kind: 'ok'; path: string }
+  | { kind: 'cancelled' }
+  /** The server answered with a business error — resending cannot help. */
+  | { kind: 'fatal'; message: string }
+  /** Transport / response-stage failure worth another attempt. */
+  | { kind: 'retry'; message: string; reason: string; detail?: Record<string, unknown> }
+
 export function useFileUpload() {
   const toast = useToast()
 
@@ -186,172 +233,262 @@ export function useFileUpload() {
    * freshly uploaded file read the path from here rather than scanning the
    * shared `pendingFiles` list (which cannot distinguish two same-sized files).
    */
-  function uploadOneFile(file: File, dir?: string, autoAttach?: boolean, relPath?: string, onConflict?: UploadConflictChoice): Promise<string | null> {
-    // Hoisted out of the executor so the banking step below shares the same cap.
+  function uploadOneFile(
+    file: File,
+    dir: string | undefined,
+    autoAttach: boolean | undefined,
+    relPath: string | undefined,
+    onConflict: UploadConflictChoice | undefined,
+    // The caller's own batch token. Passed in rather than read from the module
+    // here: with two batches in flight the module-level one may already belong
+    // to the newer batch, which would make this upload ignore its own
+    // cancellation and obey a stranger's.
+    batch: { cancelled: boolean },
+  ): Promise<string | null> {
+    // Hoisted out of the request builder so the banking step below shares the same cap.
     const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
-    // Hoisted so the `.then` below can tell whether this file still owns the
-    // chat batch's in-flight slot.
-    const xhr = new XMLHttpRequest()
+    const isDirUpload = !!dir
+    // The most recent request, so the settle path can tell whether this file
+    // still owns the chat batch's in-flight slot.
+    let lastXhr: XMLHttpRequest | null = null
 
-    const attempt = new Promise<string | null>((resolve) => {
-      const isDirUpload = !!dir
+    // Route a failure reason either to an immediate toast (chat attachment)
+    // or into the dir-upload collector for a single summary toast at the end.
+    // Dir mode must NOT toast per-file, otherwise the completion toast
+    // (singleton) overwrites the error and the user sees no failure at all.
+    // The stored reason stays bare (no "upload failed" prefix); finishDirUpload
+    // wraps it in the aggregate message exactly once.
+    function notifyError(msg: string) {
+      // A late failure from a superseded batch must not end up in the new
+      // batch's summary toast.
+      if (isDirUpload) { if (batch === dirBatch) dirUploadErrorMsgs.push(msg) }
+      else toast.show(msg, { icon: 'warning', type: 'error' })
+    }
+    // Chat toasts keep the "上传失败:" prefix; dir mode stores the bare reason.
+    function failError(reason: string) {
+      if (isDirUpload) { if (batch === dirBatch) dirUploadErrorMsgs.push(reason) }
+      else toast.show(gt('upload.failed', { error: reason }), { icon: 'warning', type: 'error' })
+    }
 
-      // Route a failure reason either to an immediate toast (chat attachment)
-      // or into the dir-upload collector for a single summary toast at the end.
-      // Dir mode must NOT toast per-file, otherwise the completion toast
-      // (singleton) overwrites the error and the user sees no failure at all.
-      // The stored reason stays bare (no "upload failed" prefix); finishDirUpload
-      // wraps it in the aggregate message exactly once.
-      function notifyError(msg: string) {
-        if (isDirUpload) dirUploadErrorMsgs.push(msg)
-        else toast.show(msg, { icon: 'warning', type: 'error' })
-      }
-      // Chat toasts keep the "上传失败:" prefix; dir mode stores the bare reason.
-      function failError(reason: string) {
-        if (isDirUpload) dirUploadErrorMsgs.push(reason)
-        else toast.show(gt('upload.failed', { error: reason }), { icon: 'warning', type: 'error' })
-      }
+    // Pre-flight size check: prevent sending a request that will be
+    // rejected by the server's MaxBytesReader (which causes onerror
+    // instead of a readable error response).
+    if (file.size > maxSizeBytes) {
+      notifyError(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }))
+      return Promise.resolve(null)
+    }
 
-      // Pre-flight size check: prevent sending a request that will be
-      // rejected by the server's MaxBytesReader (which causes onerror
-      // instead of a readable error response).
-      if (file.size > maxSizeBytes) {
-        notifyError(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }))
-        resolve(null)
-        return
-      }
+    const isImage = file.type.startsWith('image/')
+    const previewUrl = isImage ? URL.createObjectURL(file) : null
 
-      const isImage = file.type.startsWith('image/')
-      const previewUrl = isImage ? URL.createObjectURL(file) : null
+    // Push entry then get reactive proxy from array (only for chat upload, not dir upload)
+    let entry: PendingFile | null = null
+    if (!isDirUpload) {
+      const idx = pendingFiles.value.length
+      pendingFiles.value.push({
+        path: '',
+        previewUrl,
+        isImage,
+        uploading: true,
+        progress: 0,
+        size: file.size,
+      })
+      entry = pendingFiles.value[idx]
+    }
 
-      // Push entry then get reactive proxy from array (only for chat upload, not dir upload)
-      let entry: PendingFile | null = null
-      if (!isDirUpload) {
-        const idx = pendingFiles.value.length
-        pendingFiles.value.push({
-          path: '',
-          previewUrl,
-          isImage,
-          uploading: true,
-          progress: 0,
-          size: file.size,
-        })
-        entry = pendingFiles.value[idx]
-      }
+    /** Drop the pending card (chat upload only) and release its preview URL. */
+    function dropEntry() {
+      if (!entry) return
+      if (previewUrl) URL.revokeObjectURL(previewUrl)
+      const i = pendingFiles.value.indexOf(entry)
+      if (i !== -1) pendingFiles.value.splice(i, 1)
+    }
 
-      const formData = new FormData()
-      formData.append('file', file)
-      if (dir) formData.append('dir', dir)
-      if (relPath) formData.append('relpath', relPath)
-      // Only the explicit overwrite choice is sent: the server's default is
-      // rename, which is what every other caller wants.
-      if (dir && onConflict === 'overwrite') formData.append('onconflict', 'overwrite')
+    /** True once the user removed this file or terminated the whole batch. */
+    function isCancelled() {
+      return !!entry?.cancelled || batch.cancelled
+    }
 
-      if (entry) entry.xhr = xhr
-      if (isDirUpload) activeDirXhr = xhr
-      else activeChatXhr = xhr
-      xhr.open('POST', '/api/upload/file')
-      xhr.timeout = 300000
+    /**
+     * Send the file once and classify the outcome.
+     *
+     * A fresh FormData (and XHR) per attempt: the same `file` is re-read from
+     * disk by the browser, so a retry costs no extra memory beyond the body.
+     */
+    function sendOnce(): Promise<UploadAttempt> {
+      return new Promise((resolve) => {
+        const xhr = new XMLHttpRequest()
 
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          if (entry) entry.progress = Math.round((e.loaded / e.total) * 100)
-          // Batch progress = bytes banked for finished files + this file's
-          // sent bytes, so the bar keeps climbing across file boundaries
-          // instead of restarting from 0 on each one.
-          if (isDirUpload) reportDirProgress(dirUploadLoadedBytes + e.loaded)
+        const formData = new FormData()
+        formData.append('file', file)
+        if (dir) formData.append('dir', dir)
+        if (relPath) formData.append('relpath', relPath)
+        // Only the explicit overwrite choice is sent: the server's default is
+        // rename, which is what every other caller wants.
+        if (dir && onConflict === 'overwrite') formData.append('onconflict', 'overwrite')
+
+        lastXhr = xhr
+        if (entry) entry.xhr = xhr
+        if (isDirUpload) activeDirXhr = xhr
+        else activeChatXhr = xhr
+        xhr.open('POST', '/api/upload/file')
+        xhr.timeout = 300000
+
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            if (entry) entry.progress = Math.round((e.loaded / e.total) * 100)
+            // Batch progress = bytes banked for finished files + this file's
+            // sent bytes, so the bar keeps climbing across file boundaries
+            // instead of restarting from 0 on each one.
+            if (isDirUpload) reportDirProgress(dirUploadLoadedBytes + e.loaded)
+          }
         }
-      }
 
-      xhr.onload = () => {
-        if (entry?.cancelled) {
-          resolve(null)
-          return
-        }
-        try {
-          const data = JSON.parse(xhr.responseText)
-          if (data.ok) {
+        xhr.onload = () => {
+          if (isCancelled()) {
+            resolve({ kind: 'cancelled' })
+            return
+          }
+          let data: { ok?: boolean; path?: string; error?: string }
+          try {
+            data = JSON.parse(xhr.responseText)
+          } catch {
+            // The body was fully sent (progress reached 100%) but the answer is
+            // not the JSON envelope: a proxy error page, a truncated body, or a
+            // connection dropped while the response was in flight. This is the
+            // reported "100% 后解析失败" — the one case a retry actually fixes.
+            resolve({
+              kind: 'retry',
+              message: gt('upload.parseError'),
+              reason: 'parse-error',
+              detail: {
+                status: xhr.status,
+                readyState: xhr.readyState,
+                body: (xhr.responseText || '').slice(0, 200),
+              },
+            })
+            return
+          }
+          if (data?.ok) {
+            const path = data.path || ''
             if (entry) {
               entry.uploading = false
               entry.progress = 100
-              entry.path = data.path
-              if (autoAttach) addAttachedFile(entry.path)
+              entry.path = path
+              if (autoAttach) addAttachedFile(path)
             }
-            resolve(data.path)
+            resolve({ kind: 'ok', path })
           } else {
-            if (entry) {
-              if (previewUrl) URL.revokeObjectURL(previewUrl)
-              const i = pendingFiles.value.indexOf(entry)
-              if (i !== -1) pendingFiles.value.splice(i, 1)
-            }
-            failError(data.error || gt('upload.unknownError'))
-            resolve(null)
+            // A structured business error (too large, forbidden, no file…):
+            // resending the same bytes can never change the answer. Our own
+            // 5xx errors also arrive in this envelope, so they are definitive
+            // too — only a *non-JSON* 5xx (a proxy page) is retried.
+            resolve({ kind: 'fatal', message: data?.error || gt('upload.unknownError') })
           }
-        } catch {
-          if (entry) {
-            if (previewUrl) URL.revokeObjectURL(previewUrl)
-            const i = pendingFiles.value.indexOf(entry)
-            if (i !== -1) pendingFiles.value.splice(i, 1)
+        }
+
+        xhr.onerror = () => {
+          if (isCancelled()) {
+            resolve({ kind: 'cancelled' })
+            return
           }
-          notifyError(gt('upload.parseError'))
-          resolve(null)
+          // When the server's MaxBytesReader rejects the upload, the XHR
+          // gets onerror instead of onload with a parseable response.
+          // If the file exceeds the threshold, retrying cannot help.
+          if (file.size > maxSizeBytes) {
+            resolve({
+              kind: 'fatal',
+              message: gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }),
+            })
+            return
+          }
+          resolve({
+            kind: 'retry',
+            message: gt('upload.networkError'),
+            reason: 'network-error',
+            detail: { status: xhr.status, readyState: xhr.readyState },
+          })
         }
+
+        xhr.ontimeout = () => {
+          if (isCancelled()) {
+            resolve({ kind: 'cancelled' })
+            return
+          }
+          resolve({
+            kind: 'retry',
+            message: gt('upload.timeout'),
+            reason: 'timeout',
+            detail: { status: xhr.status, readyState: xhr.readyState },
+          })
+        }
+
+        // Removing a pending card aborts the request without showing a network error.
+        xhr.onabort = () => resolve({ kind: 'cancelled' })
+
+        xhr.send(formData)
+      })
+    }
+
+    /** Drive the attempts and surface the outcome exactly once. */
+    async function run(): Promise<string | null> {
+      for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+        const result = await sendOnce()
+        if (result.kind === 'ok') return result.path
+        if (result.kind === 'cancelled') return null
+        if (result.kind === 'fatal') {
+          dropEntry()
+          failError(result.message)
+          return null
+        }
+        // Transport / response-stage failure: log what is observable and try
+        // again before bothering the user. The response stage is exactly where
+        // an intermediary can fail without leaving any usable error behind, so
+        // status/readyState/body prefix are all the diagnosis available.
+        appLog.w(TAG, 'upload attempt failed', {
+          file: file.name, attempt, reason: result.reason, ...(result.detail || {}),
+        })
+        if (attempt === UPLOAD_MAX_ATTEMPTS) {
+          dropEntry()
+          // Terminal line: it must reach the server even with 调试日志捕获 off
+          // (its default), otherwise this bug stays undiagnosable in the field.
+          // Bounded to one line per failed file.
+          diagLog(TAG, `upload failed after ${attempt} attempts ${JSON.stringify({
+            file: file.name, reason: result.reason, ...(result.detail || {}),
+          })}`)
+          notifyError(result.message)
+          return null
+        }
+        // Restart this file's own bar: the bytes are being sent again.
+        if (entry) entry.progress = 0
+        await sleep(UPLOAD_RETRY_DELAYS_MS[Math.min(attempt, UPLOAD_RETRY_DELAYS_MS.length) - 1])
+        if (isCancelled()) return null
       }
-
-      xhr.onerror = () => {
-        if (entry?.cancelled) {
-          resolve(null)
-          return
-        }
-        if (entry) {
-          entry.uploading = false
-          if (previewUrl) URL.revokeObjectURL(previewUrl)
-          const i = pendingFiles.value.indexOf(entry)
-          if (i !== -1) pendingFiles.value.splice(i, 1)
-        }
-        // When the server's MaxBytesReader rejects the upload, the XHR
-        // gets onerror instead of onload with a parseable response.
-        // If the file exceeds the threshold, show a size-specific error.
-        notifyError(file.size > maxSizeBytes
-          ? gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB })
-          : gt('upload.networkError'))
-        resolve(null)
-      }
-
-      xhr.ontimeout = () => {
-        if (entry?.cancelled) {
-          resolve(null)
-          return
-        }
-        if (entry) {
-          entry.uploading = false
-          if (previewUrl) URL.revokeObjectURL(previewUrl)
-          const i = pendingFiles.value.indexOf(entry)
-          if (i !== -1) pendingFiles.value.splice(i, 1)
-        }
-        notifyError(gt('upload.timeout'))
-        resolve(null)
-      }
-
-      // Removing a pending card aborts the request without showing a network error.
-      xhr.onabort = () => resolve(null)
-
-      xhr.send(formData)
-    })
+      return null
+    }
 
     // Bank this file's bytes on every settle path (success, failure, abort) so
     // the batch bar continues from here instead of restarting. Doing it here
     // rather than in each caller means a caller cannot forget and stall the bar.
-    return attempt.then((path) => {
-      if (dir) bankDirProgress(file.size, maxSizeBytes)
+    return run().then((path) => {
+      // Banking a superseded batch's bytes would move the new batch's bar.
+      if (dir && batch === dirBatch) bankDirProgress(file.size, maxSizeBytes)
       // The in-flight slot is free once this file settles (success or not).
-      if (!dir && activeChatXhr === xhr) activeChatXhr = null
+      if (!dir && activeChatXhr === lastXhr) activeChatXhr = null
       return path
     })
   }
 
-  /** Aggregate the dir-upload result into a single summary toast. */
-  function finishDirUpload(okCount: number, failCount: number) {
+  /**
+   * Aggregate the dir-upload result into a single summary toast.
+   *
+   * `batch` is the caller's token: a batch that was cancelled and then
+   * superseded by a new one finishes LATE (its retry backoff outlives the
+   * switch), and tearing the shared progress bar down here would hide the new
+   * batch's bar and drop its cancel handle.
+   */
+  function finishDirUpload(batch: { cancelled: boolean }, okCount: number, failCount: number) {
+    if (batch !== dirBatch) return
     dirUploading.value = false
     dirUploadProgress.value = 0
     dirUploadSpeedMeter.reset()
@@ -413,6 +550,9 @@ export function useFileUpload() {
     }
     if (isDirUpload) {
       dirUploading.value = true
+      // A fresh batch gets a fresh token: the previous batch's in-flight retry
+      // must stay cancelled even though this flag is reset (see `chatBatch`).
+      dirBatch = { cancelled: false }
       dirUploadCancelled.value = false
       activeDirXhr = null
       dirUploadTotal.value = toUpload.length
@@ -423,10 +563,15 @@ export function useFileUpload() {
     } else {
       // Fresh chat batch: clear the terminate flag and forget the previous
       // batch's paths, so a new upload never inherits an old cancellation.
+      chatBatch = { cancelled: false }
       chatUploadCancelled.value = false
       chatBatchPaths = []
       activeChatXhr = null
     }
+
+    // This batch's own token, captured before the loop: a later batch replaces
+    // the module-level one, and the loop must still see *its* cancellation.
+    const batch = isDirUpload ? dirBatch : chatBatch
 
     let okCount = 0
     let failCount = 0
@@ -435,7 +580,7 @@ export function useFileUpload() {
     const uploadedPaths: string[] = []
 
     for (const file of toUpload) {
-      if (isDirUpload && dirUploadCancelled.value) break
+      if (isDirUpload && batch.cancelled) break
       if (file.size > maxSizeBytes) {
         const msg = gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB })
         if (isDirUpload) {
@@ -450,8 +595,8 @@ export function useFileUpload() {
       // When preserving folder structure, derive each file's relative sub-path
       // (including the top-level folder) from webkitRelativePath.
       const relPath = preserveStructure ? folderRelPath(file) || undefined : undefined
-      const uploadedPath = await uploadOneFile(file, dir, false, relPath, onConflict)
-      if (isDirUpload ? dirUploadCancelled.value : chatUploadCancelled.value) break
+      const uploadedPath = await uploadOneFile(file, dir, false, relPath, onConflict, batch)
+      if (batch.cancelled) break
       if (isDirUpload) {
         if (uploadedPath) okCount++
         else failCount++
@@ -463,7 +608,7 @@ export function useFileUpload() {
     }
 
     if (isDirUpload) {
-      finishDirUpload(okCount, failCount)
+      finishDirUpload(batch, okCount, failCount)
     }
     return uploadedPaths
   }
@@ -518,17 +663,21 @@ export function useFileUpload() {
     // A drag/paste batch is the same "current chat batch" as the picker's: the
     // terminate button lives in the shared Uploads tab and must stop whichever
     // one is showing, so both reset the same flag/paths here.
+    chatBatch = { cancelled: false }
     chatUploadCancelled.value = false
     chatBatchPaths = []
     activeChatXhr = null
     const generation = uploadGeneration
+    // Same reason as in `uploadFiles`: hold this batch's own token.
+    const batch = chatBatch
     for (const file of toUpload) {
-      if (generation !== uploadGeneration || chatUploadCancelled.value) break
+      if (generation !== uploadGeneration || batch.cancelled) break
       if (file.size > maxSizeBytes) {
         toast.show(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }), { icon: 'warning', type: 'error' })
         continue
       }
-      const uploadedPath = await uploadOneFile(file, undefined, true)
+      const uploadedPath = await uploadOneFile(file, undefined, true, undefined, undefined, batch)
+      if (batch.cancelled) break
       if (uploadedPath) chatBatchPaths.push(uploadedPath)
     }
   }
@@ -592,6 +741,8 @@ export function useFileUpload() {
     )
     if (onConflict === 'cancel') return
     dirUploading.value = true
+    dirBatch = { cancelled: false }
+    const batch = dirBatch
     dirUploadCancelled.value = false
     activeDirXhr = null
     dirUploadErrorMsgs = []
@@ -606,13 +757,13 @@ export function useFileUpload() {
     let failCount = 0
 
     for (const { file, relPath } of result.files) {
-      if (dirUploadCancelled.value) break
+      if (batch.cancelled) break
       if (file.size > maxSizeBytes) {
         dirUploadErrorMsgs.push(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }))
         failCount++
       } else {
-        const uploadedPath = await uploadOneFile(file, dir, false, relPath || undefined, onConflict)
-        if (dirUploadCancelled.value) break
+        const uploadedPath = await uploadOneFile(file, dir, false, relPath || undefined, onConflict, batch)
+        if (batch.cancelled) break
         if (uploadedPath) okCount++
         else failCount++
       }
@@ -621,7 +772,7 @@ export function useFileUpload() {
     }
 
     for (const emptyDir of result.emptyDirs) {
-      if (dirUploadCancelled.value) break
+      if (batch.cancelled) break
       const ok = await createDir(dir, emptyDir)
       if (ok) {
         done++
@@ -630,12 +781,13 @@ export function useFileUpload() {
       }
     }
 
-    finishDirUpload(okCount, failCount)
+    finishDirUpload(batch, okCount, failCount)
   }
 
   /** Abort an in-progress directory upload or tree download. */
   function cancelDirUpload() {
     if (!dirUploading.value) return
+    dirBatch.cancelled = true
     dirUploadCancelled.value = true
     activeDirXhr?.abort()
     activeDirXhr = null
@@ -658,6 +810,7 @@ export function useFileUpload() {
    * row would otherwise linger at its last percentage.
    */
   function cancelChatUpload(): string[] {
+    chatBatch.cancelled = true
     chatUploadCancelled.value = true
     activeChatXhr?.abort()
     activeChatXhr = null
@@ -688,6 +841,9 @@ export function useFileUpload() {
     }
 
     dirUploading.value = true
+    // The tree download uses the same bar as directory uploads; claiming the
+    // token makes a late, superseded upload batch leave it alone.
+    dirBatch = { cancelled: false }
     dirUploadCancelled.value = false
     activeDownloadAbort = null
     dirUploadTotal.value = 0

@@ -20,6 +20,7 @@ afterEach(() => {
   delete (window as any).ClawBenchNative
   // A leaked visible bar would make the next test's beginDownload() fail.
   cancelDownload()
+  vi.useRealTimers()
 })
 
 describe('buildLocalFileUrl', () => {
@@ -93,15 +94,21 @@ class FakeXhr {
   status = 200
   response: unknown = new Blob(['data'])
   responseType = ''
+  /** Headers set by the caller (the download sends a Range header). */
+  requestHeaders: Record<string, string> = {}
+  /** Headers the fake server would answer with. */
+  responseHeaders: Record<string, string> = {}
   onprogress: ((e: { loaded: number; total: number; lengthComputable: boolean }) => void) | null = null
   onload: (() => void) | null = null
   onerror: (() => void) | null = null
   onabort: (() => void) | null = null
+  ontimeout: (() => void) | null = null
   aborted = false
 
   constructor() { FakeXhr.instances.push(this) }
   open(method: string, url: string) { this.method = method; this.url = url }
-  setRequestHeader() {}
+  setRequestHeader(name: string, value: string) { this.requestHeaders[name] = value }
+  getResponseHeader(name: string): string | null { return this.responseHeaders[name] ?? null }
   send() {}
   abort() { this.aborted = true; this.onabort?.() }
 }
@@ -173,6 +180,194 @@ describe('downloadFileByPath', () => {
     xhr.onload?.()
 
     expect(downloadVisible.value).toBe(false)
+    // A 4xx is a definitive answer — resending the same request cannot help.
+    expect(FakeXhr.instances).toHaveLength(1)
+  })
+
+  describe('range resume and retry', () => {
+    // Mirrors DOWNLOAD_CHUNK_BYTES in download.ts.
+    const CHUNK = 4 * 1024 * 1024
+
+    /** Answer the nth request with one 206 slice of `fill` bytes. */
+    function answerChunk(index: number, start: number, total: number, fill = 1, size = CHUNK) {
+      const xhr = FakeXhr.instances[index]
+      xhr.status = 206
+      xhr.responseHeaders['Content-Range'] = `bytes ${start}-${start + size - 1}/${total}`
+      xhr.response = new Blob([new Uint8Array(size).fill(fill)])
+      xhr.onload?.()
+    }
+
+    it('requests bounded Range chunks and resumes at the last completed one', async () => {
+      vi.useFakeTimers()
+      const { downloadVisible, downloadReceived } = useDownloadProgress()
+      downloadFileByPath('big.bin', 'big.bin')
+
+      expect(FakeXhr.instances[0].requestHeaders.Range).toBe(`bytes=0-${CHUNK - 1}`)
+      answerChunk(0, 0, CHUNK * 2)
+
+      // The next chunk starts where the first ended.
+      expect(FakeXhr.instances).toHaveLength(2)
+      expect(FakeXhr.instances[1].requestHeaders.Range).toBe(`bytes=${CHUNK}-${CHUNK * 2 - 1}`)
+
+      // Connection drops mid-transfer: the bar must survive the backoff
+      // instead of vanishing (the reported "progress bar disappears at 10%").
+      FakeXhr.instances[1].onerror?.()
+      expect(downloadVisible.value).toBe(true)
+      expect(downloadReceived.value).toBe(CHUNK)
+
+      await vi.advanceTimersByTimeAsync(500)
+      expect(FakeXhr.instances).toHaveLength(3)
+      expect(FakeXhr.instances[2].requestHeaders.Range).toBe(`bytes=${CHUNK}-${CHUNK * 2 - 1}`)
+    })
+
+    it('handles a last chunk shorter than the requested range', async () => {
+      // Real ServeContent clamps the final slice to the file size, so the last
+      // 206 is shorter than CHUNK and its Content-Range end is total-1.
+      const TOTAL = CHUNK + 10
+      const saved: Blob[] = []
+      vi.spyOn(URL, 'createObjectURL').mockImplementation((obj: Blob | MediaSource) => {
+        saved.push(obj as Blob)
+        return 'blob:test'
+      })
+      downloadFileByPath('odd.bin', 'odd.bin')
+
+      answerChunk(0, 0, TOTAL, 1)
+      answerChunk(1, CHUNK, TOTAL, 2, 10)
+
+      expect(saved).toHaveLength(1)
+      expect(saved[0].size).toBe(TOTAL)
+      expect(FakeXhr.instances).toHaveLength(2)
+    })
+
+    it('refuses a 206 slice whose length contradicts Content-Range', async () => {
+      vi.useFakeTimers()
+      const saved: Blob[] = []
+      vi.spyOn(URL, 'createObjectURL').mockImplementation((obj: Blob | MediaSource) => {
+        saved.push(obj as Blob)
+        return 'blob:test'
+      })
+      downloadFileByPath('short.bin', 'short.bin')
+
+      const xhr = FakeXhr.instances[0]
+      xhr.status = 206
+      // Header promises CHUNK bytes, body carries one less.
+      xhr.responseHeaders['Content-Range'] = `bytes 0-${CHUNK - 1}/${CHUNK * 2}`
+      xhr.response = new Blob([new Uint8Array(CHUNK - 1)])
+      xhr.onload?.()
+
+      expect(saved).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(500)
+      expect(FakeXhr.instances).toHaveLength(2)
+      expect(FakeXhr.instances[1].requestHeaders.Range).toBe(`bytes=0-${CHUNK - 1}`)
+    })
+
+    it('refuses a 206 slice that starts at the wrong offset', async () => {
+      // A cache that keeps Range out of its key can answer with a slice from
+      // another offset. Appending it would corrupt the file silently, so the
+      // guard must retry the same offset instead of accepting the bytes.
+      vi.useFakeTimers()
+      const saved: Blob[] = []
+      vi.spyOn(URL, 'createObjectURL').mockImplementation((obj: Blob | MediaSource) => {
+        saved.push(obj as Blob)
+        return 'blob:test'
+      })
+      downloadFileByPath('big.bin', 'big.bin')
+
+      answerChunk(0, 0, CHUNK * 2, 1)
+
+      const second = FakeXhr.instances[1]
+      second.status = 206
+      second.responseHeaders['Content-Range'] = `bytes 0-${CHUNK - 1}/${CHUNK * 2}`
+      second.response = new Blob([new Uint8Array(CHUNK).fill(9)])
+      second.onload?.()
+
+      expect(saved).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(500)
+      expect(FakeXhr.instances[2].requestHeaders.Range).toBe(`bytes=${CHUNK}-${CHUNK * 2 - 1}`)
+    })
+
+    it('saves the concatenated file once the resumed transfer finishes', async () => {
+      // The bytes matter, not just "the bar went away": dropping, duplicating
+      // or reordering a chunk would still hide the bar and click the anchor.
+      vi.useFakeTimers()
+      const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+      const saved: Blob[] = []
+      vi.spyOn(URL, 'createObjectURL').mockImplementation((obj: Blob | MediaSource) => {
+        saved.push(obj as Blob)
+        return 'blob:test'
+      })
+      const { downloadVisible } = useDownloadProgress()
+      downloadFileByPath('big.bin', 'big.bin')
+
+      answerChunk(0, 0, CHUNK * 2, 1)
+      FakeXhr.instances[1].onerror?.()
+      await vi.advanceTimersByTimeAsync(500)
+      answerChunk(2, CHUNK, CHUNK * 2, 2)
+
+      expect(downloadVisible.value).toBe(false)
+      expect(clickSpy).toHaveBeenCalled()
+      expect(saved).toHaveLength(1)
+      const blob = saved[0]
+      expect(blob.size).toBe(CHUNK * 2)
+      const bytes = async (from: number, to: number) =>
+        Array.from(new Uint8Array(await blob.slice(from, to).arrayBuffer()))
+      // Chunk order preserved, seam intact, nothing dropped or duplicated.
+      expect(await bytes(0, 4)).toEqual([1, 1, 1, 1])
+      expect(await bytes(CHUNK - 4, CHUNK + 4)).toEqual([1, 1, 1, 1, 2, 2, 2, 2])
+      expect(await bytes(CHUNK * 2 - 4, CHUNK * 2)).toEqual([2, 2, 2, 2])
+    })
+
+    it('treats a 200 response as the whole file when Range is ignored', () => {
+      const { downloadVisible } = useDownloadProgress()
+      downloadFileByPath('plain.bin', 'plain.bin')
+
+      const xhr = FakeXhr.instances[0]
+      xhr.status = 200
+      xhr.response = new Blob(['whole file'])
+      xhr.onload?.()
+
+      expect(downloadVisible.value).toBe(false)
+      // One request only: a 200 body is complete, so no follow-up chunk.
+      expect(FakeXhr.instances).toHaveLength(1)
+    })
+
+    it('falls back to a plain request when Range is refused (zero-byte file)', () => {
+      // http.ServeContent answers 416 to a Range request on an empty file;
+      // that download used to work, so it must keep working.
+      const { downloadVisible } = useDownloadProgress()
+      downloadFileByPath('empty.txt', 'empty.txt')
+
+      const first = FakeXhr.instances[0]
+      first.status = 416
+      first.onload?.()
+
+      expect(FakeXhr.instances).toHaveLength(2)
+      expect(FakeXhr.instances[1].requestHeaders.Range).toBeUndefined()
+
+      const second = FakeXhr.instances[1]
+      second.status = 200
+      second.response = new Blob([])
+      second.onload?.()
+
+      expect(downloadVisible.value).toBe(false)
+    })
+
+    it('retries a 5xx response and gives up after the retry budget', async () => {
+      vi.useFakeTimers()
+      const { downloadVisible } = useDownloadProgress()
+      downloadFileByPath('busy.bin', 'busy.bin')
+
+      for (let i = 0; i < 4; i++) {
+        const xhr = FakeXhr.instances[i]
+        xhr.status = 502
+        xhr.onload?.()
+        if (i < 3) await vi.advanceTimersByTimeAsync(3000)
+      }
+
+      // Three retries after the first attempt, then a final failure.
+      expect(FakeXhr.instances).toHaveLength(4)
+      expect(downloadVisible.value).toBe(false)
+    })
   })
 
   it('falls back to the anchor when another download is already showing', () => {

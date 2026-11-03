@@ -157,6 +157,7 @@ describe('useFileUpload', () => {
   afterEach(() => {
     teardownXHR()
     globalThis.fetch = originalFetch
+    vi.useRealTimers()
   })
 
   describe('initial state', () => {
@@ -375,37 +376,142 @@ describe('useFileUpload', () => {
       expect(mockToastShow).toHaveBeenCalled()
     })
 
-    it('network error removes entry and shows toast', async () => {
+    it('network error removes entry and shows toast after the retries are spent', async () => {
+      vi.useFakeTimers()
       xhrSendHandler = (xhr) => triggerNetworkError(xhr)
 
       const upload = useFileUpload()
-      await upload.handleFileDrop([makeFile('neterr.txt')])
+      const pending = upload.handleFileDrop([makeFile('neterr.txt')])
+      await vi.advanceTimersByTimeAsync(5000)
+      await pending
+      vi.useRealTimers()
 
       expect(upload.pendingFiles.value).toHaveLength(0)
       expect(mockToastShow).toHaveBeenCalled()
     })
 
-    it('timeout removes entry and shows toast', async () => {
+    it('timeout removes entry and shows toast after the retries are spent', async () => {
+      vi.useFakeTimers()
       xhrSendHandler = (xhr) => triggerTimeout(xhr)
 
       const upload = useFileUpload()
-      await upload.handleFileDrop([makeFile('timeout.txt')])
+      const pending = upload.handleFileDrop([makeFile('timeout.txt')])
+      await vi.advanceTimersByTimeAsync(5000)
+      await pending
+      vi.useRealTimers()
 
       expect(upload.pendingFiles.value).toHaveLength(0)
       expect(mockToastShow).toHaveBeenCalled()
     })
 
-    it('invalid JSON response removes entry and shows toast', async () => {
+    it('invalid JSON response removes entry and shows toast after the retries are spent', async () => {
+      vi.useFakeTimers()
       xhrSendHandler = (xhr) => {
         xhr.responseText = 'not valid json'
         if (xhr.onload) xhr.onload()
       }
 
       const upload = useFileUpload()
-      await upload.handleFileDrop([makeFile('parseerr.txt')])
+      const pending = upload.handleFileDrop([makeFile('parseerr.txt')])
+      await vi.advanceTimersByTimeAsync(5000)
+      await pending
+      vi.useRealTimers()
 
       expect(upload.pendingFiles.value).toHaveLength(0)
       expect(mockToastShow).toHaveBeenCalled()
+    })
+
+    it('retries a fully-sent upload whose response is not JSON and succeeds', async () => {
+      // The reported failure: the bar reached 100% and then the answer was a
+      // proxy error page / truncated body. The file is still in memory, so a
+      // resend is the whole fix.
+      vi.useFakeTimers()
+      let attempts = 0
+      xhrSendHandler = (xhr) => {
+        attempts += 1
+        xhr.upload.onprogress?.({ loaded: 100, total: 100, lengthComputable: true })
+        if (attempts === 1) {
+          xhr.responseText = '<html>502 Bad Gateway</html>'
+          if (xhr.onload) xhr.onload()
+          return
+        }
+        respondSuccess(xhr, '.clawbench/uploads/retry.txt')
+      }
+
+      const upload = useFileUpload()
+      const pending = upload.handleFileDrop([makeFile('retry.txt')])
+      await vi.advanceTimersByTimeAsync(5000)
+      const paths = await pending
+      vi.useRealTimers()
+
+      expect(attempts).toBe(2)
+      expect(paths).toEqual(['.clawbench/uploads/retry.txt'])
+      expect(upload.pendingFiles.value).toHaveLength(1)
+      expect(upload.pendingFiles.value[0].uploading).toBe(false)
+      expect(upload.pendingFiles.value[0].path).toBe('.clawbench/uploads/retry.txt')
+    })
+
+    it('does not retry a business error answered by the server', async () => {
+      // {ok:false} is a definitive answer (too large / forbidden / no file):
+      // resending the same bytes can only produce the same answer.
+      let attempts = 0
+      xhrSendHandler = (xhr) => { attempts += 1; respondError(xhr, 'FileTooLarge') }
+
+      const upload = useFileUpload()
+      await upload.handleFileDrop([makeFile('bad.txt')])
+
+      expect(attempts).toBe(1)
+      expect(upload.pendingFiles.value).toHaveLength(0)
+    })
+
+    it('stops retrying when the batch is terminated during the backoff', async () => {
+      vi.useFakeTimers()
+      let attempts = 0
+      xhrSendHandler = (xhr) => { attempts += 1; triggerNetworkError(xhr) }
+
+      const upload = useFileUpload()
+      const pending = upload.handleFileDrop([makeFile('cancel.txt')])
+      expect(attempts).toBe(1)
+
+      upload.cancelChatUpload()
+      await vi.advanceTimersByTimeAsync(5000)
+      await pending
+      vi.useRealTimers()
+
+      expect(attempts).toBe(1)
+      expect(upload.pendingFiles.value).toHaveLength(0)
+    })
+
+    it('does not resurrect a cancelled batch when a new batch starts during the backoff', async () => {
+      // The retry backoff keeps the old batch's promise alive across macro
+      // tasks. A new batch resets the shared "cancelled" flag, so without a
+      // per-batch token the old batch would resume and upload the files the
+      // user just terminated.
+      vi.useFakeTimers()
+      const attempted: string[] = []
+      xhrSendHandler = (xhr, formData) => {
+        // Real File objects: a plain object is stringified by FormData.append.
+        attempted.push((formData.get('file') as File).name)
+        triggerNetworkError(xhr)
+      }
+      const realFile = (name: string) => new File(['x'], name, { type: 'text/plain' })
+
+      const upload = useFileUpload()
+      const first = upload.handleFileDrop([realFile('a.txt'), realFile('b.txt')])
+      expect(attempted).toEqual(['a.txt'])
+
+      upload.cancelChatUpload()
+      // The user retries with a different file straight away.
+      const second = upload.handleFileDrop([realFile('c.txt')])
+      await vi.advanceTimersByTimeAsync(5000)
+      await Promise.all([first, second])
+      vi.useRealTimers()
+
+      // a.txt was attempted once (then cancelled), b.txt never started, and
+      // only the new batch retried.
+      expect(attempted.filter(n => n === 'a.txt')).toHaveLength(1)
+      expect(attempted).not.toContain('b.txt')
+      expect(attempted.filter(n => n === 'c.txt')).toHaveLength(3)
     })
 
     it('sends FormData with file via XHR POST', async () => {
@@ -451,13 +557,78 @@ describe('useFileUpload', () => {
     })
 
     it('dir upload with XHR error completes cycle', async () => {
+      vi.useFakeTimers()
       xhrSendHandler = (xhr) => triggerNetworkError(xhr)
 
       const upload = useFileUpload()
-      await upload.handleFileDropToDir([makeFile('err.txt')], '/dir')
+      const pending = upload.handleFileDropToDir([makeFile('err.txt')], '/dir')
+      await vi.advanceTimersByTimeAsync(5000)
+      await pending
+      vi.useRealTimers()
 
       expect(upload.dirUploading.value).toBe(false)
       expect(upload.dirUploadDone.value).toBe(1)
+    })
+
+    it('reports one aggregated failure per file even after retries', async () => {
+      // The retries must exhaust first (3 sends) and then produce exactly one
+      // summary toast carrying the last attempt's reason.
+      vi.useFakeTimers()
+      let sends = 0
+      xhrSendHandler = (xhr) => { sends += 1; triggerNetworkError(xhr) }
+
+      const upload = useFileUpload()
+      const pending = upload.handleFileDropToDir([makeFile('err.txt')], '/dir')
+      await vi.advanceTimersByTimeAsync(5000)
+      await pending
+      vi.useRealTimers()
+
+      expect(sends).toBe(3)
+      const failures = mockToastShow.mock.calls
+        .filter((call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).startsWith('upload.failed'))
+      expect(failures).toHaveLength(1)
+      expect(failures[0][0]).toBe('upload.failed:{"error":"upload.networkError"}')
+    })
+
+    it('a superseded dir batch does not tear down the new batch progress bar', async () => {
+      // Batch A is cancelled mid-backoff and batch B starts. When A finally
+      // settles it must not hide B's bar, clear B's cancel handle, or pop A's
+      // own summary toast.
+      vi.useFakeTimers()
+      let sends = 0
+      let pendingB: any = null
+      xhrSendHandler = (xhr) => {
+        sends += 1
+        if (sends === 1) triggerNetworkError(xhr)
+        else pendingB = xhr
+      }
+
+      const upload = useFileUpload()
+      const first = upload.handleFileDropToDir([makeFile('a.txt')], '/dir')
+      // The collision preflight is async, so the first request starts a tick later.
+      await vi.advanceTimersByTimeAsync(0)
+      expect(sends).toBe(1)
+
+      upload.cancelDirUpload()
+      const second = upload.handleFileDropToDir([makeFile('b.txt')], '/dir')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(upload.dirUploading.value).toBe(true)
+
+      // A's retry timer expires while B is still transferring.
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(sends).toBe(2)
+      expect(upload.dirUploading.value).toBe(true)
+
+      respondSuccess(pendingB, 'dir/b.txt')
+      await second
+      await first
+      vi.useRealTimers()
+
+      expect(upload.dirUploading.value).toBe(false)
+      expect(mockToastShow).toHaveBeenCalledWith(
+        expect.stringContaining('upload.completed'),
+        expect.any(Object),
+      )
     })
 
     it('sends FormData with dir field for dir upload', async () => {

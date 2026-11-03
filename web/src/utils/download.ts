@@ -1,4 +1,5 @@
 import { getNative } from '@/utils/clawbenchNative'
+import { appLog, diagLog } from '@/utils/appLog'
 import { isAbsolutePath } from '@/utils/path'
 import { isShareMode, shareApiUrl } from '@/share/shareMode'
 import { gt } from '@/composables/useLocale'
@@ -221,38 +222,239 @@ export function downloadFileByPath(path: string, fileName?: string): void {
     webDownloadWithProgress(id, url, name)
 }
 
+const TAG = 'Download'
+
 /**
- * Web/desktop download via a streamed XHR.
+ * Bytes requested per Range call.
+ *
+ * The download is split into bounded chunks so a dropped connection costs at
+ * most one chunk: everything already received stays buffered and the next
+ * attempt resumes from its byte count. A single unbounded request (the previous
+ * implementation) had to restart from zero after every hiccup, which on a weak
+ * link meant a 200MB transfer could never finish.
+ */
+const DOWNLOAD_CHUNK_BYTES = 4 * 1024 * 1024
+/** Consecutive failures tolerated for one chunk before the download is given up. */
+const DOWNLOAD_MAX_RETRIES = 3
+/** Backoff between attempts; the last entry repeats for any further retry. */
+const DOWNLOAD_RETRY_DELAYS_MS = [500, 1500, 3000]
+
+interface ContentRange {
+    start: number
+    end: number
+    /** Full file size; 0 when the server sent `/*`. */
+    total: number
+}
+
+/** Parse `Content-Range: bytes 0-1023/2048`. Returns null when malformed. */
+function parseContentRange(header: string | null): ContentRange | null {
+    if (!header) return null
+    const match = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)\s*$/i.exec(header.trim())
+    if (!match) return null
+    return {
+        start: Number(match[1]),
+        end: Number(match[2]),
+        total: match[3] === '*' ? 0 : Number(match[3]),
+    }
+}
+
+/**
+ * Web/desktop download via a streamed XHR, resumed across connection drops.
  *
  * XHR rather than fetch: only XHR exposes `onprogress` on the download
  * direction, so the byte counts needed by the progress bar come for free.
+ *
+ * The file is fetched as a sequence of `Range` chunks (the backend serves file
+ * content through `http.ServeContent`, which answers 206). A failed chunk is
+ * retried with backoff, and the bar keeps its position instead of resetting —
+ * the "progress bar silently disappears at 10%" report was the failure path
+ * tearing the bar down on the first hiccup.
+ *
+ * A server that ignores `Range` answers 200 with the whole body; that is
+ * handled by replacing the buffer, so arbitrary URLs passed in by callers
+ * (`downloadUrlWithProgress`) keep working.
  */
 function webDownloadWithProgress(id: number, url: string, name: string): void {
-    const xhr = new XMLHttpRequest()
+    /** Chunks received so far, in order. */
+    const chunks: Blob[] = []
+    /** Bytes committed to `chunks` — also the offset of the next Range request. */
+    let banked = 0
+    /** Full file size; 0 while unknown (no Content-Range / no Content-Length). */
+    let total = 0
+    /** Consecutive failures for the current chunk. */
+    let failures = 0
     let cancelled = false
-    setDownloadCancel(id, () => { cancelled = true; xhr.abort() })
-    xhr.open('GET', url)
-    xhr.responseType = 'blob'
-    xhr.onprogress = (e) => {
-        reportDownloadProgress(id, e.loaded, e.lengthComputable ? e.total : 0)
+    /**
+     * Set once a Range request was refused outright (416, which is what
+     * `http.ServeContent` answers for a zero-byte file). The next attempt then
+     * asks for the whole body instead.
+     */
+    let ignoreRange = false
+    let xhr: XMLHttpRequest | null = null
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+
+    const clearRetryTimer = () => {
+        if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null }
     }
-    xhr.onload = () => {
+
+    setDownloadCancel(id, () => {
+        cancelled = true
+        clearRetryTimer()
+        const inFlight = xhr
+        xhr = null
+        inFlight?.abort()
+    })
+
+    const succeed = () => {
+        // Preserve the response's MIME type: a single chunk keeps it verbatim,
+        // several chunks carry the type of the first one.
+        const blob = chunks.length === 1 ? chunks[0] : new Blob(chunks, { type: chunks[0]?.type || '' })
+        chunks.length = 0
         endDownload(id)
         if (cancelled) return
-        if (xhr.status < 200 || xhr.status >= 300) {
-            useToast().show(gt('upload.downloadFailed'), { icon: 'error', type: 'error' })
-            return
-        }
-        saveBlob(xhr.response as Blob, name)
+        saveBlob(blob, name)
         useToast().show(gt('upload.downloaded', { count: 1 }), { icon: 'success', type: 'success' })
     }
-    xhr.onerror = () => {
+
+    const fail = (reason: string, detail?: Record<string, unknown>) => {
         endDownload(id)
         if (cancelled) return
+        // The failing stage is usually the response one, where an intermediary
+        // returns something the browser cannot describe. Record what is
+        // observable so a "download failed" toast can be diagnosed later.
+        const info = { name, reason, received: banked, total, ...detail }
+        appLog.w(TAG, 'download failed', info)
+        // The terminal line must reach the server even with 调试日志捕获 off
+        // (its default) — otherwise the report this fix is answering stays
+        // undiagnosable. It fires at most once per failed transfer.
+        diagLog(TAG, `download failed ${JSON.stringify(info)}`)
         useToast().show(gt('upload.downloadFailed'), { icon: 'error', type: 'error' })
     }
-    xhr.onabort = () => endDownload(id)
-    xhr.send()
+
+    const retry = (reason: string, detail?: Record<string, unknown>) => {
+        failures += 1
+        appLog.w(TAG, 'download attempt failed', {
+            name, reason, attempt: failures, received: banked, total, ...detail,
+        })
+        if (failures > DOWNLOAD_MAX_RETRIES) { fail(reason, detail); return }
+        // Hold the bar at the banked offset: the transfer continues from there,
+        // so resetting to 0 would read as a restart (and jump backwards).
+        reportDownloadProgress(id, banked, total)
+        const delay = DOWNLOAD_RETRY_DELAYS_MS[Math.min(failures, DOWNLOAD_RETRY_DELAYS_MS.length) - 1]
+        retryTimer = setTimeout(() => {
+            retryTimer = null
+            if (!cancelled) requestChunk()
+        }, delay)
+    }
+
+    const requestChunk = () => {
+        if (cancelled) return
+        if (total > 0 && banked >= total) { succeed(); return }
+        const start = banked
+        const current = new XMLHttpRequest()
+        xhr = current
+        current.open('GET', url)
+        current.responseType = 'blob'
+        // Bounded even for the first request: a 206 also carries the total size
+        // (Content-Range), which the plain response's Content-Length would not
+        // reveal for a resumed transfer.
+        if (!ignoreRange) {
+            current.setRequestHeader('Range', `bytes=${start}-${start + DOWNLOAD_CHUNK_BYTES - 1}`)
+        }
+        current.onprogress = (e) => {
+            // A 206 slice reports only its own bytes, so the bar is offset by
+            // what earlier chunks already delivered. A 200 means Range was
+            // ignored and the body is the whole file from byte 0.
+            const base = current.status === 206 ? start : 0
+            if (total === 0) {
+                const range = parseContentRange(current.getResponseHeader('Content-Range'))
+                if (range) total = range.total
+            }
+            const sliceTotal = e.lengthComputable ? base + e.total : 0
+            reportDownloadProgress(id, base + e.loaded, total || sliceTotal)
+        }
+        current.onload = () => {
+            if (cancelled) return
+            const status = current.status
+            const blob = current.response as Blob | null
+            if (status === 200) {
+                // Range ignored (or a server without Range support): the body is
+                // the whole file, so anything banked by earlier attempts is
+                // discarded rather than concatenated.
+                if (!blob) { fail('empty-response', { status }); return }
+                chunks.length = 0
+                chunks.push(blob)
+                banked = blob.size
+                total = blob.size
+                succeed()
+                return
+            }
+            if (status === 206) {
+                if (!blob || blob.size === 0) { retry('empty-partial-response', { status }); return }
+                const range = parseContentRange(current.getResponseHeader('Content-Range'))
+                if (!range || range.total === 0) {
+                    // A 206 must carry Content-Range. Without it the remaining
+                    // bytes cannot be located, so ask for the whole body in one
+                    // plain request — and give up if that is refused too,
+                    // rather than guessing at chunk boundaries forever.
+                    if (ignoreRange) { fail('missing-content-range', { status }); return }
+                    ignoreRange = true
+                    chunks.length = 0
+                    banked = 0
+                    failures = 0
+                    requestChunk()
+                    return
+                }
+                // A proxy or cache that mishandles Range (a classic: Range is
+                // not part of its cache key) can answer with a different slice
+                // than the one requested. Appending that would produce a file
+                // of exactly the right size with corrupted content and no error
+                // at all, so verify the slice instead of trusting it.
+                if (range.start !== start) {
+                    retry('range-start-mismatch', { status, expected: start, got: range.start })
+                    return
+                }
+                if (range.end - range.start + 1 !== blob.size) {
+                    retry('range-length-mismatch', { status, expected: range.end - range.start + 1, got: blob.size })
+                    return
+                }
+                if (total > 0 && total !== range.total) {
+                    // The file changed underneath the transfer: concatenating
+                    // the two versions would corrupt it.
+                    fail('range-total-changed', { status, expected: total, got: range.total })
+                    return
+                }
+                total = range.total
+                chunks.push(blob)
+                banked += blob.size
+                failures = 0
+                if (banked >= total) { succeed(); return }
+                requestChunk()
+                return
+            }
+            if (status >= 500) { retry(`http-${status}`, { status }); return }
+            if (status === 416 && !ignoreRange && banked === 0) {
+                // `http.ServeContent` answers 416 to a Range request on a
+                // zero-byte file. Ask for the whole body instead of failing a
+                // download that used to work.
+                ignoreRange = true
+                failures = 0
+                requestChunk()
+                return
+            }
+            fail(`http-${status}`, { status })
+        }
+        current.onerror = () => {
+            if (!cancelled) retry('network-error', { status: current.status, readyState: current.readyState })
+        }
+        current.ontimeout = () => {
+            if (!cancelled) retry('timeout', { status: current.status, readyState: current.readyState })
+        }
+        current.onabort = () => { endDownload(id) }
+        current.send()
+    }
+
+    requestChunk()
 }
 
 /** Progress-less fallback used when the single progress bar is occupied. */
