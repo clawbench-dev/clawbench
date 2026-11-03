@@ -11,8 +11,13 @@
       <FileText v-if="b.kind === 'file'" class="transcript__avatar transcript__file-icon" :size="16" aria-hidden="true" />
       <MonitorUp v-else-if="b.kind === 'screen'" class="transcript__avatar transcript__file-icon" :size="16" aria-hidden="true" />
       <ImageIcon v-else-if="b.kind === 'shot'" class="transcript__avatar transcript__file-icon" :size="16" aria-hidden="true" />
+      <!-- A continuation is the same person still talking, split off only to
+           give a monologue paragraph breaks. Repeating the avatar and the name
+           would read as a new turn; the empty cells keep the grid's columns
+           aligned with every other row. -->
+      <span v-else-if="b.continuation" class="transcript__avatar" aria-hidden="true" />
       <SpeakerAvatar v-else class="transcript__avatar" :name="b.speaker" />
-      <span class="transcript__speaker">{{ speakerOf(b) }}</span>
+      <span class="transcript__speaker">{{ b.continuation ? '' : speakerOf(b) }}</span>
       <span v-if="b.kind === 'shot' && b.shot" class="transcript__text transcript__text--shot">
         <span class="transcript__shot-head">
           <span class="transcript__shot-meta">{{ shotLabel(b) }}</span>
@@ -119,9 +124,17 @@ const rootRef = ref<HTMLElement | null>(null)
  * The publisher's pane used to scroll unconditionally, so scrolling up to
  * re-read an earlier line was undone by the next segment. "At the bottom" is
  * measured before the new row is laid out, which is why it happens first.
+ *
+ * The signature is the row count AND the length of the last row's text: one
+ * speaker talking without a pause extends the last block instead of adding a
+ * row, and watching only the count left the panel frozen while the words grew
+ * below the fold.
  */
 watch(
-  () => props.blocks.length,
+  () => {
+    const last = props.blocks[props.blocks.length - 1]
+    return `${props.blocks.length}:${last?.text.length ?? 0}`
+  },
   async () => {
     const el = rootRef.value
     if (!el) return

@@ -48,6 +48,21 @@ describe('TranscriptList', () => {
     expect(rows[1].find('.transcript__text').text()).toBe('第二句')
   })
 
+  it('keeps the paragraph break but drops the repeated name on a continuation row', () => {
+    const w = mountList([
+      block('n1', '我', '第一段'),
+      { ...block('n2', '我', '第二段'), continuation: true },
+    ])
+    const rows = w.findAll('.transcript__row')
+    expect(rows).toHaveLength(2)
+    expect(rows[1].find('.sa').exists()).toBe(false)
+    expect(rows[1].find('.transcript__speaker').text()).toBe('')
+    expect(rows[1].find('.transcript__text').text()).toBe('第二段')
+    // The avatar cell stays so the text keeps the same left edge as every
+    // other row instead of jumping into the avatar column.
+    expect(rows[1].find('.transcript__avatar').exists()).toBe(true)
+  })
+
   it('draws a file event as an icon row, not a speaker', () => {
     const w = mountList([
       { key: 'n1', channel: 'file', speaker: '文件', startedAt: 0, text: '打开 docs/a.md', kind: 'file' },
@@ -95,6 +110,22 @@ describe('TranscriptList', () => {
     })
 
     await w.setProps({ blocks: [block('n1', '我', 'a'), block('n2', '小明', 'b')] })
+    await nextTick()
+    await nextTick()
+    expect(readTop()).toBe(1000)
+  })
+
+  it('follows a block that grows in place, not just a new row', async () => {
+    // One speaker never changes the row count; the panel used to stop following
+    // as soon as the first block was the only block.
+    const w = mountList([block('n1', '我', 'a')], true)
+    const readTop = fakeScroller(w.element as HTMLElement, {
+      scrollHeight: 1000,
+      clientHeight: 400,
+      scrollTop: 600,
+    })
+
+    await w.setProps({ blocks: [block('n1', '我', 'a 又说了很长的一句')] })
     await nextTick()
     await nextTick()
     expect(readTop()).toBe(1000)

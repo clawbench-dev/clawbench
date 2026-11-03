@@ -12,6 +12,11 @@ function seg(id: number, channel: string, speaker: string, startedAt: number, te
   return { id, channel, speaker, startedAt, durationMs: 8000, text }
 }
 
+/** A segment of a continuous monologue: it runs until the next one starts. */
+function spoken(id: number, startedAt: number, text: string): LiveNoteSegment {
+  return { id, channel: 'mic', speaker: '我', startedAt, durationMs: 20_000, text }
+}
+
 describe('mergeNoteSegments', () => {
   it('sorts by speaking time, not by arrival order', () => {
     const merged = mergeNoteSegments(
@@ -51,6 +56,37 @@ describe('groupNoteSegments', () => {
       seg(2, 'mic', '我', 60_000, '很久以后'),
     ])
     expect(blocks).toHaveLength(2)
+  })
+
+  it('splits a monologue into paragraphs instead of one endless block', () => {
+    // Back-to-back 20s segments, the shape the recorder produces while someone
+    // talks without pausing: every gap is ~0, so the gap rule alone merges the
+    // whole meeting and the panel becomes one wall of text.
+    const blocks = groupNoteSegments([
+      spoken(1, 0, '第一段'),
+      spoken(2, 20_000, '第二段'),
+      spoken(3, 40_000, '第三段'),
+      spoken(4, 60_000, '第四段'),
+      spoken(5, 80_000, '第五段'),
+    ])
+    expect(blocks.map((b) => b.text)).toEqual(['第一段 第二段 第三段', '第四段 第五段'])
+    expect(blocks[0].continuation).toBeUndefined()
+    expect(blocks[1].continuation).toBe(true)
+  })
+
+  it('does not call a real break a continuation', () => {
+    // A pause and a speaker change each start a new turn, which shows the name
+    // again — only the span cap splits a turn that is still going.
+    const paused = groupNoteSegments([spoken(1, 0, '开场'), spoken(2, 120_000, '很久以后')])
+    expect(paused).toHaveLength(2)
+    expect(paused[1].continuation).toBeUndefined()
+
+    const afterFile = groupNoteSegments([
+      spoken(1, 0, '先看文档'),
+      { id: -1, channel: 'file', speaker: '文件', startedAt: 10_000, durationMs: 0, text: 'a.md', kind: 'file' },
+      spoken(2, 20_000, '接着说'),
+    ])
+    expect(afterFile.map((b) => b.continuation)).toEqual([undefined, undefined, undefined])
   })
 
   it('skips empty text', () => {

@@ -126,6 +126,14 @@ export interface NoteBlock {
    */
   kind?: 'file' | 'screen' | 'shot'
   /**
+   * The same speaker still talking, split off only because the previous block
+   * reached `BLOCK_MAX_SPAN_MS`.
+   *
+   * The row is a paragraph break, not a new turn: the view leaves the avatar
+   * and the name blank so a monologue does not repeat the speaker every minute.
+   */
+  continuation?: boolean
+  /**
    * Present on `kind: 'shot'` rows: the stored frame, where it lives, and why
    * it was taken. The thumbnail URL is resolved by the record view (it needs
    * the meeting folder), so this row stays a plain value object.
@@ -162,6 +170,18 @@ export function mergeNoteSegments(
 const BLOCK_MERGE_GAP_MS = 4_000
 
 /**
+ * Longest one rendered block may grow before it is split into paragraphs.
+ *
+ * A meeting with several speakers breaks on every change of voice, so the gap
+ * rule is enough there. A monologue has no such break: the segments are cut
+ * back-to-back, so consecutive segments always touch and a whole hour of
+ * speech would render as one paragraph with no way to find your place. The cap
+ * gives it paragraph breaks, and the overflow row is marked as a continuation
+ * so the break does not read as a new speaker.
+ */
+const BLOCK_MAX_SPAN_MS = 60_000
+
+/**
  * Groups the timeline into speaker turns for display.
  *
  * The channels are recorded independently, so one sentence can arrive as two
@@ -185,7 +205,12 @@ export function groupNoteSegments(
     // File events are timeline markers, not speech: merging two consecutive
     // ones would produce "打开 a.md 关闭 a.md" as a single line.
     const mergeable = last && !s.kind && !last.kind
-    if (mergeable && last.channel === s.channel && s.startedAt - lastEnd <= BLOCK_MERGE_GAP_MS) {
+    const sameTurn = mergeable && last.channel === s.channel && s.startedAt - lastEnd <= BLOCK_MERGE_GAP_MS
+    // Only a block that would otherwise keep growing counts as a continuation:
+    // after a real break (a pause, a speaker change, a file marker) the row is
+    // a new turn and shows who is talking again.
+    const continuation = sameTurn && s.startedAt - last.startedAt >= BLOCK_MAX_SPAN_MS
+    if (sameTurn && !continuation) {
       last.text = `${last.text} ${s.text}`.trim()
     } else {
       out.push({
@@ -194,6 +219,7 @@ export function groupNoteSegments(
         speaker: s.speaker,
         startedAt: s.startedAt,
         text: s.text,
+        ...(continuation ? { continuation: true } : {}),
         ...(s.kind ? { kind: s.kind } : {}),
         ...(s.fileAction ? { fileAction: s.fileAction } : {}),
         ...(s.shot ? { shot: s.shot } : {}),
