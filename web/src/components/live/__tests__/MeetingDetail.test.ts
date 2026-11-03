@@ -68,6 +68,9 @@ const getMock = vi.hoisted(() => vi.fn())
 const artifactMock = vi.hoisted(() => vi.fn())
 const chatMock = vi.hoisted(() => vi.fn())
 const removeMock = vi.hoisted(() => vi.fn(async () => ({ ok: true })))
+const regenPlanMock = vi.hoisted(() => vi.fn())
+const regenerateMock = vi.hoisted(() => vi.fn())
+const cancelRegenMock = vi.hoisted(() => vi.fn(async () => true))
 vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/composables/useMeetingHistory')>()
   return {
@@ -77,6 +80,9 @@ vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
       artifact: artifactMock,
       chat: chatMock,
       remove: removeMock,
+      regenPlan: regenPlanMock,
+      regenerate: regenerateMock,
+      cancelRegeneration: cancelRegenMock,
     }),
   }
 })
@@ -89,6 +95,7 @@ function mountDetail() {
       plugins: [i18n],
       stubs: {
         LoadingIndicator: true,
+        BottomSheet: true,
         SpeakerAvatar: { props: ['name'], template: '<span class="sa" :data-name="name" />' },
         // The real body mounts TableRowModal/CodeLinkPreview and the full
         // markdown pipeline; that wiring is covered by MeetingMarkdown.test.ts.
@@ -99,6 +106,16 @@ function mountDetail() {
       },
     },
   })
+}
+
+function artifact(over: Record<string, unknown> = {}) {
+  return {
+    hasContent: true,
+    jobStatus: 'idle',
+    contentAt: 1_700_002_880_000,
+    stale: false,
+    ...over,
+  }
 }
 
 function record(over: Record<string, unknown> = {}) {
@@ -112,7 +129,14 @@ function record(over: Record<string, unknown> = {}) {
     hasRevised: false,
     audioFiles: 3,
     chatCount: 2,
-    status: 'ready',
+    hasSegments: true,
+    hasAudio: true,
+    artifacts: {
+      minutes: artifact(),
+      transcript: artifact(),
+      revised: artifact({ hasContent: false, contentAt: 0 }),
+    },
+    generation: null,
     updatedAt: Date.now(),
     dirPath: '/p/.clawbench/notes/2026-11-01-1430-review-abc123',
     ...over,
@@ -241,7 +265,7 @@ describe('MeetingDetail', () => {
     // Proofreading runs BEFORE summarisation, so its file exists while the
     // minutes are still being written. The tab must show it instead of a
     // spinner that hides work already done.
-    getMock.mockResolvedValue(record({ status: 'generating', updatedAt: Date.now(), hasRevised: true }))
+    getMock.mockResolvedValue(record({ hasRevised: true }))
     artifactMock.mockImplementation(async (_token: string, kind: string) =>
       kind === 'revised' ? { content: REVISED, file: 'transcript-revised.md' } : null,
     )
@@ -274,18 +298,31 @@ describe('MeetingDetail', () => {
   })
 
   it('says the job was interrupted instead of spinning forever', async () => {
-    getMock.mockResolvedValue(
-      record({ status: 'generating', updatedAt: Date.now() - 11 * 60 * 1000 }),
-    )
+    getMock.mockResolvedValue(record({
+      artifacts: {
+        minutes: artifact({ jobStatus: 'failed', errorCode: 'interrupted', error: 'interrupted' }),
+        transcript: artifact(),
+        revised: artifact({ hasContent: false, contentAt: 0 }),
+      },
+    }))
     const w = mountDetail()
     await flushPromises()
 
-    expect(w.text()).toContain(enMessages.meeting.detail.generatingStale)
+    expect(w.text()).toContain(enMessages.meeting.detail.artifact.interrupted)
     expect(w.find('.meeting-generating').exists()).toBe(false)
   })
 
   it('shows a spinner while the job is genuinely running', async () => {
-    getMock.mockResolvedValue(record({ status: 'generating', updatedAt: Date.now() }))
+    getMock.mockResolvedValue(record({
+      hasMinutes: false,
+      artifacts: {
+        minutes: artifact({ hasContent: false, jobStatus: 'running', contentAt: 0 }),
+        transcript: artifact(),
+        revised: artifact({ hasContent: false, contentAt: 0 }),
+      },
+      generation: { step: 'minutes', remaining: [], startedAt: Date.now() },
+    }))
+    artifactMock.mockResolvedValue(null)
     const w = mountDetail()
     await flushPromises()
 
@@ -325,7 +362,9 @@ describe('MeetingDetail', () => {
     // `textContent` concatenates the two block elements with no separator; the
     // exact comparison is what catches a leaked HTML comment.
     expect(pane.text().trim()).toBe(
-      enMessages.meeting.detail.emptyTranscriptTitle + enMessages.meeting.detail.emptyTranscriptDesc,
+      enMessages.meeting.detail.emptyTranscriptTitle
+        + enMessages.meeting.detail.emptyTranscriptDesc
+        + enMessages.meeting.detail.artifact.reasr,
     )
   })
 
@@ -334,7 +373,7 @@ describe('MeetingDetail', () => {
     // (up to 3 minutes), so for a while the file legitimately does not exist.
     // "听记没有开启" was a lie in exactly the window a reader opens this tab.
     getMock.mockResolvedValue(
-      record({ hasTranscript: false, hasMinutes: false, status: 'idle', endedAt: Date.now() - 60_000 }),
+      record({ hasTranscript: false, hasMinutes: false, endedAt: Date.now() - 60_000 }),
     )
     artifactMock.mockResolvedValue(null)
     const w = mountDetail()
@@ -437,7 +476,7 @@ describe('MeetingDetail', () => {
     // `generating`, and re-arm the timer — so a closed view kept requesting
     // record + minutes + transcript + chat every 2.5 s until the process ended.
     vi.useFakeTimers()
-    const rec = record({ status: 'generating', updatedAt: Date.now() })
+    const rec = record({ hasMinutes: false, generation: { step: 'minutes', remaining: [], startedAt: Date.now() } })
     let releasePoll: (() => void) | null = null
     getMock
       .mockImplementationOnce(async () => rec)
@@ -473,7 +512,16 @@ describe('MeetingDetail', () => {
     // few seconds". Polling must be silent; only the first paint may show it.
     vi.useFakeTimers()
     const now = Date.now()
-    const rec = record({ status: 'idle', hasMinutes: false, endedAt: now - 60_000, updatedAt: now })
+    const rec = record({
+      hasMinutes: false,
+      endedAt: now - 60_000,
+      updatedAt: now,
+      artifacts: {
+        minutes: artifact({ hasContent: false, contentAt: 0 }),
+        transcript: artifact(),
+        revised: artifact({ hasContent: false, contentAt: 0 }),
+      },
+    })
     // The poll's own request is held open so the assertion lands WHILE it is in
     // flight: `loading` only lives for a microtask, so checking after the tick
     // settles passes either way.
@@ -535,5 +583,64 @@ describe('MeetingDetail chat sides', () => {
     expect(rows).toHaveLength(2)
     expect(rows[0].classes()).not.toContain('chat-row--self')
     expect(rows[1].classes()).toContain('chat-row--self')
+  })
+})
+
+describe('MeetingDetail regeneration', () => {
+  it('opens the confirmation sheet with the server plan and starts the job', async () => {
+    getMock.mockResolvedValue(record({
+      hasMinutes: false,
+      artifacts: {
+        minutes: artifact({ hasContent: false, contentAt: 0 }),
+        transcript: artifact(),
+        revised: artifact({ hasContent: false, contentAt: 0 }),
+      },
+    }))
+    artifactMock.mockResolvedValue(null)
+    regenPlanMock.mockResolvedValue({
+      target: 'minutes',
+      steps: [{ kind: 'minutes', mode: 'model', reason: 'target' }],
+      warnings: [],
+      blocked: null,
+    })
+    const next = record({ generation: { step: 'minutes', remaining: [], startedAt: Date.now() } })
+    regenerateMock.mockResolvedValue({ ok: true, session: next })
+
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-action="meeting-generate-minutes"]').trigger('click')
+    await flushPromises()
+    expect(regenPlanMock).toHaveBeenCalledWith('tok-1', 'minutes', true)
+
+    const sheet = w.findComponent({ name: 'MeetingRegenerateSheet' })
+    expect(sheet.exists()).toBe(true)
+    await sheet.vm.$emit('confirm')
+    await flushPromises()
+
+    expect(regenerateMock).toHaveBeenCalledWith('tok-1', 'minutes', true)
+    expect(sheet.props('open')).toBe(false)
+    w.unmount()
+  })
+
+  it('asks the server to cancel a running job from the status bar', async () => {
+    getMock.mockResolvedValue(record({
+      hasMinutes: false,
+      generation: { step: 'minutes', remaining: [], startedAt: Date.now() },
+      artifacts: {
+        minutes: artifact({ hasContent: false, jobStatus: 'running', contentAt: 0 }),
+        transcript: artifact(),
+        revised: artifact({ hasContent: false, contentAt: 0 }),
+      },
+    }))
+    artifactMock.mockResolvedValue(null)
+
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-action="meeting-artifact-cancel"]').trigger('click')
+    await flushPromises()
+    expect(cancelRegenMock).toHaveBeenCalledWith('tok-1')
+    w.unmount()
   })
 })

@@ -486,6 +486,39 @@ UNIQUE：`UNIQUE(token, owner, path, opened_at)`。
 
 索引：`idx_live_note_chat_token(token, id)`。永久保留；会议结束时另存一份 `chat.md` 到会议目录。
 
+### live_notes_artifacts（会议产物的生成状态）
+
+每个会议 × 产物一行，两条轴：内容轴（`content_at` 只在内容**变化**时推进，驱动「基于旧版」）与任务轴（`job_status`/`job_at`，驱动「生成中」与 10 分钟中断判定）。`pending_asr_at` 仅 transcript 使用：识别完成、VTT 尚未写成功，重试只渲染不重识别。删除会议与项目删除都会清理。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| token | TEXT | NOT NULL | — | 会议 token |
+| kind | TEXT | NOT NULL | — | transcript / revised / minutes |
+| job_status | TEXT | NOT NULL | `'idle'` | idle / queued / running / failed |
+| error_code | TEXT | NOT NULL | `''` | interrupted / no_source / model / stt / audio / io / timeout / unknown |
+| error | TEXT | NOT NULL | `''` | 原始错误详情 |
+| detail | TEXT | NOT NULL | `''` | 进度短句（3/8、12/90、汇总中） |
+| content_at | INTEGER | NOT NULL | 0 | 内容最后一次变化（Unix 毫秒） |
+| job_at | INTEGER | NOT NULL | 0 | 心跳 / 状态变化（Unix 毫秒） |
+| started_at | INTEGER | NOT NULL | 0 | 本次尝试开始（Unix 毫秒） |
+| pending_asr_at | INTEGER | NOT NULL | 0 | 识别完成、待渲染（仅 transcript） |
+
+主键：`PRIMARY KEY(token, kind)`。
+
+### live_notes_audio（合并声道文件的绝对原点）
+
+合并后的 `audio/<channel>.webm` 从 0ms 开始，但 0ms 对应的绝对时间只有合并那一刻知道（开头的静音片不会产生 `live_notes_segments` 行）。重新识别用它把新分段放回时间线。删除会议与项目删除都会清理。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| token | TEXT | NOT NULL | — | 会议 token |
+| channel | TEXT | NOT NULL | — | 原声道（`viewer:2`），不是文件名 slug |
+| file | TEXT | NOT NULL | — | `audio/` 下的文件名 |
+| base_at | INTEGER | NOT NULL | 0 | 文件 0ms 对应的绝对时间（Unix 毫秒） |
+| duration_ms | INTEGER | NOT NULL | 0 | 文件时长 |
+
+主键：`PRIMARY KEY(token, channel)`。
+
 ### project_forges（项目↔代码托管绑定）
 
 | 列名 | 类型 | 约束 | 默认值 | 说明 |

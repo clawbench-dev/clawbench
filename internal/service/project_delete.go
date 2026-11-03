@@ -47,6 +47,14 @@ var projectScopedDeleteTables = []string{
 	"live_notes_screen",
 }
 
+// projectTokenScopedDeleteTables are meeting tables keyed by the share token
+// with NO project_id column. They are deleted by a token subquery, and must go
+// BEFORE live_notes (which the generic list removes) disappears.
+var projectTokenScopedDeleteTables = []string{
+	"live_notes_artifacts",
+	"live_notes_audio",
+}
+
 // sessionLinkedDeleteTables carry BOTH session_id and project_id. They are
 // deleted by `session_id IN (project's sessions) OR project_id = ?`: a row's
 // project_id is not guaranteed to equal its session's project (historic rows
@@ -142,19 +150,49 @@ func deleteProjectRows(id int64) error {
 	}
 
 	ctx := context.Background()
+	if err := deleteSessionOwnedRows(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := deleteProjectOwnedRows(ctx, tx, id); err != nil {
+		return err
+	}
 
-	// A chat_history row belongs to the project if EITHER its session does, or
-	// its own project_id says so. The two can disagree (historic rows persisted
-	// under the request cookie's project — see the ISS-420 note on
-	// idx_history_sess_unread), so both sides are matched. This predicate is
-	// reused verbatim for the summaries / tts_summaries deletes below: they key
-	// on chat_history.id, so they must cover EXACTLY the same row set or a
-	// mis-attributed message leaves its summary/TTS behind.
-	const historyPredicate = "session_id IN (SELECT id FROM chat_sessions WHERE project_id = ?) OR project_id = ?"
+	// The project's own sessions, then the registry row.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM chat_sessions WHERE project_id = ?", id); err != nil {
+		return fmt.Errorf("delete chat sessions: %w", err)
+	}
 
-	// Order matters: every child row that references chat_history / chat_sessions
-	// / scheduled_tasks / session_tags must go before its parent, since the
-	// deletes below are keyed on the parent still existing.
+	if err := deleteScopedAgents(ctx, tx, id); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM projects WHERE id = ?", id); err != nil {
+		return fmt.Errorf("delete project row: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit project delete: %w", err)
+	}
+	return nil
+}
+
+// historyPredicate matches a chat_history row that belongs to the project.
+//
+// A row belongs to the project if EITHER its session does, or its own
+// project_id says so. The two can disagree (historic rows persisted under the
+// request cookie's project — see the ISS-420 note on idx_history_sess_unread),
+// so both sides are matched. This predicate is reused verbatim for the
+// summaries / tts_summaries deletes below: they key on chat_history.id, so they
+// must cover EXACTLY the same row set or a mis-attributed message leaves its
+// summary/TTS behind.
+const historyPredicate = "session_id IN (SELECT id FROM chat_sessions WHERE project_id = ?) OR project_id = ?"
+
+// deleteSessionOwnedRows removes every child row of the project's sessions.
+//
+// Order matters: every child row that references chat_history / chat_sessions
+// / scheduled_tasks / session_tags must go before its parent, since the deletes
+// in deleteProjectRows are keyed on the parent still existing.
+func deleteSessionOwnedRows(ctx context.Context, tx *sql.Tx, id int64) error {
 	sessionChildren := []struct {
 		query string
 		args  []any
@@ -197,29 +235,24 @@ func deleteProjectRows(id int64) error {
 			return fmt.Errorf("delete from %s: %w", table, err)
 		}
 	}
+	return nil
+}
 
-	// Tables owned by the project directly.
+// deleteProjectOwnedRows removes the tables owned by the project directly: the
+// meeting tables keyed by share token first (they have no project_id column),
+// then the ones carrying project_id.
+func deleteProjectOwnedRows(ctx context.Context, tx *sql.Tx, id int64) error {
+	for _, table := range projectTokenScopedDeleteTables {
+		if _, err := tx.ExecContext(ctx,
+			"DELETE FROM "+table+" WHERE token IN (SELECT token FROM live_notes WHERE project_id = ?)", id,
+		); err != nil {
+			return fmt.Errorf("delete from %s: %w", table, err)
+		}
+	}
 	for _, table := range projectScopedDeleteTables {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE project_id = ?", id); err != nil {
 			return fmt.Errorf("delete from %s: %w", table, err)
 		}
-	}
-
-	// The project's own sessions, then the registry row.
-	if _, err := tx.ExecContext(ctx, "DELETE FROM chat_sessions WHERE project_id = ?", id); err != nil {
-		return fmt.Errorf("delete chat sessions: %w", err)
-	}
-
-	if err := deleteScopedAgents(ctx, tx, id); err != nil {
-		return err
-	}
-
-	if _, err := tx.ExecContext(ctx, "DELETE FROM projects WHERE id = ?", id); err != nil {
-		return fmt.Errorf("delete project row: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit project delete: %w", err)
 	}
 	return nil
 }

@@ -62,6 +62,14 @@ type LiveNoteAudioMerge struct {
 	Channels []string
 	// Segments is how many segment files were folded in and removed.
 	Segments int
+	// Origins maps channel → the absolute time of the merged file's 0ms. Only
+	// channels merged in THIS pass are present: an already-merged channel has
+	// no segments left to derive the origin from.
+	Origins map[string]int64
+	// Durations maps channel → the merged file's length in milliseconds.
+	Durations map[string]int64
+	// Files maps channel → the merged file name (inside audio/).
+	Files map[string]string
 }
 
 // audioSegment is one uploaded segment file awaiting the merge.
@@ -161,7 +169,11 @@ func liveNoteAudioChannels(groups map[string][]audioSegment, done map[string]str
 func mergeLiveNoteChannels(
 	dir string, channels []string, groups map[string][]audioSegment, done map[string]string, solo string,
 ) (LiveNoteAudioMerge, error) {
-	var out LiveNoteAudioMerge
+	out := LiveNoteAudioMerge{
+		Origins:   make(map[string]int64),
+		Durations: make(map[string]int64),
+		Files:     make(map[string]string),
+	}
 	for _, ch := range channels {
 		if ch == solo {
 			continue
@@ -178,11 +190,14 @@ func mergeLiveNoteChannels(
 			return segs[i].path < segs[j].path
 		})
 		target := filepath.Join(dir, liveNoteAudioFileName(ch))
-		merged, err := mergeLiveNoteAudioGroup(dir, target, segs)
+		merged, durationMS, err := mergeLiveNoteAudioGroup(dir, target, segs)
 		if err != nil {
 			return out, err
 		}
 		out.record(ch, target, merged)
+		out.Origins[ch] = segs[0].startedAt
+		out.Durations[ch] = durationMS
+		out.Files[ch] = filepath.Base(target)
 	}
 	return out, nil
 }
@@ -241,6 +256,21 @@ func liveNoteAudioFileName(channel string) string {
 	return channel + ".webm"
 }
 
+// LiveNoteAudioChannelForSlug maps a merged file's channel slug back to the
+// original channel recorded in live_notes_segments.
+//
+// The slug is lossy (`viewer:2` becomes `viewer-2`), so the reverse lookup has
+// to try the channels the transcript actually used. "" means no match (the mix,
+// or a channel that never produced a segment).
+func LiveNoteAudioChannelForSlug(slug string, channels []string) string {
+	for _, channel := range channels {
+		if liveNotesChannelSlug(channel) == slug {
+			return channel
+		}
+	}
+	return ""
+}
+
 // liveNoteAudioChannelOfFile is the inverse of liveNoteAudioFileName: it says
 // which channel an already-merged file belongs to, so a second merge pass can
 // still report what is on disk.
@@ -277,7 +307,7 @@ func parseLiveNoteAudioSegmentName(name string) (audioSegment, bool) {
 // A single segment is already a complete WebM, so it is renamed rather than
 // rewritten — the common case of a channel that spoke once must not pay for a
 // remux.
-func mergeLiveNoteAudioGroup(dir, target string, segs []audioSegment) (int, error) {
+func mergeLiveNoteAudioGroup(dir, target string, segs []audioSegment) (int, int64, error) {
 	if len(segs) == 1 {
 		// A single segment is renamed rather than remuxed, so nothing else in
 		// this path would ever look at its contents. It still has to be a WebM:
@@ -285,80 +315,85 @@ func mergeLiveNoteAudioGroup(dir, target string, segs []audioSegment) (int, erro
 		// (Safari records audio/mp4), and publishing that as `mic.webm` would
 		// hide the problem until somebody tries to play the recording.
 		if err := validateLiveNoteWebMContainer(segs[0].path); err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		if err := os.Rename(segs[0].path, target); err != nil {
-			return 0, fmt.Errorf("live notes: rename single segment: %w", err)
+			return 0, 0, fmt.Errorf("live notes: rename single segment: %w", err)
 		}
-		return 0, nil
+		var duration int64
+		if file, readErr := readLiveNoteWebM(target); readErr == nil {
+			duration = int64(liveNoteSegmentEndMS(file))
+		}
+		return 0, duration, nil
 	}
 
 	tmp, err := os.CreateTemp(dir, ".merge-*.tmp")
 	if err != nil {
-		return 0, fmt.Errorf("live notes: create merge temp: %w", err)
+		return 0, 0, fmt.Errorf("live notes: create merge temp: %w", err)
 	}
 	tmpName := tmp.Name()
 	cleanup := func() {
 		_ = tmp.Close()
 		_ = os.Remove(tmpName)
 	}
-	if err := remuxLiveNoteAudio(tmp, segs); err != nil {
+	durationMS, err := remuxLiveNoteAudio(tmp, segs)
+	if err != nil {
 		cleanup()
-		return 0, err
+		return 0, 0, err
 	}
 	if err := tmp.Sync(); err != nil {
 		cleanup()
-		return 0, fmt.Errorf("live notes: sync merged audio: %w", err)
+		return 0, 0, fmt.Errorf("live notes: sync merged audio: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpName)
-		return 0, fmt.Errorf("live notes: close merged audio: %w", err)
+		return 0, 0, fmt.Errorf("live notes: close merged audio: %w", err)
 	}
 	// CreateTemp is 0600; the segments it replaces were 0644, and the user opens
 	// these files outside the app.
 	if err := os.Chmod(tmpName, 0o644); err != nil { //nolint:gosec // G302: recording is a user artifact, not a secret
 		_ = os.Remove(tmpName)
-		return 0, fmt.Errorf("live notes: chmod merged audio: %w", err)
+		return 0, 0, fmt.Errorf("live notes: chmod merged audio: %w", err)
 	}
 	if err := os.Rename(tmpName, target); err != nil {
 		_ = os.Remove(tmpName)
-		return 0, fmt.Errorf("live notes: publish merged audio: %w", err)
+		return 0, 0, fmt.Errorf("live notes: publish merged audio: %w", err)
 	}
 	// Only now may the segments go: the merged file is in place, so a failure
 	// here leaves extra files rather than a hole in the recording.
 	for _, seg := range segs {
 		if err := os.Remove(seg.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return len(segs), fmt.Errorf("live notes: remove merged segment: %w", err)
+			return len(segs), int64(durationMS), fmt.Errorf("live notes: remove merged segment: %w", err)
 		}
 	}
-	return len(segs), nil
+	return len(segs), int64(durationMS), nil
 }
 
 // remuxLiveNoteAudio writes one WebM holding every segment's clusters.
-func remuxLiveNoteAudio(f *os.File, segs []audioSegment) error {
+func remuxLiveNoteAudio(f *os.File, segs []audioSegment) (float64, error) {
 	first, err := readLiveNoteWebM(segs[0].path)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if len(first.header) == 0 || len(first.tracks) == 0 {
 		// Without the Tracks element the result would be a file no decoder can
 		// open; say which file is at fault instead of writing it.
-		return fmt.Errorf("live notes: %s is not a self-contained WebM segment", filepath.Base(segs[0].path))
+		return 0, fmt.Errorf("live notes: %s is not a self-contained WebM segment", filepath.Base(segs[0].path))
 	}
 
 	spans, err := writeLiveNoteHeader(f, first)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	totalMS, err := writeLiveNoteClusters(f, first, segs)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	end, err := f.Seek(0, io.SeekCurrent)
 	if err != nil {
-		return fmt.Errorf("live notes: tell merged length: %w", err)
+		return 0, fmt.Errorf("live notes: tell merged length: %w", err)
 	}
-	return patchLiveNoteHeader(f, spans, end-spans.bodyStart, totalMS)
+	return totalMS, patchLiveNoteHeader(f, spans, end-spans.bodyStart, totalMS)
 }
 
 // liveNoteHeaderSpans are the two sizes the header reserves and patches later.
@@ -513,12 +548,22 @@ func validateLiveNoteWebMContainer(path string) error {
 // this package wrote every file it reads, and a size it cannot parse means the
 // file is not one of ours.
 func readLiveNoteWebM(path string) (*liveNoteWebM, error) {
+	return readLiveNoteWebMWithCap(path, liveNoteAudioSegmentMaxBytes)
+}
+
+// readLiveNoteWebMWithCap is readLiveNoteWebM with an explicit size ceiling.
+// Merged channel files are larger than one uploaded segment (a four-hour
+// meeting is tens of megabytes), so the splitter passes its own bound.
+func readLiveNoteWebMWithCap(path string, maxBytes int64) (*liveNoteWebM, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("live notes: stat segment: %w", err)
 	}
-	if info.Size() > liveNoteAudioSegmentMaxBytes {
-		return nil, fmt.Errorf("live notes: %s is larger than one segment can be", filepath.Base(path))
+	if maxBytes > 0 && info.Size() > maxBytes {
+		if maxBytes == liveNoteAudioSegmentMaxBytes {
+			return nil, fmt.Errorf("live notes: %s is larger than one segment can be", filepath.Base(path))
+		}
+		return nil, fmt.Errorf("live notes: %s is larger than this reader accepts", filepath.Base(path))
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -897,4 +942,22 @@ func decodeLiveNoteUint(b []byte) uint64 {
 	var buf [8]byte
 	copy(buf[8-len(b):], b)
 	return binary.BigEndian.Uint64(buf[:])
+}
+
+// LiveNoteAudioFileChannelSlug returns the channel slug a file name carries.
+// It accepts both merged channel files (`mic.webm`, `meeting.webm`) and the
+// uploaded segments (`<unix-ms>-mic.webm`), because the re-recognition step has
+// to work on meetings recorded before the origin metadata existed.
+func LiveNoteAudioFileChannelSlug(name string) (string, bool) {
+	if seg, ok := parseLiveNoteAudioSegmentName(name); ok {
+		return seg.channel, true
+	}
+	return liveNoteAudioChannelOfFile(name)
+}
+
+// LiveNoteAudioFileIsSegment reports whether a file name is one uploaded
+// segment (`<unix-ms>-<channel>.webm`) rather than a merged channel file.
+func LiveNoteAudioFileIsSegment(name string) bool {
+	_, ok := parseLiveNoteAudioSegmentName(name)
+	return ok
 }

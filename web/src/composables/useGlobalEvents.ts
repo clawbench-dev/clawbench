@@ -610,6 +610,10 @@ const MEETING_EVENT_PRESENTATION: Record<string, { icon: ToastIconKey; type: Toa
     screen_share: { icon: 'eye', type: 'info', sound: false },
     minutes_ready: { icon: 'file', type: 'success', sound: true },
     minutes_failed: { icon: 'error', type: 'error', sound: true },
+    transcript_ready: { icon: 'file', type: 'success', sound: true },
+    transcript_failed: { icon: 'error', type: 'error', sound: true },
+    revised_ready: { icon: 'file', type: 'success', sound: true },
+    revised_failed: { icon: 'error', type: 'error', sound: true },
 }
 
 /**

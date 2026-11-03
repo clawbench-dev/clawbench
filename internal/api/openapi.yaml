@@ -4138,6 +4138,105 @@ paths:
         "404":
           description: token 不存在或不属于当前项目
 
+  /api/live-share/notes/regenerate/plan:
+    get:
+      tags: [LiveShare]
+      summary: 预览会议产物的重新生成计划
+      description: |
+        返回将要执行的步骤（含 `asr` / `render` / `model` 模式）、每一步的原因、
+        警告与阻断原因。确认面板先取这个计划；POST 时服务端会重新计算同一份计划，
+        不信任客户端的副本。
+      operationId: liveShareNotesRegeneratePlan
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema: { type: string }
+        - name: target
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [transcript, revised, minutes]
+        - name: downstream
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: 计划
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingRegenPlan"
+        "400":
+          description: target 非法
+        "404":
+          description: token 不存在或不属于当前项目
+
+  /api/live-share/notes/regenerate:
+    post:
+      tags: [LiveShare]
+      summary: 重新生成一个会议产物
+      description: |
+        异步执行。服务端重新计算计划后受理；已有任务时幂等返回当前记录。
+        会议仍在进行、或没有任何可用来源时返回 409。
+      operationId: liveShareNotesRegenerate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, target]
+              properties:
+                token: { type: string }
+                target:
+                  type: string
+                  enum: [transcript, revised, minutes]
+                includeDownstream: { type: boolean, default: false }
+      responses:
+        "200":
+          description: 受理后的会议记录
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    $ref: "#/components/schemas/MeetingRecord"
+        "400":
+          description: target 非法
+        "404":
+          description: token 不存在或不属于当前项目
+        "409":
+          description: 会议仍在进行，或没有可用来源
+
+  /api/live-share/notes/regenerate/cancel:
+    post:
+      tags: [LiveShare]
+      summary: 取消正在运行的重新生成
+      description: |
+        只取消任务上下文；已完成的步骤保留，当前步骤不写内容。状态由任务
+        goroutine 唯一写入，因此取消与「刚好完成」不会产生竞态。
+      operationId: liveShareNotesRegenerateCancel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        "200":
+          description: 已请求取消
+        "404":
+          description: token 不存在或不属于当前项目
+        "409":
+          description: 没有正在运行的任务
+
   /api/live-share/notes/chat:
     post:
       tags: [LiveShare]
@@ -7906,6 +8005,84 @@ components:
         audioMeeting: { type: string }
         audioFiles: { type: integer }
 
+    MeetingArtifactState:
+      type: object
+      description: 一个产物的内容轴 + 任务轴。
+      properties:
+        hasContent: { type: boolean, description: 磁盘上是否存在该产物的文件 }
+        jobStatus:
+          type: string
+          enum: [idle, queued, running, failed]
+        errorCode:
+          type: string
+          enum: ["", interrupted, no_source, model, stt, audio, io, timeout, unknown]
+        error: { type: string }
+        detail: { type: string, description: 进度短句，如 3/8、12/90、汇总中 }
+        contentAt:
+          type: integer
+          format: int64
+          description: 内容最后一次**变化**的时间；相同内容重建不会推进
+        stale:
+          type: boolean
+          description: 上一级比本产物新（需要「更新」）
+      required: [hasContent, jobStatus, contentAt, stale]
+
+    MeetingGeneration:
+      type: object
+      description: 当前任务摘要；没有任务时为 null。
+      properties:
+        step:
+          type: string
+          enum: [transcript, revised, minutes]
+        remaining:
+          type: array
+          items:
+            type: string
+            enum: [transcript, revised, minutes]
+        detail: { type: string }
+        startedAt: { type: integer, format: int64 }
+      required: [step, remaining, startedAt]
+
+    MeetingRegenStep:
+      type: object
+      properties:
+        kind: { type: string, enum: [transcript, revised, minutes] }
+        mode:
+          type: string
+          enum: [asr, render, model]
+          description: asr=重新识别录音；render=按现有分段重建；model=校对/纪要
+        reason:
+          type: string
+          enum: [missing, stale, pending, target, downstream]
+      required: [kind, mode, reason]
+
+    MeetingRegenPlan:
+      type: object
+      properties:
+        target: { type: string, enum: [transcript, revised, minutes] }
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/MeetingRegenStep"
+        warnings:
+          type: array
+          items:
+            type: string
+            enum:
+              - overwrite_transcript
+              - audio_unavailable
+              - audio_incomplete
+              - mixed_audio_only
+              - audio_base_estimated
+        blocked:
+          type: object
+          nullable: true
+          properties:
+            code: { type: string }
+            message: { type: string }
+          required: [code, message]
+      required: [target, steps, warnings]
+
     MeetingRecord:
       type: object
       description: |
@@ -7928,12 +8105,19 @@ components:
         hasMeetingAudio: { type: boolean }
         audioFiles: { type: integer }
         chatCount: { type: integer }
-        status:
-          type: string
-          enum: [idle, generating, ready, failed]
-          description: 纪要生成状态
+        hasSegments: { type: boolean, description: 是否有可用的转写分段 }
+        hasAudio: { type: boolean, description: 是否有录音（声道或混音） }
+        artifacts:
+          type: object
+          description: 三个产物各自的状态，键为 transcript / revised / minutes。
+          additionalProperties:
+            $ref: "#/components/schemas/MeetingArtifactState"
+        generation:
+          allOf:
+            - $ref: "#/components/schemas/MeetingGeneration"
+          nullable: true
         updatedAt: { type: integer, format: int64, description: 记录最后写入时间，Unix 毫秒 }
-      required: [token, title, startedAt, endedAt, hasMinutes, hasTranscript, hasRevised, audioFiles, chatCount, status, updatedAt]
+      required: [token, title, startedAt, endedAt, hasMinutes, hasTranscript, hasRevised, audioFiles, chatCount, hasSegments, hasAudio, artifacts, updatedAt]
 
     LiveNoteChatMessage:
       type: object

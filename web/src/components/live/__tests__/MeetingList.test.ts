@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import { MonitorUp } from 'lucide-vue-next'
 import enMessages from '@/i18n/locales/en'
 import MeetingList from '../MeetingList.vue'
@@ -51,8 +51,8 @@ const loading = ref(false)
 const loadMock = vi.hoisted(() => vi.fn(async () => undefined))
 const removeMock = vi.hoisted(() => vi.fn(async () => ({ ok: true })))
 vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
-  // Keep the real helpers (isStaleGenerating drives the "interrupted" chip);
-  // only the composable's I/O is stubbed.
+  // Keep the real helpers (the state labels live in i18n); only the
+  // composable's I/O is stubbed.
   const actual = await importOriginal<typeof import('@/composables/useMeetingHistory')>()
   return {
     ...actual,
@@ -66,12 +66,33 @@ vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
   }
 })
 
+const mountedWrappers: Array<{ unmount: () => void }> = []
+
 function mountList() {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
-  return mount(MeetingList, {
+  const wrapper = mount(MeetingList, {
     props: { active: true },
     global: { plugins: [i18n], stubs: { LoadingIndicator: true } },
   })
+  mountedWrappers.push(wrapper)
+  return wrapper
+}
+
+afterEach(() => {
+  // A mounted list keeps a poll timer while any row is generating. Without
+  // unmounting, every later test inherits it (and the shared sessions ref).
+  while (mountedWrappers.length) mountedWrappers.pop()?.unmount()
+  vi.useRealTimers()
+})
+
+function artifact(over: Record<string, unknown> = {}) {
+  return {
+    hasContent: true,
+    jobStatus: 'idle',
+    contentAt: 1_700_002_880_000,
+    stale: false,
+    ...over,
+  }
 }
 
 function record(over: Record<string, unknown> = {}) {
@@ -85,7 +106,14 @@ function record(over: Record<string, unknown> = {}) {
     hasRevised: false,
     audioFiles: 12,
     chatCount: 4,
-    status: 'ready',
+    hasSegments: true,
+    hasAudio: true,
+    artifacts: {
+      minutes: artifact(),
+      transcript: artifact(),
+      revised: artifact({ hasContent: false, contentAt: 0 }),
+    },
+    generation: null,
     kind: 'video',
     speakerCount: 2,
     updatedAt: 1_700_002_880_000,
@@ -243,28 +271,58 @@ describe('MeetingList rows', () => {
   it('marks a failed minutes job instead of calling it "no artifacts"', () => {
     // A dead job leaves no minutes, so without this branch the row reads as a
     // calm empty record — the one reading that is actively wrong.
-    sessions.value = [record({ status: 'failed', hasMinutes: false, hasTranscript: false })]
+    sessions.value = [record({
+      hasMinutes: false,
+      hasTranscript: false,
+      artifacts: {
+        minutes: artifact({ hasContent: false, jobStatus: 'failed', contentAt: 0 }),
+        transcript: artifact({ hasContent: false, contentAt: 0 }),
+        revised: artifact({ hasContent: false, contentAt: 0 }),
+      },
+    })]
     const w = mountList()
 
     expect(pillTexts(w)).toContain(enMessages.meeting.list.failed)
     expect(w.find('.meeting-row').attributes('data-state')).toBe('failed')
   })
 
-  it('marks a generating job that died with the process as interrupted', () => {
-    sessions.value = [
-      record({ status: 'generating', hasMinutes: false, updatedAt: Date.now() - 11 * 60 * 1000 }),
-    ]
+  it('marks an interrupted job as failed (the server normalizes it)', () => {
+    sessions.value = [record({
+      hasMinutes: false,
+      artifacts: {
+        minutes: artifact({ hasContent: false, jobStatus: 'failed', errorCode: 'interrupted', contentAt: 0 }),
+        transcript: artifact(),
+        revised: artifact({ hasContent: false, contentAt: 0 }),
+      },
+    })]
     const w = mountList()
 
-    expect(pillTexts(w)).toContain(enMessages.meeting.list.stale)
+    expect(pillTexts(w)).toContain(enMessages.meeting.list.failed)
+    expect(w.find('.meeting-row').attributes('data-state')).toBe('failed')
+  })
+
+  it('marks a downstream artifact that is behind its upstream as needing an update', () => {
+    sessions.value = [record({
+      artifacts: {
+        minutes: artifact({ stale: true }),
+        transcript: artifact(),
+        revised: artifact(),
+      },
+    })]
+    const w = mountList()
+
+    expect(pillTexts(w)).toContain(enMessages.meeting.list.updating)
     expect(w.find('.meeting-row').attributes('data-state')).toBe('stale')
   })
 
   it('keeps "generating" for a job that is actually still running', () => {
-    sessions.value = [record({ status: 'generating', hasMinutes: false, updatedAt: Date.now() })]
+    sessions.value = [record({
+      hasMinutes: false,
+      generation: { step: 'minutes', remaining: [], startedAt: Date.now() },
+    })]
     const w = mountList()
 
-    expect(pillTexts(w)).toContain(enMessages.meeting.list.generating)
+    expect(pillTexts(w)).toContain(enMessages.meeting.list.regenerating.replace('{kind}', enMessages.meeting.detail.tabMinutes))
     expect(w.find('.meeting-row').attributes('data-state')).toBe('generating')
   })
 
@@ -407,5 +465,33 @@ describe('MeetingList row affordances (source)', () => {
       (b) => /\.meeting-row__(meta|tags)/.test(b) && /padding-left/.test(b),
     )
     expect(indented).toEqual([])
+  })
+})
+
+describe('MeetingList regeneration polling', () => {
+  it('polls only while a row is generating and stops when it settles', async () => {
+    vi.useFakeTimers()
+    try {
+      sessions.value = [record({
+        hasMinutes: false,
+        generation: { step: 'minutes', remaining: [], startedAt: Date.now() },
+      })]
+      const w = mountList()
+      await flushPromises()
+      expect(loadMock).toHaveBeenCalledTimes(1)
+
+      vi.advanceTimersByTime(5000)
+      await flushPromises()
+      expect(loadMock).toHaveBeenCalledTimes(2)
+
+      sessions.value = [record({ generation: null })]
+      await nextTick()
+      vi.advanceTimersByTime(5000)
+      await flushPromises()
+      expect(loadMock).toHaveBeenCalledTimes(2)
+
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

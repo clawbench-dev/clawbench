@@ -1045,6 +1045,44 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		return fmt.Errorf("failed to create live_notes indexes: %w", err)
 	}
 
+	// Backfill the artifact state table from the legacy status columns.
+	//
+	// INSERT OR IGNORE, not an upsert: once a row exists the new writers are
+	// authoritative, and re-running this on every startup must not resurrect a
+	// status the new code has since advanced. `generating` becomes
+	// failed/interrupted because the process that owned that job is gone by the
+	// time this migration runs.
+	if _, err := store.WriteExec(`
+		INSERT OR IGNORE INTO live_notes_artifacts
+		  (token, kind, job_status, error_code, error, content_at, job_at, started_at)
+		SELECT token, 'minutes',
+		       CASE status WHEN 'generating' THEN 'failed' WHEN 'failed' THEN 'failed' ELSE 'idle' END,
+		       CASE status WHEN 'generating' THEN 'interrupted' WHEN 'failed' THEN 'unknown' ELSE '' END,
+		       CASE status WHEN 'generating' THEN 'interrupted: no progress for 10 minutes' ELSE error END,
+		       CASE WHEN minutes <> '' OR file_path <> ''
+		            THEN CAST(strftime('%s', updated_at) AS INTEGER) * 1000 ELSE 0 END,
+		       CAST(strftime('%s', updated_at) AS INTEGER) * 1000,
+		       0
+		  FROM live_notes
+		 WHERE status <> 'idle' OR minutes <> ''`); err != nil {
+		return fmt.Errorf("failed to backfill live_notes_artifacts (minutes): %w", err)
+	}
+	if _, err := store.WriteExec(`
+		INSERT OR IGNORE INTO live_notes_artifacts
+		  (token, kind, job_status, error_code, error, content_at, job_at, started_at)
+		SELECT token, 'revised',
+		       CASE revise_status WHEN 'generating' THEN 'failed' WHEN 'failed' THEN 'failed' ELSE 'idle' END,
+		       CASE revise_status WHEN 'generating' THEN 'interrupted' WHEN 'failed' THEN 'unknown' ELSE '' END,
+		       CASE revise_status WHEN 'generating' THEN 'interrupted: no progress for 10 minutes' ELSE revise_error END,
+		       CASE WHEN revised <> ''
+		            THEN CAST(strftime('%s', updated_at) AS INTEGER) * 1000 ELSE 0 END,
+		       CAST(strftime('%s', updated_at) AS INTEGER) * 1000,
+		       0
+		  FROM live_notes
+		 WHERE revise_status <> 'idle' OR revised <> ''`); err != nil {
+		return fmt.Errorf("failed to backfill live_notes_artifacts (revised): %w", err)
+	}
+
 	// Migrate: session shares no longer freeze a JSON snapshot. The DDL above is
 	// a no-op on an existing database, so the probe has to run AFTER it — the
 	// table is guaranteed to exist by this point, and the rebuild below is the

@@ -23,6 +23,15 @@ const (
 	// post-meeting job (proofread + summarize, up to ten minutes) finished.
 	MeetingEventMinutesReady  = "minutes_ready"
 	MeetingEventMinutesFailed = "minutes_failed"
+	// MeetingEventRevisedReady / MeetingEventRevisedFailed: a regeneration whose
+	// last step was the proofread transcript (no minutes were requested).
+	MeetingEventRevisedReady  = "revised_ready"
+	MeetingEventRevisedFailed = "revised_failed"
+	// MeetingEventTranscriptReady / MeetingEventTranscriptFailed: a regeneration
+	// whose last step was the transcript itself. Recognition can run for
+	// minutes, so the host must hear about it even after leaving the page.
+	MeetingEventTranscriptReady  = "transcript_ready"
+	MeetingEventTranscriptFailed = "transcript_failed"
 )
 
 // EmitMeetingEvent records one meeting event in the notification log and
@@ -136,6 +145,14 @@ func meetingEventBody(eventType, viewerName string) string {
 		return liveNoteT("MeetingEventMinutesReady")
 	case MeetingEventMinutesFailed:
 		return liveNoteT("MeetingEventMinutesFailed")
+	case MeetingEventRevisedReady:
+		return liveNoteT("MeetingEventRevisedReady")
+	case MeetingEventRevisedFailed:
+		return liveNoteT("MeetingEventRevisedFailed")
+	case MeetingEventTranscriptReady:
+		return liveNoteT("MeetingEventTranscriptReady")
+	case MeetingEventTranscriptFailed:
+		return liveNoteT("MeetingEventTranscriptFailed")
 	default:
 		return ""
 	}

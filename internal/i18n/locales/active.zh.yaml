@@ -433,6 +433,12 @@ MeetingEventViewerJoined: "{{.Name}} 加入了会议"
 MeetingEventScreenShare: "{{.Name}} 开始共享屏幕"
 MeetingEventMinutesReady: 会议纪要已生成
 MeetingEventMinutesFailed: 会议纪要生成失败
+MeetingEventRevisedReady: 会议校对稿已生成
+MeetingEventRevisedFailed: 会议校对稿生成失败
+MeetingEventTranscriptReady: 会议转写已生成
+MeetingEventTranscriptFailed: 会议转写生成失败
+MeetingSpeakerUnknown: 说话人
+MeetingProgressFinal: 汇总中
 # 会议产物（minutes.md / chat.md / transcript-revised.md）与转写行格式。纪要
 # 任务没有 HTTP 请求在作用域内，所以按配置的界面语言渲染。
 MeetingTranscriptSeparator: "："
