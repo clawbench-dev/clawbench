@@ -384,17 +384,22 @@ func (f *statErrorFile) Stat() (fs.FileInfo, error) {
 func (f *statErrorFile) Read([]byte) (int, error) { return 0, os.ErrClosed }
 func (f *statErrorFile) Close() error             { return nil }
 
-// readFileErrorFS opens a file that does NOT implement io.ReadSeeker,
-// and fs.ReadFile fails (returns error), exercising the 500 path.
+// readFileErrorFS opens a file that does NOT implement io.ReadSeeker and whose
+// Read fails, exercising the 500 path. (The read happens through the open
+// handle, not fs.ReadFile, so the failure has to come from the file itself.)
 type readFileErrorFS struct{}
 
 func (r *readFileErrorFS) Open(name string) (fs.File, error) {
-	return &nonSeekerFile{data: []byte("data")}, nil
+	return &readErrorFile{}, nil
 }
 
-func (r *readFileErrorFS) ReadFile(name string) ([]byte, error) {
-	return nil, os.ErrPermission
+type readErrorFile struct{}
+
+func (f *readErrorFile) Stat() (fs.FileInfo, error) {
+	return staticFileInfo{name: "bad.txt", size: 4}, nil
 }
+func (f *readErrorFile) Read([]byte) (int, error) { return 0, os.ErrPermission }
+func (f *readErrorFile) Close() error             { return nil }
 
 // --- ModeLabel tests ---
 

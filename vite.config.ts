@@ -4,6 +4,7 @@ import VueI18nPlugin from '@intlify/unplugin-vue-i18n/vite'
 import { resolve, dirname, sep, extname } from 'path'
 import { fileURLToPath } from 'url'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'fs'
+import { precompress } from './scripts/vite-precompress'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // Build output dir. Deliberately NOT named "public": the server resolves it as a
@@ -221,7 +222,8 @@ export default defineConfig({
     hljsThemeWrapper(),
     xtermRequestModeFix(),
     materialIconsCopy(),
-    excalidrawVendorServe()
+    excalidrawVendorServe(),
+    precompress()
   ],
   root: 'web',
   publicDir: srcAssets,
