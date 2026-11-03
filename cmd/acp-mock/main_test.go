@@ -30,6 +30,27 @@ func TestGroupRoutingReply(t *testing.T) {
 		}
 	})
 
+	// The roster renders "Name（specialty）". A specialty may contain a comma,
+	// and the parenthetical is not part of the name — taking the text up to the
+	// first comma yielded "ACP Mock Agent B（E2E Testing (ACP", a target no
+	// member answers to. The orchestrator then aborted the group turn after two
+	// consecutive unroutable host turns (see group-speaker-switch).
+	t.Run("specialty_with_comma_does_not_truncate_the_name", func(t *testing.T) {
+		prompt := "可选的成员名：ACP Mock Agent B（E2E Testing (ACP, member)）、User。\n"
+		got := groupRoutingReply("s", prompt)
+		if !strings.Contains(got, "<clawbench-mention targets=\"ACP Mock Agent B\">") {
+			t.Fatalf("expected the bare member name, got %q", got)
+		}
+	})
+
+	t.Run("specialty_without_comma_is_stripped_too", func(t *testing.T) {
+		prompt := "可选的成员名：Alice（代码）、Bob。\n"
+		got := groupRoutingReply("s", prompt)
+		if !strings.Contains(got, "<clawbench-mention targets=\"Alice\">") {
+			t.Fatalf("expected the bare member name, got %q", got)
+		}
+	})
+
 	t.Run("empty_list_ends_discussion", func(t *testing.T) {
 		got := groupRoutingReply("s", "可选的成员名：（暂无其他成员）\n")
 		if !strings.Contains(got, "<clawbench-group-end/>") {
