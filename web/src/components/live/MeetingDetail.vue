@@ -125,7 +125,6 @@
               v-if="transcriptLines.length"
               :blocks="transcriptLines"
               data-role="transcript"
-              @shot-open="openShot"
               @shot-delete="removeShot"
             />
             <div v-else-if="isArtifactRunning('transcript')" class="meeting-generating">
@@ -325,7 +324,13 @@ import { formatClockTime } from '@/utils/format'
 import { resolveUserNickname } from '@/utils/userNickname'
 import { meetingDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
 import { parseVttCues, vttToPlainText, type VttCue } from '@/utils/vtt'
-import { groupNoteSegments, type LiveNoteSegment, type NoteBlock } from '@/composables/liveNotes'
+import {
+  groupNoteSegments,
+  withMeetingShots,
+  type NoteBlock,
+  type NoteTimelineRow,
+} from '@/composables/liveNotes'
+import { shotFullUrl, shotThumbUrl } from '@/utils/meetingShots'
 import { parseRevisedTranscript, revisedToPlainText } from '@/utils/revisedTranscript'
 import { normalizeSlashes, toProjectRelative } from '@/utils/path'
 import { store } from '@/stores/app'
@@ -512,53 +517,15 @@ function kindLabel(kind: MeetingArtifactKind): string {
  * rule the live transcript uses (`groupNoteSegments`) — not by a second one
  * that would split the conversation differently on the two surfaces.
  */
-const REASON_KEYS: Record<string, string> = {
-  manual: 'meeting.shots.reasonManual',
-  file: 'meeting.shots.reasonFile',
-  sharer: 'meeting.shots.reasonSharer',
-  switch: 'meeting.shots.reasonSwitch',
-  speech: 'meeting.shots.reasonSpeech',
-  change: 'meeting.shots.reasonChange',
-}
-
-function shotReasonLabel(reason: string): string {
-  return t(REASON_KEYS[reason] ?? 'meeting.shots.reasonChange')
-}
-
-/** Absolute path of a stored frame (the image viewer takes one). */
-function shotFullPath(shot: MeetingShot): string {
-  const dir = record.value?.dirPath
-  if (!dir) return ''
-  return meetingPath(dir, ...shot.fileName.split('/'))
-}
-
-/**
- * Thumbnail URL.
- *
- * The frame lives inside the meeting folder, which is inside the project, so
- * the existing thumbnail endpoint serves it with the project cookie — no new
- * binary endpoint, and the file-manager cache/revalidation comes for free.
- */
-function shotThumbUrl(shot: MeetingShot): string {
-  const full = shotFullPath(shot)
-  if (!full) return ''
-  const rel = normalizeSlashes(toProjectRelative(full, store.state.projectRoot ?? ''))
-  return `/api/fs/thumb?target=${encodeURIComponent(rel)}&w=480`
-}
-
 /**
  * The stored cues as speaker turns, with the key frames merged in.
  *
- * Frames and utterances share one timeline, so they are put in ONE array and
- * sorted before grouping: `groupNoteSegments` walks its input in order, and
- * appending the frames would put every screenshot at the end of the meeting.
- * The row also carries text — an empty one is dropped by the grouper — which is
- * why the reason label is the row's text and the picture is an extra field.
+ * The merge itself is shared with the live panel and the member's record
+ * (`withMeetingShots`): all three must order and label frames the same way, and
+ * a second implementation here is exactly how those surfaces drift apart.
  */
 const transcriptLines = computed<NoteBlock[]>(() => {
-  const rows: Array<
-    LiveNoteSegment & { kind?: 'file' | 'screen' | 'shot'; shot?: NoteBlock['shot'] }
-  > = transcriptCues.value.map((cue, i) => ({
+  const rows: NoteTimelineRow[] = transcriptCues.value.map((cue, i) => ({
     id: i + 1,
     channel: cue.speaker || 'unknown',
     speaker: cue.speaker,
@@ -567,27 +534,21 @@ const transcriptLines = computed<NoteBlock[]>(() => {
     text: cue.text,
     ...(cue.kind ? { kind: cue.kind } : {}),
   }))
-  for (const shot of shots.value) {
-    rows.push({
-      // Negative ids keep frames out of the way of cue ids, which are 1-based.
-      id: -shot.id,
-      channel: 'shot',
-      speaker: '',
-      startedAt: shot.offsetMs,
-      durationMs: 0,
-      text: shotReasonLabel(shot.reason),
-      kind: 'shot',
-      shot: {
+  return groupNoteSegments(
+    withMeetingShots(
+      rows,
+      shots.value.map((shot) => ({
         id: shot.id,
-        thumbUrl: shotThumbUrl(shot),
-        fullPath: shotFullPath(shot),
+        // The cues are offsets from the transcript origin, and the server
+        // computes the frame's offset from that same origin.
+        at: shot.offsetMs,
         reason: shot.reason,
         ref: shot.ref,
-      },
-    })
-  }
-  rows.sort((a, b) => a.startedAt - b.startedAt || a.id - b.id)
-  return groupNoteSegments(rows)
+        thumbUrl: shotThumbUrl(props.token, shot.id),
+        fullUrl: shotFullUrl(props.token, shot.id),
+      })),
+    ),
+  )
 })
 
 /**
@@ -852,12 +813,6 @@ async function openRegenerate(kind: MeetingArtifactKind): Promise<void> {
   regenOpen.value = true
   regenPlan.value = null
   await fetchRegenPlan()
-}
-
-/** Open one frame in the image viewer (the same one the file manager uses). */
-function openShot(block: NoteBlock): void {
-  const target = block.shot?.fullPath
-  if (target) void openFilePath(target, undefined, undefined, 'live')
 }
 
 /**

@@ -1,5 +1,5 @@
 <template>
-  <div ref="rootRef" class="transcript" :class="{ 'transcript--fill': fill }">
+  <div ref="rootRef" class="transcript" :class="{ 'transcript--fill': fill }" data-media-gallery>
     <div
       v-for="b in blocks"
       :key="b.key"
@@ -18,10 +18,11 @@
       <span v-else-if="b.continuation" class="transcript__avatar" aria-hidden="true" />
       <SpeakerAvatar v-else class="transcript__avatar" :name="b.speaker" />
       <span class="transcript__speaker">{{ b.continuation ? '' : speakerOf(b) }}</span>
-      <span v-if="b.kind === 'shot' && b.shot" class="transcript__text transcript__text--shot">
+      <div v-if="b.kind === 'shot' && b.shot" class="transcript__text transcript__text--shot">
         <span class="transcript__shot-head">
-          <span class="transcript__shot-meta">{{ shotLabel(b) }}</span>
+          <span class="transcript__shot-meta">{{ labelOf(b) }}</span>
           <button
+            v-if="!readonly"
             class="transcript__shot-del"
             type="button"
             :title="i18n.global.t('meeting.shots.delete')"
@@ -32,10 +33,40 @@
             <Trash2 :size="13" />
           </button>
         </span>
-        <button class="transcript__shot" type="button" data-role="shot-open" @click="emit('shot-open', b)">
-          <img :src="b.shot.thumbUrl" :alt="shotLabel(b)" loading="lazy" />
-        </button>
-      </span>
+        <!-- The SAME figure a markdown image renders as: 1px frame + floating
+             view button, thumbnail inline, lightbox on click (touch opens from
+             the image body, desktop from the view button — the document-level
+             listener in Lightbox.vue drives both, so this component carries no
+             viewer logic of its own). `data-full-src` points at the viewing
+             size; the lightbox loads that instead of the thumbnail. -->
+        <div
+          class="transcript__shot image-block-wrapper image-block-wrapper--thumb"
+          data-role="shot-open"
+        >
+          <div class="image-block-header">
+            <span class="image-block-header-actions">
+              <button
+                class="image-block-view-btn"
+                type="button"
+                data-action="view"
+                :title="i18n.global.t('imageBlock.view')"
+                :aria-label="i18n.global.t('imageBlock.view')"
+              >
+                <Maximize :size="14" />
+              </button>
+            </span>
+          </div>
+          <span class="lightbox-img-wrap">
+            <img
+              class="lightbox-img"
+              :src="b.shot.thumbUrl"
+              :data-full-src="b.shot.fullUrl"
+              :alt="labelOf(b)"
+              loading="lazy"
+            />
+          </span>
+        </div>
+      </div>
       <span v-else class="transcript__text">{{ textOf(b) }}</span>
     </div>
   </div>
@@ -61,14 +92,29 @@
  * here so the token is declared where it is read.
  */
 import { nextTick, ref, watch } from 'vue'
-import { FileText, ImageIcon, MonitorUp, Trash2 } from 'lucide-vue-next'
+import { FileText, ImageIcon, Maximize, MonitorUp, Trash2 } from 'lucide-vue-next'
 import i18n from '@/i18n'
+import { shotLabel } from '@/utils/meetingShots'
 import SpeakerAvatar from '@/components/common/SpeakerAvatar.vue'
 import type { NoteBlock } from '@/composables/liveNotes'
 
-const props = withDefaults(defineProps<{ blocks: NoteBlock[]; fill?: boolean }>(), { fill: false })
+const props = withDefaults(
+  defineProps<{
+    blocks: NoteBlock[]
+    fill?: boolean
+    /** The member's record: same rows, but deleting is the publisher's alone. */
+    readonly?: boolean
+  }>(),
+  { fill: false, readonly: false },
+)
+/**
+ * No `shot-open`: opening a frame is the Lightbox's own document-level click
+ * handler (`.image-block-view-btn` on desktop, the image body on touch), the
+ * same path a markdown image takes — so this component carries no viewer
+ * wiring, and the share SPA (whose Lightbox is a sibling, not an ancestor)
+ * works with the identical markup.
+ */
 const emit = defineEmits<{
-  'shot-open': [block: NoteBlock]
   'shot-delete': [block: NoteBlock]
 }>()
 
@@ -87,22 +133,8 @@ function speakerOf(b: NoteBlock): string {
 }
 
 /** "打开 architecture.md" / "切换共享源" — why the frame was taken. */
-const REASON_KEYS: Record<string, string> = {
-  manual: 'meeting.shots.reasonManual',
-  file: 'meeting.shots.reasonFile',
-  sharer: 'meeting.shots.reasonSharer',
-  switch: 'meeting.shots.reasonSwitch',
-  speech: 'meeting.shots.reasonSpeech',
-  change: 'meeting.shots.reasonChange',
-}
-
-function shotLabel(b: NoteBlock): string {
-  const shot = b.shot
-  if (!shot) return ''
-  const key = REASON_KEYS[shot.reason] ?? 'meeting.shots.reasonChange'
-  const reason = i18n.global.t(key)
-  const name = shot.ref ? shot.ref.split(/[\\/]/).pop() ?? '' : ''
-  return name ? `${reason} · ${name}` : reason
+function labelOf(b: NoteBlock): string {
+  return b.shot ? shotLabel(b.shot.reason, b.shot.ref) : ''
 }
 
 /** A live file row carries a bare path; a stored transcript carries a sentence. */
@@ -218,7 +250,7 @@ watch(
   font-style: italic;
 }
 
-/* A frame row: the picture is the content, the reason is the label. */
+/* A frame row: the label is the caption, the figure is the content. */
 .transcript__text--shot {
   display: flex;
   flex-direction: column;
@@ -256,21 +288,5 @@ watch(
 .transcript__shot-del:hover {
   background: var(--bg-tertiary, rgba(0, 0, 0, 0.06));
   color: var(--text-primary, #1f2328);
-}
-
-.transcript__shot {
-  display: block;
-  max-width: calc(360 * var(--dp));
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: zoom-in;
-}
-
-.transcript__shot img {
-  display: block;
-  width: 100%;
-  border: 1px solid var(--border-subtle, #e5e7eb);
-  border-radius: var(--radius-md, 8px);
 }
 </style>

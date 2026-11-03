@@ -18,6 +18,7 @@
  * useLiveNotes.ts so this part is testable with fakes.
  */
 import { appLog } from '@/utils/appLog'
+import { shotLabel } from '@/utils/meetingShots'
 
 const TAG = 'LiveNotes'
 
@@ -134,14 +135,16 @@ export interface NoteBlock {
    */
   continuation?: boolean
   /**
-   * Present on `kind: 'shot'` rows: the stored frame, where it lives, and why
-   * it was taken. The thumbnail URL is resolved by the record view (it needs
-   * the meeting folder), so this row stays a plain value object.
+   * Present on `kind: 'shot'` rows: the stored frame and why it was taken.
+   *
+   * `thumbUrl` is the inline thumbnail; `fullUrl` is what the lightbox opens.
+   * Both are token-scoped URLs resolved by the record view (they need the
+   * share token), so this row stays a plain value object.
    */
   shot?: {
     id: number
     thumbUrl: string
-    fullPath: string
+    fullUrl: string
     reason: string
     ref?: string
   }
@@ -188,15 +191,7 @@ const BLOCK_MAX_SPAN_MS = 60_000
  * segments; merging consecutive same-speaker lines keeps the panel readable
  * without hiding who said what.
  */
-export function groupNoteSegments(
-  list: Array<
-    LiveNoteSegment & {
-      kind?: 'file' | 'screen' | 'shot'
-      fileAction?: 'open' | 'close'
-      shot?: NoteBlock['shot']
-    }
-  >,
-): NoteBlock[] {
+export function groupNoteSegments(list: NoteTimelineRow[]): NoteBlock[] {
   const out: NoteBlock[] = []
   let lastEnd = 0
   for (const s of list) {
@@ -214,7 +209,10 @@ export function groupNoteSegments(
       last.text = `${last.text} ${s.text}`.trim()
     } else {
       out.push({
-        key: `n${s.id}`,
+        // Frames and file events both carry negative ids (they are not cues),
+        // so the kind is part of the key: two rows sharing a key would make Vue
+        // reuse the wrong DOM node.
+        key: s.kind === 'shot' ? `s${s.id}` : `n${s.id}`,
         channel: s.channel,
         speaker: s.speaker,
         startedAt: s.startedAt,
@@ -227,6 +225,68 @@ export function groupNoteSegments(
     }
     lastEnd = s.startedAt + Math.max(0, s.durationMs)
   }
+  return out
+}
+
+/**
+ * One row on the transcript timeline, before grouping.
+ *
+ * The three producers (utterances, file events, key frames) all end up in this
+ * shape so `groupNoteSegments` has a single input and the surfaces cannot
+ * diverge in how they order or merge.
+ */
+export type NoteTimelineRow = LiveNoteSegment & {
+  kind?: 'file' | 'screen' | 'shot'
+  fileAction?: 'open' | 'close'
+  shot?: NoteBlock['shot']
+}
+
+/** A stored key frame, placed on the same clock as the rows beside it. */
+export interface NoteShotEvent {
+  id: number
+  /** Timeline position: absolute epoch ms live, offset from the origin in a
+   *  stored record. Callers pass whichever clock their segments use. */
+  at: number
+  reason: string
+  ref?: string
+  /** Inline thumbnail (small, fast). */
+  thumbUrl: string
+  /** Same frame at viewing size, for the lightbox. */
+  fullUrl: string
+}
+
+/**
+ * Folds key frames into the transcript as `kind: 'shot'` rows.
+ *
+ * Frames and utterances share one timeline, so they go into ONE array and are
+ * sorted before grouping: appending them would put every screenshot at the end
+ * of the meeting. Negative ids keep them clear of cue ids, which are 1-based.
+ *
+ * The row's text is the label, not empty: the grouper drops blank rows, and the
+ * record's "copy all" reads this field.
+ */
+export function withMeetingShots(rows: NoteTimelineRow[], shots: NoteShotEvent[]): NoteTimelineRow[] {
+  if (shots.length === 0) return rows
+  const out: NoteTimelineRow[] = rows.slice()
+  for (const s of shots) {
+    out.push({
+      id: -s.id,
+      channel: 'shot',
+      speaker: '',
+      startedAt: s.at,
+      durationMs: 0,
+      text: shotLabel(s.reason, s.ref),
+      kind: 'shot',
+      shot: {
+        id: s.id,
+        thumbUrl: s.thumbUrl,
+        fullUrl: s.fullUrl,
+        reason: s.reason,
+        ref: s.ref ?? '',
+      },
+    })
+  }
+  out.sort((a, b) => a.startedAt - b.startedAt || a.id - b.id)
   return out
 }
 
@@ -251,9 +311,9 @@ export interface NoteFileEvent {
 export function withMeetingFileEvents(
   segments: LiveNoteSegment[],
   files: NoteFileEvent[],
-): Array<LiveNoteSegment & { kind?: 'file'; fileAction?: 'open' | 'close' }> {
+): NoteTimelineRow[] {
   if (files.length === 0) return segments
-  const out: Array<LiveNoteSegment & { kind?: 'file'; fileAction?: 'open' | 'close' }> = segments.map((s) => ({
+  const out: NoteTimelineRow[] = segments.map((s) => ({
     ...s,
   }))
   let id = -1

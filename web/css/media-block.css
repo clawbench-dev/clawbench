@@ -502,6 +502,40 @@
    overridden" — they are deleted. A guard test asserts no chat rule reintroduces
    a size cap. */
 
+/* ─── Thumbnail variant (a timeline row, not a document) ──────────────────
+   The meeting transcript's key frames are TIMELINE EVENTS, not content: the
+   reader needs to recognise which screen was on air, then keep reading. So the
+   figure is capped to a thumbnail instead of the reading column.
+
+   Everything else is still the shared figure — same frame, same floating view
+   button, same lightbox — because the markup only adds this modifier class.
+   The full-size picture reaches the viewer through `data-full-src`, exactly as
+   a markdown thumbnail does, so the inline `<img>` stays a small JPEG.
+
+   Sized by HEIGHT, not width: a portrait or square frame must not become a
+   tall block just because it is narrower than a 16:9 screenshot. The width cap
+   is the secondary guard for very wide captures.
+
+   The selectors mirror the resting ones including `:has()`: `:has()` adds the
+   specificity of its argument, so `.image-block-wrapper--thumb` alone (0-1-0)
+   would lose to the 0-2-1 resting rule above. */
+.image-block-wrapper--thumb,
+.image-block-wrapper--thumb:has(> .lightbox-img-wrap > img) {
+    width: fit-content;
+    max-width: 100%;
+    margin: 0;
+}
+
+.image-block-wrapper--thumb > .lightbox-img-wrap > img,
+.image-block-wrapper--thumb:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap > img {
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: min(100%, calc(260 * var(--dp)));
+    max-height: calc(150 * var(--dp));
+    object-fit: contain;
+}
+
 /* ─── Pending content media: shimmer placeholder ──────────────────────────
    A content image has three visual states, and the markup can only express one
    of them on its own:

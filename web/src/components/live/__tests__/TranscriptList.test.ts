@@ -84,6 +84,56 @@ describe('TranscriptList', () => {
     expect(row.find('.transcript__text').text()).toBe('张三 开始共享屏幕')
   })
 
+  it('draws a key frame with the shared media figure, thumbnail inline', () => {
+    const w = mountList([
+      {
+        key: 'n1',
+        channel: 'shot',
+        speaker: '',
+        startedAt: 0,
+        text: '',
+        kind: 'shot',
+        shot: { id: 4, thumbUrl: '/t/4', fullUrl: '/f/4', reason: 'manual' },
+      },
+    ])
+    const figure = w.find('[data-role="shot-open"]')
+    // Reusing the markdown image figure is the point: the same classes are what
+    // give it the frame, the floating view button and the lightbox behaviour.
+    expect(figure.classes()).toContain('image-block-wrapper')
+    expect(figure.classes()).toContain('image-block-wrapper--thumb')
+    expect(figure.find('.image-block-view-btn').exists()).toBe(true)
+
+    const img = figure.find('img.lightbox-img')
+    // The row paints the thumbnail; the viewer loads `data-full-src`.
+    expect(img.attributes('src')).toBe('/t/4')
+    expect(img.attributes('data-full-src')).toBe('/f/4')
+  })
+
+  it('marks the list as one image gallery so the viewer can flip between frames', () => {
+    // Without a gallery container the lightbox opens a single image with no
+    // prev/next; `.markdown-body` cannot be used here (it would restyle the
+    // whole transcript).
+    expect(mountList([block('n1', '我', 'a')]).attributes('data-media-gallery')).toBeDefined()
+  })
+
+  it('keeps frame opening out of the component: no bespoke click handler', () => {
+    // Opening is the Lightbox's document-level listener, so the row must not
+    // emit an event its hosts would have to wire (the share SPA has no host
+    // handler and its frames were dead before this).
+    const w = mountList([
+      {
+        key: 'n1',
+        channel: 'shot',
+        speaker: '',
+        startedAt: 0,
+        text: '',
+        kind: 'shot',
+        shot: { id: 4, thumbUrl: '/t/4', fullUrl: '/f/4', reason: 'manual' },
+      },
+    ])
+    expect(w.find('[data-role="shot-open"]').element.tagName).not.toBe('BUTTON')
+  })
+
   it('localizes a live file row from its action and path', () => {
     const w = mountList([
       { key: 'n1', channel: 'file', speaker: '', startedAt: 0, text: 'docs/a.md', kind: 'file', fileAction: 'open' },

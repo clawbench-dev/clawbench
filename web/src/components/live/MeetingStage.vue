@@ -378,9 +378,11 @@
       </button>
       <span class="live-panel__spacer" />
       <!-- The only way to keep a frame the triggers missed. Whole-meeting tool,
-           like 标注: it belongs in the footer, not in a setup tab. -->
+           like 标注: it belongs in the footer, not in a setup tab. Only offered
+           while a picture exists — with nobody sharing, there is nothing to
+           grab and the button could only upload a blank frame. -->
       <button
-        v-if="shotsOn"
+        v-if="shotsOn && shotSourceReady"
         class="fbtn"
         type="button"
         data-action="shot-now"
@@ -437,9 +439,15 @@ import {
   useLiveShare,
   type CaptureSource,
 } from '@/composables/useLiveShare'
-import { groupNoteSegments, useLiveNotes, withMeetingFileEvents } from '@/composables/useLiveNotes'
+import {
+  groupNoteSegments,
+  useLiveNotes,
+  withMeetingFileEvents,
+  withMeetingShots,
+} from '@/composables/useLiveNotes'
 import { useMeetingHistory } from '@/composables/useMeetingHistory'
 import { meetingFileEntries, meetingFilesVersion } from '@/utils/meetingFileTracker'
+import { shotFullUrl, shotThumbUrl } from '@/utils/meetingShots'
 import { DEFAULT_DEVICE, useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useMeetingShots } from '@/composables/useMeetingShots'
 import { useScreenWindow, ANNOTATE_WINDOW_NAME, SCREEN_WINDOW_NAME } from '@/composables/useScreenWindow'
@@ -533,6 +541,15 @@ const cameraSelected = computed(() =>
 const notesOn = computed(() => notes.phase.value === 'recording')
 /** Whether frames are being kept right now (running and not paused). */
 const shotsOn = computed(() => shots.active.value && !shots.paused.value)
+/**
+ * Is there a picture to grab at all — this host's screen/window or a member's?
+ *
+ * `startShots` samples exactly this pair (`screenSharer ? remote : preview`),
+ * so with neither the capture has no source and a manual shot would upload
+ * nothing. A camera-only host has no `captureKind` either: the frames are
+ * about what is on screen, not who is on camera.
+ */
+const shotSourceReady = computed(() => hasScreen.value || Boolean(share.screenSharer.value))
 /** Whether this machine has a camera at all, so the group is worth showing. */
 const cameraAvailable = ref(true)
 /** Guards the async start/stop of a screen capture (it opens a picker). */
@@ -949,7 +966,22 @@ const noteBlocks = computed(() => {
   // Read the version unconditionally: the tracker is a plain module, so this is
   // the only dependency that makes the panel re-render when a file is opened.
   void meetingFilesVersion.value
-  return groupNoteSegments(withMeetingFileEvents(notes.segments.value, meetingFileEntries())).slice(-40)
+  const token = share.token.value
+  // Frames join the same timeline the record shows: the live panel used to
+  // only count them, so what the host saw during the meeting and what the
+  // record contains afterwards were two different transcripts.
+  const rows = withMeetingShots(
+    withMeetingFileEvents(notes.segments.value, meetingFileEntries()),
+    shots.items.value.map((s) => ({
+      id: s.id,
+      at: s.at,
+      reason: s.reason,
+      ref: s.ref,
+      thumbUrl: shotThumbUrl(token, s.id),
+      fullUrl: shotFullUrl(token, s.id),
+    })),
+  )
+  return groupNoteSegments(rows).slice(-40)
 })
 
 // ── Runtime capture switches ────────────────────────────────────────────────

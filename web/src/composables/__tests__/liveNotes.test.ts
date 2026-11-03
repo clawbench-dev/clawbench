@@ -4,6 +4,7 @@ import {
   groupNoteSegments,
   mergeNoteSegments,
   withMeetingFileEvents,
+  withMeetingShots,
   type LiveNoteSegment,
   type NotesUploadArgs,
 } from '../liveNotes'
@@ -123,6 +124,46 @@ describe('withMeetingFileEvents', () => {
   it('returns the original list untouched when nothing was opened', () => {
     const segments = [seg(1, 'mic', '我', 1_000, '内容')]
     expect(withMeetingFileEvents(segments, [])).toBe(segments)
+  })
+})
+
+describe('withMeetingShots', () => {
+  it('places frames on the timeline by time, not at the end', () => {
+    const rows = withMeetingShots([seg(1, 'mic', '我', 10_000, '先看文档'), seg(2, 'mic', '我', 30_000, '继续')], [
+      { id: 8, at: 20_000, reason: 'manual', thumbUrl: '/t/8', fullUrl: '/f/8' },
+    ])
+    const blocks = groupNoteSegments(rows)
+    expect(blocks.map((b) => b.kind ?? 'speech')).toEqual(['speech', 'shot', 'speech'])
+    expect(blocks[1].shot?.thumbUrl).toBe('/t/8')
+    // The inline thumbnail and the viewer's image are separate URLs: the row
+    // must not send the full-size frame to the transcript's <img>.
+    expect(blocks[1].shot?.fullUrl).toBe('/f/8')
+  })
+
+  it('labels a frame with its reason, and a file trigger with the base name', () => {
+    const rows = withMeetingShots([], [
+      { id: 3, at: 1_000, reason: 'file', ref: 'C:\\docs\\arch.md', thumbUrl: '/t/3', fullUrl: '/f/3' },
+    ])
+    // The label is the row's text: the grouper drops blank rows, and the
+    // record's "copy all" reads this field.
+    expect(rows[0].text).toContain('arch.md')
+    expect(rows[0].text).not.toContain('docs')
+    expect(rows[0].id).toBe(-3) // negative: never collides with cue ids
+  })
+
+  it('gives frames and file rows distinct keys', () => {
+    // Both kinds carry negative ids, so the key must include the kind.
+    const rows = withMeetingShots(
+      withMeetingFileEvents([], [{ path: 'a.md', openedAt: 1_000, closedAt: 0 }]),
+      [{ id: 1, at: 1_000, reason: 'manual', thumbUrl: '/t/1', fullUrl: '/f/1' }],
+    )
+    const keys = groupNoteSegments(rows).map((b) => b.key)
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+
+  it('returns the original list untouched when no frames were kept', () => {
+    const rows = [seg(1, 'mic', '我', 1_000, '内容')]
+    expect(withMeetingShots(rows, [])).toBe(rows)
   })
 })
 

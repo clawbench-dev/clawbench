@@ -15,16 +15,23 @@ import type { ShareMeetingRecord } from '../liveNotesClient'
  * rendering an empty shell.
  */
 
-vi.mock('lucide-vue-next', () => {
+// Spread the real module: a narrow mock turns any icon a shared child adds
+// (TranscriptList's lightbox view button, …) into `undefined` and the whole
+// record fails to render.
+vi.mock('lucide-vue-next', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('lucide-vue-next')>()
   const stub = { render: () => null }
   return {
+    ...actual,
     Captions: stub,
     Copy: stub,
     FileQuestion: stub,
     FileText: stub,
+    ImageIcon: stub,
     MessagesSquare: stub,
     MonitorUp: stub,
     SpellCheck: stub,
+    Trash2: stub,
   }
 })
 
@@ -50,6 +57,7 @@ function record(over: Partial<ShareMeetingRecord> = {}): ShareMeetingRecord {
       { id: 1, channel: 'mic', speaker: '我', startedAt: 1_700_000_001_000, durationMs: 2000, text: 'hi' },
     ],
     files: [],
+    shots: [],
     minutes: { status: 'ready', markdown: '# MINUTES' },
     chat: [{ speaker: 'Alex', text: 'hello', at: 1_700_000_001_000 }],
     ...over,
@@ -130,6 +138,24 @@ describe('MeetingShareDetail', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0].find('.transcript__speaker').text()).toBe('我')
     expect(rows[0].find('.transcript__text').text()).toBe('hi')
+  })
+
+  it('draws the meeting frames inline, and offers no delete', async () => {
+    fetchRecordMock.mockResolvedValue(
+      record({ shots: [{ id: 8, at: 1_700_000_001_500, reason: 'manual' }] }),
+    )
+    const w = mountDetail()
+    await flushPromises()
+
+    await w.find('[data-tab="transcript"]').trigger('click')
+
+    // The same row component the host's record draws: a member reads the
+    // timeline with the pictures in it, not a transcript without them.
+    const shot = w.find('[data-role="transcript"] [data-role="shot-open"]')
+    expect(shot.exists()).toBe(true)
+    expect(shot.find('img').attributes('src')).toContain('notes/shot?id=8')
+    // Deleting is the publisher's alone.
+    expect(w.find('[data-role="shot-delete"]').exists()).toBe(false)
   })
 
   it('draws the proofread transcript from the record payload', async () => {

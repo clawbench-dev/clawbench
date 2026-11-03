@@ -84,6 +84,7 @@
           <TranscriptList
             v-if="transcriptLines.length"
             :blocks="transcriptLines"
+            readonly
             data-role="transcript"
           />
           <MeetingEmpty
@@ -99,6 +100,7 @@
           <TranscriptList
             v-if="revisedLines.length"
             :blocks="revisedLines"
+            readonly
             data-role="revised"
           />
           <div v-else-if="generating" class="share-meeting__hint-row">
@@ -174,10 +176,18 @@ import TranscriptList from '@/components/live/TranscriptList.vue'
 import MeetingMarkdown from '@/components/live/MeetingMarkdown.vue'
 import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
 import { useToast } from '@/composables/useToast'
-import { groupNoteSegments, withMeetingFileEvents, type NoteBlock } from '@/composables/liveNotes'
+import {
+  groupNoteSegments,
+  withMeetingFileEvents,
+  withMeetingShots,
+  type NoteBlock,
+  type NoteTimelineRow,
+} from '@/composables/liveNotes'
+import { shotFullUrl, shotThumbUrl } from '@/utils/meetingShots'
 import { parseRevisedTranscript, revisedToPlainText } from '@/utils/revisedTranscript'
 import { appLog } from '@/utils/appLog'
 import { readMeetingNick } from './meetingNickname'
+import { getShareToken } from './shareMode'
 import ShareThemeButton from './ShareThemeButton.vue'
 import {
   fetchMeetingRecord,
@@ -215,10 +225,24 @@ const transcriptLines = computed<NoteBlock[]>(() => {
   if (!r) return []
   // The public payload carries no paths (the server blanks them), so the file
   // rows are identified by name — exactly what the live panel shows a viewer.
+  const rows: NoteTimelineRow[] = withMeetingFileEvents(
+    r.segments,
+    r.files.map((f) => ({ path: '', name: f.name, openedAt: f.openedAt, closedAt: f.closedAt })),
+  )
+  // Frames are part of the record, not a publisher-only extra: a member reads
+  // the same timeline the host does, pictures in the same place.
+  const token = getShareToken() ?? ''
   return groupNoteSegments(
-    withMeetingFileEvents(
-      r.segments,
-      r.files.map((f) => ({ path: '', name: f.name, openedAt: f.openedAt, closedAt: f.closedAt })),
+    withMeetingShots(
+      rows,
+      r.shots.map((s) => ({
+        id: s.id,
+        at: s.at,
+        reason: s.reason,
+        ref: s.ref,
+        thumbUrl: shotThumbUrl(token, s.id),
+        fullUrl: shotFullUrl(token, s.id),
+      })),
     ),
   )
 })

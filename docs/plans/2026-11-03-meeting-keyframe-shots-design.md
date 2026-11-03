@@ -449,6 +449,16 @@ CREATE INDEX IF NOT EXISTS idx_live_note_shots_token ON live_notes_shots(token, 
 3. **截图行不进 `transcript.vtt`**，详情页在客户端合并；`/notes/shots` 返回的 `offsetMs` 已经算好原点，客户端不再换算。
 4. **`serveLiveShareNoteShotUpload` 拆成了五个小函数**（`parseShotUpload` / `shotFields` / `readShotImage` / `shotQuotaAvailable` / `shotMeeting`）：原实现圈复杂度 25，超过仓库的 15 上限。
 
+### 2026-11-03 追加：画面行复用 markdown 图片控件
+
+画面行最初是自绘的 `<button><img></button>`（360dp 上限），点击经 `openFilePath` 跳进文件管理器查看器。现改为**渲染成 markdown 图片同一个 figure**（`media-block.css` 的 `.image-block-wrapper` + `--thumb` 变体）：
+
+- **缩略图**：inline `<img>` 仍走 `w=480` 缩略端点；新增 `data-full-src` 指向 `shotFullUrl`（同端点 `w=1600`，服务端按需栅格化，已是它能给出的最大宽度），灯箱用它而不是缩略图；
+- **打开**：不再有 `shot-open` 事件——打开是 `Lightbox.vue` 的文档级委托点击（桌面点悬浮查看按钮、触屏点图片本体），与 markdown 图片同一条路。分享页的 `Lightbox` 是 `ShareView` 的兄弟组件，provide 不到，正是这条委托路径让分享端**原本点不动的画面**获得了查看器；
+- **翻页**：列表根元素标 `data-media-gallery`，`handleLightboxClick` 的画廊容器选择器从 `.markdown-body, .chat-message` 扩到它（转写不能挂 `markdown-body`——那会给整个时间线套阅读排版）；
+- **尺寸**：`--thumb` 变体按**高度**封顶 150dp（宽 260dp 兜底横长截图），否则时间线里一张 16:9 截图占掉整个可视高度；这是 figure 体系里第一个「时间线行」尺寸场景，与「聊天即文档」的单一尺寸策略不冲突——时间线行的图不是内容本体。
+- 测试：`TranscriptList`（figure 类与 data-full-src / 画廊标记 / 不再自持点击）、`MeetingDetail`（data-full-src 指向 w=1600）、`liveNotes`（thumbUrl 与 fullUrl 分离）、`Lightbox`（`data-media-gallery` 集合翻页）；两个曾用窄 lucide mock 的测试改为 spread `importOriginal`（共享子组件加图标即崩的旧坑）。
+
 ### 性能（2026-11-03 优化）
 
 - 抓帧拆成 `domSample()`（drawImage + dHash）与惰性的 `encode()`：被调度器丢弃的帧不再编码。兜底触发的成本从 ~30–60ms 降到 ~3ms，按现在的触发频率约省掉 3/4 的编码；

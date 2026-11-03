@@ -771,6 +771,18 @@ function deriveMermaidName(mermaidNode) {
     return 'diagram.svg'
 }
 
+/**
+ * Containers whose images form ONE gallery: clicking any of them opens the
+ * lightbox with prev/next across the rest.
+ *
+ * Rendered markdown and chat bubbles were the only two surfaces with content
+ * images. The meeting transcript is the third — its frame rows are a timeline,
+ * not a document, so they cannot carry `.markdown-body` (that would apply the
+ * reading-column typography to the whole transcript), hence the explicit
+ * `data-media-gallery` marker on the list root.
+ */
+const MEDIA_GALLERY_SELECTOR = '.markdown-body, .chat-message, [data-media-gallery]'
+
 function collectMdImages(container, clickedImg, clickedMermaid, clickedSvg) {
     const list = []
     let startIdx = 0
@@ -863,8 +875,9 @@ function handleLightboxClick(e) {
     }
     if (img) {
         e.preventDefault()
-        // Check if the image is inside a markdown body — collect sibling images for navigation
-        const mdContainer = img.closest('.markdown-body, .chat-message')
+        // Collect the images of this gallery (markdown document, chat bubble,
+        // transcript timeline) so the viewer can flip between them.
+        const mdContainer = img.closest(MEDIA_GALLERY_SELECTOR)
         if (mdContainer) {
             const { list, startIdx } = collectMdImages(mdContainer, img, null, null)
             if (list.length > 1) {
@@ -883,7 +896,7 @@ function handleLightboxClick(e) {
         e.preventDefault()
         const svg = mermaidArtwork(mermaidDiv)
         if (svg) {
-            const mdContainer = mermaidDiv.closest('.markdown-body, .chat-message')
+            const mdContainer = mermaidDiv.closest(MEDIA_GALLERY_SELECTOR)
             if (mdContainer) {
                 const { list, startIdx } = collectMdImages(mdContainer, null, mermaidDiv, null)
                 if (list.length > 1) {
@@ -900,7 +913,7 @@ function handleLightboxClick(e) {
     const svgEl = wrap?.querySelector('svg.lightbox-svg') || e.target.closest('.lightbox-svg')
     if (svgEl) {
         e.preventDefault()
-        const mdContainer = svgEl.closest('.markdown-body, .chat-message')
+        const mdContainer = svgEl.closest(MEDIA_GALLERY_SELECTOR)
         if (mdContainer) {
             const { list, startIdx } = collectMdImages(mdContainer, null, null, svgEl)
             if (list.length > 1) {

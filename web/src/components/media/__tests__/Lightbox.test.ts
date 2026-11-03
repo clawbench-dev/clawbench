@@ -1467,6 +1467,39 @@ describe('Lightbox', () => {
 
       expect(vm.currentUrl).toContain('/api/fs/raw/photo.jpg')
     })
+
+    it('opens a [data-media-gallery] as one gallery, at the viewing size', async () => {
+      // The meeting transcript cannot carry `.markdown-body` (it would restyle
+      // the whole timeline), so its list root marks itself as a gallery. Both
+      // frames must reach the viewer, and the FULL render (data-full-src) is
+      // what it shows — the row's <img> is only a thumbnail.
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const gallery = document.createElement('div')
+      gallery.setAttribute('data-media-gallery', '')
+      gallery.innerHTML =
+        '<div class="image-block-wrapper"><div class="image-block-header">' +
+        '<button class="image-block-view-btn" data-action="view"></button></div>' +
+        '<span class="lightbox-img-wrap"><img class="lightbox-img" src="/t/1" ' +
+        'data-full-src="/f/1" alt="Frame 1"></span></div>' +
+        '<div class="image-block-wrapper"><div class="image-block-header">' +
+        '<button class="image-block-view-btn" data-action="view"></button></div>' +
+        '<span class="lightbox-img-wrap"><img class="lightbox-img" src="/t/2" ' +
+        'data-full-src="/f/2" alt="Frame 2"></span></div>'
+      document.body.appendChild(gallery)
+
+      gallery.querySelectorAll<HTMLButtonElement>('.image-block-view-btn')[1]
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await nextTick()
+      await nextTick()
+
+      expect(vm.mdImages).toHaveLength(2)
+      expect(vm.mdCurrentIndex).toBe(1)
+      expect(vm.currentUrl).toContain('/f/2')
+
+      document.body.removeChild(gallery)
+    })
   })
 
   // ── SVG navigation in md mode ──

@@ -12,9 +12,15 @@ import MeetingDetail from '../MeetingDetail.vue'
  * not left spinning forever.
  */
 
-vi.mock('lucide-vue-next', () => {
+// Spread the real module: a narrow mock turns any icon a shared child adds
+// (TranscriptList's lightbox view button, …) into `undefined` and the whole
+// panel fails to render. The stubs only keep the icons this test asserts on
+// from drawing anything.
+vi.mock('lucide-vue-next', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('lucide-vue-next')>()
   const stub = { render: () => null }
   return {
+    ...actual,
     ArrowLeft: stub,
     Captions: stub,
     Copy: stub,
@@ -788,8 +794,13 @@ describe('MeetingDetail key frames', () => {
     expect(labels[1]).toContain('arch.md')
 
     const src = rows[0].find('img').attributes('src') ?? ''
-    expect(src).toContain('/api/fs/thumb?target=')
-    expect(decodeURIComponent(src)).toContain('shots/b.webp')
+    // Token-scoped: the frame is addressed by id, so no project path reaches
+    // the browser and the same URL works for the member's record.
+    expect(src).toContain('/api/share/tok-1/notes/shot?id=8')
+    // The row paints a thumbnail; the viewer opens the wide render.
+    expect(rows[0].find('img').attributes('data-full-src')).toContain(
+      '/api/share/tok-1/notes/shot?id=8&w=1600',
+    )
 
     await w.findAll('[data-role="shot-delete"]')[0].trigger('click')
     await flushPromises()
