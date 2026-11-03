@@ -345,6 +345,8 @@ function close() {
   flex-direction: column;
   gap: var(--space-3);
   min-height: 0;
+  /* Clear the header's 1px shadow rule; matches ProviderModelsPicker. */
+  padding-top: var(--space-4);
 }
 /* Gutter only: the field is the shared SearchInput pill. */
 .summary-search {
