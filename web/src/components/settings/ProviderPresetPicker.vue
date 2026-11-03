@@ -1,74 +1,60 @@
 <template>
-  <!-- Provider picker: a brand-icon list with search instead of a native
-       <select>. The catalogue has 200+ entries whose names mean little on
-       their own; the icon + host makes the right row recognizable at a glance.
-       This is a ModalDialog rather than a BottomSheet because it always opens
-       from inside ProviderFormDialog: a sheet lives in the overlay band (1000)
-       and would be buried under that dialog, and ModalDialog's back handler
-       (PRIORITY_OVERLAY+1) would beat the sheet's. Two dialogs tie on priority,
-       so the one opened later wins — which is this one. -->
-  <ModalDialog
-    :open="open"
-    :title="t('settings.items.providerPresetTitle')"
-    :z-index="2600"
-    @close="close"
-  >
-    <template #header>
-      <Boxes :size="16" class="modal-header-icon" />
-      <span class="modal-title">{{ t('settings.items.providerPresetTitle') }}</span>
-    </template>
+  <!-- Provider preset list, rendered INLINE inside ProviderFormDialog (a body
+       view, not its own ModalDialog). It always opened from inside the form,
+       which stacked a second scrim over it and cost two back presses on a
+       phone; the form now swaps between views inside one shell instead.
+       A brand-icon list with search rather than a native <select>: the
+       catalogue has 200+ entries whose names mean little on their own, and the
+       icon + host makes the right row recognizable at a glance. -->
+  <div class="preset-picker" data-role="preset-picker">
+    <div class="preset-search">
+      <SearchInput v-model="query" :placeholder="t('settings.items.providerPresetSearch')" />
+    </div>
 
-    <div class="preset-picker">
-      <div class="preset-search">
-        <SearchInput v-model="query" :placeholder="t('settings.items.providerPresetSearch')" />
-      </div>
+    <div class="preset-list">
+      <button
+        v-if="!query"
+        type="button"
+        class="preset-row preset-row--none"
+        :class="{ 'preset-row--active': !selectedId }"
+        @click="choose(null)"
+      >
+        <span class="preset-icon preset-icon--none"><Ban :size="16" /></span>
+        <span class="preset-text">
+          <span class="preset-name">{{ t('settings.items.providerPresetNone') }}</span>
+        </span>
+        <Check v-if="!selectedId" :size="16" class="preset-check" />
+      </button>
 
-      <div class="preset-list">
-        <button
-          v-if="!query"
-          type="button"
-          class="preset-row preset-row--none"
-          :class="{ 'preset-row--active': !selectedId }"
-          @click="choose(null)"
-        >
-          <span class="preset-icon preset-icon--none"><Ban :size="16" /></span>
-          <span class="preset-text">
-            <span class="preset-name">{{ t('settings.items.providerPresetNone') }}</span>
-          </span>
-          <Check v-if="!selectedId" :size="16" class="preset-check" />
-        </button>
+      <button
+        v-for="p in filtered"
+        :key="p.id"
+        type="button"
+        class="preset-row"
+        :class="{ 'preset-row--active': selectedId === p.id }"
+        :data-preset-id="p.id"
+        @click="choose(p)"
+      >
+        <ProviderIcon tile :provider-id="p.id" :name="p.name" :size="30" />
+        <span class="preset-text">
+          <span class="preset-name">{{ p.name }}</span>
+          <span class="preset-meta">{{ hostOf(p.baseUrl) }}</span>
+        </span>
+        <span class="preset-proto">{{ p.protocol }}</span>
+        <Check v-if="selectedId === p.id" :size="16" class="preset-check" />
+      </button>
 
-        <button
-          v-for="p in filtered"
-          :key="p.id"
-          type="button"
-          class="preset-row"
-          :class="{ 'preset-row--active': selectedId === p.id }"
-          :data-preset-id="p.id"
-          @click="choose(p)"
-        >
-          <ProviderIcon tile :provider-id="p.id" :name="p.name" :size="30" />
-          <span class="preset-text">
-            <span class="preset-name">{{ p.name }}</span>
-            <span class="preset-meta">{{ hostOf(p.baseUrl) }}</span>
-          </span>
-          <span class="preset-proto">{{ p.protocol }}</span>
-          <Check v-if="selectedId === p.id" :size="16" class="preset-check" />
-        </button>
-
-        <div v-if="filtered.length === 0" class="preset-empty">
-          {{ t('settings.items.providerPresetEmpty') }}
-        </div>
+      <div v-if="filtered.length === 0" class="preset-empty">
+        {{ t('settings.items.providerPresetEmpty') }}
       </div>
     </div>
-  </ModalDialog>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Ban, Boxes, Check } from 'lucide-vue-next'
-import ModalDialog from '@/components/common/ModalDialog.vue'
+import { Ban, Check } from 'lucide-vue-next'
 import SearchInput from '@/components/common/SearchInput.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 
@@ -80,14 +66,15 @@ export interface PresetOption {
 }
 
 const props = defineProps<{
-  open: boolean
+  /** Whether this panel is the visible view of the form dialog. */
+  active: boolean
   presets: PresetOption[]
   selectedId: string
 }>()
 
 const emit = defineEmits<{
-  'update:open': [value: boolean]
   select: [preset: PresetOption | null]
+  done: []
 }>()
 
 const { t } = useI18n()
@@ -95,10 +82,11 @@ const query = ref('')
 
 // A fresh sheet should not remember the previous search.
 watch(
-  () => props.open,
-  (open) => {
-    if (open) query.value = ''
+  () => props.active,
+  (active) => {
+    if (active) query.value = ''
   },
+  { immediate: true },
 )
 
 const filtered = computed(() => {
@@ -122,13 +110,9 @@ function hostOf(baseUrl: string): string {
   }
 }
 
-function close() {
-  emit('update:open', false)
-}
-
 function choose(preset: PresetOption | null) {
   emit('select', preset)
-  close()
+  emit('done')
 }
 </script>
 

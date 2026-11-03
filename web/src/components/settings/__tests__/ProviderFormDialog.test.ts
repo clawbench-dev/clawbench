@@ -23,6 +23,7 @@ const i18n = createI18n({
   locale: 'zh',
   messages: {
     zh: {
+      common: { back: '返回', close: '关闭' },
       settings: {
         items: {
           providerAdd: '添加提供商',
@@ -31,28 +32,47 @@ const i18n = createI18n({
           providerSave: '保存',
           providerCancel: '取消',
           providerName: '名称',
+          providerNamePlaceholder: '例如 MiniMax',
+          providerProtocol: '协议',
           providerBaseUrl: '端点地址',
+          providerBaseUrlPlaceholder: 'https://api.example.com/v1',
+          providerBaseUrlHint: '可留空',
+          providerAuthLabel: '认证方式',
+          providerAuthAuto: '自动（推荐）',
           providerKey: 'API Key',
           providerKeyKeep: '留空表示不修改',
           providerKeyReveal: '查看密钥',
           providerKeyHide: '隐藏密钥',
           providerKeyRevealFailed: '服务端没有返回已保存的密钥',
-          providerAuthAuto: '自动',
+          providerKeyStateSaved: '已保存',
+          providerKeyStateMissing: '未配置',
+          providerClearKey: '清除已保存的密钥',
+          providerClearKeyPending: '保存后将删除已保存的密钥',
+          providerUndo: '撤销',
+          providerSectionConn: '连接',
+          providerSectionCreds: '凭据',
+          providerSectionModels: '模型',
+          providerSectionCredsLabel: '凭据',
           providerPresetPlaceholder: '从预设选择',
-          providerClearKey: '清除密钥',
-          providerModelsLabel: '可用模型',
-          providerModelsChoose: '选择模型',
+          providerPresetTitle: '选择供应商',
+          providerModelsLabel: '模型',
+          providerModelsManage: '管理',
           providerModelsNone: '还没有选择模型',
-          providerDefaultModel: '默认模型',
-          providerWireLabel: '接口协议',
+          providerModelsSummary: '已选 {count} 个',
+          providerModelsTitle: '选择可用模型',
+          providerModelsDone: '完成',
+          providerDefaultModelValue: '默认 {model}',
+          providerWireSection: 'Codex 调用方式',
           providerWireResponses: 'Responses API',
           providerWireChat: 'Chat Completions',
           providerWireHint: '只影响 Codex，已连接的会话需重启',
           providerAuthUnsupported: '「{mode}」不适用于 {protocol}',
+          providerTestConn: '测试连接',
+          providerTestingConn: '测试中…',
+          providerTestOk: '连接正常，返回 {count} 个模型',
           providerTestFailed: '连接失败',
-          providerModelTestHint: '测试该模型',
-          providerModelTestOk: '{model} · {ms} 毫秒',
-          providerModelTestFail: '{model}：{reason}',
+          providerCreatedHint: '已创建，正在配置模型',
+          providerRemove: '删除',
         },
       },
     },
@@ -82,26 +102,25 @@ function mountDialog(props: Record<string, unknown> = {}) {
     global: {
       plugins: [i18n],
       stubs: {
-        AlertCircle: true,
-        ChevronsUpDown: true,
-        Layers: true,
         ModalDialog: {
           props: ['open', 'title'],
           template: '<div v-if="open" class="mock-dialog"><span class="mock-title">{{ title }}</span><slot name="header" /><slot /><slot name="footer" /></div>',
         },
-        ProviderPresetPicker: true,
-        ProviderModelsPicker: true,
       },
     },
   })
 }
 
-/** Only the real <input>s: the preset trigger is a <button> and the protocol /
- *  auth pickers are <select>s, so their positions shift between create (trigger
- *  present) and edit (trigger hidden). Order is name, baseUrl, apiKey. */
+/** Only the real <input>s: the preset trigger is a <button>, the protocol is a
+ *  segmented control and the auth picker is a <select>, so their positions
+ *  shift between create (trigger present) and edit (trigger hidden).
+ *  Order is name, baseUrl, apiKey. */
 function inputs(wrapper: ReturnType<typeof mountDialog>) {
   return wrapper.findAll('input.provider-input')
 }
+
+const save = (wrapper: ReturnType<typeof mountDialog>) => wrapper.find('[data-action="provider-save"]')
+const protocolBtn = (wrapper: ReturnType<typeof mountDialog>, p: string) => wrapper.find(`[data-protocol="${p}"]`)
 
 describe('ProviderFormDialog', () => {
   beforeEach(() => {
@@ -113,24 +132,34 @@ describe('ProviderFormDialog', () => {
     expect(wrapper.find('.mock-title').text()).toBe('添加模型提供商')
     expect((inputs(wrapper)[0].element as HTMLInputElement).value).toBe('')
     expect((inputs(wrapper)[2].element as HTMLInputElement).value).toBe('')
-    expect(wrapper.find('.provider-models').exists()).toBe(false)
+    // The model section and the clear-key action only exist once the provider
+    // exists — they act on something a create does not have yet.
+    expect(wrapper.find('[data-section="models"]').exists()).toBe(false)
     expect(wrapper.find('.provider-clear').exists()).toBe(false)
+  })
+
+  it('labels every field, so a filled form still says what each box is', () => {
+    const wrapper = mountDialog({ provider: existing })
+    const text = wrapper.find('.provider-form').text()
+    for (const label of ['名称', '协议', '端点地址', '认证方式', 'API Key']) {
+      expect(text).toContain(label)
+    }
   })
 
   it('offers the Codex wire API only for openai providers', async () => {
     // It is a codex-only sub-option of the openai protocol, not a peer of the
-    // protocol select — showing it for anthropic/gemini providers made it read
+    // protocol control — showing it for anthropic/gemini providers made it read
     // as a fourth protocol.
     const created = mountDialog()
-    expect(created.find('[data-role="wire-api"]').exists()).toBe(false)
+    expect(created.find('[data-section="wire"]').exists()).toBe(false)
 
-    await created.find('.provider-grid select').setValue('openai')
+    await protocolBtn(created, 'openai').trigger('click')
     const wire = created.find('[data-role="wire-api"]')
     expect(wire.exists()).toBe(true)
     expect((wire.element as HTMLSelectElement).value).toBe('responses')
 
     const anthropic = mountDialog({ provider: { ...existing, protocol: 'anthropic' } })
-    expect(anthropic.find('[data-role="wire-api"]').exists()).toBe(false)
+    expect(anthropic.find('[data-section="wire"]').exists()).toBe(false)
 
     // codex's managed block is rendered from this value; a chat-only gateway
     // that keeps "responses" fails every turn.
@@ -142,7 +171,7 @@ describe('ProviderFormDialog', () => {
     const created = mountDialog()
     expect(created.text()).not.toContain('已连接的会话需重启')
 
-    await created.find('.provider-grid select').setValue('openai')
+    await protocolBtn(created, 'openai').trigger('click')
     expect(created.text()).toContain('已连接的会话需重启')
   })
 
@@ -157,10 +186,10 @@ describe('ProviderFormDialog', () => {
 
     // openai/gemini have no auth-token variable: picking bearer there made
     // BuildProviderEnv refuse every turn, so it must not be offered at all.
-    await wrapper.find('[data-role="protocol"]').setValue('openai')
+    await protocolBtn(wrapper, 'openai').trigger('click')
     expect(optionValues()).toEqual(['auto', 'x-api-key'])
 
-    await wrapper.find('[data-role="protocol"]').setValue('gemini')
+    await protocolBtn(wrapper, 'gemini').trigger('click')
     expect(optionValues()).toEqual(['auto', 'x-api-key'])
   })
 
@@ -177,7 +206,7 @@ describe('ProviderFormDialog', () => {
 
     // The stored value must survive an unrelated save untouched: rewriting it
     // silently would change the user's configuration behind their back.
-    await wrapper.find('.mock-dialog .fbtn-primary').trigger('click')
+    await save(wrapper).trigger('click')
     expect(wrapper.emitted('submit')?.[0]).toEqual([expect.objectContaining({ authMode: 'bearer' })])
   })
 
@@ -190,13 +219,13 @@ describe('ProviderFormDialog', () => {
     expect((inputs(wrapper)[2].element as HTMLInputElement).value).toMatch(/^•+$/)
     expect(inputs(wrapper)[2].attributes('type')).toBe('password')
     expect(mockGet).not.toHaveBeenCalled()
-    expect(wrapper.find('.provider-models').exists()).toBe(true)
+    expect(wrapper.find('[data-section="models"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('m-a')
   })
 
   it('submits an empty apiKey while the mask is untouched, so the stored key is kept', async () => {
     const wrapper = mountDialog({ provider: existing })
-    await wrapper.find('.mock-dialog .fbtn-primary').trigger('click')
+    await save(wrapper).trigger('click')
     expect(wrapper.emitted('submit')?.[0]).toEqual([expect.objectContaining({ apiKey: '' })])
   })
 
@@ -250,7 +279,7 @@ describe('ProviderFormDialog', () => {
     await wrapper.find('.provider-key-toggle').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.provider-error').text()).toContain('forbidden')
+    expect(wrapper.find('[data-role="key-error"]').text()).toContain('forbidden')
     expect(inputs(wrapper)[2].attributes('type')).toBe('password')
   })
 
@@ -263,22 +292,55 @@ describe('ProviderFormDialog', () => {
     await wrapper.find('.provider-key-toggle').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.provider-error').text()).toContain('服务端没有返回已保存的密钥')
+    expect(wrapper.find('[data-role="key-error"]').text()).toContain('服务端没有返回已保存的密钥')
     expect(inputs(wrapper)[2].attributes('type')).toBe('password')
+  })
+
+  it('clears the key only after an explicit action, and a typed key cancels it', async () => {
+    const wrapper = mountDialog({ provider: existing })
+
+    // Merely opening the form must not ask for a clear.
+    await save(wrapper).trigger('click')
+    expect(wrapper.emitted('submit')?.[0]).toEqual([expect.objectContaining({ clearApiKey: false })])
+
+    await wrapper.find('.provider-clear-btn').trigger('click')
+    // The dots must not survive the decision to remove the key.
+    expect((inputs(wrapper)[2].element as HTMLInputElement).value).toBe('')
+    expect(wrapper.find('.provider-clear-pending').exists()).toBe(true)
+
+    // Typing a replacement contradicts the clear: the server applies
+    // clearApiKey first and would drop the new secret.
+    await inputs(wrapper)[2].setValue('sk-brand-new')
+    expect(wrapper.find('.provider-clear-pending').exists()).toBe(false)
+
+    await save(wrapper).trigger('click')
+    expect(wrapper.emitted('submit')?.[1]).toEqual([
+      expect.objectContaining({ apiKey: 'sk-brand-new', clearApiKey: false }),
+    ])
+  })
+
+  it('offers undo for a clear that has not been saved yet', async () => {
+    const wrapper = mountDialog({ provider: existing })
+    await wrapper.find('.provider-clear-btn').trigger('click')
+    await wrapper.find('.provider-clear-undo').trigger('click')
+
+    // The mask comes back: the stored key is no longer about to be deleted.
+    expect((inputs(wrapper)[2].element as HTMLInputElement).value).toMatch(/^•+$/)
+    await save(wrapper).trigger('click')
+    expect(wrapper.emitted('submit')?.[0]).toEqual([expect.objectContaining({ clearApiKey: false })])
   })
 
   it('emits the trimmed values, and blocks submit without a name', async () => {
     const wrapper = mountDialog()
-    const save = wrapper.find('.mock-dialog .fbtn-primary')
 
-    await save.trigger('click')
+    await save(wrapper).trigger('click')
     expect(wrapper.emitted('submit')).toBeUndefined()
-    expect(save.attributes('disabled')).toBeDefined()
+    expect(save(wrapper).attributes('disabled')).toBeDefined()
 
     await inputs(wrapper)[0].setValue('  My Provider  ')
     await inputs(wrapper)[1].setValue(' https://api.example.com/v1 ')
     await inputs(wrapper)[2].setValue('sk-secret')
-    await save.trigger('click')
+    await save(wrapper).trigger('click')
 
     expect(wrapper.emitted('submit')?.[0]).toEqual([expect.objectContaining({
       name: 'My Provider',
@@ -290,77 +352,121 @@ describe('ProviderFormDialog', () => {
     })])
   })
 
-  it('fills the form from a chosen preset and keeps its catalogue id', async () => {
+  it('picks a preset from its own view and fills the form in place', async () => {
     const wrapper = mountDialog()
-    await wrapper.findComponent(ProviderPresetPicker).vm.$emit('select', presets[0])
+    await wrapper.find('.provider-preset-trigger').trigger('click')
+
+    // A view swap, not a second dialog on top: the form is hidden, the picker
+    // is the body, and the footer offers only a way back.
+    expect(wrapper.find('.provider-form').exists()).toBe(false)
+    expect(wrapper.findComponent(ProviderPresetPicker).exists()).toBe(true)
+
+    await wrapper.find('.preset-row[data-preset-id="deepseek"]').trigger('click')
     await flushPromises()
 
+    expect(wrapper.find('.provider-form').exists()).toBe(true)
     expect((inputs(wrapper)[0].element as HTMLInputElement).value).toBe('DeepSeek')
     expect((inputs(wrapper)[1].element as HTMLInputElement).value).toBe('https://api.deepseek.com/v1')
 
-    await wrapper.find('.mock-dialog .fbtn-primary').trigger('click')
+    await save(wrapper).trigger('click')
     expect(wrapper.emitted('submit')?.[0]).toEqual([expect.objectContaining({ presetId: 'deepseek' })])
   })
 
-  it('sends clearApiKey only when the box is ticked', async () => {
+  it('opens the model view from the form and keeps the default in range', async () => {
+    mockGet.mockResolvedValue({ models: ['m-a', 'm-b', 'm-c'], source: 'live' })
     const wrapper = mountDialog({ provider: existing })
-    const box = wrapper.find('.provider-clear input')
-    expect(box.exists()).toBe(true)
-
-    await wrapper.find('.mock-dialog .fbtn-primary').trigger('click')
-    expect(wrapper.emitted('submit')?.[0]).toEqual([expect.objectContaining({ clearApiKey: false })])
-
-    await box.setValue(true)
-    // The dots must not survive the decision to remove the key.
-    expect((inputs(wrapper)[2].element as HTMLInputElement).value).toBe('')
-    await wrapper.find('.mock-dialog .fbtn-primary').trigger('click')
-    expect(wrapper.emitted('submit')?.[1]).toEqual([expect.objectContaining({ clearApiKey: true })])
-  })
-
-  it('does not throw away a key typed after ticking 清除密钥', async () => {
-    // The server applies clearApiKey first (`if ClearAPIKey { next.APIKey = "" }`),
-    // so sending both would report success while leaving the provider with no
-    // key — the next turn fails with a 401 and nothing points at the cause.
-    const wrapper = mountDialog({ provider: existing })
-    await wrapper.find('.provider-clear input').setValue(true)
-    await inputs(wrapper)[2].setValue('sk-brand-new')
-
-    // The checkbox follows the field, so the two cannot disagree on screen.
-    expect((wrapper.find('.provider-clear input').element as HTMLInputElement).checked).toBe(false)
-
-    await wrapper.find('.mock-dialog .fbtn-primary').trigger('click')
-    expect(wrapper.emitted('submit')?.[0]).toEqual([
-      expect.objectContaining({ apiKey: 'sk-brand-new', clearApiKey: false }),
-    ])
-  })
-
-  it('does not clear a key that the eye revealed after 清除密钥 was ticked', async () => {
-    // Same contradiction through the other door: revealing a stored key fills
-    // the field without an input event.
-    mockGet.mockResolvedValue({ apiKey: 'sk-stored' })
-    const wrapper = mountDialog({ provider: existing })
-    await wrapper.find('.provider-clear input').setValue(true)
-
-    await wrapper.find('.provider-key-toggle').trigger('click')
+    await wrapper.find('[data-action="provider-models-open"]').trigger('click')
     await flushPromises()
 
-    await wrapper.find('.mock-dialog .fbtn-primary').trigger('click')
-    expect(wrapper.emitted('submit')?.[0]).toEqual([
-      expect.objectContaining({ apiKey: 'sk-stored', clearApiKey: false }),
-    ])
-  })
+    expect(wrapper.findComponent(ProviderModelsPicker).exists()).toBe(true)
+    expect(wrapper.find('.provider-form').exists()).toBe(false)
 
-  it('takes the picked model set and keeps the default model in range', async () => {
-    const wrapper = mountDialog({ provider: existing })
-    await wrapper.findComponent(ProviderModelsPicker).vm.$emit('update:selected', ['m-b', 'm-c'])
+    // Drop 'm-a' (the current default) and add 'm-c'.
+    await wrapper.findAll('.models-check')[0].trigger('click')
     await flushPromises()
+    await wrapper.findAll('.models-check')[2].trigger('click')
+    await flushPromises()
+
+    await wrapper.find('[data-action="provider-models-done"]').trigger('click')
 
     // 'm-a' is gone from the set, so the default falls back to the first pick.
-    await wrapper.find('.mock-dialog .fbtn-primary').trigger('click')
+    await save(wrapper).trigger('click')
     expect(wrapper.emitted('submit')?.[0]).toEqual([expect.objectContaining({
       models: ['m-b', 'm-c'],
       defaultModel: 'm-b',
     })])
+  })
+
+  it('summarizes the selected models and marks the default one', () => {
+    const wrapper = mountDialog({ provider: existing })
+    const section = wrapper.find('[data-section="models"]')
+    expect(section.text()).toContain('已选 2 个')
+    expect(section.text()).toContain('默认 m-a')
+    expect(section.find('.provider-model-chip--default').text()).toContain('m-a')
+  })
+
+  it('drops a model from the summary chip row', async () => {
+    const wrapper = mountDialog({ provider: existing })
+    await wrapper.findAll('.provider-model-chip-x')[0].trigger('click')
+
+    await save(wrapper).trigger('click')
+    expect(wrapper.emitted('submit')?.[0]).toEqual([expect.objectContaining({
+      models: ['m-b'],
+      defaultModel: 'm-b',
+    })])
+  })
+
+  it('tests the connection with the values on screen, not just the saved ones', async () => {
+    mockPost.mockResolvedValue({ ok: true, status: 200, models: ['a', 'b', 'c'] })
+    const wrapper = mountDialog({ provider: existing })
+    await inputs(wrapper)[1].setValue('https://typed.example/v1')
+
+    await wrapper.find('[data-action="provider-test-conn"]').trigger('click')
+    await flushPromises()
+
+    expect(mockPost).toHaveBeenCalledWith(
+      '/api/providers/test',
+      expect.objectContaining({ id: 7, protocol: 'openai', baseUrl: 'https://typed.example/v1' }),
+      expect.objectContaining({ timeoutMs: 45_000 }),
+    )
+    expect(wrapper.find('.provider-note--ok').text()).toContain('3')
+  })
+
+  it('drops the connection verdict as soon as the endpoint changes', async () => {
+    // A green "connection OK" over an edited endpoint claims the new values
+    // were tested. Same rule as the list card.
+    mockPost.mockResolvedValue({ ok: true, models: ['a'] })
+    const wrapper = mountDialog({ provider: existing })
+    await wrapper.find('[data-action="provider-test-conn"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.provider-note--ok').exists()).toBe(true)
+
+    await inputs(wrapper)[1].setValue('https://other.example/v1')
+    expect(wrapper.find('.provider-note').exists()).toBe(false)
+  })
+
+  it('continues on the model view right after a create', async () => {
+    const wrapper = mountDialog()
+    await wrapper.setProps({ provider: { ...existing, id: 9, name: 'Fresh', models: [] }, justCreated: true })
+    await flushPromises()
+
+    expect(wrapper.find('.provider-created').text()).toContain('已创建')
+    expect(wrapper.find('.models-picker').exists()).toBe(true)
+    // The picker view only offers a way back; the form's own footer then says
+    // "close" instead of "cancel", because the provider already exists.
+    await wrapper.find('.provider-back').trigger('click')
+    expect(wrapper.find('.provider-form').exists()).toBe(true)
+    expect(wrapper.find('[data-action="provider-cancel"]').text()).toBe('关闭')
+  })
+
+  it('returns from a picker view with the header back button', async () => {
+    const wrapper = mountDialog({ provider: existing })
+    await wrapper.find('[data-action="provider-models-open"]').trigger('click')
+    expect(wrapper.findComponent(ProviderModelsPicker).exists()).toBe(true)
+
+    await wrapper.find('.provider-back').trigger('click')
+    expect(wrapper.findComponent(ProviderModelsPicker).exists()).toBe(false)
+    expect(wrapper.find('.provider-form').exists()).toBe(true)
   })
 
   it('re-seeds from the provider on every open (a cancelled edit cannot leak)', async () => {
@@ -382,145 +488,12 @@ describe('ProviderFormDialog', () => {
 
   it('disables the primary button while a save is in flight', () => {
     const wrapper = mountDialog({ saving: true, provider: existing })
-    expect(wrapper.find('.mock-dialog .fbtn-primary').attributes('disabled')).toBeDefined()
+    expect(save(wrapper).attributes('disabled')).toBeDefined()
   })
 
   it('emits close from the cancel button', async () => {
     const wrapper = mountDialog()
-    const cancel = wrapper.findAll('.mock-dialog .fbtn').find(b => b.text().includes('取消'))
-    await cancel!.trigger('click')
+    await wrapper.find('[data-action="provider-cancel"]').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
-
-  it('tests one model with the draft values and reports how fast it answered', async () => {
-    mockPost.mockResolvedValue({ ok: true, status: 200, latencyMs: 320, reply: 'ok' })
-    const wrapper = mountDialog({ provider: existing })
-
-    await wrapper.find('[data-model-test="m-a"]').trigger('click')
-    await flushPromises()
-
-    // The unsaved draft rides along: the endpoint/key being tested is the one
-    // on screen, not necessarily the one already stored.
-    expect(mockPost).toHaveBeenCalledWith(
-      '/api/providers/test',
-      expect.objectContaining({
-        id: 7,
-        model: 'm-a',
-        protocol: 'openai',
-        baseUrl: 'https://x/v1',
-        authMode: 'bearer',
-      }),
-      expect.objectContaining({ timeoutMs: 45_000 }),
-    )
-    const result = wrapper.find('.provider-model-result--ok')
-    expect(result.text()).toContain('m-a')
-    expect(result.text()).toContain('320')
-    expect(wrapper.findAll('.provider-model-chip')[0].classes()).toContain('provider-model-chip--ok')
-  })
-
-  it('shows the upstream reason when a model test fails', async () => {
-    mockPost.mockResolvedValue({ ok: false, status: 404, error: 'HTTP 404: model not found' })
-    const wrapper = mountDialog({ provider: existing })
-
-    await wrapper.find('[data-model-test="m-b"]').trigger('click')
-    await flushPromises()
-
-    const result = wrapper.find('.provider-model-result--fail')
-    expect(result.text()).toContain('m-b')
-    expect(result.text()).toContain('model not found')
-    expect(wrapper.findAll('.provider-model-chip')[1].classes()).toContain('provider-model-chip--fail')
-  })
-
-  it('drops a model verdict when that model is removed', async () => {
-    mockPost.mockResolvedValue({ ok: true, status: 200, latencyMs: 12 })
-    const wrapper = mountDialog({ provider: existing })
-
-    await wrapper.find('[data-model-test="m-a"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.provider-model-result').exists()).toBe(true)
-
-    await wrapper.findAll('.provider-model-chip')[0].find('.provider-model-chip-x').trigger('click')
-    expect(wrapper.find('.provider-model-result').exists()).toBe(false)
-  })
-
-  it('clears model verdicts on reopen (a stale result cannot describe a new draft)', async () => {
-    mockPost.mockResolvedValue({ ok: true, status: 200, latencyMs: 12 })
-    const wrapper = mountDialog({ provider: existing })
-
-    await wrapper.find('[data-model-test="m-a"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.provider-model-result').exists()).toBe(true)
-
-    await wrapper.setProps({ open: false })
-    await wrapper.setProps({ open: true })
-    await flushPromises()
-
-    expect(wrapper.find('.provider-model-result').exists()).toBe(false)
-  })
-
-  it('discards a probe that answers after the form was reseeded for another provider', async () => {
-    // No second probe here: the reopen alone must invalidate the first one, or
-    // its verdict lands on a form that never asked for it (the two providers
-    // can both list the same model id, which is exactly when this is invisible
-    // in a screenshot but wrong in the data).
-    const first = deferred<{ ok: boolean; latencyMs: number }>()
-    mockPost.mockReturnValueOnce(first.promise)
-
-    const wrapper = mountDialog({ provider: existing })
-    await wrapper.find('[data-model-test="m-a"]').trigger('click')
-
-    await wrapper.setProps({ open: false })
-    await wrapper.setProps({ provider: { ...existing, id: 8, name: 'Other' }, open: true })
-    await flushPromises()
-
-    first.resolve({ ok: true, latencyMs: 999 })
-    await flushPromises()
-
-    expect(wrapper.find('.provider-model-result').exists()).toBe(false)
-    expect(wrapper.findAll('.provider-model-chip--ok')).toHaveLength(0)
-    // And the form is not left believing a probe is still running.
-    expect(wrapper.find('[data-model-test="m-a"]').attributes('disabled')).toBeUndefined()
-  })
-
-  it('never lands a probe result on another provider (close → switch → reopen)', async () => {
-    // ModalDialog keeps this component alive across close (v-if + v-show), so
-    // the probe of the previous provider outlives the form it was started from.
-    const first = deferred<{ ok: boolean; latencyMs: number }>()
-    const second = deferred<{ ok: boolean; error: string }>()
-    mockPost.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
-
-    const wrapper = mountDialog({ provider: existing })
-    await wrapper.find('[data-model-test="m-a"]').trigger('click')
-
-    await wrapper.setProps({ open: false })
-    await wrapper.setProps({ provider: { ...existing, id: 8, name: 'Other' }, open: true })
-    await flushPromises()
-    expect(wrapper.find('.provider-model-result').exists()).toBe(false)
-
-    // A probe for the new provider is now the one in flight.
-    await wrapper.find('[data-model-test="m-a"]').trigger('click')
-    expect(wrapper.find('[data-model-test="m-a"]').attributes('disabled')).toBeDefined()
-
-    // The abandoned probe answers: no verdict in this form, and it must not
-    // release the in-flight flag of the probe that is actually running (that
-    // would let a second click fire a third request).
-    first.resolve({ ok: true, latencyMs: 999 })
-    await flushPromises()
-    expect(wrapper.find('.provider-model-result').exists()).toBe(false)
-    expect(wrapper.find('[data-model-test="m-a"]').attributes('disabled')).toBeDefined()
-
-    second.resolve({ ok: false, error: 'HTTP 404: model not found' })
-    await flushPromises()
-    expect(wrapper.find('.provider-model-result--fail').text()).toContain('model not found')
-    expect(wrapper.find('[data-model-test="m-a"]').attributes('disabled')).toBeUndefined()
-  })
 })
-
-/** A promise plus its resolver, for holding one probe open across a reopen. */
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((r) => {
-    resolve = r
-  })
-  return { promise, resolve }
-}

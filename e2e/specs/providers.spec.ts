@@ -78,10 +78,16 @@ async function openProviders(page: Page): Promise<SettingsPage> {
   return settings
 }
 
-/** Fill the create dialog and submit it. Leaves the dialog open on failure. */
+/** The provider dialog, on any of its three views (form / preset / models). */
+function providerDialog(page: Page) {
+  return page.locator('.modal-dialog').filter({ has: page.locator('.provider-form, [data-role="models-picker"], [data-role="preset-picker"]') })
+}
+
+/** Fill the create dialog and submit it. Leaves the dialog open either way:
+ *  success continues on the model view, failure stays on the form. */
 async function createProvider(page: Page, name: string): Promise<void> {
   await page.locator('[data-action="provider-add"]').click()
-  const dialog = page.locator('.modal-dialog').filter({ has: page.locator('.provider-form') })
+  const dialog = providerDialog(page)
   await expect(dialog).toBeVisible({ timeout: 5000 })
   await dialog.locator('[data-role="name"]').fill(name)
   await dialog.locator('[data-role="base-url"]').fill(ENDPOINT)
@@ -134,7 +140,14 @@ test.describe('Model providers', () => {
     try {
       // ── 1. Create ────────────────────────────────────────────────────────
       await createProvider(page, NAME)
-      const dialog = page.locator('.modal-dialog').filter({ has: page.locator('.provider-form') })
+      const dialog = providerDialog(page)
+      // A create no longer throws the dialog away: the provider exists, so the
+      // same dialog continues on its model view (that is where a model set can
+      // be picked, and it used to require closing, finding the row, editing
+      // again and opening a second dialog).
+      await expect(dialog.locator('.provider-created')).toBeVisible({ timeout: 10000 })
+      await expect(dialog.locator('[data-role="models-picker"]')).toBeVisible({ timeout: 10000 })
+      await dialog.locator('.modal-close-btn').click()
       await expect(dialog).toBeHidden({ timeout: 10000 })
 
       const row = page.locator('.provider-row').filter({ hasText: NAME })
@@ -148,10 +161,9 @@ test.describe('Model providers', () => {
 
       // ── 2. Duplicate name is refused ─────────────────────────────────────
       await createProvider(page, NAME)
-      await expect(dialog).toBeVisible()
-      // The server answers 409 ProviderNameTaken; the dialog stays open with the
-      // typed values and shows the reason (the list-level error is a sibling,
-      // so this scopes to the dialog's own error surface).
+      // The server answers 409 ProviderNameTaken; the dialog stays open on the
+      // form with the typed values and shows the reason (the list-level error
+      // is a sibling, so this scopes to the dialog's own error surface).
       await expect(dialog.locator('.provider-error')).toBeVisible({ timeout: 10000 })
       await dialog.locator('[data-action="provider-cancel"]').click()
       await expect(dialog).toBeHidden({ timeout: 5000 })

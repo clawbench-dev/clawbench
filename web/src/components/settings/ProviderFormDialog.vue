@@ -1,76 +1,181 @@
 <template>
   <!-- Create / edit one provider. The list page only shows what is configured;
-       every field that can be changed lives here so the list stays a list. -->
+       every field that can be changed lives here so the list stays a list.
+
+       ONE shell, three views (form / preset / models) with a back arrow in the
+       header. The pickers used to be their own ModalDialogs stacked on top of
+       this one: two scrims, two close buttons and two back presses on a phone,
+       plus a form you could no longer see while choosing. Swapping the body
+       keeps a single layer and makes "back" mean "return to the form". -->
   <ModalDialog
     :open="open"
-    :title="provider ? t('settings.items.providerEditTitle') : t('settings.items.providerAddTitle')"
+    :title="dialogTitle"
     :z-index="2500"
     @close="close"
   >
-    <div class="provider-form">
-      <!-- The catalogue has 200+ entries, so the picker is a searchable list
-           with brand icons rather than a native <select>. A new provider can be
-           seeded from one; an existing one keeps whatever it was saved with. -->
-      <div v-if="!provider" class="provider-preset-row">
-        <button type="button" class="provider-input provider-preset-trigger" @click="presetPickerOpen = true">
-          <template v-if="selectedPreset">
-            <ProviderIcon tile :provider-id="selectedPreset.id" :name="selectedPreset.name" :size="20" />
+    <template #header>
+      <button
+        v-if="view !== 'form'"
+        type="button"
+        class="provider-back"
+        :aria-label="t('common.back')"
+        :title="t('common.back')"
+        @click="view = 'form'"
+      >
+        <ChevronLeft :size="16" />
+      </button>
+      <span class="modal-title">{{ dialogTitle }}</span>
+    </template>
+
+    <div v-if="justCreated" class="provider-created" role="status">
+      <CheckCircle2 :size="14" />
+      <span>{{ t('settings.items.providerCreatedHint') }}</span>
+    </div>
+
+    <div v-if="view === 'form'" class="provider-form">
+      <!-- The catalogue has 200+ entries, so presets open as their own view
+           rather than a native <select>. A new provider can be seeded from one;
+           an existing one keeps whatever it was saved with. -->
+      <button
+        v-if="!provider"
+        type="button"
+        class="provider-preset-trigger"
+        @click="view = 'preset'"
+      >
+        <template v-if="selectedPreset">
+          <ProviderIcon tile :provider-id="selectedPreset.id" :name="selectedPreset.name" :size="22" />
+          <span class="provider-preset-text">
             <span class="provider-preset-name">{{ selectedPreset.name }}</span>
             <span class="provider-preset-proto">{{ selectedPreset.protocol }}</span>
-          </template>
-          <span v-else class="provider-preset-placeholder">{{ t('settings.items.providerPresetPlaceholder') }}</span>
-          <ChevronsUpDown :size="14" class="provider-preset-chevron" />
-        </button>
-      </div>
+          </span>
+        </template>
+        <span v-else class="provider-preset-placeholder">{{ t('settings.items.providerPresetPlaceholder') }}</span>
+        <ChevronRight :size="15" class="provider-preset-chevron" />
+      </button>
 
-      <div class="provider-grid">
-        <input v-model="draft.name" class="provider-input" data-role="name" :placeholder="t('settings.items.providerName')" />
-        <select v-model="draft.protocol" class="provider-input provider-select" data-role="protocol">
-          <option value="anthropic">anthropic</option>
-          <option value="openai">openai</option>
-          <option value="gemini">gemini</option>
-        </select>
-      </div>
-      <input v-model="draft.baseUrl" class="provider-input" data-role="base-url" :placeholder="t('settings.items.providerBaseUrl')" />
-      <div class="provider-key-field">
-        <input
-          :value="keyValue"
-          :type="showKey ? 'text' : 'password'"
-          autocomplete="off"
-          class="provider-input provider-key-input"
-          data-role="api-key"
-          :placeholder="provider ? t('settings.items.providerKeyKeep') : t('settings.items.providerKey')"
-          @input="onKeyInput"
-          @focus="onKeyFocus"
-        />
-        <!-- The stored key is never sent with the list; the eye asks for it
-             explicitly, so a plaintext key only travels when someone is
-             actually looking at it. -->
-        <button
-          type="button"
-          class="provider-key-toggle"
-          :disabled="keyLoading"
-          :title="showKey ? t('settings.items.providerKeyHide') : t('settings.items.providerKeyReveal')"
-          :aria-label="showKey ? t('settings.items.providerKeyHide') : t('settings.items.providerKeyReveal')"
-          @click="toggleKeyVisibility"
-        >
-          <component :is="showKey ? EyeOff : Eye" :size="14" />
-        </button>
-      </div>
-      <div v-if="keyError" class="provider-error">
-        <AlertCircle :size="13" />
-        <span>{{ keyError }}</span>
-      </div>
-      <select v-model="draft.authMode" class="provider-input provider-select provider-select--full" data-role="auth-mode">
-        <option v-for="m in authModeOptions" :key="m.value" :value="m.value" :disabled="m.disabled">{{ m.label }}</option>
-      </select>
-      <!-- A protocol that cannot express the mode makes every turn fail, so an
-           existing row in that state says so here instead of looking fine. -->
-      <div v-if="authModeUnsupported" class="provider-error" data-role="auth-mode-warning">
-        <AlertCircle :size="13" />
-        <span>{{ t('settings.items.providerAuthUnsupported', { mode: draft.authMode, protocol: draft.protocol }) }}</span>
-      </div>
+      <!-- ── Connection ─────────────────────────────────────────────────── -->
+      <section class="provider-section" data-section="conn">
+        <h3 class="provider-section-title">{{ t('settings.items.providerSectionConn') }}</h3>
 
+        <label class="provider-field">
+          <span class="provider-label">{{ t('settings.items.providerName') }}</span>
+          <input
+            v-model="draft.name"
+            class="provider-input"
+            data-role="name"
+            :placeholder="t('settings.items.providerNamePlaceholder')"
+          />
+        </label>
+
+        <div class="provider-field">
+          <span class="provider-label">{{ t('settings.items.providerProtocol') }}</span>
+          <div class="provider-seg" data-role="protocol">
+            <button
+              v-for="p in PROTOCOLS"
+              :key="p"
+              type="button"
+              class="provider-seg-btn"
+              :class="{ 'provider-seg-btn--on': draft.protocol === p }"
+              :data-protocol="p"
+              :aria-pressed="draft.protocol === p"
+              @click="draft.protocol = p"
+            >
+              {{ p }}
+            </button>
+          </div>
+        </div>
+
+        <label class="provider-field">
+          <span class="provider-label">{{ t('settings.items.providerBaseUrl') }}</span>
+          <input
+            v-model="draft.baseUrl"
+            class="provider-input"
+            data-role="base-url"
+            inputmode="url"
+            autocapitalize="off"
+            spellcheck="false"
+            :placeholder="t('settings.items.providerBaseUrlPlaceholder')"
+          />
+          <span class="provider-hint">{{ t('settings.items.providerBaseUrlHint') }}</span>
+        </label>
+
+        <div class="provider-field">
+          <span class="provider-label">{{ t('settings.items.providerAuthLabel') }}</span>
+          <select v-model="draft.authMode" class="provider-input provider-select" data-role="auth-mode">
+            <option v-for="m in authModeOptions" :key="m.value" :value="m.value" :disabled="m.disabled">{{ m.label }}</option>
+          </select>
+          <!-- A protocol that cannot express the mode makes every turn fail, so an
+               existing row in that state says so here instead of looking fine. -->
+          <div v-if="authModeUnsupported" class="provider-error" data-role="auth-mode-warning">
+            <AlertCircle :size="13" />
+            <span>{{ t('settings.items.providerAuthUnsupported', { mode: draft.authMode, protocol: draft.protocol }) }}</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Credentials ────────────────────────────────────────────────── -->
+      <section class="provider-section" data-section="creds">
+        <h3 class="provider-section-title">{{ t('settings.items.providerSectionCreds') }}</h3>
+
+        <div class="provider-field">
+          <div class="provider-label-row">
+            <span class="provider-label">{{ t('settings.items.providerKey') }}</span>
+            <span
+              v-if="provider"
+              class="provider-key-state"
+              :class="{ 'provider-key-state--ok': provider.hasKey && !clearKey }"
+            >
+              {{ provider.hasKey && !clearKey ? t('settings.items.providerKeyStateSaved') : t('settings.items.providerKeyStateMissing') }}
+            </span>
+          </div>
+          <div class="provider-key-field">
+            <input
+              :value="keyValue"
+              :type="showKey ? 'text' : 'password'"
+              autocomplete="off"
+              class="provider-input provider-key-input"
+              data-role="api-key"
+              :placeholder="provider ? t('settings.items.providerKeyKeep') : t('settings.items.providerKey')"
+              @input="onKeyInput"
+              @focus="onKeyFocus"
+            />
+            <!-- The stored key is never sent with the list; the eye asks for it
+                 explicitly, so a plaintext key only travels when someone is
+                 actually looking at it. -->
+            <button
+              type="button"
+              class="provider-key-toggle"
+              :disabled="keyLoading"
+              :title="showKey ? t('settings.items.providerKeyHide') : t('settings.items.providerKeyReveal')"
+              :aria-label="showKey ? t('settings.items.providerKeyHide') : t('settings.items.providerKeyReveal')"
+              @click="toggleKeyVisibility"
+            >
+              <component :is="showKey ? EyeOff : Eye" :size="15" />
+            </button>
+          </div>
+          <div v-if="keyError" class="provider-error" data-role="key-error">
+            <AlertCircle :size="13" />
+            <span>{{ keyError }}</span>
+          </div>
+          <!-- Clearing is a destructive one-way action, so it is a text action
+               with an explicit undo instead of a checkbox that silently rides
+               along with the next save. -->
+          <div v-if="provider?.hasKey" class="provider-clear">
+            <button v-if="!clearKey" type="button" class="provider-clear-btn" @click="clearKey = true">
+              <Trash2 :size="12" />
+              {{ t('settings.items.providerClearKey') }}
+            </button>
+            <template v-else>
+              <span class="provider-clear-pending">{{ t('settings.items.providerClearKeyPending') }}</span>
+              <button type="button" class="provider-clear-undo" @click="clearKey = false">
+                {{ t('settings.items.providerUndo') }}
+              </button>
+            </template>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Codex wire API (openai only) ───────────────────────────────── -->
       <!-- Only codex reads this: its managed config block tells codex whether
            the endpoint speaks the Responses API or plain chat/completions. A
            gateway that serves only the latter 404s every turn when this says
@@ -78,83 +183,55 @@
            Codex only accepts the openai protocol (see model.providerEnvTable),
            so for anthropic/gemini providers this control has no meaning at all
            and used to look like a fourth, peer-level protocol choice. -->
-      <span v-if="draft.protocol === 'openai'" class="provider-models-label">
-        {{ t('settings.items.providerWireLabel') }}
-      </span>
-      <select
-        v-if="draft.protocol === 'openai'"
-        v-model="draft.wireApi"
-        class="provider-input provider-select provider-select--full"
-        data-role="wire-api"
-      >
-        <option value="responses">{{ t('settings.items.providerWireResponses') }}</option>
-        <option value="chat">{{ t('settings.items.providerWireChat') }}</option>
-      </select>
-      <!-- Codex reads this from its config file at process start, so a live
-           connection keeps the old value; without the note the change looks
-           like it did nothing. -->
-      <div v-if="draft.protocol === 'openai'" class="provider-hint">{{ t('settings.items.providerWireHint') }}</div>
+      <section v-if="draft.protocol === 'openai'" class="provider-section" data-section="wire">
+        <h3 class="provider-section-title">{{ t('settings.items.providerWireSection') }}</h3>
+        <div class="provider-field">
+          <select v-model="draft.wireApi" class="provider-input provider-select" data-role="wire-api">
+            <option value="responses">{{ t('settings.items.providerWireResponses') }}</option>
+            <option value="chat">{{ t('settings.items.providerWireChat') }}</option>
+          </select>
+          <!-- Codex reads this from its config file at process start, so a live
+               connection keeps the old value; without the note the change looks
+               like it did nothing. -->
+          <span class="provider-hint">{{ t('settings.items.providerWireHint') }}</span>
+        </div>
+      </section>
 
-      <label v-if="provider" class="provider-clear">
-        <input v-model="clearKey" type="checkbox" />
-        {{ t('settings.items.providerClearKey') }}
-      </label>
-
+      <!-- ── Models ─────────────────────────────────────────────────────── -->
       <!-- The curated model set. Agents bound to this provider inherit it, so
-           this is the only place a model can be "known to work". -->
-      <div v-if="provider" class="provider-models">
-        <div class="provider-models-head">
-          <span class="provider-models-label">{{ t('settings.items.providerModelsLabel') }}</span>
-          <button type="button" class="fbtn" @click="modelsPickerOpen = true">
-            <Layers :size="13" />
-            {{ t('settings.items.providerModelsChoose') }}
+           this is the only place a model can be "known to work". The full
+           editor is its own view; the form only summarizes it. -->
+      <section v-if="provider" class="provider-section" data-section="models">
+        <div class="provider-section-head">
+          <h3 class="provider-section-title">{{ t('settings.items.providerModelsLabel') }}</h3>
+          <button type="button" class="provider-link" data-action="provider-models-open" @click="view = 'models'">
+            {{ t('settings.items.providerModelsManage') }}
+            <ChevronRight :size="14" />
           </button>
         </div>
-        <div v-if="draft.models.length === 0" class="provider-models-empty">
-          {{ t('settings.items.providerModelsNone') }}
-        </div>
-        <div v-else class="provider-models-chips">
+        <p class="provider-models-summary">{{ modelsSummary }}</p>
+        <div v-if="draft.models.length > 0" class="provider-models-chips">
           <span
             v-for="id in draft.models"
             :key="id"
             class="provider-model-chip"
-            :class="chipClass(id)"
+            :class="{ 'provider-model-chip--default': id === draft.defaultModel }"
           >
+            <Star v-if="id === draft.defaultModel" :size="10" class="provider-model-chip-star" fill="currentColor" />
             <span class="provider-model-chip-id">{{ id }}</span>
-            <!-- The only honest way to know a model works: ask it. A listed id
-                 can still be rejected by the endpoint, and a gateway can serve
-                 a model it never lists. -->
             <button
               type="button"
-              class="provider-model-chip-test"
-              :disabled="testingModel !== null"
-              :title="t('settings.items.providerModelTestHint')"
-              :aria-label="t('settings.items.providerModelTestHint')"
-              :data-model-test="id"
-              @click="testModel(id)"
-            >
-              <component :is="testIcon(id)" :size="12" :class="{ 'provider-spin': testingModel === id }" />
-            </button>
-            <button type="button" class="provider-model-chip-x" @click="removeModel(id)">×</button>
+              class="provider-model-chip-x"
+              :aria-label="t('settings.items.providerRemove')"
+              @click="removeModel(id)"
+            >×</button>
           </span>
         </div>
-        <div v-if="visibleModelResults.length > 0" class="provider-model-results">
-          <div
-            v-for="r in visibleModelResults"
-            :key="r.model"
-            class="provider-model-result"
-            :class="r.ok ? 'provider-model-result--ok' : 'provider-model-result--fail'"
-          >
-            <component :is="r.ok ? CheckCircle2 : AlertCircle" :size="13" />
-            <span>{{ r.text }}</span>
-          </div>
-        </div>
-        <div v-if="draft.models.length > 0" class="provider-models-default">
-          <span>{{ t('settings.items.providerDefaultModel') }}</span>
-          <select v-model="draft.defaultModel" class="provider-input provider-select">
-            <option v-for="id in draft.models" :key="id" :value="id">{{ id }}</option>
-          </select>
-        </div>
+      </section>
+
+      <div v-if="connResult" class="provider-note" :class="connResult.ok ? 'provider-note--ok' : 'provider-note--fail'">
+        <component :is="connResult.ok ? CheckCircle2 : AlertCircle" :size="13" />
+        <span>{{ connResult.message }}</span>
       </div>
 
       <div v-if="errorMessage" class="provider-error">
@@ -163,41 +240,80 @@
       </div>
     </div>
 
-    <template #footer>
-      <button class="fbtn" data-action="provider-cancel" @click="close">{{ t('settings.items.providerCancel') }}</button>
-      <button class="fbtn fbtn-primary" data-action="provider-save" :disabled="!canSave || saving" @click="submit">
-        {{ provider ? t('settings.items.providerSave') : t('settings.items.providerAdd') }}
-      </button>
-    </template>
-
-    <!-- Both pickers are their own ModalDialog at a higher z-index: a
-         BottomSheet would paint in the overlay band (1000) and be buried under
-         this dialog, which also outranks every drawer on the back gesture. -->
-    <ProviderModelsPicker
-      :open="modelsPickerOpen"
-      :provider-id="provider?.id ?? null"
-      :selected="draft.models"
-      @update:open="modelsPickerOpen = $event"
-      @update:selected="onModelsSelected"
-    />
-
     <ProviderPresetPicker
-      :open="presetPickerOpen"
+      v-if="view === 'preset'"
+      :active="true"
       :presets="presets"
       :selected-id="presetId"
-      @update:open="presetPickerOpen = $event"
       @select="onPresetSelect"
+      @done="view = 'form'"
     />
+
+    <ProviderModelsPicker
+      v-if="view === 'models'"
+      :active="true"
+      :provider-id="provider?.id ?? null"
+      :selected="draft.models"
+      :default-model="draft.defaultModel"
+      :probe="modelsProbe"
+      @update:selected="onModelsSelected"
+      @update:default-model="draft.defaultModel = $event"
+    />
+
+    <template #footer>
+      <template v-if="view === 'form'">
+        <!-- Testing belongs here, next to the values it tests: the list page
+             could only test what was already saved, so a wrong key was found
+             after saving it. Draft values ride along with the probe. -->
+        <button
+          v-if="provider"
+          type="button"
+          class="fbtn provider-test-conn"
+          data-action="provider-test-conn"
+          :disabled="testingConn"
+          @click="testConnection"
+        >
+          <component :is="testingConn ? Loader2 : PlugZap" :size="13" :class="{ 'provider-spin': testingConn }" />
+          {{ testingConn ? t('settings.items.providerTestingConn') : t('settings.items.providerTestConn') }}
+        </button>
+        <span class="provider-footer-spacer" />
+        <button class="fbtn" data-action="provider-cancel" @click="close">
+          {{ justCreated ? t('common.close') : t('settings.items.providerCancel') }}
+        </button>
+        <button class="fbtn fbtn-primary" data-action="provider-save" :disabled="!canSave || saving" @click="submit">
+          {{ provider ? t('settings.items.providerSave') : t('settings.items.providerAdd') }}
+        </button>
+      </template>
+      <template v-else>
+        <button class="fbtn" @click="view = 'form'">{{ t('common.back') }}</button>
+        <span class="provider-footer-spacer" />
+        <button v-if="view === 'models'" class="fbtn fbtn-primary" data-action="provider-models-done" @click="view = 'form'">
+          {{ t('settings.items.providerModelsDone') }}
+        </button>
+      </template>
+    </template>
   </ModalDialog>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, CheckCircle2, ChevronsUpDown, Eye, EyeOff, Layers, Loader2, Play } from 'lucide-vue-next'
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  Loader2,
+  PlugZap,
+  Star,
+  Trash2,
+} from 'lucide-vue-next'
 import '@/assets/modal-footer-btn.css'
 import { apiGet, apiPost } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
+import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import ProviderPresetPicker, { type PresetOption } from './ProviderPresetPicker.vue'
@@ -243,6 +359,10 @@ const props = defineProps<{
   /** Server-side failure text, owned by the caller so the dialog can stay open
    *  with the user's input intact for a retry. */
   errorMessage?: string
+  /** Flipped by the caller right after a create succeeded: the provider now
+   *  exists, so continue on the model view instead of closing and making the
+   *  user find it in the list again. */
+  justCreated?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -252,8 +372,17 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const presetPickerOpen = ref(false)
-const modelsPickerOpen = ref(false)
+const PROTOCOLS = ['anthropic', 'openai', 'gemini'] as const
+
+/** Which of the three bodies is showing. One ModalDialog, no nesting. */
+const view = ref<'form' | 'preset' | 'models'>('form')
+
+const dialogTitle = computed(() => {
+  if (view.value === 'preset') return t('settings.items.providerPresetTitle')
+  if (view.value === 'models') return t('settings.items.providerModelsTitle')
+  return props.provider ? t('settings.items.providerEditTitle') : t('settings.items.providerAddTitle')
+})
+
 const presetId = ref('')
 const clearKey = ref(false)
 /** Password vs plaintext for the key field, and whether the stored key has
@@ -325,66 +454,49 @@ const authModeOptions = computed(() => {
   return out
 })
 
-/** Per-model probe state. `testingModel` is the id currently in flight; one at
- *  a time keeps the results readable and the endpoint unhammered. */
-const testingModel = ref<string | null>(null)
-const modelResults = ref<Record<string, ModelTestResult>>({})
+const modelsSummary = computed(() => {
+  if (draft.models.length === 0) return t('settings.items.providerModelsNone')
+  const count = t('settings.items.providerModelsSummary', { count: draft.models.length })
+  if (!draft.defaultModel) return count
+  return `${count} · ${t('settings.items.providerDefaultModelValue', { model: draft.defaultModel })}`
+})
 
-/** Bumped on every re-seed and on every probe. The dialog is only hidden on
- *  close (`v-if="everOpened"` + `v-show` inside ModalDialog), so a probe can
- *  outlive the form it was started from: close → pick another provider →
- *  reopen. Without this token that promise writes the PREVIOUS provider's
- *  verdict into the new list and clears the in-flight flag of a probe that is
- *  still running (its buttons become clickable again, so two probes overlap). */
-let probeGeneration = 0
+/** What the per-model probe sends besides the model id: the values on screen,
+ *  not necessarily the ones already stored. */
+const modelsProbe = computed(() => ({
+  protocol: draft.protocol,
+  baseUrl: draft.baseUrl.trim(),
+  apiKey: draft.apiKey,
+  authMode: draft.authMode,
+}))
 
-interface ModelTestResult {
-  model: string
-  ok: boolean
-  text: string
-}
-
-/** Results are shown only for models still in the set: removing a chip must
- *  take its verdict with it, or the list would describe a model that is no
- *  longer configured. */
-const visibleModelResults = computed(() =>
-  draft.models
-    .map((id) => modelResults.value[id])
-    .filter((r): r is ModelTestResult => r !== undefined),
+/** The chosen catalogue entry, for the trigger row (icon + name). */
+const selectedPreset = computed<PresetOption | undefined>(() =>
+  props.presets.find((p) => p.id === presetId.value),
 )
 
-function testIcon(id: string) {
-  if (testingModel.value === id) return Loader2
-  const r = modelResults.value[id]
-  if (!r) return Play
-  return r.ok ? CheckCircle2 : AlertCircle
-}
+// ── Connection test ─────────────────────────────────────────────────────────
 
-function chipClass(id: string): Record<string, boolean> {
-  const r = modelResults.value[id]
-  return {
-    'provider-model-chip--ok': r?.ok === true,
-    'provider-model-chip--fail': r?.ok === false,
-  }
-}
+const testingConn = ref(false)
+const connResult = ref<{ ok: boolean; message: string } | null>(null)
 
-/** Sends one minimal chat request for this model. Draft values ride along so a
- *  key or endpoint that has not been saved can still be tested — saving a
- *  wrong key first would be the only way to find out it is wrong. */
-async function testModel(id: string) {
+/** A verdict belongs to the values that produced it; editing any of them makes
+ *  it stale. Endpoint, key and protocol are the ones the probe actually uses. */
+watch(
+  () => [draft.protocol, draft.baseUrl, draft.apiKey, draft.authMode].join('\u0000'),
+  () => { connResult.value = null },
+)
+
+async function testConnection() {
   const p = props.provider
-  if (!p || testingModel.value !== null) return
-  const generation = ++probeGeneration
-  testingModel.value = id
-  const next = { ...modelResults.value }
-  delete next[id]
-  modelResults.value = next
+  if (!p || testingConn.value) return
+  testingConn.value = true
+  connResult.value = null
   try {
-    const res = await apiPost<{ ok: boolean; status?: number; latencyMs?: number; error?: string }>(
+    const res = await apiPost<{ ok: boolean; status?: number; models?: string[]; error?: string }>(
       '/api/providers/test',
       {
         id: p.id,
-        model: id,
         protocol: draft.protocol,
         baseUrl: draft.baseUrl.trim(),
         apiKey: draft.apiKey,
@@ -393,63 +505,39 @@ async function testModel(id: string) {
       // A generated token is slower than the default 10s budget.
       { timeoutMs: 45_000 },
     )
-    if (generation !== probeGeneration) return
-    modelResults.value = {
-      ...modelResults.value,
-      [id]: res.ok
-        ? {
-            model: id,
-            ok: true,
-            text: t('settings.items.providerModelTestOk', { model: id, ms: res.latencyMs ?? 0 }),
-          }
-        : {
-            model: id,
-            ok: false,
-            text: t('settings.items.providerModelTestFail', {
-              model: id,
-              reason: res.error || t('settings.items.providerTestFailed'),
-            }),
-          },
-    }
+    connResult.value = res.ok
+      ? { ok: true, message: t('settings.items.providerTestOk', { count: res.models?.length ?? 0 }) }
+      : { ok: false, message: clipError(res.error || t('settings.items.providerTestFailed')) }
   } catch (err) {
-    if (generation !== probeGeneration) return
-    modelResults.value = {
-      ...modelResults.value,
-      [id]: {
-        model: id,
-        ok: false,
-        text: t('settings.items.providerModelTestFail', {
-          model: id,
-          reason: err instanceof Error ? err.message : String(err),
-        }),
-      },
+    connResult.value = {
+      ok: false,
+      message: clipError(err instanceof Error ? err.message : String(err)),
     }
   } finally {
-    // Only the probe that still owns the form may release it; an older one
-    // returning late must not clear a probe that is legitimately in flight.
-    if (generation === probeGeneration) testingModel.value = null
+    testingConn.value = false
   }
 }
 
-/** The chosen catalogue entry, for the trigger row (icon + name). */
-const selectedPreset = computed<PresetOption | undefined>(() =>
-  props.presets.find((p) => p.id === presetId.value),
-)
+/** The /models probe relays the upstream body verbatim (an HTML error page can
+ *  be a megabyte), and this card renders it inline — so clip before display. */
+function clipError(text: string): string {
+  const s = text.trim()
+  return s.length > 300 ? s.slice(0, 300) + '…' : s
+}
+
+// ── Seeding ─────────────────────────────────────────────────────────────────
 
 function resetFromProvider() {
   const p = props.provider
-  // Any probe still in flight belongs to the form being replaced.
-  probeGeneration++
-  presetPickerOpen.value = false
-  modelsPickerOpen.value = false
+  view.value = 'form'
   clearKey.value = false
   showKey.value = false
   keyLoaded.value = false
   keyLoading.value = false
   keyError.value = ''
+  connResult.value = null
+  testingConn.value = false
   keyMasked.value = p?.hasKey === true
-  testingModel.value = null
-  modelResults.value = {}
   presetId.value = p?.presetId ?? ''
   draft.name = p?.name ?? ''
   draft.protocol = p?.protocol ?? 'anthropic'
@@ -526,6 +614,30 @@ watch(() => props.open, (open) => {
   if (open) resetFromProvider()
 }, { immediate: true })
 
+// A create that just succeeded turns this dialog into the edit dialog for the
+// new provider; the caller opens the model view so the next step is obvious.
+watch(() => props.justCreated, (created) => {
+  if (created) view.value = 'models'
+}, { immediate: true })
+
+// Android back / edge swipe: inside a picker it returns to the form instead of
+// closing the dialog. `PRIORITY_OVERLAY + 2` outranks ModalDialog's own
+// handler (PRIORITY_OVERLAY + 1), which then only sees the form view.
+let unregisterBack: (() => void) | null = null
+watch(() => props.open, (open) => {
+  if (open && !unregisterBack) {
+    unregisterBack = registerBackHandler({
+      id: 'provider-form-view',
+      canGoBack: () => view.value !== 'form',
+      goBack: () => { view.value = 'form' },
+      priority: PRIORITY_OVERLAY + 2,
+    })
+  } else if (!open && unregisterBack) {
+    unregisterBack()
+    unregisterBack = null
+  }
+}, { immediate: true })
+
 function onPresetSelect(preset: PresetOption | null) {
   if (!preset) {
     // "No preset" keeps whatever the user has typed; it only drops the link to
@@ -548,11 +660,6 @@ function onModelsSelected(ids: string[]) {
 
 function removeModel(id: string) {
   onModelsSelected(draft.models.filter((m) => m !== id))
-  if (modelResults.value[id]) {
-    const next = { ...modelResults.value }
-    delete next[id]
-    modelResults.value = next
-  }
 }
 
 function submit() {
@@ -581,53 +688,180 @@ function close() {
 
 <style scoped>
 /* Geometry and type tokens mirror the provider list rows: both are rendered
- * inside the same settings card, so they must share the 30dp control height
- * and the 16px inset. Using the wrong token names here (--text-sm /
- * --border-primary) silently falls back to inherited values — that is exactly
- * how this page drifted out of alignment before. */
+ * inside the same settings card, so they must share the control height and the
+ * 16px inset. Using the wrong token names here (--text-sm / --border-primary)
+ * silently falls back to inherited values — that is exactly how this page
+ * drifted out of alignment before. */
 .provider-form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-5) var(--space-7) var(--space-6);
+  gap: var(--space-6);
+  padding: var(--space-5) var(--space-6) var(--space-6);
 }
-.provider-grid {
+/* Header back arrow for the picker views. 28dp matches .modal-close-btn so the
+   two ends of the header read as one row of controls. */
+.provider-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+.provider-back:hover {
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  color: var(--text-primary);
+}
+.provider-created {
   display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: var(--space-4) var(--space-6) 0;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-green) 12%, transparent);
+  color: var(--color-green);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+/* ── Sections ── */
+.provider-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+/* A hairline between groups is what makes the form read as three questions
+   ("what is it / how do I log in / what does it serve") instead of eight
+   equally important boxes. */
+.provider-section + .provider-section {
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-color);
+}
+.provider-section-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-muted);
+  letter-spacing: calc(0.4 * var(--dp));
+}
+.provider-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--space-3);
 }
-/* Same per-axis sizing rule as MCPSetting: a bare `flex` on a column child
- * would override the control height. */
+.provider-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: none;
+  background: transparent;
+  color: var(--accent-color);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+.provider-link:hover {
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+}
+
+/* ── Fields ── */
+.provider-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.provider-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.provider-label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
 .provider-input {
   box-sizing: border-box;
-  height: calc(30 * var(--dp));
-  padding: 0 var(--space-6);
+  width: 100%;
+  height: calc(34 * var(--dp));
+  padding: 0 var(--space-5);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-lg);
+  min-width: 0;
 }
-.provider-grid > .provider-input:not(.provider-select) {
+.provider-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 calc(2 * var(--dp)) var(--focus-ring);
+}
+.provider-select {
+  padding: 0 var(--space-3);
+  cursor: pointer;
+}
+/* Segmented protocol switch: three values that used to hide behind a <select>
+   even though the protocol decides which other fields exist. */
+.provider-seg {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+}
+.provider-seg-btn {
   flex: 1;
-  min-width: calc(120 * var(--dp));
+  min-width: 0;
+  height: calc(28 * var(--dp));
+  border: none;
+  border-radius: calc(var(--radius-sm) - 1px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.provider-form > .provider-input {
-  align-self: stretch;
-  flex: none;
+.provider-seg-btn--on {
+  background: var(--accent-color);
+  color: var(--bg-primary);
+  font-weight: var(--font-weight-medium);
 }
-/* The key field owns the reveal button, so it needs the stretch behaviour the
- * bare input used to get from being a direct child. */
+/* Muted explanatory line under a control. */
+.provider-hint {
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* ── Key ── */
 .provider-key-field {
   position: relative;
   display: flex;
   align-self: stretch;
-  height: calc(30 * var(--dp));
+  height: calc(34 * var(--dp));
 }
 .provider-key-field > .provider-input {
   flex: 1;
   min-width: 0;
   /* Leave room for the button so a long key never runs underneath it. */
-  padding-right: calc(34 * var(--dp));
+  padding-right: calc(38 * var(--dp));
 }
 .provider-key-toggle {
   position: absolute;
@@ -637,13 +871,14 @@ function close() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: calc(24 * var(--dp));
-  height: calc(24 * var(--dp));
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
+  padding: 0;
 }
 .provider-key-toggle:hover:not(:disabled) {
   color: var(--text-primary);
@@ -651,27 +886,69 @@ function close() {
 }
 .provider-key-toggle:disabled {
   cursor: default;
-  opacity: 0.5;
+  opacity: var(--opacity-disabled);
 }
-.provider-select {
-  flex: 0 0 calc(120 * var(--dp));
-  padding: 0 var(--space-3);
+.provider-key-state {
+  font-size: var(--font-size-xs);
+  color: var(--color-orange);
+  flex-shrink: 0;
 }
-/* A select that is a direct child must stretch like the inputs above it. */
-.provider-select--full {
-  align-self: stretch;
-  flex: none;
+.provider-key-state--ok {
+  color: var(--color-green);
 }
-/* Trigger row for the preset picker: looks like the inputs around it, but
- * opens the in-app picker instead of a native dropdown. */
+.provider-clear {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  font-size: var(--font-size-sm);
+}
+.provider-clear-btn,
+.provider-clear-undo {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: none;
+  background: transparent;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  padding: var(--space-1) 0;
+}
+.provider-clear-btn {
+  color: var(--color-red);
+}
+.provider-clear-undo {
+  color: var(--accent-color);
+  text-decoration: underline;
+}
+.provider-clear-pending {
+  color: var(--text-muted);
+}
+
+/* ── Preset trigger ── */
 .provider-preset-trigger {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   width: 100%;
-  padding: 0 var(--space-4);
+  min-height: calc(44 * var(--dp));
+  padding: var(--space-2) var(--space-4);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-sm);
+  background: transparent;
   text-align: left;
   cursor: pointer;
+  color: var(--text-primary);
+}
+.provider-preset-trigger:hover {
+  border-color: var(--accent-color);
+}
+.provider-preset-text {
+  display: flex;
+  flex-direction: column;
+  gap: calc(1 * var(--dp));
+  min-width: 0;
+  flex: 1;
 }
 .provider-preset-name {
   font-size: var(--font-size-md);
@@ -683,10 +960,6 @@ function close() {
 .provider-preset-proto {
   font-size: var(--font-size-xs);
   color: var(--text-muted);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  padding: 0 var(--space-2);
-  flex-shrink: 0;
 }
 .provider-preset-placeholder {
   flex: 1;
@@ -698,39 +971,14 @@ function close() {
   color: var(--text-muted);
   flex-shrink: 0;
 }
-.provider-input:focus {
-  outline: none;
-  border-color: var(--accent-color);
-  box-shadow: 0 0 0 calc(2 * var(--dp)) var(--focus-ring);
-}
-/* Muted explanatory line under a control (the wire-API note). */
-.provider-hint {
+
+/* ── Models summary ── */
+.provider-models-summary {
+  margin: 0;
   font-size: var(--font-size-sm);
+  color: var(--text-muted);
   line-height: var(--line-height-normal);
-  color: var(--text-muted);
   overflow-wrap: anywhere;
-}
-.provider-models {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border-color);
-}
-.provider-models-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-.provider-models-label {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-  color: var(--text-primary);
-}
-.provider-models-empty {
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
 }
 .provider-models-chips {
   display: flex;
@@ -742,12 +990,23 @@ function close() {
   align-items: center;
   gap: var(--space-2);
   padding: 0 var(--space-2) 0 var(--space-3);
-  height: calc(22 * var(--dp));
+  height: calc(24 * var(--dp));
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
+  max-width: 100%;
+}
+/* The default model is marked on its own chip: a separate <select> one screen
+   below the chips made the relationship invisible. */
+.provider-model-chip--default {
+  border-color: color-mix(in srgb, var(--accent-color) 55%, transparent);
+  color: var(--text-primary);
+}
+.provider-model-chip-star {
+  color: var(--accent-color);
+  flex-shrink: 0;
 }
 .provider-model-chip-x {
   border: none;
@@ -756,7 +1015,10 @@ function close() {
   cursor: pointer;
   font-size: var(--font-size-md);
   line-height: 1;
-  padding: 0;
+  padding: 0 var(--space-1);
+}
+.provider-model-chip-x:hover {
+  color: var(--color-red);
 }
 /* A model id can be long; truncate it instead of stretching the chip past the
    dialog and pushing the buttons out of reach. */
@@ -766,47 +1028,10 @@ function close() {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.provider-model-chip-test {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  /* Bigger than the 12dp glyph: this is the only tappable target on the chip
-     besides the remove button, and a bare icon is unusable on a phone. */
-  width: calc(18 * var(--dp));
-  height: calc(18 * var(--dp));
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  line-height: 1;
-  padding: 0;
-}
-.provider-model-chip-test:hover:not(:disabled) {
-  color: var(--accent-color);
-}
-.provider-model-chip-test:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
-/* The chip itself carries the verdict, so a tested set reads at a glance. */
-.provider-model-chip--ok {
-  border-color: color-mix(in srgb, var(--color-green) 55%, transparent);
-}
-.provider-model-chip--ok .provider-model-chip-test {
-  color: var(--color-green);
-}
-.provider-model-chip--fail {
-  border-color: color-mix(in srgb, var(--color-red) 55%, transparent);
-}
-.provider-model-chip--fail .provider-model-chip-test {
-  color: var(--color-red);
-}
-.provider-model-results {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.provider-model-result {
+
+/* ── Messages ── */
+.provider-error,
+.provider-note {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
@@ -814,11 +1039,22 @@ function close() {
   line-height: var(--line-height-normal);
   overflow-wrap: anywhere;
 }
-.provider-model-result--ok {
+.provider-error {
+  color: var(--color-red);
+}
+.provider-note--ok {
   color: var(--color-green);
 }
-.provider-model-result--fail {
+.provider-note--fail {
   color: var(--color-red);
+}
+
+/* ── Footer ── */
+.provider-test-conn {
+  margin-right: auto;
+}
+.provider-footer-spacer {
+  flex: 1;
 }
 .provider-spin {
   animation: provider-spin 1s linear infinite;
@@ -832,32 +1068,5 @@ function close() {
   .provider-spin {
     animation-duration: 3s;
   }
-}
-.provider-models-default {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-}
-.provider-models-default .provider-select {
-  flex: 0 0 calc(160 * var(--dp));
-}
-.provider-clear {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-}
-.provider-error {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-normal);
-  overflow-wrap: anywhere;
-  color: var(--color-red);
 }
 </style>
