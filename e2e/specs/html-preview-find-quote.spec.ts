@@ -67,6 +67,14 @@ test.describe('HTML preview: find and quote', () => {
 
     const frame = page.frameLocator('iframe.html-preview-iframe')
     await expect(frame.locator('h1')).toContainText('clawbench preview', { timeout: 15000 })
+    // Wait for the DOCUMENT to finish loading, not just for the <h1> to exist.
+    // The pane is measured and sized while the document is still loading, and a
+    // selection made in that window is measured against a frame that has not
+    // been laid out yet — the bar then falls back to its pinned top position,
+    // far from the text (the flake this spec used to hit on CI).
+    await expect
+      .poll(() => frame.locator('html').evaluate((el) => el.ownerDocument.readyState), { timeout: 15000 })
+      .toBe('complete')
     return frame
   }
 

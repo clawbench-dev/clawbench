@@ -89,6 +89,37 @@ export class ChatPage {
     return this.page.locator('.chat-message.assistant').last()
   }
 
+  /**
+   * Wait until the backend has no running turn and the frontend's queue is
+   * empty.
+   *
+   * Every spec in a run shares ONE server and ONE default session, so the
+   * previous spec may still be streaming — or, if it failed mid-way, may have
+   * left entries in `queued_messages` that the backend drain loop keeps
+   * working through after the page that queued them is gone. Sending while
+   * that is in flight silently converts a "starts the turn" message into a
+   * queued one, so any count-based assertion about the queue then reads
+   * leftovers.
+   *
+   * The backend is the authority for both halves: `/api/ai/sessions` reports
+   * `running` per session, and the queue panel is rendered from the DB queue
+   * snapshot (loadHistory returns `queue`), so a reloaded page reflects it.
+   * Order matters — the queue can only drain while a turn runs, so wait for
+   * the turn to end before asserting the queue is empty.
+   */
+  async waitForIdle(timeout = 90000): Promise<void> {
+    const anyRunning = async (): Promise<boolean> =>
+      await this.page.evaluate(async () => {
+        const resp = await fetch('/api/ai/sessions')
+        // Unknown state ⇒ keep waiting rather than reporting "idle".
+        if (!resp.ok) return true
+        const data = await resp.json()
+        return ((data.sessions || []) as Array<{ running?: boolean }>).some((s) => s.running === true)
+      })
+    await expect.poll(anyRunning, { timeout, intervals: [200, 500, 1000] }).toBe(false)
+    await expect(this.page.locator('.queued-bar')).toHaveCount(0, { timeout })
+  }
+
   /** Click the new session button (the "+" button in chat action row) */
   async createSession() {
     // The second .chat-action-btn is the "new session" button
