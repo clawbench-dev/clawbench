@@ -4153,7 +4153,6 @@ export default {
       notFoundTitle: '记录不存在',
       notFoundDesc: '这场会议可能已被删除。',
       chatCount: '{n} 条聊天',
-      noChat: '没有聊天',
       tabMinutes: '纪要',
       tabTranscript: '转写',
       tabRevised: '校对',

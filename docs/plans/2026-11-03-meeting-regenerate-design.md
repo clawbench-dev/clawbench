@@ -438,7 +438,7 @@ CREATE TABLE IF NOT EXISTS live_notes_audio (
 | 文件 | 职责 |
 |---|---|
 | `web/src/composables/useMeetingHistory.ts` | 类型扩展；新增 `planRegeneration()` / `regenerate()` / `cancelRegeneration()` |
-| `web/src/components/live/MeetingArtifactBar.vue` | **新增**：记录页顶部的状态条（状态文案 + 主操作）；位于页签之上，任何页签都可见 |
+| `web/src/components/live/MeetingArtifactBar.vue` | **新增**：状态条（状态文案 + 主操作）；位于**纪要/转写/校对页签内部顶端**，资源与聊天页签不渲染 |
 | `web/src/components/live/MeetingRegenerateSheet.vue` | **新增**：确认面板（计划、原因、下游勾选、警告、成本提示） |
 | `web/src/components/live/MeetingDetail.vue` | 三个页签接入状态条；空状态 CTA；轮询条件与增量拉取；完成/取消 toast |
 | `web/src/components/live/MeetingEmpty.vue` | 新增可选 `#action` 插槽（空状态里的主按钮） |
@@ -719,9 +719,9 @@ CREATE TABLE IF NOT EXISTS live_notes_audio (
 - **音频原点**：`MergeLiveNoteAudio` 的返回值带 `Origins/Durations/Files`；合并端点、首次生成 job、重新识别前都会落 `live_notes_audio`。老会议没有元数据时回退并警告。
 - **计划端点**：`GET /api/live-share/notes/regenerate/plan` 的 `mode` 为 `asr|render|model`；POST 会重算同一份计划，409 携带 `{error, code, plan}`。
 - **通知**：新增 `transcript_ready/failed`、`revised_ready/failed`，通知中心与 `MEETING_EVENT_PRESENTATION` 已接。
-- **前端**：`MeetingArtifactBar` 位于**页签之上**（任何页签都可见，不随正文滚动）；确认面板用 `BottomSheet`；列表只在有 `generation` 时 5s 轮询。
-  - 之所以不放在三个文本页签内部：记录打开时默认落在「资源」（main 的默认页签），页签内状态条会让「正在重新生成」在资源页完全不可见，重新生成入口也多一次点击。
-  - 非文本页签上状态条的主体取「正在执行的步骤」，无任务时回退到纪要（记录的主产物）；此时用 `showKind` 在文案前加一个产物名 chip，避免「还没有生成」指代不明。运行中不加 chip——运行文案本身已经带产物名。
+- **前端**：`MeetingArtifactBar` 位于**纪要/转写/校对页签内部顶端**（页签面板的第一行，正文在其下滚动）；资源与聊天页签没有产物，**不渲染**状态条。确认面板用 `BottomSheet`；列表只在有 `generation` 时 5s 轮询。
+  - 2026-11-03 调整（用户决定，推翻初版）：初版把状态条放在页签之上、所有页签可见，理由是记录默认落在「资源」；实际使用中这条横条挤在标题与页签之间，与页签内容脱节。现在状态条只属于拥有产物的页签，主体恒为该页签自己的产物，故 `showKind` chip 一并删除。
+  - 会议的日期/时长/聊天数并入顶部标题栏（容器查询 ≤420px 时整段隐藏，不挤标题）；「没有聊天」这行状态删除——空聊天页签本身已经说明这件事。
 
 ### 验证结果（2026-11-03）
 

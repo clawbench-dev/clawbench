@@ -278,13 +278,18 @@ test.describe('Meeting flow', () => {
     await page.locator('.dlg-ok').click()
     await expect(page.locator('[data-action="meeting-quote"]')).toBeVisible({ timeout: 20000 })
 
-    // The artifact bar sits ABOVE the tab strip, so it is on screen from the
-    // tab the record opens on (资源) — a running job or a missing artifact must
-    // not depend on which tab the reader happens to be looking at.
-    const bar = page.locator('.artifact-bar')
+    // 资源 owns no artifact, so it carries no strip at all.
+    await expect(page.locator('.artifact-bar')).toHaveCount(0)
+
+    await page.locator('.meeting-tabs [data-tab="minutes"]').click()
+    // On 纪要 the strip lives at the top of the tab pane, above the content.
+    const bar = page.locator('.meeting-tabpanel .artifact-bar')
     await expect(bar).toBeVisible()
-    // On a tab that owns no artifact the bar names its subject.
-    await expect(bar.locator('.artifact-bar__kind')).toHaveText(/纪要|Minutes/i)
+    const barBox = await bar.boundingBox()
+    const bodyBox = await page.locator('.meeting-tabpanel .meeting-body').boundingBox()
+    expect(barBox, 'the strip must be laid out').toBeTruthy()
+    expect(bodyBox, 'the tab body must be laid out').toBeTruthy()
+    expect(barBox!.y).toBeLessThan(bodyBox!.y)
     // This meeting recorded nothing and transcribed nothing, so there is no
     // source to regenerate from: the bar must say so and keep its button
     // disabled instead of promising a job the server would refuse. (The
@@ -294,12 +299,12 @@ test.describe('Meeting flow', () => {
     await expect(bar.locator('.artifact-bar__text')).toHaveText(/没有可用的来源|no source available/i)
     await expect(bar.locator('[data-action="meeting-artifact-regenerate"]')).toBeDisabled()
     // The minutes tab's empty state explains why, and offers no CTA that could
-    // not run. (On 资源 the CTA would be absent for the wrong reason — that tab
-    // has no empty state at all — so the assertion belongs on 纪要.)
-    await page.locator('.meeting-tabs [data-tab="minutes"]').click()
+    // not run.
     await expect(page.locator('[data-action="meeting-generate-minutes"]')).toHaveCount(0)
 
     await page.locator('.meeting-tabs [data-tab="chat"]').click()
+    // 聊天 owns no artifact either, and the strip must not follow it there.
+    await expect(page.locator('.artifact-bar')).toHaveCount(0)
     await expect(page.locator('.chat-row__text')).toContainText('这是一条会议聊天')
 
     // And the record is in the list, titled as typed.

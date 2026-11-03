@@ -2,9 +2,6 @@
   <div class="artifact-bar" :class="{ 'artifact-bar--warn': stale, 'artifact-bar--error': failed }">
     <div class="artifact-bar__status">
       <LoadingIndicator v-if="running || waiting" size="sm" inline />
-      <!-- On a tab that owns no artifact the bar speaks for the minutes (or the
-           running step), so it has to name its subject. -->
-      <span v-if="showKind && !running && !waiting" class="artifact-bar__kind">{{ label }}</span>
       <span v-if="blocked" class="artifact-bar__text">{{ blocked }}</span>
       <template v-else-if="running">
         <span class="artifact-bar__text">
@@ -51,13 +48,17 @@
 
 <script setup lang="ts">
 /**
- * The one-line status/action strip above each text tab.
+ * The one-line status/action strip at the top of a text tab's pane.
  *
  * It reads the per-artifact state and the current generation summary: a tab
  * whose step is queued says "waiting", the tab whose step is running shows the
  * progress, and every other tab keeps its own content state. While a chain is
  * running the old content stays visible — the bar is the only thing that
  * changes, so reading is not interrupted.
+ *
+ * The strip belongs to the tab that owns the artifact, so it always speaks for
+ * that tab's own product (纪要 / 转写 / 校对). Tabs without an artifact (资源 /
+ * 聊天) do not render it at all.
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -75,12 +76,6 @@ const props = defineProps<{
   hasAudio: boolean
   /** A human-readable reason the action is unavailable (no source). */
   blocked?: string
-  /**
-   * Prefix the status with the artifact's name. Set by the record view when the
-   * active tab owns no artifact (资源 / 聊天), where the subject would otherwise
-   * be ambiguous.
-   */
-  showKind?: boolean
 }>()
 
 const emit = defineEmits<{ regenerate: []; cancel: [] }>()
@@ -181,13 +176,6 @@ const actionLabel = computed(() => {
   gap: var(--space-2);
   min-width: 0;
   flex: 1;
-}
-.artifact-bar__kind {
-  flex-shrink: 0;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-sm);
-  background: var(--bg-hover);
-  color: var(--text-secondary);
 }
 .artifact-bar__text {
   overflow: hidden;

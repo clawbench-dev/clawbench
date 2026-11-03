@@ -676,10 +676,20 @@ describe('MeetingDetail regeneration', () => {
 })
 
 describe('MeetingDetail status bar placement', () => {
-  it('keeps the bar on the resources tab, naming the minutes', async () => {
-    // The record opens on 资源 (main's default), so a bar that only existed on
-    // text tabs left the regeneration entry one click deep — and hid a running
-    // job entirely.
+  it('draws no bar on the tabs that own no artifact', async () => {
+    const w = mountDetail()
+    await flushPromises()
+
+    // The record opens on 资源, which has no artifact of its own.
+    expect(w.find('[data-tab="resources"]').classes()).toContain('meeting-tab--on')
+    expect(w.find('.artifact-bar').exists()).toBe(false)
+
+    await w.find('[data-tab="chat"]').trigger('click')
+    expect(w.find('.artifact-bar').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('puts the bar at the top of the artifact tab pane, above the content', async () => {
     getMock.mockResolvedValue(record({
       artifacts: {
         minutes: artifact({ hasContent: false, contentAt: 0 }),
@@ -689,23 +699,26 @@ describe('MeetingDetail status bar placement', () => {
     }))
     artifactMock.mockResolvedValue(null)
 
-    const w = mountDetail()
+    const w = mountDetail('minutes')
     await flushPromises()
 
-    expect(w.find('[data-tab="resources"]').classes()).toContain('meeting-tab--on')
-    const bar = w.find('.artifact-bar')
+    const pane = w.find('.meeting-tabpanel')
+    expect(pane.exists()).toBe(true)
+    const bar = pane.find('.artifact-bar')
     expect(bar.exists()).toBe(true)
-    expect(bar.find('.artifact-bar__kind').text()).toBe(enMessages.meeting.detail.tabMinutes)
+    // First child of the pane, with the scrolling body right after it: the
+    // strip stays put while the artifact below it scrolls.
+    expect(pane.element.firstElementChild).toBe(bar.element)
+    expect(bar.element.nextElementSibling).toBe(pane.find('.meeting-body').element)
     expect(bar.text()).toContain(enMessages.meeting.detail.artifact.notGenerated)
 
     await bar.find('[data-action="meeting-artifact-regenerate"]').trigger('click')
     await flushPromises()
-    // The action is the minutes one: that is what the chip promised.
     expect(regenPlanMock).toHaveBeenCalledWith('tok-1', 'minutes', true)
     w.unmount()
   })
 
-  it('shows the running step from a tab that owns no artifact', async () => {
+  it('speaks for the tab it sits in', async () => {
     getMock.mockResolvedValue(record({
       artifacts: {
         minutes: artifact({ hasContent: false, contentAt: 0 }),
@@ -716,17 +729,42 @@ describe('MeetingDetail status bar placement', () => {
     }))
     artifactMock.mockResolvedValue(null)
 
+    const w = mountDetail('transcript')
+    await flushPromises()
+
+    const bar = w.find('.meeting-tabpanel .artifact-bar')
+    // A transcript re-recognition: the ASR wording, not the minutes fallback.
+    expect(bar.text()).toContain(enMessages.meeting.detail.artifact.runningAsr)
+    expect(bar.find('[data-action="meeting-artifact-cancel"]').exists()).toBe(true)
+    w.unmount()
+  })
+})
+
+describe('MeetingDetail header meta', () => {
+  it('merges the date/time into the title bar and never says "no chat"', async () => {
+    getMock.mockResolvedValue(record({ chatCount: 0 }))
     const w = mountDetail()
     await flushPromises()
 
-    const bar = w.find('.artifact-bar')
-    // The bar followed the step (a transcript re-recognition, so the ASR
-    // wording), not the minutes it falls back to when idle.
-    expect(bar.text()).toContain(enMessages.meeting.detail.artifact.runningAsr)
-    // The sentence names the step, so the chip must not repeat it.
-    expect(bar.find('.artifact-bar__kind').exists()).toBe(false)
-    expect(bar.find('[data-action="meeting-artifact-cancel"]').exists()).toBe(true)
-    w.unmount()
+    // The standalone meta row is gone: it now lives in the header.
+    expect(w.find('.meeting-meta').exists()).toBe(false)
+
+    const meta = w.find('.meeting-header [data-role="meeting-meta"]')
+    expect(meta.exists()).toBe(true)
+    expect(meta.text()).toMatch(/\d{1,2}\/\d{1,2}/)
+    // started 1_700_000_000_000, ended 2_880_000 ms later → 48 min.
+    expect(meta.text()).toContain(enMessages.meeting.list.duration.replace('{n}', '48'))
+    // Zero chat is silence, not a status worth a sentence.
+    expect(meta.text()).not.toContain('messages')
+    expect(meta.text()).not.toContain('No chat')
+  })
+
+  it('still reports how much chat there is', async () => {
+    getMock.mockResolvedValue(record({ chatCount: 2 }))
+    const w = mountDetail()
+    await flushPromises()
+
+    expect(w.find('.meeting-header [data-role="meeting-meta"]').text()).toContain('2 messages')
   })
 })
 

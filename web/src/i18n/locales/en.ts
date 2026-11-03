@@ -4159,7 +4159,6 @@ export default {
       notFoundTitle: 'Record not found',
       notFoundDesc: 'This meeting may have been deleted.',
       chatCount: '{n} messages',
-      noChat: 'No chat',
       tabMinutes: 'Minutes',
       tabTranscript: 'Transcript',
       tabRevised: 'Proofread',

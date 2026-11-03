@@ -11,6 +11,10 @@
         @dragstart="onDragStart"
         @dragend="cleanupDragGhost()"
       >{{ record?.title || t('meeting.list.untitled') }}</span>
+      <!-- When/How long: merged into the title bar instead of taking a row of
+           its own. The container query below drops it on a narrow pane rather
+           than squeezing the title to nothing. -->
+      <span v-if="metaLabel" class="meeting-header__meta" data-role="meeting-meta">{{ metaLabel }}</span>
       <span class="meeting-header__spacer" />
       <button
         v-if="record"
@@ -36,27 +40,6 @@
       />
     </div>
     <template v-else>
-      <div class="meeting-meta">
-        <span>{{ formatWhen(record.startedAt) }}</span>
-        <span v-if="durationLabel">· {{ durationLabel }}</span>
-        <span>· {{ record.chatCount > 0 ? t('meeting.detail.chatCount', { n: record.chatCount }) : t('meeting.detail.noChat') }}</span>
-      </div>
-
-      <!-- The bar sits ABOVE the tabs so it is visible from every tab: the
-           record opens on 资源, and a regeneration started elsewhere must not
-           be invisible (or unreachable) just because the reader is not on a
-           text tab. -->
-      <MeetingArtifactBar
-        :kind="barKind"
-        :state="barState"
-        :generation="record?.generation ?? null"
-        :has-audio="Boolean(record?.hasAudio)"
-        :show-kind="!activeArtifactKind"
-        :blocked="barBlockedReason"
-        @regenerate="openRegenerate(barKind)"
-        @cancel="cancelRegenerate"
-      />
-
       <div class="meeting-tabs">
         <button
           v-for="tab in tabs"
@@ -78,166 +61,182 @@
       </div>
 
 
-      <div
-        class="meeting-body"
-        :data-quote-source="quoteSource"
-        :data-quote-language="activeTab === 'chat' ? 'chat' : 'meeting'"
-        :data-quote-meeting-token="record?.token || ''"
-      >
-        <template v-if="activeTab === 'minutes'">
-          <!-- The minutes are rendered by the SAME pipeline/interactions as the
-               file preview. Do NOT go back to v-html + renderMarkdownHtml:
-               that drops detectedPaths, never verifies the path chips, and
-               resolves relative links against the project root. -->
-          <MeetingMarkdown
-            v-if="minutesText"
-            :content="minutesText"
-            :path="minutesPath"
-            @copy="copy"
-          />
-          <div v-else-if="isArtifactRunning('minutes')" class="meeting-generating">
-            <div class="meeting-generating__row"><span class="meeting-spinner" />{{ t('liveShare.notes.generating') }}</div>
-          </div>
-          <MeetingEmpty
-            v-else
-            :icon="FileText"
-            :title="t('meeting.detail.emptyMinutesTitle')"
-            :desc="canRegenerate('minutes') ? t('meeting.detail.emptyMinutesDesc') : t('meeting.detail.artifact.noSource')"
-          >
-            <template v-if="canRegenerate('minutes')" #action>
-              <button
-                class="fbtn fbtn-primary"
-                type="button"
-                data-action="meeting-generate-minutes"
-                @click="openRegenerate('minutes')"
-              >
-                {{ t('meeting.detail.artifact.generate') }}
-              </button>
-            </template>
-          </MeetingEmpty>
-        </template>
+      <!-- The artifact strip belongs to the tab that owns the artifact: it sits
+           at the TOP of that tab's pane, above the scrolling content. 资源 and
+           聊天 own no artifact and get no strip at all. -->
+      <div class="meeting-tabpanel">
+        <MeetingArtifactBar
+          v-if="activeArtifactKind"
+          :kind="activeArtifactKind"
+          :state="barState"
+          :generation="record?.generation ?? null"
+          :has-audio="Boolean(record?.hasAudio)"
+          :blocked="barBlockedReason"
+          @regenerate="regenerateActive"
+          @cancel="cancelRegenerate"
+        />
 
-        <template v-else-if="activeTab === 'transcript'">
-          <!-- The same rows the live 转写 tab drew, from the stored artifact:
-               the cue's voice span gives the speaker back. Do NOT write the
-               timing arrow as its two-dash form in this comment: an HTML
-               comment ends at the first close marker, so the rest would leak
-               into the pane as visible text. -->
-          <TranscriptList
-            v-if="transcriptLines.length"
-            :blocks="transcriptLines"
-            data-role="transcript"
-            @shot-open="openShot"
-            @shot-delete="removeShot"
-          />
-          <div v-else-if="isArtifactRunning('transcript')" class="meeting-generating">
-            <div class="meeting-generating__row"><span class="meeting-spinner" />{{ t('meeting.detail.artifact.runningAsr') }}</div>
-          </div>
-          <!-- An empty transcript has three different causes and the old single
-               sentence ("听记没有开启") was only right for one of them: it also
-               claimed that while the file was still being uploaded right after
-               a meeting, and when the file exists but could not be read. -->
-          <MeetingEmpty
-            v-else-if="transcriptPending"
-            :icon="Captions"
-            :title="t('meeting.detail.transcriptPendingTitle')"
-            :desc="t('meeting.detail.transcriptPendingDesc')"
-            data-role="transcript-pending"
-          />
-          <MeetingEmpty
-            v-else-if="transcriptUnreadable"
-            :icon="Captions"
-            :title="t('meeting.detail.transcriptUnreadableTitle')"
-            :desc="t('meeting.detail.transcriptUnreadableDesc')"
-            data-role="transcript-unreadable"
-          />
-          <MeetingEmpty
-            v-else
-            :icon="Captions"
-            :title="t('meeting.detail.emptyTranscriptTitle')"
-            :desc="canRegenerate('transcript') ? t('meeting.detail.emptyTranscriptDesc') : t('meeting.detail.artifact.noSource')"
-          >
-            <template v-if="canRegenerate('transcript')" #action>
-              <button
-                class="fbtn fbtn-primary"
-                type="button"
-                data-action="meeting-generate-transcript"
-                @click="openRegenerate('transcript')"
-              >
-                {{ record?.hasAudio ? t('meeting.detail.artifact.reasr') : t('meeting.detail.artifact.generate') }}
-              </button>
-            </template>
-          </MeetingEmpty>
-        </template>
-
-        <template v-else-if="activeTab === 'revised'">
-          <!-- The same rows the 转写 tab draws, from the proofread file: the
-               model only fixes words, so the speakers and the timeline are the
-               same conversation. Not Markdown — one line per utterance has no
-               paragraph breaks and would render as a single block. -->
-          <TranscriptList
-            v-if="revisedLines.length"
-            :blocks="revisedLines"
-            data-role="revised"
-          />
-          <div v-else-if="isArtifactRunning('revised')" class="meeting-generating">
-            <div class="meeting-generating__row"><span class="meeting-spinner" />{{ t('liveShare.notes.proofreading') }}</div>
-          </div>
-          <!-- Proofreading is allowed to fail without failing the minutes: the
-               summary then comes from the raw transcript, and this tab stays
-               empty. Say so instead of leaving a blank pane. -->
-          <MeetingEmpty
-            v-else
-            :icon="SpellCheck"
-            :title="t('meeting.detail.emptyRevisedTitle')"
-            :desc="canRegenerate('revised') ? t('meeting.detail.emptyRevisedDesc') : t('meeting.detail.artifact.noSource')"
-            data-role="revised-empty"
-          >
-            <template v-if="canRegenerate('revised')" #action>
-              <button
-                class="fbtn fbtn-primary"
-                type="button"
-                data-action="meeting-generate-revised"
-                @click="openRegenerate('revised')"
-              >
-                {{ t('meeting.detail.artifact.generate') }}
-              </button>
-            </template>
-          </MeetingEmpty>
-        </template>
-
-        <template v-else-if="activeTab === 'chat'">
-          <MeetingEmpty
-            v-if="chat.length === 0"
-            :icon="MessagesSquare"
-            :title="t('meeting.detail.emptyChatTitle')"
-          />
-          <!-- The same conversation the live panel showed, drawn by the same
-               row component: same bubble, same avatar, same timestamp. -->
-          <div v-else class="meeting-chat">
-            <ChatMessageRow
-              v-for="m in chat"
-              :key="m.id"
-              :name="m.speaker || t('meeting.detail.anonymous')"
-              :at="m.at"
-              :text="m.text"
-              :self="isMine(m)"
+        <div
+          class="meeting-body"
+          :data-quote-source="quoteSource"
+          :data-quote-language="activeTab === 'chat' ? 'chat' : 'meeting'"
+          :data-quote-meeting-token="record?.token || ''"
+        >
+          <template v-if="activeTab === 'minutes'">
+            <!-- The minutes are rendered by the SAME pipeline/interactions as the
+                 file preview. Do NOT go back to v-html + renderMarkdownHtml:
+                 that drops detectedPaths, never verifies the path chips, and
+                 resolves relative links against the project root. -->
+            <MeetingMarkdown
+              v-if="minutesText"
+              :content="minutesText"
+              :path="minutesPath"
+              @copy="copy"
             />
-          </div>
-        </template>
+            <div v-else-if="isArtifactRunning('minutes')" class="meeting-generating">
+              <div class="meeting-generating__row"><span class="meeting-spinner" />{{ t('liveShare.notes.generating') }}</div>
+            </div>
+            <MeetingEmpty
+              v-else
+              :icon="FileText"
+              :title="t('meeting.detail.emptyMinutesTitle')"
+              :desc="canRegenerate('minutes') ? t('meeting.detail.emptyMinutesDesc') : t('meeting.detail.artifact.noSource')"
+            >
+              <template v-if="canRegenerate('minutes')" #action>
+                <button
+                  class="fbtn fbtn-primary"
+                  type="button"
+                  data-action="meeting-generate-minutes"
+                  @click="openRegenerate('minutes')"
+                >
+                  {{ t('meeting.detail.artifact.generate') }}
+                </button>
+              </template>
+            </MeetingEmpty>
+          </template>
 
-        <template v-else>
-          <MeetingResources
-            :groups="resourceGroups"
-            :loading="resourcesLoading"
-            :error="resourcesError"
-            :total="resourceTotal"
-            :folder-path="resourceDir"
-            :links="shareLinks"
-            :share-token="record?.token || ''"
-            @reload="reloadResources"
-          />
-        </template>
+          <template v-else-if="activeTab === 'transcript'">
+            <!-- The same rows the live 转写 tab drew, from the stored artifact:
+                 the cue's voice span gives the speaker back. Do NOT write the
+                 timing arrow as its two-dash form in this comment: an HTML
+                 comment ends at the first close marker, so the rest would leak
+                 into the pane as visible text. -->
+            <TranscriptList
+              v-if="transcriptLines.length"
+              :blocks="transcriptLines"
+              data-role="transcript"
+              @shot-open="openShot"
+              @shot-delete="removeShot"
+            />
+            <div v-else-if="isArtifactRunning('transcript')" class="meeting-generating">
+              <div class="meeting-generating__row"><span class="meeting-spinner" />{{ t('meeting.detail.artifact.runningAsr') }}</div>
+            </div>
+            <!-- An empty transcript has three different causes and the old single
+                 sentence ("听记没有开启") was only right for one of them: it also
+                 claimed that while the file was still being uploaded right after
+                 a meeting, and when the file exists but could not be read. -->
+            <MeetingEmpty
+              v-else-if="transcriptPending"
+              :icon="Captions"
+              :title="t('meeting.detail.transcriptPendingTitle')"
+              :desc="t('meeting.detail.transcriptPendingDesc')"
+              data-role="transcript-pending"
+            />
+            <MeetingEmpty
+              v-else-if="transcriptUnreadable"
+              :icon="Captions"
+              :title="t('meeting.detail.transcriptUnreadableTitle')"
+              :desc="t('meeting.detail.transcriptUnreadableDesc')"
+              data-role="transcript-unreadable"
+            />
+            <MeetingEmpty
+              v-else
+              :icon="Captions"
+              :title="t('meeting.detail.emptyTranscriptTitle')"
+              :desc="canRegenerate('transcript') ? t('meeting.detail.emptyTranscriptDesc') : t('meeting.detail.artifact.noSource')"
+            >
+              <template v-if="canRegenerate('transcript')" #action>
+                <button
+                  class="fbtn fbtn-primary"
+                  type="button"
+                  data-action="meeting-generate-transcript"
+                  @click="openRegenerate('transcript')"
+                >
+                  {{ record?.hasAudio ? t('meeting.detail.artifact.reasr') : t('meeting.detail.artifact.generate') }}
+                </button>
+              </template>
+            </MeetingEmpty>
+          </template>
+
+          <template v-else-if="activeTab === 'revised'">
+            <!-- The same rows the 转写 tab draws, from the proofread file: the
+                 model only fixes words, so the speakers and the timeline are the
+                 same conversation. Not Markdown — one line per utterance has no
+                 paragraph breaks and would render as a single block. -->
+            <TranscriptList
+              v-if="revisedLines.length"
+              :blocks="revisedLines"
+              data-role="revised"
+            />
+            <div v-else-if="isArtifactRunning('revised')" class="meeting-generating">
+              <div class="meeting-generating__row"><span class="meeting-spinner" />{{ t('liveShare.notes.proofreading') }}</div>
+            </div>
+            <!-- Proofreading is allowed to fail without failing the minutes: the
+                 summary then comes from the raw transcript, and this tab stays
+                 empty. Say so instead of leaving a blank pane. -->
+            <MeetingEmpty
+              v-else
+              :icon="SpellCheck"
+              :title="t('meeting.detail.emptyRevisedTitle')"
+              :desc="canRegenerate('revised') ? t('meeting.detail.emptyRevisedDesc') : t('meeting.detail.artifact.noSource')"
+              data-role="revised-empty"
+            >
+              <template v-if="canRegenerate('revised')" #action>
+                <button
+                  class="fbtn fbtn-primary"
+                  type="button"
+                  data-action="meeting-generate-revised"
+                  @click="openRegenerate('revised')"
+                >
+                  {{ t('meeting.detail.artifact.generate') }}
+                </button>
+              </template>
+            </MeetingEmpty>
+          </template>
+
+          <template v-else-if="activeTab === 'chat'">
+            <MeetingEmpty
+              v-if="chat.length === 0"
+              :icon="MessagesSquare"
+              :title="t('meeting.detail.emptyChatTitle')"
+            />
+            <!-- The same conversation the live panel showed, drawn by the same
+                 row component: same bubble, same avatar, same timestamp. -->
+            <div v-else class="meeting-chat">
+              <ChatMessageRow
+                v-for="m in chat"
+                :key="m.id"
+                :name="m.speaker || t('meeting.detail.anonymous')"
+                :at="m.at"
+                :text="m.text"
+                :self="isMine(m)"
+              />
+            </div>
+          </template>
+
+          <template v-else>
+            <MeetingResources
+              :groups="resourceGroups"
+              :loading="resourcesLoading"
+              :error="resourcesError"
+              :total="resourceTotal"
+              :folder-path="resourceDir"
+              :links="shareLinks"
+              :share-token="record?.token || ''"
+              @reload="reloadResources"
+            />
+          </template>
+        </div>
       </div>
 
       <div class="meeting-footer">
@@ -466,22 +465,18 @@ const activeArtifactKind = computed<MeetingArtifactKind | null>(() => {
   }
   return null
 })
-/**
- * The artifact the bar speaks for.
- *
- * On a text tab that is the tab's own artifact. On 资源/聊天 the bar still has
- * to mean something: it follows the running step, so a chain started from
- * another tab stays visible, and otherwise falls back to the minutes — the
- * record's primary output. `showKind` marks that fallback so "还没有生成" never
- * reads as if it were about the tab on screen.
- */
-const barKind = computed<MeetingArtifactKind>(() =>
-  activeArtifactKind.value ?? record.value?.generation?.step ?? 'minutes')
-const barState = computed(() => artifactStateOf(record.value, barKind.value))
+const barState = computed(() =>
+  artifactStateOf(record.value, activeArtifactKind.value ?? 'minutes'))
 const barBlockedReason = computed(() => {
-  if (!record.value) return ''
-  return canRegenerate(barKind.value) ? '' : t('meeting.detail.artifact.noSource')
+  const kind = activeArtifactKind.value
+  if (!kind || !record.value) return ''
+  return canRegenerate(kind) ? '' : t('meeting.detail.artifact.noSource')
 })
+
+function regenerateActive(): void {
+  const kind = activeArtifactKind.value
+  if (kind) void openRegenerate(kind)
+}
 
 /** The step is the current one, or the only job left after a refresh. */
 function isArtifactRunning(kind: MeetingArtifactKind): boolean {
@@ -660,6 +655,21 @@ const durationLabel = computed(() => {
   if (!r?.endedAt || !r.startedAt || r.endedAt <= r.startedAt) return ''
   const minutes = Math.max(1, Math.round((r.endedAt - r.startedAt) / 60000))
   return t('meeting.list.duration', { n: minutes })
+})
+
+/**
+ * When / how long / how much chat, as one line in the title bar.
+ *
+ * "No chat" is deliberately absent: it described the absence of something the
+ * reader can already see (an empty 聊天 tab) and pushed the title aside for it.
+ */
+const metaLabel = computed(() => {
+  const r = record.value
+  if (!r) return ''
+  const parts = [formatWhen(r.startedAt)]
+  if (durationLabel.value) parts.push(durationLabel.value)
+  if (r.chatCount > 0) parts.push(t('meeting.detail.chatCount', { n: r.chatCount }))
+  return parts.filter(Boolean).join(' · ')
 })
 
 const currentText = computed(() => {
@@ -1049,10 +1059,20 @@ onMounted(() => {
   display: flex; align-items: center; gap: var(--space-3);
   height: var(--header-height); padding: 0 var(--space-5) 0 var(--space-6);
   border-bottom: 1px solid var(--border-color); flex-shrink: 0;
+  /* Query container for the meta line: on a narrow pane the when/duration is
+     dropped entirely instead of squeezing the title out. */
+  container-type: inline-size;
 }
 .meeting-header__title {
   font-size: var(--font-size-md); font-weight: 600; color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.meeting-header__meta {
+  flex-shrink: 0; font-size: var(--font-size-xs); color: var(--text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+@container (max-width: 420px) {
+  .meeting-header__meta { display: none; }
 }
 .meeting-header__spacer { flex: 1; }
 .meeting-icon-btn {
@@ -1062,14 +1082,6 @@ onMounted(() => {
   color: var(--text-muted); cursor: pointer; flex-shrink: 0;
 }
 .meeting-icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
-
-.meeting-meta {
-  display: flex; flex-wrap: wrap; gap: var(--space-2);
-  padding: var(--space-3) var(--space-7);
-  font-size: var(--font-size-xs); color: var(--text-muted);
-  border-bottom: 1px solid var(--border-color);
-  flex-shrink: 0;
-}
 
 .meeting-tabs {
   display: flex; flex-shrink: 0;
@@ -1090,6 +1102,10 @@ onMounted(() => {
   padding: 0 var(--space-1); border-radius: var(--radius-full);
   background: var(--accent-color); color: #fff;
   font-size: var(--font-size-2xs); line-height: calc(14 * var(--dp)); text-align: center;
+}
+
+.meeting-tabpanel {
+  display: flex; flex-direction: column; flex: 1; min-height: 0;
 }
 
 .meeting-body {
