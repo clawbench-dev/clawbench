@@ -4173,8 +4173,13 @@ export default {
       copyAll: '复制全部',
       chatLine: '[{time}] {speaker}：{text}',
     },
+    share: {
+      ended: '会议已结束',
+    },
     resources: {
       title: '会议资源',
+      linkTitle: '会议链接',
+      linkHint: '链接长期有效，直到这条会议记录被删除。拿到链接的人无需登录即可查看纪要与转写。',
       groupFolder: '会议目录',
       groupReferenced: '纪要中引用',
       referencedHint: '从纪要正文提取的路径，去重后只保留磁盘上存在的文件；会议目录内的文件不在这里重复。',

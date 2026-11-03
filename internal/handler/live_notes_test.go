@@ -322,7 +322,7 @@ func TestServeLiveShareNoteSegment_OtherProjectIs404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestServeShareLiveNotes_RequiresLiveRoom(t *testing.T) {
+func TestServeShareLiveNotes_RequiresLiveRoomOrRecord(t *testing.T) {
 	setupLiveNotesDB(t)
 	resetLiveRegistry(t)
 
@@ -331,6 +331,142 @@ func TestServeShareLiveNotes_RequiresLiveRoom(t *testing.T) {
 	ServeShareLiveNotes(w, req, "0123456789abcdef0123456789abcdef")
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// A share link outlives the room.
+//
+// The room is in-memory and disappears the moment the publisher presses 结束会议,
+// but the RECORD is permanent: the same URL must keep answering with the
+// transcript, the minutes, the proofread text and the chat until the owner
+// deletes it. Before this, every link handed out in advance died with the room.
+func TestServeShareLiveNotes_RecordOutlivesRoom(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := projPath("/proj/a")
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	const token = "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "发版评审", 1_700_000_000_000))
+	_, err = service.AppendLiveNoteSegment(context.Background(), token, pid, service.LiveNoteSegment{
+		Channel: "mic", Speaker: "我", StartedAt: 1000, DurationMS: 2000, Text: "你好",
+	})
+	require.NoError(t, err)
+	_, err = service.AppendLiveNoteChat(token, pid, service.LiveNoteChatMessage{
+		ClientID: "c1", Speaker: "小明", Text: "早", At: 1_700_000_001_000,
+	})
+	require.NoError(t, err)
+	require.NoError(t, service.SetLiveNoteMinutes(token, pid, "发版评审", service.LiveNotesStatusReady, "# 纪要", "", ""))
+	require.NoError(t, service.SetLiveNoteRevise(token, pid, service.LiveNotesStatusReady, "[00:00] 我：你好", ""))
+	require.NoError(t, service.EndLiveNote(token, 1_700_000_060_000))
+
+	// No room: exactly the state after the publisher ended the meeting.
+	require.Nil(t, liveRegistry.Get(token))
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/share/x/notes?since=0&full=1", http.NoBody)
+	ServeShareLiveNotes(w, req, token)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp liveNotesResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.Ended)
+	assert.Equal(t, "发版评审", resp.Title)
+	assert.Equal(t, int64(1_700_000_060_000), resp.EndedAt)
+	require.Len(t, resp.Segments, 1)
+	assert.Equal(t, "你好", resp.Segments[0].Text)
+	assert.Equal(t, "# 纪要", resp.Minutes.Markdown)
+	assert.Equal(t, "[00:00] 我：你好", resp.Minutes.Revise.Text)
+	require.Len(t, resp.Chat, 1)
+	assert.Equal(t, "小明", resp.Chat[0].Speaker)
+	assert.Equal(t, "早", resp.Chat[0].Text)
+}
+
+// The live poll must stay cheap: `?full=1` is the record view only, so the chat
+// and the proofread text are not re-sent every three seconds while a meeting is
+// running.
+func TestServeShareLiveNotes_PollOmitsRecordExtras(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := projPath("/proj/a")
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	const token = "fedcba9876543210fedcba9876543210"
+	require.NoError(t, service.StartLiveNote(token, pid, "会议", 1_700_000_000_000))
+	_, err = service.AppendLiveNoteChat(token, pid, service.LiveNoteChatMessage{
+		ClientID: "c1", Speaker: "小明", Text: "早", At: 1_700_000_001_000,
+	})
+	require.NoError(t, err)
+	require.NoError(t, service.SetLiveNoteRevise(token, pid, service.LiveNotesStatusReady, "[00:00] 我：你好", ""))
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/share/x/notes?since=0", http.NoBody)
+	ServeShareLiveNotes(w, req, token)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp liveNotesResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Empty(t, resp.Chat)
+	assert.Empty(t, resp.Minutes.Revise.Text)
+}
+
+// Hidden rows are pre-record meetings the upgrade could not place on a
+// timeline: the owner cannot see them, so a link must not resolve to them.
+func TestServeShareLiveNotes_HiddenRecordIs404(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := projPath("/proj/a")
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	const token = "00112233445566778899aabbccddeeff"
+	require.NoError(t, service.StartLiveNote(token, pid, "旧会议", 1_700_000_000_000))
+	_, err = db.Exec(`UPDATE live_notes SET hidden = 1 WHERE token = ?`, token)
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/share/x/notes", http.NoBody)
+	ServeShareLiveNotes(w, req, token)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// The dispatcher must resolve a finished meeting to `live` + ended, so the
+// share page opens the record instead of asking for a nickname to join a room
+// that no longer exists.
+func TestShareMeta_RecordOutlivesRoom(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	// serveShareMeta falls through to the session and file share lookups, which
+	// need their tables to exist.
+	_, err := db.Exec(service.SessionSharesDDL)
+	require.NoError(t, err)
+	_, err = db.Exec(service.FileSharesDDL)
+	require.NoError(t, err)
+	resetLiveRegistry(t)
+
+	project := projPath("/proj/a")
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	const token = "aaaabbbbccccddddeeeeffff00001111"
+	require.NoError(t, service.StartLiveNote(token, pid, "发版评审", 1_700_000_000_000))
+	require.NoError(t, service.EndLiveNote(token, 1_700_000_060_000))
+
+	w := httptest.NewRecorder()
+	serveShareMeta(w, newRequest(t, http.MethodGet, "/api/share/"+token+"/meta", nil), token)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp shareMetaResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, shareKindLive, resp.Kind)
+	assert.True(t, resp.Ended)
+	assert.Equal(t, "发版评审", resp.Title)
+	assert.Equal(t, int64(1_700_000_000_000), resp.StartedAt)
+	assert.Equal(t, int64(1_700_000_060_000), resp.EndedAt)
 }
 
 func TestServeShareLiveNotes_ReturnsSegmentsForLiveRoom(t *testing.T) {

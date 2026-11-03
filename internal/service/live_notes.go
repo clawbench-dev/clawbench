@@ -637,6 +637,43 @@ func GetLiveNote(token string) (LiveNote, bool, error) {
 	return n, true, nil
 }
 
+// PublicMeetingByToken resolves a share token to its meeting record WITHOUT a
+// project scope.
+//
+// This is what makes a meeting link outlive the room: the room is in-memory and
+// disappears the moment the publisher stops, while the record is permanent. The
+// public share endpoints use this after the room lookup fails, so the same URL
+// keeps answering with the meeting's minutes, transcript and chat until the
+// record is deleted.
+//
+// Hidden rows (pre-record meetings the upgrade could not place on a timeline)
+// are reported as missing, exactly like the list and the detail view: the link
+// must not expose something the owner cannot even see.
+func PublicMeetingByToken(token string) (LiveNote, bool, error) {
+	if strings.TrimSpace(token) == "" {
+		return LiveNote{}, false, nil
+	}
+	var n LiveNote
+	var hidden int64
+	err := store.ReadDB().QueryRow(
+		`SELECT token, title, status, minutes, error, file_path, dir_name, revised,
+		        revise_status, revise_error, started_at, ended_at, hidden
+		   FROM live_notes WHERE token = ?`, token,
+	).Scan(&n.Token, &n.Title, &n.Status, &n.Minutes, &n.Error, &n.FilePath,
+		&n.DirName, &n.Revised, &n.ReviseStatus, &n.ReviseError, &n.StartedAt,
+		&n.EndedAt, &hidden)
+	if errors.Is(err, sql.ErrNoRows) {
+		return LiveNote{}, false, nil
+	}
+	if err != nil {
+		return LiveNote{}, false, fmt.Errorf("live notes: public get: %w", err)
+	}
+	if hidden != 0 {
+		return LiveNote{}, false, nil
+	}
+	return n, true, nil
+}
+
 // LiveNoteProjectID reports which project owns a share's notes. The publisher
 // endpoints use it to authorize requests for a room that has already ended.
 func LiveNoteProjectID(token string) (int64, bool, error) {

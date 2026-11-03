@@ -1,8 +1,12 @@
 <template>
+  <!-- The meeting is over: the token now addresses the permanent RECORD, so
+       the page opens the minutes / transcript / proofread / chat instead of a
+       gate that would dial a room which no longer exists. -->
+  <MeetingShareDetail v-if="recordView" :title="title || metaTitle" />
   <!-- The nickname gate runs BEFORE any connection: an empty name must not take
        an audience slot. It also carries the meeting title the server already
        resolved from the share link. -->
-  <LiveJoinGate v-if="!joined" :title="title" @join="onJoin" />
+  <LiveJoinGate v-else-if="!joined" :title="title" @join="onJoin" />
   <!-- Shell: the picture column plus the side panel, side by side. The panel is
        a SIBLING of the picture, never an overlay: opening it must squeeze the
        stage, so nothing the presenter draws ends up hidden behind it. -->
@@ -477,6 +481,7 @@ import LiveChatPanel, { type ChatMessage } from './LiveChatPanel.vue'
 import LiveDock from './LiveDock.vue'
 import LiveDockButton from './LiveDockButton.vue'
 import LiveStageLayout from './LiveStageLayout.vue'
+import MeetingShareDetail from './MeetingShareDetail.vue'
 import { useInkBoard } from './useInkBoard'
 import { contentRectOf, toNormalized, type ContentRect, type ControlMessage } from './liveControl'
 import { appendChatMessage, mergeChatHistory } from './chatHistory'
@@ -487,6 +492,26 @@ import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 
 const TAG = 'LiveShareView'
+
+/**
+ * What `/api/share/{token}/meta` told the dispatcher about this token.
+ *
+ * Only `ended` matters here: a live room and a finished meeting share the same
+ * kind, and the record view is what a finished one opens. `title` is used while
+ * the record is still loading, so the header never shows a blank name.
+ */
+const props = withDefaults(
+  defineProps<{ meta?: { ended?: boolean; title?: string } | null }>(),
+  { meta: null },
+)
+const metaTitle = computed(() => props.meta?.title ?? '')
+/**
+ * The meeting is over and this page shows its record.
+ *
+ * Seeded from meta (a link opened after the meeting) and flipped when the
+ * publisher stops while we are watching (see `applyViewerState`).
+ */
+const recordView = ref(props.meta?.ended === true)
 
 const { t } = useI18n()
 
@@ -1393,12 +1418,16 @@ function attachCamera(stream: MediaStream | null): void {
 function applyViewerState(s: LiveViewerState, reason?: string): void {
   state.value = s
   if (reason) failReason.value = reason
+  // The meeting ended — not "you were removed", which is a different fact and
+  // keeps its own explanation. The record survives the room, so this is where
+  // the member lands: the same four surfaces the host sees.
+  if (s === 'ended' && reason !== 'kicked') recordView.value = true
   if (s === 'ended' || s === 'full' || s === 'failed') {
     talking.value = false
     sharingScreen.value = false
     screenSharer.value = ''
     memberStream.value = null
-    // The room is gone, so the transcript endpoint 404s from here on.
+    // The room is gone, so the live transcript endpoint stops advancing.
     // Fall back to the chat tab rather than closing the panel: the
     // conversation is still worth reading after the stream drops.
     stopNotesPolling()

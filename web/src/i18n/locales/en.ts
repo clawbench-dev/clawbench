@@ -4180,8 +4180,13 @@ export default {
       copyAll: 'Copy all',
       chatLine: '[{time}] {speaker}: {text}',
     },
+    share: {
+      ended: 'Meeting ended',
+    },
     resources: {
       title: 'Meeting resources',
+      linkTitle: 'Meeting link',
+      linkHint: 'The link stays valid until this meeting record is deleted. Anyone with it can read the minutes and the transcript without signing in.',
       groupFolder: 'Meeting folder',
       groupReferenced: 'Referenced in minutes',
       referencedHint: 'Paths found in the minutes, de-duplicated and kept only when the file exists; files inside the meeting folder are not repeated here.',

@@ -86,19 +86,38 @@ var liveNoteSTTSlots = make(chan struct{}, liveNoteSTTConcurrency)
 
 // liveNotesResponse is the publisher/viewer read payload.
 type liveNotesResponse struct {
-	Title    string                    `json:"title,omitempty"`
-	Segments []service.LiveNoteSegment `json:"segments"`
+	Title string `json:"title,omitempty"`
+	// StartedAt / EndedAt are unix ms, server clock. A viewer reads them from
+	// the record once the meeting is over (the record view prints the time and
+	// the duration); during a live meeting they are simply the current values.
+	StartedAt int64                     `json:"startedAt,omitempty"`
+	EndedAt   int64                     `json:"endedAt,omitempty"`
+	Ended     bool                      `json:"ended"`
+	Segments  []service.LiveNoteSegment `json:"segments"`
 	// Files are the open/close events so far. A viewer gets the same rows with
 	// Path blanked — it may know which file, not where the publisher keeps it.
 	Files []service.LiveNoteFile `json:"files,omitempty"`
 	// Screens are the screen-sharing intervals (who shared, when). No redaction
 	// needed: a nickname is already visible to every viewer in the roster.
 	Screens []service.LiveNoteScreenShare `json:"screens,omitempty"`
+	// Chat is the archived conversation, oldest first. Filled only for the
+	// record view (`?full=1`): the live poll runs every few seconds and must not
+	// re-transfer a growing message list on every tick.
+	Chat []liveNotePublicChat `json:"chat,omitempty"`
 	// Shots are the key frames kept for this meeting. Publisher-only: the
 	// public endpoint leaves this empty (a viewer watches the live picture, and
 	// the frames are a persistent artifact of the host's project).
 	Shots   []service.LiveNoteShot  `json:"shots,omitempty"`
 	Minutes liveNotesMinutesPayload `json:"minutes"`
+}
+
+// liveNotePublicChat is one chat line as a viewer may see it: the text, who
+// said it and when. The client message id and the viewer id are internal
+// identifiers and are not part of the record.
+type liveNotePublicChat struct {
+	Speaker string `json:"speaker"`
+	Text    string `json:"text"`
+	At      int64  `json:"at"`
 }
 
 // liveNotesMinutesPayload carries the generated minutes and their status so the
@@ -122,6 +141,10 @@ type liveNotesMinutesPayload struct {
 type liveNotesRevisePayload struct {
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
+	// Text is the proofread transcript. Viewer-only (`?full=1`): the publisher
+	// reads the same content from `transcript-revised.md`, which is a path on
+	// its own disk.
+	Text string `json:"text,omitempty"`
 }
 
 // liveNotesArtifacts lists the permanent files of one meeting.
@@ -1408,9 +1431,15 @@ func liveNotesStartTime(segments []service.LiveNoteSegment) time.Time {
 // ServeShareLiveNotes handles GET /api/share/{token}/notes (PUBLIC: the share
 // token is the sole credential, exactly like the signaling socket).
 //
-// Notes are only readable while the room is live. After the publisher ends the
-// share the token stops resolving, so a leaked link cannot be used to read a
-// transcript later.
+// The token stays readable after the meeting ends: the room is only the live
+// transport, the meeting RECORD is permanent. Once the publisher stops, the
+// same URL answers with the archived transcript, minutes, proofread text and
+// chat until the owner deletes the record — which is what makes a link handed
+// out in advance still worth opening the next day.
+//
+// `?full=1` is the record view: it adds the proofread text and the archived
+// chat. The live poll deliberately omits them (it runs every few seconds and
+// must not re-transfer a growing message list on each tick).
 func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -1419,10 +1448,20 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 		http.NotFound(w, r)
 		return
 	}
-	if liveRegistry.Get(token) == nil {
+	// A live room is the fast path, but it is NOT the only valid state: after
+	// the room is gone the record still owns the token.
+	live := liveRegistry.Get(token) != nil
+	note, exists, err := service.PublicMeetingByToken(token)
+	if err != nil {
+		slog.Error("live notes: public get failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if !live && !exists {
 		http.NotFound(w, r)
 		return
 	}
+	full := r.URL.Query().Get("full") != ""
 	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
 	segments, err := service.ListLiveNoteSegments(token, since)
 	if err != nil {
@@ -1442,23 +1481,38 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
-	note, _, err := service.GetLiveNote(token)
-	if err != nil {
-		slog.Error("live notes: public get failed", "err", err)
-		model.WriteError(w, model.Internal(err))
-		return
+	var chat []liveNotePublicChat
+	if full {
+		messages, chatErr := service.ListLiveNoteChat(token, 0)
+		if chatErr != nil {
+			// Chat is not an official artifact of the meeting: losing it must
+			// not cost the reader the minutes and the transcript.
+			slog.Warn("live notes: public chat failed", "err", chatErr)
+		}
+		for _, m := range messages {
+			chat = append(chat, liveNotePublicChat{Speaker: m.Speaker, Text: m.Text, At: m.At})
+		}
+	}
+	revise := liveNotesRevisePayload{Status: note.ReviseStatus, Error: note.ReviseError}
+	if full {
+		revise.Text = note.Revised
 	}
 	writeJSON(w, http.StatusOK, liveNotesResponse{
-		Segments: segments,
-		Files:    redactLiveNoteFilePaths(files),
-		Screens:  screens,
+		Title:     note.Title,
+		StartedAt: note.StartedAt,
+		EndedAt:   note.EndedAt,
+		Ended:     !live,
+		Segments:  segments,
+		Files:     redactLiveNoteFilePaths(files),
+		Screens:   screens,
+		Chat:      chat,
 		Minutes: liveNotesMinutesPayload{
 			Status:   note.Status,
 			Markdown: note.Minutes,
 			Error:    note.Error,
 			// FilePath and Artifacts deliberately omitted: viewers get the text,
 			// not paths into the publisher's project.
-			Revise: liveNotesRevisePayload{Status: note.ReviseStatus},
+			Revise: revise,
 		},
 	})
 }

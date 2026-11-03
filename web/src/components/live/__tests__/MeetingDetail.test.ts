@@ -86,10 +86,17 @@ vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
   }
 })
 
-function mountDetail() {
+type DetailTab = 'resources' | 'minutes' | 'transcript' | 'revised' | 'chat'
+
+/**
+ * The record opens on 资源 by default, so a test that is about another pane has
+ * to say so explicitly — otherwise it silently asserts against the resources
+ * tab (which is exactly the kind of test that passes for the wrong reason).
+ */
+function mountDetail(initialTab?: DetailTab) {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
   return mount(MeetingDetail, {
-    props: { token: 'tok-1' },
+    props: initialTab ? { token: 'tok-1', initialTab } : { token: 'tok-1' },
     global: {
       plugins: [i18n],
       stubs: {
@@ -174,7 +181,7 @@ describe('MeetingDetail', () => {
   })
 
   it('renders the minutes through the shared document body', async () => {
-    const w = mountDetail()
+    const w = mountDetail('minutes')
     await flushPromises()
 
     expect(w.find('.meeting-md').html()).toContain('MINUTES')
@@ -183,13 +190,14 @@ describe('MeetingDetail', () => {
     expect(w.findAll('.meeting-file')).toHaveLength(0)
   })
 
-  it('adds a resources tab alongside minutes, transcript, proofread and chat', async () => {
+  it('opens on the resources tab, first in the bar', async () => {
     const w = mountDetail()
     await flushPromises()
 
     const tabs = w.findAll('.meeting-tab').map((tab) => tab.attributes('data-tab'))
-    expect(tabs).toEqual(['minutes', 'transcript', 'revised', 'chat', 'resources'])
-    await w.find('[data-tab="resources"]').trigger('click')
+    expect(tabs).toEqual(['resources', 'minutes', 'transcript', 'revised', 'chat'])
+    // Default: the resource pane is already the one rendered.
+    expect(w.find('.meeting-tab--on').attributes('data-tab')).toBe('resources')
     expect(w.find('.meeting-resources-stub').exists()).toBe(true)
   })
 
@@ -283,7 +291,7 @@ describe('MeetingDetail', () => {
     getMock.mockResolvedValue(
       record({ status: 'generating', updatedAt: Date.now() - 11 * 60 * 1000 }),
     )
-    const w = mountDetail()
+    const w = mountDetail('minutes')
     await flushPromises()
 
     expect(w.text()).toContain(enMessages.meeting.detail.generatingStale)
@@ -292,7 +300,7 @@ describe('MeetingDetail', () => {
 
   it('shows a spinner while the job is genuinely running', async () => {
     getMock.mockResolvedValue(record({ status: 'generating', updatedAt: Date.now() }))
-    const w = mountDetail()
+    const w = mountDetail('minutes')
     await flushPromises()
 
     expect(w.find('.meeting-generating').exists()).toBe(true)
@@ -303,7 +311,7 @@ describe('MeetingDetail', () => {
       record({ hasMinutes: false, hasTranscript: false, hasRevised: false, audioFiles: 0, dirPath: undefined }),
     )
     artifactMock.mockResolvedValue(null)
-    const w = mountDetail()
+    const w = mountDetail('minutes')
     await flushPromises()
 
     expect(w.find('.meeting-empty').exists()).toBe(true)
@@ -496,7 +504,7 @@ describe('MeetingDetail', () => {
       kind === 'transcript' ? { content: VTT, file: 'transcript.vtt' } : null,
     )
 
-    const w = mountDetail()
+    const w = mountDetail('minutes')
     try {
       expect(w.find('.meeting-center').exists()).toBe(true) // first paint shows loading
 

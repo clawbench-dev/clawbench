@@ -68,7 +68,7 @@ const emit = defineEmits<{ quote: [token: string] }>()
 type View = 'list' | 'create' | 'join' | 'meeting' | 'detail'
 const view = ref<View>('list')
 const detailToken = ref('')
-const detailTab = ref<MeetingDetailTab>('minutes')
+const detailTab = ref<MeetingDetailTab>('resources')
 const share = useLiveShare()
 /** The meeting this client publishes, or '' — the list's "back to meeting" chip. */
 const liveToken = computed(() => (share.state.value === 'publishing' ? share.token.value : ''))
@@ -82,9 +82,9 @@ function openDetail(token: string): void {
     return
   }
   detailToken.value = token
-  // A record opened from the list starts at the minutes, not at whatever tab
-  // the previous record happened to be on.
-  detailTab.value = 'minutes'
+  // A record opened from the list starts at its resources (the folder, the
+  // meeting link), not at whatever tab the previous record happened to be on.
+  detailTab.value = 'resources'
   view.value = 'detail'
 }
 

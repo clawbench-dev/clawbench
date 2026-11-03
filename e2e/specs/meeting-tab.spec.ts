@@ -281,6 +281,19 @@ test.describe('Meeting flow', () => {
     // "first row is the one I just made" assertion depended on run order.
     const token = await row.getAttribute('data-token')
     expect(token, 'the row must carry the meeting token for cleanup').toBeTruthy()
+
+    // The link handed out in advance still works after the meeting: a member
+    // opening it now lands on the record — minutes / transcript / proofread /
+    // chat — instead of a dead "share ended" page. This is the whole point of
+    // keeping the link until the record is deleted.
+    const viewer = await page.context().newPage()
+    await viewer.goto(`/share/${token}`)
+    await expect(viewer.locator('[data-role="meeting-ended"]')).toBeVisible({ timeout: 20000 })
+    await expect(viewer.locator('[data-role="record-title"]')).toHaveText(title)
+    await viewer.locator('.share-meeting__tab[data-tab="chat"]').click()
+    await expect(viewer.locator('.chat-row__text')).toContainText('这是一条会议聊天')
+    await viewer.close()
+
     // 409 means the minutes job is still running and the record cannot be
     // deleted yet — retry instead of treating it as a failure.
     await expect

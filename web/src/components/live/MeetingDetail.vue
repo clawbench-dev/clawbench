@@ -190,6 +190,8 @@
             :error="resourcesError"
             :total="resourceTotal"
             :folder-path="resourceDir"
+            :links="shareLinks"
+            :share-token="record?.token || ''"
             @reload="reloadResources"
           />
         </template>
@@ -253,6 +255,7 @@ import {
   type MeetingShot,
 } from '@/composables/useMeetingHistory'
 import { useMeetingResources } from '@/composables/useMeetingResources'
+import { buildShareLinks, type ShareLink } from '@/composables/useShareLinks'
 import {
   setMeetingView,
   clearMeetingView,
@@ -294,7 +297,7 @@ function isMine(m: MeetingChatMessage): boolean {
 const { openFilePath } = useFilePathAnnotation()
 
 type Tab = MeetingDetailTab
-const activeTab = ref<Tab>(props.initialTab ?? 'minutes')
+const activeTab = ref<Tab>(props.initialTab ?? 'resources')
 const record = ref<MeetingRecord | null>(null)
 const loading = ref(true)
 const minutesText = ref('')
@@ -345,12 +348,43 @@ const {
   minutesPath: () => minutesPath.value,
 })
 
+/**
+ * The meeting link, kept for as long as the record exists.
+ *
+ * The link used to live only in the running stage's 会议管理 tab, so the moment
+ * the host ended the meeting it disappeared from the UI — while the record (and
+ * its artifacts) stayed. The resource tab is where a finished meeting's
+ * leftovers live, so the link belongs here: it is the one thing a reader wants
+ * to send to someone who missed the meeting, and it stays valid until this
+ * record is deleted.
+ *
+ * Rebuilt from the token instead of reusing the stage's `shareLinks`: those are
+ * cleared when the share stops, and they were captured for the publisher's own
+ * address list at that moment.
+ */
+const shareLinks = ref<ShareLink[]>([])
+let shareLinksGen = 0
+watch(
+  () => record.value?.token,
+  async (token) => {
+    const gen = ++shareLinksGen
+    if (!token) {
+      shareLinks.value = []
+      return
+    }
+    const links = await buildShareLinks(`/share/${encodeURIComponent(token)}`)
+    if (gen !== shareLinksGen) return
+    shareLinks.value = links
+  },
+  { immediate: true },
+)
+
 const tabs = computed(() => [
+  { key: 'resources' as Tab, label: t('meeting.detail.tabResources'), count: resourceTotal.value },
   { key: 'minutes' as Tab, label: t('meeting.detail.tabMinutes'), count: 0 },
   { key: 'transcript' as Tab, label: t('meeting.detail.tabTranscript'), count: 0 },
   { key: 'revised' as Tab, label: t('meeting.detail.tabRevised'), count: 0 },
   { key: 'chat' as Tab, label: t('meeting.detail.tabChat'), count: chat.value.length },
-  { key: 'resources' as Tab, label: t('meeting.detail.tabResources'), count: resourceTotal.value },
 ])
 
 const generating = computed(() => record.value?.status === 'generating' && !isStaleGenerating(record.value))
@@ -762,7 +796,7 @@ async function askDelete(): Promise<void> {
 watch(
   () => props.token,
   () => {
-    activeTab.value = props.initialTab ?? 'minutes'
+    activeTab.value = props.initialTab ?? 'resources'
     void load()
   },
 )
