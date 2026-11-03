@@ -781,8 +781,10 @@ func TestGenerateLiveNotesMinutes_ProviderError(t *testing.T) {
 
 // ── Context-aware proofreading ─────────────────────────────────────────────
 
-// The proofreader is fed the project's own documents: that is where the correct
-// spelling of product names lives, and it is the only reason this stage exists.
+// The proofreader is fed the meeting's own vocabulary — the project documents,
+// the files people opened and the title — and answers with replacement pairs.
+// Applying them must leave every timestamp and speaker label exactly where it
+// was: that is the whole reason the stage stopped asking for a rewrite.
 func TestReviseLiveNotesTranscript_UsesProjectContextAndKeepsTheTimeline(t *testing.T) {
 	project := t.TempDir()
 	require.NoError(t, os.WriteFile(
@@ -797,22 +799,30 @@ func TestReviseLiveNotesTranscript_UsesProjectContextAndKeepsTheTimeline(t *test
 		bodies = append(bodies, string(body))
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[00:00] 我：确认 ClawBench 的 ACP 计划"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"科劳本奇 => ClawBench\na c p => ACP"}}]}`))
 	}))
 	defer srv.Close()
 	withAISummary(t, srv.URL)
 
-	got, err := ReviseLiveNotesTranscript(context.Background(), project, "周会", []LiveNoteSegment{
-		seg(1, "mic", "我", 1_000, "确认科劳本奇的 a c p 计划"),
-	}, LiveNotesSpeaker{})
+	got, err := ReviseLiveNotesTranscript(context.Background(), LiveNotesReviseInput{
+		ProjectPath: project,
+		Title:       "周会",
+		Files:       []LiveNoteFile{{Path: "internal/service/live_notes.go", OpenedAt: 1_000}},
+		Segments: []LiveNoteSegment{
+			seg(1, "mic", "我", 1_000, "确认科劳本奇的 a c p 计划"),
+		},
+	})
 	require.NoError(t, err)
-	assert.Equal(t, "[00:00] 我：确认 ClawBench 的 ACP 计划", got)
+	assert.Equal(t, "[00:00] 我：确认ClawBench的 ACP 计划", got)
 
 	mu.Lock()
 	defer mu.Unlock()
 	require.Len(t, bodies, 1)
 	assert.Contains(t, bodies[0], "ClawBench 是产品名", "project context must reach the model")
 	assert.Contains(t, bodies[0], "确认科劳本奇的 a c p 计划", "and so must the raw line")
+	assert.Contains(t, bodies[0], "术语表", "the glossary block must be there")
+	assert.Contains(t, bodies[0], "live_notes.go", "an opened file is the closest vocabulary there is")
+	assert.Contains(t, bodies[0], "周会", "the title is a free domain term")
 }
 
 // People are the only vocabulary the transcript carries itself: the line prefix
@@ -830,14 +840,14 @@ func TestReviseLiveNotesTranscript_PromptCoversNamesAndAddress(t *testing.T) {
 		bodies = append(bodies, string(body))
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[00:00] 我：好"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"NO_CHANGES"}}]}`))
 	}))
 	defer srv.Close()
 	withAISummary(t, srv.URL)
 
-	_, err := ReviseLiveNotesTranscript(context.Background(), t.TempDir(), "", []LiveNoteSegment{
-		seg(1, "mic", "我", 1_000, "好"),
-	}, LiveNotesSpeaker{})
+	_, err := ReviseLiveNotesTranscript(context.Background(), LiveNotesReviseInput{
+		Segments: []LiveNoteSegment{seg(1, "mic", "我", 1_000, "好")},
+	})
 	require.NoError(t, err)
 
 	mu.Lock()
@@ -859,8 +869,16 @@ func TestReviseLiveNotesTranscript_PromptCoversNamesAndAddress(t *testing.T) {
 		"no role may be singled out: the publisher is only a label like any other")
 	assert.Contains(t, prompt, "标签本身不要动",
 		"rule 3 corrects the body, never the label")
-	assert.Contains(t, prompt, "不要改变时间戳、说话人",
-		"the timeline lock must survive the new rules")
+	// The JSON body escapes ">" as \u003e, so the two halves are asserted
+	// separately rather than as one literal.
+	assert.Contains(t, prompt, "原词")
+	assert.Contains(t, prompt, "改词",
+		"the answer format is the contract that keeps the timeline intact")
+	assert.Contains(t, prompt, "NO_CHANGES")
+	assert.Contains(t, prompt, "不要重写转写",
+		"a rewrite would let the model reflow lines and lose the offsets")
+	assert.Contains(t, prompt, "保持原语言",
+		"a mixed-language meeting must not get its English terms translated")
 }
 
 // LEGACY transcripts label the publisher with a pronoun, so nothing in the text
@@ -912,14 +930,15 @@ func TestReviseLiveNotesTranscript_InjectsTheInitiator(t *testing.T) {
 				bodies = append(bodies, string(body))
 				mu.Unlock()
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[00:00] 我：好"}}]}`))
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"NO_CHANGES"}}]}`))
 			}))
 			defer srv.Close()
 			withAISummary(t, srv.URL)
 
-			_, err := ReviseLiveNotesTranscript(context.Background(), t.TempDir(), "", []LiveNoteSegment{
-				seg(1, "mic", "我", 1_000, "好"),
-			}, tc.self)
+			_, err := ReviseLiveNotesTranscript(context.Background(), LiveNotesReviseInput{
+				Segments: []LiveNoteSegment{seg(1, "mic", "我", 1_000, "好")},
+				Self:     tc.self,
+			})
 			require.NoError(t, err)
 
 			mu.Lock()
@@ -958,15 +977,15 @@ func TestReviseLiveNotesTranscript_InjectsTheInitiator(t *testing.T) {
 }
 
 func TestReviseLiveNotesTranscript_EmptyTranscript(t *testing.T) {
-	_, err := ReviseLiveNotesTranscript(context.Background(), t.TempDir(), "", nil, LiveNotesSpeaker{})
+	_, err := ReviseLiveNotesTranscript(context.Background(), LiveNotesReviseInput{})
 	assert.ErrorIs(t, err, ErrLiveNotesEmpty)
 }
 
 func TestReviseLiveNotesTranscript_NoSummaryModel(t *testing.T) {
 	withAISummary(t, "")
-	_, err := ReviseLiveNotesTranscript(context.Background(), t.TempDir(), "", []LiveNoteSegment{
-		seg(1, "mic", "我", 1_000, "内容"),
-	}, LiveNotesSpeaker{})
+	_, err := ReviseLiveNotesTranscript(context.Background(), LiveNotesReviseInput{
+		Segments: []LiveNoteSegment{seg(1, "mic", "我", 1_000, "内容")},
+	})
 	assert.ErrorIs(t, err, ErrSummaryModelNotConfigured)
 }
 
@@ -2612,10 +2631,11 @@ func TestReviseLiveNotesTranscript_ChunksALongTranscript(t *testing.T) {
 	require.Greater(t, len([]rune(BuildLiveNotesTranscript(segments))), liveNotesReviseChunkRunes,
 		"fixture must exceed one chunk or the chunk path is not exercised")
 
-	bodies := captureSummaryBodies(t, "[00:00] 我：第一段", "[01:00] 我：第二段")
-	got, err := ReviseLiveNotesTranscript(context.Background(), "", "", segments, LiveNotesSpeaker{})
+	bodies := captureSummaryBodies(t, "第一段的错词 => 正确写法")
+	got, err := ReviseLiveNotesTranscript(context.Background(), LiveNotesReviseInput{Segments: segments})
 	require.NoError(t, err)
-	assert.Equal(t, "[00:00] 我：第一段\n[01:00] 我：第二段", got)
+	assert.Equal(t, BuildLiveNotesTranscript(segments), got,
+		"a pair that matches nothing leaves the transcript exactly as it was")
 
 	requests := bodies()
 	require.Len(t, requests, 2)
@@ -2631,28 +2651,30 @@ func TestReviseLiveNotesTranscript_ChunkErrorIsReported(t *testing.T) {
 	withAISummary(t, srv.URL)
 
 	long := strings.Repeat("很长的发言内容。", 400)
-	_, err := ReviseLiveNotesTranscript(context.Background(), "", "", []LiveNoteSegment{
-		seg(1, "mic", "我", 1, long),
-		seg(2, "mic", "我", 60_000, long),
-	}, LiveNotesSpeaker{})
+	_, err := ReviseLiveNotesTranscript(context.Background(), LiveNotesReviseInput{
+		Segments: []LiveNoteSegment{
+			seg(1, "mic", "我", 1, long),
+			seg(2, "mic", "我", 60_000, long),
+		},
+	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "live notes: revise chunk")
 }
 
-// A reply that hit the output cap is a prefix, not a shorter proofread: the
-// tail lines are gone. It must fail the stage so the minutes fall back to the
-// raw transcript instead of summarizing a truncated copy.
+// A reply that hit the output cap is a prefix: the tail of the replacement list
+// is gone, so the transcript would keep half the corrections and nobody would
+// know which half. It must fail the stage instead.
 func TestReviseLiveNotesTranscript_TruncatedChunkIsAnError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[00:00] 我：内容"},"finish_reason":"length"}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"错词 => 正确写法"},"finish_reason":"length"}]}`))
 	}))
 	defer srv.Close()
 	withAISummary(t, srv.URL)
 
-	_, err := ReviseLiveNotesTranscript(context.Background(), "", "", []LiveNoteSegment{
-		seg(1, "mic", "我", 1, "内容"),
-	}, LiveNotesSpeaker{})
+	_, err := ReviseLiveNotesTranscript(context.Background(), LiveNotesReviseInput{
+		Segments: []LiveNoteSegment{seg(1, "mic", "我", 1, "内容")},
+	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, summarize.ErrOutputTruncated)
 }

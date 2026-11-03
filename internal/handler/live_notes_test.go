@@ -1031,10 +1031,11 @@ func TestServeLiveShareNotesMinutes_WritesThreeArtifactsAndSummarisesTheProofrea
 		bodies = append(bodies, string(body))
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		// The proofreading pass is the one that carries the raw transcript; the
-		// summarisation pass carries whatever it returned.
+		// The proofreading pass is the one that carries the raw transcript and
+		// answers with replacement pairs; the summarisation pass carries
+		// whatever the pairs produced.
 		if strings.Contains(string(body), "待校对转写") {
-			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[00:00] 我：确认 ClawBench 发布计划"}}]}`))
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"科劳本奇 => ClawBench"}}]}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要\n\n确认 ClawBench 发布计划。"}}]}`))
@@ -1065,7 +1066,7 @@ func TestServeLiveShareNotesMinutes_WritesThreeArtifactsAndSummarisesTheProofrea
 	note, _, err := service.GetLiveNote(room.Token())
 	require.NoError(t, err)
 	assert.Equal(t, service.LiveNotesStatusReady, note.ReviseStatus)
-	assert.Equal(t, "[00:00] 我：确认 ClawBench 发布计划", note.Revised)
+	assert.Equal(t, "[00:00] 我：确认ClawBench发布计划", note.Revised)
 	require.NotEmpty(t, note.DirName)
 
 	raw, err := os.ReadFile(filepath.Join(service.MeetingDirPath(project, note.DirName), "transcript.vtt"))
@@ -1086,7 +1087,7 @@ func TestServeLiveShareNotesMinutes_WritesThreeArtifactsAndSummarisesTheProofrea
 	mu.Lock()
 	defer mu.Unlock()
 	require.Len(t, bodies, 2, "one proofread pass, one summarisation pass")
-	assert.Contains(t, bodies[1], "ClawBench 发布计划", "the minutes see the corrected spelling")
+	assert.Contains(t, bodies[1], "ClawBench", "the minutes see the corrected spelling")
 	assert.NotContains(t, bodies[1], "科劳本奇", "and never the raw mis-recognition")
 }
 
@@ -2322,24 +2323,25 @@ func TestPersistLiveNoteAudio_WriteFailureIsSwallowed(t *testing.T) {
 	persistLiveNoteAudio(token, pid, project, "周会", "mic", 1_700_000_000_000, []byte("audio"))
 }
 
-func TestLiveNotesTimeline_ScreenSectionIsAppended(t *testing.T) {
+func TestLiveNoteMinutesContext_ScreenSectionIsAppended(t *testing.T) {
 	started := time.UnixMilli(1_700_000_000_000)
 	screens := []service.LiveNoteScreenShare{{Sharer: "host", SharerName: "主持人", StartedAt: 1_700_000_100_000}}
+	files := []service.LiveNoteFile{{Path: "/proj/a/main.go", OpenedAt: 1_700_000_050_000}}
+	info := service.LiveNoteMeetingInfo{StartedAt: started.UnixMilli(), ProjectPath: "/proj/a"}
 
 	// No screens: the file timeline alone, with no trailing separator.
-	files := []service.LiveNoteFile{{Path: "/proj/a/main.go", OpenedAt: 1_700_000_050_000}}
-	onlyFiles := liveNotesTimeline(files, nil, started, "/proj/a")
+	onlyFiles := service.LiveNoteMinutesContext{Info: info, Files: files}.PromptSection()
 	require.NotEmpty(t, onlyFiles)
 	assert.NotContains(t, onlyFiles, "屏幕共享")
 
 	// Both: one block for each, a blank line apart.
-	both := liveNotesTimeline(files, screens, started, "/proj/a")
+	both := service.LiveNoteMinutesContext{Info: info, Files: files, Screens: screens}.PromptSection()
 	assert.Contains(t, both, "屏幕共享")
 	assert.Contains(t, both, "\n\n", "the two timelines are separate blocks")
 	assert.Greater(t, len(both), len(onlyFiles))
 
 	// Screens only (no files opened): still a usable block.
-	onlyScreens := liveNotesTimeline(nil, screens, started, "/proj/a")
+	onlyScreens := service.LiveNoteMinutesContext{Info: info, Screens: screens}.PromptSection()
 	assert.Contains(t, onlyScreens, "屏幕共享")
 }
 

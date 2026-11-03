@@ -1279,18 +1279,15 @@ func liveNotesStoredTitle(token, fallback string) string {
 	return row.Title
 }
 
-// liveNotesTimeline joins the "what were we looking at" context for the minutes
-// prompt: files and screen shares, one blank line apart.
-func liveNotesTimeline(files []service.LiveNoteFile, screens []service.LiveNoteScreenShare, startedAt time.Time, projectPath string) string {
-	timeline := service.LiveNoteFilesPromptSection(files, startedAt, projectPath)
-	section := service.LiveNoteScreenPromptSection(screens, startedAt)
-	if section == "" {
-		return timeline
+// liveNotesEndTime returns the stored end time, or 0 when the meeting is still
+// running (or the row is gone). The minutes prompt uses it to say how long the
+// meeting took; a running meeting has no duration to report.
+func liveNotesEndTime(token string) int64 {
+	row, ok, err := service.GetLiveNote(token)
+	if err != nil || !ok {
+		return 0
 	}
-	if timeline != "" {
-		timeline += "\n\n"
-	}
-	return timeline + section
+	return row.EndedAt
 }
 
 // ── Regeneration chain ─────────────────────────────────────────────────────
@@ -1313,8 +1310,16 @@ type artifactChain struct {
 	screens  []service.LiveNoteScreenShare
 	segments []service.LiveNoteSegment
 	self     service.LiveNotesSpeaker
-	raw      string
-	revised  string
+
+	// Context the transcript cannot carry. Loaded once in prepare() and consumed
+	// by the minutes step; the proofreader gets its own vocabulary from the
+	// files and segments instead.
+	chat    []service.LiveNoteChatMessage
+	shots   []service.LiveNoteShot
+	prev    service.LiveNote
+	hasPrev bool
+	raw     string
+	revised string
 }
 
 func newArtifactChain(token string, projectID int64, projectPath, title string, strict bool) *artifactChain {
@@ -1361,6 +1366,23 @@ func (c *artifactChain) prepare() {
 		slog.Warn("live notes: list screen shares failed", "err", screensErr)
 	}
 	c.screens = screens
+	// Chat, key frames and the previous meeting are the same kind of input: they
+	// make the minutes better and none of them is worth failing the meeting over.
+	if chat, chatErr := service.ListLiveNoteChat(c.token, 0); chatErr != nil {
+		slog.Warn("live notes: list chat failed", "err", chatErr)
+	} else {
+		c.chat = chat
+	}
+	if frames, shotErr := service.ListLiveNoteShots(c.token); shotErr != nil {
+		slog.Warn("live notes: list shots failed", "err", shotErr)
+	} else {
+		c.shots = frames
+	}
+	if prev, ok, prevErr := service.PreviousLiveNoteMinutes(c.projectID, startedAt.UnixMilli(), c.token); prevErr != nil {
+		slog.Warn("live notes: previous meeting lookup failed", "err", prevErr)
+	} else if ok {
+		c.prev, c.hasPrev = prev, true
+	}
 }
 
 // refreshSegments re-reads the transcript rows. The ASR step replaces them, so
@@ -1552,7 +1574,13 @@ func (c *artifactChain) buildRevised(ctx context.Context) error {
 			slog.Warn("live notes: revise heartbeat failed", "err", err)
 		}
 	}
-	revised, err := service.ReviseLiveNotesTranscript(ctx, c.projectPath, c.title, c.segments, c.self, progress)
+	revised, err := service.ReviseLiveNotesTranscript(ctx, service.LiveNotesReviseInput{
+		ProjectPath: c.projectPath,
+		Title:       c.title,
+		Files:       c.files,
+		Segments:    c.segments,
+		Self:        c.self,
+	}, progress)
 	if err != nil {
 		return err
 	}
@@ -1595,10 +1623,27 @@ func (c *artifactChain) buildMinutes(ctx context.Context) error {
 	}
 
 	startedAt := liveNotesStartTime(c.segments)
-	// One background block for both timelines: they answer the same question
-	// ("what were we looking at") and splitting them into two sections only
-	// makes the model treat the second one as an afterthought.
-	timeline := liveNotesTimeline(c.files, c.screens, startedAt, c.projectPath)
+	// Everything the meeting knows about itself, in one block: framing, chat,
+	// what was on screen, and what the previous meeting left open. Assembled by
+	// the service so the order is a single decision rather than a call-site
+	// convention.
+	contextSection := service.LiveNoteMinutesContext{
+		Info: service.LiveNoteMeetingInfo{
+			ProjectName: filepath.Base(c.projectPath),
+			ProjectPath: c.projectPath,
+			StartedAt:   startedAt.UnixMilli(),
+			EndedAt:     liveNotesEndTime(c.token),
+			Segments:    c.segments,
+			Screens:     c.screens,
+			Self:        c.self,
+		},
+		Chat:    c.chat,
+		Files:   c.files,
+		Screens: c.screens,
+		Shots:   c.shots,
+		Prev:    c.prev,
+		HasPrev: c.hasPrev,
+	}.PromptSection()
 	progress := func(done, total int, phase string) {
 		detail := fmt.Sprintf("%d/%d", done, total)
 		if phase == "final" {
@@ -1608,7 +1653,7 @@ func (c *artifactChain) buildMinutes(ctx context.Context) error {
 			slog.Warn("live notes: minutes heartbeat failed", "err", err)
 		}
 	}
-	minutes, err := service.GenerateLiveNotesMinutes(ctx, c.title, text, timeline, c.self, progress)
+	minutes, err := service.GenerateLiveNotesMinutes(ctx, c.title, text, contextSection, c.self, progress)
 	if err != nil {
 		return err
 	}

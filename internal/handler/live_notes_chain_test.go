@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -30,8 +32,15 @@ func chainFixture(t *testing.T) (token string, pid int64, project string) {
 }
 
 func TestRunArtifactChain_RecordsEveryArtifactState(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
+		// The proofreader answers with replacement pairs (or the sentinel);
+		// every other pass is the minutes.
+		if strings.Contains(string(body), "待校对转写") {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"NO_CHANGES"}}]}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要"}}]}`))
 	}))
 	defer srv.Close()

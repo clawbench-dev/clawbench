@@ -89,7 +89,7 @@ func meetingTitleServer(t *testing.T, title string) (*httptest.Server, *bool) {
 			asked = true
 			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"` + title + `"}}]}`))
 		case strings.Contains(req, "待校对转写"):
-			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[00:00] 我：确认发版计划"}}]}`))
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"NO_CHANGES"}}]}`))
 		default:
 			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要\n\n确认发版计划。"}}]}`))
 		}

@@ -2357,7 +2357,8 @@ func (s LiveNotesSpeaker) reviseNote() string {
 	if label == "" {
 		return fmt.Sprintf(
 			"补充说明：本次会议的发起人，称谓是「%s」。正文里明显指这个人的近音写法改成「%s」；"+
-				"拿不准是不是指这个人时保持原样。", name, name)
+				"拿不准是不是指这个人时保持原样。", name, name,
+		)
 	}
 	if label == name {
 		// The label already is the name: rule 3 has everything it needs.
@@ -2366,7 +2367,8 @@ func (s LiveNotesSpeaker) reviseNote() string {
 	return fmt.Sprintf(
 		"补充说明（优先于第 4 条）：转写里说话人标注为「%s」的那一路，是本次会议的发起人本人，称谓是「%s」。"+
 			"正文里明显指这个人的近音写法改成「%s」；「%s」这个标注本身不要动，也不要把别的说话人当成这个人。",
-		label, name, name, label)
+		label, name, name, label,
+	)
 }
 
 // LiveNotesSelfLabel returns the speaker label the transcript uses for the
@@ -2391,40 +2393,6 @@ func LiveNotesSelfLabel(segments []LiveNoteSegment) string {
 	return ""
 }
 
-const liveNotesMinutesPrompt = `你是一名专业的会议记录员。根据下面这场会议的实时转写（每行是「时间 说话人：内容」，不同说话人的语音来自不同信道，已按时间重排），生成结构化的会议纪要。
-
-要求：
-1. 输出 Markdown，使用以下章节（没有内容的章节可省略）：
-   ## 概要
-   ## 议题与讨论
-   ## 结论与决定
-   ## 待办事项
-2. 待办事项用列表表示，能判断负责人时标注说话人，提到时间点时一并保留。
-3. 只依据转写内容，不要编造。信息不完整或听不清的地方标注「（待确认）」。
-4. 忽略寒暄、口头语和明显的转写错误；不要输出转写原文。
-5. 使用与转写内容一致的语言输出（中英混合时以中文为主）。`
-
-const liveNotesChunkPrompt = `你是一名会议记录员。下面是一场长会议转写的其中一段（每行是「时间 说话人：内容」）。请只提取这一段里的关键信息，用简短要点列出：
-- 讨论的议题
-- 达成的结论或决定
-- 待办事项（尽量标注负责人）
-不要展开叙述，不要输出转写原文，保留说话人姓名。使用与原文一致的语言。`
-
-// liveNotesReviseChunkRunes is the per-chunk input budget for proofreading.
-//
-// It is deliberately small: proofreading is a 1:1 rewrite (every timestamp,
-// speaker and line must survive), so the binding limit is the OUTPUT cap, not
-// the model window. A chunk much larger than max_tokens would be truncated
-// mid-transcript.
-const liveNotesReviseChunkRunes = 6000
-
-// liveNotesReviseMaxTokens bounds one proofread chunk. The output is roughly
-// the same length as the input, and 6000 CJK runes can approach 6000 tokens,
-// so the cap sits above the chunk size: 4000 silently truncated Chinese
-// chunks. AskAboutContextLossless turns a hit cap into an error rather than a
-// prefix, and the caller falls back to the raw transcript.
-const liveNotesReviseMaxTokens = 8000
-
 // liveNotesMinutesChunkRunes is the per-chunk input budget for the minutes
 // map-reduce. Much larger than the proofreading chunk because the output is a
 // short extraction, not a rewrite: a long-context model can read a whole
@@ -2439,103 +2407,38 @@ const liveNotesMinutesChunkRunes = 24000
 // drop exactly the details the larger chunk was meant to preserve.
 const liveNotesMinutesChunkMaxTokens = liveNotesMinutesChunkRunes / 5
 
-// liveNotesRevisePrompt proofreads one chunk of the transcript.
+const liveNotesMinutesPrompt = `你是一名专业的会议记录员。根据下面这场会议的实时转写（每行是「时间 说话人：内容」，不同说话人的语音来自不同信道，已按时间重排），生成结构化的会议纪要。
+
+要求：
+1. 输出 Markdown，使用以下章节（没有内容的章节可省略）：
+   ## 概要
+   ## 议题与讨论
+   ## 结论与决定
+   ## 待办事项
+   ## 遗留事项
+2. 待办事项用列表表示，能判断负责人时标注说话人，提到时间点时一并保留。
+3. 只依据转写内容，不要编造。信息不完整或听不清的地方标注「（待确认）」。
+4. 忽略寒暄、口头语和明显的转写错误；不要输出转写原文。
+5. 使用与转写内容一致的语言输出（中英混合时以中文为主）。
+6. 转写之外的材料各有用途：「会议信息」说明时间、时长与在场的人，可据此写「本次会议约 47 分钟」这类表述；
+   「会议聊天记录」与语音讨论同属会议内容；「打开的文件」「屏幕共享」「共享画面」只说明当时在看什么，
+   不要仅凭它们推断结论、决定或待办。
+7. 「上一次会议的待办事项」是背景，不是本次会议的内容：只有本次讨论明确提到某一项时，才写进「遗留事项」
+   并说明进展；本次会议与它们无关时省略该章节，也不要把它们当成这次会议的待办。`
+
+// liveNotesChunkPrompt extracts one chunk of a long meeting.
 //
-// The instructions are deliberately narrow. A proofreader that is allowed to
-// "improve" a sentence rewrites the meeting: minutes then describe what the
-// model thinks should have been said. Only substitutions are allowed here —
-// every timestamp, speaker and line must survive unchanged so the result is
-// still a transcript and not an essay.
-//
-// People are the one place where the transcript carries its own vocabulary:
-// each line is prefixed with the speaker label, and that label is the 称谓 the
-// person entered — the publisher's included (web/src/components/live/
-// MeetingCreate.vue). So a name mangled in the body can be checked against the
-// labels without any extra input. Legacy transcripts still carry a pronoun or
-// an ordinal there (「我」/「Me」/「观众 3」), which is why rule 4 forbids
-// inventing a name from a label that has none. Forms of address get their own
-// rule because "王总" and "王小明" are the same person in two registers: the
-// surname is correctable, the honorific is not the model's to rewrite.
-const liveNotesRevisePrompt = `你是一名会议转写校对员。输入是语音识别的会议转写，每行格式为「[mm:ss] 说话人：内容」。
+// The `[mm:ss] 说话人：` prefix is mandatory in the output: the final pass never
+// sees the transcript, so a bullet list without an anchor loses exactly what the
+// action items need — who said it and when. Asking for the prefix keeps the two
+// facts alive across the reduction.
+const liveNotesChunkPrompt = `你是一名会议记录员。下面是一场长会议转写的其中一段（每行是「时间 说话人：内容」）。请只提取这一段里的关键信息。
 
-你的任务只有一件：修正听写错误。
-
-1. 只改明显的同音/近音错字、专有名词、产品名、技术术语、人名、称呼与缩写。
-2. 「项目背景」里出现过的写法是唯一正确写法：转写里与之接近的一律改成它（例如把同音词改成项目里的真实名字）。
-3. 行首的说话人标签就是本人的称谓，是人名的权威写法：正文里明显指同一个人的近音写法，改成标签里的名字。标签本身不要动。
-4. 行首标签若是代词或占位（「我」「Me」「观众 3」这类），它不含姓名信息：不要据此推断或改写正文，也不要为任何说话人补上转写里没有的名字。
-5. 称呼（「王总」「李工」「张老师」这类）保留称谓本身，只按第 3 条校正其中的姓或名；不要把称呼整体换成姓名，也不要把姓名改成称呼。
-6. 不要润色、不要改写句式、不要合并或拆分句子、不要补全没听清的内容。
-7. 不要删除任何信息（口头语也保留），不要改变时间戳、说话人、行数和顺序。
-8. 听不清且无法确定的，保持原样，不要猜测；拿不准正文里的人名是不是行首那个人时，同样保持原样。
-
-直接输出校对后的转写，不要任何解释、不要加代码块。`
-
-const liveNotesReviseQuestion = "请输出这一段校对后的转写。"
-
-// ReviseLiveNotesTranscript proofreads the raw transcript against the project's
-// own vocabulary and returns the corrected timeline.
-//
-// Why this stage exists: ASR has no idea that "claw bench" is ClawBench or that
-// "ACP" is not "a c p". The project's own documents (AGENTS.md / README.md) are
-// full of the correct spellings, and feeding them to the proofreader fixes
-// exactly the errors a human would fix — which is what makes the minutes
-// readable.
-//
-// Chunked for the same reason the minutes are: a one-hour meeting does not fit
-// in one request. Chunks are cut on line boundaries so a line is never split.
-//
-// `self` says who the meeting's initiator is. It is the only identity the
-// transcript cannot supply (see reviseNote), so it is passed in rather than
-// read from config here — the caller already resolves it for the minutes.
-func ReviseLiveNotesTranscript(
-	ctx context.Context, projectPath, title string, segments []LiveNoteSegment, self LiveNotesSpeaker,
-	progress ...func(done, total int),
-) (string, error) {
-	transcript := BuildLiveNotesTranscript(segments)
-	if strings.TrimSpace(transcript) == "" {
-		return "", ErrLiveNotesEmpty
-	}
-	summarizer := summarize.NewAISummarizer(model.ConfigInstance.AISummary)
-	if summarizer == nil {
-		return "", ErrSummaryModelNotConfigured
-	}
-
-	background := strings.Join(projectContext(projectPath), "\n\n")
-	// Resolved once: every chunk gets the same initiator, and a chunk that
-	// happens to contain no 「我」 line still needs to recognize the name.
-	systemPrompt := liveNotesRevisePrompt
-	if note := self.reviseNote(); note != "" {
-		systemPrompt += "\n\n" + note
-	}
-	chunks := splitRunes(transcript, liveNotesReviseChunkRunes)
-	out := make([]string, 0, len(chunks))
-	for i, chunk := range chunks {
-		// The transcript always gets its own heading, even with no project
-		// documents: without it the model has no delimiter between "context" and
-		// "the thing to correct", and a project without an AGENTS.md is the
-		// normal case for a fresh directory.
-		block := "## 待校对转写\n" + chunk
-		if background != "" {
-			block = "## 项目背景（专有名词以此为准）\n" + background + "\n\n" + block
-		}
-		question := liveNotesReviseQuestion
-		if len(chunks) > 1 {
-			question = fmt.Sprintf("这是第 %d/%d 段。%s", i+1, len(chunks), liveNotesReviseQuestion)
-		}
-		revised, err := summarize.AskAboutContextLossless(ctx, summarizer, systemPrompt, block, question, liveNotesReviseMaxTokens)
-		if err != nil {
-			return "", fmt.Errorf("live notes: revise chunk %d: %w", i+1, err)
-		}
-		// The provider already fails on an empty answer, so a blank chunk cannot
-		// reach here; trimming is all that is left to do.
-		out = append(out, strings.TrimSpace(revised))
-		if len(progress) > 0 && progress[0] != nil {
-			progress[0](i+1, len(chunks))
-		}
-	}
-	return strings.Join(out, "\n"), nil
-}
+输出要求：每条要点单独一行，必须以原行的时间与说话人为前缀，格式为「[mm:ss] 说话人：要点」。
+- 讨论的议题
+- 达成的结论或决定
+- 待办事项（尽量标注负责人；负责人就是说话人时也写明）
+不要展开叙述，不要输出转写原文的正文，使用与原文一致的语言。`
 
 // LiveNoteFilesPromptSection renders the meeting's file timeline for the
 // summariser, or "" when nothing was opened.
@@ -2724,12 +2627,19 @@ func liveNoteExcerptText(data []byte, maxRunes int) string {
 // thing about the transcript that is NOT in its text: who the speaker labeled
 // "我" actually is.
 //
+// `contextSection` is everything else the meeting knows about itself — when it
+// ran, who was in it, what was on screen, what was typed in chat, what the last
+// meeting left open (see LiveNoteMinutesContext). It is appended AFTER the
+// transcript (and after the reduction, when there is one) on purpose: a block
+// placed in the tail of a chunk would be summarized away exactly in the long
+// meetings where it matters most.
+//
 // Long meetings are map-reduced: each chunk is condensed to bullet points, then
 // the bullet points are merged into the final minutes. Sending the whole
 // transcript in one request would either overflow the model window or be
 // silently truncated by the provider.
 func GenerateLiveNotesMinutes(
-	ctx context.Context, title, transcript, filesSection string, self LiveNotesSpeaker,
+	ctx context.Context, title, transcript, contextSection string, self LiveNotesSpeaker,
 	progress ...func(done, total int, phase string),
 ) (string, error) {
 	if strings.TrimSpace(transcript) == "" {
@@ -2766,8 +2676,8 @@ func GenerateLiveNotesMinutes(
 	// After the reduction, never inside it: a file list in the tail of one chunk
 	// would be summarized away exactly when the meeting is long enough to be
 	// chunked at all.
-	if strings.TrimSpace(filesSection) != "" {
-		contextBlock += "\n\n" + filesSection
+	if strings.TrimSpace(contextSection) != "" {
+		contextBlock += "\n\n" + contextSection
 	}
 
 	report(0, 1, "final")

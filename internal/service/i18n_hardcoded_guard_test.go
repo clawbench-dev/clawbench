@@ -57,10 +57,12 @@ var allowedCJKFiles = map[string]string{
 	// Live meeting-notes summarisation: the chunk and final-minute prompts are
 	// instructions to the model (section headings, "mark uncertain parts"),
 	// never rendered to a user. The transcript itself is model output.
-	"internal/service/live_notes.go":  "AI meeting-minutes prompts (chunk + final summary)",
-	"internal/summarize/task.go":      "AI summarization prompt",
-	"internal/summarize/recommend.go": "AI recommendation prompt + its quick-command header",
-	"internal/summarize/title.go":     "AI title-output prefix stripping (标题：)",
+	"internal/service/live_notes.go":         "AI meeting-minutes prompts (chunk + final summary)",
+	"internal/service/live_notes_revise.go":  "AI proofreading prompt (replacement-pair format) and its NO_CHANGES sentinel",
+	"internal/service/live_notes_context.go": "AI prompt blocks (glossary, meeting info, chat, key frames, previous todos); not user-visible",
+	"internal/summarize/task.go":             "AI summarization prompt",
+	"internal/summarize/recommend.go":        "AI recommendation prompt + its quick-command header",
+	"internal/summarize/title.go":            "AI title-output prefix stripping (标题：)",
 	// Parsers that must recognize CJK punctuation/numerals in model or CLI
 	// output; the literals are matched, not displayed.
 	"internal/askquestion/markdown.go":           "ordered-list marker regex (CJK numerals)",

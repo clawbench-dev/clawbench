@@ -2,8 +2,10 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,8 +63,13 @@ func TestServeLiveShareNotesRegeneratePlan_InvalidTarget(t *testing.T) {
 }
 
 func TestServeLiveShareNotesRegenerate_StartsAndCompletes(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(string(body), "待校对转写") {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"NO_CHANGES"}}]}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"## 概要"}}]}`))
 	}))
 	defer srv.Close()
