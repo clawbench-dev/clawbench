@@ -389,10 +389,23 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
    * pointer, so a scroll while the button is held is proof the drag is alive.
    * Without this the timer sees a quiet pointer and surfaces the bar, which the
    * next scroll then hides — the reported flicker (issue #572).
+   *
+   * A scroll AFTER the bar is up is a different matter: the anchor is expressed
+   * in HOST viewport coordinates, so anything that scrolls this document moves
+   * the selected text out from under it and leaves the bar pointing at nothing
+   * (measured: one 411px scroll of the previewed document put the bar 475px
+   * away from its own text). The host hides its bar on scroll, but the common
+   * case here is the browser revealing the selection it was just given — hiding
+   * then takes the bar away from the user mid-interaction — so the bar is
+   * re-measured and follows the text instead.
    */
   function onScroll() {
     if (disposed) return
-    if (pointerCount > 0) lastPointerActivity = Date.now()
+    if (pointerCount > 0) {
+      lastPointerActivity = Date.now()
+      return
+    }
+    if (barShown) scheduleEvaluate(0)
   }
 
   function releasePointer() {

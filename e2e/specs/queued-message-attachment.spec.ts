@@ -33,7 +33,12 @@ const PNG_BASE64 =
 test.describe('Queued message with an image attachment', () => {
   let chat: ChatPage
 
-  test.setTimeout(180000)
+  // The whole flow is: hold turn 1 open (60s), run the attach UI (~15s on
+  // WebKit, more on a loaded CI runner), send the image so it QUEUES, then wait
+  // for the drain to reach it — which can only start once turn 1 ends. The
+  // budget therefore has to cover the marker window plus the drain, not just
+  // the drain.
+  test.setTimeout(240000)
 
   test.beforeEach(async ({ page }) => {
     chat = new ChatPage(page)
@@ -44,6 +49,13 @@ test.describe('Queued message with an image attachment', () => {
     await page.reload()
     await page.waitForLoadState('domcontentloaded')
     await expect(page.locator('.chat-textarea')).toBeVisible({ timeout: 10000 })
+    // Start from an idle session: if a previous spec (or a previous attempt of
+    // THIS spec, whose queued backlog the backend keeps draining after the page
+    // is gone) still has a turn running, our first message would queue behind
+    // it and the slow-reply marker below would land on a queued entry instead
+    // of on the running turn — the marker window then no longer covers the
+    // attach flow.
+    await chat.waitForIdle()
   })
 
   /** Attach one image through the drawer (the single upload entry point). */
@@ -79,29 +91,36 @@ test.describe('Queued message with an image attachment', () => {
     })
 
     try {
-      // Keep a multi-turn backlog so attaching + sending the image is not a
-      // race against the first reply: three messages queue ~3 mock turns.
-      //
-      // The backlog alone is not enough — attaching an image on WebKit
-      // (drawer, file input, upload, strip settling) measured ~15s, far longer
-      // than three default 1200ms turns, so the queue was already empty by the
-      // time the image message was sent and the test silently exercised the
-      // DIRECT-send path instead (observed: `.queued-bar` never appeared). The
-      // `[mock:slow-reply:…]` marker holds turn 1 open past the attach flow so
-      // the image message is queued by construction.
-      await chat.sendMessage(`${first} [mock:slow-reply:30000]`)
-      await chat.sendMessage(`qimg-filler-a-${run}`)
-      await chat.sendMessage(`qimg-filler-b-${run}`)
+      // ONE long turn, held open by the `[mock:slow-reply:…]` marker, is what
+      // makes the queueing deterministic. A backlog of default turns is not
+      // enough: attaching an image through the drawer measured ~15s on WebKit
+      // and longer on a loaded CI runner, far more than three 1200ms turns, so
+      // the queue was empty by the time the image message was sent and the test
+      // silently exercised the DIRECT-send path instead (observed: `.queued-bar`
+      // never appeared). The window is sized to cover the attach flow with
+      // margin; if it ever is not, the `.queued-bar` assertion below fails
+      // loudly instead of silently testing the wrong path.
+      await chat.sendMessage(`${first} [mock:slow-reply:60000]`)
 
       await attachImage(page, imgPath)
       await chat.sendMessage(queued)
 
       // The message MUST have gone through the queue, otherwise this spec would
-      // silently test the direct-send path instead.
-      await expect(page.locator('.queued-bar')).toBeVisible({ timeout: 10000 })
+      // silently test the direct-send path instead. Assert on OUR entry, not
+      // just on the bar being present: a leftover entry from an earlier spec
+      // would satisfy the weaker form.
+      const queuedBar = page.locator('.queued-bar')
+      await expect(queuedBar).toBeVisible({ timeout: 15000 })
+      // The row list only renders when the bar is expanded.
+      await page.locator('.queued-bar-header').click()
+      await expect(queuedBar.locator('.queued-bar-item').filter({ hasText: queued })).toHaveCount(1, { timeout: 15000 })
 
       const bubble = page.locator('.chat-message.user').filter({ hasText: queued })
-      await expect(bubble).toHaveCount(1, { timeout: 60000 })
+      // The bubble only appears once the drain reaches this entry, i.e. after
+      // the remainder of the slow turn plus that turn's own runtime. Budget the
+      // whole remainder (the marker is 60s, so 120s covers any start point)
+      // rather than a fixed guess at how much of it is left.
+      await expect(bubble).toHaveCount(1, { timeout: 120000 })
 
       const html = await bubble.evaluate((el) => el.outerHTML)
       // The attachment card itself must be there.

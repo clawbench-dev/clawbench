@@ -220,6 +220,56 @@ describe('attachIframeSelectionQuoteBridge', () => {
     dispose()
   })
 
+  it('re-measures the anchor when the previewed document scrolls under the bar', () => {
+    // The bar is positioned in HOST coordinates, so a scroll inside the frame's
+    // own document moves the text out from under it. Nothing in the host sees
+    // that scroll, so the bridge has to re-measure — otherwise the bar stays
+    // where the text used to be (measured: a 411px scroll left it 475px away
+    // from its own text, which is exactly the intermittent CI failure).
+    const frameElement = {
+      getBoundingClientRect: () => ({ left: 0, top: 100, width: 400, height: 300 }),
+    } as unknown as Element
+    let rectTop = 10
+    const selection = {
+      collapsed: false,
+      toString: () => 'selected text',
+      rangeCount: 1,
+      getRangeAt: () => ({
+        getClientRects: () => [{ top: rectTop, left: 10, width: 50, height: 18 }],
+      }),
+    } as unknown as Selection
+    const doc = new FakeDoc()
+    const show = vi.fn()
+    const dispose = attachIframeSelectionQuoteBridge({
+      win: {
+        getSelection: () => selection,
+        document: doc,
+        frameElement,
+        innerWidth: 400,
+        innerHeight: 300,
+      },
+      filePath: () => '/a.html',
+      show,
+      hide: vi.fn(),
+    })
+
+    doc.fire('selectionchange')
+    vi.advanceTimersByTime(152)
+    expect(show).toHaveBeenCalledTimes(1)
+    // Host coords: frame top 100 + selection top 10.
+    expect((show.mock.calls[0][1] as DOMRect).top).toBe(110)
+
+    // The document scrolls: the same selection now sits 200px higher inside the
+    // frame, so its host position must move with it.
+    rectTop = -190
+    doc.fire('scroll')
+    vi.advanceTimersByTime(2)
+
+    expect(show).toHaveBeenCalledTimes(2)
+    expect((show.mock.calls[1][1] as DOMRect).top).toBe(-90)
+    dispose()
+  })
+
   it('passes the frame element to show so the bar can tell its surface from unrelated scrolls', () => {
     const frame = document.createElement('iframe')
     const doc = new FakeDoc()

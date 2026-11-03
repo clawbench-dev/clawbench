@@ -882,12 +882,20 @@ func groupRoutingReply(sid, prompt string) string {
 		// No addressable member: end the discussion.
 		return "讨论结束。<clawbench-group-end/> 结论：群内暂无其他成员。"
 	}
-	// First name only (comma/、-separated list).
-	name := rest
-	if i := strings.IndexAny(rest, ",、"); i >= 0 {
-		name = rest[:i]
+	// First name only. A roster entry is rendered as "Name（specialty）" and the
+	// entries are joined by "、", so the NAME ends at whichever comes first: the
+	// specialty marker, the list separator, or a comma. Splitting on ",、" alone
+	// is not enough — a specialty may itself contain a comma (e.g. the e2e
+	// "E2E Testing (ACP, member)"), which truncated the name mid-specialty and
+	// produced a target that resolves to no member. The orchestrator then saw
+	// two consecutive unroutable host turns and aborted the whole group turn.
+	end := len(rest)
+	for _, sep := range []string{"（", "、", ","} {
+		if i := strings.Index(rest, sep); i >= 0 && i < end {
+			end = i
+		}
 	}
-	name = strings.TrimSpace(name)
+	name := strings.TrimSpace(rest[:end])
 	if name == "" {
 		return "讨论结束。<clawbench-group-end/> 结论：无人可点。"
 	}

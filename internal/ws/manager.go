@@ -144,12 +144,22 @@ func (m *Manager) StreamHub() *StreamHub {
 func (m *Manager) Subscribe(conn *websocket.Conn, writeMu *sync.Mutex, clientID, locale string) *ClientSubscription {
 	m.mu.Lock()
 
-	// Check subscription limit (existing clientID reconnect is allowed)
+	// Check subscription limit (existing clientID reconnect is allowed).
+	//
+	// A slot held by a client that is already DISCONNECTED is not worth refusing
+	// a live one for: after disconnectedBufferWindow its replay buffer is dead
+	// anyway, and until CleanupStale reaps it (staleTimeout = 2min) it makes the
+	// cap look full. Counting those was how a normal browser session — several
+	// tabs/reloads/devices, or a test suite that opens a fresh context per test
+	// — ended up locked out with "too many subscriptions" for minutes. Reclaim
+	// the longest-dead slot instead; only a genuinely all-live registry rejects.
 	if _, exists := m.subscriptions[clientID]; !exists && len(m.subscriptions) >= maxSubscriptions {
-		m.mu.Unlock()
-		_ = conn.Close(websocket.StatusPolicyViolation, "too many subscriptions")
-		slog.Warn("ws: subscription rejected, limit reached", "limit", maxSubscriptions, "client_id", clientID)
-		return nil
+		if !m.reclaimDisconnectedSlotLocked() {
+			m.mu.Unlock()
+			_ = conn.Close(websocket.StatusPolicyViolation, "too many subscriptions")
+			slog.Warn("ws: subscription rejected, limit reached", "limit", maxSubscriptions, "client_id", clientID)
+			return nil
+		}
 	}
 
 	sub, ok := m.subscriptions[clientID]
@@ -750,6 +760,41 @@ func (m *Manager) SubscriptionDiagnostics(sessionID string) []any {
 		slog.Int("subscribed_to_session", subscribedToSession),
 		slog.Int("hub_subscribers", hubSubscribers),
 	}
+}
+
+// reclaimDisconnectedSlotLocked frees ONE registry slot by dropping the
+// subscription that has been disconnected the longest, when that is already past
+// its replay window. It reports whether a slot was freed.
+//
+// Called by Subscribe (holding m.mu) when the cap is reached. Dropping a
+// subscription past disconnectedBufferWindow loses nothing: events for it are
+// no longer buffered, so a reconnect at that point could not replay them anyway.
+// Subscriptions that are still connected, or still inside the window, are never
+// touched — a live client can never be evicted for a new one.
+//
+// Lock order matches CleanupStale: m.mu (held by the caller) → sub.mu.
+func (m *Manager) reclaimDisconnectedSlotLocked() bool {
+	var oldestID string
+	var oldestAt time.Time
+	for id, sub := range m.subscriptions {
+		sub.mu.Lock()
+		reclaimable := sub.conn == nil && !sub.bufferStart.IsZero() &&
+			time.Since(sub.bufferStart) > disconnectedBufferWindow
+		if reclaimable && (oldestID == "" || sub.bufferStart.Before(oldestAt)) {
+			oldestID = id
+			oldestAt = sub.bufferStart
+		}
+		sub.mu.Unlock()
+	}
+	if oldestID == "" {
+		return false
+	}
+	delete(m.subscriptions, oldestID)
+	slog.Info("ws: reclaimed slot from a disconnected client",
+		"evicted_client_id", oldestID,
+		"disconnected_for", time.Since(oldestAt),
+		"limit", maxSubscriptions)
+	return true
 }
 
 // CleanupStale removes stale subscriptions:

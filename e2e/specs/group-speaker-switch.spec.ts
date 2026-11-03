@@ -85,18 +85,31 @@ test.describe.serial('group chat subscribe-time recovery carries the speaker', (
     // OnSubscribe — so looping until a stream_start frame arrives makes the
     // probe independent of which instant we happen to land in.
     const recovery = await page.evaluate(async ({ groupId, memberRowIds }) => {
-      const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ai/events/ws?client_id=e2e-recovery-probe`
+      // A per-run client id: the hub keys subscriptions by client id and keeps a
+      // disconnected client's entry (with its replay buffer) for a while, so a
+      // fixed id makes this probe inherit whatever the previous run left behind
+      // — including a still-subscribed PREVIOUS group, whose live stream then
+      // answers this subscribe with a stream_start belonging to another group.
+      const clientId = `e2e-recovery-probe-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ai/events/ws?client_id=${clientId}`
       const ws = new WebSocket(wsUrl)
       let first: Record<string, unknown> = {}
+      let firstSession = ''
       let captured = false
+      // Every stream_start seen, for diagnostics: a frame from ANOTHER session
+      // means the probe was still subscribed somewhere it should not be.
+      const seen: string[] = []
       ws.onmessage = (ev) => {
-        if (captured) return
         try {
           const msg = JSON.parse(ev.data as string)
-          if (msg.event === 'chat_stream' && msg.data?.event_type === 'stream_start') {
-            first = msg.data.payload || {}
-            captured = true
-          }
+          if (msg.event !== 'chat_stream' || msg.data?.event_type !== 'stream_start') return
+          const sid = String(msg.data?.session_id || '')
+          const agent = String(msg.data?.payload?.agent_id || '')
+          if (seen.length < 8) seen.push(`${sid}:${agent}`)
+          if (captured || sid !== groupId) return
+          first = msg.data.payload || {}
+          firstSession = sid
+          captured = true
         } catch { /* ignore non-JSON */ }
       }
       await new Promise<void>((resolve) => {
@@ -114,24 +127,36 @@ test.describe.serial('group chat subscribe-time recovery carries the speaker', (
         captured,
         messageId: first.message_id as number | undefined,
         agentId: (first.agent_id as string | undefined) || '',
+        firstSession,
+        seen,
         memberRowIds,
       }
     }, { groupId: setup.groupId, memberRowIds: setup.memberRowIds })
 
     // The recovery stream_start must carry the speaker, and it must be a real
     // member row id of THIS group (not empty, not the session's agent id).
-    expect(recovery.captured, 'a mid-turn subscribe must be answered with a stream_start').toBe(true)
+    expect(recovery.captured, `a mid-turn subscribe must be answered with a stream_start (seen: ${recovery.seen.join(', ') || 'none'})`).toBe(true)
+    expect(recovery.firstSession, 'the re-emitted stream_start must belong to THIS group').toBe(setup.groupId)
     expect(recovery.messageId, 'a live run must be re-emitted to a mid-turn subscriber').toBeTruthy()
     expect(recovery.agentId, 'the re-emitted stream_start must carry the speaker (agent_id)').toBeTruthy()
-    expect(recovery.memberRowIds).toContain(recovery.agentId)
+    expect(recovery.memberRowIds, `agentId=${recovery.agentId} members=${recovery.memberRowIds.join(',')}`).toContain(recovery.agentId)
 
-    // Wait for the group turn to finish so the shared mock is not left busy for
-    // later specs (the stop button lives on the group session's run state).
+    // Stop the group turn. It is NOT enough to wait for "no streaming row":
+    // a multi-member turn has gaps between speeches where nothing is streaming
+    // yet the runner is still alive, so a poll on that shape can return early
+    // and leave the turn running. Every later spec then trips over it —
+    // ChatPage.sendAndAwaitACPReply polls "is ANY session running" and spins
+    // until its own test timeout. Cancel explicitly, then wait for the run to
+    // actually clear.
+    await page.evaluate(async (groupId) => {
+      await fetch(`/api/ai/chat/cancel?session_id=${encodeURIComponent(groupId)}`, { method: 'POST' })
+    }, setup.groupId)
     await expect
       .poll(async () => {
         return page.evaluate(async (groupId) => {
-          const hist = await (await fetch(`/api/ai/chat?session_id=${encodeURIComponent(groupId)}&limit=5`)).json()
-          return (hist.messages || []).some((m: { streaming?: boolean }) => m.streaming)
+          const data = await (await fetch('/api/ai/sessions')).json()
+          const s = (data.sessions || []).find((x: { id: string }) => x.id === groupId)
+          return !!s?.running
         }, setup.groupId)
       }, { timeout: 90000 })
       .toBe(false)
