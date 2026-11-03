@@ -1131,6 +1131,10 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := store.WriteExec(ProvidersDDL); err != nil {
 		return fmt.Errorf("failed to create providers table: %w", err)
 	}
+	// Relay (LiveKit) endpoint + credential. One row; see live_sfu.go.
+	if _, err := store.WriteExec(LiveSFUDDL); err != nil {
+		return fmt.Errorf("failed to create live_sfu_config table: %w", err)
+	}
 	// project_forges.scheme: the API scheme the binding's host is reached with.
 	//
 	// Existing rows backfill to '' (unknown) rather than 'https'. The distinction

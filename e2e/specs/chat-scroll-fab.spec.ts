@@ -87,32 +87,106 @@ test.describe('Chat scroll FAB', () => {
   }
 
   /**
-   * Wheel up until the FAB is in its "up" state, and fail with the measured
-   * geometry if it never gets there.
+   * Wheel up until the FAB actually renders its UP pair, and fail with the
+   * measured geometry if it never does.
    *
-   * The group renders EITHER the up pair or the down pair depending on
-   * `scrolledUp`, and both pairs use `.scroll-fab-round` — so `.first()` is the
-   * scroll-to-top button only while the container is in the up band
-   * (`scrollTop >= 100` and more than 200px from the bottom, mirroring the
-   * component's own gating). A single wheel tick is not enough to guarantee
-   * that on a loaded runner: the event can land before the container settles, or
-   * leave the view still inside the bottom band — then `.first()` is the
-   * scroll-to-BOTTOM button and the "jump to top" assertions measure the wrong
-   * action (observed on a 2-core run: scrollTop stayed at 2469).
+   * The group renders EITHER the up pair or the down pair, and both use
+   * `.scroll-fab-round` — so `.first()` is the scroll-to-top button only while
+   * `scrolledUp` is true. `scrolledUp` is NOT a function of geometry alone:
+   * the component sets it from the LAST gesture's direction
+   * (`shouldShowUp = scrollDelta < 0 && distFromBottom > 200 && !nearTop`).
+   * Checking geometry without wheeling up therefore "succeeds" right after a
+   * downward scroll and the click lands on **Scroll to bottom** (measured on a
+   * throttled run: `clicked="Scroll to bottom"`, scrollTop 600 → 1402).
+   *
+   * So: every attempt performs a real upward wheel, and success is confirmed by
+   * the rendered button's own label rather than by geometry alone.
    */
   async function wheelUpUntilFabIsUp(page: Page): Promise<void> {
     const container = page.locator('.chat-messages')
+    const firstButton = page.locator('.scroll-fab-group .scroll-fab-round').first()
+    const upLabel = /scroll to top|回到顶部/i
     const geometry = async () => container.evaluate((el) => ({
       top: el.scrollTop,
       fromBottom: el.scrollHeight - el.scrollTop - el.clientHeight,
     }))
-    for (let i = 0; i < 5; i++) {
-      const m = await geometry()
-      if (m.top >= 100 && m.fromBottom > 200) return
+    // Park the viewport a fixed distance below the top. Where the test starts is
+    // not controllable: the transcript may open anywhere (restored position,
+    // queued backlog still draining, a session whose history is mostly older
+    // messages), and a wheel near the top edge is clamped to a delta the
+    // component ignores — then "wheel down, wheel up" nets zero and the loop
+    // never makes progress (observed on WebKit: scrollTop oscillated to 0).
+    // Parking makes the following 400px upward wheel land at ~400, inside the
+    // FAB's up band.
+    const park = async () => {
+      await container.evaluate((el) => {
+        el.scrollTop = Math.min(800, el.scrollHeight - el.clientHeight)
+      })
+    }
+    if ((await geometry()).top < 600) await park()
+    for (let i = 0; i < 4; i++) {
       await wheelScroll(page, -400)
+      const m = await geometry()
+      if (m.top < 100) {
+        await park()
+        continue
+      }
+      // The pair swaps through `<Transition mode="out-in">`: right after the
+      // gesture the DOWN node is still the one mounted (it leaves first), so a
+      // single read would see "Scroll to bottom" and wrongly conclude the state
+      // never flipped. Wait for the swap instead of racing it.
+      const flipped = await expect
+        .poll(async () => firstButton.getAttribute('title').catch(() => null), {
+          timeout: 2000,
+          intervals: [100, 200, 500],
+        })
+        .toMatch(upLabel)
+        .then(() => true)
+        .catch(() => false)
+      if (flipped) return
     }
     const m = await geometry()
-    throw new Error(`transcript never reached the "scrolled up" band: scrollTop=${m.top}, fromBottom=${m.fromBottom}`)
+    throw new Error(
+      `FAB never reached its UP pair: scrollTop=${m.top}, fromBottom=${m.fromBottom}, ` +
+      `firstButtonTitle=${await firstButton.getAttribute('title').catch(() => null)}`,
+    )
+  }
+
+  /**
+   * Load every older page, so the transcript stops growing when the view
+   * reaches the top.
+   *
+   * `scrollToTop()` smooth-scrolls to 0, but entering the history prefetch band
+   * loads an older page MID-ANIMATION: the content change cancels the browser's
+   * smooth scroll and the container's anchoring only restores the visual
+   * position for the prepended height, so the jump stops part-way. Measured on
+   * a throttled 2-core run: 2023 → 992 with a 614px page and 2023 → 1914 with a
+   * 1431px page — i.e. the final offset depends on WHEN the page landed, not on
+   * the FAB. With nothing left to load the jump completes, which is the
+   * behaviour this test is actually about.
+   *
+   * Sets `scrollTop = 0` repeatedly: `maybeLoadOlder()` runs for programmatic
+   * offsets too, and each page leaves the view anchored one page lower, so the
+   * loop needs to push it back up every round.
+   */
+  async function loadAllHistory(page: Page): Promise<void> {
+    const container = page.locator('.chat-messages')
+    for (let i = 0; i < 20; i++) {
+      const height = await container.evaluate((el) => el.scrollHeight)
+      await container.evaluate((el) => { el.scrollTop = 0 })
+      const grew = await expect
+        .poll(async () => container.evaluate((el) => el.scrollHeight), {
+          // Generous on purpose: returning while a page is still in flight
+          // would let it land during the jump and cancel the smooth scroll.
+          timeout: 5000,
+          intervals: [100, 200, 500],
+        })
+        .toBeGreaterThan(height)
+        .then(() => true)
+        .catch(() => false)
+      if (!grew) return
+    }
+    throw new Error('history did not finish loading after 20 pages')
   }
 
   test('scroll-up FAB appears when scrolling up in a long chat', async ({ page }) => {
@@ -149,6 +223,14 @@ test.describe('Chat scroll FAB', () => {
     await ensureScrollableRange(page)
     expect(await isScrollable(page)).toBe(true)
 
+    // Finish loading the history BEFORE measuring: a page that lands while the
+    // jump animates cancels the smooth scroll, so the final offset would depend
+    // on load timing rather than on the button (see loadAllHistory).
+    await loadAllHistory(page)
+
+    // Move away from the top so the FAB renders its UP pair, then confirm the
+    // container is in the band the component gates `scrolledUp` on.
+    await wheelScroll(page, 600)
     await wheelUpUntilFabIsUp(page)
 
     const scrollFabGroup = page.locator('.scroll-fab-group')
@@ -156,31 +238,37 @@ test.describe('Chat scroll FAB', () => {
 
     // Click the scroll-to-top button (first button of the UP pair)
     const before = await scrollState(page)
-    await scrollFabGroup.locator('.scroll-fab-round').first().click()
+    const target = scrollFabGroup.locator('.scroll-fab-round').first()
+    const targetTitle = await target.getAttribute('title')
+    await target.click()
 
     // After reaching the top the buttons hide (nearTop triggers immediate hide
     // during programmatic scroll).
     await expect(scrollFabGroup).not.toBeVisible({ timeout: 8000 })
 
-    // What the click guarantees is that the viewport ends at the TOP of the
-    // content that was loaded when it was clicked.
-    //
-    // `scrollTop` alone cannot express that: the jump enters the history
-    // prefetch band, so older pages are prepended and the container's anchoring
-    // corrects the scroll position by exactly the height they added. On a
-    // session with unloaded history that leaves a large `scrollTop` even though
-    // the view did move to the top of the previously-loaded content (measured:
-    // 2069 → 2065 while ~2k px of history was prepended). Subtracting the
-    // prepended height is exact in both cases — with nothing prepended it
-    // reduces to "scrollTop must be near 0", which is what this test asserts on
-    // a fully-loaded transcript, and a click that does nothing still fails.
-    await expect.poll(
-      async () => {
-        const now = await scrollState(page)
-        return now.top - Math.max(0, now.height - before.height)
-      },
-      { timeout: 20000, intervals: [200, 500, 1000] }
-    ).toBeLessThan(200)
+    // The jump must land at the top of the loaded content. History is fully
+    // loaded by now, so nothing is prepended during the animation and this
+    // reduces to "scrollTop is near 0"; the subtraction is kept because a page
+    // that still arrives (e.g. a message added while the test ran) is exactly
+    // the offset anchoring compensates for, and a click that does nothing
+    // leaves `top` at its pre-click value either way.
+    let lastSeen = before
+    try {
+      await expect.poll(
+        async () => {
+          const now = await scrollState(page)
+          lastSeen = now
+          return now.top - Math.max(0, now.height - before.height)
+        },
+        { timeout: 20000, intervals: [200, 500, 1000] }
+      ).toBeLessThan(200)
+    } catch (err) {
+      throw new Error(
+        `scroll-to-top did not reach the top of the loaded content. ` +
+        `clicked="${targetTitle}" before=${JSON.stringify(before)} last=${JSON.stringify(lastSeen)}\n` +
+        String(err),
+      )
+    }
   })
 
   test('clicking scroll-to-bottom FAB scrolls to bottom', async ({ page }) => {

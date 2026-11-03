@@ -67,6 +67,10 @@ func TestRegisteredRoutes_AuthFlagMatchesSpec(t *testing.T) {
 		"/api/apk",
 		"/api/desktop/latest",
 		"/api/ssh/info",
+		// Signaling proxy for a loopback relay: the viewer page is public, so
+		// the socket it opens must be too. The LiveKit token it carries is the
+		// credential, and the handler only ever dials 127.0.0.1.
+		"/livekit/",
 	}
 	for _, p := range publicPatterns {
 		auth, ok := got[p]
@@ -86,7 +90,7 @@ func TestRegisteredRoutes_AuthFlagMatchesSpec(t *testing.T) {
 func isPublicPattern(p string) bool {
 	switch p {
 	case "/", "/login", "/api/health", "/api/me", "/api/share/", "/share/",
-		"/api/apk", "/api/desktop/latest", "/api/ssh/info":
+		"/api/apk", "/api/desktop/latest", "/api/ssh/info", "/livekit/":
 		return true
 	}
 	return false

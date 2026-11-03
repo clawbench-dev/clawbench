@@ -32,6 +32,13 @@ func InitInMemoryDB() (*sql.DB, error) {
 		return nil, err
 	}
 
+	// Relay configuration: the live-share handler reads it on every create, so
+	// the fixture has to have it or every meeting test fails on a missing table.
+	if _, err := db.ExecContext(context.Background(), LiveSFUDDL); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
 	// The projects registry: agent project-scope resolution (ProjectIDForPath /
 	// ProjectIDByPath) reads it, so handler tests that exercise scoping need it.
 	if _, err := db.ExecContext(context.Background(), store.ProjectsDDL); err != nil {
